@@ -33,7 +33,14 @@ export interface OpenAIStreamChunk {
   choices: Array<{
     delta: {
       content?: string;
+      /** Standard reasoning/thinking field (DeepSeek, MiMo, etc.) */
       reasoning_content?: string;
+      /**
+       * OpenRouter reasoning field. OpenRouter streams reasoning content via
+       * `delta.reasoning` instead of `delta.reasoning_content`. Read as a
+       * fallback so OpenRouter-compatible reasoning models are captured.
+       */
+      reasoning?: string;
       tool_calls?: Array<{
         index: number;
         id?: string;
@@ -106,7 +113,11 @@ export async function parseOpenAIStream(
         for (const choice of chunk.choices ?? []) {
           const delta = choice.delta;
           if (delta.content) content += delta.content;
+          // Standard reasoning_content (DeepSeek/MiMo) — primary source.
           if (delta.reasoning_content) reasoningContent += delta.reasoning_content;
+          // OpenRouter streams reasoning under `delta.reasoning` — fall back
+          // so reasoning is captured when reasoning_content is absent.
+          if (delta.reasoning) reasoningContent += delta.reasoning;
           if (delta.tool_calls) {
             for (const tc of delta.tool_calls) {
               if (tc.id) {
@@ -140,7 +151,14 @@ interface OpenAIResponseChoice {
       id: string;
       function: { name: string; arguments: string };
     }>;
+    /** Standard reasoning/thinking field (DeepSeek, MiMo, etc.) */
     reasoning_content?: string;
+    /**
+     * OpenRouter reasoning field. OpenRouter returns reasoning content via
+     * `message.reasoning` instead of `message.reasoning_content`. Read as a
+     * fallback so OpenRouter-compatible reasoning models are captured.
+     */
+    reasoning?: string;
   };
   finish_reason?: string;
 }
@@ -197,9 +215,13 @@ export function parseOpenAIResponse(
     }
   }
 
-  // Merge reasoning_content into content for models that put output there
-  if (!content && message.reasoning_content) {
-    content = message.reasoning_content;
+  // Merge reasoning_content into content for models that put output there.
+  // Prefer the standard `reasoning_content` field (DeepSeek/MiMo); fall back
+  // to OpenRouter's `reasoning` field so reasoning is captured regardless of
+  // which field the provider populates.
+  const reasoningContent = message.reasoning_content ?? message.reasoning;
+  if (!content && reasoningContent) {
+    content = reasoningContent;
   }
 
   return {
@@ -216,7 +238,7 @@ export function parseOpenAIResponse(
             : 'stop',
     toolCalls,
     parsed: tryParseOpenAICompatibleStructured(content, responseFormat),
-    reasoning_content: message.reasoning_content,
+    reasoning_content: reasoningContent,
   };
 }
 
@@ -286,12 +308,41 @@ export function buildOpenAIBody(
     }
   }
 
+  // Propagate prompt_cache_key for providers that support OpenAI-style cache routing
+  // (xAI, Groq, Together, etc.). Providers that don't support it will simply ignore
+  // the unknown field per OpenAI-compatible API convention.
+  if (request.cacheConfig?.promptCacheKey) {
+    body.prompt_cache_key = request.cacheConfig.promptCacheKey;
+  }
+
+  // Apply reasoning configuration for providers that support it
+  // (DeepSeek-Reasoner, Grok, etc.). Providers that don't support
+  // reasoning_effort will ignore the unknown field.
+  //
+  // Some providers use a provider-specific reasoning envelope instead of the
+  // flat `reasoning_effort`/`max_thinking_tokens` fields. For example,
+  // OpenRouter expects `reasoning: { enabled, effort, max_tokens }`. When a
+  // subclass supplies such an object via getExtraBody (present in `extra`),
+  // the standard flat fields are suppressed to avoid emitting conflicting
+  // reasoning directives. The subclass's `reasoning` object (spread into the
+  // body above) already carries the equivalent configuration.
+  const rc = request.reasoningConfig;
+  if (rc?.enabled && !('reasoning' in extra)) {
+    if (rc.effort) body.reasoning_effort = rc.effort;
+    if (rc.budget && rc.budget > 0) body.max_thinking_tokens = rc.budget;
+  }
+
   return body;
 }
 
 /**
  * Standard OpenAI-compatible API call.
  * Handles streaming and non-streaming, auto-detects which to use.
+ *
+ * Includes automatic retry for transient HTTP errors (429 rate limit, 5xx
+ * server errors) with exponential backoff and Retry-After header respect.
+ * This ensures the framework is resilient to provider rate limiting without
+ * requiring callers to implement their own retry logic.
  */
 export async function callOpenAICompatibleAPI(
   config: OpenAICompatibleConfig,
@@ -307,62 +358,116 @@ export async function callOpenAICompatibleAPI(
   const useStreaming = request.cacheConfig?.useCacheControl ?? true;
   const logger = getGlobalLogger();
 
-  const response = await fetch(`${config.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.apiKey}`,
-      ...config.extraHeaders,
-    },
-    body: JSON.stringify({ ...body, stream: useStreaming }),
-  });
+  // Retry transient HTTP errors (429, 5xx) at the provider level.
+  // This catches rate limits before they bubble up to the runtime's
+  // retry loop, which has limited error context.
+  const MAX_HTTP_RETRIES = 4; // 5 total attempts
+  const BASE_BACKOFF_MS = 1000;
+  const MAX_BACKOFF_MS = 60000;
 
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`${config.name} API error ${response.status}: ${err}`);
+  let lastError: Error | undefined;
+
+  for (let httpAttempt = 0; httpAttempt <= MAX_HTTP_RETRIES; httpAttempt++) {
+    const response = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+        ...config.extraHeaders,
+      },
+      body: JSON.stringify({ ...body, stream: useStreaming }),
+    });
+
+    if (response.ok) {
+      // Success — parse the response
+      if (useStreaming) {
+        const streamed = await parseOpenAIStream(response, logger);
+        const tokenUsage: TokenUsage = streamed.usage
+          ? {
+              promptTokens: streamed.usage.prompt_tokens,
+              completionTokens: streamed.usage.completion_tokens,
+              totalTokens: streamed.usage.total_tokens,
+              cacheReadTokens: streamed.usage.prompt_tokens_details?.cached_tokens ?? 0,
+            }
+          : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+
+        return {
+          content: streamed.content,
+          model,
+          usage: tokenUsage,
+          finishReason: 'stop',
+          toolCalls:
+            streamed.toolCalls.length > 0
+              ? streamed.toolCalls.map((tc) => {
+                  let parsed: Record<string, unknown> = {};
+                  try {
+                    parsed = JSON.parse(tc.arguments || '{}');
+                  } catch (err) {
+                    reportSilentFailure(err, 'baseOpenAICompatible:347');
+                    try {
+                      parsed = JSON.parse(`{${tc.arguments}}`);
+                    } catch (err) {
+                      reportSilentFailure(err, 'baseOpenAICompatible:351');
+                      parsed = { raw: tc.arguments };
+                    }
+                  }
+                  return { id: tc.id, name: tc.name, arguments: parsed };
+                })
+              : undefined,
+          parsed: tryParseOpenAICompatibleStructured(streamed.content, request.responseFormat),
+          reasoning_content: streamed.reasoningContent || undefined,
+        };
+      }
+
+      const data = await response.json();
+      return parseOpenAIResponse(data, model, extractTextToolCalls, request.responseFormat);
+    }
+
+    // Non-OK response: check if retryable
+    const errorBody = await response.text();
+    const isRateLimit = response.status === 429;
+    const isServerError = response.status >= 500 && response.status < 600;
+
+    if ((isRateLimit || isServerError) && httpAttempt < MAX_HTTP_RETRIES) {
+      // Respect Retry-After header for 429s
+      const retryAfterHeader = response.headers.get('retry-after') ?? response.headers.get('Retry-After');
+      let delayMs: number;
+      if (retryAfterHeader) {
+        const retryAfterSec = parseInt(retryAfterHeader, 10);
+        delayMs = isNaN(retryAfterSec) ? computeHttpBackoff(httpAttempt, BASE_BACKOFF_MS, MAX_BACKOFF_MS) : retryAfterSec * 1000;
+      } else {
+        delayMs = computeHttpBackoff(httpAttempt, BASE_BACKOFF_MS, MAX_BACKOFF_MS);
+      }
+
+      logger.warn('BaseOpenAI', `Retrying ${config.name} after ${response.status}`, {
+        attempt: httpAttempt + 1,
+        maxAttempts: MAX_HTTP_RETRIES + 1,
+        delayMs,
+        endpoint: `${config.baseUrl}/chat/completions`,
+      });
+
+      await new Promise<void>((resolve) => {
+        const t = setTimeout(resolve, delayMs);
+        t.unref?.();
+      });
+
+      lastError = new Error(`${config.name} API error ${response.status}: ${errorBody}`);
+      continue;
+    }
+
+    // Non-retryable error or retries exhausted
+    throw new Error(`${config.name} API error ${response.status}: ${errorBody}`);
   }
 
-  if (useStreaming) {
-    const streamed = await parseOpenAIStream(response, logger);
-    const tokenUsage: TokenUsage = streamed.usage
-      ? {
-          promptTokens: streamed.usage.prompt_tokens,
-          completionTokens: streamed.usage.completion_tokens,
-          totalTokens: streamed.usage.total_tokens,
-          cacheReadTokens: streamed.usage.prompt_tokens_details?.cached_tokens ?? 0,
-        }
-      : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  // All HTTP retries exhausted
+  throw lastError ?? new Error(`${config.name} API: all retry attempts exhausted`);
+}
 
-    return {
-      content: streamed.content,
-      model,
-      usage: tokenUsage,
-      finishReason: 'stop',
-      toolCalls:
-        streamed.toolCalls.length > 0
-          ? streamed.toolCalls.map((tc) => {
-              let parsed: Record<string, unknown> = {};
-              try {
-                parsed = JSON.parse(tc.arguments || '{}');
-              } catch (err) {
-                reportSilentFailure(err, 'baseOpenAICompatible:347');
-                try {
-                  parsed = JSON.parse(`{${tc.arguments}}`);
-                } catch (err) {
-                  reportSilentFailure(err, 'baseOpenAICompatible:351');
-                  parsed = { raw: tc.arguments };
-                }
-              }
-              return { id: tc.id, name: tc.name, arguments: parsed };
-            })
-          : undefined,
-      parsed: tryParseOpenAICompatibleStructured(streamed.content, request.responseFormat),
-      reasoning_content: streamed.reasoningContent || undefined,
-    };
-  }
-
-  const data = await response.json();
-  return parseOpenAIResponse(data, model, extractTextToolCalls, request.responseFormat);
+/** Exponential backoff with jitter for HTTP-level retries. */
+function computeHttpBackoff(attempt: number, baseMs: number, maxMs: number): number {
+  const exponential = Math.min(baseMs * Math.pow(2, attempt), maxMs);
+  const jitter = exponential * 0.2 * (Math.random() - 0.5);
+  return Math.min(Math.round(exponential + jitter), maxMs);
 }
 
 // ============================================================================

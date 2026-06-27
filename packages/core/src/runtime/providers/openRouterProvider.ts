@@ -1,109 +1,77 @@
-import type { LLMProvider, LLMRequest, LLMResponse } from '../types';
-import { FormatBridge } from '../formatBridge';
-import { getGlobalLogger } from '../../logging';
+import { BaseOpenAICompatibleProvider, type OpenAICompatibleConfig } from './baseOpenAICompatible';
+import type { LLMRequest } from '../types';
 
-export class OpenRouterProvider implements LLMProvider {
+/**
+ * OpenRouter Provider — unified gateway to many models via the OpenRouter API
+ * (OpenAI-compatible).
+ *
+ * Endpoint: https://openrouter.ai/api/v1
+ * Models: openai/gpt-4o-mini, anthropic/claude-3.5-sonnet,
+ *         google/gemini-2.0-flash-exp, deepseek/deepseek-r1,
+ *         meta-llama/llama-3.3-70b-instruct, etc.
+ *
+ * By extending BaseOpenAICompatibleProvider, this provider inherits:
+ *  - Streaming SSE parsing (parseOpenAIStream)
+ *  - Non-streaming response parsing (parseOpenAIResponse)
+ *  - Cache token parsing (prompt_tokens_details.cached_tokens)
+ *  - prompt_cache_key propagation (buildOpenAIBody)
+ *  - Automatic HTTP retry with exponential backoff for 429/5xx
+ *  - Tool adaptation via FormatBridge.adaptToolsForProvider(tools, 'openrouter')
+ *    (the provider name is derived from this class's name)
+ *
+ * OpenRouter-specific behavior handled below:
+ *  - Requires `HTTP-Referer` and `X-Title` headers for app attribution/ranking
+ *    (injected via getExtraConfig).
+ *  - Uses a `reasoning: { enabled, effort, max_tokens }` object instead of the
+ *    flat `reasoning_effort` field for reasoning models. getExtraBody emits the
+ *    `reasoning` object; buildOpenAIBody detects the `reasoning` key in the
+ *    extra body and suppresses `reasoning_effort`/`max_thinking_tokens` so only
+ *    the OpenRouter-native directive is sent.
+ *  - Returns reasoning content under `message.reasoning` (non-streaming) and
+ *    `delta.reasoning` (streaming) instead of `reasoning_content`. The base
+ *    parse functions read these as fallbacks (see parseOpenAIResponse /
+ *    parseOpenAIStream).
+ *
+ * Env: OPENROUTER_API_KEY (required)
+ *      OPENROUTER_BASE_URL (optional)
+ *      OPENROUTER_MODEL (optional)
+ */
+export class OpenRouterProvider extends BaseOpenAICompatibleProvider {
   readonly name = 'openrouter';
-  private apiKey: string;
-  private baseUrl: string;
-  private defaultModel: string;
 
-  constructor(config: { apiKey: string; baseUrl?: string; defaultModel?: string }) {
-    this.apiKey = config.apiKey;
-    this.baseUrl = config.baseUrl ?? 'https://openrouter.ai/api/v1';
-    this.defaultModel = config.defaultModel ?? 'openai/gpt-4o-mini';
+  protected getDefaultBaseUrl(): string {
+    return 'https://openrouter.ai/api/v1';
   }
 
-  async call(request: LLMRequest): Promise<LLMResponse> {
-    const model = request.model || this.defaultModel;
-    const messages = request.messages.map((m) => ({
-      role: m.role,
-      content: m.content,
-      ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
-      ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
-    }));
+  protected getDefaultModel(): string {
+    return 'openai/gpt-4o-mini';
+  }
 
-    const body: Record<string, unknown> = {
-      model,
-      messages,
-      max_tokens: request.maxTokens ?? 8192,
-      temperature: request.temperature ?? 0.7,
-    };
-    if (request.tools && request.tools.length > 0) {
-      body.tools = FormatBridge.adaptToolsForProvider(request.tools, 'openrouter');
-    }
-
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey}`,
+  protected getExtraConfig(): Partial<OpenAICompatibleConfig> {
+    // OpenRouter requests app attribution headers for ranking and the free
+    // tier. These are sent with every request via the base class fetch.
+    return {
+      extraHeaders: {
         'HTTP-Referer': 'https://github.com/PStarH/Commander',
         'X-Title': 'Commander',
       },
-      body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`OpenRouter API error ${response.status}: ${err}`);
-    }
-
-    const data = await response.json();
-    return this.parseResponse(data, model);
+    };
   }
 
-  private parseResponse(
-    data: {
-      model?: string;
-      choices?: Array<{
-        message?: {
-          content?: string;
-          tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
-          reasoning?: string;
-        };
-        finish_reason?: string;
-      }>;
-      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
-    },
-    model: string,
-  ): LLMResponse {
-    const choice = data.choices?.[0];
-    const message = choice?.message ?? {};
-
-    return {
-      content: message.content ?? '',
-      model: data.model ?? model,
-      usage: {
-        promptTokens: data.usage?.prompt_tokens ?? 0,
-        completionTokens: data.usage?.completion_tokens ?? 0,
-        totalTokens: data.usage?.total_tokens ?? 0,
-      },
-      finishReason:
-        choice?.finish_reason === 'stop'
-          ? 'stop'
-          : choice?.finish_reason === 'tool_calls'
-            ? 'tool_calls'
-            : choice?.finish_reason === 'length'
-              ? 'length'
-              : 'stop',
-      toolCalls: message.tool_calls?.map(
-        (tc: { id: string; function?: { name?: string; arguments?: string } }) => ({
-          id: tc.id,
-          name: tc.function?.name ?? '',
-          arguments: (() => {
-            try {
-              return JSON.parse(tc.function?.arguments ?? '{}');
-            } catch (e) {
-              getGlobalLogger().debug('OpenRouterProvider', 'Skipping malformed tool arguments', {
-                error: (e as Error)?.message,
-              });
-              return {};
-            }
-          })(),
-        }),
-      ),
-      reasoning_content: message.reasoning,
-    };
+  protected getExtraBody(request: LLMRequest): Record<string, unknown> {
+    const extra: Record<string, unknown> = {};
+    const rc = request.reasoningConfig;
+    if (rc?.enabled) {
+      // OpenRouter expects a `reasoning` object instead of the flat
+      // `reasoning_effort` field. The presence of this `reasoning` key in the
+      // extra body tells buildOpenAIBody to suppress `reasoning_effort` and
+      // `max_thinking_tokens`, so we emit a single, OpenRouter-native
+      // reasoning directive here.
+      const reasoning: Record<string, unknown> = { enabled: true };
+      if (rc.effort) reasoning.effort = rc.effort;
+      if (rc.budget && rc.budget > 0) reasoning.max_tokens = rc.budget;
+      extra.reasoning = reasoning;
+    }
+    return extra;
   }
 }
