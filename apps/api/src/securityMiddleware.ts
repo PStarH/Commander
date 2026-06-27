@@ -51,9 +51,17 @@ export function requestIdMiddleware(req: Request, _res: Response, next: NextFunc
 export function securityHeaders(_req: Request, res: Response, next: NextFunction): void {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('X-XSS-Protection', '1; mode=block');
+  // Security: X-XSS-Protection is deprecated and can introduce vulnerabilities
+  // in older browsers. Per OWASP: set to 0 and rely on CSP instead.
+  res.setHeader('X-XSS-Protection', '0');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  // Security: Content-Security-Policy — defense-in-depth against XSS.
+  // Per OWASP CSP Cheat Sheet: restrict script sources to same-origin.
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'",
+  );
   // HSTS — only in production with HTTPS
   if (process.env.NODE_ENV === 'production') {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');

@@ -73,7 +73,9 @@ export function createOrchestratorRouter(): Router {
       });
       res.json(result);
     } catch (err) {
-      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      // Security: Per Express security best practice — do not leak internal error details.
+      console.error('[orchestratorEndpoints] Error:', err);
+      res.status(500).json({ error: 'An internal error occurred' });
     }
   });
 

@@ -19,7 +19,7 @@ export function createA2ARouter(
   cardRegistry: AgentCardRegistry,
 ): Router {
   const router = express.Router();
-  router.use(express.json());
+  // Security: express.json() with limit is applied globally in index.ts.
 
   /**
    * GET /.well-known/agent-card

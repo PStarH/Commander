@@ -18,7 +18,7 @@ import { MissionGovernanceMode, MissionRiskLevel } from '@commander/core';
  */
 export function createGovernanceRouter(checkpointManager: CheckpointManager): Router {
   const router = express.Router();
-  router.use(express.json());
+  // Security: express.json() with limit is applied globally in index.ts.
 
   /**
    * POST /checkpoints

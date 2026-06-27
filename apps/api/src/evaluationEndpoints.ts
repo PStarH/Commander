@@ -12,7 +12,7 @@ export function createEvaluationRouter(
   llmCall: (prompt: string) => Promise<string>,
 ): Router {
   const router = express.Router();
-  router.use(express.json());
+  // Security: express.json() with limit is applied globally in index.ts.
 
   /**
    * POST /evaluate

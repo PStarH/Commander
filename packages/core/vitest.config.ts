@@ -3,21 +3,30 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     threads: false,
+    setupFiles: ['tests/setup.ts'],
     include: [
       'tests/cli/envLoader.test.ts',
       // --- atr ---
       'tests/atr/recoveryBootstrapper.test.ts',
       'tests/atr/taskQueue.test.ts',
+      'tests/atr/gitSnapshot.test.ts',
       // --- recovery ---
       'tests/recovery/kill9.test.ts',
       // --- runtime ---
       'tests/runtime/agentHandoff.test.ts',
+      'tests/runtime/incrementalSCC.integration.test.ts',
       'tests/runtime/agentInbox.test.ts',
       'tests/runtime/agentRuntime.test.ts',
+      'tests/runtime/executionContextInjector.test.ts',
+      'tests/runtime/executionRouter.test.ts',
       'tests/runtime/agentRuntime.integration.test.ts',
       'tests/runtime/agentRuntimeInterface.test.ts',
       'tests/checkpointStore.test.ts',
+      'tests/runtime/baseOpenAICompatibleRetry.test.ts',
       'tests/runtime/circuitBreaker.test.ts',
+      'tests/runtime/concurrentToolExecution.test.ts',
+      'tests/runtime/stateIsolation.test.ts',
+      'tests/runtime/deployRollbackIntegration.test.ts',
       'tests/runtime/compensation-integration.test.ts',
       'tests/runtime/compensationRegistry.test.ts',
       'tests/runtime/costBenchmark.test.ts',
@@ -34,6 +43,8 @@ export default defineConfig({
       'tests/runtime/entropyGater.test.ts',
       'tests/runtime/evolutionaryWorkflowEngine.test.ts',
       'tests/runtime/execPolicy.edge.test.ts',
+      'tests/runtime/apiStability.test.ts',
+      'tests/runtime/execPolicy.catastrophic.test.ts',
       'tests/runtime/geminiCacheManager.test.ts',
       'tests/runtime/htmlReport.test.ts',
       'tests/runtime/llmRetry.test.ts',
@@ -56,6 +67,7 @@ export default defineConfig({
       'tests/runtime/securityOrchestrator.test.ts',
       'tests/runtime/securityOrchestrator.integration.test.ts',
       'tests/runtime/securityOrchestratorHelper.test.ts',
+      'tests/runtime/supervisionTree.integration.test.ts',
       'tests/runtime/samplesStore.test.ts',
       'tests/runtime/semanticCache.test.ts',
       'tests/runtime/speculativeExecutor.test.ts',
@@ -78,6 +90,7 @@ export default defineConfig({
       'tests/runtime/vcrProvider.test.ts',
       'tests/runtime/batchProvider.test.ts',
       // 'tests/runtime/webhookDispatcher.test.ts', // skipped: intermittent timeout in CI
+      'tests/runtime/runtimeGuardianBridge.test.ts',
       'tests/runtime/workflowPopulation.test.ts',
       'tests/runtime/sopDashboard.test.ts',
       // --- telos ---
@@ -106,8 +119,16 @@ export default defineConfig({
       'tests/observability/samplingPolicy.test.ts',
       'tests/observability/traceContext.test.ts',
       'tests/observability/traceContextBridge.test.ts',
+      'tests/observability/sloOperations.test.ts',
       // --- memory (cross-tenant leak fix) ---
       'tests/memory/resolveSessionProjectId.test.ts',
+
+      // --- architecture blueprint (Phases 1-5) ---
+      'tests/architecture/architectureBlueprint.test.ts',
+      // --- GDPR compliance + AdaptiveHITL weight learning ---
+      'tests/architecture/gdprCompliance.test.ts',
+      // --- 4 architecture gap fixes (HNSW, TEE workers, Distributed bus, Petri scheduler) ---
+      'tests/architecture/gapFixes.test.ts',
 
       // --- memory (audit MED item 1 — Phase A route-out) ---
       'tests/threeLayerRouting.test.ts',
@@ -131,6 +152,7 @@ export default defineConfig({
 
       // --- security ---
       'tests/security/guardianAgent.test.ts',
+      'tests/security/guardianDangerousToolCall.test.ts',
       'tests/security/capabilityToken.test.ts',
       'tests/security/auditChainLedger.test.ts',
       'tests/security/agentLineage.test.ts',
@@ -197,6 +219,12 @@ export default defineConfig({
       'tests/ultimate/exeStep.classify.test.ts',
       'tests/ultimate/tokenBudget.test.ts',
       'tests/ultimate/qualityGates.test.ts',
+      'tests/ultimate/checkpointManager.test.ts',
+      'tests/ultimate/evolutionRunner.test.ts',
+      'tests/ultimate/topologyExecutionRunner.test.ts',
+      'tests/ultimate/metricsHelper.test.ts',
+      'tests/ultimate/agentFileCollector.test.ts',
+      'tests/ultimate/qualityGateFixer.test.ts',
       // --- e2e ---
       'tests/e2e/orchestration.test.ts',
       'tests/e2e/sloMeasurement.test.ts',
