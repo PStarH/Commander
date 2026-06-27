@@ -21,7 +21,7 @@
 
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
-import { mkdir, readFile, writeFile, access } from 'fs/promises';
+import { mkdir, readFile, writeFile, access, unlink } from 'fs/promises';
 import { join } from 'node:path';
 
 // ============================================================================
@@ -214,6 +214,41 @@ export class UserModelManager {
     const filePath = this.getModelPath(userId);
     const data = this.serializeProfile(profile);
     await writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  }
+
+  /**
+   * GDPR Article 17: Delete a user profile from memory and disk.
+   * Returns true if a profile was deleted, false if it didn't exist.
+   */
+  async deleteProfile(userId: string): Promise<boolean> {
+    const existed = this.models.has(userId);
+
+    // Remove from memory
+    this.models.delete(userId);
+
+    // Remove from disk
+    const filePath = this.getModelPath(userId);
+    try {
+      await unlink(filePath);
+      getGlobalLogger().info('UserModelManager', 'Profile deleted (GDPR)', { userId });
+      return true;
+    } catch (err) {
+      // File may not exist if profile was never persisted
+      if (existed) {
+        reportSilentFailure(err, 'userModel:deleteProfile');
+      }
+      return existed;
+    }
+  }
+
+  /**
+   * GDPR Article 15 (DSAR): Export a user profile for data subject access.
+   * Returns the profile data or null if not found.
+   */
+  async exportProfile(userId: string): Promise<UserProfile | null> {
+    const profile = this.models.get(userId) ?? (await this.loadProfile(userId));
+    if (!profile) return null;
+    return JSON.parse(JSON.stringify(profile));
   }
 
   /**
