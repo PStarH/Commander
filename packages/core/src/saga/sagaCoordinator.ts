@@ -327,7 +327,10 @@ export class SagaCoordinator {
           idGenerator: this.idGenerator,
         },
       );
-      promises.push(child.run().then(() => undefined));
+      // Route branch execution through the shared WorkerPool so that
+      // concurrency is bounded by workerPool.maxConcurrency.
+      const runBranch = (): Promise<void> => child.run().then(() => undefined);
+      promises.push(this.workerPool!.run(childRunId, runBranch));
     }
 
     let firstError: unknown;

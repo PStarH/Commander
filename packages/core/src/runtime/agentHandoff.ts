@@ -2,6 +2,8 @@ import type { AgentInbox } from './agentInbox';
 import type { StateCheckpointer } from './stateCheckpointer';
 import { TokenGovernor } from './tokenGovernor';
 import type { InboxTraceContext } from '../observability/traceContextBridge';
+import { getIncrementalSCCDetector } from './incrementalSCC';
+import { reportSilentFailure } from '../silentFailureReporter';
 
 export type HandoffStatus = 'requested' | 'accepted' | 'rejected' | 'completed' | 'failed';
 
@@ -93,6 +95,12 @@ export class AgentHandoff {
     const threshold = Date.now() - this.UNRESOLVED_TTL_MS;
     for (const [, h] of this.handoffs) {
       if (h.status === 'requested' && new Date(h.createdAt).getTime() < threshold) {
+        // Incremental SCC: clean up the wait edge for timed-out handoffs.
+        try {
+          getIncrementalSCCDetector().removeEdge(h.fromAgent, h.toAgent);
+        } catch (err) {
+          reportSilentFailure(err, 'agentHandoff:pruneUnresolved:scc');
+        }
         h.status = 'failed';
         h.resolvedAt = new Date().toISOString();
         h.response = 'Timed out waiting for acceptance';
@@ -117,6 +125,37 @@ export class AgentHandoff {
       status: 'requested',
       createdAt: new Date().toISOString(),
     };
+
+    // Incremental SCC: detect circular wait before registering the handoff.
+    // If adding edge fromAgent→toAgent would create a cycle (deadlock),
+    // reject the handoff with a structured error rather than letting agents
+    // wait forever. Degrades gracefully — if SCC fails, handoff proceeds.
+    try {
+      const scc = getIncrementalSCCDetector();
+      scc.addNode({ id: handoff.fromAgent, agentId: handoff.fromAgent, nodeType: 'agent' });
+      scc.addNode({ id: handoff.toAgent, agentId: handoff.toAgent, nodeType: 'agent' });
+
+      const alert = scc.addEdge({
+        from: handoff.fromAgent,
+        to: handoff.toAgent,
+        reason: `handoff:${full.handoffId}`,
+        timestamp: Date.now(),
+      });
+
+      if (alert) {
+        // Cycle detected — addEdge with rejectCyclicEdges=true means the edge
+        // was NOT added. Fail the handoff gracefully (alert already published
+        // to messageBus 'system.alert' inside addEdge).
+        full.status = 'failed';
+        full.resolvedAt = new Date().toISOString();
+        full.response = `Deadlock detected: circular handoff chain ${alert.involvedAgents.join(' → ')}`;
+        this.handoffs.set(full.handoffId, full);
+        return full;
+      }
+    } catch (err) {
+      reportSilentFailure(err, 'agentHandoff:request:scc');
+    }
+
     this.handoffs.set(full.handoffId, full);
 
     this.inbox.send(
@@ -144,6 +183,13 @@ export class AgentHandoff {
     handoff.resolvedAt = new Date().toISOString();
     handoff.response = response;
 
+    // Incremental SCC: handoff accepted — the wait edge is resolved.
+    try {
+      getIncrementalSCCDetector().removeEdge(handoff.fromAgent, handoff.toAgent);
+    } catch (err) {
+      reportSilentFailure(err, 'agentHandoff:accept:scc');
+    }
+
     this.inbox.send({
       id: `ho_ack_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
       from: handoff.toAgent,
@@ -158,13 +204,20 @@ export class AgentHandoff {
     return handoff;
   }
 
-  /** Agent B rejects a handoff */
+  /** Agent B rejects a handoff — informs A */
   async reject(handoffId: string, reason: string): Promise<HandoffRequest | null> {
     const handoff = this.handoffs.get(handoffId);
     if (!handoff || handoff.status !== 'requested') return null;
     handoff.status = 'rejected';
     handoff.resolvedAt = new Date().toISOString();
     handoff.response = reason;
+
+    // Incremental SCC: handoff rejected — the wait edge is resolved.
+    try {
+      getIncrementalSCCDetector().removeEdge(handoff.fromAgent, handoff.toAgent);
+    } catch (err) {
+      reportSilentFailure(err, 'agentHandoff:reject:scc');
+    }
 
     this.inbox.send({
       id: `ho_rej_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
@@ -185,6 +238,14 @@ export class AgentHandoff {
   complete(handoffId: string): void {
     const handoff = this.handoffs.get(handoffId);
     if (handoff) {
+      // Incremental SCC: handoff completed — clean up graph state.
+      // Edge was already removed on accept/reject, but double-check for safety.
+      try {
+        getIncrementalSCCDetector().removeEdge(handoff.fromAgent, handoff.toAgent);
+      } catch (err) {
+        reportSilentFailure(err, 'agentHandoff:complete:scc');
+      }
+
       handoff.status = 'completed';
       handoff.resolvedAt = new Date().toISOString();
     }

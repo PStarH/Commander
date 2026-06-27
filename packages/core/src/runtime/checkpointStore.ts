@@ -22,6 +22,7 @@ import { dirname } from 'node:path';
 import { getGlobalLogger } from '../logging';
 import type { LLMMessage } from './types/llm';
 import { walCheckpoint } from '../storage/walCheckpoint';
+import { getCurrentTenantId } from './tenantContext';
 
 // ============================================================================
 // SQLite Interface Types
@@ -254,7 +255,7 @@ export class CheckpointStore {
     this.stmtGetCheckpoint = d.prepare(`
       SELECT id, run_id, label, phase, step_number, token_count,
              agent_id, tenant_id, created_at, expires_at, metadata_json, version
-      FROM checkpoints WHERE id = ?
+      FROM checkpoints WHERE id = ? AND (tenant_id IS ? OR ? IS NULL)
     `);
 
     this.stmtGetMessages = d.prepare(`
@@ -275,7 +276,7 @@ export class CheckpointStore {
              c.created_at,
              (SELECT COUNT(*) FROM checkpoint_messages m WHERE m.checkpoint_id = c.id) AS message_count
       FROM checkpoints c
-      WHERE c.run_id = ?
+      WHERE c.run_id = ? AND (c.tenant_id IS ? OR ? IS NULL)
       ORDER BY c.step_number DESC
     `);
 
@@ -283,29 +284,29 @@ export class CheckpointStore {
       SELECT id, run_id, label, phase, step_number, token_count,
              agent_id, tenant_id, created_at, expires_at, metadata_json, version
       FROM checkpoints
-      WHERE run_id = ?
+      WHERE run_id = ? AND (tenant_id IS ? OR ? IS NULL)
       ORDER BY step_number DESC
       LIMIT 1
     `);
 
-    this.stmtDeleteRun = d.prepare(`DELETE FROM checkpoints WHERE run_id = ?`);
+    this.stmtDeleteRun = d.prepare(`DELETE FROM checkpoints WHERE run_id = ? AND (tenant_id IS ? OR ? IS NULL)`);
 
     this.stmtDeleteMessages = d.prepare(`DELETE FROM checkpoint_messages WHERE checkpoint_id = ?`);
 
     this.stmtDeleteFiles = d.prepare(`DELETE FROM checkpoint_files WHERE checkpoint_id = ?`);
 
-    this.stmtCountByRun = d.prepare(`SELECT COUNT(*) AS cnt FROM checkpoints WHERE run_id = ?`);
+    this.stmtCountByRun = d.prepare(`SELECT COUNT(*) AS cnt FROM checkpoints WHERE run_id = ? AND (tenant_id IS ? OR ? IS NULL)`);
 
     this.stmtDeleteAfter = d.prepare(`
       DELETE FROM checkpoints
-      WHERE run_id = ? AND step_number >= ? AND id != ?
+      WHERE run_id = ? AND step_number >= ? AND id != ? AND (tenant_id IS ? OR ? IS NULL)
     `);
 
     this.stmtPruneRun = d.prepare(`
       DELETE FROM checkpoints
       WHERE id IN (
         SELECT id FROM checkpoints
-        WHERE run_id = ?
+        WHERE run_id = ? AND (tenant_id IS ? OR ? IS NULL)
         ORDER BY step_number ASC
         LIMIT ?
       )
@@ -325,7 +326,8 @@ export class CheckpointStore {
 
     const { checkpoint, messages, filesRead, filesModified } = snapshot;
 
-    const latest = this.stmtLatestByRun.get<CheckpointRow>(checkpoint.runId);
+    const tenant = getCurrentTenantId() ?? null;
+    const latest = this.stmtLatestByRun.get<CheckpointRow>(checkpoint.runId, tenant, tenant);
     const version = (latest?.version ?? 0) + 1;
 
     const txFn = this.db.transaction(() => {
@@ -374,14 +376,16 @@ export class CheckpointStore {
 
   getCheckpoint(id: string): CheckpointRecord | null {
     if (!this.db) throw new Error('CheckpointStore not initialized');
-    const row = this.stmtGetCheckpoint.get<CheckpointRow>(id);
+    const tenant = getCurrentTenantId() ?? null;
+    const row = this.stmtGetCheckpoint.get<CheckpointRow>(id, tenant, tenant);
     return row ? this.rowToRecord(row) : null;
   }
 
   getSnapshot(id: string): CheckpointSnapshot | null {
     if (!this.db) throw new Error('CheckpointStore not initialized');
 
-    const row = this.stmtGetCheckpoint.get<CheckpointRow>(id);
+    const tenant = getCurrentTenantId() ?? null;
+    const row = this.stmtGetCheckpoint.get<CheckpointRow>(id, tenant, tenant);
     if (!row) return null;
 
     const messages = this.stmtGetMessages.all<MessageRow>(id).map((m) => this.rowToMessage(m));
@@ -400,7 +404,8 @@ export class CheckpointStore {
   listByRun(runId: string): CheckpointSummary[] {
     if (!this.db) throw new Error('CheckpointStore not initialized');
 
-    const rows = this.stmtListByRun.all<CheckpointRow & { message_count: number }>(runId);
+    const tenant = getCurrentTenantId() ?? null;
+    const rows = this.stmtListByRun.all<CheckpointRow & { message_count: number }>(runId, tenant, tenant);
     return rows.map((r) => ({
       id: r.id,
       runId: r.run_id,
@@ -415,18 +420,20 @@ export class CheckpointStore {
 
   getLatestByRun(runId: string): CheckpointRecord | null {
     if (!this.db) throw new Error('CheckpointStore not initialized');
-    const row = this.stmtLatestByRun.get<CheckpointRow>(runId);
+    const tenant = getCurrentTenantId() ?? null;
+    const row = this.stmtLatestByRun.get<CheckpointRow>(runId, tenant, tenant);
     return row ? this.rowToRecord(row) : null;
   }
 
   rewindTo(id: string): LLMMessage[] | null {
     if (!this.db) throw new Error('CheckpointStore not initialized');
 
-    const row = this.stmtGetCheckpoint.get<CheckpointRow>(id);
+    const tenant = getCurrentTenantId() ?? null;
+    const row = this.stmtGetCheckpoint.get<CheckpointRow>(id, tenant, tenant);
     if (!row) return null;
 
     const txFn = this.db.transaction(() => {
-      this.stmtDeleteAfter.run(row.run_id, row.step_number, id);
+      this.stmtDeleteAfter.run(row.run_id, row.step_number, id, tenant, tenant);
     });
     txFn();
 
@@ -436,14 +443,16 @@ export class CheckpointStore {
 
   deleteRun(runId: string): void {
     if (!this.db) throw new Error('CheckpointStore not initialized');
-    this.stmtDeleteRun.run(runId);
+    const tenant = getCurrentTenantId() ?? null;
+    this.stmtDeleteRun.run(runId, tenant, tenant);
   }
 
   pruneRun(runId: string, keepCount: number): void {
     if (!this.db) return;
-    const row = this.stmtCountByRun.get<{ cnt: number }>(runId);
+    const tenant = getCurrentTenantId() ?? null;
+    const row = this.stmtCountByRun.get<{ cnt: number }>(runId, tenant, tenant);
     if (!row || row.cnt <= keepCount) return;
-    this.stmtPruneRun.run(runId, row.cnt - keepCount);
+    this.stmtPruneRun.run(runId, tenant, tenant, row.cnt - keepCount);
   }
 
   deleteExpired(): number {

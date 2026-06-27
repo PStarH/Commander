@@ -54,7 +54,7 @@ export function descendingToolOrder(toolCalls: ToolCall[]): ToolCall[] {
   const broad: ToolCall[] = [];
   const narrow: ToolCall[] = [];
   for (const tc of toolCalls) {
-    const lower = tc.name.toLowerCase();
+    const lower = (tc.name ?? '').toLowerCase();
     const isBroad = broadKeywords.some((k) => lower.includes(k));
     (isBroad ? broad : narrow).push(tc);
   }
