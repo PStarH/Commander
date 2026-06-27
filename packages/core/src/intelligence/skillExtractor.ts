@@ -9,6 +9,8 @@
 
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 // ============================================================================
 // Skill Decay Configuration
@@ -77,7 +79,6 @@ export class SkillExtractor {
 
   private loadSkills(): void {
     try {
-      const fs = require('fs');
       if (fs.existsSync(this.skillsPath)) {
         const data = JSON.parse(fs.readFileSync(this.skillsPath, 'utf-8'));
         for (const skill of data) {
@@ -96,8 +97,6 @@ export class SkillExtractor {
 
   private saveSkills(): void {
     try {
-      const fs = require('fs');
-      const path = require('path');
       fs.mkdirSync(path.dirname(this.skillsPath), { recursive: true });
       fs.writeFileSync(this.skillsPath, JSON.stringify(Array.from(this.skills.values()), null, 2));
     } catch (err) {

@@ -11,7 +11,7 @@ import { dryReplay, liveReplay, type LiveReplayContext } from './replay';
 import { ToolMetricsCollector } from './toolMetrics';
 import { compareTraces } from './traceComparison';
 import { PromptVersionTracker } from './promptVersioning';
-import { SLOManager } from './sloManager';
+import { SLOManager, getSLOManager } from './sloManager';
 import type { CostReport } from './types';
 import type { DatasetStore } from './dataset';
 import type { ExperimentRunner, CaseExecutor } from './experimentRunner';
@@ -521,7 +521,7 @@ export async function handleObservabilityRequest(
     }
 
     if (segments[0] === 'slos' && segments.length === 1 && method === 'GET') {
-      const manager = new SLOManager();
+      const manager = getSLOManager();
       sendJson(res, 200, { slos: manager.listSLOs(), status: manager.getStatus() });
       return { handled: true, status: 200 };
     }

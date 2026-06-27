@@ -1,4 +1,17 @@
 import type { ExecutionTrace } from '@commander/core';
+import { getCostModel } from './costModel';
+
+// Lazy-load getMessageBus to avoid circular dependency at module load time.
+// The observability package may be imported before the runtime is initialized.
+function publishSLOAlert(payload: Record<string, unknown>): void {
+  try {
+    // Use dynamic require to avoid circular dependency
+    const { getMessageBus } = require('@commander/core');
+    getMessageBus().publish('system.alert', 'sloManager', payload);
+  } catch {
+    /* best-effort — don't let alert publishing break SLO checking */
+  }
+}
 
 interface SLODefinition {
   id: string;
@@ -91,9 +104,25 @@ export class SLOManager {
         case 'success_rate':
           actualValue = 1 - trace.summary.errors / Math.max(trace.summary.totalEvents, 1);
           break;
-        case 'cost_usd':
-          actualValue = 0;
+        case 'cost_usd': {
+          const cm = getCostModel();
+          let totalCost = 0;
+          for (const e of trace.events) {
+            if (e.type === 'llm_call' && e.data.tokenUsage && e.data.modelInfo) {
+              const tokens = {
+                input: e.data.tokenUsage.promptTokens ?? 0,
+                output: e.data.tokenUsage.completionTokens ?? 0,
+                cached: 0,
+                reasoning: 0,
+                total: e.data.tokenUsage.totalTokens ?? 0,
+              };
+              const cost = cm.calculate(e.data.modelInfo.provider, e.data.modelInfo.model, tokens);
+              totalCost += cost.totalCostUsd;
+            }
+          }
+          actualValue = totalCost;
           break;
+        }
         default:
           continue;
       }
@@ -131,6 +160,20 @@ export class SLOManager {
         };
         violations.push(violation);
         this.violations.push(violation);
+
+        // Publish SLO violation as a system alert so that WebhookDispatcher
+        // and NotificationManager can pick it up and notify operators.
+        publishSLOAlert({
+          type: 'slo_violation',
+          severity,
+          sloId: slo.id,
+          sloName: slo.name,
+          metric: slo.metric,
+          actualValue,
+          threshold: slo.threshold,
+          runId: trace.runId,
+          timestamp: violation.timestamp,
+        });
       }
     }
 
