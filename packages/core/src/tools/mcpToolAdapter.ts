@@ -20,6 +20,42 @@ import { MCPClient, createMCPClient } from '../mcp/client';
 import type { MCPClientConfig, MCPTool, MCPToolResult } from '../mcp/types';
 import { ToolRegistry } from './toolRegistry';
 import { getGlobalLogger } from '../logging';
+import { sanitizeIfNeeded } from '../security/outputSanitizer';
+import { scanToolOutputForInjection } from '../contentScanner';
+
+// ============================================================================
+// Security helpers for MCP content
+// ============================================================================
+
+const MAX_MCP_DESCRIPTION_LENGTH = 2000;
+
+function sanitizeMcpDescription(description: string, serverLabel: string): string {
+  let safe = description
+    .replace(/[<>]/g, '')
+    .slice(0, MAX_MCP_DESCRIPTION_LENGTH);
+  return `[MCP:${serverLabel}] ${safe}`;
+}
+
+function sanitizeMcpOutput(output: string, source: string): string {
+  let safe = output;
+  try {
+    const injectionScan = scanToolOutputForInjection(safe);
+    if (injectionScan.blocked) {
+      safe = `[MCP output filtered: ${injectionScan.reason}]`;
+    }
+  } catch {
+    /* best-effort */
+  }
+  try {
+    const sanitizeResult = sanitizeIfNeeded(safe, { source });
+    if (sanitizeResult.wasRedacted) {
+      safe = sanitizeResult.output;
+    }
+  } catch {
+    /* best-effort */
+  }
+  return safe;
+}
 
 // ============================================================================
 // MCPToolAdapter — wraps an MCP tool as a Commander Tool
@@ -44,7 +80,7 @@ export class MCPToolAdapter implements Tool {
     const name = `mcp_${serverLabel}_${mcpTool.name}`;
     this.definition = {
       name,
-      description: `[MCP:${serverLabel}] ${mcpTool.description}`,
+      description: sanitizeMcpDescription(mcpTool.description ?? '', serverLabel),
       inputSchema: mcpTool.inputSchema as unknown as Record<string, unknown>,
       category: 'mcp',
     };
@@ -68,7 +104,7 @@ export class MCPToolAdapter implements Tool {
         return `error: MCP tool "${this.serverLabel}/${this.mcpToolName}" returned an error:\n${errText}`;
       }
 
-      return result.content
+      const rawOutput = result.content
         .map((c) => {
           if (c.type === 'text') return c.text;
           if (c.type === 'resource')
@@ -77,6 +113,7 @@ export class MCPToolAdapter implements Tool {
           return '';
         })
         .join('\n');
+      return sanitizeMcpOutput(rawOutput, `mcp:${this.serverLabel}/${this.mcpToolName}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error(

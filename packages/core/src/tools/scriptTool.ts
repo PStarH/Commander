@@ -1,6 +1,19 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import type { Tool, ToolDefinition } from '../runtime/types';
 import vm from 'vm';
+import { getGlobalLogger } from '../logging';
+
+// ── Security: Try to load isolated-vm for true V8 Isolate isolation ──────────
+// Per Node.js security docs: the `vm` module is NOT a security sandbox.
+// isolated-vm provides true V8 Isolate-level isolation with separate heap.
+// When available, we use it; when not, we fall back to vm with hardening + warning.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let isolatedVm: any = null;
+try {
+  isolatedVm = require('isolated-vm');
+} catch {
+  // isolated-vm not installed — will fall back to vm module
+}
 
 /**
  * ExecuteScriptTool — Programmatic Tool Calling
@@ -172,6 +185,119 @@ export class ExecuteScriptTool implements Tool {
   }
 
   private async runScript(
+    script: string,
+    tools: Record<string, (args: Record<string, unknown>) => Promise<string>>,
+    console_: {
+      log: (...args: unknown[]) => void;
+      warn: (...args: unknown[]) => void;
+      error: (...args: unknown[]) => void;
+    },
+  ): Promise<void> {
+    // Security: Prefer isolated-vm (true V8 Isolate) over Node.js vm module.
+    // Per Node.js docs: vm is NOT a security sandbox — prototype chain escapes
+    // are possible. isolated-vm provides real heap isolation.
+    if (isolatedVm) {
+      try {
+        await this.runScriptInIsolate(script, tools, console_);
+        return;
+      } catch (err) {
+        // If isolated-vm fails (e.g. tool call serialization issue), log and
+        // fall back to hardened vm — but warn about the security implication.
+        getGlobalLogger().warn(
+          'ExecuteScriptTool',
+          'isolated-vm execution failed, falling back to hardened vm (less secure)',
+          { error: err instanceof Error ? err.message : String(err) },
+        );
+      }
+    } else {
+      // Security: Warn that isolated-vm is not installed.
+      getGlobalLogger().warn(
+        'ExecuteScriptTool',
+        'Using Node.js vm module — NOT a security sandbox. Install isolated-vm for true isolation: pnpm add isolated-vm',
+      );
+    }
+
+    // Fall back to hardened vm module
+    await this.runScriptInVm(script, tools, console_);
+  }
+
+  /**
+   * Execute script in a true V8 Isolate using isolated-vm.
+   * Security: Separate heap, no access to Node.js APIs, memory limit enforced.
+   */
+  private async runScriptInIsolate(
+    script: string,
+    tools: Record<string, (args: Record<string, unknown>) => Promise<string>>,
+    console_: {
+      log: (...args: unknown[]) => void;
+      warn: (...args: unknown[]) => void;
+      error: (...args: unknown[]) => void;
+    },
+  ): Promise<void> {
+    const ivm = isolatedVm!;
+    const isolate = new ivm.Isolate({ memoryLimit: 128 });
+    const context = isolate.createContext();
+
+    try {
+      // Inject console into the isolate
+      const logRef = new ivm.Reference((...args: unknown[]) => {
+        console_.log(...args);
+      });
+      const warnRef = new ivm.Reference((...args: unknown[]) => {
+        console_.warn(...args);
+      });
+      const errorRef = new ivm.Reference((...args: unknown[]) => {
+        console_.error(...args);
+      });
+
+      context.global.setSync('console', {
+        log: logRef.derefInto(),
+        warn: warnRef.derefInto(),
+        error: errorRef.derefInto(),
+      });
+
+      // Inject tools as references — each tool call crosses the isolate boundary
+      // via structured clone, so no prototype pollution or shared mutable state.
+      const toolNames = Object.keys(tools);
+      const toolSetupCode: string[] = [];
+      for (const name of toolNames) {
+        const ref = new ivm.Reference((...args: unknown[]) => {
+          return tools[name](args[0] as Record<string, unknown>);
+        });
+        context.global.setSync(`__tool_${name}`, ref.derefInto());
+        toolSetupCode.push(`tools['${name}'] = async (args) => __tool_${name}(args);`);
+      }
+
+      // Set up the tools object and execute the script
+      const setupCode = `
+        var tools = {};
+        ${toolSetupCode.join('\n')}
+      `;
+      context.evalSync(setupCode);
+
+      // Run the user script with timeout
+      const compiledScript = isolate.compileScript(script);
+      const result = await compiledScript.run(context, {
+        timeout: 120000,
+        promise: true,
+        copy: true,
+      });
+
+      // Await the result if it's a promise
+      if (result && typeof (result as { then?: unknown }).then === 'function') {
+        await result;
+      }
+    } finally {
+      isolate.dispose();
+    }
+  }
+
+  /**
+   * Execute script in Node.js vm module (fallback — NOT a security sandbox).
+   * Security: Hardened with Proxy-based prototype chain blocking, but still
+   * less secure than isolated-vm. Use only as fallback.
+   */
+  private async runScriptInVm(
     script: string,
     tools: Record<string, (args: Record<string, unknown>) => Promise<string>>,
     console_: {

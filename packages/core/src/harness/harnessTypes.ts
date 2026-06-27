@@ -730,6 +730,12 @@ export interface HarnessRunParams {
   sessionId?: string;
   /** Network policy (Codex CLI) */
   networkPolicy?: NetworkPolicy;
+  /**
+   * Feature flags requested for this run (mirrors HarnessSelectionContext.features).
+   * Optional for backward compatibility; when present, harnesses can use it
+   * for defensive self-selection checks inside runAttempt.
+   */
+  features?: string[];
 }
 
 // ============================================================================
@@ -899,9 +905,12 @@ export const BUILTIN_HARNESS_RULES: HarnessSelectionRule[] = [
     reason: 'fallback → default harness',
   },
 
-  // ── Priority -10: Tier-1 harness for all production runs ──
+  // ── Priority 10: Tier-1 harness for all production runs ──
+  // Priority must be > 0 (the fallback rule) so this rule is actually
+  // reachable. It still sits below the mcp-server-mode rule (priority 50)
+  // so MCP server contexts keep routing to the mcp harness.
   {
-    priority: -10,
+    priority: 10,
     name: 'tier1-production',
     matcher: () => true,
     harness: 'tier1',
