@@ -215,6 +215,10 @@ export interface AttestorConfig {
   persistArtifacts: boolean;
   /** Creator string (Tool: Commander SupplyChainAttestor/x.y.z). */
   creator: string;
+  /** Path to a PEM-encoded ECDSA P-256 private key for attestation signing. */
+  signingKeyPath?: string;
+  /** Env var name containing a PEM-encoded ECDSA P-256 private key. */
+  signingKeyEnv?: string;
 }
 
 const DEFAULT_CONFIG: AttestorConfig = {
@@ -222,6 +226,7 @@ const DEFAULT_CONFIG: AttestorConfig = {
   outputDir: path.join(process.cwd(), '.commander', 'sboms'),
   persistArtifacts: true,
   creator: 'Tool: Commander-SupplyChainAttestor-1.0',
+  signingKeyEnv: 'COMMANDER_ATTESTATION_SIGNING_KEY',
 };
 
 // ============================================================================
@@ -446,10 +451,34 @@ export class SupplyChainAttestor {
     const payload = Buffer.from(JSON.stringify(statement)).toString('base64');
     const payloadType = 'application/vnd.in-toto+json';
 
-    // Generate ephemeral ECDSA key pair for signing
-    const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', {
-      namedCurve: 'P-256',
-    });
+    // SECURITY: load a persistent signing key from config/env. Ephemeral keys
+    // cannot be verified after the process exits, defeating attestation purpose.
+    let privateKey: crypto.KeyObject;
+    let publicKeyPem: string;
+    const configuredKey = this.resolveSigningKey();
+    if (configuredKey) {
+      try {
+        privateKey = crypto.createPrivateKey(configuredKey);
+        publicKeyPem = crypto
+          .createPublicKey(privateKey)
+          .export({ type: 'spki', format: 'pem' })
+          .toString();
+      } catch (err) {
+        console.error(
+          `[SupplyChainAttestor] Failed to load configured signing key, falling back to ephemeral: ${(err as Error).message}`,
+        );
+        const keyPair = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+        privateKey = keyPair.privateKey;
+        publicKeyPem = keyPair.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+      }
+    } else {
+      console.warn(
+        '[SupplyChainAttestor] No persistent signing key configured; attestation uses an ephemeral key that cannot be verified later.',
+      );
+      const keyPair = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+      privateKey = keyPair.privateKey;
+      publicKeyPem = keyPair.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+    }
 
     // Sign the DSSE pre-authentication encoding
     const pae = this.dssePreAuthEncoding(payloadType, Buffer.from(JSON.stringify(statement)));
@@ -457,8 +486,6 @@ export class SupplyChainAttestor {
     sign.update(pae);
     sign.end();
     const signature = sign.sign(privateKey, 'hex');
-
-    const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
 
     // Simulate Rekor log entry (in production, this comes from the Rekor API)
     const logEntry = {
@@ -714,6 +741,21 @@ export class SupplyChainAttestor {
    */
   private canonicalizeSbom(sbom: SpdxDocument): string {
     return JSON.stringify(sbom, Object.keys(sbom).sort());
+  }
+
+  /** Resolve the configured persistent signing key, if any. */
+  private resolveSigningKey(): string | undefined {
+    if (this.config.signingKeyPath) {
+      try {
+        return fs.readFileSync(this.config.signingKeyPath, 'utf-8');
+      } catch {
+        /* fall through */
+      }
+    }
+    if (this.config.signingKeyEnv) {
+      return process.env[this.config.signingKeyEnv];
+    }
+    return undefined;
   }
 
   /** DSSE Pre-Authentication Encoding (PAE). */
