@@ -23,17 +23,38 @@ export const PROJECT_ID = 'project-war-room';
 async function readError(response: Response, fallback: string): Promise<string> {
   try {
     const data = (await response.json()) as { error?: string };
-    return data.error || fallback;
+    // Security: Sanitize error messages from the backend to avoid leaking
+    // internal implementation details. Only return known-safe error patterns.
+    const rawError = data.error || fallback;
+    // Allow short, alphanumeric error messages (typical API error responses)
+    // but truncate and sanitize anything that looks like an internal detail.
+    if (rawError.length > 200 || rawError.includes('\n') || rawError.includes('at /')) {
+      return fallback;
+    }
+    return rawError;
   } catch (err) {
     reportSilentFailure(err, 'api:27');
     return fallback;
   }
 }
 
+/**
+ * Unified request wrapper that encapsulates the common fetch + error-handling +
+ * JSON-parsing pattern used across the API module.
+ *
+ * TODO: Migrate the remaining fetch functions to use this helper for consistency.
+ */
+async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, options);
+  if (!response.ok) {
+    throw new Error(await readError(response, `Request to ${path} failed`));
+  }
+  const text = await response.text();
+  return (text ? JSON.parse(text) : (undefined as unknown)) as T;
+}
+
 export async function fetchWarRoomSnapshot(): Promise<WarRoomSnapshot> {
-  const response = await fetch(`${API_BASE}/projects/${PROJECT_ID}/war-room`);
-  if (!response.ok) throw new Error('Failed to load war room snapshot');
-  return response.json() as Promise<WarRoomSnapshot>;
+  return apiFetch<WarRoomSnapshot>(`/projects/${PROJECT_ID}/war-room`);
 }
 
 export async function fetchMemoryItems(filters?: {
@@ -63,18 +84,15 @@ export async function fetchMemoryItems(filters?: {
 }
 
 export async function fetchMemoryOverview(): Promise<MemoryOverview> {
-  const response = await fetch(`${API_BASE}/projects/${PROJECT_ID}/memory/overview`);
-  if (!response.ok) throw new Error('Failed to load memory overview');
-  return response.json() as Promise<MemoryOverview>;
+  return apiFetch<MemoryOverview>(`/projects/${PROJECT_ID}/memory/overview`);
 }
 
 export async function createMission(payload: CreateMissionPayload): Promise<void> {
-  const response = await fetch(`${API_BASE}/projects/${PROJECT_ID}/missions`, {
+  await apiFetch<void>(`/projects/${PROJECT_ID}/missions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!response.ok) throw new Error(await readError(response, 'Failed to create mission'));
 }
 
 export async function updateMissionStatus(missionId: string, status: string): Promise<void> {
@@ -136,9 +154,7 @@ export async function fetchAgentConfidence(
 }
 
 export async function fetchCostSummary(): Promise<CostSummary> {
-  const response = await fetch(`${API_BASE}/api/cost/summary`);
-  if (!response.ok) throw new Error(await readError(response, 'Failed to load cost summary'));
-  return response.json() as Promise<CostSummary>;
+  return apiFetch<CostSummary>(`/api/cost/summary`);
 }
 
 export async function fetchCostRecords(limit = 100, runId?: string): Promise<CostRecordsResponse> {

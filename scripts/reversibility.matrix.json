@@ -48,6 +48,55 @@
       "callSitePattern": "getCompensationQueue|setCompensationQueue",
       "minCallSites": 1,
       "srcPaths": ["packages/core/src/runtime/agentRuntime.ts", "packages/core/src/atr/compensationQueue.ts"]
+    },
+    {
+      "name": "hubGlue",
+      "importPattern": "installHubGlue",
+      "callSitePattern": "installHubGlue\\(\\)",
+      "minCallSites": 1,
+      "srcPaths": ["packages/core/src/runtime/serviceInitializer.ts"]
+    },
+    {
+      "name": "complianceAuditReport",
+      "importPattern": "getComplianceAuditManager",
+      "callSitePattern": "getComplianceAuditManager\\(\\)\\.generateFullReport",
+      "minCallSites": 1,
+      "srcPaths": ["packages/core/src/runtime/httpServer.ts"]
+    },
+    {
+      "name": "euAiActCompliance",
+      "importPattern": "getEuAiActComplianceReporter",
+      "callSitePattern": "getEuAiActComplianceReporter\\(\\)\\.generateReport",
+      "minCallSites": 1,
+      "srcPaths": ["packages/core/src/runtime/httpServer.ts"]
+    },
+    {
+      "name": "mcpObservability",
+      "importPattern": "registerObservabilityTools",
+      "callSitePattern": "registerObservabilityTools\\(",
+      "minCallSites": 1,
+      "srcPaths": ["packages/core/src/mcp/commanderMcpServer.ts"]
+    },
+    {
+      "name": "incrementalSCC",
+      "importPattern": "getIncrementalSCCDetector",
+      "callSitePattern": "getIncrementalSCCDetector\\(\\)",
+      "minCallSites": 4,
+      "srcPaths": ["packages/core/src/runtime/agentHandoff.ts"]
+    },
+    {
+      "name": "supervisionTree",
+      "importPattern": "getSupervisionTreeRegistry",
+      "callSitePattern": "getSupervisionTreeRegistry\\(\\)",
+      "minCallSites": 1,
+      "srcPaths": ["packages/core/src/runtime/serviceInitializer.ts"]
+    },
+    {
+      "name": "speculativeExecutor",
+      "importPattern": "planSpeculativeExecution|getPatternTracker",
+      "callSitePattern": "triggerSpeculativeExecution|getPatternTracker\\(\\)\\.recordSequence",
+      "minCallSites": 2,
+      "srcPaths": ["packages/core/src/runtime/toolExecutionService.ts", "packages/core/src/runtime/agentRuntime.ts"]
     }
   ]
 }

@@ -6,15 +6,19 @@ import { getTraceRecorder } from '@commander/core';
 import { getMetaLearner } from '@commander/core';
 import { getHTMLReportRenderer, createWarRoomHTMLReport } from '@commander/core';
 import type { AgentExecutionContext, MessageBusTopic } from '@commander/core';
+import { validateBody } from './validationMiddleware';
+import { runtimeExecuteBody } from './schemas';
 
 export function createRuntimeRouter(): Router {
   const router = express.Router();
-  router.use(express.json());
+  // Security: express.json() with limit is applied globally in index.ts — no need
+  // for per-router body parsing (which would use default unlimited size).
 
   const runtime = new AgentRuntime({ maxRetries: 1, timeoutMs: 30000 });
 
   // POST /api/runtime/execute — Execute an agent task
-  router.post('/execute', async (req, res) => {
+  // Security: Validate input with Zod schema to prevent type confusion and injection.
+  router.post('/execute', validateBody(runtimeExecuteBody), async (req, res) => {
     const { agentId, projectId, missionId, goal, contextData, availableTools, tokenBudget } =
       req.body;
 
@@ -61,7 +65,10 @@ export function createRuntimeRouter(): Router {
 
       res.json(result);
     } catch (err) {
-      res.status(500).json({ error: String(err) });
+      // Security: Per Express security best practice — do not leak internal
+      // error details to clients. Log full error server-side, return generic message.
+      console.error('[runtimeEndpoints] Error:', err);
+      res.status(500).json({ error: 'An internal error occurred' });
     }
   });
 

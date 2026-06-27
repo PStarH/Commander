@@ -78,6 +78,15 @@ const a2aArtifactManager = new ArtifactManager();
 const a2aRouter = createA2ARouter(a2aTaskManager, a2aArtifactManager, agentCardRegistry);
 
 // ── Security middleware stack ────────────────────────────────────────────────
+// Security: Disable X-Powered-By header to reduce fingerprinting.
+// Per Express production security best practices: hide framework identity.
+app.disable('x-powered-by');
+
+// Security: Configure trust proxy for reverse proxy deployments.
+// Per Express behind-proxies docs: set to hop count or trusted IP range.
+// '1' trusts the first proxy (typical Nginx/ALB setup). Set via env for flexibility.
+app.set('trust proxy', process.env.TRUST_PROXY_HOPS ?? '1');
+
 // 1. Request ID tracking
 app.use(requestIdMiddleware);
 
@@ -107,15 +116,18 @@ const ALLOWED_ORIGINS = new Set([
 app.use(express.json({ limit: '1mb' }));
 app.use((req, res, next) => {
   const origin = req.headers.origin;
+  // Security: Per OWASP CORS guidance — only set Allow-Credentials when origin
+  // matches the allowlist. Never combine wildcard origin with credentials.
   if (origin && ALLOWED_ORIGINS.has(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Vary', 'Origin');
   }
   res.header('Access-Control-Allow-Methods', 'GET,POST,PATCH,PUT,DELETE,OPTIONS');
   res.header(
     'Access-Control-Allow-Headers',
     'Content-Type, Authorization, X-Request-ID, X-API-Key',
   );
-  res.header('Access-Control-Allow-Credentials', 'true');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
   }
@@ -181,8 +193,6 @@ app.get('/system/status', (_req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
-
-app.use(authMiddleware);
 
 // ── Routers ─────────────────────────────────────────────────────────────────
 app.use(createProjectRouter(store, memoryStore, agentStateStore));

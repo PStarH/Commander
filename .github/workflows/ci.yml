@@ -25,7 +25,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'pnpm'
 
-      - run: pnpm install
+      - run: pnpm install --frozen-lockfile
 
       - name: Rebuild better-sqlite3 native binding (Windows MSVC fallback inline)
         # better-sqlite3 ships prebuilt binaries for most OS × ABI combos
@@ -183,6 +183,15 @@ jobs:
       - name: TypeScript check (SDK)
         run: pnpm --filter @commander/sdk typecheck
 
+      - name: Generate dependency SBOM
+        run: pnpm list --recursive --depth=Infinity --json > sbom.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.os }}-node${{ matrix.node-version }}
+          path: sbom.json
+
       - name: Verify core test inventory
         run: pnpm --filter @commander/core test:inventory
 
@@ -256,7 +265,7 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
 
-      - run: pnpm install
+      - run: pnpm install --frozen-lockfile
 
       - name: Build web GUI
         run: pnpm exec vite build

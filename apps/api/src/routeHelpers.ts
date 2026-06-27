@@ -46,7 +46,7 @@ export function mapErrorToStatusCode(error: unknown) {
   return 400;
 }
 
-export function toErrorMessage(error: unknown) {
+export function toErrorMessage(error: unknown): string {
   if (!(error instanceof Error)) {
     return 'Unknown error';
   }
@@ -60,6 +60,9 @@ export function toErrorMessage(error: unknown) {
     case 'MISSION_REQUIRES_APPROVAL':
       return 'Mission requires approval before completion';
     default:
-      return error.message;
+      // Security: Per Express security best practice — do not leak internal
+      // error messages to clients. Return a generic message for unrecognized
+      // errors; the global error handler logs the full detail server-side.
+      return 'An internal error occurred';
   }
 }
