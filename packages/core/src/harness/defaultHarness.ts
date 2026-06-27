@@ -58,6 +58,12 @@ export class DefaultHarness implements AgentHarness {
 
   private eventHandlers: Set<HarnessEventHandler> = new Set();
   private steerQueueInternal: SteerMessage[] = [];
+  /**
+   * Abort controller owned by this harness instance. abort() trips this
+   * signal so that runAttempt — which polls signal.aborted — actually
+   * observes the cancellation.
+   */
+  private abortController = new AbortController();
 
   supports(_ctx: HarnessSelectionContext): boolean {
     return true;
@@ -75,12 +81,28 @@ export class DefaultHarness implements AgentHarness {
       messages,
       availableTools,
       maxSteps,
-      signal,
       tenantId,
       routing,
       services,
       outputSchema,
     } = params;
+
+    // Use this harness's own AbortController so that abort() actually trips
+    // the signal that runAttempt polls below. A fresh controller is created
+    // per run so a previous cancellation does not bleed into the next run.
+    // Any externally-supplied signal (params.signal) is bridged so callers
+    // that pass their own AbortController still get honoured.
+    this.abortController = new AbortController();
+    const signal = this.abortController.signal;
+    if (params.signal?.aborted) {
+      this.abortController.abort();
+    } else if (params.signal) {
+      params.signal.addEventListener(
+        'abort',
+        () => this.abortController.abort(),
+        { once: true },
+      );
+    }
 
     const runId = generateId();
     const startTime = Date.now();
@@ -361,7 +383,9 @@ export class DefaultHarness implements AgentHarness {
   }
 
   abort(): void {
-    // DefaultHarness has no persistent state to abort
+    // Trip the harness-owned AbortController so runAttempt — which polls
+    // signal.aborted — breaks out of its execution loop.
+    this.abortController.abort();
   }
 
   steer(message: string, priority: number = 0, abortCurrent: boolean = false): void {

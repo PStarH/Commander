@@ -292,10 +292,13 @@ async function main() {
 
     // ── Viz (execution topology visualizer) ──
     case 'viz': {
-      const { execSync } = require('child_process');
+      // Security: Use spawn with explicit argv array instead of execSync with
+      // template literal to prevent command injection via CLI arguments.
+      // Per OWASP OS Command Injection Defense Cheat Sheet: avoid shell interpretation.
+      const { spawn } = require('child_process');
       const vizPath = require('path').join(__dirname, '../../../viz/dist/index.js');
       try {
-        execSync(`node ${vizPath} ${rest.join(' ')}`, { stdio: 'inherit' });
+        spawn('node', [vizPath, ...rest], { stdio: 'inherit', shell: false });
       } catch (err) {
         reportSilentFailure(err, 'cli:299');
         console.error(
