@@ -33,6 +33,9 @@ export interface ModelPricing {
   outputPer1k: number;
   cachedInputPer1k?: number;
   reasoningPer1k?: number;
+  /** Batch API pricing (50% discount). Auto-derived if undefined. */
+  batchInputPer1k?: number;
+  batchOutputPer1k?: number;
 }
 
 export interface CostBreakdown {
@@ -41,6 +44,8 @@ export interface CostBreakdown {
   outputCostUsd: number;
   cachedCostUsd?: number;
   reasoningCostUsd?: number;
+  /** Savings from batch API (50% discount vs standard pricing) */
+  batchSavingsUsd?: number;
 }
 
 export interface TokenBreakdown {
