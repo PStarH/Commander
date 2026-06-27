@@ -1,6 +1,8 @@
 import type { TokenUsage } from '../runtime/types';
 import type { TELOSBudget, TokenCheckResult, CostRecord, CostSummary, BudgetAlert } from './types';
 import { getModelRouter } from '../runtime/modelRouter';
+import { getCostModel } from '../observability/costModel';
+import type { TokenBreakdown as ObservabilityTokenBreakdown } from '../observability/types';
 
 // ============================================================================
 // Token Counter — estimate before sending
@@ -64,19 +66,45 @@ function estimateMessagesTokens(
 }
 
 // ============================================================================
-// Cost Calculator
+// Cost Calculator — delegates to the unified CostModel in observability/costModel.ts
 //
-// Single source of truth for cost calculation. All other modules
-// (cmdCost, CostPredictor, agentRuntime, etc.) must call into here
-// instead of hardcoding rates.
+// The CostModel class maintains the single source of truth for model pricing
+// (DEFAULT_PRICING with 18+ models). This module adapts the CostModel output
+// to the TokenSentinel's CostBreakdown format (which includes cache savings).
 // ============================================================================
 
-/** Per-provider cache pricing multipliers (applied to costPer1MInput). */
-const CACHE_MULTIPLIERS: Record<string, { read: number; write: number }> = {
-  anthropic: { read: 0.1, write: 1.25 }, // 90% off reads, 1.25x write (5min TTL)
-  openai: { read: 0.5, write: 1.0 }, // 50% off reads, automatic (no explicit write cost)
-  google: { read: 0.1, write: 1.0 }, // Gemini cachedContent ~90% off reads
-  default: { read: 1.0, write: 1.0 }, // No caching benefit assumed
+/**
+ * Per-provider cache pricing multipliers, derived from CostModel's cachedInputPer1k.
+ * These express the ratio of cached input price to regular input price.
+ * Used to compute cacheSavingsUsd for the CostBreakdown.
+ *
+ * Backward-compatible: exported as CACHE_MULTIPLIERS for tests and consumers
+ * that reference the read/write ratio per provider.
+ */
+const CACHE_READ_RATIO: Record<string, number> = {
+  anthropic: 0.1,  // 90% off cache reads
+  openai: 0.5,     // 50% off cache reads
+  google: 0.1,     // ~90% off cache reads
+  default: 1.0,    // No caching benefit assumed
+};
+
+/** Per-provider cache write pricing multipliers (applied to input rate). */
+const CACHE_WRITE_RATIO: Record<string, number> = {
+  anthropic: 1.25, // 1.25x write (5min TTL)
+  openai: 1.0,      // Automatic (no explicit write cost)
+  google: 1.0,      // No explicit write cost
+  default: 1.0,
+};
+
+/**
+ * Backward-compatible export for tests that reference the old CACHE_MULTIPLIERS map.
+ * Derived from the read/write ratios above.
+ */
+export const CACHE_MULTIPLIERS: Record<string, { read: number; write: number }> = {
+  anthropic: { read: CACHE_READ_RATIO.anthropic, write: CACHE_WRITE_RATIO.anthropic },
+  openai: { read: CACHE_READ_RATIO.openai, write: CACHE_WRITE_RATIO.openai },
+  google: { read: CACHE_READ_RATIO.google, write: CACHE_WRITE_RATIO.google },
+  default: { read: CACHE_READ_RATIO.default, write: CACHE_WRITE_RATIO.default },
 };
 
 export interface CostBreakdown {
@@ -87,18 +115,33 @@ export interface CostBreakdown {
   totalUsd: number;
   /** Tokens that were served from cache (saved money) */
   cacheSavingsUsd: number;
+  /** Savings from batch API (50% discount vs standard pricing) */
+  batchSavingsUsd?: number;
 }
 
+/**
+ * Calculate cost breakdown using the unified CostModel pricing.
+ *
+ * This delegates to CostModel.calculate() for the core cost computation,
+ * then adapts the result to include cache read/write breakdown and savings.
+ *
+ * The CostModel is the single source of truth for model pricing —
+ * no duplicate pricing tables are maintained here.
+ */
 export function calculateCostBreakdown(
   modelId: string,
   inputTokens: number,
   outputTokens: number,
   cacheReadTokens: number = 0,
   cacheWriteTokens: number = 0,
+  isBatch: boolean = false,
 ): CostBreakdown {
   const router = getModelRouter();
   const model = router.getModel(modelId);
   const provider = model?.provider ?? 'unknown';
+
+  // Get the unified CostModel instance
+  const costModel = getCostModel();
 
   // No model in router → use conservative $2/M fallback (split 80/20 input/output)
   if (!model) {
@@ -118,27 +161,42 @@ export function calculateCostBreakdown(
     };
   }
 
-  const multipliers = CACHE_MULTIPLIERS[provider] ?? CACHE_MULTIPLIERS.default;
-  const inputRate = model.costPer1MInput;
-  const outputRate = model.costPer1MOutput;
+  // Try CostModel first (single source of truth for pricing)
+  const tokenBreakdown: ObservabilityTokenBreakdown = {
+    input: inputTokens,
+    output: outputTokens,
+    cached: cacheReadTokens,
+    reasoning: 0,
+    total: inputTokens + outputTokens + cacheReadTokens,
+  };
 
-  const inputCostUsd = (inputTokens / 1_000_000) * inputRate;
-  const outputCostUsd = (outputTokens / 1_000_000) * outputRate;
-  const cacheReadCostUsd = (cacheReadTokens / 1_000_000) * inputRate * multipliers.read;
-  const cacheWriteCostUsd = (cacheWriteTokens / 1_000_000) * inputRate * multipliers.write;
+  const costBreakdown = costModel.calculate(provider, modelId, tokenBreakdown, isBatch);
 
-  const totalUsd = inputCostUsd + outputCostUsd + cacheReadCostUsd + cacheWriteCostUsd;
+  // If CostModel didn't find the model (cachedCostUsd undefined but we have cache reads),
+  // fall back to router pricing × cache ratio for backward compatibility
+  const cacheReadRatio = CACHE_READ_RATIO[provider] ?? CACHE_READ_RATIO.default;
+  const cacheWriteRatio = CACHE_WRITE_RATIO[provider] ?? CACHE_WRITE_RATIO.default;
+  const inputRatePerToken = model.costPer1MInput / 1_000_000;
 
-  // What we WOULD have paid for cache reads at full input price
-  const cacheSavingsUsd = (cacheReadTokens / 1_000_000) * inputRate * (1 - multipliers.read);
+  let cacheReadCostUsd = costBreakdown.cachedCostUsd ?? 0;
+  if (cacheReadTokens > 0 && cacheReadCostUsd === 0) {
+    cacheReadCostUsd = cacheReadTokens * inputRatePerToken * cacheReadRatio;
+  }
+
+  // Compute cache write cost (not tracked by CostModel)
+  const cacheWriteCostUsd = cacheWriteTokens * inputRatePerToken * cacheWriteRatio;
+
+  // Compute savings: what we would have paid at full input price vs. cache price
+  const cacheSavingsUsd = cacheReadTokens * inputRatePerToken * (1 - cacheReadRatio);
 
   return {
-    inputCostUsd,
-    outputCostUsd,
+    inputCostUsd: costBreakdown.inputCostUsd,
+    outputCostUsd: costBreakdown.outputCostUsd,
     cacheReadCostUsd,
     cacheWriteCostUsd,
-    totalUsd,
+    totalUsd: costBreakdown.inputCostUsd + costBreakdown.outputCostUsd + cacheReadCostUsd + cacheWriteCostUsd,
     cacheSavingsUsd,
+    batchSavingsUsd: costBreakdown.batchSavingsUsd,
   };
 }
 
@@ -450,4 +508,4 @@ export function resetTokenSentinel(): void {
   sentinelSingleton.reset();
 }
 
-export { estimateTokenCount, estimateMessagesTokens, calculateCost, CACHE_MULTIPLIERS };
+export { estimateTokenCount, estimateMessagesTokens, calculateCost };
