@@ -21,6 +21,8 @@ import { ThompsonMemoryScorer } from './memory/thompsonMemoryScorer.js';
 // bundle clean. The value-side MemoryStore dependency is injected via
 // constructor or setMemoryStore(); see mapMemoryEntryToWriteOptions.
 import type { MemoryStore, MemoryWriteOptions, MemoryKind } from './memory';
+import { getGlobalSemanticMemoryStore } from './memory/semanticStore';
+import { getGlobalEpisodicStore } from './memory/episodicStore';
 
 function generateUUID(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -136,6 +138,15 @@ export class ThreeLayerMemory {
   private thompsonScorer: ThompsonMemoryScorer;
   /** Optional persistent sink for non-working layers (audit MED item 1 Phase A) */
   private memoryStore: MemoryStore | null = null;
+  /**
+   * Pillar IV contract stores — optional delegates for enhanced retrieval.
+   * When available, episodic memories are also recorded in EpisodicMemoryStore
+   * (with ACT-R activation tracking), and semantic queries are augmented
+   * with SemanticMemoryStore's HNSW vector search + knowledge graph traversal.
+   * These are lazily initialized from the global singletons.
+   */
+  private semanticStore: ReturnType<typeof getGlobalSemanticMemoryStore> | null = null;
+  private episodicStore: ReturnType<typeof getGlobalEpisodicMemoryStore> | null = null;
 
   constructor(
     config?: Partial<Record<MemoryLayer, LayerConfig>> & {
@@ -242,6 +253,30 @@ export class ThreeLayerMemory {
 
   setEmbeddingFunction(fn: EmbeddingFunction): void {
     this.embeddingFn = fn;
+  }
+
+  /**
+   * Enable Pillar IV contract store delegation.
+   *
+   * When enabled, episodic memories are mirrored to EpisodicMemoryStore
+   * (with ACT-R activation formula tracking), and semantic queries are
+   * augmented with SemanticMemoryStore's HNSW vector search + knowledge
+   * graph traversal. This connects the runtime's memory path to the
+   * Pillar IV contract implementations.
+   */
+  enablePillarIVDelegation(): void {
+    try {
+      this.semanticStore = getGlobalSemanticMemoryStore();
+      this.episodicStore = getGlobalEpisodicStore();
+      getGlobalLogger().info('ThreeLayerMemory', 'Pillar IV delegation enabled', {
+        semanticStore: !!this.semanticStore,
+        episodicStore: !!this.episodicStore,
+      });
+    } catch (err) {
+      getGlobalLogger().warn('ThreeLayerMemory', 'Failed to enable Pillar IV delegation', {
+        error: (err as Error)?.message,
+      });
+    }
   }
 
   getEmbeddingStore(): InMemoryEmbeddingStore {
@@ -372,6 +407,45 @@ export class ThreeLayerMemory {
     }
     this.embedStore.setEntry(entry.id, entry);
 
+    // Pillar IV delegation: mirror episodic memories to EpisodicMemoryStore
+    // for ACT-R activation tracking, and ingest semantic entities to
+    // SemanticMemoryStore for HNSW vector search + knowledge graph traversal.
+    if (layer === 'episodic' && this.episodicStore) {
+      try {
+        this.episodicStore.record({
+          timestamp: Date.now(),
+          context: context || 'general',
+          action: content.slice(0, 100),
+          outcome: 'recorded',
+          tags,
+        });
+      } catch (err) {
+        getGlobalLogger().debug('ThreeLayerMemory', 'EpisodicStore mirror failed', {
+          error: (err as Error)?.message,
+        });
+      }
+    }
+    if (layer !== 'working' && this.semanticStore) {
+      try {
+        // Ingest as a semantic entity for knowledge graph + HNSW search
+        this.semanticStore.ingest({
+          name: content.slice(0, 80),
+          type: layer,
+          description: `${context} ${tags.join(' ')}`.trim() || content,
+          embedding: this.embedStore.getEmbedding(entry.id) ?? [],
+          relationships: [],
+        }).catch((err: unknown) => {
+          getGlobalLogger().debug('ThreeLayerMemory', 'SemanticStore ingest failed', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      } catch (err) {
+        getGlobalLogger().debug('ThreeLayerMemory', 'SemanticStore ingest error', {
+          error: (err as Error)?.message,
+        });
+      }
+    }
+
     this.evictIfNeeded(layer);
 
     return entry;
@@ -415,9 +489,12 @@ export class ThreeLayerMemory {
   }
 
   /**
-   * 查询记忆 (with embedding-aware scoring)
+   * 查询记忆 (with embedding-aware scoring) — sync version (no Pillar IV augmentation).
+   * Used by internal callers (add contradiction check, searchRelated) that need
+   * synchronous results. External callers should use the async `query()` method
+   * for Pillar IV augmented results.
    */
-  query(query: MemoryQuery): MemoryEntry[] {
+  querySync(query: MemoryQuery): MemoryEntry[] {
     let results = Array.from(this.memories.values());
 
     // 按层过滤
@@ -458,8 +535,6 @@ export class ThreeLayerMemory {
       if (!(emb instanceof Promise)) {
         queryEmbedding = emb;
       }
-      // If async, skip embedding scoring — the embedding was stored asynchronously
-      // in add(), so it may not be available yet. Fall back to recency+importance.
     }
 
     // Sort by embedding-aware three-factor score (Generative Agents formula)
@@ -468,6 +543,97 @@ export class ThreeLayerMemory {
       const scoreB = calculateMemoryScore(b, queryEmbedding, this.embedStore.getEmbedding(b.id));
       return scoreB - scoreA;
     });
+
+    if (query.limit) {
+      results = results.slice(0, query.limit);
+    }
+
+    return results;
+  }
+
+  /**
+   * 查询记忆 (with embedding-aware scoring) — async version with Pillar IV augmentation.
+   * Includes SemanticMemoryStore HNSW search and EpisodicMemoryStore ACT-R recall.
+   */
+  async query(query: MemoryQuery): Promise<MemoryEntry[]> {
+    let results = this.querySync(query);
+
+    // Pillar IV delegation: augment with SemanticMemoryStore HNSW results.
+    // When semantic store is available and keywords are provided, query the
+    // HNSW index for additional candidates that may not match keywords
+    // exactly but are semantically close. Results are merged and re-ranked.
+    if (this.semanticStore && query.keywords && query.keywords.length > 0) {
+      try {
+        const semanticResults = await this.semanticStore.query({
+          text: query.keywords.join(' '),
+          limit: query.limit ?? 10,
+          minSimilarity: 0.3,
+        });
+        // Merge semantic results with existing results, avoiding duplicates
+        const existingIds = new Set(results.map((r) => r.id));
+        for (const entity of semanticResults) {
+          if (!existingIds.has(entity.id)) {
+            // Convert semantic entity to memory entry format
+            results.push({
+              id: entity.id,
+              layer: 'semantic' as MemoryLayer,
+              content: entity.name + ': ' + entity.description,
+              context: 'semantic-augmented',
+              importance: 0.5,
+              createdAt: new Date().toISOString(),
+              lastAccessedAt: new Date().toISOString(),
+              accessCount: 0,
+              decayScore: 0,
+              tags: [entity.type],
+              metadata: { source: 'SemanticMemoryStore', semanticScore: true },
+            });
+          }
+        }
+        // Re-sort after merge
+        results.sort((a, b) => b.importance - a.importance);
+      } catch (err) {
+        getGlobalLogger().debug('ThreeLayerMemory', 'SemanticStore augmentation failed', {
+          error: (err as Error)?.message,
+        });
+      }
+    }
+
+    // Pillar IV delegation: augment with EpisodicMemoryStore recall.
+    // Uses ACT-R activation formula to find episodic memories with high
+    // activation scores (recent + frequently accessed).
+    if (this.episodicStore && query.layer === 'episodic') {
+      try {
+        const episodicResults = await this.episodicStore.recall({
+          context: query.keywords?.join(' ') ?? undefined,
+          limit: query.limit ?? 10,
+          minActivation: 0.1,
+        });
+        const existingIds = new Set(results.map((r) => r.id));
+        for (const ep of episodicResults) {
+          if (!existingIds.has(ep.id)) {
+            results.push({
+              id: ep.id,
+              layer: 'episodic' as MemoryLayer,
+              content: `${ep.action} → ${ep.outcome}`,
+              context: ep.context,
+              importance: 0.5,
+              createdAt: new Date(ep.timestamp).toISOString(),
+              lastAccessedAt: new Date().toISOString(),
+              accessCount: 0,
+              decayScore: 0,
+              tags: ep.tags ?? [],
+              metadata: { source: 'EpisodicMemoryStore', activation: ep.activation },
+            });
+          }
+        }
+        // Re-sort after merge
+        results.sort((a, b) => b.importance - a.importance);
+      } catch (err) {
+        getGlobalLogger().debug('ThreeLayerMemory', 'EpisodicStore augmentation failed', {
+          error: (err as Error)?.message,
+        });
+      }
+    }
 
     // 限制数量
     if (query.limit) {
@@ -481,7 +647,7 @@ export class ThreeLayerMemory {
    * 获取特定层的记忆
    */
   getByLayer(layer: MemoryLayer, limit?: number): MemoryEntry[] {
-    const results = this.query({ layer, limit });
+    const results = this.querySync({ layer, limit });
     return results;
   }
 
@@ -492,7 +658,7 @@ export class ThreeLayerMemory {
     const workingSlots = Math.max(1, Math.ceil(maxEntries * 0.7));
     const episodicSlots = Math.max(1, maxEntries - workingSlots);
     const working = this.getByLayer('working', workingSlots);
-    const recentEpisodic = this.query({
+    const recentEpisodic = this.querySync({
       layer: 'episodic',
       limit: episodicSlots,
       importanceThreshold: 0.6,
@@ -719,8 +885,8 @@ export class ThreeLayerMemory {
       }
     }
 
-    // Fallback: keyword-only search
-    return this.query({ keywords, limit });
+    // Fallback: keyword-only search (use sync version — no Pillar IV augmentation)
+    return this.querySync({ keywords, limit });
   }
 
   /**
@@ -871,11 +1037,9 @@ export function createPersistedThreeLayerMemory(basePath?: string): ThreeLayerMe
  *   working     → not routed (caller already filters)
  *   episodic    → kind=SUMMARY,  duration=EPISODIC
  *   longterm    → kind=DECISION if importance >= 0.7 else LESSON, duration=LONG_TERM
- *   procedural  → kind=LESSON,   duration=EPISODIC   (Phase A lossiness —
- *                   accepts that the typed proceduralType/successRate/
- *                   usageCount/conditions fields are dropped. Verified by
- *                   pre-flight grep: no production code reads them on a
- *                   MemoryEntry. Phase D restores via a `meta` JSON column.)
+ *   procedural  → kind=LESSON,   duration=EPISODIC   (Phase D: procedural
+ *                   fields proceduralType/successRate/usageCount/conditions
+ *                   are now preserved via the `meta` JSON column.)
  */
 export function mapMemoryEntryToWriteOptions(
   entry: MemoryEntry,
@@ -890,6 +1054,18 @@ export function mapMemoryEntryToWriteOptions(
         ? 'SUMMARY'
         : 'LESSON'; // procedural or fallback
   const duration = entry.layer === 'longterm' ? 'LONG_TERM' : 'EPISODIC';
+
+  // Phase D: preserve procedural fields via meta
+  const meta: import('./memory').MemoryMeta | undefined =
+    entry.layer === 'procedural' || entry.proceduralType
+      ? {
+          proceduralType: entry.proceduralType,
+          successRate: entry.successRate,
+          usageCount: entry.usageCount,
+          conditions: entry.conditions,
+        }
+      : undefined;
+
   return {
     // Thread entry.id so SqliteMemoryStore.write uses it as the row's ID —
     // this lets routeOutDelete(entry.id) in evictIfNeeded find and remove the
@@ -906,6 +1082,7 @@ export function mapMemoryEntryToWriteOptions(
     tags: entry.tags,
     priority: Math.round(entry.importance * 100),
     confidence: entry.importance,
+    meta,
   };
 }
 

@@ -24,6 +24,7 @@ import type {
   MemoryManageOptions,
   MemoryStats,
   MemoryStore,
+  MemoryMeta,
 } from '../memory';
 import type { MemoryKind, MemoryDuration } from '../memory';
 
@@ -135,7 +136,8 @@ export class SqliteMemoryStore implements MemoryStore {
         last_accessed_at TEXT NOT NULL,
         expires_at TEXT,
         evidence_refs TEXT,
-        confidence REAL NOT NULL DEFAULT 0.8
+        confidence REAL NOT NULL DEFAULT 0.8,
+        meta TEXT
       );
 
       -- Indexes for common queries
@@ -175,14 +177,21 @@ export class SqliteMemoryStore implements MemoryStore {
         VALUES (new.rowid, new.title, new.content, new.tags);
       END;
     `);
+
+    // Phase D: add meta column if it doesn't exist (migration for existing DBs)
+    try {
+      this.ensureInitialized().exec('ALTER TABLE memory_items ADD COLUMN meta TEXT');
+    } catch {
+      // Column already exists — expected for new databases
+    }
   }
 
   private prepareStatements(): void {
     const d = this.ensureInitialized();
 
     this.stmtInsert = d.prepare(`
-      INSERT INTO memory_items (id, project_id, mission_id, agent_id, kind, duration, title, content, tags, priority, created_at, last_accessed_at, expires_at, evidence_refs, confidence)
-      VALUES (@id, @projectId, @missionId, @agentId, @kind, @duration, @title, @content, @tags, @priority, @createdAt, @lastAccessedAt, @expiresAt, @evidenceRefs, @confidence)
+      INSERT INTO memory_items (id, project_id, mission_id, agent_id, kind, duration, title, content, tags, priority, created_at, last_accessed_at, expires_at, evidence_refs, confidence, meta)
+      VALUES (@id, @projectId, @missionId, @agentId, @kind, @duration, @title, @content, @tags, @priority, @createdAt, @lastAccessedAt, @expiresAt, @evidenceRefs, @confidence, @meta)
     `);
 
     this.stmtGet = d.prepare('SELECT * FROM memory_items WHERE id = ? AND project_id = ?');
@@ -292,6 +301,7 @@ export class SqliteMemoryStore implements MemoryStore {
       expiresAt,
       evidenceRefs: options.evidenceRefs,
       confidence: options.confidence ?? 0.8,
+      meta: options.meta,
     };
 
     this.stmtInsert.run({
@@ -310,6 +320,7 @@ export class SqliteMemoryStore implements MemoryStore {
       expiresAt: item.expiresAt ?? null,
       evidenceRefs: item.evidenceRefs ? JSON.stringify(item.evidenceRefs) : null,
       confidence: item.confidence,
+      meta: item.meta ? JSON.stringify(item.meta) : null,
     });
 
     return item;
@@ -361,6 +372,7 @@ export class SqliteMemoryStore implements MemoryStore {
           expiresAt,
           evidenceRefs: options.evidenceRefs,
           confidence: options.confidence ?? 0.8,
+          meta: options.meta,
         };
 
         this.stmtInsert.run({
@@ -379,6 +391,7 @@ export class SqliteMemoryStore implements MemoryStore {
           expiresAt: item.expiresAt ?? null,
           evidenceRefs: item.evidenceRefs ? JSON.stringify(item.evidenceRefs) : null,
           confidence: item.confidence,
+          meta: item.meta ? JSON.stringify(item.meta) : null,
         });
 
         results.push(item);
@@ -630,6 +643,7 @@ export class SqliteMemoryStore implements MemoryStore {
   private rowToItem(row: SqliteRow): EpisodicMemoryItem {
     let tags: string[] = [];
     let evidenceRefs: string[] | undefined;
+    let meta: MemoryMeta | undefined;
     try {
       tags = JSON.parse((row.tags as string) || '[]');
     } catch (err) {
@@ -640,6 +654,12 @@ export class SqliteMemoryStore implements MemoryStore {
       evidenceRefs = row.evidence_refs ? JSON.parse(row.evidence_refs as string) : undefined;
     } catch (err) {
       reportSilentFailure(err, 'sqliteMemoryStore:641');
+      /* ok */
+    }
+    try {
+      meta = row.meta ? JSON.parse(row.meta as string) : undefined;
+    } catch (err) {
+      reportSilentFailure(err, 'sqliteMemoryStore:meta');
       /* ok */
     }
 
@@ -668,6 +688,7 @@ export class SqliteMemoryStore implements MemoryStore {
       expiresAt: (row.expires_at as string) || undefined,
       evidenceRefs,
       confidence: row.confidence as number,
+      meta,
     };
   }
 

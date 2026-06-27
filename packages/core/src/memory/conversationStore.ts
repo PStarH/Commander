@@ -21,6 +21,7 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import { walCheckpoint } from '../storage/walCheckpoint';
+import { getCurrentTenantId } from '../runtime/tenantContext';
 
 // ============================================================================
 // Types
@@ -139,6 +140,8 @@ export class ConversationStore {
   private stmtFtsSearch!: BetterSqlite3Stmt;
   private stmtRecentSessions!: BetterSqlite3Stmt;
   private stmtDeleteOldSessions!: BetterSqlite3Stmt;
+  private stmtDeleteByUser!: BetterSqlite3Stmt;
+  private stmtGetSessionsByUser!: BetterSqlite3Stmt;
 
   constructor(config?: Partial<ConversationStoreConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -201,13 +204,16 @@ export class ConversationStore {
         started_at TEXT NOT NULL,
         ended_at TEXT,
         tags TEXT NOT NULL DEFAULT '[]',
-        metadata TEXT NOT NULL DEFAULT '{}'
+        metadata TEXT NOT NULL DEFAULT '{}',
+        tenant_id TEXT
       );
 
       CREATE INDEX IF NOT EXISTS idx_conv_sessions_project
         ON conversation_sessions(project_id, started_at DESC);
       CREATE INDEX IF NOT EXISTS idx_conv_sessions_user
         ON conversation_sessions(user_id, started_at DESC) WHERE user_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_conv_sessions_tenant
+        ON conversation_sessions(tenant_id, project_id) WHERE tenant_id IS NOT NULL;
 
       -- Conversation turns (individual messages)
       CREATE TABLE IF NOT EXISTS conversation_turns (
@@ -253,14 +259,34 @@ export class ConversationStore {
         VALUES (new.rowid, new.content, new.tool_name);
       END;
     `);
+
+    this.migrate();
+  }
+
+  /**
+   * Idempotent column-based migrations for existing databases.
+   * CREATE TABLE IF NOT EXISTS won't add new columns to an existing table,
+   * so we check PRAGMA table_info and ALTER TABLE when the column is missing.
+   */
+  private migrate(): void {
+    if (!this.db) return;
+    const cols = (
+      this.db.prepare('PRAGMA table_info(conversation_sessions)').all() as Array<{
+        name: string;
+      }>
+    ).map((c) => c.name);
+    // Add tenant_id column if it doesn't exist (migration for existing DBs)
+    if (!cols.includes('tenant_id')) {
+      this.db.exec('ALTER TABLE conversation_sessions ADD COLUMN tenant_id TEXT');
+    }
   }
 
   private prepareStatements(): void {
     const d = this.db!;
 
     this.stmtInsertSession = d.prepare(`
-      INSERT INTO conversation_sessions (id, project_id, agent_id, user_id, goal, started_at, tags, metadata)
-      VALUES (@id, @projectId, @agentId, @userId, @goal, @startedAt, @tags, @metadata)
+      INSERT INTO conversation_sessions (id, project_id, agent_id, user_id, goal, started_at, tags, metadata, tenant_id)
+      VALUES (@id, @projectId, @agentId, @userId, @goal, @startedAt, @tags, @metadata, @tenantId)
     `);
 
     this.stmtInsertTurn = d.prepare(`
@@ -268,16 +294,20 @@ export class ConversationStore {
       VALUES (@id, @sessionId, @role, @content, @toolName, @toolCallId, @tokenCount, @importance, @createdAt)
     `);
 
-    this.stmtGetSession = d.prepare('SELECT * FROM conversation_sessions WHERE id = ?');
-
-    this.stmtGetTurns = d.prepare(
-      'SELECT * FROM conversation_turns WHERE session_id = ? ORDER BY created_at ASC',
+    this.stmtGetSession = d.prepare(
+      'SELECT * FROM conversation_sessions WHERE id = ? AND (tenant_id IS ? OR ? IS NULL)',
     );
 
-    this.stmtUpdateSummary = d.prepare('UPDATE conversation_sessions SET summary = ? WHERE id = ?');
+    this.stmtGetTurns = d.prepare(
+      'SELECT t.* FROM conversation_turns t INNER JOIN conversation_sessions s ON t.session_id = s.id WHERE t.session_id = ? AND (s.tenant_id IS ? OR ? IS NULL) ORDER BY t.created_at ASC',
+    );
+
+    this.stmtUpdateSummary = d.prepare(
+      'UPDATE conversation_sessions SET summary = ? WHERE id = ? AND (tenant_id IS ? OR ? IS NULL)',
+    );
 
     this.stmtEndSession = d.prepare(
-      'UPDATE conversation_sessions SET ended_at = ?, turn_count = ?, total_tokens = ? WHERE id = ?',
+      'UPDATE conversation_sessions SET ended_at = ?, turn_count = ?, total_tokens = ? WHERE id = ? AND (tenant_id IS ? OR ? IS NULL)',
     );
 
     this.stmtFtsSearch = d.prepare(`
@@ -289,12 +319,13 @@ export class ConversationStore {
         ORDER BY rank
       )
       AND s.project_id = ?
+      AND (s.tenant_id IS ? OR ? IS NULL)
       LIMIT ?
     `);
 
     this.stmtRecentSessions = d.prepare(`
       SELECT * FROM conversation_sessions
-      WHERE project_id = ?
+      WHERE project_id = ? AND (tenant_id IS ? OR ? IS NULL)
       ORDER BY started_at DESC
       LIMIT ?
     `);
@@ -303,10 +334,20 @@ export class ConversationStore {
       DELETE FROM conversation_sessions
       WHERE id IN (
         SELECT id FROM conversation_sessions
-        WHERE project_id = ?
+        WHERE project_id = ? AND (tenant_id IS ? OR ? IS NULL)
         ORDER BY started_at DESC
         LIMIT -1 OFFSET ?
       )
+    `);
+
+    // GDPR: Delete all sessions for a specific user
+    this.stmtDeleteByUser = d.prepare(`
+      DELETE FROM conversation_sessions WHERE user_id = ?
+    `);
+
+    // GDPR: Get all sessions for a specific user (for DSAR export)
+    this.stmtGetSessionsByUser = d.prepare(`
+      SELECT * FROM conversation_sessions WHERE user_id = ? ORDER BY started_at DESC
     `);
   }
 
@@ -349,6 +390,7 @@ export class ConversationStore {
       startedAt: session.startedAt,
       tags: JSON.stringify(session.tags),
       metadata: JSON.stringify(session.metadata),
+      tenantId: getCurrentTenantId() ?? null,
     });
 
     return session;
@@ -359,12 +401,20 @@ export class ConversationStore {
    */
   async endSession(sessionId: string): Promise<void> {
     await this.init();
-    const turns = this.stmtGetTurns.all<SqliteRow>(sessionId);
+    const tenantId = getCurrentTenantId() ?? null;
+    const turns = this.stmtGetTurns.all<SqliteRow>(sessionId, tenantId, tenantId);
     const totalTokens = turns.reduce(
       (sum: number, t: SqliteRow) => sum + ((t.token_count as number) ?? 0),
       0,
     );
-    this.stmtEndSession.run(new Date().toISOString(), turns.length, totalTokens, sessionId);
+    this.stmtEndSession.run(
+      new Date().toISOString(),
+      turns.length,
+      totalTokens,
+      sessionId,
+      tenantId,
+      tenantId,
+    );
   }
 
   /**
@@ -372,7 +422,8 @@ export class ConversationStore {
    */
   async getSession(sessionId: string): Promise<ConversationSession | null> {
     await this.init();
-    const row = this.stmtGetSession.get<SqliteRow>(sessionId);
+    const tenantId = getCurrentTenantId() ?? null;
+    const row = this.stmtGetSession.get<SqliteRow>(sessionId, tenantId, tenantId);
     return row ? this.rowToSession(row) : null;
   }
 
@@ -381,7 +432,8 @@ export class ConversationStore {
    */
   async getRecentSessions(projectId: string, limit = 20): Promise<ConversationSession[]> {
     await this.init();
-    const rows = this.stmtRecentSessions.all<SqliteRow>(projectId, limit);
+    const tenantId = getCurrentTenantId() ?? null;
+    const rows = this.stmtRecentSessions.all<SqliteRow>(projectId, tenantId, tenantId, limit);
     return rows.map((r) => this.rowToSession(r));
   }
 
@@ -434,7 +486,8 @@ export class ConversationStore {
    */
   async getTurns(sessionId: string): Promise<ConversationTurn[]> {
     await this.init();
-    const rows = this.stmtGetTurns.all<SqliteRow>(sessionId);
+    const tenantId = getCurrentTenantId() ?? null;
+    const rows = this.stmtGetTurns.all<SqliteRow>(sessionId, tenantId, tenantId);
     return rows.map((r) => this.rowToTurn(r));
   }
 
@@ -453,6 +506,7 @@ export class ConversationStore {
 
     const ftsQuery = this.buildFtsQuery(options.query);
     const limit = options.limit ?? 20;
+    const tenantId = getCurrentTenantId() ?? null;
 
     try {
       const rows = this.stmtFtsSearch.all<
@@ -462,7 +516,7 @@ export class ConversationStore {
           summary: string | null;
           user_id: string | null;
         }
-      >(ftsQuery, options.projectId, limit * 3); // Fetch more to group by session
+      >(ftsQuery, options.projectId, tenantId, tenantId, limit * 3); // Fetch more to group by session
 
       // Group by session
       const sessionMap = new Map<
@@ -477,7 +531,7 @@ export class ConversationStore {
         const sessionId = row.session_id as string;
         if (!sessionMap.has(sessionId)) {
           // Fetch full session
-          const sessionRow = this.stmtGetSession.get<SqliteRow>(sessionId);
+          const sessionRow = this.stmtGetSession.get<SqliteRow>(sessionId, tenantId, tenantId);
           if (sessionRow) {
             sessionMap.set(sessionId, {
               session: this.rowToSession(sessionRow),
@@ -556,7 +610,8 @@ export class ConversationStore {
    */
   async setSummary(sessionId: string, summary: string): Promise<void> {
     await this.init();
-    this.stmtUpdateSummary.run(summary, sessionId);
+    const tenantId = getCurrentTenantId() ?? null;
+    this.stmtUpdateSummary.run(summary, sessionId, tenantId, tenantId);
   }
 
   /**
@@ -564,19 +619,41 @@ export class ConversationStore {
    */
   async prune(projectId: string): Promise<number> {
     await this.init();
+    const tenantId = getCurrentTenantId() ?? null;
     const before = this.db!.prepare(
-      'SELECT COUNT(*) as cnt FROM conversation_sessions WHERE project_id = ?',
-    ).get<{ cnt: number }>(projectId);
+      'SELECT COUNT(*) as cnt FROM conversation_sessions WHERE project_id = ? AND (tenant_id IS ? OR ? IS NULL)',
+    ).get<{ cnt: number }>(projectId, tenantId, tenantId);
     const currentCount = before?.cnt ?? 0;
 
     if (currentCount <= this.config.maxSessions!) return 0;
 
-    this.stmtDeleteOldSessions.run(projectId, this.config.maxSessions!);
+    this.stmtDeleteOldSessions.run(projectId, tenantId, tenantId, this.config.maxSessions!);
 
     const after = this.db!.prepare(
-      'SELECT COUNT(*) as cnt FROM conversation_sessions WHERE project_id = ?',
-    ).get<{ cnt: number }>(projectId);
+      'SELECT COUNT(*) as cnt FROM conversation_sessions WHERE project_id = ? AND (tenant_id IS ? OR ? IS NULL)',
+    ).get<{ cnt: number }>(projectId, tenantId, tenantId);
     return currentCount - (after?.cnt ?? 0);
+  }
+
+  /**
+   * GDPR Article 17: Delete all conversation sessions for a specific user.
+   * Turns are automatically cascade-deleted (ON DELETE CASCADE).
+   * Returns the number of deleted sessions.
+   */
+  async deleteByUser(userId: string): Promise<number> {
+    await this.init();
+    const result = this.stmtDeleteByUser.run(userId);
+    return result.changes;
+  }
+
+  /**
+   * GDPR Article 15 (DSAR): Get all sessions for a specific user.
+   * Used for data subject access requests.
+   */
+  async getSessionsByUser(userId: string): Promise<ConversationSession[]> {
+    await this.init();
+    const rows = this.stmtGetSessionsByUser.all(userId) as ConversationSession[];
+    return rows;
   }
 
   // --------------------------------------------------------------------------
