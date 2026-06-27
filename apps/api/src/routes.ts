@@ -36,6 +36,7 @@ import { createEvaluationRunnerRouter } from './evaluationRunnerEndpoints';
 import { createOrchestratorRouter } from './orchestratorEndpoints';
 import { createObservabilityRouter } from './observabilityEndpoints';
 import { createStreamRouter } from './streamEndpoints';
+import { createHubCorrelationsRouter } from './hubCorrelationsEndpoints';
 import { authMiddleware } from './authMiddleware';
 
 export interface RouterContext {
@@ -102,4 +103,5 @@ export function registerRoutes(app: Express, ctx: RouterContext) {
   app.use('/api/v1/runtime', createRuntimeRouter());
   app.use('/api/v1', createOrchestratorRouter());
   app.use('/api/v1/observability', createObservabilityRouter());
+  app.use('/api/v1/hub', createHubCorrelationsRouter());
 }

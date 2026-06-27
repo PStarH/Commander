@@ -321,13 +321,14 @@ function runD25PlaintextGate(scannableFiles: string[]): void {
 
 function runExecPolicySmoke(): void {
   console.log('[D3 hook] running ExecPolicy edge tests smoke…');
-  // npx handles local-binary discovery (.bin lookup) plus PATH search;
-  // passing bare 'vitest' to node won't work (Node only resolves modules).
-  // execFileSync propagates a real exit code so a non-zero from vitest lands
-  // in our catch block.
+  // vitest config lives in packages/core; running from repo root fails
+  // because vitest cannot find vitest.config.ts there.  Use
+  // packages/core as cwd so vitest resolves its config and the test
+  // file path is relative to the package root.
+  const vitestCwd = path.join(REPO_ROOT, 'packages', 'core');
   try {
-    execFileSync('npx', ['vitest', 'run', EXECPOLICY_TEST_FILE, '--no-cache', '--reporter=basic'], {
-      cwd: REPO_ROOT,
+    execFileSync('npx', ['vitest', 'run', EXECPOLICY_TEST_FILE, '--no-cache', '--reporter=default'], {
+      cwd: vitestCwd,
       stdio: 'inherit',
       env: { ...process.env, NODE_ENV: 'test' },
     });

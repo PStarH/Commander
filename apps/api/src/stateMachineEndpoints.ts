@@ -26,6 +26,8 @@ import {
   AgentState,
   GovernanceCheckpoint,
 } from './stateMachine';
+import { validateBody } from './validationMiddleware';
+import { stateMachineCreateBody, resumeFromCheckpointBody } from './schemas';
 
 const router: express.Router = express.Router();
 
@@ -35,8 +37,9 @@ const stateMachines: Map<string, StateMachine> = new Map();
 /**
  * POST /api/state-machine/create
  * Create a new state machine for a task
+ * Security: Validate input with Zod schema to prevent type confusion.
  */
-router.post('/create', (req, res) => {
+router.post('/create', validateBody(stateMachineCreateBody), (req, res) => {
   try {
     const { taskId, projectId, agentId, type = 'standard' } = req.body;
 
@@ -314,15 +317,14 @@ router.post('/:taskId/memory', (req, res) => {
 /**
  * POST /api/state-machine/:taskId/resume
  * Resume from a checkpoint
+ * Security: Validate input with Zod schema — checkpointId format prevents path traversal.
  */
-router.post('/:taskId/resume', (req, res) => {
+router.post('/:taskId/resume', validateBody(resumeFromCheckpointBody), (req, res) => {
   try {
-    const { taskId } = req.params;
+    const taskId = String(req.params.taskId);
     const { checkpointId } = req.body;
 
-    if (!checkpointId) {
-      return res.status(400).json({ error: 'Missing required field: checkpointId' });
-    }
+    // checkpointId format already validated by Zod schema (resumeFromCheckpointBody)
 
     // Create new state machine and resume
     const sm = StateMachineFactory.create('standard');
