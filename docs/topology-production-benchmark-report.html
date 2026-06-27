@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Commander 生产拓扑基准报告</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --blue: #58a6ff;
+    --accent: #1f6feb;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 24px;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 28px; margin-bottom: 8px; }
+  h2 { font-size: 22px; margin: 32px 0 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  h3 { font-size: 16px; margin: 20px 0 12px; color: var(--muted); }
+  .meta { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+  .verdict {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--card); border: 1px solid var(--green);
+    border-radius: 8px; padding: 16px 20px; margin-bottom: 24px;
+  }
+  .verdict-icon { font-size: 28px; }
+  .verdict-text { font-size: 18px; font-weight: 600; color: var(--green); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .stat-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px;
+  }
+  .stat-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-value { font-size: 24px; font-weight: 700; margin-top: 4px; }
+  .stat-value.green { color: var(--green); }
+  .stat-value.blue { color: var(--blue); }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); font-size: 14px; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  td.num { font-family: 'SF Mono', 'Fira Code', monospace; text-align: right; }
+  .pass { color: var(--green); }
+  .fail { color: var(--red); }
+  .chart-bar {
+    height: 8px; border-radius: 4px; background: var(--border);
+    position: relative; overflow: hidden; margin: 4px 0;
+  }
+  .chart-fill { height: 100%; border-radius: 4px; }
+  .latency-fill { background: linear-gradient(90deg, var(--green), var(--yellow), var(--red)); }
+  .cost-fill { background: linear-gradient(90deg, var(--blue), var(--accent)); }
+  .topology-dist { display: flex; gap: 8px; flex-wrap: wrap; }
+  .topology-tag {
+    background: var(--border); border-radius: 4px;
+    padding: 2px 8px; font-size: 12px; font-family: monospace;
+  }
+  .section-note { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+  code { background: var(--border); padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Commander 生产拓扑基准报告</h1>
+  <div class="meta">
+    生成时间：2026-06-25 12:11 (北京时间) &nbsp;|&nbsp;
+    Cost per token: $0.000015 &nbsp;|&nbsp;
+    任务类型：8 种 &nbsp;|&nbsp;
+    总任务数：860
+  </div>
+
+  <div class="verdict">
+    <span class="verdict-icon">✅</span>
+    <span class="verdict-text">全部通过 — 拓扑失败率 &lt; 1%（实测 0.12%）</span>
+  </div>
+
+  <div class="grid">
+    <div class="stat-card">
+      <div class="stat-label">总任务数</div>
+      <div class="stat-value blue">860</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">总失败数</div>
+      <div class="stat-value green">1</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">整体失败率</div>
+      <div class="stat-value green">0.12%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">最高吞吐</div>
+      <div class="stat-value blue">899.9/s</div>
+    </div>
+  </div>
+
+  <h2>失败率与百分位摘要</h2>
+  <p class="section-note">目标：所有并发级别下 topology failure rate &lt; 1%。Latency 和 Cost 均为每任务值。</p>
+  <table>
+    <thead>
+      <tr>
+        <th>并发</th>
+        <th>任务数</th>
+        <th>失败数</th>
+        <th>失败率</th>
+        <th>判定</th>
+        <th class="num">Lat P50 (ms)</th>
+        <th class="num">Lat P95 (ms)</th>
+        <th class="num">Lat P99 (ms)</th>
+        <th class="num">Cost P50 ($)</th>
+        <th class="num">Cost P95 ($)</th>
+        <th class="num">Cost P99 ($)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>1</code></td><td>10</td><td>0</td><td>0.00%</td><td class="pass">✅</td>
+        <td class="num">18.7</td><td class="num">22.9</td><td class="num">22.9</td>
+        <td class="num">0.000070</td><td class="num">0.000220</td><td class="num">0.000220</td>
+      </tr>
+      <tr>
+        <td><code>5</code></td><td>50</td><td>0</td><td>0.00%</td><td class="pass">✅</td>
+        <td class="num">14.9</td><td class="num">21.3</td><td class="num">38.6</td>
+        <td class="num">0.000080</td><td class="num">0.000340</td><td class="num">0.000720</td>
+      </tr>
+      <tr>
+        <td><code>10</code></td><td>100</td><td>0</td><td>0.00%</td><td class="pass">✅</td>
+        <td class="num">14.2</td><td class="num">21.7</td><td class="num">23.1</td>
+        <td class="num">0.000070</td><td class="num">0.000200</td><td class="num">0.000700</td>
+      </tr>
+      <tr>
+        <td><code>20</code></td><td>200</td><td>1</td><td>0.50%</td><td class="pass">✅</td>
+        <td class="num">17.4</td><td class="num">27.7</td><td class="num">47.5</td>
+        <td class="num">0.000060</td><td class="num">0.000210</td><td class="num">0.000840</td>
+      </tr>
+      <tr>
+        <td><code>50</code></td><td>500</td><td>0</td><td>0.00%</td><td class="pass">✅</td>
+        <td class="num">27.9</td><td class="num">58.1</td><td class="num">66.0</td>
+        <td class="num">0.000070</td><td class="num">0.000200</td><td class="num">0.000580</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>延迟分布（Latency ms）</h2>
+  <p class="section-note">P50/P95/P99 随并发增长的变化趋势。50 并发时 P99 = 66ms，远低于 500ms SLO。</p>
+  <table>
+    <thead>
+      <tr><th>并发</th><th class="num">Min</th><th class="num">Mean</th><th class="num">P50</th><th class="num">P95</th><th class="num">P99</th><th class="num">Max</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>1</code></td><td class="num">11.4</td><td class="num">17.8</td><td class="num">18.7</td><td class="num">22.9</td><td class="num">22.9</td><td class="num">22.9</td></tr>
+      <tr><td><code>5</code></td><td class="num">8.5</td><td class="num">15.7</td><td class="num">14.9</td><td class="num">21.3</td><td class="num">38.6</td><td class="num">38.6</td></tr>
+      <tr><td><code>10</code></td><td class="num">7.2</td><td class="num">14.8</td><td class="num">14.2</td><td class="num">21.7</td><td class="num">23.1</td><td class="num">23.7</td></tr>
+      <tr><td><code>20</code></td><td class="num">6.7</td><td class="num">18.0</td><td class="num">17.4</td><td class="num">27.7</td><td class="num">47.5</td><td class="num">63.7</td></tr>
+      <tr><td><code>50</code></td><td class="num">7.2</td><td class="num">29.9</td><td class="num">27.9</td><td class="num">58.1</td><td class="num">66.0</td><td class="num">78.0</td></tr>
+    </tbody>
+  </table>
+
+  <h2>成本分布（Cost USD）</h2>
+  <p class="section-note">每任务成本 = token 消耗 × $0.000015/token。P99 成本始终低于 $0.001。</p>
+  <table>
+    <thead>
+      <tr><th>并发</th><th class="num">Min</th><th class="num">Mean</th><th class="num">P50</th><th class="num">P95</th><th class="num">P99</th><th class="num">Max</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>1</code></td><td class="num">0.000030</td><td class="num">0.000089</td><td class="num">0.000070</td><td class="num">0.000220</td><td class="num">0.000220</td><td class="num">0.000220</td></tr>
+      <tr><td><code>5</code></td><td class="num">0.000030</td><td class="num">0.000121</td><td class="num">0.000080</td><td class="num">0.000340</td><td class="num">0.000720</td><td class="num">0.000720</td></tr>
+      <tr><td><code>10</code></td><td class="num">0.000030</td><td class="num">0.000111</td><td class="num">0.000070</td><td class="num">0.000200</td><td class="num">0.000700</td><td class="num">0.001120</td></tr>
+      <tr><td><code>20</code></td><td class="num">0.000000</td><td class="num">0.000113</td><td class="num">0.000060</td><td class="num">0.000210</td><td class="num">0.000840</td><td class="num">0.001020</td></tr>
+      <tr><td><code>50</code></td><td class="num">0.000020</td><td class="num">0.000104</td><td class="num">0.000070</td><td class="num">0.000200</td><td class="num">0.000580</td><td class="num">0.001060</td></tr>
+    </tbody>
+  </table>
+
+  <h2>拓扑分布</h2>
+  <p class="section-note">TopologyRouter 根据 deliberation 分析将任务路由到 SINGLE（单代理）或 DISPATCH（并行分发）拓扑。</p>
+  <table>
+    <thead>
+      <tr><th>并发</th><th>SINGLE</th><th>DISPATCH</th><th>SINGLE 占比</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>1</code></td><td>7</td><td>3</td><td>70.0%</td></tr>
+      <tr><td><code>5</code></td><td>37</td><td>13</td><td>74.0%</td></tr>
+      <tr><td><code>10</code></td><td>74</td><td>26</td><td>74.0%</td></tr>
+      <tr><td><code>20</code></td><td>150</td><td>50</td><td>75.0%</td></tr>
+      <tr><td><code>50</code></td><td>374</td><td>126</td><td>74.8%</td></tr>
+    </tbody>
+  </table>
+
+  <h2>吞吐量</h2>
+  <table>
+    <thead>
+      <tr><th>并发</th><th class="num">吞吐 (tasks/sec)</th><th class="num">批次耗时 (ms)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>1</code></td><td class="num">56.2</td><td class="num">178</td></tr>
+      <tr><td><code>5</code></td><td class="num">225.7</td><td class="num">222</td></tr>
+      <tr><td><code>10</code></td><td class="num">451.1</td><td class="num">222</td></tr>
+      <tr><td><code>20</code></td><td class="num">606.4</td><td class="num">330</td></tr>
+      <tr><td><code>50</code></td><td class="num">899.9</td><td class="num">556</td></tr>
+    </tbody>
+  </table>
+
+  <h2>方法论</h2>
+  <div class="section-note">
+    <p><strong>测试架构：</strong>TELOSOrchestrator + TopologyRouter 完整管道，AgentRuntime 边界替换为模拟真实 LLM 延迟（5-20ms）和 token 消耗（50-200 tokens）的 fake runtime。</p>
+    <p><strong>韧性模拟：</strong>fake runtime 模拟 2% 瞬态失败率 + 1 次重试，有效失败率降至 0.04%，模拟生产环境的 circuit breaker + retry 行为。</p>
+    <p><strong>任务类型：</strong>8 种任务覆盖 FACTUAL/ANALYSIS/RESEARCH/CODING/REVIEW/DEBUG/CREATIVE/DATA 场景。</p>
+    <p><strong>并发级别：</strong>1/5/10/20/50 并发，每级别 10 轮迭代，共 860 个任务。</p>
+    <p><strong>判定标准：</strong>failure rate &lt; 1% 为 PASS。Latency P99 &lt; 500ms 为 SLO。</p>
+  </div>
+</div>
+</body>
+</html>

@@ -167,3 +167,54 @@ describe('SpeculativeExecutor - planSpeculativeExecution', () => {
     expect(plan.length).toBeLessThanOrEqual(2);
   });
 });
+
+describe('SpeculativeExecutor - triggerSpeculativeExecution integration', () => {
+  beforeEach(() => {
+    resetPatternTracker();
+  });
+
+  it('triggerSpeculativeExecution is a no-op when config disabled', async () => {
+    // When speculativeExecution.enabled is not set (default), the method
+    // should return immediately without touching the cache or tools.
+    const { ToolExecutionService } = await import('../../src/runtime/toolExecutionService');
+    const mockCache = { get: () => null, set: () => {} };
+    const svc = new ToolExecutionService({
+      tools: new Map(),
+      compensationService: {} as never,
+      cacheManager: { getToolCache: () => mockCache } as never,
+      dlq: {} as never,
+      getRunHandle: () => null,
+      config: {} as never,
+      reflexionGenerator: {} as never,
+      stepTimeout: {} as never,
+      getPromotedTools: () => new Set(),
+      generateActionId: () => 'test',
+      getBreakerRegistry: () => ({ get: () => null }) as never,
+    });
+    // Should not throw and should return void
+    await expect(svc.triggerSpeculativeExecution()).resolves.toBeUndefined();
+  });
+
+  it('triggerSpeculativeExecution does not execute when no patterns learned', async () => {
+    const { ToolExecutionService } = await import('../../src/runtime/toolExecutionService');
+    let executeCalled = false;
+    const mockTool = { execute: async () => { executeCalled = true; return 'result'; } };
+    const tools = new Map([['file_read', mockTool as never]]);
+    const mockCache = { get: () => null, set: () => {} };
+    const svc = new ToolExecutionService({
+      tools,
+      compensationService: {} as never,
+      cacheManager: { getToolCache: () => mockCache } as never,
+      dlq: {} as never,
+      getRunHandle: () => null,
+      config: { speculativeExecution: { enabled: true } } as never,
+      reflexionGenerator: {} as never,
+      stepTimeout: {} as never,
+      getPromotedTools: () => new Set(),
+      generateActionId: () => 'test',
+      getBreakerRegistry: () => ({ get: () => null }) as never,
+    });
+    await svc.triggerSpeculativeExecution();
+    expect(executeCalled).toBe(false);
+  });
+});
