@@ -30,6 +30,11 @@ import { resetCheckpointWriter } from '../../src/runtime/checkpointWriter';
 import { resetMetricsCollector } from '../../src/runtime/metricsCollector';
 import { resetSLOManager } from '../../src/observability/sloManager';
 import { getModelRouter } from '../../src/runtime/modelRouter';
+import { resetEnterpriseSecurityGateway } from '../../src/security/enterpriseSecurityGateway';
+import { resetBillExplosionGuard } from '../../src/security/billExplosionGuard';
+import { resetCostGuard } from '../../src/security/costGuard';
+import { resetSecurityMonitor } from '../../src/security/securityMonitor';
+import { resetGuardianAgent } from '../../src/security/guardianAgent';
 
 describe('E2E: UltimateOrchestrator full pipeline', () => {
   function resetGlobals() {
@@ -48,6 +53,11 @@ describe('E2E: UltimateOrchestrator full pipeline', () => {
     resetCheckpointWriter();
     resetMetricsCollector();
     resetSLOManager();
+    resetEnterpriseSecurityGateway();
+    resetBillExplosionGuard();
+    resetCostGuard();
+    resetSecurityMonitor();
+    resetGuardianAgent();
   }
 
   function makeRuntime(): AgentRuntime {
