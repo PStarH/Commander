@@ -234,6 +234,12 @@ export const DEFAULT_APPROVAL_POLICIES: ApprovalPolicy[] = [
   },
   // 安全工具 — 自动审批
   {
+    pattern: 'file_read',
+    level: 'auto',
+    riskLevel: 'low',
+    description: 'File read is safe to auto-approve',
+  },
+  {
     pattern: 'web_search',
     level: 'auto',
     riskLevel: 'low',
@@ -383,14 +389,30 @@ export class ToolApproval {
     autoApproveCallback?: ApprovalCallback,
     tokenVerifier?: CapabilityTokenVerifier,
   ) {
+    // SECURITY: default to fail-closed. Without an explicit approval callback,
+    // high-risk tool calls are rejected rather than silently approved.
     this.approvalCallback =
       approvalCallback ??
-      (async () => ({
-        approved: true,
-        requestId: `auto-${Date.now()}`,
-        approvedAt: new Date().toISOString(),
-        reason: 'Default auto-approve',
-      }));
+      (async (req) => {
+        // SECURITY: fail-closed default. Unknown tools and explicitly manual
+        // policies are rejected when no human-in-the-loop callback is wired.
+        // Policy-driven auto/semi_auto tools with low/medium risk are allowed
+        // to proceed so that the approval policy itself remains meaningful.
+        const allowed =
+          (req.policy.level === 'auto' || req.policy.level === 'semi_auto') &&
+          req.policy.riskLevel !== 'critical' &&
+          req.policy.riskLevel !== 'high';
+        return {
+          approved: allowed,
+          requestId: allowed
+            ? `auto-default-${Date.now()}-${req.toolName}`
+            : `deny-${Date.now()}-${req.toolName}`,
+          approvedAt: new Date().toISOString(),
+          reason: allowed
+            ? 'Approved by fail-closed default callback (auto/semi_auto, low risk)'
+            : 'No approval callback configured; default policy is deny',
+        };
+      });
     this.autoApproveCallback = autoApproveCallback;
     this.tokenVerifier = tokenVerifier;
     this.initializeDefaultPolicies();
@@ -445,6 +467,7 @@ export class ToolApproval {
    * 查找匹配的审批策略
    */
   private findPolicy(toolName: string): ApprovalPolicy | undefined {
+    if (!toolName) return undefined;
     for (const [, policy] of this.policies) {
       if (typeof policy.pattern === 'string') {
         // 支持通配符
@@ -523,6 +546,19 @@ export class ToolApproval {
       token?: string;
     },
   ): Promise<ApprovalResult> {
+    // Reject malformed tool calls defensively rather than crashing on missing
+    // name / pattern lookups. This protects the approval pipeline from
+    // providers that return incomplete tool_call payloads.
+    if (!toolName) {
+      const now = new Date().toISOString();
+      return {
+        approved: false,
+        requestId: `deny-missing-name-${Date.now()}`,
+        approvedAt: now,
+        reason: 'Tool call rejected: missing tool name',
+      };
+    }
+
     // Capability-token fast path: a valid token short-circuits the entire
     // policy / arg-risk / trust-tier / approval flow. Without this, the
     // original "auto-approves every subsequent call after one human
@@ -569,12 +605,38 @@ export class ToolApproval {
     const policy = this.findPolicy(toolName);
 
     if (!policy) {
-      return {
-        approved: true,
-        requestId: `auto-${Date.now()}-${toolName}`,
-        approvedAt: new Date().toISOString(),
-        reason: 'No policy found, auto-approved',
+      // SECURITY: no matching policy is treated as manual approval. The default
+      // callback rejects, so unknown tools fail closed; custom callbacks can
+      // prompt a human operator instead of auto-approving.
+      const requestId = `req-${Date.now()}-${toolName}-${Math.random().toString(36).slice(2, 6)}`;
+      const now = new Date().toISOString();
+      const approvalRequest: ApprovalRequest = {
+        id: requestId,
+        toolName,
+        arguments: args,
+        policy: {
+          pattern: toolName,
+          level: 'manual',
+          riskLevel: 'high',
+          description: 'Unknown tool — no policy configured',
+        },
+        requestTime: now,
+        waitCount: 0,
+        reason: 'No matching approval policy; escalated to manual review',
       };
+      try {
+        const result = await this.approvalCallback(approvalRequest);
+        this.recordDecision(toolName, result.approved, 'manual');
+        return result;
+      } catch (e) {
+        this.recordDecision(toolName, false, 'manual');
+        return {
+          approved: false,
+          requestId,
+          approvedAt: now,
+          reason: `Approval callback error for unconfigured tool ${toolName}`,
+        };
+      }
     }
 
     const argRisk = assessArgRisk(args, policy.argRiskRules, policy.argWhitelist);

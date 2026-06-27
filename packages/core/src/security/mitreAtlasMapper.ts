@@ -768,6 +768,10 @@ const EVENT_TYPE_TO_ATLAS: Record<SecurityEventType, string[]> = {
   key_rotation_dry_run: ['AML.T0019'],
   token_budget_breach: ['AML.T0038'],
   circuit_breaker_short_circuit: ['AML.T0038'],
+  security_decision: [], // informational only
+  a2a_security_violation: ['AML.T0043'],
+  threat_learned: ['AML.T0050'],
+  signature_matched: ['AML.T0050'],
 };
 
 /** Map RedTeamFramework AttackCategory → ATLAS technique IDs */
@@ -792,6 +796,7 @@ const GUARDIAN_TYPE_TO_ATLAS: Record<GuardianInterventionType, string[]> = {
   behavioral_baseline_deviation: ['AML.T0019'],
   tool_usage_spike: ['AML.T0038.002'],
   data_exfiltration: ['AML.T0035'],
+  dangerous_tool_call: ['AML.T0012', 'AML.T0015', 'AML.T0037'],
 };
 
 /** Map CrossAgentCorrelator RuleType → ATLAS technique IDs */

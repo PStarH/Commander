@@ -375,7 +375,7 @@ export class SandboxVerifier {
       network_isolation: { pass: 0, fail: 0, skip: 0, error: 0 },
       process_isolation: { pass: 0, fail: 0, skip: 0, error: 0 },
       env_sanitization: { pass: 0, fail: 0, skip: 0, error: 0 },
-      resource_limits: { pass: 0, fail: 0, skip: 0, error: 0 }, // No tests yet — placeholder for memory/CPU enforcement checks
+      resource_limits: { pass: 0, fail: 0, skip: 1, error: 0 }, // Not yet implemented — resource limit enforcement verification is skipped
     };
 
     for (const ev of evidence) {
