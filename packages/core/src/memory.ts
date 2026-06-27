@@ -57,6 +57,32 @@ export interface EpisodicMemoryItem {
 
   // Confidence score (research: quality gate)
   confidence: number; // 0.0 - 1.0
+
+  /**
+   * Structured metadata for procedural memory fields and other typed extensions.
+   *
+   * Phase D (audit MED item 1): restores the proceduralType/successRate/
+   * usageCount/conditions fields that Phase A dropped. Stored as a JSON
+   * column in SqliteMemoryStore so the schema is forward-compatible.
+   */
+  meta?: MemoryMeta;
+}
+
+/**
+ * Structured metadata attached to memory items.
+ * Used primarily for procedural memory fields.
+ */
+export interface MemoryMeta {
+  /** Procedural type classification */
+  proceduralType?: 'sop' | 'tool' | 'workflow' | 'heuristic';
+  /** Success rate (0-1) for procedural memories */
+  successRate?: number;
+  /** Invocation count for procedural memories */
+  usageCount?: number;
+  /** Applicability conditions for procedural memories */
+  conditions?: string[];
+  /** Additional custom metadata */
+  [key: string]: unknown;
 }
 
 /**
@@ -72,6 +98,9 @@ export interface MemorySearchQuery {
   limit?: number;
   minPriority?: number;
   minConfidence?: number;
+  /** Security (G10): The agent requesting the read. Used for agent-level isolation —
+   * only items written by this agent OR explicitly shared items are returned. */
+  readerAgentId?: string;
 }
 
 /**
@@ -99,6 +128,8 @@ export interface MemoryWriteOptions {
   evidenceRefs?: string[];
   confidence?: number;
   duration?: MemoryDuration;
+  /** Structured metadata (procedural fields, etc.) */
+  meta?: MemoryMeta;
 }
 
 /**
@@ -209,6 +240,7 @@ export class InMemoryMemoryStore implements MemoryStore {
           : undefined,
       evidenceRefs: options.evidenceRefs,
       confidence: options.confidence ?? 0.8,
+      meta: options.meta,
     };
 
     this.items.set(id, item);
@@ -237,7 +269,13 @@ export class InMemoryMemoryStore implements MemoryStore {
     }
 
     if (options.updates) {
-      Object.assign(item, options.updates);
+      // Security: Prevent prototype pollution by filtering dangerous keys.
+      // Per OWASP: never merge untrusted objects without stripping __proto__.
+      const safeUpdates = { ...options.updates };
+      delete (safeUpdates as any).__proto__;
+      delete (safeUpdates as any).constructor;
+      delete (safeUpdates as any).prototype;
+      Object.assign(item, safeUpdates);
       item.lastAccessedAt = new Date().toISOString();
       this.accessOrderMap.set(options.id, ++this.accessOrder);
     }
@@ -286,10 +324,19 @@ export class InMemoryMemoryStore implements MemoryStore {
     return toDelete.length;
   }
 
-  async read(id: string, projectId: string): Promise<EpisodicMemoryItem | null> {
+  async read(id: string, projectId: string, readerAgentId?: string): Promise<EpisodicMemoryItem | null> {
     const item = this.items.get(id);
     if (!item || item.projectId !== projectId) {
       return null;
+    }
+
+    // Security (G10): Agent-level memory isolation.
+    // Agents can only read their own memories or memories explicitly shared.
+    if (readerAgentId && item.agentId && item.agentId !== readerAgentId) {
+      const isShared = item.meta?.shared === true;
+      if (!isShared) {
+        return null; // Not authorized to read this memory entry
+      }
     }
 
     // Update last accessed time
@@ -309,6 +356,12 @@ export class InMemoryMemoryStore implements MemoryStore {
       if (query.kind && item.kind !== query.kind) continue;
       if (query.missionId && item.missionId !== query.missionId) continue;
       if (query.agentId && item.agentId !== query.agentId) continue;
+      // Security (G10): Agent-level memory isolation — if readerAgentId is set,
+      // only return items written by the same agent OR explicitly shared items.
+      if (query.readerAgentId && item.agentId && item.agentId !== query.readerAgentId) {
+        const isShared = item.meta?.shared === true;
+        if (!isShared) continue;
+      }
       if (hasTags && !query.tags!.some((tag) => item.tags.includes(tag))) continue;
       if (query.minPriority !== undefined && item.priority < query.minPriority) continue;
       if (query.minConfidence !== undefined && item.confidence < query.minConfidence) continue;

@@ -183,7 +183,12 @@ export class JsonMemoryStore implements MemoryStore {
     }
     if (options.updates) {
       this.deindexItem(options.id);
-      Object.assign(item, options.updates);
+      // Security: Prevent prototype pollution by filtering dangerous keys.
+      const safeUpdates = { ...options.updates };
+      delete (safeUpdates as any).__proto__;
+      delete (safeUpdates as any).constructor;
+      delete (safeUpdates as any).prototype;
+      Object.assign(item, safeUpdates);
       item.lastAccessedAt = new Date().toISOString();
       this.indexItem(item);
       this.dirty = true;

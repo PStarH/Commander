@@ -213,7 +213,7 @@ export class MemorySystem {
       `Explanation: ${prefs.explanationLevel}`,
       `Language: ${prefs.language}`,
       `Expertise: ${Array.from(profile.expertise.entries())
-        .map(([k, v]) => `${k}=${v}`)
+        .map(([k, v]) => `${k}=${v.level}`)
         .join(', ')}`,
     ].join('\n');
   }
