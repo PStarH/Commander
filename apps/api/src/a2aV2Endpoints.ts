@@ -50,7 +50,7 @@ let taskIdCounter = 0;
 
 export function createA2AV2Router(): Router {
   const router = express.Router();
-  router.use(express.json());
+  // Security: express.json() with limit is applied globally in index.ts.
 
   // Well-known Agent Card (v1.0)
   router.get(AGENT_CARD_WELL_KNOWN_PATH, (_req, res) => {
