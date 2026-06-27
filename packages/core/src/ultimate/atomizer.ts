@@ -275,15 +275,36 @@ Include specific code snippets with line numbers when referencing code.`;
         }));
       case 'DEBATE': {
         const debaterCount = agentCount - 1;
+        // Feature 7: Free-MAD Anti-Conformity Prompts
+        // Research basis: "Commander-BFT-C3" consensus report section 6 (Debate Layer).
+        //
+        // Free-MAD (Consensus-Free Multi-Agent Debate) uses anti-conformity prompts
+        // to increase candidate diversity. Each debater is explicitly instructed to:
+        //   1. Argue a DISTINCT position (not just rephrase the same answer)
+        //   2. Challenge the consensus if they disagree
+        //   3. NOT conform to other debaters' views for the sake of agreement
+        //   4. Provide independent reasoning before seeing other positions
+        //
+        // This breaks the "conformity propagation chain" where agents copy each
+        // other's errors (hallucination resonance). The anti-conformity directive
+        // is varied per debater to prevent template-matching convergence.
+        const antiConformityDirectives = [
+          'You MUST take a DISTINCT and INDEPENDENT position. Do NOT agree with other debaters unless your own analysis independently arrives at the same conclusion. Challenge conventional wisdom if your reasoning supports it.',
+          'Your job is to find the answer that others might MISS. Consider edge cases, contrarian viewpoints, and approaches that diverge from the obvious. Independence of thought is more valuable than agreement.',
+          'Argue from a fundamentally different angle than you expect other debaters to take. If you suspect others will agree with X, seriously consider whether NOT-X might be correct. Do NOT conform to avoid conflict.',
+          'Be the devil\'s advocate. Even if you lean toward the majority view, argue the strongest possible case for the minority position. Only concede if the evidence is overwhelming AND you cannot find any counterargument.',
+          'Prioritize correctness over consensus. If you believe the popular answer is wrong, say so clearly with evidence. Do NOT cave to social pressure from other debaters. A wrong consensus is worse than a productive disagreement.',
+          'Think from first principles. Ignore what other debaters might say. Build your argument from the ground up using only the evidence and reasoning you can verify yourself. If this leads to a unique position, embrace it.',
+        ];
         const debaters = Array.from({ length: debaterCount }, (_, i) => ({
-          goal: `[Debate position ${i + 1}/${debaterCount}] ${goal}`,
+          goal: `[Debater ${i + 1}/${debaterCount}] ${goal}\n\n## Anti-Conformity Directive\n${antiConformityDirectives[i % antiConformityDirectives.length]}\n\nProvide your INDEPENDENT answer first, before considering what other debaters might say. Your unique perspective is valuable precisely because it differs from others.`,
           deliberation: { ...base, role: roleOf(`DEBATER_${i + 1}`) },
           dependencies: [],
         }));
         return [
           ...debaters,
           {
-            goal: `[Judge] Evaluate the debate positions and select the best answer for: ${goal}`,
+            goal: `[Judge] Evaluate the debate positions and select the best answer for: ${goal}\n\n## Judge Directive\nYou are evaluating a Free-MAD (anti-conformity) debate. Each debater was instructed to provide INDEPENDENT and DISTINCT positions. Evaluate each on its own merits — do NOT weight agreement between debaters as a positive signal. A single well-reasoned contrarian position can be correct even if all others disagree. Select the answer with the strongest evidence and reasoning, not the most popular one.`,
             deliberation: { ...base, role: roleOf('JUDGE') },
             dependencies: [],
           },
@@ -529,7 +550,8 @@ Write a comprehensive output with:
       return `You are a serial handoff agent. ${role.endsWith('_1') ? 'Start the task from scratch and pass forward a clear result.' : 'Continue from the previous agent’s output and move the task forward.'}`;
     }
     if (role.startsWith('DEBATER_')) {
-      return 'You are a debater. Argue your assigned position clearly and thoroughly.';
+      // Feature 7: Free-MAD anti-conformity system prompt for debaters
+      return 'You are a Free-MAD debater. Argue your assigned position with FULL INDEPENDENCE. Do NOT conform to other debaters\' views for the sake of agreement. Your unique perspective — even if contrarian — is valuable. Prioritize correctness over consensus.';
     }
     if (role === 'JUDGE') {
       return 'You are a judge. Evaluate the debate positions and select the best answer with justification.';

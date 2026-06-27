@@ -1,4 +1,4 @@
-import { reportSilentFailure } from '../../core/src/silentFailureReporter';
+import { reportSilentFailure } from '@commander/core';
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { ExecutionTrace, TraceEvent } from '@commander/core';
 import { PersistentTraceStore, type TraceStore } from '@commander/core';

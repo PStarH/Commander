@@ -7,6 +7,7 @@
 export type SandboxMode = 'read-only' | 'workspace-write' | 'full-access';
 export type NetworkPolicy = 'blocked' | 'allowlisted' | 'proxy' | 'full';
 export type SandboxMechanism =
+  | 'v8-isolate'
   | 'seatbelt'
   | 'bwrap'
   | 'appcontainer'
