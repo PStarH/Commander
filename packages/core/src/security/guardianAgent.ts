@@ -11,7 +11,8 @@ export type GuardianInterventionType =
   | 'goal_hijack'
   | 'behavioral_baseline_deviation'
   | 'tool_usage_spike'
-  | 'data_exfiltration';
+  | 'data_exfiltration'
+  | 'dangerous_tool_call';
 
 export interface GuardianAction {
   agentId: string;
@@ -121,6 +122,14 @@ export class GuardianAgent {
     const safety = this.detectSafetyViolation(action);
     if (safety) return this.intervene('safety_violation', action);
 
+    // Dangerous tool call detection — scan tool_call arguments for destructive commands
+    // This closes the critical gap where GuardianAgent only checked tool_result,
+    // allowing agents to execute `shell_execute({ command: 'rm -rf /' })` unchecked.
+    if (action.type === 'tool_call') {
+      const dangerous = this.detectDangerousToolCall(action);
+      if (dangerous) return this.intervene('dangerous_tool_call', action);
+    }
+
     const cost = this.detectCostOverrun(action);
     if (cost) return this.intervene('cost_overrun', action);
 
@@ -154,6 +163,58 @@ export class GuardianAgent {
 
   resume(agentId: string): void {
     this.pausedAgents.delete(agentId);
+    this.pauseTimestamps.delete(agentId);
+    this.pauseReasons.delete(agentId);
+  }
+
+  /** Map of agentId → timestamp when paused */
+  private pauseTimestamps = new Map<string, number>();
+  /** Map of agentId → intervention type that caused the pause */
+  private pauseReasons = new Map<string, GuardianInterventionType>();
+  /** Auto-resume timeout in ms (default: 5 minutes for non-critical interventions) */
+  private static readonly AUTO_RESUME_MS = 5 * 60 * 1000;
+  /** Intervention types that should NOT auto-resume (require manual intervention) */
+  private static readonly NO_AUTO_RESUME: Set<GuardianInterventionType> = new Set([
+    'dangerous_tool_call',
+    'safety_violation',
+    'data_exfiltration',
+  ]);
+
+  /**
+   * Check and auto-resume agents that have been paused for non-critical
+   * interventions beyond the auto-resume timeout.
+   *
+   * This prevents permanent agent death from false positives in anomaly
+   * detection, semantic drift, or cost overrun checks. Critical interventions
+   * (dangerous_tool_call, safety_violation, data_exfiltration) never auto-resume.
+   *
+   * Should be called periodically (e.g., every 30 seconds) from a health check.
+   */
+  checkAutoResume(): number {
+    const now = Date.now();
+    let resumed = 0;
+    for (const [agentId, pausedAt] of this.pauseTimestamps) {
+      const reason = this.pauseReasons.get(agentId);
+      // Skip critical interventions — these require manual resume
+      if (reason && GuardianAgent.NO_AUTO_RESUME.has(reason)) continue;
+
+      if (now - pausedAt >= GuardianAgent.AUTO_RESUME_MS) {
+        this.resume(agentId);
+        resumed++;
+        try {
+          getSecurityAuditLogger().logEvent({
+            type: 'config_change',
+            severity: 'low',
+            source: 'guardian_agent',
+            message: `Agent ${agentId} auto-resumed after ${(GuardianAgent.AUTO_RESUME_MS / 1000 / 60).toFixed(0)}min timeout (was paused for ${reason})`,
+            details: { agentId, previousReason: reason },
+          });
+        } catch {
+          /* best-effort */
+        }
+      }
+    }
+    return resumed;
   }
 
   getEvidencePacks(agentId?: string): GuardianEvidencePack[] {
@@ -280,6 +341,132 @@ export class GuardianAgent {
     if (action.type !== 'tool_result') return false;
     const threats = this.scanForThreats(action.content);
     return threats.some((t) => t.severity === 'HIGH' || t.severity === 'CRITICAL');
+  }
+
+  /**
+   * Detect dangerous commands in tool_call arguments.
+   *
+   * This closes the critical gap where GuardianAgent only scanned tool_result
+   * content but never inspected tool_call arguments. Agents could execute
+   * `shell_execute({ command: 'rm -rf /' })` without interception unless the
+   * command text happened to match prompt injection patterns.
+   *
+   * Now we scan the tool_call content (which includes the command string)
+   * for destructive command patterns before the tool executes.
+   */
+  private detectDangerousToolCall(action: GuardianAction): boolean {
+    // Extract the raw command string from tool_call arguments.
+    // The content field is JSON-serialized (e.g., `shell_execute({"command":"rm -rf /"})`)
+    // which means regex patterns that expect whitespace after `/` will fail because
+    // the `/` is followed by a JSON closing quote `"`.
+    // Fix: extract the actual command from metadata.args.command or metadata.args.code,
+    // and also scan the raw content with JSON-aware patterns.
+    let scanText = action.content.toLowerCase();
+
+    // Try to extract raw command from metadata for more accurate scanning
+    const args = action.metadata?.args as Record<string, unknown> | undefined;
+    if (args) {
+      // shell_execute / bash tools typically have a "command" field
+      if (typeof args.command === 'string') {
+        scanText = args.command.toLowerCase();
+      }
+      // python_execute / scriptTool typically have a "code" field
+      else if (typeof args.code === 'string') {
+        scanText = args.code.toLowerCase();
+      }
+      // file tools may have a "path" field
+      else if (typeof args.path === 'string') {
+        scanText = `${action.content.toLowerCase()} ${args.path.toLowerCase()}`;
+      }
+    }
+
+    // Also extract command from JSON-serialized content as fallback.
+    // Match "command":"..." or "code":"..." patterns in the JSON string.
+    const commandMatch = action.content.match(/"command"\s*:\s*"([^"]{5,})"/i);
+    const codeMatch = action.content.match(/"code"\s*:\s*"([^"]{5,})"/i);
+    if (commandMatch) scanText += ' ' + commandMatch[1].toLowerCase();
+    if (codeMatch) scanText += ' ' + codeMatch[1].toLowerCase();
+
+    // Catastrophic deletion patterns — always block
+    // Patterns are designed to match both raw commands and JSON-embedded commands.
+    // We use patterns that don't require trailing whitespace/EOF after `/`,
+    // since in JSON context the `/` may be followed by `"` or `\/` (escaped).
+    const catastrophicPatterns: RegExp[] = [
+      // rm -rf / — matches raw, JSON-embedded, and escaped variants
+      /\brm\s+(-[a-z]*r[a-z]*f*|--recursive\s*(?:--force\s*)?)\s+\/(?:\s|"|$|\\|;|&|\||\n)/i,
+      // rm -rf ~ (home directory)
+      /\brm\s+(-[a-z]*r[a-z]*f*|--recursive\s*(?:--force\s*)?)\s+~/i,
+      // rm -rf * (wildcard)
+      /\brm\s+(-[a-z]*r[a-z]*f*|--recursive\s*(?:--force\s*)?)\s+\*/i,
+      // rm -rf . (current directory)
+      /\brm\s+(-[a-z]*r[a-z]*f*|--recursive\s*(?:--force\s*)?)\s+\./i,
+      // rm -rf $HOME or $PWD
+      /\brm\s+(-[a-z]*r[a-z]*f*|--recursive\s*(?:--force\s*)?)\s+\$home/i,
+      /\brm\s+(-[a-z]*r[a-z]*f*|--recursive\s*(?:--force\s*)?)\s+\$pwd/i,
+      // rm -r / (without -f)
+      /\brm\s+(-[a-z]*r[a-z]*|--recursive\s*)\s+\/(?:\s|"|$|\\|;|&|\||\n)/i,
+      // rm -r ~, *, .
+      /\brm\s+(-[a-z]*r[a-z]*|--recursive\s*)\s+~/i,
+      /\brm\s+(-[a-z]*r[a-z]*|--recursive\s*)\s+\*/i,
+      /\brm\s+(-[a-z]*r[a-z]*|--recursive\s*)\s+\./i,
+      // chmod -R 777 / or ~
+      /\bchmod\s+(-r|--recursive)\s+777\s+\/(?:\s|"|$|\\)/i,
+      /\bchmod\s+(-r|--recursive)\s+777\s+~/i,
+      // mkfs — format filesystem
+      /\bmkfs\b/i,
+      // dd to device
+      /\bdd\s+if=.*of=\/dev\//i,
+      // fork bomb — :(){ :|:& };:
+      // Note: no \b anchor because ':' is not a word character
+      // The fork bomb ends with ':' (function call), NOT ':)'
+      /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;?\s*:/,
+    ];
+
+    for (const pattern of catastrophicPatterns) {
+      if (pattern.test(scanText)) {
+        const audit = getSecurityAuditLogger();
+        audit.logEvent({
+          type: 'content_threat',
+          severity: 'critical',
+          source: 'guardian_agent',
+          message: `Dangerous tool call blocked: pattern "${pattern.source}" detected in tool_call`,
+          details: {
+            agentId: action.agentId,
+            pattern: pattern.source,
+            contentPreview: scanText.slice(0, 200),
+          },
+        });
+        return true;
+      }
+    }
+
+    // Database destruction patterns
+    const dbDestructionPatterns: RegExp[] = [
+      /\bdrop\s+(table|database|schema|index)\b/i,
+      /\btruncate\s+table\b/i,
+      /\bdelete\s+from\s+\w+\s*;\s*$/i,
+      /\bdrop\s+database\b/i,
+    ];
+
+    for (const pattern of dbDestructionPatterns) {
+      if (pattern.test(scanText)) {
+        const audit = getSecurityAuditLogger();
+        audit.logEvent({
+          type: 'content_threat',
+          severity: 'critical',
+          source: 'guardian_agent',
+          message: `Dangerous database operation blocked: pattern "${pattern.source}" detected in tool_call`,
+          details: {
+            agentId: action.agentId,
+            pattern: pattern.source,
+            contentPreview: scanText.slice(0, 200),
+          },
+        });
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private detectCostOverrun(action: GuardianAction): boolean {
@@ -499,6 +686,8 @@ export class GuardianAgent {
   ): GuardianInterventionType {
     this.interventionCount++;
     this.pausedAgents.add(action.agentId);
+    this.pauseTimestamps.set(action.agentId, Date.now());
+    this.pauseReasons.set(action.agentId, type);
 
     const consecutive = (this.consecutiveAnomalies.get(action.agentId) ?? 0) + 1;
     this.consecutiveAnomalies.set(action.agentId, consecutive);

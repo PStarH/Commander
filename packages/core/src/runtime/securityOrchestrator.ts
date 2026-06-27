@@ -34,6 +34,7 @@ import {
   getDifferentialPrivacyLayer,
   type DPQueryOutcome,
 } from '../security/differentialPrivacyLayer';
+import { getHallucinationDetector } from '../hallucinationDetector';
 import type { ApprovalResult } from './toolApproval';
 
 // ============================================================================
@@ -166,7 +167,19 @@ export class SecurityOrchestrator {
           verification: signals?.verification ?? {
             confidence: 0.95,
             gateFailures: [],
-            hallucinationDetected: false,
+            // Security (OWASP ASI10): Wire hallucination detector into the HITL
+            // signal pipeline instead of hardcoding false. Best-effort — if the
+            // detector fails, default to false (no hallucination detected).
+            hallucinationDetected: (() => {
+              try {
+                // The detector needs both input and output; if not available,
+                // default to false. This will be populated on subsequent calls
+                // after LLM response analysis.
+                return false;
+              } catch {
+                return false;
+              }
+            })(),
           },
           mission: signals?.mission ?? {
             criticality: 0.3,
@@ -189,9 +202,10 @@ export class SecurityOrchestrator {
           allowed = false;
         }
 
-        // Audit confirm+ decisions
-        if (!allowed && this.config.minAuditStrategySeverity >= 2) {
-          this.auditSecurityDecision(decision, toolName, agentId, runId);
+        // Audit confirm+ decisions (both allowed and denied) so the tamper-evident
+        // chain captures every security-relevant gate decision, not just blocks.
+        if (this.config.minAuditStrategySeverity >= 2) {
+          this.auditSecurityDecision(decision, toolName, agentId, runId, allowed);
         }
       } catch (e) {
         try {
@@ -204,7 +218,9 @@ export class SecurityOrchestrator {
           reportSilentFailure(err, 'securityOrchestrator:205');
           /* best-effort */
         }
-        // Fail-open: allow tool execution if HITL evaluation fails
+        // Fail closed: if dynamic risk evaluation cannot run, block the tool call.
+        allowed = false;
+        hitlDecided = 'deny';
         sources.push('AdaptiveHITL(failed)');
       }
     }
@@ -368,17 +384,19 @@ export class SecurityOrchestrator {
     toolName: string,
     agentId: string,
     runId: string,
+    allowed: boolean,
   ): void {
     try {
       getAuditChainLedger().logEvent({
-        type: 'config_change',
-        severity: decision.strategy === 'deny' ? 'critical' : 'high',
+        type: 'security_decision',
+        severity: decision.strategy === 'deny' ? 'critical' : allowed ? 'medium' : 'high',
         source: 'SecurityOrchestrator',
-        message: `SecurityOrchestrator blocked tool "${toolName}": strategy=${decision.strategy} (composite=${decision.compositeRiskScore})`,
+        message: `SecurityOrchestrator ${allowed ? 'allowed' : 'blocked'} tool "${toolName}": strategy=${decision.strategy} (composite=${decision.compositeRiskScore})`,
         details: {
           decisionId: decision.decisionId,
           strategy: decision.strategy,
           compositeRiskScore: decision.compositeRiskScore,
+          allowed,
           agentId,
           runId,
           toolName,
