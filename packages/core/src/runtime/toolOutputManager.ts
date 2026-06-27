@@ -364,7 +364,8 @@ export class ToolOutputManager {
         fs.mkdirSync(dir, { recursive: true });
       }
 
-      const hash = createHash('md5').update(output).digest('hex').slice(0, 8);
+      // Security: Use SHA-256 instead of MD5 for cryptographic safety.
+      const hash = createHash('sha256').update(output).digest('hex').slice(0, 8);
       const filename = `${toolCall.name}_${hash}.txt`;
       const filepath = path.join(dir, filename);
       const tmpPath = `${filepath}.tmp`;

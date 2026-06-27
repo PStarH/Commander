@@ -273,6 +273,14 @@ export interface AgentRuntimeConfig {
   securityMonitor?: {
     enabled?: boolean;
   };
+  /** Runtime guardian (LLM-based tool call reviewer) configuration. */
+  runtimeGuardian?: {
+    enabled?: boolean;
+    model?: string;
+    providerName?: string;
+    maxTokens?: number;
+    timeoutMs?: number;
+  };
   /** Cycle detector configuration. */
   cycleDetection?: {
     enabled?: boolean;

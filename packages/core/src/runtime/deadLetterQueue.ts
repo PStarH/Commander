@@ -176,6 +176,8 @@ export class DeadLetterQueue {
   }
 
   readEntries(category: DLQCategory, limit = 50): DeadLetterEntry[] {
+    // Flush in-memory buffer to disk first so reads see all enqueued entries
+    this.flush(category);
     const filePath = path.join(this.baseDir, `${category}.ndjson`);
     if (!fs.existsSync(filePath)) return [];
     try {
@@ -225,6 +227,8 @@ export class DeadLetterQueue {
    * for the matching id. Returns null if the entry is not found.
    */
   replay(entryId: string): { category: DLQCategory; entry: DeadLetterEntry } | null {
+    // Flush all buffers to disk so replay can find entries not yet written
+    this.flush();
     const files = fs.readdirSync(this.baseDir).filter((f) => f.endsWith('.ndjson'));
     for (const file of files) {
       const category = file.replace('.ndjson', '') as DLQCategory;
@@ -265,11 +269,57 @@ export class DeadLetterQueue {
   }
 
   /**
+   * Mark an entry as recovered WITHOUT returning/re-executing it.
+   * Used by downstream consumers after they have successfully re-executed
+   * the operation, to acknowledge that the entry no longer needs retry.
+   *
+   * This is the "ack" half of the DLQ replay protocol:
+   *   1. Worker publishes dlq.replayed event (entry NOT marked recovered)
+   *   2. Consumer re-executes the operation
+   *   3. Consumer calls markRecovered(entryId) on success
+   */
+  markRecovered(entryId: string): boolean {
+    this.flush();
+    const files = fs.readdirSync(this.baseDir).filter((f) => f.endsWith('.ndjson'));
+    for (const file of files) {
+      const filePath = path.join(this.baseDir, file);
+      if (!fs.existsSync(filePath)) continue;
+      const raw = fs.readFileSync(filePath, 'utf-8').trim();
+      if (!raw) continue;
+      const lines = raw.split('\n');
+      const idx = lines.findIndex((line) => {
+        try {
+          const parsed = JSON.parse(line) as DeadLetterEntry;
+          return parsed.id === entryId;
+        } catch {
+          return false;
+        }
+      });
+      if (idx === -1) continue;
+      try {
+        const parsed = JSON.parse(lines[idx]) as DeadLetterEntry;
+        parsed.recovered = true;
+        lines[idx] = JSON.stringify(parsed);
+        const tmpPath = filePath + '.tmp';
+        fs.writeFileSync(tmpPath, lines.join('\n') + '\n');
+        fs.renameSync(tmpPath, filePath);
+        return true;
+      } catch (err) {
+        reportSilentFailure(err, `deadLetterQueue:markRecovered:${entryId}`);
+        return false;
+      }
+    }
+    return false;
+  }
+
+  /**
    * List all entries across DLQ categories that are retryable but
    * haven't been recovered yet. The caller decides what to do with
    * these (re-execute via saga, alert an operator, etc.).
    */
   listUnrecoveredEntries(limit = 50): Array<{ category: DLQCategory; entry: DeadLetterEntry }> {
+    // Flush all buffers to disk so the listing includes pending entries
+    this.flush();
     const result: Array<{ category: DLQCategory; entry: DeadLetterEntry }> = [];
     const files = fs.readdirSync(this.baseDir).filter((f) => f.endsWith('.ndjson'));
     for (const file of files) {
@@ -286,6 +336,8 @@ export class DeadLetterQueue {
   }
 
   getStats(): { category: string; count: number }[] {
+    // Flush all buffers so stats reflect pending entries
+    this.flush();
     const results: { category: string; count: number }[] = [];
     try {
       const files = fs.readdirSync(this.baseDir);

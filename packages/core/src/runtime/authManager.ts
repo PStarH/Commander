@@ -75,7 +75,8 @@ export class AuthManager {
     }
     const now = new Date().toISOString();
     const user: AuthUser = {
-      id: `user_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      // Security: Use crypto.randomUUID() for unpredictable user IDs.
+      id: `user_${crypto.randomUUID()}`,
       username,
       role,
       apiKeys: [],
