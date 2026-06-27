@@ -8,6 +8,7 @@ import { TELOSOrchestrator } from './telos/telosOrchestrator';
 import { deliberate } from './ultimate/deliberation';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 import { MCPIntegrationManager, readMCPConfig } from './tools/mcpToolAdapter';
 import { A2AServer, createA2AServer } from './mcp/a2aServer';
 import { A2ADiscoveryManager } from './mcp/a2aClient';
@@ -156,6 +157,13 @@ export class CommanderAgentLoop {
       registrations.push(async () => {
         const { XiaomiProvider } = await import('./runtime/providers/xiaomiProvider');
         this.runtime.registerProvider('xiaomi', new XiaomiProvider({ apiKey }));
+      });
+    }
+    if (process.env.MINIMAX_API_KEY) {
+      const apiKey = process.env.MINIMAX_API_KEY;
+      registrations.push(async () => {
+        const { MiniMaxProvider } = await import('./runtime/providers/minimaxProvider');
+        this.runtime.registerProvider('minimax', new MiniMaxProvider({ apiKey }));
       });
     }
     if (process.env.OLLAMA_HOST || process.env.OLLAMA_BASE_URL || process.env.OLLAMA_MODEL) {
@@ -429,6 +437,7 @@ export class CommanderAgentLoop {
               port: (serverCfg.port as number) ?? 3002,
               host: (serverCfg.host as string) ?? '127.0.0.1',
               agentCard,
+              authToken: (serverCfg.authToken as string) ?? process.env.A2A_AUTH_TOKEN ?? crypto.randomUUID() + crypto.randomUUID(),
             },
             this.runtime,
           );
@@ -454,8 +463,20 @@ export class CommanderAgentLoop {
           url: string;
           authToken?: string;
         }>;
-        if (remoteConfigs.length > 0) {
-          await this.a2aDiscoveryManager.discoverFromConfig(remoteConfigs);
+        const validConfigs = remoteConfigs.filter((cfg) => {
+          if (!cfg.authToken || cfg.authToken.length < 16) {
+            this.logger.warn(
+              'AgentLoop',
+              `Skipping A2A remote agent "${cfg.label}" — authToken is required (>=16 chars).`,
+            );
+            return false;
+          }
+          return true;
+        });
+        if (validConfigs.length > 0) {
+          await this.a2aDiscoveryManager.discoverFromConfig(
+            validConfigs as Array<{ label: string; url: string; authToken: string }>,
+          );
           this.logger.info(
             'AgentLoop',
             `Connected to ${this.a2aDiscoveryManager.getAgentCount()} remote A2A agents`,
@@ -477,18 +498,26 @@ export class CommanderAgentLoop {
 
     // A2A discovery from env var
     const envJson = process.env.COMMANDER_A2A_AGENTS;
+    const envAuthToken = process.env.COMMANDER_A2A_AUTH_TOKEN;
     if (envJson && !this.a2aDiscoveryManager) {
       try {
         const urls = JSON.parse(envJson) as string[];
         if (Array.isArray(urls) && urls.length > 0) {
-          this.a2aDiscoveryManager = new A2ADiscoveryManager();
-          await this.a2aDiscoveryManager.discoverFromConfig(
-            urls.map((url, i) => ({ label: `a2a-env-${i}`, url })),
-          );
-          this.logger.info(
-            'AgentLoop',
-            `Connected to ${this.a2aDiscoveryManager.getAgentCount()} env-configured A2A agents`,
-          );
+          if (!envAuthToken || envAuthToken.length < 16) {
+            this.logger.warn(
+              'AgentLoop',
+              'COMMANDER_A2A_AGENTS is set but COMMANDER_A2A_AUTH_TOKEN is missing or too short; skipping env-based A2A discovery.',
+            );
+          } else {
+            this.a2aDiscoveryManager = new A2ADiscoveryManager();
+            await this.a2aDiscoveryManager.discoverFromConfig(
+              urls.map((url, i) => ({ label: `a2a-env-${i}`, url, authToken: envAuthToken })),
+            );
+            this.logger.info(
+              'AgentLoop',
+              `Connected to ${this.a2aDiscoveryManager.getAgentCount()} env-configured A2A agents`,
+            );
+          }
         }
       } catch (err) {
         reportSilentFailure(err, 'agentLoop:493');

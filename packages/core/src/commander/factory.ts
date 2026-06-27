@@ -37,6 +37,7 @@ const PROVIDER_FACTORIES: Record<string, () => Promise<{ new (...args: any[]): a
   xai: async () => (await import('../runtime/providers/xaiProvider')).XAIProvider,
   anyscale: async () => (await import('../runtime/providers/anyscaleProvider')).AnyscaleProvider,
   deepinfra: async () => (await import('../runtime/providers/deepinfraProvider')).DeepInfraProvider,
+  minimax: async () => (await import('../runtime/providers/minimaxProvider')).MiniMaxProvider,
 };
 
 export interface WiredRuntime {
