@@ -9,6 +9,9 @@ import type { LLMRequest, Tool, ToolResult } from './types';
 import { classifyProvisionIntent } from './taskAnalyzer';
 import { ToolResultCache } from './toolResultCache';
 import { getGlobalLogger } from '../logging';
+import { scanToolOutputForInjection } from '../contentScanner';
+import { sanitizeIfNeeded } from '../security/outputSanitizer';
+import * as path from 'node:path';
 
 // ============================================================================
 // Provisioned tool result injection config
@@ -21,6 +24,51 @@ interface ProvisionConfig {
   maxOutputChars: number;
   buildArgs: (goal: string) => Record<string, unknown>;
   validateOutput?: (output: string) => boolean;
+}
+
+// ============================================================================
+// Security helpers for provisioned content
+// ============================================================================
+
+/** Allowed workspace roots for file_read provisioning. */
+const ALLOWED_FILE_ROOTS = [process.cwd(), '/workspace', '/tmp'];
+
+/**
+ * Validate that a file path is inside an allowed workspace root.
+ * Prevents goal-induced path traversal (e.g. "read ~/.ssh/id_rsa").
+ */
+function isAllowedFilePath(filePath: string): boolean {
+  if (!filePath) return false;
+  const resolved = path.resolve(filePath);
+  return ALLOWED_FILE_ROOTS.some((root) => {
+    const relative = path.relative(root, resolved);
+    return relative && !relative.startsWith('..') && !path.isAbsolute(relative);
+  });
+}
+
+/**
+ * Sanitize and scan external tool output before it enters the LLM context.
+ * Returns a safe replacement string if injection or credential leakage is found.
+ */
+function sanitizeProvisionedOutput(output: string, source: string): string {
+  let safe = output;
+  try {
+    const injectionScan = scanToolOutputForInjection(safe);
+    if (injectionScan.blocked) {
+      safe = `[Provisioned output filtered: ${injectionScan.reason}]`;
+    }
+  } catch {
+    /* best-effort */
+  }
+  try {
+    const sanitizeResult = sanitizeIfNeeded(safe, { source });
+    if (sanitizeResult.wasRedacted) {
+      safe = sanitizeResult.output;
+    }
+  } catch {
+    /* best-effort */
+  }
+  return safe;
 }
 
 // ============================================================================
@@ -45,9 +93,14 @@ async function provisionTool(
   const cached = toolCache.get(toolCall);
 
   if (cached && !cached.error) {
+    const safeOutput = sanitizeProvisionedOutput(
+      cached.output.slice(0, config.maxOutputChars),
+      `provision:${config.toolName}`,
+    );
     request.messages.push({
-      role: 'system',
-      content: `[Tool: ${config.label}]\n${cached.output.slice(0, config.maxOutputChars)}`,
+      role: 'tool',
+      content: `[Provisioned ${config.label}]\n${safeOutput}`,
+      name: config.toolName,
     });
     return true;
   }
@@ -65,9 +118,14 @@ async function provisionTool(
         durationMs: 0,
       };
       toolCache.set(toolCall, toolResult);
+      const safeOutput = sanitizeProvisionedOutput(
+        result.slice(0, config.maxOutputChars),
+        `provision:${config.toolName}`,
+      );
       request.messages.push({
-        role: 'system',
-        content: `[Tool: ${config.label}]\n${result.slice(0, config.maxOutputChars)}`,
+        role: 'tool',
+        content: `[Provisioned ${config.label}]\n${safeOutput}`,
+        name: config.toolName,
       });
       return true;
     }
@@ -110,7 +168,12 @@ const PROVISION_CONFIGS: ProvisionConfig[] = [
       const fileMatch = goal.match(
         /(?:read|open|analyze|load|parse)\s+(?:the\s+)?(?:file\s+)?['"]?([\w./\\-]+\.[a-z]{2,4})['"]?/i,
       );
-      return { path: fileMatch?.[1] ?? '' };
+      const candidate = fileMatch?.[1] ?? '';
+      // SECURITY: reject goal-induced paths outside the allowed workspace roots.
+      if (!candidate || !isAllowedFilePath(candidate)) {
+        return { path: '' };
+      }
+      return { path: candidate };
     },
     validateOutput: (output) => {
       // For file_read, we also check that we got a valid path

@@ -96,7 +96,13 @@ export type MessageBusTopic =
   | 'security.capability_minted'
   | 'security.capability_revoked'
   | 'security.token_delegated'
-  | 'security.policy_denied';
+  | 'security.policy_denied'
+  // --- Real-time streaming (observability) ---
+  | 'reasoning.delta'
+  | 'output.delta'
+  // --- DLQ replay worker ---
+  | 'dlq.replayed'
+  | 'circuit.compensation_trigger';
 
 /**
  * Priority levels for messages.

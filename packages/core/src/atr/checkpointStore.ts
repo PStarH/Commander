@@ -29,6 +29,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { CheckpointState } from '../runtime/stateCheckpointer';
+import { getCurrentTenantId } from '../runtime/tenantContext';
 import { walCheckpoint } from '../storage/walCheckpoint';
 
 let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
@@ -152,16 +153,16 @@ export class WalCheckpointStore {
          fencing_epoch, lease_token, version, created_at, state_json)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    this.stmtGet = d.prepare(`SELECT * FROM atr_checkpoints WHERE id = ? LIMIT 1`);
+    this.stmtGet = d.prepare(`SELECT * FROM atr_checkpoints WHERE id = ? AND (tenant_id IS ? OR ? IS NULL) LIMIT 1`);
     this.stmtLatest = d.prepare(`
-      SELECT * FROM atr_checkpoints WHERE run_id = ?
+      SELECT * FROM atr_checkpoints WHERE run_id = ? AND (tenant_id IS ? OR ? IS NULL)
       ORDER BY step_number DESC LIMIT 1
     `);
     this.stmtList = d.prepare(`
-      SELECT * FROM atr_checkpoints WHERE run_id = ?
+      SELECT * FROM atr_checkpoints WHERE run_id = ? AND (tenant_id IS ? OR ? IS NULL)
       ORDER BY step_number ASC
     `);
-    this.stmtDeleteRun = d.prepare(`DELETE FROM atr_checkpoints WHERE run_id = ?`);
+    this.stmtDeleteRun = d.prepare(`DELETE FROM atr_checkpoints WHERE run_id = ? AND (tenant_id IS ? OR ? IS NULL)`);
   }
 
   /**
@@ -172,14 +173,15 @@ export class WalCheckpointStore {
   save(state: CheckpointState): CheckpointRecord {
     if (!this.stmtInsert || !this.stmtLatest) throw new Error('WalCheckpointStore not initialized');
     const id = `${state.runId}_${state.stepNumber}`;
-    const previous = this.stmtLatest.get(state.runId) as CheckpointRow | undefined;
+    const tenant = getCurrentTenantId() ?? null;
+    const previous = this.stmtLatest.get(state.runId, tenant, tenant) as CheckpointRow | undefined;
     const version = (previous?.version ?? 0) + 1;
     const stateJson = JSON.stringify({ ...state, version });
     this.stmtInsert.run(
       id,
       state.runId,
       state.agentId ?? null,
-      state.context?.projectId ?? null,
+      getCurrentTenantId() ?? state.context?.projectId ?? null,
       state.stepNumber,
       state.phase,
       state.fencingEpoch ?? null,
@@ -192,7 +194,7 @@ export class WalCheckpointStore {
       id,
       runId: state.runId,
       agentId: state.agentId,
-      tenantId: state.context?.projectId,
+      tenantId: getCurrentTenantId() ?? state.context?.projectId,
       stepNumber: state.stepNumber,
       phase: state.phase,
       fencingEpoch: state.fencingEpoch,
@@ -205,25 +207,29 @@ export class WalCheckpointStore {
 
   get(id: string): CheckpointRecord | null {
     if (!this.stmtGet) return null;
-    const row = this.stmtGet.get(id) as CheckpointRow | undefined;
+    const tenant = getCurrentTenantId() ?? null;
+    const row = this.stmtGet.get(id, tenant, tenant) as CheckpointRow | undefined;
     return row ? rowToRecord(row) : null;
   }
 
   getLatest(runId: string): CheckpointRecord | null {
     if (!this.stmtLatest) return null;
-    const row = this.stmtLatest.get(runId) as CheckpointRow | undefined;
+    const tenant = getCurrentTenantId() ?? null;
+    const row = this.stmtLatest.get(runId, tenant, tenant) as CheckpointRow | undefined;
     return row ? rowToRecord(row) : null;
   }
 
   listByRun(runId: string): CheckpointRecord[] {
     if (!this.stmtList) return [];
-    const rows = this.stmtList.all(runId) as CheckpointRow[];
+    const tenant = getCurrentTenantId() ?? null;
+    const rows = this.stmtList.all(runId, tenant, tenant) as CheckpointRow[];
     return rows.map(rowToRecord);
   }
 
   deleteRun(runId: string): void {
     if (!this.stmtDeleteRun) return;
-    this.stmtDeleteRun.run(runId);
+    const tenant = getCurrentTenantId() ?? null;
+    this.stmtDeleteRun.run(runId, tenant, tenant);
   }
 
   countByRun(runId: string): number {
