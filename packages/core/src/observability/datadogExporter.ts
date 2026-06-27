@@ -3,9 +3,9 @@ import * as https from 'node:https';
 import { getGlobalLogger } from '../logging';
 
 interface DatadogSpan {
-  trace_id: string;
-  span_id: string;
-  parent_id?: string;
+  trace_id: number;
+  span_id: number;
+  parent_id?: number;
   name: string;
   resource: string;
   service: string;
@@ -60,9 +60,9 @@ function eventToDatadogSpan(
   else if (event.type === 'tool_execution') spanType = 'tool';
 
   return {
-    trace_id: event.traceId.replace(/-/g, ''),
-    span_id: event.spanId.replace(/-/g, ''),
-    parent_id: event.parentSpanId?.replace(/-/g, ''),
+    trace_id: parseInt(event.traceId.replace(/-/g, '').slice(0, 15), 16),
+    span_id: parseInt(event.spanId.replace(/-/g, '').slice(0, 15), 16),
+    parent_id: event.parentSpanId ? parseInt(event.parentSpanId.replace(/-/g, '').slice(0, 15), 16) : undefined,
     name: `${event.type}:${event.data.modelInfo?.model ?? event.data.input ?? 'unknown'}`,
     resource: `${event.type}.${event.data.modelInfo?.model ?? 'unknown'}`,
     service: serviceName,
@@ -117,13 +117,16 @@ export class DatadogExporter {
     if (this.queue.length === 0) return;
 
     const batch = this.queue.splice(0, this.maxBatchSize);
-    const payload = JSON.stringify({ spans: batch });
+    // Datadog trace intake expects an array of traces, each trace being an
+    // array of spans: [[span1, span2], [span3]]. We send each batch as a
+    // single trace group.
+    const payload = JSON.stringify([batch]);
 
-    const url = `https://http-intake.logs.${this.config.site}/api/v2/events`;
+    const url = `https://trace.agent.${this.config.site}/api/v0.5/traces`;
     const headers = {
       'Content-Type': 'application/json',
       'DD-API-KEY': this.config.apiKey,
-      'DD-EVIL-AGENT': 'true',
+      'X-Commander-Source': 'observability',
     };
 
     return new Promise((resolve, _reject) => {
