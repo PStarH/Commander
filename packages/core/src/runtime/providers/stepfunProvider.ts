@@ -28,7 +28,19 @@ export class StepFunProvider extends BaseOpenAICompatibleProvider {
     }
     const model = (request.model || this.config.defaultModel).toLowerCase();
     if (model.startsWith('step-3')) {
-      extra.reasoning_effort = 'medium';
+      // Respect caller-provided reasoningConfig; fall back to medium effort
+      const rc = request.reasoningConfig;
+      if (rc?.enabled) {
+        if (rc.effort) {
+          extra.reasoning_effort = rc.effort;
+        }
+        if (rc.budget && rc.budget > 0) {
+          extra.max_thinking_tokens = rc.budget;
+        }
+      } else if (!rc || rc.enabled === undefined) {
+        // Default: medium reasoning effort for step-3 models
+        extra.reasoning_effort = 'medium';
+      }
     }
     return extra;
   }

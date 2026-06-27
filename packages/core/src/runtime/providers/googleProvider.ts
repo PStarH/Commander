@@ -35,6 +35,8 @@ interface GeminiResponse {
     promptTokenCount: number;
     candidatesTokenCount: number;
     totalTokenCount: number;
+    /** Gemini implicit caching: tokens served from cache (billed at 90% discount) */
+    cachedContentTokenCount?: number;
   };
 }
 
@@ -57,12 +59,25 @@ export class GoogleProvider implements LLMProvider {
 
     const url = `${this.baseUrl}/models/${model}:generateContent?key=${this.apiKey}`;
 
+    const generationConfig: Record<string, unknown> = {
+      maxOutputTokens: request.maxTokens ?? 8192,
+      temperature: request.temperature ?? 0.7,
+    };
+
+    // Gemini 2.5+ thinking budget configuration
+    const rc = request.reasoningConfig;
+    if (rc?.enabled) {
+      if (rc.budget !== undefined && rc.budget >= 0) {
+        generationConfig.thinkingConfig = { thinkingBudget: rc.budget };
+      }
+      if (rc.effort === 'none') {
+        generationConfig.thinkingConfig = { thinkingBudget: 0 };
+      }
+    }
+
     const body: Record<string, unknown> = {
       contents,
-      generationConfig: {
-        maxOutputTokens: request.maxTokens ?? 8192,
-        temperature: request.temperature ?? 0.7,
-      },
+      generationConfig,
     };
     if (systemInstruction) {
       body.system_instruction = { parts: [{ text: systemInstruction }] };
@@ -190,6 +205,7 @@ export class GoogleProvider implements LLMProvider {
       promptTokenCount: 0,
       candidatesTokenCount: 0,
       totalTokenCount: 0,
+      cachedContentTokenCount: 0,
     };
 
     const parsed = tryParseGeminiResponse(text, responseFormat);
@@ -201,6 +217,7 @@ export class GoogleProvider implements LLMProvider {
         promptTokens: usage.promptTokenCount,
         completionTokens: usage.candidatesTokenCount,
         totalTokens: usage.totalTokenCount,
+        cacheReadTokens: usage.cachedContentTokenCount ?? 0,
       },
       finishReason:
         finishReason === 'STOP'

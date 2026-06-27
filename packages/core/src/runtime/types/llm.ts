@@ -32,8 +32,8 @@ export interface ReasoningConfig {
   enabled: boolean;
   /** Maximum tokens for reasoning/thinking (0 = use provider default) */
   budget?: number;
-  /** Effort level — some providers support low/medium/high reasoning effort */
-  effort?: 'low' | 'medium' | 'high';
+  /** Effort level — some providers support low/medium/high/none reasoning effort */
+  effort?: 'low' | 'medium' | 'high' | 'none';
 }
 
 /**
@@ -57,6 +57,8 @@ export interface LLMRequest {
     /** Name for the structured output schema (OpenAI json_schema). */
     name?: string;
   };
+  /** Mistral safe_prompt: enables additional safety moderation */
+  safePrompt?: boolean;
 }
 
 /**
@@ -138,6 +140,8 @@ export interface CacheConfig {
   geminiCachedContentName?: string;
   /** When true, provider should use batch API mode for 50% cost savings (24h turnaround). */
   isBatch?: boolean;
+  /** OpenAI prompt_cache_retention: "24h" for gpt-5.x models, "in_memory" for older models */
+  promptCacheRetention?: '24h' | 'in_memory';
 }
 
 export interface SemanticCacheRuntimeConfig {
@@ -193,6 +197,8 @@ export interface LLMResponse {
   parsed?: Record<string, unknown>;
   /** MiMo reasoning models put internal reasoning here. Present on responses from reasoning models. */
   reasoning_content?: string;
+  /** Anthropic extended thinking content (chain-of-thought from Extended Thinking beta) */
+  thinking?: string;
 }
 
 /**

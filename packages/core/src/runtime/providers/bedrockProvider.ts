@@ -97,6 +97,48 @@ export class BedrockProvider implements LLMProvider {
       };
     }
 
+    // Prompt caching via Bedrock Converse cachePoint breakpoints.
+    // Bedrock uses explicit cachePoint markers (not Anthropic cache_control).
+    // Limits: max 4 cachePoints per request; 1h-TTL breakpoints must precede
+    // 5m-TTL ones. We inject at most one breakpoint per block here, so ordering
+    // and count stay within bounds.
+    if (request.cacheConfig?.useCacheControl) {
+      const ttl = request.cacheConfig.cacheTtl ?? '5m';
+      // Append a cachePoint to the system block (only if a system block exists)
+      if (Array.isArray(body.system) && (body.system as unknown[]).length > 0) {
+        (body.system as unknown[]).push({
+          text: '',
+          cachePoint: { type: 'default', ttl },
+        });
+      }
+      // Append a cachePoint tool entry (only when tools are present)
+      const toolsArr = body.toolConfig
+        ? (body.toolConfig as { tools?: unknown[] }).tools
+        : undefined;
+      if (Array.isArray(toolsArr) && toolsArr.length > 0) {
+        toolsArr.push({
+          toolSpec: {
+            name: '__cache_point__',
+            description: '',
+            inputSchema: { json: { type: 'object' } },
+          },
+          cachePoint: { type: 'default', ttl },
+        });
+      }
+    }
+
+    // Extended Thinking for Claude models (Bedrock Converse API).
+    // additionalModelRequestFields.thinking enables chain-of-thought reasoning
+    // before the visible response. Only Claude models support this field.
+    if (request.reasoningConfig?.enabled && /claude/i.test(model)) {
+      body.additionalModelRequestFields = {
+        thinking: {
+          type: 'enabled',
+          budget_tokens: request.reasoningConfig.budget ?? 4096,
+        },
+      };
+    }
+
     try {
       if (!this.sdk) {
         throw new Error('Bedrock SDK not loaded');
@@ -116,6 +158,7 @@ export class BedrockProvider implements LLMProvider {
                       | Array<{
                           text?: string;
                           toolUse?: { toolUseId: string; name: string; input: unknown };
+                          reasoningContent?: { reasoningText?: { text?: string } };
                         }>
                       | undefined;
                   }
@@ -127,6 +170,8 @@ export class BedrockProvider implements LLMProvider {
           | {
               inputTokens?: number;
               outputTokens?: number;
+              cacheReadInputTokens?: number;
+              cacheWriteInputTokens?: number;
             }
           | undefined;
       };
@@ -140,6 +185,7 @@ export class BedrockProvider implements LLMProvider {
                         | Array<{
                             text?: string;
                             toolUse?: { toolUseId: string; name: string; input: unknown };
+                            reasoningContent?: { reasoningText?: { text?: string } };
                           }>
                         | undefined;
                     }
@@ -151,6 +197,8 @@ export class BedrockProvider implements LLMProvider {
             | {
                 inputTokens?: number;
                 outputTokens?: number;
+                cacheReadInputTokens?: number;
+                cacheWriteInputTokens?: number;
               }
             | undefined;
         },
@@ -247,11 +295,17 @@ export class BedrockProvider implements LLMProvider {
           content?: Array<{
             text?: string;
             toolUse?: { toolUseId: string; name: string; input: unknown };
+            reasoningContent?: { reasoningText?: { text?: string } };
           }>;
         };
       };
       stopReason?: string;
-      usage?: { inputTokens?: number; outputTokens?: number };
+      usage?: {
+        inputTokens?: number;
+        outputTokens?: number;
+        cacheReadInputTokens?: number;
+        cacheWriteInputTokens?: number;
+      };
     },
     model: string,
   ): LLMResponse {
@@ -263,19 +317,39 @@ export class BedrockProvider implements LLMProvider {
       (c): c is typeof c & { toolUse: { toolUseId: string; name: string; input: unknown } } =>
         !!c.toolUse,
     );
+    // Extended Thinking: concatenate reasoningText blocks into the `thinking` field.
+    const reasoningParts = content.filter(
+      (c): c is typeof c & { reasoningContent: { reasoningText?: { text?: string } } } =>
+        !!c.reasoningContent,
+    );
+    const thinking = reasoningParts
+      .map((c) => c.reasoningContent.reasoningText?.text ?? '')
+      .filter((t) => t.length > 0)
+      .join('');
 
     const stopReason = response.stopReason || 'end_turn';
 
+    // With prompt caching enabled, inputTokens only counts non-cached input;
+    // cacheReadInputTokens and cacheWriteInputTokens are billed separately.
+    // totalTokens must aggregate all input sources plus output.
+    const inputTokens = response.usage?.inputTokens ?? 0;
+    const outputTokens = response.usage?.outputTokens ?? 0;
+    const cacheReadTokens = response.usage?.cacheReadInputTokens ?? 0;
+    const cacheWriteTokens = response.usage?.cacheWriteInputTokens ?? 0;
+
     const usage: TokenUsage = {
-      promptTokens: response.usage?.inputTokens ?? 0,
-      completionTokens: response.usage?.outputTokens ?? 0,
-      totalTokens: (response.usage?.inputTokens ?? 0) + (response.usage?.outputTokens ?? 0),
+      promptTokens: inputTokens,
+      completionTokens: outputTokens,
+      totalTokens: inputTokens + cacheReadTokens + cacheWriteTokens + outputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
     };
 
     return {
       content: textParts.map((c) => c.text).join(''),
       model,
       usage,
+      thinking: thinking || undefined,
       finishReason:
         stopReason === 'end_turn'
           ? 'stop'
@@ -334,6 +408,12 @@ export class BedrockProvider implements LLMProvider {
         generation?: string | undefined;
         usage?:
           | {
+              // Anthropic Messages API native fields (snake_case)
+              input_tokens?: number;
+              output_tokens?: number;
+              cache_read_input_tokens?: number;
+              cache_creation_input_tokens?: number;
+              // camelCase aliases kept for backward compatibility
               inputTokens?: number;
               outputTokens?: number;
             }
@@ -345,13 +425,24 @@ export class BedrockProvider implements LLMProvider {
       // Legacy Text Completions response: data.completion
       const content = data.content?.[0]?.text || data.completion || data.generation || '';
 
+      // InvokeModel returns Anthropic-native snake_case usage. Prefer snake_case
+      // (always present for Claude), fall back to camelCase for compatibility.
+      // With caching, input_tokens only counts non-cached input, so totalTokens
+      // aggregates all input sources plus output.
+      const inTokens = data.usage?.input_tokens ?? data.usage?.inputTokens ?? 0;
+      const outTokens = data.usage?.output_tokens ?? data.usage?.outputTokens ?? 0;
+      const cacheReadTokens = data.usage?.cache_read_input_tokens ?? 0;
+      const cacheWriteTokens = data.usage?.cache_creation_input_tokens ?? 0;
+
       return {
         content,
         model,
         usage: {
-          promptTokens: data.usage?.inputTokens ?? 0,
-          completionTokens: data.usage?.outputTokens ?? 0,
-          totalTokens: (data.usage?.inputTokens ?? 0) + (data.usage?.outputTokens ?? 0),
+          promptTokens: inTokens,
+          completionTokens: outTokens,
+          totalTokens: inTokens + cacheReadTokens + cacheWriteTokens + outTokens,
+          cacheReadTokens,
+          cacheWriteTokens,
         },
         finishReason:
           data.stop_reason === 'end_turn'
