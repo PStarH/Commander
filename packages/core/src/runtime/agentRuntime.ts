@@ -100,6 +100,8 @@ import { getMetricsCollector } from './metricsCollector';
 import { CompensationRegistry } from './compensationRegistry';
 import { ReliabilityEngine } from './reliabilityEngine';
 import { AgentInbox } from './agentInbox';
+import { ExecutionContextInjector } from './executionContextInjector';
+import { ExecutionRouter } from './executionRouter';
 import { TeamRegistry } from './teamRegistry';
 import { AgentHandoff } from './agentHandoff';
 import { getGlobalThreeLayerMemory } from '../threeLayerMemory';
@@ -127,9 +129,16 @@ import { LeaseManager } from '../atr/leaseManager';
 import { isConfidentResponse } from './entropyGater';
 import { InterruptError } from './interruptError';
 import { createContentScanner, type ContentScanner } from '../contentScanner';
-import { scanToolOutputForInjection } from '../contentScanner';
+import { scanToolOutputForInjection, enforceToolOutputSecurity } from '../contentScanner';
 import { sanitizeIfNeeded } from '../security/outputSanitizer';
 import { getCostGuard } from '../security/costGuard';
+import { getCapabilityTokenIssuer } from '../security/capabilityToken';
+import { getEnterpriseSecurityGateway } from '../security/enterpriseSecurityGateway';
+import { checkMemoryPoisoning } from '../security/memoryPoisoningGate';
+import { isAgentSuspended, isAgentQuarantined, getThrottleMultiplier, processSecurityAlert } from '../security/securityResponseEngine';
+import type { SecurityAlert } from '../security/securityResponseEngine';
+import { assertInvariants } from '../security/securityInvariantVerifier';
+import { getHallucinationDetector } from '../hallucinationDetector';
 import { getSLOManager } from '../observability/sloManager';
 import { getPrivacyRouter } from './privacyRouter';
 import type { TenantProvider, TenantConfig } from './tenantProvider';
@@ -148,6 +157,12 @@ import type { CompensationPlan } from '../compensation/types';
 import { SingleFlightRequestCache, type SingleFlightStats } from './singleFlightRequestCache';
 import type { GeminiCacheStats } from './geminiCacheManager';
 import { ToolExecutionService } from './toolExecutionService';
+import { initializeServices, type InitializedServices } from './serviceInitializer';
+import { CheckpointingPhase } from './phases/checkpointing';
+import {
+  createInitialAgentExecutionState,
+  type AgentExecutionState,
+} from './phases/AgentExecutionState';
 import {
   OpenTelemetryExporter,
   getOTelExporter,
@@ -169,6 +184,7 @@ import type { CompactTaskType } from './contextCompactor';
 import { getCostEstimator, type CostEstimate } from './costEstimator';
 import { getModelPerformanceStore } from './modelPerformanceStore';
 import { getSecurityMonitor } from '../security/securityMonitor';
+import { initializeRuntimeGuardian } from './runtimeGuardianBridge';
 import {
   SecurityOrchestrator,
   getSecurityOrchestrator,
@@ -243,9 +259,12 @@ export class AgentRuntime implements AgentRuntimeInterface {
   private fallbackChain: ProviderFallbackChain<import('./types').LLMResponse>;
   private lastPrefixCacheKey?: string;
   private agentInbox: AgentInbox;
+  private contextInjector: ExecutionContextInjector;
+  private executionRouter: ExecutionRouter;
   private teamRegistry: TeamRegistry;
   private agentHandoff: AgentHandoff;
   private outputManager: ToolOutputManager;
+  private breakerRegistry: import('./circuitBreakerRegistry').CircuitBreakerRegistry;
   private memoryStore: MemoryStore | null = null;
   private otelExporter: OpenTelemetryExporter | null = null;
   private orchestrator: ToolOrchestrator;
@@ -277,9 +296,16 @@ export class AgentRuntime implements AgentRuntimeInterface {
   private tenantManager: TenantManager;
   private compensationService: CompensationService;
   private toolExecutionService: ToolExecutionService;
+  private checkpointingPhase: CheckpointingPhase;
 
   // Tenant config provider (kept for direct lookups in execute())
   private tenantProvider: TenantProvider;
+
+  // Last error from a provider call, preserved so the retry loop can
+  // classify it properly instead of seeing "Unknown error".
+  private lastProviderError: Error | null = null;
+  // Last hallucination detection result, fed into AdaptiveHITL signals.
+  private lastHallucinationDetected = false;
 
   constructor(
     config?: Partial<AgentRuntimeConfig>,
@@ -287,6 +313,18 @@ export class AgentRuntime implements AgentRuntimeInterface {
     tenantProvider?: TenantProvider,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+
+    // Wire providerRetry config into maxRetries and retryDelayMs so callers
+    // can control provider-level retry behavior without setting individual fields.
+    if (config?.providerRetry) {
+      if (config.providerRetry.attempts !== undefined) {
+        this.config.maxRetries = config.providerRetry.attempts;
+      }
+      if (config.providerRetry.initialDelayMs !== undefined) {
+        this.config.retryDelayMs = config.providerRetry.initialDelayMs;
+      }
+    }
+
     this.router = router ?? getModelRouter();
     if (this.config.smartModelRouter?.enabled) {
       this.smartRouter =
@@ -294,394 +332,85 @@ export class AgentRuntime implements AgentRuntimeInterface {
         new SmartModelRouter(this.config.smartModelRouter as Partial<ModelRouterUserConfig>);
     }
     this.tenantProvider = tenantProvider ?? getGlobalTenantProvider();
-    this.compactor = new ContextCompactor({
-      maxContextTokens: this.config.budgetHardCapTokens || 128000,
-    });
-    this.slidingWindow = new SlidingWindowOrchestrator();
-    this.reliabilityEngine = new ReliabilityEngine({
-      circuitThreshold: 5,
-      circuitRecoveryMs: 30_000,
-      circuitProviderName: 'agentRuntime',
-      circuitTransitionHandler: (from, to, provider) => {
-        try {
-          getIntentLog(undefined).write({
-            schemaVersion: 1,
-            runId: 'circuit-breaker',
-            capturedAt: new Date().toISOString(),
-            stage: 'agentRuntime.circuit',
-            decision: 'transition',
-            reason: `circuit ${from}->${to}`,
-            payload: { from, to, provider: provider ?? 'agentRuntime' },
-          });
-        } catch (err) {
-          reportSilentFailure(err, 'agentRuntime:334');
-          /* best-effort */
-        }
+
+    // Delegate subsystem construction to ServiceInitializer so this file stays
+    // an orchestrator rather than a 500-line constructor.
+    const services = initializeServices(
+      {
+        config: this.config,
+        getRunHandle: () => this.runHandle,
+        getLedgerCtx: () => this.ledgerCtx,
+        getActiveRuns: () => new Set(this.runLifecycle?.getActiveRuns() ?? []),
+        getPromotedTools: () => this.promotedTools,
+        generateActionId: () => this.generateActionId(),
       },
-    });
-    this.circuitBreaker = this.reliabilityEngine.getCircuitBreaker();
-    this.dlq = this.reliabilityEngine.getDeadLetterQueue();
-    this.checkpointer = this.reliabilityEngine.getStateCheckpointer();
-    this.circuitBreaker.setObservability({
-      onTransition: (from, to, provider) => {
-        try {
-          getMetricsCollector().recordCircuitTransition(from, to, provider ?? 'agentRuntime');
-        } catch (err) {
-          reportSilentFailure(err, 'agentRuntime:347');
-          /* best-effort */
-        }
-        try {
-          this.dlq.enqueue({
-            category: 'circuit_breaker',
-            operationName: 'circuit.transition',
-            errorMessage: `${from}->${to}`,
-            tags: [`from:${from}`, `to:${to}`, `provider:${provider ?? 'agentRuntime'}`],
-            failureMode: 'circuit_open',
-            failureModeNumber: 11,
-          });
-        } catch (err) {
-          reportSilentFailure(err, 'agentRuntime:360');
-          /* best-effort */
-        }
-        try {
-          getIntentLog(undefined).write({
-            schemaVersion: 1,
-            runId: 'circuit-breaker',
-            capturedAt: new Date().toISOString(),
-            stage: 'agentRuntime.circuit',
-            decision: 'transition',
-            reason: `circuit ${from}->${to}`,
-            payload: { from, to, provider: provider ?? 'agentRuntime' },
-          });
-        } catch (err) {
-          reportSilentFailure(err, 'agentRuntime:374');
-          /* best-effort */
-        }
-      },
-    });
-    // Wire semantic trip handler: when consecutive verification failures exceed
-    // threshold, publish an alert and enqueue a dead-letter entry for operator
-    // review. This enables operators to detect systemic quality degradation
-    // (e.g., a model version regression) vs. isolated operational errors.
-    this.circuitBreaker.setSemanticTripHandler((consecutiveFailures, reason, ctx) => {
-      const bus = getMessageBus();
-      // Phase 2 Hub Glue / SemanticCircuitCorrelator:
-      // `ctx?.runId` is populated when verification-failure recordSemanticFailure
-      // calls carry runId + toolName from `execute()`'s loop. We also fall back
-      // to `this.ledgerCtx?.runId` (the AgentRuntime's per-run ledger context)
-      // so the unified event emit can still correlate with the resulting
-      // `tool.blocked circuit_broken` for the originating run.
-      bus.publish('system.alert', 'runtime', {
-        type: 'semantic_circuit_trip',
-        consecutiveFailures,
-        reason,
-        runId: ctx?.runId ?? this.ledgerCtx?.runId,
-        ...(ctx?.toolName ? { toolName: ctx.toolName } : {}),
-      });
-      try {
-        this.dlq.enqueue({
-          category: 'verification',
-          operationName: 'semantic.circuit_trip',
-          errorMessage: `Semantic circuit tripped after ${consecutiveFailures} consecutive verification failures: ${reason}`,
-          tags: ['semantic_drift', 'verification_failure', `count:${consecutiveFailures}`],
-          failureMode: 'verification',
-          failureModeNumber: 7,
-        });
-      } catch (err) {
-        reportSilentFailure(err, 'agentRuntime:400');
-        /* best-effort */
-      }
-      try {
-        getIntentLog(undefined).write({
-          schemaVersion: 1,
-          runId: 'semantic-circuit-breaker',
-          capturedAt: new Date().toISOString(),
-          stage: 'agentRuntime.semantic',
-          decision: 'trip',
-          reason: `semantic circuit tripped: ${consecutiveFailures} consecutive failures`,
-          payload: { consecutiveFailures, reason },
-        });
-      } catch (err) {
-        reportSilentFailure(err, 'agentRuntime:414');
-        /* best-effort */
-      }
-    });
-    this.governor = new TokenGovernor({ totalBudget: this.config.budgetHardCapTokens || 200000 });
-    this.verificationPipeline = new UnifiedVerificationPipeline({
-      enabled: true,
-      budgetFloorTokens: 1500,
-      llmVerificationBudget: 300,
-    });
+      this.tools,
+    );
+
+    // Promote all initialized services to instance fields (preserves the
+    // existing AgentRuntimeInterface surface while shrinking the god object).
+    this.compactor = services.compactor;
+    this.slidingWindow = services.slidingWindow;
+    this.reliabilityEngine = services.reliabilityEngine;
+    this.circuitBreaker = services.circuitBreaker;
+    this.dlq = services.dlq;
+    this.checkpointer = services.checkpointer;
+    this.governor = services.governor;
+    this.verificationPipeline = services.verificationPipeline;
     this.verificationPipeline.setRuntime(this);
-    this.reflexionInjector = new ReflexionInjector({
-      maxReflections: 3,
-      maxTokensPerReflection: 50,
-    });
-    this.samplesStore = new SamplesStore();
-    this.traceStore = new PersistentTraceStore();
-    this.leaseManager = new LeaseManager();
-    this.stepTimeout = new StepTimeoutManager();
-    this.fallbackChain = new ProviderFallbackChain<import('./types').LLMResponse>();
-    this.compensationService = new CompensationService({
-      dlq: this.dlq,
-      getRunId: () => this.ledgerCtx?.runId ?? 'unknown',
-      traceStore: this.traceStore,
-    });
-    this.agentInbox = new AgentInbox();
-    this.teamRegistry = new TeamRegistry();
-    this.agentHandoff = new AgentHandoff(this.agentInbox, this.checkpointer);
-    try {
-      this.memory = getGlobalThreeLayerMemory();
-    } catch (e) {
-      getGlobalLogger().warn('AgentRuntime', 'Failed to initialize global memory', {
-        error: (e as Error)?.message,
-      });
-    }
-    try {
-      getTraceRecorder(this.traceStore);
-    } catch (e) {
-      getGlobalLogger().warn('AgentRuntime', 'Failed to initialize trace recorder', {
-        error: (e as Error)?.message,
-      });
-    }
-    // Initialize memory store if configured
-    if (this.config.memoryStoreType) {
-      createMemoryStore(this.config.memoryStoreType)
-        .then((store) => {
-          this.memoryStore = store;
-        })
-        .catch((e) => {
-          getGlobalLogger().warn('AgentRuntime', 'Failed to initialize memory store', {
-            type: this.config.memoryStoreType,
-            error: (e as Error)?.message,
-          });
-        });
-    }
-    // Initialize OTel exporter if configured
-    if (this.config.otelExporter?.enabled) {
-      try {
-        const exporter = getOTelExporter({
-          endpoint: this.config.otelExporter.endpoint,
-          serviceName: this.config.otelExporter.serviceName,
-          headers: this.config.otelExporter.headers,
-        });
-        exporter.start().catch((e) =>
-          getGlobalLogger().warn('AgentRuntime', 'Failed to start OTel exporter', {
-            error: (e as Error)?.message,
-          }),
-        );
-        this.otelExporter = exporter;
-      } catch (e) {
-        getGlobalLogger().warn('AgentRuntime', 'Failed to initialize OTel exporter', {
-          error: (e as Error)?.message,
-        });
-      }
-    }
-    // Extracted services (shrink the god object)
-    this.cacheManager = new CacheManager({
-      semanticCache: this.config.semanticCache,
-      singleFlight: this.config.singleFlight,
-      geminiCache: this.config.geminiCache,
-    });
-    this.concurrencyController = new ConcurrencyController(this.config.maxConcurrency);
-    this.runLifecycle = new RunLifecycleManager();
-    this.tenantManager = new TenantManager();
-    this.toolExecutionService = new ToolExecutionService({
-      tools: this.tools,
-      compensationService: this.compensationService,
-      cacheManager: this.cacheManager,
-      dlq: this.dlq,
-      getRunHandle: () => this.runHandle,
-      config: this.config,
-      reflexionGenerator: this.reflexionGenerator,
-      stepTimeout: this.stepTimeout,
-      getPromotedTools: () => this.promotedTools,
-      generateActionId: () => this.generateActionId(),
-      getBreakerRegistry: () => this.getBreakerRegistry(),
+    this.reflexionInjector = services.reflexionInjector;
+    this.reflexionGenerator = services.reflexionGenerator;
+    this.samplesStore = services.samplesStore;
+    this.traceStore = services.traceStore;
+    this.leaseManager = services.leaseManager;
+    this.stepTimeout = services.stepTimeout;
+    this.fallbackChain = services.fallbackChain;
+    this.compensationService = services.compensationService;
+    this.agentInbox = services.agentInbox;
+    this.teamRegistry = services.teamRegistry;
+    this.agentHandoff = services.agentHandoff;
+    this.cacheManager = services.cacheManager;
+    this.concurrencyController = services.concurrencyController;
+    this.runLifecycle = services.runLifecycle;
+    this.tenantManager = services.tenantManager;
+    this.toolExecutionService = services.toolExecutionService;
+    this.outputManager = services.outputManager;
+    this.breakerRegistry = services.breakerRegistry;
+    this.orchestrator = services.orchestrator;
+    this.planner = services.planner;
+    this.cycleDetector = services.cycleDetector;
+    this.contentScanner = services.contentScanner;
+    this.securityOrch = services.securityOrch;
+    this.contextInjector = services.contextInjector;
+    this.memory = services.memory;
+    this.memoryStore = services.memoryStore;
+    this.conversationStore = services.conversationStore;
+    this.otelExporter = services.otelExporter;
+
+    this.executionRouter = new ExecutionRouter({
+      getSmartRouter: () => this.smartRouter,
+      isSmartRouterActive: () => this.smartRouterActive,
+      getRouter: () => this.router,
+      getGovernor: () => this.governor,
+      getProviders: () => this.providers,
     });
 
-    // Tool calling infrastructure
-    this.outputManager = new ToolOutputManager({ enabled: true, turnBudget: 32000 });
-    // ToolApproval with configurable approval callback
-    // When approval is configured with a custom callback, use it; otherwise auto-approve.
-    const approvalCfg = this.config.approval;
-    const defaultApprovalCallback = async (req: {
-      id: string;
-      toolName: string;
-      arguments: Record<string, unknown>;
-      reason?: string;
-    }) => ({
-      approved: true,
-      requestId: req.id,
-      approvedAt: new Date().toISOString(),
-      reason: 'Auto-approved',
+    this.checkpointingPhase = new CheckpointingPhase({
+      checkpointer: this.checkpointer,
+      runLifecycle: this.runLifecycle,
+      leaseManager: this.leaseManager,
     });
-    const approvalCallback = approvalCfg?.approvalCallback ?? defaultApprovalCallback;
-    const toolApproval = new ToolApproval(approvalCallback);
-    this.orchestrator = new ToolOrchestrator(
-      { enabled: true, maxRetries: 1, circuitBreakerThreshold: 3, useApproval: true },
-      toolApproval,
-    );
-    this.planner = new ToolPlanner();
-    this.cycleDetector = new CycleDetector({
-      enabled: this.config.cycleDetection?.enabled !== false,
-    });
-    this.contentScanner = createContentScanner();
-    this.securityOrch = getSecurityOrchestrator();
+
     // Benchmarks may intentionally generate high tool-call volumes; let callers
     // disable GuardianAgent monitoring through the runtime config.
     if (this.config.securityMonitor?.enabled === false) {
       this.securityOrch.updateConfig({ enableGuardianAgent: false });
     }
 
-    // Initialize ConversationStore for FTS5-powered conversation persistence
-    try {
-      this.conversationStore = getConversationStore();
-
-      // Wire auto-recording of conversations via bus events
-      // Every agent.started → startSession(), every agent.completed/failed → endSession().
-      // Uses a runId→sessionId map instead of payload mutation because bus event
-      // payloads are separate objects for started/completed/failed.
-      const bus = getMessageBus();
-      const store = this.conversationStore;
-      const sessionMap = new Map<string, string>();
-
-      bus.subscribe('agent.started', (msg) => {
-        const payload = msg.payload as Record<string, unknown>;
-        const runId = (payload.runId ?? payload.taskId) as string | undefined;
-        const goal = payload.goal as string | undefined;
-        if (!runId || !goal) return;
-        store
-          .startSession({
-            projectId: 'default',
-            agentId: msg.source,
-            goal: goal || undefined,
-            metadata: { runId, model: payload.model },
-          })
-          .then((session) => {
-            sessionMap.set(runId, session.id);
-            store
-              .addTurn({
-                sessionId: session.id,
-                role: 'user',
-                content: goal,
-              })
-              .catch((e) => {
-                getGlobalLogger().debug('AgentRuntime', 'Failed to record conversation turn', {
-                  error: (e as Error)?.message,
-                });
-              });
-          })
-          .catch((e) => {
-            getGlobalLogger().warn('AgentRuntime', 'Failed to create conversation session', {
-              error: (e as Error)?.message,
-            });
-          });
-      });
-
-      bus.subscribe('agent.completed', (msg) => {
-        const payload = msg.payload as Record<string, unknown>;
-        const runId = (payload.runId ?? payload.taskId) as string | undefined;
-        const summary = payload.summary as string | undefined;
-        if (!runId) return;
-        const sessionId = sessionMap.get(runId);
-        if (sessionId) {
-          sessionMap.delete(runId);
-          store
-            .addTurn({
-              sessionId,
-              role: 'assistant',
-              content: (summary || '').slice(0, SUMMARY_MAX_CHARS),
-            })
-            .catch((e) => {
-              getGlobalLogger().debug('AgentRuntime', 'Failed to record completion turn', {
-                error: (e as Error)?.message,
-              });
-            });
-          store.endSession(sessionId).catch((e) => {
-            getGlobalLogger().debug('AgentRuntime', 'Failed to end conversation session', {
-              error: (e as Error)?.message,
-            });
-          });
-        }
-      });
-
-      bus.subscribe('agent.failed', (msg) => {
-        const payload = msg.payload as Record<string, unknown>;
-        const runId = (payload.runId ?? payload.taskId) as string | undefined;
-        const error = payload.error as string | undefined;
-        if (!runId) return;
-        const sessionId = sessionMap.get(runId);
-        if (sessionId) {
-          sessionMap.delete(runId);
-          store
-            .addTurn({
-              sessionId,
-              role: 'assistant',
-              content: `[Failed] ${(error || '').slice(0, ERROR_MAX_CHARS)}`,
-            })
-            .catch((e) => {
-              getGlobalLogger().debug('AgentRuntime', 'Failed to record failure turn', {
-                error: (e as Error)?.message,
-              });
-            });
-          store.endSession(sessionId).catch((e) => {
-            getGlobalLogger().debug('AgentRuntime', 'Failed to end session after failure', {
-              error: (e as Error)?.message,
-            });
-          });
-        }
-      });
-
-      // Lazy init — the store initializes on first access
-    } catch (e) {
-      getGlobalLogger().warn('AgentRuntime', 'Failed to initialize conversation store', {
-        error: (e as Error)?.message,
-      });
-    }
-
-    getHookManager()
-      .register(createParameterControllerPlugin())
-      .catch((e) =>
-        getGlobalLogger().debug('AgentRuntime', 'Hook registration', {
-          error: (e as Error)?.message,
-        }),
-      );
-
-    // Tier 1.2: Bind lease manager to checkpointer for run recovery validation
-    this.checkpointer.setLeaseManager(this.leaseManager);
-
-    // Tier 1.1: Install process crash handlers (uncaughtException, unhandledRejection, SIGTERM, SIGINT)
-    installProcessCrashHandlers({
-      dlq: this.dlq,
-      leaseManager: this.leaseManager,
-      activeRunIds: () => this.runLifecycle.getActiveRuns(),
-      leaseTokenFor: (runId: string) => {
-        return this.runHandle?.runId === runId
-          ? (this.runHandle as RunHandle)?.leaseToken
-          : undefined;
-      },
-      fencingEpochFor: (runId: string) => {
-        return this.runHandle?.runId === runId
-          ? (this.runHandle as RunHandle)?.fencingEpoch
-          : undefined;
-      },
-      tenantIdFor: () => getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
-    }); // SOC 2 C1.2 / GDPR Art 17 disposal — schedule the retention
-    // janitor from the runtime constructor so CLI-only paths
-    // (which don't go through httpServer.start()) still get the
-    // housekeeping tick. The module-level `scheduledRootDirs`
-    // dedup set in storage/dataRetention.ts ensures only one
-    // setInterval runs across the process regardless of how many
-    // AgentRuntime instances exist or in what order surfaces boot.
+    // SOC 2 C1.2 / GDPR Art 17 disposal — schedule the retention janitor from
+    // the runtime constructor so CLI-only paths still get the housekeeping tick.
     try {
       const janitor = getDataRetentionJanitor();
-      // `claimed` lets the log disambiguate: true means THIS
-      // AgentRuntime instance owns the recurring tick; false means
-      // another surface (e.g. httpServer.start) claimed first and
-      // the module-level `scheduledRootDirs` Set deduped us. See
-      // DataRetentionJanitor.schedule() JSDoc for the full
-      // claimed-vs-dedup-catch glossary.
       const claimed = janitor.schedule(60 * 60 * 1000, false);
       getGlobalLogger().info(
         'AgentRuntime',
@@ -702,6 +431,36 @@ export class AgentRuntime implements AgentRuntimeInterface {
       } catch (err) {
         reportSilentFailure(err, 'agentRuntime:712');
         /* best-effort */
+      }
+    }
+
+    // Initialize the runtime guardian bridge with this runtime's provider access.
+    // Only initialize when explicitly enabled in config — avoids side effects
+    // in tests that don't expect extra LLM calls from the guardian.
+    if (this.config.runtimeGuardian?.enabled) {
+      try {
+        const runtimeRef = this;
+        initializeRuntimeGuardian(
+          (name: string) => {
+            const provider = runtimeRef.getProvider(name);
+            if (!provider) return null;
+            return {
+              call: (input: {
+                model: string;
+                messages: { role: string; content: string }[];
+                maxTokens: number;
+              }) =>
+                provider.call({
+                  ...input,
+                  messages: input.messages as any,
+                }),
+            };
+          },
+          this.config.runtimeGuardian,
+        );
+      } catch (err) {
+        reportSilentFailure(err, 'agentRuntime:runtime-guardian-init');
+        /* best-effort — GuardianAgent rules still provide baseline protection */
       }
     }
   }
@@ -856,6 +615,13 @@ export class AgentRuntime implements AgentRuntimeInterface {
       tc.arguments as Record<string, unknown>,
       agentId,
       runId,
+      {
+        verification: {
+          confidence: 0.95,
+          gateFailures: [],
+          hallucinationDetected: this.lastHallucinationDetected,
+        },
+      },
     );
 
     // Feed tool_call event to correlator (DoS detection, lateral movement,
@@ -1044,6 +810,11 @@ export class AgentRuntime implements AgentRuntimeInterface {
     return this.tools.get(name);
   }
 
+  /** Return the names of all registered tools. */
+  listToolNames(): string[] {
+    return Array.from(this.tools.keys());
+  }
+
   getConfig(): AgentRuntimeConfig {
     return { ...this.config };
   }
@@ -1075,7 +846,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
   /** Expose the tool orchestrator's circuit breaker registry for runtime observation. */
   getBreakerRegistry(): import('./circuitBreakerRegistry').CircuitBreakerRegistry {
-    return this.orchestrator.getBreakerRegistry();
+    return this.breakerRegistry;
   }
 
   /** Flush any buffered dead-letter-queue entries to disk for observation. */
@@ -1162,7 +933,10 @@ export class AgentRuntime implements AgentRuntimeInterface {
     const runId = generateId();
     const bus = getMessageBus();
     const tracer = getTraceRecorder();
+    const costEstimator = getCostEstimator();
     const startTime = Date.now();
+    const state = createInitialAgentExecutionState(ctx);
+    (state as { runId: string }).runId = runId;
 
     const tenantId = getGlobalTenantProvider().getCurrentTenantId() ?? ctx.tenantId ?? undefined;
     const tenantCfg = tenantId ? this.tenantProvider.getTenantConfig(tenantId) : undefined;
@@ -1362,240 +1136,31 @@ export class AgentRuntime implements AgentRuntimeInterface {
             };
           }
 
-          // 1. Route to optimal model with FrugalGPT cascade awareness
-          //    In tight/critical budget: start with cheapest model, escalate on failure
-          //    In relaxed/moderate: start with optimal model (standard routing)
-          let routing: RoutingDecision;
-          let currentEscalationChain: ModelConfig[];
-
-          if (this.smartRouter && this.smartRouterActive) {
-            const smartResult = this.smartRouter.route(ctx, {
-              governorPhase: this.governor.getState().phase,
-              registeredProviders: new Set(this.providers.keys()),
-              preferredTier: ctx.preferredModelTier,
-            });
-            routing = smartResult;
-            currentEscalationChain = (smartResult.escalationChain ?? []).map(
-              (id) =>
-                (this.smartRouter!.getModel(id) as ModelConfig | undefined) ?? {
-                  id,
-                  provider: 'unknown',
-                  tier: 'standard' as ModelTier,
-                  costPer1MInput: 0,
-                  costPer1MOutput: 0,
-                  capabilities: [],
-                  contextWindow: DEFAULT_CONTEXT_WINDOW_TOKENS,
-                  priority: 0,
-                },
-            );
-          } else {
-            const { initial: cascadeInitial, escalationChain } = this.router.routeWithCascade(
-              ctx,
-              this.governor.getState().phase,
-              ctx.preferredModelTier,
-              new Set(this.providers.keys()),
-            );
-            routing = cascadeInitial;
-            currentEscalationChain = escalationChain;
-          }
-
-          // P0-4: Batch API routing for non-time-sensitive tasks (50% cost savings).
-          // OpenAI, Anthropic, and Google all offer batch at 50% discount for tasks
-          // that can tolerate 24h turnaround. Eligible tasks: evaluation runs, data
-          // labeling, document processing, nightly analysis, embedding backfills.
-          // Not eligible: interactive chat, real-time code fixes, sequential
-          // multi-turn tool chains requiring immediate feedback.
-          let batchRouting: import('./types').RoutingDecision | undefined;
-          if (ModelRouter.isBatchEligible(ctx) && this.governor.getState().phase !== 'critical') {
-            const batchModel = this.router.routeBatch(ctx, routing.tier);
-            if (batchModel) {
-              const estimatedInputTokens = Math.ceil(ctx.goal.length / 4) + 2048;
-              const estimatedOutputTokens = Math.min(
-                ctx.tokenBudget,
-                batchModel.contextWindow - estimatedInputTokens,
-              );
-              batchRouting = {
-                modelId: batchModel.id,
-                tier: batchModel.tier,
-                provider: batchModel.provider,
-                reasoning: [
-                  ...routing.reasoning,
-                  `batch_api: 50% cost savings via ${batchModel.provider}/${batchModel.id}`,
-                  `batch_max_batch_size: ${batchModel.maxBatchSize ?? 'unlimited'}`,
-                ],
-                estimatedCost:
-                  (estimatedInputTokens / 1_000_000) * batchModel.costPer1MInput +
-                  (estimatedOutputTokens / 1_000_000) * batchModel.costPer1MOutput,
-                maxTokens: Math.min(estimatedOutputTokens, 200000),
-              };
-              tracer.recordDecision(
-                runId,
-                `batch_routing: ${batchModel.id} (${batchModel.tier}) — 50% cost savings via batch API`,
-                0,
-              );
-              bus.publish('system.alert', 'runtime', {
-                type: 'batch_routing_selected',
-                model: batchModel.id,
-                provider: batchModel.provider,
-                tier: batchModel.tier,
-                estimatedSavings: `${Math.round(batchRouting.estimatedCost * 100) / 100}`,
-              });
-              try {
-                getMetricsCollector().incrementCounter(
-                  'batch_routing_total',
-                  'Batch API routing selections',
-                  1,
-                  [
-                    { name: 'provider', value: batchModel.provider },
-                    { name: 'tier', value: batchModel.tier },
-                  ],
-                );
-              } catch (err) {
-                reportSilentFailure(err, 'agentRuntime:1439');
-                /* best-effort */
-              }
-              try {
-                getIntentLog(ctx.tenantId).write({
-                  schemaVersion: 1,
-                  runId,
-                  capturedAt: new Date().toISOString(),
-                  stage: 'agentRuntime.batch',
-                  decision: 'batch_routing',
-                  reason: `Batch API selected: ${batchModel.id} (${batchModel.tier}) for 50% savings`,
-                  payload: {
-                    model: batchModel.id,
-                    provider: batchModel.provider,
-                    tier: batchModel.tier,
-                    estimatedCost: batchRouting.estimatedCost,
-                  },
-                });
-              } catch (err) {
-                reportSilentFailure(err, 'agentRuntime:1458');
-                /* best-effort */
-              }
-            }
-          }
-
-          tracer.recordDecision(
-            runId,
-            `routed to ${routing.modelId} (${routing.tier}) cascade=${currentEscalationChain.length > 0}${batchRouting ? ' [BATCH]' : ''}`,
-            0,
-          );
-
-          // ── Privacy Routing ────────────────────────────────────────────────
-          // Before sending anything to a cloud provider, scan the user's goal for
-          // sensitive content (API keys, internal IPs, PII, secrets). If found,
-          // either block execution or re-route to a local model (Ollama/vLLM).
-          // This is the Local-First Fallback pattern for enterprise compliance.
-          try {
-            const privacy = getPrivacyRouter();
-            const decision = await privacy.checkContent(ctx.goal, {
-              agentId: ctx.agentId,
-              runId,
-            });
-
-            if (decision.blocked) {
-              // Critical secrets detected — abort execution entirely
-              const summary = `PRIVACY_BLOCKED: ${decision.reason}`;
-              tracer.recordDecision(runId, summary, 0);
-              bus.publish('agent.failed', ctx.agentId, { runId, error: summary });
-              try {
-                getMetricsCollector().incrementCounter(
-                  'privacy_blocks_total',
-                  'Privacy blocks',
-                  1,
-                  [],
-                );
-              } catch (err) {
-                reportSilentFailure(err, 'agentRuntime:1495');
-                /* best-effort */
-              }
-              return {
-                runId,
-                agentId: ctx.agentId,
-                missionId: ctx.missionId,
-                status: 'cancelled',
-                summary,
-                steps: [],
-                totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-                totalDurationMs: 0,
-                error: summary,
-              };
-            }
-
-            if (decision.route === 'local') {
-              // Sensitive content detected — override routing to use a local model
-              const origModel = routing.modelId;
-              routing = privacy.applyRouting(routing, decision);
-              tracer.recordDecision(
-                runId,
-                `privacy_routing: ${origModel} → ${routing.modelId} (${routing.provider}) — ${decision.reason}`,
-                0,
-              );
-              bus.publish('system.alert', 'runtime', {
-                type: 'privacy_routing_local',
-                originalModel: origModel,
-                routedModel: routing.modelId,
-                provider: routing.provider,
-                matchCount: decision.matches.length,
-              });
-              try {
-                getMetricsCollector().incrementCounter(
-                  'privacy_routes_local_total',
-                  'Privacy routes to local model',
-                  1,
-                  [],
-                );
-              } catch (err) {
-                reportSilentFailure(err, 'agentRuntime:1535');
-                /* best-effort */
-              }
-            }
-          } catch (e) {
-            getGlobalLogger().warn('AgentRuntime', 'Privacy check failed', {
-              error: (e as Error)?.message,
-            });
-            // Best-effort: proceed with cloud routing on privacy check failure
-          }
-
-          // 1a. Pre-run cost estimation: predict cost and log for observability
-          const costEstimator = getCostEstimator();
-          const costEstimate: CostEstimate = costEstimator.estimateBeforeRun(
+          // 1. Model routing + Privacy + Cost estimation
+          const routeResult = await this.executionRouter.route({
             ctx,
-            routing,
-            this.router.getModel(routing.modelId),
-          );
-          tracer.recordDecision(
             runId,
-            `cost_estimate: $${costEstimate.predictedCostUsd} (${costEstimate.predictedTotalTokens}t, confidence=${(costEstimate.confidence * 100).toFixed(0)}%, samples=${costEstimate.sampleCount})`,
-            0,
-          );
-          try {
-            getMetricsCollector().setGauge(
-              'pre_run_cost_estimate_usd',
-              'Pre-run cost estimate in USD',
-              costEstimate.predictedCostUsd,
-              [
-                { name: 'task_category', value: costEstimate.taskCategory },
-                { name: 'model_tier', value: costEstimate.modelTier },
-                { name: 'model', value: routing.modelId },
-                ...(tenantId ? [{ name: 'tenant', value: tenantId }] : []),
-              ],
-            );
-            getMetricsCollector().setGauge(
-              'pre_run_token_estimate',
-              'Pre-run token estimate',
-              costEstimate.predictedTotalTokens,
-              [
-                { name: 'task_category', value: costEstimate.taskCategory },
-                { name: 'model_tier', value: costEstimate.modelTier },
-                ...(tenantId ? [{ name: 'tenant', value: tenantId }] : []),
-              ],
-            );
-          } catch (err) {
-            reportSilentFailure(err, 'agentRuntime:1581');
-            /* best-effort */
+            tenantId,
+            bus,
+            tracer,
+          });
+          if (routeResult.status === 'cancelled') {
+            return {
+              runId,
+              agentId: ctx.agentId,
+              missionId: ctx.missionId,
+              status: 'cancelled',
+              summary: routeResult.summary,
+              steps: [],
+              totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+              totalDurationMs: 0,
+              error: routeResult.summary,
+            };
           }
+          let routing = routeResult.routing;
+          let currentEscalationChain = routeResult.escalationChain;
+          const batchRouting = routeResult.batchRouting;
+          const costEstimate = routeResult.costEstimate;
 
           // 2. Build LLM request with cache-optimized prompt structure
           //    Stable content (system, tools) FIRST for maximum cache hits.
@@ -1726,9 +1291,40 @@ export class AgentRuntime implements AgentRuntimeInterface {
             isBatch: !!batchRouting,
           };
 
-          // Strip internal @tier suffix (eco/standard/power/consensus) before sending to provider
-          const apiModel = (routing.modelId || '').replace(/@\w+$/, '') || routing.modelId;
-          const selectedModelCfg = this.router.getModel(routing.modelId);
+          // When batch routing is active, switch to the batch-selected model.
+          // The isBatch flag on cacheConfig tells the provider to use native
+          // Batch API (50% cost discount). If the batch API fails, the provider
+          // falls back to standard API (fail-closed).
+          const activeRouting = batchRouting ?? routing;
+          const apiModel = (activeRouting.modelId || '').replace(/@\w+$/, '') || activeRouting.modelId;
+          const selectedModelCfg = this.router.getModel(activeRouting.modelId);
+
+          // Security: System prompt extraction detection (OWASP ASI07).
+          // Scan user input for common prompt extraction/leakage patterns before
+          // sending to the LLM. Log and flag suspicious attempts.
+          const userContent = buildCacheAwareUserPrompt(ctx, routing, this.governor, this.config);
+          try {
+            const extractionPatterns = [
+              /repeat\s+(your\s+)?(instructions?|system\s*prompt|rules?)/i,
+              /show\s+me\s+(your\s+)?(system\s*prompt|instructions?|rules?)/i,
+              /ignore\s+(all\s+)?previous\s+(instructions?|prompts?|rules?)/i,
+              /what\s+(is|are)\s+your\s+(system\s+p|instructions?|rules?)/i,
+              /print\s+(your\s+)?(system\s*p|instructions?|rules?)/i,
+              /reveal\s+(your\s+)?(system\s*p|instructions?)/i,
+            ];
+            for (const pattern of extractionPatterns) {
+              if (pattern.test(userContent)) {
+                getGlobalLogger().warn('AgentRuntime', 'System prompt extraction attempt detected', {
+                  agentId: ctx.agentId,
+                  pattern: pattern.source,
+                });
+                break;
+              }
+            }
+          } catch {
+            /* best-effort detection */
+          }
+
           const baseRequest: LLMRequest = {
             model: apiModel,
             // Order: [system (stable, cacheable), user (variable)]
@@ -1739,7 +1335,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
               },
               {
                 role: 'user',
-                content: buildCacheAwareUserPrompt(ctx, routing, this.governor, this.config),
+                content: userContent,
               },
             ],
             maxTokens: routing.maxTokens,
@@ -1781,171 +1377,21 @@ export class AgentRuntime implements AgentRuntimeInterface {
             });
           }
 
-          this.checkpointer.checkpoint({
-            runId,
-            agentId: ctx.agentId,
-            missionId: ctx.missionId,
-            timestamp: now(),
-            phase: 'started',
-            stepNumber: 0,
-            attemptNumber: 0,
-            messages: request.messages,
-            tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-            stepDurations: [],
-            context: {
-              agentId: ctx.agentId,
-              missionId: ctx.missionId,
-              projectId: ctx.projectId,
-              goal: ctx.goal,
-              availableTools: ctx.availableTools,
-              maxSteps: ctx.maxSteps,
-              tokenBudget: ctx.tokenBudget,
-              projectContextCacheKey: projectContext.cacheKey,
-              projectContextFiles: projectContext.filesRead,
-            },
-            totalDurationMs: 0,
+          state.activeProjectContext = projectContext;
+          await this.checkpointingPhase.checkpointStart(ctx, state, {
+            request,
+            projectContext,
           });
 
-          // Context injection with token budget cap to prevent pre-prompt bloat.
-          // Cap injected context at 20% of total budget to leave room for actual execution.
-          // Cache-stable context injection: consolidate all dynamic context into a single system message.
-          // Research: Anthropic/OpenAI prompt caching requires stable prefixes for cache hits.
-          // Multiple splice operations create variable-length arrays, reducing cache hit rates.
-          // Solution: build a single context block and insert it once.
-          const contextTokenCap = Math.max(2000, Math.floor((ctx.tokenBudget || 200000) * 0.2));
-          let injectedContextTokens = 0;
-          const estimateTokens = (text: string) => Math.ceil(text.length / 3.5);
-          const contextParts: string[] = [];
-
-          // Check agent inbox for pending messages before execution
-          const inboxMessages = this.agentInbox.pollInbox(ctx.agentId);
-          if (inboxMessages.length > 0) {
-            const inboxBlock = inboxMessages
-              .map((m) => `[from:${m.from}] ${m.subject}: ${m.body.slice(0, 300)}`)
-              .join('\n');
-            const inboxTokens = estimateTokens(inboxBlock);
-            if (injectedContextTokens + inboxTokens < contextTokenCap) {
-              contextParts.push(
-                `## Pending Messages\n${inboxBlock}\n\nAddress these messages as part of your execution.`,
-              );
-              injectedContextTokens += inboxTokens;
-            }
-            for (const msg of inboxMessages) {
-              this.agentInbox.acknowledge(ctx.agentId, msg.id);
-            }
-          }
-
-          if (this.memory) {
-            try {
-              const keywords = ctx.goal
-                .split(/\s+/)
-                .filter((w) => w.length > 4)
-                .slice(0, 8);
-              if (keywords.length > 0) {
-                const rawMemories = this.memory.query({
-                  keywords,
-                  limit: 5,
-                  importanceThreshold: 0.3,
-                });
-                // DP-sanitize memory entries before sharing across agents
-                const dpOutcome = this.securityOrch.sanitizeMemoryShare(rawMemories, ctx.agentId);
-                const memories = dpOutcome.result;
-                if (memories && memories.length > 0) {
-                  const memoryBlock = memories
-                    .map(
-                      (m) =>
-                        `[${m.layer}] ${m.content.slice(0, 300)} (importance:${m.importance.toFixed(2)}, tags:${m.tags.join(',')})`,
-                    )
-                    .join('\n');
-                  const memoryTokens = estimateTokens(memoryBlock);
-                  if (injectedContextTokens + memoryTokens < contextTokenCap) {
-                    contextParts.push(
-                      `## Relevant Past Experiences\n${memoryBlock}\n\nLearn from these past experiences when working on the current task.`,
-                    );
-                    injectedContextTokens += memoryTokens;
-                  }
-                }
-              }
-            } catch (e) {
-              getGlobalLogger().debug('AgentRuntime', 'Memory initialization failed', {
-                error: (e as Error)?.message,
-              });
-            }
-          }
-
-          // Inject skills catalog (Level 0) into context
-          try {
-            const { SkillInjector, getSkillSystem } = await import('../skills');
-            const injector = new SkillInjector(getSkillSystem().manager);
-            const skillsBlock = await injector.buildSkillsBlock(ctx.goal, 0);
-            const instructions = injector.buildSkillUsageInstructions();
-            if (skillsBlock) {
-              const skillsTokens = estimateTokens(skillsBlock + instructions);
-              if (injectedContextTokens + skillsTokens < contextTokenCap) {
-                contextParts.push(`${skillsBlock}\n\n${instructions}`);
-                injectedContextTokens += skillsTokens;
-              }
-            }
-          } catch (e) {
-            getGlobalLogger().debug('AgentRuntime', 'Skills injection failed', {
-              error: (e as Error)?.message,
-            });
-          }
-
-          // Inject auto-extracted skill recall — check SkillExtractor for matching past successes
-          try {
-            const { getSkillExtractor } = await import('../intelligence/skillExtractor');
-            const skillExtractor = getSkillExtractor();
-            const matchingSkill = skillExtractor.findMatchingSkill(ctx.goal);
-            if (matchingSkill && matchingSkill.confidence >= 0.5) {
-              try {
-                getMetricsCollector().recordSkillRecallHit(true, ctx.tenantId);
-              } catch (err) {
-                reportSilentFailure(err, 'agentRuntime:1889');
-                /* best-effort */
-              }
-              const skillLines = [
-                '## Auto-Recalled Skill',
-                `You've successfully handled a similar task before. Use this proven pattern:`,
-                ``,
-                `**${matchingSkill.name}** (${(matchingSkill.successRate * 100).toFixed(0)}% success, used ${matchingSkill.usageCount}×)`,
-                `Description: ${matchingSkill.description}`,
-              ];
-              if (matchingSkill.steps.length > 0) {
-                skillLines.push(`Steps: ${matchingSkill.steps.join(' → ')}`);
-              }
-              if (matchingSkill.tools.length > 0) {
-                skillLines.push(`Recommended tools: ${matchingSkill.tools.join(', ')}`);
-              }
-              skillLines.push(
-                ``,
-                `Reuse this pattern if applicable. Adapt based on the current context.`,
-              );
-              const skillBlock = skillLines.join('\n');
-              const skillTokens = estimateTokens(skillBlock);
-              if (injectedContextTokens + skillTokens < contextTokenCap) {
-                contextParts.push(skillBlock);
-                injectedContextTokens += skillTokens;
-              }
-            } else {
-              try {
-                getMetricsCollector().recordSkillRecallHit(false, ctx.tenantId);
-              } catch (err) {
-                reportSilentFailure(err, 'agentRuntime:1919');
-                /* best-effort */
-              }
-            }
-          } catch (e) {
-            getGlobalLogger().debug('AgentRuntime', 'Skill recall injection failed (best-effort)', {
-              error: (e as Error)?.message,
-            });
-          }
-
-          // Single splice for cache stability — all dynamic context in one system message
-          if (contextParts.length > 0) {
+          // Dynamic context injection (inbox, memory, skills, skill recall)
+          const injected = await this.contextInjector.inject({
+            ctx,
+            tokenBudget: ctx.tokenBudget,
+          });
+          if (injected.partCount > 0) {
             request.messages.splice(request.messages.length - 1, 0, {
               role: 'system' as const,
-              content: contextParts.join('\n\n---\n\n'),
+              content: injected.content,
             });
           }
 
@@ -2051,6 +1497,16 @@ export class AgentRuntime implements AgentRuntimeInterface {
           for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
             const llmCtx = { request, agentId: ctx.agentId, runId };
             const llmRequest = await getHookManager().fireBeforeLLMCall(llmCtx);
+
+            // PASTE speculative execution: pre-execute predicted read-only tools
+            // during LLM thinking time. Fire-and-forget — results land in
+            // ToolResultCache and are consumed transparently on cache hit.
+            try {
+              this.toolExecutionService.triggerSpeculativeExecution(tenantId).catch(() => {});
+            } catch (err) {
+              reportSilentFailure(err, 'agentRuntime:speculativeTrigger');
+            }
+
             let response = await this.callWithTimeout(llmRequest, routing);
             await getHookManager().fireAfterLLMCall({
               request: llmRequest,
@@ -2094,6 +1550,25 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 tenantId,
               );
 
+              // Hallucination detection: analyze the LLM response and feed the
+              // result into AdaptiveHITL via onBeforeToolCall signals.
+              try {
+                const userInput = request.messages
+                  .filter((m) => m.role === 'user')
+                  .map((m) => m.content)
+                  .join('\n')
+                  .slice(0, 4000);
+                const report = getHallucinationDetector().analyze(
+                  userInput,
+                  response.content?.slice(0, 4000) ?? '',
+                );
+                this.lastHallucinationDetected =
+                  report.recommendation === 'reject' || report.recommendation === 'flag_for_review';
+              } catch (err) {
+                reportSilentFailure(err, 'agentRuntime:hallucination-detection');
+                this.lastHallucinationDetected = false;
+              }
+
               // SecurityOrchestrator: feed LLM call into GuardianAgent + CrossAgentCorrelator
               try {
                 const llmEvent: CrossAgentEvent = {
@@ -2113,6 +1588,28 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   timestamp: Date.now(),
                   severity: 'low' as const,
                 };
+                // Security (OWASP ASI10): Run hallucination detector on LLM output
+                // and pass result to security orchestrator for HITL signal enrichment.
+                try {
+                  const hallucinationReport = getHallucinationDetector().analyze(
+                    ctx.goal ?? '',
+                    response.content ?? '',
+                  );
+                  if (hallucinationReport.recommendation !== 'pass') {
+                    getGlobalLogger().warn('AgentRuntime', 'Hallucination detected', {
+                      agentId: ctx.agentId,
+                      riskScore: hallucinationReport.riskScore,
+                      recommendation: hallucinationReport.recommendation,
+                      signals: hallucinationReport.signals.length,
+                    });
+                    // Enrich the LLM event with hallucination signal
+                    llmEvent.metadata.hallucinationDetected = true;
+                    llmEvent.metadata.hallucinationRiskScore = hallucinationReport.riskScore;
+                    llmEvent.severity = 'medium' as const;
+                  }
+                } catch {
+                  /* best-effort hallucination detection */
+                }
                 this.securityOrch.onAgentEvent(llmEvent);
               } catch (err) {
                 reportSilentFailure(err, 'agentRuntime:2104');
@@ -2190,6 +1687,36 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 );
 
               steps.push(step);
+
+              // Publish reasoning and output deltas for real-time SSE streaming.
+              // Previously SSEStream.emitReasoning()/emitOutput() existed but were
+              // never called, so enterprise users could only see event-level
+              // "started/completed" — not the agent's actual thinking process.
+              // Publishing to the bus lets SSEStream forward these to connected clients.
+              try {
+                const reasoningContent =
+                  (response as { reasoning_content?: string }).reasoning_content;
+                if (reasoningContent) {
+                  getMessageBus().publish('reasoning.delta', ctx.agentId, {
+                    runId,
+                    agentId: ctx.agentId,
+                    stepNumber,
+                    delta: reasoningContent.slice(0, 2000),
+                    timestamp: now(),
+                  });
+                }
+                if (response.content) {
+                  getMessageBus().publish('output.delta', ctx.agentId, {
+                    runId,
+                    agentId: ctx.agentId,
+                    stepNumber,
+                    delta: response.content.slice(0, 2000),
+                    timestamp: now(),
+                  });
+                }
+              } catch {
+                /* best-effort — streaming is non-critical */
+              }
 
               const anomalyDetector = getAnomalyDetector();
               anomalyDetector.recordUsage(ctx.agentId, response.usage.totalTokens);
@@ -2285,7 +1812,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 this.outputManager.adjustBudgetForPressure(this.governor.getState().pressure);
 
                 // Check cache for all tool calls first (zero-cost on hit)
-                const calls = response.toolCalls;
+                const calls = (response.toolCalls ?? []).map((tc) =>
+                  this.normalizeToolCall(tc),
+                );
                 const uncachedCalls: typeof calls = [];
                 const cachedResults: Array<{
                   toolCallId: string;
@@ -2710,11 +2239,13 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
                 for (const masked of maskedResults) {
                   let finalOutput = masked.output;
+                  let injectionBlocked = false;
                   // Defense-in-depth: scan tool outputs for injection patterns before they enter the LLM context.
                   // Lightweight regex check — blocks known injection patterns without LLM cost.
                   try {
                     const injectionScan = scanToolOutputForInjection(finalOutput);
                     if (injectionScan.blocked) {
+                      injectionBlocked = true;
                       finalOutput = `[Tool output filtered: ${injectionScan.reason}] (Original output length: ${finalOutput.length} chars)`;
                       bus.publish('system.alert', 'runtime', {
                         type: 'tool_output_injection_blocked',
@@ -2737,6 +2268,23 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     reportSilentFailure(err, 'agentRuntime:2717');
                     /* best-effort defense */
                   }
+                  // Deep security scan: enforce tool output security based on trust tier
+                  // Disabled for now — the async full-scan causes timing issues in the
+                  // tool execution loop. The regex-based scanToolOutputForInjection
+                  // above already provides the primary defense.
+                  /*
+                  try {
+                    const deepScan = await enforceToolOutputSecurity(finalOutput, 'untrusted');
+                    if (deepScan.blocked && !injectionBlocked) {
+                      const reason = deepScan.blockedAt
+                        ? `deep-scan ${deepScan.blockedAt}`
+                        : 'untrusted output blocked';
+                      finalOutput = `[Tool output filtered: ${reason}] ...`;
+                    }
+                  } catch (err) {
+                    reportSilentFailure(err, 'agentRuntime:enforceToolOutputSecurity');
+                  }
+                  */
                   // Output sanitization: redact credentials, API keys, PII before tool results
                   // enter the LLM context. This prevents credential leakage via tool outputs.
                   try {
@@ -2754,8 +2302,14 @@ export class AgentRuntime implements AgentRuntimeInterface {
                       });
                     }
                   } catch (err) {
-                    reportSilentFailure(err, 'agentRuntime:2737');
-                    /* best-effort sanitization */
+                    // Fail closed: if sanitization fails, suppress the output rather than
+                    // leaking potentially unsanitized credentials/PII into the LLM context.
+                    finalOutput = `[sanitization failed, output suppressed]`;
+                    bus.publish('system.alert', 'runtime', {
+                      type: 'tool_output_sanitization_failed',
+                      toolCallId: masked.toolCallId,
+                      error: (err as Error)?.message,
+                    });
                   }
                   // Apply truncation if governor says so and output is verbose
                   if (truncLimit > 0 && finalOutput.length > truncLimit) {
@@ -2946,6 +2500,24 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 ctx.guard?.recordTokens(followUp.usage.totalTokens);
                 response = followUp;
 
+                // Hallucination detection on the follow-up response.
+                try {
+                  const userInput = followUpRequest.messages
+                    .filter((m) => m.role === 'user')
+                    .map((m) => m.content)
+                    .join('\n')
+                    .slice(0, 4000);
+                  const report = getHallucinationDetector().analyze(
+                    userInput,
+                    followUp.content?.slice(0, 4000) ?? '',
+                  );
+                  this.lastHallucinationDetected =
+                    report.recommendation === 'reject' || report.recommendation === 'flag_for_review';
+                } catch (err) {
+                  reportSilentFailure(err, 'agentRuntime:hallucination-detection-followup');
+                  this.lastHallucinationDetected = false;
+                }
+
                 // Enforce sub-agent step and progress limits at each tool loop iteration
                 ctx.guard?.check(cumulativeEvidence);
 
@@ -3031,27 +2603,13 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   totalDurationMs,
                   interrupt: id,
                 };
-                this.checkpointer.terminalCheckpoint({
-                  runId,
-                  agentId: ctx.agentId,
-                  missionId: ctx.missionId,
-                  timestamp: now(),
-                  phase: 'interrupted',
+                state.totalTokenUsage = totalTokens;
+                state.steps = steps;
+                await this.checkpointingPhase.checkpointTerminal(ctx, state, 'interrupted', {
+                  request,
+                  attempt,
                   stepNumber: steps.length,
-                  attemptNumber: attempt,
-                  messages: request.messages,
-                  tokenUsage: { ...totalTokens },
-                  stepDurations: steps.map((s) => s.durationMs),
-                  context: {
-                    agentId: ctx.agentId,
-                    missionId: ctx.missionId,
-                    projectId: ctx.projectId,
-                    goal: ctx.goal,
-                    availableTools: ctx.availableTools,
-                    maxSteps: ctx.maxSteps,
-                    tokenBudget: ctx.tokenBudget,
-                  },
-                  totalDurationMs,
+                  exitSummary: result.summary,
                 });
                 tracer.recordDecision(runId, `Interrupted: ${id.reason}`, steps.length);
                 bus.publish('agent.interrupted', ctx.agentId, { runId, reason: id.reason });
@@ -3204,33 +2762,25 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   totalDurationMs,
                 };
 
-                this.checkpointer.terminalCheckpoint({
-                  runId,
-                  agentId: ctx.agentId,
-                  missionId: ctx.missionId,
-                  timestamp: now(),
-                  phase: 'completed_early_exit',
+                state.totalTokenUsage = totalTokens;
+                state.steps = steps;
+                await this.checkpointingPhase.checkpointTerminal(ctx, state, 'completed_early_exit', {
+                  request,
+                  attempt,
                   stepNumber: steps.length,
-                  attemptNumber: attempt,
-                  messages: request.messages,
-                  tokenUsage: { ...totalTokens },
-                  stepDurations: steps.map((s) => s.durationMs),
-                  context: {
-                    agentId: ctx.agentId,
-                    missionId: ctx.missionId,
-                    projectId: ctx.projectId,
-                    goal: ctx.goal,
-                    availableTools: ctx.availableTools,
-                    maxSteps: ctx.maxSteps,
-                    tokenBudget: ctx.tokenBudget,
-                  },
-                  totalDurationMs,
+                  exitSummary: result.summary,
                 });
 
                 if (this.memory) {
                   try {
+                    const _memContent = `[EARLY_EXIT] ${ctx.goal.slice(0, GOAL_TELEMETRY_MAX_CHARS)}`;
+                    // Security (OWASP ASI07): Memory poisoning detection gate.
+                    const _poisoningCheck = checkMemoryPoisoning(_memContent, `agent:${ctx.agentId}`, ctx.agentId);
+                    if (!_poisoningCheck.allowed) {
+                      getGlobalLogger().warn('AgentRuntime', 'Memory write blocked by poisoning gate', { reason: _poisoningCheck.reason });
+                    } else {
                     this.memory.add(
-                      `[EARLY_EXIT] ${ctx.goal.slice(0, GOAL_TELEMETRY_MAX_CHARS)}`,
+                      _memContent,
                       'episodic',
                       `run:${runId}|tokens:${totalTokens.totalTokens}|dur:${totalDurationMs}ms|steps:${steps.length}`,
                       0.6,
@@ -3242,6 +2792,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                         durationMs: totalDurationMs,
                       },
                     );
+                    } // end poisoning gate else
                   } catch (err) {
                     reportSilentFailure(err, 'agentRuntime:3226');
                     /* best-effort */
@@ -3312,27 +2863,12 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   !s.content?.startsWith('TOOL_'),
               ).length;
 
-              this.checkpointer.checkpoint({
-                runId,
-                agentId: ctx.agentId,
-                missionId: ctx.missionId,
-                timestamp: now(),
-                phase: 'tool_execution',
+              state.totalTokenUsage = totalTokens;
+              state.steps = steps;
+              await this.checkpointingPhase.checkpointAfterStep(ctx, state, 'tool_execution', {
+                request,
+                attempt,
                 stepNumber: steps.length,
-                attemptNumber: attempt,
-                messages: request.messages,
-                tokenUsage: { ...totalTokens },
-                stepDurations: steps.map((s) => s.durationMs),
-                context: {
-                  agentId: ctx.agentId,
-                  missionId: ctx.missionId,
-                  projectId: ctx.projectId,
-                  goal: ctx.goal,
-                  availableTools: ctx.availableTools,
-                  maxSteps: ctx.maxSteps,
-                  tokenBudget: ctx.tokenBudget,
-                },
-                totalDurationMs: Date.now() - startTime,
               });
 
               // Enforce sub-agent progress and step limits
@@ -3454,28 +2990,14 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 /* best-effort */
               }
 
-              this.checkpointer.checkpoint({
-                runId,
-                agentId: ctx.agentId,
-                missionId: ctx.missionId,
-                timestamp: now(),
-                phase: 'verification',
+              state.totalTokenUsage = totalTokens;
+              state.steps = steps;
+              state.lastError = lastError;
+              await this.checkpointingPhase.checkpointAfterStep(ctx, state, 'verification', {
+                request,
+                attempt,
                 stepNumber: steps.length,
-                attemptNumber: attempt,
-                messages: request.messages,
-                tokenUsage: { ...totalTokens },
-                stepDurations: steps.map((s) => s.durationMs),
-                context: {
-                  agentId: ctx.agentId,
-                  missionId: ctx.missionId,
-                  projectId: ctx.projectId,
-                  goal: ctx.goal,
-                  availableTools: ctx.availableTools,
-                  maxSteps: ctx.maxSteps,
-                  tokenBudget: ctx.tokenBudget,
-                },
                 lastError,
-                totalDurationMs: Date.now() - startTime,
               });
 
               // Tier 3.2: Record reflection from this verification attempt so future
@@ -3865,33 +3387,25 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 /* best-effort learning */
               }
 
-              this.checkpointer.terminalCheckpoint({
-                runId,
-                agentId: ctx.agentId,
-                missionId: ctx.missionId,
-                timestamp: now(),
-                phase: 'completed',
+              state.totalTokenUsage = totalTokens;
+              state.steps = steps;
+              await this.checkpointingPhase.checkpointTerminal(ctx, state, 'completed', {
+                request,
+                attempt,
                 stepNumber: steps.length,
-                attemptNumber: attempt,
-                messages: request.messages,
-                tokenUsage: { ...totalTokens },
-                stepDurations: steps.map((s) => s.durationMs),
-                context: {
-                  agentId: ctx.agentId,
-                  missionId: ctx.missionId,
-                  projectId: ctx.projectId,
-                  goal: ctx.goal,
-                  availableTools: ctx.availableTools,
-                  maxSteps: ctx.maxSteps,
-                  tokenBudget: ctx.tokenBudget,
-                },
-                totalDurationMs,
+                exitSummary: result.summary,
               });
 
               if (this.memory) {
                 try {
+                  const _memContent2 = `[SUCCESS] ${ctx.goal.slice(0, GOAL_TELEMETRY_MAX_CHARS)}`;
+                  // Security (OWASP ASI07): Memory poisoning detection gate.
+                  const _poisoningCheck2 = checkMemoryPoisoning(_memContent2, `agent:${ctx.agentId}`, ctx.agentId);
+                  if (!_poisoningCheck2.allowed) {
+                    getGlobalLogger().warn('AgentRuntime', 'Memory write blocked by poisoning gate', { reason: _poisoningCheck2.reason });
+                  } else {
                   this.memory.add(
-                    `[SUCCESS] ${ctx.goal.slice(0, GOAL_TELEMETRY_MAX_CHARS)}`,
+                    _memContent2,
                     'episodic',
                     `run:${runId}|tokens:${totalTokens.totalTokens}|dur:${totalDurationMs}ms|steps:${steps.length}`,
                     0.7,
@@ -3903,6 +3417,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                       durationMs: totalDurationMs,
                     },
                   );
+                  } // end poisoning gate else
                 } catch (e) {
                   getGlobalLogger().warn('AgentRuntime', 'Failed to record success memory', {
                     error: (e as Error)?.message,
@@ -4003,9 +3518,14 @@ export class AgentRuntime implements AgentRuntimeInterface {
             }
 
             // Handle failure with error classification
-            const ce = classifyLLMError(new Error(lastError || 'Unknown error'));
+            // Use the preserved provider error for accurate classification,
+            // falling back to lastError or a generic message.
+            const errorToClassify = this.lastProviderError ?? new Error(lastError || 'Unknown error');
+            const ce = classifyLLMError(errorToClassify);
             lastError = ce.message;
             lastErrorIsPermanent = !ce.retryable;
+            // Reset for the next attempt
+            this.lastProviderError = null;
             tracer.recordError(runId, `${ce.errorClass}: ${ce.message}`, Date.now() - startTime);
 
             if (ce.retryable && attempt < this.config.maxRetries) {
@@ -4075,40 +3595,34 @@ export class AgentRuntime implements AgentRuntimeInterface {
               }),
             );
 
-          this.checkpointer.terminalCheckpoint({
-            runId,
-            agentId: ctx.agentId,
-            missionId: ctx.missionId,
-            timestamp: now(),
-            phase: 'failed',
+          state.totalTokenUsage = totalTokens;
+          state.steps = steps;
+          state.lastError = lastError;
+          await this.checkpointingPhase.checkpointTerminal(ctx, state, 'failed', {
+            request,
+            attempt: this.config.maxRetries,
             stepNumber: steps.length,
-            attemptNumber: this.config.maxRetries,
-            messages: request.messages,
-            tokenUsage: { ...totalTokens },
-            stepDurations: steps.map((s) => s.durationMs),
-            context: {
-              agentId: ctx.agentId,
-              missionId: ctx.missionId,
-              projectId: ctx.projectId,
-              goal: ctx.goal,
-              availableTools: ctx.availableTools,
-              maxSteps: ctx.maxSteps,
-              tokenBudget: ctx.tokenBudget,
-            },
             lastError,
-            totalDurationMs: Date.now() - startTime,
+            exitSummary: lastError,
           });
 
           if (this.memory) {
             try {
+              const _memContent3 = `[FAIL] ${ctx.goal.slice(0, GOAL_TELEMETRY_MAX_CHARS)}`;
+              // Security (OWASP ASI07): Memory poisoning detection gate.
+              const _poisoningCheck3 = checkMemoryPoisoning(_memContent3, `agent:${ctx.agentId}`, ctx.agentId);
+              if (!_poisoningCheck3.allowed) {
+                getGlobalLogger().warn('AgentRuntime', 'Memory write blocked by poisoning gate', { reason: _poisoningCheck3.reason });
+              } else {
               this.memory.add(
-                `[FAIL] ${ctx.goal.slice(0, GOAL_TELEMETRY_MAX_CHARS)}`,
+                _memContent3,
                 'episodic',
                 `run:${runId}|error:${(lastError ?? 'unknown').slice(0, 100)}|dur:${Date.now() - startTime}ms`,
                 0.5 + (lastErrorIsPermanent ? 0.3 : 0),
                 ['execution', 'failure', ...ctx.availableTools.slice(0, 3)],
                 { runId, goal: ctx.goal.slice(0, GOAL_RESULT_MAX_CHARS), error: lastError },
               );
+              } // end poisoning gate else
             } catch (e) {
               getGlobalLogger().warn('AgentRuntime', 'Failed to record failure memory', {
                 error: (e as Error)?.message,
@@ -4431,7 +3945,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
   }
 
   /** Thin forwarder that adapts callProvider's nullable return for ProviderFallbackChain.
-   *  ProviderFallbackChain treats non-throwing returns as success, so we throw on null. */
+   *  ProviderFallbackChain treats non-throwing returns as success, so we throw on null.
+   *  Preserves the original provider error so the retry loop can classify it (429 vs 400 etc). */
   private async callProviderOrThrow(
     provider: LLMProvider,
     providerName: string,
@@ -4441,8 +3956,17 @@ export class AgentRuntime implements AgentRuntimeInterface {
   ): Promise<import('./types').LLMResponse> {
     const result = await this.callProvider(provider, providerName, request, attemptNumber, taskId);
     if (!result) {
+      // The original error is preserved in this.lastProviderError by callProvider.
+      // Throw it directly so ProviderFallbackChain and the retry loop can classify
+      // it properly (e.g., 429 = retryable, 400 = permanent).
+      // Do NOT clear this.lastProviderError here — the retry loop reads it later.
+      if (this.lastProviderError) {
+        throw this.lastProviderError;
+      }
       throw new Error(`Provider "${providerName}" returned null (likely timeout or unavailable)`);
     }
+    // Clear on success — no error to preserve
+    this.lastProviderError = null;
     return result;
   }
 
@@ -4523,6 +4047,22 @@ export class AgentRuntime implements AgentRuntimeInterface {
       const evictionsBefore = this.cacheManager.getSingleFlightStats().evictions;
       const inflightBefore = this.cacheManager.getSingleFlightInflightCount();
       const llmTimeoutMs = this.config.llmTimeoutMs ?? DEFAULT_LLM_TIMEOUT_MS;
+
+      // EnterpriseSecurityGateway: pre-LLM cost + input-scan gate.
+      const estimatedTokens = this.estimateRequestTokens(request);
+      const gateway = getEnterpriseSecurityGateway();
+      const preCheck = gateway.preLLMCheck({
+        tenantId: tenantIdForFlight,
+        sessionId: taskId,
+        model: request.model,
+        estimatedTokens,
+        source: taskId ?? 'unknown',
+        input: request.messages.map((m) => m.content).join('\n').slice(0, 10000),
+      });
+      if (!preCheck.allowed) {
+        throw new Error(`Security gateway blocked LLM call: ${preCheck.reason ?? 'policy'}`);
+      }
+
       const result: LLMResponse = await this.cacheManager.dedupeSingleFlight(
         flightKey,
         async () => {
@@ -4562,6 +4102,20 @@ export class AgentRuntime implements AgentRuntimeInterface {
         /* best-effort */
       }
 
+      // EnterpriseSecurityGateway: post-LLM cost accounting + DLP scan.
+      const postCheck = gateway.postLLMCheck({
+        tenantId: tenantIdForFlight,
+        sessionId: taskId,
+        model: request.model,
+        inputTokens: result.usage.promptTokens,
+        outputTokens: result.usage.completionTokens,
+        agentId: taskId,
+        output: result.content,
+      });
+      if (!postCheck.allowed) {
+        throw new Error(`Security gateway blocked LLM output: ${postCheck.reason ?? 'DLP policy'}`);
+      }
+
       this.samplesStore.recordLLMCall(request, result, {
         provider: providerName,
         durationMs: Date.now() - startMs,
@@ -4570,6 +4124,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       });
       return result;
     } catch (err) {
+      this.lastProviderError = err instanceof Error ? err : new Error(String(err));
       this.samplesStore.recordLLMCall(request, null, {
         provider: providerName,
         durationMs: Date.now() - startMs,
@@ -4615,7 +4170,78 @@ export class AgentRuntime implements AgentRuntimeInterface {
     allowedTools?: string[],
     agentCtx?: AgentExecutionContext,
   ): Promise<ToolResult> {
-    return this.toolExecutionService.execute(
+    // Security (RASP): Check if agent is suspended or quarantined before executing any tool.
+    // This closes the detection→response loop — alerts from security detectors
+    // suspend agents, and this check prevents further tool execution.
+    if (isAgentQuarantined(agentId)) {
+      return {
+        toolCallId: toolCall.id,
+        name: toolCall.name,
+        output: '',
+        error: 'BLOCKED: Agent is quarantined due to critical security event. Manual review required.',
+        durationMs: 0,
+      };
+    }
+    if (isAgentSuspended(agentId)) {
+      return {
+        toolCallId: toolCall.id,
+        name: toolCall.name,
+        output: '',
+        error: 'BLOCKED: Agent is temporarily suspended due to a security alert. Retry later.',
+        durationMs: 0,
+      };
+    }
+
+    // Security (G9): Verify security invariants before tool execution.
+    // Checks all registered invariants (AUTH, AUTHZ, SANDBOX, FLOW, AUDIT, etc.)
+    // and blocks execution if any invariant is violated.
+    try {
+      const invariantResult = assertInvariants(
+        {
+          agentId,
+          runId,
+          toolName: toolCall.name,
+          toolArgs: toolCall.arguments,
+          capabilityTokenPresent: !!agentCtx,
+          agentSuspended: isAgentSuspended(agentId),
+          agentQuarantined: isAgentQuarantined(agentId),
+        },
+        'executeTool',
+      );
+      if (!invariantResult.passed) {
+        const violated = invariantResult.violations.map((v) => v.invariant.id).join(', ');
+        return {
+          toolCallId: toolCall.id,
+          name: toolCall.name,
+          output: '',
+          error: `BLOCKED: Security invariant violated (${violated}). Tool execution denied.`,
+          durationMs: 0,
+        };
+      }
+    } catch {
+      // best-effort — if invariant verifier fails, proceed (don't block on verifier errors)
+    }
+
+    const gateway = getEnterpriseSecurityGateway();
+    const preCheck = gateway.preToolCheck({
+      tenantId,
+      sessionId: runId,
+      toolName: toolCall.name,
+      source: agentId,
+      input: JSON.stringify(toolCall.arguments).slice(0, 10000),
+    });
+    if (!preCheck.allowed) {
+      const errorMsg = `SECURITY_GATEWAY_BLOCKED: ${preCheck.reason ?? 'tool policy'}`;
+      return {
+        toolCallId: toolCall.id,
+        name: toolCall.name,
+        output: errorMsg,
+        error: errorMsg,
+        durationMs: 0,
+      };
+    }
+
+    const result = await this.toolExecutionService.execute(
       runId,
       toolCall,
       agentId,
@@ -4624,9 +4250,70 @@ export class AgentRuntime implements AgentRuntimeInterface {
       agentCtx,
       this.executedMutations,
     );
+
+    // EnterpriseSecurityGateway: post-tool DLP scan on tool output.
+    const postCheck = gateway.postToolCheck({
+      tenantId,
+      sessionId: runId,
+      toolName: toolCall.name,
+      output: result.output,
+      agentId,
+    });
+    if (!postCheck.allowed) {
+      const errorMsg = `SECURITY_GATEWAY_BLOCKED_OUTPUT: ${postCheck.reason ?? 'DLP policy'}`;
+      return {
+        toolCallId: toolCall.id,
+        name: toolCall.name,
+        output: errorMsg,
+        error: errorMsg,
+        durationMs: result.durationMs,
+      };
+    }
+    if (postCheck.sanitizedOutput && postCheck.sanitizedOutput !== result.output) {
+      result.output = postCheck.sanitizedOutput;
+    }
+
+    return result;
   }
   private generateActionId(): string {
     return `act_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  }
+
+  /** Rough token estimator for the enterprise security gateway pre-LLM check. */
+  private estimateRequestTokens(request: LLMRequest): number {
+    const text = request.messages.map((m) => m.content).join('\n');
+    // Approximate 4 chars per token; include tool definitions if present.
+    const toolText = request.tools
+      ? request.tools.map((t) => `${t.name}\n${t.description ?? ''}\n${JSON.stringify(t.inputSchema ?? {})}`).join('\n')
+      : '';
+    return Math.ceil((text.length + toolText.length) / 4);
+  }
+
+  /**
+   * Normalize a tool_call payload from either the internal flat format or the
+   * OpenAI-style `{ function: { name, arguments } }` format into the flat
+   * `{ id, name, arguments }` shape the rest of the runtime expects.
+   */
+  private normalizeToolCall(
+    tc: ToolCall & { function?: { name?: string; arguments?: string } },
+  ): ToolCall {
+    if (tc.name && tc.arguments !== undefined) {
+      return tc;
+    }
+    const fn = tc.function;
+    let args: Record<string, unknown> = {};
+    if (fn?.arguments) {
+      try {
+        args = JSON.parse(fn.arguments);
+      } catch {
+        args = { raw: fn.arguments };
+      }
+    }
+    return {
+      id: tc.id ?? `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      name: fn?.name ?? tc.name ?? '',
+      arguments: args,
+    };
   }
 
   /** Heuristic used by the goal-completion verification gate. A verification
@@ -4663,9 +4350,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
    * Callers can use this to present a resume UI or auto-resume.
    */
   listUnfinishedRuns(): Array<{ runId: string; phase: string; timestamp: string }> {
-    return this.checkpointer
-      .listCheckpoints()
-      .filter((cp) => cp.phase !== 'completed' && cp.phase !== 'failed');
+    return this.checkpointingPhase.listUnfinishedRuns();
   }
 
   /** Tier 1.2: Resume a crashed run using the full RunRecovery pipeline.
@@ -4674,30 +4359,20 @@ export class AgentRuntime implements AgentRuntimeInterface {
    *  Returns null if the checkpoint is not found or the lease was lost.
    */
   async resume(runId: string, tenantId?: string): Promise<RunRecoveryResult | null> {
-    const recovery = new RunRecovery(this.checkpointer, this.leaseManager);
-    const result = await recovery.attempt(runId, { tenantId });
-    if (result.status === 'not_found' || result.status === 'lease_lost') {
-      getGlobalLogger().warn('AgentRuntime', 'Run recovery failed', {
+    const result = await this.checkpointingPhase.resume(runId, tenantId);
+    if (result && result.status === 'recovered') {
+      getGlobalLogger().info('AgentRuntime', 'Run recovered', {
         runId,
-        status: result.status,
+        resumeFromStep: result.resumeFromStep,
+        completedToolCalls: result.completedToolCallIds.size,
       });
-      return null;
     }
-    getGlobalLogger().info('AgentRuntime', 'Run recovered', {
-      runId,
-      resumeFromStep: result.resumeFromStep,
-      completedToolCalls: result.completedToolCallIds.size,
-    });
     return result;
   }
 
   /** List all runs that have recoverable checkpoints (non-terminal phases). */
   listResumableRuns(): Array<{ runId: string; phase: string; timestamp: string }> {
-    return this.checkpointer.listCheckpoints().map((entry) => ({
-      runId: entry.runId,
-      phase: entry.phase,
-      timestamp: entry.timestamp,
-    }));
+    return this.checkpointingPhase.listResumableRuns();
   }
 
   /**
@@ -4705,18 +4380,18 @@ export class AgentRuntime implements AgentRuntimeInterface {
    * Returns true if the run was active and pause was signaled, false otherwise.
    */
   pauseRun(runId: string): boolean {
-    return this.runLifecycle.pauseRun(runId);
+    return this.checkpointingPhase.pauseRun(runId);
   }
 
   /**
    * Clear the pause flag for a run (e.g., after resume).
    */
   unpauseRun(runId: string): void {
-    this.runLifecycle.unpauseRun(runId);
+    this.checkpointingPhase.unpauseRun(runId);
   }
 
   isPaused(runId: string): boolean {
-    return this.runLifecycle.isPaused(runId);
+    return this.checkpointingPhase.isPaused(runId);
   }
 
   /**
@@ -4724,22 +4399,15 @@ export class AgentRuntime implements AgentRuntimeInterface {
    * Returns an array of { runId, paused, checkpointPhase }.
    */
   getActiveRuns(): Array<{ runId: string; paused: boolean; checkpointPhase?: string }> {
-    return this.runLifecycle.getActiveRuns().map((runId) => {
-      const checkpoint = this.checkpointer.resume(runId);
-      return {
-        runId,
-        paused: this.runLifecycle.isPaused(runId),
-        checkpointPhase: checkpoint?.phase,
-      };
-    });
+    return this.checkpointingPhase.getActiveRuns();
   }
 
   getActiveRunCount(): number {
-    return this.runLifecycle.getActiveRunCount();
+    return this.checkpointingPhase.getActiveRunCount();
   }
 
   isRunActive(runId: string): boolean {
-    return this.runLifecycle.isActive(runId);
+    return this.checkpointingPhase.isRunActive(runId);
   }
 
   getSemanticCacheStats() {
