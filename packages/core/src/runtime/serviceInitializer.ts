@@ -62,9 +62,12 @@ import { getConversationStore } from '../memory/conversationStore';
 import { getHookManager } from '../pluginManager';
 import { createParameterControllerPlugin } from './parameterController';
 import { installProcessCrashHandlers } from './processCrashSafety';
+import { RecoveryBootstrapper } from '../atr/recoveryBootstrapper';
 import { onCircuitBreakerOpen } from './dlqReplayWorker';
 import { getCapabilityTokenIssuer } from '../security/capabilityToken';
 import { getOTelExporter } from './openTelemetryExporter';
+import { getGlobalEventSourcingEngine } from './eventSourcingEngine';
+import { getGlobalEventSourcingSubscriber } from './eventSourcingSubscriber';
 import { createMemoryStore } from '../memory';
 
 import type { StateCheckpointer } from './stateCheckpointer';
@@ -539,6 +542,34 @@ export function initializeServices(
 
   resolvedCheckpointer.setLeaseManager(leaseManager);
 
+  // P0: Initialize the EventSourcingEngine WAL before any state transitions
+  // occur. This loads existing events from disk so the hash chain continues
+  // across process restarts. Fire-and-forget — the engine handles lazy init
+  // on first append if this fails.
+  getGlobalEventSourcingEngine()
+    .init()
+    .then(() => {
+      // P0: Start the EventSourcingSubscriber after the engine is
+      // initialized so events flow to a ready WAL. The subscriber
+      // forwards agent lifecycle events (tool.started/completed,
+      // agent.started/completed/failed, trace.recorded, etc.) from
+      // the MessageBus to the EventSourcingEngine WAL.
+      try {
+        getGlobalEventSourcingSubscriber().start();
+      } catch (e) {
+        getGlobalLogger().warn(
+          'AgentRuntime',
+          'EventSourcingSubscriber start failed',
+          { error: (e as Error)?.message },
+        );
+      }
+    })
+    .catch((e: unknown) =>
+      getGlobalLogger().warn('AgentRuntime', 'EventSourcingEngine init failed', {
+        error: (e as Error)?.message,
+      }),
+    );
+
   installProcessCrashHandlers({
     dlq: resolvedDlq,
     leaseManager,
@@ -555,6 +586,26 @@ export function initializeServices(
     },
     tenantIdFor: () => getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
   });
+
+  // P0: Zombie run recovery on startup. Scans the RunLedger for runs left
+  // in EXECUTING/VERIFYING/PAUSED by a previously crashed process. Fences
+  // zombies (bumps fencing epoch), then aborts+compensates or reclaims
+  // for resume. Idempotent — safe to call even if no zombies exist.
+  try {
+    const recoveryResult = RecoveryBootstrapper.bootstrap();
+    if (recoveryResult.scanned > 0) {
+      getGlobalLogger().info('AgentRuntime', 'Recovery bootstrap scan completed', {
+        scanned: recoveryResult.scanned,
+        recovered: recoveryResult.recovered,
+        aborted: recoveryResult.aborted,
+        skipped: recoveryResult.skipped,
+      });
+    }
+  } catch (e) {
+    getGlobalLogger().warn('AgentRuntime', 'Recovery bootstrap scan failed', {
+      error: (e as Error)?.message,
+    });
+  }
 
   // ── Supervision Tree (Erlang/OTP "Let It Crash") ──────────────────────
   // Create a root supervisor for agent runtime instances. The supervisor

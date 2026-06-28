@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { AgentRuntime } from '../../src/runtime/agentRuntime';
 import { ModelRouter, resetModelRouter } from '../../src/runtime/modelRouter';
 import { resetMessageBus, getMessageBus } from '../../src/runtime/messageBus';
@@ -9,6 +9,8 @@ import { runWithTenant } from '../../src/runtime/tenantContext';
 import { MockLLMProvider } from '../../src/runtime/mockLLMProvider';
 
 describe('Tenant runtime isolation', () => {
+  let runtime: AgentRuntime;
+
   beforeEach(() => {
     resetModelRouter();
     resetMessageBus();
@@ -19,7 +21,7 @@ describe('Tenant runtime isolation', () => {
 
   it('isolates trace stores and message bus history between tenants', async () => {
     const router = new ModelRouter();
-    const runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000 }, router);
+    runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000 }, router);
     const provider = new MockLLMProvider('openai', { defaultResponse: 'ok' });
     runtime.registerProvider('openai', provider);
 
@@ -62,5 +64,15 @@ describe('Tenant runtime isolation', () => {
     expect(historyB.some((m) => (m.payload as { runId?: string }).runId === resultA.runId)).toBe(
       false,
     );
+  });
+
+  afterEach(() => {
+    // Dispose the AgentRuntime to prevent timer/resource leaks that cause
+    // intermittent timeouts under parallel-load CPU contention.
+    try {
+      runtime?.dispose();
+    } catch {
+      /* best-effort */
+    }
   });
 });

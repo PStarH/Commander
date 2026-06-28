@@ -1,4 +1,5 @@
 import { reportSilentFailure } from '../silentFailureReporter';
+import { getGlobalEventSourcingEngine } from '../runtime/eventSourcingEngine';
 /**
  * RunLedger — P0-2 ATR kernel component.
  *
@@ -309,6 +310,27 @@ export class RunLedger {
     this.handlers.set(toolName, handler);
   }
 
+  // ── P0: Event Sourcing Integration ────────────────────────────────
+  // Every state transition is mirrored to the EventSourcingEngine WAL
+  // with a SHA-256 hash chain, enabling state reconstruction from the
+  // event log. Fire-and-forget: observability must never break the
+  // critical path.
+  private emitSourcingEvent(
+    type: string,
+    payload: Record<string, unknown>,
+  ): void {
+    try {
+      const engine = getGlobalEventSourcingEngine();
+      engine
+        .append({ type, payload })
+        .catch((err: unknown) => {
+          reportSilentFailure(err, 'runLedger:emitSourcingEvent');
+        });
+    } catch (err) {
+      reportSilentFailure(err, 'runLedger:emitSourcingEvent:init');
+    }
+  }
+
   /**
    * Start a new run. Acquires a lease and persists a PENDING transaction.
    * If the runId already exists, returns the existing transaction (idempotent).
@@ -382,6 +404,14 @@ export class RunLedger {
       tenantId: input.tenantId,
       metadata: input.metadata,
     };
+
+    this.emitSourcingEvent('run.started', {
+      runId,
+      tenantId: input.tenantId ?? null,
+      intentHash: input.intentHash,
+      createdAt,
+    });
+
     return { lease: acquireResult, tx };
   }
 
@@ -407,6 +437,9 @@ export class RunLedger {
       leaseToken,
       fencingEpoch,
     );
+    if (result.changes === 1) {
+      this.emitSourcingEvent('run.executing', { runId, tenantId });
+    }
     return result.changes === 1;
   }
 
@@ -431,6 +464,9 @@ export class RunLedger {
       leaseToken,
       fencingEpoch,
     );
+    if (result.changes === 1) {
+      this.emitSourcingEvent('run.verifying', { runId, tenantId });
+    }
     return result.changes === 1;
   }
 
@@ -455,6 +491,9 @@ export class RunLedger {
       leaseToken,
       fencingEpoch,
     );
+    if (result.changes === 1) {
+      this.emitSourcingEvent('run.committed', { runId, tenantId });
+    }
     return result.changes === 1;
   }
 
@@ -497,6 +536,16 @@ export class RunLedger {
       JSON.stringify(input.tags ?? []),
       input.description ?? `${input.toolName}`,
     );
+
+    this.emitSourcingEvent('action.recorded', {
+      runId: input.runId,
+      tenantId,
+      actionId,
+      toolName: input.toolName,
+      compensable: input.compensable,
+      executedAt,
+    });
+
     return {
       actionId,
       runId: input.runId,
@@ -563,6 +612,12 @@ export class RunLedger {
         leaseToken,
         fencingEpoch,
       );
+
+      this.emitSourcingEvent('run.aborted', {
+        runId,
+        tenantId,
+        errorMessage,
+      });
     }
     // No handler → log and treat as success (idempotent no-op). This is the
     // safe default for tools we can't undo (e.g. side effects to systems with

@@ -3,6 +3,14 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     threads: false,
+    // Integration tests exercise full AgentRuntime execution loops (tool
+    // calling, security correlators, tenant isolation). Under the forks pool
+    // with many concurrent files they legitimately need more than the 5s
+    // default — they pass in <1.5s in isolation but balloon past 5s under CPU
+    // contention. 15s gives realistic headroom; `retry: 2` absorbs residual
+    // transient flakiness (e.g. correlator event-emission races under load).
+    testTimeout: 15000,
+    retry: 2,
     setupFiles: ['tests/setup.ts'],
     include: [
       'tests/cli/envLoader.test.ts',

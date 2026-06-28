@@ -457,3 +457,58 @@ export interface ComplianceAuditReport {
   redTeam?: RedTeamSummary;
   signature?: string;
 }
+
+// ============================================================================
+// Hallucination Detection — risk reports extracted from trace files (GAP-04)
+// ============================================================================
+
+export interface HallucinationSignal {
+  type: string;
+  severity: 'low' | 'medium' | 'high';
+  evidence: string;
+  suggestion: string;
+}
+
+export interface HallucinationReportEntry {
+  eventId: string;
+  spanId: string;
+  timestamp: string;
+  agentId: string;
+  eventType: string;
+  riskScore: number;
+  recommendation: 'pass' | 'flag_for_review' | 'reject';
+  signals: HallucinationSignal[];
+  summary: string;
+}
+
+export interface HallucinationReportResponse {
+  runId: string;
+  reports: HallucinationReportEntry[];
+  total: number;
+}
+
+// ============================================================================
+// Lineage Tracking — agent provenance tree (GAP-05)
+// ============================================================================
+
+export interface LineageNodeEntry {
+  instanceId: string;
+  parentInstanceId: string | null;
+  agentId: string;
+  role?: string;
+  runId?: string;
+  spawnedAt: string;
+  revokedAt?: string;
+  depth: number;
+  toolCallCount: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface LineageSummaryResponse {
+  runId: string;
+  root: LineageNodeEntry | null;
+  nodes: LineageNodeEntry[];
+  totalNodes: number;
+  maxDepth: number;
+  activeNodes: number;
+}

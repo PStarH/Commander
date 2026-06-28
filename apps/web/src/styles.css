@@ -1233,6 +1233,261 @@ p {
 }
 
 /* ==============================
+   Approval Config Panel (GAP-06)
+   ============================== */
+
+.approval-config-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.approval-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.approval-subhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.approval-subhead h3 {
+  font-size: 1rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.approval-subhead > svg {
+  color: var(--accent-green);
+  flex-shrink: 0;
+}
+
+.approval-hint {
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+}
+
+/* ── Sandbox mode cards ── */
+.sandbox-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.sandbox-mode-card {
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  transition: all var(--transition);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.sandbox-mode-card:hover {
+  border-color: var(--border-hover);
+  background: var(--bg-hover);
+}
+
+.sandbox-mode-card:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.sandbox-mode-card.active {
+  border-color: var(--accent-green-border);
+  background: var(--accent-green-bg);
+  box-shadow: 0 0 0 1px var(--accent-green-border);
+}
+
+.sandbox-mode-card.danger:hover {
+  border-color: var(--accent-red-border);
+}
+
+.sandbox-mode-card.danger.active {
+  border-color: var(--accent-red-border);
+  background: var(--accent-red-bg);
+  box-shadow: 0 0 0 1px var(--accent-red-border);
+}
+
+.sandbox-mode-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sandbox-mode-icon {
+  display: inline-flex;
+  color: var(--accent-green);
+}
+
+.sandbox-mode-card.danger .sandbox-mode-icon {
+  color: var(--accent-red);
+}
+
+.sandbox-mode-label {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.sandbox-mode-check {
+  margin-left: auto;
+  color: var(--accent-green);
+}
+
+.sandbox-mode-card.danger .sandbox-mode-check {
+  color: var(--accent-red);
+}
+
+.sandbox-mode-desc {
+  font-size: 0.76rem;
+  color: var(--text-tertiary);
+  line-height: 1.4;
+}
+
+/* ── Add-policy inline form ── */
+.approval-add-form {
+  padding: 14px;
+}
+
+.approval-add-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.approval-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+
+.approval-field-wide {
+  grid-column: 1 / -1;
+}
+
+.approval-field .inp,
+.approval-field .sel {
+  width: 100%;
+}
+
+/* ── Policy / audit tables ── */
+.approval-table-wrap {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: var(--bg-card);
+  overflow-x: auto;
+}
+
+.approval-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.approval-table thead th {
+  text-align: left;
+  padding: 10px 12px;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  white-space: nowrap;
+}
+
+.approval-table tbody td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  vertical-align: middle;
+}
+
+.approval-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.approval-table tbody tr:hover td {
+  background: var(--bg-hover);
+}
+
+.approval-pattern {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.approval-pattern code {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+}
+
+.approval-level-select {
+  min-width: 120px;
+}
+
+.approval-desc {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.approval-desc .inp {
+  width: 100%;
+  min-width: 200px;
+}
+
+.approval-time {
+  white-space: nowrap;
+  color: var(--text-tertiary);
+  font-size: 0.76rem;
+}
+
+.approval-reason {
+  color: var(--text-tertiary);
+  font-size: 0.78rem;
+  max-width: 320px;
+}
+
+@media (max-width: 960px) {
+  .sandbox-mode-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .sandbox-mode-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .approval-add-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .approval-field-wide {
+    grid-column: auto;
+  }
+}
+
+/* ==============================
    Modal
    ============================== */
 
@@ -1598,6 +1853,16 @@ p {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
   }
 }
 
