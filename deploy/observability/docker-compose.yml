@@ -1,0 +1,60 @@
+version: "3.8"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Commander Observability Stack
+#
+# One-click full observability: Prometheus + Grafana + Jaeger (optional)
+# Usage: docker compose -f deploy/observability/docker-compose.yml up -d
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  # ── Prometheus — scrapes /metrics from Commander ──────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: commander-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    restart: unless-stopped
+
+  # ── Grafana — pre-configured dashboards ───────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: commander-grafana
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/developer-overview.json
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # ── Jaeger — receives OTLP traces (optional) ──────────────────────────
+  jaeger:
+    image: jaegertracing/all-in-one:1.55
+    container_name: commander-jaeger
+    ports:
+      - "16686:16686"  # UI
+      - "4318:4318"    # OTLP HTTP
+      - "4317:4317"    # OTLP gRPC
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    restart: unless-stopped
+    profiles:
+      - tracing  # Only started with: docker compose --profile tracing up
+
+volumes:
+  prometheus-data:
+  grafana-data:
