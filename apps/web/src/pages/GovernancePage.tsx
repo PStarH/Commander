@@ -1,6 +1,7 @@
 import { Shield, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 import { Card, Badge, Button, MetricCard } from '../components/ui';
 import { ApprovalConfigPanel } from '../components/ApprovalConfigPanel';
+import { WebhookConfigPanel } from '../components/WebhookConfigPanel';
 import type { Mission, BattleReport } from '../types';
 import { formatTimestamp, isMissionHighRisk } from '../types';
 
@@ -131,6 +132,12 @@ export function GovernancePage({
       </div>
 
       <ApprovalConfigPanel />
+
+      <div className="section-head" style={{ marginTop: 24 }}>
+        <h2>IM Webhook Integration</h2>
+      </div>
+
+      <WebhookConfigPanel />
     </div>
   );
 }
