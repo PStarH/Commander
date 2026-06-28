@@ -17,6 +17,10 @@ const PUBLIC_PATHS = new Set([
   '/api/openapi.json',
   '/a2a/.well-known/agent-card',
   '/mcp/.well-known/mcp',
+  // User-auth endpoints handle their own auth via JWT — must be reachable
+  // without an API key so users can obtain their first token.
+  '/api/auth/login',
+  '/api/auth/register',
 ]);
 
 // ── Timing-safe API key storage ──────────────────────────────────────────────
@@ -186,6 +190,13 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
 
   const path = req.path;
   if (isPublicPath(path)) {
+    return next();
+  }
+
+  // If jwtMiddleware already authenticated the request via a valid JWT
+  // (req.user is set), skip API-key validation entirely. This keeps the two
+  // auth mechanisms compatible: JWT users are not subject to API-key checks.
+  if (req.user) {
     return next();
   }
 

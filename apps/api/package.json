@@ -24,7 +24,9 @@
   "dependencies": {
     "@commander/core": "workspace:*",
     "@commander/observability": "workspace:*",
+    "bcryptjs": "^3.0.3",
     "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
     "uuid": "^13.0.0"
   },
   "peerDependencies": {
@@ -36,8 +38,10 @@
     }
   },
   "devDependencies": {
+    "@types/bcryptjs": "^3.0.0",
     "@types/better-sqlite3": "^7.6.0",
     "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
     "ts-node-dev": "^2.0.0",
     "typescript": "^6.0.3"
   }

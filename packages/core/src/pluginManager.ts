@@ -8,6 +8,8 @@ import type {
 } from './runtime/types';
 import { getGlobalLogger } from './logging';
 import { getMetricsCollector } from './runtime/metricsCollector';
+import { getGlobalPluginPermissionRegistry } from './security/pluginPermissions';
+import { createPluginSandboxContext } from './runtime/pluginSandboxContext';
 
 // ============================================================================
 // Hook Types
@@ -296,6 +298,37 @@ export interface CommanderPlugin {
   beforeBackendSelect?: (ctx: BeforeBackendSelectContext) => Promise<string | null> | string | null;
   /** Called after execution backend is selected. */
   afterBackendSelect?: (ctx: AfterBackendSelectContext) => Promise<void> | void;
+
+  /**
+   * Optional tools declared by this builtin plugin. The host (API / runtime)
+   * can read this list and wire the tools into the ToolRegistry so the LLM can
+   * invoke them. Each tool is self-contained: name, description, JSON-Schema
+   * input, and an async execute() returning a string result.
+   *
+   * This field is additive — existing plugins that do not set it are unaffected.
+   */
+  tools?: BuiltinPluginTool[];
+}
+
+// ============================================================================
+// Builtin Plugin Tool — declarative tool definition for built-in plugins
+// ============================================================================
+
+/**
+ * A tool that a builtin CommanderPlugin can declare via its `tools` field.
+ * Mirrors the subset of the SDK's PluginTool that the runtime needs to wire a
+ * tool into the ToolRegistry: a definition (name/description/schema) plus an
+ * async execute() handler.
+ */
+export interface BuiltinPluginTool {
+  /** Tool name (unique within the plugin). */
+  name: string;
+  /** Description shown to the LLM. */
+  description: string;
+  /** JSON Schema for the tool's input arguments. */
+  inputSchema: Record<string, unknown>;
+  /** Execute the tool with validated arguments; return a string result. */
+  execute: (args: Record<string, unknown>) => Promise<string>;
 }
 
 // ============================================================================
@@ -354,9 +387,41 @@ export class HookManager {
     this.plugins.set(plugin.name, entry);
 
     // Call onLoad lifecycle hook
+    // P-SEC: Pass a sandboxed context instead of the raw HookManager.
+    // This prevents plugins from accessing other plugins' internal state,
+    // modifying the hook system directly, or reaching into system internals.
+    // The sandboxed context enforces permission checks on all resource access.
     if (plugin.onLoad) {
       try {
-        await plugin.onLoad({ config: mergedConfig, hookManager: this });
+        const enforcer = getGlobalPluginPermissionRegistry().get(plugin.name);
+        const sandboxContext = enforcer
+          ? createPluginSandboxContext(
+              plugin.name,
+              enforcer,
+              mergedConfig,
+              (hookName: string, callback: (...args: unknown[]) => unknown | Promise<unknown>) => {
+                // Register hook through a permission-checked path
+                const check = enforcer.checkHook(hookName);
+                if (check.allowed) {
+                  (plugin as unknown as Record<string, unknown>)[hookName] = callback;
+                } else {
+                  getGlobalLogger().warn(
+                    'PluginSecurity',
+                    'Hook registration denied during onLoad',
+                    { plugin: plugin.name, hook: hookName, reason: check.reason },
+                  );
+                }
+              },
+            )
+          : null;
+
+        // Plugins that expect the old API (hookManager) still work, but
+        // new plugins should use the sandboxed context methods.
+        await plugin.onLoad(
+          sandboxContext
+            ? { ...sandboxContext, hookManager: this, config: mergedConfig } as unknown as Parameters<NonNullable<typeof plugin.onLoad>>[0]
+            : { config: mergedConfig, hookManager: this },
+        );
       } catch (err) {
         this.plugins.delete(plugin.name);
         throw new Error(
@@ -383,6 +448,8 @@ export class HookManager {
       }
     }
     this.plugins.delete(name);
+    // P-SEC: Clean up permission registration when plugin is unloaded
+    getGlobalPluginPermissionRegistry().unregister(name);
     return true;
   }
 
