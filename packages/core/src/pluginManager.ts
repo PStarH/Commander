@@ -226,7 +226,15 @@ export interface PluginConfigSchema {
 
 export interface PluginLoadContext {
   config: Record<string, unknown>;
-  hookManager: HookManager;
+  /**
+   * Raw HookManager reference.
+   * @deprecated — When a plugin declares permissions (loaded via PluginLoader),
+   * this field is intentionally omitted to prevent privilege escalation.
+   * Plugins should use the sandbox context methods (readFile, writeFile, fetch,
+   * getEnvVar, registerHook, log) provided alongside this context instead.
+   * Only present for built-in plugins registered directly without permissions.
+   */
+  hookManager?: HookManager;
 }
 
 // ============================================================================
@@ -387,41 +395,15 @@ export class HookManager {
     this.plugins.set(plugin.name, entry);
 
     // Call onLoad lifecycle hook
-    // P-SEC: Pass a sandboxed context instead of the raw HookManager.
-    // This prevents plugins from accessing other plugins' internal state,
-    // modifying the hook system directly, or reaching into system internals.
-    // The sandboxed context enforces permission checks on all resource access.
+    // P-SEC: When a permission enforcer exists, pass ONLY the sandboxed context.
+    // The raw HookManager is deliberately withheld to prevent privilege
+    // escalation — without it, a plugin cannot call register/unregister/
+    // updateConfig/getPlugin on other plugins or the hook system itself.
+    // Built-in plugins (no enforcer) still receive the raw hookManager.
     if (plugin.onLoad) {
       try {
-        const enforcer = getGlobalPluginPermissionRegistry().get(plugin.name);
-        const sandboxContext = enforcer
-          ? createPluginSandboxContext(
-              plugin.name,
-              enforcer,
-              mergedConfig,
-              (hookName: string, callback: (...args: unknown[]) => unknown | Promise<unknown>) => {
-                // Register hook through a permission-checked path
-                const check = enforcer.checkHook(hookName);
-                if (check.allowed) {
-                  (plugin as unknown as Record<string, unknown>)[hookName] = callback;
-                } else {
-                  getGlobalLogger().warn(
-                    'PluginSecurity',
-                    'Hook registration denied during onLoad',
-                    { plugin: plugin.name, hook: hookName, reason: check.reason },
-                  );
-                }
-              },
-            )
-          : null;
-
-        // Plugins that expect the old API (hookManager) still work, but
-        // new plugins should use the sandboxed context methods.
-        await plugin.onLoad(
-          sandboxContext
-            ? { ...sandboxContext, hookManager: this, config: mergedConfig } as unknown as Parameters<NonNullable<typeof plugin.onLoad>>[0]
-            : { config: mergedConfig, hookManager: this },
-        );
+        const loadCtx = this.buildSandboxedLoadContext(plugin, mergedConfig);
+        await plugin.onLoad(loadCtx);
       } catch (err) {
         this.plugins.delete(plugin.name);
         throw new Error(
@@ -534,8 +516,12 @@ export class HookManager {
     if (entry.plugin.onUnload) {
       await entry.plugin.onUnload();
     }
+    // P-SEC: Apply the same sandboxed context as register() — do NOT pass
+    // raw hookManager here. Previously this bypassed the permission system
+    // entirely, allowing a config update to escalate privileges.
     if (entry.plugin.onLoad) {
-      await entry.plugin.onLoad({ config: merged, hookManager: this });
+      const loadCtx = this.buildSandboxedLoadContext(entry.plugin, merged);
+      await entry.plugin.onLoad(loadCtx);
     }
   }
 
@@ -918,6 +904,55 @@ export class HookManager {
     }
   }
 
+  // ── Sandbox context builder ─────────────────────────────────────────
+
+  /**
+   * P-SEC: Build the load context for a plugin's onLoad hook.
+   *
+   * - If a permission enforcer exists for this plugin (i.e., the plugin was
+   *   loaded via PluginLoader with declared permissions): return ONLY the
+   *   sandboxed context + config. The raw `hookManager` is deliberately
+   *   omitted to prevent privilege escalation.
+   * - If no enforcer exists (built-in plugin registered directly): return
+   *   the legacy context with the raw `hookManager` for backward compat.
+   */
+  private buildSandboxedLoadContext(
+    plugin: CommanderPlugin,
+    mergedConfig: Record<string, unknown>,
+  ): PluginLoadContext {
+    const enforcer = getGlobalPluginPermissionRegistry().get(plugin.name);
+    if (!enforcer) {
+      // Built-in plugin — no permission envelope, full access
+      return { config: mergedConfig, hookManager: this };
+    }
+
+    // Third-party plugin with declared permissions — sandbox only
+    const sandboxContext = createPluginSandboxContext(
+      plugin.name,
+      enforcer,
+      mergedConfig,
+      (hookName: string, callback: (...args: unknown[]) => unknown | Promise<unknown>) => {
+        const check = enforcer.checkHook(hookName);
+        if (check.allowed) {
+          (plugin as unknown as Record<string, unknown>)[hookName] = callback;
+        } else {
+          getGlobalLogger().warn(
+            'PluginSecurity',
+            'Hook registration denied during onLoad',
+            { plugin: plugin.name, hook: hookName, reason: check.reason },
+          );
+        }
+      },
+    );
+
+    // Intentionally do NOT include `hookManager` — the sandbox context
+    // provides all necessary APIs through permission-checked methods.
+    return {
+      config: mergedConfig,
+      ...sandboxContext,
+    } as unknown as PluginLoadContext;
+  }
+
   // ── Config validation ──
 
   private validateAndMergeConfig(
@@ -959,7 +994,13 @@ export class HookManager {
     return merged;
   }
 
-  /** Wrap a plugin hook promise with a timeout. */
+  /**
+   * Wrap a plugin hook promise with a timeout.
+   * P-SEC: Uses the per-plugin maxExecutionTimeMs from the permission enforcer
+   * when available, falling back to the global hookTimeoutMs. This ensures a
+   * plugin cannot exceed its declared execution budget even if the global
+   * timeout is set higher.
+   */
   private withTimeout<T>(
     promise: Promise<T> | T,
     pluginName: string,
@@ -968,6 +1009,16 @@ export class HookManager {
     if (typeof promise !== 'object' || promise === null || !('then' in promise)) {
       return Promise.resolve(promise);
     }
+
+    // P-SEC: Enforce per-plugin execution time limit from permission enforcer.
+    // If the plugin has a declared maxExecutionTimeMs, use the stricter of
+    // (per-plugin limit, global limit) to prevent timeout-based DoS.
+    const enforcer = getGlobalPluginPermissionRegistry().get(pluginName);
+    const perPluginLimit = enforcer?.maxExecutionTimeMs;
+    const timeoutMs = perPluginLimit !== undefined
+      ? Math.min(perPluginLimit, this.hookTimeoutMs)
+      : this.hookTimeoutMs;
+
     let timer: ReturnType<typeof setTimeout>;
     return Promise.race([
       (promise as Promise<T>).finally(() => clearTimeout(timer)),
@@ -976,10 +1027,10 @@ export class HookManager {
           () =>
             reject(
               new Error(
-                `Plugin "${pluginName}" hook "${hookName}" timed out after ${this.hookTimeoutMs}ms`,
+                `Plugin "${pluginName}" hook "${hookName}" timed out after ${timeoutMs}ms`,
               ),
             ),
-          this.hookTimeoutMs,
+          timeoutMs,
         );
         timer.unref();
       }),
