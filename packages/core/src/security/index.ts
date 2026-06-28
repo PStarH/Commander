@@ -918,6 +918,27 @@ export {
   getAttackCampaignTracker,
   resetAttackCampaignTracker,
 } from './attackCampaignTracker';
+
+// UnifiedAuditLog — cross-source audit log aggregator
+// Merges security/approval/execution/user-action/configuration audit producers
+// into a single normalized, queryable, exportable trail.
+export {
+  UnifiedAuditLog,
+  getUnifiedAuditLog,
+  resetUnifiedAuditLog,
+  SENSITIVE_BODY_KEYS,
+} from './unifiedAuditLog';
+
+export type {
+  UnifiedAuditCategory,
+  UnifiedAuditSeverity,
+  UnifiedAuditEntry,
+  AuditQueryFilters,
+  AuditTimelinePoint,
+  AuditStats,
+  AuditExportFormat,
+  UnifiedAuditLogOptions,
+} from './unifiedAuditLog';
 export type {
   CampaignPhase,
   CampaignSeverity,

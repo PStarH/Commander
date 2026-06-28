@@ -1856,6 +1856,10 @@ p {
   }
 }
 
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+
 @keyframes blink {
   0%,
   100% {
