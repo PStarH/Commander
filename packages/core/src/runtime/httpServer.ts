@@ -39,6 +39,12 @@ import { MCPServer } from '../mcp/server';
 import { getGlobalLogger } from '../logging';
 import { getMetricsCollector } from './metricsCollector';
 import { installProcessCrashHandlers } from './processCrashSafety';
+import {
+  extractTraceFromHeaders,
+  createTraceContext,
+  runWithTrace,
+} from './distributedTracing';
+import { RecoveryBootstrapper } from '../atr/recoveryBootstrapper';
 import { getDeadLetterQueue } from './deadLetterQueueSingleton';
 import { openApiSpec } from './openapi';
 import { handleAtrHttpRequest, type AtrHttpDeps } from '../atr/atrHttp';
@@ -528,16 +534,30 @@ export class CommanderHttpServer {
         res.on('finish', () => {
           this.connections.delete(socket);
         });
-        this.handleRequest(req, res).catch((err) => {
-          getGlobalLogger().error(
-            'HttpServer',
-            'Unhandled error in request handler',
-            err instanceof Error ? err : new Error(String(err)),
-          );
-          if (!res.headersSent) {
-            res.writeHead(500);
-            res.end('Internal Server Error');
-          }
+
+        // P0: Set up W3C distributed trace context for each request.
+        // Extracts trace context from incoming headers (x-request-id,
+        // x-trace-id, x-span-id, x-baggage) or creates a new one. This
+        // propagates requestId/traceId/spanId through AsyncLocalStorage
+        // to all downstream logs, LLM calls, tool executions, and
+        // message bus events — enabling end-to-end request tracing.
+        const rawRequestId = req.headers['x-request-id'];
+        const requestId = Array.isArray(rawRequestId) ? rawRequestId[0] : rawRequestId;
+        const traceContext =
+          extractTraceFromHeaders(req.headers) ?? createTraceContext(requestId);
+
+        runWithTrace(traceContext, () => {
+          this.handleRequest(req, res).catch((err) => {
+            getGlobalLogger().error(
+              'HttpServer',
+              'Unhandled error in request handler',
+              err instanceof Error ? err : new Error(String(err)),
+            );
+            if (!res.headersSent) {
+              res.writeHead(500);
+              res.end('Internal Server Error');
+            }
+          });
         });
       };
       this.server = this.config.https
@@ -571,6 +591,25 @@ export class CommanderHttpServer {
           });
         } catch (e) {
           getGlobalLogger().warn('HttpServer', 'Failed to install crash handlers', {
+            error: (e as Error)?.message,
+          });
+        }
+
+        // P0: Zombie run recovery on server startup. Scans the RunLedger
+        // for runs left in EXECUTING/VERIFYING/PAUSED by a crashed process,
+        // fences them, and aborts+compensates or reclaims for resume.
+        try {
+          const result = RecoveryBootstrapper.bootstrap();
+          if (result.scanned > 0) {
+            getGlobalLogger().info('HttpServer', 'Recovery bootstrap scan completed', {
+              scanned: result.scanned,
+              recovered: result.recovered,
+              aborted: result.aborted,
+              skipped: result.skipped,
+            });
+          }
+        } catch (e) {
+          getGlobalLogger().warn('HttpServer', 'Recovery bootstrap scan failed', {
             error: (e as Error)?.message,
           });
         }

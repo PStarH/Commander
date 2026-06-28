@@ -161,6 +161,15 @@ describe('SecurityOrchestrator helper — execute() seam contract', () => {
   });
 
   afterEach(() => {
+    // Dispose the AgentRuntime to release timers, compensation service,
+    // cache manager, and model performance store. Without this, resources
+    // from one test leak into the next, causing intermittent assertion
+    // races under parallel-load CPU contention.
+    try {
+      runtime?.dispose();
+    } catch {
+      /* best-effort — runtime may not be assigned if test failed early */
+    }
     vi.restoreAllMocks();
   });
 
