@@ -365,9 +365,21 @@ export class MetricsCollector {
   private metrics: Map<string, Metric> = new Map();
   private listeners: Array<(name: string, point: MetricPoint) => void> = [];
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+  private runtimeCollector: any = null;
 
   constructor(config?: Partial<MetricsConfig>) {
     this.config = { ...DEFAULT_METRICS_CONFIG, ...config };
+
+    // P1: Try to connect to the runtime MetricsCollector for unified metrics.
+    // If it's not available (e.g., during early init or tests), fall back to
+    // the in-memory time-series store. This preserves backward compatibility
+    // while unifying the two collectors.
+    try {
+      const { getMetricsCollector } = require('./runtime/metricsCollector');
+      this.runtimeCollector = getMetricsCollector();
+    } catch {
+      // Runtime collector not available — use in-memory fallback
+    }
 
     // Cleanup old data periodically — run at half the retention period so stale
     // data is evicted promptly instead of sitting around for up to 2x retention.
@@ -385,30 +397,48 @@ export class MetricsCollector {
   }
 
   /**
-   * Increment counter
+   * Increment counter — delegates to runtime MetricsCollector when available.
    */
   incrementCounter(name: string, value: number = 1, labels: Record<string, string> = {}): void {
+    // P1: Delegate to runtime collector (unified path)
+    if (this.runtimeCollector) {
+      const labelArray = Object.entries(labels).map(([k, v]) => ({ name: k, value: v }));
+      this.runtimeCollector.incrementCounter(name, name, value, labelArray);
+    }
+    // Also record in-memory time-series for backward-compatible query APIs
     this.record('counter', name, value, labels);
   }
 
   /**
-   * Set gauge value
+   * Set gauge value — delegates to runtime MetricsCollector when available.
    */
   setGauge(name: string, value: number, labels: Record<string, string> = {}): void {
+    if (this.runtimeCollector) {
+      const labelArray = Object.entries(labels).map(([k, v]) => ({ name: k, value: v }));
+      this.runtimeCollector.setGauge(name, name, value, labelArray);
+    }
     this.record('gauge', name, value, labels);
   }
 
   /**
-   * Record histogram value
+   * Record histogram value — delegates to runtime MetricsCollector when available.
    */
   recordHistogram(name: string, value: number, labels: Record<string, string> = {}): void {
+    if (this.runtimeCollector) {
+      const labelArray = Object.entries(labels).map(([k, v]) => ({ name: k, value: v }));
+      this.runtimeCollector.recordHistogram(name, name, value, undefined, labelArray);
+    }
     this.record('histogram', name, value, labels);
   }
 
   /**
-   * Record timer value
+   * Record timer value — delegates to runtime MetricsCollector when available.
    */
   recordTimer(name: string, durationMs: number, labels: Record<string, string> = {}): void {
+    if (this.runtimeCollector) {
+      const labelArray = Object.entries(labels).map(([k, v]) => ({ name: k, value: v }));
+      this.runtimeCollector.recordHistogram(name, name, durationMs, undefined, labelArray);
+    }
     this.record('timer', name, durationMs, labels);
   }
 
