@@ -7,16 +7,20 @@ import {
   BookOpen,
   ShieldCheck,
   Fingerprint,
+  MessageSquare,
+  AlertTriangle,
   ChevronRight,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/chat', icon: MessageSquare, label: 'Chat' },
   { to: '/agents', icon: Users, label: 'Agents' },
   { to: '/missions', icon: Kanban, label: 'Missions' },
   { to: '/execution', icon: ScrollText, label: 'Execution' },
   { to: '/memory', icon: BookOpen, label: 'Memory' },
   { to: '/governance', icon: ShieldCheck, label: 'Governance' },
+  { to: '/dlq', icon: AlertTriangle, label: 'DLQ' },
   { to: '/security', icon: Fingerprint, label: 'Security' },
 ];
 
