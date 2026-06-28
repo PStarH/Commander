@@ -40,6 +40,50 @@ const store: GitSnapshotStore = {
   snapshots: new Map(),
 };
 
+// ── P2: Disk persistence for GitSnapshot index ──────────────────────────
+// The in-memory Map is lost on process crash, breaking the full-workspace
+// rollback safety net. This persists snapshot refs to a JSON file so
+// restoreGitSnapshot() works across restarts.
+
+import { existsSync, mkdirSync } from 'node:fs';
+
+const PERSIST_PATH =
+  typeof process !== 'undefined'
+    ? path.join(process.cwd(), '.commander_state', 'git-snapshots.json')
+    : null;
+
+function persistSnapshots(): void {
+  if (!PERSIST_PATH) return;
+  try {
+    const dir = path.dirname(PERSIST_PATH);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const fs = require('node:fs');
+    const data = Object.fromEntries(store.snapshots);
+    const tmp = PERSIST_PATH + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(data), { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(tmp, PERSIST_PATH);
+  } catch {
+    // Best-effort — don't crash the runtime
+  }
+}
+
+function loadSnapshots(): void {
+  if (!PERSIST_PATH || !existsSync(PERSIST_PATH)) return;
+  try {
+    const fs = require('node:fs');
+    const raw = fs.readFileSync(PERSIST_PATH, 'utf8');
+    const data = JSON.parse(raw);
+    for (const [runId, result] of Object.entries(data)) {
+      store.snapshots.set(runId, result as GitSnapshotResult);
+    }
+  } catch {
+    // Corrupt or missing — start fresh
+  }
+}
+
+// Load on module init
+loadSnapshots();
+
 /**
  * Check if the current directory is inside a git repository.
  */
@@ -151,6 +195,7 @@ export function createGitSnapshot(runId: string, cwd: string = process.cwd()): G
       error: errorMsg,
     };
     store.snapshots.set(runId, result);
+    persistSnapshots();
     return result;
   }
 }
@@ -223,6 +268,7 @@ export function getGitSnapshot(runId: string): GitSnapshotResult | undefined {
  */
 export function clearGitSnapshot(runId: string): void {
   store.snapshots.delete(runId);
+  persistSnapshots();
 }
 
 /**
