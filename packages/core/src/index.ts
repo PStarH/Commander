@@ -1065,6 +1065,7 @@ export {
 } from './pluginManager';
 export type {
   CommanderPlugin,
+  BuiltinPluginTool,
   HookPoint,
   BeforeToolCallContext,
   AfterToolCallContext,
@@ -1074,6 +1075,20 @@ export type {
   AgentCompleteContext,
   ErrorContext,
 } from './pluginManager';
+
+// Built-in Plugins — RAG Knowledge Base
+export { createRagPlugin } from './plugins/builtin/ragPlugin';
+export {
+  KnowledgeBaseStore,
+  createKbEmbeddingFunction,
+  getSharedKnowledgeBaseStore,
+  setSharedKnowledgeBaseStore,
+} from './plugins/builtin/knowledgeBaseStore';
+export type {
+  KbDocumentMeta,
+  KbSearchResult,
+  KbIngestResult,
+} from './plugins/builtin/knowledgeBaseStore';
 
 // TELOS Framework — Token-Efficient Low-waste Orchestration System
 export type {
