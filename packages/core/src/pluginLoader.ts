@@ -6,6 +6,10 @@ import * as path from 'node:path';
 import { getHookManager, type CommanderPlugin } from './pluginManager';
 import { getGlobalLogger } from './logging';
 import { getSupplyChainScanner } from './security/supplyChainScanner';
+import {
+  getGlobalPluginPermissionRegistry,
+  type PluginPermissions,
+} from './security/pluginPermissions';
 
 interface PluginManifest {
   name: string;
@@ -16,6 +20,13 @@ interface PluginManifest {
   tools?: string[];
   requires?: string[];
   config?: Record<string, unknown>;
+  /**
+   * P-SEC: Declared permissions for the plugin. Plugins must declare all
+   * required permissions here — the permission enforcer denies any
+   * resource access not explicitly declared. This ensures plugins never
+   * have more permissions than the main system.
+   */
+  permissions?: PluginPermissions;
 }
 
 interface PluginPackage {
@@ -88,26 +99,81 @@ export class PluginLoader {
     }
 
     // SECURITY: supply-chain scan before loading any plugin code.
+    // P-SEC: Scan ALL .js/.ts/.mjs files in the plugin directory, not just
+    // the entry file. The previous scan only inspected the main file, leaving
+    // transitive dependencies and bundled code unchecked — a bypassable gate.
     const mainFile = manifest.main ?? 'index.js';
     const mainPath = path.join(resolvedDir, mainFile);
     let pluginInstance: CommanderPlugin;
 
     if (fs.existsSync(mainPath)) {
-      const pluginContent = fs.readFileSync(mainPath, 'utf-8');
-      const scanResult = getSupplyChainScanner().scan({
-        name: manifest.name,
-        content: pluginContent,
-        tools: manifest.tools ?? [],
-        provenance: {
-          source: 'local',
-          author: manifest.name,
-        },
-      });
-      if (!scanResult.passed) {
+      // Scan the entry file + all other JS files in the plugin directory
+      const filesToScan = [mainPath];
+      try {
+        const allFiles = fs.readdirSync(resolvedDir, { recursive: true }) as string[];
+        for (const f of allFiles) {
+          const fullPath = path.join(resolvedDir, f);
+          if (
+            fullPath !== mainPath &&
+            /\.(js|mjs|cjs|ts|mts|cts)$/.test(f) &&
+            !f.includes('node_modules')
+          ) {
+            filesToScan.push(fullPath);
+          }
+        }
+      } catch {
+        // Non-critical — fall back to scanning just the entry file
+      }
+
+      // Scan each file and aggregate results
+      let scanBlocked = false;
+      let blockReason = '';
+      for (const filePath of filesToScan) {
+        try {
+          const fileContent = fs.readFileSync(filePath, 'utf-8');
+          const scanResult = getSupplyChainScanner().scan({
+            name: manifest.name,
+            content: fileContent,
+            tools: manifest.tools ?? [],
+            provenance: {
+              source: 'local',
+              author: manifest.name,
+            },
+          });
+          if (!scanResult.passed) {
+            scanBlocked = true;
+            blockReason = `${path.basename(filePath)}: ${scanResult.recommendation} (risk=${scanResult.riskScore})`;
+            break;
+          }
+        } catch {
+          // If we can't read a file, skip it — non-critical
+        }
+      }
+
+      if (scanBlocked) {
         throw new Error(
-          `Supply chain scan blocked plugin "${manifest.name}": ${scanResult.recommendation} (risk=${scanResult.riskScore})`,
+          `Supply chain scan blocked plugin "${manifest.name}": ${blockReason}`,
         );
       }
+
+      // P-SEC: Register permission enforcer BEFORE importing plugin code.
+      // This ensures the enforcer is active when the plugin's onLoad runs.
+      const enforcer = getGlobalPluginPermissionRegistry().register(
+        manifest.name,
+        manifest.permissions,
+      );
+
+      // Log declared permissions for audit trail
+      const declaredPerms = enforcer.getDeclaredPermissions();
+      getGlobalLogger().info('PluginLoader', 'Plugin permission envelope', {
+        plugin: manifest.name,
+        filesystem: { read: declaredPerms.filesystem.read.length, write: declaredPerms.filesystem.write.length },
+        network: { domains: declaredPerms.network.allowedDomains.length },
+        process: declaredPerms.process,
+        env: declaredPerms.env.length,
+        hooks: declaredPerms.hooks.length,
+        tools: declaredPerms.tools.length,
+      });
 
       try {
         const mod = await import(mainPath);
@@ -116,6 +182,8 @@ export class PluginLoader {
           pluginInstance.name = manifest.name;
         }
       } catch (err: unknown) {
+        // Clean up permission registration on load failure
+        getGlobalPluginPermissionRegistry().unregister(manifest.name);
         throw new Error(
           `Failed to load plugin "${manifest.name}" from ${mainPath}: ${err instanceof Error ? err.message : String(err)}`,
         );
