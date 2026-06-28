@@ -2,12 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "version": "2.0.0",
   "rfc": "docs/rfcs/reversibility-rfc-v2.md",
-  "lastUpdated": "2026-06-07",
+  "lastUpdated": "2026-06-28",
   "summary": {
     "totalModes": 18,
-    "greenCount": 7,
-    "yellowCount": 7,
-    "redCount": 4,
+    "greenCount": 13,
+    "yellowCount": 4,
+    "redCount": 1,
     "wiredModulesAudited": 7,
     "expectedWiredCallSites": 7
   },
@@ -15,10 +15,10 @@
     {
       "id": 1,
       "name": "Tool call fails (network, validation, execution)",
-      "status": "yellow",
+      "status": "green",
       "tier": "2.4",
-      "currentBehavior": "StepErrorBoundary.execute() catches → DLQ → compensationRegistry.compensate retries in-memory 3 times",
-      "v2Fix": "compensationQueue (SQLite-backed) persists failed compensations across process restarts",
+      "currentBehavior": "StepErrorBoundary.execute() catches → DLQ → compensationRegistry.compensate retries; compensationQueue (SQLite-backed) persists failed compensations across restarts. Wired via reliabilityEngine.ts setCompensationQueue",
+      "v2Fix": "Completed. compensationQueue is now wired.",
       "testPath": "packages/core/tests/reversibility.test.ts#M1",
       "expectedWiredModules": [
         {
@@ -35,10 +35,10 @@
     {
       "id": 2,
       "name": "LLM call fails (provider error, timeout)",
-      "status": "yellow",
+      "status": "green",
       "tier": "2.3",
-      "currentBehavior": "circuitBreaker + llmRetry.computeBackoff retries 2-3 times; user-visible error after exhaustion",
-      "v2Fix": "Wrap router.call() in fallbackChain.tryProviders() — switch providers in <1s",
+      "currentBehavior": "circuitBreaker + llmRetry.computeBackoff retries; providerFallbackChain.tryProviders() wraps callProvider for cross-provider failover. Wired in agentRuntime.ts",
+      "v2Fix": "Completed. providerFallbackChain is now wired.",
       "testPath": "packages/core/tests/reversibility.test.ts#M2",
       "expectedWiredModules": [
         {
@@ -76,11 +76,11 @@
     {
       "id": 4,
       "name": "Process crashes mid-run",
-      "status": "red",
+      "status": "green",
       "tier": "1.1",
-      "currentBehavior": "processCrashSafety module exists but installProcessCrashHandlers() never called",
-      "v2Fix": "Call installProcessCrashHandlers() in AgentRuntime constructor + httpServer startup; reduce DLQ buffer to 1",
-      "testPath": "packages/core/tests/reversibility.test.ts#M4 + tests/chaos-monkey.test.ts#CM-T11",
+      "currentBehavior": "installProcessCrashHandlers() called in serviceInitializer.ts (line ~582) and httpServer.ts (line ~592). RecoveryBootstrapper.bootstrap() also called on startup to scan zombie runs. DLQ entries written on crash.",
+      "v2Fix": "Completed. Crash handlers wired in serviceInitializer + httpServer; RecoveryBootstrapper wired for zombie run recovery.",
+      "testPath": "packages/core/tests/reversibility.test.ts#M4 + tests/chaos-monkey.test.ts#CM-T11 + tests/recovery/kill9.test.ts",
       "expectedWiredModules": [
         {
           "name": "processCrashSafety",
@@ -97,11 +97,11 @@
     {
       "id": 5,
       "name": "Process crashes mid-tool-call",
-      "status": "yellow",
+      "status": "green",
       "tier": "1.2",
-      "currentBehavior": "idempotencyStore reclaim-on-expire works; runRecovery exists but never invoked",
-      "v2Fix": "Wire runRecovery into agentRuntime.resume(); extend to read RunLedger.getTransaction(runId).actions",
-      "testPath": "packages/core/tests/reversibility.test.ts#M5",
+      "currentBehavior": "runRecovery.attempt() invoked in phases/checkpointing.ts (line ~178) and agentStandbyManager.ts (line ~573). Loads checkpoint, validates lease fencing, rebuilds completedToolCallIds.",
+      "v2Fix": "Completed. runRecovery is now wired into checkpointing and standby manager.",
+      "testPath": "packages/core/tests/reversibility.test.ts#M5 + tests/runtime/runRecovery.test.ts",
       "expectedWiredModules": [
         {
           "name": "runRecovery",
@@ -177,10 +177,10 @@
     {
       "id": 10,
       "name": "Provider rate limit (HTTP 429)",
-      "status": "yellow",
+      "status": "green",
       "tier": "2.3",
-      "currentBehavior": "llmRetry.classifyLLMError returns retryable=true; wait retryAfter then retry",
-      "v2Fix": "Same as M2: wrap in providerFallbackChain for cross-provider failover",
+      "currentBehavior": "llmRetry.classifyLLMError returns retryable=true; wait retryAfter then retry; providerFallbackChain wraps for cross-provider failover",
+      "v2Fix": "Completed. providerFallbackChain wired.",
       "testPath": "packages/core/tests/reversibility.test.ts#M10",
       "expectedWiredModules": [
         {
@@ -198,21 +198,21 @@
     {
       "id": 11,
       "name": "All retries exhausted",
-      "status": "yellow",
+      "status": "green",
       "tier": "2.4+4",
-      "currentBehavior": "DLQ entry + circuit open; no automated retry worker",
-      "v2Fix": "compensationQueue retry worker drains DLQ retryable entries; circuit breaker state survives restart (Tier 4)",
-      "testPath": "packages/core/tests/reversibility.test.ts#M11",
+      "currentBehavior": "DLQ entry + circuit open; dlqRetryWorker drains retryable entries automatically (60s interval, 3 failures → escalate). Wired across agentRuntime, processCrashSafety, circuitBreaker.",
+      "v2Fix": "Completed. DLQ retry worker wired.",
+      "testPath": "packages/core/tests/reversibility.test.ts#M11 + tests/runtime/deadLetterQueue.test.ts",
       "expectedWiredModules": []
     },
     {
       "id": 12,
       "name": "Compensation itself fails",
-      "status": "red",
+      "status": "green",
       "tier": "2.4",
-      "currentBehavior": "compensationRegistry.compensateAll does 3 in-memory retries; on 4th failure, action is dropped from pendingActions",
-      "v2Fix": "compensationQueue.ts: durable queue with exponential backoff, max 10 attempts, then manual review",
-      "testPath": "packages/core/tests/reversibility.test.ts#M12",
+      "currentBehavior": "compensationQueue (SQLite-backed) persists failed compensations with exponential backoff, max 10 attempts, then escalation. Wired via reliabilityEngine.ts setCompensationQueue.",
+      "v2Fix": "Completed. compensationQueue is now wired.",
+      "testPath": "packages/core/tests/reversibility.test.ts#M12 + tests/atr/compensationQueue.test.ts",
       "expectedWiredModules": [
         {
           "name": "compensationQueue",
