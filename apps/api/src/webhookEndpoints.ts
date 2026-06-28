@@ -212,7 +212,7 @@ export function createWebhookRouter(): Router {
   // ── POST /api/webhook/dingtalk/:id? — DingTalk robot callback ─────────
   router.post('/api/webhook/dingtalk/:id?', async (req: Request, res: Response) => {
     try {
-      const { id } = req.params;
+      const id = typeof req.params.id === 'string' ? req.params.id : undefined;
       const config = id ? findIMWebhook(id) : undefined;
       const secret = config?.secret ?? '';
 
@@ -256,7 +256,7 @@ export function createWebhookRouter(): Router {
   // ── POST /api/webhook/feishu/:id? — Feishu bot callback ───────────────
   router.post('/api/webhook/feishu/:id?', async (req: Request, res: Response) => {
     try {
-      const { id } = req.params;
+      const id = typeof req.params.id === 'string' ? req.params.id : undefined;
       const config = id ? findIMWebhook(id) : undefined;
 
       const body = req.body as Record<string, unknown>;
@@ -317,7 +317,7 @@ export function createWebhookRouter(): Router {
   // ── POST /api/webhook/wecom/:id? — WeCom app callback ─────────────────
   router.post('/api/webhook/wecom/:id?', async (req: Request, res: Response) => {
     try {
-      const { id } = req.params;
+      const id = typeof req.params.id === 'string' ? req.params.id : undefined;
       const config = id ? findIMWebhook(id) : undefined;
 
       const msgSignature = req.query.msg_signature as string | undefined;
