@@ -1,4 +1,4 @@
-import { reportSilentFailure } from '@commander/core';
+import { reportSilentFailure, createRagPlugin, getHookManager } from '@commander/core';
 import express from 'express';
 import { createWarRoomStore } from './store';
 import { ProjectMemoryStore } from './memoryStore';
@@ -42,6 +42,8 @@ import {
   closeRateLimitStore,
 } from './securityMiddleware';
 import { authMiddleware } from './authMiddleware';
+import { jwtMiddleware } from './jwtMiddleware';
+import { createUserAuthRouter } from './userAuthEndpoints';
 import { createEvaluationRunnerRouter } from './evaluationRunnerEndpoints';
 import { createOrchestratorRouter } from './orchestratorEndpoints';
 import { createObservabilityRouter } from './observabilityEndpoints';
@@ -52,6 +54,13 @@ import { createApprovalConfigRouter } from './approvalConfigEndpoints';
 import { createHallucinationRouter } from './hallucinationEndpoints';
 import { createLineageRouter } from './lineageEndpoints';
 import { createSecurityPostureRouter } from './securityPostureEndpoints';
+import { createWebhookRouter } from './webhookEndpoints';
+import { createCostDashboardRouter } from './costDashboardEndpoints';
+import { createKnowledgeBaseRouter } from './knowledgeBaseEndpoints';
+import { createOnboardingRouter } from './onboardingEndpoints';
+import { createAuditLogRouter } from './auditLogEndpoints';
+import { createAuditMiddleware } from './auditMiddleware';
+import { getUnifiedAuditLog } from '@commander/core/security';
 
 const PROJECT_ID = process.env.COMMANDER_PROJECT_ID ?? 'project-war-room';
 const app = express();
@@ -141,7 +150,18 @@ app.use((req, res, next) => {
 });
 
 // 5. Authentication (skipped when AUTH_DISABLED=true or no API_KEYS configured)
+// JWT middleware runs first: it parses Bearer JWT tokens (non-blocking) and
+// populates req.user. The existing API-key authMiddleware runs second and
+// skips requests already authenticated via JWT (req.user set).
+app.use(jwtMiddleware);
 app.use(authMiddleware);
+
+// 6. Audit middleware — records all mutating (POST/PUT/PATCH/DELETE) requests
+// to the unified audit trail (.commander/audit/user-actions.ndjson). Mounted
+// after auth so req.user / req.apiKeyId are populated, and before routers so
+// the response `finish` listener is attached before handlers run. Sensitive
+// body fields are stripped by createAuditMiddleware before persistence.
+app.use(createAuditMiddleware(getUnifiedAuditLog()));
 
 // Initialize default memory domains on startup
 DEFAULT_DOMAINS.forEach(({ domain, description }) => {
@@ -288,6 +308,10 @@ app.get('/system/status', (_req, res) => {
 });
 
 // ── Routers ─────────────────────────────────────────────────────────────────
+// User authentication (register/login/me/refresh/users) — mounted first so the
+// auth endpoints are available before any feature routers.
+app.use(createUserAuthRouter());
+
 app.use(createProjectRouter(store, memoryStore, agentStateStore));
 app.use(createMemoryIndexRouter(memoryIndexManager));
 app.use(createConflictRouter(store));
@@ -325,6 +349,36 @@ app.use(createApprovalConfigRouter());
 app.use(createHallucinationRouter());
 app.use(createLineageRouter());
 app.use(createSecurityPostureRouter());
+app.use(createWebhookRouter());
+
+// ── Cost Dashboard (enterprise cost analytics) ─────────────────────────────
+app.use(createCostDashboardRouter());
+
+// ── Knowledge Base / RAG (enterprise document retrieval) ───────────────────
+// Register the built-in RAG CommanderPlugin (default disabled). Enabling it
+// activates the beforeLLMCall auto-inject hook + the `knowledge_search` tool.
+// The data plane (upload/list/delete/search) works regardless of enable state
+// via the shared KnowledgeBaseStore.
+const ragPlugin = createRagPlugin();
+getHookManager()
+  .register(ragPlugin)
+  .then(() => {
+    // Default to disabled so RAG is opt-in (enterprise deployments enable it
+    // explicitly via POST /api/knowledge-base/enable).
+    getHookManager().disable('builtin-rag');
+  })
+  .catch((err: unknown) =>
+    console.error('RAG plugin registration failed:', err),
+  );
+
+app.use(createKnowledgeBaseRouter());
+
+// ── Unified Audit Log (cross-source query/export/stats) ────────────────────
+app.use(createAuditLogRouter());
+
+// ── Onboarding Wizard (Web 端上手引导) ──────────────────────────────────────
+// 解决 POC→生产鸿沟：为新用户提供首次登录后的多步骤引导向导后端能力。
+app.use(createOnboardingRouter());
 
 // ── API v1 versioned aliases (backward-compatible) ──────────────────────────
 // All routes are accessible under /api/v1/ prefix in addition to their original paths.

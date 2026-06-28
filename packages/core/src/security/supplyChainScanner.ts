@@ -636,7 +636,14 @@ export class SupplyChainScanner {
 
     if (hasMalware) return { severity: 'malicious', recommendation: 'block' };
     if (hasCritical) return { severity: 'dangerous', recommendation: 'block' };
-    if (hasHigh || riskScore >= 50) return { severity: 'dangerous', recommendation: 'quarantine' };
+    // P-SEC: High-severity findings now BLOCK loading (was 'quarantine').
+    // The previous 'quarantine' recommendation passed the scan (passed=true),
+    // allowing plugins with high-severity security findings to load. This is
+    // a privilege escalation risk — a malicious plugin with high-severity
+    // patterns (e.g., credential exfiltration, reverse shell) would bypass
+    // the gate. Changed to 'block' to enforce "plugins never have more
+    // permissions than the main system" security principle.
+    if (hasHigh || riskScore >= 50) return { severity: 'dangerous', recommendation: 'block' };
     if (riskScore >= 20) return { severity: 'warning', recommendation: 'allow_with_warnings' };
     return { severity: 'clean', recommendation: 'allow' };
   }
