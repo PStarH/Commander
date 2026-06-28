@@ -121,8 +121,66 @@ export class CompensationRegistry {
   }
 
   /** Compensate ALL pending actions (in reverse order, max 3 attempts each).
-   *  Exhausted items are enqueued to the durable CompensationQueue if wired. */
+   *  Exhausted items are enqueued to the durable CompensationQueue if wired.
+   *
+   *  P2: When a runId is available, delegates to RunLedger.abortAndCompensate()
+   *  (SQLite-backed, crash-safe) as the single source of truth. The in-memory
+   *  compensation loop is kept as a fallback for runs without RunLedger entries. */
   async compensateAll(): Promise<{ succeeded: number; failed: number; errors: string[] }> {
+    // P2: Try RunLedger delegation first (single source of truth)
+    const runIds = new Set<string>();
+    for (const action of this.pendingActions.values()) {
+      if (action.runId) runIds.add(action.runId);
+    }
+
+    if (runIds.size > 0) {
+      let ledgerSucceeded = 0;
+      let ledgerFailed = 0;
+      const ledgerErrors: string[] = [];
+
+      for (const runId of runIds) {
+        try {
+          const { getRunLedgerBundle } = require('../atr/runLedger');
+          const bundle = getRunLedgerBundle();
+          if (bundle?.ledger) {
+            // Delegate to RunLedger — SQLite-backed, crash-safe compensation
+            const result = await bundle.ledger.abortAndCompensate(
+              runId,
+              undefined, // leaseToken — recovery path doesn't have it
+              undefined, // fencingEpoch
+              { errorMessage: 'CompensationRegistry.compensateAll() delegated to RunLedger' },
+            );
+
+            if (result.succeeded > 0) {
+              ledgerSucceeded += result.succeeded;
+            }
+            if (result.failed > 0) {
+              ledgerFailed += result.failed;
+            }
+            if (result.errors.length > 0) {
+              ledgerErrors.push(...result.errors);
+            }
+
+            // Remove delegated actions from in-memory tracking
+            for (const [id, action] of this.pendingActions) {
+              if (action.runId === runId) {
+                this.pendingActions.delete(id);
+                this.compensationAttempts.delete(id);
+              }
+            }
+          }
+        } catch (err) {
+          reportSilentFailure(err, 'compensationRegistry:compensateAll:ledger');
+          // Fall through to in-memory compensation below
+        }
+      }
+
+      if (ledgerSucceeded > 0 || ledgerFailed > 0) {
+        return { succeeded: ledgerSucceeded, failed: ledgerFailed, errors: ledgerErrors };
+      }
+    }
+
+    // Fallback: in-memory compensation (for runs without RunLedger entries)
     const ids = Array.from(this.pendingActions.keys()).reverse();
     let succeeded = 0;
     let failed = 0;
