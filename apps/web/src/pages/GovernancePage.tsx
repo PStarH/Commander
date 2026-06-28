@@ -1,5 +1,6 @@
 import { Shield, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 import { Card, Badge, Button, MetricCard } from '../components/ui';
+import { ApprovalConfigPanel } from '../components/ApprovalConfigPanel';
 import type { Mission, BattleReport } from '../types';
 import { formatTimestamp, isMissionHighRisk } from '../types';
 
@@ -124,6 +125,12 @@ export function GovernancePage({
           </div>
         </Card>
       </div>
+
+      <div className="section-head" style={{ marginTop: 24 }}>
+        <h2>Approval Configuration</h2>
+      </div>
+
+      <ApprovalConfigPanel />
     </div>
   );
 }

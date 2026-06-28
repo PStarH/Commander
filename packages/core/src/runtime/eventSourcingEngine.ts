@@ -340,9 +340,31 @@ export class EventSourcingEngine implements IEventSourcingEngine {
 
 let globalEventSourcingEngine: EventSourcingEngine | null = null;
 
-export function getGlobalEventSourcingEngine(): EventSourcingEngine {
+export function getGlobalEventSourcingEngine(
+  options?: { walPath?: string },
+): EventSourcingEngine {
   if (!globalEventSourcingEngine) {
-    globalEventSourcingEngine = new EventSourcingEngine();
+    const walPath =
+      options?.walPath ??
+      (typeof process !== 'undefined'
+        ? process.env?.COMMANDER_EVENT_SOURCING_WAL
+        : undefined) ??
+      null;
+
+    // Default WAL path: <cwd>/.commander_state/event-sourcing.wal
+    const resolvedWalPath =
+      walPath ??
+      (typeof process !== 'undefined'
+        ? path.join(
+            process.cwd(),
+            '.commander_state',
+            'event-sourcing.wal',
+          )
+        : null);
+
+    globalEventSourcingEngine = new EventSourcingEngine({
+      walPath: resolvedWalPath ?? undefined,
+    });
   }
   return globalEventSourcingEngine;
 }
