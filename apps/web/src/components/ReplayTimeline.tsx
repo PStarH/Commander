@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import type { ReactNode } from 'react';
 import {
   Brain,
   Wrench,
@@ -13,11 +14,19 @@ import {
   Play,
   CheckCircle,
   XCircle,
+  Undo2,
+  Loader,
 } from 'lucide-react';
 import { Badge, Button } from './ui';
-import { fetchReplayRuns, fetchReplayEvents } from '../api';
+import { fetchReplayRuns, fetchReplayEvents, rollbackToStep } from '../api';
 import { formatTimestamp } from '../types';
 import type { ReplayRun, ReplayEvent } from '../types';
+
+// Event types that represent checkpointed, re-executable steps and are
+// therefore valid rollback targets (per GAP-03 spec).
+const ROLLBACKABLE_EVENT_TYPES = new Set(['tool_execution', 'state_change']);
+
+type RollbackStatus = 'idle' | 'confirming' | 'success' | 'error';
 
 const COLORS = {
   green: '#4de98c',
@@ -64,6 +73,14 @@ export function ReplayTimeline() {
   const [typeFilter, setTypeFilter] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [eventsLoading, setEventsLoading] = useState(false);
+
+  // ── Step-level rollback state (GAP-03 frontend) ───────────────────────
+  // rollbackTarget: the event index currently being rolled back (null = idle)
+  const [rollbackTarget, setRollbackTarget] = useState<number | null>(null);
+  const [rollbackInstructions, setRollbackInstructions] = useState('');
+  const [rollbackStatus, setRollbackStatus] = useState<RollbackStatus>('idle');
+  const [rollbackMessage, setRollbackMessage] = useState('');
+  const [rollbackLoading, setRollbackLoading] = useState(false);
 
   useEffect(() => {
     loadRuns();
@@ -128,6 +145,196 @@ export function ReplayTimeline() {
       default:
         return event.type;
     }
+  }
+
+  // ── Rollback handlers ────────────────────────────────────────────────
+  function startRollback(eventIndex: number): void {
+    setRollbackTarget(eventIndex);
+    setRollbackStatus('confirming');
+    setRollbackInstructions('');
+    setRollbackMessage('');
+  }
+
+  function resetRollback(): void {
+    setRollbackTarget(null);
+    setRollbackStatus('idle');
+    setRollbackInstructions('');
+    setRollbackMessage('');
+    setRollbackLoading(false);
+  }
+
+  async function handleConfirmRollback(runId: string, stepNumber: number): Promise<void> {
+    setRollbackLoading(true);
+    try {
+      const trimmed = rollbackInstructions.trim();
+      const result = await rollbackToStep(runId, stepNumber, trimmed || undefined);
+      setRollbackStatus('success');
+      setRollbackMessage(
+        result.message ||
+          `Rolled back from step ${result.fromStep} to step ${result.toStep}.`,
+      );
+    } catch (err) {
+      setRollbackStatus('error');
+      setRollbackMessage(
+        err instanceof Error ? err.message : 'Failed to rollback to step',
+      );
+    } finally {
+      setRollbackLoading(false);
+    }
+  }
+
+  /**
+   * Renders the step-level rollback panel for a given timeline event.
+   *
+   * Rendered as a sibling of the timeline-content button (valid HTML — buttons
+   * cannot be nested) but visually aligned beneath the expanded detail. Only
+   * shown for rollbackable event types (tool_execution / state_change).
+   */
+  function renderRollbackPanel(eventIndex: number, eventType: string): ReactNode {
+    if (!selectedRun) return null;
+    if (!ROLLBACKABLE_EVENT_TYPES.has(eventType)) return null;
+
+    const isActive = rollbackTarget === eventIndex;
+    const runId = selectedRun.runId;
+
+    return (
+      <div
+        className="timeline-rollback"
+        style={{ marginLeft: 38, marginBottom: 8, marginTop: -4 }}
+      >
+        {/* Success banner */}
+        {isActive && rollbackStatus === 'success' && (
+          <div
+            className="banner"
+            style={{
+              marginBottom: 8,
+              padding: '8px 12px',
+              fontSize: '0.78rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}
+          >
+            <CheckCircle size={14} style={{ flexShrink: 0 }} />
+            <span style={{ flex: 1 }}>{rollbackMessage}</span>
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              onClick={resetRollback}
+            >
+              Close
+            </button>
+          </div>
+        )}
+
+        {/* Error banner */}
+        {isActive && rollbackStatus === 'error' && (
+          <div
+            className="banner error"
+            style={{
+              marginBottom: 8,
+              padding: '8px 12px',
+              fontSize: '0.78rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}
+          >
+            <AlertTriangle size={14} style={{ flexShrink: 0 }} />
+            <span style={{ flex: 1 }}>{rollbackMessage}</span>
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              onClick={resetRollback}
+              disabled={rollbackLoading}
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {/* Inline confirmation form */}
+        {isActive && rollbackStatus === 'confirming' && (
+          <div
+            style={{
+              padding: 10,
+              background: 'var(--bg-elevated)',
+              border: '1px solid var(--accent-red)',
+              borderRadius: 'var(--radius-md)',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                marginBottom: 8,
+                fontSize: '0.78rem',
+                color: 'var(--accent-red)',
+              }}
+            >
+              <AlertTriangle size={14} style={{ flexShrink: 0 }} />
+              <span>
+                Confirm rollback to step {eventIndex}. Execution will re-run from
+                this point.
+              </span>
+            </div>
+            <input
+              type="text"
+              className="inp"
+              value={rollbackInstructions}
+              onChange={(e) => setRollbackInstructions(e.target.value)}
+              placeholder="Optional: inject correction instructions"
+              disabled={rollbackLoading}
+              style={{
+                width: '100%',
+                marginBottom: 8,
+                minHeight: 32,
+                fontSize: '0.78rem',
+                boxSizing: 'border-box',
+              }}
+            />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                className="btn btn-sm btn-danger"
+                onClick={() => handleConfirmRollback(runId, eventIndex)}
+                disabled={rollbackLoading}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                {rollbackLoading ? (
+                  <Loader size={12} className="spin" />
+                ) : (
+                  <AlertTriangle size={12} />
+                )}
+                {rollbackLoading ? 'Rolling back…' : 'Confirm Rollback'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={resetRollback}
+                disabled={rollbackLoading}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Default: Rollback to Here button */}
+        {!isActive && (
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            onClick={() => startRollback(eventIndex)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <Undo2 size={12} />
+            Rollback to Here
+          </button>
+        )}
+      </div>
+    );
   }
 
   if (loading) {
@@ -363,6 +570,7 @@ export function ReplayTimeline() {
                           </div>
                         )}
                       </button>
+                      {isExpanded && renderRollbackPanel(i, event.type)}
                     </div>
                   );
                 })

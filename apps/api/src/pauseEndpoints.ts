@@ -1,9 +1,48 @@
 import { Router } from 'express';
+import * as fsp from 'fs/promises';
+import * as path from 'path';
 import { getSharedRuntime } from './sharedRuntime';
 
 const RUN_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_INSTRUCTIONS_LENGTH = 4096;
 const RESUME_COOLDOWN_MS = 10_000; // 10s cooldown between resumes of same run
+
+// ── Checkpoint reading (mirrors replayEndpoints.ts pattern) ──────────────
+
+interface CheckpointData {
+  agentId: string;
+  missionId?: string;
+  phase: string;
+  stepNumber: number;
+  messages: Array<{ role: string; content: string }>;
+  context: {
+    projectId: string;
+    goal: string;
+    availableTools: string[];
+    tokenBudget: number;
+  };
+  totalDurationMs?: number;
+  timestamp: string;
+}
+
+async function readCheckpoint(runId: string): Promise<CheckpointData | null> {
+  const stateDir = path.join(process.cwd(), '.commander_state');
+  // Try completed checkpoint first, then in-flight
+  const candidates = [
+    path.join(stateDir, 'completed', `${runId}.json`),
+    path.join(stateDir, `${runId}.checkpoint`),
+  ];
+  for (const filePath of candidates) {
+    try {
+      await fsp.access(filePath);
+      const raw = await fsp.readFile(filePath, 'utf-8');
+      return JSON.parse(raw) as CheckpointData;
+    } catch {
+      /* try next candidate */
+    }
+  }
+  return null;
+}
 
 // Track last resume time per run to prevent abuse
 const resumeCooldowns: Map<string, number> = new Map();
@@ -137,6 +176,71 @@ export function createPauseRouter(): Router {
     } catch (err) {
       process.stderr.write(`[Resume] Failed for ${runId}: ${(err as Error).message}\n`);
       res.status(500).json({ error: 'Failed to resume execution' });
+    }
+  });
+
+  // ── Rollback to a specific step (GAP-03 backend) ───────────────────────
+  // Accepts { runId, stepNumber, userInstructions } and re-executes from the
+  // target step. The checkpoint is read from disk (works for completed runs,
+  // unlike resume which requires a paused run). Correction instructions are
+  // injected as a user message so the agent adjusts its behavior from that step.
+  router.post('/runtime/rollback', async (req, res) => {
+    const { runId, stepNumber, userInstructions } = req.body ?? {};
+    if (!isValidRunId(runId)) {
+      return res.status(400).json({ error: 'runId is required and must be alphanumeric' });
+    }
+    if (typeof stepNumber !== 'number' || !Number.isInteger(stepNumber) || stepNumber < 0) {
+      return res.status(400).json({ error: 'stepNumber must be a non-negative integer' });
+    }
+
+    const checkpoint = await readCheckpoint(runId);
+    if (!checkpoint) {
+      return res.status(404).json({ error: 'No checkpoint found for this run' });
+    }
+
+    const fromStep = checkpoint.stepNumber ?? 0;
+    const messages = Array.isArray(checkpoint.messages) ? checkpoint.messages : [];
+
+    // Truncate conversation to the target step (keep messages up to and
+    // including the step we're rolling back to).
+    const truncatedMessages = messages.slice(0, stepNumber + 1);
+
+    // Sanitize and inject correction instructions.
+    const sanitized = sanitizeInstructions(userInstructions);
+    const goalSuffix = sanitized
+      ? `\n\n[User correction at step ${stepNumber}]: ${sanitized}`
+      : '';
+
+    try {
+      const runtime = getSharedRuntime();
+      const ctx = {
+        agentId: checkpoint.agentId,
+        projectId: checkpoint.context.projectId,
+        missionId: checkpoint.missionId,
+        goal: `${checkpoint.context.goal}${goalSuffix}`,
+        contextData: { agentState: { previousMessages: truncatedMessages } },
+        availableTools: checkpoint.context.availableTools,
+        tokenBudget: checkpoint.context.tokenBudget,
+        maxSteps: 50,
+      };
+
+      // Run asynchronously — don't block the response.
+      runtime.execute(ctx).catch((err) => {
+        process.stderr.write(
+          `[Rollback] Execution failed for ${runId}: ${(err as Error).message}\n`,
+        );
+      });
+
+      res.json({
+        status: 'rollback_initiated',
+        message: `Rollback initiated from step ${fromStep} to step ${stepNumber}.`,
+        fromStep,
+        toStep: stepNumber,
+        injectedInstructions: !!sanitized,
+      });
+    } catch (err) {
+      process.stderr.write(`[Rollback] Failed for ${runId}: ${(err as Error).message}\n`);
+      res.status(500).json({ error: 'Failed to rollback execution' });
     }
   });
 
