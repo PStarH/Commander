@@ -2493,93 +2493,23 @@ export class AgentRuntime implements AgentRuntimeInterface {
               }
 
               // ── Goal-completion verification gate ──
-              // If the execution context names a verification tool, invoke it
-              // before accepting a stop signal. A failed verification forces the
-              // agent to continue rather than stopping early.
-              let verificationPassed = !ctx.verificationTool;
-              if (
-                ctx.verificationTool &&
-                (!response.toolCalls || response.toolCalls.length === 0)
-              ) {
-                const vToolCallId = `verify-${Date.now()}`;
-                const vToolCall: ToolCall = {
-                  id: vToolCallId,
-                  name: ctx.verificationTool,
-                  arguments: {},
-                };
-                getGlobalLogger().info('AgentRuntime', 'Running verification tool', {
-                  tool: ctx.verificationTool,
-                  runId,
-                });
-                const vStart = Date.now();
-                let vResult = await this.executeTool(
-                  runId,
-                  vToolCall,
-                  ctx.agentId,
-                  tenantId,
-                  ctx.availableTools,
-                  ctx,
-                );
-                try {
-                  vResult = await getHookManager().fireAfterToolCall({
-                    toolName: vToolCall.name,
-                    args: vToolCall.arguments,
-                    result: vResult,
-                    agentId: ctx.agentId,
-                    runId,
-                  });
-                } catch {
-                  /* best-effort hook */
-                }
-                const vDuration = Date.now() - vStart;
-                const vOutput = vResult.error ? `error: ${vResult.error}` : vResult.output;
-
-                steps.push({
-                  stepNumber: steps.length + 1,
-                  timestamp: now(),
-                  type: 'tool_result',
-                  content: vOutput,
-                  durationMs: vDuration,
-                });
-
-                const vAssistantMsg: import('./types').LLMMessage = {
-                  role: 'assistant',
-                  content: response.content,
-                  ...(response.reasoning_content
-                    ? { reasoning_content: response.reasoning_content }
-                    : {}),
-                  tool_calls: [
-                    {
-                      id: vToolCallId,
-                      type: 'function' as const,
-                      function: {
-                        name: vToolCall.name,
-                        arguments: JSON.stringify(vToolCall.arguments),
-                      },
-                    },
-                  ],
-                };
-                request.messages.push(vAssistantMsg, {
-                  role: 'tool',
-                  content: vOutput,
-                  tool_call_id: vToolCallId,
-                });
-
-                verificationPassed = this.isVerificationResultSuccessful(vResult);
-                getGlobalLogger().info('AgentRuntime', 'Verification tool result', {
-                  tool: ctx.verificationTool,
-                  passed: verificationPassed,
-                  runId,
-                });
-
-                if (!verificationPassed && attempt < this.config.maxRetries) {
-                  const feedback = vResult.error
-                    ? `Verification tool "${ctx.verificationTool}" reported an error: ${vResult.error}. Use the available tools to complete the task, then call "${ctx.verificationTool}" again.`
-                    : `Verification tool "${ctx.verificationTool}" did not report success because the task is not complete. Use the available tools to finish the work, then call "${ctx.verificationTool}" again.`;
-                  lastError = feedback;
-                  request.messages.push({ role: 'user', content: feedback });
-                  continue;
-                }
+              // Verifies whether the agent's accumulated work has satisfied the
+              // original goal before a stop signal is accepted. A failed
+              // verification (within the attempt budget) injects feedback into
+              // the next iteration's context and forces another retry.
+              const verification = await this.goalCompletionVerifier.verify({
+                ctx,
+                runId,
+                routing,
+                steps,
+                request,
+                response,
+                tenantId,
+                attempt,
+              });
+              if (!verification.isComplete && verification.feedback) {
+                lastError = verification.feedback;
+                continue;
               }
 
               // Early exit: skip verification when model is confident and has no tool calls.
@@ -3847,31 +3777,6 @@ export class AgentRuntime implements AgentRuntimeInterface {
       name: fn?.name ?? tc.name ?? '',
       arguments: args,
     };
-  }
-
-  /** Heuristic used by the goal-completion verification gate. A verification
-   *  tool succeeds when it reports no error and its output contains an explicit
-   *  success signal (or a JSON `passed`/`success`/`ok` field). */
-  private isVerificationResultSuccessful(result: ToolResult): boolean {
-    if (result.error) return false;
-    const output = String(result.output ?? '');
-    if (/\b(error|fail|failed|failure|invalid|unsuccessful|false)\b/i.test(output)) {
-      return false;
-    }
-    if (/\b(pass|passed|success|successful|ok|valid|true)\b/i.test(output)) {
-      return true;
-    }
-    try {
-      const parsed = JSON.parse(output);
-      if (parsed && typeof parsed === 'object') {
-        if ('passed' in parsed) return Boolean(parsed.passed);
-        if ('success' in parsed) return Boolean(parsed.success);
-        if ('ok' in parsed) return Boolean(parsed.ok);
-      }
-    } catch {
-      /* not JSON */
-    }
-    return true;
   }
 
   // ---------------------------------------------------------------------------
