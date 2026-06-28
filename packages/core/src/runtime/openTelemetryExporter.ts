@@ -39,6 +39,12 @@ export interface OTelExporterConfig {
   batchIntervalMs?: number;
   /** File fallback directory when endpoint unreachable (default: .commander/otel_queue/) */
   fallbackDir?: string;
+  /** PII redaction: drop raw prompt input from spans. Default true. */
+  redactInput?: boolean;
+  /** PII redaction: drop raw completion output from spans. Default true. */
+  redactOutput?: boolean;
+  /** PII redaction: drop tool call arguments from spans. Default true. */
+  redactToolArgs?: boolean;
 }
 
 export interface OTelSpan {
@@ -138,6 +144,11 @@ export class OpenTelemetryExporter {
       batchSize: config.batchSize || 64,
       batchIntervalMs: config.batchIntervalMs || 5000,
       fallbackDir: config.fallbackDir || path.join(process.cwd(), '.commander', 'otel_queue'),
+      // PII redaction defaults to "strip everything" so a misconfigured
+      // Collector URL can't exfiltrate user prompts/completions.
+      redactInput: config.redactInput ?? true,
+      redactOutput: config.redactOutput ?? true,
+      redactToolArgs: config.redactToolArgs ?? true,
     };
     // Try env var override
     const envEndpoint =
@@ -186,21 +197,72 @@ export class OpenTelemetryExporter {
 
   /**
    * Queue a span for export. Non-blocking — spans are batched and sent periodically.
+   * PII redaction is applied before queuing when redactInput/redactOutput/redactToolArgs
+   * are enabled (default: all true).
    */
   exportSpan(span: OTelSpan): void {
     if (!this.running) {
       getGlobalLogger().warn('OTelExporter', 'Exporter not started — queuing span');
     }
+    // P0: Apply PII redaction before the span enters the queue so no
+    // raw prompt/completion/tool-args ever touch the network or disk.
+    const redactedSpan = this.redactSpan(span);
     if (this.queue.length >= OpenTelemetryExporter.MAX_QUEUE_SIZE) {
-      this.queue.shift(); // drop oldest to prevent unbounded memory growth
+      this.queue.shift();
     }
-    this.queue.push(span);
-    // Send immediately if batch size reached
+    this.queue.push(redactedSpan);
     if (this.queue.length >= this.config.batchSize) {
       this.flush().catch((err) => {
         getGlobalLogger().error('OTelExporter', 'Batch flush failed', err as Error);
       });
     }
+  }
+
+  /**
+   * Strip PII-sensitive attributes from a span based on redaction config.
+   * Removes gen_ai.prompt (input), gen_ai.completion (output), and
+   * gen_ai.tool.call.arguments while preserving tool names and IDs.
+   */
+  private redactSpan(span: OTelSpan): OTelSpan {
+    if (
+      !this.config.redactInput &&
+      !this.config.redactOutput &&
+      !this.config.redactToolArgs
+    ) {
+      return span;
+    }
+
+    const attrs = { ...span.attributes };
+    let redacted = false;
+
+    if (this.config.redactInput) {
+      for (const key of ['gen_ai.prompt', 'data.input', 'input', 'gen_ai.input']) {
+        if (key in attrs) {
+          delete attrs[key];
+          redacted = true;
+        }
+      }
+    }
+
+    if (this.config.redactOutput) {
+      for (const key of ['gen_ai.completion', 'data.output', 'output', 'gen_ai.output']) {
+        if (key in attrs) {
+          delete attrs[key];
+          redacted = true;
+        }
+      }
+    }
+
+    if (this.config.redactToolArgs) {
+      for (const key of ['gen_ai.tool.call.arguments', 'tool.args', 'arguments']) {
+        if (key in attrs) {
+          delete attrs[key];
+          redacted = true;
+        }
+      }
+    }
+
+    return redacted ? { ...span, attributes: attrs } : span;
   }
 
   getStats(): { queued: number; totalExported: number; totalFailed: number } {
