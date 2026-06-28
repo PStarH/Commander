@@ -52,13 +52,16 @@ These are architectural goals for the current v0.2.0 release. Measurement infras
 
 ```bash
 # Basic health check
-curl http://localhost:3000/health
+curl http://localhost:4000/health
 
 # Detailed health with all component statuses
-curl http://localhost:3000/health/detailed
+curl http://localhost:4000/health/detailed
 
 # Readiness probe (for k8s)
-curl http://localhost:3000/ready
+curl http://localhost:4000/ready
+
+# Prometheus metrics
+curl http://localhost:4000/metrics
 ```
 
 Health check monitors 8 components:
@@ -199,6 +202,38 @@ npx tsx packages/core/src/cli.ts status              # System health
 ```
 
 No configuration files. No YAML pipelines. No graph builders. One command and you're running multi-agent orchestration.
+
+### Web Console
+
+Commander includes a full web-based control console for visual monitoring, chat-based agent interaction, and governance:
+
+```bash
+# Terminal 1: Start the API server (port 4000)
+pnpm --filter @commander/api dev
+
+# Terminal 2: Start the web frontend (port 5173)
+pnpm --filter @commander/web dev
+```
+
+Then open `http://localhost:5173` in your browser. The web console provides:
+
+- **Dashboard** — Battle report, token trends, live topology, agent roster, mission board
+- **Chat** — Conversational interface with real-time agent streaming
+- **Governance** — Approval queue, unified policy configuration, audit log
+- **DLQ** — Dead letter queue management with replay
+- **Security** — ISO 42001 / NIST AI RMF compliance posture
+- **Execution** — Real-time execution feed with hallucination risk panel
+- **Agents** — Agent roster with lineage tree visualization
+
+For production deployment with Docker:
+
+```bash
+export COMMANDER_API_KEY="your-secret-key"
+export OPENAI_API_KEY="sk-..."
+docker compose up -d
+```
+
+The API server listens on port 4000; the web frontend is served on port 3000.
 
 ---
 

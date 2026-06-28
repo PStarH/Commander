@@ -176,6 +176,93 @@ app.get('/health', (_req, res) => {
   });
 });
 
+// Readiness probe — checks if the server is ready to accept traffic
+// (all critical stores initialized)
+app.get('/ready', (_req, res) => {
+  const checks: Record<string, 'ok' | 'fail'> = {
+    warRoom: store ? 'ok' : 'fail',
+    memoryStore: memoryStore ? 'ok' : 'fail',
+    agentStateStore: agentStateStore ? 'ok' : 'fail',
+    episodicMemoryStore: episodicMemoryStore ? 'ok' : 'fail',
+    memoryIndexManager: memoryIndexManager ? 'ok' : 'fail',
+    confidenceReporter: confidenceReporter ? 'ok' : 'fail',
+  };
+
+  const allOk = Object.values(checks).every((v) => v === 'ok');
+  res.status(allOk ? 200 : 503).json({
+    status: allOk ? 'ready' : 'not_ready',
+    checks,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Detailed health — includes module-level diagnostics
+app.get('/health/detailed', (_req, res) => {
+  const memUsage = process.memoryUsage();
+  const heapUsedMB = Math.floor(memUsage.heapUsed / 1024 / 1024);
+  const heapTotalMB = Math.floor(memUsage.heapTotal / 1024 / 1024);
+  const rssMB = Math.floor(memUsage.rss / 1024 / 1024);
+  const heapHealthy = heapUsedMB / heapTotalMB < 0.8;
+
+  res.status(heapHealthy ? 200 : 503).json({
+    status: heapHealthy ? 'healthy' : 'degraded',
+    projectId: PROJECT_ID,
+    uptime: Math.floor(process.uptime()),
+    version: API_VERSION,
+    memory: {
+      rss: `${rssMB}MB`,
+      heapUsed: `${heapUsedMB}MB`,
+      heapTotal: `${heapTotalMB}MB`,
+      heapPercent: Math.round((heapUsedMB / heapTotalMB) * 100),
+    },
+    modules: {
+      warRoom: store ? 'active' : 'inactive',
+      memoryStore: memoryStore ? 'active' : 'inactive',
+      agentStateStore: agentStateStore ? 'active' : 'inactive',
+      episodicMemoryStore: episodicMemoryStore ? 'active' : 'inactive',
+      memoryIndexManager: memoryIndexManager ? 'active' : 'inactive',
+      confidenceReporter: confidenceReporter ? 'active' : 'inactive',
+      governance: 'active',
+      checkpointManager: checkpointManager ? 'active' : 'inactive',
+    },
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Prometheus metrics endpoint
+app.get('/metrics', (_req, res) => {
+  const memUsage = process.memoryUsage();
+  const heapUsed = memUsage.heapUsed;
+  const heapTotal = memUsage.heapTotal;
+  const rss = memUsage.rss;
+  const uptime = process.uptime();
+
+  res.type('text/plain; version=0.0.4').send(
+    [
+      '# HELP commander_heap_used_bytes Heap memory used in bytes',
+      '# TYPE commander_heap_used_bytes gauge',
+      `commander_heap_used_bytes ${heapUsed}`,
+      '',
+      '# HELP commander_heap_total_bytes Total heap size in bytes',
+      '# TYPE commander_heap_total_bytes gauge',
+      `commander_heap_total_bytes ${heapTotal}`,
+      '',
+      '# HELP commander_rss_bytes Resident set size in bytes',
+      '# TYPE commander_rss_bytes gauge',
+      `commander_rss_bytes ${rss}`,
+      '',
+      '# HELP commander_uptime_seconds Server uptime in seconds',
+      '# TYPE commander_uptime_seconds gauge',
+      `commander_uptime_seconds ${uptime}`,
+      '',
+      '# HELP commander_heap_percent Heap usage percentage',
+      '# TYPE commander_heap_percent gauge',
+      `commander_heap_percent ${Math.round((heapUsed / heapTotal) * 100)}`,
+      '',
+    ].join('\n'),
+  );
+});
+
 app.get('/system/status', (_req, res) => {
   const uptime = process.uptime();
   const memUsage = process.memoryUsage();
