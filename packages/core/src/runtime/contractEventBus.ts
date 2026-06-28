@@ -19,6 +19,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import type { IEventBus } from '../contracts/pillarII';
 import { getMessageBus } from './messageBus';
 import type { MessageBus } from './messageBus';
+import { getGlobalEventSourcingEngine } from './eventSourcingEngine';
 
 // ============================================================================
 // Types
@@ -116,6 +117,23 @@ export class ContractEventBus implements IEventBus {
     // Trim log if exceeding max size
     if (this.eventLog.length > this.maxLogSize) {
       this.eventLog = this.eventLog.slice(-this.maxLogSize);
+    }
+
+    // P2: Persist to EventSourcingEngine WAL for durability.
+    // This enables replayFrom() to work across process restarts —
+    // the event log survives crashes and can be replayed to rebuild state.
+    // Fire-and-forget: never blocks the publish critical path.
+    try {
+      getGlobalEventSourcingEngine()
+        .append({
+          type: `bus.${topic}`,
+          payload: { id: event.id, topic, message, timestamp: event.timestamp },
+        })
+        .catch((err: unknown) => {
+          reportSilentFailure(err, 'contractEventBus:publish:wal');
+        });
+    } catch (err) {
+      reportSilentFailure(err, 'contractEventBus:publish:wal:init');
     }
 
     // Deliver to local subscribers

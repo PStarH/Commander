@@ -26,7 +26,8 @@ api:
   # Health check configuration
   health:
     livenessPath: /health
-    readinessPath: /health
+    readinessPath: /ready
+    metricsPath: /metrics
     initialDelaySeconds: 10
     periodSeconds: 15
   # Autoscaling
