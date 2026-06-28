@@ -1,0 +1,66 @@
+{
+  "title": "Developer Overview",
+  "uid": "developer-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "10s",
+  "panels": [
+    {
+      "title": "Run Success Rate",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [{ "expr": "commander_runs_total{status=\"completed\"} / commander_runs_total", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "thresholds": { "mode": "absolute", "steps": [{"color":"red","value":null},{"color":"yellow","value":0.8},{"color":"green","value":0.95}] } } }
+    },
+    {
+      "title": "P95 Latency (ms)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [{ "expr": "histogram_quantile(0.95, commander_run_duration_ms_bucket)", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "ms", "thresholds": { "mode": "absolute", "steps": [{"color":"green","value":null},{"color":"yellow","value":5000},{"color":"red","value":10000}] } } }
+    },
+    {
+      "title": "Token Cost (USD/hour)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [{ "expr": "rate(commander_cost_usd_total[1h]) * 3600", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "thresholds": { "mode": "absolute", "steps": [{"color":"green","value":null},{"color":"yellow","value":1},{"color":"red","value":10}] } } }
+    },
+    {
+      "title": "Active Runs",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [{ "expr": "commander_active_runs", "refId": "A" }]
+    },
+    {
+      "title": "Run Success Rate Over Time",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [{ "expr": "rate(commander_runs_total{status=\"completed\"}[5m]) / rate(commander_runs_total[5m])", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit" } }
+    },
+    {
+      "title": "Token Usage Over Time",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        { "expr": "rate(commander_tokens_total{type=\"input\"}[5m])", "legendFormat": "Input", "refId": "A" },
+        { "expr": "rate(commander_tokens_total{type=\"output\"}[5m])", "legendFormat": "Output", "refId": "B" }
+      ]
+    },
+    {
+      "title": "Tool Call Success Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [{ "expr": "rate(commander_tool_calls_total{status=\"success\"}[5m]) / rate(commander_tool_calls_total[5m])", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit" } }
+    },
+    {
+      "title": "Cost by Component",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [{ "expr": "sum by (component) (rate(commander_cost_usd_total[1h]))", "refId": "A" }]
+    }
+  ]
+}
