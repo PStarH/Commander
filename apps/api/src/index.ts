@@ -46,6 +46,12 @@ import { createEvaluationRunnerRouter } from './evaluationRunnerEndpoints';
 import { createOrchestratorRouter } from './orchestratorEndpoints';
 import { createObservabilityRouter } from './observabilityEndpoints';
 import { createStreamRouter } from './streamEndpoints';
+import { createChatRouter } from './chatEndpoints';
+import { createDlqRouter } from './dlqEndpoints';
+import { createApprovalConfigRouter } from './approvalConfigEndpoints';
+import { createHallucinationRouter } from './hallucinationEndpoints';
+import { createLineageRouter } from './lineageEndpoints';
+import { createSecurityPostureRouter } from './securityPostureEndpoints';
 
 const PROJECT_ID = process.env.COMMANDER_PROJECT_ID ?? 'project-war-room';
 const app = express();
@@ -221,6 +227,17 @@ app.use('/', createPauseRouter());
 app.use('/', createReplayRouter());
 app.use('/api', createOrchestratorRouter());
 app.use('/api', createTeamRouter());
+
+// ── UX gap-fix routers (mounted directly, not via routes.ts) ────────────────
+// These 6 routers were created to close UX gaps but were never mounted.
+// Mounting them here ensures they are always registered regardless of
+// whether registerRoutes() is called.
+app.use(createChatRouter());
+app.use(createDlqRouter());
+app.use(createApprovalConfigRouter());
+app.use(createHallucinationRouter());
+app.use(createLineageRouter());
+app.use(createSecurityPostureRouter());
 
 // ── API v1 versioned aliases (backward-compatible) ──────────────────────────
 // All routes are accessible under /api/v1/ prefix in addition to their original paths.
