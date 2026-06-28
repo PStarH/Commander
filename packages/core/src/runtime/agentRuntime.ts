@@ -39,7 +39,6 @@ import type {
   ToolDefinition,
   RoutingDecision,
   TokenUsage,
-  CacheConfig,
   ModelConfig,
   ModelTier,
 } from './types';
@@ -64,16 +63,11 @@ import { getMessageBus } from './messageBus';
 import { getTraceRecorder } from './executionTrace';
 import { getAnomalyDetector } from '../observability/anomalyDetector';
 import { PersistentTraceStore } from './traceStore';
-import {
-  compactToolDef,
-  compactToolDefs,
-  getCompactConfigForTier,
-} from './programmaticToolFormatter';
 import { ContextCompactor } from './contextCompactor';
 import { SlidingWindowOrchestrator } from './slidingWindowOrchestrator';
 import { classifyLLMError, computeBackoff } from './llmRetry';
 import { CircuitBreaker } from './circuitBreaker';
-import { createParameterControllerPlugin, applyControllerParams } from './parameterController';
+import { createParameterControllerPlugin } from './parameterController';
 import {
   UnifiedVerificationPipeline,
   type UVPTaskContext,
@@ -114,13 +108,6 @@ import { ToolOutputManager } from './toolOutputManager';
 import { ToolOrchestrator } from './toolOrchestrator';
 import { SyntheticErrorRow, toolErrorRow, type PreToolCallGateResult } from './toolResultShape';
 import { ToolApproval } from './toolApproval';
-import {
-  buildTwoTierTools,
-  buildRegistrySummary,
-  calculateTierMetrics,
-  detectContextPromotions,
-} from './toolRetriever';
-import { createRequestToolTool } from '../tools/requestToolTool';
 import { ToolPlanner } from './toolPlanner';
 import { CycleDetector } from './cycleDetector';
 import { parseStructuredOutput } from './structuredOutput';
@@ -159,6 +146,7 @@ import type { GeminiCacheStats } from './geminiCacheManager';
 import { ToolExecutionService } from './toolExecutionService';
 import { initializeServices, type InitializedServices } from './serviceInitializer';
 import { CheckpointingPhase } from './phases/checkpointing';
+import { RunTelemetryRecorder } from './runTelemetryRecorder';
 import {
   createInitialAgentExecutionState,
   type AgentExecutionState,
@@ -170,11 +158,11 @@ import {
 } from './openTelemetryExporter';
 import { exportSOPFromTrace, formatSOPAsMarkdown } from './sopExport';
 import {
-  buildSystemPrompt,
-  buildCacheAwareUserPrompt,
-  computePrefixCacheKey,
-} from './promptBuilder';
-import { loadProjectContext } from './projectContextLoader';
+  FinallyCleanupHandler,
+  type TenantOverrides,
+} from './finallyCleanupHandler';
+import { LLMRequestBuilder } from './llmRequestBuilder';
+import { GoalCompletionVerifier } from './goalCompletionVerifier';
 import { ReflexionGenerator, type ReflexionContext } from './reflexionGenerator';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -204,14 +192,8 @@ import {
 // ============================================================================
 // Tenant context resolution — extracted from execute() for clarity
 // ============================================================================
-
-interface TenantOverrides {
-  origSamplesStore: SamplesStore;
-  origTraceStore: PersistentTraceStore;
-  origCheckpointer: StateCheckpointer;
-  origMemory: import('../threeLayerMemory').ThreeLayerMemory | null;
-  origGovernor: TokenGovernor;
-}
+// NOTE: TenantOverrides is now imported from ./finallyCleanupHandler to keep a
+// single source of truth shared with the cleanup handler.
 
 interface TenantResolutionResult {
   allowed: boolean;
@@ -297,6 +279,16 @@ export class AgentRuntime implements AgentRuntimeInterface {
   private compensationService: CompensationService;
   private toolExecutionService: ToolExecutionService;
   private checkpointingPhase: CheckpointingPhase;
+  // Records success/failure run telemetry (hooks, metrics, bus, circuit
+  // breaker, memory, intelligence, meta-learner) - extracted from execute().
+  private runTelemetryRecorder: RunTelemetryRecorder;
+  // Finally-block cleanup — extracted from execute() for testability/clarity
+  private finallyCleanupHandler: FinallyCleanupHandler;
+  // Extracted from execute() step 2 — builds the cache-optimized LLM request.
+  private llmRequestBuilder: LLMRequestBuilder;
+  // Extracted from execute()'s retry loop — verifies goal completion via the
+  // configured verification tool before accepting a stop signal.
+  private goalCompletionVerifier: GoalCompletionVerifier;
 
   // Tenant config provider (kept for direct lookups in execute())
   private tenantProvider: TenantProvider;
@@ -399,6 +391,65 @@ export class AgentRuntime implements AgentRuntimeInterface {
       checkpointer: this.checkpointer,
       runLifecycle: this.runLifecycle,
       leaseManager: this.leaseManager,
+    });
+
+    // RunTelemetryRecorder owns the success/failure telemetry tails that were
+    // previously inlined in execute()'s retry loop. Getters are used so the
+    // recorder always reads the runtime's current state (e.g. runHandle is
+    // assigned mid-run, router/memory are stable after init).
+    this.runTelemetryRecorder = new RunTelemetryRecorder({
+      getMemory: () => this.memory,
+      getRouter: () => this.router,
+      getCircuitBreaker: () => this.circuitBreaker,
+      getRunHandle: () => this.runHandle,
+      getCheckpointingPhase: () => this.checkpointingPhase,
+      getMaxRetries: () => this.config.maxRetries,
+    });
+
+    // Wire the finally-block cleanup handler with getter callbacks so it always
+    // observes the runtime's current (possibly tenant-overridden) instance
+    // fields rather than values captured at construction time.
+    this.finallyCleanupHandler = new FinallyCleanupHandler({
+      getCircuitBreaker: () => this.circuitBreaker,
+      getRunLifecycle: () => this.runLifecycle,
+      getTenantManager: () => this.tenantManager,
+      getConcurrencyController: () => this.concurrencyController,
+      getTracer: () => getTraceRecorder(),
+      getConfig: () => this.config,
+      getOtelExporter: () => this.otelExporter,
+      getSamplesStore: () => this.samplesStore,
+      getTraceStore: () => this.traceStore,
+      getConversationStore: () => this.conversationStore,
+      restoreTenantOverrides: (overrides, tenantId) =>
+        this.restoreTenantOverrides(overrides, tenantId),
+    });
+
+    // LLMRequestBuilder — dependency-injected via getter/setter callbacks so it
+    // always observes the runtime's current (per-run) instance fields rather
+    // than values captured at construction time.
+    this.llmRequestBuilder = new LLMRequestBuilder({
+      getConfig: () => this.config,
+      getGovernor: () => this.governor,
+      getRouter: () => this.router,
+      getTools: () => this.tools,
+      setPromotedTools: (tools: Set<string>) => {
+        this.promotedTools = tools;
+      },
+      setTool: (name: string, tool: Tool) => {
+        this.tools.set(name, tool);
+      },
+      getLastPrefixCacheKey: () => this.lastPrefixCacheKey,
+      setLastPrefixCacheKey: (key: string) => {
+        this.lastPrefixCacheKey = key;
+      },
+    });
+
+    // GoalCompletionVerifier — owns the goal-completion verification gate that
+    // previously lived inline in execute()'s retry loop. Getter callbacks keep
+    // it decoupled from the runtime's concrete (possibly per-tenant) state.
+    this.goalCompletionVerifier = new GoalCompletionVerifier({
+      getExecuteTool: () => this.executeTool.bind(this),
+      getMaxRetries: () => this.config.maxRetries,
     });
 
     // Benchmarks may intentionally generate high tool-call volumes; let callers
@@ -1165,200 +1216,14 @@ export class AgentRuntime implements AgentRuntimeInterface {
           // 2. Build LLM request with cache-optimized prompt structure
           //    Stable content (system, tools) FIRST for maximum cache hits.
           //    Variable content (user message) LAST.
-          // --- Two-Tier Tool Loading (Lazy Schema Loading) ---
-          // Research (arXiv:2604.21816): Eager schema injection costs 10k-60k tokens/turn.
-          // Two-tier loading: Tier 1 (full schema for top-N) + Tier 2 (compact registry for rest).
-          // Estimated savings: 60-80% of tool-related token cost.
-
-          const allToolDefs = ctx.availableTools
-            .map((name) => this.tools.get(name)?.definition)
-            .filter((t): t is ToolDefinition => t !== undefined);
-
-          const maxActiveTools = this.config.toolRetrieval?.maxTools ?? 8;
-          const twoTier = buildTwoTierTools(ctx.goal, allToolDefs, maxActiveTools);
-
-          const contextPromotions = detectContextPromotions(ctx.goal, twoTier.registry);
-          if (contextPromotions.length > 0) {
-            const toolMap = new Map(allToolDefs.map((t) => [t.name, t]));
-            for (const toolName of contextPromotions) {
-              const tool = toolMap.get(toolName);
-              if (tool) {
-                twoTier.active.push(tool);
-                twoTier.registry = twoTier.registry.filter((r) => r.name !== toolName);
-              }
-            }
-          }
-
-          const tierMetrics = calculateTierMetrics(twoTier, allToolDefs.length);
-
-          // Log token savings
-          if (tierMetrics.registryCount > 0) {
-            getGlobalLogger().debug(
-              'AgentRuntime',
-              `Two-tier tools: ${tierMetrics.activeCount} active (${tierMetrics.activeTokenEstimate} tok), ${tierMetrics.registryCount} registry (~${tierMetrics.registryTokenEstimate} tok), ~${tierMetrics.savingsPercent}% savings`,
-            );
-          }
-
-          // Tier 1: Active tools with full schema
-          let toolDefs = twoTier.active;
-          // Track promoted tools for hallucination rejection gate
-          this.promotedTools = new Set(twoTier.active.map((t) => t.name));
-          this.promotedTools.add('request_tool'); // always allow request_tool
-
-          // Compact active tool schemas: strip verbose descriptions/examples.
-          // Parameter-name minification is off for active tools so validation stays simple.
-          const TIER_TO_COMPACT: Record<string, 'low' | 'medium' | 'high'> = {
-            eco: 'low',
-            standard: 'medium',
-            power: 'high',
-            consensus: 'high',
-          };
-          const compactConfig = getCompactConfigForTier(
-            TIER_TO_COMPACT[this.config.defaultModelTier] ?? 'high',
-          );
-          toolDefs = compactToolDefs(toolDefs, compactConfig);
-
-          // Register request_tool for Tier 2 tools (if there are registry tools)
-          if (twoTier.registry.length > 0) {
-            const registryNames = twoTier.registry.map((t) => t.name);
-            const requestTool = createRequestToolTool((name) => {
-              const found = allToolDefs.find((t) => t.name === name);
-              return found ? compactToolDef(found, compactConfig) : undefined;
-            }, registryNames);
-            // Add request_tool to active tools
-            toolDefs = [...toolDefs, requestTool.definition];
-            // Register for execution
-            this.tools.set('request_tool', requestTool);
-          }
-
-          // Build registry summary for system prompt
-          const registrySummary = buildRegistrySummary(twoTier.registry);
-
-          // Load project context once per run. This is cached by file mtime and
-          // injected into the stable prefix so it participates in KV-cache reuse.
-          const projectContext = loadProjectContext();
-
-          const systemPrompt = buildSystemPrompt(
+          //    (Extracted into LLMRequestBuilder — see llmRequestBuilder.ts)
+          const { request, projectContext } = this.llmRequestBuilder.build({
             ctx,
             routing,
-            this.config,
-            this.tools,
-            this.governor,
-            registrySummary,
-            twoTier.active.map((t) => t.name),
+            batchRouting,
             taskType,
-            projectContext,
-          );
-
-          // KV-cache: track whether the stable system-prompt prefix changed
-          // since the prior call. The prefix is tool-list + governance +
-          // registry summary + max-steps + task-type + project-context — all cacheable across requests.
-          // A hit lets the provider reuse prefix tokens, cutting cost and
-          // latency (Anthropic reports 5x cost reduction on cached prefixes).
-          const activeToolNames = twoTier.active.map((t) => t.name);
-          const newPrefixKey = computePrefixCacheKey(
-            this.config,
-            this.tools,
-            this.governor,
-            registrySummary,
-            activeToolNames,
-            taskType,
-            projectContext.cacheKey,
-          );
-          const cacheHit =
-            this.lastPrefixCacheKey !== undefined && this.lastPrefixCacheKey === newPrefixKey;
-          this.lastPrefixCacheKey = newPrefixKey;
-          try {
-            getMetricsCollector().recordPromptPrefixCache(cacheHit, ctx.tenantId);
-            getMetricsCollector().setPromptPrefixCacheKey(newPrefixKey, ctx.tenantId);
-          } catch (err) {
-            reportSilentFailure(err, 'agentRuntime:1695');
-            /* best-effort */
-          }
-
-          // Cache configuration: enable caching for system prompt + tools on providers that support it
-          // 1h TTL is 2x write premium — only worth it on multi-step/long sessions, and the governor
-          // forces 5m in 'critical' phase to avoid paying the write premium on tight budgets.
-          const governorPhase = this.governor.getState().phase;
-          const cacheTtl: '5m' | '1h' =
-            this.config.promptCacheTtl === '1h' && governorPhase !== 'critical' ? '1h' : '5m';
-          const cacheConfig: CacheConfig = {
-            cacheSystemPrompt: true,
-            cacheTools: toolDefs.length > 0,
-            useCacheControl: true,
-            cacheTtl,
-            promptCacheKey: this.config.promptCacheKey ?? derivePromptCacheKey(ctx, tenantId),
-            isBatch: !!batchRouting,
-          };
-
-          // When batch routing is active, switch to the batch-selected model.
-          // The isBatch flag on cacheConfig tells the provider to use native
-          // Batch API (50% cost discount). If the batch API fails, the provider
-          // falls back to standard API (fail-closed).
-          const activeRouting = batchRouting ?? routing;
-          const apiModel = (activeRouting.modelId || '').replace(/@\w+$/, '') || activeRouting.modelId;
-          const selectedModelCfg = this.router.getModel(activeRouting.modelId);
-
-          // Security: System prompt extraction detection (OWASP ASI07).
-          // Scan user input for common prompt extraction/leakage patterns before
-          // sending to the LLM. Log and flag suspicious attempts.
-          const userContent = buildCacheAwareUserPrompt(ctx, routing, this.governor, this.config);
-          try {
-            const extractionPatterns = [
-              /repeat\s+(your\s+)?(instructions?|system\s*prompt|rules?)/i,
-              /show\s+me\s+(your\s+)?(system\s*prompt|instructions?|rules?)/i,
-              /ignore\s+(all\s+)?previous\s+(instructions?|prompts?|rules?)/i,
-              /what\s+(is|are)\s+your\s+(system\s+p|instructions?|rules?)/i,
-              /print\s+(your\s+)?(system\s*p|instructions?|rules?)/i,
-              /reveal\s+(your\s+)?(system\s*p|instructions?)/i,
-            ];
-            for (const pattern of extractionPatterns) {
-              if (pattern.test(userContent)) {
-                getGlobalLogger().warn('AgentRuntime', 'System prompt extraction attempt detected', {
-                  agentId: ctx.agentId,
-                  pattern: pattern.source,
-                });
-                break;
-              }
-            }
-          } catch {
-            /* best-effort detection */
-          }
-
-          const baseRequest: LLMRequest = {
-            model: apiModel,
-            // Order: [system (stable, cacheable), user (variable)]
-            messages: [
-              {
-                role: 'system',
-                content: systemPrompt,
-              },
-              {
-                role: 'user',
-                content: userContent,
-              },
-            ],
-            maxTokens: routing.maxTokens,
-            tools: toolDefs,
-            cacheConfig,
-          };
-
-          // Wire provider-native structured output when an output schema is supplied.
-          if (ctx.outputSchema && selectedModelCfg) {
-            if (selectedModelCfg.supportsStructuredOutput) {
-              baseRequest.responseFormat = {
-                type: 'json_schema',
-                schema: ctx.outputSchema,
-                name: 'structured_output',
-              };
-            } else if (selectedModelCfg.supportsJSONMode) {
-              baseRequest.responseFormat = { type: 'json_object' };
-            }
-            // Anthropic / unsupported providers fall through to tool-use fallback in their provider.
-          }
-
-          // Apply parameter controller (eval profile, reasoning config, adaptive params)
-          const request = applyControllerParams(baseRequest, ctx.goal, baseRequest.messages, 0);
+            tenantId,
+          });
 
           // Pre-LLM tool provisioning: detect tool needs and inject results before LLM sees the question
           try {
@@ -3425,95 +3290,23 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 }
               }
 
-              // Fire plugin onAgentComplete hooks
-              getHookManager()
-                .fireOnAgentComplete({ result, runId })
-                .catch((e) =>
-                  getGlobalLogger().debug('AgentRuntime', 'onAgentComplete hook failed', {
-                    error: (e as Error)?.message,
-                  }),
-                );
-
-              // Emit completed event
-              getMetricsCollector().recordRunComplete(
-                'success',
-                totalDurationMs,
-                steps.length,
-                tenantId,
-                getCostEstimator().estimateCostFromUsage(
-                  routing.modelId,
-                  totalTokens.promptTokens,
-                  totalTokens.completionTokens,
-                ),
-              );
-              bus.publish('agent.completed', ctx.agentId, {
+              // Record success telemetry (plugin hooks, run-complete metrics,
+              // agent.completed bus event, circuit-breaker success, agent
+              // intelligence, meta-learner experience, scheduler commitRun) -
+              // extracted to RunTelemetryRecorder.recordSuccess().
+              this.runTelemetryRecorder.recordSuccess({
+                ctx,
                 runId,
-                missionId: ctx.missionId,
-                summary: result.summary,
-                tokenUsage: totalTokens,
-                durationMs: totalDurationMs,
+                routing,
+                taskType,
+                result,
+                totalTokens,
+                steps,
+                startTime,
+                tenantId,
+                costEstimate,
               });
-
-              this.circuitBreaker.onSuccess();
               circuitReleased = true;
-
-              // Record intelligence: postTask, metaLearner, failure patterns
-              try {
-                getAgentIntelligence().postTask({
-                  task: ctx.goal,
-                  taskType: taskType || 'general',
-                  effortLevel: routing.tier,
-                  topology: ctx.subAgentRole || 'SINGLE',
-                  tokens: totalTokens.totalTokens,
-                  durationMs: totalDurationMs,
-                  success: true,
-                  steps: steps.map((s) => ({
-                    action: s.content?.slice(0, 200) || '',
-                    tool: s.toolCall?.name || 'llm',
-                    result: s.toolResult?.output?.slice(0, 200) || '',
-                  })),
-                  runId,
-                });
-              } catch (err) {
-                reportSilentFailure(err, 'agentRuntime:3937');
-                /* best-effort */
-              }
-
-              try {
-                getMetaLearner().recordExperience({
-                  id: `exp-${runId}-success`,
-                  runId,
-                  agentId: ctx.agentId,
-                  missionId: ctx.missionId,
-                  taskType: taskType || 'general',
-                  strategyUsed: ctx.subAgentRole || 'SEQUENTIAL',
-                  success: true,
-                  durationMs: totalDurationMs,
-                  tokenCost: totalTokens.totalTokens,
-                  modelUsed: routing.modelId,
-                  timestamp: new Date().toISOString(),
-                  topology: ctx.subAgentRole || 'SEQUENTIAL',
-                  lessons: result.summary ? [result.summary.slice(0, 200)] : [],
-                });
-              } catch (err) {
-                reportSilentFailure(err, 'agentRuntime:3958');
-                /* best-effort */
-              }
-              if (this.runHandle) {
-                try {
-                  getExecutionScheduler().commitRun({
-                    runId,
-                    leaseToken: this.runHandle.leaseToken,
-                    fencingEpoch: this.runHandle.fencingEpoch,
-                    tenantId: getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
-                  });
-                } catch (e) {
-                  getGlobalLogger().debug('AgentRuntime', 'Scheduler commitRun failed', {
-                    runId,
-                    error: (e as Error).message,
-                  });
-                }
-              }
               return result;
             }
 
@@ -3538,183 +3331,27 @@ export class AgentRuntime implements AgentRuntimeInterface {
             }
           }
 
-          // All attempts failed
-          tracer.recordError(
+          // Record failure telemetry (trace error, actual cost, model
+          // performance, onError hooks, terminal checkpoint, failure memory
+          // with poisoning gate, run-complete metrics, agent.failed bus event,
+          // agent intelligence, meta-learner experience, failure-pattern
+          // learner) - extracted to RunTelemetryRecorder.recordFailure(),
+          // which returns the failed AgentExecutionResult.
+          return await this.runTelemetryRecorder.recordFailure({
+            ctx,
             runId,
-            `All ${this.config.maxRetries + 1} attempts failed`,
-            Date.now() - startTime,
-          );
-
-          // Record final actual cost for failed run (for estimator learning)
-          try {
-            const modelCfg = this.router.getModel(routing.modelId);
-            costEstimator.recordActualCost(
-              costEstimate.taskCategory,
-              routing.tier,
-              totalTokens.promptTokens,
-              totalTokens.completionTokens,
-              totalTokens.cacheReadTokens ?? 0,
-              modelCfg?.costPer1MInput ?? 3,
-              modelCfg?.costPer1MOutput ?? 10,
-              modelCfg?.costPer1MCachedInput,
-              Date.now() - startTime,
-              false,
-            );
-            // Record model performance failure for cross-session learning
-            this.router.recordOutcome(
-              routing.modelId,
-              costEstimate.taskCategory,
-              false,
-              Date.now() - startTime,
-              totalTokens.totalTokens,
-            );
-            try {
-              getModelPerformanceStore().record({
-                modelId: routing.modelId,
-                taskType: costEstimate.taskCategory,
-                success: false,
-                durationMs: Date.now() - startTime,
-                tokensUsed: totalTokens.totalTokens,
-                timestamp: Date.now(),
-              });
-            } catch (err) {
-              reportSilentFailure(err, 'agentRuntime:4035');
-              /* best-effort */
-            }
-          } catch (err) {
-            reportSilentFailure(err, 'agentRuntime:4039');
-            /* best-effort learning */
-          }
-
-          // Fire plugin onError hooks
-          getHookManager()
-            .fireOnError({ error: lastError ?? 'Unknown error', runId, agentId: ctx.agentId })
-            .catch((e) =>
-              getGlobalLogger().debug('AgentRuntime', 'onError hook failed', {
-                error: (e as Error)?.message,
-              }),
-            );
-
-          state.totalTokenUsage = totalTokens;
-          state.steps = steps;
-          state.lastError = lastError;
-          await this.checkpointingPhase.checkpointTerminal(ctx, state, 'failed', {
-            request,
-            attempt: this.config.maxRetries,
-            stepNumber: steps.length,
+            routing,
+            taskType,
             lastError,
-            exitSummary: lastError,
-          });
-
-          if (this.memory) {
-            try {
-              const _memContent3 = `[FAIL] ${ctx.goal.slice(0, GOAL_TELEMETRY_MAX_CHARS)}`;
-              // Security (OWASP ASI07): Memory poisoning detection gate.
-              const _poisoningCheck3 = checkMemoryPoisoning(_memContent3, `agent:${ctx.agentId}`, ctx.agentId);
-              if (!_poisoningCheck3.allowed) {
-                getGlobalLogger().warn('AgentRuntime', 'Memory write blocked by poisoning gate', { reason: _poisoningCheck3.reason });
-              } else {
-              this.memory.add(
-                _memContent3,
-                'episodic',
-                `run:${runId}|error:${(lastError ?? 'unknown').slice(0, 100)}|dur:${Date.now() - startTime}ms`,
-                0.5 + (lastErrorIsPermanent ? 0.3 : 0),
-                ['execution', 'failure', ...ctx.availableTools.slice(0, 3)],
-                { runId, goal: ctx.goal.slice(0, GOAL_RESULT_MAX_CHARS), error: lastError },
-              );
-              } // end poisoning gate else
-            } catch (e) {
-              getGlobalLogger().warn('AgentRuntime', 'Failed to record failure memory', {
-                error: (e as Error)?.message,
-              });
-            }
-          }
-
-          getMetricsCollector().recordRunComplete(
-            'failed',
-            Date.now() - startTime,
-            steps.length,
-            tenantId,
-            getCostEstimator().estimateCostFromUsage(
-              routing.modelId,
-              totalTokens.promptTokens,
-              totalTokens.completionTokens,
-            ),
-          );
-          bus.publish('agent.failed', ctx.agentId, {
-            runId,
-            missionId: ctx.missionId,
-            error: lastError,
-          });
-
-          // Record intelligence: postTask (failure), metaLearner, failure patterns
-          try {
-            getAgentIntelligence().postTask({
-              task: ctx.goal,
-              taskType: taskType || 'general',
-              effortLevel: routing.tier,
-              topology: ctx.subAgentRole || 'SINGLE',
-              tokens: totalTokens.totalTokens,
-              durationMs: Date.now() - startTime,
-              success: false,
-              steps: steps.map((s) => ({
-                action: s.content?.slice(0, 200) || '',
-                tool: s.toolCall?.name || 'llm',
-                result: s.toolResult?.output?.slice(0, 200) || '',
-              })),
-              error: lastError,
-              runId,
-            });
-          } catch (err) {
-            reportSilentFailure(err, 'agentRuntime:4129');
-            /* best-effort */
-          }
-
-          try {
-            getMetaLearner().recordExperience({
-              id: `exp-${runId}-failure`,
-              runId,
-              agentId: ctx.agentId,
-              missionId: ctx.missionId,
-              taskType: taskType || 'general',
-              strategyUsed: ctx.subAgentRole || 'SEQUENTIAL',
-              success: false,
-              durationMs: Date.now() - startTime,
-              tokenCost: totalTokens.totalTokens,
-              modelUsed: routing.modelId,
-              timestamp: new Date().toISOString(),
-              topology: ctx.subAgentRole || 'SEQUENTIAL',
-              errorPattern: lastError,
-              lessons: lastError ? [lastError.slice(0, 200)] : [],
-            });
-          } catch (err) {
-            reportSilentFailure(err, 'agentRuntime:4151');
-            /* best-effort */
-          }
-
-          try {
-            getFailurePatternLearner().recordFailure({
-              task: ctx.goal,
-              error: lastError || 'Unknown error',
-              context: `runId:${runId}|topology:${ctx.subAgentRole || 'SINGLE'}|tokens:${totalTokens.totalTokens}`,
-              category: 'other',
-            });
-          } catch (err) {
-            reportSilentFailure(err, 'agentRuntime:4163');
-            /* best-effort */
-          }
-
-          return {
-            runId,
-            agentId: ctx.agentId,
-            missionId: ctx.missionId,
-            status: 'failed',
-            summary: lastError ?? 'Unknown error',
+            lastErrorIsPermanent,
+            totalTokens,
             steps,
-            totalTokenUsage: totalTokens,
-            totalDurationMs: Date.now() - startTime,
-            error: lastError,
-          };
+            startTime,
+            tenantId,
+            costEstimate,
+            state,
+            request,
+          });
         },
       );
 
@@ -3741,124 +3378,20 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
       return execResult;
     } finally {
-      // Release circuit breaker if neither onSuccess nor onFailure was called
-      if (!circuitReleased) this.circuitBreaker.release();
-      // GAP-02 + GAP-05: Guarantee cleanup on ALL exit paths (normal, error, exception)
-      this.runLifecycle.removeRun(runId);
-      getMetricsCollector().setGauge(
-        'active_runs',
-        'Active concurrent runs',
-        this.runLifecycle.getActiveRunCount(),
-      );
-      if (tenantCfg?.enabled && tenantCfg.maxConcurrency > 0 && tenantId) {
-        this.tenantManager.releaseTenantConcurrency(tenantId);
-      }
-      getLaneManager().releaseSlot(currentLane);
-      this.concurrencyController.releaseSlot();
-      try {
-        tracer.completeRun(runId);
-      } catch (e) {
-        getGlobalLogger().warn('AgentRuntime', 'Failed to complete trace', {
-          runId,
-          error: (e as Error)?.message,
-        });
-      }
-      // SLO check: evaluate trace against all active SLOs and record violations
-      try {
-        const trace = tracer.getTrace(runId);
-        if (trace) {
-          const sloManager = getSLOManager();
-          const violations = sloManager.checkTrace(trace);
-          for (const v of violations) {
-            const sloDef = sloManager.getSLO(v.sloId);
-            getMetricsCollector().recordSLOViolation(
-              v.sloId,
-              sloDef?.name ?? v.sloId,
-              v.metric,
-              v.severity,
-              v.actualValue,
-              v.threshold,
-              tenantId,
-            );
-          }
-        }
-      } catch (e) {
-        getGlobalLogger().warn('AgentRuntime', 'SLO check failed', {
-          runId,
-          error: (e as Error)?.message,
-        });
-      }
-      // Export trace to OpenTelemetry if configured
-      if (this.otelExporter) {
-        try {
-          const trace = tracer.getTrace(runId);
-          if (trace) {
-            const otelSpans = executionTraceToOtlpSpans(trace);
-            for (const span of otelSpans) {
-              this.otelExporter.exportSpan(span);
-            }
-          }
-        } catch (e) {
-          getGlobalLogger().warn('AgentRuntime', 'Failed to export OTel spans', {
-            runId,
-            error: (e as Error)?.message,
-          });
-        }
-      }
-      // Auto-export SOP template on successful execution
-      if (execResult?.status === 'success') {
-        try {
-          const trace = tracer.getTrace(runId);
-          if (trace) {
-            const sop = exportSOPFromTrace(trace);
-            if (sop) {
-              const sopDir = path.join(this.config.sopDir || '.commander/sops', ctx.agentId);
-              await fs.promises.mkdir(sopDir, { recursive: true });
-              const sopPath = path.join(sopDir, `${runId}.md`);
-              await fs.promises.writeFile(sopPath, formatSOPAsMarkdown(sop), 'utf-8');
-              // Also write structured JSON for API retrieval
-              const jsonPath = path.join(sopDir, `${runId}.json`);
-              await fs.promises.writeFile(jsonPath, JSON.stringify(sop, null, 2), 'utf-8');
-              getGlobalLogger().debug('AgentRuntime', 'SOP auto-exported', {
-                runId,
-                path: sopPath,
-              });
-              // Publish bus event for SSE streaming and API visibility
-              getMessageBus().publish('sop.generated', ctx.agentId, {
-                runId,
-                agentId: ctx.agentId,
-                goal: sop.goal,
-                path: sopPath,
-                stepCount: sop.totalSteps,
-                status: 'success',
-                tags: sop.tags,
-              });
-            }
-          }
-        } catch (e) {
-          getGlobalLogger().debug('AgentRuntime', 'SOP auto-export failed', {
-            runId,
-            error: (e as Error)?.message,
-          });
-        }
-      }
-      try {
-        await this.samplesStore.flush();
-      } catch (e) {
-        getGlobalLogger().warn('AgentRuntime', 'Failed to flush samples', {
-          runId,
-          error: (e as Error)?.message,
-        });
-      }
-      try {
-        this.traceStore.flushAll();
-      } catch (e) {
-        getGlobalLogger().warn('AgentRuntime', 'Failed to flush traces', {
-          runId,
-          error: (e as Error)?.message,
-        });
-      }
-      this.restoreTenantOverrides(tenantOverrides, tenantId);
+      // Cleanup is delegated to FinallyCleanupHandler (circuit breaker release,
+      // run lifecycle, tenant/lane/concurrency slot release, tracer completion,
+      // SLO check, OTel export, SOP auto-export, store flush, tenant restore).
+      await this.finallyCleanupHandler.cleanup({
+        runId,
+        ctx,
+        circuitReleased,
+        tenantCfg,
+        tenantId,
+        currentLane,
+        startTime,
+        execResult,
+        tenantOverrides,
+      });
     }
   }
 
@@ -4486,15 +4019,4 @@ export class AgentRuntime implements AgentRuntimeInterface {
     // Dispose tenant-scoped stores
     this.tenantManager.flushAll();
   }
-}
-function derivePromptCacheKey(ctx: AgentExecutionContext, tenantId: string | undefined): string {
-  const goal = ctx.goal ?? '';
-  let hash = 0;
-  for (let i = 0; i < goal.length; i++) {
-    hash = ((hash << 5) - hash + goal.charCodeAt(i)) | 0;
-  }
-  const goalTag = Math.abs(hash).toString(36).slice(0, 12);
-  const tenantTag = tenantId ?? 'default';
-  const agentTag = ctx.agentId ?? 'shared';
-  return `${tenantTag}:${agentTag}:${goalTag}`.slice(0, 64);
 }

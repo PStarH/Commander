@@ -356,9 +356,36 @@ export class ContractEventBus implements IEventBus {
 
 let globalEventBus: ContractEventBus | null = null;
 
+/**
+ * Global contract event bus accessor.
+ *
+ * Returns a DistributedEventBus so the distributed-capable bus is live at
+ * runtime: it reads COMMANDER_EVENT_BUS_BACKEND / COMMANDER_EVENT_BUS_REDIS_URL
+ * and fans out cross-node via Redis Pub/Sub when configured, falling back to
+ * in-memory operation (backward compatible with ContractEventBus) otherwise.
+ *
+ * Lazy-require breaks the circular module dependency — distributedEventBus.ts
+ * extends ContractEventBus, so it cannot be statically imported here without
+ * triggering the `extends` evaluation before this class is defined.
+ */
 export function getGlobalContractEventBus(): ContractEventBus {
   if (!globalEventBus) {
-    globalEventBus = new ContractEventBus();
+    const { createDistributedEventBus } = require('./distributedEventBus') as {
+      createDistributedEventBus: (config?: {
+        backend?: 'memory' | 'redis' | 'nats';
+        redisUrl?: string;
+        natsUrl?: string;
+        nodeId?: string;
+      }) => ContractEventBus;
+    };
+    const backend = (process.env.COMMANDER_EVENT_BUS_BACKEND ?? 'memory') as
+      | 'memory'
+      | 'redis'
+      | 'nats';
+    globalEventBus = createDistributedEventBus({
+      backend,
+      redisUrl: process.env.COMMANDER_EVENT_BUS_REDIS_URL,
+    });
   }
   return globalEventBus;
 }

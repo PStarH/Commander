@@ -12,6 +12,7 @@ import type { AgentRuntimeInterface } from '../runtime';
 import type { AgentExecutionContext, AgentExecutionResult, ModelTier } from '../runtime/types';
 import type { StateCheckpointer } from '../runtime/stateCheckpointer';
 import { getHumanApprovalManager } from './humanApprovalManager';
+import { assessNodeRisk, shouldRequestApproval } from './riskAssessor';
 import { ArtifactSystem, getArtifactSystem } from './artifactSystem';
 import { getTeamManager } from './agentTeamManager';
 import { getMessageBus } from '../runtime/messageBus';
@@ -165,37 +166,44 @@ export class SubAgentExecutor {
     )
       return;
 
-    // Check approval gate before executing
+    // Check approval gate before executing. The risk assessor classifies the
+    // node from its goal + available tools, and shouldRequestApproval decides
+    // whether this node actually warrants human review (nodeIds allowlist,
+    // tags, riskThreshold, or sampling) — so the gate no longer blocks every
+    // node unconditionally with a hardcoded 'low' risk level.
     if (this.approvalGate?.enabled) {
-      const manager = getHumanApprovalManager();
-      const request = manager.request({
-        runId: this.currentRunId ?? 'unknown',
-        nodeId: node.id,
-        nodeGoal: node.goal,
-        gate: this.approvalGate,
-        riskLevel: 'low',
-        requesterId: 'sub-agent-executor',
-      });
-      const resolution = await manager.awaitResolution(request.approvalId);
-      if (resolution.decision === 'reject' || resolution.decision === 'modify') {
-        node.status = 'SKIPPED';
-        node.result = `[skipped] approval not granted: ${resolution.decision}`;
-        const skipReason = resolution.timedOut
-          ? `Timed out: ${resolution.note ?? 'no response'}`
-          : (resolution.note ?? 'approval not granted');
-        this.skippedApprovals.push({
+      const riskAssessment = assessNodeRisk(node);
+      if (shouldRequestApproval(this.approvalGate, riskAssessment, node)) {
+        const manager = getHumanApprovalManager();
+        const request = manager.request({
+          runId: this.currentRunId ?? 'unknown',
           nodeId: node.id,
-          reason: skipReason,
+          nodeGoal: node.goal,
+          gate: this.approvalGate,
+          riskLevel: riskAssessment.level,
+          requesterId: 'sub-agent-executor',
         });
-        errors.push({
-          nodeId: node.id,
-          agentId: node.id,
-          message: `Node skipped: ${skipReason}`,
-          recovered: false,
-        });
-        // Write checkpoint when node is skipped
-        this.writeCheckpoint(node);
-        return;
+        const resolution = await manager.awaitResolution(request.approvalId);
+        if (resolution.decision === 'reject' || resolution.decision === 'modify') {
+          node.status = 'SKIPPED';
+          node.result = `[skipped] approval not granted: ${resolution.decision}`;
+          const skipReason = resolution.timedOut
+            ? `Timed out: ${resolution.note ?? 'no response'}`
+            : (resolution.note ?? 'approval not granted');
+          this.skippedApprovals.push({
+            nodeId: node.id,
+            reason: skipReason,
+          });
+          errors.push({
+            nodeId: node.id,
+            agentId: node.id,
+            message: `Node skipped: ${skipReason}`,
+            recovered: false,
+          });
+          // Write checkpoint when node is skipped
+          this.writeCheckpoint(node);
+          return;
+        }
       }
     }
 

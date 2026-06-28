@@ -15,7 +15,7 @@
 import * as crypto from 'node:crypto';
 import { getGlobalLogger } from '../logging';
 import { reportSilentFailure } from '../silentFailureReporter';
-import type { ITeeEnclave } from '../contracts/pillarIII';
+import type { ITeeEnclave, ISandbox, ISandboxResult, ISandboxConfig } from '../contracts/pillarIII';
 
 // ============================================================================
 // Types
@@ -318,4 +318,80 @@ export function getGlobalContractTeeEnclave(): ContractTeeEnclave {
     globalContractTeeEnclave = new ContractTeeEnclave();
   }
   return globalContractTeeEnclave;
+}
+
+// ============================================================================
+// ISandbox adapter — registers the TEE enclave as the scheduler's 'tee' tier
+// ============================================================================
+
+/**
+ * Adapts the contract ITeeEnclave to the ISandbox interface so the
+ * HybridSandboxScheduler can register it as the 'tee' (heavy) tier backend.
+ *
+ * The enclave executes code in an isolated worker_thread (separate V8
+ * Isolate), providing process-level isolation that replaces the previous
+ * `new Function()` approach. The enclave is initialized lazily on first
+ * execution to avoid worker spawns at construction time.
+ */
+class TeeEnclaveSandboxAdapter implements ISandbox {
+  private readonly enclave = getGlobalContractTeeEnclave();
+  private initialized = false;
+
+  async execute(
+    code: string,
+    capabilities: string[],
+    _config: Partial<ISandboxConfig>,
+  ): Promise<ISandboxResult> {
+    const start = Date.now();
+    try {
+      if (!this.initialized) {
+        await this.enclave.initialize();
+        this.initialized = true;
+      }
+      const output = await this.enclave.executeInEnclave(code, { capabilities });
+      return {
+        output,
+        success: true,
+        capabilitiesUsed: capabilities,
+        executionTimeMs: Date.now() - start,
+        peakMemoryMb: 0,
+      };
+    } catch (err) {
+      reportSilentFailure(err, 'teeEnclaveSandboxAdapter:execute');
+      return {
+        output: null,
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+        capabilitiesUsed: capabilities,
+        executionTimeMs: Date.now() - start,
+        peakMemoryMb: 0,
+      };
+    }
+  }
+
+  async createIsolate(_config?: Partial<ISandboxConfig>): Promise<string> {
+    // The enclave is a shared global; return a synthetic isolate id.
+    return 'tee-enclave-global';
+  }
+
+  terminate(_isolateId: string): void {
+    // No-op: the enclave is a long-lived global, terminated only on shutdown.
+  }
+
+  getMetrics(_isolateId: string): { heapUsedMb: number; executionTimeMs: number } {
+    return { heapUsedMb: 0, executionTimeMs: 0 };
+  }
+}
+
+let teeSandboxBackend: TeeEnclaveSandboxAdapter | null = null;
+
+/**
+ * Returns the singleton ISandbox backend backed by the ContractTeeEnclave,
+ * for registration as the scheduler's 'tee' tier.
+ */
+export function getTeeSandboxBackend(): ISandbox {
+  if (!teeSandboxBackend) {
+    teeSandboxBackend = new TeeEnclaveSandboxAdapter();
+  }
+  return teeSandboxBackend;
 }

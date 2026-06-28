@@ -36,6 +36,7 @@ import type {
 } from '../contracts/pillarIII';
 import type { ISandbox } from '../contracts/pillarIII';
 import { isV8IsolateAvailable, getV8IsolateSandbox } from './v8Isolate';
+import { getTeeSandboxBackend } from './contractTeeEnclave';
 import { PetriNetSchedulerIntegration } from './petriNetScheduler';
 import type { DeadlockAnalysis } from './petriNetScheduler';
 
@@ -184,6 +185,10 @@ export class HybridSandboxScheduler implements ISandboxScheduler {
     if (isV8IsolateAvailable()) {
       this.backends.set('v8-isolate', getV8IsolateSandbox());
     }
+    // Register the TEE enclave as the heavy ('tee') tier backend so
+    // HIGH/CRITICAL-risk code selected for the tee tier actually executes in
+    // the isolated enclave instead of falling back to v8-isolate.
+    this.backends.set('tee', getTeeSandboxBackend());
     // Initialize Petri net resource model with same concurrency limits
     this.petriIntegration = new PetriNetSchedulerIntegration(this.tierConcurrency);
   }
