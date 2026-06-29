@@ -99,25 +99,37 @@ export function createAuditMiddleware(auditLog: UnifiedAuditLog) {
     const sanitizedBody = sanitizeBody(req.body);
 
     // Record once the response has finished so we can capture the status code.
+    // The whole callback is defensive: audit recording must never throw into
+    // the response lifecycle (the listener fires off the request path).
     const onFinish = (): void => {
-      _res.removeListener('finish', onFinish);
+      try {
+        if (typeof _res.removeListener === 'function') {
+          _res.removeListener('finish', onFinish);
+        }
+      } catch {
+        /* detach is best-effort — finish only fires once anyway */
+      }
       const status = _res.statusCode;
-      void auditLog.log({
-        category: 'user_action',
-        eventType: `http.${method.toLowerCase()}`,
-        severity: severityForStatus(status),
-        userId: req.user?.id ?? req.apiKeyId,
-        message: describeAction(method, req.path, status),
-        details: {
-          method,
-          path: req.path,
-          statusCode: status,
-          body: sanitizedBody,
-          ...(req.apiKeyId ? { apiKeyId: req.apiKeyId } : {}),
-          ...(req.ip ? { ip: req.ip } : {}),
-        },
-        source: 'api',
-      });
+      void auditLog
+        .log({
+          category: 'user_action',
+          eventType: `http.${method.toLowerCase()}`,
+          severity: severityForStatus(status),
+          userId: req.user?.id ?? req.apiKeyId,
+          message: describeAction(method, req.path, status),
+          details: {
+            method,
+            path: req.path,
+            statusCode: status,
+            body: sanitizedBody,
+            ...(req.apiKeyId ? { apiKeyId: req.apiKeyId } : {}),
+            ...(req.ip ? { ip: req.ip } : {}),
+          },
+          source: 'api',
+        })
+        .catch(() => {
+          /* UnifiedAuditLog.log already swallows errors; this is belt+suspenders */
+        });
     };
 
     _res.on('finish', onFinish);

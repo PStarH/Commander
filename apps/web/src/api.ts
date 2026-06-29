@@ -17,6 +17,7 @@ import type {
   ReplayEventsResponse,
   HallucinationReportResponse,
   LineageSummaryResponse,
+  ComplianceAuditReport,
 } from './types';
 
 export const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
@@ -572,6 +573,18 @@ export async function fetchLineage(
     throw new Error(await readError(response, 'Failed to load lineage graph'));
   }
   return response.json() as Promise<LineageSummaryResponse>;
+}
+
+// ============================================================================
+// Security Posture — real compliance report from GET /api/security/posture
+// ============================================================================
+
+export async function fetchSecurityPosture(): Promise<ComplianceAuditReport> {
+  const response = await fetch(`${API_BASE}/api/security/posture`);
+  if (!response.ok) {
+    throw new Error(await readError(response, 'Failed to load security posture'));
+  }
+  return response.json() as Promise<ComplianceAuditReport>;
 }
 
 // ============================================================================
