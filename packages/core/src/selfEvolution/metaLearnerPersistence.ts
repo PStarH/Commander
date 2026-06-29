@@ -1,4 +1,4 @@
-import * as fs from 'node:fs';
+import { promises as fsp } from 'node:fs';
 import * as nodePath from 'node:path';
 import { getGlobalLogger } from '../logging';
 import { BetaDistribution } from './betaDistribution';
@@ -26,11 +26,20 @@ export interface MetaLearnerState {
   config: MetaLearnerConfig;
 }
 
-export function persist(state: MetaLearnerState, persistPath: string | null): void {
+/**
+ * Persist MetaLearner state to disk asynchronously.
+ *
+ * Uses an atomic write pattern: write to a .tmp file, then rename.
+ * All I/O is non-blocking via fs/promises — never blocks the event loop.
+ */
+export async function persist(
+  state: MetaLearnerState,
+  persistPath: string | null,
+): Promise<void> {
   if (!persistPath) return;
   try {
     const dir = nodePath.dirname(persistPath);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    await fsp.mkdir(dir, { recursive: true });
 
     // Serialize Thompson priors (Beta distributions as alpha/beta pairs)
     const serializedPriors: Record<string, Array<{ alpha: number; beta: number }>> = {};
@@ -64,8 +73,8 @@ export function persist(state: MetaLearnerState, persistPath: string | null): vo
     };
 
     const tmpPath = persistPath + '.tmp';
-    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
-    fs.renameSync(tmpPath, persistPath);
+    await fsp.writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
+    await fsp.rename(tmpPath, persistPath);
   } catch (e) {
     getGlobalLogger().warn('MetaLearner', 'Persistence failed (best-effort)', {
       error: (e as Error)?.message,
@@ -73,11 +82,30 @@ export function persist(state: MetaLearnerState, persistPath: string | null): vo
   }
 }
 
-export function load(state: MetaLearnerState, persistPath: string | null): void {
+/**
+ * Load MetaLearner state from disk asynchronously.
+ *
+ * Non-blocking via fs/promises. If the persist file does not exist yet
+ * (ENOENT), the state is left unchanged — this is the normal first-run path.
+ */
+export async function load(
+  state: MetaLearnerState,
+  persistPath: string | null,
+): Promise<void> {
   if (!persistPath) return;
+  let raw: string;
   try {
-    if (!fs.existsSync(persistPath)) return;
-    const raw = fs.readFileSync(persistPath, 'utf-8');
+    raw = await fsp.readFile(persistPath, 'utf-8');
+  } catch (e) {
+    // First run — no persist file yet; silently skip.
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return;
+    getGlobalLogger().warn('MetaLearner', 'Load failed (best-effort)', {
+      error: (e as Error)?.message,
+    });
+    return;
+  }
+
+  try {
     const data = JSON.parse(raw);
 
     if (Array.isArray(data.experiences)) state.experiences = data.experiences;
