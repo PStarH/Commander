@@ -19,10 +19,7 @@
  */
 
 import { getGlobalLogger } from '../logging';
-import type {
-  IBackpressureController,
-  BackpressureMetrics,
-} from '../contracts/pillarI';
+import type { IBackpressureController, BackpressureMetrics } from '../contracts/pillarI';
 
 // ============================================================================
 // Token Bucket
@@ -46,7 +43,9 @@ class TokenBucket {
       throw new Error(`TokenBucket: maxTokens must be positive, got ${maxTokens}`);
     }
     if (refillRatePerSecond <= 0 || !Number.isFinite(refillRatePerSecond)) {
-      throw new Error(`TokenBucket: refillRatePerSecond must be positive, got ${refillRatePerSecond}`);
+      throw new Error(
+        `TokenBucket: refillRatePerSecond must be positive, got ${refillRatePerSecond}`,
+      );
     }
     this.maxTokens = maxTokens;
     this.tokens = maxTokens;
@@ -243,7 +242,10 @@ class CircuitBreaker {
 
     if (this.state === 'HALF_OPEN') {
       this.state = 'OPEN';
-      getGlobalLogger().warn('BackpressureController', 'Circuit breaker → OPEN (half-open failure)');
+      getGlobalLogger().warn(
+        'BackpressureController',
+        'Circuit breaker → OPEN (half-open failure)',
+      );
     } else if (this.failureCount >= this.failureThreshold) {
       this.state = 'OPEN';
       getGlobalLogger().warn('BackpressureController', 'Circuit breaker → OPEN', {
@@ -299,7 +301,12 @@ export class BackpressureController implements IBackpressureController {
   private readonly config: BackpressureControllerConfig;
 
   // Bounded waiter queue — each waiter has a unique ID for race-free removal
-  private waiters: Array<{ id: number; resolve: (v: boolean) => void; timer: NodeJS.Timeout; resolved: () => boolean }> = [];
+  private waiters: Array<{
+    id: number;
+    resolve: (v: boolean) => void;
+    timer: NodeJS.Timeout;
+    resolved: () => boolean;
+  }> = [];
   private waiterIdCounter = 0;
 
   constructor(config: Partial<BackpressureControllerConfig> = {}) {

@@ -22,10 +22,7 @@
  */
 
 import { getGlobalLogger } from '../logging';
-import {
-  type EmbeddingFunction,
-  cosineSimilarity,
-} from '../runtime/embedding';
+import { type EmbeddingFunction, cosineSimilarity } from '../runtime/embedding';
 import { LocalEmbeddingFunction } from '../runtime/embedding';
 import { HNSWIndex } from './hnswIndex';
 import type {
@@ -100,9 +97,7 @@ export class SemanticMemoryStore implements ISemanticStore {
 
     // Create new entity
     const id = `sem-${++this.idCounter}`;
-    const embedding = await this.embeddingFn.generate(
-      `${entity.name} ${entity.description}`,
-    );
+    const embedding = await this.embeddingFn.generate(`${entity.name} ${entity.description}`);
 
     const internal: InternalEntity = {
       id,
@@ -154,7 +149,7 @@ export class SemanticMemoryStore implements ISemanticStore {
     const minSimilarity = query.minSimilarity ?? 0.1;
 
     // Step 1: Vector similarity search
-    let candidates: Array<{ entity: InternalEntity; score: number }> = [];
+    const candidates: Array<{ entity: InternalEntity; score: number }> = [];
 
     if (query.text) {
       const queryEmbedding = await this.embeddingFn.generate(query.text);
@@ -235,9 +230,7 @@ export class SemanticMemoryStore implements ISemanticStore {
     const paths: SemanticRelationship[][] = [];
     const visited = new Set<string>();
 
-    const queue: Array<{ id: string; path: SemanticRelationship[] }> = [
-      { id: fromId, path: [] },
-    ];
+    const queue: Array<{ id: string; path: SemanticRelationship[] }> = [{ id: fromId, path: [] }];
 
     while (queue.length > 0 && paths.length < 10) {
       const { id, path } = queue.shift()!;

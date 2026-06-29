@@ -91,9 +91,13 @@ function loadIsolatedVm(): IsolatedVmModule | null {
     getGlobalLogger().info('V8IsolateSandbox', 'isolated-vm loaded successfully');
   } catch (err) {
     reportSilentFailure(err, 'v8IsolateSandbox:load');
-    getGlobalLogger().info('V8IsolateSandbox', 'isolated-vm not available — V8 Isolate sandbox disabled', {
-      hint: 'Install with: pnpm add isolated-vm',
-    });
+    getGlobalLogger().info(
+      'V8IsolateSandbox',
+      'isolated-vm not available — V8 Isolate sandbox disabled',
+      {
+        hint: 'Install with: pnpm add isolated-vm',
+      },
+    );
   }
 
   return isolatedVm;

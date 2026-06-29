@@ -315,17 +315,12 @@ export class RunLedger {
   // with a SHA-256 hash chain, enabling state reconstruction from the
   // event log. Fire-and-forget: observability must never break the
   // critical path.
-  private emitSourcingEvent(
-    type: string,
-    payload: Record<string, unknown>,
-  ): void {
+  private emitSourcingEvent(type: string, payload: Record<string, unknown>): void {
     try {
       const engine = getGlobalEventSourcingEngine();
-      engine
-        .append({ type, payload })
-        .catch((err: unknown) => {
-          reportSilentFailure(err, 'runLedger:emitSourcingEvent');
-        });
+      engine.append({ type, payload }).catch((err: unknown) => {
+        reportSilentFailure(err, 'runLedger:emitSourcingEvent');
+      });
     } catch (err) {
       reportSilentFailure(err, 'runLedger:emitSourcingEvent:init');
     }

@@ -596,7 +596,10 @@ export class ZeroTrustValidator {
   private recordRejection(reason: string, tenantId?: string, keyId?: string): void {
     this.rejectionCount++;
     try {
-      getGlobalMetrics().incrementCounter('zerotrust.rejections', 1, { reason, keyId: keyId ?? '' });
+      getGlobalMetrics().incrementCounter('zerotrust.rejections', 1, {
+        reason,
+        keyId: keyId ?? '',
+      });
     } catch (err) {
       reportSilentFailure(err, 'zeroTrustValidator:rejectionMetrics');
     }
@@ -642,10 +645,7 @@ export class ZeroTrustValidator {
  * 可选配置：
  *   app.use(zeroTrustMiddleware({ skipPaths: ['/health', '/metrics'] }));
  */
-export function zeroTrustMiddleware(options?: {
-  skipPaths?: string[];
-  skipIfNoKeys?: boolean;
-}) {
+export function zeroTrustMiddleware(options?: { skipPaths?: string[]; skipIfNoKeys?: boolean }) {
   const skipPaths = new Set(options?.skipPaths ?? ['/health', '/metrics', '/readyz']);
   const skipIfNoKeys = options?.skipIfNoKeys ?? true;
 
@@ -672,7 +672,8 @@ export function zeroTrustMiddleware(options?: {
       return next();
     }
 
-    const signatureHeader = (request.headers[DEFAULT_CONFIG.signatureHeader] as string) ?? undefined;
+    const signatureHeader =
+      (request.headers[DEFAULT_CONFIG.signatureHeader] as string) ?? undefined;
     const requestId = (request.headers[DEFAULT_CONFIG.requestIdHeader] as string) ?? undefined;
 
     // 获取请求体（Express body-parser 已解析）

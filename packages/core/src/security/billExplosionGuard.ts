@@ -699,15 +699,7 @@ export class BillExplosionGuard {
     isRetry?: boolean;
     source?: string;
   }): CostCheckResult {
-    const {
-      sessionId,
-      model,
-      estimatedTokens,
-      input,
-      cacheHitRatio,
-      isRetry,
-      source,
-    } = params;
+    const { sessionId, model, estimatedTokens, input, cacheHitRatio, isRetry, source } = params;
     const tenantId = this.resolveTenantId(params.tenantId);
     const now = Date.now();
     const timestamp = new Date(now).toISOString();
@@ -751,26 +743,17 @@ export class BillExplosionGuard {
     // ── 记录请求时间戳（用于并发爆发检测） ────────────────────
     session.requestTimestamps.push(now);
     const burstWindowStart = now - this.config.concurrentBurstWindowMs;
-    session.requestTimestamps = session.requestTimestamps.filter(
-      (t) => t > burstWindowStart,
-    );
+    session.requestTimestamps = session.requestTimestamps.filter((t) => t > burstWindowStart);
 
     // ── 记录重试时间戳（用于重试风暴检测） ────────────────────
     if (isRetry) {
       session.retryTimestamps.push(now);
       const retryWindowStart = now - this.config.retryStormWindowMs;
-      session.retryTimestamps = session.retryTimestamps.filter(
-        (t) => t > retryWindowStart,
-      );
+      session.retryTimestamps = session.retryTimestamps.filter((t) => t > retryWindowStart);
     }
 
     // ── 预估成本（含安全边际） ────────────────────────────────
-    const baseCost = estimateCost(
-      estimatedTokens,
-      model,
-      this.config,
-      cacheHitRatio ?? 0,
-    );
+    const baseCost = estimateCost(estimatedTokens, model, this.config, cacheHitRatio ?? 0);
     const estimatedCost = baseCost * this.config.estimateSafetyMargin;
 
     // ── 攻击模式检测 ──────────────────────────────────────────
@@ -794,11 +777,14 @@ export class BillExplosionGuard {
           this.applyMelt(state, tenantId, `攻击检测: ${attack}`, attack);
         }
 
-        this.logSecurityEvent(
-          action === 'MELT' ? 'critical' : 'high',
-          `攻击模式检测: ${attack}`,
-          { tenantId, sessionId, model, estimatedTokens, attack, action },
-        );
+        this.logSecurityEvent(action === 'MELT' ? 'critical' : 'high', `攻击模式检测: ${attack}`, {
+          tenantId,
+          sessionId,
+          model,
+          estimatedTokens,
+          attack,
+          action,
+        });
 
         return this.buildResult(
           false,
@@ -855,8 +841,7 @@ export class BillExplosionGuard {
     // ── 成本硬上限检查（预估） ────────────────────────────────
     const capCheck = this.checkHardCaps(state, session, estimatedCost);
     if (capCheck) {
-      const action: BillGuardAction =
-        capCheck.scope === 'request' ? 'MELT' : 'THROTTLE';
+      const action: BillGuardAction = capCheck.scope === 'request' ? 'MELT' : 'THROTTLE';
 
       if (action === 'MELT') {
         this.applyMelt(state, tenantId, capCheck.reason, capCheck.scope);
@@ -945,7 +930,12 @@ export class BillExplosionGuard {
       this.logSecurityEvent(
         'medium',
         `成本警告: 已达 ${this.config.warnThreshold * 100}% 上限（作用域: ${cbAction.maxUtilizationScope}）`,
-        { tenantId, sessionId, utilization: cbAction.maxUtilization, scope: cbAction.maxUtilizationScope },
+        {
+          tenantId,
+          sessionId,
+          utilization: cbAction.maxUtilization,
+          scope: cbAction.maxUtilizationScope,
+        },
       );
     }
 
@@ -1011,8 +1001,7 @@ export class BillExplosionGuard {
 
     // 计算实际成本
     const actualCost =
-      params.actualCost ??
-      estimateCost(totalTokens, model, this.config, cacheHitRatio ?? 0);
+      params.actualCost ?? estimateCost(totalTokens, model, this.config, cacheHitRatio ?? 0);
 
     // ── 更新会话成本 ──────────────────────────────────────────
     session.cost += actualCost;
@@ -1041,7 +1030,7 @@ export class BillExplosionGuard {
 
     // ── 检查熔断器 ────────────────────────────────────────────
     const cb = this.computeCircuitBreakerAction(state, session);
-    let action: BillGuardAction = cb.action;
+    const action: BillGuardAction = cb.action;
     let reason = '成本已记录';
 
     if (action === 'MELT') {
@@ -1229,11 +1218,12 @@ export class BillExplosionGuard {
           `工具调用放大攻击: ${callsPerMinute} 次/分钟（阈值: ${this.config.toolAmplificationThreshold * 2}）`,
           'tool_amplification',
         );
-        this.logSecurityEvent(
-          'critical',
-          `工具调用放大熔断: ${callsPerMinute} 次/分钟`,
-          { tenantId, sessionId, toolName, callsPerMinute },
-        );
+        this.logSecurityEvent('critical', `工具调用放大熔断: ${callsPerMinute} 次/分钟`, {
+          tenantId,
+          sessionId,
+          toolName,
+          callsPerMinute,
+        });
         return this.buildResult(
           false,
           'MELT',
@@ -1249,11 +1239,12 @@ export class BillExplosionGuard {
       }
 
       if (callsPerMinute > this.config.toolAmplificationThreshold) {
-        this.logSecurityEvent(
-          'high',
-          `工具调用放大警告: ${callsPerMinute} 次/分钟`,
-          { tenantId, sessionId, toolName, callsPerMinute },
-        );
+        this.logSecurityEvent('high', `工具调用放大警告: ${callsPerMinute} 次/分钟`, {
+          tenantId,
+          sessionId,
+          toolName,
+          callsPerMinute,
+        });
         return this.buildResult(
           false,
           'THROTTLE',
@@ -1526,11 +1517,10 @@ export class BillExplosionGuard {
       globalDailyState.melted = snapshot.globalMelted;
     }
 
-    this.logSecurityEvent(
-      'medium',
-      `成本快照已恢复: 租户 ${snapshot.tenantId}`,
-      { tenantId: snapshot.tenantId, snapshotTimestamp: snapshot.timestamp },
-    );
+    this.logSecurityEvent('medium', `成本快照已恢复: 租户 ${snapshot.tenantId}`, {
+      tenantId: snapshot.tenantId,
+      snapshotTimestamp: snapshot.timestamp,
+    });
   }
 
   // ── 周期管理 ─────────────────────────────────────────────────
@@ -1606,11 +1596,10 @@ export class BillExplosionGuard {
       }
     }
 
-    this.logSecurityEvent(
-      'medium',
-      `计费周期已重置: ${period}（租户: ${tid}）`,
-      { tenantId: tid, period },
-    );
+    this.logSecurityEvent('medium', `计费周期已重置: ${period}（租户: ${tid}）`, {
+      tenantId: tid,
+      period,
+    });
   }
 
   // ── 熔断管理 ─────────────────────────────────────────────────
@@ -1659,11 +1648,10 @@ export class BillExplosionGuard {
     }
 
     if (lifted) {
-      this.logSecurityEvent(
-        'high',
-        `熔断已手动解除: 租户 ${tid}`,
-        { tenantId: tid, liftedBy: 'manual' },
-      );
+      this.logSecurityEvent('high', `熔断已手动解除: 租户 ${tid}`, {
+        tenantId: tid,
+        liftedBy: 'manual',
+      });
     }
 
     return lifted;
@@ -1849,10 +1837,7 @@ export class BillExplosionGuard {
    * 获取或创建会话状态。
    * 同时清理过期的会话。
    */
-  private getOrCreateSession(
-    state: TenantCostState,
-    sessionId: string,
-  ): SessionState {
+  private getOrCreateSession(state: TenantCostState, sessionId: string): SessionState {
     let session = state.sessions.get(sessionId);
     if (!session) {
       this.cleanupOldSessions(state);
@@ -1889,10 +1874,7 @@ export class BillExplosionGuard {
       const sorted = [...state.sessions.entries()].sort(
         (a, b) => a[1].lastActiveAt - b[1].lastActiveAt,
       );
-      const toRemove = sorted.slice(
-        0,
-        state.sessions.size - this.config.maxSessionsPerTenant,
-      );
+      const toRemove = sorted.slice(0, state.sessions.size - this.config.maxSessionsPerTenant);
       for (const [id] of toRemove) {
         state.sessions.delete(id);
       }
@@ -2093,22 +2075,10 @@ export class BillExplosionGuard {
     maxUtilization: number;
     maxUtilizationScope: string;
   } {
-    const sessionUtil = computeUtilization(
-      session.cost,
-      this.config.maxCostPerSession,
-    );
-    const dailyUtil = computeUtilization(
-      state.dailyCost,
-      this.config.maxCostPerTenantDaily,
-    );
-    const monthlyUtil = computeUtilization(
-      state.monthlyCost,
-      this.config.maxCostPerTenantMonthly,
-    );
-    const globalUtil = computeUtilization(
-      globalDailyState.cost,
-      this.config.maxCostGlobalDaily,
-    );
+    const sessionUtil = computeUtilization(session.cost, this.config.maxCostPerSession);
+    const dailyUtil = computeUtilization(state.dailyCost, this.config.maxCostPerTenantDaily);
+    const monthlyUtil = computeUtilization(state.monthlyCost, this.config.maxCostPerTenantMonthly);
+    const globalUtil = computeUtilization(globalDailyState.cost, this.config.maxCostGlobalDaily);
 
     const utils: Array<{ scope: string; value: number }> = [
       { scope: 'session', value: sessionUtil },
@@ -2117,9 +2087,7 @@ export class BillExplosionGuard {
       { scope: 'global_daily', value: globalUtil },
     ];
 
-    const maxEntry = utils.reduce((max, cur) =>
-      cur.value > max.value ? cur : max,
-    );
+    const maxEntry = utils.reduce((max, cur) => (cur.value > max.value ? cur : max));
     const maxUtilization = maxEntry.value;
     const maxUtilizationScope = maxEntry.scope;
 
@@ -2157,12 +2125,7 @@ export class BillExplosionGuard {
   /**
    * 应用熔断 —— 设置熔断状态并记录日志。
    */
-  private applyMelt(
-    state: TenantCostState,
-    tenantId: string,
-    reason: string,
-    scope: string,
-  ): void {
+  private applyMelt(state: TenantCostState, tenantId: string, reason: string, scope: string): void {
     state.melted = true;
     state.meltReason = reason;
     state.meltedAt = Date.now();
@@ -2292,9 +2255,7 @@ export class BillExplosionGuard {
       metrics.incrementCounter('billguard.operations', 1, {
         operation,
         action,
-        ...Object.fromEntries(
-          Object.entries(labels).map(([k, v]) => [k, String(v)]),
-        ),
+        ...Object.fromEntries(Object.entries(labels).map(([k, v]) => [k, String(v)])),
       });
       if (action === 'MELT') {
         metrics.incrementCounter('billguard.melts', 1, { operation });
@@ -2312,10 +2273,9 @@ export class BillExplosionGuard {
 // 单例
 // ============================================================================
 
-const billExplosionGuardSingleton = createTenantAwareSingleton(
-  () => new BillExplosionGuard(),
-  { componentName: 'BillExplosionGuard' },
-);
+const billExplosionGuardSingleton = createTenantAwareSingleton(() => new BillExplosionGuard(), {
+  componentName: 'BillExplosionGuard',
+});
 
 /**
  * 获取全局 BillExplosionGuard 单例（单租户）或租户作用域实例（多租户）。
@@ -2323,9 +2283,7 @@ const billExplosionGuardSingleton = createTenantAwareSingleton(
  * @param config - 部分配置（可选，首次传入时会重新配置）
  * @returns BillExplosionGuard 实例
  */
-export function getBillExplosionGuard(
-  config?: Partial<BillGuardConfig>,
-): BillExplosionGuard {
+export function getBillExplosionGuard(config?: Partial<BillGuardConfig>): BillExplosionGuard {
   if (config) {
     const guard = billExplosionGuardSingleton.get();
     guard.reconfigure(config);

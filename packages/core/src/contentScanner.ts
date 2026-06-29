@@ -292,9 +292,7 @@ export class DefaultContentScanner implements ContentScanner {
     // isSafe: block when (1) any HIGH/CRITICAL threat, OR (2) accumulated
     // riskScore >= 50 (composite MEDIUM threats that individually wouldn't
     // block but collectively indicate a likely attack).
-    let hasHighOrCritical = threats.some(
-      (t) => t.severity === 'HIGH' || t.severity === 'CRITICAL',
-    );
+    let hasHighOrCritical = threats.some((t) => t.severity === 'HIGH' || t.severity === 'CRITICAL');
     // Composite block: requires riskScore >= 75 (>=5 MEDIUM matches) AND at
     // least 2 distinct threat types OR any single HIGH/CRITICAL. This catches
     // multi-pronged attacks (e.g. semantic-manipulation + jailbreak-synonym)
@@ -316,17 +314,11 @@ export class DefaultContentScanner implements ContentScanner {
     // prompt-injection scanning would be silently bypassed. Fail-open: if the
     // ML detector throws, the regex scanner's verdict stands unchanged.
     const regexBlocked = hasHighOrCritical || compositeDangerous;
-    if (
-      threats.length > 0 &&
-      !regexBlocked &&
-      effectiveConfig.enablePromptInjectionScan
-    ) {
+    if (threats.length > 0 && !regexBlocked && effectiveConfig.enablePromptInjectionScan) {
       try {
         const mlResult = getMLInjectionDetector().detect(content);
         const mlScore =
-          mlResult.isInjection && mlResult.nearestMatch
-            ? mlResult.nearestMatch.similarity
-            : 0;
+          mlResult.isInjection && mlResult.nearestMatch ? mlResult.nearestMatch.similarity : 0;
         if (mlResult.isInjection && mlScore > 0.8) {
           // High-confidence semantic injection — upgrade the finding to blocked.
           threats.push({

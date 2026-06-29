@@ -3,7 +3,12 @@ import { execSync, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import type { PlatformSandbox, SandboxProfile, SandboxExecutionResult, SandboxMechanism } from './types';
+import type {
+  PlatformSandbox,
+  SandboxProfile,
+  SandboxExecutionResult,
+  SandboxMechanism,
+} from './types';
 import { getGlobalLogger } from '../logging';
 import { buildSeccompFilter, countAllowedSyscalls } from './seccompBpf';
 import { getLLMAPIDomains, shquote, writeProxyScript } from './networkProxy';
@@ -1169,7 +1174,8 @@ class V8IsolateSB implements PlatformSandbox {
       });
 
       return {
-        stdout: typeof result.output === 'string' ? result.output : JSON.stringify(result.output ?? ''),
+        stdout:
+          typeof result.output === 'string' ? result.output : JSON.stringify(result.output ?? ''),
         stderr: result.error ?? '',
         exitCode: result.success ? 0 : 1,
         durationMs: result.executionTimeMs,
@@ -1193,11 +1199,29 @@ class V8IsolateSB implements PlatformSandbox {
   private looksLikeJavaScript(cmd: string): boolean {
     const trimmed = cmd.trim();
     // Common shell command prefixes → not JS
-    const shellPrefixes = ['ls', 'cat', 'echo', 'rm', 'cp', 'mv', 'mkdir', 'git', 'npm', 'npx', 'node', 'python', 'bash', 'sh', 'cd ', 'export '];
+    const shellPrefixes = [
+      'ls',
+      'cat',
+      'echo',
+      'rm',
+      'cp',
+      'mv',
+      'mkdir',
+      'git',
+      'npm',
+      'npx',
+      'node',
+      'python',
+      'bash',
+      'sh',
+      'cd ',
+      'export ',
+    ];
     if (shellPrefixes.some((p) => trimmed.startsWith(p))) return false;
 
     // JS patterns: function/const/let/var/return/import/class
-    const jsPatterns = /^(function|const|let|var|return|import|export|class|async|await|if|for|while|try|throw|\(|\{|\[)/;
+    const jsPatterns =
+      /^(function|const|let|var|return|import|export|class|async|await|if|for|while|try|throw|\(|\{|\[)/;
     return jsPatterns.test(trimmed);
   }
 }
@@ -1225,8 +1249,8 @@ export function discoverSandboxes(): PlatformSandbox[] {
   if (available.length === 0 && process.env.NODE_ENV === 'production') {
     throw new Error(
       'CRITICAL: No OS-level sandbox available in production environment. ' +
-      'Install at least one of: Docker, Bubblewrap, Seatbelt, gVisor, or run in a TEE. ' +
-      'Refusing to start without sandbox isolation for security.'
+        'Install at least one of: Docker, Bubblewrap, Seatbelt, gVisor, or run in a TEE. ' +
+        'Refusing to start without sandbox isolation for security.',
     );
   }
 

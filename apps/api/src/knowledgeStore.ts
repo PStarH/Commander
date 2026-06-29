@@ -266,7 +266,10 @@ export function chunkText(
 
   // Split into paragraphs on blank lines; keep paragraph boundaries as part
   // of the text so offsets stay meaningful.
-  const paragraphs = clean.split(/\n\s*\n/).map((p) => p.trim()).filter((p) => p.length > 0);
+  const paragraphs = clean
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
   if (paragraphs.length === 0) return [];
 
   // First, expand any over-long paragraph into <=maxChars pieces (word-aware).
@@ -343,10 +346,7 @@ export function chunkText(
  * - application/json: pretty-printed so structure is preserved.
  * - text/html: tags + scripts/styles stripped to plain text.
  */
-export function extractPlainText(
-  content: string,
-  type: SupportedContentType,
-): string {
+export function extractPlainText(content: string, type: SupportedContentType): string {
   switch (type) {
     case 'text/plain':
     case 'text/markdown':
@@ -420,7 +420,9 @@ export class KnowledgeStore {
   private initPromise: Promise<void> | null = null;
 
   constructor(baseDir?: string) {
-    this.baseDir = path.resolve(baseDir ?? path.join(process.cwd(), '.commander', 'knowledge-base'));
+    this.baseDir = path.resolve(
+      baseDir ?? path.join(process.cwd(), '.commander', 'knowledge-base'),
+    );
     this.chunksDir = path.join(this.baseDir, 'chunks');
     this.documentsPath = path.join(this.baseDir, 'documents.json');
     this.indexPath = path.join(this.baseDir, 'index.json');
@@ -730,7 +732,9 @@ export class KnowledgeStore {
     parts.push(`Found ${results.length} relevant knowledge chunk(s) for query: "${options.query}"`);
     parts.push('');
     results.forEach((r, i) => {
-      parts.push(`--- [${i + 1}] Source: ${r.docName} (chunk ${r.chunkIndex + 1}, score ${r.score.toFixed(3)}) ---`);
+      parts.push(
+        `--- [${i + 1}] Source: ${r.docName} (chunk ${r.chunkIndex + 1}, score ${r.score.toFixed(3)}) ---`,
+      );
       parts.push(r.text);
       parts.push('');
     });

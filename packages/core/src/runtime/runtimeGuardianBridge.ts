@@ -190,10 +190,7 @@ export async function reviewToolCall(
     // to avoid leaking timers when the LLM responds before the timeout.
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<{ content?: string }>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error('Runtime guardian timeout')),
-        config.timeoutMs,
-      );
+      timer = setTimeout(() => reject(new Error('Runtime guardian timeout')), config.timeoutMs);
       if (typeof timer.unref === 'function') timer.unref();
     });
 

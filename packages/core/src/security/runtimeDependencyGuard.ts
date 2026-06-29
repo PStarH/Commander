@@ -498,21 +498,45 @@ const SUSPICIOUS_SCRIPT_PATTERNS: ReadonlyArray<{
   label: string;
   severity: SecuritySeverity;
 }> = [
-  { pattern: /curl\s+https?:|wget\s+https?:|fetch\s*\(\s*['"`]https?:/i, label: 'network_request', severity: 'high' },
+  {
+    pattern: /curl\s+https?:|wget\s+https?:|fetch\s*\(\s*['"`]https?:/i,
+    label: 'network_request',
+    severity: 'high',
+  },
   { pattern: /https?:\/\/[^\s'"`)]+/i, label: 'url_reference', severity: 'medium' },
-  { pattern: /child_process|\.exec\s*\(|execSync|\.spawn\s*\(|spawnSync|\.fork\s*\(/i, label: 'child_process_exec', severity: 'high' },
+  {
+    pattern: /child_process|\.exec\s*\(|execSync|\.spawn\s*\(|spawnSync|\.fork\s*\(/i,
+    label: 'child_process_exec',
+    severity: 'high',
+  },
   { pattern: /process\.env\.[A-Z0-9_]+/i, label: 'env_var_read', severity: 'high' },
-  { pattern: /\.(ssh|aws|gnupg|kube|docker|config)\b/i, label: 'sensitive_path_write', severity: 'critical' },
-  { pattern: /\/etc\/passwd|\/etc\/shadow|\/root\/\.|\/Users\/[^/]+\/\.(ssh|aws)/i, label: 'system_file_access', severity: 'critical' },
+  {
+    pattern: /\.(ssh|aws|gnupg|kube|docker|config)\b/i,
+    label: 'sensitive_path_write',
+    severity: 'critical',
+  },
+  {
+    pattern: /\/etc\/passwd|\/etc\/shadow|\/root\/\.|\/Users\/[^/]+\/\.(ssh|aws)/i,
+    label: 'system_file_access',
+    severity: 'critical',
+  },
   { pattern: /\b(HOME|USERPROFILE|APPDATA)\b/i, label: 'home_dir_access', severity: 'medium' },
   { pattern: /base64\b[\s\S]*?decode|atob\s*\(/i, label: 'base64_decode', severity: 'high' },
   { pattern: /\beval\s*\(|new\s+Function\s*\(/i, label: 'dynamic_eval', severity: 'high' },
   { pattern: /chmod\s+\+x|chmod\s+[0-7]{3,4}/i, label: 'permission_change', severity: 'medium' },
   { pattern: /\bnpm\s+(publish|install|run\s+script)/i, label: 'npm_mutation', severity: 'medium' },
   { pattern: /\bnc\b\s+-|ncat|netcat/i, label: 'reverse_shell', severity: 'critical' },
-  { pattern: /curl[\s\S]*?\|\s*(sh|bash|zsh)|wget[\s\S]*?\|\s*(sh|bash|zsh)/i, label: 'pipe_to_shell', severity: 'critical' },
+  {
+    pattern: /curl[\s\S]*?\|\s*(sh|bash|zsh)|wget[\s\S]*?\|\s*(sh|bash|zsh)/i,
+    label: 'pipe_to_shell',
+    severity: 'critical',
+  },
   { pattern: /registry\.(npmjs|yarnpkg)\.org/i, label: 'registry_access', severity: 'low' },
-  { pattern: /\b(token|secret|password|apikey|api_key)\b/i, label: 'credential_keyword', severity: 'high' },
+  {
+    pattern: /\b(token|secret|password|apikey|api_key)\b/i,
+    label: 'credential_keyword',
+    severity: 'high',
+  },
   { pattern: /\bpython\b[\s\S]*?-c\s+['"`]/i, label: 'python_eval', severity: 'high' },
   { pattern: /\bperl\b[\s\S]*?-e\s+['"`]/i, label: 'perl_eval', severity: 'high' },
   { pattern: /\bruby\b[\s\S]*?-e\s+['"`]/i, label: 'ruby_eval', severity: 'high' },
@@ -931,7 +955,9 @@ export class RuntimeDependencyGuard {
       nodeModulesRoot = fs.realpathSync(nodeModulesRoot);
     } catch (err) {
       reportSilentFailure(err, 'runtimeDependencyGuard.initializeHashes.realpath');
-      this.log('warn', 'node_modules 路径不可访问，跳过初始化', { nodeModulesPath: this.config.nodeModulesPath });
+      this.log('warn', 'node_modules 路径不可访问，跳过初始化', {
+        nodeModulesPath: this.config.nodeModulesPath,
+      });
       this.stats.lastInitializedAt = nowIso();
       return 0;
     }
@@ -948,7 +974,10 @@ export class RuntimeDependencyGuard {
     for (const pkg of packages) {
       if (this.shouldSkipPath(pkg.dir)) continue;
       try {
-        const { hash, fileCount, fileHashes } = hashPackageDir(pkg.dir, this.config.maxFilesPerPackage);
+        const { hash, fileCount, fileHashes } = hashPackageDir(
+          pkg.dir,
+          this.config.maxFilesPerPackage,
+        );
         if (fileCount === 0) continue;
         const key = `${pkg.name}@${pkg.version}`;
         const record: DependencyIntegrityRecord = {
@@ -1017,7 +1046,10 @@ export class RuntimeDependencyGuard {
       }
 
       try {
-        const { hash: actualHash, fileCount } = hashPackageDir(record.filePath, this.config.maxFilesPerPackage);
+        const { hash: actualHash, fileCount } = hashPackageDir(
+          record.filePath,
+          this.config.maxFilesPerPackage,
+        );
         record.lastVerified = stamp;
         if (actualHash !== record.hash) {
           record.tampered = true;
@@ -1029,7 +1061,11 @@ export class RuntimeDependencyGuard {
             actualHash,
             detectedAt: stamp,
             severity: 'critical',
-            details: { version: record.version, expectedFileCount: record.fileCount, actualFileCount: fileCount },
+            details: {
+              version: record.version,
+              expectedFileCount: record.fileCount,
+              actualFileCount: fileCount,
+            },
           });
         } else {
           record.tampered = false;
@@ -1051,7 +1087,9 @@ export class RuntimeDependencyGuard {
     // 检测基线之外新增的可执行文件（file_added 线索）：扫描 node_modules 顶层入口
     newViolations += this.detectAddedFiles(stamp);
 
-    this.stats.tamperedPackages = Array.from(this.integrityRecords.values()).filter((r) => r.tampered).length;
+    this.stats.tamperedPackages = Array.from(this.integrityRecords.values()).filter(
+      (r) => r.tampered,
+    ).length;
     this.stats.lastVerificationAt = stamp;
     this.stats.integrityViolations = this.violations.length;
 
@@ -1301,11 +1339,16 @@ export class RuntimeDependencyGuard {
       suspicious: this.stats.suspiciousPostInstallScripts,
       blocked: this.stats.blockedPostInstallScripts,
     });
-    this.audit('security_scan', this.stats.blockedPostInstallScripts > 0 ? 'high' : 'low', 'Post-install 脚本审计完成', {
-      audited: this.stats.postInstallScriptsAudited,
-      suspicious: this.stats.suspiciousPostInstallScripts,
-      blocked: this.stats.blockedPostInstallScripts,
-    });
+    this.audit(
+      'security_scan',
+      this.stats.blockedPostInstallScripts > 0 ? 'high' : 'low',
+      'Post-install 脚本审计完成',
+      {
+        audited: this.stats.postInstallScriptsAudited,
+        suspicious: this.stats.suspiciousPostInstallScripts,
+        blocked: this.stats.blockedPostInstallScripts,
+      },
+    );
     return analyses;
   }
 
@@ -1410,7 +1453,11 @@ export class RuntimeDependencyGuard {
           packageName: pkg,
           detectedAt: nowIso(),
           severity: 'high',
-          details: { suspectedTarget: bestTarget, editDistance: bestDistance, confidence: result.confidence },
+          details: {
+            suspectedTarget: bestTarget,
+            editDistance: bestDistance,
+            confidence: result.confidence,
+          },
         });
       }
     }
@@ -1459,21 +1506,21 @@ export class RuntimeDependencyGuard {
         // 黑名单阻断
         if (pkgName && self.blacklist.has(pkgName)) {
           self.handleBlockedLoad(request, null, false, 'blacklisted', false);
-          throw new Error(
-            `[RuntimeDependencyGuard] 已阻止加载黑名单模块: ${request}`,
-          );
+          throw new Error(`[RuntimeDependencyGuard] 已阻止加载黑名单模块: ${request}`);
         }
         // 白名单强制
         if (self.config.enforceModuleWhitelist && !self.whitelist.has(pkgName)) {
           self.handleBlockedLoad(request, null, false, 'unwhitelisted', false);
-          throw new Error(
-            `[RuntimeDependencyGuard] 已阻止加载非白名单模块: ${request}`,
-          );
+          throw new Error(`[RuntimeDependencyGuard] 已阻止加载非白名单模块: ${request}`);
         }
       }
 
       // 调用原始加载逻辑
-      const moduleExports = (self.originalModuleLoad as NodeModuleInternals['_load'])(request, parent, isMain);
+      const moduleExports = (self.originalModuleLoad as NodeModuleInternals['_load'])(
+        request,
+        parent,
+        isMain,
+      );
 
       // 解析文件路径用于日志与按文件校验（best-effort）
       let resolvedPath: string | null = null;
@@ -1569,7 +1616,8 @@ export class RuntimeDependencyGuard {
     }
 
     if (actualHash !== expected) {
-      const pkgName = this.fileToPackage.get(resolvedPath) ?? extractPackageName(request) ?? 'unknown';
+      const pkgName =
+        this.fileToPackage.get(resolvedPath) ?? extractPackageName(request) ?? 'unknown';
       this.recordViolation({
         type: 'hash_mismatch',
         packageName: pkgName,
@@ -1684,9 +1732,10 @@ export class RuntimeDependencyGuard {
    */
   private isMaliciousDomain(host: string): boolean {
     const extra = this.config.extraMaliciousDomains;
-    const allMalicious = extra.length > 0
-      ? new Set<string>([...KNOWN_MALICIOUS_DOMAINS, ...extra])
-      : KNOWN_MALICIOUS_DOMAINS;
+    const allMalicious =
+      extra.length > 0
+        ? new Set<string>([...KNOWN_MALICIOUS_DOMAINS, ...extra])
+        : KNOWN_MALICIOUS_DOMAINS;
     if (allMalicious.has(host)) return true;
     for (const domain of allMalicious) {
       if (host.endsWith(`.${domain}`)) return true;
@@ -1861,7 +1910,8 @@ export class RuntimeDependencyGuard {
     if (this.violations.length > this.config.maxViolations) {
       this.violations.shift();
     }
-    this.log(violation.severity === 'critical' || violation.severity === 'high' ? 'error' : 'warn',
+    this.log(
+      violation.severity === 'critical' || violation.severity === 'high' ? 'error' : 'warn',
       `依赖防护违规: ${violation.type}`,
       {
         packageName: violation.packageName,
@@ -1878,11 +1928,10 @@ export class RuntimeDependencyGuard {
       actualHash: violation.actualHash,
     });
     try {
-      getGlobalMetrics().incrementCounter(
-        'runtime_dependency_guard_violations_total',
-        1,
-        { type: violation.type, severity: violation.severity },
-      );
+      getGlobalMetrics().incrementCounter('runtime_dependency_guard_violations_total', 1, {
+        type: violation.type,
+        severity: violation.severity,
+      });
     } catch (err) {
       reportSilentFailure(err, 'runtimeDependencyGuard.recordViolation.metrics');
     }

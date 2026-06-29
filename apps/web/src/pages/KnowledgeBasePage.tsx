@@ -14,12 +14,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { BookOpen, Power, PowerOff, RefreshCw, FileText, Database, Cpu } from 'lucide-react';
 import { KnowledgeBase } from '../components/KnowledgeBase';
 import { Badge, Button, MetricCard } from '../components/ui';
-import {
-  fetchKbStatus,
-  enableRagPlugin,
-  disableRagPlugin,
-  type KbStatus,
-} from '../api';
+import { fetchKbStatus, enableRagPlugin, disableRagPlugin, type KbStatus } from '../api';
 
 // ── RagPluginStatus — plugin control card ──────────────────────────────────
 
@@ -98,12 +93,7 @@ function RagPluginStatus() {
           )}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => void refresh()}
-            disabled={loading}
-          >
+          <Button variant="ghost" size="sm" onClick={() => void refresh()} disabled={loading}>
             <RefreshCw size={14} style={{ marginRight: 4 }} />
             {loading ? 'Refreshing…' : 'Refresh'}
           </Button>
@@ -135,13 +125,19 @@ function RagPluginStatus() {
           fontSize: 13,
         }}
       >
-        Enabling the RAG plugin activates the <code>beforeLLMCall</code> auto-inject
-        hook (retrieved context is prepended to the conversation) and exposes the{' '}
-        <code>knowledge_search</code> tool to the Agent. The knowledge base itself
-        (upload / search) works regardless of this toggle.
+        Enabling the RAG plugin activates the <code>beforeLLMCall</code> auto-inject hook (retrieved
+        context is prepended to the conversation) and exposes the <code>knowledge_search</code> tool
+        to the Agent. The knowledge base itself (upload / search) works regardless of this toggle.
       </p>
 
-      <div className="metric-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+      <div
+        className="metric-grid"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+          gap: 12,
+        }}
+      >
         <MetricCard
           label="Documents"
           value={String(status?.documentCount ?? 0)}
@@ -152,11 +148,7 @@ function RagPluginStatus() {
           value={String(status?.vectorCount ?? 0)}
           icon={<Database size={16} />}
         />
-        <MetricCard
-          label="Embedding"
-          value={status?.embedding ?? '—'}
-          icon={<Cpu size={16} />}
-        />
+        <MetricCard label="Embedding" value={status?.embedding ?? '—'} icon={<Cpu size={16} />} />
         <MetricCard
           label="Dimension"
           value={String(status?.embeddingDimension ?? 0)}
@@ -193,9 +185,9 @@ export function KnowledgeBasePage() {
           <h1>Knowledge Base</h1>
         </div>
         <p className="page-desc">
-          Upload internal documents and let your Agent retrieve them via semantic search.
-          Documents are chunked and embedded locally (no external API key required), then served
-          as retrieval-augmented context for LLM calls. Storage lives in
+          Upload internal documents and let your Agent retrieve them via semantic search. Documents
+          are chunked and embedded locally (no external API key required), then served as
+          retrieval-augmented context for LLM calls. Storage lives in
           <code style={{ marginLeft: 4 }}>.commander/knowledge-base/</code>.
         </p>
       </div>

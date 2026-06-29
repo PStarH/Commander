@@ -108,9 +108,7 @@ export class LockFreeStateStore<T> implements ILockFreeStateStore<T> {
   /**
    * Async update with retry loop.
    */
-  private async updateAsync(
-    transform: (current: T) => Promise<T>,
-  ): Promise<T> {
+  private async updateAsync(transform: (current: T) => Promise<T>): Promise<T> {
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt < this.maxRetries; attempt++) {

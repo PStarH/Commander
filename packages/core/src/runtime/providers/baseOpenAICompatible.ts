@@ -430,11 +430,14 @@ export async function callOpenAICompatibleAPI(
 
     if ((isRateLimit || isServerError) && httpAttempt < MAX_HTTP_RETRIES) {
       // Respect Retry-After header for 429s
-      const retryAfterHeader = response.headers.get('retry-after') ?? response.headers.get('Retry-After');
+      const retryAfterHeader =
+        response.headers.get('retry-after') ?? response.headers.get('Retry-After');
       let delayMs: number;
       if (retryAfterHeader) {
         const retryAfterSec = parseInt(retryAfterHeader, 10);
-        delayMs = isNaN(retryAfterSec) ? computeHttpBackoff(httpAttempt, BASE_BACKOFF_MS, MAX_BACKOFF_MS) : retryAfterSec * 1000;
+        delayMs = isNaN(retryAfterSec)
+          ? computeHttpBackoff(httpAttempt, BASE_BACKOFF_MS, MAX_BACKOFF_MS)
+          : retryAfterSec * 1000;
       } else {
         delayMs = computeHttpBackoff(httpAttempt, BASE_BACKOFF_MS, MAX_BACKOFF_MS);
       }

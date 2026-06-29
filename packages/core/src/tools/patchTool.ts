@@ -85,7 +85,7 @@ export class ApplyPatchTool implements Tool {
 
       let targetPath: string;
       try {
-        targetPath = safePath(fileToPatch);
+        targetPath = await safePath(fileToPatch);
       } catch (err) {
         reportSilentFailure(err, 'patchTool:86');
         return `Error: Target file "${fileToPatch}" is outside the workspace.`;

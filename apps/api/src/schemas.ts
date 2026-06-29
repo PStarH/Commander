@@ -406,13 +406,15 @@ export const securityScanEntryBody = z.object({
 });
 
 // POST /mcp/discover — validated separately in mcpEndpoints.ts via inline checks
-export const mcpDiscoverBody = z.object({
-  url: z.string().url().optional(),
-  transport: z.enum(['stdio', 'sse', 'streamable-http']).optional(),
-  command: z.string().max(500).optional(),
-  args: z.array(z.string().max(500)).max(50).optional(),
-  headers: z.record(z.string(), z.string()).optional(),
-  label: z.string().max(200).optional(),
-}).refine(data => data.url || data.command, {
-  message: 'Either url or command is required',
-});
+export const mcpDiscoverBody = z
+  .object({
+    url: z.string().url().optional(),
+    transport: z.enum(['stdio', 'sse', 'streamable-http']).optional(),
+    command: z.string().max(500).optional(),
+    args: z.array(z.string().max(500)).max(50).optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+    label: z.string().max(200).optional(),
+  })
+  .refine((data) => data.url || data.command, {
+    message: 'Either url or command is required',
+  });

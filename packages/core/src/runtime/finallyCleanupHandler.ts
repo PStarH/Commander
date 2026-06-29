@@ -16,11 +16,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import type {
-  AgentExecutionContext,
-  AgentExecutionResult,
-  AgentRuntimeConfig,
-} from './types';
+import type { AgentExecutionContext, AgentExecutionResult, AgentRuntimeConfig } from './types';
 import type { TenantConfig } from './tenantProvider';
 import type { CircuitBreaker } from './circuitBreaker';
 import type { RunLifecycleManager } from './runLifecycleManager';
@@ -213,10 +209,7 @@ export class FinallyCleanupHandler {
         if (trace) {
           const sop = exportSOPFromTrace(trace);
           if (sop) {
-            const sopDir = path.join(
-              getConfig().sopDir || '.commander/sops',
-              ctx.agentId,
-            );
+            const sopDir = path.join(getConfig().sopDir || '.commander/sops', ctx.agentId);
             await fs.promises.mkdir(sopDir, { recursive: true });
             const sopPath = path.join(sopDir, `${runId}.md`);
             await fs.promises.writeFile(sopPath, formatSOPAsMarkdown(sop), 'utf-8');

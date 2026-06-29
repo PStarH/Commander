@@ -71,21 +71,21 @@ export const DEFAULT_SLO_CONFIG: SLOOperationsConfig = {
     {
       id: 'topology-success-rate',
       name: 'Topology Success Rate',
-      targetPercent: 99.0,       // 99% of tasks must succeed
+      targetPercent: 99.0, // 99% of tasks must succeed
       metric: 'success_rate',
       threshold: 0.99,
     },
     {
       id: 'latency-p99',
       name: 'Latency P99 < 500ms',
-      targetPercent: 99.0,       // 99% of requests under threshold
+      targetPercent: 99.0, // 99% of requests under threshold
       metric: 'latency_ms',
       threshold: 500,
     },
     {
       id: 'cost-per-task',
       name: 'Cost per Task < $0.01',
-      targetPercent: 95.0,       // 95% of tasks under cost threshold
+      targetPercent: 95.0, // 95% of tasks under cost threshold
       metric: 'cost_usd',
       threshold: 0.01,
     },
@@ -154,7 +154,10 @@ export class SLOOperationsManager {
         this.processTraceEvent({ data: message.payload as Record<string, unknown> });
       });
     } catch {
-      getGlobalLogger().warn('SLOOperationsManager', 'Message bus not available — trace subscription skipped');
+      getGlobalLogger().warn(
+        'SLOOperationsManager',
+        'Message bus not available — trace subscription skipped',
+      );
     }
 
     if (config.autoStart) {
@@ -205,7 +208,9 @@ export class SLOOperationsManager {
         this.monitoringEngine.recordEvent(sloId, metric, value, passed);
       }
     } catch (err) {
-      getGlobalLogger().debug('SLOOperationsManager', 'Trace processing failed', { error: (err as Error).message });
+      getGlobalLogger().debug('SLOOperationsManager', 'Trace processing failed', {
+        error: (err as Error).message,
+      });
     }
   }
 
@@ -226,10 +231,12 @@ export class SLOOperationsManager {
    */
   private handleBurnRateIncident(result: BurnRateResult): void {
     // Check if there's already an open incident for this SLO
-    const existing = this.incidentManager.listIncidents({
-      sloId: result.sloId,
-      limit: 1,
-    }).find((i) => i.status !== 'closed');
+    const existing = this.incidentManager
+      .listIncidents({
+        sloId: result.sloId,
+        limit: 1,
+      })
+      .find((i) => i.status !== 'closed');
 
     if (existing) {
       // Add timeline entry to existing incident
@@ -428,7 +435,9 @@ export function handleSLOOperationsRequest(
 
     if (method === 'POST' && segments[2] === 'ack') {
       const ackBody = JSON.parse(body ?? '{}');
-      const acked = ops.getAlertEngine().acknowledgeAlert(segments[1], ackBody.acknowledgedBy ?? 'api');
+      const acked = ops
+        .getAlertEngine()
+        .acknowledgeAlert(segments[1], ackBody.acknowledgedBy ?? 'api');
       return acked ? json({ acknowledged: true }) : json({ error: 'Alert not found' }, 404);
     }
   }
@@ -470,12 +479,9 @@ export function handleSLOOperationsRequest(
     if (method === 'PUT' && segments.length === 2) {
       try {
         const data = JSON.parse(body ?? '{}');
-        const incident = ops.getIncidentManager().updateStatus(
-          segments[1],
-          data.status,
-          data.actor ?? 'api',
-          data.details,
-        );
+        const incident = ops
+          .getIncidentManager()
+          .updateStatus(segments[1], data.status, data.actor ?? 'api', data.details);
         return incident ? json(incident) : json({ error: 'Incident not found' }, 404);
       } catch (err) {
         return json({ error: 'Invalid update', message: (err as Error).message }, 400);
@@ -485,11 +491,9 @@ export function handleSLOOperationsRequest(
     if (method === 'POST' && segments[2] === 'postmortem') {
       try {
         const data = JSON.parse(body ?? '{}');
-        const incident = ops.getIncidentManager().submitPostmortem(
-          segments[1],
-          data,
-          data.author ?? 'api',
-        );
+        const incident = ops
+          .getIncidentManager()
+          .submitPostmortem(segments[1], data, data.author ?? 'api');
         return incident ? json(incident) : json({ error: 'Incident not found' }, 404);
       } catch (err) {
         return json({ error: 'Invalid post-mortem data', message: (err as Error).message }, 400);

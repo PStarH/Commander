@@ -319,38 +319,43 @@ export class FileWatcher {
     this.debounceMs = debounceMs;
   }
 
-  watch(filePath: string, handler: (event: FileChangeEvent) => void): Unsubscribe {
+  watch(filePath: string, handler: (event: FileChangeEvent) => void): Promise<Unsubscribe> {
     let absolutePath: string;
     try {
-      absolutePath = safePath(filePath);
+      // safePath is now async — we await the canonical-path resolution
+      // before registering the fs.watch subscription so the watcher
+      // always operates on the resolved path (no race between symlink
+      // resolution and watch registration).
+      return safePath(filePath).then((absolutePath) => {
+        let entry = this.watchers.get(absolutePath);
+        if (!entry) {
+          entry = {
+            path: absolutePath,
+            handlers: new Set(),
+            watcher: null,
+            debounceTimer: null,
+          };
+          this.watchers.set(absolutePath, entry);
+          this.startWatching(entry);
+        }
+        entry.handlers.add(handler);
+        return () => {
+          const current = this.watchers.get(absolutePath);
+          if (!current) return;
+          current.handlers.delete(handler);
+          if (current.handlers.size === 0) {
+            this.stopWatching(current);
+            this.watchers.delete(absolutePath);
+          }
+        };
+      });
     } catch (err) {
       reportSilentFailure(err, 'harnessInfrastructure:326');
       getGlobalLogger().warn('FileWatcher', `Cannot watch path outside workspace: ${filePath}`);
-      // Return no-op unsubscribe for safety
-      const noop: Unsubscribe = () => {};
-      return noop;
+      // Return a resolved no-op Unsubscribe so callers always receive
+      // Promise<Unsubscribe> per the type contract.
+      return Promise.resolve<Unsubscribe>(() => {});
     }
-    let entry = this.watchers.get(absolutePath);
-    if (!entry) {
-      entry = {
-        path: absolutePath,
-        handlers: new Set(),
-        watcher: null,
-        debounceTimer: null,
-      };
-      this.watchers.set(absolutePath, entry);
-      this.startWatching(entry);
-    }
-    entry.handlers.add(handler);
-    return () => {
-      const current = this.watchers.get(absolutePath);
-      if (!current) return;
-      current.handlers.delete(handler);
-      if (current.handlers.size === 0) {
-        this.stopWatching(current);
-        this.watchers.delete(absolutePath);
-      }
-    };
   }
 
   private startWatching(entry: WatcherEntry): void {
@@ -451,8 +456,16 @@ export class SessionStore {
   async load(sessionId: string): Promise<SessionInfo | null> {
     try {
       const fp = this.filePath(sessionId);
-      if (!fs.existsSync(fp)) return null;
-      const content = await fsp.readFile(fp, 'utf-8');
+      // Async existence probe replaces fs.existsSync. ENOENT returns
+      // null cleanly; any other error (corrupt JSON, EACCES) surfaces
+      // as a parse failure inline so the outer catch can log it.
+      let content: string;
+      try {
+        content = await fsp.readFile(fp, 'utf-8');
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+        throw err;
+      }
       return JSON.parse(content) as SessionInfo;
     } catch (err) {
       getGlobalLogger().warn('SessionStore', 'load failed', {
@@ -807,7 +820,7 @@ export class PatchEngine {
     try {
       let filePath: string;
       try {
-        filePath = safePath(request.filePath);
+        filePath = await safePath(request.filePath);
       } catch (err) {
         reportSilentFailure(err, 'harnessInfrastructure:811');
         return {

@@ -156,48 +156,42 @@ export function createKnowledgeBaseRouter(): Router {
   );
 
   // ── GET /api/knowledge/documents/:id — get a single document ─────────
-  router.get(
-    '/api/knowledge/documents/:id',
-    async (req: Request, res: Response) => {
-      try {
-        const id = paramToString(req.params.id);
-        if (!id) {
-          res.status(400).json({ error: 'Document id is required' });
-          return;
-        }
-        const doc: KnowledgeDocument | null = await store.getDocument(id);
-        if (!doc) {
-          res.status(404).json({ error: 'Document not found' });
-          return;
-        }
-        res.json({ document: doc });
-      } catch (error) {
-        res.status(500).json({ error: toErrorMessage(error) });
+  router.get('/api/knowledge/documents/:id', async (req: Request, res: Response) => {
+    try {
+      const id = paramToString(req.params.id);
+      if (!id) {
+        res.status(400).json({ error: 'Document id is required' });
+        return;
       }
-    },
-  );
+      const doc: KnowledgeDocument | null = await store.getDocument(id);
+      if (!doc) {
+        res.status(404).json({ error: 'Document not found' });
+        return;
+      }
+      res.json({ document: doc });
+    } catch (error) {
+      res.status(500).json({ error: toErrorMessage(error) });
+    }
+  });
 
   // ── DELETE /api/knowledge/documents/:id — delete a document ──────────
-  router.delete(
-    '/api/knowledge/documents/:id',
-    async (req: Request, res: Response) => {
-      try {
-        const id = paramToString(req.params.id);
-        if (!id) {
-          res.status(400).json({ error: 'Document id is required' });
-          return;
-        }
-        const deleted = await store.deleteDocument(id);
-        if (!deleted) {
-          res.status(404).json({ error: 'Document not found' });
-          return;
-        }
-        res.json({ status: 'deleted', id });
-      } catch (error) {
-        res.status(500).json({ error: toErrorMessage(error) });
+  router.delete('/api/knowledge/documents/:id', async (req: Request, res: Response) => {
+    try {
+      const id = paramToString(req.params.id);
+      if (!id) {
+        res.status(400).json({ error: 'Document id is required' });
+        return;
       }
-    },
-  );
+      const deleted = await store.deleteDocument(id);
+      if (!deleted) {
+        res.status(404).json({ error: 'Document not found' });
+        return;
+      }
+      res.json({ status: 'deleted', id });
+    } catch (error) {
+      res.status(500).json({ error: toErrorMessage(error) });
+    }
+  });
 
   // ── POST /api/knowledge/search — semantic search ─────────────────────
   router.post(
@@ -345,42 +339,36 @@ export function createKnowledgeBaseRouter(): Router {
   );
 
   // ── GET /api/knowledge-base/documents — list KB documents ────────────
-  router.get(
-    '/api/knowledge-base/documents',
-    async (_req: Request, res: Response) => {
-      try {
-        const store = getSharedKnowledgeBaseStore();
-        await store.init();
-        const documents: KbDocumentMeta[] = store.listDocuments();
-        res.json({ documents, count: documents.length });
-      } catch (error) {
-        res.status(500).json({ error: toErrorMessage(error) });
-      }
-    },
-  );
+  router.get('/api/knowledge-base/documents', async (_req: Request, res: Response) => {
+    try {
+      const store = getSharedKnowledgeBaseStore();
+      await store.init();
+      const documents: KbDocumentMeta[] = store.listDocuments();
+      res.json({ documents, count: documents.length });
+    } catch (error) {
+      res.status(500).json({ error: toErrorMessage(error) });
+    }
+  });
 
   // ── DELETE /api/knowledge-base/documents/:id — delete a KB document ─
-  router.delete(
-    '/api/knowledge-base/documents/:id',
-    async (req: Request, res: Response) => {
-      try {
-        const id = paramToString(req.params.id);
-        if (!id) {
-          res.status(400).json({ error: 'Document id is required' });
-          return;
-        }
-        const store = getSharedKnowledgeBaseStore();
-        const deleted = await store.deleteDocument(id);
-        if (!deleted) {
-          res.status(404).json({ error: 'Document not found' });
-          return;
-        }
-        res.json({ status: 'deleted', id });
-      } catch (error) {
-        res.status(500).json({ error: toErrorMessage(error) });
+  router.delete('/api/knowledge-base/documents/:id', async (req: Request, res: Response) => {
+    try {
+      const id = paramToString(req.params.id);
+      if (!id) {
+        res.status(400).json({ error: 'Document id is required' });
+        return;
       }
-    },
-  );
+      const store = getSharedKnowledgeBaseStore();
+      const deleted = await store.deleteDocument(id);
+      if (!deleted) {
+        res.status(404).json({ error: 'Document not found' });
+        return;
+      }
+      res.json({ status: 'deleted', id });
+    } catch (error) {
+      res.status(500).json({ error: toErrorMessage(error) });
+    }
+  });
 
   // ── POST /api/knowledge-base/search — manual retrieval test ──────────
   router.post(

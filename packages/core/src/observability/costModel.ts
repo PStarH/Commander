@@ -62,7 +62,13 @@ export const DEFAULT_PRICING: ModelPricing[] = [
     outputPer1k: 0.0003,
     cachedInputPer1k: 0.00001875,
   },
-  { provider: 'google', model: 'gemini-2.0-flash', inputPer1k: 0.0001, outputPer1k: 0.0004, cachedInputPer1k: 0.000025 },
+  {
+    provider: 'google',
+    model: 'gemini-2.0-flash',
+    inputPer1k: 0.0001,
+    outputPer1k: 0.0004,
+    cachedInputPer1k: 0.000025,
+  },
   {
     provider: 'deepseek',
     model: 'deepseek-chat',
@@ -70,28 +76,112 @@ export const DEFAULT_PRICING: ModelPricing[] = [
     outputPer1k: 0.00028,
     cachedInputPer1k: 0.000014,
   },
-  { provider: 'deepseek', model: 'deepseek-reasoner', inputPer1k: 0.00014, outputPer1k: 0.00219, cachedInputPer1k: 0.000014 },
+  {
+    provider: 'deepseek',
+    model: 'deepseek-reasoner',
+    inputPer1k: 0.00014,
+    outputPer1k: 0.00219,
+    cachedInputPer1k: 0.000014,
+  },
   // xAI Grok
-  { provider: 'xai', model: 'grok-2-latest', inputPer1k: 0.002, outputPer1k: 0.01, cachedInputPer1k: 0.001 },
-  { provider: 'xai', model: 'grok-3-latest', inputPer1k: 0.003, outputPer1k: 0.015, cachedInputPer1k: 0.0015 },
+  {
+    provider: 'xai',
+    model: 'grok-2-latest',
+    inputPer1k: 0.002,
+    outputPer1k: 0.01,
+    cachedInputPer1k: 0.001,
+  },
+  {
+    provider: 'xai',
+    model: 'grok-3-latest',
+    inputPer1k: 0.003,
+    outputPer1k: 0.015,
+    cachedInputPer1k: 0.0015,
+  },
   // Mistral
-  { provider: 'mistral', model: 'mistral-large-latest', inputPer1k: 0.002, outputPer1k: 0.006, cachedInputPer1k: 0.001 },
-  { provider: 'mistral', model: 'mistral-small-latest', inputPer1k: 0.0002, outputPer1k: 0.0006, cachedInputPer1k: 0.0001 },
+  {
+    provider: 'mistral',
+    model: 'mistral-large-latest',
+    inputPer1k: 0.002,
+    outputPer1k: 0.006,
+    cachedInputPer1k: 0.001,
+  },
+  {
+    provider: 'mistral',
+    model: 'mistral-small-latest',
+    inputPer1k: 0.0002,
+    outputPer1k: 0.0006,
+    cachedInputPer1k: 0.0001,
+  },
   // Cohere
-  { provider: 'cohere', model: 'command-a-plus', inputPer1k: 0.0025, outputPer1k: 0.01, cachedInputPer1k: 0.00125 },
-  { provider: 'cohere', model: 'command-r-plus', inputPer1k: 0.0025, outputPer1k: 0.01, cachedInputPer1k: 0.00125 },
+  {
+    provider: 'cohere',
+    model: 'command-a-plus',
+    inputPer1k: 0.0025,
+    outputPer1k: 0.01,
+    cachedInputPer1k: 0.00125,
+  },
+  {
+    provider: 'cohere',
+    model: 'command-r-plus',
+    inputPer1k: 0.0025,
+    outputPer1k: 0.01,
+    cachedInputPer1k: 0.00125,
+  },
   // MiniMax
-  { provider: 'minimax', model: 'MiniMax-M3', inputPer1k: 0.001, outputPer1k: 0.004, cachedInputPer1k: 0.0001 },
+  {
+    provider: 'minimax',
+    model: 'MiniMax-M3',
+    inputPer1k: 0.001,
+    outputPer1k: 0.004,
+    cachedInputPer1k: 0.0001,
+  },
   // GLM (Zhipu AI)
-  { provider: 'glm', model: 'glm-4.7', inputPer1k: 0.0007, outputPer1k: 0.0028, cachedInputPer1k: 0.00007 },
-  { provider: 'glm', model: 'glm-4.6', inputPer1k: 0.0007, outputPer1k: 0.0028, cachedInputPer1k: 0.00007 },
+  {
+    provider: 'glm',
+    model: 'glm-4.7',
+    inputPer1k: 0.0007,
+    outputPer1k: 0.0028,
+    cachedInputPer1k: 0.00007,
+  },
+  {
+    provider: 'glm',
+    model: 'glm-4.6',
+    inputPer1k: 0.0007,
+    outputPer1k: 0.0028,
+    cachedInputPer1k: 0.00007,
+  },
   // Xiaomi MiMo
-  { provider: 'xiaomi', model: 'mimo-v2-flash', inputPer1k: 0.00018, outputPer1k: 0.00018, cachedInputPer1k: 0.000018 },
-  { provider: 'xiaomi', model: 'mimo-v2-pro', inputPer1k: 0.0007, outputPer1k: 0.0028, cachedInputPer1k: 0.00007 },
+  {
+    provider: 'xiaomi',
+    model: 'mimo-v2-flash',
+    inputPer1k: 0.00018,
+    outputPer1k: 0.00018,
+    cachedInputPer1k: 0.000018,
+  },
+  {
+    provider: 'xiaomi',
+    model: 'mimo-v2-pro',
+    inputPer1k: 0.0007,
+    outputPer1k: 0.0028,
+    cachedInputPer1k: 0.00007,
+  },
   // MiMo (token-plan endpoint)
-  { provider: 'mimo', model: 'mimo-v2.5', inputPer1k: 0.0007, outputPer1k: 0.0028, cachedInputPer1k: 0.00007 },
+  {
+    provider: 'mimo',
+    model: 'mimo-v2.5',
+    inputPer1k: 0.0007,
+    outputPer1k: 0.0028,
+    cachedInputPer1k: 0.00007,
+  },
   // StepFun
-  { provider: 'stepfun', model: 'step-3.7-flash', inputPer1k: 0.0003, outputPer1k: 0.0009, cachedInputPer1k: 0.00003 },
+  {
+    provider: 'stepfun',
+    model: 'step-3.7-flash',
+    inputPer1k: 0.0003,
+    outputPer1k: 0.0009,
+    cachedInputPer1k: 0.00003,
+  },
 ];
 
 const FALLBACK_PRICING: ModelPricing = {
@@ -151,7 +241,8 @@ export class CostModel {
           ...existing,
           inputPer1k: newInput,
           outputPer1k: newOutput,
-          cachedInputPer1k: litellmCacheRead != null ? litellmCacheRead / 1000 : existing.cachedInputPer1k,
+          cachedInputPer1k:
+            litellmCacheRead != null ? litellmCacheRead / 1000 : existing.cachedInputPer1k,
           batchInputPer1k: newInput * 0.5,
           batchOutputPer1k: newOutput * 0.5,
         });
@@ -209,7 +300,12 @@ export class CostModel {
    * When isBatch is true, uses batch pricing (50% discount on input + output).
    * Returns batchSavingsUsd = (standardCost - batchCost).
    */
-  calculate(provider: string, model: string, tokens: TokenBreakdown, isBatch = false): CostBreakdown {
+  calculate(
+    provider: string,
+    model: string,
+    tokens: TokenBreakdown,
+    isBatch = false,
+  ): CostBreakdown {
     const p = this.getPricing(provider, model);
     const cachedClamped = Math.min(tokens.cached, tokens.input);
     const billableInput = Math.max(0, tokens.input - cachedClamped);
@@ -226,7 +322,7 @@ export class CostModel {
     if (isBatch) {
       const standardInputCost = (billableInput / 1000) * p.inputPer1k;
       const standardOutputCost = (tokens.output / 1000) * p.outputPer1k;
-      batchSavingsUsd = (standardInputCost - inputCost) + (standardOutputCost - outputCost);
+      batchSavingsUsd = standardInputCost - inputCost + (standardOutputCost - outputCost);
       if (batchSavingsUsd <= 0) batchSavingsUsd = undefined;
     }
 
@@ -267,7 +363,7 @@ export class CostModel {
       outputCostUsd: a.outputCostUsd + b.outputCostUsd,
       cachedCostUsd: (a.cachedCostUsd ?? 0) + (b.cachedCostUsd ?? 0) || undefined,
       reasoningCostUsd: (a.reasoningCostUsd ?? 0) + (b.reasoningCostUsd ?? 0) || undefined,
-      batchSavingsUsd: (batchA + batchB) || undefined,
+      batchSavingsUsd: batchA + batchB || undefined,
     };
   }
 
@@ -311,8 +407,10 @@ export class CostModel {
     const p = this.getPricing(provider, this.stripTierSuffix(model));
     const batchInputRate = p.batchInputPer1k ?? p.inputPer1k * 0.5;
     const batchOutputRate = p.batchOutputPer1k ?? p.outputPer1k * 0.5;
-    const standardCost = (inputTokens / 1000) * p.inputPer1k + (outputTokens / 1000) * p.outputPer1k;
-    const batchCost = (inputTokens / 1000) * batchInputRate + (outputTokens / 1000) * batchOutputRate;
+    const standardCost =
+      (inputTokens / 1000) * p.inputPer1k + (outputTokens / 1000) * p.outputPer1k;
+    const batchCost =
+      (inputTokens / 1000) * batchInputRate + (outputTokens / 1000) * batchOutputRate;
     return {
       batchCostUsd: batchCost,
       standardCostUsd: standardCost,

@@ -329,8 +329,7 @@ export class AdaptiveStoppingController {
       totalTokensSpent: this.totalTokensSpent,
       distinctAnswers: this.betaBinomial.distinctCount,
       noveltyProbability: this.betaBinomial.noveltyProbability,
-      avgTokensPerRound:
-        this.rounds.length > 0 ? this.totalTokensSpent / this.rounds.length : 0,
+      avgTokensPerRound: this.rounds.length > 0 ? this.totalTokensSpent / this.rounds.length : 0,
       rounds: [...this.rounds],
     };
   }

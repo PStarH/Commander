@@ -47,13 +47,7 @@ const PROVIDER_TEST_TIMEOUT_MS = 10_000;
 // 自包含——因为 detectProvider 未从 @commander/core 顶层导出，且本路由需要
 // 额外的灵活性（例如从 .commander.json 读取用户保存的 apiKey）。
 
-type ProviderId =
-  | 'openai'
-  | 'anthropic'
-  | 'google'
-  | 'deepseek'
-  | 'ollama'
-  | 'openrouter';
+type ProviderId = 'openai' | 'anthropic' | 'google' | 'deepseek' | 'ollama' | 'openrouter';
 
 interface ProviderDescriptor {
   id: ProviderId;
@@ -212,7 +206,8 @@ async function resolveProvider(): Promise<ResolvedProvider | null> {
           id: desc.id,
           label: desc.label,
           apiKey: cfgApiKey ?? '',
-          baseUrl: (typeof cfg.baseUrl === 'string' ? cfg.baseUrl : undefined) || desc.defaultBaseUrl,
+          baseUrl:
+            (typeof cfg.baseUrl === 'string' ? cfg.baseUrl : undefined) || desc.defaultBaseUrl,
           model: cfgModel || desc.defaultModel,
           apiType: desc.apiType,
           fromEnv: false,
@@ -469,8 +464,12 @@ export function createOnboardingRouter(): Router {
       const hasProvider = resolved !== null;
       // hasApiKey: 环境变量 API_KEYS 配置了 Commander 自身鉴权 key，
       // 或 provider 解析出了 key（含本地 ollama 视为已具备）。
-      const hasCommanderApiKey = Boolean(process.env.API_KEYS && process.env.API_KEYS.trim() !== '');
-      const hasApiKey = hasCommanderApiKey || (resolved !== null && resolved.apiKey !== '') ||
+      const hasCommanderApiKey = Boolean(
+        process.env.API_KEYS && process.env.API_KEYS.trim() !== '',
+      );
+      const hasApiKey =
+        hasCommanderApiKey ||
+        (resolved !== null && resolved.apiKey !== '') ||
         (resolved?.id === 'ollama' && resolved.baseUrl !== '');
 
       const completedSteps = completion.steps.slice();
@@ -667,23 +666,19 @@ export function createOnboardingRouter(): Router {
               let text = '';
               if (resolved.apiType === 'anthropic') {
                 const content = data.content as Array<{ type: string; text?: string }> | undefined;
-                text =
-                  Array.isArray(content)
-                    ? content
-                        .filter((c) => c.type === 'text' && typeof c.text === 'string')
-                        .map((c) => c.text as string)
-                        .join('')
-                    : '';
+                text = Array.isArray(content)
+                  ? content
+                      .filter((c) => c.type === 'text' && typeof c.text === 'string')
+                      .map((c) => c.text as string)
+                      .join('')
+                  : '';
               } else if (resolved.apiType === 'google') {
                 const candidates = data.candidates as
                   | Array<{ content?: { parts?: Array<{ text?: string }> } }>
                   | undefined;
-                text =
-                  Array.isArray(candidates)
-                    ? (candidates[0]?.content?.parts ?? [])
-                        .map((p) => p.text ?? '')
-                        .join('')
-                    : '';
+                text = Array.isArray(candidates)
+                  ? (candidates[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('')
+                  : '';
               } else {
                 const choices = data.choices as
                   | Array<{ message?: { content?: string } }>
@@ -762,11 +757,7 @@ export function createOnboardingRouter(): Router {
         if (!fsSync.existsSync(COMMANDER_DIR)) {
           await fsp.mkdir(COMMANDER_DIR, { recursive: true });
         }
-        await fsp.writeFile(
-          ONBOARDING_COMPLETE_FILE,
-          JSON.stringify(payload, null, 2),
-          'utf-8',
-        );
+        await fsp.writeFile(ONBOARDING_COMPLETE_FILE, JSON.stringify(payload, null, 2), 'utf-8');
         res.json({ success: true, completedAt: payload.completedAt });
       } catch (error) {
         res.status(500).json({ error: toErrorMessage(error) });

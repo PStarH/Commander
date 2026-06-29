@@ -153,11 +153,8 @@ export class ContractEventBus implements IEventBus {
     // receive events published through the IEventBus contract.
     if (this.productionBus) {
       try {
-        this.productionBus.publish(
-          topic as any,
-          'ContractEventBus',
-          message,
-        );
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        this.productionBus.publish(topic as any, 'ContractEventBus', message);
       } catch (err) {
         reportSilentFailure(err, 'contractEventBus:publish:bridge');
       }
@@ -354,9 +351,7 @@ export class ContractEventBus implements IEventBus {
    * Get all active topics.
    */
   getActiveTopics(): string[] {
-    return [...this.subscribers.keys()].filter(
-      (t) => (this.subscribers.get(t)?.size ?? 0) > 0,
-    );
+    return [...this.subscribers.keys()].filter((t) => (this.subscribers.get(t)?.size ?? 0) > 0);
   }
 
   /**

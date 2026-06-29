@@ -44,7 +44,7 @@ export class PdfExtractTool implements Tool {
     try {
       let resolved: string;
       try {
-        resolved = safePath(filePath);
+        resolved = await safePath(filePath);
       } catch (err) {
         reportSilentFailure(err, 'pdfTool:42');
         return `Error: Access denied: path "${filePath}" is outside workspace`;

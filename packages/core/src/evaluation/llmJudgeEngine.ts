@@ -163,11 +163,11 @@ const DEFAULT_CONFIG: Required<LLMJudgeConfig> = {
 
 // Dimension weights (sum to 1.0)
 const DIMENSION_WEIGHTS: Record<JudgeDimension, number> = {
-  correctness: 0.30,
+  correctness: 0.3,
   completeness: 0.25,
-  safety: 0.20,
+  safety: 0.2,
   helpfulness: 0.15,
-  costEfficiency: 0.10,
+  costEfficiency: 0.1,
 };
 
 export class LLMJudgeEngine {
@@ -238,10 +238,7 @@ export class LLMJudgeEngine {
 
       // Cost circuit breaker: check token budget
       if (this.tokenBucket.available() < estimatedTokens) {
-        const acquired = await this.tokenBucket.waitFor(
-          estimatedTokens,
-          this.config.timeoutMs,
-        );
+        const acquired = await this.tokenBucket.waitFor(estimatedTokens, this.config.timeoutMs);
         if (!acquired) {
           return {
             dimensions: [],
@@ -271,10 +268,7 @@ export class LLMJudgeEngine {
       // Compute weighted overall score
       const overallScore =
         dimensions.length > 0
-          ? dimensions.reduce(
-              (sum, d) => sum + d.score * (DIMENSION_WEIGHTS[d.dimension] ?? 0),
-              0,
-            )
+          ? dimensions.reduce((sum, d) => sum + d.score * (DIMENSION_WEIGHTS[d.dimension] ?? 0), 0)
           : 0;
 
       const overallConfidence =
@@ -406,9 +400,7 @@ export class LLMJudgeEngine {
     return parts.join('\n');
   }
 
-  private async callJudgeWithTimeout(
-    prompt: string,
-  ): Promise<{
+  private async callJudgeWithTimeout(prompt: string): Promise<{
     content: string;
     tokensUsed: { input: number; output: number; total: number };
     durationMs: number;
@@ -421,13 +413,12 @@ export class LLMJudgeEngine {
         this.config.timeoutMs,
       );
 
-      this.provider!
-        .call({
-          model: this.config.defaultJudgeModel,
-          messages: [{ role: 'user', content: prompt }],
-          temperature: this.config.temperature,
-          maxTokens: this.config.maxTokensPerCall,
-        })
+      this.provider!.call({
+        model: this.config.defaultJudgeModel,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: this.config.temperature,
+        maxTokens: this.config.maxTokensPerCall,
+      })
         .then((response) => {
           clearTimeout(timer);
           resolve(response);
@@ -454,11 +445,7 @@ export class LLMJudgeEngine {
 
       const results: DimensionScore[] = [];
       for (const d of parsed.dimensions) {
-        if (
-          d.dimension &&
-          JUDGE_DIMENSIONS.includes(d.dimension) &&
-          typeof d.score === 'number'
-        ) {
+        if (d.dimension && JUDGE_DIMENSIONS.includes(d.dimension) && typeof d.score === 'number') {
           results.push({
             dimension: d.dimension,
             score: Math.max(0, Math.min(1, d.score)),

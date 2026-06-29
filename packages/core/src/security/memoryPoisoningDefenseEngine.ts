@@ -40,7 +40,12 @@ export type PoisoningType = 'write' | 'retrieval' | 'summary' | 'reflection' | '
 export type PoisoningSeverity = 'critical' | 'high' | 'medium' | 'low';
 
 /** 数据源可信度分级。 */
-export type SourceCredibility = 'verified_tool' | 'agent_generated' | 'user_input' | 'web_content' | 'unknown';
+export type SourceCredibility =
+  | 'verified_tool'
+  | 'agent_generated'
+  | 'user_input'
+  | 'web_content'
+  | 'unknown';
 
 /** 记忆写入上下文 — 在任何记忆写入前传给引擎。 */
 export interface MemoryWriteContext {
@@ -132,73 +137,233 @@ interface DetectionPattern {
  * 指令覆盖模式 — 试图让 Agent 忽略/遗忘既有指令。
  */
 const INSTRUCTION_OVERRIDE_PATTERNS: DetectionPattern[] = [
-  { category: 'instruction_override', weight: 0.95, pattern: /ignore\s+(all\s+)?previous\s+(instructions?|memor|rules?|prompts?)/i },
-  { category: 'instruction_override', weight: 0.95, pattern: /disregard\s+(all\s+)?prior\s+(instructions?|memor|rules?)/i },
-  { category: 'instruction_override', weight: 0.9, pattern: /forget\s+(all\s+|everything\s+|all\s+your\s+)?previous\s+(instructions?|context|memor)/i },
-  { category: 'instruction_override', weight: 0.9, pattern: /you\s+(are|must|should)\s+(now|always|only)\s+(ignore|follow|act)/i },
-  { category: 'instruction_override', weight: 0.85, pattern: /(?:new|real|actual|updated?)\s+instructions?\s*(?:follow|:|are)/i },
-  { category: 'instruction_override', weight: 0.9, pattern: /override\s+(the\s+)?(system|safety|security)\s+(prompt|instructions?|rules?)/i },
-  { category: 'instruction_override', weight: 0.8, pattern: /stop\s+(following|adhering\s+to)\s+(your|the)\s+(rules|guidelines|instructions)/i },
-  { category: 'instruction_override', weight: 0.85, pattern: /from\s+now\s+on[,\s]+(you\s+)?(must|should|will|are\s+to)/i },
+  {
+    category: 'instruction_override',
+    weight: 0.95,
+    pattern: /ignore\s+(all\s+)?previous\s+(instructions?|memor|rules?|prompts?)/i,
+  },
+  {
+    category: 'instruction_override',
+    weight: 0.95,
+    pattern: /disregard\s+(all\s+)?prior\s+(instructions?|memor|rules?)/i,
+  },
+  {
+    category: 'instruction_override',
+    weight: 0.9,
+    pattern:
+      /forget\s+(all\s+|everything\s+|all\s+your\s+)?previous\s+(instructions?|context|memor)/i,
+  },
+  {
+    category: 'instruction_override',
+    weight: 0.9,
+    pattern: /you\s+(are|must|should)\s+(now|always|only)\s+(ignore|follow|act)/i,
+  },
+  {
+    category: 'instruction_override',
+    weight: 0.85,
+    pattern: /(?:new|real|actual|updated?)\s+instructions?\s*(?:follow|:|are)/i,
+  },
+  {
+    category: 'instruction_override',
+    weight: 0.9,
+    pattern: /override\s+(the\s+)?(system|safety|security)\s+(prompt|instructions?|rules?)/i,
+  },
+  {
+    category: 'instruction_override',
+    weight: 0.8,
+    pattern: /stop\s+(following|adhering\s+to)\s+(your|the)\s+(rules|guidelines|instructions)/i,
+  },
+  {
+    category: 'instruction_override',
+    weight: 0.85,
+    pattern: /from\s+now\s+on[,\s]+(you\s+)?(must|should|will|are\s+to)/i,
+  },
 ];
 
 /**
  * 系统提示词操纵模式 — 试图篡改或替换系统提示词。
  */
 const SYSTEM_PROMPT_MANIPULATION_PATTERNS: DetectionPattern[] = [
-  { category: 'system_prompt_manipulation', weight: 0.85, pattern: /system\s*prompt\s*(is|should\s+be|must\s+be|has\s+been)\s+/i },
-  { category: 'system_prompt_manipulation', weight: 0.9, pattern: /your\s+(true|real|actual|hidden)\s+(instructions?|goal|mission|objective)\s+(is|are|was)\s+/i },
-  { category: 'system_prompt_manipulation', weight: 0.9, pattern: /(?:update|replace|modify|change|rewrite)\s+(the\s+)?system\s+(prompt|message|instructions?)/i },
-  { category: 'system_prompt_manipulation', weight: 0.85, pattern: /system\s+(prompt|message)\s+(contains?|says?)\s+/i },
-  { category: 'system_prompt_manipulation', weight: 0.8, pattern: /reveal|disclose|show|print|output\s+(your\s+)?system\s+(prompt|instructions?)/i },
-  { category: 'system_prompt_manipulation', weight: 0.85, pattern: /\[system\]|\[\/system\]|\[instructions\]/i },
+  {
+    category: 'system_prompt_manipulation',
+    weight: 0.85,
+    pattern: /system\s*prompt\s*(is|should\s+be|must\s+be|has\s+been)\s+/i,
+  },
+  {
+    category: 'system_prompt_manipulation',
+    weight: 0.9,
+    pattern:
+      /your\s+(true|real|actual|hidden)\s+(instructions?|goal|mission|objective)\s+(is|are|was)\s+/i,
+  },
+  {
+    category: 'system_prompt_manipulation',
+    weight: 0.9,
+    pattern:
+      /(?:update|replace|modify|change|rewrite)\s+(the\s+)?system\s+(prompt|message|instructions?)/i,
+  },
+  {
+    category: 'system_prompt_manipulation',
+    weight: 0.85,
+    pattern: /system\s+(prompt|message)\s+(contains?|says?)\s+/i,
+  },
+  {
+    category: 'system_prompt_manipulation',
+    weight: 0.8,
+    pattern: /reveal|disclose|show|print|output\s+(your\s+)?system\s+(prompt|instructions?)/i,
+  },
+  {
+    category: 'system_prompt_manipulation',
+    weight: 0.85,
+    pattern: /\[system\]|\[\/system\]|\[instructions\]/i,
+  },
 ];
 
 /**
  * 数据外泄载荷模式 — 试图将敏感数据发送到外部。
  */
 const DATA_EXFILTRATION_PATTERNS: DetectionPattern[] = [
-  { category: 'data_exfiltration', weight: 0.8, pattern: /(?:send|exfiltrate|upload|post|transmit|leak)\s+.*(?:to|via|through)\s+(?:web|http|https|url|endpoint|server|api|webhook)/i },
-  { category: 'data_exfiltration', weight: 0.85, pattern: /(?:send|exfiltrate|upload|post)\s+.*(?:credentials?|secrets?|tokens?|keys?|passwords?|api[_-]?keys?)/i },
-  { category: 'data_exfiltration', weight: 0.75, pattern: /(?:curl|wget|fetch|axios)\s+(https?:|http:|ftp:)/i },
-  { category: 'data_exfiltration', weight: 0.8, pattern: /(?:base64|btoa|atob|encode)\s*\(.*(?:secret|token|key|password)/i },
+  {
+    category: 'data_exfiltration',
+    weight: 0.8,
+    pattern:
+      /(?:send|exfiltrate|upload|post|transmit|leak)\s+.*(?:to|via|through)\s+(?:web|http|https|url|endpoint|server|api|webhook)/i,
+  },
+  {
+    category: 'data_exfiltration',
+    weight: 0.85,
+    pattern:
+      /(?:send|exfiltrate|upload|post)\s+.*(?:credentials?|secrets?|tokens?|keys?|passwords?|api[_-]?keys?)/i,
+  },
+  {
+    category: 'data_exfiltration',
+    weight: 0.75,
+    pattern: /(?:curl|wget|fetch|axios)\s+(https?:|http:|ftp:)/i,
+  },
+  {
+    category: 'data_exfiltration',
+    weight: 0.8,
+    pattern: /(?:base64|btoa|atob|encode)\s*\(.*(?:secret|token|key|password)/i,
+  },
   { category: 'data_exfiltration', weight: 0.7, pattern: /(?:http|https|ftp):\/\/[^\s"']{10,}/i },
-  { category: 'data_exfiltration', weight: 0.85, pattern: /(?:collect|gather|harvest)\s+(all\s+)?(?:user\s+)?(?:data|info|information|files?|documents?)/i },
+  {
+    category: 'data_exfiltration',
+    weight: 0.85,
+    pattern:
+      /(?:collect|gather|harvest)\s+(all\s+)?(?:user\s+)?(?:data|info|information|files?|documents?)/i,
+  },
 ];
 
 /**
  * 权限提升模式 — 试图获取未授权的权限。
  */
 const PRIVILEGE_ESCALATION_PATTERNS: DetectionPattern[] = [
-  { category: 'privilege_escalation', weight: 0.9, pattern: /grant\s+(full|admin|root|elevated|super)\s+(access|permissions?|privileges?)/i },
-  { category: 'privilege_escalation', weight: 0.85, pattern: /(?:enable|activate|turn\s+on)\s+(?:sudo|root|admin|superuser|debug|developer)\s+mode/i },
-  { category: 'privilege_escalation', weight: 0.85, pattern: /(?:sudo|su\s+-|chmod\s+777|chown\s+root)/i },
-  { category: 'privilege_escalation', weight: 0.8, pattern: /(?:disable|turn\s+off|bypass)\s+(?:security|safety|sandbox|guardrails?|protections?|checks?)/i },
-  { category: 'privilege_escalation', weight: 0.85, pattern: /(?:escalate|elevate)\s+(privileges?|permissions?|access|rights)/i },
-  { category: 'privilege_escalation', weight: 0.8, pattern: /run\s+as\s+(root|admin|superuser|system)/i },
+  {
+    category: 'privilege_escalation',
+    weight: 0.9,
+    pattern: /grant\s+(full|admin|root|elevated|super)\s+(access|permissions?|privileges?)/i,
+  },
+  {
+    category: 'privilege_escalation',
+    weight: 0.85,
+    pattern:
+      /(?:enable|activate|turn\s+on)\s+(?:sudo|root|admin|superuser|debug|developer)\s+mode/i,
+  },
+  {
+    category: 'privilege_escalation',
+    weight: 0.85,
+    pattern: /(?:sudo|su\s+-|chmod\s+777|chown\s+root)/i,
+  },
+  {
+    category: 'privilege_escalation',
+    weight: 0.8,
+    pattern:
+      /(?:disable|turn\s+off|bypass)\s+(?:security|safety|sandbox|guardrails?|protections?|checks?)/i,
+  },
+  {
+    category: 'privilege_escalation',
+    weight: 0.85,
+    pattern: /(?:escalate|elevate)\s+(privileges?|permissions?|access|rights)/i,
+  },
+  {
+    category: 'privilege_escalation',
+    weight: 0.8,
+    pattern: /run\s+as\s+(root|admin|superuser|system)/i,
+  },
 ];
 
 /**
  * 摘要/反思场景特有的危险重构模式。
  */
 const DANGEROUS_REFRAMING_PATTERNS: DetectionPattern[] = [
-  { category: 'dangerous_reframing', weight: 0.85, pattern: /(?:data\s+)?exfiltration.*(?:as|is)\s+(?:backup|archiv|sync|export)/i },
-  { category: 'dangerous_reframing', weight: 0.85, pattern: /(?:disable|bypass|turn\s+off)\s+security.*(?:efficient|best\s+practice|optimization)/i },
-  { category: 'dangerous_reframing', weight: 0.8, pattern: /(?:temporarily|just\s+for\s+now|quick)\s+(?:disable|skip|ignore|bypass)\s+(?:auth|security|validation|checks?)/i },
-  { category: 'dangerous_reframing', weight: 0.8, pattern: /(?:workaround|hack|trick)\s+(?:for|to)\s+(?:bypass|skip|avoid|disable)/i },
-  { category: 'dangerous_reframing', weight: 0.85, pattern: /(?:store|save|persist)\s+(?:credentials?|secrets?|passwords?)\s+(?:in\s+)?(?:plain\s*text|plaintext|clear\s*text|memory)/i },
-  { category: 'dangerous_reframing', weight: 0.8, pattern: /(?:it\s+is\s+)?(?:safe|ok|fine)\s+to\s+(?:ignore|skip|disable|bypass)\s+(?:validation|checks?|security|auth)/i },
+  {
+    category: 'dangerous_reframing',
+    weight: 0.85,
+    pattern: /(?:data\s+)?exfiltration.*(?:as|is)\s+(?:backup|archiv|sync|export)/i,
+  },
+  {
+    category: 'dangerous_reframing',
+    weight: 0.85,
+    pattern:
+      /(?:disable|bypass|turn\s+off)\s+security.*(?:efficient|best\s+practice|optimization)/i,
+  },
+  {
+    category: 'dangerous_reframing',
+    weight: 0.8,
+    pattern:
+      /(?:temporarily|just\s+for\s+now|quick)\s+(?:disable|skip|ignore|bypass)\s+(?:auth|security|validation|checks?)/i,
+  },
+  {
+    category: 'dangerous_reframing',
+    weight: 0.8,
+    pattern: /(?:workaround|hack|trick)\s+(?:for|to)\s+(?:bypass|skip|avoid|disable)/i,
+  },
+  {
+    category: 'dangerous_reframing',
+    weight: 0.85,
+    pattern:
+      /(?:store|save|persist)\s+(?:credentials?|secrets?|passwords?)\s+(?:in\s+)?(?:plain\s*text|plaintext|clear\s*text|memory)/i,
+  },
+  {
+    category: 'dangerous_reframing',
+    weight: 0.8,
+    pattern:
+      /(?:it\s+is\s+)?(?:safe|ok|fine)\s+to\s+(?:ignore|skip|disable|bypass)\s+(?:validation|checks?|security|auth)/i,
+  },
 ];
 
 /**
  * 不安全"最佳实践"模式 — 反思中编码不安全模式为"最佳实践"。
  */
 const INSECURE_BEST_PRACTICE_PATTERNS: DetectionPattern[] = [
-  { category: 'insecure_best_practice', weight: 0.8, pattern: /(?:best\s+practice|recommend|always|should)\s+(?:disable|skip|ignore|bypass)\s+(?:auth|validation|security|checks?|sandbox)/i },
-  { category: 'insecure_best_practice', weight: 0.75, pattern: /(?:lesson|takeaway|learned)[:\s]+(?:always\s+)?(?:disable|skip|ignore|bypass|store\s+plaintext)/i },
-  { category: 'insecure_best_practice', weight: 0.8, pattern: /(?:lower|reduce|relax|decrease)\s+(?:security|safety|validation)\s+(?:threshold|level|strictness|requirements?)/i },
-  { category: 'insecure_best_practice', weight: 0.75, pattern: /(?:no\s+need|unnecessary|overkill)\s+to\s+(?:validate|check|sanitize|verify|authenticate)/i },
-  { category: 'insecure_best_practice', weight: 0.7, pattern: /(?:trust|allow|permit)\s+(?:all|any)\s+(?:input|tool|command|request|memory)/i },
+  {
+    category: 'insecure_best_practice',
+    weight: 0.8,
+    pattern:
+      /(?:best\s+practice|recommend|always|should)\s+(?:disable|skip|ignore|bypass)\s+(?:auth|validation|security|checks?|sandbox)/i,
+  },
+  {
+    category: 'insecure_best_practice',
+    weight: 0.75,
+    pattern:
+      /(?:lesson|takeaway|learned)[:\s]+(?:always\s+)?(?:disable|skip|ignore|bypass|store\s+plaintext)/i,
+  },
+  {
+    category: 'insecure_best_practice',
+    weight: 0.8,
+    pattern:
+      /(?:lower|reduce|relax|decrease)\s+(?:security|safety|validation)\s+(?:threshold|level|strictness|requirements?)/i,
+  },
+  {
+    category: 'insecure_best_practice',
+    weight: 0.75,
+    pattern:
+      /(?:no\s+need|unnecessary|overkill)\s+to\s+(?:validate|check|sanitize|verify|authenticate)/i,
+  },
+  {
+    category: 'insecure_best_practice',
+    weight: 0.7,
+    pattern: /(?:trust|allow|permit)\s+(?:all|any)\s+(?:input|tool|command|request|memory)/i,
+  },
 ];
 
 /**
@@ -209,8 +374,16 @@ const HIDDEN_HTML_PATTERNS: DetectionPattern[] = [
   { category: 'hidden_html', weight: 0.8, pattern: /visibility\s*:\s*hidden/i },
   { category: 'hidden_html', weight: 0.8, pattern: /font-size\s*:\s*0(px|pt|em|rem)?/i },
   { category: 'hidden_html', weight: 0.8, pattern: /opacity\s*:\s*0(\.\d+)?/i },
-  { category: 'hidden_html', weight: 0.85, pattern: /color\s*:\s*(#fff|#ffffff|white|transparent)\b/i },
-  { category: 'hidden_html', weight: 0.8, pattern: /position\s*:\s*absolute[;\s][^>]*(left|top)\s*:\s*-\d+/i },
+  {
+    category: 'hidden_html',
+    weight: 0.85,
+    pattern: /color\s*:\s*(#fff|#ffffff|white|transparent)\b/i,
+  },
+  {
+    category: 'hidden_html',
+    weight: 0.8,
+    pattern: /position\s*:\s*absolute[;\s][^>]*(left|top)\s*:\s*-\d+/i,
+  },
   { category: 'hidden_html', weight: 0.75, pattern: /<[^>]+(?:hidden|aria-hidden="true")[^>]*>/i },
   { category: 'hidden_html', weight: 0.7, pattern: /<script[^>]*>|<iframe[^>]*>/i },
   { category: 'hidden_html', weight: 0.75, pattern: /text-indent\s*:\s*-\d{4,}/i },
@@ -254,10 +427,22 @@ const SOURCE_CREDIBILITY_SCORE: Record<SourceCredibility, number> = {
 
 /** 已知安全事实 — 用于检测与安全常识相矛盾的内容。 */
 const KNOWN_SAFE_FACTS: Array<{ fact: RegExp; description: string }> = [
-  { fact: /(?:it\s+is\s+)?(?:safe|ok|fine)\s+to\s+(?:store|save|keep)\s+(?:passwords?|secrets?|credentials?)\s+in\s+(?:plain\s*text|plaintext|memory|code)/i, description: '明文存储凭证不是安全的' },
-  { fact: /(?:always\s+)?(?:disable|turn\s+off)\s+(?:authentication|auth|authorization)\s+(?:in\s+)?(?:production|prod)/i, description: '在生产环境禁用认证不安全' },
-  { fact: /(?:it\s+is\s+)?(?:safe|ok)\s+to\s+(?:run|execute)\s+untrusted\s+(?:code|commands?|scripts?)/i, description: '执行不可信代码不安全' },
-  { fact: /(?:no\s+)?need\s+to\s+(?:validate|sanitize|escape|check)\s+(?:user\s+)?input/i, description: '必须验证用户输入' },
+  {
+    fact: /(?:it\s+is\s+)?(?:safe|ok|fine)\s+to\s+(?:store|save|keep)\s+(?:passwords?|secrets?|credentials?)\s+in\s+(?:plain\s*text|plaintext|memory|code)/i,
+    description: '明文存储凭证不是安全的',
+  },
+  {
+    fact: /(?:always\s+)?(?:disable|turn\s+off)\s+(?:authentication|auth|authorization)\s+(?:in\s+)?(?:production|prod)/i,
+    description: '在生产环境禁用认证不安全',
+  },
+  {
+    fact: /(?:it\s+is\s+)?(?:safe|ok)\s+to\s+(?:run|execute)\s+untrusted\s+(?:code|commands?|scripts?)/i,
+    description: '执行不可信代码不安全',
+  },
+  {
+    fact: /(?:no\s+)?need\s+to\s+(?:validate|sanitize|escape|check)\s+(?:user\s+)?input/i,
+    description: '必须验证用户输入',
+  },
 ];
 
 /** Unicode 隐藏字符码点范围。 */
@@ -333,9 +518,14 @@ function detectBase64Payload(content: string): { detected: boolean; samples: str
   // 匹配连续的 Base64 字符序列
   const base64Regex = /[A-Za-z0-9+/]{40,}={0,2}/g;
   const suspiciousKeywords = [
-    /ignore\s+previous/i, /system\s*prompt/i, /exec|eval|import/i,
-    /curl|wget|http/i, /token|secret|key|password/i, /rm\s+-rf/i,
-    /script/i, /sudo/i,
+    /ignore\s+previous/i,
+    /system\s*prompt/i,
+    /exec|eval|import/i,
+    /curl|wget|http/i,
+    /token|secret|key|password/i,
+    /rm\s+-rf/i,
+    /script/i,
+    /sudo/i,
   ];
   let detected = false;
   let match: RegExpExecArray | null;
@@ -367,9 +557,15 @@ function sanitizeContent(content: string, patterns: DetectionPattern[]): string 
     sanitized = sanitized.replace(pattern, '[SANITIZED]');
   }
   // 清洗隐藏 Unicode 字符
-  sanitized = sanitized.replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\u00ad]/g, '');
+  sanitized = sanitized.replace(
+    /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\u00ad]/g,
+    '',
+  );
   // 清洗隐藏 HTML 样式
-  sanitized = sanitized.replace(/\b(?:display|visibility|font-size|opacity|text-indent)\s*:\s*[^;}>]+/gi, '[SANITIZED-STYLE]');
+  sanitized = sanitized.replace(
+    /\b(?:display|visibility|font-size|opacity|text-indent)\s*:\s*[^;}>]+/gi,
+    '[SANITIZED-STYLE]',
+  );
   return sanitized;
 }
 
@@ -440,7 +636,8 @@ export class MemoryPoisoningDefenseEngine {
   private config: MemoryPoisoningDefenseConfig;
 
   /** 每个代理的写入速率追踪: agentId -> { count, windowStart } */
-  private readonly writeRateTracker: Map<string, { count: number; windowStart: number }> = new Map();
+  private readonly writeRateTracker: Map<string, { count: number; windowStart: number }> =
+    new Map();
 
   /** 污染追踪图: taintId -> TaintEntry */
   private readonly taintGraph: Map<string, TaintEntry> = new Map();
@@ -584,9 +781,7 @@ export class MemoryPoisoningDefenseEngine {
       const severity = severityFromRisk(riskScore);
 
       // 决策逻辑
-      const shouldBlock = this.config.strictMode
-        ? riskScore >= 0.3
-        : riskScore >= 0.7;
+      const shouldBlock = this.config.strictMode ? riskScore >= 0.3 : riskScore >= 0.7;
       const shouldQuarantine = !shouldBlock && riskScore >= 0.4 && this.config.quarantineEnabled;
 
       // 跨会话污染检查 — 检查 source 是否已被标记为污染源
@@ -599,7 +794,16 @@ export class MemoryPoisoningDefenseEngine {
 
       if (shouldBlock) {
         const reason = `写入被拦截: 检测到 ${matchedCategories.join('; ')}`;
-        this.addToQuarantine(content, source, agentId, sessionId, reason, 'write', riskScore, memoryType);
+        this.addToQuarantine(
+          content,
+          source,
+          agentId,
+          sessionId,
+          reason,
+          'write',
+          riskScore,
+          memoryType,
+        );
         this.logSecurityEvent('write', severity, agentId, sessionId, reason, {
           source,
           riskScore,
@@ -626,7 +830,16 @@ export class MemoryPoisoningDefenseEngine {
 
       if (shouldQuarantine) {
         const reason = `写入已隔离 (待复核): 检测到 ${matchedCategories.join('; ')}`;
-        this.addToQuarantine(content, source, agentId, sessionId, reason, 'write', riskScore, memoryType);
+        this.addToQuarantine(
+          content,
+          source,
+          agentId,
+          sessionId,
+          reason,
+          'write',
+          riskScore,
+          memoryType,
+        );
         this.logSecurityEvent('write', severity, agentId, sessionId, reason, {
           source,
           riskScore,
@@ -658,9 +871,10 @@ export class MemoryPoisoningDefenseEngine {
 
       return {
         allowed: true,
-        reason: matchedCategories.length > 0
-          ? `放行 (检测到低风险模式: ${matchedCategories.join('; ')})`
-          : '通过全部检测',
+        reason:
+          matchedCategories.length > 0
+            ? `放行 (检测到低风险模式: ${matchedCategories.join('; ')})`
+            : '通过全部检测',
         poisoningType: riskScore > 0 ? 'write' : undefined,
         severity,
         riskScore,
@@ -746,7 +960,8 @@ export class MemoryPoisoningDefenseEngine {
           const similarity = jaccardSimilarity(entry.content, query);
           if (similarity < 0.02 && entry.content.length > 200) {
             // 极低相关性的长内容可能是注入
-            const hasRiskySource = entry.sourceCredibility === 'web_content' || entry.sourceCredibility === 'unknown';
+            const hasRiskySource =
+              entry.sourceCredibility === 'web_content' || entry.sourceCredibility === 'unknown';
             if (hasRiskySource) {
               isSafe = false;
               reason = `检索拦截: 与查询语义无关且来源可信度低 (相似度 ${similarity.toFixed(3)})`;
@@ -764,9 +979,16 @@ export class MemoryPoisoningDefenseEngine {
         }
 
         // 2e. 检索时数据源可信度复核 — web_content/unknown 额外审查
-        if (isSafe && (entry.sourceCredibility === 'web_content' || entry.sourceCredibility === 'unknown')) {
-          const b64 = this.config.enableBase64Detection ? detectBase64Payload(entry.content) : { detected: false };
-          const unicode = this.config.enableUnicodeDetection ? detectHiddenUnicode(entry.content) : { count: 0 };
+        if (
+          isSafe &&
+          (entry.sourceCredibility === 'web_content' || entry.sourceCredibility === 'unknown')
+        ) {
+          const b64 = this.config.enableBase64Detection
+            ? detectBase64Payload(entry.content)
+            : { detected: false };
+          const unicode = this.config.enableUnicodeDetection
+            ? detectHiddenUnicode(entry.content)
+            : { count: 0 };
           if (b64.detected || unicode.count > 0) {
             isSafe = false;
             reason = `检索拦截: 低可信度来源包含隐藏内容 (base64:${b64.detected}, unicode:${unicode.count})`;
@@ -833,7 +1055,13 @@ export class MemoryPoisoningDefenseEngine {
     sessionId: string,
   ): DefenseResult {
     if (!this.config.enabled) {
-      return { allowed: true, reason: '引擎已禁用', severity: 'low', riskScore: 0, quarantined: false };
+      return {
+        allowed: true,
+        reason: '引擎已禁用',
+        severity: 'low',
+        riskScore: 0,
+        quarantined: false,
+      };
     }
 
     try {
@@ -859,7 +1087,8 @@ export class MemoryPoisoningDefenseEngine {
       }
 
       // 3c. 安全相关上下文丢失检测
-      const securityKeywords = /security|auth|permission|credential|secret|password|encrypt|sandbox|validation|sanitize|guardrail/i;
+      const securityKeywords =
+        /security|auth|permission|credential|secret|password|encrypt|sandbox|validation|sanitize|guardrail/i;
       const sourceHasSecurity = securityKeywords.test(sourceContent);
       const summaryHasSecurity = securityKeywords.test(summary);
       if (sourceHasSecurity && !summaryHasSecurity) {
@@ -880,8 +1109,20 @@ export class MemoryPoisoningDefenseEngine {
 
       if (shouldBlock) {
         const reason = `摘要被拦截: 检测到 ${matchedCategories.join('; ')}`;
-        this.addToQuarantine(summary, 'summary', agentId, sessionId, reason, 'summary', riskScore, 'summary');
-        this.logSecurityEvent('summary', severity, agentId, sessionId, reason, { riskScore, matchedCategories });
+        this.addToQuarantine(
+          summary,
+          'summary',
+          agentId,
+          sessionId,
+          reason,
+          'summary',
+          riskScore,
+          'summary',
+        );
+        this.logSecurityEvent('summary', severity, agentId, sessionId, reason, {
+          riskScore,
+          matchedCategories,
+        });
         this.recordMetrics('blocked_writes', 'summary', 1);
         return {
           allowed: false,
@@ -895,8 +1136,20 @@ export class MemoryPoisoningDefenseEngine {
 
       if (shouldQuarantine) {
         const reason = `摘要已隔离 (待复核): 检测到 ${matchedCategories.join('; ')}`;
-        this.addToQuarantine(summary, 'summary', agentId, sessionId, reason, 'summary', riskScore, 'summary');
-        this.logSecurityEvent('summary', severity, agentId, sessionId, reason, { riskScore, matchedCategories });
+        this.addToQuarantine(
+          summary,
+          'summary',
+          agentId,
+          sessionId,
+          reason,
+          'summary',
+          riskScore,
+          'summary',
+        );
+        this.logSecurityEvent('summary', severity, agentId, sessionId, reason, {
+          riskScore,
+          matchedCategories,
+        });
         this.recordMetrics('quarantined_entries', 'summary', 1);
         const sanitized = sanitizeContent(summary, SUMMARY_REFLECTION_PATTERNS);
         return {
@@ -912,9 +1165,10 @@ export class MemoryPoisoningDefenseEngine {
 
       return {
         allowed: true,
-        reason: matchedCategories.length > 0
-          ? `摘要放行 (低风险: ${matchedCategories.join('; ')})`
-          : '摘要通过全部检测',
+        reason:
+          matchedCategories.length > 0
+            ? `摘要放行 (低风险: ${matchedCategories.join('; ')})`
+            : '摘要通过全部检测',
         poisoningType: riskScore > 0 ? 'summary' : undefined,
         severity,
         riskScore,
@@ -958,7 +1212,13 @@ export class MemoryPoisoningDefenseEngine {
     sessionId: string,
   ): DefenseResult {
     if (!this.config.enabled) {
-      return { allowed: true, reason: '引擎已禁用', severity: 'low', riskScore: 0, quarantined: false };
+      return {
+        allowed: true,
+        reason: '引擎已禁用',
+        severity: 'low',
+        riskScore: 0,
+        quarantined: false,
+      };
     }
 
     try {
@@ -984,10 +1244,13 @@ export class MemoryPoisoningDefenseEngine {
       }
 
       // 4c. 循环推理检测 — 反思中引用自身或先前反思作为依据
-      const circularReasoning = /(?:as\s+(?:we\s+|i\s+)?(?:learned|noted|decided|concluded)\s+(?:earlier|before|previously)|(?:per|based\s+on)\s+(?:our|my)\s+(?:previous\s+)?reflection)/i;
+      const circularReasoning =
+        /(?:as\s+(?:we\s+|i\s+)?(?:learned|noted|decided|concluded)\s+(?:earlier|before|previously)|(?:per|based\s+on)\s+(?:our|my)\s+(?:previous\s+)?reflection)/i;
       if (circularReasoning.test(reflection)) {
         // 检查是否伴随降低安全阈值的语言
-        const lowersSecurity = /(?:lower|reduce|relax|decrease|skip|disable|bypass)/i.test(reflection);
+        const lowersSecurity = /(?:lower|reduce|relax|decrease|skip|disable|bypass)/i.test(
+          reflection,
+        );
         if (lowersSecurity) {
           contributions.push(0.8);
           matchedCategories.push('circular_reasoning_lowers_security');
@@ -995,7 +1258,8 @@ export class MemoryPoisoningDefenseEngine {
       }
 
       // 4d. 自我强化错误循环 — 反思验证危险动作
-      const selfReinforcing = /(?:this\s+(?:worked|succeeded|was\s+effective)|good\s+approach|will\s+repeat|should\s+always\s+do)/i;
+      const selfReinforcing =
+        /(?:this\s+(?:worked|succeeded|was\s+effective)|good\s+approach|will\s+repeat|should\s+always\s+do)/i;
       const referencesDanger = /(?:disable|bypass|skip|ignore|plaintext|untrusted|no\s+auth)/i;
       if (selfReinforcing.test(reflection) && referencesDanger.test(reflection)) {
         contributions.push(0.85);
@@ -1027,13 +1291,32 @@ export class MemoryPoisoningDefenseEngine {
 
       if (shouldBlock) {
         const reason = `反思被拦截: 检测到 ${matchedCategories.join('; ')}`;
-        this.addToQuarantine(reflection, 'reflection', agentId, sessionId, reason, 'reflection', riskScore, 'reflection');
-        this.logSecurityEvent('reflection', severity, agentId, sessionId, reason, { riskScore, matchedCategories });
+        this.addToQuarantine(
+          reflection,
+          'reflection',
+          agentId,
+          sessionId,
+          reason,
+          'reflection',
+          riskScore,
+          'reflection',
+        );
+        this.logSecurityEvent('reflection', severity, agentId, sessionId, reason, {
+          riskScore,
+          matchedCategories,
+        });
         this.recordMetrics('blocked_writes', 'reflection', 1);
 
         let taintId: string | undefined;
         if (this.config.enableTaintTracking) {
-          taintId = this.registerTaint('reflection', reflection, agentId, sessionId, 'reflection', undefined);
+          taintId = this.registerTaint(
+            'reflection',
+            reflection,
+            agentId,
+            sessionId,
+            'reflection',
+            undefined,
+          );
         }
 
         return {
@@ -1049,8 +1332,20 @@ export class MemoryPoisoningDefenseEngine {
 
       if (shouldQuarantine) {
         const reason = `反思已隔离 (待复核): 检测到 ${matchedCategories.join('; ')}`;
-        this.addToQuarantine(reflection, 'reflection', agentId, sessionId, reason, 'reflection', riskScore, 'reflection');
-        this.logSecurityEvent('reflection', severity, agentId, sessionId, reason, { riskScore, matchedCategories });
+        this.addToQuarantine(
+          reflection,
+          'reflection',
+          agentId,
+          sessionId,
+          reason,
+          'reflection',
+          riskScore,
+          'reflection',
+        );
+        this.logSecurityEvent('reflection', severity, agentId, sessionId, reason, {
+          riskScore,
+          matchedCategories,
+        });
         this.recordMetrics('quarantined_entries', 'reflection', 1);
         const sanitized = sanitizeContent(reflection, SUMMARY_REFLECTION_PATTERNS);
         return {
@@ -1066,9 +1361,10 @@ export class MemoryPoisoningDefenseEngine {
 
       return {
         allowed: true,
-        reason: matchedCategories.length > 0
-          ? `反思放行 (低风险: ${matchedCategories.join('; ')})`
-          : '反思通过全部检测',
+        reason:
+          matchedCategories.length > 0
+            ? `反思放行 (低风险: ${matchedCategories.join('; ')})`
+            : '反思通过全部检测',
         poisoningType: riskScore > 0 ? 'reflection' : undefined,
         severity,
         riskScore,
@@ -1112,7 +1408,13 @@ export class MemoryPoisoningDefenseEngine {
     sessionId: string,
   ): DefenseResult {
     if (!this.config.enabled || !this.config.enableTaintTracking) {
-      return { allowed: true, reason: '污染追踪已禁用', severity: 'low', riskScore: 0, quarantined: false };
+      return {
+        allowed: true,
+        reason: '污染追踪已禁用',
+        severity: 'low',
+        riskScore: 0,
+        quarantined: false,
+      };
     }
 
     try {
@@ -1218,7 +1520,15 @@ export class MemoryPoisoningDefenseEngine {
     poisoningType: PoisoningType,
     propagatedFrom?: string,
   ): string {
-    return this.registerTaint(memoryId, content, agentId, sessionId, poisoningType, propagatedFrom, source);
+    return this.registerTaint(
+      memoryId,
+      content,
+      agentId,
+      sessionId,
+      poisoningType,
+      propagatedFrom,
+      source,
+    );
   }
 
   // ── 污染报告与清理 ──────────────────────────────────────────────
@@ -1452,7 +1762,9 @@ export class MemoryPoisoningDefenseEngine {
       this.poisonedReflectionPatterns.shift();
     }
     // 提取关键动词短语作为签名
-    const keyPhraseMatch = reflection.match(/(?:disable|bypass|skip|ignore|store\s+plaintext|lower|reduce|relax)[^.!?]{5,60}/i);
+    const keyPhraseMatch = reflection.match(
+      /(?:disable|bypass|skip|ignore|store\s+plaintext|lower|reduce|relax)[^.!?]{5,60}/i,
+    );
     const signature = keyPhraseMatch
       ? new RegExp(keyPhraseMatch[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&').slice(0, 60), 'i')
       : new RegExp(reflection.slice(0, 40).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');

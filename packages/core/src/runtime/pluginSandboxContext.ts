@@ -36,7 +36,10 @@ export interface PluginSandboxContext {
   writeFile(path: string, content: string): Promise<boolean>;
 
   /** Make an HTTP request (permission-checked) */
-  fetch(url: string, options?: { method?: string; headers?: Record<string, string> }): Promise<{
+  fetch(
+    url: string,
+    options?: { method?: string; headers?: Record<string, string> },
+  ): Promise<{
     status: number;
     body: string;
   } | null>;
@@ -48,7 +51,11 @@ export interface PluginSandboxContext {
   getConfig(): Record<string, unknown>;
 
   /** Log a message (safe — always allowed) */
-  log(level: 'debug' | 'info' | 'warn' | 'error', message: string, meta?: Record<string, unknown>): void;
+  log(
+    level: 'debug' | 'info' | 'warn' | 'error',
+    message: string,
+    meta?: Record<string, unknown>,
+  ): void;
 }
 
 // ============================================================================
@@ -64,12 +71,18 @@ export function createPluginSandboxContext(
   pluginName: string,
   enforcer: PluginPermissionEnforcer,
   config: Record<string, unknown>,
-  hookRegistrar: (hookName: string, callback: (...args: unknown[]) => unknown | Promise<unknown>) => void,
+  hookRegistrar: (
+    hookName: string,
+    callback: (...args: unknown[]) => unknown | Promise<unknown>,
+  ) => void,
 ): PluginSandboxContext {
   return {
     pluginName,
 
-    registerHook(hookName: string, callback: (...args: unknown[]) => unknown | Promise<unknown>): boolean {
+    registerHook(
+      hookName: string,
+      callback: (...args: unknown[]) => unknown | Promise<unknown>,
+    ): boolean {
       const check = enforcer.checkHook(hookName);
       if (!check.allowed) {
         getGlobalLogger().warn('PluginSecurity', 'Hook registration denied', {

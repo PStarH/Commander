@@ -430,11 +430,7 @@ export class ActiveDeceptionSystem {
    * @param responseTemplate - 返回给攻击者的伪造数据模板，未提供时使用默认模板
    * @returns 创建的蜜罐端点对象
    */
-  registerHoneypot(
-    path: string,
-    method: string,
-    responseTemplate?: unknown,
-  ): HoneypotEndpoint {
+  registerHoneypot(path: string, method: string, responseTemplate?: unknown): HoneypotEndpoint {
     if (!this.config.enabled) {
       throw new Error('ActiveDeceptionSystem is disabled');
     }
@@ -557,10 +553,7 @@ export class ActiveDeceptionSystem {
    * @param source - 触发来源（IP 地址或调用方标识）
    * @returns 被触发的令牌对象；若令牌不存在则返回 undefined
    */
-  checkCanaryTrigger(
-    tokenValue: string,
-    source: string,
-  ): CanaryToken | undefined {
+  checkCanaryTrigger(tokenValue: string, source: string): CanaryToken | undefined {
     const token = this.canaryTokenByValue.get(tokenValue);
     if (!token) {
       return undefined;
@@ -598,15 +591,11 @@ export class ActiveDeceptionSystem {
         },
       });
 
-      getGlobalLogger().critical(
-        'ActiveDeceptionSystem',
-        `Canary token triggered by ${source}`,
-        {
-          tokenId: token.id,
-          tokenType: token.type,
-          endpoint: token.associatedEndpoint,
-        },
-      );
+      getGlobalLogger().critical('ActiveDeceptionSystem', `Canary token triggered by ${source}`, {
+        tokenId: token.id,
+        tokenType: token.type,
+        endpoint: token.associatedEndpoint,
+      });
 
       getGlobalMetrics().incrementCounter('deception.canary_tokens.triggered', 1, {
         type: token.type,
@@ -688,10 +677,7 @@ export class ActiveDeceptionSystem {
    * @param sourceIp - 使用来源 IP
    * @returns 被使用的诱饵凭证对象；若不存在则返回 undefined
    */
-  checkDecoyCredentialUsed(
-    fakeKey: string,
-    sourceIp: string,
-  ): DecoyCredential | undefined {
+  checkDecoyCredentialUsed(fakeKey: string, sourceIp: string): DecoyCredential | undefined {
     const credential = this.decoyCredentialByKey.get(fakeKey);
     if (!credential) {
       return undefined;
@@ -865,10 +851,7 @@ export class ActiveDeceptionSystem {
     }
 
     // 自动部署检查
-    if (
-      this.config.autoDeployEnabled &&
-      endpoint.hits >= this.config.autoDeployThreshold
-    ) {
+    if (this.config.autoDeployEnabled && endpoint.hits >= this.config.autoDeployThreshold) {
       try {
         this.autoDeployHoneypots();
       } catch (err) {
@@ -1273,8 +1256,23 @@ export class ActiveDeceptionSystem {
   ): boolean {
     // 信号1：检测到已知扫描器工具
     const scannerTools = profile.toolsDetected.filter((t) =>
-      ['nmap', 'nikto', 'sqlmap', 'masscan', 'zgrab', 'nuclei', 'dirbuster', 'dirb',
-       'gobuster', 'wpscan', 'hydra', 'metasploit', 'acunetix', 'nessus', 'scrapy'].includes(t),
+      [
+        'nmap',
+        'nikto',
+        'sqlmap',
+        'masscan',
+        'zgrab',
+        'nuclei',
+        'dirbuster',
+        'dirb',
+        'gobuster',
+        'wpscan',
+        'hydra',
+        'metasploit',
+        'acunetix',
+        'nessus',
+        'scrapy',
+      ].includes(t),
     );
     if (scannerTools.length > 0) {
       return true;

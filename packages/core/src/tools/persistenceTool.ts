@@ -31,7 +31,9 @@ function ensureMemoryDir(): Promise<void> {
 
 /** Lazy async init for a namespace subdirectory. Idempotent. */
 function ensureNamespace(nsDir: string): Promise<void> {
-  return fsp.mkdir(nsDir, { recursive: true });
+  // fsp.mkdir resolves to the first directory created (or undefined). We
+  // explicitly discard the value so callers receive a clean Promise<void>.
+  return fsp.mkdir(nsDir, { recursive: true }).then(() => undefined);
 }
 
 export class MemoryStoreTool implements Tool {
@@ -144,11 +146,7 @@ export class MemoryRecallTool implements Tool {
         const dk = String(d.key ?? '');
         const dv = String(d.value ?? '');
         const dt = String(d.timestamp ?? '');
-        if (
-          !search ||
-          dk.toLowerCase().includes(search) ||
-          dv.toLowerCase().includes(search)
-        ) {
+        if (!search || dk.toLowerCase().includes(search) || dv.toLowerCase().includes(search)) {
           results.push({ key: dk, value: dv, timestamp: dt });
         }
       } catch (e) {
@@ -157,7 +155,10 @@ export class MemoryRecallTool implements Tool {
         });
       }
     }
-    results.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    // Sort newest-first by timestamp. Coerce NaN to 0 so parse-failed
+    // entries (timestamp === '') sort deterministically instead of feeding
+    // NaN into the Array#sort comparator (V8 behavior is undefined for NaN).
+    results.sort((a, b) => (Date.parse(b.timestamp) || 0) - (Date.parse(a.timestamp) || 0));
     return (
       results
         .slice(0, limit)

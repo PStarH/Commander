@@ -76,11 +76,14 @@ interface WFQEntry {
  * - Network: requires network access?
  * - Code patterns: eval, fs, process, child_process
  */
-export function assessRisk(code: string, context?: {
-  source?: 'TRUSTED' | 'UNTRUSTED' | 'UNKNOWN';
-  handlesSensitiveData?: boolean;
-  requiresNetwork?: boolean;
-}): RiskProfile {
+export function assessRisk(
+  code: string,
+  context?: {
+    source?: 'TRUSTED' | 'UNTRUSTED' | 'UNKNOWN';
+    handlesSensitiveData?: boolean;
+    requiresNetwork?: boolean;
+  },
+): RiskProfile {
   const source = context?.source ?? 'UNKNOWN';
   const handlesSensitiveData = context?.handlesSensitiveData ?? false;
   const requiresNetwork = context?.requiresNetwork ?? false;
@@ -127,7 +130,7 @@ export function selectTier(risk: RiskProfile, availableTiers?: Set<SandboxTier>)
       // Lightest isolation: V8 Isolate (if available), else fall back to seccomp
       return tiers.has('v8-isolate') ? 'v8-isolate' : 'seccomp';
     case 'MEDIUM':
-      return tiers.has('seccomp') ? 'seccomp' : (tiers.has('v8-isolate') ? 'v8-isolate' : 'seccomp');
+      return tiers.has('seccomp') ? 'seccomp' : tiers.has('v8-isolate') ? 'v8-isolate' : 'seccomp';
     case 'HIGH':
       // Container isolation — use the strongest available tier
       if (tiers.has('tee')) return 'tee';
@@ -135,7 +138,7 @@ export function selectTier(risk: RiskProfile, availableTiers?: Set<SandboxTier>)
       if (tiers.has('seccomp')) return 'seccomp';
       return 'v8-isolate';
     case 'CRITICAL':
-      return tiers.has('tee') ? 'tee' : (tiers.has('wasm') ? 'wasm' : 'seccomp');
+      return tiers.has('tee') ? 'tee' : tiers.has('wasm') ? 'wasm' : 'seccomp';
     default:
       return 'seccomp';
   }
@@ -149,7 +152,16 @@ export class HybridSandboxScheduler implements ISandboxScheduler {
   /** WFQ queue, sorted by virtual finish time */
   private queue: WFQEntry[] = [];
   /** Per-principal state for WFQ */
-  private principalState: Map<string, { weight: number; lastVFT: number; activeExecutions: number; totalCpuTimeMs: number; totalMemoryMb: number }> = new Map();
+  private principalState: Map<
+    string,
+    {
+      weight: number;
+      lastVFT: number;
+      activeExecutions: number;
+      totalCpuTimeMs: number;
+      totalMemoryMb: number;
+    }
+  > = new Map();
   /** Per-principal quotas */
   private quotas: Map<string, QuotaLimits> = new Map();
   /** Sandbox backends per tier */
@@ -157,9 +169,9 @@ export class HybridSandboxScheduler implements ISandboxScheduler {
   /** Active executions count per tier */
   private activeByTier: Record<SandboxTier, number> = {
     'v8-isolate': 0,
-    'seccomp': 0,
-    'wasm': 0,
-    'tee': 0,
+    seccomp: 0,
+    wasm: 0,
+    tee: 0,
   };
   /** Total sandboxes created */
   private totalCreated = 0;
@@ -173,9 +185,9 @@ export class HybridSandboxScheduler implements ISandboxScheduler {
   /** Default per-tier concurrency limits */
   private tierConcurrency: Record<SandboxTier, number> = {
     'v8-isolate': 10,
-    'seccomp': 4,
-    'wasm': 2,
-    'tee': 1,
+    seccomp: 4,
+    wasm: 2,
+    tee: 1,
   };
   /** Petri net integration for formal resource modeling and deadlock detection */
   private petriIntegration: PetriNetSchedulerIntegration;
@@ -268,7 +280,9 @@ export class HybridSandboxScheduler implements ISandboxScheduler {
    */
   preempt(isolateId: string): void {
     // Delegate to V8 Isolate backend if available
-    const v8Backend = this.backends.get('v8-isolate') as { terminate?: (id: string) => void } | undefined;
+    const v8Backend = this.backends.get('v8-isolate') as
+      | { terminate?: (id: string) => void }
+      | undefined;
     if (v8Backend && typeof v8Backend.terminate === 'function') {
       v8Backend.terminate(isolateId);
       getGlobalLogger().info('SandboxScheduler', 'Preempted sandbox', { isolateId });
@@ -349,17 +363,23 @@ export class HybridSandboxScheduler implements ISandboxScheduler {
   private estimateCost(tier: SandboxTier): number {
     // Higher tiers are more expensive (longer execution time)
     switch (tier) {
-      case 'v8-isolate': return 100;
-      case 'seccomp': return 500;
-      case 'wasm': return 1000;
-      case 'tee': return 5000;
-      default: return 500;
+      case 'v8-isolate':
+        return 100;
+      case 'seccomp':
+        return 500;
+      case 'wasm':
+        return 1000;
+      case 'tee':
+        return 5000;
+      default:
+        return 500;
     }
   }
 
   private insertByVFT(entry: WFQEntry): void {
     // Binary search insertion
-    let lo = 0, hi = this.queue.length;
+    let lo = 0,
+      hi = this.queue.length;
     while (lo < hi) {
       const mid = (lo + hi) >>> 1;
       if (this.queue[mid].virtualFinishTime <= entry.virtualFinishTime) {

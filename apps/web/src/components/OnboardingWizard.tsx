@@ -68,7 +68,12 @@ const PROVIDER_OPTIONS: {
     defaultModel: 'claude-3-5-sonnet-20241022',
     hint: 'ANTHROPIC_API_KEY',
   },
-  { id: 'google', label: 'Google Gemini', defaultModel: 'gemini-2.0-flash', hint: 'GOOGLE_API_KEY' },
+  {
+    id: 'google',
+    label: 'Google Gemini',
+    defaultModel: 'gemini-2.0-flash',
+    hint: 'GOOGLE_API_KEY',
+  },
   { id: 'deepseek', label: 'DeepSeek', defaultModel: 'deepseek-chat', hint: 'DEEPSEEK_API_KEY' },
   {
     id: 'openrouter',
@@ -160,8 +165,8 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps) 
             <div className="section-label">Onboarding</div>
             <h1>上手引导向导</h1>
             <p className="page-desc">
-              几分钟内完成首次配置：连接 LLM provider、运行首个任务、探索 Commander 的多
-              Agent 编排与安全治理能力。
+              几分钟内完成首次配置：连接 LLM provider、运行首个任务、探索 Commander 的多 Agent
+              编排与安全治理能力。
             </p>
           </div>
           {/* 跳过引导链接 */}
@@ -189,12 +194,7 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps) 
         ) : (
           <>
             {step === 1 && <WelcomeStep />}
-            {step === 2 && (
-              <ProviderStep
-                status={onboardingStatus}
-                onSaved={checkStatus}
-              />
-            )}
+            {step === 2 && <ProviderStep status={onboardingStatus} onSaved={checkStatus} />}
             {step === 3 && <FirstTaskStep status={onboardingStatus} onRan={checkStatus} />}
             {step === 4 && <CompleteStep />}
 
@@ -220,7 +220,9 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps) 
                 上一步
               </button>
 
-              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', alignSelf: 'center' }}>
+              <span
+                style={{ fontSize: '0.72rem', color: 'var(--text-muted)', alignSelf: 'center' }}
+              >
                 {step} / {TOTAL_STEPS}
               </span>
 
@@ -305,7 +307,11 @@ function Stepper({ current, total }: { current: number; total: number }) {
                   fontSize: '0.62rem',
                   fontWeight: 700,
                   border: `1px solid ${
-                    active ? 'var(--accent-green-border)' : done ? 'var(--accent-green)' : 'var(--border-hover)'
+                    active
+                      ? 'var(--accent-green-border)'
+                      : done
+                        ? 'var(--accent-green)'
+                        : 'var(--border-hover)'
                   }`,
                   background: done
                     ? 'var(--accent-green-bg)'
@@ -375,9 +381,16 @@ function WelcomeStep() {
         </div>
       </div>
 
-      <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: '18px' }}>
-        调研显示 93% 的企业 Agent 项目卡在 POC→生产阶段，上手体验是关键。本向导将带你完成
-        LLM provider 连接、首个任务运行，并熟悉核心能力。
+      <p
+        style={{
+          fontSize: '0.88rem',
+          color: 'var(--text-secondary)',
+          lineHeight: 1.6,
+          marginBottom: '18px',
+        }}
+      >
+        调研显示 93% 的企业 Agent 项目卡在 POC→生产阶段，上手体验是关键。本向导将带你完成 LLM
+        provider 连接、首个任务运行，并熟悉核心能力。
       </p>
 
       <div style={{ display: 'grid', gap: '10px' }}>
@@ -395,7 +408,9 @@ function WelcomeStep() {
           >
             <div style={{ color: 'var(--accent-green)', flexShrink: 0 }}>{c.icon}</div>
             <div>
-              <div style={{ fontSize: '0.86rem', fontWeight: 600, marginBottom: '2px' }}>{c.title}</div>
+              <div style={{ fontSize: '0.86rem', fontWeight: 600, marginBottom: '2px' }}>
+                {c.title}
+              </div>
               <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
                 {c.desc}
               </div>
@@ -428,9 +443,7 @@ function ProviderStep({
 }) {
   // 初始 provider：优先用检测到的，否则默认 openai
   const detectedProvider = status?.provider as OnboardingProvider | undefined;
-  const [provider, setProvider] = useState<OnboardingProvider>(
-    detectedProvider ?? 'openai',
-  );
+  const [provider, setProvider] = useState<OnboardingProvider>(detectedProvider ?? 'openai');
   const [model, setModel] = useState<string>(status?.model ?? 'gpt-4o');
   const [apiKey, setApiKey] = useState<string>('');
   const [testing, setTesting] = useState(false);
@@ -497,7 +510,8 @@ function ProviderStep({
     <div>
       <h2 style={{ fontSize: '1.1rem', marginBottom: '6px' }}>配置 LLM Provider</h2>
       <p style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)', marginBottom: '16px' }}>
-        选择一个 provider 并测试连通性。API Key 仅保存到本地 <code>.commander.json</code>，不会写入环境变量。
+        选择一个 provider 并测试连通性。API Key 仅保存到本地 <code>.commander.json</code>
+        ，不会写入环境变量。
       </p>
 
       {/* 检测到的状态 */}
@@ -512,9 +526,16 @@ function ProviderStep({
         >
           <StatusPill
             ok={status.hasProvider}
-            label={status.hasProvider ? `已检测到 ${status.providerLabel ?? status.provider}` : '未检测到 Provider'}
+            label={
+              status.hasProvider
+                ? `已检测到 ${status.providerLabel ?? status.provider}`
+                : '未检测到 Provider'
+            }
           />
-          <StatusPill ok={status.hasApiKey} label={status.hasApiKey ? '已具备 API Key' : '缺少 API Key'} />
+          <StatusPill
+            ok={status.hasApiKey}
+            label={status.hasApiKey ? '已具备 API Key' : '缺少 API Key'}
+          />
         </div>
       )}
 
@@ -599,7 +620,9 @@ function ProviderStep({
             ) : (
               <AlertTriangle size={14} style={{ color: 'var(--accent-red)' }} />
             )}
-            <span style={{ color: testResult.success ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+            <span
+              style={{ color: testResult.success ? 'var(--accent-green)' : 'var(--accent-red)' }}
+            >
               {testResult.success ? '连接成功' : '连接失败'}
             </span>
             {testResult.success && (
@@ -706,14 +729,23 @@ function FirstTaskStep({
     <div>
       <h2 style={{ fontSize: '1.1rem', marginBottom: '6px' }}>运行首个任务</h2>
       <p style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)', marginBottom: '14px' }}>
-        选择一个示例任务或输入自定义任务，验证 provider 配置可用。 Commander 会将任务路由到
-        LLM 并返回结果。
+        选择一个示例任务或输入自定义任务，验证 provider 配置可用。 Commander 会将任务路由到 LLM
+        并返回结果。
       </p>
 
       {status && !status.hasProvider && (
-        <div className="banner" style={{ marginBottom: '14px', background: 'var(--accent-amber-bg)', borderColor: 'var(--accent-amber-border)', color: 'var(--accent-amber)' }}>
+        <div
+          className="banner"
+          style={{
+            marginBottom: '14px',
+            background: 'var(--accent-amber-bg)',
+            borderColor: 'var(--accent-amber-border)',
+            color: 'var(--accent-amber)',
+          }}
+        >
           <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <AlertTriangle size={14} /> 未检测到 provider，将返回示例结果。请先在「Provider」步骤配置。
+            <AlertTriangle size={14} /> 未检测到
+            provider，将返回示例结果。请先在「Provider」步骤配置。
           </span>
         </div>
       )}
@@ -757,7 +789,12 @@ function FirstTaskStep({
           onChange={(e) => setTask(e.target.value)}
           rows={3}
           placeholder="输入要让 Agent 执行的任务…"
-          style={{ width: '100%', resize: 'vertical', padding: '8px 10px', fontFamily: 'var(--font-mono)' }}
+          style={{
+            width: '100%',
+            resize: 'vertical',
+            padding: '8px 10px',
+            fontFamily: 'var(--font-mono)',
+          }}
         />
       </Field>
 
@@ -896,7 +933,14 @@ function CompleteStep() {
         </div>
       </div>
 
-      <p style={{ fontSize: '0.86rem', color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: '18px' }}>
+      <p
+        style={{
+          fontSize: '0.86rem',
+          color: 'var(--text-secondary)',
+          lineHeight: 1.6,
+          marginBottom: '18px',
+        }}
+      >
         Commander 远不止于此。以下是你接下来可以探索的核心功能：
       </p>
 
@@ -939,15 +983,7 @@ function CompleteStep() {
 
 // ── 通用子组件 ─────────────────────────────────────────────────────────────
 
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: ReactNode;
-}) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '12px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>

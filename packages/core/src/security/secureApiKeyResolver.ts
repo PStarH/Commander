@@ -33,10 +33,7 @@ export function initSecureApiKeyResolver(vault: unknown): void {
  * @param envVar - The fallback env var name (same as keyName by default)
  * @returns The decrypted API key, or empty string if not found
  */
-export function resolveSecureApiKey(
-  keyName: string,
-  envVar: string = keyName,
-): string {
+export function resolveSecureApiKey(keyName: string, envVar: string = keyName): string {
   // 1. Try vault first
   if (vaultInitialized && vaultInstance) {
     try {
@@ -60,7 +57,7 @@ export function resolveSecureApiKey(
       getGlobalLogger().warn(
         'SecureApiKeyResolver',
         `API key "${envVar}" loaded from environment variable instead of encrypted vault. ` +
-        'Store keys in the EncryptedSecretsVault for production security.',
+          'Store keys in the EncryptedSecretsVault for production security.',
         { keyName, envVar },
       );
     }
@@ -72,9 +69,7 @@ export function resolveSecureApiKey(
 /**
  * Batch resolve multiple API keys.
  */
-export function resolveSecureApiKeys(
-  keys: string[],
-): Record<string, string> {
+export function resolveSecureApiKeys(keys: string[]): Record<string, string> {
   const result: Record<string, string> = {};
   for (const key of keys) {
     result[key] = resolveSecureApiKey(key);

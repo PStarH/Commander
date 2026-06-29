@@ -30,9 +30,7 @@ import { scanToolOutputForInjection } from '../contentScanner';
 const MAX_MCP_DESCRIPTION_LENGTH = 2000;
 
 function sanitizeMcpDescription(description: string, serverLabel: string): string {
-  let safe = description
-    .replace(/[<>]/g, '')
-    .slice(0, MAX_MCP_DESCRIPTION_LENGTH);
+  const safe = description.replace(/[<>]/g, '').slice(0, MAX_MCP_DESCRIPTION_LENGTH);
   return `[MCP:${serverLabel}] ${safe}`;
 }
 

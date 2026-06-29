@@ -120,9 +120,7 @@ let globalSubscriber: EventSourcingSubscriber | null = null;
  * The subscriber is not started automatically — call start() after
  * the MessageBus and EventSourcingEngine are both initialized.
  */
-export function getGlobalEventSourcingSubscriber(
-  bus?: MessageBus,
-): EventSourcingSubscriber {
+export function getGlobalEventSourcingSubscriber(bus?: MessageBus): EventSourcingSubscriber {
   if (!globalSubscriber) {
     const messageBus = bus ?? require('./messageBus').getMessageBus();
     globalSubscriber = new EventSourcingSubscriber(messageBus);

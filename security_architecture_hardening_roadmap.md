@@ -19,20 +19,25 @@
 | L6 审计追溯 | AuditChainLedger, 无条件写入, 安全审计日志 | ✅ 已实现 |
 | L7 供应链 | SupplyChainScanner, 插件扫描, npx 移除, Docker 加固 | ✅ 已实现 |
 
-### 残余缺口 (10 项)
+### 残余缺口 (8 项)
 
 | # | 缺口 | 严重度 | 类型 | 可否立即修复 |
 |---|------|--------|------|-------------|
 | G1 | RASP 实时阻断引擎 | **Critical** | 架构 | 可部分实现 |
 | G2 | 信息流控制 / 污点追踪 | High | 架构 | 需新子系统 |
 | G3 | A2A mTLS 双向认证 | High | 架构 | 需证书基础设施 |
-| G4 | 记忆投毒检测接入运行时 | High | **实现** | **可立即修复** |
 | G5 | 密钥保险库实际采用 | High | **实现** | **可立即修复** |
 | G6 | 沙箱逃逸运行时检测 | High | 架构 | 需内核级监控 |
 | G7 | Egress 过滤强化(禁用 NoopSB) | Medium | **实现** | **可立即修复** |
-| G8 | CPU 资源限制 | Medium | **实现** | **可立即修复** |
 | G9 | 形式化验证 | Medium | 架构 | 需形式化方法 |
 | G10 | Agent 间记忆隔离 | Medium | 架构 | 需命名空间重设计 |
+
+### 已实现的缺口 (2 项，原计划内)
+
+| # | 缺口 | 严重度 | 实现位置 |
+|---|------|--------|----------|
+| G4 | 记忆投毒检测接入运行时 | High | `agentRuntime.ts` — checkMemoryPoisoning + getMemoryPoisoningDefenseEngine |
+| G8 | CPU 资源限制 | Medium | `sandbox/types.ts` + `platforms.ts` — cpuLimit / --cpus / --cpu-quota |
 
 ---
 

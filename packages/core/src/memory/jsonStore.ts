@@ -185,8 +185,11 @@ export class JsonMemoryStore implements MemoryStore {
       this.deindexItem(options.id);
       // Security: Prevent prototype pollution by filtering dangerous keys.
       const safeUpdates = { ...options.updates };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       delete (safeUpdates as any).__proto__;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       delete (safeUpdates as any).constructor;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       delete (safeUpdates as any).prototype;
       Object.assign(item, safeUpdates);
       item.lastAccessedAt = new Date().toISOString();

@@ -211,10 +211,14 @@ export class RecoverySLA {
       updatedAt: new Date().toISOString(),
       disableReplay: true,
     });
-    getGlobalLogger().warn('RecoverySLA', 'Replay disabled for tenant — rollback to checkpoint-only', {
-      tenantId,
-      previousStrategy: config?.strategy,
-    });
+    getGlobalLogger().warn(
+      'RecoverySLA',
+      'Replay disabled for tenant — rollback to checkpoint-only',
+      {
+        tenantId,
+        previousStrategy: config?.strategy,
+      },
+    );
   }
 
   /**
