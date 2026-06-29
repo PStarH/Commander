@@ -212,3 +212,22 @@ npx tsx scripts/verify-rotation-signoff.ts --quiet
 # D3.0: combine `--json` + `--quiet` for the typical `jq` pipeline read-out:
 npx tsx scripts/verify-rotation-signoff.ts --json --quiet
 ```
+
+## A2A mTLS Certificate Revocation Limitation
+
+**Known limitation:** Node.js only verifies the client certificate during
+the TLS handshake. Once an HTTP Keep-Alive connection is established,
+certificate revocation (CRL/OCSP) does **not** affect the live socket —
+the client can keep sending requests until the socket closes.
+
+**Mitigations for high-sensitivity deployments:**
+
+1. **Defense-in-depth:** always combine mTLS with the mandatory bearer
+   `authToken`. The `authToken` can be rotated and checked per-request,
+   independent of socket lifetime.
+2. **Shorter `shutdownTimeoutMs`:** set `shutdownTimeoutMs` to 60s or
+   lower to force connection recycling.
+3. **Reverse-proxy layer:** disable HTTP Keep-Alive at the reverse proxy
+   (e.g. nginx `keepalive_timeout 0;`) for the A2A endpoint.
+4. **Future hardening (tracked):** periodic TLS re-handshake via
+   `tlsSocket.renegotiate()` or a server-side idle-socket reaper.
