@@ -190,4 +190,77 @@ describe('CycleDetector', () => {
       expect(info.historyLength).toBeLessThanOrEqual(15);
     });
   });
+
+  describe('detectRepetition — character-level degeneration', () => {
+    it('detects immediate phrase repetition (TheTheThe pattern)', () => {
+      const text = 'TheTheTheTheTheTheTheTheTheTheTheThe service is down';
+      const result = CycleDetector.detectRepetition(text);
+      expect(result.detected).toBe(true);
+      expect(result.type).toBe('semantic_stagnation');
+      if (result.detected) {
+        expect(result.similarity).toBeGreaterThan(0.9);
+      }
+    });
+
+    it('detects word repetition with spaces (the the the the the)', () => {
+      const text = 'The the the the the the the the the the the the the the the service is down';
+      const result = CycleDetector.detectRepetition(text);
+      expect(result.detected).toBe(true);
+    });
+
+    it('detects phrase repetition (I willI willI will)', () => {
+      const text = 'I willI willI willI willI willI willI willI willI will fix the issue now';
+      const result = CycleDetector.detectRepetition(text);
+      expect(result.detected).toBe(true);
+    });
+
+    it('does NOT flag normal text', () => {
+      const text =
+        'The payment service is experiencing elevated latency. I recommend restarting the service and checking the database connection pool.';
+      const result = CycleDetector.detectRepetition(text);
+      expect(result.detected).toBe(false);
+    });
+
+    it('does NOT flag text with minor repetition (false positive guard)', () => {
+      const text = 'I went to the the store to buy milk and eggs for the recipe.';
+      const result = CycleDetector.detectRepetition(text);
+      expect(result.detected).toBe(false);
+    });
+
+    it('does NOT flag short text (< 20 chars)', () => {
+      const result = CycleDetector.detectRepetition('TheTheTheThe');
+      expect(result.detected).toBe(false);
+    });
+
+    it('detects long token repetition (step step step step step)', () => {
+      const text = 'step step step step step step step step step step step step step step step done';
+      const result = CycleDetector.detectRepetition(text);
+      expect(result.detected).toBe(true);
+    });
+
+    it('detects degeneration from benchmark data (long TheTheThe pattern)', () => {
+      const text = 'The'.repeat(200) + ' — service is down';
+      const result = CycleDetector.detectRepetition(text);
+      expect(result.detected).toBe(true);
+    });
+
+    it('checkOutput integrates detectRepetition for degenerate text', () => {
+      const cd = new CycleDetector();
+      const degenerate = 'The'.repeat(100) + ' service is down';
+      const result = cd.checkOutput(degenerate);
+      expect(result.detected).toBe(true);
+      expect(result.type).toBe('semantic_stagnation');
+    });
+
+    it('checkOutput still works for semantic similarity (original behavior)', () => {
+      const cd = new CycleDetector();
+      cd.checkOutput('the analysis shows the code needs refactoring for better performance');
+      cd.checkOutput('the analysis shows the code needs refactoring for better performance');
+      const result = cd.checkOutput(
+        'the analysis shows the code needs refactoring for better performance',
+      );
+      expect(result.detected).toBe(true);
+      expect(result.type).toBe('semantic_stagnation');
+    });
+  });
 });
