@@ -22,6 +22,7 @@ import { isHashlineFormat, parseHashline, applyHashlineSection } from '../edit/h
 import { parseAndApplyHashEdit, isHashEditFormat } from '../edit/hashAnchoredEditor';
 import { safePath } from './fileSystemTool';
 import { atomicWriteFile } from './_utils/atomicWrite';
+import { pathExists } from './_utils/pathExists';
 import { getSnapshotStore } from '../edit/snapshotStore';
 
 export class FileHashEditTool implements Tool {
@@ -64,14 +65,14 @@ Content hashes stay valid even when line numbers change.`,
       // Hash-anchored single-line edit
       {
         name: 'file_hash_edit',
-        arguments: { input: '¶src/config.ts#A1B2\\n@F7G8H9→const port = 8080;' },
+        arguments: { input: '¶src/config.ts#A1B2\n@F7G8H9→const port = 8080;' },
       },
       // Hash-anchored multi-line edit
       {
         name: 'file_hash_edit',
         arguments: {
           input:
-            '¶src/config.ts#A1B2\\n@F7G8H9,I0J1K2→\\nconst port = 8080;\\nconst host = \"0.0.0.0\";',
+            '¶src/config.ts#A1B2\n@F7G8H9,I0J1K2→\nconst port = 8080;\nconst host = "0.0.0.0"',
         },
       },
     ],
@@ -124,17 +125,17 @@ Content hashes stay valid even when line numbers change.`,
 
     try {
       const resolved = safePath(filePath);
-      if (!fs.existsSync(resolved)) return `Error: file not found: ${filePath}`;
+      if (!(await pathExists(resolved))) return `Error: file not found: ${filePath}`;
 
-      let content = fs.readFileSync(resolved, 'utf-8');
+      const content = await fs.promises.readFile(resolved, 'utf-8');
       const idx = content.indexOf(oldStr);
       if (idx === -1)
         return `Error: oldString not found in ${filePath}. Try re-reading the file with includeHashes:true and use @hash→content format.`;
 
       const occurrences = content.split(oldStr).length - 1;
-      content = content.split(oldStr).join(newStr);
-      await atomicWriteFile(resolved, content, { encoding: 'utf-8' });
-      getSnapshotStore().record(resolved, content);
+      const updated = content.split(oldStr).join(newStr);
+      await atomicWriteFile(resolved, updated, { encoding: 'utf-8' });
+      getSnapshotStore().record(resolved, updated);
 
       return `✅ ${filePath}: replaced ${occurrences} occurrence(s)`;
     } catch (err) {
