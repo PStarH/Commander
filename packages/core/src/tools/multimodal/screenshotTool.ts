@@ -53,7 +53,6 @@ export class ScreenshotCaptureTool implements Tool {
     const width = Number(args.width ?? 1280);
     const height = Number(args.height ?? 720);
     const fullPage = Boolean(args.fullPage);
-    const fs = await import('fs');
     const path = await import('path');
     const crypto = await import('crypto');
 
@@ -68,7 +67,7 @@ export class ScreenshotCaptureTool implements Tool {
       try {
         resolvedPath = safePath(outputPath);
       } catch (err) {
-        reportSilentFailure(err, 'screenshotTool:71');
+        reportSilentFailure(err, 'screenshotTool:67');
         return `Error: Access denied: path "${outputPath}" is outside workspace`;
       }
     } else {
@@ -77,7 +76,10 @@ export class ScreenshotCaptureTool implements Tool {
       resolvedPath = safePath(`screenshots/screenshot-${Date.now()}-${hash}.png`);
     }
     const outDir = path.dirname(resolvedPath);
-    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+    // mkdirAsync with recursive:true is idempotent — no need for a separate
+    // existsSync guard. This collapses the original (existsSync + mkdirSync)
+    // audit-flagged sync pair into a single non-blocking call.
+    await (await import('fs')).promises.mkdir(outDir, { recursive: true });
 
     try {
       if (url) {

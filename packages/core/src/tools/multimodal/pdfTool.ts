@@ -37,19 +37,31 @@ export class PdfExtractTool implements Tool {
 
     if (!filePath) return 'Error: No file path provided.';
 
+    const fs = await import('fs');
+    const pathModule = await import('path');
+    const { safePath } = await import('../fileSystemTool');
+
     try {
-      const fs = await import('fs');
-      const pathModule = await import('path');
-      const { safePath } = await import('../fileSystemTool');
       let resolved: string;
       try {
         resolved = safePath(filePath);
       } catch (err) {
-        reportSilentFailure(err, 'pdfTool:47');
+        reportSilentFailure(err, 'pdfTool:42');
         return `Error: Access denied: path "${filePath}" is outside workspace`;
       }
-      if (!fs.existsSync(resolved)) return `Error: File not found: ${filePath}`;
-      const stat = fs.statSync(resolved);
+
+      // Single fs.promises.stat replaces {existsSync + statSync} — it both
+      // checks existence and yields metadata, off the event loop.
+      let stat;
+      try {
+        stat = await fs.promises.stat(resolved);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+          return `Error: File not found: ${filePath}`;
+        }
+        reportSilentFailure(err, 'pdfTool:54');
+        return `Error: stat failed for ${filePath}: ${(err as Error).message}`;
+      }
       if (!stat.isFile()) return `Error: Not a file: ${filePath}`;
       if (stat.size > 100 * 1024 * 1024)
         return `Error: PDF too large (${(stat.size / 1024 / 1024).toFixed(1)}MB). Max: 100MB.`;
@@ -60,7 +72,8 @@ export class PdfExtractTool implements Tool {
       try {
         const pdfMod = 'pdfjs-dist';
         const pdflib = await import(pdfMod);
-        const data = new Uint8Array(fs.readFileSync(resolved));
+        const raw = await fs.promises.readFile(resolved);
+        const data = new Uint8Array(raw);
         const doc = await pdflib.getDocument({ data }).promise;
         const totalPages = doc.numPages;
         const endPage = Math.min(pageEnd, totalPages);
