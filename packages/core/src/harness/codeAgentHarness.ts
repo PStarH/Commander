@@ -13,15 +13,10 @@
  * plugin hooks, tenant isolation, and metrics infrastructure.
  */
 import type {
-  AgentHarness,
   HarnessSelectionContext,
   HarnessRunParams,
   HarnessCapabilities,
   HarnessServices,
-  HarnessEvent,
-  HarnessEventHandler,
-  Unsubscribe,
-  SteerMessage,
 } from './harnessTypes';
 import type {
   AgentExecutionResult,
@@ -35,6 +30,7 @@ import type {
 } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
 import { generateId, now } from '../runtime/runtimeHelpers';
+import { BaseHarness } from './baseHarness';
 
 // ============================================================================
 // Capabilities
@@ -136,16 +132,13 @@ export interface HashlineAnchor {
 // Code Agent Harness
 // ============================================================================
 
-export class CodeAgentHarness implements AgentHarness {
+export class CodeAgentHarness extends BaseHarness {
   readonly name = 'code-agent';
 
-  private currentRunId: string | null = null;
-  private abortController: AbortController | null = null;
   private guardianConfig: GuardianConfig;
-  private eventHandlers: Set<HarnessEventHandler> = new Set();
-  private steerQueueInternal: SteerMessage[] = [];
 
   constructor(guardianConfig?: Partial<GuardianConfig>) {
+    super();
     this.guardianConfig = { ...DEFAULT_GUARDIAN_CONFIG, ...guardianConfig };
   }
 
@@ -188,13 +181,9 @@ export class CodeAgentHarness implements AgentHarness {
     const { goal, messages, availableTools, maxSteps, signal, tenantId, routing, services } =
       params;
 
-    const runId = generateId();
-    const startTime = Date.now();
+    const { runId, startTime } = this.startRun(goal);
     const steps: AgentExecutionStep[] = [];
     const totalTokenUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-
-    this.currentRunId = runId;
-    this.abortController = new AbortController();
 
     this.emitEvent({ type: 'run_start', runId, goal, harness: this.name, timestamp: Date.now() });
     await services.fireOnAgentStart({ agentId: goal.slice(0, 32), runId });
@@ -241,8 +230,8 @@ export class CodeAgentHarness implements AgentHarness {
 
       request = await services.fireBeforeLLMCall({ request, agentId: goal.slice(0, 32), runId });
       for (let attempt = 0; attempt <= 2; attempt++) {
-        if (signal.aborted || this.abortController.signal.aborted) {
-          return this.buildResult(
+        if (signal.aborted || this.abortController!.signal.aborted) {
+          return this.buildResultInternal(
             runId,
             goal,
             'cancelled',
@@ -255,7 +244,7 @@ export class CodeAgentHarness implements AgentHarness {
 
         const provider = this.resolveProvider(routing, services);
         if (!provider) {
-          return this.buildResult(
+          return this.buildResultInternal(
             runId,
             goal,
             'failed',
@@ -271,8 +260,8 @@ export class CodeAgentHarness implements AgentHarness {
         let response: LLMResponse | null = null;
 
         while (toolLoopCount < maxSteps && !taskComplete) {
-          if (signal.aborted || this.abortController.signal.aborted) {
-            return this.buildResult(
+          if (signal.aborted || this.abortController!.signal.aborted) {
+            return this.buildResultInternal(
               runId,
               goal,
               'cancelled',
@@ -364,7 +353,7 @@ export class CodeAgentHarness implements AgentHarness {
             [];
 
           for (const tc of toolCalls) {
-            if (signal.aborted || this.abortController.signal.aborted) break;
+            if (signal.aborted || this.abortController!.signal.aborted) break;
 
             const intent = this.extractIntent(tc);
             if (intent) {
@@ -508,7 +497,7 @@ export class CodeAgentHarness implements AgentHarness {
 
         // ── Post-loop: handle completion ──
         if (taskComplete && finalContent) {
-          const result = this.buildResult(
+          const result = this.buildResultInternal(
             runId,
             goal,
             'success',
@@ -566,7 +555,7 @@ export class CodeAgentHarness implements AgentHarness {
         finalContent = this.synthesizeFinalContent(steps, goal);
       }
 
-      const finalResult = this.buildResult(
+      const finalResult = this.buildResultInternal(
         runId,
         goal,
         finalContent ? 'success' : 'failed',
@@ -597,7 +586,7 @@ export class CodeAgentHarness implements AgentHarness {
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       getGlobalLogger().error('CodeAgentHarness', 'Run failed', err as Error);
-      const result = this.buildResult(
+      const result = this.buildResultInternal(
         runId,
         goal,
         'failed',
@@ -612,56 +601,11 @@ export class CodeAgentHarness implements AgentHarness {
     }
   }
 
-  abort(): void {
-    if (this.abortController) {
-      this.abortController.abort();
-      this.abortController = null;
-    }
-    this.currentRunId = null;
-  }
-
-  steer(message: string, priority: number = 0, abortCurrent: boolean = false): void {
-    this.steerQueueInternal.push({
-      id: `steer_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-      message,
-      timestamp: Date.now(),
-      priority,
-      abortCurrent,
-    });
-    if (abortCurrent || priority >= 10) {
-      this.abort();
-    }
-  }
-
-  subscribe(handler: HarnessEventHandler): Unsubscribe {
-    this.eventHandlers.add(handler);
-    return () => {
-      this.eventHandlers.delete(handler);
-    };
-  }
-
-  private emitEvent(event: HarnessEvent): void {
-    for (const handler of this.eventHandlers) {
-      try {
-        const result = handler(event);
-        if (result instanceof Promise) {
-          result.catch((err) => {
-            getGlobalLogger().error('CodeAgentHarness', 'Async event handler error', err as Error);
-          });
-        }
-      } catch (err) {
-        getGlobalLogger().error('CodeAgentHarness', 'Event handler error', err as Error);
-      }
-    }
-  }
+  // abort(), steer(), subscribe(), emitEvent() are inherited from BaseHarness.
 
   private drainSteerMessages(): string[] {
-    if (this.steerQueueInternal.length === 0) return [];
-    const sorted = [...this.steerQueueInternal].sort(
-      (a, b) => (b.priority ?? 0) - (a.priority ?? 0) || a.timestamp - b.timestamp,
-    );
-    this.steerQueueInternal = [];
-    return sorted.map((s) => s.message);
+    // Delegate to BaseHarness's drainSteer() which returns sorted SteerMessage[]
+    return this.drainSteer().map((s) => s.message);
   }
 
   private extractIntent(
@@ -942,7 +886,7 @@ Respond with a JSON object:
     return `[Execution completed] Goal: ${goal.slice(0, 200)}`;
   }
 
-  private buildResult(
+  private buildResultInternal(
     runId: string,
     goal: string,
     status: AgentExecutionResult['status'],
