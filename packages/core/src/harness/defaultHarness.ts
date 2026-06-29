@@ -10,15 +10,10 @@
  */
 import { reportSilentFailure } from '../silentFailureReporter';
 import type {
-  AgentHarness,
   HarnessSelectionContext,
   HarnessRunParams,
   HarnessCapabilities,
   HarnessServices,
-  HarnessEvent,
-  HarnessEventHandler,
-  Unsubscribe,
-  SteerMessage,
 } from './harnessTypes';
 import type {
   AgentExecutionResult,
@@ -29,7 +24,8 @@ import type {
   LLMResponse,
 } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
-import { generateId, now } from '../runtime/runtimeHelpers';
+import { now } from '../runtime/runtimeHelpers';
+import { BaseHarness } from './baseHarness';
 
 export const DEFAULT_HARNESS_CAPABILITIES: HarnessCapabilities = {
   supportsSubAgents: false,
@@ -53,17 +49,8 @@ export const DEFAULT_HARNESS_CAPABILITIES: HarnessCapabilities = {
   description: 'Backward-compatible default harness — wraps existing AgentRuntime',
 };
 
-export class DefaultHarness implements AgentHarness {
+export class DefaultHarness extends BaseHarness {
   readonly name = 'default';
-
-  private eventHandlers: Set<HarnessEventHandler> = new Set();
-  private steerQueueInternal: SteerMessage[] = [];
-  /**
-   * Abort controller owned by this harness instance. abort() trips this
-   * signal so that runAttempt — which polls signal.aborted — actually
-   * observes the cancellation.
-   */
-  private abortController = new AbortController();
 
   supports(_ctx: HarnessSelectionContext): boolean {
     return true;
@@ -87,25 +74,20 @@ export class DefaultHarness implements AgentHarness {
       outputSchema,
     } = params;
 
-    // Use this harness's own AbortController so that abort() actually trips
-    // the signal that runAttempt polls below. A fresh controller is created
-    // per run so a previous cancellation does not bleed into the next run.
+    // Use BaseHarness.startRun() to create a fresh AbortController per run.
     // Any externally-supplied signal (params.signal) is bridged so callers
     // that pass their own AbortController still get honoured.
-    this.abortController = new AbortController();
-    const signal = this.abortController.signal;
+    const { runId, startTime } = this.startRun(goal);
+    const signal = this.abortController!.signal;
     if (params.signal?.aborted) {
-      this.abortController.abort();
+      this.abortController!.abort();
     } else if (params.signal) {
       params.signal.addEventListener(
         'abort',
-        () => this.abortController.abort(),
+        () => this.abortController?.abort(),
         { once: true },
       );
     }
-
-    const runId = generateId();
-    const startTime = Date.now();
     const steps: AgentExecutionResult['steps'] = [];
     const totalTokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
@@ -133,7 +115,7 @@ export class DefaultHarness implements AgentHarness {
 
       for (let attempt = 0; attempt <= 2; attempt++) {
         if (signal.aborted) {
-          return this.buildResult(
+          return this.buildResultInternal(
             runId,
             goal,
             'cancelled',
@@ -147,7 +129,7 @@ export class DefaultHarness implements AgentHarness {
         // LLM call
         const provider = services.getProvider(routing.provider);
         if (!provider) {
-          const res = this.buildResult(
+          const res = this.buildResultInternal(
             runId,
             goal,
             'failed',
@@ -212,7 +194,7 @@ export class DefaultHarness implements AgentHarness {
           toolLoopCount++;
 
           if (signal.aborted) {
-            return this.buildResult(
+            return this.buildResultInternal(
               runId,
               goal,
               'cancelled',
@@ -323,7 +305,7 @@ export class DefaultHarness implements AgentHarness {
         if (safeContent.length > 0) {
           const contentScan = await services.scanContent(safeContent);
           if (contentScan.isSafe || safeContent.length > 100) {
-            const result = this.buildResult(
+            const result = this.buildResultInternal(
               runId,
               goal,
               'success',
@@ -350,7 +332,7 @@ export class DefaultHarness implements AgentHarness {
       }
 
       // All attempts exhausted
-      const result = this.buildResult(
+      const result = this.buildResultInternal(
         runId,
         goal,
         'failed',
@@ -368,7 +350,7 @@ export class DefaultHarness implements AgentHarness {
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       getGlobalLogger().error('DefaultHarness', 'Run failed', err as Error);
-      const result = this.buildResult(
+      const result = this.buildResultInternal(
         runId,
         goal,
         'failed',
@@ -382,43 +364,7 @@ export class DefaultHarness implements AgentHarness {
     }
   }
 
-  abort(): void {
-    // Trip the harness-owned AbortController so runAttempt — which polls
-    // signal.aborted — breaks out of its execution loop.
-    this.abortController.abort();
-  }
-
-  steer(message: string, priority: number = 0, abortCurrent: boolean = false): void {
-    this.steerQueueInternal.push({
-      id: `steer_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-      message,
-      timestamp: Date.now(),
-      priority,
-      abortCurrent,
-    });
-  }
-
-  subscribe(handler: HarnessEventHandler): Unsubscribe {
-    this.eventHandlers.add(handler);
-    return () => {
-      this.eventHandlers.delete(handler);
-    };
-  }
-
-  private emitEvent(event: HarnessEvent): void {
-    for (const handler of this.eventHandlers) {
-      try {
-        const result = handler(event);
-        if (result instanceof Promise) {
-          result.catch((err) => {
-            getGlobalLogger().error('DefaultHarness', 'Async event handler error', err as Error);
-          });
-        }
-      } catch (err) {
-        getGlobalLogger().error('DefaultHarness', 'Event handler error', err as Error);
-      }
-    }
-  }
+  // abort(), steer(), subscribe(), emitEvent() are inherited from BaseHarness.
 
   getCapabilities(): HarnessCapabilities {
     return DEFAULT_HARNESS_CAPABILITIES;
@@ -529,7 +475,7 @@ export class DefaultHarness implements AgentHarness {
     return results;
   }
 
-  private buildResult(
+  private buildResultInternal(
     runId: string,
     goal: string,
     status: AgentExecutionResult['status'],

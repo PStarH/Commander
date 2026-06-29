@@ -18,14 +18,9 @@
  * orchestration, not autonomous multi-agent dispatch.
  */
 import type {
-  AgentHarness,
   HarnessSelectionContext,
   HarnessRunParams,
   HarnessCapabilities,
-  HarnessEvent,
-  HarnessEventHandler,
-  Unsubscribe,
-  SteerMessage,
 } from './harnessTypes';
 import type {
   AgentExecutionResult,
@@ -41,6 +36,7 @@ import { getGlobalLogger } from '../logging';
 import { generateId } from '../runtime/runtimeHelpers';
 import { sanitizeIfNeeded } from '../security/outputSanitizer';
 import { scanToolOutputForInjection } from '../contentScanner';
+import { BaseHarness } from './baseHarness';
 
 export const MCP_HARNESS_CAPABILITIES: HarnessCapabilities = {
   supportsSubAgents: false,
@@ -91,11 +87,9 @@ function sanitizeHarnessOutput(output: string, source: string): string {
 // The runAttempt loop below is functional but the broader MCP server-mode
 // integration (transport, tool exposure, external orchestration) is still
 // evolving. Treat this harness as experimental until the MCP surface stabilizes.
-export class McpHarness implements AgentHarness {
+export class McpHarness extends BaseHarness {
   readonly name = 'mcp';
 
-  private eventHandlers: Set<HarnessEventHandler> = new Set();
-  private steerQueueInternal: SteerMessage[] = [];
   private aborted = false;
 
   // @experimental — only advertise support when the caller explicitly
@@ -492,26 +486,11 @@ export class McpHarness implements AgentHarness {
     return result;
   }
 
+  // abort(), steer(), subscribe(), emitEvent() are inherited from BaseHarness.
+  // McpHarness overrides abort() to also reset its local `aborted` flag.
   abort(): void {
     this.aborted = true;
-    this.steerQueueInternal = [];
-  }
-
-  steer(message: string, priority: number = 0, _abortCurrent: boolean = false): void {
-    this.steerQueueInternal.push({
-      id: `steer_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-      message,
-      timestamp: Date.now(),
-      priority,
-      abortCurrent: _abortCurrent,
-    });
-  }
-
-  subscribe(handler: HarnessEventHandler): Unsubscribe {
-    this.eventHandlers.add(handler);
-    return () => {
-      this.eventHandlers.delete(handler);
-    };
+    super.abort();
   }
 
   getCapabilities(): HarnessCapabilities {
@@ -523,26 +502,9 @@ export class McpHarness implements AgentHarness {
    * so the LLM sees them on the next iteration.
    */
   private drainSteerQueue(messages: LLMMessage[]): void {
-    if (this.steerQueueInternal.length === 0) return;
-    // Sort by priority descending.
-    const sorted = this.steerQueueInternal.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
-    const combined = sorted.map((s) => s.message).join('\n');
-    this.steerQueueInternal = [];
+    const steered = this.drainSteer();
+    if (steered.length === 0) return;
+    const combined = steered.map((s) => s.message).join('\n');
     messages.push({ role: 'user', content: `[Steering] ${combined}` });
-  }
-
-  private emitEvent(event: HarnessEvent): void {
-    for (const handler of this.eventHandlers) {
-      try {
-        const result = handler(event);
-        if (result instanceof Promise) {
-          result.catch((err) => {
-            getGlobalLogger().error('McpHarness', 'Async event handler error', err as Error);
-          });
-        }
-      } catch (err) {
-        getGlobalLogger().error('McpHarness', 'Event handler error', err as Error);
-      }
-    }
   }
 }
