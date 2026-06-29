@@ -47,6 +47,10 @@ export class MetaLearner {
   private regressionGate: RegressionGate;
   private perfTracker = new StrategyPerformanceTracker();
 
+  /** Serializes async persist calls; initialized to the load promise so no
+   *  persist fires before the initial state is loaded from disk. */
+  private persistChain: Promise<void> = Promise.resolve();
+
   constructor(
     maxExperiences = 500,
     minSamplesForSuggestion = 5,
@@ -59,9 +63,9 @@ export class MetaLearner {
     this.config = { ...DEFAULT_META_LEARNER_CONFIG, ...config };
     this.predictionLoop = new PredictionLoop(this.config.enablePredictionLoop);
     this.regressionGate = new RegressionGate(this.config.regressionThreshold);
-    if (this.persistPath) {
-      this.load();
-    }
+    // Start async load; persistChain gates subsequent writes to ensure
+    // no persist fires before load completes (prevents state overwrite).
+    this.persistChain = this.load();
   }
 
   // ========================================================================
@@ -443,10 +447,17 @@ export class MetaLearner {
       perModelPriors: this.crossModel.getPerModelPriors(),
       config: this.config,
     };
-    persist(state, this.persistPath);
+    // Chain after any in-flight load or previous persist to serialize disk
+    // writes. The state snapshot is captured synchronously here; only the
+    // I/O is deferred — the event loop is never blocked.
+    this.persistChain = this.persistChain
+      .then(() => persist(state, this.persistPath))
+      .catch(() => {
+        /* best-effort; errors are logged inside persist() */
+      });
   }
 
-  private load(): void {
+  private async load(): Promise<void> {
     const state = {
       experiences: this.experiences,
       reflections: this.reflections,
@@ -459,12 +470,15 @@ export class MetaLearner {
       perModelPriors: new Map<string, Map<string, BetaDistribution>>(),
       config: this.config,
     };
-    load(state, this.persistPath);
+    await load(state, this.persistPath);
 
-    // Sync loaded state into sub-modules
-    this.experiences = state.experiences;
-    this.reflections = state.reflections;
-    this.config = state.config;
+    // Merge: preserve any in-memory experiences added during async load
+    // (prevents the load from overwriting state accumulated while I/O
+    // was in flight). In practice the load completes in milliseconds and
+    // recordExperience is only called after a full agent run.
+    this.experiences = [...state.experiences, ...this.experiences];
+    this.reflections = [...state.reflections, ...this.reflections];
+    this.config = { ...state.config, ...this.config };
     this.perfTracker.setStrategyPerformance(state.strategyPerformance);
     this.selector.setThompsonPriors(state.thompsonPriors);
     this.predictionLoop.setPredictions(state.predictions);
