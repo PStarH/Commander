@@ -199,6 +199,7 @@ export default defineConfig({
       'tests/security/supplyChainAttestor.test.ts',
       'tests/security/differentialPrivacyLayer.test.ts',
       'tests/security/security-hardening.test.ts',
+      'tests/security/property/invariantPropertyTests.ts',
       // --- harness ---
       'tests/harness/tier1AgentLoop.test.ts',
       'tests/harness/tier1Harness.test.ts',
