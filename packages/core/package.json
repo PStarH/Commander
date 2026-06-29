@@ -95,7 +95,7 @@
   "optionalDependencies": {
     "better-sqlite3": "^12.11.1",
     "isolated-vm": "^5.0.1",
-    "playwright": "^1.61.0",
+    "playwright": "^1.61.1",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"
   }
