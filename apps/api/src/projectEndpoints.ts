@@ -348,6 +348,50 @@ export function createProjectRouter(
     }
   });
 
+  // ── POST /missions/:missionId/approve — 显式审批放行高风险任务 ────────
+  // MANUAL 治理模式下的 HIGH/CRITICAL 任务在 PATCH 时会被 409 阻断，
+  // 必须通过此显式审批端点以 bypassGovernance=true 标记为 DONE。
+  router.post('/missions/:missionId/approve', (req, res) => {
+    const { approver, comment } = req.body as { approver?: string; comment?: string };
+    try {
+      const mission = store.updateMission(
+        req.params.missionId,
+        { status: 'DONE' },
+        { bypassGovernance: true },
+      );
+      // 记录审批日志
+      store.createLog({
+        missionId: mission.id,
+        message: `Mission approved by ${approver ?? 'operator'}${comment ? `: ${comment}` : ''}`,
+        level: 'SUCCESS',
+      });
+      // 创建自动摘要（与 PATCH 路径一致）
+      try {
+        const existingSummary = memoryStore
+          .list(mission.projectId, 100)
+          .find((item) => item.missionId === mission.id && item.kind === 'SUMMARY');
+        if (!existingSummary) {
+          memoryStore.append({
+            projectId: mission.projectId,
+            missionId: mission.id,
+            agentId: mission.assignedAgentId,
+            kind: 'SUMMARY',
+            title: `任务完成：${mission.title}`,
+            content: `任务「${mission.title}」经审批完成（优先级 ${mission.priority}，风险等级 ${mission.riskLevel}，治理模式 ${mission.governanceMode}）。目标：${mission.objective}`,
+            tags: ['mission', 'done', 'approved', mission.priority.toLowerCase()],
+          });
+        }
+      } catch (e) {
+        process.stderr.write(
+          `[MemorySummary] Failed to create auto-summary on approve: ${(e as Error)?.message}\n`,
+        );
+      }
+      res.json(mission);
+    } catch (error) {
+      res.status(mapErrorToStatusCode(error)).json({ error: toErrorMessage(error) });
+    }
+  });
+
   router.post('/projects/:projectId/memory', (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
     if (!snapshot) return res.status(404).json({ error: 'Project not found' });

@@ -82,7 +82,7 @@ interface CostDashboardResponse {
   trend: TrendPoint[];
 }
 
-// ── Pricing table (mirrors @commander/observability costModel defaults) ───
+// ── Pricing table (mirrors @commander/core costModel defaults) ───
 
 const PRICING_TABLE: Record<string, ModelPricing> = {
   'openai:gpt-4o': { inputPer1k: 0.0025, outputPer1k: 0.01, cachedInputPer1k: 0.00125 },

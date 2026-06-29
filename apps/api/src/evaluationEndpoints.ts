@@ -5,6 +5,7 @@
 
 import express, { Request, Response, Router } from 'express';
 import { LLMEvaluator, ScoreSmoother, EvaluationCriterion, EvaluationRequest } from './evaluation';
+import { resolveSecureApiKey } from '@commander/core/security/secureApiKeyResolver';
 
 export function createEvaluationRouter(
   evaluator: LLMEvaluator,
@@ -249,6 +250,88 @@ export function createEvaluationRouter(
   });
 
   return router;
+}
+
+/**
+ * Create a production LLM call for LLM-as-Judge evaluation.
+ *
+ * Uses the real LLM provider when an API key is configured. Falls back to
+ * mock only when COMMANDER_EVAL_MOCK=true is explicitly set.
+ *
+ * Per project constraint: LLM-as-Judge evaluation must use a real provider.
+ * Silent fake scores in production are a correctness and safety risk.
+ */
+export function createProductionLLMCall(): (prompt: string) => Promise<string> {
+  const useMock = process.env.COMMANDER_EVAL_MOCK === 'true';
+
+  if (useMock) {
+    process.stderr.write('[Evaluation] WARNING: COMMANDER_EVAL_MOCK=true — using mock LLM judge (NOT for production)\n');
+    return createMockLLMCall();
+  }
+
+  // Resolve API key from EncryptedSecretsVault or environment variable
+  const apiKey = resolveSecureApiKey('OPENAI_API_KEY') ?? resolveSecureApiKey('ANTHROPIC_API_KEY');
+  const model = process.env.COMMANDER_EVAL_MODEL ?? 'gpt-4o-mini';
+  const isAnthropic = !!resolveSecureApiKey('ANTHROPIC_API_KEY') && !resolveSecureApiKey('OPENAI_API_KEY');
+
+  if (!apiKey) {
+    // No provider configured — return a clear error instead of fake scores
+    return async (_prompt: string) => {
+      throw new Error(
+        'EVAL_LLM_NOT_CONFIGURED: No LLM API key found. Set OPENAI_API_KEY or ANTHROPIC_API_KEY, ' +
+          'or set COMMANDER_EVAL_MOCK=true for testing. Evaluation endpoints cannot return real scores without a provider.',
+      );
+    };
+  }
+
+  // Real LLM call via OpenAI-compatible Chat Completions API
+  return async (prompt: string): Promise<string> => {
+    const baseURL = process.env.COMMANDER_LLM_BASE_URL ?? 'https://api.openai.com/v1';
+
+    if (isAnthropic) {
+      // Anthropic Messages API
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: process.env.COMMANDER_EVAL_MODEL ?? 'claude-3-5-sonnet-20241022',
+          max_tokens: 1024,
+          messages: [{ role: 'user', content: prompt }],
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`LLM judge call failed: ${response.status} ${await response.text()}`);
+      }
+      const data = (await response.json()) as { content: Array<{ text: string }> };
+      return data.content[0]?.text ?? '';
+    }
+
+    // OpenAI-compatible Chat Completions
+    const response = await fetch(`${baseURL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 1024,
+        temperature: 0,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`LLM judge call failed: ${response.status} ${await response.text()}`);
+    }
+    const data = (await response.json()) as {
+      choices: Array<{ message: { content: string } }>;
+    };
+    return data.choices[0]?.message?.content ?? '';
+  };
 }
 
 /**
