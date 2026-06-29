@@ -278,6 +278,10 @@ export class ContractLlmRouter implements ILLMRouter {
           availableTools: [],
           sessionId: 'contract-router',
           agentId: 'contract-router',
+          projectId: 'contract-router',
+          contextData: {},
+          maxSteps: 1,
+          tokenBudget: 4096,
           turn: 0,
           userTier: 'paid' as const,
         };

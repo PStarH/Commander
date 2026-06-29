@@ -1092,3 +1092,9 @@ export function createLoggingPlugin(): CommanderPlugin {
     },
   };
 }
+
+// Re-export the built-in RAG plugin factory alongside createLoggingPlugin so
+// hosts can `import { createRagPlugin } from './pluginManager'`. This is safe:
+// ragPlugin.ts only has type-only imports from this module, so there is no
+// runtime circular dependency.
+export { createRagPlugin } from './plugins/builtin/ragPlugin';
