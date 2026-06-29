@@ -207,6 +207,13 @@ class MemorySystem {
 }
 ```
 
+> **Orchestrator spawn contract (hard requirement):** 编排引擎在衍生
+> (spawn) 任何任务受限型子智能体时,其运行时上下文必须默认向 ACL 注入
+> 对应的任务命名空间令牌(即 `acl.namespaces` 至少包含 `'tasks'` 或具体
+> `tasks/<TID>` 前缀),以防合法 ReAct 流在写下第一行任务日志时被
+> `MEMORY-001` 误杀。`ultimate/orchestrator.ts` 等编排入口必须把这一步
+> 列为 spawn 流程的强制前置,而不是留给业务层自行决定。
+
 #### 3.2.3 Register `MEMORY-001` as a default invariant
 
 **File:** `packages/core/src/security/securityInvariantVerifier.ts`
@@ -331,6 +338,18 @@ export interface ToolDefinition {
   };
 }
 ```
+
+> **Fallback strategy (undefined `riskMetadata`):** 对于第三方 MCP 工具或
+> 遗留工具,若 `riskMetadata` 为 `undefined` 且无法通过 `name` 匹配
+> fallback 规则(见 §4.5 `isKnownExternalTool`):
+> - 涉及读取操作(Read)默认视作 `'none'` —— 不升级 run 的 taint tier;
+> - 涉及写入或执行操作(Execute)默认安全视作 `'local_state'` —— 升级到
+>   `LOCAL_DIRTY` 但不触发 outbound 熔断,保留 ReAct 流活性。
+>
+> 这一非对称默认值的目的是:在缺乏自报元数据时,宁可放过潜在的外部读取
+> 噪声,也不误杀合法的本地写入链路。真正的外部出口工具必须显式声明
+> `external_egress` 才会被熔断机制识别 —— 这迫使工具作者主动标注风险,
+> 而不是让框架替他们猜测。
 
 #### 4.4.2 Extend plugin hook contexts with `tool?: Tool`
 
@@ -599,13 +618,19 @@ import * as safeRegex from 'safe-regex';
 
 const REGEX_BUDGET_MS = 50;
 
-const INJECTION_PATTERNS: { name: string; re: RegExp }[] = [
-  { name: 'ignore_previous',     re: /ignore\s+(all\s+)?previous\s+(instructions|prompts?)/i },
-  { name: 'reveal_system_prompt', re: /(reveal|show|print|repeat)\s+(the\s+)?system\s+prompt/i },
-  { name: 'exfil_via',           re: /exfil(tra)?te\s+(via|through|using)\s+/i },
-  { name: 'jailbreak_roleplay',  re: /(you\s+are\s+(now|a)\s+)|(pretend\s+you\s+(are|can))/i },
-  { name: 'base64_payload',      re: /[A-Za-z0-9+/]{200,}={0,2}/ },
-  { name: 'unicode_confusable',  re: /[\u0400-\u04FF\u202A-\u202E]/ },
+const INJECTION_PATTERNS: { name: string; re: RegExp; severity: 'high' | 'medium' }[] = [
+  { name: 'ignore_previous',     re: /ignore\s+(all\s+)?previous\s+(instructions|prompts?)/i, severity: 'high' },
+  { name: 'reveal_system_prompt', re: /(reveal|show|print|repeat)\s+(the\s+)?system\s+prompt/i, severity: 'high' },
+  { name: 'exfil_via',           re: /exfil(tra)?te\s+(via|through|using)\s+/i, severity: 'high' },
+  { name: 'jailbreak_roleplay',  re: /(you\s+are\s+(now|a)\s+)|(pretend\s+you\s+(are|can))/i, severity: 'high' },
+  // Patch B: threshold raised 200 → 512 to avoid false positives on inline SVG
+  // assets, RSA/Ed25519 public keys, and obfuscated frontend bundle paths.
+  // Pure long-base64 hits are downgraded to 'medium' severity — they log an
+  // audit event but do NOT auto-suspend; the RASP response engine escalates
+  // only when this signal combines with other behavioural anomalies (e.g.
+  // high tool-failure rate from the same run).
+  { name: 'base64_payload',      re: /[A-Za-z0-9+/]{512,}={0,2}/, severity: 'medium' },
+  { name: 'unicode_confusable',  re: /[\u0400-\u04FF\u202A-\u202E]/, severity: 'high' },
 ];
 
 interface RunState {
@@ -687,8 +712,11 @@ export function createRaspExtensionsPlugin(): CommanderPlugin {
               continue;
             }
             if (hit) {
+              // Per-pattern severity — base64_payload is 'medium' (logs but
+              // does not auto-suspend); other patterns are 'high' (RASP
+              // escalates to suspend + revoke per response engine policy).
               processSecurityAlert({
-                severity: 'high',
+                severity: p.severity,
                 source: 'rasp-prompt-injection',
                 agentId: ctx.agentId,
                 message: `Prompt-injection pattern "${p.name}" detected in user message`,
