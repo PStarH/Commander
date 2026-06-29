@@ -606,6 +606,7 @@ export interface HarnessServices {
     args: Record<string, unknown>;
     agentId: string;
     runId: string;
+    tool?: Tool;
   }): Promise<{ blocked: boolean; error?: string }>;
   fireAfterToolCall(ctx: {
     toolName: string;
@@ -613,6 +614,7 @@ export interface HarnessServices {
     result: ToolResult;
     agentId: string;
     runId: string;
+    tool?: Tool;
   }): Promise<ToolResult>;
   fireOnAgentStart(ctx: { agentId: string; runId: string }): Promise<void>;
   fireOnAgentComplete(ctx: { result: AgentExecutionResult; runId: string }): Promise<void>;
