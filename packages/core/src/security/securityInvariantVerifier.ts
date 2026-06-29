@@ -57,6 +57,12 @@ export interface InvariantContext {
   systemPromptModified?: boolean;
   outboundTool?: boolean;
   dataTaint?: 'trusted' | 'untrusted' | 'external';
+  /** Set to false when a memory write was attempted outside the writer's namespace. */
+  memoryWriteNamespaced?: boolean;
+  /** Writer agent ID (for memory-write invariant checks). */
+  writerAgentId?: string;
+  /** Target memory path. */
+  memoryTargetPath?: string;
   [key: string]: unknown;
 }
 
@@ -183,6 +189,20 @@ export function registerDefaultInvariants(): void {
     domain: 'AGENT',
     check: (ctx) => ctx.parentVerified !== false,
     violationSeverity: 'high',
+  });
+
+  // MEMORY invariants (G10)
+  registerInvariant({
+    id: 'MEMORY-001',
+    description: 'All memory writes must stay within the writer agent\'s namespace or ACL-granted namespaces',
+    domain: 'AGENT',  // reuse AGENT domain — memory is an agent-lifecycle concern
+    check: (ctx) => {
+      // O(1) — pure memory comparison, never async.
+      // The assertNamespaced() guard in MemorySystem throws before this check
+      // fires; this invariant is the static guarantee that the guard ran.
+      return ctx.memoryWriteNamespaced !== false;
+    },
+    violationSeverity: 'critical',
   });
 
   getGlobalLogger().info(
