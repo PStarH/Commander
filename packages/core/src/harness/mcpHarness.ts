@@ -420,6 +420,7 @@ export class McpHarness extends BaseHarness {
             result: toolResult,
             agentId,
             runId,
+            tool,
           });
         } catch (err) {
           getGlobalLogger().warn('McpHarness', 'fireAfterToolCall failed', {
