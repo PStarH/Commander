@@ -46,7 +46,7 @@ jobs:
       TZ: UTC
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # Preserve existing baseline JSONs so yesterday's run is
           # available even on a fresh runner clone (the workflow reads
@@ -213,7 +213,7 @@ jobs:
           if-no-files-found: error
 
       # Day-N+1 regress gate dependency: this PR is the commit-back path so
-      # the next day's `actions/checkout@v6 fetch-depth: 0` finds today's
+      # the next day's `actions/checkout@v7 fetch-depth: 0` finds today's
       # JSON in HEAD. PR auto-creation is paired with team auto-merge policy
       # (Settings → General → "Allow auto-merge" + branch rule matching
       # labels `automated`+`ci-bench`). Until auto-merge is enabled, the
@@ -271,7 +271,7 @@ jobs:
 
             Commits today's `docs/baselines/wal-baseline.<TODAY>.json` to the
             default branch so tomorrow's workflow run finds it as yesterday's
-            baseline via `actions/checkout@v6 fetch-depth: 0`. Without this
+            baseline via `actions/checkout@v7 fetch-depth: 0`. Without this
             commit-back, tomorrow's regress gate would perpetually see
             "first-day run" and never fire.
 

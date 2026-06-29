@@ -12,7 +12,7 @@ jobs:
     environment: staging
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Check staging secrets
         id: secrets
@@ -82,7 +82,7 @@ jobs:
     # Run even if staging is skipped (no staging secrets configured)
     if: always() && (needs.staging.result == 'success' || needs.staging.result == 'skipped')
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Check production secrets
         id: secrets
