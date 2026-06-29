@@ -1,11 +1,12 @@
 /**
- * Recursive Atomizer - template-based task decomposition.
+ * Recursive Atomizer — adaptive task decomposition.
  *
- * Decomposes goals into subtask trees using fixed templates and text splitting.
- * ASPECT mode creates fixed subtask groups, STEP mode creates fixed execution
- * steps, and RECURSIVE mode splits goal text at paragraph boundaries.
+ * Decomposes goals into subtask trees using effort-scaled templates and text
+ * splitting. ASPECT mode creates 2–5 subtask groups (scaled by effort level),
+ * STEP mode creates 3–6 execution steps, and RECURSIVE mode splits goal text
+ * at paragraph boundaries.
  */
-import type { TaskTreeNode, DeliberationPlan, OrchestrationTopology, ROMARole } from './types';
+import type { TaskTreeNode, DeliberationPlan, OrchestrationTopology, ROMARole, EffortLevel } from './types';
 import * as path from 'node:path';
 
 /** Ms per estimated token for timeout calculation */
@@ -19,6 +20,44 @@ const MIN_GOAL_LENGTH_FOR_DECOMPOSITION = 200;
 
 /** Minimum estimated steps to consider decomposition */
 const MIN_STEPS_FOR_DECOMPOSITION = 5;
+
+/**
+ * Adaptive subtask counts keyed by effort level.
+ * Instead of always producing 3 aspects or 4 steps, we scale the
+ * decomposition granularity with task complexity.
+ */
+const ASPECT_COUNT_BY_EFFORT: Record<EffortLevel, number> = {
+  SIMPLE: 2,
+  MODERATE: 3,
+  COMPLEX: 4,
+  DEEP_RESEARCH: 5,
+};
+
+const STEP_COUNT_BY_EFFORT: Record<EffortLevel, number> = {
+  SIMPLE: 3,
+  MODERATE: 4,
+  COMPLEX: 5,
+  DEEP_RESEARCH: 6,
+};
+
+/** Aspect templates — ordered by priority; extra aspects are appended for higher effort. */
+const ASPECT_TEMPLATES = [
+  { aspect: 'research',   prefix: 'Research and gather information',  tools: ['web_search', 'document_reader'] },
+  { aspect: 'analysis',  prefix: 'Analyze and evaluate',              tools: ['code_analysis', 'data_processing'] },
+  { aspect: 'synthesis',  prefix: 'Synthesize findings into',         tools: ['reasoning'] },
+  { aspect: 'validation',prefix: 'Validate and cross-check results',  tools: ['web_search', 'code_analysis'] },
+  { aspect: 'optimization', prefix: 'Optimize and refine approach',   tools: ['code_analysis', 'reasoning'] },
+];
+
+/** Step templates — ordered by priority; extra steps are appended for higher effort. */
+const STEP_TEMPLATES = [
+  'Plan and design approach',
+  'Implement core logic',
+  'Review and verify',
+  'Polish and finalize',
+  'Test edge cases and error handling',
+  'Document and summarize',
+];
 
 /**
  * Extract file-writing intent from a goal string.
@@ -196,24 +235,11 @@ export class RecursiveAtomizer {
     dependencies: number[];
     availableTools?: string[];
   }> {
-    // Fixed 3-aspect template: research, analysis, synthesis
-    const aspects = [
-      {
-        aspect: 'research',
-        prefix: 'Research and gather information',
-        tools: ['web_search', 'document_reader'],
-      },
-      {
-        aspect: 'analysis',
-        prefix: 'Analyze and evaluate',
-        tools: ['code_analysis', 'data_processing'],
-      },
-      {
-        aspect: 'synthesis',
-        prefix: 'Synthesize findings into',
-        tools: ['reasoning'],
-      },
-    ];
+    // Adaptive: scale aspect count by effort level (SIMPLE=2 ... DEEP_RESEARCH=5)
+    const effort: EffortLevel = deliberation.effortLevel ?? 'MODERATE';
+    const aspectCount = ASPECT_COUNT_BY_EFFORT[effort] ?? 3;
+    const aspects = ASPECT_TEMPLATES.slice(0, aspectCount);
+    const numAspects = aspects.length;
 
     const fileIntent = extractFileIntent(goal);
     return aspects.map((a, i) => {
@@ -230,8 +256,8 @@ Include specific code snippets with line numbers when referencing code.`;
         deliberation: {
           ...deliberation,
           decompositionStrategy: 'NONE',
-          estimatedAgentCount: Math.max(1, Math.floor((deliberation.estimatedAgentCount ?? 3) / 3)),
-          estimatedSteps: Math.max(5, Math.floor((deliberation.estimatedSteps ?? 10) / 3)),
+          estimatedAgentCount: Math.max(1, Math.floor((deliberation.estimatedAgentCount ?? numAspects) / numAspects)),
+          estimatedSteps: Math.max(5, Math.floor((deliberation.estimatedSteps ?? 10) / numAspects)),
         },
         dependencies: i > 0 ? [i - 1] : [],
         availableTools: a.tools,
@@ -364,13 +390,11 @@ Include specific code snippets with line numbers when referencing code.`;
     dependencies: number[];
     availableTools?: string[];
   }> {
-    // Fixed 4-step template
-    const steps = [
-      'Plan and design approach',
-      'Implement core logic',
-      'Review and verify',
-      'Polish and finalize',
-    ];
+    // Adaptive: scale step count by effort level (SIMPLE=3 ... DEEP_RESEARCH=6)
+    const effort: EffortLevel = deliberation.effortLevel ?? 'MODERATE';
+    const stepCount = STEP_COUNT_BY_EFFORT[effort] ?? 4;
+    const steps = STEP_TEMPLATES.slice(0, stepCount);
+    const numSteps = steps.length;
 
     const fileIntent = extractFileIntent(goal);
     return steps.map((step, i) => {
@@ -427,7 +451,7 @@ Write a comprehensive output with:
         deliberation: {
           ...deliberation,
           decompositionStrategy: 'NONE',
-          estimatedSteps: Math.max(5, Math.floor((deliberation.estimatedSteps ?? 10) / 4)),
+          estimatedSteps: Math.max(5, Math.floor((deliberation.estimatedSteps ?? 10) / numSteps)),
         },
         dependencies: i > 0 ? [i - 1] : [],
       };
