@@ -765,8 +765,9 @@ class GVisorSB implements PlatformSandbox {
 
     if (p.memoryLimitMB && p.memoryLimitMB > 0) args.push('--memory', `${p.memoryLimitMB}m`);
 
-    // Security: CPU resource limit — prevent crypto-mining / DoS via CPU exhaustion.
-    args.push('--cpus', '2', '--cpu-quota', '200000');
+    // Security (G8): Configurable CPU resource limit — prevent crypto-mining / DoS via CPU exhaustion.
+    const _cpuLimit = p.cpuLimit ?? 2;
+    args.push('--cpus', String(_cpuLimit), '--cpu-quota', String(Math.round(_cpuLimit * 100000)));
 
     // Environment filtering
     const env = filterEnv(p);
@@ -992,8 +993,9 @@ class DockerSB implements PlatformSandbox {
     }
 
     if (p.memoryLimitMB && p.memoryLimitMB > 0) args.push('--memory', `${p.memoryLimitMB}m`);
-    // Security: CPU resource limit — prevent crypto-mining / DoS via CPU exhaustion.
-    args.push('--cpus', '2', '--cpu-quota', '200000');
+    // Security (G8): Configurable CPU resource limit — prevent crypto-mining / DoS via CPU exhaustion.
+    const _cpuLimit = p.cpuLimit ?? 2;
+    args.push('--cpus', String(_cpuLimit), '--cpu-quota', String(Math.round(_cpuLimit * 100000)));
     args.push(
       '--cap-drop',
       'ALL',
@@ -1094,11 +1096,33 @@ class DockerSB implements PlatformSandbox {
   }
 }
 
-// Noop fallback
+// Noop fallback — ZERO isolation, must enforce network policy explicitly
 class NoopSB implements PlatformSandbox {
   readonly name = 'none' as const;
   readonly available = true;
   async execute(cmd: string, p: SandboxProfile, wd?: string): Promise<SandboxExecutionResult> {
+    // Security (G7): NoopSB provides ZERO isolation — no filesystem, network,
+    // or process boundaries. Refuse to execute when the profile requires network
+    // restrictions, since we cannot enforce them without an OS-level sandbox.
+    // Only 'full' network is acceptable — the caller explicitly accepts unsandboxed
+    // network access.
+    if (p.network !== 'full') {
+      getGlobalLogger().warn(
+        'NoopSB',
+        `Refusing to execute — network policy "${p.network}" cannot be enforced without an OS-level sandbox`,
+      );
+      return {
+        stdout: '',
+        stderr:
+          `Command refused: NoopSB cannot enforce network policy "${p.network}". ` +
+          'Install an OS-level sandbox (Docker/Seatbelt/Bubblewrap/gVisor) ' +
+          'or use the "full-access" profile to explicitly accept unsandboxed execution.',
+        exitCode: 126,
+        durationMs: 0,
+        sandboxMechanism: 'none',
+        violated: ['network_policy_not_enforceable'],
+      };
+    }
     return exec(cmd, wd ?? process.cwd(), filterEnv(p), p.timeout ?? 60000);
   }
 }
