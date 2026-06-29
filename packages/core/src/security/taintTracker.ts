@@ -73,7 +73,7 @@ export class TaintedString {
 
 // ── Taint Combination Logic ────────────────────────────────────────────────
 
-function combineTaint(a: TaintLabel, b: TaintLabel): TaintLabel {
+export function combineTaint(a: TaintLabel, b: TaintLabel): TaintLabel {
   // Most restrictive wins
   if (a === 'external' || b === 'external') return 'external';
   if (a === 'untrusted' || b === 'untrusted') return 'untrusted';
