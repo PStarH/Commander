@@ -65,6 +65,18 @@ export async function atomicWriteFile(
  * Register a cleanup hook so .tmp files in the target directory are
  * removed on process exit / SIGINT / SIGTERM. Best-effort: this is a
  * safety net for crashes, not a replacement for try/catch in callers.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * SYNC I/O RETENTION (audited): the body of `cleanup` deliberately uses
+ * `readdirSync` + `unlinkSync`. Rationale:
+ *   1. Node.js docs forbid async I/O inside a `process.on('exit')` listener
+ *      ("Listener functions should only contain synchronous operations").
+ *   2. SIGINT/SIGTERM are surfaced via the same cleanup path so we can fail
+ *      loudly on user Ctrl-C without losing the crash-recovery .tmp sweep.
+ *
+ * Net effect: at most a handful of files are scanned synchronously during
+ * process teardown — the hot path (atomicWriteFile itself) is fully async.
+ * ───────────────────────────────────────────────────────────────────────────
  */
 export function registerTmpCleanup(directory: string): () => void {
   const cleanup = (): void => {
@@ -75,12 +87,12 @@ export function registerTmpCleanup(directory: string): () => void {
           try {
             fs.unlinkSync(path.join(directory, entry));
           } catch (_silentE_) {
-            reportSilentFailure(_silentE_, 'atomicWrite:76');
+            reportSilentFailure(_silentE_, 'atomicWrite:88');
           }
         }
       }
     } catch (_silentE_) {
-      reportSilentFailure(_silentE_, 'atomicWrite:79');
+      reportSilentFailure(_silentE_, 'atomicWrite:91');
     }
   };
 

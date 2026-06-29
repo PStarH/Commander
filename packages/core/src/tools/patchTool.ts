@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { execSandboxed } from './sandboxedExec';
 import { getGlobalLogger } from '../logging';
 import { safePath } from './fileSystemTool';
+import { pathExists } from './_utils/pathExists';
 
 /** Reject paths containing shell metacharacters that could enable injection. */
 const SHELL_UNSAFE_RE = /[;&|`$(){}[\]!#~<>*\n\t'"\\\x00-\x1f]/;
@@ -68,8 +69,8 @@ export class ApplyPatchTool implements Tool {
     const patchFile = path.join(cwd, `.tmp-patch-${Date.now()}.diff`);
 
     try {
-      // Write patch to temp file
-      fs.writeFileSync(patchFile, patchContent, 'utf-8');
+      // Write patch to temp file (async — no event-loop blocking)
+      await fs.promises.writeFile(patchFile, patchContent, 'utf-8');
 
       // Try to extract target file from patch header
       let fileToPatch = targetFile;
@@ -86,10 +87,10 @@ export class ApplyPatchTool implements Tool {
       try {
         targetPath = safePath(fileToPatch);
       } catch (err) {
-        reportSilentFailure(err, 'patchTool:88');
+        reportSilentFailure(err, 'patchTool:86');
         return `Error: Target file "${fileToPatch}" is outside the workspace.`;
       }
-      if (!fs.existsSync(targetPath)) {
+      if (!(await pathExists(targetPath))) {
         return `Error: Target file not found: ${fileToPatch}. Searched at: ${targetPath}`;
       }
 
@@ -113,7 +114,7 @@ export class ApplyPatchTool implements Tool {
           patchApplied = true;
           break;
         } catch (err) {
-          reportSilentFailure(err, 'patchTool:115');
+          reportSilentFailure(err, 'patchTool:113');
           /* try next variant */
         }
       }
@@ -143,7 +144,7 @@ export class ApplyPatchTool implements Tool {
           }
 
           // Run ESLint if available
-          if (fs.existsSync(path.join(cwd, '.eslintrc'))) {
+          if (await pathExists(path.join(cwd, '.eslintrc'))) {
             const lintResult = await execSandboxed('npx eslint --quiet . 2>&1 || true', 30, cwd);
             const lintOutput = lintResult.stdout || lintResult.stderr;
             if (lintOutput.trim()) {
@@ -201,7 +202,7 @@ export class ApplyPatchTool implements Tool {
       return `Patch failed: ${msg.slice(0, 300)}`;
     } finally {
       try {
-        fs.unlinkSync(patchFile);
+        await fs.promises.unlink(patchFile);
       } catch (e) {
         getGlobalLogger().warn('ApplyPatchTool', 'Temp patch cleanup failed', {
           error: (e as Error)?.message,

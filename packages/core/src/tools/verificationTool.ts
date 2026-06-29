@@ -3,7 +3,7 @@ import type { Tool, ToolDefinition } from '../runtime/types';
 import { execSandboxed } from './sandboxedExec';
 import { safePath } from './fileSystemTool';
 import { getGlobalLogger } from '../logging';
-import * as fs from 'node:fs';
+import { pathExists } from './_utils/pathExists';
 import * as path from 'node:path';
 
 const DEFINITION: ToolDefinition = {
@@ -64,7 +64,7 @@ export class VerificationTool implements Tool {
       try {
         directory = safePath(String(args.directory));
       } catch (err) {
-        reportSilentFailure(err, 'verificationTool:66');
+        reportSilentFailure(err, 'verificationTool:64');
         return `Error: Access denied: directory "${args.directory}" is outside workspace`;
       }
     } else {
@@ -151,7 +151,7 @@ export class VerificationTool implements Tool {
 
   private async runLint(cwd: string, fix: boolean): Promise<CheckResult> {
     const fixFlag = fix ? ' --fix' : '';
-    if (this.hasTool(cwd, 'node_modules/.bin/eslint')) {
+    if (await this.hasTool(cwd, 'node_modules/.bin/eslint')) {
       return this.runCommand(`npx eslint .${fixFlag} --format compact 2>&1 || true`, cwd, 'ESLint');
     }
     return {
@@ -165,7 +165,7 @@ export class VerificationTool implements Tool {
   }
 
   private async runTypeCheck(cwd: string): Promise<CheckResult> {
-    if (this.hasFile(cwd, 'tsconfig.json')) {
+    if (await this.hasFile(cwd, 'tsconfig.json')) {
       return this.runCommand('npx tsc --noEmit 2>&1 || true', cwd, 'TypeScript');
     }
     return {
@@ -193,7 +193,7 @@ export class VerificationTool implements Tool {
       };
     }
 
-    if (this.hasTool(cwd, 'node_modules/.bin/vitest')) {
+    if (await this.hasTool(cwd, 'node_modules/.bin/vitest')) {
       // SECURITY FIX: use execFileSync with argv array instead of shell interpolation
       const args = ['vitest', 'run'];
       if (sanitizedPattern) args.push(sanitizedPattern);
@@ -228,7 +228,7 @@ export class VerificationTool implements Tool {
         };
       }
     }
-    if (this.hasTool(cwd, 'node_modules/.bin/jest')) {
+    if (await this.hasTool(cwd, 'node_modules/.bin/jest')) {
       const args = ['jest'];
       if (sanitizedPattern) args.push(sanitizedPattern);
       try {
@@ -273,7 +273,7 @@ export class VerificationTool implements Tool {
   }
 
   private async runBuild(cwd: string): Promise<CheckResult> {
-    if (this.hasFile(cwd, 'package.json')) {
+    if (await this.hasFile(cwd, 'package.json')) {
       return this.runCommand('npx tsc --noEmit 2>&1 || true', cwd, 'Build check');
     }
     return {
@@ -286,27 +286,13 @@ export class VerificationTool implements Tool {
     };
   }
 
-  private hasTool(cwd: string, relPath: string): boolean {
-    try {
-      return fs.existsSync(path.join(cwd, relPath));
-    } catch (e) {
-      getGlobalLogger().warn('VerificationTool', 'Tool check failed', {
-        error: (e as Error)?.message,
-        relPath,
-      });
-      return false;
-    }
+  private async hasTool(cwd: string, relPath: string): Promise<boolean> {
+    return pathExists(path.join(cwd, relPath));
   }
 
-  private hasFile(cwd: string, name: string): boolean {
-    try {
-      return fs.existsSync(path.join(cwd, name));
-    } catch (e) {
-      getGlobalLogger().warn('VerificationTool', 'File check failed', {
-        error: (e as Error)?.message,
-        name,
-      });
-      return false;
-    }
+  private async hasFile(cwd: string, name: string): Promise<boolean> {
+    return pathExists(path.join(cwd, name));
   }
 }
+
+
