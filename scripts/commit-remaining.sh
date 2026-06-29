@@ -57,10 +57,7 @@ commit_group "fix(core): update remaining core modules (goal, drive, edit, mcp, 
 commit_group "test(core): update core tests and reorganize e2e suite" packages/core/tests/
 
 # 其它 packages
-commit_group "fix(observability-package): update routes, scoring, and timeline builders" packages/observability/
 commit_group "fix(sdk): update commander client" packages/sdk/
-commit_group "fix(valify): update schemas" packages/valify/
-commit_group "fix(viz): update trace reader and ANSI handling" packages/viz/
 
 # scripts（包含本次整理用的两个脚本）
 commit_group "chore(scripts): update audit, benchmark, and QA scripts" scripts/
