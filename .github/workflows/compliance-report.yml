@@ -59,7 +59,7 @@ jobs:
       - name: Restore previous snapshot history
         id: restore
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: posture-snapshots-latest
           path: packages/core/.commander
