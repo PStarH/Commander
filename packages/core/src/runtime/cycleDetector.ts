@@ -224,6 +224,13 @@ export class CycleDetector {
   }
 
   checkOutput(output: string): CycleDetectionResult {
+    // 1. Character-level repetition detection (model degeneration guard).
+    // Catches patterns like "TheTheTheThe", "I willI willI will", or
+    // excessive repetition of any token sequence — common failure mode
+    // of small models under long-context stress.
+    const repetition = CycleDetector.detectRepetition(output);
+    if (repetition.detected) return repetition;
+
     const fingerprint = CycleDetector.extractFingerprint(output);
     this.outputHistory.push(fingerprint);
     if (this.outputHistory.length > this.maxOutputHistory) {
@@ -249,6 +256,65 @@ export class CycleDetector {
           advice:
             'The model is producing semantically near-identical outputs. Inject variety: rephrase the goal, add a temperature constraint, or switch to a different model.',
           similarity,
+        };
+      }
+    }
+
+    return { detected: false };
+  }
+
+  /**
+   * Character-level repetition detection for model degeneration.
+   *
+   * Detects two patterns:
+   * 1. Immediate token repetition: "TheTheTheThe", "I willI willI will"
+   *    — a word or short phrase repeated 3+ times with no separator.
+   * 2. Run-length degeneration: any single character sequence repeated
+   *    5+ times (e.g., "aaaaaaa", "......").
+   *
+   * Returns a CycleDetectionResult when degeneration is found, so the
+   * runtime can break the retry loop instead of accumulating worse output.
+   */
+  static detectRepetition(text: string): CycleDetectionResult {
+    if (!text || text.length < 20) return { detected: false };
+
+    // Pattern 1: immediate word/phrase repetition (no whitespace separator)
+    // Matches "TheTheThe", "I willI willI will", "step step step step"
+    // Uses a backreference: \1+ means "the captured group, 2 or more times"
+    const phraseRepeat = text.match(/\b([\w\s]{2,30}?)\1{2,}/);
+    if (phraseRepeat) {
+      const repeated = phraseRepeat[1].trim();
+      // Any 3+ repetition of a phrase ≥6 chars is degeneration.
+      // Lower threshold: 3 repetitions × "The" (3 chars) = 9 chars match,
+      // but we require ≥6 char match to avoid false positives on short words.
+      const matchLen = phraseRepeat[0].length;
+      const repetitions = Math.floor(matchLen / phraseRepeat[1].length);
+      if (matchLen >= 6 && repetitions >= 3) {
+        return {
+          detected: true,
+          type: 'semantic_stagnation',
+          description: `Model degeneration: phrase "${repeated}" repeated ${repetitions} times (${matchLen} chars)`,
+          advice:
+            'The model is producing repetitive output — a sign of context-window exhaustion or degeneration. Stop retrying; the output will not improve.',
+          similarity: 0.99,
+        };
+      }
+    }
+
+    // Pattern 2: run-length degeneration — any single token repeated 5+ times
+    // Catches "aaaaaaa", "......", "=====", "the the the the the"
+    const tokenRepeat = text.match(/(\b\w+\b)(\s+\1){4,}/gi);
+    if (tokenRepeat) {
+      const match = tokenRepeat[0];
+      const wordCount = match.split(/\s+/).length;
+      if (wordCount >= 5) {
+        return {
+          detected: true,
+          type: 'semantic_stagnation',
+          description: `Model degeneration: token repeated ${wordCount} times`,
+          advice:
+            'The model is producing repetitive output — a sign of context-window exhaustion or degeneration. Stop retrying; the output will not improve.',
+          similarity: 0.99,
         };
       }
     }
