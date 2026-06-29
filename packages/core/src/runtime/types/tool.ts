@@ -18,6 +18,19 @@ export interface ToolDefinition {
   category?: string;
   /** Whether this tool should be hidden from general-purpose models (specialized) */
   hidden?: boolean;
+  /** Side-effect classification for taint tracking and security gates.
+   *  - 'none': pure read, no state change
+   *  - 'local_state': writes to local filesystem / DB / in-process state
+   *  - 'external_egress': sends data to an external system (HTTP, email, webhook, A2A, MCP-egress)
+   *
+   * Fallback strategy (undefined riskMetadata):
+   *   - Read operations → treated as 'none' (don't bump taint tier)
+   *   - Write/Execute operations → treated as 'local_state' (bump to LOCAL_DIRTY, no outbound block)
+   * This asymmetric default avoids false positives on third-party MCP tools
+   * while forcing tool authors to explicitly declare 'external_egress'. */
+  riskMetadata?: {
+    sideEffect: 'none' | 'local_state' | 'external_egress';
+  };
 }
 
 /**
