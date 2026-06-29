@@ -41,11 +41,11 @@ export interface SACEvaluation {
   evaluatorId: string;
   evaluatedAgentId: string;
   scores: {
-    relevance: number;  // 0-1
-    accuracy: number;   // 0-1
-    depth: number;      // 0-1
-    logic: number;      // 0-1
-    clarity: number;    // 0-1
+    relevance: number; // 0-1
+    accuracy: number; // 0-1
+    depth: number; // 0-1
+    logic: number; // 0-1
+    clarity: number; // 0-1
   };
   /** Overall weighted score (computed from dimension scores) */
   overall: number;
@@ -57,7 +57,7 @@ export interface SACEvaluation {
 export interface SACConsensusResult {
   winningProposal: SACProposal;
   winningAgentId: string;
-  consensusScore: number;       // 0-1, weighted average score of winner
+  consensusScore: number; // 0-1, weighted average score of winner
   consensusLevel: 'unanimous' | 'strong' | 'moderate' | 'low' | 'divided';
   allScores: Array<{
     agentId: string;
@@ -67,7 +67,7 @@ export interface SACConsensusResult {
   }>;
   reputationUpdates: ReputationUpdate[];
   totalEvaluations: number;
-  byzantineSuspects: string[];  // agents whose proposals were universally rejected
+  byzantineSuspects: string[]; // agents whose proposals were universally rejected
 }
 
 export interface SACDimensionAverages {
@@ -123,16 +123,16 @@ export interface SACConfig {
 export const DEFAULT_CONFIG: SACConfig = {
   dimensionWeights: {
     relevance: 0.25,
-    accuracy: 0.30,
+    accuracy: 0.3,
     depth: 0.15,
-    logic: 0.20,
-    clarity: 0.10,
+    logic: 0.2,
+    clarity: 0.1,
   },
   thresholds: {
     unanimous: 0.95,
-    strong: 0.80,
-    moderate: 0.60,
-    low: 0.40,
+    strong: 0.8,
+    moderate: 0.6,
+    low: 0.4,
   },
   reputationLearningRate: 0.1,
   initialReputation: 0.5,
@@ -201,10 +201,7 @@ export class SACProtocol {
    * @param evaluations - All receiver-side evaluations (each evaluator scores each proposal)
    * @returns Consensus result with winner, scores, and reputation updates
    */
-  computeConsensus(
-    proposals: SACProposal[],
-    evaluations: SACEvaluation[],
-  ): SACConsensusResult {
+  computeConsensus(proposals: SACProposal[], evaluations: SACEvaluation[]): SACConsensusResult {
     if (proposals.length === 0) {
       throw new Error('SAC: no proposals provided');
     }
@@ -277,14 +274,15 @@ export class SACProtocol {
 
     // Identify byzantine suspects (proposals with very low scores)
     const byzantineSuspects = allScores
-      .filter((s) => s.weightedScore < this.config.byzantineScoreThreshold && s.evaluatorCount >= this.config.minEvaluatorsPerProposal)
+      .filter(
+        (s) =>
+          s.weightedScore < this.config.byzantineScoreThreshold &&
+          s.evaluatorCount >= this.config.minEvaluatorsPerProposal,
+      )
       .map((s) => s.agentId);
 
     // Update reputations based on which evaluators picked the winner
-    const reputationUpdates = this.updateReputations(
-      winningScore.agentId,
-      evaluationsByAgent,
-    );
+    const reputationUpdates = this.updateReputations(winningScore.agentId, evaluationsByAgent);
 
     const result: SACConsensusResult = {
       winningProposal,

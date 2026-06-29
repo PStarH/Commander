@@ -115,6 +115,13 @@ export default defineConfig({
       'tests/runtime/observationPurifier.test.ts',
       // --- tools ---
       'tests/tools/resourceTools.test.ts',
+      // async-I/O regression tests added alongside the safePath/pathExists
+      // async refactor; they guard the "no event-loop blocking, no TOCTOU
+      // probes, no missed warn-on-real-error" contract.
+      'tests/tools/_utils/pathExists.test.ts',
+      'tests/tools/fileSystemTool.asyncHelpers.test.ts',
+      'tests/tools/persistenceTool.test.ts',
+      'tests/tools/verificationTool.asyncHelpers.test.ts',
       // --- observability ---
       'tests/observability/autoScorer.test.ts',
       'tests/observability/datasetStore.test.ts',

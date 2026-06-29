@@ -94,10 +94,7 @@ export class AgentFileCollector {
    *
    * @returns The enriched final output string
    */
-  async collectAndEnrich(
-    params: CollectAgentFilesParams,
-    reasoning: string[],
-  ): Promise<string> {
+  async collectAndEnrich(params: CollectAgentFilesParams, reasoning: string[]): Promise<string> {
     let finalOutput = params.finalSynthesis;
 
     try {
@@ -290,15 +287,11 @@ export class AgentFileCollector {
             reasoning.push(`Output generator: produced ${finalOutput.length} bytes`);
           }
         } catch (e) {
-          reasoning.push(
-            `Output generator failed: ${e instanceof Error ? e.message : 'unknown'}`,
-          );
+          reasoning.push(`Output generator failed: ${e instanceof Error ? e.message : 'unknown'}`);
         }
       }
     } catch (e) {
-      reasoning.push(
-        `Agent file collection failed: ${e instanceof Error ? e.message : 'unknown'}`,
-      );
+      reasoning.push(`Agent file collection failed: ${e instanceof Error ? e.message : 'unknown'}`);
     }
 
     return finalOutput;

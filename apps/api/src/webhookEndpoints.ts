@@ -93,9 +93,7 @@ function writeIMWebhooks(imConfigs: IMWebhookConfig[]): void {
   // Preserve non-IM entries (legacy outgoing webhooks without a `platform` field)
   const nonIM = all.filter(
     (e) =>
-      !e ||
-      typeof e !== 'object' ||
-      typeof (e as Record<string, unknown>).platform !== 'string',
+      !e || typeof e !== 'object' || typeof (e as Record<string, unknown>).platform !== 'string',
   );
   writeAllWebhooks([...nonIM, ...imConfigs]);
 }
@@ -118,20 +116,13 @@ function generateSecret(): string {
  * DingTalk robot signature verification.
  * Algorithm: HmacSHA256(timestamp + "\n" + secret), base64-encoded.
  */
-function verifyDingTalkSignature(
-  timestamp: string,
-  sign: string,
-  secret: string,
-): boolean {
+function verifyDingTalkSignature(timestamp: string, sign: string, secret: string): boolean {
   try {
     const expected = crypto
       .createHmac('sha256', secret)
       .update(timestamp + '\n' + secret)
       .digest('base64');
-    return crypto.timingSafeEqual(
-      Buffer.from(expected),
-      Buffer.from(sign),
-    );
+    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sign));
   } catch (err) {
     reportSilentFailure(err, 'webhookEndpoints:verifyDingTalkSignature');
     return false;
@@ -173,10 +164,7 @@ function extractXmlField(xml: string, tag: string): string | null {
 
 // ── Agent execution helper ────────────────────────────────────────────────
 
-async function executeAgentMessage(
-  agentId: string,
-  message: string,
-): Promise<string> {
+async function executeAgentMessage(agentId: string, message: string): Promise<string> {
   const runtime = getSharedRuntime();
   const result = await runtime.execute({
     agentId,
@@ -189,8 +177,7 @@ async function executeAgentMessage(
   });
 
   return (
-    result.summary ||
-    (result.status === 'success' ? 'Task completed.' : `Task ${result.status}.`)
+    result.summary || (result.status === 'success' ? 'Task completed.' : `Task ${result.status}.`)
   );
 }
 
@@ -261,9 +248,12 @@ export function createWebhookRouter(): Router {
 
       const body = req.body as Record<string, unknown>;
       const header = (body.header ?? {}) as Record<string, unknown>;
-      const eventType = typeof header.event_type === 'string'
-        ? header.event_type
-        : (typeof body.type === 'string' ? body.type : '');
+      const eventType =
+        typeof header.event_type === 'string'
+          ? header.event_type
+          : typeof body.type === 'string'
+            ? body.type
+            : '';
 
       // Optional token verification
       if (config && config.secret) {

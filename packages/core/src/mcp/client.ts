@@ -223,9 +223,10 @@ export class MCPClient {
   async connect(): Promise<void> {
     // SECURITY: run a supply-chain scan before opening a connection to an
     // external MCP server. Block on critical/malicious findings.
-    const scanInput = this.config.transport === 'stdio'
-      ? `${this.config.command ?? ''} ${(this.config.args ?? []).join(' ')}`
-      : this.config.url ?? '';
+    const scanInput =
+      this.config.transport === 'stdio'
+        ? `${this.config.command ?? ''} ${(this.config.args ?? []).join(' ')}`
+        : (this.config.url ?? '');
     const scanResult = getSupplyChainScanner().scan({
       name: `mcp:${scanInput}`,
       content: scanInput,

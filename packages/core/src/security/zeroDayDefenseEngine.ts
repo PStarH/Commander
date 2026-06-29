@@ -549,8 +549,7 @@ function combineBpa(a: BPA, b: BPA): BPA {
     // 完全冲突——返回最大不确定
     return { attack: 0, noAttack: 0, unknown: 1 };
   }
-  const attack =
-    (a.attack * b.attack + a.attack * b.unknown + a.unknown * b.attack) / denom;
+  const attack = (a.attack * b.attack + a.attack * b.unknown + a.unknown * b.attack) / denom;
   const noAttack =
     (a.noAttack * b.noAttack + a.noAttack * b.unknown + a.unknown * b.noAttack) / denom;
   const unknown = (a.unknown * b.unknown) / denom;
@@ -658,7 +657,12 @@ export class ZeroDayDefenseEngine {
    * @param source - 请求来源标识（可选，用于分布式攻击检测）
    * @returns 若检测到异常则返回 AnomalySignal，否则返回 null
    */
-  recordMetric(type: MetricType, name: string, value: number, source?: string): AnomalySignal | null {
+  recordMetric(
+    type: MetricType,
+    name: string,
+    value: number,
+    source?: string,
+  ): AnomalySignal | null {
     const metricKey = `${type}${METRIC_KEY_SEP}${name}`;
     const now = Date.now();
     const baseline = this.getOrCreateBaseline(type, metricKey, value, now);
@@ -719,7 +723,15 @@ export class ZeroDayDefenseEngine {
     let signal: AnomalySignal | null = null;
     if (confidence > 0.5) {
       const relax = this.currentRelaxFactor();
-      const description = this.describeAnomaly(metricKey, value, zScore, ewmaDeviation, iqrScore, markovAnomaly, frequencyAnomaly);
+      const description = this.describeAnomaly(
+        metricKey,
+        value,
+        zScore,
+        ewmaDeviation,
+        iqrScore,
+        markovAnomaly,
+        frequencyAnomaly,
+      );
       signal = {
         metricName: metricKey,
         value,
@@ -936,10 +948,14 @@ export class ZeroDayDefenseEngine {
 
     if (detected) {
       try {
-        getGlobalLogger().warn('ZeroDayDefenseEngine', `检测到慢攻击（最严重指标: ${worstMetric}）`, {
-          maxAccumulator: maxAccumulator.toFixed(2),
-          threshold: this.config.slowAttackAccumulationThreshold,
-        });
+        getGlobalLogger().warn(
+          'ZeroDayDefenseEngine',
+          `检测到慢攻击（最严重指标: ${worstMetric}）`,
+          {
+            maxAccumulator: maxAccumulator.toFixed(2),
+            threshold: this.config.slowAttackAccumulationThreshold,
+          },
+        );
       } catch (err) {
         reportSilentFailure(err, 'zeroDayDefenseEngine:detectSlowAttack');
       }
@@ -1024,7 +1040,9 @@ export class ZeroDayDefenseEngine {
 
     return {
       detected,
-      confidence: detected ? clamp(sourceCount / (this.config.distributedMinSources * 2), 0, 0.9) : 0,
+      confidence: detected
+        ? clamp(sourceCount / (this.config.distributedMinSources * 2), 0, 0.9)
+        : 0,
       signals,
       description: detected
         ? `检测到分布式攻击：${sourceCount} 个来源汇聚低频异常`
@@ -1069,12 +1087,11 @@ export class ZeroDayDefenseEngine {
       // 近期是否有强异常
       const recentAnomaly = baseline.lastAnomalyTimestamp >= lookbackStart;
 
-      if ((novelTransitionScore > 0.6 || spectralShift > this.config.frequencyAnomalyThreshold) && recentAnomaly) {
-        const confidence = clamp(
-          Math.max(novelTransitionScore, spectralShift) * 0.85,
-          0,
-          0.9,
-        );
+      if (
+        (novelTransitionScore > 0.6 || spectralShift > this.config.frequencyAnomalyThreshold) &&
+        recentAnomaly
+      ) {
+        const confidence = clamp(Math.max(novelTransitionScore, spectralShift) * 0.85, 0, 0.9);
         signals.push({
           metricName: metricKey,
           value: baseline.ewma,
@@ -1414,8 +1431,7 @@ export class ZeroDayDefenseEngine {
     }
 
     const detected =
-      lowConfidenceSignals.length >= this.config.coordinatedMinSignals &&
-      typeSet.size >= 2; // 至少跨 2 个维度
+      lowConfidenceSignals.length >= this.config.coordinatedMinSignals && typeSet.size >= 2; // 至少跨 2 个维度
 
     const signals: AnomalySignal[] = [];
     if (detected) {
@@ -1439,7 +1455,9 @@ export class ZeroDayDefenseEngine {
 
     return {
       detected,
-      confidence: detected ? clamp(lowConfidenceSignals.length / (this.config.coordinatedMinSignals * 2), 0, 0.9) : 0,
+      confidence: detected
+        ? clamp(lowConfidenceSignals.length / (this.config.coordinatedMinSignals * 2), 0, 0.9)
+        : 0,
       signals,
       description: detected
         ? `检测到协调攻击：${lowConfidenceSignals.length} 个低置信度信号跨维度并发`
@@ -1472,11 +1490,7 @@ export class ZeroDayDefenseEngine {
 
       const signals: AnomalySignal[] = [];
       if (detected) {
-        const confidence = clamp(
-          (melted ? 0.6 : 0.4) + (highUtilization ? 0.2 : 0),
-          0,
-          0.9,
-        );
+        const confidence = clamp((melted ? 0.6 : 0.4) + (highUtilization ? 0.2 : 0), 0, 0.9);
         signals.push({
           metricName: 'bill_explosion_correlation',
           value: report?.daily?.utilization ?? 0,
@@ -1493,9 +1507,7 @@ export class ZeroDayDefenseEngine {
         detected,
         confidence: detected ? 0.7 : 0,
         signals,
-        description: detected
-          ? '检测到账单爆炸关联（经济型零日攻击嫌疑）'
-          : '未检测到账单爆炸关联',
+        description: detected ? '检测到账单爆炸关联（经济型零日攻击嫌疑）' : '未检测到账单爆炸关联',
       };
     } catch (err) {
       reportSilentFailure(err, 'zeroDayDefenseEngine:detectBillExplosion');
@@ -1520,7 +1532,18 @@ export class ZeroDayDefenseEngine {
     const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
     // 简单节假日判断（元旦、国庆等固定日期）
     const monthDay = `${date.getMonth() + 1}-${date.getDate()}`;
-    const isHoliday = ['1-1', '1-2', '1-3', '10-1', '10-2', '10-3', '10-4', '10-5', '10-6', '10-7'].includes(monthDay);
+    const isHoliday = [
+      '1-1',
+      '1-2',
+      '1-3',
+      '10-1',
+      '10-2',
+      '10-3',
+      '10-4',
+      '10-5',
+      '10-6',
+      '10-7',
+    ].includes(monthDay);
 
     // 周末/节假日：流量通常更低、模式更简单 → 异常更易显现，阈值收紧
     // 此处通过调整慢攻击累积阈值与协调攻击灵敏度体现（已在 currentRelaxFactor 间接使用）
@@ -1570,10 +1593,14 @@ export class ZeroDayDefenseEngine {
 
     if (this.burstMode !== wasBurst) {
       try {
-        getGlobalLogger().info('ZeroDayDefenseEngine', `突发流量模式${this.burstMode ? '启用' : '关闭'}`, {
-          ratio: ratio.toFixed(2),
-          multiplier: this.config.burstDetectionMultiplier,
-        });
+        getGlobalLogger().info(
+          'ZeroDayDefenseEngine',
+          `突发流量模式${this.burstMode ? '启用' : '关闭'}`,
+          {
+            ratio: ratio.toFixed(2),
+            multiplier: this.config.burstDetectionMultiplier,
+          },
+        );
         getSecurityAuditLogger().logEvent({
           type: 'config_change',
           severity: 'low',
@@ -1656,7 +1683,9 @@ export class ZeroDayDefenseEngine {
             details: { riskScore, attackPattern, signals: signalSummary },
             recommendation: '增强监控，关注后续异常信号累积趋势',
           });
-          getGlobalMetrics().incrementCounter('zeroday.response.monitor', 1, { pattern: attackPattern });
+          getGlobalMetrics().incrementCounter('zeroday.response.monitor', 1, {
+            pattern: attackPattern,
+          });
           break;
         }
         case 'THROTTLE': {
@@ -1678,7 +1707,9 @@ export class ZeroDayDefenseEngine {
           });
           // 联动企业安全网关态势
           this.recordGatewayPosture(action, riskScore, attackPattern);
-          getGlobalMetrics().incrementCounter('zeroday.response.throttle', 1, { pattern: attackPattern });
+          getGlobalMetrics().incrementCounter('zeroday.response.throttle', 1, {
+            pattern: attackPattern,
+          });
           break;
         }
         case 'ISOLATE':
@@ -1844,10 +1875,9 @@ export class ZeroDayDefenseEngine {
 // 单例
 // ============================================================================
 
-const zeroDaySingleton = createTenantAwareSingleton(
-  () => new ZeroDayDefenseEngine(),
-  { componentName: 'ZeroDayDefenseEngine' },
-);
+const zeroDaySingleton = createTenantAwareSingleton(() => new ZeroDayDefenseEngine(), {
+  componentName: 'ZeroDayDefenseEngine',
+});
 
 /**
  * 获取全局 ZeroDayDefenseEngine 单例（单租户）或租户作用域实例（多租户）。

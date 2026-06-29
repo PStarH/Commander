@@ -71,8 +71,7 @@ Content hashes stay valid even when line numbers change.`,
       {
         name: 'file_hash_edit',
         arguments: {
-          input:
-            '¶src/config.ts#A1B2\n@F7G8H9,I0J1K2→\nconst port = 8080;\nconst host = "0.0.0.0"',
+          input: '¶src/config.ts#A1B2\n@F7G8H9,I0J1K2→\nconst port = 8080;\nconst host = "0.0.0.0"',
         },
       },
     ],
@@ -96,7 +95,7 @@ Content hashes stay valid even when line numbers change.`,
       const results: string[] = [];
       for (const section of parsed.sections) {
         try {
-          const resolved = safePath(section.filePath);
+          const resolved = await safePath(section.filePath);
           section.filePath = resolved;
           const result = applyHashlineSection(section);
           if (result.success) {
@@ -124,7 +123,7 @@ Content hashes stay valid even when line numbers change.`,
     }
 
     try {
-      const resolved = safePath(filePath);
+      const resolved = await safePath(filePath);
       if (!(await pathExists(resolved))) return `Error: file not found: ${filePath}`;
 
       const content = await fs.promises.readFile(resolved, 'utf-8');

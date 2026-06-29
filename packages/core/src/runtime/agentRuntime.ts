@@ -124,7 +124,12 @@ import { getCapabilityTokenIssuer } from '../security/capabilityToken';
 import { getEnterpriseSecurityGateway } from '../security/enterpriseSecurityGateway';
 import { checkMemoryPoisoning } from '../security/memoryPoisoningGate';
 import { getMemoryPoisoningDefenseEngine } from '../security/memoryPoisoningDefenseEngine';
-import { isAgentSuspended, isAgentQuarantined, getThrottleMultiplier, processSecurityAlert } from '../security/securityResponseEngine';
+import {
+  isAgentSuspended,
+  isAgentQuarantined,
+  getThrottleMultiplier,
+  processSecurityAlert,
+} from '../security/securityResponseEngine';
 import type { SecurityAlert } from '../security/securityResponseEngine';
 import { assertInvariants } from '../security/securityInvariantVerifier';
 import { getHallucinationDetector } from '../hallucinationDetector';
@@ -159,10 +164,7 @@ import {
   executionTraceToOtlpSpans,
 } from './openTelemetryExporter';
 import { exportSOPFromTrace, formatSOPAsMarkdown } from './sopExport';
-import {
-  FinallyCleanupHandler,
-  type TenantOverrides,
-} from './finallyCleanupHandler';
+import { FinallyCleanupHandler, type TenantOverrides } from './finallyCleanupHandler';
 import { LLMRequestBuilder } from './llmRequestBuilder';
 import { GoalCompletionVerifier } from './goalCompletionVerifier';
 import { ToolExecutionHandler } from './toolExecutionHandler';
@@ -178,17 +180,9 @@ import { DEFAULT_TELOS_CONFIG, type TELOSBudget } from '../telos/types';
 import { getModelPerformanceStore } from './modelPerformanceStore';
 import { getSecurityMonitor } from '../security/securityMonitor';
 import { initializeRuntimeGuardian } from './runtimeGuardianBridge';
-import {
-  SecurityOrchestrator,
-  type SecurityOrchestratorDecision,
-} from './securityOrchestrator';
+import { SecurityOrchestrator, type SecurityOrchestratorDecision } from './securityOrchestrator';
 import type { CrossAgentEvent } from '../security/crossAgentCorrelator';
-import {
-  DEFAULT_CONFIG,
-  generateId,
-  now,
-  delay,
-} from './runtimeHelpers';
+import { DEFAULT_CONFIG, generateId, now, delay } from './runtimeHelpers';
 
 // ============================================================================
 // Tenant context resolution — extracted from execute() for clarity
@@ -548,24 +542,21 @@ export class AgentRuntime implements AgentRuntimeInterface {
     if (this.config.runtimeGuardian?.enabled) {
       try {
         const runtimeRef = this;
-        initializeRuntimeGuardian(
-          (name: string) => {
-            const provider = runtimeRef.getProvider(name);
-            if (!provider) return null;
-            return {
-              call: (input: {
-                model: string;
-                messages: { role: string; content: string }[];
-                maxTokens: number;
-              }) =>
-                provider.call({
-                  ...input,
-                  messages: input.messages as LLMMessage[],
-                }),
-            };
-          },
-          this.config.runtimeGuardian,
-        );
+        initializeRuntimeGuardian((name: string) => {
+          const provider = runtimeRef.getProvider(name);
+          if (!provider) return null;
+          return {
+            call: (input: {
+              model: string;
+              messages: { role: string; content: string }[];
+              maxTokens: number;
+            }) =>
+              provider.call({
+                ...input,
+                messages: input.messages as LLMMessage[],
+              }),
+          };
+        }, this.config.runtimeGuardian);
       } catch (err) {
         reportSilentFailure(err, 'agentRuntime:runtime-guardian-init');
         /* best-effort — GuardianAgent rules still provide baseline protection */
@@ -972,6 +963,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
   }
   getCompensationRegistry(): CompensationRegistry {
     return this.compensationService.getRegistry();
+  }
+  getReliabilityEngine(): ReliabilityEngine {
+    return this.reliabilityEngine;
   }
 
   /** Cancel all in-flight steps managed by the StepTimeoutManager.
@@ -1669,7 +1663,11 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     '[Output truncated: model degeneration detected — ' +
                     stagnation.description +
                     ']';
-                  response.toolCalls = [];
+                  // Don't clear toolCalls — the model may still issue valid
+                  // tool calls even when its text is degenerate (e.g.
+                  // "TheTheTheThe" + update-dep). Clearing them prevents
+                  // useful work from executing and guarantees checkCompletion
+                  // failure in benchmark cases.
                   degenerationDetected = true;
                 }
               }
@@ -1781,12 +1779,16 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 );
                 const contextTokenLimit = 102400; // 80% of typical 128k context window
                 if (estimatedContextTokens > contextTokenLimit) {
-                  getGlobalLogger().warn('AgentRuntime', 'Context-growth guard: breaking retry loop', {
-                    estimatedContextTokens,
-                    contextTokenLimit,
-                    attempt,
-                    maxRetries: this.config.maxRetries,
-                  });
+                  getGlobalLogger().warn(
+                    'AgentRuntime',
+                    'Context-growth guard: breaking retry loop',
+                    {
+                      estimatedContextTokens,
+                      contextTokenLimit,
+                      attempt,
+                      maxRetries: this.config.maxRetries,
+                    },
+                  );
                   getMetricsCollector().incrementCounter(
                     'context_growth_breaks_total',
                     'Retry loops broken due to context window exhaustion',
@@ -1846,59 +1848,77 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
                 state.totalTokenUsage = totalTokens;
                 state.steps = steps;
-                await this.checkpointingPhase.checkpointTerminal(ctx, state, 'completed_early_exit', {
-                  request,
-                  attempt,
-                  stepNumber: steps.length,
-                  exitSummary: result.summary,
-                });
+                await this.checkpointingPhase.checkpointTerminal(
+                  ctx,
+                  state,
+                  'completed_early_exit',
+                  {
+                    request,
+                    attempt,
+                    stepNumber: steps.length,
+                    exitSummary: result.summary,
+                  },
+                );
 
                 if (this.memory) {
                   try {
                     const _memContent = `[EARLY_EXIT] ${ctx.goal.slice(0, GOAL_TELEMETRY_MAX_CHARS)}`;
                     // Security (OWASP ASI07): Memory poisoning detection gate.
-                    const _poisoningCheck = checkMemoryPoisoning(_memContent, `agent:${ctx.agentId}`, ctx.agentId);
-                    if (!_poisoningCheck.allowed) {
-                      getGlobalLogger().warn('AgentRuntime', 'Memory write blocked by poisoning gate', { reason: _poisoningCheck.reason });
-                    } else {
-                    // Security (G4): Advanced defense engine — entropy, Unicode, Base64, rate limit, taint tracking
-                    let _defenseBlocked = false;
-                    try {
-                      const _defenseResult = getMemoryPoisoningDefenseEngine().validateMemoryWrite({
-                        content: _memContent,
-                        source: `agent:${ctx.agentId}`,
-                        agentId: ctx.agentId,
-                        memoryType: 'episodic',
-                        sourceCredibility: 'agent_generated',
-                        sessionId: runId,
-                        metadata: { phase: 'early_exit' },
-                      });
-                      if (!_defenseResult.allowed) {
-                        _defenseBlocked = true;
-                        getGlobalLogger().warn('AgentRuntime', 'Memory write blocked by defense engine', {
-                          reason: _defenseResult.reason,
-                          riskScore: _defenseResult.riskScore,
-                          severity: _defenseResult.severity,
-                        });
-                      }
-                    } catch (err) {
-                      reportSilentFailure(err, 'agentRuntime:defenseEngine:early_exit');
-                    }
-                    if (!_defenseBlocked) {
-                    this.memory.add(
+                    const _poisoningCheck = checkMemoryPoisoning(
                       _memContent,
-                      'episodic',
-                      `run:${runId}|tokens:${totalTokens.totalTokens}|dur:${totalDurationMs}ms|steps:${steps.length}`,
-                      0.6,
-                      ['execution', 'early_exit', ...ctx.availableTools.slice(0, 3)],
-                      {
-                        runId,
-                        goal: ctx.goal.slice(0, GOAL_RESULT_MAX_CHARS),
-                        tokenUsage: totalTokens,
-                        durationMs: totalDurationMs,
-                      },
+                      `agent:${ctx.agentId}`,
+                      ctx.agentId,
                     );
-                    } // end defense engine check
+                    if (!_poisoningCheck.allowed) {
+                      getGlobalLogger().warn(
+                        'AgentRuntime',
+                        'Memory write blocked by poisoning gate',
+                        { reason: _poisoningCheck.reason },
+                      );
+                    } else {
+                      // Security (G4): Advanced defense engine — entropy, Unicode, Base64, rate limit, taint tracking
+                      let _defenseBlocked = false;
+                      try {
+                        const _defenseResult =
+                          getMemoryPoisoningDefenseEngine().validateMemoryWrite({
+                            content: _memContent,
+                            source: `agent:${ctx.agentId}`,
+                            agentId: ctx.agentId,
+                            memoryType: 'episodic',
+                            sourceCredibility: 'agent_generated',
+                            sessionId: runId,
+                            metadata: { phase: 'early_exit' },
+                          });
+                        if (!_defenseResult.allowed) {
+                          _defenseBlocked = true;
+                          getGlobalLogger().warn(
+                            'AgentRuntime',
+                            'Memory write blocked by defense engine',
+                            {
+                              reason: _defenseResult.reason,
+                              riskScore: _defenseResult.riskScore,
+                              severity: _defenseResult.severity,
+                            },
+                          );
+                        }
+                      } catch (err) {
+                        reportSilentFailure(err, 'agentRuntime:defenseEngine:early_exit');
+                      }
+                      if (!_defenseBlocked) {
+                        this.memory.add(
+                          _memContent,
+                          'episodic',
+                          `run:${runId}|tokens:${totalTokens.totalTokens}|dur:${totalDurationMs}ms|steps:${steps.length}`,
+                          0.6,
+                          ['execution', 'early_exit', ...ctx.availableTools.slice(0, 3)],
+                          {
+                            runId,
+                            goal: ctx.goal.slice(0, GOAL_RESULT_MAX_CHARS),
+                            tokenUsage: totalTokens,
+                            durationMs: totalDurationMs,
+                          },
+                        );
+                      } // end defense engine check
                     } // end poisoning gate else
                   } catch (err) {
                     reportSilentFailure(err, 'agentRuntime:3226');
@@ -2458,13 +2478,15 @@ export class AgentRuntime implements AgentRuntimeInterface {
               if (safeContent && CycleDetector.detectRepetition(safeContent).detected) {
                 const rep = CycleDetector.detectRepetition(safeContent);
                 if (rep.detected) {
-                  getGlobalLogger().warn('AgentRuntime', 'Terminal degeneration guard: sanitizing safeContent', {
-                    description: rep.description,
-                  });
+                  getGlobalLogger().warn(
+                    'AgentRuntime',
+                    'Terminal degeneration guard: sanitizing safeContent',
+                    {
+                      description: rep.description,
+                    },
+                  );
                   safeContent =
-                    '[Output truncated: model degeneration detected — ' +
-                    rep.description +
-                    ']';
+                    '[Output truncated: model degeneration detected — ' + rep.description + ']';
                 }
               }
 
@@ -2531,48 +2553,62 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 try {
                   const _memContent2 = `[SUCCESS] ${ctx.goal.slice(0, GOAL_TELEMETRY_MAX_CHARS)}`;
                   // Security (OWASP ASI07): Memory poisoning detection gate.
-                  const _poisoningCheck2 = checkMemoryPoisoning(_memContent2, `agent:${ctx.agentId}`, ctx.agentId);
-                  if (!_poisoningCheck2.allowed) {
-                    getGlobalLogger().warn('AgentRuntime', 'Memory write blocked by poisoning gate', { reason: _poisoningCheck2.reason });
-                  } else {
-                  // Security (G4): Advanced defense engine — entropy, Unicode, Base64, rate limit, taint tracking
-                  let _defenseBlocked2 = false;
-                  try {
-                    const _defenseResult2 = getMemoryPoisoningDefenseEngine().validateMemoryWrite({
-                      content: _memContent2,
-                      source: `agent:${ctx.agentId}`,
-                      agentId: ctx.agentId,
-                      memoryType: 'episodic',
-                      sourceCredibility: 'agent_generated',
-                      sessionId: runId,
-                      metadata: { phase: 'success' },
-                    });
-                    if (!_defenseResult2.allowed) {
-                      _defenseBlocked2 = true;
-                      getGlobalLogger().warn('AgentRuntime', 'Memory write blocked by defense engine', {
-                        reason: _defenseResult2.reason,
-                        riskScore: _defenseResult2.riskScore,
-                        severity: _defenseResult2.severity,
-                      });
-                    }
-                  } catch (err) {
-                    reportSilentFailure(err, 'agentRuntime:defenseEngine:success');
-                  }
-                  if (!_defenseBlocked2) {
-                  this.memory.add(
+                  const _poisoningCheck2 = checkMemoryPoisoning(
                     _memContent2,
-                    'episodic',
-                    `run:${runId}|tokens:${totalTokens.totalTokens}|dur:${totalDurationMs}ms|steps:${steps.length}`,
-                    0.7,
-                    ['execution', 'success', ...ctx.availableTools.slice(0, 3)],
-                    {
-                      runId,
-                      goal: ctx.goal.slice(0, 500),
-                      tokenUsage: totalTokens,
-                      durationMs: totalDurationMs,
-                    },
+                    `agent:${ctx.agentId}`,
+                    ctx.agentId,
                   );
-                  } // end defense engine check
+                  if (!_poisoningCheck2.allowed) {
+                    getGlobalLogger().warn(
+                      'AgentRuntime',
+                      'Memory write blocked by poisoning gate',
+                      { reason: _poisoningCheck2.reason },
+                    );
+                  } else {
+                    // Security (G4): Advanced defense engine — entropy, Unicode, Base64, rate limit, taint tracking
+                    let _defenseBlocked2 = false;
+                    try {
+                      const _defenseResult2 = getMemoryPoisoningDefenseEngine().validateMemoryWrite(
+                        {
+                          content: _memContent2,
+                          source: `agent:${ctx.agentId}`,
+                          agentId: ctx.agentId,
+                          memoryType: 'episodic',
+                          sourceCredibility: 'agent_generated',
+                          sessionId: runId,
+                          metadata: { phase: 'success' },
+                        },
+                      );
+                      if (!_defenseResult2.allowed) {
+                        _defenseBlocked2 = true;
+                        getGlobalLogger().warn(
+                          'AgentRuntime',
+                          'Memory write blocked by defense engine',
+                          {
+                            reason: _defenseResult2.reason,
+                            riskScore: _defenseResult2.riskScore,
+                            severity: _defenseResult2.severity,
+                          },
+                        );
+                      }
+                    } catch (err) {
+                      reportSilentFailure(err, 'agentRuntime:defenseEngine:success');
+                    }
+                    if (!_defenseBlocked2) {
+                      this.memory.add(
+                        _memContent2,
+                        'episodic',
+                        `run:${runId}|tokens:${totalTokens.totalTokens}|dur:${totalDurationMs}ms|steps:${steps.length}`,
+                        0.7,
+                        ['execution', 'success', ...ctx.availableTools.slice(0, 3)],
+                        {
+                          runId,
+                          goal: ctx.goal.slice(0, 500),
+                          tokenUsage: totalTokens,
+                          durationMs: totalDurationMs,
+                        },
+                      );
+                    } // end defense engine check
                   } // end poisoning gate else
                 } catch (e) {
                   getGlobalLogger().warn('AgentRuntime', 'Failed to record success memory', {
@@ -2604,7 +2640,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
             // Handle failure with error classification
             // Use the preserved provider error for accurate classification,
             // falling back to lastError or a generic message.
-            const errorToClassify = this.lastProviderError ?? new Error(lastError || 'Unknown error');
+            const errorToClassify =
+              this.lastProviderError ?? new Error(lastError || 'Unknown error');
             const ce = classifyLLMError(errorToClassify);
             lastError = ce.message;
             lastErrorIsPermanent = !ce.retryable;
@@ -2881,7 +2918,10 @@ export class AgentRuntime implements AgentRuntimeInterface {
         model: request.model,
         estimatedTokens,
         source: taskId ?? 'unknown',
-        input: request.messages.map((m) => m.content).join('\n').slice(0, 10000),
+        input: request.messages
+          .map((m) => m.content)
+          .join('\n')
+          .slice(0, 10000),
       });
       if (!preCheck.allowed) {
         throw new Error(`Security gateway blocked LLM call: ${preCheck.reason ?? 'policy'}`);
@@ -3002,7 +3042,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
         toolCallId: toolCall.id,
         name: toolCall.name,
         output: '',
-        error: 'BLOCKED: Agent is quarantined due to critical security event. Manual review required.',
+        error:
+          'BLOCKED: Agent is quarantined due to critical security event. Manual review required.',
         durationMs: 0,
       };
     }
@@ -3108,7 +3149,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
     const text = request.messages.map((m) => m.content).join('\n');
     // Approximate 4 chars per token; include tool definitions if present.
     const toolText = request.tools
-      ? request.tools.map((t) => `${t.name}\n${t.description ?? ''}\n${JSON.stringify(t.inputSchema ?? {})}`).join('\n')
+      ? request.tools
+          .map((t) => `${t.name}\n${t.description ?? ''}\n${JSON.stringify(t.inputSchema ?? {})}`)
+          .join('\n')
       : '';
     return Math.ceil((text.length + toolText.length) / 4);
   }

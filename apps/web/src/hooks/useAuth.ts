@@ -82,16 +82,13 @@ export function useAuth() {
     return response;
   }, []);
 
-  const register = useCallback(
-    async (username: string, email: string, password: string) => {
-      const response = await fetchRegister(username, email, password);
-      setAuthTokens(response.token, response.refreshToken);
-      setToken(response.token);
-      setCurrentUser(response.user);
-      return response;
-    },
-    [],
-  );
+  const register = useCallback(async (username: string, email: string, password: string) => {
+    const response = await fetchRegister(username, email, password);
+    setAuthTokens(response.token, response.refreshToken);
+    setToken(response.token);
+    setCurrentUser(response.user);
+    return response;
+  }, []);
 
   const logout = useCallback(() => {
     clearAuthToken();

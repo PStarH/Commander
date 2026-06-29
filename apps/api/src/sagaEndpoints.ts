@@ -155,7 +155,10 @@ export function createSagaRouter(): Router {
       .catch((err: unknown) => {
         // Security: Log full error server-side; publish sanitized message to bus.
         console.error('[sagaEndpoints] Saga failed:', err);
-        bus.publish('saga.failed' as MessageBusTopic, 'saga-api', { runId, error: 'Saga execution failed' });
+        bus.publish('saga.failed' as MessageBusTopic, 'saga-api', {
+          runId,
+          error: 'Saga execution failed',
+        });
       });
   });
 

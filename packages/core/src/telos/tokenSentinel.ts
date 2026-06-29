@@ -82,17 +82,17 @@ function estimateMessagesTokens(
  * that reference the read/write ratio per provider.
  */
 const CACHE_READ_RATIO: Record<string, number> = {
-  anthropic: 0.1,  // 90% off cache reads
-  openai: 0.5,     // 50% off cache reads
-  google: 0.1,     // ~90% off cache reads
-  default: 1.0,    // No caching benefit assumed
+  anthropic: 0.1, // 90% off cache reads
+  openai: 0.5, // 50% off cache reads
+  google: 0.1, // ~90% off cache reads
+  default: 1.0, // No caching benefit assumed
 };
 
 /** Per-provider cache write pricing multipliers (applied to input rate). */
 const CACHE_WRITE_RATIO: Record<string, number> = {
   anthropic: 1.25, // 1.25x write (5min TTL)
-  openai: 1.0,      // Automatic (no explicit write cost)
-  google: 1.0,      // No explicit write cost
+  openai: 1.0, // Automatic (no explicit write cost)
+  google: 1.0, // No explicit write cost
   default: 1.0,
 };
 
@@ -194,7 +194,11 @@ export function calculateCostBreakdown(
     outputCostUsd: costBreakdown.outputCostUsd,
     cacheReadCostUsd,
     cacheWriteCostUsd,
-    totalUsd: costBreakdown.inputCostUsd + costBreakdown.outputCostUsd + cacheReadCostUsd + cacheWriteCostUsd,
+    totalUsd:
+      costBreakdown.inputCostUsd +
+      costBreakdown.outputCostUsd +
+      cacheReadCostUsd +
+      cacheWriteCostUsd,
     cacheSavingsUsd,
     batchSavingsUsd: costBreakdown.batchSavingsUsd,
   };

@@ -408,7 +408,8 @@ const DEFAULT_PATTERNS: SensitiveDataPattern[] = [
   // ── 银行账号（medium）───────────────────────────────────────────────
   {
     type: 'bank_account',
-    pattern: /(?:账号|账户|卡号|银行|account(?:\s*number)?|bank(?:\s*account)?)\s*[:：=]?\s*\d{15,19}/gi,
+    pattern:
+      /(?:账号|账户|卡号|银行|account(?:\s*number)?|bank(?:\s*account)?)\s*[:：=]?\s*\d{15,19}/gi,
     riskLevel: 'medium',
     description: '银行账号',
   },
@@ -1472,9 +1473,7 @@ export function sanitizeLogEntry(entry: string): string {
  * @param result - 工具调用结果对象
  * @returns 脱敏后的工具调用结果对象
  */
-export function sanitizeToolResult<T extends { output: string; error?: string }>(
-  result: T,
-): T {
+export function sanitizeToolResult<T extends { output: string; error?: string }>(result: T): T {
   return getDataLossPrevention().sanitizeToolResult(result);
 }
 

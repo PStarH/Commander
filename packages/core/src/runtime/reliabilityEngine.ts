@@ -261,10 +261,7 @@ export class ReliabilityEngine {
    * this ctx as its third optional argument, which is what enables
    * the Hub Glue `runtime.circuit_correlated` pipeline.
    */
-  recordSemanticFailure(
-    reason: string,
-    ctx?: { runId?: string; toolName?: string },
-  ): void {
+  recordSemanticFailure(reason: string, ctx?: { runId?: string; toolName?: string }): void {
     this._circuitBreaker.recordSemanticFailure(reason, ctx);
   }
 

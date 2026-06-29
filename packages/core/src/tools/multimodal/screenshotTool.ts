@@ -65,7 +65,7 @@ export class ScreenshotCaptureTool implements Tool {
     let resolvedPath: string;
     if (outputPath) {
       try {
-        resolvedPath = safePath(outputPath);
+        resolvedPath = await safePath(outputPath);
       } catch (err) {
         reportSilentFailure(err, 'screenshotTool:67');
         return `Error: Access denied: path "${outputPath}" is outside workspace`;
@@ -73,7 +73,7 @@ export class ScreenshotCaptureTool implements Tool {
     } else {
       // Default: save in workspace with unique filename
       const hash = crypto.randomBytes(4).toString('hex');
-      resolvedPath = safePath(`screenshots/screenshot-${Date.now()}-${hash}.png`);
+      resolvedPath = await safePath(`screenshots/screenshot-${Date.now()}-${hash}.png`);
     }
     const outDir = path.dirname(resolvedPath);
     // mkdirAsync with recursive:true is idempotent — no need for a separate

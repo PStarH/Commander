@@ -39,10 +39,10 @@ export interface SLOWindowConfig {
 }
 
 export const DEFAULT_WINDOW_CONFIG: SLOWindowConfig = {
-  shortWindowMs: 5 * 60 * 1000,    // 5 minutes
-  longWindowMs: 60 * 60 * 1000,    // 1 hour
+  shortWindowMs: 5 * 60 * 1000, // 5 minutes
+  longWindowMs: 60 * 60 * 1000, // 1 hour
   fullWindowMs: 24 * 60 * 60 * 1000, // 24 hours
-  evaluationIntervalMs: 30 * 1000,  // 30 seconds
+  evaluationIntervalMs: 30 * 1000, // 30 seconds
 };
 
 export type BurnRateSeverity = 'none' | 'warning' | 'critical' | 'page';
@@ -184,10 +184,7 @@ function calculateBurnRate(
  *   - Warning: short > 3x AND long > 3x        (10% budget in 3 days)
  *   - Warning: short > 1x AND long > 1x        (budget being consumed)
  */
-function deriveSeverity(
-  shortBurnRate: number,
-  longBurnRate: number,
-): BurnRateSeverity {
+function deriveSeverity(shortBurnRate: number, longBurnRate: number): BurnRateSeverity {
   if (shortBurnRate > 14.4 && longBurnRate > 14.4) return 'page';
   if (shortBurnRate > 6 && longBurnRate > 6) return 'critical';
   if (shortBurnRate > 3 && longBurnRate > 3) return 'warning';
@@ -294,9 +291,7 @@ export class SLOMonitoringEngine {
   getDashboard(): SLODashboard {
     const burnRates = Array.from(this.lastBurnRates.values());
     const violating = burnRates.filter((r) => r.isViolating);
-    const critical = burnRates.filter(
-      (r) => r.severity === 'critical' || r.severity === 'page',
-    );
+    const critical = burnRates.filter((r) => r.severity === 'critical' || r.severity === 'page');
 
     return {
       timestamp: new Date().toISOString(),

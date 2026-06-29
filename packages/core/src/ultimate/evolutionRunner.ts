@@ -9,12 +9,7 @@
  */
 import type { UltimateOrchestratorConfig, EffortLevel } from './types';
 import type { AgentRuntimeInterface } from '../runtime';
-import type {
-  ExecutionExperience,
-  AnalysisMode,
-  LLMProvider,
-  ModelTier,
-} from '../runtime/types';
+import type { ExecutionExperience, AnalysisMode, LLMProvider, ModelTier } from '../runtime/types';
 import { getMetaLearner, DEFAULT_META_LEARNER_CONFIG } from '../selfEvolution/metaLearner';
 import { TrajectoryAnalyzer } from '../selfEvolution/trajectoryAnalyzer';
 import { getEvolverAgent } from '../selfEvolution/evolverAgent';
@@ -109,7 +104,9 @@ export class EvolutionRunner {
         }
         case 'prompt_template_change': {
           // Adjust quality gate thresholds based on prompt template suggestions
-          const gateConfig = this.deps.config.qualityGates.find((g) => g.name === suggestion.target);
+          const gateConfig = this.deps.config.qualityGates.find(
+            (g) => g.name === suggestion.target,
+          );
           if (gateConfig) {
             const thresholdAdjustment = suggestion.confidence * 0.1;
             if (suggestion.to === 'strict') {
@@ -189,9 +186,7 @@ export class EvolutionRunner {
     if (insights.length > 0) {
       try {
         const evolver = getEvolverAgent();
-        const cycle = evolver.runCycle(insights, this.deps.config, exp, [
-          taskType ?? 'general',
-        ]);
+        const cycle = evolver.runCycle(insights, this.deps.config, exp, [taskType ?? 'general']);
         if (cycle.applied > 0) {
           bus.publish('system.alert', 'ultimate-orch', {
             type: 'evolution_applied',

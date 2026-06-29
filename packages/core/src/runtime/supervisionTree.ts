@@ -91,7 +91,13 @@ export interface SupervisorConfig {
 }
 
 export interface SupervisionEvent {
-  type: 'child_started' | 'child_crashed' | 'child_restarted' | 'child_stopped' | 'supervisor_crashed' | 'supervisor_recovered';
+  type:
+    | 'child_started'
+    | 'child_crashed'
+    | 'child_restarted'
+    | 'child_stopped'
+    | 'supervisor_crashed'
+    | 'supervisor_recovered';
   supervisorId: string;
   childId?: string;
   timestamp: number;
@@ -246,8 +252,6 @@ export class Supervisor {
     }
   }
 
-
-
   /**
    * Check health of all children.
    */
@@ -270,7 +274,10 @@ export class Supervisor {
             await this.reportChildCrash(childId, `Health check failed: ${issues}`);
           }
         } catch (err) {
-          await this.reportChildCrash(childId, `Health check threw: ${err instanceof Error ? err.message : String(err)}`);
+          await this.reportChildCrash(
+            childId,
+            `Health check threw: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
       }
     }
@@ -279,7 +286,12 @@ export class Supervisor {
   /**
    * Get all children and their states.
    */
-  getChildren(): Array<{ id: string; state: ChildState; restartCount: number; lastError: string | null }> {
+  getChildren(): Array<{
+    id: string;
+    state: ChildState;
+    restartCount: number;
+    lastError: string | null;
+  }> {
     return Array.from(this.children.entries()).map(([id, entry]) => ({
       id,
       state: entry.state,
@@ -454,11 +466,11 @@ export class Supervisor {
       }
     }
 
-    getGlobalLogger().info(
-      'Supervisor',
-      event.message,
-      { type: event.type, supervisorId: event.supervisorId, childId: event.childId },
-    );
+    getGlobalLogger().info('Supervisor', event.message, {
+      type: event.type,
+      supervisorId: event.supervisorId,
+      childId: event.childId,
+    });
   }
 }
 

@@ -229,7 +229,7 @@ Using specialized tools is REQUIRED because they return hashline-anchored output
 
     let resolvedWorkdir: string;
     try {
-      resolvedWorkdir = safePath(workdir);
+      resolvedWorkdir = await safePath(workdir);
     } catch (err) {
       reportSilentFailure(err, 'codeExecutionTool:254');
       return `Error: Access denied: workdir "${workdir}" is outside workspace`;

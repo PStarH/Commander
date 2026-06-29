@@ -69,10 +69,7 @@ export class ContractTeeEnclave implements ITeeEnclave {
     );
 
     // Generate measurement of enclave code
-    const measurement = crypto
-      .createHash('sha256')
-      .update('enclave-initialization')
-      .digest('hex');
+    const measurement = crypto.createHash('sha256').update('enclave-initialization').digest('hex');
 
     // Perform (simulated) remote attestation
     this.attestationReport = {
@@ -164,7 +161,11 @@ export class ContractTeeEnclave implements ITeeEnclave {
         clearTimeout(timeout);
         worker.terminate();
         reportSilentFailure(err, 'teeEnclave:executeInEnclave:worker');
-        reject(new Error(`Enclave execution failed: ${err instanceof Error ? err.message : String(err)}`));
+        reject(
+          new Error(
+            `Enclave execution failed: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
       });
 
       // Send input to the worker
@@ -185,10 +186,11 @@ export class ContractTeeEnclave implements ITeeEnclave {
     // In production, verify hardware signature
     // In simulation, check report integrity
     const report = this.attestationReport;
-    const isValid = report.verified === true
-      && report.teeIdentity.length === 64
-      && report.measurement.length === 64
-      && report.timestamp > 0;
+    const isValid =
+      report.verified === true &&
+      report.teeIdentity.length === 64 &&
+      report.measurement.length === 64 &&
+      report.timestamp > 0;
 
     getGlobalLogger().info('ContractTeeEnclave', 'Attestation verified', {
       valid: isValid,
@@ -213,10 +215,7 @@ export class ContractTeeEnclave implements ITeeEnclave {
     const iv = crypto.randomBytes(12); // 96-bit IV for GCM
     const cipher = crypto.createCipheriv('aes-256-gcm', this.sealingKey, iv);
 
-    const encrypted = Buffer.concat([
-      cipher.update(Buffer.from(data)),
-      cipher.final(),
-    ]);
+    const encrypted = Buffer.concat([cipher.update(Buffer.from(data)), cipher.final()]);
     const authTag = cipher.getAuthTag();
 
     // Package: IV (12 bytes) + authTag (16 bytes) + encrypted data
@@ -251,10 +250,7 @@ export class ContractTeeEnclave implements ITeeEnclave {
     decipher.setAuthTag(authTag);
 
     try {
-      const decrypted = Buffer.concat([
-        decipher.update(encrypted),
-        decipher.final(),
-      ]);
+      const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
 
       getGlobalLogger().debug('ContractTeeEnclave', 'Data unsealed', {
         sealedSize: sealed.length,

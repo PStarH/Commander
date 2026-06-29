@@ -289,13 +289,17 @@ export class CheckpointStore {
       LIMIT 1
     `);
 
-    this.stmtDeleteRun = d.prepare(`DELETE FROM checkpoints WHERE run_id = ? AND (tenant_id IS ? OR ? IS NULL)`);
+    this.stmtDeleteRun = d.prepare(
+      `DELETE FROM checkpoints WHERE run_id = ? AND (tenant_id IS ? OR ? IS NULL)`,
+    );
 
     this.stmtDeleteMessages = d.prepare(`DELETE FROM checkpoint_messages WHERE checkpoint_id = ?`);
 
     this.stmtDeleteFiles = d.prepare(`DELETE FROM checkpoint_files WHERE checkpoint_id = ?`);
 
-    this.stmtCountByRun = d.prepare(`SELECT COUNT(*) AS cnt FROM checkpoints WHERE run_id = ? AND (tenant_id IS ? OR ? IS NULL)`);
+    this.stmtCountByRun = d.prepare(
+      `SELECT COUNT(*) AS cnt FROM checkpoints WHERE run_id = ? AND (tenant_id IS ? OR ? IS NULL)`,
+    );
 
     this.stmtDeleteAfter = d.prepare(`
       DELETE FROM checkpoints
@@ -405,7 +409,11 @@ export class CheckpointStore {
     if (!this.db) throw new Error('CheckpointStore not initialized');
 
     const tenant = getCurrentTenantId() ?? null;
-    const rows = this.stmtListByRun.all<CheckpointRow & { message_count: number }>(runId, tenant, tenant);
+    const rows = this.stmtListByRun.all<CheckpointRow & { message_count: number }>(
+      runId,
+      tenant,
+      tenant,
+    );
     return rows.map((r) => ({
       id: r.id,
       runId: r.run_id,

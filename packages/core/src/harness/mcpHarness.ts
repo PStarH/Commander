@@ -201,7 +201,9 @@ export class McpHarness extends BaseHarness {
           runId,
         });
       } catch (err) {
-        getGlobalLogger().warn('McpHarness', 'fireBeforeLLMCall failed', { error: (err as Error).message });
+        getGlobalLogger().warn('McpHarness', 'fireBeforeLLMCall failed', {
+          error: (err as Error).message,
+        });
       }
 
       // Call the provider.
@@ -245,7 +247,9 @@ export class McpHarness extends BaseHarness {
           runId,
         });
       } catch (err) {
-        getGlobalLogger().warn('McpHarness', 'fireAfterLLMCall failed', { error: (err as Error).message });
+        getGlobalLogger().warn('McpHarness', 'fireAfterLLMCall failed', {
+          error: (err as Error).message,
+        });
       }
 
       // Accumulate token usage.
@@ -351,7 +355,9 @@ export class McpHarness extends BaseHarness {
           blocked = gate.blocked;
           blockError = gate.error;
         } catch (err) {
-          getGlobalLogger().warn('McpHarness', 'fireBeforeToolCall failed', { error: (err as Error).message });
+          getGlobalLogger().warn('McpHarness', 'fireBeforeToolCall failed', {
+            error: (err as Error).message,
+          });
         }
 
         if (blocked) {
@@ -416,7 +422,9 @@ export class McpHarness extends BaseHarness {
             runId,
           });
         } catch (err) {
-          getGlobalLogger().warn('McpHarness', 'fireAfterToolCall failed', { error: (err as Error).message });
+          getGlobalLogger().warn('McpHarness', 'fireAfterToolCall failed', {
+            error: (err as Error).message,
+          });
         }
 
         // Add tool result to conversation (OpenAI snake_case format).
@@ -451,7 +459,10 @@ export class McpHarness extends BaseHarness {
 
       // Check token budget.
       if (params.tokenBudget > 0 && totalUsage.totalTokens >= params.tokenBudget) {
-        getGlobalLogger().info('McpHarness', `Token budget ${params.tokenBudget} reached, stopping`);
+        getGlobalLogger().info(
+          'McpHarness',
+          `Token budget ${params.tokenBudget} reached, stopping`,
+        );
         break;
       }
     }

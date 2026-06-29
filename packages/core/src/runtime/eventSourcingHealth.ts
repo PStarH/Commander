@@ -76,17 +76,25 @@ export async function checkEventSourcingHealth(): Promise<EventSourcingHealthRes
     // WAL file size check
     if (walFileSizeMB !== undefined) {
       if (walFileSizeMB >= WAL_SIZE_UNHEALTHY_MB) {
-        issues.push(`WAL file ${walFileSizeMB}MB exceeds ${WAL_SIZE_UNHEALTHY_MB}MB — compaction required`);
+        issues.push(
+          `WAL file ${walFileSizeMB}MB exceeds ${WAL_SIZE_UNHEALTHY_MB}MB — compaction required`,
+        );
       } else if (walFileSizeMB >= WAL_SIZE_DEGRADED_MB) {
-        issues.push(`WAL file ${walFileSizeMB}MB exceeds ${WAL_SIZE_DEGRADED_MB}MB — compaction recommended`);
+        issues.push(
+          `WAL file ${walFileSizeMB}MB exceeds ${WAL_SIZE_DEGRADED_MB}MB — compaction recommended`,
+        );
       }
     }
 
     // Backlog ratio check
     if (backlogRatio >= BACKLOG_UNHEALTHY_RATIO) {
-      issues.push(`Event backlog ratio ${Math.round(backlogRatio)} exceeds ${BACKLOG_UNHEALTHY_RATIO} — snapshot needed`);
+      issues.push(
+        `Event backlog ratio ${Math.round(backlogRatio)} exceeds ${BACKLOG_UNHEALTHY_RATIO} — snapshot needed`,
+      );
     } else if (backlogRatio >= BACKLOG_DEGRADED_RATIO) {
-      issues.push(`Event backlog ratio ${Math.round(backlogRatio)} exceeds ${BACKLOG_DEGRADED_RATIO} — snapshot recommended`);
+      issues.push(
+        `Event backlog ratio ${Math.round(backlogRatio)} exceeds ${BACKLOG_DEGRADED_RATIO} — snapshot recommended`,
+      );
     }
 
     // Hash chain integrity — only check if we have events
@@ -106,9 +114,7 @@ export async function checkEventSourcingHealth(): Promise<EventSourcingHealthRes
     // Determine final status
     let status: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
     if (issues.length > 0) {
-      const hasUnhealthy = issues.some(
-        (i) => i.includes('required') || i.includes('FAILED'),
-      );
+      const hasUnhealthy = issues.some((i) => i.includes('required') || i.includes('FAILED'));
       status = hasUnhealthy ? 'unhealthy' : 'degraded';
     }
 

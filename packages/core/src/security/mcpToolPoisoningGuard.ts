@@ -429,7 +429,8 @@ const PROMPT_INJECTION_PATTERNS: Array<{
     suggestedAction: 'BLOCK',
   },
   {
-    pattern: /(?:override|replace|reset)\s+(?:the\s+)?(?:system|original)\s+(?:prompt|instructions?)/gi,
+    pattern:
+      /(?:override|replace|reset)\s+(?:the\s+)?(?:system|original)\s+(?:prompt|instructions?)/gi,
     category: 'instruction_override',
     description: '指令覆盖：要求替换系统提示词',
     severity: 'malicious',
@@ -503,7 +504,8 @@ const PROMPT_INJECTION_PATTERNS: Array<{
     suggestedAction: 'QUARANTINE',
   },
   {
-    pattern: /(?:secretly|silently|quietly|without\s+(?:the\s+)?user'?s?\s+(?:knowledge|awareness))/gi,
+    pattern:
+      /(?:secretly|silently|quietly|without\s+(?:the\s+)?user'?s?\s+(?:knowledge|awareness))/gi,
     category: 'instruction_override',
     description: '隐瞒指令：要求秘密执行操作',
     severity: 'malicious',
@@ -519,7 +521,8 @@ const PROMPT_INJECTION_PATTERNS: Array<{
     suggestedAction: 'BLOCK',
   },
   {
-    pattern: /\b(?:download|fetch|retrieve)\s+(?:all\s+)?(?:files?|data|secrets?|credentials?|tokens?|env|environment)/gi,
+    pattern:
+      /\b(?:download|fetch|retrieve)\s+(?:all\s+)?(?:files?|data|secrets?|credentials?|tokens?|env|environment)/gi,
     category: 'data_exfiltration',
     description: '数据外传：要求下载文件或敏感数据',
     severity: 'malicious',
@@ -540,7 +543,8 @@ const PROMPT_INJECTION_PATTERNS: Array<{
     suggestedAction: 'BLOCK',
   },
   {
-    pattern: /(?:read|access|get|dump)\s+(?:env(?:ironment)?\s+)?(?:variables?|secrets?|keys?|\.env\b)/gi,
+    pattern:
+      /(?:read|access|get|dump)\s+(?:env(?:ironment)?\s+)?(?:variables?|secrets?|keys?|\.env\b)/gi,
     category: 'data_exfiltration',
     description: '数据外传：要求读取环境变量或密钥',
     severity: 'malicious',
@@ -579,21 +583,24 @@ const PROMPT_INJECTION_PATTERNS: Array<{
 
   // ── 提示注入通用类（suspicious）─────────────────────────────────────
   {
-    pattern: /\b(?:execute|run|call)\s+(?:the\s+)?(?:following|this|below)\s+(?:command|instruction|action)/gi,
+    pattern:
+      /\b(?:execute|run|call)\s+(?:the\s+)?(?:following|this|below)\s+(?:command|instruction|action)/gi,
     category: 'prompt_injection',
     description: '提示注入：要求执行后续指令',
     severity: 'suspicious',
     suggestedAction: 'QUARANTINE',
   },
   {
-    pattern: /(?:instead|rather)\s+(?:of|than)\s+(?:your|the)\s+(?:normal|usual|regular)\s+(?:behavior|operation|function)/gi,
+    pattern:
+      /(?:instead|rather)\s+(?:of|than)\s+(?:your|the)\s+(?:normal|usual|regular)\s+(?:behavior|operation|function)/gi,
     category: 'prompt_injection',
     description: '提示注入：要求替代正常行为',
     severity: 'suspicious',
     suggestedAction: 'QUARANTINE',
   },
   {
-    pattern: /\b(?:important|critical|urgent|note)\s*:\s*(?:you\s+must|you\s+should|you\s+are\s+required)/gi,
+    pattern:
+      /\b(?:important|critical|urgent|note)\s*:\s*(?:you\s+must|you\s+should|you\s+are\s+required)/gi,
     category: 'prompt_injection',
     description: '提示注入：使用紧急语气要求执行',
     severity: 'suspicious',
@@ -691,7 +698,10 @@ function maxSeverity(a: PoisoningSeverity, b: PoisoningSeverity): PoisoningSever
  * @param config - 防护配置
  * @returns 建议的防御动作
  */
-function decideAction(severity: PoisoningSeverity, config: MCPToolPoisoningConfig): PoisoningAction {
+function decideAction(
+  severity: PoisoningSeverity,
+  config: MCPToolPoisoningConfig,
+): PoisoningAction {
   if (severity === 'clean') return 'ALLOW';
   if (compareSeverity(severity, config.blockOnSeverity) >= 0) return 'BLOCK';
   if (compareSeverity(severity, config.quarantineOnSeverity) >= 0) {
@@ -879,9 +889,7 @@ export class MCPToolPoisoningGuard {
           patterns.push({
             category: 'hidden_unicode',
             description: `隐藏 Unicode 字符：${rangeName}（检测到 ${rangeCount} 个）`,
-            matchedSnippet: truncateSnippet(
-              `检测到 ${rangeName} 范围内的不可见字符`,
-            ),
+            matchedSnippet: truncateSnippet(`检测到 ${rangeName} 范围内的不可见字符`),
             position: firstPosition,
             severity: 'suspicious',
             suggestedAction: 'SANITIZE',
@@ -1328,7 +1336,10 @@ export class MCPToolPoisoningGuard {
       if (!caps.includes('file_write') && /(?:created|modified|deleted)\s+file:/i.test(resultStr)) {
         anomalies.push('返回值表明工具执行了文件写入操作，但未声明文件写入权限');
       }
-      if (!caps.includes('command_exec') && /(?:exit\s+code|process\s+terminated)/i.test(resultStr)) {
+      if (
+        !caps.includes('command_exec') &&
+        /(?:exit\s+code|process\s+terminated)/i.test(resultStr)
+      ) {
         anomalies.push('返回值表明工具执行了系统命令，但未声明命令执行权限');
       }
     }
@@ -1523,11 +1534,7 @@ export class MCPToolPoisoningGuard {
     descriptionHash: string,
   ): void {
     const auditSeverity =
-      severity === 'malicious'
-        ? 'critical'
-        : severity === 'suspicious'
-          ? 'high'
-          : 'low';
+      severity === 'malicious' ? 'critical' : severity === 'suspicious' ? 'high' : 'low';
 
     try {
       getSecurityAuditLogger().logEvent({
@@ -1639,7 +1646,12 @@ export class MCPToolPoisoningGuard {
     if (lower.includes('exec') || lower.includes('run') || lower.includes('shell')) {
       caps.push('command_exec');
     }
-    if (lower.includes('http') || lower.includes('url') || lower.includes('web') || lower.includes('net')) {
+    if (
+      lower.includes('http') ||
+      lower.includes('url') ||
+      lower.includes('web') ||
+      lower.includes('net')
+    ) {
       caps.push('network');
     }
     if (lower.includes('db') || lower.includes('sql') || lower.includes('query')) {
@@ -1725,7 +1737,9 @@ export class MCPToolPoisoningGuard {
           return true;
         case 'object':
           if (typeof val !== 'object' || val === null || Array.isArray(val)) {
-            errors.push(`${path}: 期望 object，实际 ${val === null ? 'null' : Array.isArray(val) ? 'array' : typeof val}`);
+            errors.push(
+              `${path}: 期望 object，实际 ${val === null ? 'null' : Array.isArray(val) ? 'array' : typeof val}`,
+            );
             return false;
           }
           return true;
@@ -1789,12 +1803,9 @@ export class MCPToolPoisoningGuard {
 // 多租户单例
 // ============================================================================
 
-const poisoningGuardSingleton = createTenantAwareSingleton(
-  () => new MCPToolPoisoningGuard(),
-  {
-    componentName: 'MCPToolPoisoningGuard',
-  },
-);
+const poisoningGuardSingleton = createTenantAwareSingleton(() => new MCPToolPoisoningGuard(), {
+  componentName: 'MCPToolPoisoningGuard',
+});
 
 /**
  * 获取全局 MCP 工具中毒防护守卫单例实例（多租户感知）。
