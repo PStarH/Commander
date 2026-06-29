@@ -1,13 +1,71 @@
-import { useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { ScoreGauge } from '../components/ScoreGauge';
 import { DimensionBars } from '../components/DimensionBars';
 import { ComplianceHeatmap } from '../components/ComplianceHeatmap';
 import { TrendSparkline } from '../components/TrendSparkline';
-import { generateMockReport } from '../data/mockComplianceReport';
+import { fetchSecurityPosture } from '../api';
 import type { ComplianceAuditReport, AuditChecklistItem } from '../types';
 
 export function SecurityPosturePage() {
-  const report = useMemo(() => generateMockReport(), []);
+  const [report, setReport] = useState<ComplianceAuditReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchSecurityPosture()
+      .then((data) => {
+        if (!cancelled) {
+          setReport(data);
+          setError(null);
+        }
+      })
+      .catch((err: Error) => {
+        if (!cancelled) {
+          setError(err.message);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="page">
+        <div className="page-head">
+          <span className="section-label">Security Posture</span>
+          <h1>Compliance & Red Team Dashboard</h1>
+        </div>
+        <div className="card" style={{ padding: '32px', textAlign: 'center' }}>
+          <span style={{ color: 'var(--text-muted)' }}>Loading security posture…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !report) {
+    return (
+      <div className="page">
+        <div className="page-head">
+          <span className="section-label">Security Posture</span>
+          <h1>Compliance & Red Team Dashboard</h1>
+        </div>
+        <div className="card" style={{ padding: '24px', textAlign: 'center' }}>
+          <p style={{ color: 'var(--accent-amber)', fontSize: '0.8rem', marginBottom: '8px' }}>
+            {error ?? 'No posture data available'}
+          </p>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>
+            Run a security posture assessment to generate real compliance data.
+            The backend reads snapshots from <code>.commander/posture-snapshots.json</code>.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="page">
