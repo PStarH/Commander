@@ -663,7 +663,7 @@ export {
   resetGlobalMemoryRegistry,
 } from './runtime/tenantProvider';
 
-// Cost Model — token-based price calculation (also re-exported via @commander/observability)
+// Cost Model — token-based price calculation (single source of truth in core)
 export {
   CostModel,
   getCostModel,
@@ -672,7 +672,14 @@ export {
 } from './observability/costModel';
 export type { CostBreakdown, TokenBreakdown, ModelPricing } from './observability/types';
 
-// Trace Store — durable execution-trace persistence (also re-exported via @commander/observability)
+// Observability HTTP API — unified handler for trace/cost/decision endpoints
+export {
+  handleObservabilityRequest,
+  OBSERVABILITY_HTTP_ROUTES,
+} from './observability/httpApi';
+export type { ObservabilityDeps, ObservabilityResult } from './observability/httpApi';
+
+// Trace Store — durable execution-trace persistence (single source of truth in core)
 export { PersistentTraceStore } from './runtime/traceStore';
 export type { TraceStore } from './runtime/traceStore';
 

@@ -51,6 +51,7 @@ import { CircuitBreaker } from './circuitBreaker';
 import { CircuitBreakerRegistry } from './circuitBreakerRegistry';
 
 import { getMessageBus } from './messageBus';
+import { getWebhookDispatcher } from './webhookDispatcher';
 import { installHubGlue } from '../hub';
 import { getIntentLog } from './intentLog';
 import { getMetricsCollector } from './metricsCollector';
@@ -666,6 +667,25 @@ export function initializeServices(
   } catch (err) {
     reportSilentFailure(err, 'serviceInitializer:supervisionTree');
     supervisor = null;
+  }
+
+  // ── Outbound Webhook Dispatcher ───────────────────────────────────────
+  // Start the outbound webhook event dispatcher so that agent.completed,
+  // agent.failed, and other MessageBus events are pushed (HMAC-SHA256
+  // signed, retried with exponential backoff, SSRF-guarded) to any webhook
+  // URLs registered in .commander/webhooks.json. Without this start() call
+  // the dispatcher's `started` flag stays false and dispatch() silently
+  // drops every event — leaving the entire WebhookDispatcher module dead.
+  // Safe to fail: webhooks are a best-effort side-channel, never on the
+  // critical execution path.
+  try {
+    getWebhookDispatcher().start();
+  } catch (err) {
+    getGlobalLogger().warn(
+      'ServiceInitializer',
+      'Failed to start WebhookDispatcher; outbound webhooks disabled',
+      { error: (err as Error)?.message },
+    );
   }
 
   return {
