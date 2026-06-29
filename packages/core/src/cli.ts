@@ -48,6 +48,8 @@ import {
   cmdBudget,
   cmdCheckpoint,
   cmdGoalJudge,
+  cmdPlugin,
+  cmdUp,
 } from './cli/commands';
 import { cmdFix } from './cli/commands/convenience';
 import { cmdSandbox } from './cli/commands/sandbox';
@@ -65,7 +67,9 @@ const COMMAND_HELP: Record<string, string> = {
   config: `  ${$.bold}commander config [subcommand]${$.reset}\n\n  ${$.bold}Subcommands:${$.reset}\n    show              Show current configuration\n    set <key> <val>   Set a config value\n    list-providers    List all available providers\n    list-models       List available models\n    test              Test API connection\n\n  ${$.dim}Example:${$.reset}\n    commander config set model gpt-4o\n    commander config test\n`,
   history: `  ${$.bold}commander history [subcommand]${$.reset}\n\n  ${$.bold}Subcommands:${$.reset}\n    (none)            List all sessions\n    view <runId>      View session details\n    delete <runId>    Delete a session\n    prune <keep>      Keep only the last N sessions\n`,
   doctor: `  ${$.bold}commander doctor${$.reset}\n\n  Run diagnostics: Node.js, API key, packages, git, workspace, connectivity.\n`,
-  gui: `  ${$.bold}commander gui${$.reset}\n\n  Start the Agent War Room web dashboard (API + Web UI).\n`,
+  gui: `  ${$.bold}commander gui${$.reset}\n\n  Start the Agent War Room web dashboard (API + Web UI).\n  One-click: starts API (port 4000) + Web (port 5173) and opens the browser.\n`,
+  plugin: `  ${$.bold}commander plugin <subcommand>${$.reset}\n\n  Install, list, and uninstall Commander plugins.\n\n  ${$.bold}Subcommands:${$.reset}\n    install <source>   Install a plugin (npm package / github:user/repo / local path)\n    list (ls)          List installed plugins\n    uninstall <name>   Uninstall a plugin\n    info <name>        Show plugin details\n\n  ${$.dim}Examples:${$.reset}\n    commander plugin install @commander/web-scraper\n    commander plugin install ./my-plugin\n    commander plugin list\n`,
+  up: `  ${$.bold}commander up [task] [flags]${$.reset}\n\n  Unified execution + Web TUI. Starts a local server (default port 4000) that\n  serves the web dashboard and optionally runs a task with live metrics.\n\n  ${$.bold}Flags:${$.reset}\n    --port=<n>      Server port (default: 4000)\n    --no-open       Do not auto-open the browser\n    --resume        Resume frozen runs from their checkpoints\n\n  ${$.dim}Examples:${$.reset}\n    commander up\n    commander up "audit this repo"\n    commander up --port=5000\n`,
   // ── Enterprise / Advanced ─────────────────────────────────────────
   company: `  ${$.bold}commander company <task>${$.reset}\n\n  Execute with Company Engine (capability matching + quality gating + memory).\n\n  ${$.dim}Example:${$.reset}\n    commander company "Build a CLI tool"\n`,
   swarm: `  ${$.bold}commander swarm <task> [flags]${$.reset}\n\n  Recursive swarm: fission (decompose) + fusion (merge).\n\n  ${$.bold}Flags:${$.reset}\n    --max-depth=<n>                    Max tree depth (default: 3)\n    --max-workers=<n>                  Max parallel workers (default: 10)\n    --mode=<balanced|thorough|fast>    Execution mode\n\n  ${$.dim}Example:${$.reset}\n    commander swarm "Audit this codebase for security issues"\n`,
@@ -187,6 +191,9 @@ async function main() {
     case 'skill':
       await cmdSkill(rest);
       break;
+    case 'plugin':
+      await cmdPlugin(rest);
+      break;
 
     // ── Advanced execution ──
     case 'company':
@@ -212,6 +219,11 @@ async function main() {
         process.exit(1);
       }
       await cmdDrive(positional.join(' '), flags);
+      break;
+    }
+    case 'up': {
+      const { positional, flags } = parseFlags(rest);
+      await cmdUp(positional, flags);
       break;
     }
 
@@ -321,6 +333,7 @@ async function main() {
         'mode',
         'history',
         'skill',
+        'plugin',
         'intelligence',
         'experience',
         'debug',
@@ -331,6 +344,7 @@ async function main() {
         'company',
         'swarm',
         'drive',
+        'up',
         'saga',
         'resume',
         'compensation',
