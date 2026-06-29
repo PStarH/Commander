@@ -69,53 +69,20 @@ export function Sidebar({ currentUser, onLogout }: SidebarProps) {
 
       <div className="sidebar-footer">
         {currentUser ? (
-          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <div
-                style={{
-                  width: '24px',
-                  height: '24px',
-                  borderRadius: '50%',
-                  border: '1px solid var(--accent-green-border)',
-                  background: 'var(--accent-green-bg)',
-                  color: 'var(--accent-green)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0,
-                }}
-              >
+          <div className="sidebar-user">
+            <div className="sidebar-user-row">
+              <div className="sidebar-user-avatar">
                 <UserIcon size={12} />
               </div>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div
-                  style={{
-                    fontSize: '0.78rem',
-                    color: 'var(--text-secondary)',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}
-                >
-                  {currentUser.username}
-                </div>
-                <div
-                  style={{
-                    fontSize: '0.64rem',
-                    color: 'var(--text-muted)',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.08em',
-                  }}
-                >
-                  {currentUser.role}
-                </div>
+              <div className="sidebar-user-info">
+                <div className="sidebar-user-name">{currentUser.username}</div>
+                <div className="sidebar-user-role">{currentUser.role}</div>
               </div>
             </div>
             <button
               type="button"
-              className="btn btn-ghost btn-sm"
+              className="btn btn-ghost btn-sm sidebar-signout"
               onClick={onLogout}
-              style={{ width: '100%' }}
             >
               <LogOut size={12} />
               Sign Out
