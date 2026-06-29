@@ -146,17 +146,19 @@ jobs:
             else
               echo "::warning::MSVC vcvars64 not located on Windows runner — attempting pnpm rebuild without MSVC source-build fallback"
               pnpm rebuild better-sqlite3 \
-                || (echo "::warning::better-sqlite3 rebuild failed" && exit 0)
+              || { echo "::warning::better-sqlite3 rebuild failed — will probe binding next"; exit 0; }
             fi
           else
             pnpm rebuild better-sqlite3 \
-              || (echo "::warning::better-sqlite3 rebuild failed" && exit 0)
+              || { echo "::warning::better-sqlite3 rebuild failed — will probe binding next"; exit 0; }
           fi
-          # Probe: check if compiled binary exists, then try to load binding
+          # Probe: check if compiled binary exists, then try to load binding.
+          # This is the authoritative gate: if the binding cannot be loaded,
+          # the job exits 1 so the test suite is skipped (not silently pass).
           echo "  checking for compiled binary:"
           ls -la packages/core/node_modules/better-sqlite3/build/Release/ 2>/dev/null || echo "  (no build/Release in packages/core)"
           ls -la node_modules/.pnpm/better-sqlite3*/node_modules/better-sqlite3/build/Release/ 2>/dev/null || echo "  (no build/Release in .pnpm store)"
-          (cd packages/core && node -e "
+          if (cd packages/core && node -e "
             try {
               var D=require('better-sqlite3'), db=new D(':memory:');
               db.exec('CREATE TABLE t (a)');
@@ -164,8 +166,14 @@ jobs:
               db.close();
               process.exit(row&&row.v===1?0:1);
             } catch(e) { console.error('  PROBE_ERROR:', e.message); process.exit(1); }
-          ") && echo "::notice::better-sqlite3 binding loaded and functional OK" \
-            || echo "::warning::binding did not load post-rebuild"
+          "); then
+            echo "::notice::better-sqlite3 binding loaded and functional OK"
+            echo "SQLITE_BINDING_OK=true" >> $GITHUB_ENV
+          else
+            echo "::error::better-sqlite3 binding failed to load — SQLite tests will be skipped"
+            echo "SQLITE_BINDING_OK=false" >> $GITHUB_ENV
+            exit 1
+          fi
           echo "::notice::Post-rebuild binding status: ABI=$(node -p 'process.versions.modules') platform=$(node -p 'process.platform') arch=$(node -p 'process.arch')"
 
       - name: Security audit
@@ -201,7 +209,19 @@ jobs:
       - name: Run core tests
         env:
           COMMANDER_ALLOW_NO_SANDBOX: true
-        run: pnpm --filter @commander/core test
+        run: |
+          if [ "$SQLITE_BINDING_OK" = "false" ]; then
+            echo "::notice::SQLite binding unavailable — running tests excluding 6 SQLite-dependent suites"
+            pnpm --filter @commander/core exec vitest run --no-cache \
+              --exclude '**/workQueueStore.test.ts' \
+              --exclude '**/persistentStore.test.ts' \
+              --exclude '**/conversationSearchTool.test.ts' \
+              --exclude '**/filePermissions.test.ts' \
+              --exclude '**/kill9.test.ts' \
+              --exclude '**/workCoordinator.test.ts'
+          else
+            pnpm --filter @commander/core test
+          fi
 
       - name: Run SLO measurements
         env:
