@@ -234,7 +234,7 @@ jobs:
       - name: Open PR for today's WAL baseline (commit-back for day-N+1 regress gate)
         id: open-pr
         if: success()
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           branch: bench/wal-baseline-${{ steps.dates.outputs.today }}
           delete-branch: true
