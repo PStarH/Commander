@@ -285,6 +285,7 @@ export function cmdHelp(showAll = false) {
     ${$.cyan}doctor${$.reset}                  Run diagnostics
     ${$.cyan}mode [mode]${$.reset}             Approval mode (plan|read-only|suggest|auto-edit|full-auto)
     ${$.cyan}skill [sub]${$.reset}             Manage learnable skills (list, view, create, curate)
+    ${$.cyan}plugin [sub]${$.reset}            Install, list, uninstall plugins
     ${$.cyan}gui${$.reset}                     Start Agent War Room web dashboard${
       showAll
         ? `
@@ -293,6 +294,7 @@ export function cmdHelp(showAll = false) {
     ${$.cyan}company <task>${$.reset}          Enterprise: quality gating + memory
     ${$.cyan}swarm <task> [flags]${$.reset}    Recursive decomposition + parallel
     ${$.cyan}drive <task> [flags]${$.reset}    Autonomous step-by-step loop
+    ${$.cyan}up [task] [flags]${$.reset}       Unified execution + Web TUI
 
   ${$.bold}INFRASTRUCTURE${$.reset}
     ${$.cyan}saga [sub]${$.reset}              Durable compensating transactions

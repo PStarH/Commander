@@ -3,6 +3,8 @@ export { cmdSwarm, cmdDrive } from './commands/orchestrate';
 export { cmdStatus, cmdConfig, cmdDoctor, cmdMode } from './commands/manage';
 export { cmdHistory, cmdHistoryView } from './commands/history';
 export { cmdGui, cmdSkill, cmdReview, cmdHelp } from './commands/misc';
+export { cmdPlugin } from './commands/plugin';
+export { cmdUp } from './commands/up';
 
 export { cmdInit } from './commands/init';
 export { cmdQuickstart } from './commands/quickstart';

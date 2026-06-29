@@ -6,6 +6,7 @@ export { cmdSwarm, cmdDrive } from './orchestrate';
 export { cmdStatus, cmdConfig, cmdDoctor, cmdMode } from './manage';
 export { cmdGui, cmdSkill, cmdReview, cmdHelp } from './misc';
 export { cmdPlugin } from './plugin';
+export { cmdUp } from './up';
 export { cmdHistory } from './history';
 
 export { cmdQuickstart } from './quickstart';
