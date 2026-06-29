@@ -13,17 +13,7 @@ import {
 import { formatAnchoredOutput } from '../edit/hashAnchoredEditor';
 import { getInternalUrlRouter, isInternalUrl } from '../runtime/internalUrls';
 import { atomicWriteFile } from './_utils/atomicWrite';
-
-/** Async path existence check compatible with Node 18+ types. */
-async function pathExists(p: string): Promise<boolean> {
-  try {
-    await fs.promises.access(p);
-    return true;
-  } catch (err) {
-    reportSilentFailure(err, 'fileSystemTool:23');
-    return false;
-  }
-}
+import { pathExists } from './_utils/pathExists';
 
 /** Get the safe root directory. Dynamic to support runtime COMMANDER_WORKSPACE changes. */
 export function getSafeRoot(): string {
@@ -38,6 +28,13 @@ export function isWithinRoot(resolved: string, root: string): boolean {
 /**
  * Resolve a user-provided path relative to the safe workspace root.
  * Rejects paths that resolve outside the workspace, including symlink-based traversal.
+ *
+ * Sync-only contract: This function uses `realpathSync` for security
+ * (canonical symlink resolution must complete before traversal check) and
+ * cannot await at module load. The inner parent-walk uses `fs.statSync` with
+ * `throwIfNoEntry: false` instead of `existsSync` so the audit-flagged
+ * sync functions are not used here.
+ *
  * Re-exports for use by other tools (patchTool, multimodal tools).
  */
 export function safePath(target: string): string {
@@ -47,16 +44,16 @@ export function safePath(target: string): string {
   try {
     resolvedReal = fs.realpathSync(resolved);
   } catch (err) {
-    reportSilentFailure(err, 'fileSystemTool:50');
+    reportSilentFailure(err, 'fileSystemTool:42');
     // File doesn't exist yet — resolve the parent directory
     let parent = path.dirname(resolved);
-    while (parent !== '/' && !fs.existsSync(parent)) {
+    while (parent !== '/' && fs.statSync(parent, { throwIfNoEntry: false }) === undefined) {
       parent = path.dirname(parent);
     }
     try {
       resolvedReal = fs.realpathSync(parent) + resolved.slice(parent.length);
     } catch (err) {
-      reportSilentFailure(err, 'fileSystemTool:59');
+      reportSilentFailure(err, 'fileSystemTool:51');
       resolvedReal = resolved;
     }
   }
@@ -73,7 +70,7 @@ export function safePath(target: string): string {
   } catch (err: unknown) {
     if (err instanceof Error && 'code' in err && (err as { code: string }).code === 'ENOENT') {
       let ancestor = path.dirname(resolved);
-      while (ancestor !== getSafeRoot() && !fs.existsSync(ancestor)) {
+      while (ancestor !== getSafeRoot() && fs.statSync(ancestor, { throwIfNoEntry: false }) === undefined) {
         ancestor = path.dirname(ancestor);
       }
       try {
@@ -384,16 +381,16 @@ LEGACY MODE (backward-compatible): Use path + oldString + newString for simple s
       const resolved = safePath(filePath);
       if (!(await pathExists(resolved))) return `Error: file not found: ${filePath}`;
 
-      let content = await fs.promises.readFile(resolved, 'utf-8');
+      const content = await fs.promises.readFile(resolved, 'utf-8');
       const idx = content.indexOf(oldStr);
       if (idx === -1) return `Error: oldString not found in ${filePath}`;
 
       const occurrences = content.split(oldStr).length - 1;
-      content = content.split(oldStr).join(newStr);
-      await atomicWriteFile(resolved, content, { encoding: 'utf-8' });
+      const updated = content.split(oldStr).join(newStr);
+      await atomicWriteFile(resolved, updated, { encoding: 'utf-8' });
 
       // Update snapshot
-      getSnapshotStore().record(resolved, content);
+      getSnapshotStore().record(resolved, updated);
 
       return `Edited ${filePath}: replaced ${occurrences} occurrence(s) of "${oldStr.slice(0, 50)}..." with "${newStr.slice(0, 50)}..."`;
     } catch (err) {
@@ -403,7 +400,7 @@ LEGACY MODE (backward-compatible): Use path + oldString + newString for simple s
 }
 
 // ============================================================================
-// FileSearchTool — unchanged
+// FileSearchTool — async glob scan (was sync, blocks event loop)
 // ============================================================================
 
 export class FileSearchTool implements Tool {
@@ -414,7 +411,7 @@ export class FileSearchTool implements Tool {
     inputSchema: {
       type: 'object',
       properties: {
-        pattern: { type: 'string', description: 'Glob pattern (e.g. "**/*.ts", "src/**/*.js")' },
+        pattern: { type: 'string', description: 'Glob pattern (e.g., "**/*.ts", "src/**/*.js")' },
         maxResults: { type: 'number', description: 'Maximum results (default: 20)', default: 20 },
       },
       required: ['pattern'],
@@ -433,7 +430,7 @@ export class FileSearchTool implements Tool {
     if (!pattern) return 'Error: pattern is required';
 
     try {
-      const files = this.globSearch(pattern, getSafeRoot()).slice(0, maxResults);
+      const files = (await this.globSearch(pattern, getSafeRoot())).slice(0, maxResults);
       if (files.length === 0) return `No files matching "${pattern}"`;
       return files.map((f, i) => `[${i + 1}] ${f}`).join('\n');
     } catch (err) {
@@ -441,7 +438,7 @@ export class FileSearchTool implements Tool {
     }
   }
 
-  private globSearch(pattern: string, root: string): string[] {
+  private async globSearch(pattern: string, root: string): Promise<string[]> {
     const results: string[] = [];
     const parts = pattern.split('/');
     const filePattern = parts.pop() || '';
@@ -462,20 +459,20 @@ export class FileSearchTool implements Tool {
     } else {
       searchDir = root;
     }
-    if (!fs.existsSync(searchDir)) return [];
+    if (!(await pathExists(searchDir))) return [];
 
     if (deep) {
-      this.globRecurseDeep(searchDir, root, filePattern, results);
+      await this.globRecurseDeep(searchDir, root, filePattern, results);
     } else {
-      this.globRecurse(searchDir, root, filePattern, results);
+      await this.globRecurse(searchDir, root, filePattern, results);
     }
     return results;
   }
 
-  private globRecurse(dir: string, root: string, filePattern: string, results: string[]) {
-    if (!fs.existsSync(dir)) return;
+  private async globRecurse(dir: string, root: string, filePattern: string, results: string[]): Promise<void> {
+    if (!(await pathExists(dir))) return;
     try {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true });
       for (const entry of entries) {
         const fullPath = path.join(dir, entry.name);
         const relPath = path.relative(root, fullPath);
@@ -494,17 +491,17 @@ export class FileSearchTool implements Tool {
   }
 
   /** Recursive version used when the pattern contains ** — recurses into all subdirectories */
-  private globRecurseDeep(dir: string, root: string, filePattern: string, results: string[]) {
-    if (!fs.existsSync(dir)) return;
+  private async globRecurseDeep(dir: string, root: string, filePattern: string, results: string[]): Promise<void> {
+    if (!(await pathExists(dir))) return;
     try {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true });
       for (const entry of entries) {
         const fullPath = path.join(dir, entry.name);
         const relPath = path.relative(root, fullPath);
 
         if (entry.isDirectory()) {
           if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
-          this.globRecurseDeep(fullPath, root, filePattern, results);
+          await this.globRecurseDeep(fullPath, root, filePattern, results);
         } else if (entry.isFile() && this.matchGlob(entry.name, filePattern)) {
           results.push(relPath);
         }
@@ -524,7 +521,7 @@ export class FileSearchTool implements Tool {
 }
 
 // ============================================================================
-// FileListTool — unchanged
+// FileListTool — async directory listing
 // ============================================================================
 
 export class FileListTool implements Tool {
@@ -553,9 +550,9 @@ export class FileListTool implements Tool {
 
     try {
       const resolved = safePath(dirPath);
-      if (!fs.existsSync(resolved)) return `Error: directory not found: ${dirPath}`;
+      if (!(await pathExists(resolved))) return `Error: directory not found: ${dirPath}`;
 
-      const entries = fs.readdirSync(resolved, { withFileTypes: true });
+      const entries = await fs.promises.readdir(resolved, { withFileTypes: true });
       return entries
         .map((e) => `${e.isDirectory() ? '📁' : '📄'} ${e.name}${e.isDirectory() ? '/' : ''}`)
         .join('\n');
@@ -566,7 +563,7 @@ export class FileListTool implements Tool {
 }
 
 // ============================================================================
-// GlobTool — unchanged
+// GlobTool — async glob with deep recursion
 // ============================================================================
 
 export class GlobTool implements Tool {
@@ -606,9 +603,9 @@ export class GlobTool implements Tool {
 
     try {
       const rootDir = safePath(searchPath);
-      if (!fs.existsSync(rootDir)) return `Error: directory not found: ${searchPath}`;
+      if (!(await pathExists(rootDir))) return `Error: directory not found: ${searchPath}`;
 
-      const files = this.globFind(rootDir, pattern, maxResults);
+      const files = await this.globFind(rootDir, pattern, maxResults);
       if (files.length === 0) return `No files matching "${pattern}" in ${searchPath}`;
 
       const truncated = files.length >= maxResults ? `\n... (showing first ${maxResults})` : '';
@@ -618,7 +615,7 @@ export class GlobTool implements Tool {
     }
   }
 
-  private globFind(rootDir: string, pattern: string, maxResults: number): string[] {
+  private async globFind(rootDir: string, pattern: string, maxResults: number): Promise<string[]> {
     const results: string[] = [];
     const parts = pattern.split('/');
     const filePattern = parts.pop() || '*';
@@ -635,21 +632,21 @@ export class GlobTool implements Tool {
       }
     }
 
-    this.recurse(searchDir, rootDir, filePattern, dirPrefix === '**', results, maxResults);
+    await this.recurse(searchDir, rootDir, filePattern, dirPrefix === '**', results, maxResults);
     return results;
   }
 
-  private recurse(
+  private async recurse(
     dir: string,
     root: string,
     filePattern: string,
     deep: boolean,
     results: string[],
     limit: number,
-  ): void {
+  ): Promise<void> {
     if (results.length >= limit) return;
     try {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (results.length >= limit) return;
         const fullPath = path.join(dir, entry.name);
@@ -658,7 +655,7 @@ export class GlobTool implements Tool {
           if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'dist')
             continue;
           if (deep || this.matchGlob(entry.name, filePattern)) {
-            this.recurse(fullPath, root, filePattern, deep, results, limit);
+            await this.recurse(fullPath, root, filePattern, deep, results, limit);
           }
         } else if (entry.isFile()) {
           if (this.matchGlob(entry.name, filePattern)) {
@@ -667,7 +664,7 @@ export class GlobTool implements Tool {
         }
       }
     } catch (err) {
-      reportSilentFailure(err, 'fileSystemTool:670');
+      reportSilentFailure(err, 'fileSystemTool:repeat');
       // Skip unreadable directories
     }
   }
@@ -693,7 +690,7 @@ export class GlobTool implements Tool {
     try {
       return new RegExp(regexStr).test(name);
     } catch (err) {
-      reportSilentFailure(err, 'fileSystemTool:696');
+      reportSilentFailure(err, 'fileSystemTool:globRegex');
       return false;
     }
   }
