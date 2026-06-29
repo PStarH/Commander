@@ -61,7 +61,8 @@ const CLEANUP_INTERVAL_MS = 3600_000; // 1 hour
 const FLUSH_INTERVAL_MS = 1000; // 1 second batch flush
 
 export class LogPersistence {
-  /* eslint-disable @typescript-eslint/no-explicit-any */ private db: any = null; /* eslint-enable @typescript-eslint/no-explicit-any */
+  /* eslint-disable @typescript-eslint/no-explicit-any */ private db: any =
+    null; /* eslint-enable @typescript-eslint/no-explicit-any */
   private queue: PersistedLogEntry[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
@@ -141,7 +142,8 @@ export class LogPersistence {
     }
   }
 
-  /* eslint-disable @typescript-eslint/no-explicit-any */ private insertStmt: any = null; /* eslint-enable @typescript-eslint/no-explicit-any */
+  /* eslint-disable @typescript-eslint/no-explicit-any */ private insertStmt: any =
+    null; /* eslint-enable @typescript-eslint/no-explicit-any */
 
   /**
    * Queue a log entry for async persistence.
