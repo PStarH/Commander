@@ -29,6 +29,7 @@ import type {
   LLMProvider,
   LLMRequest,
   LLMResponse,
+  LLMMessage,
   AgentExecutionContext,
   AgentExecutionStep,
   AgentExecutionResult,
@@ -122,6 +123,7 @@ import { getCostGuard } from '../security/costGuard';
 import { getCapabilityTokenIssuer } from '../security/capabilityToken';
 import { getEnterpriseSecurityGateway } from '../security/enterpriseSecurityGateway';
 import { checkMemoryPoisoning } from '../security/memoryPoisoningGate';
+import { getMemoryPoisoningDefenseEngine } from '../security/memoryPoisoningDefenseEngine';
 import { isAgentSuspended, isAgentQuarantined, getThrottleMultiplier, processSecurityAlert } from '../security/securityResponseEngine';
 import type { SecurityAlert } from '../security/securityResponseEngine';
 import { assertInvariants } from '../security/securityInvariantVerifier';
@@ -163,6 +165,7 @@ import {
 } from './finallyCleanupHandler';
 import { LLMRequestBuilder } from './llmRequestBuilder';
 import { GoalCompletionVerifier } from './goalCompletionVerifier';
+import { ToolExecutionHandler } from './toolExecutionHandler';
 import { ReflexionGenerator, type ReflexionContext } from './reflexionGenerator';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -170,12 +173,13 @@ import { getGlobalLogger } from '../logging';
 import { getDataRetentionJanitor } from '../storage/dataRetention';
 import type { CompactTaskType } from './contextCompactor';
 import { getCostEstimator, type CostEstimate } from './costEstimator';
+import { getTokenSentinel } from '../telos/tokenSentinel';
+import { DEFAULT_TELOS_CONFIG, type TELOSBudget } from '../telos/types';
 import { getModelPerformanceStore } from './modelPerformanceStore';
 import { getSecurityMonitor } from '../security/securityMonitor';
 import { initializeRuntimeGuardian } from './runtimeGuardianBridge';
 import {
   SecurityOrchestrator,
-  getSecurityOrchestrator,
   type SecurityOrchestratorDecision,
 } from './securityOrchestrator';
 import type { CrossAgentEvent } from '../security/crossAgentCorrelator';
@@ -184,9 +188,6 @@ import {
   generateId,
   now,
   delay,
-  descendingToolOrder,
-  applyObservationMask,
-  isMutationTool,
 } from './runtimeHelpers';
 
 // ============================================================================
@@ -289,6 +290,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
   // Extracted from execute()'s retry loop — verifies goal completion via the
   // configured verification tool before accepting a stop signal.
   private goalCompletionVerifier: GoalCompletionVerifier;
+  // Extracted from execute()'s retry loop — owns the per-response tool-execution
+  // phase (onStepStart → tool dispatch → result redaction → onStepComplete).
+  private toolExecutionHandler: ToolExecutionHandler;
 
   // Tenant config provider (kept for direct lookups in execute())
   private tenantProvider: TenantProvider;
@@ -452,6 +456,59 @@ export class AgentRuntime implements AgentRuntimeInterface {
       getMaxRetries: () => this.config.maxRetries,
     });
 
+    // ToolExecutionHandler — owns the tool-execution phase that previously lived
+    // inline in execute()'s retry loop (onStepStart hook → tool-call parsing →
+    // batch-safe/sequential dispatch → result redaction → onStepComplete →
+    // follow-up LLM call). Getter callbacks keep it decoupled from the runtime's
+    // concrete (possibly per-tenant) instance fields; the runtime-method
+    // callbacks are bound so `this` resolves correctly inside the handler.
+    this.toolExecutionHandler = new ToolExecutionHandler({
+      getConfig: () => this.config,
+      getTools: () => this.tools,
+      getGovernor: () => this.governor,
+      getCacheManager: () => this.cacheManager,
+      getPlanner: () => this.planner,
+      getOrchestrator: () => this.orchestrator,
+      getOutputManager: () => this.outputManager,
+      getCycleDetector: () => this.cycleDetector,
+      getSecurityOrch: () => this.securityOrch,
+      getSlidingWindow: () => this.slidingWindow,
+      getMemory: () => this.memory,
+      getCompactor: () => this.compactor,
+      normalizeToolCall: (tc) => this.normalizeToolCall(tc),
+      applyPreToolCallGates: (
+        tc,
+        agentId,
+        runId,
+        tenantId,
+        recentToolPatterns,
+        toolLoopCount,
+        siblingAbortSignal,
+      ) =>
+        this.applyPreToolCallGates(
+          tc,
+          agentId,
+          runId,
+          tenantId,
+          recentToolPatterns,
+          toolLoopCount,
+          siblingAbortSignal,
+        ),
+      applyBeforeToolCallSecurity: (tc, agentId, runId) =>
+        this.applyBeforeToolCallSecurity(tc, agentId, runId),
+      executeTool: (runId, toolCall, agentId, tenantId, allowedTools, agentCtx) =>
+        this.executeTool(runId, toolCall, agentId, tenantId, allowedTools, agentCtx),
+      invalidateMutationCache: (toolName) => this.invalidateMutationCache(toolName),
+      callWithTimeout: (request, routing, attemptNumber, taskId) =>
+        this.callWithTimeout(request, routing, attemptNumber, taskId),
+      setExecutedMutations: (mutations) => {
+        this.executedMutations = mutations;
+      },
+      setLastHallucinationDetected: (value) => {
+        this.lastHallucinationDetected = value;
+      },
+    });
+
     // Benchmarks may intentionally generate high tool-call volumes; let callers
     // disable GuardianAgent monitoring through the runtime config.
     if (this.config.securityMonitor?.enabled === false) {
@@ -503,7 +560,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
               }) =>
                 provider.call({
                   ...input,
-                  messages: input.messages as any,
+                  messages: input.messages as LLMMessage[],
                 }),
             };
           },
@@ -1289,8 +1346,6 @@ export class AgentRuntime implements AgentRuntimeInterface {
           };
           // Track content written by file_write tool calls for artifact propagation
           let largestFileWriteContent = '';
-          // Cumulative evidence for SubAgentGuard progress tracking (persists across retries)
-          let cumulativeEvidence = 0;
 
           // Per-run sliding window instance to prevent concurrent run corruption
           this.slidingWindow = new SlidingWindowOrchestrator();
@@ -1522,7 +1577,104 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 /* best-effort learning */
               }
 
-              // Record step
+              // TokenSentinel: fine-grained per-run token-budget tracking.
+              // Unlike EnterpriseSecurityGateway's BillExplosionGuard (which
+              // does a pre-LLM cost estimate and hard-blocks the call), the
+              // TokenSentinel checks the *actual* accumulated token usage
+              // against a hard cap and emits a warn log + a 'system.alert'
+              // (token_usage_anomaly variant) MessageBus event when exceeded.
+              // Advisory only — it does NOT throw or abort the run; the
+              // BillExplosionGuard already owns the hard-block path (see
+              // preLLMCheck further down).
+              try {
+                const hardCap =
+                  this.config.budgetHardCapTokens ||
+                  DEFAULT_TELOS_CONFIG.defaultBudget.hardCapTokens;
+                const telosBudget: TELOSBudget = {
+                  hardCapTokens: hardCap,
+                  softCapTokens: Math.floor(hardCap * 0.75),
+                  costCapUsd: DEFAULT_TELOS_CONFIG.defaultBudget.costCapUsd,
+                };
+                const budgetAlert = getTokenSentinel().checkBudget(
+                  runId,
+                  totalTokens.totalTokens,
+                  telosBudget,
+                );
+                if (budgetAlert) {
+                  getGlobalLogger().warn(
+                    'AgentRuntime',
+                    `TokenSentinel budget exceeded: ${budgetAlert.message}`,
+                    {
+                      runId,
+                      agentId: ctx.agentId,
+                      current: budgetAlert.current,
+                      limit: budgetAlert.limit,
+                      type: budgetAlert.type,
+                    },
+                  );
+                  bus.publish('system.alert', ctx.agentId, {
+                    type: 'token_usage_anomaly',
+                    runId,
+                    agentId: ctx.agentId,
+                    alertType: budgetAlert.type,
+                    current: budgetAlert.current,
+                    limit: budgetAlert.limit,
+                    message: budgetAlert.message,
+                  });
+                }
+              } catch (err) {
+                reportSilentFailure(err, 'agentRuntime:tokenSentinel:checkBudget');
+              }
+
+              // ── Degeneration guard (PRE-STEP) ──
+              // Detect and sanitize model degeneration BEFORE the step is created.
+              // This prevents degenerate content (e.g., "TheTheTheThe…") from
+              // entering step history, where it would contaminate the final
+              // summary when the terminal handler pulls from steps.
+              let degenerationDetected = false;
+              if (response.content) {
+                const stagnation = this.cycleDetector.checkOutput(response.content);
+                if (stagnation.detected && stagnation.type === 'semantic_stagnation') {
+                  bus.publish('system.alert', 'runtime', {
+                    ...stagnation,
+                    runId,
+                    agentId: ctx.agentId,
+                    stepNumber: steps.length + 1,
+                  });
+                  getGlobalLogger().warn('AgentRuntime', 'Semantic stagnation detected', {
+                    stepNumber: steps.length + 1,
+                    similarity: stagnation.similarity,
+                    description: stagnation.description,
+                  });
+                  getMetricsCollector().incrementCounter(
+                    'degeneration_breaks_total',
+                    'Retry loops broken due to model output degeneration',
+                    1,
+                    [{ name: 'type', value: 'repetition' }],
+                  );
+
+                  // Sanitize: truncate to the first non-degenerate sentence.
+                  const sentences = response.content.split(/(?<=[.!?])\s+/);
+                  const cleanSentences: string[] = [];
+                  for (const s of sentences) {
+                    if (!CycleDetector.detectRepetition(s).detected) {
+                      cleanSentences.push(s);
+                    } else {
+                      break;
+                    }
+                  }
+                  const cleanContent = cleanSentences.join(' ').trim();
+                  response.content =
+                    (cleanContent.length > 20 ? cleanContent.slice(0, 2000) : '') +
+                    '[Output truncated: model degeneration detected — ' +
+                    stagnation.description +
+                    ']';
+                  response.toolCalls = [];
+                  degenerationDetected = true;
+                }
+              }
+
+              // Record step (content is already sanitized if degeneration was detected)
               const stepNumber = steps.length + 1;
               const step: AgentExecutionStep = {
                 stepNumber,
@@ -1536,922 +1688,32 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 durationMs: stepDuration,
               };
 
-              // ── Hook: onStepStart ──
-              getHookManager()
-                .fireOnStepStart({
-                  runId,
-                  agentId: ctx.agentId,
-                  stepNumber,
-                  type: 'response',
-                  content: response.content,
-                })
-                .catch((e) =>
-                  getGlobalLogger().debug('AgentRuntime', 'onStepStart hook failed', {
-                    error: (e as Error)?.message,
-                  }),
-                );
-
-              steps.push(step);
-
-              // Publish reasoning and output deltas for real-time SSE streaming.
-              // Previously SSEStream.emitReasoning()/emitOutput() existed but were
-              // never called, so enterprise users could only see event-level
-              // "started/completed" — not the agent's actual thinking process.
-              // Publishing to the bus lets SSEStream forward these to connected clients.
-              try {
-                const reasoningContent =
-                  (response as { reasoning_content?: string }).reasoning_content;
-                if (reasoningContent) {
-                  getMessageBus().publish('reasoning.delta', ctx.agentId, {
-                    runId,
-                    agentId: ctx.agentId,
-                    stepNumber,
-                    delta: reasoningContent.slice(0, 2000),
-                    timestamp: now(),
-                  });
-                }
-                if (response.content) {
-                  getMessageBus().publish('output.delta', ctx.agentId, {
-                    runId,
-                    agentId: ctx.agentId,
-                    stepNumber,
-                    delta: response.content.slice(0, 2000),
-                    timestamp: now(),
-                  });
-                }
-              } catch {
-                /* best-effort — streaming is non-critical */
-              }
-
-              const anomalyDetector = getAnomalyDetector();
-              anomalyDetector.recordUsage(ctx.agentId, response.usage.totalTokens);
-              const anomaly = anomalyDetector.checkForAnomaly(
-                ctx.agentId,
+              // ── Tool execution phase (extracted to ToolExecutionHandler) ──
+              // Owns onStepStart → tool dispatch → result redaction → onStepComplete
+              // → follow-up LLM call. Returns control signals for the post-loop
+              // interrupt check, goal-completion verification, and early-exit path.
+              const {
+                response: toolExecResponse,
+                earlyExit,
+                interruptData,
+                largestFileWriteContent: toolExecLargestFileWriteContent,
+              } = await this.toolExecutionHandler.executeStep({
+                ctx,
                 runId,
+                response,
+                request,
+                steps,
+                totalTokens,
+                bus,
+                tenantId,
+                routing,
+                step,
                 stepNumber,
-                response.usage.totalTokens,
-              );
-              if (anomaly) {
-                bus.publish('system.alert', 'runtime', {
-                  type: 'token_usage_anomaly',
-                  ...anomaly,
-                });
-              }
-
-              if (response.content) {
-                const stagnation = this.cycleDetector.checkOutput(response.content);
-                if (stagnation.detected) {
-                  bus.publish('system.alert', 'runtime', {
-                    ...stagnation,
-                    runId,
-                    agentId: ctx.agentId,
-                    stepNumber,
-                  });
-                  getGlobalLogger().warn('AgentRuntime', 'Semantic stagnation detected', {
-                    stepNumber,
-                    similarity: stagnation.similarity,
-                  });
-                }
-              }
-
-              // Entropy gating: if model is confident with no tool calls, skip verification
-              // to save tokens. Evidence: arXiv 2602.02050 — high-quality tool calls reduce
-              // model entropy; confident responses need no verification.
-              let earlyExit = false;
-              if (!response.toolCalls || response.toolCalls.length === 0) {
-                if (isConfidentResponse(response)) {
-                  bus.publish('system.alert', 'runtime', {
-                    type: 'entropy_gate',
-                    reason: 'confident_no_tool_calls',
-                  });
-                  // Skip verification when model is confident — saves ~500-2000 tokens per skip
-                  earlyExit = true;
-                  getMetricsCollector().incrementCounter(
-                    'early_exits_total',
-                    'Early exits due to confident responses',
-                    1,
-                    [{ name: 'reason', value: 'confident_no_tools' }],
-                  );
-                }
-                // Attempt structured output extraction for potential JSON answers.
-                // Prefer provider-native parsed output, then fall back to content parsing.
-                if (response.parsed) {
-                  step.content = JSON.stringify(response.parsed);
-                } else {
-                  const structured = parseStructuredOutput(response.content);
-                  if (structured) {
-                    step.content =
-                      typeof structured === 'string' ? structured : JSON.stringify(structured);
-                  }
-                }
-              }
-
-              // Process tool calls in a loop — with caching, planning, cycle detection, and output management
-              const maxIterations = Math.max(ctx.maxSteps || 10, 20);
-              let toolLoopCount = 0;
-              this.cycleDetector.reset();
-              this.executedMutations = [];
-              // Track recent tool call patterns for retry-loop detection.
-              // A retry loop is when the same tool is called with identical
-              // arguments >= 3 times within a short window (last 20 calls).
-              const recentToolPatterns: string[] = [];
-              let retryLoopDetected = false;
-              void 0;
-              let cycleDetected = false;
-              let interruptData: { reason: string; value: unknown } | null = null;
-              while (
-                response.toolCalls &&
-                response.toolCalls.length > 0 &&
-                toolLoopCount < maxIterations &&
-                !cycleDetected &&
-                !retryLoopDetected &&
-                this.governor.getState().phase !== 'critical'
-              ) {
-                console.warn(
-                  `[TOOL LOOP] iteration ${toolLoopCount + 1} calls=${response.toolCalls?.length} phase=${this.governor.getState().phase}`,
-                );
-                toolLoopCount++;
-
-                // Reset output manager turn budget (governor-aware: shrink under pressure)
-                this.outputManager.resetTurn();
-                this.outputManager.adjustBudgetForPressure(this.governor.getState().pressure);
-
-                // Check cache for all tool calls first (zero-cost on hit)
-                const calls = (response.toolCalls ?? []).map((tc) =>
-                  this.normalizeToolCall(tc),
-                );
-                const uncachedCalls: typeof calls = [];
-                const cachedResults: Array<{
-                  toolCallId: string;
-                  name: string;
-                  output: string;
-                  error?: string;
-                  durationMs: number;
-                }> = [];
-
-                for (const tc of calls) {
-                  const cached = this.cacheManager.getToolCache().get(tc, tenantId);
-                  if (cached) {
-                    cachedResults.push({
-                      toolCallId: tc.id,
-                      name: tc.name,
-                      output: cached.output,
-                      error: cached.error,
-                      durationMs: 0,
-                    });
-                  } else {
-                    uncachedCalls.push(tc);
-                  }
-                }
-
-                // Plan execution for uncached calls using dependency-aware planner
-                const executionPlan = this.planner.plan(uncachedCalls, this.tools);
-                const rawResults: Array<{
-                  toolCallId: string;
-                  name: string;
-                  output: string;
-                  error?: string;
-                  durationMs: number;
-                }> = [];
-
-                // Execute each stage (parallel within stage, sequential across stages)
-                for (const stage of executionPlan.stages) {
-                  if (stage.toolCalls.length === 0) continue;
-
-                  // Apply descending scheduler if enabled (broad exploration first)
-                  const stageCalls = this.config.enableDescendingScheduler
-                    ? descendingToolOrder(stage.toolCalls)
-                    : stage.toolCalls;
-
-                  // Check orchestration plan (circuit breakers, approvals)
-                  const planResult = await this.orchestrator.planExecution(stageCalls, this.tools);
-                  const approvedCalls = [...planResult.concurrent, ...planResult.serial];
-
-                  // Log skipped/circuit-broken tools
-                  for (const s of planResult.skipped) {
-                    bus.publish('tool.blocked', ctx.agentId, {
-                      runId,
-                      toolName: s.toolCall.name,
-                      reason: 'orchestrator_skipped',
-                      detail: s.reason,
-                    });
-                    rawResults.push({
-                      toolCallId: s.toolCall.id,
-                      name: s.toolCall.name,
-                      output: '',
-                      error: s.reason,
-                      durationMs: 0,
-                    });
-                  }
-                  for (const cb of planResult.circuitBroken) {
-                    bus.publish('tool.blocked', ctx.agentId, {
-                      runId,
-                      toolName: cb.toolCall.name,
-                      reason: 'circuit_broken',
-                      detail: cb.toolName,
-                    });
-                    rawResults.push({
-                      toolCallId: cb.toolCall.id,
-                      name: cb.toolCall.name,
-                      output: '',
-                      error: `CIRCUIT_OPEN: ${cb.toolName}`,
-                      durationMs: 0,
-                    });
-                  }
-
-                  // Partition approved calls: concurrent-safe first, then serial
-                  const concurrencyMap = approvedCalls.map((tc) => {
-                    const tool = this.tools.get(tc.name);
-                    return { tc, isSafe: tool?.isConcurrencySafe === true };
-                  });
-                  const safeCalls = concurrencyMap.filter((c) => c.isSafe).map((c) => c.tc);
-                  const serialCalls = concurrencyMap.filter((c) => !c.isSafe).map((c) => c.tc);
-
-                  // Run concurrent-safe tools in parallel with sibling abort
-                  if (safeCalls.length > 0) {
-                    const siblingAbort = new AbortController();
-                    const concurrentResults = await Promise.allSettled(
-                      safeCalls.map(async (tc) => {
-                        // Pre-tool-call safety gates (hook, sibling-abort, retry, cycle)
-                        const gate = await this.applyPreToolCallGates(
-                          tc,
-                          ctx.agentId,
-                          runId,
-                          ctx.tenantId,
-                          recentToolPatterns,
-                          toolLoopCount,
-                          siblingAbort.signal,
-                        );
-                        if (gate.kind !== 'allowed') {
-                          console.warn(`[SERIAL] GATE BLOCKED ${tc.name} kind=${gate.kind}`);
-                          if (gate.kind === 'retry') {
-                            retryLoopDetected = true;
-                            return toolErrorRow(tc, `Retry loop detected: ${tc.name}`);
-                          }
-                          if (gate.kind === 'cycle') {
-                            cycleDetected = true;
-                            // Publishes live at the call site (no double-fire).
-                            // `runId` propagates so Phase 2 Hub Glue
-                            // CycleCorrelator can dedup by run instead of
-                            // collapsing concurrent runs that hit the same
-                            // tool/args within the 5s TTL window.
-                            bus.publish('system.alert', 'runtime', {
-                              type: 'cycle_detected',
-                              toolName: tc.name,
-                              description: gate.description,
-                              runId,
-                            });
-                            bus.publish('tool.blocked', ctx.agentId, {
-                              runId,
-                              toolName: tc.name,
-                              reason: 'cycle_detected',
-                              detail: gate.description,
-                            });
-                            return toolErrorRow(tc, `Cycle detected: ${gate.description}`);
-                          }
-                          if (gate.kind === 'hooked') {
-                            bus.publish('tool.blocked', ctx.agentId, {
-                              runId,
-                              toolName: tc.name,
-                              reason: 'hook_denied',
-                              detail: gate.errorMsg,
-                            });
-                            // Cross-agent correlator: record the attempt that
-                            // the HookManager denied (the applyBeforeToolCallSecurity
-                            // correlator fire only runs on the allowed-path branch,
-                            // so this denial path would otherwise leave the
-                            // correlator empty). Fires once per hook-denial.
-                            try {
-                              this.securityOrch.onAgentEvent({
-                                id: generateId(),
-                                agentId: ctx.agentId,
-                                runId,
-                                type: 'tool_call',
-                                summary: `Tool ${tc.name} (denied by hook)`,
-                                metadata: {
-                                  toolName: tc.name,
-                                  allowed: false,
-                                  hookReason: gate.errorMsg,
-                                },
-                                timestamp: Date.now(),
-                                severity: 'high',
-                              } as CrossAgentEvent);
-                            } catch (err) {
-                              reportSilentFailure(err, 'agentRuntime:2430');
-                              /* best-effort */
-                            }
-                            return toolErrorRow(tc, `Hook blocked: ${gate.errorMsg || 'denied'}`);
-                          }
-                          // gate.kind === 'siblingAbort'
-                          return gate.row;
-                        }
-
-                        // SecurityOrchestrator: unify ToolApproval + AdaptiveHITL before execution
-                        const sec = await this.applyBeforeToolCallSecurity(tc, ctx.agentId, runId);
-                        if (!sec.allowed && sec.blockedRawResult) {
-                          return sec.blockedRawResult;
-                        }
-                        // Catch InterruptError before StepErrorBoundary — it's a signal, not an error
-                        let toolResult: ToolResult;
-                        try {
-                          toolResult = await this.executeTool(
-                            runId,
-                            tc,
-                            ctx.agentId,
-                            tenantId,
-                            ctx.availableTools,
-                          );
-                        } catch (err) {
-                          if (err instanceof InterruptError) {
-                            // Signal interrupt — the tool loop will break after this iteration
-                            interruptData = { reason: err.reason, value: err.value };
-                            bus.publish('agent.interrupted', ctx.agentId, {
-                              runId,
-                              reason: err.reason,
-                            });
-                            return {
-                              toolCallId: tc.id,
-                              name: tc.name,
-                              output: `Interrupted: ${err.reason}`,
-                              error: undefined,
-                              durationMs: 0,
-                            };
-                          }
-                          throw err; // Re-throw non-interrupt errors for StepErrorBoundary
-                        }
-
-                        toolResult = await getHookManager().fireAfterToolCall({
-                          toolName: tc.name,
-                          args: tc.arguments,
-                          result: toolResult,
-                          agentId: ctx.agentId,
-                          runId,
-                        });
-                        if (
-                          toolResult.error &&
-                          (tc.name === 'shell_execute' || tc.name === 'bash')
-                        ) {
-                          siblingAbort.abort();
-                        }
-                        if (!toolResult.error) {
-                          this.cacheManager.getToolCache().set(tc, toolResult, tenantId);
-                          this.invalidateMutationCache(tc.name);
-                          if (isMutationTool(tc.name)) {
-                            this.executedMutations.push({
-                              toolName: tc.name,
-                              args: tc.arguments as Record<string, unknown>,
-                            });
-                          }
-                        }
-                        // Capture file_write content for artifact propagation
-                        if (tc.name === 'file_write' && !toolResult.error) {
-                          const writtenContent = String(tc.arguments?.content ?? '');
-                          if (writtenContent.length > largestFileWriteContent.length) {
-                            largestFileWriteContent = writtenContent;
-                          }
-                        }
-                        return {
-                          toolCallId: tc.id,
-                          name: tc.name,
-                          output: toolResult.output,
-                          error: toolResult.error,
-                          durationMs: toolResult.durationMs,
-                        };
-                      }),
-                    );
-                    for (let i = 0; i < concurrentResults.length; i++) {
-                      const r = concurrentResults[i];
-                      if (r.status === 'fulfilled') {
-                        if (r.status === 'fulfilled' && !r.value.error) cumulativeEvidence++;
-                        rawResults.push(r.value);
-                      } else {
-                        rawResults.push({
-                          toolCallId: safeCalls[i].id,
-                          name: safeCalls[i].name,
-                          output: '',
-                          error: r.reason?.toString() || 'Execution failed',
-                          durationMs: 0,
-                        });
-                      }
-                    }
-                  }
-
-                  // Run serial tools in order
-                  for (const tc of serialCalls) {
-                    // Pre-tool-call safety gates (hook, retry, cycle).
-                    // Concurrent-only sibling-abort is irrelevant on the
-                    // serial path — no Promise.allSettled siblings.
-                    const gate = await this.applyPreToolCallGates(
-                      tc,
-                      ctx.agentId,
-                      runId,
-                      ctx.tenantId,
-                      recentToolPatterns,
-                      toolLoopCount,
-                    );
-                    if (gate.kind !== 'allowed') {
-                      let blockingRow: SyntheticErrorRow | null = null;
-                      let shouldBreak = false;
-                      switch (gate.kind) {
-                        case 'hooked':
-                          bus.publish('tool.blocked', ctx.agentId, {
-                            runId,
-                            toolName: tc.name,
-                            reason: 'hook_denied',
-                            detail: gate.errorMsg,
-                          });
-                          blockingRow = toolErrorRow(
-                            tc,
-                            `Hook blocked: ${gate.errorMsg || 'denied'}`,
-                          );
-                          break;
-                        case 'retry':
-                          retryLoopDetected = true;
-                          blockingRow = toolErrorRow(tc, `Retry loop detected: ${tc.name}`);
-                          shouldBreak = true;
-                          break;
-                        case 'cycle':
-                          // `runId` propagates so the Phase 2 Hub Glue
-                          // CycleCorrelator can dedup by run (key
-                          // `${runId}:${toolName}:${description}`) instead
-                          // of false-correlating concurrent runs that trigger the
-                          // same gate. Mirrors the concurrent-path edit in the
-                          // Promise.allSettled closure.
-                          bus.publish('system.alert', 'runtime', {
-                            type: 'cycle_detected',
-                            toolName: tc.name,
-                            description: gate.description,
-                            runId,
-                          });
-                          bus.publish('tool.blocked', ctx.agentId, {
-                            runId,
-                            toolName: tc.name,
-                            reason: 'cycle_detected',
-                            detail: gate.description,
-                          });
-                          cycleDetected = true;
-                          blockingRow = toolErrorRow(tc, `Cycle detected: ${gate.description}`);
-                          shouldBreak = true;
-                          break;
-                        case 'siblingAbort':
-                          // serial path does not consume siblingAbort — kept
-                          // defensive so a future regression that lets it fire
-                          // here still pushes the synthetic row instead of
-                          // silently dropping the cancellation.
-                          blockingRow = gate.row;
-                          break;
-                      }
-                      if (blockingRow) rawResults.push(blockingRow);
-                      if (shouldBreak) break;
-                    }
-                    // SecurityOrchestrator: unify ToolApproval + AdaptiveHITL before execution
-                    const sec = await this.applyBeforeToolCallSecurity(tc, ctx.agentId, runId);
-                    if (!sec.allowed && sec.blockedToolResult) {
-                      console.warn(
-                        `[SERIAL] BLOCKED ${tc.name} by security: ${sec.decision.blockReason ?? 'unknown'}`,
-                      );
-                    }
-                    let toolResult: ToolResult;
-                    if (!sec.allowed && sec.blockedToolResult) {
-                      toolResult = sec.blockedToolResult;
-                    } else {
-                      console.warn(`[SERIAL] EXECUTING ${tc.name} toolLoopCount=${toolLoopCount}`);
-                      toolResult = await this.executeTool(
-                        runId,
-                        tc,
-                        ctx.agentId,
-                        tenantId,
-                        ctx.availableTools,
-                      );
-                    }
-                    toolResult = await getHookManager().fireAfterToolCall({
-                      toolName: tc.name,
-                      args: tc.arguments,
-                      result: toolResult,
-                      agentId: ctx.agentId,
-                      runId,
-                    });
-                    if (!toolResult.error) {
-                      this.cacheManager.getToolCache().set(tc, toolResult, tenantId);
-                      this.invalidateMutationCache(tc.name);
-                      if (isMutationTool(tc.name)) {
-                        this.executedMutations.push({
-                          toolName: tc.name,
-                          args: tc.arguments as Record<string, unknown>,
-                        });
-                      }
-                    }
-                    // Capture file_write content for artifact propagation
-                    if (tc.name === 'file_write' && !toolResult.error) {
-                      const writtenContent = String(tc.arguments?.content ?? '');
-                      if (writtenContent.length > largestFileWriteContent.length) {
-                        largestFileWriteContent = writtenContent;
-                      }
-                    }
-                    if (!toolResult.error) cumulativeEvidence++;
-                    rawResults.push({
-                      toolCallId: tc.id,
-                      name: tc.name,
-                      output: toolResult.output,
-                      error: toolResult.error,
-                      durationMs: toolResult.durationMs,
-                    });
-                  }
-                }
-
-                // Merge cached + raw results, reorder to match original request order
-                const allResults = [...cachedResults, ...rawResults];
-                const resultMap = new Map(allResults.map((r) => [r.toolCallId, r]));
-                const orderedResults = calls.map((tc) => resultMap.get(tc.id)!).filter(Boolean);
-
-                // Output management: cap, truncate, persist per-turn budget
-                const managedOutputs = this.outputManager.manageBatch(
-                  orderedResults.map((r, i) => ({
-                    toolCall: calls[i],
-                    result: {
-                      toolCallId: r.toolCallId,
-                      name: r.name,
-                      output: r.output,
-                      error: r.error,
-                      durationMs: r.durationMs,
-                    },
-                  })),
-                );
-
-                // Governor-driven observation masking: adjust window based on budget pressure
-                const maskDecision = this.governor.shouldApply('observation_mask');
-                const effectiveWindow = maskDecision.apply
-                  ? Math.max(
-                      2,
-                      Math.floor(
-                        this.config.observationMaskWindow * (1 - maskDecision.intensity * 0.7),
-                      ),
-                    )
-                  : this.config.observationMaskWindow;
-                const maskedResults = await applyObservationMask(
-                  orderedResults.map((r, i) => ({
-                    ...r,
-                    output: managedOutputs[i]?.output ?? r.output,
-                  })),
-                  effectiveWindow,
-                );
-
-                // Governor-driven tool output truncation: truncate verbose outputs under budget pressure
-                const truncateDecision = this.governor.shouldApply('tool_output_truncate');
-                const truncLimit = truncateDecision.apply
-                  ? Math.max(200, Math.floor(2000 * (1 - truncateDecision.intensity * 0.8)))
-                  : 0;
-
-                for (const masked of maskedResults) {
-                  let finalOutput = masked.output;
-                  let injectionBlocked = false;
-                  // Defense-in-depth: scan tool outputs for injection patterns before they enter the LLM context.
-                  // Lightweight regex check — blocks known injection patterns without LLM cost.
-                  try {
-                    const injectionScan = scanToolOutputForInjection(finalOutput);
-                    if (injectionScan.blocked) {
-                      injectionBlocked = true;
-                      finalOutput = `[Tool output filtered: ${injectionScan.reason}] (Original output length: ${finalOutput.length} chars)`;
-                      bus.publish('system.alert', 'runtime', {
-                        type: 'tool_output_injection_blocked',
-                        toolCallId: masked.toolCallId,
-                        reason: injectionScan.reason,
-                      });
-                      try {
-                        getMetricsCollector().incrementCounter(
-                          'tool_output_injection_blocked_total',
-                          'Tool outputs blocked for injection patterns',
-                          1,
-                          [{ name: 'reason', value: injectionScan.reason ?? 'unknown' }],
-                        );
-                      } catch (err) {
-                        reportSilentFailure(err, 'agentRuntime:2712');
-                        /* best-effort */
-                      }
-                    }
-                  } catch (err) {
-                    reportSilentFailure(err, 'agentRuntime:2717');
-                    /* best-effort defense */
-                  }
-                  // Deep security scan: enforce tool output security based on trust tier
-                  // Disabled for now — the async full-scan causes timing issues in the
-                  // tool execution loop. The regex-based scanToolOutputForInjection
-                  // above already provides the primary defense.
-                  /*
-                  try {
-                    const deepScan = await enforceToolOutputSecurity(finalOutput, 'untrusted');
-                    if (deepScan.blocked && !injectionBlocked) {
-                      const reason = deepScan.blockedAt
-                        ? `deep-scan ${deepScan.blockedAt}`
-                        : 'untrusted output blocked';
-                      finalOutput = `[Tool output filtered: ${reason}] ...`;
-                    }
-                  } catch (err) {
-                    reportSilentFailure(err, 'agentRuntime:enforceToolOutputSecurity');
-                  }
-                  */
-                  // Output sanitization: redact credentials, API keys, PII before tool results
-                  // enter the LLM context. This prevents credential leakage via tool outputs.
-                  try {
-                    const sanitizeResult = sanitizeIfNeeded(finalOutput, {
-                      agentId: ctx.agentId,
-                      runId,
-                      source: `tool:${masked.name}`,
-                    });
-                    if (sanitizeResult.wasRedacted) {
-                      finalOutput = sanitizeResult.output;
-                      bus.publish('system.alert', 'runtime', {
-                        type: 'tool_output_sanitized',
-                        toolCallId: masked.toolCallId,
-                        categories: sanitizeResult.categories,
-                      });
-                    }
-                  } catch (err) {
-                    // Fail closed: if sanitization fails, suppress the output rather than
-                    // leaking potentially unsanitized credentials/PII into the LLM context.
-                    finalOutput = `[sanitization failed, output suppressed]`;
-                    bus.publish('system.alert', 'runtime', {
-                      type: 'tool_output_sanitization_failed',
-                      toolCallId: masked.toolCallId,
-                      error: (err as Error)?.message,
-                    });
-                  }
-                  // Apply truncation if governor says so and output is verbose
-                  if (truncLimit > 0 && finalOutput.length > truncLimit) {
-                    finalOutput =
-                      finalOutput.slice(0, truncLimit) +
-                      `\n...[truncated: ${masked.output.length - truncLimit} chars]`;
-                  }
-                  const tsNum = steps.length + 1;
-                  const toolStep: AgentExecutionStep = {
-                    stepNumber: tsNum,
-                    timestamp: now(),
-                    type: 'tool_result',
-                    content: finalOutput,
-                    durationMs: masked.durationMs,
-                  };
-
-                  // ── Hook: onStepComplete ──
-                  getHookManager()
-                    .fireOnStepComplete({
-                      runId,
-                      agentId: ctx.agentId,
-                      stepNumber: tsNum,
-                      type: 'tool_result',
-                      content: finalOutput,
-                    })
-                    .catch((e) =>
-                      getGlobalLogger().debug('AgentRuntime', 'onStepComplete hook failed', {
-                        error: (e as Error)?.message,
-                      }),
-                    );
-
-                  steps.push(toolStep);
-
-                  // SecurityOrchestrator: feed tool result into GuardianAgent + CrossAgentCorrelator
-                  try {
-                    const toolEvent: CrossAgentEvent = {
-                      id: generateId(),
-                      agentId: ctx.agentId,
-                      runId,
-                      type: 'tool_result',
-                      summary: `Tool ${masked.name}: ${finalOutput.slice(0, 80)}`,
-                      metadata: {
-                        toolName: masked.name,
-                        toolCallId: masked.toolCallId,
-                        outputLength: finalOutput.length,
-                        hasError: !!masked.error,
-                      },
-                      timestamp: Date.now(),
-                      severity: (masked.error ? 'high' : 'low') as CrossAgentEvent['severity'],
-                    };
-                    this.securityOrch.onAgentEvent(toolEvent);
-                  } catch (err) {
-                    reportSilentFailure(err, 'agentRuntime:2791');
-                    /* best-effort */
-                  }
-
-                  const assistantMsg: import('./types').LLMMessage = {
-                    role: 'assistant',
-                    content: response.content,
-                    ...(response.reasoning_content
-                      ? { reasoning_content: response.reasoning_content }
-                      : {}),
-                    ...(response.toolCalls
-                      ? {
-                          tool_calls: response.toolCalls.map((tc) => ({
-                            id: tc.id,
-                            type: 'function' as const,
-                            function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
-                          })),
-                        }
-                      : {}),
-                  };
-                  request.messages.push(assistantMsg, {
-                    role: 'tool',
-                    content: finalOutput,
-                    tool_call_id: masked.toolCallId,
-                  });
-                }
-
-                // ── Sliding Window + Memory Solidification ──
-                // Before the follow-up LLM call, increment the turn counter,
-                // solidify completed turns to episodic memory (if due),
-                // enforce the window boundary, and retrieve relevant context.
-                this.slidingWindow.incrementTurn();
-
-                if (this.memory) {
-                  // 1. Solidify completed turns to memory (every N turns)
-                  try {
-                    const solidifyResult = await this.slidingWindow.solidifyCompletedTurns(
-                      request.messages,
-                      this.memory,
-                      ctx.goal,
-                      runId,
-                    );
-                    if (solidifyResult.turnsSolidified > 0) {
-                      bus.publish('system.alert', 'runtime', {
-                        type: 'sliding_window_solidify',
-                        turnsSolidified: solidifyResult.turnsSolidified,
-                        tokensFreed: solidifyResult.tokensFreed,
-                      });
-                    }
-                  } catch (e) {
-                    getGlobalLogger().debug(
-                      'AgentRuntime',
-                      'Sliding window solidify failed (best-effort)',
-                      {
-                        error: (e as Error)?.message,
-                      },
-                    );
-                  }
-
-                  // 2. Apply sliding window (enforce max turns in context)
-                  // request.messages is mutated in-place, so the subsequent
-                  // followUpRequest will automatically reference the updated array.
-                  try {
-                    const windowResult = this.slidingWindow.applyWindow(request.messages);
-                    if (windowResult.applied) {
-                      bus.publish('system.alert', 'runtime', {
-                        type: 'sliding_window_applied',
-                        turnsDropped: windowResult.turnsDropped,
-                        tokensFreed: windowResult.tokensFreed,
-                      });
-                    }
-                  } catch (e) {
-                    getGlobalLogger().debug(
-                      'AgentRuntime',
-                      'Sliding window apply failed (best-effort)',
-                      {
-                        error: (e as Error)?.message,
-                      },
-                    );
-                  }
-
-                  // 3. Retrieve relevant context from memory and inject
-                  try {
-                    const retrievalResult = this.slidingWindow.retrieveContext(
-                      this.memory,
-                      ctx.goal,
-                      request.messages,
-                    );
-                    if (
-                      retrievalResult.entriesRetrieved > 0 &&
-                      retrievalResult.injectedContext.length > 0
-                    ) {
-                      // Inject as a system message before the last user message
-                      // This keeps prompt-cache stability (injected before variable content)
-                      request.messages.splice(request.messages.length - 1, 0, {
-                        role: 'system' as const,
-                        content: retrievalResult.injectedContext,
-                      });
-
-                      bus.publish('system.alert', 'runtime', {
-                        type: 'sliding_window_retrieval',
-                        entriesRetrieved: retrievalResult.entriesRetrieved,
-                        injectedTokens: retrievalResult.injectedTokens,
-                      });
-                    }
-                  } catch (e) {
-                    getGlobalLogger().debug(
-                      'AgentRuntime',
-                      'Sliding window retrieval failed (best-effort)',
-                      {
-                        error: (e as Error)?.message,
-                      },
-                    );
-                  }
-                }
-
-                // Resume the model with tool results
-                // followUpRequest is created fresh from the mutated request object,
-                // so it correctly sees the updated messages array.
-                const followUpCtx = { request, agentId: ctx.agentId, runId };
-                const followUpRequest = await getHookManager().fireBeforeLLMCall(followUpCtx);
-                const followUp = await this.callWithTimeout(followUpRequest, routing);
-                await getHookManager().fireAfterLLMCall({
-                  request: followUpRequest,
-                  response: followUp,
-                  agentId: ctx.agentId,
-                  runId,
-                });
-                if (!followUp) break;
-                totalTokens.promptTokens += followUp.usage.promptTokens;
-                totalTokens.completionTokens += followUp.usage.completionTokens;
-                totalTokens.totalTokens += followUp.usage.totalTokens;
-                totalTokens.cacheReadTokens =
-                  (totalTokens.cacheReadTokens ?? 0) + (followUp.usage.cacheReadTokens ?? 0);
-                this.governor.reportUsage(followUp.usage.totalTokens);
-                ctx.guard?.recordTokens(followUp.usage.totalTokens);
-                response = followUp;
-
-                // Hallucination detection on the follow-up response.
-                try {
-                  const userInput = followUpRequest.messages
-                    .filter((m) => m.role === 'user')
-                    .map((m) => m.content)
-                    .join('\n')
-                    .slice(0, 4000);
-                  const report = getHallucinationDetector().analyze(
-                    userInput,
-                    followUp.content?.slice(0, 4000) ?? '',
-                  );
-                  this.lastHallucinationDetected =
-                    report.recommendation === 'reject' || report.recommendation === 'flag_for_review';
-                } catch (err) {
-                  reportSilentFailure(err, 'agentRuntime:hallucination-detection-followup');
-                  this.lastHallucinationDetected = false;
-                }
-
-                // Enforce sub-agent step and progress limits at each tool loop iteration
-                ctx.guard?.check(cumulativeEvidence);
-
-                // Context compaction: check every iteration after the first.
-                // The compactor's own layer thresholds (60%/70%/82%/92% full) decide whether to act.
-                // This prevents context bloat before the LLM call that would waste tokens.
-                if (toolLoopCount > 1) {
-                  const tokensBefore = this.compactor.getUsage(request.messages).total;
-                  const tt = detectTaskType(ctx.goal);
-                  const taskType: CompactTaskType = tt === 'creative' ? 'general' : tt;
-
-                  // ── Hook: beforeContextCompaction ──
-                  getHookManager()
-                    .fireBeforeContextCompaction({
-                      messageCount: request.messages.length,
-                      totalTokens: tokensBefore,
-                      budgetTokens: this.config.budgetHardCapTokens || 128000,
-                      agentId: ctx.agentId,
-                      runId,
-                    })
-                    .catch((e) =>
-                      getGlobalLogger().debug(
-                        'AgentRuntime',
-                        'beforeContextCompaction hook failed',
-                        { error: (e as Error)?.message },
-                      ),
-                    );
-
-                  const compactResult = this.compactor.compact(
-                    request.messages,
-                    undefined,
-                    taskType,
-                  );
-                  if (compactResult.action.droppedCount > 0) {
-                    request.messages = compactResult.messages;
-                    this.governor.recordOutcome(
-                      'context_compaction',
-                      tokensBefore,
-                      this.compactor.getUsage(request.messages).total,
-                    );
-                    bus.publish('system.alert', 'runtime', {
-                      type: 'context_compaction',
-                      layer: compactResult.action.layer,
-                      droppedCount: compactResult.action.droppedCount,
-                      tokensSaved: compactResult.action.tokensSaved,
-                    });
-
-                    // ── Hook: afterContextCompaction ──
-                    getHookManager()
-                      .fireAfterContextCompaction({
-                        messageCount: request.messages.length,
-                        totalTokens: this.compactor.getUsage(request.messages).total,
-                        budgetTokens: this.config.budgetHardCapTokens || 128000,
-                        agentId: ctx.agentId,
-                        runId,
-                      })
-                      .catch((e) =>
-                        getGlobalLogger().debug(
-                          'AgentRuntime',
-                          'afterContextCompaction hook failed',
-                          { error: (e as Error)?.message },
-                        ),
-                      );
-                  }
-                }
-              }
-              console.warn(
-                `[TOOL LOOP] EXIT after ${toolLoopCount} iterations. calls=${response.toolCalls?.length} cycle=${cycleDetected} retry=${retryLoopDetected} phase=${this.governor.getState().phase}`,
-              );
+                degenerationDetected,
+                largestFileWriteContent,
+              });
+              response = toolExecResponse;
+              largestFileWriteContent = toolExecLargestFileWriteContent;
 
               // Interrupt check: if a tool requested human input, pause execution
               if (interruptData) {
@@ -2508,6 +1770,31 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 attempt,
               });
               if (!verification.isComplete && verification.feedback) {
+                // ── Context-growth guard ──
+                // Each failed verification adds messages to request.messages and
+                // forces another retry. Under long-context stress, small models
+                // degenerate rapidly. Estimate the current context size and break
+                // if it exceeds a safe threshold (~80% of a typical 128k window).
+                const estimatedContextTokens = request.messages.reduce(
+                  (sum, m) => sum + Math.ceil(String(m.content ?? '').length / 4),
+                  0,
+                );
+                const contextTokenLimit = 102400; // 80% of typical 128k context window
+                if (estimatedContextTokens > contextTokenLimit) {
+                  getGlobalLogger().warn('AgentRuntime', 'Context-growth guard: breaking retry loop', {
+                    estimatedContextTokens,
+                    contextTokenLimit,
+                    attempt,
+                    maxRetries: this.config.maxRetries,
+                  });
+                  getMetricsCollector().incrementCounter(
+                    'context_growth_breaks_total',
+                    'Retry loops broken due to context window exhaustion',
+                    1,
+                    [{ name: 'reason', value: 'context_limit' }],
+                  );
+                  break;
+                }
                 lastError = verification.feedback;
                 continue;
               }
@@ -2574,6 +1861,30 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     if (!_poisoningCheck.allowed) {
                       getGlobalLogger().warn('AgentRuntime', 'Memory write blocked by poisoning gate', { reason: _poisoningCheck.reason });
                     } else {
+                    // Security (G4): Advanced defense engine — entropy, Unicode, Base64, rate limit, taint tracking
+                    let _defenseBlocked = false;
+                    try {
+                      const _defenseResult = getMemoryPoisoningDefenseEngine().validateMemoryWrite({
+                        content: _memContent,
+                        source: `agent:${ctx.agentId}`,
+                        agentId: ctx.agentId,
+                        memoryType: 'episodic',
+                        sourceCredibility: 'agent_generated',
+                        sessionId: runId,
+                        metadata: { phase: 'early_exit' },
+                      });
+                      if (!_defenseResult.allowed) {
+                        _defenseBlocked = true;
+                        getGlobalLogger().warn('AgentRuntime', 'Memory write blocked by defense engine', {
+                          reason: _defenseResult.reason,
+                          riskScore: _defenseResult.riskScore,
+                          severity: _defenseResult.severity,
+                        });
+                      }
+                    } catch (err) {
+                      reportSilentFailure(err, 'agentRuntime:defenseEngine:early_exit');
+                    }
+                    if (!_defenseBlocked) {
                     this.memory.add(
                       _memContent,
                       'episodic',
@@ -2587,6 +1898,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                         durationMs: totalDurationMs,
                       },
                     );
+                    } // end defense engine check
                     } // end poisoning gate else
                   } catch (err) {
                     reportSilentFailure(err, 'agentRuntime:3226');
@@ -3094,10 +2406,15 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
               // If the final response has no text content (tool_call-only response),
               // find the last text response from the step history for the summary.
+              // Safety net: skip steps with degenerate content.
               if (!safeContent || safeContent.length === 0) {
                 for (let si = steps.length - 1; si >= 0; si--) {
                   const s = steps[si];
                   if (s.type === 'response' && s.content && !s.content.includes('<tool_call>')) {
+                    // Skip degenerate content in step history
+                    if (CycleDetector.detectRepetition(s.content).detected) {
+                      continue;
+                    }
                     safeContent = s.content;
                     break;
                   }
@@ -3117,10 +2434,14 @@ export class AgentRuntime implements AgentRuntimeInterface {
               }
 
               // Last resort: use the last step's content (even if tool result)
+              // Safety net: skip steps with degenerate content.
               if (!safeContent || safeContent.length === 0) {
                 for (let si = steps.length - 1; si >= 0; si--) {
                   const s = steps[si];
                   if (s.content && s.content.length > 0) {
+                    if (CycleDetector.detectRepetition(s.content).detected) {
+                      continue;
+                    }
                     safeContent = s.content.slice(0, 2000);
                     break;
                   }
@@ -3130,6 +2451,21 @@ export class AgentRuntime implements AgentRuntimeInterface {
               // Absolute last resort: reflect the goal
               if (!safeContent || safeContent.length === 0) {
                 safeContent = `[No text response generated by agent] Goal: ${ctx.goal.slice(0, GOAL_TELEMETRY_MAX_CHARS)}`;
+              }
+
+              // Final degeneration guard: if safeContent still contains degenerate
+              // content (from any source), sanitize it before building the result.
+              if (safeContent && CycleDetector.detectRepetition(safeContent).detected) {
+                const rep = CycleDetector.detectRepetition(safeContent);
+                if (rep.detected) {
+                  getGlobalLogger().warn('AgentRuntime', 'Terminal degeneration guard: sanitizing safeContent', {
+                    description: rep.description,
+                  });
+                  safeContent =
+                    '[Output truncated: model degeneration detected — ' +
+                    rep.description +
+                    ']';
+                }
               }
 
               const totalDurationMs = Date.now() - startTime;
@@ -3199,6 +2535,30 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   if (!_poisoningCheck2.allowed) {
                     getGlobalLogger().warn('AgentRuntime', 'Memory write blocked by poisoning gate', { reason: _poisoningCheck2.reason });
                   } else {
+                  // Security (G4): Advanced defense engine — entropy, Unicode, Base64, rate limit, taint tracking
+                  let _defenseBlocked2 = false;
+                  try {
+                    const _defenseResult2 = getMemoryPoisoningDefenseEngine().validateMemoryWrite({
+                      content: _memContent2,
+                      source: `agent:${ctx.agentId}`,
+                      agentId: ctx.agentId,
+                      memoryType: 'episodic',
+                      sourceCredibility: 'agent_generated',
+                      sessionId: runId,
+                      metadata: { phase: 'success' },
+                    });
+                    if (!_defenseResult2.allowed) {
+                      _defenseBlocked2 = true;
+                      getGlobalLogger().warn('AgentRuntime', 'Memory write blocked by defense engine', {
+                        reason: _defenseResult2.reason,
+                        riskScore: _defenseResult2.riskScore,
+                        severity: _defenseResult2.severity,
+                      });
+                    }
+                  } catch (err) {
+                    reportSilentFailure(err, 'agentRuntime:defenseEngine:success');
+                  }
+                  if (!_defenseBlocked2) {
                   this.memory.add(
                     _memContent2,
                     'episodic',
@@ -3212,6 +2572,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                       durationMs: totalDurationMs,
                     },
                   );
+                  } // end defense engine check
                   } // end poisoning gate else
                 } catch (e) {
                   getGlobalLogger().warn('AgentRuntime', 'Failed to record success memory', {
