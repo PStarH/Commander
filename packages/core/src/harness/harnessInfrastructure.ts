@@ -803,7 +803,7 @@ export class SteerQueueImpl {
 // ============================================================================
 
 export class PatchEngine {
-  apply(request: PatchRequest): PatchResult {
+  async apply(request: PatchRequest): Promise<PatchResult> {
     try {
       let filePath: string;
       try {
@@ -817,7 +817,11 @@ export class PatchEngine {
           removed: 0,
         };
       }
-      if (!fs.existsSync(filePath)) {
+      // Use async I/O to avoid blocking the event loop
+      let original: string;
+      try {
+        original = await fsp.readFile(filePath, 'utf-8');
+      } catch {
         return {
           success: false,
           error: `File not found: ${filePath}`,
@@ -825,7 +829,6 @@ export class PatchEngine {
           removed: 0,
         };
       }
-      const original = fs.readFileSync(filePath, 'utf-8');
       const originalLines = original.split('\n');
       const hunks = [...request.hunks].sort((a, b) => b.oldStart - a.oldStart);
       const patched = [...originalLines];
@@ -861,8 +864,8 @@ export class PatchEngine {
 
       const newContent = patched.join('\n');
       const tmp = `${filePath}.tmp`;
-      fs.writeFileSync(tmp, newContent, 'utf-8');
-      fs.renameSync(tmp, filePath);
+      await fsp.writeFile(tmp, newContent, 'utf-8');
+      await fsp.rename(tmp, filePath);
 
       return {
         success: true,
@@ -1007,7 +1010,7 @@ export class HarnessInfrastructure {
       popSteer: () => this.steerQueue.pop(),
       drainSteerQueue: () => this.steerQueue.drain(),
 
-      applyPatch: (request: PatchRequest) => this.patchEngine.apply(request),
+      applyPatch: async (request: PatchRequest) => this.patchEngine.apply(request),
 
       updatePlanItem: (itemId: string, update: Partial<PlanItem>) =>
         this.planTracker.update(itemId, update),

@@ -19,18 +19,13 @@
  */
 import { reportSilentFailure } from '../silentFailureReporter';
 import type {
-  AgentHarness,
   HarnessSelectionContext,
   HarnessRunParams,
   HarnessCapabilities,
-  HarnessEvent,
-  HarnessEventHandler,
-  Unsubscribe,
-  SteerMessage,
 } from './harnessTypes';
 import type { AgentExecutionResult } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
-import { generateId } from '../runtime/runtimeHelpers';
+import { BaseHarness } from './baseHarness';
 import { Tier1AgentLoop } from './tier1AgentLoop';
 
 export { Tier1AgentLoop, type Tier1LoopParams, type Tier1LoopResult } from './tier1AgentLoop';
@@ -58,17 +53,13 @@ export const TIER1_HARNESS_CAPABILITIES: HarnessCapabilities = {
     'Tier-1 production harness — parallel execution, structured errors, sanitization, loop guards, Guardian approval',
 };
 
-export class Tier1Harness implements AgentHarness {
+export class Tier1Harness extends BaseHarness {
   readonly name = 'tier1';
-
-  private eventHandlers: Set<HarnessEventHandler> = new Set();
-  private steerQueueInternal: SteerMessage[] = [];
-  private abortController: AbortController | null = null;
-  private currentRunId: string | null = null;
 
   private loop: Tier1AgentLoop;
 
   constructor() {
+    super();
     this.loop = new Tier1AgentLoop((event) => this.emitEvent(event));
   }
 
@@ -97,9 +88,7 @@ export class Tier1Harness implements AgentHarness {
       networkPolicy,
     } = params;
 
-    this.abortController = new AbortController();
-    const runId = generateId();
-    this.currentRunId = runId;
+    const { runId, startTime: _t } = this.startRun(goal);
 
     // Inject skills into system prompt if provided
     const systemMessages = messages.filter((m) => m.role === 'system');
@@ -148,7 +137,7 @@ export class Tier1Harness implements AgentHarness {
       tokenBudget,
       maxSteps,
       signal,
-      abortSignal: this.abortController.signal,
+      abortSignal: this.abortController!.signal,
       tenantId,
       userId,
       routing,
@@ -187,54 +176,9 @@ export class Tier1Harness implements AgentHarness {
     return result;
   }
 
-  abort(): void {
-    if (this.abortController) {
-      this.abortController.abort();
-      this.abortController = null;
-    }
-    this.currentRunId = null;
-  }
-
-  steer(message: string, priority: number = 0, abortCurrent: boolean = false): void {
-    this.steerQueueInternal.push({
-      id: `steer_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-      message,
-      timestamp: Date.now(),
-      priority,
-      abortCurrent,
-    });
-    if (abortCurrent || priority >= 10) {
-      this.abort();
-    }
-  }
-
-  subscribe(handler: HarnessEventHandler): Unsubscribe {
-    this.eventHandlers.add(handler);
-    return () => {
-      this.eventHandlers.delete(handler);
-    };
-  }
+  // abort(), steer(), subscribe(), emitEvent() are inherited from BaseHarness.
 
   getCapabilities(): HarnessCapabilities {
     return TIER1_HARNESS_CAPABILITIES;
-  }
-
-  // ============================================================================
-  // Private: Event Emission
-  // ============================================================================
-
-  private emitEvent(event: HarnessEvent): void {
-    for (const handler of this.eventHandlers) {
-      try {
-        const result = handler(event);
-        if (result instanceof Promise) {
-          result.catch((err) => {
-            getGlobalLogger().error('Tier1Harness', 'Async event handler error', err as Error);
-          });
-        }
-      } catch (err) {
-        getGlobalLogger().error('Tier1Harness', 'Event handler error', err as Error);
-      }
-    }
   }
 }
