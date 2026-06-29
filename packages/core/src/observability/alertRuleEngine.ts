@@ -30,11 +30,11 @@ export type AlertSeverity = 'info' | 'warning' | 'critical' | 'page';
 export type AlertStatus = 'firing' | 'resolved' | 'suppressed' | 'acknowledged';
 
 export type AlertCondition =
-  | 'gt'   // value > threshold
-  | 'gte'  // value >= threshold
-  | 'lt'   // value < threshold
-  | 'lte'  // value <= threshold
-  | 'eq'   // value === threshold
+  | 'gt' // value > threshold
+  | 'gte' // value >= threshold
+  | 'lt' // value < threshold
+  | 'lte' // value <= threshold
+  | 'eq' // value === threshold
   | 'neq'; // value !== threshold
 
 export interface AlertRule {
@@ -203,7 +203,11 @@ export class AlertRuleEngine {
    * Evaluate a single metric value against all matching rules.
    * Returns any alerts that fired or resolved during this evaluation.
    */
-  evaluateMetric(metric: string, value: number, labels: Record<string, string> = {}): {
+  evaluateMetric(
+    metric: string,
+    value: number,
+    labels: Record<string, string> = {},
+  ): {
     fired: AlertRecord[];
     resolved: AlertRecord[];
   } {
@@ -350,8 +354,8 @@ export class AlertRuleEngine {
     const active = this.getActiveAlerts();
     const cutoff24h = Date.now() - 24 * 60 * 60 * 1000;
     const resolved24h = this.alertHistory.filter(
-      (a) => a.status === 'resolved' && a.resolvedAt &&
-        new Date(a.resolvedAt).getTime() >= cutoff24h,
+      (a) =>
+        a.status === 'resolved' && a.resolvedAt && new Date(a.resolvedAt).getTime() >= cutoff24h,
     ).length;
 
     return {
@@ -379,19 +383,31 @@ export class AlertRuleEngine {
 
   private checkCondition(value: number, threshold: number, condition: AlertCondition): boolean {
     switch (condition) {
-      case 'gt': return value > threshold;
-      case 'gte': return value >= threshold;
-      case 'lt': return value < threshold;
-      case 'lte': return value <= threshold;
-      case 'eq': return value === threshold;
-      case 'neq': return value !== threshold;
-      default: return false;
+      case 'gt':
+        return value > threshold;
+      case 'gte':
+        return value >= threshold;
+      case 'lt':
+        return value < threshold;
+      case 'lte':
+        return value <= threshold;
+      case 'eq':
+        return value === threshold;
+      case 'neq':
+        return value !== threshold;
+      default:
+        return false;
     }
   }
 
   private buildMessage(rule: AlertRule, value: number): string {
     const conditionStr = {
-      gt: '>', gte: '>=', lt: '<', lte: '<=', eq: '===', neq: '!==',
+      gt: '>',
+      gte: '>=',
+      lt: '<',
+      lte: '<=',
+      eq: '===',
+      neq: '!==',
     }[rule.condition];
     return `${rule.name}: ${rule.metric} (${value.toFixed(4)}) ${conditionStr} ${rule.threshold} — ${rule.description}`;
   }
@@ -462,7 +478,7 @@ export function createDefaultSLORules(
     threshold: 14.4,
     severity: 'page',
     channels: ['pagerduty', 'slack'],
-    forDurationMs: 2 * 60 * 1000,    // 2 minutes
+    forDurationMs: 2 * 60 * 1000, // 2 minutes
     autoResolveAfterMs: 5 * 60 * 1000, // 5 minutes
     enabled: true,
     runbookUrl: `https://runbooks.commander.dev/slo/${sloId}`,
@@ -478,7 +494,7 @@ export function createDefaultSLORules(
     threshold: 6,
     severity: 'critical',
     channels: ['slack', 'email'],
-    forDurationMs: 5 * 60 * 1000,    // 5 minutes
+    forDurationMs: 5 * 60 * 1000, // 5 minutes
     autoResolveAfterMs: 10 * 60 * 1000,
     enabled: true,
     runbookUrl: `https://runbooks.commander.dev/slo/${sloId}`,
@@ -494,7 +510,7 @@ export function createDefaultSLORules(
     threshold: 3,
     severity: 'warning',
     channels: ['slack'],
-    forDurationMs: 15 * 60 * 1000,   // 15 minutes
+    forDurationMs: 15 * 60 * 1000, // 15 minutes
     autoResolveAfterMs: 30 * 60 * 1000,
     enabled: true,
     sloId,

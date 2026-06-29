@@ -167,9 +167,17 @@ export class TopologyStateMachine {
       if (this.currentState !== 'NORMAL' && this.degradedAnomalySince !== null) {
         const degradedDuration = Date.now() - this.degradedAnomalySince;
         if (degradedDuration > this.config.minStateDurationMs) {
-          const targetState = this.currentState === 'ESCALATE' ? 'LOCKDOWN' :
-            this.currentState === 'LOCKDOWN' ? 'ALERT' : 'NORMAL';
-          this.transition(targetState, 'Sustained low anomaly + consensus success', this.currentAnomalyScore);
+          const targetState =
+            this.currentState === 'ESCALATE'
+              ? 'LOCKDOWN'
+              : this.currentState === 'LOCKDOWN'
+                ? 'ALERT'
+                : 'NORMAL';
+          this.transition(
+            targetState,
+            'Sustained low anomaly + consensus success',
+            this.currentAnomalyScore,
+          );
         }
       }
     } else {
@@ -188,10 +196,10 @@ export class TopologyStateMachine {
    */
   isolateAgent(agentId: string, reason: string): void {
     this.isolatedAgents.add(agentId);
-    this.submitAnomalyScore(
-      Math.max(this.currentAnomalyScore, this.config.alertThreshold),
-      { reason: `agent_isolated: ${agentId} — ${reason}`, agentId },
-    );
+    this.submitAnomalyScore(Math.max(this.currentAnomalyScore, this.config.alertThreshold), {
+      reason: `agent_isolated: ${agentId} — ${reason}`,
+      agentId,
+    });
   }
 
   /**
@@ -336,10 +344,14 @@ export class TopologyStateMachine {
 
   private stateSeverity(state: TopologyState): number {
     switch (state) {
-      case 'NORMAL': return 0;
-      case 'ALERT': return 1;
-      case 'LOCKDOWN': return 2;
-      case 'ESCALATE': return 3;
+      case 'NORMAL':
+        return 0;
+      case 'ALERT':
+        return 1;
+      case 'LOCKDOWN':
+        return 2;
+      case 'ESCALATE':
+        return 3;
     }
   }
 }
@@ -348,9 +360,7 @@ export class TopologyStateMachine {
 
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
-const topologyStateMachineSingleton = createTenantAwareSingleton(
-  () => new TopologyStateMachine(),
-);
+const topologyStateMachineSingleton = createTenantAwareSingleton(() => new TopologyStateMachine());
 
 export function getTopologyStateMachine(): TopologyStateMachine {
   return topologyStateMachineSingleton.get();

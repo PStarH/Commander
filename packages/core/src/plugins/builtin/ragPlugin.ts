@@ -191,9 +191,7 @@ export function createRagPlugin(): CommanderPlugin {
           '',
         ];
         results.forEach((r, i) => {
-          parts.push(
-            `--- [${i + 1}] Source: ${r.source} (score ${r.score.toFixed(3)}) ---`,
-          );
+          parts.push(`--- [${i + 1}] Source: ${r.source} (score ${r.score.toFixed(3)}) ---`);
           parts.push(r.content);
           parts.push('');
         });

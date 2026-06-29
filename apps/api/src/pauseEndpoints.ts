@@ -207,9 +207,7 @@ export function createPauseRouter(): Router {
 
     // Sanitize and inject correction instructions.
     const sanitized = sanitizeInstructions(userInstructions);
-    const goalSuffix = sanitized
-      ? `\n\n[User correction at step ${stepNumber}]: ${sanitized}`
-      : '';
+    const goalSuffix = sanitized ? `\n\n[User correction at step ${stepNumber}]: ${sanitized}` : '';
 
     try {
       const runtime = getSharedRuntime();

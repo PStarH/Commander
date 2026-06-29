@@ -936,11 +936,11 @@ export class HookManager {
         if (check.allowed) {
           (plugin as unknown as Record<string, unknown>)[hookName] = callback;
         } else {
-          getGlobalLogger().warn(
-            'PluginSecurity',
-            'Hook registration denied during onLoad',
-            { plugin: plugin.name, hook: hookName, reason: check.reason },
-          );
+          getGlobalLogger().warn('PluginSecurity', 'Hook registration denied during onLoad', {
+            plugin: plugin.name,
+            hook: hookName,
+            reason: check.reason,
+          });
         }
       },
     );
@@ -1015,9 +1015,10 @@ export class HookManager {
     // (per-plugin limit, global limit) to prevent timeout-based DoS.
     const enforcer = getGlobalPluginPermissionRegistry().get(pluginName);
     const perPluginLimit = enforcer?.maxExecutionTimeMs;
-    const timeoutMs = perPluginLimit !== undefined
-      ? Math.min(perPluginLimit, this.hookTimeoutMs)
-      : this.hookTimeoutMs;
+    const timeoutMs =
+      perPluginLimit !== undefined
+        ? Math.min(perPluginLimit, this.hookTimeoutMs)
+        : this.hookTimeoutMs;
 
     let timer: ReturnType<typeof setTimeout>;
     return Promise.race([
@@ -1026,9 +1027,7 @@ export class HookManager {
         timer = setTimeout(
           () =>
             reject(
-              new Error(
-                `Plugin "${pluginName}" hook "${hookName}" timed out after ${timeoutMs}ms`,
-              ),
+              new Error(`Plugin "${pluginName}" hook "${hookName}" timed out after ${timeoutMs}ms`),
             ),
           timeoutMs,
         );

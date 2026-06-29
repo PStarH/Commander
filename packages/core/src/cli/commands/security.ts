@@ -62,9 +62,7 @@ function resolveScript(scriptName: string): { path: string; useTsx: boolean } | 
 /** Print usage / available subcommands. */
 function printSecurityHelp(): void {
   section('commander security <subcommand> [args]');
-  console.log(
-    `  Run Commander's adversarial / red-team / compliance test batteries.\n`,
-  );
+  console.log(`  Run Commander's adversarial / red-team / compliance test batteries.\n`);
   console.log(`  ${$.bold}Subcommands:${$.reset}`);
   bullet(`${$.cyan}redteam${$.reset}             Red-team battery (runRedTeamBattery)`);
   bullet(`${$.cyan}compliance-audit${$.reset}    Compliance audit (runComplianceAudit)`);

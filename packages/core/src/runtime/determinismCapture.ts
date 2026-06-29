@@ -149,8 +149,7 @@ export class DeterminismCapture {
       },
       getLLMResponse: (step: number) => runCaptures.get(`llmResponse:${step}`),
       getToolResponse: (step: number) => runCaptures.get(`toolResponse:${step}`),
-      has: (type: NonDeterministicInput, step: number) =>
-        runCaptures.has(`${type}:${step}`),
+      has: (type: NonDeterministicInput, step: number) => runCaptures.has(`${type}:${step}`),
       size: () => runCaptures.size,
     };
   }
@@ -190,12 +189,7 @@ export class DeterminismCapture {
 
   // ── Private ──────────────────────────────────────────────────────────
 
-  private capture(
-    runId: string,
-    step: number,
-    type: NonDeterministicInput,
-    value: unknown,
-  ): void {
+  private capture(runId: string, step: number, type: NonDeterministicInput, value: unknown): void {
     const input: CapturedInput = {
       runId,
       step,

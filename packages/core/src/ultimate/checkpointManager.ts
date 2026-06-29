@@ -5,11 +5,7 @@
  * Runs an independent LLM call outside the main agent's attention to write
  * a checkpoint.md snapshot when token budget thresholds are crossed.
  */
-import type {
-  TaskTreeNode,
-  ExecutionError,
-  UltimateOrchestratorConfig,
-} from './types';
+import type { TaskTreeNode, ExecutionError, UltimateOrchestratorConfig } from './types';
 import type { AgentRuntimeInterface } from '../runtime';
 import { flattenTree } from './taskTreeUtils';
 import { getCheckpointWriter } from '../runtime/checkpointWriter';

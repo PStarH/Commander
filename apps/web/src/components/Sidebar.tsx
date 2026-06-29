@@ -99,7 +99,14 @@ export function Sidebar({ currentUser, onLogout }: SidebarProps) {
                 >
                   {currentUser.username}
                 </div>
-                <div style={{ fontSize: '0.64rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                <div
+                  style={{
+                    fontSize: '0.64rem',
+                    color: 'var(--text-muted)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
+                  }}
+                >
                   {currentUser.role}
                 </div>
               </div>

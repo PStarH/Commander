@@ -56,7 +56,11 @@ export interface ISandboxResult {
  */
 export interface ISandbox {
   /** Execute code within the sandbox with the given capabilities */
-  execute(code: string, capabilities: string[], config: Partial<ISandboxConfig>): Promise<ISandboxResult>;
+  execute(
+    code: string,
+    capabilities: string[],
+    config: Partial<ISandboxConfig>,
+  ): Promise<ISandboxResult>;
   /** Create a V8 Isolate for lightweight isolation */
   createIsolate(config?: Partial<ISandboxConfig>): Promise<string>;
   /** Terminate an isolate immediately (preemption) */

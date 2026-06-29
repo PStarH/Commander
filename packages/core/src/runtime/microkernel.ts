@@ -98,7 +98,9 @@ export class Microkernel implements IMicrokernel {
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           this.pendingRequests.delete(requestId);
-          reject(new Error(`Request to '${targetServiceId}' timed out after ${this.requestTimeoutMs}ms`));
+          reject(
+            new Error(`Request to '${targetServiceId}' timed out after ${this.requestTimeoutMs}ms`),
+          );
         }, this.requestTimeoutMs);
 
         this.pendingRequests.set(requestId, { resolve, reject, timer });

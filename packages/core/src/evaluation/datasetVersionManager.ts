@@ -79,9 +79,7 @@ export class DatasetVersionManager {
   constructor(options?: { dbPath?: string; persistenceDir?: string }) {
     this.dbPath =
       options?.dbPath ??
-      (options?.persistenceDir
-        ? path.join(options.persistenceDir, 'datasets.json')
-        : null);
+      (options?.persistenceDir ? path.join(options.persistenceDir, 'datasets.json') : null);
 
     if (this.dbPath) {
       const dir = path.dirname(this.dbPath);
@@ -174,9 +172,7 @@ export class DatasetVersionManager {
       throw new Error(`Dataset not found: ${datasetId}`);
     }
 
-    const targetVersionData = dataset.versions.find(
-      (v) => v.versionNumber === targetVersion,
-    );
+    const targetVersionData = dataset.versions.find((v) => v.versionNumber === targetVersion);
     if (!targetVersionData) {
       throw new Error(`Version ${targetVersion} not found`);
     }
@@ -362,9 +358,7 @@ export class DatasetVersionManager {
 
 let globalDatasetManager: DatasetVersionManager | null = null;
 
-export function getGlobalDatasetManager(
-  options?: { dbPath?: string },
-): DatasetVersionManager {
+export function getGlobalDatasetManager(options?: { dbPath?: string }): DatasetVersionManager {
   if (!globalDatasetManager) {
     const dbPath =
       options?.dbPath ??

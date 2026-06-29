@@ -229,8 +229,14 @@ export class ContractLlmRouter implements ILLMRouter {
       const chain = this.fallbackChains.get(routingKey) ?? [];
       for (const fallbackProviderId of chain) {
         const fallbackProvider = this.providers.get(fallbackProviderId);
-        if (fallbackProvider && fallbackProvider.enabled && !fallbackProvider.health.circuitBreakerOpen) {
-          const model = fallbackProvider.models.find((m) => m.modelId === entry.modelId) ?? fallbackProvider.models[0];
+        if (
+          fallbackProvider &&
+          fallbackProvider.enabled &&
+          !fallbackProvider.health.circuitBreakerOpen
+        ) {
+          const model =
+            fallbackProvider.models.find((m) => m.modelId === entry.modelId) ??
+            fallbackProvider.models[0];
           if (model) {
             this.requestCount++;
             return {
@@ -250,8 +256,9 @@ export class ContractLlmRouter implements ILLMRouter {
       const modelRouter = getModelRouter();
       const model = modelRouter.getModel(req.modelId);
       if (model) {
-        const cost = (inputTokens / 1_000_000) * model.costPer1MInput +
-                     (outputTokens / 1_000_000) * model.costPer1MOutput;
+        const cost =
+          (inputTokens / 1_000_000) * model.costPer1MInput +
+          (outputTokens / 1_000_000) * model.costPer1MOutput;
         const latency = modelRouter.getLatency(model.provider, model.id);
         const avgLatency = latency ? latency.ewmaTTFT + latency.ewmaTPOT : 1000;
         const errorRate = latency?.errorRate ?? 0;
@@ -395,7 +402,8 @@ export class ContractLlmRouter implements ILLMRouter {
     const latencies = modelRouter.getAllLatencies().filter((l) => l.provider === providerId);
 
     if (latencies.length > 0) {
-      const avgLatency = latencies.reduce((sum, l) => sum + l.ewmaTTFT + l.ewmaTPOT, 0) / latencies.length;
+      const avgLatency =
+        latencies.reduce((sum, l) => sum + l.ewmaTTFT + l.ewmaTPOT, 0) / latencies.length;
       const avgErrorRate = latencies.reduce((sum, l) => sum + l.errorRate, 0) / latencies.length;
 
       let state: ProviderHealth['state'] = 'HEALTHY';
@@ -443,8 +451,10 @@ export class ContractLlmRouter implements ILLMRouter {
       const modelRouter = getModelRouter();
       const model = modelRouter.getModel(req.modelId);
       if (model) {
-        return (inputTokens / 1_000_000) * model.costPer1MInput +
-               (outputTokens / 1_000_000) * model.costPer1MOutput;
+        return (
+          (inputTokens / 1_000_000) * model.costPer1MInput +
+          (outputTokens / 1_000_000) * model.costPer1MOutput
+        );
       }
     }
 
@@ -584,8 +594,14 @@ export class ContractLlmRouter implements ILLMRouter {
       const chain = this.fallbackChains.get(entry.modelId) ?? [];
       for (const fallbackProviderId of chain) {
         const fallbackProvider = this.providers.get(fallbackProviderId);
-        if (fallbackProvider && fallbackProvider.enabled && !fallbackProvider.health.circuitBreakerOpen) {
-          const model = fallbackProvider.models.find((m) => m.modelId === entry.modelId) ?? fallbackProvider.models[0];
+        if (
+          fallbackProvider &&
+          fallbackProvider.enabled &&
+          !fallbackProvider.health.circuitBreakerOpen
+        ) {
+          const model =
+            fallbackProvider.models.find((m) => m.modelId === entry.modelId) ??
+            fallbackProvider.models[0];
           if (model) {
             this.requestCount++;
             return {
@@ -622,7 +638,9 @@ export class ContractLlmRouter implements ILLMRouter {
     outputTokens: number,
   ): number {
     if (!model) return 0;
-    return (inputTokens / 1000) * model.inputCostPer1k + (outputTokens / 1000) * model.outputCostPer1k;
+    return (
+      (inputTokens / 1000) * model.inputCostPer1k + (outputTokens / 1000) * model.outputCostPer1k
+    );
   }
 
   private rebuildRoutingTable(): void {

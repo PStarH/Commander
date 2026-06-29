@@ -212,9 +212,10 @@ function logAlert(alert: SecurityAlert): void {
 
   try {
     // Map our custom event types to SecurityAuditLogger's SecurityEventType union
-    const auditType = alert.type === 'memory_poisoning_detected'
-      ? 'memory_poisoning_detected' as const
-      : 'content_threat' as const;
+    const auditType =
+      alert.type === 'memory_poisoning_detected'
+        ? ('memory_poisoning_detected' as const)
+        : ('content_threat' as const);
     getSecurityAuditLogger().logEvent({
       type: auditType,
       severity: alert.severity,
@@ -304,7 +305,12 @@ function createSecuritySnapshot(alert: SecurityAlert): void {
     throttledAgents: Object.fromEntries(throttledAgents),
   };
 
-  getGlobalLogger().error('SecurityResponseEngine', 'Security snapshot created', undefined, snapshot);
+  getGlobalLogger().error(
+    'SecurityResponseEngine',
+    'Security snapshot created',
+    undefined,
+    snapshot,
+  );
 
   try {
     getSecurityAuditLogger().logEvent({

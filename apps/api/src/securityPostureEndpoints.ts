@@ -108,8 +108,12 @@ function buildIsoCompliance(dimensions: PostureDimension[]) {
 
   const clauseCoverage: Record<string, { covered: boolean; controls: string[]; score: number }> =
     {};
-  const gaps: Array<{ clause: string; description: string; severity: string; recommendation: string }> =
-    [];
+  const gaps: Array<{
+    clause: string;
+    description: string;
+    severity: string;
+    recommendation: string;
+  }> = [];
 
   for (const clause of allClauses) {
     const covered = coveredClauses.has(clause);
@@ -164,8 +168,21 @@ function buildNistAlignment(dimensions: PostureDimension[]) {
     }
   }
 
-  const functionCoverage: Record<string, { coveredSubcategories: number; totalSubcategories: number; coveragePercentage: number; controls: string[] }> = {};
-  const gaps: Array<{ subcategory: string; description: string; severity: string; recommendation: string }> = [];
+  const functionCoverage: Record<
+    string,
+    {
+      coveredSubcategories: number;
+      totalSubcategories: number;
+      coveragePercentage: number;
+      controls: string[];
+    }
+  > = {};
+  const gaps: Array<{
+    subcategory: string;
+    description: string;
+    severity: string;
+    recommendation: string;
+  }> = [];
 
   for (const fn of functions) {
     const subcats = functionSubcats[fn];
@@ -274,7 +291,12 @@ function buildAuditChecklist(dimensions: PostureDimension[]) {
         id: ctrl.id,
         category: dim.label,
         item: ctrl.name,
-        status: ctrl.effectivenessScore >= 70 ? 'passed' : ctrl.effectivenessScore >= 40 ? 'pending' : 'failed',
+        status:
+          ctrl.effectivenessScore >= 70
+            ? 'passed'
+            : ctrl.effectivenessScore >= 40
+              ? 'pending'
+              : 'failed',
         notes: ctrl.automated ? 'Automated control' : 'Manual control',
       });
     }

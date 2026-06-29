@@ -42,10 +42,7 @@ import { ToolPlanner } from './toolPlanner';
 import { CycleDetector } from './cycleDetector';
 import { createContentScanner } from '../contentScanner';
 import { ExecutionContextInjector } from './executionContextInjector';
-import {
-  SecurityOrchestrator,
-  getSecurityOrchestrator,
-} from './securityOrchestrator';
+import { SecurityOrchestrator, getSecurityOrchestrator } from './securityOrchestrator';
 import { ReflexionGenerator } from './reflexionGenerator';
 import { CircuitBreaker } from './circuitBreaker';
 import { CircuitBreakerRegistry } from './circuitBreakerRegistry';
@@ -137,14 +134,8 @@ export function initializeServices(
   svcConfig: ServiceInitializerConfig,
   tools: Map<string, import('./types').Tool>,
 ): InitializedServices {
-  const {
-    config,
-    getRunHandle,
-    getLedgerCtx,
-    getActiveRuns,
-    getPromotedTools,
-    generateActionId,
-  } = svcConfig;
+  const { config, getRunHandle, getLedgerCtx, getActiveRuns, getPromotedTools, generateActionId } =
+    svcConfig;
 
   const compactor = new ContextCompactor({
     maxContextTokens: config.budgetHardCapTokens || DEFAULT_CONTEXT_WINDOW_TOKENS,
@@ -387,9 +378,7 @@ export function initializeServices(
     const level = req.policy?.level ?? 'manual';
     const risk = req.policy?.riskLevel ?? 'high';
     const allowed =
-      (level === 'auto' || level === 'semi_auto') &&
-      risk !== 'critical' &&
-      risk !== 'high';
+      (level === 'auto' || level === 'semi_auto') && risk !== 'critical' && risk !== 'high';
     return {
       approved: allowed,
       requestId: req.id,
@@ -422,7 +411,10 @@ export function initializeServices(
   try {
     const { registerDefaultInvariants } = require('../security/securityInvariantVerifier');
     registerDefaultInvariants();
-    getGlobalLogger().info('ServiceInitializer', 'Security invariants registered for runtime verification');
+    getGlobalLogger().info(
+      'ServiceInitializer',
+      'Security invariants registered for runtime verification',
+    );
   } catch (err) {
     getGlobalLogger().warn(
       'ServiceInitializer',
@@ -558,11 +550,9 @@ export function initializeServices(
       try {
         getGlobalEventSourcingSubscriber().start();
       } catch (e) {
-        getGlobalLogger().warn(
-          'AgentRuntime',
-          'EventSourcingSubscriber start failed',
-          { error: (e as Error)?.message },
-        );
+        getGlobalLogger().warn('AgentRuntime', 'EventSourcingSubscriber start failed', {
+          error: (e as Error)?.message,
+        });
       }
     })
     .catch((e: unknown) =>
@@ -635,22 +625,24 @@ export function initializeServices(
     const childId = `agent_${getGlobalTenantProvider().getCurrentTenantId() ?? 'default'}`;
     const activeRunsRef = getActiveRuns;
     if (supervisor) {
-      supervisor.startChild({
-      id: childId,
-      start: async () => ({
-        id: childId,
-        isAlive: () => activeRunsRef().size > 0 || true, // runtime process is alive
-        healthCheck: async () => ({
-          healthy: true,
-          issues: activeRunsRef().size > 0 ? undefined : ['No active runs'],
-        }),
-      }),
-      shutdownMs: 5_000,
-      maxRestarts: 3,
-      maxRestartIntervalMs: 60_000,
-    }).catch((err: unknown) => {
-      reportSilentFailure(err, 'serviceInitializer:supervisorStartChild');
-    });
+      supervisor
+        .startChild({
+          id: childId,
+          start: async () => ({
+            id: childId,
+            isAlive: () => activeRunsRef().size > 0 || true, // runtime process is alive
+            healthCheck: async () => ({
+              healthy: true,
+              issues: activeRunsRef().size > 0 ? undefined : ['No active runs'],
+            }),
+          }),
+          shutdownMs: 5_000,
+          maxRestarts: 3,
+          maxRestartIntervalMs: 60_000,
+        })
+        .catch((err: unknown) => {
+          reportSilentFailure(err, 'serviceInitializer:supervisorStartChild');
+        });
     } // end if (supervisor)
 
     // Subscribe to agent.failed events — when an agent crashes, report it

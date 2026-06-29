@@ -32,10 +32,7 @@ export interface MetaLearnerState {
  * Uses an atomic write pattern: write to a .tmp file, then rename.
  * All I/O is non-blocking via fs/promises — never blocks the event loop.
  */
-export async function persist(
-  state: MetaLearnerState,
-  persistPath: string | null,
-): Promise<void> {
+export async function persist(state: MetaLearnerState, persistPath: string | null): Promise<void> {
   if (!persistPath) return;
   try {
     const dir = nodePath.dirname(persistPath);
@@ -88,10 +85,7 @@ export async function persist(
  * Non-blocking via fs/promises. If the persist file does not exist yet
  * (ENOENT), the state is left unchanged — this is the normal first-run path.
  */
-export async function load(
-  state: MetaLearnerState,
-  persistPath: string | null,
-): Promise<void> {
+export async function load(state: MetaLearnerState, persistPath: string | null): Promise<void> {
   if (!persistPath) return;
   let raw: string;
   try {

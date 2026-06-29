@@ -69,7 +69,7 @@ export class VisionAnalyzeTool implements Tool {
         const { safePath } = await import('../fileSystemTool');
         let resolved: string;
         try {
-          resolved = safePath(source);
+          resolved = await safePath(source);
         } catch (err) {
           reportSilentFailure(err, 'visionTool:71');
           return `Error: Access denied: path "${source}" is outside workspace`;

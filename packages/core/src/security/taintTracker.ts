@@ -26,8 +26,14 @@ export type TaintLabel = 'trusted' | 'untrusted' | 'external';
 
 /** Tools that send data externally — untrusted data must not flow into these. */
 const OUTBOUND_TOOLS = new Set([
-  'web_search', 'web_fetch', 'http_request', 'shell_execute',
-  'a2a_delegate', 'send_email', 'webhook_send', 'mcp_call',
+  'web_search',
+  'web_fetch',
+  'http_request',
+  'shell_execute',
+  'a2a_delegate',
+  'send_email',
+  'webhook_send',
+  'mcp_call',
 ]);
 
 // ── Tainted String Wrapper ─────────────────────────────────────────────────
@@ -127,14 +133,9 @@ export function canFlow(
  * Wrap tool output as untrusted data.
  * All external tool outputs should be wrapped before entering the LLM context.
  */
-export function wrapToolOutput(
-  output: string,
-  toolName: string,
-): TaintedString {
+export function wrapToolOutput(output: string, toolName: string): TaintedString {
   // Internal-only tools produce trusted output
-  const internalTools = new Set([
-    'code_search', 'file_read', 'list_files', 'index_search',
-  ]);
+  const internalTools = new Set(['code_search', 'file_read', 'list_files', 'index_search']);
   if (internalTools.has(toolName)) {
     return new TaintedString(output, 'trusted', `tool:${toolName}`);
   }

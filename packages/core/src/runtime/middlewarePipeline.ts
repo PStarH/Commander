@@ -24,9 +24,10 @@ import type { IMiddlewarePipeline, Middleware } from '../contracts/pillarII';
 // Middleware Pipeline Implementation
 // ============================================================================
 
-export class MiddlewarePipeline<TContext, TResult>
-  implements IMiddlewarePipeline<TContext, TResult>
-{
+export class MiddlewarePipeline<TContext, TResult> implements IMiddlewarePipeline<
+  TContext,
+  TResult
+> {
   private middlewares: Middleware<TContext, TResult>[] = [];
 
   /**
@@ -44,10 +45,7 @@ export class MiddlewarePipeline<TContext, TResult>
    * The handler is wrapped by all middlewares in reverse registration order
    * (last registered = innermost layer, closest to handler).
    */
-  async execute(
-    handler: (ctx: TContext) => Promise<TResult>,
-    ctx: TContext,
-  ): Promise<TResult> {
+  async execute(handler: (ctx: TContext) => Promise<TResult>, ctx: TContext): Promise<TResult> {
     // Build the composed handler by wrapping from inside out
     let composed = handler;
 
@@ -296,15 +294,15 @@ export function createLLMCallPipeline(
   pipeline.use(loggingMiddleware('LLMCall'));
 
   if (options?.rateLimit) {
-    pipeline.use(
-      rateLimitMiddleware(options.rateLimit.maxRequests, options.rateLimit.windowMs),
-    );
+    pipeline.use(rateLimitMiddleware(options.rateLimit.maxRequests, options.rateLimit.windowMs));
   }
 
-  pipeline.use(errorHandlingMiddleware<LLMCallContext, LLMCallResult>((err, ctx) => {
-    getGlobalLogger().error('LLMCall', 'Unhandled error', err, { model: ctx.modelId });
-    throw err;
-  }));
+  pipeline.use(
+    errorHandlingMiddleware<LLMCallContext, LLMCallResult>((err, ctx) => {
+      getGlobalLogger().error('LLMCall', 'Unhandled error', err, { model: ctx.modelId });
+      throw err;
+    }),
+  );
 
   if (options?.maxRetries && options.maxRetries > 0) {
     pipeline.use(retryMiddleware(options.maxRetries));

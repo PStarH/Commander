@@ -56,19 +56,84 @@ const SANDBOX_MODE_DESC: Record<ApprovalMode, string> = {
 
 // ── Default policies (mirrors core DEFAULT_APPROVAL_POLICIES) ───────────
 const DEFAULT_POLICIES: ToolPolicy[] = [
-  { pattern: 'shell_execute', level: 'manual', riskLevel: 'critical', description: 'Shell command execution requires manual approval' },
-  { pattern: 'python_execute', level: 'semi_auto', riskLevel: 'high', description: 'Python code execution' },
-  { pattern: 'file_write', level: 'semi_auto', riskLevel: 'medium', description: 'File modification requires approval for system paths' },
-  { pattern: 'file_edit', level: 'semi_auto', riskLevel: 'medium', description: 'File editing requires approval' },
-  { pattern: 'file_read', level: 'auto', riskLevel: 'low', description: 'File read is safe to auto-approve' },
-  { pattern: 'web_search', level: 'auto', riskLevel: 'low', description: 'Web search is safe to auto-approve' },
-  { pattern: 'web_fetch', level: 'auto', riskLevel: 'low', description: 'Web fetch is safe to auto-approve' },
-  { pattern: 'browser_search', level: 'auto', riskLevel: 'low', description: 'Browser search is safe to auto-approve' },
-  { pattern: 'memory_*', level: 'auto', riskLevel: 'low', description: 'Memory operations are safe' },
-  { pattern: 'agent', level: 'semi_auto', riskLevel: 'high', description: 'Sub-agent spawning requires approval' },
-  { pattern: 'git_push', level: 'manual', riskLevel: 'critical', description: 'Git push requires explicit approval' },
-  { pattern: 'git_commit', level: 'semi_auto', riskLevel: 'medium', description: 'Git commit is semi-automatic' },
-  { pattern: 'git', level: 'auto', riskLevel: 'low', description: 'Git read operations are auto-approved' },
+  {
+    pattern: 'shell_execute',
+    level: 'manual',
+    riskLevel: 'critical',
+    description: 'Shell command execution requires manual approval',
+  },
+  {
+    pattern: 'python_execute',
+    level: 'semi_auto',
+    riskLevel: 'high',
+    description: 'Python code execution',
+  },
+  {
+    pattern: 'file_write',
+    level: 'semi_auto',
+    riskLevel: 'medium',
+    description: 'File modification requires approval for system paths',
+  },
+  {
+    pattern: 'file_edit',
+    level: 'semi_auto',
+    riskLevel: 'medium',
+    description: 'File editing requires approval',
+  },
+  {
+    pattern: 'file_read',
+    level: 'auto',
+    riskLevel: 'low',
+    description: 'File read is safe to auto-approve',
+  },
+  {
+    pattern: 'web_search',
+    level: 'auto',
+    riskLevel: 'low',
+    description: 'Web search is safe to auto-approve',
+  },
+  {
+    pattern: 'web_fetch',
+    level: 'auto',
+    riskLevel: 'low',
+    description: 'Web fetch is safe to auto-approve',
+  },
+  {
+    pattern: 'browser_search',
+    level: 'auto',
+    riskLevel: 'low',
+    description: 'Browser search is safe to auto-approve',
+  },
+  {
+    pattern: 'memory_*',
+    level: 'auto',
+    riskLevel: 'low',
+    description: 'Memory operations are safe',
+  },
+  {
+    pattern: 'agent',
+    level: 'semi_auto',
+    riskLevel: 'high',
+    description: 'Sub-agent spawning requires approval',
+  },
+  {
+    pattern: 'git_push',
+    level: 'manual',
+    riskLevel: 'critical',
+    description: 'Git push requires explicit approval',
+  },
+  {
+    pattern: 'git_commit',
+    level: 'semi_auto',
+    riskLevel: 'medium',
+    description: 'Git commit is semi-automatic',
+  },
+  {
+    pattern: 'git',
+    level: 'auto',
+    riskLevel: 'low',
+    description: 'Git read operations are auto-approved',
+  },
 ];
 
 // ── Persistence: custom policies stored in .commander/custom-policies.json ─
@@ -194,75 +259,87 @@ export function createApprovalConfigRouter(): Router {
   });
 
   // PUT /api/approval/sandbox-mode — update sandbox mode
-  router.put('/api/approval/sandbox-mode', validateBody(sandboxModeSchema), (req: Request, res: Response) => {
-    try {
-      const mode = req.body.mode as ApprovalMode;
-      writeSandboxMode(mode);
-      res.json({
-        status: 'updated',
-        mode,
-        description: SANDBOX_MODE_DESC[mode],
-      });
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  });
+  router.put(
+    '/api/approval/sandbox-mode',
+    validateBody(sandboxModeSchema),
+    (req: Request, res: Response) => {
+      try {
+        const mode = req.body.mode as ApprovalMode;
+        writeSandboxMode(mode);
+        res.json({
+          status: 'updated',
+          mode,
+          description: SANDBOX_MODE_DESC[mode],
+        });
+      } catch (error) {
+        res.status(500).json({ error: toErrorMessage(error) });
+      }
+    },
+  );
 
   // POST /api/approval/policy — add custom policy
-  router.post('/api/approval/policy', validateBody(addPolicySchema), (req: Request, res: Response) => {
-    try {
-      const newPolicy = req.body as ToolPolicy;
-      const store = loadCustomPolicies();
+  router.post(
+    '/api/approval/policy',
+    validateBody(addPolicySchema),
+    (req: Request, res: Response) => {
+      try {
+        const newPolicy = req.body as ToolPolicy;
+        const store = loadCustomPolicies();
 
-      // Check if pattern already exists
-      const existingIdx = store.policies.findIndex((p) => p.pattern === newPolicy.pattern);
-      if (existingIdx >= 0) {
-        store.policies[existingIdx] = newPolicy;
-      } else {
-        store.policies.push(newPolicy);
+        // Check if pattern already exists
+        const existingIdx = store.policies.findIndex((p) => p.pattern === newPolicy.pattern);
+        if (existingIdx >= 0) {
+          store.policies[existingIdx] = newPolicy;
+        } else {
+          store.policies.push(newPolicy);
+        }
+        store.lastUpdated = new Date().toISOString();
+        saveCustomPolicies(store);
+
+        res.status(201).json({ status: 'added', policy: newPolicy });
+      } catch (error) {
+        res.status(500).json({ error: toErrorMessage(error) });
       }
-      store.lastUpdated = new Date().toISOString();
-      saveCustomPolicies(store);
-
-      res.status(201).json({ status: 'added', policy: newPolicy });
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  });
+    },
+  );
 
   // PUT /api/approval/policy/:pattern — update existing policy
-  router.put('/api/approval/policy/:pattern', validateBody(updatePolicySchema), (req: Request, res: Response) => {
-    try {
-      const pattern = decodeURIComponent(String(req.params.pattern));
-      const updates = req.body as Partial<ToolPolicy>;
-      const store = loadCustomPolicies();
+  router.put(
+    '/api/approval/policy/:pattern',
+    validateBody(updatePolicySchema),
+    (req: Request, res: Response) => {
+      try {
+        const pattern = decodeURIComponent(String(req.params.pattern));
+        const updates = req.body as Partial<ToolPolicy>;
+        const store = loadCustomPolicies();
 
-      // Find in custom policies
-      let policy = store.policies.find((p) => p.pattern === pattern);
-      if (!policy) {
-        // Find in defaults and copy to custom
-        const defaultPolicy = DEFAULT_POLICIES.find((p) => p.pattern === pattern);
-        if (!defaultPolicy) {
-          return res.status(404).json({ error: 'Policy not found' });
+        // Find in custom policies
+        let policy = store.policies.find((p) => p.pattern === pattern);
+        if (!policy) {
+          // Find in defaults and copy to custom
+          const defaultPolicy = DEFAULT_POLICIES.find((p) => p.pattern === pattern);
+          if (!defaultPolicy) {
+            return res.status(404).json({ error: 'Policy not found' });
+          }
+          policy = { ...defaultPolicy };
+          store.policies.push(policy);
         }
-        policy = { ...defaultPolicy };
-        store.policies.push(policy);
+
+        // Apply updates
+        if (updates.level) policy.level = updates.level;
+        if (updates.riskLevel) policy.riskLevel = updates.riskLevel;
+        if (updates.description) policy.description = updates.description;
+        if (updates.autoApproveIf !== undefined) policy.autoApproveIf = updates.autoApproveIf;
+
+        store.lastUpdated = new Date().toISOString();
+        saveCustomPolicies(store);
+
+        res.json({ status: 'updated', policy });
+      } catch (error) {
+        res.status(500).json({ error: toErrorMessage(error) });
       }
-
-      // Apply updates
-      if (updates.level) policy.level = updates.level;
-      if (updates.riskLevel) policy.riskLevel = updates.riskLevel;
-      if (updates.description) policy.description = updates.description;
-      if (updates.autoApproveIf !== undefined) policy.autoApproveIf = updates.autoApproveIf;
-
-      store.lastUpdated = new Date().toISOString();
-      saveCustomPolicies(store);
-
-      res.json({ status: 'updated', policy });
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  });
+    },
+  );
 
   // DELETE /api/approval/policy/:pattern — remove custom policy
   router.delete('/api/approval/policy/:pattern', (req: Request, res: Response) => {

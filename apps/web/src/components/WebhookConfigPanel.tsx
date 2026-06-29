@@ -13,28 +13,10 @@
  *   C. Delete webhook — remove a configuration
  */
 import { useState, useEffect, useCallback } from 'react';
-import {
-  Webhook,
-  Plus,
-  Trash2,
-  AlertTriangle,
-  Check,
-  X,
-  Copy,
-  MessageCircle,
-} from 'lucide-react';
+import { Webhook, Plus, Trash2, AlertTriangle, Check, X, Copy, MessageCircle } from 'lucide-react';
 import { Card, Badge, Button, Select, Input } from './ui';
-import {
-  fetchWebhooks,
-  createWebhook,
-  deleteWebhook,
-  API_BASE,
-} from '../api';
-import type {
-  IMWebhookConfig,
-  WebhookPlatform,
-  CreateWebhookPayload,
-} from '../api';
+import { fetchWebhooks, createWebhook, deleteWebhook, API_BASE } from '../api';
+import type { IMWebhookConfig, WebhookPlatform, CreateWebhookPayload } from '../api';
 import { formatTimestamp } from '../types';
 
 // ── Platform metadata ─────────────────────────────────────────────────────
@@ -198,8 +180,8 @@ export function WebhookConfigPanel() {
       </div>
 
       <div className="narrative narrative-green" style={{ marginBottom: 12 }}>
-        <Webhook size={14} /> Configure webhook endpoints to embed Agents into your IM
-        workflows. Users can @mention the bot in a group chat to interact with Commander.
+        <Webhook size={14} /> Configure webhook endpoints to embed Agents into your IM workflows.
+        Users can @mention the bot in a group chat to interact with Commander.
       </div>
 
       {actionError && (
@@ -270,12 +252,7 @@ export function WebhookConfigPanel() {
             <Button variant="primary" size="sm" onClick={handleAdd} disabled={busy}>
               <Check size={12} /> Create
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowAddForm(false)}
-              disabled={busy}
-            >
+            <Button variant="ghost" size="sm" onClick={() => setShowAddForm(false)} disabled={busy}>
               <X size={12} /> Cancel
             </Button>
           </div>
@@ -284,7 +261,9 @@ export function WebhookConfigPanel() {
 
       {/* ── Webhook list ───────────────────────────────────────────────── */}
       {webhooks.length === 0 ? (
-        <div className="empty">No IM webhooks configured yet. Click "Add Webhook" to get started.</div>
+        <div className="empty">
+          No IM webhooks configured yet. Click "Add Webhook" to get started.
+        </div>
       ) : (
         <div className="approval-table-wrap">
           <table className="approval-table">
@@ -333,11 +312,7 @@ export function WebhookConfigPanel() {
                           title="Copy URL"
                           style={{ padding: '2px 4px' }}
                         >
-                          {copiedId === wh.id ? (
-                            <Check size={12} />
-                          ) : (
-                            <Copy size={12} />
-                          )}
+                          {copiedId === wh.id ? <Check size={12} /> : <Copy size={12} />}
                         </Button>
                       </div>
                     </td>

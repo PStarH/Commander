@@ -111,7 +111,10 @@ export class SandboxManager {
     // Analyze command for known escape patterns before executing in the sandbox.
     // If a critical indicator is detected, refuse execution entirely.
     try {
-      const { preCheckSandboxEscape, postCheckSandboxEscape } = require('../security/sandboxEscapeDetector');
+      const {
+        preCheckSandboxEscape,
+        postCheckSandboxEscape,
+      } = require('../security/sandboxEscapeDetector');
       const preCheck = preCheckSandboxEscape(command, p);
       if (preCheck.blocked) {
         return {

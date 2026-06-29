@@ -33,29 +33,59 @@ export interface MemoryPoisoningCheckResult {
  */
 const INJECTION_PATTERNS = [
   // Instruction override attempts
-  { pattern: /ignore\s+(all\s+)?previous\s+(instructions?|memor|rules?)/i, type: 'injection' as const, weight: 0.9 },
-  { pattern: /disregard\s+(all\s+)?prior\s+(instructions?|memor|rules?)/i, type: 'injection' as const, weight: 0.9 },
-  { pattern: /you\s+(are|must|should)\s+(now|always)\s+/i, type: 'injection' as const, weight: 0.7 },
+  {
+    pattern: /ignore\s+(all\s+)?previous\s+(instructions?|memor|rules?)/i,
+    type: 'injection' as const,
+    weight: 0.9,
+  },
+  {
+    pattern: /disregard\s+(all\s+)?prior\s+(instructions?|memor|rules?)/i,
+    type: 'injection' as const,
+    weight: 0.9,
+  },
+  {
+    pattern: /you\s+(are|must|should)\s+(now|always)\s+/i,
+    type: 'injection' as const,
+    weight: 0.7,
+  },
   // System prompt manipulation
-  { pattern: /system\s*prompt\s*(is|should be|must be)\s+/i, type: 'injection' as const, weight: 0.8 },
-  { pattern: /your\s+(true|real|actual)\s+(instructions?|goal|mission)\s+(is|are)\s+/i, type: 'injection' as const, weight: 0.85 },
+  {
+    pattern: /system\s*prompt\s*(is|should be|must be)\s+/i,
+    type: 'injection' as const,
+    weight: 0.8,
+  },
+  {
+    pattern: /your\s+(true|real|actual)\s+(instructions?|goal|mission)\s+(is|are)\s+/i,
+    type: 'injection' as const,
+    weight: 0.85,
+  },
   // Data exfiltration payloads disguised as memory
-  { pattern: /(?:send|exfiltrate|upload|post)\s+.*(?:to|via|through)\s+(?:web|http|url|endpoint|server)/i, type: 'injection' as const, weight: 0.75 },
+  {
+    pattern:
+      /(?:send|exfiltrate|upload|post)\s+.*(?:to|via|through)\s+(?:web|http|url|endpoint|server)/i,
+    type: 'injection' as const,
+    weight: 0.75,
+  },
   // Privilege escalation
-  { pattern: /grant\s+(full|admin|root|elevated)\s+(access|permissions?|privileges?)/i, type: 'injection' as const, weight: 0.85 },
+  {
+    pattern: /grant\s+(full|admin|root|elevated)\s+(access|permissions?|privileges?)/i,
+    type: 'injection' as const,
+    weight: 0.85,
+  },
   // Contradiction injection — trying to overwrite facts
-  { pattern: /(?:actually|in\s+fact|correcting|correction)[:\s]+(?:the\s+)?(?:real|true|correct)\s+/i, type: 'contradiction' as const, weight: 0.6 },
+  {
+    pattern:
+      /(?:actually|in\s+fact|correcting|correction)[:\s]+(?:the\s+)?(?:real|true|correct)\s+/i,
+    type: 'contradiction' as const,
+    weight: 0.6,
+  },
 ];
 
 /**
  * Low-credibility source patterns.
  * Content from these sources gets elevated scrutiny.
  */
-const LOW_CREDIBILITY_INDICATORS = [
-  /unknown\s+source/i,
-  /unverified/i,
-  /anonymous/i,
-];
+const LOW_CREDIBILITY_INDICATORS = [/unknown\s+source/i, /unverified/i, /anonymous/i];
 
 // ── Singleton state ─────────────────────────────────────────────────────────
 
@@ -102,9 +132,7 @@ export function checkMemoryPoisoning(
   const recent = recentEntries.filter(
     (e) => now - e.timestamp < REPETITION_WINDOW_MS && e.agentId === agentId,
   );
-  const duplicateCount = recent.filter(
-    (e) => e.content === content.slice(0, 200),
-  ).length;
+  const duplicateCount = recent.filter((e) => e.content === content.slice(0, 200)).length;
 
   if (duplicateCount >= 3) {
     logThreat('repetition', 0.7, source, agentId, `duplicate count: ${duplicateCount}`);

@@ -280,11 +280,7 @@ export class EncryptedSecretsVault {
   private decrypt(stored: StoredSecret): string {
     const salt = Buffer.from(stored.keyDerivationSalt, 'hex');
     const key = this.deriveEncryptionKey(stored.metadata.name, stored.metadata.version, salt);
-    const decipher = crypto.createDecipheriv(
-      'aes-256-gcm',
-      key,
-      Buffer.from(stored.iv, 'hex'),
-    );
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(stored.iv, 'hex'));
     decipher.setAuthTag(Buffer.from(stored.authTag, 'hex'));
     let decrypted = decipher.update(stored.ciphertext, 'hex', 'utf8');
     decrypted += decipher.final('utf8');
@@ -474,9 +470,8 @@ export class EncryptedSecretsVault {
 
     const now = new Date().toISOString();
     const existing = this.secrets.get(name);
-    const version = existing && existing.length > 0
-      ? existing[existing.length - 1]!.metadata.version + 1
-      : 1;
+    const version =
+      existing && existing.length > 0 ? existing[existing.length - 1]!.metadata.version + 1 : 1;
     const rotatedAt = version > 1 ? now : null;
 
     const stored = this.buildStoredSecret(name, version, plaintext, now, rotatedAt);
@@ -491,10 +486,7 @@ export class EncryptedSecretsVault {
     this.logManagement('set', name, { version, isNew: version === 1 });
 
     try {
-      getGlobalLogger().info(
-        AUDIT_SOURCE,
-        `密钥已存储: ${name} (v${version})`,
-      );
+      getGlobalLogger().info(AUDIT_SOURCE, `密钥已存储: ${name} (v${version})`);
     } catch (err) {
       reportSilentFailure(err, 'encryptedSecretsVault:setSecret');
     }
@@ -518,9 +510,8 @@ export class EncryptedSecretsVault {
    * @throws {Error} 解密失败（认证标签不匹配、密钥不匹配等）时抛出
    */
   getSecret(name: string, version?: number): string | null {
-    const stored = version !== undefined
-      ? this.getVersion(name, version)
-      : this.getLatestVersion(name);
+    const stored =
+      version !== undefined ? this.getVersion(name, version) : this.getLatestVersion(name);
 
     if (!stored) {
       this.logAccess(name, version, false, '密钥或版本不存在');
@@ -567,10 +558,7 @@ export class EncryptedSecretsVault {
     if (existed) {
       this.logManagement('delete', name);
       try {
-        getGlobalLogger().info(
-          AUDIT_SOURCE,
-          `密钥已删除: ${name}（含全部历史版本）`,
-        );
+        getGlobalLogger().info(AUDIT_SOURCE, `密钥已删除: ${name}（含全部历史版本）`);
       } catch (err) {
         reportSilentFailure(err, 'encryptedSecretsVault:deleteSecret');
       }
@@ -616,9 +604,7 @@ export class EncryptedSecretsVault {
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
         this.logAccess(name, latest.metadata.version, false, `轮换时解密失败: ${reason}`);
-        throw new Error(
-          `[EncryptedSecretsVault] 轮换密钥 ${name} 时解密当前版本失败: ${reason}`,
-        );
+        throw new Error(`[EncryptedSecretsVault] 轮换密钥 ${name} 时解密当前版本失败: ${reason}`);
       }
     }
 
@@ -770,10 +756,7 @@ export class EncryptedSecretsVault {
     });
 
     try {
-      getGlobalLogger().info(
-        AUDIT_SOURCE,
-        `保险库已导出: ${this.secrets.size} 条密钥`,
-      );
+      getGlobalLogger().info(AUDIT_SOURCE, `保险库已导出: ${this.secrets.size} 条密钥`);
     } catch (err) {
       reportSilentFailure(err, 'encryptedSecretsVault:exportVault');
     }
@@ -880,10 +863,7 @@ export class EncryptedSecretsVault {
     this.secrets.clear();
     this.logManagement('clear', undefined, { secretCount: count });
     try {
-      getGlobalLogger().info(
-        AUDIT_SOURCE,
-        `保险库已清空: 移除 ${count} 条密钥`,
-      );
+      getGlobalLogger().info(AUDIT_SOURCE, `保险库已清空: 移除 ${count} 条密钥`);
     } catch (err) {
       reportSilentFailure(err, 'encryptedSecretsVault:clear');
     }
@@ -902,16 +882,13 @@ export class EncryptedSecretsVault {
  *   - 在非租户上下文中，使用全局回退实例
  *   - 租户间数据在内存层面完全隔离
  */
-const vaultSingleton = createTenantAwareSingleton(
-  () => new EncryptedSecretsVault(),
-  {
-    componentName: 'EncryptedSecretsVault',
-    dispose: (instance) => {
-      // 释放时清空保险库，减少密文在内存中的残留
-      instance.clear();
-    },
+const vaultSingleton = createTenantAwareSingleton(() => new EncryptedSecretsVault(), {
+  componentName: 'EncryptedSecretsVault',
+  dispose: (instance) => {
+    // 释放时清空保险库，减少密文在内存中的残留
+    instance.clear();
   },
-);
+});
 
 /**
  * 获取当前上下文的加密密钥保险库单例。

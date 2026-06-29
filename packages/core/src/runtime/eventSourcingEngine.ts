@@ -98,9 +98,7 @@ export class EventSourcingEngine implements IEventSourcingEngine {
    * Atomic append to the WAL.
    * Computes the hash chain and persists to disk (if configured).
    */
-  async append(
-    event: Omit<IEvent, 'id' | 'timestamp' | 'previousHash'>,
-  ): Promise<IEvent> {
+  async append(event: Omit<IEvent, 'id' | 'timestamp' | 'previousHash'>): Promise<IEvent> {
     // Serialize writes to prevent hash chain corruption
     const prevHash = this.lastHash;
     const timestamp = Date.now();
@@ -130,12 +128,9 @@ export class EventSourcingEngine implements IEventSourcingEngine {
           await fs.promises.appendFile(this.walPath, line, 'utf8');
         } catch (err) {
           reportSilentFailure(err, 'eventSourcingEngine:append:write');
-          getGlobalLogger().error(
-            'EventSourcingEngine',
-            'WAL write failed',
-            err as Error,
-            { eventId: id },
-          );
+          getGlobalLogger().error('EventSourcingEngine', 'WAL write failed', err as Error, {
+            eventId: id,
+          });
         }
       }
     });
@@ -340,26 +335,18 @@ export class EventSourcingEngine implements IEventSourcingEngine {
 
 let globalEventSourcingEngine: EventSourcingEngine | null = null;
 
-export function getGlobalEventSourcingEngine(
-  options?: { walPath?: string },
-): EventSourcingEngine {
+export function getGlobalEventSourcingEngine(options?: { walPath?: string }): EventSourcingEngine {
   if (!globalEventSourcingEngine) {
     const walPath =
       options?.walPath ??
-      (typeof process !== 'undefined'
-        ? process.env?.COMMANDER_EVENT_SOURCING_WAL
-        : undefined) ??
+      (typeof process !== 'undefined' ? process.env?.COMMANDER_EVENT_SOURCING_WAL : undefined) ??
       null;
 
     // Default WAL path: <cwd>/.commander_state/event-sourcing.wal
     const resolvedWalPath =
       walPath ??
       (typeof process !== 'undefined'
-        ? path.join(
-            process.cwd(),
-            '.commander_state',
-            'event-sourcing.wal',
-          )
+        ? path.join(process.cwd(), '.commander_state', 'event-sourcing.wal')
         : null);
 
     globalEventSourcingEngine = new EventSourcingEngine({

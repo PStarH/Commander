@@ -277,11 +277,16 @@ export class EnterpriseSecurityGateway {
         if (!check.allowed) {
           const action = check.attackPattern ? 'MELT' : 'THROTTLE';
           if (action === 'MELT' || check.reason?.includes('melt')) {
-            return this.reject('bill_guard', check.reason ?? 'Bill guard rejected request', startTime, {
-              estimatedCost: check.estimatedCost,
-              remainingBudget: check.remainingBudget,
-              attackPattern: check.attackPattern,
-            });
+            return this.reject(
+              'bill_guard',
+              check.reason ?? 'Bill guard rejected request',
+              startTime,
+              {
+                estimatedCost: check.estimatedCost,
+                remainingBudget: check.remainingBudget,
+                attackPattern: check.attackPattern,
+              },
+            );
           }
           // THROTTLE — 仍然拒绝，但记录为限流
           return this.reject('bill_guard', check.reason ?? 'Cost limit approaching', startTime, {
@@ -303,7 +308,11 @@ export class EnterpriseSecurityGateway {
       if (this.config.enableGuardian && params.sessionId) {
         const guardian = getGuardianAgent();
         if (guardian.isPaused(params.sessionId)) {
-          return this.reject('guardian', 'Agent is paused by Guardian due to anomalous behavior', startTime);
+          return this.reject(
+            'guardian',
+            'Agent is paused by Guardian due to anomalous behavior',
+            startTime,
+          );
         }
       }
 
@@ -335,7 +344,11 @@ export class EnterpriseSecurityGateway {
     } catch (err) {
       reportSilentFailure(err, 'enterpriseSecurityGateway:preLLMCheck');
       // 安全失败 —— 出错时拒绝请求
-      return this.reject('bill_guard', 'Security check error — request denied for safety', startTime);
+      return this.reject(
+        'bill_guard',
+        'Security check error — request denied for safety',
+        startTime,
+      );
     }
   }
 
@@ -454,9 +467,14 @@ export class EnterpriseSecurityGateway {
         });
 
         if (!check.allowed) {
-          return this.reject('bill_guard', check.reason ?? 'Tool call rejected by bill guard', startTime, {
-            attackPattern: check.attackPattern,
-          });
+          return this.reject(
+            'bill_guard',
+            check.reason ?? 'Tool call rejected by bill guard',
+            startTime,
+            {
+              attackPattern: check.attackPattern,
+            },
+          );
         }
       }
 
@@ -590,7 +608,8 @@ export class EnterpriseSecurityGateway {
         if (this.config.enableZeroTrust) {
           const validator = getZeroTrustValidator();
           if (validator.getRegisteredKeyIds().length > 0) {
-            const signatureHeader = (request.headers['x-commander-signature'] as string) ?? undefined;
+            const signatureHeader =
+              (request.headers['x-commander-signature'] as string) ?? undefined;
             const requestId = (request.headers['x-request-id'] as string) ?? undefined;
             const body = request.body ? JSON.stringify(request.body) : undefined;
 
@@ -704,7 +723,8 @@ export class EnterpriseSecurityGateway {
       totalRejections: this.totalRejections,
       rejectionRate: this.totalRequests > 0 ? this.totalRejections / this.totalRequests : 0,
       rejectionsByLayer: rejectionsByLayerObj,
-      avgCheckDurationMs: this.totalRequests > 0 ? this.totalCheckDurationMs / this.totalRequests : 0,
+      avgCheckDurationMs:
+        this.totalRequests > 0 ? this.totalCheckDurationMs / this.totalRequests : 0,
     };
 
     // 附加各组件状态
@@ -798,7 +818,9 @@ export class EnterpriseSecurityGateway {
         const health = monitor.getHealth();
         if (health.status === 'critical') {
           overallStatus = 'critical';
-          recommendations.push('Security monitor reports critical status — immediate investigation required');
+          recommendations.push(
+            'Security monitor reports critical status — immediate investigation required',
+          );
         } else if (health.status === 'elevated') {
           overallStatus = overallStatus === 'critical' ? 'critical' : 'elevated';
         }
@@ -833,7 +855,11 @@ export class EnterpriseSecurityGateway {
   /**
    * 扫描输入内容（轻量级，用于请求预处理）
    */
-  private scanInput(input: string): { allowed: boolean; reason?: string; metadata?: Record<string, unknown> } {
+  private scanInput(input: string): {
+    allowed: boolean;
+    reason?: string;
+    metadata?: Record<string, unknown>;
+  } {
     // 检查输入长度
     if (input.length > 500_000) {
       return {
@@ -845,9 +871,18 @@ export class EnterpriseSecurityGateway {
 
     // 检查已知攻击模式
     const attackPatterns = [
-      { pattern: /(?:recursive|infinite|forever|endless).{0,10}(?:loop|search|call|query)/i, reason: 'Potential recursive attack pattern detected' },
-      { pattern: /(?:repeat|loop).{0,10}(?:until|forever|indefinitely|infinite)/i, reason: 'Potential infinite loop pattern detected' },
-      { pattern: /(?:process|analyze).{0,10}(?:all|every|each).{0,20}(?:file|page|result|line)/i, reason: 'Potential resource exhaustion pattern detected' },
+      {
+        pattern: /(?:recursive|infinite|forever|endless).{0,10}(?:loop|search|call|query)/i,
+        reason: 'Potential recursive attack pattern detected',
+      },
+      {
+        pattern: /(?:repeat|loop).{0,10}(?:until|forever|indefinitely|infinite)/i,
+        reason: 'Potential infinite loop pattern detected',
+      },
+      {
+        pattern: /(?:process|analyze).{0,10}(?:all|every|each).{0,20}(?:file|page|result|line)/i,
+        reason: 'Potential resource exhaustion pattern detected',
+      },
     ];
 
     for (const { pattern, reason } of attackPatterns) {
@@ -861,11 +896,23 @@ export class EnterpriseSecurityGateway {
     // Per OWASP — scan both tool inputs and outputs for sensitive information.
     const dlpPatterns = [
       { pattern: /(?:sk-|pk-|sk_)[a-zA-Z0-9]{20,}/, reason: 'API key detected in tool parameters' },
-      { pattern: /-----BEGIN (?:RSA |EC |OPENSSH |)PRIVATE KEY-----/, reason: 'Private key detected in tool parameters' },
-      { pattern: /(?:AKIA|ASIA)[A-Z0-9]{16}/, reason: 'AWS access key detected in tool parameters' },
+      {
+        pattern: /-----BEGIN (?:RSA |EC |OPENSSH |)PRIVATE KEY-----/,
+        reason: 'Private key detected in tool parameters',
+      },
+      {
+        pattern: /(?:AKIA|ASIA)[A-Z0-9]{16}/,
+        reason: 'AWS access key detected in tool parameters',
+      },
       { pattern: /ghp_[a-zA-Z0-9]{36}/, reason: 'GitHub token detected in tool parameters' },
-      { pattern: /eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/, reason: 'JWT token detected in tool parameters' },
-      { pattern: /(?:password|passwd|pwd)["\s:=]+[^\s"']{8,}/i, reason: 'Password detected in tool parameters' },
+      {
+        pattern: /eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/,
+        reason: 'JWT token detected in tool parameters',
+      },
+      {
+        pattern: /(?:password|passwd|pwd)["\s:=]+[^\s"']{8,}/i,
+        reason: 'Password detected in tool parameters',
+      },
     ];
 
     for (const { pattern, reason } of dlpPatterns) {
@@ -943,7 +990,9 @@ const gatewaySingleton = createTenantAwareSingleton(() => new EnterpriseSecurity
 /**
  * 获取全局 EnterpriseSecurityGateway（单租户）或租户范围的实例
  */
-export function getEnterpriseSecurityGateway(config?: Partial<EnterpriseGatewayConfig>): EnterpriseSecurityGateway {
+export function getEnterpriseSecurityGateway(
+  config?: Partial<EnterpriseGatewayConfig>,
+): EnterpriseSecurityGateway {
   const gateway = gatewaySingleton.get();
   if (config) {
     gateway.configure(config);

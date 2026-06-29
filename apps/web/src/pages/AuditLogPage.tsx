@@ -645,20 +645,11 @@ function FilterRow({ label, children }: { label: string; children: ReactNode }) 
   );
 }
 
-function SeverityBadge({
-  severity,
-  count,
-}: {
-  severity: UnifiedAuditSeverity;
-  count: number;
-}) {
+function SeverityBadge({ severity, count }: { severity: UnifiedAuditSeverity; count: number }) {
   const color = SEVERITY_COLOR[severity];
   const label = SEVERITY_OPTIONS.find((s) => s.value === severity)?.label ?? severity;
   return (
-    <div
-      className="metric-card"
-      style={{ borderLeft: `3px solid ${color}`, padding: '10px 14px' }}
-    >
+    <div className="metric-card" style={{ borderLeft: `3px solid ${color}`, padding: '10px 14px' }}>
       <div className="metric-card-head">
         <span className="metric-card-label" style={{ color }}>
           {label}
@@ -898,7 +889,12 @@ function Pagination({
       </span>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-        <Button variant="ghost" size="sm" onClick={() => onPageChange(page - 1)} disabled={page <= 0}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => onPageChange(page - 1)}
+          disabled={page <= 0}
+        >
           ‹ Prev
         </Button>
         {pages.map((p) => (

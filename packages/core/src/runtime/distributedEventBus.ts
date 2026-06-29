@@ -70,9 +70,13 @@ export class DistributedEventBus extends ContractEventBus {
     if (config.backend === 'redis' && config.redisUrl) {
       this.initRedis(config.redisUrl).catch((err) => {
         reportSilentFailure(err, 'distributedEventBus:initRedis');
-        getGlobalLogger().warn('DistributedEventBus', 'Redis init failed — falling back to in-memory', {
-          error: (err as Error).message,
-        });
+        getGlobalLogger().warn(
+          'DistributedEventBus',
+          'Redis init failed — falling back to in-memory',
+          {
+            error: (err as Error).message,
+          },
+        );
         this.backend = 'memory';
       });
     }
@@ -110,9 +114,13 @@ export class DistributedEventBus extends ContractEventBus {
       });
     } catch (err) {
       // redis package not installed — that's OK, fall back to memory
-      getGlobalLogger().info('DistributedEventBus', 'Redis package not available — using in-memory', {
-        hint: 'Install redis package: npm install redis',
-      });
+      getGlobalLogger().info(
+        'DistributedEventBus',
+        'Redis package not available — using in-memory',
+        {
+          hint: 'Install redis package: npm install redis',
+        },
+      );
       this.backend = 'memory';
     }
   }
@@ -179,33 +187,35 @@ export class DistributedEventBus extends ContractEventBus {
       if (!this.subscribedTopics.has(channel)) {
         this.subscribedTopics.add(channel);
 
-        this.redisClient.subscribe(channel, (rawMessage: string) => {
-          try {
-            const envelope = JSON.parse(rawMessage) as {
-              nodeId: string;
-              topic: string;
-              message: unknown;
-              eventId: string;
-              timestamp: number;
-            };
+        this.redisClient
+          .subscribe(channel, (rawMessage: string) => {
+            try {
+              const envelope = JSON.parse(rawMessage) as {
+                nodeId: string;
+                topic: string;
+                message: unknown;
+                eventId: string;
+                timestamp: number;
+              };
 
-            // Skip messages from this node (already delivered locally)
-            if (envelope.nodeId === this.nodeId) return;
+              // Skip messages from this node (already delivered locally)
+              if (envelope.nodeId === this.nodeId) return;
 
-            getGlobalLogger().debug('DistributedEventBus', 'Received from remote', {
-              topic: envelope.topic,
-              sourceNode: envelope.nodeId,
-              eventId: envelope.eventId,
-            });
+              getGlobalLogger().debug('DistributedEventBus', 'Received from remote', {
+                topic: envelope.topic,
+                sourceNode: envelope.nodeId,
+                eventId: envelope.eventId,
+              });
 
-            // Deliver to local subscribers via the parent class
-            super.publish(envelope.topic, envelope.message);
-          } catch (err) {
-            reportSilentFailure(err, 'distributedEventBus:remoteMessage:parse');
-          }
-        }).catch((err) => {
-          reportSilentFailure(err, 'distributedEventBus:subscribe:remote');
-        });
+              // Deliver to local subscribers via the parent class
+              super.publish(envelope.topic, envelope.message);
+            } catch (err) {
+              reportSilentFailure(err, 'distributedEventBus:remoteMessage:parse');
+            }
+          })
+          .catch((err) => {
+            reportSilentFailure(err, 'distributedEventBus:subscribe:remote');
+          });
       }
     }
 

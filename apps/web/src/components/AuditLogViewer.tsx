@@ -258,28 +258,25 @@ export function AuditLogViewer() {
 
   // Load logs + stats + sources. Stats/sources reflect the full (unfiltered)
   // corpus so the overview cards stay stable across filter changes.
-  const loadAll = useCallback(
-    async (query: AuditLogQuery) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const [logsRes, statsRes, sourcesRes] = await Promise.all([
-          fetchAuditLogs(query),
-          fetchAuditStats(),
-          fetchAuditSources(),
-        ]);
-        setLogs(logsRes.logs);
-        setTotal(logsRes.total);
-        setStats(statsRes);
-        setSources(sourcesRes);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load audit logs');
-      } finally {
-        setLoading(false);
-      }
-    },
-    [],
-  );
+  const loadAll = useCallback(async (query: AuditLogQuery) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [logsRes, statsRes, sourcesRes] = await Promise.all([
+        fetchAuditLogs(query),
+        fetchAuditStats(),
+        fetchAuditSources(),
+      ]);
+      setLogs(logsRes.logs);
+      setTotal(logsRes.total);
+      setStats(statsRes);
+      setSources(sourcesRes);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load audit logs');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   // Initial load.
   useEffect(() => {
@@ -288,22 +285,19 @@ export function AuditLogViewer() {
   }, []);
 
   // Reload logs (only) when page or pageSize changes — keep filters stable.
-  const loadLogs = useCallback(
-    async (query: AuditLogQuery) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const logsRes = await fetchAuditLogs(query);
-        setLogs(logsRes.logs);
-        setTotal(logsRes.total);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load audit logs');
-      } finally {
-        setLoading(false);
-      }
-    },
-    [],
-  );
+  const loadLogs = useCallback(async (query: AuditLogQuery) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const logsRes = await fetchAuditLogs(query);
+      setLogs(logsRes.logs);
+      setTotal(logsRes.total);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load audit logs');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   const handleSearch = useCallback(() => {
     setPage(0);
@@ -510,12 +504,7 @@ export function AuditLogViewer() {
             <Search size={13} />
             Search
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleExport}
-            disabled={exporting || loading}
-          >
+          <Button variant="ghost" size="sm" onClick={handleExport} disabled={exporting || loading}>
             <Download size={13} />
             {exporting ? 'Exporting…' : 'Export'}
           </Button>
@@ -878,9 +867,7 @@ function Pagination({
       }}
     >
       <span style={{ fontSize: '0.68rem', color: 'var(--text-tertiary)' }}>
-        {total === 0
-          ? '0 entries'
-          : `${rangeStart}–${rangeEnd} of ${total} entries`}
+        {total === 0 ? '0 entries' : `${rangeStart}–${rangeEnd} of ${total} entries`}
       </span>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>

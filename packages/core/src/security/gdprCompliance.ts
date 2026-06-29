@@ -333,7 +333,10 @@ export class GdprComplianceManager {
    * Returns user data in a structured, machine-readable JSON format.
    * This is the same as exportUserData but with additional portability metadata.
    */
-  async portUserData(userId: string, projectId?: string): Promise<{
+  async portUserData(
+    userId: string,
+    projectId?: string,
+  ): Promise<{
     format: string;
     version: string;
     data: GdprDataExport;

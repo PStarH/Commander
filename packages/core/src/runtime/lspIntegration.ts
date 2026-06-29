@@ -460,7 +460,7 @@ export class LSPDiagnosticsTool implements Tool {
 
     // Validate workspace boundary
     try {
-      safePath(filePath);
+      await safePath(filePath);
     } catch (err) {
       reportSilentFailure(err, 'lspIntegration:465');
       return `Error: Access denied: filePath "${filePath}" is outside workspace`;
@@ -504,14 +504,22 @@ export class LSPAttachTool implements Tool {
     // Validate workspace boundary
     let resolved: string;
     try {
-      resolved = safePath(filePath);
+      resolved = await safePath(filePath);
     } catch (err) {
       reportSilentFailure(err, 'lspIntegration:509');
       return `Error: Access denied: filePath "${filePath}" is outside workspace`;
     }
-    if (!fs.existsSync(resolved)) return `Error: file not found: ${filePath}`;
-
-    const content = fs.readFileSync(filePath, 'utf-8');
+    // Async read replaces sync fs.existsSync + fs.readFileSync so the
+    // event loop is not blocked while the file's contents load.
+    let content: string;
+    try {
+      content = await fs.promises.readFile(resolved, 'utf-8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+        return `Error: file not found: ${filePath}`;
+      }
+      throw err;
+    }
     const enriched = attachDiagnostics(content, filePath);
     return enriched;
   }

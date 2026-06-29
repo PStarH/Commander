@@ -137,10 +137,7 @@ export function validateBody(body: unknown, schema: Schema): FieldError[] {
 /**
  * Validate and return the body or throw an ApiError.
  */
-export function validateOrThrow<T = Record<string, unknown>>(
-  body: unknown,
-  schema: Schema,
-): T {
+export function validateOrThrow<T = Record<string, unknown>>(body: unknown, schema: Schema): T {
   const errors = validateBody(body, schema);
   if (errors.length > 0) {
     throw ApiError.validation(errors);
@@ -165,7 +162,19 @@ export const Schemas = {
     },
     provider: {
       type: 'string' as const,
-      enum: ['openai', 'anthropic', 'google', 'openrouter', 'deepseek', 'glm', 'mimo', 'xiaomi', 'ollama', 'vllm', 'cohere'],
+      enum: [
+        'openai',
+        'anthropic',
+        'google',
+        'openrouter',
+        'deepseek',
+        'glm',
+        'mimo',
+        'xiaomi',
+        'ollama',
+        'vllm',
+        'cohere',
+      ],
     },
     model: { type: 'string' as const, maxLength: 200 },
     maxTokens: { type: 'number' as const, min: 1, max: 1000000 },
@@ -185,7 +194,19 @@ export const Schemas = {
     provider: {
       type: 'string' as const,
       required: true,
-      enum: ['openai', 'anthropic', 'google', 'openrouter', 'deepseek', 'glm', 'mimo', 'xiaomi', 'ollama', 'vllm', 'cohere'],
+      enum: [
+        'openai',
+        'anthropic',
+        'google',
+        'openrouter',
+        'deepseek',
+        'glm',
+        'mimo',
+        'xiaomi',
+        'ollama',
+        'vllm',
+        'cohere',
+      ],
     },
     model: { type: 'string' as const, maxLength: 200 },
     apiKey: { type: 'string' as const, maxLength: 500 },
@@ -260,7 +281,19 @@ export const Schemas = {
     projectId: { type: 'string' as const, maxLength: 100 },
     provider: {
       type: 'string' as const,
-      enum: ['openai', 'anthropic', 'google', 'openrouter', 'deepseek', 'glm', 'mimo', 'xiaomi', 'ollama', 'vllm', 'cohere'],
+      enum: [
+        'openai',
+        'anthropic',
+        'google',
+        'openrouter',
+        'deepseek',
+        'glm',
+        'mimo',
+        'xiaomi',
+        'ollama',
+        'vllm',
+        'cohere',
+      ],
     },
     model: { type: 'string' as const, maxLength: 200 },
   },

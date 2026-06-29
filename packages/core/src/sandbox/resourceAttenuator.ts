@@ -72,10 +72,7 @@ export class ResourceAttenuator implements IResourceAttenuator {
    *
    * This creates a bidirectional isolation boundary.
    */
-  createMembrane(
-    inner: object,
-    outer: object,
-  ): { innerProxy: object; outerProxy: object } {
+  createMembrane(inner: object, outer: object): { innerProxy: object; outerProxy: object } {
     const contextId = this.generateContextId();
     const innerPolicy: AttenuationPolicy = {
       allowedProperties: undefined, // Allow all by default
@@ -270,7 +267,10 @@ export class ResourceAttenuator implements IResourceAttenuator {
         if (typeof value === 'function') {
           return function (...args: unknown[]) {
             // Check call depth
-            if (policy.maxCallDepth !== undefined && state!.currentCallDepth >= policy.maxCallDepth) {
+            if (
+              policy.maxCallDepth !== undefined &&
+              state!.currentCallDepth >= policy.maxCallDepth
+            ) {
               throw new Error(
                 `Access denied: max call depth ${policy.maxCallDepth} exceeded in context '${contextId}'`,
               );

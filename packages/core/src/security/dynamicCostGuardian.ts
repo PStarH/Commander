@@ -603,9 +603,7 @@ export class DynamicCostGuardian {
       // 时段分布归一化
       const hourlySum = state.hourlyCosts.reduce((a, b) => a + b, 0);
       const hourlyDistribution =
-        hourlySum > 0
-          ? state.hourlyCosts.map((c) => c / hourlySum)
-          : new Array(24).fill(1 / 24);
+        hourlySum > 0 ? state.hourlyCosts.map((c) => c / hourlySum) : new Array(24).fill(1 / 24);
 
       // 模型组合归一化
       const modelTotal = [...state.modelCounts.values()].reduce((a, b) => a + b, 0);
@@ -636,17 +634,12 @@ export class DynamicCostGuardian {
       };
 
       // 周期性
-      const weekdayAvg =
-        state.weekdayCost / Math.max(1, state.weekdayDays.size);
-      const weekendAvg =
-        state.weekendCost / Math.max(1, state.weekendDays.size);
+      const weekdayAvg = state.weekdayCost / Math.max(1, state.weekdayDays.size);
+      const weekendAvg = state.weekendCost / Math.max(1, state.weekendDays.size);
       const weekdayVsWeekendRatio = weekendAvg > 0 ? weekdayAvg / weekendAvg : 1;
-      const endOfMonthAvg =
-        state.endOfMonthCost / Math.max(1, state.endOfMonthDays.size);
-      const nonEndOfMonthAvg =
-        state.nonEndOfMonthCost / Math.max(1, state.nonEndOfMonthDays.size);
-      const endOfMonthSpikeFactor =
-        nonEndOfMonthAvg > 0 ? endOfMonthAvg / nonEndOfMonthAvg : 1;
+      const endOfMonthAvg = state.endOfMonthCost / Math.max(1, state.endOfMonthDays.size);
+      const nonEndOfMonthAvg = state.nonEndOfMonthCost / Math.max(1, state.nonEndOfMonthDays.size);
+      const endOfMonthSpikeFactor = nonEndOfMonthAvg > 0 ? endOfMonthAvg / nonEndOfMonthAvg : 1;
 
       // 增长趋势（按周桶线性回归斜率）
       const { growthRate, trendDirection } = this.computeGrowthTrend(state);
@@ -710,9 +703,10 @@ export class DynamicCostGuardian {
   }
 
   /** 计算增长趋势（按周桶的简单线性回归斜率，转成每周百分比）。 */
-  private computeGrowthTrend(
-    state: TenantFingerprintState,
-  ): { growthRate: number; trendDirection: 'growing' | 'stable' | 'declining' } {
+  private computeGrowthTrend(state: TenantFingerprintState): {
+    growthRate: number;
+    trendDirection: 'growing' | 'stable' | 'declining';
+  } {
     const buckets = state.weeklyBuckets;
     if (buckets.length < 2) {
       return { growthRate: 0, trendDirection: 'stable' };
@@ -755,7 +749,10 @@ export class DynamicCostGuardian {
     try {
       const cached = this.cachedThresholds.get(tenantId);
       const now = Date.now();
-      if (cached && now - Date.parse(cached.lastCalculated) < this.config.fingerprintUpdateIntervalMs) {
+      if (
+        cached &&
+        now - Date.parse(cached.lastCalculated) < this.config.fingerprintUpdateIntervalMs
+      ) {
         return cached;
       }
 
@@ -772,12 +769,9 @@ export class DynamicCostGuardian {
       if (fingerprint) {
         perRequestTokenLimit =
           fingerprint.requestSizeStats.p95 * this.config.requestLimitMultiplier;
-        perHourCostLimit =
-          fingerprint.baselineHourlyCost * this.config.hourlyLimitMultiplier;
-        perDayCostLimit =
-          fingerprint.baselineDailyCost * this.config.dailyLimitMultiplier;
-        sessionCostLimit =
-          fingerprint.baselineSessionCost * this.config.sessionLimitMultiplier;
+        perHourCostLimit = fingerprint.baselineHourlyCost * this.config.hourlyLimitMultiplier;
+        perDayCostLimit = fingerprint.baselineDailyCost * this.config.dailyLimitMultiplier;
+        sessionCostLimit = fingerprint.baselineSessionCost * this.config.sessionLimitMultiplier;
         reason = `基于指纹（置信度 ${fingerprint.confidence.toFixed(2)}，${fingerprint.dataPoints} 数据点）`;
       } else {
         perRequestTokenLimit = CONSERVATIVE_DEFAULTS.perRequestTokenLimit;
@@ -1127,10 +1121,7 @@ export class DynamicCostGuardian {
       tenantId,
       description: `多会话并发：活跃会话 ${count} 个超过阈值 ${this.config.multiSessionThreshold}`,
       recommendedAction: sigma >= 5 ? 4 : 3,
-      evidence: [
-        `活跃会话数: ${count}`,
-        `阈值: ${this.config.multiSessionThreshold}`,
-      ],
+      evidence: [`活跃会话数: ${count}`, `阈值: ${this.config.multiSessionThreshold}`],
       timestamp: new Date().toISOString(),
     };
   }
@@ -1262,10 +1253,7 @@ export class DynamicCostGuardian {
    * 对成本异常执行渐进式响应。
    * 响应级别 1-5 对应从记录监控到完全冻结。
    */
-  respondToCostAnomaly(
-    tenantId: string,
-    detection: EconomicAttackDetection,
-  ): CostAnomalyResponse {
+  respondToCostAnomaly(tenantId: string, detection: EconomicAttackDetection): CostAnomalyResponse {
     const timestamp = new Date().toISOString();
     const anomaly = this.getOrCreateAnomalyState(tenantId);
 
@@ -1455,11 +1443,7 @@ export class DynamicCostGuardian {
       const anomaly = this.getOrCreateAnomalyState(tenantId);
       anomaly.manualOverride = level;
       this.applyResponseLevel(anomaly, level);
-      this.logSecurityEvent(
-        'medium',
-        `手动覆盖成本异常响应级别为 ${level}`,
-        { tenantId, level },
-      );
+      this.logSecurityEvent('medium', `手动覆盖成本异常响应级别为 ${level}`, { tenantId, level });
       getGlobalLogger().info(
         'DynamicCostGuardian',
         `手动覆盖租户 ${tenantId} 响应级别为 ${level}`,
@@ -1553,10 +1537,7 @@ export class DynamicCostGuardian {
       this.updateAccumulators(state, record, date);
 
       // —— 周期性重建指纹 ——
-      if (
-        Date.now() - state.lastFingerprintBuildAt >=
-        this.config.fingerprintUpdateIntervalMs
-      ) {
+      if (Date.now() - state.lastFingerprintBuildAt >= this.config.fingerprintUpdateIntervalMs) {
         this.buildSpendingFingerprint(record.tenantId);
         // 重建后失效缓存的阈值，下次获取会重算
         this.cachedThresholds.delete(record.tenantId);
@@ -1596,11 +1577,7 @@ export class DynamicCostGuardian {
   }
 
   /** 更新指纹构建所需的原始累加器。 */
-  private updateAccumulators(
-    state: TenantFingerprintState,
-    record: CostRecord,
-    date: Date,
-  ): void {
+  private updateAccumulators(state: TenantFingerprintState, record: CostRecord, date: Date): void {
     const hour = date.getHours();
     const dayKey = date.toISOString().slice(0, 10);
 
@@ -1861,17 +1838,14 @@ function fingerprint0(state: TenantFingerprintState): number {
 // 单例
 // ============================================================================
 
-const dynamicCostGuardianSingleton = createTenantAwareSingleton(
-  () => new DynamicCostGuardian(),
-  { componentName: 'DynamicCostGuardian' },
-);
+const dynamicCostGuardianSingleton = createTenantAwareSingleton(() => new DynamicCostGuardian(), {
+  componentName: 'DynamicCostGuardian',
+});
 
 /**
  * 获取全局 DynamicCostGuardian（单租户）或按租户隔离的实例。
  */
-export function getDynamicCostGuardian(
-  config?: Partial<DynamicCostConfig>,
-): DynamicCostGuardian {
+export function getDynamicCostGuardian(config?: Partial<DynamicCostConfig>): DynamicCostGuardian {
   const guardian = dynamicCostGuardianSingleton.get();
   if (config) {
     guardian.reconfigure(config);

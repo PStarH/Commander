@@ -95,10 +95,7 @@ export interface ABExperimentResult {
  * @param alpha Significance level (default 0.05)
  * @returns Statistical result with z, p-value, and effect size
  */
-export function wilcoxonSignedRankTest(
-  deltas: number[],
-  alpha: number = 0.05,
-): StatisticalResult {
+export function wilcoxonSignedRankTest(deltas: number[], alpha: number = 0.05): StatisticalResult {
   const n = deltas.length;
 
   // Filter out zero differences (ties)
@@ -192,10 +189,7 @@ export class ABExperimentComparator {
    * Compare two sets of judge results paired by case ID.
    * Performs Wilcoxon signed-rank test on overall scores.
    */
-  compare(
-    config: ExperimentConfig,
-    pairs: ExperimentPairResult[],
-  ): ABExperimentResult {
+  compare(config: ExperimentConfig, pairs: ExperimentPairResult[]): ABExperimentResult {
     const deltas = pairs.map((p) => p.scoreDelta);
     const stats = wilcoxonSignedRankTest(deltas);
 
@@ -299,7 +293,7 @@ function rankAbsoluteValues(values: number[]): number[] {
  * Normal CDF using Abramowitz & Stegun approximation (7.1.26).
  */
 function normalCdf(x: number): number {
-  const b1 = 0.319381530;
+  const b1 = 0.31938153;
   const b2 = -0.356563782;
   const b3 = 1.781477937;
   const b4 = -1.821255978;
@@ -309,7 +303,9 @@ function normalCdf(x: number): number {
 
   const t = 1 / (1 + p * x);
   const phi =
-    c * Math.exp(-x * x / 2) * (b1 * t + b2 * t * t + b3 * t * t * t + b4 * t * t * t * t + b5 * t * t * t * t * t);
+    c *
+    Math.exp((-x * x) / 2) *
+    (b1 * t + b2 * t * t + b3 * t * t * t + b4 * t * t * t * t + b5 * t * t * t * t * t);
 
   return 1 - phi;
 }
@@ -322,9 +318,7 @@ function median(values: number[]): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0
-    ? (sorted[mid - 1] + sorted[mid]) / 2
-    : sorted[mid];
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
 function mean(values: number[]): number {
