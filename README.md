@@ -191,6 +191,10 @@ cd Commander && pnpm install
 export OPENAI_API_KEY=sk-...
 # or: ANTHROPIC / DEEPSEEK / GROQ / OLLAMA / 17 others
 
+# Fastest start: one-click Web Console (API + Web + auto-open browser)
+npx tsx packages/core/src/cli.ts gui
+# or use the pnpm shortcut: pnpm gui  (alias: pnpm start)
+
 # Run anything
 npx tsx packages/core/src/cli.ts run "audit this repo for security vulnerabilities"
 npx tsx packages/core/src/cli.ts run "refactor auth module" --dry-run
@@ -203,11 +207,18 @@ npx tsx packages/core/src/cli.ts status              # System health
 
 No configuration files. No YAML pipelines. No graph builders. One command and you're running multi-agent orchestration.
 
+> **Dev vs installed usage:** After cloning (before building), invoke the CLI directly with `npx tsx packages/core/src/cli.ts <command>` (or the `pnpm <script>` shortcuts). Once Commander is installed globally (`npm install -g`), use the `commander <command>` shorthand instead. All help text references the installed `commander` form.
+
 ### Web Console
 
 Commander includes a full web-based control console for visual monitoring, chat-based agent interaction, and governance:
 
 ```bash
+# Recommended: one-click start (API on :4000 + Web on :5173 + auto-open browser)
+npx tsx packages/core/src/cli.ts gui
+# or: pnpm gui / pnpm start
+
+# Dev mode (two terminals, separate process logs):
 # Terminal 1: Start the API server (port 4000)
 pnpm --filter @commander/api dev
 
@@ -215,7 +226,7 @@ pnpm --filter @commander/api dev
 pnpm --filter @commander/web dev
 ```
 
-Then open `http://localhost:5173` in your browser. The web console provides:
+Then open `http://localhost:5173` in your browser (the one-click `gui` command opens it for you). The web console provides:
 
 - **Dashboard** — Battle report, token trends, live topology, agent roster, mission board
 - **Chat** — Conversational interface with real-time agent streaming

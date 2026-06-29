@@ -114,23 +114,11 @@ git commit --no-verify -m "fix(core): update remaining core modules (goal, drive
 git add packages/core/tests/
 git commit --no-verify -m "test(core): update core tests and reorganize e2e suite"
 
-# 22. packages/observability package
-git add packages/observability/
-git commit --no-verify -m "fix(observability-package): update routes, scoring, and timeline builders"
-
-# 23. packages/sdk
+# 22. packages/sdk
 git add packages/sdk/
 git commit --no-verify -m "fix(sdk): update commander client"
 
-# 24. packages/valify
-git add packages/valify/
-git commit --no-verify -m "fix(valify): update schemas"
-
-# 25. packages/viz
-git add packages/viz/
-git commit --no-verify -m "fix(viz): update trace reader and ANSI handling"
-
-# 26. scripts
+# 23. scripts
 git add scripts/
 git commit --no-verify -m "chore(scripts): update audit, benchmark, and QA scripts"
 
