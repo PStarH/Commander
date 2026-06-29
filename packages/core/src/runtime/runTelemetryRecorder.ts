@@ -39,10 +39,7 @@ import { checkMemoryPoisoning } from '../security/memoryPoisoningGate';
 import { getGlobalTenantProvider } from './tenantProvider';
 import { getGlobalLogger } from '../logging';
 import { reportSilentFailure } from '../silentFailureReporter';
-import {
-  GOAL_RESULT_MAX_CHARS,
-  GOAL_TELEMETRY_MAX_CHARS,
-} from './runtimeConstants';
+import { GOAL_RESULT_MAX_CHARS, GOAL_TELEMETRY_MAX_CHARS } from './runtimeConstants';
 
 /**
  * Constructor dependencies. All are getters so the recorder always observes the
@@ -101,17 +98,8 @@ export class RunTelemetryRecorder {
    * inlined behaviour.
    */
   recordSuccess(params: RecordSuccessParams): void {
-    const {
-      ctx,
-      runId,
-      routing,
-      taskType,
-      result,
-      totalTokens,
-      steps,
-      startTime,
-      tenantId,
-    } = params;
+    const { ctx, runId, routing, taskType, result, totalTokens, steps, startTime, tenantId } =
+      params;
     const totalDurationMs = Date.now() - startTime;
     const bus = getMessageBus();
 
@@ -217,9 +205,7 @@ export class RunTelemetryRecorder {
    * publishes `agent.failed` on the bus, records agent-intelligence (postTask),
    * meta-learner experience, and the failure-pattern learner entry.
    */
-  async recordFailure(
-    params: RecordFailureParams,
-  ): Promise<AgentExecutionResult> {
+  async recordFailure(params: RecordFailureParams): Promise<AgentExecutionResult> {
     const {
       ctx,
       runId,
@@ -243,11 +229,7 @@ export class RunTelemetryRecorder {
     const memory = this.deps.getMemory();
 
     // All attempts failed
-    tracer.recordError(
-      runId,
-      `All ${maxRetries + 1} attempts failed`,
-      Date.now() - startTime,
-    );
+    tracer.recordError(runId, `All ${maxRetries + 1} attempts failed`, Date.now() - startTime);
 
     // Record final actual cost for failed run (for estimator learning)
     try {

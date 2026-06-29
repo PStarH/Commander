@@ -17,7 +17,10 @@ import { toolErrorRow } from './toolResultShape';
 import type { ToolApproval } from './toolApproval';
 import { CircuitBreakerRegistry } from './circuitBreakerRegistry';
 import { getGuardianAgent } from '../security/guardianAgent';
-import { reviewToolCall as guardianReviewToolCall, isRuntimeGuardianAvailable } from './runtimeGuardianBridge';
+import {
+  reviewToolCall as guardianReviewToolCall,
+  isRuntimeGuardianAvailable,
+} from './runtimeGuardianBridge';
 
 import { getApprovalSystem } from '../sandbox/approval';
 import { getIdempotencyStore } from '../atr/idempotencyStore';
@@ -339,7 +342,7 @@ export class ToolOrchestrator {
         // Security gate: Runtime Guardian LLM review
         if (isRuntimeGuardianAvailable()) {
           try {
-            const goal = (context as any).goal || 'unknown';
+            const goal = (context as { goal?: string }).goal || 'unknown';
             const decision = await guardianReviewToolCall(toolCall, goal);
             if (!decision.approved) {
               const errorMsg = `RUNTIME_GUARDIAN_BLOCKED: ${decision.reason}`;

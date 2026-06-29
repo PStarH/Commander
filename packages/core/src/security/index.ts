@@ -837,11 +837,7 @@ export type {
 
 // SemanticFirewall — 语义防火墙 (OWASP ASI06/ASI07)
 // 5 层纵深防御：内容净化 → 溯源追踪 → 写入前验证(正则+LLM语义) → 隔离区 → 审计日志
-export {
-  SemanticFirewall,
-  getSemanticFirewall,
-  resetSemanticFirewall,
-} from './semanticFirewall';
+export { SemanticFirewall, getSemanticFirewall, resetSemanticFirewall } from './semanticFirewall';
 export type {
   ProvenanceOrigin,
   TrustLevel,

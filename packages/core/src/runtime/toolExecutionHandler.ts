@@ -74,10 +74,7 @@ import type { ToolPlanner } from './toolPlanner';
 import type { ToolOrchestrator } from './toolOrchestrator';
 import type { ToolOutputManager } from './toolOutputManager';
 import type { CycleDetector } from './cycleDetector';
-import type {
-  SecurityOrchestrator,
-  SecurityOrchestratorDecision,
-} from './securityOrchestrator';
+import type { SecurityOrchestrator, SecurityOrchestratorDecision } from './securityOrchestrator';
 import type { SlidingWindowOrchestrator } from './slidingWindowOrchestrator';
 import type { ThreeLayerMemory } from '../threeLayerMemory';
 
@@ -193,11 +190,8 @@ export interface ToolExecutionStepResult {
 export class ToolExecutionHandler {
   constructor(private readonly deps: ToolExecutionHandlerDeps) {}
 
-  async executeStep(
-    params: ToolExecutionStepParams,
-  ): Promise<ToolExecutionStepResult> {
-    const { ctx, runId, request, steps, totalTokens, bus, tenantId, routing } =
-      params;
+  async executeStep(params: ToolExecutionStepParams): Promise<ToolExecutionStepResult> {
+    const { ctx, runId, request, steps, totalTokens, bus, tenantId, routing } = params;
     let response = params.response;
     const { step, stepNumber } = params;
     const degenerationDetected = params.degenerationDetected;
@@ -228,8 +222,7 @@ export class ToolExecutionHandler {
     // "started/completed" — not the agent's actual thinking process.
     // Publishing to the bus lets SSEStream forward these to connected clients.
     try {
-      const reasoningContent = (response as { reasoning_content?: string })
-        .reasoning_content;
+      const reasoningContent = (response as { reasoning_content?: string }).reasoning_content;
       if (reasoningContent) {
         getMessageBus().publish('reasoning.delta', ctx.agentId, {
           runId,
@@ -275,9 +268,11 @@ export class ToolExecutionHandler {
     // to save tokens. Evidence: arXiv 2602.02050 — high-quality tool calls reduce
     // model entropy; confident responses need no verification.
     let earlyExit = false;
-    // Degeneration forces early exit — skip verification to avoid
-    // wasting tokens on a model that is already degenerating.
-    if (degenerationDetected) {
+    // Degeneration detected in text but model still issued tool calls.
+    // Let the tool calls execute — they're often valid (e.g. update-dep,
+    // backup-db) even when text is degenerate. Only force earlyExit if
+    // there are truly no tool calls to execute.
+    if (degenerationDetected && (!response.toolCalls || response.toolCalls.length === 0)) {
       earlyExit = true;
     } else if (!response.toolCalls || response.toolCalls.length === 0) {
       if (isConfidentResponse(response)) {
@@ -301,8 +296,7 @@ export class ToolExecutionHandler {
       } else {
         const structured = parseStructuredOutput(response.content);
         if (structured) {
-          step.content =
-            typeof structured === 'string' ? structured : JSON.stringify(structured);
+          step.content = typeof structured === 'string' ? structured : JSON.stringify(structured);
         }
       }
     }
@@ -341,9 +335,7 @@ export class ToolExecutionHandler {
         .adjustBudgetForPressure(this.deps.getGovernor().getState().pressure);
 
       // Check cache for all tool calls first (zero-cost on hit)
-      const calls = (response.toolCalls ?? []).map((tc) =>
-        this.deps.normalizeToolCall(tc),
-      );
+      const calls = (response.toolCalls ?? []).map((tc) => this.deps.normalizeToolCall(tc));
       const uncachedCalls: typeof calls = [];
       const cachedResults: Array<{
         toolCallId: string;
@@ -554,10 +546,7 @@ export class ToolExecutionHandler {
                 agentId: ctx.agentId,
                 runId,
               });
-              if (
-                toolResult.error &&
-                (tc.name === 'shell_execute' || tc.name === 'bash')
-              ) {
+              if (toolResult.error && (tc.name === 'shell_execute' || tc.name === 'bash')) {
                 siblingAbort.abort();
               }
               if (!toolResult.error) {
@@ -627,10 +616,7 @@ export class ToolExecutionHandler {
                   reason: 'hook_denied',
                   detail: gate.errorMsg,
                 });
-                blockingRow = toolErrorRow(
-                  tc,
-                  `Hook blocked: ${gate.errorMsg || 'denied'}`,
-                );
+                blockingRow = toolErrorRow(tc, `Hook blocked: ${gate.errorMsg || 'denied'}`);
                 break;
               case 'retry':
                 retryLoopDetected = true;
@@ -902,9 +888,7 @@ export class ToolExecutionHandler {
         const assistantMsg: import('./types').LLMMessage = {
           role: 'assistant',
           content: response.content,
-          ...(response.reasoning_content
-            ? { reasoning_content: response.reasoning_content }
-            : {}),
+          ...(response.reasoning_content ? { reasoning_content: response.reasoning_content } : {}),
           ...(response.toolCalls
             ? {
                 tool_calls: response.toolCalls.map((tc) => ({
@@ -943,13 +927,9 @@ export class ToolExecutionHandler {
             });
           }
         } catch (e) {
-          getGlobalLogger().debug(
-            'AgentRuntime',
-            'Sliding window solidify failed (best-effort)',
-            {
-              error: (e as Error)?.message,
-            },
-          );
+          getGlobalLogger().debug('AgentRuntime', 'Sliding window solidify failed (best-effort)', {
+            error: (e as Error)?.message,
+          });
         }
 
         // 2. Apply sliding window (enforce max turns in context)
@@ -965,13 +945,9 @@ export class ToolExecutionHandler {
             });
           }
         } catch (e) {
-          getGlobalLogger().debug(
-            'AgentRuntime',
-            'Sliding window apply failed (best-effort)',
-            {
-              error: (e as Error)?.message,
-            },
-          );
+          getGlobalLogger().debug('AgentRuntime', 'Sliding window apply failed (best-effort)', {
+            error: (e as Error)?.message,
+          });
         }
 
         // 3. Retrieve relevant context from memory and inject
@@ -979,10 +955,7 @@ export class ToolExecutionHandler {
           const retrievalResult = this.deps
             .getSlidingWindow()
             .retrieveContext(memory, ctx.goal, request.messages);
-          if (
-            retrievalResult.entriesRetrieved > 0 &&
-            retrievalResult.injectedContext.length > 0
-          ) {
+          if (retrievalResult.entriesRetrieved > 0 && retrievalResult.injectedContext.length > 0) {
             // Inject as a system message before the last user message
             // This keeps prompt-cache stability (injected before variable content)
             request.messages.splice(request.messages.length - 1, 0, {
@@ -997,13 +970,9 @@ export class ToolExecutionHandler {
             });
           }
         } catch (e) {
-          getGlobalLogger().debug(
-            'AgentRuntime',
-            'Sliding window retrieval failed (best-effort)',
-            {
-              error: (e as Error)?.message,
-            },
-          );
+          getGlobalLogger().debug('AgentRuntime', 'Sliding window retrieval failed (best-effort)', {
+            error: (e as Error)?.message,
+          });
         }
       }
 
@@ -1041,8 +1010,7 @@ export class ToolExecutionHandler {
           followUp.content?.slice(0, 4000) ?? '',
         );
         this.deps.setLastHallucinationDetected(
-          report.recommendation === 'reject' ||
-            report.recommendation === 'flag_for_review',
+          report.recommendation === 'reject' || report.recommendation === 'flag_for_review',
         );
       } catch (err) {
         reportSilentFailure(err, 'agentRuntime:hallucination-detection-followup');
@@ -1070,11 +1038,9 @@ export class ToolExecutionHandler {
             runId,
           })
           .catch((e) =>
-            getGlobalLogger().debug(
-              'AgentRuntime',
-              'beforeContextCompaction hook failed',
-              { error: (e as Error)?.message },
-            ),
+            getGlobalLogger().debug('AgentRuntime', 'beforeContextCompaction hook failed', {
+              error: (e as Error)?.message,
+            }),
           );
 
         const compactResult = this.deps
@@ -1082,11 +1048,13 @@ export class ToolExecutionHandler {
           .compact(request.messages, undefined, taskType);
         if (compactResult.action.droppedCount > 0) {
           request.messages = compactResult.messages;
-          this.deps.getGovernor().recordOutcome(
-            'context_compaction',
-            tokensBefore,
-            this.deps.getCompactor().getUsage(request.messages).total,
-          );
+          this.deps
+            .getGovernor()
+            .recordOutcome(
+              'context_compaction',
+              tokensBefore,
+              this.deps.getCompactor().getUsage(request.messages).total,
+            );
           bus.publish('system.alert', 'runtime', {
             type: 'context_compaction',
             layer: compactResult.action.layer,
@@ -1104,11 +1072,9 @@ export class ToolExecutionHandler {
               runId,
             })
             .catch((e) =>
-              getGlobalLogger().debug(
-                'AgentRuntime',
-                'afterContextCompaction hook failed',
-                { error: (e as Error)?.message },
-              ),
+              getGlobalLogger().debug('AgentRuntime', 'afterContextCompaction hook failed', {
+                error: (e as Error)?.message,
+              }),
             );
         }
       }

@@ -92,13 +92,29 @@ const PRICING_TABLE: Record<string, ModelPricing> = {
   'openai:o1': { inputPer1k: 0.015, outputPer1k: 0.06 },
   'openai:o1-mini': { inputPer1k: 0.003, outputPer1k: 0.012 },
   'openai:o3-mini': { inputPer1k: 0.0011, outputPer1k: 0.0044 },
-  'anthropic:claude-3-5-sonnet': { inputPer1k: 0.003, outputPer1k: 0.015, cachedInputPer1k: 0.0003 },
-  'anthropic:claude-3-5-haiku': { inputPer1k: 0.0008, outputPer1k: 0.004, cachedInputPer1k: 0.00008 },
+  'anthropic:claude-3-5-sonnet': {
+    inputPer1k: 0.003,
+    outputPer1k: 0.015,
+    cachedInputPer1k: 0.0003,
+  },
+  'anthropic:claude-3-5-haiku': {
+    inputPer1k: 0.0008,
+    outputPer1k: 0.004,
+    cachedInputPer1k: 0.00008,
+  },
   'anthropic:claude-3-opus': { inputPer1k: 0.015, outputPer1k: 0.075 },
   'google:gemini-1.5-pro': { inputPer1k: 0.00125, outputPer1k: 0.005, cachedInputPer1k: 0.00031 },
-  'google:gemini-1.5-flash': { inputPer1k: 0.000075, outputPer1k: 0.0003, cachedInputPer1k: 0.00001875 },
+  'google:gemini-1.5-flash': {
+    inputPer1k: 0.000075,
+    outputPer1k: 0.0003,
+    cachedInputPer1k: 0.00001875,
+  },
   'google:gemini-2.0-flash': { inputPer1k: 0.0001, outputPer1k: 0.0004 },
-  'deepseek:deepseek-chat': { inputPer1k: 0.00014, outputPer1k: 0.00028, cachedInputPer1k: 0.000014 },
+  'deepseek:deepseek-chat': {
+    inputPer1k: 0.00014,
+    outputPer1k: 0.00028,
+    cachedInputPer1k: 0.000014,
+  },
   'deepseek:deepseek-reasoner': { inputPer1k: 0.00014, outputPer1k: 0.00219 },
 };
 
@@ -240,9 +256,15 @@ function extractLLMCall(event: TraceEvent): AggregatedLLMCall | null {
 
   const data = event.data ?? {};
   const modelInfo = (data.modelInfo ?? {}) as Record<string, unknown>;
-  const tokenUsage = (data.tokenUsage ?? (data as Record<string, unknown>).usage ?? {}) as Record<string, unknown>;
+  const tokenUsage = (data.tokenUsage ?? (data as Record<string, unknown>).usage ?? {}) as Record<
+    string,
+    unknown
+  >;
 
-  const rawModel = toString(modelInfo.model ?? (data.input as Record<string, unknown>)?.model, 'unknown');
+  const rawModel = toString(
+    modelInfo.model ?? (data.input as Record<string, unknown>)?.model,
+    'unknown',
+  );
   const model = stripTierSuffix(rawModel);
   const provider = toString(modelInfo.provider, 'unknown');
 

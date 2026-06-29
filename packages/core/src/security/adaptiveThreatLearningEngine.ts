@@ -259,16 +259,130 @@ const DEFAULT_CONFIG: AdaptiveLearningConfig = {
 
 /** 停用词集合（关键词提取时过滤） */
 const STOPWORDS: Set<string> = new Set([
-  'the', 'a', 'an', 'and', 'or', 'but', 'if', 'then', 'else', 'for', 'of', 'to', 'in', 'on',
-  'at', 'by', 'with', 'from', 'as', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'this',
-  'that', 'these', 'those', 'it', 'its', 'i', 'you', 'he', 'she', 'we', 'they', 'me', 'him',
-  'her', 'us', 'them', 'my', 'your', 'his', 'our', 'their', 'not', 'no', 'do', 'does', 'did',
-  'will', 'would', 'can', 'could', 'should', 'shall', 'may', 'might', 'must', 'have', 'has',
-  'had', 'get', 'got', 'let', 'please', 'help', 'need', 'want', 'use', 'using', 'used', 'make',
-  'made', 'new', 'one', 'two', 'also', 'just', 'like', 'so', 'than', 'too', 'very', 'about',
-  'into', 'out', 'up', 'down', 'over', 'under', 'again', 'here', 'there', 'when', 'where',
-  'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such',
-  'only', 'own', 'same', 's', 't', 'd', 'll', 'm', 're', 've', 'now', 'yes', 'no',
+  'the',
+  'a',
+  'an',
+  'and',
+  'or',
+  'but',
+  'if',
+  'then',
+  'else',
+  'for',
+  'of',
+  'to',
+  'in',
+  'on',
+  'at',
+  'by',
+  'with',
+  'from',
+  'as',
+  'is',
+  'are',
+  'was',
+  'were',
+  'be',
+  'been',
+  'being',
+  'this',
+  'that',
+  'these',
+  'those',
+  'it',
+  'its',
+  'i',
+  'you',
+  'he',
+  'she',
+  'we',
+  'they',
+  'me',
+  'him',
+  'her',
+  'us',
+  'them',
+  'my',
+  'your',
+  'his',
+  'our',
+  'their',
+  'not',
+  'no',
+  'do',
+  'does',
+  'did',
+  'will',
+  'would',
+  'can',
+  'could',
+  'should',
+  'shall',
+  'may',
+  'might',
+  'must',
+  'have',
+  'has',
+  'had',
+  'get',
+  'got',
+  'let',
+  'please',
+  'help',
+  'need',
+  'want',
+  'use',
+  'using',
+  'used',
+  'make',
+  'made',
+  'new',
+  'one',
+  'two',
+  'also',
+  'just',
+  'like',
+  'so',
+  'than',
+  'too',
+  'very',
+  'about',
+  'into',
+  'out',
+  'up',
+  'down',
+  'over',
+  'under',
+  'again',
+  'here',
+  'there',
+  'when',
+  'where',
+  'why',
+  'how',
+  'all',
+  'any',
+  'both',
+  'each',
+  'few',
+  'more',
+  'most',
+  'other',
+  'some',
+  'such',
+  'only',
+  'own',
+  'same',
+  's',
+  't',
+  'd',
+  'll',
+  'm',
+  're',
+  've',
+  'now',
+  'yes',
+  'no',
 ]);
 
 const SEVERITY_RANK: Record<'low' | 'medium' | 'high' | 'critical', number> = {
@@ -381,10 +495,7 @@ function bucketTimeOfDay(timestamp: string): string {
 function normalizeApi(endpoint?: string): string | undefined {
   if (!endpoint) return undefined;
   return endpoint
-    .replace(
-      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
-      '{id}',
-    )
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '{id}')
     .replace(/\/\d+(?=\/|$)/g, '/{id}')
     .replace(/\?.*$/, '');
 }
@@ -498,16 +609,25 @@ function severityToAction(severity: 'critical' | 'high' | 'medium' | 'low'): Rul
 /**
  * 依据内容类型与共性关键词推断攻击家族类型。
  */
-function inferAttackFamilyType(
-  contentType: string,
-  keywords: string[],
-): AttackFamilyType {
+function inferAttackFamilyType(contentType: string, keywords: string[]): AttackFamilyType {
   const kw: Set<string> = new Set(keywords.map((k) => k.toLowerCase()));
   const hasAny = (words: string[]): boolean => words.some((w) => kw.has(w));
   if (['sql', 'xss', 'shell', 'path_traversal', 'prompt_injection'].includes(contentType)) {
     return 'injection';
   }
-  if (hasAny(['admin', 'root', 'sudo', 'privilege', 'escalate', 'escalation', 'sudoers', 'chmod', 'token'])) {
+  if (
+    hasAny([
+      'admin',
+      'root',
+      'sudo',
+      'privilege',
+      'escalate',
+      'escalation',
+      'sudoers',
+      'chmod',
+      'token',
+    ])
+  ) {
     return 'privilege_escalation';
   }
   if (hasAny(['exfiltrate', 'extract', 'steal', 'download', 'export', 'exfil', 'leak', 'data'])) {
@@ -978,19 +1098,15 @@ export class AdaptiveThreatLearningEngine {
         modelHealth: health,
       };
 
-      this.logThreatLearned(
-        `威胁模型已进化至 v${this.modelVersion}`,
-        'low',
-        {
-          version: this.modelVersion,
-          totalSignatures: sigs.length,
-          activeSignatures: activeSigs.length,
-          totalRules: rules.length,
-          activeRules: activeRules.length,
-          families: families.length,
-          modelHealth: health,
-        },
-      );
+      this.logThreatLearned(`威胁模型已进化至 v${this.modelVersion}`, 'low', {
+        version: this.modelVersion,
+        totalSignatures: sigs.length,
+        activeSignatures: activeSigs.length,
+        totalRules: rules.length,
+        activeRules: activeRules.length,
+        families: families.length,
+        modelHealth: health,
+      });
       this.recordMetrics();
       return this.threatModel;
     } catch (err) {
@@ -1092,9 +1208,7 @@ export class AdaptiveThreatLearningEngine {
     };
 
     // 规范指纹——分桶以稳定化，使同类攻击坍缩到同一签名 ID
-    const contentPattern = sha256(
-      [...content.patternKeywords].sort().slice(0, 5).join('|'),
-    );
+    const contentPattern = sha256([...content.patternKeywords].sort().slice(0, 5).join('|'));
     const canonical = JSON.stringify({
       tb: bucketLog(behavioral.tokenRange[1]),
       sb: bucketLog(behavioral.requestSizeRange[1]),
@@ -1335,9 +1449,7 @@ export class AdaptiveThreatLearningEngine {
           : 0,
     );
     if (sig.contextFingerprint.sourcePattern && req.sourcePattern) {
-      contextComps.push(
-        req.sourcePattern === sig.contextFingerprint.sourcePattern ? 1 : 0,
-      );
+      contextComps.push(req.sourcePattern === sig.contextFingerprint.sourcePattern ? 1 : 0);
     }
     const context = mean(contextComps);
 
@@ -1443,9 +1555,7 @@ export class AdaptiveThreatLearningEngine {
     }
     characteristics.push(`severity: ${maxSeverity(members.map((m) => m.severity))}`);
 
-    const firstSeen = members
-      .map((m) => m.firstSeen)
-      .sort()[0]!;
+    const firstSeen = members.map((m) => m.firstSeen).sort()[0]!;
     const lastSeen = members
       .map((m) => m.lastSeen)
       .sort()

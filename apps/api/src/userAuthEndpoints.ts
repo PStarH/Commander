@@ -13,12 +13,7 @@ import {
   type UserRole,
   type SafeUser,
 } from './userStore';
-import {
-  signAccessToken,
-  signRefreshToken,
-  verifyToken,
-  type AuthUser,
-} from './jwtMiddleware';
+import { signAccessToken, signRefreshToken, verifyToken, type AuthUser } from './jwtMiddleware';
 
 // ── Validation schemas ──────────────────────────────────────────────────────
 
@@ -27,7 +22,10 @@ const registerSchema = z.object({
     .string()
     .min(3, 'Username must be at least 3 characters')
     .max(32, 'Username must be at most 32 characters')
-    .regex(/^[a-zA-Z0-9_.-]+$/, 'Username may only contain letters, numbers, dots, hyphens and underscores'),
+    .regex(
+      /^[a-zA-Z0-9_.-]+$/,
+      'Username may only contain letters, numbers, dots, hyphens and underscores',
+    ),
   email: z.string().email('Invalid email address').max(255),
   password: z.string().min(6, 'Password must be at least 6 characters').max(128),
 });
@@ -211,14 +209,9 @@ export function createUserAuthRouter(): Router {
   });
 
   // ── GET /api/auth/users  (admin only) ────────────────────────────────────
-  router.get(
-    '/api/auth/users',
-    requireAuth,
-    requireAdmin,
-    (_req: Request, res: Response) => {
-      res.json({ users: listUsers() });
-    },
-  );
+  router.get('/api/auth/users', requireAuth, requireAdmin, (_req: Request, res: Response) => {
+    res.json({ users: listUsers() });
+  });
 
   // ── PUT /api/auth/users/:id/role  (admin only) ───────────────────────────
   router.put(

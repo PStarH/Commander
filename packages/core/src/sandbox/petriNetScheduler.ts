@@ -66,9 +66,9 @@ const ALL_TIERS: SandboxTier[] = ['v8-isolate', 'seccomp', 'wasm', 'tee'];
 /** Maps a SandboxTier to its Petri net place prefix */
 const TIER_PLACE_PREFIX: Record<SandboxTier, string> = {
   'v8-isolate': 'v8',
-  'seccomp': 'seccomp',
-  'wasm': 'wasm',
-  'tee': 'tee',
+  seccomp: 'seccomp',
+  wasm: 'wasm',
+  tee: 'tee',
 };
 
 // ============================================================================
@@ -84,9 +84,9 @@ export class PetriNetSchedulerIntegration {
     this.petriNet = new PetriNetEngine();
     this.tierConcurrency = {
       'v8-isolate': tierConcurrency?.['v8-isolate'] ?? 10,
-      'seccomp': tierConcurrency?.['seccomp'] ?? 4,
-      'wasm': tierConcurrency?.['wasm'] ?? 2,
-      'tee': tierConcurrency?.['tee'] ?? 1,
+      seccomp: tierConcurrency?.['seccomp'] ?? 4,
+      wasm: tierConcurrency?.['wasm'] ?? 2,
+      tee: tierConcurrency?.['tee'] ?? 1,
     };
     this.buildPetriNet();
     this.initialized = true;
@@ -152,9 +152,7 @@ export class PetriNetSchedulerIntegration {
           ['pending', 1],
           [`${prefix}_slots`, 1],
         ]),
-        outputs: new Map([
-          ['executing', 1],
-        ]),
+        outputs: new Map([['executing', 1]]),
         // Guard: only fires when the tier matches the request
         guard: (ctx) => {
           if (!ctx || typeof ctx !== 'object') return true;
@@ -172,9 +170,7 @@ export class PetriNetSchedulerIntegration {
       this.petriNet.addTransition({
         id: `complete_${tier}`,
         label: `Complete from ${tier}`,
-        inputs: new Map([
-          ['executing', 1],
-        ]),
+        inputs: new Map([['executing', 1]]),
         outputs: new Map([
           ['completed', 1],
           [`${prefix}_slots`, 1],
@@ -333,14 +329,17 @@ export class PetriNetSchedulerIntegration {
 
     let recommendation: string;
     if (isDeadlocked) {
-      recommendation = 'DEADLOCK: All tier slots exhausted, no executing sandboxes to complete. ' +
+      recommendation =
+        'DEADLOCK: All tier slots exhausted, no executing sandboxes to complete. ' +
         'Consider increasing tier concurrency limits or rejecting new requests.';
     } else if (!safeState) {
-      recommendation = 'UNSAFE: Potential resource starvation detected. ' +
+      recommendation =
+        'UNSAFE: Potential resource starvation detected. ' +
         'Executing sandboxes may not be able to release slots. ' +
         'Consider preempting long-running sandboxes.';
     } else if (availableSlots === 0 && executing > 0) {
-      recommendation = 'SATURATED: All slots in use, but completions can free capacity. ' +
+      recommendation =
+        'SATURATED: All slots in use, but completions can free capacity. ' +
         'New requests will queue until executions complete.';
     } else {
       recommendation = 'SAFE: Resources available for scheduling.';
@@ -422,9 +421,9 @@ export class PetriNetSchedulerIntegration {
   getSnapshot(): SchedulerPetriState {
     const availableSlots: Record<SandboxTier, number> = {
       'v8-isolate': 0,
-      'seccomp': 0,
-      'wasm': 0,
-      'tee': 0,
+      seccomp: 0,
+      wasm: 0,
+      tee: 0,
     };
 
     for (const tier of ALL_TIERS) {

@@ -370,7 +370,14 @@ export class AdaptiveHITL {
     this.config = { ...DEFAULT_CONFIG, ...config };
 
     // Initialize Thompson Sampling posteriors for each weight source
-    const sources = ['toolRisk', 'agentConfidence', 'correlation', 'verification', 'mission', 'timeDecay'];
+    const sources = [
+      'toolRisk',
+      'agentConfidence',
+      'correlation',
+      'verification',
+      'mission',
+      'timeDecay',
+    ];
     for (const source of sources) {
       this.weightPosteriors.set(source, { alpha: 1, beta: 1 }); // Beta(1,1) = uniform prior
     }
@@ -1035,8 +1042,7 @@ export class AdaptiveHITL {
         // Did this factor's score direction match the human's decision?
         const factorSaidRisky = factor.score > 50;
         const factorMatched =
-          (humanEscalated && factorSaidRisky) ||
-          (!humanEscalated && !factorSaidRisky);
+          (humanEscalated && factorSaidRisky) || (!humanEscalated && !factorSaidRisky);
 
         if (factorMatched) {
           posterior.alpha += 1;
@@ -1072,11 +1078,13 @@ export class AdaptiveHITL {
       this.config.toolRiskWeight =
         this.config.toolRiskWeight * (1 - learningRate) + newWeights.toolRisk * learningRate;
       this.config.agentConfidenceWeight =
-        this.config.agentConfidenceWeight * (1 - learningRate) + newWeights.agentConfidence * learningRate;
+        this.config.agentConfidenceWeight * (1 - learningRate) +
+        newWeights.agentConfidence * learningRate;
       this.config.correlationWeight =
         this.config.correlationWeight * (1 - learningRate) + newWeights.correlation * learningRate;
       this.config.verificationWeight =
-        this.config.verificationWeight * (1 - learningRate) + newWeights.verification * learningRate;
+        this.config.verificationWeight * (1 - learningRate) +
+        newWeights.verification * learningRate;
       this.config.missionWeight =
         this.config.missionWeight * (1 - learningRate) + newWeights.mission * learningRate;
       this.config.timeDecayWeight =

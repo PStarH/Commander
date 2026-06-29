@@ -206,7 +206,10 @@ const DEFAULT_CONFIG: UDCConfig = {
 
 export class UltimateDefenseCoordinator {
   private config: UDCConfig;
-  private layerStats: Map<DefenseLayer, { threatsBlocked: number; alertsGenerated: number; lastCheckAt: string }> = new Map();
+  private layerStats: Map<
+    DefenseLayer,
+    { threatsBlocked: number; alertsGenerated: number; lastCheckAt: string }
+  > = new Map();
   private activeThreats = 0;
   private isolatedAttacks = 0;
   private selfHealingCount = 0;
@@ -221,7 +224,11 @@ export class UltimateDefenseCoordinator {
       this.config.layers = { ...DEFAULT_CONFIG.layers, ...config.layers };
     }
     for (const layer of Object.keys(this.config.layers) as DefenseLayer[]) {
-      this.layerStats.set(layer, { threatsBlocked: 0, alertsGenerated: 0, lastCheckAt: new Date().toISOString() });
+      this.layerStats.set(layer, {
+        threatsBlocked: 0,
+        alertsGenerated: 0,
+        lastCheckAt: new Date().toISOString(),
+      });
     }
   }
 
@@ -237,9 +244,13 @@ export class UltimateDefenseCoordinator {
     this.initialized = true;
 
     try {
-      getGlobalLogger().info('UltimateDefenseCoordinator', 'Initializing ultimate defense system — 12 layers', {
-        layers: Object.keys(this.config.layers).length,
-      });
+      getGlobalLogger().info(
+        'UltimateDefenseCoordinator',
+        'Initializing ultimate defense system — 12 layers',
+        {
+          layers: Object.keys(this.config.layers).length,
+        },
+      );
 
       // 启动健康检查循环
       this.startHealthCheck();
@@ -279,21 +290,44 @@ export class UltimateDefenseCoordinator {
     try {
       // 跳过指定路径
       if (this.config.skipPaths.includes(ctx.path)) {
-        return { allowed: true, riskScore: 0, durationMs: 0, layerResults: [], selfHealingTriggered: false, honeypotTriggered: false };
+        return {
+          allowed: true,
+          riskScore: 0,
+          durationMs: 0,
+          layerResults: [],
+          selfHealingTriggered: false,
+          honeypotTriggered: false,
+        };
       }
 
       // ── L1: 供应链防护 ──
       if (this.config.layers.supply_chain) {
         const result = this.checkSupplyChain(ctx, startTime);
         layerResults.push(result.summary);
-        if (!result.passed) return this.deny('supply_chain', result.reason ?? 'Blocked by supply chain defense', startTime, layerResults, riskScore, honeypotTriggered);
+        if (!result.passed)
+          return this.deny(
+            'supply_chain',
+            result.reason ?? 'Blocked by supply chain defense',
+            startTime,
+            layerResults,
+            riskScore,
+            honeypotTriggered,
+          );
       }
 
       // ── L2: 零信任验证 ──
       if (this.config.layers.zero_trust) {
         const result = this.checkZeroTrust(ctx, startTime);
         layerResults.push(result.summary);
-        if (!result.passed) return this.deny('zero_trust', result.reason ?? 'Blocked by zero trust validation', startTime, layerResults, riskScore, honeypotTriggered);
+        if (!result.passed)
+          return this.deny(
+            'zero_trust',
+            result.reason ?? 'Blocked by zero trust validation',
+            startTime,
+            layerResults,
+            riskScore,
+            honeypotTriggered,
+          );
       }
 
       // ── L8: 主动欺骗（蜜罐检查） ── 提前检查，如果命中蜜罐
@@ -305,7 +339,14 @@ export class UltimateDefenseCoordinator {
           this.honeypotHits++;
           this.recordLayerStat('active_deception', 'threat');
           // 蜜罐命中 = 100% 攻击者
-          return this.deny('active_deception', result.reason ?? 'Honeypot triggered', startTime, layerResults, 100, true);
+          return this.deny(
+            'active_deception',
+            result.reason ?? 'Honeypot triggered',
+            startTime,
+            layerResults,
+            100,
+            true,
+          );
         }
       }
 
@@ -313,14 +354,30 @@ export class UltimateDefenseCoordinator {
       if (this.config.layers.input_defense) {
         const result = this.checkInputDefense(ctx, startTime);
         layerResults.push(result.summary);
-        if (!result.passed) return this.deny('input_defense', result.reason ?? 'Blocked by input defense', startTime, layerResults, 50, honeypotTriggered);
+        if (!result.passed)
+          return this.deny(
+            'input_defense',
+            result.reason ?? 'Blocked by input defense',
+            startTime,
+            layerResults,
+            50,
+            honeypotTriggered,
+          );
       }
 
       // ── L4: 成本防护 ──
       if (this.config.layers.cost_protection) {
         const result = this.checkCostProtection(ctx, startTime);
         layerResults.push(result.summary);
-        if (!result.passed) return this.deny('cost_protection', result.reason ?? 'Blocked by cost protection', startTime, layerResults, 80, honeypotTriggered);
+        if (!result.passed)
+          return this.deny(
+            'cost_protection',
+            result.reason ?? 'Blocked by cost protection',
+            startTime,
+            layerResults,
+            80,
+            honeypotTriggered,
+          );
       }
 
       // ── L7: 零日检测 ──
@@ -335,7 +392,15 @@ export class UltimateDefenseCoordinator {
           if (this.config.enableAutoHealing) {
             this.triggerSelfHealing('zero_day', ctx);
           }
-          return this.deny('zero_day', result.reason ?? 'Blocked by zero-day detection', startTime, layerResults, result.riskScore, honeypotTriggered, true);
+          return this.deny(
+            'zero_day',
+            result.reason ?? 'Blocked by zero-day detection',
+            startTime,
+            layerResults,
+            result.riskScore,
+            honeypotTriggered,
+            true,
+          );
         }
       }
 
@@ -348,11 +413,25 @@ export class UltimateDefenseCoordinator {
         reportSilentFailure(err, 'udc:inspectRequest:metrics');
       }
 
-      return { allowed: true, riskScore, durationMs, layerResults, selfHealingTriggered: false, honeypotTriggered };
+      return {
+        allowed: true,
+        riskScore,
+        durationMs,
+        layerResults,
+        selfHealingTriggered: false,
+        honeypotTriggered,
+      };
     } catch (err) {
       reportSilentFailure(err, 'udc:inspectRequest');
       // 安全失败 —— 出错时拒绝
-      return this.deny('input_defense', 'Security check error — request denied for safety', startTime, layerResults, 100, honeypotTriggered);
+      return this.deny(
+        'input_defense',
+        'Security check error — request denied for safety',
+        startTime,
+        layerResults,
+        100,
+        honeypotTriggered,
+      );
     }
   }
 
@@ -391,8 +470,14 @@ export class UltimateDefenseCoordinator {
 
       if (!gwResult.allowed) {
         this.recordLayerStat('input_defense', 'threat');
-        return this.deny(gwResult.rejectedBy === 'bill_guard' ? 'cost_protection' : 'input_defense',
-          gwResult.reason ?? 'Blocked by gateway', startTime, layerResults, 80, false);
+        return this.deny(
+          gwResult.rejectedBy === 'bill_guard' ? 'cost_protection' : 'input_defense',
+          gwResult.reason ?? 'Blocked by gateway',
+          startTime,
+          layerResults,
+          80,
+          false,
+        );
       }
 
       // 零日检测
@@ -412,15 +497,40 @@ export class UltimateDefenseCoordinator {
 
         if (!passed) {
           this.zeroDayAnomalies++;
-          this.triggerSelfHealing('zero_day_anomaly', { tenantId: params.tenantId, sessionId: params.sessionId });
-          return this.deny('zero_day', `Zero-day anomaly detected (risk: ${assessment.riskScore})`, startTime, layerResults, assessment.riskScore, false, true);
+          this.triggerSelfHealing('zero_day_anomaly', {
+            tenantId: params.tenantId,
+            sessionId: params.sessionId,
+          });
+          return this.deny(
+            'zero_day',
+            `Zero-day anomaly detected (risk: ${assessment.riskScore})`,
+            startTime,
+            layerResults,
+            assessment.riskScore,
+            false,
+            true,
+          );
         }
       }
 
-      return { allowed: true, riskScore: 0, durationMs: Date.now() - startTime, layerResults, selfHealingTriggered: false, honeypotTriggered: false };
+      return {
+        allowed: true,
+        riskScore: 0,
+        durationMs: Date.now() - startTime,
+        layerResults,
+        selfHealingTriggered: false,
+        honeypotTriggered: false,
+      };
     } catch (err) {
       reportSilentFailure(err, 'udc:preLLMExecution');
-      return this.deny('input_defense', 'Security check error', startTime, layerResults, 100, false);
+      return this.deny(
+        'input_defense',
+        'Security check error',
+        startTime,
+        layerResults,
+        100,
+        false,
+      );
     }
   }
 
@@ -491,7 +601,14 @@ export class UltimateDefenseCoordinator {
       });
 
       if (!gwResult.allowed) {
-        return this.deny('input_defense', gwResult.reason ?? 'Blocked', startTime, layerResults, 70, false);
+        return this.deny(
+          'input_defense',
+          gwResult.reason ?? 'Blocked',
+          startTime,
+          layerResults,
+          70,
+          false,
+        );
       }
 
       // 2. 工具中毒检查
@@ -513,17 +630,34 @@ export class UltimateDefenseCoordinator {
         }
       }
 
-      return { allowed: true, riskScore: 0, durationMs: Date.now() - startTime, layerResults, selfHealingTriggered: false, honeypotTriggered: false };
+      return {
+        allowed: true,
+        riskScore: 0,
+        durationMs: Date.now() - startTime,
+        layerResults,
+        selfHealingTriggered: false,
+        honeypotTriggered: false,
+      };
     } catch (err) {
       reportSilentFailure(err, 'udc:preToolExecution');
-      return this.deny('input_defense', 'Security check error', startTime, layerResults, 100, false);
+      return this.deny(
+        'input_defense',
+        'Security check error',
+        startTime,
+        layerResults,
+        100,
+        false,
+      );
     }
   }
 
   // ── 各层检查实现 ──────────────────────────────────────────────
 
   /** L1: 供应链防护检查 */
-  private checkSupplyChain(ctx: RequestSecurityContext, startTime: number): { passed: boolean; reason?: string; summary: LayerCheckSummary } {
+  private checkSupplyChain(
+    ctx: RequestSecurityContext,
+    startTime: number,
+  ): { passed: boolean; reason?: string; summary: LayerCheckSummary } {
     const layerStart = Date.now();
     try {
       // 检查 CVE 数据库是否有匹配
@@ -534,7 +668,12 @@ export class UltimateDefenseCoordinator {
       this.recordLayerStat('supply_chain', 'check');
       return {
         passed: true,
-        summary: { layer: 'supply_chain', passed: true, durationMs: Date.now() - layerStart, detail: `${stats.totalCVEs} CVEs tracked` },
+        summary: {
+          layer: 'supply_chain',
+          passed: true,
+          durationMs: Date.now() - layerStart,
+          detail: `${stats.totalCVEs} CVEs tracked`,
+        },
       };
     } catch (err) {
       reportSilentFailure(err, 'udc:checkSupplyChain');
@@ -546,7 +685,10 @@ export class UltimateDefenseCoordinator {
   }
 
   /** L2: 零信任验证 */
-  private checkZeroTrust(ctx: RequestSecurityContext, startTime: number): { passed: boolean; reason?: string; summary: LayerCheckSummary } {
+  private checkZeroTrust(
+    ctx: RequestSecurityContext,
+    startTime: number,
+  ): { passed: boolean; reason?: string; summary: LayerCheckSummary } {
     const layerStart = Date.now();
     try {
       const validator = getZeroTrustValidator();
@@ -554,7 +696,15 @@ export class UltimateDefenseCoordinator {
 
       if (keys.length === 0) {
         // 无密钥注册时跳过（兼容模式）
-        return { passed: true, summary: { layer: 'zero_trust', passed: true, durationMs: Date.now() - layerStart, detail: 'No keys registered' } };
+        return {
+          passed: true,
+          summary: {
+            layer: 'zero_trust',
+            passed: true,
+            durationMs: Date.now() - layerStart,
+            detail: 'No keys registered',
+          },
+        };
       }
 
       const signatureHeader = (ctx.headers['x-commander-signature'] as string) ?? undefined;
@@ -573,16 +723,27 @@ export class UltimateDefenseCoordinator {
       return {
         passed: result.valid,
         reason: result.reason ?? undefined,
-        summary: { layer: 'zero_trust', passed: result.valid, durationMs: Date.now() - layerStart, detail: result.reason },
+        summary: {
+          layer: 'zero_trust',
+          passed: result.valid,
+          durationMs: Date.now() - layerStart,
+          detail: result.reason,
+        },
       };
     } catch (err) {
       reportSilentFailure(err, 'udc:checkZeroTrust');
-      return { passed: true, summary: { layer: 'zero_trust', passed: true, durationMs: Date.now() - layerStart } };
+      return {
+        passed: true,
+        summary: { layer: 'zero_trust', passed: true, durationMs: Date.now() - layerStart },
+      };
     }
   }
 
   /** L3: 输入防御 */
-  private checkInputDefense(ctx: RequestSecurityContext, startTime: number): { passed: boolean; reason?: string; summary: LayerCheckSummary } {
+  private checkInputDefense(
+    ctx: RequestSecurityContext,
+    startTime: number,
+  ): { passed: boolean; reason?: string; summary: LayerCheckSummary } {
     const layerStart = Date.now();
     try {
       // 检查请求体大小
@@ -591,7 +752,12 @@ export class UltimateDefenseCoordinator {
         return {
           passed: false,
           reason: 'Request body exceeds maximum size',
-          summary: { layer: 'input_defense', passed: false, durationMs: Date.now() - layerStart, detail: 'Body too large' },
+          summary: {
+            layer: 'input_defense',
+            passed: false,
+            durationMs: Date.now() - layerStart,
+            detail: 'Body too large',
+          },
         };
       }
 
@@ -610,22 +776,36 @@ export class UltimateDefenseCoordinator {
             return {
               passed: false,
               reason: 'Malicious input pattern detected',
-              summary: { layer: 'input_defense', passed: false, durationMs: Date.now() - layerStart, detail: 'Attack pattern' },
+              summary: {
+                layer: 'input_defense',
+                passed: false,
+                durationMs: Date.now() - layerStart,
+                detail: 'Attack pattern',
+              },
             };
           }
         }
       }
 
       this.recordLayerStat('input_defense', 'check');
-      return { passed: true, summary: { layer: 'input_defense', passed: true, durationMs: Date.now() - layerStart } };
+      return {
+        passed: true,
+        summary: { layer: 'input_defense', passed: true, durationMs: Date.now() - layerStart },
+      };
     } catch (err) {
       reportSilentFailure(err, 'udc:checkInputDefense');
-      return { passed: true, summary: { layer: 'input_defense', passed: true, durationMs: Date.now() - layerStart } };
+      return {
+        passed: true,
+        summary: { layer: 'input_defense', passed: true, durationMs: Date.now() - layerStart },
+      };
     }
   }
 
   /** L4: 成本防护 */
-  private checkCostProtection(ctx: RequestSecurityContext, startTime: number): { passed: boolean; reason?: string; summary: LayerCheckSummary } {
+  private checkCostProtection(
+    ctx: RequestSecurityContext,
+    startTime: number,
+  ): { passed: boolean; reason?: string; summary: LayerCheckSummary } {
     const layerStart = Date.now();
     try {
       const billGuard = getBillExplosionGuard();
@@ -636,20 +816,34 @@ export class UltimateDefenseCoordinator {
         return {
           passed: false,
           reason: 'Cost protection MELT active — billing cap exceeded',
-          summary: { layer: 'cost_protection', passed: false, durationMs: Date.now() - layerStart, detail: 'MELT active' },
+          summary: {
+            layer: 'cost_protection',
+            passed: false,
+            durationMs: Date.now() - layerStart,
+            detail: 'MELT active',
+          },
         };
       }
 
       this.recordLayerStat('cost_protection', 'check');
-      return { passed: true, summary: { layer: 'cost_protection', passed: true, durationMs: Date.now() - layerStart } };
+      return {
+        passed: true,
+        summary: { layer: 'cost_protection', passed: true, durationMs: Date.now() - layerStart },
+      };
     } catch (err) {
       reportSilentFailure(err, 'udc:checkCostProtection');
-      return { passed: true, summary: { layer: 'cost_protection', passed: true, durationMs: Date.now() - layerStart } };
+      return {
+        passed: true,
+        summary: { layer: 'cost_protection', passed: true, durationMs: Date.now() - layerStart },
+      };
     }
   }
 
   /** L8: 蜜罐检查 */
-  private checkHoneypot(ctx: RequestSecurityContext, startTime: number): { passed: boolean; reason?: string; summary: LayerCheckSummary } {
+  private checkHoneypot(
+    ctx: RequestSecurityContext,
+    startTime: number,
+  ): { passed: boolean; reason?: string; summary: LayerCheckSummary } {
     const layerStart = Date.now();
     try {
       const deception = getActiveDeceptionSystem();
@@ -673,19 +867,38 @@ export class UltimateDefenseCoordinator {
         return {
           passed: false,
           reason: 'Honeypot endpoint accessed — attacker identified',
-          summary: { layer: 'active_deception', passed: false, durationMs: Date.now() - layerStart, detail: `Honeypot hit: ${ctx.path}` },
+          summary: {
+            layer: 'active_deception',
+            passed: false,
+            durationMs: Date.now() - layerStart,
+            detail: `Honeypot hit: ${ctx.path}`,
+          },
         };
       }
 
-      return { passed: true, summary: { layer: 'active_deception', passed: true, durationMs: Date.now() - layerStart, detail: `${stats.totalHoneypots ?? 0} honeypots active` } };
+      return {
+        passed: true,
+        summary: {
+          layer: 'active_deception',
+          passed: true,
+          durationMs: Date.now() - layerStart,
+          detail: `${stats.totalHoneypots ?? 0} honeypots active`,
+        },
+      };
     } catch (err) {
       reportSilentFailure(err, 'udc:checkHoneypot');
-      return { passed: true, summary: { layer: 'active_deception', passed: true, durationMs: Date.now() - layerStart } };
+      return {
+        passed: true,
+        summary: { layer: 'active_deception', passed: true, durationMs: Date.now() - layerStart },
+      };
     }
   }
 
   /** L7: 零日检测 */
-  private checkZeroDay(ctx: RequestSecurityContext, startTime: number): { passed: boolean; reason?: string; riskScore: number; summary: LayerCheckSummary } {
+  private checkZeroDay(
+    ctx: RequestSecurityContext,
+    startTime: number,
+  ): { passed: boolean; reason?: string; riskScore: number; summary: LayerCheckSummary } {
     const layerStart = Date.now();
     try {
       const zeroDay = getZeroDayDefenseEngine();
@@ -704,13 +917,24 @@ export class UltimateDefenseCoordinator {
 
       return {
         passed,
-        reason: passed ? undefined : `Zero-day anomaly: ${assessment.detectedAttackPattern ?? 'unknown pattern'}`,
+        reason: passed
+          ? undefined
+          : `Zero-day anomaly: ${assessment.detectedAttackPattern ?? 'unknown pattern'}`,
         riskScore: assessment.riskScore,
-        summary: { layer: 'zero_day', passed, durationMs: Date.now() - layerStart, detail: `Risk: ${assessment.riskScore}` },
+        summary: {
+          layer: 'zero_day',
+          passed,
+          durationMs: Date.now() - layerStart,
+          detail: `Risk: ${assessment.riskScore}`,
+        },
       };
     } catch (err) {
       reportSilentFailure(err, 'udc:checkZeroDay');
-      return { passed: true, riskScore: 0, summary: { layer: 'zero_day', passed: true, durationMs: Date.now() - layerStart } };
+      return {
+        passed: true,
+        riskScore: 0,
+        summary: { layer: 'zero_day', passed: true, durationMs: Date.now() - layerStart },
+      };
     }
   }
 
@@ -724,11 +948,15 @@ export class UltimateDefenseCoordinator {
 
     try {
       const healing = getSecuritySelfHealingEngine();
-      healing.triggerResponse(attackType as AttackType, {
-        tenantId: ctx.tenantId,
-        sessionId: ctx.sessionId,
-        ipAddress: ctx.clientIp,
-      }, { path: ctx.path, method: ctx.method });
+      healing.triggerResponse(
+        attackType as AttackType,
+        {
+          tenantId: ctx.tenantId,
+          sessionId: ctx.sessionId,
+          ipAddress: ctx.clientIp,
+        },
+        { path: ctx.path, method: ctx.method },
+      );
       this.selfHealingCount++;
     } catch (err) {
       reportSilentFailure(err, 'udc:triggerSelfHealing');
@@ -798,7 +1026,10 @@ export class UltimateDefenseCoordinator {
     let activeLayers = 0;
     const recommendations: string[] = [];
 
-    for (const [layer, enabled] of Object.entries(this.config.layers) as [DefenseLayer, boolean][]) {
+    for (const [layer, enabled] of Object.entries(this.config.layers) as [
+      DefenseLayer,
+      boolean,
+    ][]) {
       const stats = this.layerStats.get(layer);
       const layerStatus: DefenseLayerStatus = {
         layer,
@@ -829,7 +1060,10 @@ export class UltimateDefenseCoordinator {
     if (this.activeThreats > 5 || healthScore < 50) overallStatus = 'COMPROMISED';
 
     // 建议
-    for (const [layer, enabled] of Object.entries(this.config.layers) as [DefenseLayer, boolean][]) {
+    for (const [layer, enabled] of Object.entries(this.config.layers) as [
+      DefenseLayer,
+      boolean,
+    ][]) {
       if (!enabled) {
         recommendations.push(`启用 ${layer} 防御层以提升安全性`);
       }
@@ -885,7 +1119,9 @@ export class UltimateDefenseCoordinator {
       this.config.layers = { ...this.config.layers, ...config.layers };
     }
     try {
-      getGlobalLogger().info('UltimateDefenseCoordinator', 'Configuration updated', { activeLayers: this.countActiveLayers() });
+      getGlobalLogger().info('UltimateDefenseCoordinator', 'Configuration updated', {
+        activeLayers: this.countActiveLayers(),
+      });
     } catch (err) {
       reportSilentFailure(err, 'udc:configure');
     }
@@ -910,7 +1146,11 @@ export class UltimateDefenseCoordinator {
     this.zeroDayAnomalies = 0;
     this.initialized = false;
     for (const layer of Object.keys(this.config.layers) as DefenseLayer[]) {
-      this.layerStats.set(layer, { threatsBlocked: 0, alertsGenerated: 0, lastCheckAt: new Date().toISOString() });
+      this.layerStats.set(layer, {
+        threatsBlocked: 0,
+        alertsGenerated: 0,
+        lastCheckAt: new Date().toISOString(),
+      });
     }
   }
 
@@ -933,7 +1173,11 @@ export class UltimateDefenseCoordinator {
 
     try {
       getGlobalMetrics().incrementCounter('udc.requests_blocked', 1, { layer });
-      getGlobalLogger().warn('UltimateDefenseCoordinator', `Request blocked by ${layer}: ${reason}`, { riskScore });
+      getGlobalLogger().warn(
+        'UltimateDefenseCoordinator',
+        `Request blocked by ${layer}: ${reason}`,
+        { riskScore },
+      );
     } catch (err) {
       reportSilentFailure(err, 'udc:deny');
     }
@@ -978,7 +1222,9 @@ const udcSingleton = createTenantAwareSingleton(() => new UltimateDefenseCoordin
 /**
  * 获取全局 UltimateDefenseCoordinator 单例
  */
-export function getUltimateDefenseCoordinator(config?: Partial<UDCConfig>): UltimateDefenseCoordinator {
+export function getUltimateDefenseCoordinator(
+  config?: Partial<UDCConfig>,
+): UltimateDefenseCoordinator {
   const udc = udcSingleton.get();
   if (config) {
     udc.configure(config);

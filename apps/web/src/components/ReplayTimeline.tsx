@@ -170,14 +170,11 @@ export function ReplayTimeline() {
       const result = await rollbackToStep(runId, stepNumber, trimmed || undefined);
       setRollbackStatus('success');
       setRollbackMessage(
-        result.message ||
-          `Rolled back from step ${result.fromStep} to step ${result.toStep}.`,
+        result.message || `Rolled back from step ${result.fromStep} to step ${result.toStep}.`,
       );
     } catch (err) {
       setRollbackStatus('error');
-      setRollbackMessage(
-        err instanceof Error ? err.message : 'Failed to rollback to step',
-      );
+      setRollbackMessage(err instanceof Error ? err.message : 'Failed to rollback to step');
     } finally {
       setRollbackLoading(false);
     }
@@ -198,10 +195,7 @@ export function ReplayTimeline() {
     const runId = selectedRun.runId;
 
     return (
-      <div
-        className="timeline-rollback"
-        style={{ marginLeft: 38, marginBottom: 8, marginTop: -4 }}
-      >
+      <div className="timeline-rollback" style={{ marginLeft: 38, marginBottom: 8, marginTop: -4 }}>
         {/* Success banner */}
         {isActive && rollbackStatus === 'success' && (
           <div
@@ -217,11 +211,7 @@ export function ReplayTimeline() {
           >
             <CheckCircle size={14} style={{ flexShrink: 0 }} />
             <span style={{ flex: 1 }}>{rollbackMessage}</span>
-            <button
-              type="button"
-              className="btn btn-sm btn-ghost"
-              onClick={resetRollback}
-            >
+            <button type="button" className="btn btn-sm btn-ghost" onClick={resetRollback}>
               Close
             </button>
           </div>
@@ -275,8 +265,7 @@ export function ReplayTimeline() {
             >
               <AlertTriangle size={14} style={{ flexShrink: 0 }} />
               <span>
-                Confirm rollback to step {eventIndex}. Execution will re-run from
-                this point.
+                Confirm rollback to step {eventIndex}. Execution will re-run from this point.
               </span>
             </div>
             <input

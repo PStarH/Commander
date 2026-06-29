@@ -29,31 +29,34 @@ export function isWithinRoot(resolved: string, root: string): boolean {
  * Resolve a user-provided path relative to the safe workspace root.
  * Rejects paths that resolve outside the workspace, including symlink-based traversal.
  *
- * Sync-only contract: This function uses `realpathSync` for security
- * (canonical symlink resolution must complete before traversal check) and
- * cannot await at module load. The inner parent-walk uses `fs.statSync` with
- * `throwIfNoEntry: false` instead of `existsSync` so the audit-flagged
- * sync functions are not used here.
+ * Async I/O — uses `fs.promises.realpath` so the event loop is not blocked
+ * during symlink resolution. Both branches (target exists / target does
+ * not exist but ancestor does) preserve the same semantics as the
+ * prior sync version. Throws on out-of-workspace targets, including
+ * symlink-based traversal bypass attempts.
  *
  * Re-exports for use by other tools (patchTool, multimodal tools).
  */
-export function safePath(target: string): string {
+export async function safePath(target: string): Promise<string> {
   const resolved = path.resolve(getSafeRoot(), target);
   // Resolve symlinks for the resolved path (e.g., /tmp -> /private/tmp on macOS)
   let resolvedReal: string;
   try {
-    resolvedReal = fs.realpathSync(resolved);
+    resolvedReal = await fs.promises.realpath(resolved);
   } catch (err) {
-    reportSilentFailure(err, 'fileSystemTool:42');
+    reportSilentFailure(err, 'fileSystemTool:50');
     // File doesn't exist yet — resolve the parent directory
     let parent = path.dirname(resolved);
-    while (parent !== '/' && fs.statSync(parent, { throwIfNoEntry: false }) === undefined) {
+    while (
+      parent !== '/' &&
+      (await fs.promises.stat(parent, { throwIfNoEntry: false })) === undefined
+    ) {
       parent = path.dirname(parent);
     }
     try {
-      resolvedReal = fs.realpathSync(parent) + resolved.slice(parent.length);
+      resolvedReal = (await fs.promises.realpath(parent)) + resolved.slice(parent.length);
     } catch (err) {
-      reportSilentFailure(err, 'fileSystemTool:51');
+      reportSilentFailure(err, 'fileSystemTool:60');
       resolvedReal = resolved;
     }
   }
@@ -62,7 +65,7 @@ export function safePath(target: string): string {
   }
   // GAP-15: Resolve symlinks to prevent traversal bypass.
   try {
-    const real = fs.realpathSync(resolved);
+    const real = await fs.promises.realpath(resolved);
     if (!isWithinRoot(real, getSafeRoot())) {
       throw new Error(`Access denied: symlink "${target}" points outside workspace`);
     }
@@ -70,11 +73,14 @@ export function safePath(target: string): string {
   } catch (err: unknown) {
     if (err instanceof Error && 'code' in err && (err as { code: string }).code === 'ENOENT') {
       let ancestor = path.dirname(resolved);
-      while (ancestor !== getSafeRoot() && fs.statSync(ancestor, { throwIfNoEntry: false }) === undefined) {
+      while (
+        ancestor !== getSafeRoot() &&
+        (await fs.promises.stat(ancestor, { throwIfNoEntry: false })) === undefined
+      ) {
         ancestor = path.dirname(ancestor);
       }
       try {
-        const realAncestor = fs.realpathSync(ancestor);
+        const realAncestor = await fs.promises.realpath(ancestor);
         if (!isWithinRoot(realAncestor, getSafeRoot())) {
           throw new Error(`Access denied: ancestor of "${target}" is outside workspace`);
         }
@@ -152,7 +158,7 @@ export class FileReadTool implements Tool {
     }
 
     try {
-      const resolved = safePath(filePath);
+      const resolved = await safePath(filePath);
       if (!(await pathExists(resolved))) return `Error: file not found: ${filePath}`;
 
       const stat = await fs.promises.stat(resolved);
@@ -240,7 +246,7 @@ export class FileWriteTool implements Tool {
       return `Error: content too large (${(content.length / 1024 / 1024).toFixed(1)}MB). Max: 10MB`;
 
     try {
-      const resolved = safePath(filePath);
+      const resolved = await safePath(filePath);
       const dir = path.dirname(resolved);
       if (!(await pathExists(dir))) await fs.promises.mkdir(dir, { recursive: true });
 
@@ -341,8 +347,8 @@ LEGACY MODE (backward-compatible): Use path + oldString + newString for simple s
 
     for (const section of parsed.sections) {
       try {
-        // Resolve file path
-        const resolved = safePath(section.filePath);
+        // Resolve file path (async — safePath now returns Promise<string>)
+        const resolved = await safePath(section.filePath);
         section.filePath = resolved;
 
         const result = applyHashlineSection(section);
@@ -378,7 +384,7 @@ LEGACY MODE (backward-compatible): Use path + oldString + newString for simple s
       return 'Error: path and oldString are required (or use hashline mode with input)';
 
     try {
-      const resolved = safePath(filePath);
+      const resolved = await safePath(filePath);
       if (!(await pathExists(resolved))) return `Error: file not found: ${filePath}`;
 
       const content = await fs.promises.readFile(resolved, 'utf-8');
@@ -469,47 +475,66 @@ export class FileSearchTool implements Tool {
     return results;
   }
 
-  private async globRecurse(dir: string, root: string, filePattern: string, results: string[]): Promise<void> {
-    if (!(await pathExists(dir))) return;
+  private async globRecurse(
+    dir: string,
+    root: string,
+    filePattern: string,
+    results: string[],
+  ): Promise<void> {
+    // Single readdir with ENOENT-skip guard (no separate existsSync probe) —
+    // closes a TOCTOU window between check and read, and saves a syscall per
+    // directory visited.
+    let entries: import('node:fs').Dirent[];
     try {
-      const entries = await fs.promises.readdir(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name);
-        const relPath = path.relative(root, fullPath);
-
-        if (entry.isDirectory()) {
-          // For simple patterns like *.ts, do not recurse — * should not match /
-        } else if (entry.isFile() && this.matchGlob(entry.name, filePattern)) {
-          results.push(relPath);
-        }
-      }
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
     } catch (e) {
+      const code = (e as NodeJS.ErrnoException)?.code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') return;
       getGlobalLogger().warn('FileSystemTool', 'Directory scan failed', {
         error: (e as Error)?.message,
       });
+      return;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      const relPath = path.relative(root, fullPath);
+
+      if (entry.isDirectory()) {
+        // For simple patterns like *.ts, do not recurse — * should not match /
+      } else if (entry.isFile() && this.matchGlob(entry.name, filePattern)) {
+        results.push(relPath);
+      }
     }
   }
 
   /** Recursive version used when the pattern contains ** — recurses into all subdirectories */
-  private async globRecurseDeep(dir: string, root: string, filePattern: string, results: string[]): Promise<void> {
-    if (!(await pathExists(dir))) return;
+  private async globRecurseDeep(
+    dir: string,
+    root: string,
+    filePattern: string,
+    results: string[],
+  ): Promise<void> {
+    let entries: import('node:fs').Dirent[];
     try {
-      const entries = await fs.promises.readdir(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name);
-        const relPath = path.relative(root, fullPath);
-
-        if (entry.isDirectory()) {
-          if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
-          await this.globRecurseDeep(fullPath, root, filePattern, results);
-        } else if (entry.isFile() && this.matchGlob(entry.name, filePattern)) {
-          results.push(relPath);
-        }
-      }
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
     } catch (e) {
+      const code = (e as NodeJS.ErrnoException)?.code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') return;
       getGlobalLogger().warn('FileSystemTool', 'Directory scan failed', {
         error: (e as Error)?.message,
       });
+      return;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      const relPath = path.relative(root, fullPath);
+
+      if (entry.isDirectory()) {
+        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+        await this.globRecurseDeep(fullPath, root, filePattern, results);
+      } else if (entry.isFile() && this.matchGlob(entry.name, filePattern)) {
+        results.push(relPath);
+      }
     }
   }
 
@@ -549,7 +574,7 @@ export class FileListTool implements Tool {
     const dirPath = String(args.path ?? '.');
 
     try {
-      const resolved = safePath(dirPath);
+      const resolved = await safePath(dirPath);
       if (!(await pathExists(resolved))) return `Error: directory not found: ${dirPath}`;
 
       const entries = await fs.promises.readdir(resolved, { withFileTypes: true });
@@ -602,7 +627,7 @@ export class GlobTool implements Tool {
     if (!pattern) return 'Error: pattern is required';
 
     try {
-      const rootDir = safePath(searchPath);
+      const rootDir = await safePath(searchPath);
       if (!(await pathExists(rootDir))) return `Error: directory not found: ${searchPath}`;
 
       const files = await this.globFind(rootDir, pattern, maxResults);

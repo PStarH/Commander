@@ -47,7 +47,10 @@ const MAX_AUTH_FAILURES = parseInt(process.env.AUTH_MAX_FAILURES ?? '5', 10);
 const LOCKOUT_DURATION_MS = parseInt(process.env.AUTH_LOCKOUT_MS ?? '300000', 10); // 5 min
 const AUTH_FAILURE_WINDOW_MS = 60_000; // 1 minute sliding window
 
-const authFailureTracker = new Map<string, { count: number; firstFailureAt: number; lockedUntil: number }>();
+const authFailureTracker = new Map<
+  string,
+  { count: number; firstFailureAt: number; lockedUntil: number }
+>();
 
 // Cleanup old entries every 5 minutes
 setInterval(() => {
@@ -103,16 +106,16 @@ function getCachedKeys(): Map<string, StoredKey> {
  * all stored hashes using crypto.timingSafeEqual. The loop always iterates
  * over ALL entries (no early exit) to prevent timing side-channels.
  */
-function findKey(
-  token: string,
-  storedKeys: Map<string, StoredKey>,
-): StoredKey | null {
+function findKey(token: string, storedKeys: Map<string, StoredKey>): StoredKey | null {
   const tokenHash = sha256(token);
   let match: StoredKey | null = null;
   // Iterate over ALL keys — no early exit to maintain constant time
   for (const stored of storedKeys.values()) {
     try {
-      if (stored.hash.length === tokenHash.length && crypto.timingSafeEqual(stored.hash, tokenHash)) {
+      if (
+        stored.hash.length === tokenHash.length &&
+        crypto.timingSafeEqual(stored.hash, tokenHash)
+      ) {
         match = stored;
         // Do NOT break — continue iterating to prevent timing leak
       }
@@ -163,11 +166,7 @@ function isLockedOut(ip: string): boolean {
 // this gate, every authenticated request would re-emit the warning,
 // spamming stdout under any load.
 let _warnedAuthDisabledInProd = false;
-if (
-  isProductionEnv() &&
-  process.env.AUTH_DISABLED === 'true' &&
-  !_warnedAuthDisabledInProd
-) {
+if (isProductionEnv() && process.env.AUTH_DISABLED === 'true' && !_warnedAuthDisabledInProd) {
   _warnedAuthDisabledInProd = true;
   // eslint-disable-next-line no-console
   console.warn(
@@ -182,7 +181,8 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
   if (process.env.AUTH_DISABLED === 'true') {
     if (isProductionEnv()) {
       return res.status(500).json({
-        error: 'Authentication is disabled in production. Remove AUTH_DISABLED=true before deployment.',
+        error:
+          'Authentication is disabled in production. Remove AUTH_DISABLED=true before deployment.',
       });
     }
     return next();

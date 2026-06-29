@@ -251,7 +251,11 @@ export function restoreGitSnapshot(runId: string, cwd: string = process.cwd()): 
     return true;
   } catch (err) {
     reportSilentFailure(err, 'gitSnapshot:restore');
-    getGlobalLogger().error('GitSnapshot', `Failed to restore snapshot for run ${runId}`, err as Error);
+    getGlobalLogger().error(
+      'GitSnapshot',
+      `Failed to restore snapshot for run ${runId}`,
+      err as Error,
+    );
     return false;
   }
 }

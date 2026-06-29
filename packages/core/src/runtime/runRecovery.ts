@@ -21,10 +21,7 @@
 import { StateCheckpointer, type CheckpointState } from './stateCheckpointer';
 import type { LeaseManager } from '../atr/leaseManager';
 import { getGlobalLogger } from '../logging';
-import {
-  getGlobalDeterminismCapture,
-  type ReplayContext,
-} from './determinismCapture';
+import { getGlobalDeterminismCapture, type ReplayContext } from './determinismCapture';
 
 export type RecoveryStatus =
   | 'recovered'

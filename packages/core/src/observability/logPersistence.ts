@@ -61,7 +61,7 @@ const CLEANUP_INTERVAL_MS = 3600_000; // 1 hour
 const FLUSH_INTERVAL_MS = 1000; // 1 second batch flush
 
 export class LogPersistence {
-  private db: any = null;
+  /* eslint-disable @typescript-eslint/no-explicit-any */ private db: any = null; /* eslint-enable @typescript-eslint/no-explicit-any */
   private queue: PersistedLogEntry[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
@@ -141,7 +141,7 @@ export class LogPersistence {
     }
   }
 
-  private insertStmt: any = null;
+  /* eslint-disable @typescript-eslint/no-explicit-any */ private insertStmt: any = null; /* eslint-enable @typescript-eslint/no-explicit-any */
 
   /**
    * Queue a log entry for async persistence.
@@ -246,15 +246,12 @@ export class LogPersistence {
       params.cursor = options.cursor;
     }
 
-    const whereClause =
-      conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
     const limit = options.limit ?? 100;
 
     try {
       // Count total
-      const countStmt = this.db.prepare(
-        `SELECT COUNT(*) as count FROM app_logs ${whereClause}`,
-      );
+      const countStmt = this.db.prepare(`SELECT COUNT(*) as count FROM app_logs ${whereClause}`);
       const countResult = countStmt.get(params);
       const total = countResult?.count ?? 0;
 
@@ -264,6 +261,7 @@ export class LogPersistence {
       );
       const rows = queryStmt.all({ ...params, limitVal: limit });
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const entries: PersistedLogEntry[] = rows.map((row: any) => ({
         id: row.id,
         timestamp: row.timestamp,
@@ -277,9 +275,7 @@ export class LogPersistence {
       }));
 
       const nextCursor =
-        entries.length === limit && entries.length > 0
-          ? entries[entries.length - 1].id!
-          : null;
+        entries.length === limit && entries.length > 0 ? entries[entries.length - 1].id! : null;
 
       return { entries, nextCursor, total };
     } catch {
@@ -351,15 +347,12 @@ let globalLogPersistence: LogPersistence | null = null;
 
 export function getGlobalLogPersistence(): LogPersistence | null {
   if (!globalLogPersistence) {
-    const enabled =
-      typeof process !== 'undefined' &&
-      process.env?.COMMANDER_LOG_PERSIST === 'true';
+    const enabled = typeof process !== 'undefined' && process.env?.COMMANDER_LOG_PERSIST === 'true';
 
     if (!enabled) return null;
 
     const dbPath =
-      process.env?.COMMANDER_LOG_DB_PATH ??
-      path.join(process.cwd(), '.commander_state', 'logs.db');
+      process.env?.COMMANDER_LOG_DB_PATH ?? path.join(process.cwd(), '.commander_state', 'logs.db');
 
     globalLogPersistence = new LogPersistence(dbPath);
     globalLogPersistence.start();

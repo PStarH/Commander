@@ -136,11 +136,11 @@ export class ReflexionLoop implements IReflexionLoop {
       critiqueParts.push(
         `Latency of ${outcome.latencyMs}ms exceeded the ${this.latencyThresholdMs}ms threshold.`,
       );
-      suggestions.push('Optimize the execution path — consider caching, parallelization, or model selection.');
-    } else if (outcome.success) {
-      critiqueParts.push(
-        `Latency of ${outcome.latencyMs}ms was within acceptable bounds.`,
+      suggestions.push(
+        'Optimize the execution path — consider caching, parallelization, or model selection.',
       );
+    } else if (outcome.success) {
+      critiqueParts.push(`Latency of ${outcome.latencyMs}ms was within acceptable bounds.`);
     }
 
     // Analyze token cost
@@ -148,20 +148,20 @@ export class ReflexionLoop implements IReflexionLoop {
       critiqueParts.push(
         `Token cost of ${outcome.tokenCost} exceeded the ${this.tokenCostThreshold} budget.`,
       );
-      suggestions.push('Reduce token usage — consider prompt compression, context trimming, or a more efficient model.');
+      suggestions.push(
+        'Reduce token usage — consider prompt compression, context trimming, or a more efficient model.',
+      );
     }
 
     // Analyze user satisfaction
     if (outcome.userSatisfaction !== undefined) {
       if (outcome.userSatisfaction < this.satisfactionThreshold) {
-        critiqueParts.push(
-          `User satisfaction was low (${outcome.userSatisfaction.toFixed(2)}).`,
+        critiqueParts.push(`User satisfaction was low (${outcome.userSatisfaction.toFixed(2)}).`);
+        suggestions.push(
+          'Improve response quality — consider adding more context or refining the output format.',
         );
-        suggestions.push('Improve response quality — consider adding more context or refining the output format.');
       } else {
-        critiqueParts.push(
-          `User satisfaction was high (${outcome.userSatisfaction.toFixed(2)}).`,
-        );
+        critiqueParts.push(`User satisfaction was high (${outcome.userSatisfaction.toFixed(2)}).`);
       }
     }
 
@@ -169,7 +169,9 @@ export class ReflexionLoop implements IReflexionLoop {
     if (verdict === 'POSITIVE') {
       suggestions.push('Consider this execution pattern as a template for similar future tasks.');
     } else if (verdict === 'NEGATIVE') {
-      suggestions.push('Record this failure case in procedural memory to avoid repeating the same mistakes.');
+      suggestions.push(
+        'Record this failure case in procedural memory to avoid repeating the same mistakes.',
+      );
       suggestions.push('Consider escalating to a more capable model or adding human review.');
     }
 
@@ -224,12 +226,14 @@ export class ReflexionLoop implements IReflexionLoop {
    */
   getImprovements(): ImprovementTrend[] {
     if (this.history.length < 2) {
-      return [{
-        period: 'all-time',
-        successRateTrend: 'stable',
-        latencyTrend: 'stable',
-        tokenEfficiencyTrend: 'stable',
-      }];
+      return [
+        {
+          period: 'all-time',
+          successRateTrend: 'stable',
+          latencyTrend: 'stable',
+          tokenEfficiencyTrend: 'stable',
+        },
+      ];
     }
 
     // Split history into two halves for trend comparison
@@ -274,10 +278,7 @@ export class ReflexionLoop implements IReflexionLoop {
    * Record an execution outcome with its verdict and reflection.
    * This is used internally to maintain history for trend tracking.
    */
-  recordOutcome(
-    outcome: ExecutionOutcome,
-    reflection: ReflectionOutput,
-  ): void {
+  recordOutcome(outcome: ExecutionOutcome, reflection: ReflectionOutput): void {
     const verdict = this.evaluate(outcome);
     const entry: ReflexionEntry = {
       timestamp: Date.now(),
@@ -324,9 +325,15 @@ export class ReflexionLoop implements IReflexionLoop {
 
     for (const entry of this.history) {
       switch (entry.verdict) {
-        case 'POSITIVE': positive++; break;
-        case 'NEGATIVE': negative++; break;
-        case 'NEUTRAL': neutral++; break;
+        case 'POSITIVE':
+          positive++;
+          break;
+        case 'NEGATIVE':
+          negative++;
+          break;
+        case 'NEUTRAL':
+          neutral++;
+          break;
       }
     }
 

@@ -1186,11 +1186,7 @@ export class SecuritySelfHealingEngine {
     this.stats.totalHealDurationMs += result.durationMs;
 
     // 完成时间线
-    this.finalizeTimeline(
-      timeline,
-      result.success ? '响应成功完成' : '响应未完全成功',
-      attackType,
-    );
+    this.finalizeTimeline(timeline, result.success ? '响应成功完成' : '响应未完全成功', attackType);
 
     // 将执行结果摘要追加到时间线
     this.recordTimelineEvent(timeline, {
@@ -1320,7 +1316,10 @@ export class SecuritySelfHealingEngine {
         try {
           conditionResult = step.condition(context);
         } catch (err) {
-          reportSilentFailure(err, `SecuritySelfHealingEngine.executePlaybook.condition[${step.id}]`);
+          reportSilentFailure(
+            err,
+            `SecuritySelfHealingEngine.executePlaybook.condition[${step.id}]`,
+          );
           conditionResult = false;
         }
         if (!conditionResult) {
@@ -1334,8 +1333,7 @@ export class SecuritySelfHealingEngine {
 
       // 检查该动作是否需要人工确认
       const needsApproval =
-        this.config.requireHumanApprovalFor.includes(step.action) ||
-        playbook.requiresHumanApproval;
+        this.config.requireHumanApprovalFor.includes(step.action) || playbook.requiresHumanApproval;
       if (needsApproval && step.action !== 'NOTIFY_HUMAN') {
         const approved = await this.requestHumanApproval(step, context);
         if (!approved) {
@@ -1392,9 +1390,14 @@ export class SecuritySelfHealingEngine {
           });
         } else if (strategy === 'escalate') {
           // 升级：通知人工并中止
-          await this.executeAction('NOTIFY_HUMAN', scope, {
-            reason: `步骤 ${step.id}(${step.action}) 失败并触发升级: ${result.message}`,
-          }, context);
+          await this.executeAction(
+            'NOTIFY_HUMAN',
+            scope,
+            {
+              reason: `步骤 ${step.id}(${step.action}) 失败并触发升级: ${result.message}`,
+            },
+            context,
+          );
           actionsTaken.push('NOTIFY_HUMAN');
           aborted = true;
         } else if (strategy === 'retry') {
@@ -1581,9 +1584,7 @@ export class SecuritySelfHealingEngine {
     }
 
     const message =
-      isolatedDims.length > 0
-        ? `已隔离: ${isolatedDims.join(', ')}`
-        : '无需隔离（作用域为空）';
+      isolatedDims.length > 0 ? `已隔离: ${isolatedDims.join(', ')}` : '无需隔离（作用域为空）';
 
     this.logSecurityEvent('security_decision', 'high', 'SecuritySelfHealingEngine', message, {
       scope,
@@ -1591,7 +1592,11 @@ export class SecuritySelfHealingEngine {
       isolatedDims,
     });
 
-    getGlobalLogger().warn('SecuritySelfHealingEngine', '执行隔离', { scope, reason, isolatedDims });
+    getGlobalLogger().warn('SecuritySelfHealingEngine', '执行隔离', {
+      scope,
+      reason,
+      isolatedDims,
+    });
     getGlobalMetrics().incrementCounter('self_healing.isolations', isolatedDims.length, {
       reason,
     });
@@ -1657,10 +1662,16 @@ export class SecuritySelfHealingEngine {
     }
 
     if (lifted > 0) {
-      this.logSecurityEvent('security_decision', 'medium', 'SecuritySelfHealingEngine', `解除隔离: ${lifted} 个维度`, {
-        scope,
-        lifted,
-      });
+      this.logSecurityEvent(
+        'security_decision',
+        'medium',
+        'SecuritySelfHealingEngine',
+        `解除隔离: ${lifted} 个维度`,
+        {
+          scope,
+          lifted,
+        },
+      );
       getGlobalLogger().info('SecuritySelfHealingEngine', '解除隔离', { scope, lifted });
       getGlobalMetrics().incrementCounter('self_healing.isolations_lifted', lifted);
     }
@@ -1689,10 +1700,7 @@ export class SecuritySelfHealingEngine {
    * @param snapshot - 指定快照（可选，不提供则使用最近快照）
    * @returns 恢复结果
    */
-  async restore(
-    scope: IsolationScope,
-    snapshot?: SecuritySnapshot,
-  ): Promise<StepActionResult> {
+  async restore(scope: IsolationScope, snapshot?: SecuritySnapshot): Promise<StepActionResult> {
     const target = snapshot ?? this.snapshots[this.snapshots.length - 1];
 
     if (!target) {
@@ -1706,9 +1714,7 @@ export class SecuritySelfHealingEngine {
     // 恢复 BillExplosionGuard 配置
     if (target.billGuardConfig) {
       try {
-        getBillExplosionGuard().reconfigure(
-          target.billGuardConfig as Partial<BillGuardConfig>,
-        );
+        getBillExplosionGuard().reconfigure(target.billGuardConfig as Partial<BillGuardConfig>);
         restoredItems.push('BillExplosionGuard 配置');
       } catch (err) {
         reportSilentFailure(err, 'SecuritySelfHealingEngine.restore.billGuardConfig');
@@ -1718,9 +1724,7 @@ export class SecuritySelfHealingEngine {
     // 恢复 DLP 配置
     if (target.dlpConfig) {
       try {
-        getDataLossPrevention().configure(
-          target.dlpConfig as Partial<DLPConfig>,
-        );
+        getDataLossPrevention().configure(target.dlpConfig as Partial<DLPConfig>);
         restoredItems.push('DataLossPrevention 配置');
       } catch (err) {
         reportSilentFailure(err, 'SecuritySelfHealingEngine.restore.dlpConfig');
@@ -1812,10 +1816,7 @@ export class SecuritySelfHealingEngine {
    * @param measures - 加固措施集合
    * @returns 加固结果
    */
-  async harden(
-    scope: IsolationScope,
-    measures: HardeningMeasures,
-  ): Promise<StepActionResult> {
+  async harden(scope: IsolationScope, measures: HardeningMeasures): Promise<StepActionResult> {
     const applied: string[] = [];
 
     // 收紧速率限制
@@ -1892,8 +1893,7 @@ export class SecuritySelfHealingEngine {
       applied.push(`封禁 IP: ${measures.blockIps.join(', ')}`);
     }
 
-    const message =
-      applied.length > 0 ? `加固完成: ${applied.join('; ')}` : '无加固措施需执行';
+    const message = applied.length > 0 ? `加固完成: ${applied.join('; ')}` : '无加固措施需执行';
 
     this.logSecurityEvent('security_decision', 'medium', 'SecuritySelfHealingEngine', message, {
       scope,
@@ -2188,9 +2188,10 @@ export class SecuritySelfHealingEngine {
       case 'TIGHTEN_RATE_LIMIT':
         return this.harden(scope, {
           tightenRateLimit: {
-            factor: typeof params.factor === 'number'
-              ? params.factor
-              : this.config.defaultRateLimitTightenFactor,
+            factor:
+              typeof params.factor === 'number'
+                ? params.factor
+                : this.config.defaultRateLimitTightenFactor,
             windowMs: typeof params.windowMs === 'number' ? params.windowMs : 60_000,
           },
         });
@@ -2198,9 +2199,10 @@ export class SecuritySelfHealingEngine {
       case 'TIGHTEN_COST_LIMIT':
         return this.harden(scope, {
           tightenCostLimit: {
-            factor: typeof params.factor === 'number'
-              ? params.factor
-              : this.config.defaultCostLimitTightenFactor,
+            factor:
+              typeof params.factor === 'number'
+                ? params.factor
+                : this.config.defaultCostLimitTightenFactor,
           },
         });
 
@@ -2263,8 +2265,7 @@ export class SecuritySelfHealingEngine {
       reportSilentFailure(err, 'SecuritySelfHealingEngine.resetBaseline.snapshot');
     }
 
-    const message =
-      items.length > 0 ? `基线重置: ${items.join(', ')}` : '基线重置未完成';
+    const message = items.length > 0 ? `基线重置: ${items.join(', ')}` : '基线重置未完成';
     return { success: items.length > 0, message };
   }
 
@@ -2413,11 +2414,7 @@ export class SecuritySelfHealingEngine {
   /**
    * 为 Promise 添加超时控制。
    */
-  private async withTimeout<T>(
-    promise: Promise<T>,
-    timeoutMs: number,
-    label: string,
-  ): Promise<T> {
+  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
     if (timeoutMs <= 0) {
       return promise;
     }
@@ -2469,10 +2466,7 @@ export class SecuritySelfHealingEngine {
   /**
    * 记录时间线事件。
    */
-  private recordTimelineEvent(
-    timeline: AttackTimeline,
-    event: AttackTimelineEvent,
-  ): void {
+  private recordTimelineEvent(timeline: AttackTimeline, event: AttackTimelineEvent): void {
     timeline.events.push(event);
   }
 
@@ -2498,9 +2492,7 @@ export class SecuritySelfHealingEngine {
       (e) => e.type === 'isolation' || e.type === 'action_failed',
     );
     timeline.impactSummary =
-      isolationEvents.length > 0
-        ? `共触发 ${isolationEvents.length} 个关键事件`
-        : '无显著影响事件';
+      isolationEvents.length > 0 ? `共触发 ${isolationEvents.length} 个关键事件` : '无显著影响事件';
 
     // 经验教训
     const failedActions = timeline.events.filter((e) => e.type === 'action_failed');
@@ -2511,9 +2503,7 @@ export class SecuritySelfHealingEngine {
     }
     const approvalDenied = timeline.events.filter((e) => e.type === 'approval_denied');
     if (approvalDenied.length > 0) {
-      timeline.lessonsLearned.push(
-        '存在人工确认被拒绝的步骤，建议优化剧本以减少不必要的阻断',
-      );
+      timeline.lessonsLearned.push('存在人工确认被拒绝的步骤，建议优化剧本以减少不必要的阻断');
     }
     if (timeline.lessonsLearned.length === 0) {
       timeline.lessonsLearned.push('响应流程顺利完成，建议定期复审剧本有效性');
@@ -2630,12 +2620,7 @@ export class SecuritySelfHealingEngine {
    * 将元数据中的 severity 值转换为标准严重程度。
    */
   private toSeverity(value: unknown): 'low' | 'medium' | 'high' | 'critical' {
-    if (
-      value === 'low' ||
-      value === 'medium' ||
-      value === 'high' ||
-      value === 'critical'
-    ) {
+    if (value === 'low' || value === 'medium' || value === 'high' || value === 'critical') {
       return value;
     }
     return 'medium';
@@ -2646,12 +2631,20 @@ export class SecuritySelfHealingEngine {
    */
   private getEventTypeForAction(action: PlaybookAction): string {
     if (action.startsWith('ISOLATE_')) return 'isolation';
-    if (action === 'RESTORE_SNAPSHOT' || action === 'RESET_BASELINE' ||
-        action === 'ROTATE_CREDENTIAL' || action === 'REBUILD_DEPENDENCY') {
+    if (
+      action === 'RESTORE_SNAPSHOT' ||
+      action === 'RESET_BASELINE' ||
+      action === 'ROTATE_CREDENTIAL' ||
+      action === 'REBUILD_DEPENDENCY'
+    ) {
       return 'recovery';
     }
-    if (action === 'TIGHTEN_RATE_LIMIT' || action === 'TIGHTEN_COST_LIMIT' ||
-        action === 'ENABLE_STRICT_DLP' || action === 'BLOCK_IP') {
+    if (
+      action === 'TIGHTEN_RATE_LIMIT' ||
+      action === 'TIGHTEN_COST_LIMIT' ||
+      action === 'ENABLE_STRICT_DLP' ||
+      action === 'BLOCK_IP'
+    ) {
       return 'hardening';
     }
     if (action === 'NOTIFY_HUMAN') return 'notification';

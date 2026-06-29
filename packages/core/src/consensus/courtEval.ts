@@ -30,31 +30,31 @@ export type CourtRole = 'grader' | 'critic' | 'defender';
 
 export interface CourtParticipant {
   role: CourtRole;
-  modelFamily: string;  // e.g., 'openai', 'anthropic', 'google', 'deepseek'
+  modelFamily: string; // e.g., 'openai', 'anthropic', 'google', 'deepseek'
   provider: LLMProvider;
   model: string;
 }
 
 export interface GraderScores {
-  relevance: number;  // 0-1
-  accuracy: number;   // 0-1
-  depth: number;      // 0-1
-  logic: number;      // 0-1
-  clarity: number;    // 0-1
-  overall: number;    // weighted average
+  relevance: number; // 0-1
+  accuracy: number; // 0-1
+  depth: number; // 0-1
+  logic: number; // 0-1
+  clarity: number; // 0-1
+  overall: number; // weighted average
   reasoning: string;
 }
 
 export interface CriticAttack {
   dimension: keyof Omit<GraderScores, 'overall' | 'reasoning'>;
-  severity: number;   // 0-1, how severe the attack is
+  severity: number; // 0-1, how severe the attack is
   description: string;
   evidence: string;
 }
 
 export interface DefenseResponse {
   attackIndex: number;
-  successful: boolean;  // did the defense counter the attack?
+  successful: boolean; // did the defense counter the attack?
   reasoning: string;
   /** Score recovery amount (0-1, how much of the attack severity is mitigated) */
   recovery: number;
@@ -108,10 +108,10 @@ export const DEFAULT_CONFIG: CourtEvalConfig = {
   passThreshold: 0.7,
   dimensionWeights: {
     relevance: 0.25,
-    accuracy: 0.30,
+    accuracy: 0.3,
     depth: 0.15,
-    logic: 0.20,
-    clarity: 0.10,
+    logic: 0.2,
+    clarity: 0.1,
   },
   enforceCrossFamily: true,
   maxAttacks: 5,
@@ -195,27 +195,13 @@ export class CourtEvalEngine {
     }
 
     // Phase 1: Grader scores the answer
-    const originalScores = await this.runGrader(
-      question,
-      answer,
-      participants.grader,
-    );
+    const originalScores = await this.runGrader(question, answer, participants.grader);
 
     // Phase 2: Critic attacks the answer
-    const attacks = await this.runCritic(
-      question,
-      answer,
-      originalScores,
-      participants.critic,
-    );
+    const attacks = await this.runCritic(question, answer, originalScores, participants.critic);
 
     // Phase 3: Defender responds to each attack
-    const defenses = await this.runDefender(
-      question,
-      answer,
-      attacks,
-      participants.defender,
-    );
+    const defenses = await this.runDefender(question, answer, attacks, participants.defender);
 
     // Phase 4: Compute adjusted scores
     const adjustedScores = this.adjustScores(originalScores, attacks, defenses);
@@ -250,9 +236,10 @@ export class CourtEvalEngine {
     answer: string,
     participant: CourtParticipant,
   ): Promise<GraderScores> {
-    const prompt = GRADER_PROMPT
-      .replace('{question}', question.slice(0, 2000))
-      .replace('{answer}', answer.slice(0, 4000));
+    const prompt = GRADER_PROMPT.replace('{question}', question.slice(0, 2000)).replace(
+      '{answer}',
+      answer.slice(0, 4000),
+    );
 
     try {
       const response = await this.callLLM(participant.provider, participant.model, prompt);
@@ -274,8 +261,13 @@ export class CourtEvalEngine {
       // Fallback: neutral scores
       const w = this.config.dimensionWeights;
       const scores: GraderScores = {
-        relevance: 0.5, accuracy: 0.5, depth: 0.5, logic: 0.5, clarity: 0.5,
-        overall: 0.5, reasoning: 'Grader LLM call failed; using neutral fallback',
+        relevance: 0.5,
+        accuracy: 0.5,
+        depth: 0.5,
+        logic: 0.5,
+        clarity: 0.5,
+        overall: 0.5,
+        reasoning: 'Grader LLM call failed; using neutral fallback',
       };
       scores.overall = this.computeWeighted(scores, w);
       return scores;
@@ -291,8 +283,7 @@ export class CourtEvalEngine {
     graderScores: GraderScores,
     participant: CourtParticipant,
   ): Promise<CriticAttack[]> {
-    const prompt = CRITIC_PROMPT
-      .replace('{question}', question.slice(0, 2000))
+    const prompt = CRITIC_PROMPT.replace('{question}', question.slice(0, 2000))
       .replace('{answer}', answer.slice(0, 4000))
       .replace('{graderScores}', JSON.stringify(graderScores))
       .replace('{maxAttacks}', String(this.config.maxAttacks));
@@ -302,8 +293,8 @@ export class CourtEvalEngine {
       const parsed = this.extractJSONArray(response) as Array<Record<string, unknown>>;
       const validDims = ['relevance', 'accuracy', 'depth', 'logic', 'clarity'] as const;
       const attacks: CriticAttack[] = parsed.slice(0, this.config.maxAttacks).map((a) => ({
-        dimension: validDims.includes(a.dimension as typeof validDims[number])
-          ? (a.dimension as typeof validDims[number])
+        dimension: validDims.includes(a.dimension as (typeof validDims)[number])
+          ? (a.dimension as (typeof validDims)[number])
           : 'accuracy',
         severity: this.clamp(typeof a.severity === 'number' ? a.severity : 0.5),
         description: typeof a.description === 'string' ? a.description : '',
@@ -327,8 +318,7 @@ export class CourtEvalEngine {
   ): Promise<DefenseResponse[]> {
     if (attacks.length === 0) return [];
 
-    const prompt = DEFENDER_PROMPT
-      .replace('{question}', question.slice(0, 2000))
+    const prompt = DEFENDER_PROMPT.replace('{question}', question.slice(0, 2000))
       .replace('{answer}', answer.slice(0, 4000))
       .replace('{attacks}', JSON.stringify(attacks));
 
@@ -377,7 +367,8 @@ export class CourtEvalEngine {
       const attack = attacks[i];
       const defense = defenses.find((d) => d.attackIndex === i);
       const recovery = defense?.recovery ?? 0;
-      const netImpact = attack.severity * this.config.criticWeight * (1 - recovery * this.config.defenderWeight);
+      const netImpact =
+        attack.severity * this.config.criticWeight * (1 - recovery * this.config.defenderWeight);
 
       // Reduce the attacked dimension
       adjusted[attack.dimension] = Math.max(0, adjusted[attack.dimension] - netImpact);
@@ -409,7 +400,9 @@ export class CourtEvalEngine {
     if (attacks.length > 0) {
       lines.push('Key attacks:');
       for (const attack of attacks.slice(0, 3)) {
-        lines.push(`  - [${attack.dimension}] severity=${(attack.severity * 100).toFixed(0)}%: ${attack.description}`);
+        lines.push(
+          `  - [${attack.dimension}] severity=${(attack.severity * 100).toFixed(0)}%: ${attack.description}`,
+        );
       }
     }
 

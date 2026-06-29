@@ -29,14 +29,7 @@ import type { SecurityAlert } from './securityResponseEngine';
 
 // ── Invariant Types ─────────────────────────────────────────────────────────
 
-export type InvariantDomain =
-  | 'AUTH'
-  | 'AUTHZ'
-  | 'SANDBOX'
-  | 'FLOW'
-  | 'AUDIT'
-  | 'SUPPLY'
-  | 'AGENT';
+export type InvariantDomain = 'AUTH' | 'AUTHZ' | 'SANDBOX' | 'FLOW' | 'AUDIT' | 'SUPPLY' | 'AGENT';
 
 export interface SecurityInvariant {
   /** Unique invariant ID (e.g., 'AUTH-001'). */
@@ -271,8 +264,13 @@ export function getRegisteredInvariants(): SecurityInvariant[] {
  */
 export function getInvariantCountByDomain(): Record<InvariantDomain, number> {
   const counts: Record<InvariantDomain, number> = {
-    AUTH: 0, AUTHZ: 0, SANDBOX: 0, FLOW: 0,
-    AUDIT: 0, SUPPLY: 0, AGENT: 0,
+    AUTH: 0,
+    AUTHZ: 0,
+    SANDBOX: 0,
+    FLOW: 0,
+    AUDIT: 0,
+    SUPPLY: 0,
+    AGENT: 0,
   };
   for (const inv of invariants) {
     counts[inv.domain]++;

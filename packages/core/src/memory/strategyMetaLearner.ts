@@ -80,25 +80,34 @@ export class StrategyMetaLearner implements IMetaLearner {
    */
   updateWeights(feedback: RetrievalFeedback): void {
     const learningRate = 0.05;
-    const difficultyMultiplier = feedback.taskDifficulty
-      ? 1 + feedback.taskDifficulty * 0.5
-      : 1;
+    const difficultyMultiplier = feedback.taskDifficulty ? 1 + feedback.taskDifficulty * 0.5 : 1;
 
-    const total = this.layerWeights.episodic + this.layerWeights.semantic + this.layerWeights.procedural;
+    const total =
+      this.layerWeights.episodic + this.layerWeights.semantic + this.layerWeights.procedural;
     const adjust = (feedback.wasUseful ? 1 : -1) * learningRate * difficultyMultiplier;
 
     for (const layer of feedback.layersUsed) {
       if (layer === 'episodic') {
-        this.layerWeights.episodic = Math.max(0.05, Math.min(0.9, this.layerWeights.episodic + adjust));
+        this.layerWeights.episodic = Math.max(
+          0.05,
+          Math.min(0.9, this.layerWeights.episodic + adjust),
+        );
       } else if (layer === 'semantic') {
-        this.layerWeights.semantic = Math.max(0.05, Math.min(0.9, this.layerWeights.semantic + adjust));
+        this.layerWeights.semantic = Math.max(
+          0.05,
+          Math.min(0.9, this.layerWeights.semantic + adjust),
+        );
       } else if (layer === 'procedural') {
-        this.layerWeights.procedural = Math.max(0.05, Math.min(0.9, this.layerWeights.procedural + adjust));
+        this.layerWeights.procedural = Math.max(
+          0.05,
+          Math.min(0.9, this.layerWeights.procedural + adjust),
+        );
       }
     }
 
     // Normalize weights to sum to 1
-    const newTotal = this.layerWeights.episodic + this.layerWeights.semantic + this.layerWeights.procedural;
+    const newTotal =
+      this.layerWeights.episodic + this.layerWeights.semantic + this.layerWeights.procedural;
     this.layerWeights.episodic /= newTotal;
     this.layerWeights.semantic /= newTotal;
     this.layerWeights.procedural /= newTotal;
@@ -163,7 +172,8 @@ export class StrategyMetaLearner implements IMetaLearner {
 
     // Compute confidence from the Beta distribution
     const mean = stats.alpha / (stats.alpha + stats.beta);
-    const variance = (stats.alpha * stats.beta) /
+    const variance =
+      (stats.alpha * stats.beta) /
       (Math.pow(stats.alpha + stats.beta, 2) * (stats.alpha + stats.beta + 1));
     const confidence = Math.max(0, Math.min(1, 1 - Math.sqrt(variance) * 2));
 

@@ -58,9 +58,7 @@ export class EpisodicMemoryStore implements IEpisodicStore {
    * Record a new experience.
    * Initial activation is computed based on the current time.
    */
-  async record(
-    experience: Omit<IEpisodicRecord, 'id' | 'activation'>,
-  ): Promise<IEpisodicRecord> {
+  async record(experience: Omit<IEpisodicRecord, 'id' | 'activation'>): Promise<IEpisodicRecord> {
     const id = crypto.randomUUID();
     const now = Date.now();
 
@@ -93,7 +91,7 @@ export class EpisodicMemoryStore implements IEpisodicStore {
    */
   async recall(query: EpisodicQuery): Promise<IEpisodicRecord[]> {
     const now = Date.now();
-    let results: StoredEpisodicRecord[] = [];
+    const results: StoredEpisodicRecord[] = [];
 
     // Filter by time range
     const sinceMs = query.since ? new Date(query.since).getTime() : 0;
@@ -289,18 +287,9 @@ export class EpisodicMemoryStore implements IEpisodicStore {
   /**
    * Score a record for ranking (combines context, activation, temporal).
    */
-  private scoreRecord(
-    record: StoredEpisodicRecord,
-    query: EpisodicQuery,
-    now: number,
-  ): number {
+  private scoreRecord(record: StoredEpisodicRecord, query: EpisodicQuery, now: number): number {
     const contextScore = query.context
-      ? this.computeContextSimilarity(
-          query.context,
-          record.context,
-          record.action,
-          record.outcome,
-        )
+      ? this.computeContextSimilarity(query.context, record.context, record.action, record.outcome)
       : 0.5;
 
     const activationScore = Math.max(0, record.activation);

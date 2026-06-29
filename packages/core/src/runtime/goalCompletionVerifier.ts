@@ -107,11 +107,8 @@ export class GoalCompletionVerifier {
    * reaches the next iteration; otherwise execution falls through to the
    * early-exit / session-archive path.
    */
-  async verify(
-    params: GoalCompletionVerifyParams,
-  ): Promise<GoalCompletionVerifyResult> {
-    const { ctx, runId, routing, steps, request, response, tenantId, attempt } =
-      params;
+  async verify(params: GoalCompletionVerifyParams): Promise<GoalCompletionVerifyResult> {
+    const { ctx, runId, routing, steps, request, response, tenantId, attempt } = params;
 
     // No verification tool configured → nothing to verify; the goal is
     // considered complete from this gate's perspective.
@@ -176,9 +173,7 @@ export class GoalCompletionVerifier {
     const vAssistantMsg: LLMMessage = {
       role: 'assistant',
       content: response.content,
-      ...(response.reasoning_content
-        ? { reasoning_content: response.reasoning_content }
-        : {}),
+      ...(response.reasoning_content ? { reasoning_content: response.reasoning_content } : {}),
       tool_calls: [
         {
           id: vToolCallId,

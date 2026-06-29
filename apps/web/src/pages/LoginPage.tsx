@@ -74,10 +74,7 @@ export function LoginPage() {
           'var(--bg-deep)',
       }}
     >
-      <div
-        className="card"
-        style={{ width: '100%', maxWidth: '400px', padding: '28px 24px' }}
-      >
+      <div className="card" style={{ width: '100%', maxWidth: '400px', padding: '28px 24px' }}>
         {/* Brand */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
           <div className="sidebar-logo">
@@ -115,11 +112,7 @@ export function LoginPage() {
         {error && (
           <div className="banner error" style={{ marginBottom: '14px' }}>
             <span>{error}</span>
-            <button
-              type="button"
-              className="banner-close"
-              onClick={() => setError(null)}
-            >
+            <button type="button" className="banner-close" onClick={() => setError(null)}>
               ×
             </button>
           </div>
@@ -127,7 +120,10 @@ export function LoginPage() {
 
         {/* Login form */}
         {tab === 'login' && (
-          <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <form
+            onSubmit={handleLogin}
+            style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}
+          >
             <FormField label="Username">
               <input
                 className="inp"

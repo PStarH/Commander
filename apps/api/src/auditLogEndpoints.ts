@@ -101,10 +101,8 @@ const MAX_TOTAL_ENTRIES = 100_000;
 const SOURCE_DESCRIPTIONS: Record<AuditSource, string> = {
   security:
     'Security events (sandbox violations, auth failures, threat detections, policy breaches)',
-  approval:
-    'Approval decisions (tool approval granted/denied, sandbox mode changes)',
-  action:
-    'Action rationale (explainability trail for agent decisions and outcomes)',
+  approval: 'Approval decisions (tool approval granted/denied, sandbox mode changes)',
+  action: 'Action rationale (explainability trail for agent decisions and outcomes)',
 };
 
 // ── Low-level file readers ───────────────────────────────────────────────
@@ -147,10 +145,7 @@ async function readJsonFile<T = unknown>(filePath: string): Promise<T | null> {
 }
 
 /** List files in a directory matching a predicate. Missing dir → []. */
-async function listFiles(
-  dir: string,
-  predicate: (name: string) => boolean,
-): Promise<string[]> {
+async function listFiles(dir: string, predicate: (name: string) => boolean): Promise<string[]> {
   try {
     const entries = await fsp.readdir(dir);
     return entries.filter(predicate).map((f) => path.join(dir, f));
@@ -462,9 +457,7 @@ function applyFilters(entries: AuditLogEntry[], q: AuditQuery): AuditLogEntry[] 
   }
   // Sort by timestamp descending (newest first). ISO string comparison is
   // valid for same-timezone UTC timestamps — see actionRationale.ts.
-  out = out.sort((a, b) =>
-    a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0,
-  );
+  out = out.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
   return out;
 }
 
@@ -547,7 +540,10 @@ function parseStringArray(value: unknown): string[] | undefined {
       .filter((s) => s.length > 0);
   }
   if (typeof value === 'string') {
-    const arr = value.split(',').map((s) => s.trim()).filter((s) => s.length > 0);
+    const arr = value
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
     return arr.length > 0 ? arr : undefined;
   }
   return undefined;
@@ -634,10 +630,7 @@ export function createAuditLogRouter(): Router {
         logs: capped,
       };
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      res.setHeader(
-        'Content-Disposition',
-        `attachment; filename="audit-logs-${Date.now()}.json"`,
-      );
+      res.setHeader('Content-Disposition', `attachment; filename="audit-logs-${Date.now()}.json"`);
       res.json(payload);
     } catch (error) {
       res.status(500).json({ error: toErrorMessage(error) });

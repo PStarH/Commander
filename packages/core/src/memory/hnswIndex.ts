@@ -235,11 +235,12 @@ export class HNSWIndex {
 
     // Find entry point at the top layer
     let currentEntryPoint = this.entryPoint;
-    let currentMaxLayer = this.maxLayer;
+    const currentMaxLayer = this.maxLayer;
 
     // Navigate from top layer down to level+1 (greedy search)
     for (let l = currentMaxLayer; l > level; l--) {
-      currentEntryPoint = this.greedySearchLayer(vector, currentEntryPoint, l, 1)[0] ?? currentEntryPoint;
+      currentEntryPoint =
+        this.greedySearchLayer(vector, currentEntryPoint, l, 1)[0] ?? currentEntryPoint;
     }
 
     // From level down to 0, connect to M nearest neighbors
@@ -251,7 +252,7 @@ export class HNSWIndex {
       const selected = this.selectNeighbors(candidates, M);
 
       // Add bidirectional connections
- for (const candidateId of selected) {
+      for (const candidateId of selected) {
         const candidateNode = this.nodes.get(candidateId);
         if (!candidateNode) continue;
 
@@ -264,12 +265,9 @@ export class HNSWIndex {
           // Prune connections if exceeding M
           if (candidateConns.size > M) {
             const toPrune = this.selectNeighbors(
-              [...candidateConns].map(cid => ({
+              [...candidateConns].map((cid) => ({
                 id: cid,
-                score: cosineSimilarity(
-                  candidateNode.vector,
-                  this.nodes.get(cid)?.vector ?? [],
-                ),
+                score: cosineSimilarity(candidateNode.vector, this.nodes.get(cid)?.vector ?? []),
               })),
               M,
             );
@@ -347,7 +345,7 @@ export class HNSWIndex {
       }
     }
 
-    return result.map(r => r.id);
+    return result.map((r) => r.id);
   }
 
   /**
@@ -361,7 +359,7 @@ export class HNSWIndex {
 
     if (typeof candidates[0] === 'string') {
       // Need to compute scores
-      scored = (candidates as string[]).map(id => ({
+      scored = (candidates as string[]).map((id) => ({
         id,
         score: 0, // Will be set by caller context
       }));
@@ -370,7 +368,7 @@ export class HNSWIndex {
     }
 
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, M).map(s => s.id);
+    return scored.slice(0, M).map((s) => s.id);
   }
 
   /**

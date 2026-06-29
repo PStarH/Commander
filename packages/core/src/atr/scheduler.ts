@@ -440,43 +440,40 @@ export function getExecutionScheduler(): ExecutionScheduler {
     // Previously this event had no consumer, so circuit breaker trips never
     // triggered rollback of already-committed mutations.
     try {
-      getMessageBus().subscribe(
-        'circuit.compensation_trigger',
-        (event) => {
-          const payload = (event.payload || {}) as Record<string, unknown>;
-          const runId = payload.runId as string | undefined;
-          if (!runId) return;
+      getMessageBus().subscribe('circuit.compensation_trigger', (event) => {
+        const payload = (event.payload || {}) as Record<string, unknown>;
+        const runId = payload.runId as string | undefined;
+        if (!runId) return;
 
-          getGlobalLogger().warn(
-            'ExecutionScheduler',
-            'Circuit breaker compensation trigger — aborting run',
-            { runId, reason: payload.reason },
-          );
+        getGlobalLogger().warn(
+          'ExecutionScheduler',
+          'Circuit breaker compensation trigger — aborting run',
+          { runId, reason: payload.reason },
+        );
 
-          // Abort and compensate the run — this triggers saga compensation
-          // for any uncommitted mutations, and restores the git snapshot if
-          // compensation has failures. Fire-and-forget (async) since the bus
-          // callback is synchronous.
-          try {
-            const sched = schedulerSingleton?.get();
-            if (sched) {
-              sched
-                .abortRun({
-                  runId,
-                  leaseToken: '', // fence-safe: abort will use stored lease
-                  fencingEpoch: 0,
-                  reason: `circuit_breaker_open: ${payload.reason ?? 'unknown'}`,
-                  tenantId: payload.tenantId as string | undefined,
-                })
-                .catch((err: unknown) => {
-                  reportSilentFailure(err, 'scheduler:circuit-compensation-abort');
-                });
-            }
-          } catch (err) {
-            reportSilentFailure(err, 'scheduler:circuit-compensation-trigger');
+        // Abort and compensate the run — this triggers saga compensation
+        // for any uncommitted mutations, and restores the git snapshot if
+        // compensation has failures. Fire-and-forget (async) since the bus
+        // callback is synchronous.
+        try {
+          const sched = schedulerSingleton?.get();
+          if (sched) {
+            sched
+              .abortRun({
+                runId,
+                leaseToken: '', // fence-safe: abort will use stored lease
+                fencingEpoch: 0,
+                reason: `circuit_breaker_open: ${payload.reason ?? 'unknown'}`,
+                tenantId: payload.tenantId as string | undefined,
+              })
+              .catch((err: unknown) => {
+                reportSilentFailure(err, 'scheduler:circuit-compensation-abort');
+              });
           }
-        },
-      );
+        } catch (err) {
+          reportSilentFailure(err, 'scheduler:circuit-compensation-trigger');
+        }
+      });
     } catch (err) {
       reportSilentFailure(err, 'scheduler:subscribe-compensation-trigger');
     }

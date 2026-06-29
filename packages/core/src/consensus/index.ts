@@ -71,10 +71,7 @@ export type {
 } from './sacProtocol';
 
 // CourtEval (Evaluation Layer)
-export {
-  CourtEvalEngine,
-  DEFAULT_CONFIG as DEFAULT_COURT_EVAL_CONFIG,
-} from './courtEval';
+export { CourtEvalEngine, DEFAULT_CONFIG as DEFAULT_COURT_EVAL_CONFIG } from './courtEval';
 export type {
   CourtRole,
   CourtParticipant,
