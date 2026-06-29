@@ -7,7 +7,8 @@ import type {
 } from './types';
 import { getArtifactSystem } from './artifactSystem';
 import { getGlobalLogger } from '../logging';
-import { QualityGateEngine, type QualityGateEngineOptions } from './qualityGates';
+import { QualityGateEngine, LLMJudgeEvaluator, type QualityGateEngineOptions } from './qualityGates';
+import type { LLMProvider } from '../runtime/types';
 
 /** Minimum result length to consider for voting */
 const MIN_VOTE_RESULT_LENGTH = 50;
@@ -29,9 +30,17 @@ export class MultiAgentSynthesizer {
     this.qualityGateEngine = new QualityGateEngine(qualityGateOptions);
   }
 
-  // Quality gates are regex-based heuristics, not LLM evaluation.
-  // They penalize hedging language, uncertainty phrases, and known unsafe
-  // patterns rather than performing semantic assessment.
+  /**
+   * Wire up an LLM-as-judge evaluator for semantic quality assessment.
+   * When set, the quality gate engine uses LLM evaluation for
+   * hallucination/consistency/completeness/accuracy checks, falling back
+   * to rule-based signals for safety and as a safety net.
+   */
+  setLLMEvaluator(provider: LLMProvider, model: string): void {
+    this.qualityGateEngine = new QualityGateEngine({
+      llmEvaluator: new LLMJudgeEvaluator(provider, model),
+    });
+  }
 
   async synthesize(
     strategy: SynthesisStrategy,

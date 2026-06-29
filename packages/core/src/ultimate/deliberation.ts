@@ -12,6 +12,11 @@ import type { LLMProvider, LLMRequest } from '../runtime/types';
 import { classifyEffortLevel } from './effortScaler';
 import { getGlobalLogger } from '../logging';
 
+/** Escape regex metacharacters to prevent ReDoS / injection from user-supplied keywords. */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 type DeliberationTaskType = DeliberationPlan['taskType'];
 const TASK_TYPES: readonly DeliberationTaskType[] = [
   'FACTUAL',
@@ -55,7 +60,7 @@ const MAX_CACHED_RE = 500;
 function getWordBoundaryRe(word: string): RegExp {
   const existing = SHORT_WORD_RE.get(word);
   if (existing) return existing;
-  const re = new RegExp(`\\b${word}\\b`);
+  const re = new RegExp(`\\b${escapeRegex(word)}\\b`);
   if (SHORT_WORD_RE.size >= MAX_CACHED_RE) {
     const firstKey = SHORT_WORD_RE.keys().next().value;
     if (firstKey) SHORT_WORD_RE.delete(firstKey);
