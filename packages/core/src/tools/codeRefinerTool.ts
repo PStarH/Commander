@@ -2,7 +2,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { execSandboxed } from './sandboxedExec';
 import { safePath } from './fileSystemTool';
-import * as fs from 'node:fs';
+import { pathExists } from './_utils/pathExists';
 
 const DEFINITION: ToolDefinition = {
   name: 'refine_code',
@@ -96,7 +96,7 @@ export class CodeRefinerTool implements Tool {
           reportSilentFailure(err, 'codeRefinerTool:96');
           return `Error: Access denied: codeFile "${codeFile}" is outside workspace`;
         }
-        if (fs.existsSync(resolvedCodeFile)) {
+        if (await pathExists(resolvedCodeFile)) {
           // Code exists, just run tests
           if (testCommand) {
             const testResult = await this.runTests(testCommand, cwd);
