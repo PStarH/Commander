@@ -230,7 +230,7 @@ export {
 export { ContextWindowManager, estimateTotalTokens } from './runtime/contextWindow';
 export type { ContextWindowConfig, WindowAction } from './runtime/contextWindow';
 
-export { Logger, MetricsCollector, getGlobalLogger, getGlobalMetrics } from './logging';
+export { Logger, getGlobalLogger, getGlobalMetrics } from './logging';
 
 // Error Handler
 export {
@@ -648,7 +648,13 @@ export { buildDecisions, decisionsSummary } from './observability/decisionProven
 export { captureProvenance } from './runtime/provenance';
 
 // Metrics (from metricsCollector, not the logging re-export)
-export { getMetricsCollector, resetMetricsCollector } from './runtime/metricsCollector';
+export { getMetricsCollector, resetMetricsCollector, MetricsCollector } from './runtime/metricsCollector';
+
+// Health checks (shared HealthCollector so the API layer does not dual-track)
+export { HealthCollector, type HealthSources, type HealthCheckResult } from './runtime/healthCheck';
+
+// Evaluation — LLM-as-Judge, dataset versioning, A/B experiment comparison
+export * from './evaluation';
 
 // Tenant Provider — multi-tenant isolation primitives
 export {
@@ -1078,6 +1084,7 @@ export type {
 
 // Built-in Plugins — RAG Knowledge Base
 export { createRagPlugin } from './plugins/builtin/ragPlugin';
+export { createTaintTrackingPlugin } from './plugins/builtin/taintTrackingPlugin';
 export {
   KnowledgeBaseStore,
   createKbEmbeddingFunction,
