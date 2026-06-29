@@ -258,6 +258,7 @@ export class CommanderMcpServer {
           result,
           agentId: 'mcp',
           runId: 'mcp-run',
+          tool,
         });
         const toolDuration = Date.now() - toolStart;
 
