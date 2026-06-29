@@ -623,9 +623,7 @@ const SAFE_ALTERNATIVES: Record<string, Array<{ name: string; reason: string }>>
   '@tanstack/react-query': [
     { name: 'swr', reason: 'Vercel 出品的 React 数据请求库，API 类似且无已知投毒事件' },
   ],
-  next: [
-    { name: '@remix-run/react', reason: '基于 Web 标准的全栈框架，可作为 Next.js 替代评估' },
-  ],
+  next: [{ name: '@remix-run/react', reason: '基于 Web 标准的全栈框架，可作为 Next.js 替代评估' }],
 };
 
 // ============================================================================
@@ -728,7 +726,10 @@ function satisfiesRange(version: string, range: string): boolean {
   if (r === '' || r === '*') return true;
 
   // OR 组合
-  const orGroups = r.split('||').map((g) => g.trim()).filter(Boolean);
+  const orGroups = r
+    .split('||')
+    .map((g) => g.trim())
+    .filter(Boolean);
   if (orGroups.length > 1) {
     return orGroups.some((g) => satisfiesRange(version, g));
   }
@@ -877,11 +878,10 @@ export class CVEDatabase {
         reportSilentFailure(err, `cveDatabase.syncExternalSources:${source.id}`);
         try {
           const logger = getGlobalLogger();
-          logger.warn(
-            'CVEDatabase',
-            `外部数据源同步失败：${source.name}`,
-            { sourceId: source.id, error: err instanceof Error ? err.message : String(err) },
-          );
+          logger.warn('CVEDatabase', `外部数据源同步失败：${source.name}`, {
+            sourceId: source.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
         } catch {
           /* 日志不可用时忽略 */
         }
@@ -932,9 +932,7 @@ export class CVEDatabase {
       if (!cveId) continue;
       const descriptions = cve.descriptions as Array<{ lang: string; value: string }> | undefined;
       const description =
-        descriptions?.find((d) => d.lang === 'en')?.value ??
-        descriptions?.[0]?.value ??
-        '无描述';
+        descriptions?.find((d) => d.lang === 'en')?.value ?? descriptions?.[0]?.value ?? '无描述';
       const metrics = cve.metrics as Record<string, unknown> | undefined;
       const cvssData = this.extractCvss(metrics);
       const published = (cve.published as string) ?? new Date().toISOString();
@@ -971,7 +969,9 @@ export class CVEDatabase {
     if (!Array.isArray(advisories)) return out;
     for (const adv of advisories) {
       if (!isObjectWithProp(adv, 'advisory')) continue;
-      const advisory = (adv as { advisory: Record<string, unknown>; package?: Record<string, unknown> }).advisory;
+      const advisory = (
+        adv as { advisory: Record<string, unknown>; package?: Record<string, unknown> }
+      ).advisory;
       const ghsaId = advisory.ghsaId as string | undefined;
       const cveIds = advisory.cveId as string | undefined;
       const cveId = cveIds ?? ghsaId;
@@ -985,7 +985,8 @@ export class CVEDatabase {
             {
               name: pkg.name,
               ecosystem: (pkg.ecosystem?.toLowerCase() as PackageEcosystem) ?? 'npm',
-              vulnerableRange: (adv as { vulnerableVersionRange?: string }).vulnerableVersionRange ?? '*',
+              vulnerableRange:
+                (adv as { vulnerableVersionRange?: string }).vulnerableVersionRange ?? '*',
             },
           ]
         : [];
@@ -1188,7 +1189,10 @@ export class CVEDatabase {
     let transitiveScanned = 0;
 
     try {
-      const pkgJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8')) as Record<string, unknown>;
+      const pkgJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8')) as Record<
+        string,
+        unknown
+      >;
       const dir = path.dirname(packageJsonPath);
 
       // 解析各类依赖
@@ -1233,7 +1237,11 @@ export class CVEDatabase {
       return this.buildScanResult(0, [], startTime, {
         transitiveScanned: 0,
         integrityIssues: [
-          { name: '<package.json>', version: '', reason: `解析失败：${err instanceof Error ? err.message : String(err)}` },
+          {
+            name: '<package.json>',
+            version: '',
+            reason: `解析失败：${err instanceof Error ? err.message : String(err)}`,
+          },
         ],
       });
     }
@@ -1439,7 +1447,12 @@ export class CVEDatabase {
           weaponized: entry.weaponized,
           priority,
           matchedBy,
-          recommendation: this.buildRecommendationSummary(entry, matchedPkgName, safeVersion, priority),
+          recommendation: this.buildRecommendationSummary(
+            entry,
+            matchedPkgName,
+            safeVersion,
+            priority,
+          ),
         });
       }
     }
@@ -1497,7 +1510,8 @@ export class CVEDatabase {
 
     const priority = this.priorityFromEntry(entry);
     const recommendedVersion = entry.fixedVersions[packageName];
-    const ecosystem = entry.affectedPackages.find((p) => p.name === packageName)?.ecosystem ?? 'npm';
+    const ecosystem =
+      entry.affectedPackages.find((p) => p.name === packageName)?.ecosystem ?? 'npm';
     const upgradeCommand = recommendedVersion
       ? this.buildUpgradeCommand(packageName, recommendedVersion, ecosystem)
       : undefined;
@@ -1577,9 +1591,7 @@ export class CVEDatabase {
     safeVersion?: string,
     priority?: FixPriority,
   ): string {
-    const action = safeVersion
-      ? `升级至 ${safeVersion}+`
-      : '关注厂商修复公告并采取缓解措施';
+    const action = safeVersion ? `升级至 ${safeVersion}+` : '关注厂商修复公告并采取缓解措施';
     const urgency =
       priority === 'IMMEDIATE'
         ? '立即修复'

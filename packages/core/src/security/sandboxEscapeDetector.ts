@@ -33,7 +33,11 @@ import type { SandboxExecutionResult, SandboxProfile } from '../sandbox/types';
 // ── Escape Indicators ────────────────────────────────────────────────────────
 
 /** Patterns in command output that indicate a sandbox escape attempt. */
-const ESCAPE_OUTPUT_PATTERNS: { pattern: RegExp; indicator: string; severity: 'high' | 'critical' }[] = [
+const ESCAPE_OUTPUT_PATTERNS: {
+  pattern: RegExp;
+  indicator: string;
+  severity: 'high' | 'critical';
+}[] = [
   // Host filesystem access — reading files outside the sandbox
   { pattern: /root:[x*]:0:0:/, indicator: 'host_etc_shadow_access', severity: 'critical' },
   { pattern: /\/proc\/1\/root/, indicator: 'host_proc_access', severity: 'critical' },
@@ -44,21 +48,37 @@ const ESCAPE_OUTPUT_PATTERNS: { pattern: RegExp; indicator: string; severity: 'h
   // Container breakout commands in output
   { pattern: /nsenter\s+--target\s+1\b/, indicator: 'nsenter_pid1', severity: 'critical' },
   { pattern: /nsenter\s+--mount/, indicator: 'nsenter_mount', severity: 'critical' },
-  { pattern: /unshare\s+--pid|unshare\s+--mount/, indicator: 'unshare_namespace', severity: 'high' },
+  {
+    pattern: /unshare\s+--pid|unshare\s+--mount/,
+    indicator: 'unshare_namespace',
+    severity: 'high',
+  },
   { pattern: /setns\s+\d+/, indicator: 'setns_call', severity: 'critical' },
-  { pattern: /mount\s+--type\s+(proc|sysfs|tmpfs)/, indicator: 'mount_filesystem', severity: 'high' },
+  {
+    pattern: /mount\s+--type\s+(proc|sysfs|tmpfs)/,
+    indicator: 'mount_filesystem',
+    severity: 'high',
+  },
 
   // Privilege escalation
   { pattern: /sudo\s+(su|root|bash|sh)/, indicator: 'sudo_escalation', severity: 'high' },
   { pattern: /chmod\s+4[0-9]{3}\s+\/(bin|sbin|usr)/, indicator: 'setuid_binary', severity: 'high' },
-  { pattern: /capsh\s+--cap=CAP_SYS_ADMIN/, indicator: 'capability_escalation', severity: 'critical' },
+  {
+    pattern: /capsh\s+--cap=CAP_SYS_ADMIN/,
+    indicator: 'capability_escalation',
+    severity: 'critical',
+  },
 
   // Kernel module loading
   { pattern: /insmod\s+|modprobe\s+/, indicator: 'kernel_module_load', severity: 'critical' },
   { pattern: /\/lib\/modules\/.*\.ko/, indicator: 'kernel_module_path', severity: 'high' },
 
   // Docker/container runtime escape
-  { pattern: /docker\s+(run|exec|create)\s+.*--privileged/, indicator: 'privileged_container', severity: 'critical' },
+  {
+    pattern: /docker\s+(run|exec|create)\s+.*--privileged/,
+    indicator: 'privileged_container',
+    severity: 'critical',
+  },
   { pattern: /docker\s+.*-v\s+\/:/, indicator: 'host_mount_container', severity: 'critical' },
 
   // SSH key exfiltration
@@ -66,18 +86,38 @@ const ESCAPE_OUTPUT_PATTERNS: { pattern: RegExp; indicator: string; severity: 'h
 ];
 
 /** Patterns in the command itself that indicate an escape attempt. */
-const ESCAPE_COMMAND_PATTERNS: { pattern: RegExp; indicator: string; severity: 'high' | 'critical' }[] = [
+const ESCAPE_COMMAND_PATTERNS: {
+  pattern: RegExp;
+  indicator: string;
+  severity: 'high' | 'critical';
+}[] = [
   { pattern: /nsenter\s+--target\s+1\b/, indicator: 'nsenter_pid1', severity: 'critical' },
   { pattern: /nsenter\s+--mount=/, indicator: 'nsenter_mount_ns', severity: 'critical' },
-  { pattern: /unshare\s+--pid|unshare\s+--mount=/, indicator: 'unshare_namespace', severity: 'high' },
+  {
+    pattern: /unshare\s+--pid|unshare\s+--mount=/,
+    indicator: 'unshare_namespace',
+    severity: 'high',
+  },
   { pattern: /setns\b/, indicator: 'setns_call', severity: 'critical' },
-  { pattern: /mount\s+--type\s+(proc|sysfs|tmpfs)/, indicator: 'mount_filesystem', severity: 'high' },
+  {
+    pattern: /mount\s+--type\s+(proc|sysfs|tmpfs)/,
+    indicator: 'mount_filesystem',
+    severity: 'high',
+  },
   { pattern: /insmod\s+|modprobe\s+/, indicator: 'kernel_module_load', severity: 'critical' },
-  { pattern: /capsh\s+--cap=CAP_SYS_ADMIN/, indicator: 'capability_escalation', severity: 'critical' },
+  {
+    pattern: /capsh\s+--cap=CAP_SYS_ADMIN/,
+    indicator: 'capability_escalation',
+    severity: 'critical',
+  },
   { pattern: /dd\s+if=\/dev\/(mem|kmem|sd)/, indicator: 'raw_device_access', severity: 'critical' },
   { pattern: /docker\s+.*--privileged/, indicator: 'privileged_container', severity: 'critical' },
   { pattern: /docker\s+.*-v\s+\/:/, indicator: 'host_mount_container', severity: 'critical' },
-  { pattern: /\bchmod\s+4[0-9]{3}\s+\/(bin|sbin|usr\/bin)/, indicator: 'setuid_binary', severity: 'high' },
+  {
+    pattern: /\bchmod\s+4[0-9]{3}\s+\/(bin|sbin|usr\/bin)/,
+    indicator: 'setuid_binary',
+    severity: 'high',
+  },
   { pattern: /\/proc\/1\/root/, indicator: 'host_proc_access', severity: 'critical' },
   { pattern: /\/var\/run\/docker\.sock/, indicator: 'docker_socket_access', severity: 'critical' },
 ];
@@ -294,11 +334,7 @@ export function resetSandboxState(workdir: string): void {
 
 // ── Internal ────────────────────────────────────────────────────────────────
 
-function updateSandboxState(
-  workdir: string,
-  mechanism: string,
-  hadViolation: boolean,
-): void {
+function updateSandboxState(workdir: string, mechanism: string, hadViolation: boolean): void {
   const state = sandboxStates.get(workdir) ?? {
     verified: false,
     executionCount: 0,

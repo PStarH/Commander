@@ -128,10 +128,7 @@ export class BiscuitCapabilityAdapter {
    * The verifier checks that the token's tenant fact matches the expected audience.
    */
   createVerifier(expectedAud?: string): BiscuitCapabilityVerifier {
-    return new BiscuitCapabilityVerifier(
-      this.verifier,
-      expectedAud,
-    );
+    return new BiscuitCapabilityVerifier(this.verifier, expectedAud);
   }
 
   /**
@@ -161,10 +158,7 @@ export class BiscuitCapabilityVerifier {
   private biscuitVerifier: BiscuitTokenVerifier;
   private expectedAud?: string;
 
-  constructor(
-    biscuitVerifier: BiscuitTokenVerifier,
-    expectedAud?: string,
-  ) {
+  constructor(biscuitVerifier: BiscuitTokenVerifier, expectedAud?: string) {
     this.biscuitVerifier = biscuitVerifier;
     this.expectedAud = expectedAud;
   }
@@ -243,11 +237,7 @@ export class BiscuitCapabilityVerifier {
     }
 
     // Extract a pseudo-jti from the token's first block
-    const jti = crypto
-      .createHash('sha256')
-      .update(b64Data.slice(0, 64))
-      .digest('hex')
-      .slice(0, 32);
+    const jti = crypto.createHash('sha256').update(b64Data.slice(0, 64)).digest('hex').slice(0, 32);
 
     getGlobalLogger().debug('BiscuitCapability', 'Token verified', {
       tool: req.tool,

@@ -153,7 +153,9 @@ export class WalCheckpointStore {
          fencing_epoch, lease_token, version, created_at, state_json)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    this.stmtGet = d.prepare(`SELECT * FROM atr_checkpoints WHERE id = ? AND (tenant_id IS ? OR ? IS NULL) LIMIT 1`);
+    this.stmtGet = d.prepare(
+      `SELECT * FROM atr_checkpoints WHERE id = ? AND (tenant_id IS ? OR ? IS NULL) LIMIT 1`,
+    );
     this.stmtLatest = d.prepare(`
       SELECT * FROM atr_checkpoints WHERE run_id = ? AND (tenant_id IS ? OR ? IS NULL)
       ORDER BY step_number DESC LIMIT 1
@@ -162,7 +164,9 @@ export class WalCheckpointStore {
       SELECT * FROM atr_checkpoints WHERE run_id = ? AND (tenant_id IS ? OR ? IS NULL)
       ORDER BY step_number ASC
     `);
-    this.stmtDeleteRun = d.prepare(`DELETE FROM atr_checkpoints WHERE run_id = ? AND (tenant_id IS ? OR ? IS NULL)`);
+    this.stmtDeleteRun = d.prepare(
+      `DELETE FROM atr_checkpoints WHERE run_id = ? AND (tenant_id IS ? OR ? IS NULL)`,
+    );
   }
 
   /**

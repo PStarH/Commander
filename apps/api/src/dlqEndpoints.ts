@@ -223,9 +223,7 @@ export function createDlqRouter(): Router {
   router.get('/api/dlq/categories', (_req: Request, res: Response) => {
     try {
       const stats = buildStats();
-      res.json(
-        stats.categories.map((c) => ({ category: c.category, count: c.count })),
-      );
+      res.json(stats.categories.map((c) => ({ category: c.category, count: c.count })));
     } catch (error) {
       res.status(500).json({ error: toErrorMessage(error) });
     }
@@ -268,9 +266,7 @@ export function createDlqRouter(): Router {
       }
       const ok = markEntryRecovered(entryId);
       if (!ok) {
-        return res
-          .status(404)
-          .json({ error: 'Entry not found', entryId });
+        return res.status(404).json({ error: 'Entry not found', entryId });
       }
       res.json({ status: 'ok', entryId, recovered: true });
     } catch (error) {

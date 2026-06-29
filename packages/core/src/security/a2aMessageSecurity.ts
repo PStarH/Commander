@@ -323,11 +323,7 @@ export class A2AMessageSecurity {
    * @param capabilityToken - 能力令牌原文
    * @returns 注册成功的代理身份
    */
-  registerAgent(
-    agentId: string,
-    tenantId: string,
-    capabilityToken: string,
-  ): AgentIdentity {
+  registerAgent(agentId: string, tenantId: string, capabilityToken: string): AgentIdentity {
     const now = new Date().toISOString();
     const capabilityTokenHash = this.hashCapabilityToken(capabilityToken);
     const identity: AgentIdentity = {
@@ -674,10 +670,7 @@ export class A2AMessageSecurity {
     );
     const iv = crypto.randomBytes(GCM_IV_LENGTH);
     const cipher = crypto.createCipheriv(CIPHER_ALGORITHM, messageKey, iv);
-    const ciphertext = Buffer.concat([
-      cipher.update(plaintext, 'utf-8'),
-      cipher.final(),
-    ]);
+    const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf-8'), cipher.final()]);
     const tag = cipher.getAuthTag();
     return (
       `${ENCRYPTION_PREFIX}, alg=aes-256-gcm, ` +
@@ -728,10 +721,9 @@ export class A2AMessageSecurity {
         );
         const decipher = crypto.createDecipheriv(CIPHER_ALGORITHM, messageKey, iv);
         decipher.setAuthTag(tag);
-        const plaintext = Buffer.concat([
-          decipher.update(ciphertext),
-          decipher.final(),
-        ]).toString('utf-8');
+        const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString(
+          'utf-8',
+        );
         return { success: true, plaintext, reason: '' };
       } catch {
         // 该密钥不匹配，继续尝试下一个候选密钥。
@@ -857,10 +849,7 @@ export class A2AMessageSecurity {
   /**
    * 校验时间戳：不能缺失、不能超出允许年龄、不能超出时钟偏移。
    */
-  private checkTimestamp(
-    timestamp: string,
-    now: number,
-  ): { valid: boolean; reason: string } {
+  private checkTimestamp(timestamp: string, now: number): { valid: boolean; reason: string } {
     const parsed = Date.parse(timestamp);
     if (Number.isNaN(parsed)) {
       return { valid: false, reason: 'timestamp_invalid' };
@@ -925,10 +914,7 @@ export class A2AMessageSecurity {
    *
    * 容忍值中包含等号（取第一个等号为分隔符），但不容忍空字段。
    */
-  private parseHeaderFields(
-    header: string,
-    prefix: string,
-  ): Record<string, string> {
+  private parseHeaderFields(header: string, prefix: string): Record<string, string> {
     const result: Record<string, string> = {};
     // 移除前缀及其后的逗号。
     const body = header.slice(prefix.length).replace(/^,?\s*/, '');
@@ -1000,9 +986,7 @@ export class A2AMessageSecurity {
     const timestamp = message.timestamp || new Date().toISOString();
 
     // 能力令牌哈希（用于身份证明与回退签名密钥）。
-    const capabilityTokenHash = this.hashCapabilityToken(
-      senderContext.capabilityToken,
-    );
+    const capabilityTokenHash = this.hashCapabilityToken(senderContext.capabilityToken);
 
     const secured: SecuredMessage = {
       original: { ...message, timestamp },
@@ -1057,7 +1041,11 @@ export class A2AMessageSecurity {
 
     // HMAC 签名（signed 及以上）。
     const resolvedLevel = secured.securityLevel;
-    if (resolvedLevel === 'signed' || resolvedLevel === 'encrypted' || resolvedLevel === 'attested') {
+    if (
+      resolvedLevel === 'signed' ||
+      resolvedLevel === 'encrypted' ||
+      resolvedLevel === 'attested'
+    ) {
       const messageHash = this.hashMessage(effectiveMessage);
       const signingKey = this.getSigningKey(capabilityTokenHash);
       secured.signature = this.signMessage(
@@ -1087,10 +1075,7 @@ export class A2AMessageSecurity {
    * @param expectedSender - 期望的发送方 agentId
    * @returns 验证结果
    */
-  verifyMessage(
-    secured: SecuredMessage,
-    expectedSender: string,
-  ): VerificationResult {
+  verifyMessage(secured: SecuredMessage, expectedSender: string): VerificationResult {
     const now = Date.now();
     const result: VerificationResult = {
       valid: false,
@@ -1195,11 +1180,7 @@ export class A2AMessageSecurity {
       if (!this.config.enableAttestation) {
         return this.fail(result, secured, expectedSender, 'attestation_disabled', now);
       }
-      const attestResult = this.verifyAttestation(
-        secured.attestation,
-        expectedSender,
-        nonce,
-      );
+      const attestResult = this.verifyAttestation(secured.attestation, expectedSender, nonce);
       if (!attestResult.valid) {
         return this.fail(result, secured, expectedSender, attestResult.reason, now);
       }
@@ -1253,8 +1234,7 @@ export class A2AMessageSecurity {
     result.valid = false;
     result.reason = reason;
     this.stats.verificationFailures++;
-    this.stats.failuresByReason[reason] =
-      (this.stats.failuresByReason[reason] ?? 0) + 1;
+    this.stats.failuresByReason[reason] = (this.stats.failuresByReason[reason] ?? 0) + 1;
 
     this.recordMetric('a2a.verification.failures', 1, { reason });
 
@@ -1298,9 +1278,7 @@ export class A2AMessageSecurity {
   /**
    * 根据失败原因返回合适的严重级别。
    */
-  private severityForReason(
-    reason: string,
-  ): 'low' | 'medium' | 'high' | 'critical' {
+  private severityForReason(reason: string): 'low' | 'medium' | 'high' | 'critical' {
     if (reason === 'replay_detected') return 'critical';
     if (reason.startsWith('attestation_')) return 'high';
     if (reason.startsWith('signature_')) return 'high';
@@ -1351,13 +1329,9 @@ export class A2AMessageSecurity {
       ...this.stats,
       config: this.getConfig(),
       registeredAgents: this.agentRegistry.size,
-      activeAgents: Array.from(this.agentRegistry.values()).filter((a) => !a.revoked)
-        .length,
+      activeAgents: Array.from(this.agentRegistry.values()).filter((a) => !a.revoked).length,
       trackedSenders: this.nonceCache.size,
-      totalNonces: Array.from(this.nonceCache.values()).reduce(
-        (sum, e) => sum + e.length,
-        0,
-      ),
+      totalNonces: Array.from(this.nonceCache.values()).reduce((sum, e) => sum + e.length, 0),
       hasSharedSecret: this.currentKey !== null,
       hasPreviousKey: this.previousKey !== null,
     };
@@ -1380,19 +1354,16 @@ export class A2AMessageSecurity {
 // 单例
 // ============================================================================
 
-const a2aMessageSecuritySingleton = createTenantAwareSingleton(
-  () => new A2AMessageSecurity(),
-  {
-    componentName: 'A2AMessageSecurity',
-    dispose: (instance) => {
-      try {
-        instance.dispose();
-      } catch (err) {
-        reportSilentFailure(err, 'a2aMessageSecurity.singleton.dispose');
-      }
-    },
+const a2aMessageSecuritySingleton = createTenantAwareSingleton(() => new A2AMessageSecurity(), {
+  componentName: 'A2AMessageSecurity',
+  dispose: (instance) => {
+    try {
+      instance.dispose();
+    } catch (err) {
+      reportSilentFailure(err, 'a2aMessageSecurity.singleton.dispose');
+    }
   },
-);
+});
 
 /**
  * 获取 A2A 消息安全层单例实例（租户隔离）。

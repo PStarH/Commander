@@ -20,11 +20,7 @@ import {
 } from 'lucide-react';
 import { Badge, MetricCard } from './ui';
 import { fetchLineage, fetchReplayRuns } from '../api';
-import type {
-  LineageNodeEntry,
-  LineageSummaryResponse,
-  ReplayRun,
-} from '../types';
+import type { LineageNodeEntry, LineageSummaryResponse, ReplayRun } from '../types';
 
 const COLORS = {
   green: '#4de98c',
@@ -56,9 +52,8 @@ function buildForest(nodes: LineageNodeEntry[]): TreeNode[] {
 
   const childrenByParent = new Map<string | null, LineageNodeEntry[]>();
   for (const n of nodes) {
-    const parentKey = n.parentInstanceId && byInstanceId.has(n.parentInstanceId)
-      ? n.parentInstanceId
-      : null;
+    const parentKey =
+      n.parentInstanceId && byInstanceId.has(n.parentInstanceId) ? n.parentInstanceId : null;
     const list = childrenByParent.get(parentKey) ?? [];
     list.push(n);
     childrenByParent.set(parentKey, list);
@@ -127,9 +122,7 @@ function LineageNodeRow({ treeNode, isLast, prefix }: LineageNodeRowProps) {
           <span className="lineage-agent-id" title={node.instanceId}>
             {node.agentId}
           </span>
-          {node.role && (
-            <Badge variant="info">{node.role}</Badge>
-          )}
+          {node.role && <Badge variant="info">{node.role}</Badge>}
           <Badge variant={nodeStatusVariant(node)}>{nodeStatusLabel(node)}</Badge>
           <span className="lineage-depth" title="Depth in lineage tree">
             <Layers size={11} /> d{node.depth}
@@ -229,10 +222,7 @@ export function LineageTree({ runId: initialRunId }: LineageTreeProps) {
     };
   }, [selectedRunId]);
 
-  const forest = useMemo(
-    () => (summary ? buildForest(summary.nodes) : []),
-    [summary],
-  );
+  const forest = useMemo(() => (summary ? buildForest(summary.nodes) : []), [summary]);
 
   return (
     <div className="confidence-panel">
@@ -270,9 +260,7 @@ export function LineageTree({ runId: initialRunId }: LineageTreeProps) {
         </div>
       </div>
 
-      {loadingSummary && (
-        <div className="narrative narrative-green">Loading agent lineage...</div>
-      )}
+      {loadingSummary && <div className="narrative narrative-green">Loading agent lineage...</div>}
 
       {!loadingSummary && error && (
         <div className="narrative narrative-amber">
@@ -282,15 +270,15 @@ export function LineageTree({ runId: initialRunId }: LineageTreeProps) {
 
       {!loadingSummary && !error && !summary && (
         <div className="narrative narrative-green">
-          Select a run to view its agent lineage tree. Every sub-agent spawn and handoff is
-          tracked as a parent→child edge, with tool call counts per node.
+          Select a run to view its agent lineage tree. Every sub-agent spawn and handoff is tracked
+          as a parent→child edge, with tool call counts per node.
         </div>
       )}
 
       {!loadingSummary && !error && summary && summary.totalNodes === 0 && (
         <div className="narrative narrative-green">
-          No agent lineage events found for this run. Either the run used a single root agent
-          with no spawns, or no spawn / handoff events were recorded in the trace.
+          No agent lineage events found for this run. Either the run used a single root agent with
+          no spawns, or no spawn / handoff events were recorded in the trace.
         </div>
       )}
 

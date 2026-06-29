@@ -62,6 +62,14 @@ function makeFakeRuntime(): AgentRuntimeInterface {
     getCompensationRegistry: vi.fn().mockReturnValue({
       compensateAll: vi.fn().mockResolvedValue({ errors: [] }),
     }),
+    getReliabilityEngine: vi.fn().mockReturnValue({
+      getStats: vi.fn().mockReturnValue({
+        circuit: { state: 'CLOSED', failureCount: 0 },
+        dlq: [],
+        compensation: { pending: 0, compensated: 0 },
+        checkpointCount: 0,
+      }),
+    }),
     cancelAllSteps: vi.fn().mockReturnValue(0),
     getStepTimeoutManager: vi.fn(),
     listUnfinishedRuns: vi.fn().mockReturnValue([]),

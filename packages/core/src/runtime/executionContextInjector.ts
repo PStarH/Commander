@@ -156,7 +156,10 @@ export class ExecutionContextInjector {
         if (matchingSkill.tools.length > 0) {
           skillLines.push(`Recommended tools: ${matchingSkill.tools.join(', ')}`);
         }
-        skillLines.push(``, `Reuse this pattern if applicable. Adapt based on the current context.`);
+        skillLines.push(
+          ``,
+          `Reuse this pattern if applicable. Adapt based on the current context.`,
+        );
         const skillBlock = skillLines.join('\n');
         const skillTokens = estimateTokens(skillBlock);
         if (injectedContextTokens + skillTokens < contextTokenCap) {

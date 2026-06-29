@@ -198,9 +198,13 @@ export class ProceduralMemoryStore {
     // Read the current entry
     const item = await this.store.read(entryId, this.projectId);
     if (!item || !item.meta?.proceduralType) {
-      getGlobalLogger().debug('ProceduralMemoryStore', 'updateUtility: entry not found or not procedural', {
-        entryId,
-      });
+      getGlobalLogger().debug(
+        'ProceduralMemoryStore',
+        'updateUtility: entry not found or not procedural',
+        {
+          entryId,
+        },
+      );
       return;
     }
 
@@ -361,7 +365,8 @@ export class ProceduralMemoryStore {
     const meta = item.meta ?? {};
     return {
       id: item.id,
-      proceduralType: (meta.proceduralType as 'sop' | 'tool' | 'workflow' | 'heuristic') ?? 'heuristic',
+      proceduralType:
+        (meta.proceduralType as 'sop' | 'tool' | 'workflow' | 'heuristic') ?? 'heuristic',
       content: item.content,
       conditions: (meta.conditions as string[]) ?? [],
       goal: (meta.goal as string) ?? item.title,

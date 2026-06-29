@@ -372,28 +372,92 @@ export class CommanderClient {
   }
 
   /**
-   * @deprecated 此方法当前返回占位数据（空数组），将在未来版本实现。
-   * Memory access is best-effort — returns empty on failure.
+   * Query memory entries from the Three-Layer Memory system.
+   * Best-effort — returns empty on failure.
    */
   queryMemory(options: MemoryQueryOptions = {}): MemoryItem[] {
-    // Memory access is best-effort — returns empty on failure
-    return [];
+    try {
+      // Synchronous access to global ThreeLayerMemory (already initialized by core)
+      const { getGlobalThreeLayerMemory } = require('@commander/core');
+      const memory = getGlobalThreeLayerMemory();
+      const entries = memory.querySync({
+        keywords: options.keywords,
+        importanceThreshold: options.importanceThreshold,
+        limit: options.limit,
+        layer: options.layer,
+      });
+
+      let results = entries
+        .filter((e: { layer: string }) =>
+          e.layer === 'working' || e.layer === 'episodic' || e.layer === 'longterm',
+        )
+        .map((e: Record<string, unknown>) => ({
+          id: e.id as string,
+          content: e.content as string,
+          layer: e.layer as 'working' | 'episodic' | 'longterm',
+          importance: e.importance as number,
+          tags: (e.tags as string[]) ?? [],
+          createdAt: e.createdAt as string,
+          metadata: (e.metadata as Record<string, unknown>) ?? {},
+        }));
+
+      if (options.tags && options.tags.length > 0) {
+        results = results.filter((item: MemoryItem) =>
+          options.tags!.every((tag) => item.tags.includes(tag)),
+        );
+      }
+
+      return results;
+    } catch (err) {
+      reportSilentFailure(err, 'commanderClient:queryMemory');
+      return [];
+    }
   }
 
   /**
-   * @deprecated 此方法当前返回占位数据（全零统计），将在未来版本实现。
-   * Memory stats via core Commander — best-effort, returns zeros on failure.
+   * Get memory statistics from the Three-Layer Memory system.
+   * Best-effort — returns zeros on failure.
    */
   async getMemoryStats(): Promise<MemoryStats> {
-    // Memory stats via core Commander — best-effort, returns zeros on failure
-    return {
-      workingCount: 0,
-      episodicCount: 0,
-      longTermCount: 0,
-      totalCount: 0,
-      oldestEntry: '',
-      newestEntry: '',
-    };
+    try {
+      const { getGlobalThreeLayerMemory } = await import('@commander/core');
+      const memory = getGlobalThreeLayerMemory();
+      const stats = memory.getStats();
+      const entries = memory.getAll() as Array<{
+        layer: string;
+        createdAt: string;
+      }>;
+
+      const sdkEntries = entries.filter(
+        (e) => e.layer === 'working' || e.layer === 'episodic' || e.layer === 'longterm',
+      );
+
+      let oldestEntry = '';
+      let newestEntry = '';
+      for (const e of sdkEntries) {
+        if (!oldestEntry || e.createdAt < oldestEntry) oldestEntry = e.createdAt;
+        if (!newestEntry || e.createdAt > newestEntry) newestEntry = e.createdAt;
+      }
+
+      return {
+        workingCount: stats.byLayer.working ?? 0,
+        episodicCount: stats.byLayer.episodic ?? 0,
+        longTermCount: stats.byLayer.longterm ?? 0,
+        totalCount: stats.totalEntries,
+        oldestEntry,
+        newestEntry,
+      };
+    } catch (err) {
+      reportSilentFailure(err, 'commanderClient:getMemoryStats');
+      return {
+        workingCount: 0,
+        episodicCount: 0,
+        longTermCount: 0,
+        totalCount: 0,
+        oldestEntry: '',
+        newestEntry: '',
+      };
+    }
   }
 
   // ==========================================================================
@@ -452,16 +516,40 @@ export class CommanderClient {
   }
 
   /**
-   * @deprecated 此方法当前返回占位数据（硬编码 CLOSED/零值），将在未来版本实现。
+   * Get reliability statistics from the runtime's ReliabilityEngine.
+   * Covers circuit breaker state, dead-letter queue, compensations, and checkpoints.
+   * Best-effort — returns zeros when not connected or on failure.
    */
   getReliabilityStats(): SDKReliabilityStats {
-    return {
-      circuitState: 'CLOSED',
-      circuitFailures: 0,
-      dlqTotalEntries: 0,
-      pendingCompensations: 0,
-      checkpointCount: 0,
-    };
+    try {
+      if (!this.commander) {
+        return {
+          circuitState: 'CLOSED',
+          circuitFailures: 0,
+          dlqTotalEntries: 0,
+          pendingCompensations: 0,
+          checkpointCount: 0,
+        };
+      }
+      const engine = this.commander.getRuntime().getReliabilityEngine();
+      const stats = engine.getStats();
+      return {
+        circuitState: stats.circuit.state,
+        circuitFailures: stats.circuit.failureCount,
+        dlqTotalEntries: stats.dlq.reduce((sum, c) => sum + c.count, 0),
+        pendingCompensations: stats.compensation.pending,
+        checkpointCount: stats.checkpointCount,
+      };
+    } catch (err) {
+      reportSilentFailure(err, 'commanderClient:getReliabilityStats');
+      return {
+        circuitState: 'CLOSED',
+        circuitFailures: 0,
+        dlqTotalEntries: 0,
+        pendingCompensations: 0,
+        checkpointCount: 0,
+      };
+    }
   }
 
   // ==========================================================================

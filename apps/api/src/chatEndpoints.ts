@@ -71,192 +71,187 @@ export function createChatRouter(): Router {
   //   Non-stream: returns a single JSON { reply, agentId, runId, timestamp }.
   //   Stream:     emits `start` → 0..n `step` (thought/tool_call/tool_result)
   //               → `done` → `data: [DONE]` frames.
-  router.post(
-    '/api/chat',
-    validateBody(chatBodySchema),
-    async (req: Request, res: Response) => {
-      try {
-        const { message, agentId, missionId, projectId } = req.body;
-        const sanitized = sanitizeMessage(message);
-        if (!sanitized) {
-          return res.status(400).json({ error: 'Message is required and must be non-empty' });
-        }
-
-        const resolvedAgentId = agentId || 'agent-commander';
-        const resolvedProjectId = projectId || 'project-war-room';
-        const stream = req.query.stream === 'true';
-
-        // Record user message in conversation history
-        addToHistory(resolvedProjectId, {
-          role: 'user',
-          content: sanitized,
-          timestamp: new Date().toISOString(),
-          agentId: resolvedAgentId,
-        });
-
-        const runtime = getSharedRuntime();
-
-        // ── Streaming mode: SSE ───────────────────────────────────────
-        if (stream) {
-          res.writeHead(200, {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache, no-transform',
-            Connection: 'keep-alive',
-            'X-Accel-Buffering': 'no',
-          });
-
-          const writeFrame = (event: string, data: unknown): void => {
-            res.write(`event: ${event}\n`);
-            res.write(`data: ${JSON.stringify(data)}\n\n`);
-          };
-
-          // Signal the start of the stream so the client can render a placeholder.
-          writeFrame('start', {
-            agentId: resolvedAgentId,
-            timestamp: new Date().toISOString(),
-          });
-
-          // Forward MessageBus events as `step` chunks for real-time UX.
-          // The runtime publishes these topics during execution; we translate
-          // them into thought/tool_call/tool_result step frames.
-          const bus = getMessageBus();
-          const busTopics: MessageBusTopic[] = [
-            'agent.message',
-            'tool.started',
-            'tool.executed',
-            'tool.completed',
-          ];
-          let clientClosed = false;
-          const unsubscribe = bus.subscribeMany(busTopics, (msg) => {
-            if (clientClosed) return;
-            try {
-              const payload =
-                (msg as { payload?: Record<string, unknown> }).payload ?? {};
-              if (msg.topic === 'agent.message' && typeof payload.content === 'string') {
-                writeFrame('step', {
-                  type: 'thought',
-                  content: payload.content,
-                  timestamp: msg.timestamp,
-                });
-              } else if (msg.topic === 'tool.started' && typeof payload.toolName === 'string') {
-                writeFrame('step', {
-                  type: 'tool_call',
-                  content: `Calling tool: ${payload.toolName}`,
-                  toolName: payload.toolName,
-                  timestamp: msg.timestamp,
-                });
-              } else if (
-                (msg.topic === 'tool.executed' || msg.topic === 'tool.completed') &&
-                typeof payload.toolName === 'string'
-              ) {
-                const success = payload.success !== false;
-                writeFrame('step', {
-                  type: 'tool_result',
-                  content: `Tool ${payload.toolName} ${success ? 'completed' : 'failed'}`,
-                  toolName: payload.toolName,
-                  success,
-                  timestamp: msg.timestamp,
-                });
-              }
-            } catch {
-              /* best-effort — never let bus forwarding break the stream */
-            }
-          });
-
-          const cleanupBus = (): void => {
-            if (clientClosed) return;
-            clientClosed = true;
-            try {
-              unsubscribe();
-            } catch {
-              /* best-effort */
-            }
-          };
-          req.on('close', cleanupBus);
-          req.on('error', cleanupBus);
-
-          try {
-            const result = await runtime.execute({
-              agentId: resolvedAgentId,
-              projectId: resolvedProjectId,
-              missionId,
-              goal: sanitized,
-              contextData: {},
-              availableTools: [],
-              tokenBudget: 50000,
-              maxSteps: 20,
-            });
-
-            cleanupBus();
-
-            const reply =
-              result.summary ||
-              (result.status === 'success' ? 'Task completed.' : `Task ${result.status}.`);
-
-            const responseEntry: ChatHistoryEntry = {
-              role: 'assistant',
-              content: reply,
-              timestamp: new Date().toISOString(),
-              agentId: resolvedAgentId,
-              runId: result.runId,
-            };
-            addToHistory(resolvedProjectId, responseEntry);
-
-            // Final consolidated reply + completion marker.
-            writeFrame('done', {
-              reply,
-              agentId: resolvedAgentId,
-              runId: result.runId,
-              timestamp: responseEntry.timestamp,
-            });
-            res.write('data: [DONE]\n\n');
-            res.end();
-          } catch (err) {
-            cleanupBus();
-            writeFrame('error', { error: toErrorMessage(err) });
-            res.write('data: [DONE]\n\n');
-            res.end();
-          }
-          return;
-        }
-
-        // ── Default (non-streaming) mode ─────────────────────────────
-        const result = await runtime.execute({
-          agentId: resolvedAgentId,
-          projectId: resolvedProjectId,
-          missionId,
-          goal: sanitized,
-          contextData: {},
-          availableTools: [],
-          tokenBudget: 50000,
-          maxSteps: 20,
-        });
-
-        // Extract the reply text from the result
-        const reply =
-          result.summary ||
-          (result.status === 'success' ? 'Task completed.' : `Task ${result.status}.`);
-
-        const responseEntry: ChatHistoryEntry = {
-          role: 'assistant',
-          content: reply,
-          timestamp: new Date().toISOString(),
-          agentId: resolvedAgentId,
-          runId: result.runId,
-        };
-        addToHistory(resolvedProjectId, responseEntry);
-
-        res.json({
-          reply,
-          agentId: resolvedAgentId,
-          runId: result.runId,
-          timestamp: responseEntry.timestamp,
-        });
-      } catch (error) {
-        res.status(500).json({ error: toErrorMessage(error) });
+  router.post('/api/chat', validateBody(chatBodySchema), async (req: Request, res: Response) => {
+    try {
+      const { message, agentId, missionId, projectId } = req.body;
+      const sanitized = sanitizeMessage(message);
+      if (!sanitized) {
+        return res.status(400).json({ error: 'Message is required and must be non-empty' });
       }
-    },
-  );
+
+      const resolvedAgentId = agentId || 'agent-commander';
+      const resolvedProjectId = projectId || 'project-war-room';
+      const stream = req.query.stream === 'true';
+
+      // Record user message in conversation history
+      addToHistory(resolvedProjectId, {
+        role: 'user',
+        content: sanitized,
+        timestamp: new Date().toISOString(),
+        agentId: resolvedAgentId,
+      });
+
+      const runtime = getSharedRuntime();
+
+      // ── Streaming mode: SSE ───────────────────────────────────────
+      if (stream) {
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache, no-transform',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        });
+
+        const writeFrame = (event: string, data: unknown): void => {
+          res.write(`event: ${event}\n`);
+          res.write(`data: ${JSON.stringify(data)}\n\n`);
+        };
+
+        // Signal the start of the stream so the client can render a placeholder.
+        writeFrame('start', {
+          agentId: resolvedAgentId,
+          timestamp: new Date().toISOString(),
+        });
+
+        // Forward MessageBus events as `step` chunks for real-time UX.
+        // The runtime publishes these topics during execution; we translate
+        // them into thought/tool_call/tool_result step frames.
+        const bus = getMessageBus();
+        const busTopics: MessageBusTopic[] = [
+          'agent.message',
+          'tool.started',
+          'tool.executed',
+          'tool.completed',
+        ];
+        let clientClosed = false;
+        const unsubscribe = bus.subscribeMany(busTopics, (msg) => {
+          if (clientClosed) return;
+          try {
+            const payload = (msg as { payload?: Record<string, unknown> }).payload ?? {};
+            if (msg.topic === 'agent.message' && typeof payload.content === 'string') {
+              writeFrame('step', {
+                type: 'thought',
+                content: payload.content,
+                timestamp: msg.timestamp,
+              });
+            } else if (msg.topic === 'tool.started' && typeof payload.toolName === 'string') {
+              writeFrame('step', {
+                type: 'tool_call',
+                content: `Calling tool: ${payload.toolName}`,
+                toolName: payload.toolName,
+                timestamp: msg.timestamp,
+              });
+            } else if (
+              (msg.topic === 'tool.executed' || msg.topic === 'tool.completed') &&
+              typeof payload.toolName === 'string'
+            ) {
+              const success = payload.success !== false;
+              writeFrame('step', {
+                type: 'tool_result',
+                content: `Tool ${payload.toolName} ${success ? 'completed' : 'failed'}`,
+                toolName: payload.toolName,
+                success,
+                timestamp: msg.timestamp,
+              });
+            }
+          } catch {
+            /* best-effort — never let bus forwarding break the stream */
+          }
+        });
+
+        const cleanupBus = (): void => {
+          if (clientClosed) return;
+          clientClosed = true;
+          try {
+            unsubscribe();
+          } catch {
+            /* best-effort */
+          }
+        };
+        req.on('close', cleanupBus);
+        req.on('error', cleanupBus);
+
+        try {
+          const result = await runtime.execute({
+            agentId: resolvedAgentId,
+            projectId: resolvedProjectId,
+            missionId,
+            goal: sanitized,
+            contextData: {},
+            availableTools: [],
+            tokenBudget: 50000,
+            maxSteps: 20,
+          });
+
+          cleanupBus();
+
+          const reply =
+            result.summary ||
+            (result.status === 'success' ? 'Task completed.' : `Task ${result.status}.`);
+
+          const responseEntry: ChatHistoryEntry = {
+            role: 'assistant',
+            content: reply,
+            timestamp: new Date().toISOString(),
+            agentId: resolvedAgentId,
+            runId: result.runId,
+          };
+          addToHistory(resolvedProjectId, responseEntry);
+
+          // Final consolidated reply + completion marker.
+          writeFrame('done', {
+            reply,
+            agentId: resolvedAgentId,
+            runId: result.runId,
+            timestamp: responseEntry.timestamp,
+          });
+          res.write('data: [DONE]\n\n');
+          res.end();
+        } catch (err) {
+          cleanupBus();
+          writeFrame('error', { error: toErrorMessage(err) });
+          res.write('data: [DONE]\n\n');
+          res.end();
+        }
+        return;
+      }
+
+      // ── Default (non-streaming) mode ─────────────────────────────
+      const result = await runtime.execute({
+        agentId: resolvedAgentId,
+        projectId: resolvedProjectId,
+        missionId,
+        goal: sanitized,
+        contextData: {},
+        availableTools: [],
+        tokenBudget: 50000,
+        maxSteps: 20,
+      });
+
+      // Extract the reply text from the result
+      const reply =
+        result.summary ||
+        (result.status === 'success' ? 'Task completed.' : `Task ${result.status}.`);
+
+      const responseEntry: ChatHistoryEntry = {
+        role: 'assistant',
+        content: reply,
+        timestamp: new Date().toISOString(),
+        agentId: resolvedAgentId,
+        runId: result.runId,
+      };
+      addToHistory(resolvedProjectId, responseEntry);
+
+      res.json({
+        reply,
+        agentId: resolvedAgentId,
+        runId: result.runId,
+        timestamp: responseEntry.timestamp,
+      });
+    } catch (error) {
+      res.status(500).json({ error: toErrorMessage(error) });
+    }
+  });
 
   // ── GET /api/chat/history — retrieve conversation history ───────────
   router.get('/api/chat/history', (req: Request, res: Response) => {

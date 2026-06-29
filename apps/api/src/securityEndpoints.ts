@@ -79,17 +79,21 @@ export function createSecurityRouter(): Router {
   });
 
   // Security: Validate input with Zod schema to prevent type confusion.
-  router.post('/api/memory/assess-credibility', validateBody(assessCredibilityBody), async (req, res) => {
-    const { source, content, context } = req.body;
-    const result = await memoryPoisoningDetector.assessCredibility({
-      id: `mem-${Date.now()}`,
-      content,
-      timestamp: new Date(),
-      source,
-      metadata: context,
-    });
-    res.json(result);
-  });
+  router.post(
+    '/api/memory/assess-credibility',
+    validateBody(assessCredibilityBody),
+    async (req, res) => {
+      const { source, content, context } = req.body;
+      const result = await memoryPoisoningDetector.assessCredibility({
+        id: `mem-${Date.now()}`,
+        content,
+        timestamp: new Date(),
+        source,
+        metadata: context,
+      });
+      res.json(result);
+    },
+  );
 
   router.post('/api/memory/detect-poisoning', async (req, res) => {
     const { newMemories, existingMemories } = req.body ?? {};

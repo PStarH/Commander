@@ -160,7 +160,8 @@ interface OverridePattern {
 const DIRECT_OVERRIDE_PATTERNS: OverridePattern[] = [
   {
     name: 'ignore_previous_instructions',
-    regex: /ignore\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions?|goals?|objectives?|directives?)/i,
+    regex:
+      /ignore\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions?|goals?|objectives?|directives?)/i,
     confidence: 0.95,
     severity: 'critical',
   },
@@ -178,7 +179,8 @@ const DIRECT_OVERRIDE_PATTERNS: OverridePattern[] = [
   },
   {
     name: 'forget_what_doing',
-    regex: /forget\s+(?:what\s+you\s+(?:were|are)\s+doing|everything|all\s+(?:prior|previous)\s+(?:instructions?|context))/i,
+    regex:
+      /forget\s+(?:what\s+you\s+(?:were|are)\s+doing|everything|all\s+(?:prior|previous)\s+(?:instructions?|context))/i,
     confidence: 0.9,
     severity: 'critical',
   },
@@ -262,19 +264,22 @@ const HIDDEN_CONTENT_PATTERNS: HiddenContentPattern[] = [
   },
   {
     name: 'html_comment_instruction',
-    regex: /<!--[\s\S]*?(?:ignore|disregard|new\s+(?:task|instruction|goal)|you\s+are\s+now|system\s*:)[\s\S]*?-->/i,
+    regex:
+      /<!--[\s\S]*?(?:ignore|disregard|new\s+(?:task|instruction|goal)|you\s+are\s+now|system\s*:)[\s\S]*?-->/i,
     stealthLevel: 3,
     severity: 'high',
   },
   {
     name: 'block_comment_instruction',
-    regex: /\/\*[\s\S]*?(?:ignore|disregard|new\s+(?:task|instruction|goal)|you\s+are\s+now)[\s\S]*?\*\//i,
+    regex:
+      /\/\*[\s\S]*?(?:ignore|disregard|new\s+(?:task|instruction|goal)|you\s+are\s+now)[\s\S]*?\*\//i,
     stealthLevel: 3,
     severity: 'high',
   },
   {
     name: 'line_comment_instruction',
-    regex: /(?:^|\n)\s*#\s*(?:ignore|disregard|new\s+(?:task|instruction|goal)|you\s+are\s+now|system\s*:)/i,
+    regex:
+      /(?:^|\n)\s*#\s*(?:ignore|disregard|new\s+(?:task|instruction|goal)|you\s+are\s+now|system\s*:)/i,
     stealthLevel: 2,
     severity: 'medium',
   },
@@ -292,7 +297,7 @@ const HIDDEN_CONTENT_PATTERNS: HiddenContentPattern[] = [
   },
   {
     name: 'yaml_instruction_field',
-    regex: /^\s*(?:instruction|system_prompt|hidden_command|override|directive)\s*:\s*\S/mi,
+    regex: /^\s*(?:instruction|system_prompt|hidden_command|override|directive)\s*:\s*\S/im,
     stealthLevel: 4,
     severity: 'high',
   },
@@ -334,19 +339,121 @@ const HOMOGLYPH_MAP: ReadonlyMap<string, string> = new Map<string, string>([
 
 /** 英语停用词 — 关键词提取时过滤 */
 const STOPWORDS: ReadonlySet<string> = new Set<string>([
-  'a', 'an', 'the', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 'be',
-  'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will',
-  'would', 'could', 'should', 'may', 'might', 'must', 'can', 'shall',
-  'to', 'of', 'in', 'on', 'at', 'by', 'for', 'with', 'about', 'as',
-  'into', 'through', 'during', 'before', 'after', 'above', 'below',
-  'from', 'up', 'down', 'out', 'off', 'over', 'under', 'again', 'then',
-  'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any',
-  'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no',
-  'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very',
-  'just', 'now', 'this', 'that', 'these', 'those', 'i', 'you', 'he',
-  'she', 'it', 'we', 'they', 'them', 'his', 'her', 'its', 'our',
-  'your', 'their', 'my', 'me', 'him', 'us', 'what', 'which', 'who',
-  'whom', 'if', 'because', 'while', 'your', 'task', 'goal',
+  'a',
+  'an',
+  'the',
+  'and',
+  'or',
+  'but',
+  'is',
+  'are',
+  'was',
+  'were',
+  'be',
+  'been',
+  'being',
+  'have',
+  'has',
+  'had',
+  'do',
+  'does',
+  'did',
+  'will',
+  'would',
+  'could',
+  'should',
+  'may',
+  'might',
+  'must',
+  'can',
+  'shall',
+  'to',
+  'of',
+  'in',
+  'on',
+  'at',
+  'by',
+  'for',
+  'with',
+  'about',
+  'as',
+  'into',
+  'through',
+  'during',
+  'before',
+  'after',
+  'above',
+  'below',
+  'from',
+  'up',
+  'down',
+  'out',
+  'off',
+  'over',
+  'under',
+  'again',
+  'then',
+  'once',
+  'here',
+  'there',
+  'when',
+  'where',
+  'why',
+  'how',
+  'all',
+  'any',
+  'both',
+  'each',
+  'few',
+  'more',
+  'most',
+  'other',
+  'some',
+  'such',
+  'no',
+  'nor',
+  'not',
+  'only',
+  'own',
+  'same',
+  'so',
+  'than',
+  'too',
+  'very',
+  'just',
+  'now',
+  'this',
+  'that',
+  'these',
+  'those',
+  'i',
+  'you',
+  'he',
+  'she',
+  'it',
+  'we',
+  'they',
+  'them',
+  'his',
+  'her',
+  'its',
+  'our',
+  'your',
+  'their',
+  'my',
+  'me',
+  'him',
+  'us',
+  'what',
+  'which',
+  'who',
+  'whom',
+  'if',
+  'because',
+  'while',
+  'your',
+  'task',
+  'goal',
 ]);
 
 /** Base64 字符串匹配模式 (最少 32 字符，排除普通文本) */
@@ -354,9 +461,26 @@ const BASE64_PATTERN: RegExp = /[A-Za-z0-9+/]{32,}={0,2}/g;
 
 /** 指令类关键词 — 用于判断解码后的 Base64 内容是否含指令 */
 const INSTRUCTION_KEYWORDS: ReadonlySet<string> = new Set<string>([
-  'ignore', 'disregard', 'override', 'forget', 'new', 'instruction',
-  'task', 'goal', 'mission', 'system', 'prompt', 'command', 'execute',
-  'pretend', 'roleplay', 'act', 'reveal', 'secret', 'password', 'key',
+  'ignore',
+  'disregard',
+  'override',
+  'forget',
+  'new',
+  'instruction',
+  'task',
+  'goal',
+  'mission',
+  'system',
+  'prompt',
+  'command',
+  'execute',
+  'pretend',
+  'roleplay',
+  'act',
+  'reveal',
+  'secret',
+  'password',
+  'key',
 ]);
 
 // ============================================================================
@@ -404,8 +528,7 @@ function tryDecodeBase64(encoded: string): string | null {
     const decoded: string = Buffer.from(encoded, 'base64').toString('utf-8');
     // 过滤掉非可打印字符为主的解码结果
     const printableRatio: number =
-      decoded.replace(/[^\x20-\x7E\u4e00-\u9fff\n\r\t]/g, '').length /
-      Math.max(decoded.length, 1);
+      decoded.replace(/[^\x20-\x7E\u4e00-\u9fff\n\r\t]/g, '').length / Math.max(decoded.length, 1);
     if (printableRatio < 0.6) return null;
     return decoded;
   } catch {
@@ -623,10 +746,7 @@ export class GoalHijackDetector {
    * @param sessionId 会话 ID
    * @returns 修改记录列表
    */
-  getGoalModificationHistory(
-    goalId: string,
-    sessionId: string,
-  ): GoalModificationRecord[] {
+  getGoalModificationHistory(goalId: string, sessionId: string): GoalModificationRecord[] {
     const modKey: string = `${goalId}::${sessionId}`;
     const state: GoalModificationState | undefined = this.modificationStates.get(modKey);
     return state ? [...state.modifications] : [];
@@ -690,10 +810,7 @@ export class GoalHijackDetector {
       const recursive: HijackDetectionResult = this.detectRecursiveModification(ctx);
       results.push(recursive);
     } catch (err) {
-      reportSilentFailure(
-        err,
-        'goalHijackDetector:checkContext:detectRecursiveModification',
-      );
+      reportSilentFailure(err, 'goalHijackDetector:checkContext:detectRecursiveModification');
     }
 
     // 返回最严重的检测结果
@@ -759,10 +876,7 @@ export class GoalHijackDetector {
       for (const pattern of DIRECT_OVERRIDE_PATTERNS) {
         const match: RegExpMatchArray | null = source.content.match(pattern.regex);
         if (match) {
-          if (
-            !bestMatch ||
-            pattern.confidence > bestMatch.pattern.confidence
-          ) {
+          if (!bestMatch || pattern.confidence > bestMatch.pattern.confidence) {
             bestMatch = {
               pattern,
               source: source.name,
@@ -889,9 +1003,7 @@ export class GoalHijackDetector {
       }
 
       // Base64 编码指令检测
-      const base64Matches: RegExpMatchArray[] = Array.from(
-        content.matchAll(BASE64_PATTERN),
-      );
+      const base64Matches: RegExpMatchArray[] = Array.from(content.matchAll(BASE64_PATTERN));
       for (const match of base64Matches) {
         const encoded: string = match[0];
         const decoded: string | null = tryDecodeBase64(encoded);
@@ -983,9 +1095,7 @@ export class GoalHijackDetector {
     if (!state) {
       // 自动初始化漂移追踪状态
       const keywords: string[] =
-        ctx.goal.keywords.length > 0
-          ? ctx.goal.keywords
-          : extractKeywords(ctx.goal.description);
+        ctx.goal.keywords.length > 0 ? ctx.goal.keywords : extractKeywords(ctx.goal.description);
       state = {
         originalKeywords: new Set(keywords),
         driftHistory: [],
@@ -995,9 +1105,7 @@ export class GoalHijackDetector {
     }
 
     // 计算当前动作与原始目标的关键词相似度
-    const actionKeywords: Set<string> = new Set(
-      extractKeywords(ctx.currentAction),
-    );
+    const actionKeywords: Set<string> = new Set(extractKeywords(ctx.currentAction));
     const similarity: number = jaccardSimilarity(actionKeywords, state.originalKeywords);
     const driftScore: number = 1 - similarity;
 
@@ -1020,11 +1128,7 @@ export class GoalHijackDetector {
 
     if (exceedsThreshold || rapidDrift) {
       const severity: HijackSeverity =
-        driftScore > 0.9
-          ? 'critical'
-          : driftScore > 0.8
-            ? 'high'
-            : 'medium';
+        driftScore > 0.9 ? 'critical' : driftScore > 0.8 ? 'high' : 'medium';
 
       const result: HijackDetectionResult = {
         detected: true,
@@ -1081,8 +1185,7 @@ export class GoalHijackDetector {
    */
   detectRecursiveModification(ctx: GoalContext): HijackDetectionResult {
     const modKey: string = `${ctx.goal.goalId}::${ctx.sessionId}`;
-    const state: GoalModificationState | undefined =
-      this.modificationStates.get(modKey);
+    const state: GoalModificationState | undefined = this.modificationStates.get(modKey);
 
     if (!state || state.modifications.length === 0) {
       return {
@@ -1122,17 +1225,12 @@ export class GoalHijackDetector {
     }
 
     // 最新修改与原始目标的相似度
-    const latestMod: GoalModificationRecord =
-      state.modifications[state.modifications.length - 1]!;
+    const latestMod: GoalModificationRecord = state.modifications[state.modifications.length - 1]!;
     const latestSimilarity: number = latestMod.similarityToOriginal;
 
     if (exceedsMax || isProgressiveDivergence) {
       const severity: HijackSeverity =
-        exceedsMax && isProgressiveDivergence
-          ? 'critical'
-          : exceedsMax
-            ? 'high'
-            : 'medium';
+        exceedsMax && isProgressiveDivergence ? 'critical' : exceedsMax ? 'high' : 'medium';
 
       const reason: string = exceedsMax
         ? `目标修改次数 ${modCount} 超过最大值 ${this.config.maxGoalModifications}`
@@ -1165,13 +1263,11 @@ export class GoalHijackDetector {
         isProgressiveDivergence,
         divergenceTrend,
         latestSimilarity,
-        recentModifications: state.modifications.slice(-5).map(
-          (m: GoalModificationRecord) => ({
-            step: m.step,
-            similarityToOriginal: m.similarityToOriginal,
-            trigger: m.trigger,
-          }),
-        ),
+        recentModifications: state.modifications.slice(-5).map((m: GoalModificationRecord) => ({
+          step: m.step,
+          similarityToOriginal: m.similarityToOriginal,
+          trigger: m.trigger,
+        })),
       });
 
       return result;
@@ -1308,17 +1404,13 @@ export class GoalHijackDetector {
 
     try {
       const logger = getGlobalLogger();
-      logger.warn(
-        'GoalHijackDetector',
-        `目标劫持检测: [${result.type}] ${result.reason}`,
-        {
-          agentId: ctx.agentId,
-          sessionId: ctx.sessionId,
-          step: ctx.currentStep,
-          severity: result.severity,
-          confidence: result.confidence,
-        },
-      );
+      logger.warn('GoalHijackDetector', `目标劫持检测: [${result.type}] ${result.reason}`, {
+        agentId: ctx.agentId,
+        sessionId: ctx.sessionId,
+        step: ctx.currentStep,
+        severity: result.severity,
+        confidence: result.confidence,
+      });
     } catch (err) {
       reportSilentFailure(err, 'goalHijackDetector:logDetection:logger');
     }

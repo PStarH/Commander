@@ -16,10 +16,7 @@ export type {
   LLMJudgeConfig,
 } from './llmJudgeEngine';
 
-export {
-  DatasetVersionManager,
-  getGlobalDatasetManager,
-} from './datasetVersionManager';
+export { DatasetVersionManager, getGlobalDatasetManager } from './datasetVersionManager';
 export type {
   DatasetCase,
   DatasetVersion,

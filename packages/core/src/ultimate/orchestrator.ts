@@ -136,7 +136,10 @@ export class UltimateOrchestrator {
           getProvider.call(this.runtime, 'glm');
         if (judgeProvider) {
           const judgeModel = process.env.COMMANDER_JUDGE_MODEL ?? 'gpt-4o-mini';
-          this.synthesizer.setLLMEvaluator(judgeProvider as import('../runtime/types').LLMProvider, judgeModel);
+          this.synthesizer.setLLMEvaluator(
+            judgeProvider as import('../runtime/types').LLMProvider,
+            judgeModel,
+          );
         }
       }
     } catch {
@@ -491,9 +494,11 @@ export class UltimateOrchestrator {
       // ── Checkpoint Trigger (MiMo-style: 20%/45%/70% token budget) ──────
       // Runs an independent LLM call outside the main agent's attention.
       // Writes checkpoint.md for crash recovery and rebuild prompt injection.
-      this.checkpointManager.maybeCheckpoint(execId, taskTree, params, errors, reasoning).catch(() => {
-        // Background task — ignore failures, don't block the main loop
-      });
+      this.checkpointManager
+        .maybeCheckpoint(execId, taskTree, params, errors, reasoning)
+        .catch(() => {
+          // Background task — ignore failures, don't block the main loop
+        });
 
       // Fetch artifacts before merging shared state (allArtifacts needed for merge + synthesis)
       const allArtifacts = await this.artifactSystem.find({ tags: ['completed'] }, 50);
@@ -565,7 +570,9 @@ export class UltimateOrchestrator {
       }
 
       // ── Checkpoint after synthesis (captures final state before quality gates) ──
-      this.checkpointManager.maybeCheckpoint(execId, taskTree, params, errors, reasoning).catch(() => {});
+      this.checkpointManager
+        .maybeCheckpoint(execId, taskTree, params, errors, reasoning)
+        .catch(() => {});
 
       // Phase 8: Quality Gates with Reflexion-inspired auto-fix retry loop
       const fixResult = await this.qualityGateFixer.runAutoFixLoop(
@@ -756,7 +763,9 @@ export class UltimateOrchestrator {
       };
     } finally {
       // Terminal checkpoint: capture final state for future rebuild
-      this.checkpointManager.maybeCheckpoint(execId, taskTree, params, errors, reasoning).catch(() => {});
+      this.checkpointManager
+        .maybeCheckpoint(execId, taskTree, params, errors, reasoning)
+        .catch(() => {});
       // Clean up rebuild tracking for this run (prevents unbounded Map growth)
       try {
         getRebuildPrompt().resetRun(execId);
@@ -886,4 +895,3 @@ export class UltimateOrchestrator {
 
 // Re-export tree utilities for backward compatibility (tests and consumers that import from orchestrator)
 export { countNodes, measureDepth, flattenTree } from './taskTreeUtils';
-

@@ -45,7 +45,14 @@ function encryptSecret(plaintext: string): string {
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
   const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   const tag = cipher.getAuthTag();
-  return WEBHOOK_ENC_PREFIX + iv.toString('hex') + ':' + tag.toString('hex') + ':' + encrypted.toString('hex');
+  return (
+    WEBHOOK_ENC_PREFIX +
+    iv.toString('hex') +
+    ':' +
+    tag.toString('hex') +
+    ':' +
+    encrypted.toString('hex')
+  );
 }
 
 function decryptSecret(stored: string): string {
@@ -56,7 +63,10 @@ function decryptSecret(stored: string): string {
   const key = getMasterKey();
   if (!key) {
     // Encrypted but no master key available — can't decrypt
-    getGlobalLogger().warn('WebhookManager', 'Encrypted webhook secret found but COMMANDER_MASTER_KEY not set');
+    getGlobalLogger().warn(
+      'WebhookManager',
+      'Encrypted webhook secret found but COMMANDER_MASTER_KEY not set',
+    );
     return '';
   }
   try {
@@ -156,9 +166,7 @@ export class WebhookManager {
    */
   add(rule: Omit<WebhookRule, 'id' | 'createdAt' | 'triggerCount'>): WebhookRule {
     if (!rule.secret || rule.secret.length < 16) {
-      throw new Error(
-        'Webhook rules must configure a signing secret of at least 16 characters.',
-      );
+      throw new Error('Webhook rules must configure a signing secret of at least 16 characters.');
     }
 
     const id = `wh-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -293,9 +301,7 @@ export class WebhookManager {
    */
   async startServer(port: number = 9876, authToken?: string): Promise<void> {
     if (!authToken || authToken.length < 16) {
-      throw new Error(
-        'Webhook server requires an authToken of at least 16 characters.',
-      );
+      throw new Error('Webhook server requires an authToken of at least 16 characters.');
     }
 
     const http = await import('http');

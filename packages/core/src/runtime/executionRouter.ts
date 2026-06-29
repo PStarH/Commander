@@ -8,10 +8,7 @@
  * Returns a discriminated union: either 'proceed' with all routing data, or
  * 'cancelled' with a summary string (when privacy check blocks execution).
  */
-import type {
-  AgentExecutionContext,
-  RoutingDecision,
-} from './types';
+import type { AgentExecutionContext, RoutingDecision } from './types';
 import type { ModelConfig } from './types/routing';
 import type { ModelTier } from './types';
 import { ModelRouter } from './modelRouter';

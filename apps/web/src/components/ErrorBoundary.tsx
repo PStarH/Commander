@@ -65,8 +65,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             Something went wrong
           </h1>
           <p style={{ marginBottom: '1.5rem', color: '#8b949e', maxWidth: '40rem' }}>
-            The application encountered an unexpected error while rendering. You can try
-            reloading the page.
+            The application encountered an unexpected error while rendering. You can try reloading
+            the page.
           </p>
           <pre
             style={{

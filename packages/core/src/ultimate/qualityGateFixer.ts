@@ -152,9 +152,7 @@ export class QualityGateFixer {
 
             // Early exit: if fix didn't improve score, don't waste another attempt
             if (finalQualityScore <= previousAttemptScore) {
-              reasoning.push(
-                `Auto-fix ${fixAttempt + 1}: no score improvement, stopping fix loop`,
-              );
+              reasoning.push(`Auto-fix ${fixAttempt + 1}: no score improvement, stopping fix loop`);
               break;
             }
           } else {

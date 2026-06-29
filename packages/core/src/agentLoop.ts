@@ -437,7 +437,10 @@ export class CommanderAgentLoop {
               port: (serverCfg.port as number) ?? 3002,
               host: (serverCfg.host as string) ?? '127.0.0.1',
               agentCard,
-              authToken: (serverCfg.authToken as string) ?? process.env.A2A_AUTH_TOKEN ?? crypto.randomUUID() + crypto.randomUUID(),
+              authToken:
+                (serverCfg.authToken as string) ??
+                process.env.A2A_AUTH_TOKEN ??
+                crypto.randomUUID() + crypto.randomUUID(),
             },
             this.runtime,
           );
