@@ -680,7 +680,7 @@ export interface HarnessServices {
   drainSteerQueue(): SteerMessage[];
 
   // ── Patch Application (Codex apply_patch) ──
-  applyPatch(request: PatchRequest): PatchResult;
+  applyPatch(request: PatchRequest): Promise<PatchResult>;
 
   // ── Plan Mode (Codex CLI) ──
   updatePlanItem(itemId: string, update: Partial<PlanItem>): void;
