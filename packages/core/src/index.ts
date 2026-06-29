@@ -673,10 +673,7 @@ export {
 export type { CostBreakdown, TokenBreakdown, ModelPricing } from './observability/types';
 
 // Observability HTTP API — unified handler for trace/cost/decision endpoints
-export {
-  handleObservabilityRequest,
-  OBSERVABILITY_HTTP_ROUTES,
-} from './observability/httpApi';
+export { handleObservabilityRequest, OBSERVABILITY_HTTP_ROUTES } from './observability/httpApi';
 export type { ObservabilityDeps, ObservabilityResult } from './observability/httpApi';
 
 // Trace Store — durable execution-trace persistence (single source of truth in core)
@@ -903,11 +900,7 @@ export type {
 } from './runtime/supervisionTree';
 
 // PRM (Process Reward Model) regression gate types
-export type {
-  PRMScoreEntry,
-  PRMRegressionAlert,
-  PRMConfig,
-} from './selfEvolution/regressionGate';
+export type { PRMScoreEntry, PRMRegressionAlert, PRMConfig } from './selfEvolution/regressionGate';
 
 export { TaskComplexityAnalyzer } from './taskComplexityAnalyzer';
 
@@ -1207,6 +1200,7 @@ export type {
   SecurityOrchestratorDecision,
   SecurityOrchestratorConfig,
 } from './runtime/securityOrchestrator';
+export { ReliabilityEngine } from './runtime/reliabilityEngine';
 export type { ReliabilityEngineConfig, ReliabilityStats } from './runtime/reliabilityEngine';
 
 // Commander Core — tiered auto-configuration control center (recommended entry)

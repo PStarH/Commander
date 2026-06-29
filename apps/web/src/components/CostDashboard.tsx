@@ -98,26 +98,23 @@ export function CostDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const loadData = useCallback(
-    async (range: CostTimeRange, isRefresh = false) => {
-      if (isRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
-      try {
-        const result = await fetchCostDashboard(range);
-        setData(result);
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load cost dashboard');
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
-      }
-    },
-    [],
-  );
+  const loadData = useCallback(async (range: CostTimeRange, isRefresh = false) => {
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+    try {
+      const result = await fetchCostDashboard(range);
+      setData(result);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load cost dashboard');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
 
   // Load on mount and when time range changes
   useEffect(() => {
@@ -256,9 +253,7 @@ export function CostDashboard() {
               value={formatCost(data.summary.cacheSavingsUsd)}
               icon={<Save size={14} />}
               trend={
-                data.summary.cacheSavingsUsd > 0
-                  ? { value: 'saved', positive: true }
-                  : undefined
+                data.summary.cacheSavingsUsd > 0 ? { value: 'saved', positive: true } : undefined
               }
             />
           </div>
@@ -312,7 +307,8 @@ export function CostDashboard() {
           {/* ── Peak cost info ────────────────────────────────────────── */}
           {data.summary.peakCostHour && (
             <div className="narrative narrative-amber" style={{ marginTop: 12 }}>
-              <AlertTriangle size={14} /> Peak cost hour: {data.summary.peakCostHour.replace('T', ' ')}:00 UTC
+              <AlertTriangle size={14} /> Peak cost hour:{' '}
+              {data.summary.peakCostHour.replace('T', ' ')}:00 UTC
             </div>
           )}
 

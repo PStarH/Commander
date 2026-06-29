@@ -60,6 +60,8 @@ import { createKnowledgeBaseRouter } from './knowledgeBaseEndpoints';
 import { createOnboardingRouter } from './onboardingEndpoints';
 import { createAuditLogRouter } from './auditLogEndpoints';
 import { createAuditMiddleware } from './auditMiddleware';
+import { createSagaRouter } from './sagaEndpoints';
+import { createHubCorrelationsRouter } from './hubCorrelationsEndpoints';
 import { getUnifiedAuditLog, dlpResponseMiddleware } from '@commander/core/security';
 
 const PROJECT_ID = process.env.COMMANDER_PROJECT_ID ?? 'project-war-room';
@@ -271,30 +273,32 @@ app.get('/metrics', (_req, res) => {
   const rss = memUsage.rss;
   const uptime = process.uptime();
 
-  res.type('text/plain; version=0.0.4').send(
-    [
-      '# HELP commander_heap_used_bytes Heap memory used in bytes',
-      '# TYPE commander_heap_used_bytes gauge',
-      `commander_heap_used_bytes ${heapUsed}`,
-      '',
-      '# HELP commander_heap_total_bytes Total heap size in bytes',
-      '# TYPE commander_heap_total_bytes gauge',
-      `commander_heap_total_bytes ${heapTotal}`,
-      '',
-      '# HELP commander_rss_bytes Resident set size in bytes',
-      '# TYPE commander_rss_bytes gauge',
-      `commander_rss_bytes ${rss}`,
-      '',
-      '# HELP commander_uptime_seconds Server uptime in seconds',
-      '# TYPE commander_uptime_seconds gauge',
-      `commander_uptime_seconds ${uptime}`,
-      '',
-      '# HELP commander_heap_percent Heap usage percentage',
-      '# TYPE commander_heap_percent gauge',
-      `commander_heap_percent ${Math.round((heapUsed / heapTotal) * 100)}`,
-      '',
-    ].join('\n'),
-  );
+  res
+    .type('text/plain; version=0.0.4')
+    .send(
+      [
+        '# HELP commander_heap_used_bytes Heap memory used in bytes',
+        '# TYPE commander_heap_used_bytes gauge',
+        `commander_heap_used_bytes ${heapUsed}`,
+        '',
+        '# HELP commander_heap_total_bytes Total heap size in bytes',
+        '# TYPE commander_heap_total_bytes gauge',
+        `commander_heap_total_bytes ${heapTotal}`,
+        '',
+        '# HELP commander_rss_bytes Resident set size in bytes',
+        '# TYPE commander_rss_bytes gauge',
+        `commander_rss_bytes ${rss}`,
+        '',
+        '# HELP commander_uptime_seconds Server uptime in seconds',
+        '# TYPE commander_uptime_seconds gauge',
+        `commander_uptime_seconds ${uptime}`,
+        '',
+        '# HELP commander_heap_percent Heap usage percentage',
+        '# TYPE commander_heap_percent gauge',
+        `commander_heap_percent ${Math.round((heapUsed / heapTotal) * 100)}`,
+        '',
+      ].join('\n'),
+    );
 });
 
 app.get('/system/status', (_req, res) => {
@@ -378,9 +382,7 @@ getHookManager()
     // explicitly via POST /api/knowledge-base/enable).
     getHookManager().disable('builtin-rag');
   })
-  .catch((err: unknown) =>
-    console.error('RAG plugin registration failed:', err),
-  );
+  .catch((err: unknown) => console.error('RAG plugin registration failed:', err));
 
 app.use(createKnowledgeBaseRouter());
 
@@ -390,6 +392,16 @@ app.use(createAuditLogRouter());
 // ── Onboarding Wizard (Web 端上手引导) ──────────────────────────────────────
 // 解决 POC→生产鸿沟：为新用户提供首次登录后的多步骤引导向导后端能力。
 app.use(createOnboardingRouter());
+
+// ── Saga Compensation (分布式事务补偿) ───────────────────────────────────────
+// Saga 模式长运行事务的管理与补偿：列出运行中事务、查看时间线、
+// 恢复中断事务、分叉新执行路径、实时流传输状态变更。
+app.use(createSagaRouter());
+
+// ── Hub Correlations (Tier-0 关联事件可观测性) ──────────────────────────────
+// 跨运行时关联事件的管理员观测端点：循环检测关联、重试阻断关联、
+// 语义断路器关联。支持 REST 摘要查询和 SSE 实时流。
+app.use('/api/v1/hub/correlations', createHubCorrelationsRouter());
 
 // ── API v1 versioned aliases (backward-compatible) ──────────────────────────
 // All routes are accessible under /api/v1/ prefix in addition to their original paths.

@@ -1,10 +1,10 @@
 import { reportSilentFailure } from '../silentFailureReporter';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { execSandboxed } from './sandboxedExec';
 import { safePath } from './fileSystemTool';
 import { getGlobalLogger } from '../logging';
-import { pathExists } from './_utils/pathExists';
-import * as path from 'node:path';
 
 const DEFINITION: ToolDefinition = {
   name: 'verify',
@@ -62,9 +62,9 @@ export class VerificationTool implements Tool {
     let directory: string;
     if (args.directory) {
       try {
-        directory = safePath(String(args.directory));
+        directory = await safePath(String(args.directory));
       } catch (err) {
-        reportSilentFailure(err, 'verificationTool:64');
+        reportSilentFailure(err, 'verificationTool:62');
         return `Error: Access denied: directory "${args.directory}" is outside workspace`;
       }
     } else {
@@ -286,13 +286,39 @@ export class VerificationTool implements Tool {
     };
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // hasTool / hasFile — async equivalents of the original fs.existsSync usage.
+  // Preserve the original telemetry: log unexpected errors (EACCES, EMFILE, …)
+  // via getGlobalLogger so a real config issue surfaces in CI, while only
+  // ENOENT/ENOTDIR are silent "false" returns.
+  // ─────────────────────────────────────────────────────────────────────────
   private async hasTool(cwd: string, relPath: string): Promise<boolean> {
-    return pathExists(path.join(cwd, relPath));
+    try {
+      await fs.promises.access(path.join(cwd, relPath), fs.constants.F_OK);
+      return true;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException)?.code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+      getGlobalLogger().warn('VerificationTool', 'Tool check failed', {
+        error: (e as Error)?.message,
+        relPath,
+      });
+      return false;
+    }
   }
 
   private async hasFile(cwd: string, name: string): Promise<boolean> {
-    return pathExists(path.join(cwd, name));
+    try {
+      await fs.promises.access(path.join(cwd, name), fs.constants.F_OK);
+      return true;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException)?.code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+      getGlobalLogger().warn('VerificationTool', 'File check failed', {
+        error: (e as Error)?.message,
+        name,
+      });
+      return false;
+    }
   }
 }
-
-

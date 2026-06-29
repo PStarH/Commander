@@ -63,16 +63,8 @@ export class DefaultHarness extends BaseHarness {
    * wrapping the existing AgentRuntime's LLM → Tools → Verification cycle.
    */
   async runAttempt(params: HarnessRunParams): Promise<AgentExecutionResult> {
-    const {
-      goal,
-      messages,
-      availableTools,
-      maxSteps,
-      tenantId,
-      routing,
-      services,
-      outputSchema,
-    } = params;
+    const { goal, messages, availableTools, maxSteps, tenantId, routing, services, outputSchema } =
+      params;
 
     // Use BaseHarness.startRun() to create a fresh AbortController per run.
     // Any externally-supplied signal (params.signal) is bridged so callers
@@ -82,11 +74,7 @@ export class DefaultHarness extends BaseHarness {
     if (params.signal?.aborted) {
       this.abortController!.abort();
     } else if (params.signal) {
-      params.signal.addEventListener(
-        'abort',
-        () => this.abortController?.abort(),
-        { once: true },
-      );
+      params.signal.addEventListener('abort', () => this.abortController?.abort(), { once: true });
     }
     const steps: AgentExecutionResult['steps'] = [];
     const totalTokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };

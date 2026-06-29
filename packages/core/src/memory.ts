@@ -272,8 +272,11 @@ export class InMemoryMemoryStore implements MemoryStore {
       // Security: Prevent prototype pollution by filtering dangerous keys.
       // Per OWASP: never merge untrusted objects without stripping __proto__.
       const safeUpdates = { ...options.updates };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       delete (safeUpdates as any).__proto__;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       delete (safeUpdates as any).constructor;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       delete (safeUpdates as any).prototype;
       Object.assign(item, safeUpdates);
       item.lastAccessedAt = new Date().toISOString();
@@ -324,7 +327,11 @@ export class InMemoryMemoryStore implements MemoryStore {
     return toDelete.length;
   }
 
-  async read(id: string, projectId: string, readerAgentId?: string): Promise<EpisodicMemoryItem | null> {
+  async read(
+    id: string,
+    projectId: string,
+    readerAgentId?: string,
+  ): Promise<EpisodicMemoryItem | null> {
     const item = this.items.get(id);
     if (!item || item.projectId !== projectId) {
       return null;

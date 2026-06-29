@@ -265,7 +265,11 @@ export class AttackCampaignTracker {
           campaign = dormant;
           campaign.active = true;
           this.addEventToCampaign(campaign, event);
-          this.recordPhaseTransition(campaign, this.detectPhase(campaign, eventTime), 'evolutionary_link');
+          this.recordPhaseTransition(
+            campaign,
+            this.detectPhase(campaign, eventTime),
+            'evolutionary_link',
+          );
           this.logEvolutionaryLink(campaign, event);
         } else {
           // 3. 创建新战役
@@ -454,7 +458,9 @@ export class AttackCampaignTracker {
       techniquesUsed: [event.technique],
       signatureIds: new Set(event.signatureId ? [event.signatureId] : []),
       incidents: [event],
-      phaseHistory: [{ phase: 'reconnaissance', timestamp: event.timestamp, trigger: 'campaign_created' }],
+      phaseHistory: [
+        { phase: 'reconnaissance', timestamp: event.timestamp, trigger: 'campaign_created' },
+      ],
       severityProgression: [{ severity: event.severity, timestamp: event.timestamp }],
       correlatedCampaignIds: new Set(),
       active: true,
@@ -556,7 +562,11 @@ export class AttackCampaignTracker {
   }
 
   /** 若新阶段与当前不同，记录阶段转换并审计。 */
-  private recordPhaseTransition(campaign: AttackCampaign, newPhase: CampaignPhase, trigger: string): void {
+  private recordPhaseTransition(
+    campaign: AttackCampaign,
+    newPhase: CampaignPhase,
+    trigger: string,
+  ): void {
     if (campaign.phase === newPhase) return;
     campaign.phaseHistory.push({ phase: newPhase, timestamp: new Date().toISOString(), trigger });
     campaign.phase = newPhase;
@@ -706,12 +716,16 @@ export class AttackCampaignTracker {
   }
 
   /** 攻击频率：比较前半段与后半段的平均事件间隔（间隔缩短即加速）。 */
-  private computeAttackFrequency(campaign: AttackCampaign): 'accelerating' | 'steady' | 'decreasing' {
+  private computeAttackFrequency(
+    campaign: AttackCampaign,
+  ): 'accelerating' | 'steady' | 'decreasing' {
     const inc = campaign.incidents;
     if (inc.length < 4) return 'steady';
     const intervals: number[] = [];
     for (let i = 1; i < inc.length; i++) {
-      intervals.push(new Date(inc[i].timestamp).getTime() - new Date(inc[i - 1].timestamp).getTime());
+      intervals.push(
+        new Date(inc[i].timestamp).getTime() - new Date(inc[i - 1].timestamp).getTime(),
+      );
     }
     const half = Math.floor(intervals.length / 2);
     const firstAvg = this.avg(intervals.slice(0, half));
@@ -775,7 +789,11 @@ export class AttackCampaignTracker {
     };
 
     // 一次性计算两两相似度，缓存结果
-    const pairCache: Array<{ i: number; j: number; sim: ReturnType<AttackCampaignTracker['computeCampaignSimilarity']> }> = [];
+    const pairCache: Array<{
+      i: number;
+      j: number;
+      sim: ReturnType<AttackCampaignTracker['computeCampaignSimilarity']>;
+    }> = [];
     for (let i = 0; i < all.length; i++) {
       for (let j = i + 1; j < all.length; j++) {
         const sim = this.computeCampaignSimilarity(all[i], all[j]);
@@ -1017,7 +1035,10 @@ export class AttackCampaignTracker {
           prediction: `Likely to probe: ${probingTargets.join(', ') || 'additional endpoints on affected agents'}`,
           confidence: 0.55,
           recommendedDefense: 'Harden endpoints not yet probed but in the same agent/tenant',
-          preemptiveActions: ['Audit sibling endpoints on affected agents', 'Add input validation to unprobed endpoints'],
+          preemptiveActions: [
+            'Audit sibling endpoints on affected agents',
+            'Add input validation to unprobed endpoints',
+          ],
         });
         break;
       case 'probing':
@@ -1028,7 +1049,11 @@ export class AttackCampaignTracker {
           prediction: 'Likely transitioning to active exploitation of vulnerable targets',
           confidence: 0.65,
           recommendedDefense: 'Patch and verify the systematically probed endpoints',
-          preemptiveActions: ['Patch probed endpoints', 'Enable exploit-prevention rules', 'Block IPs hitting probed endpoints'],
+          preemptiveActions: [
+            'Patch probed endpoints',
+            'Enable exploit-prevention rules',
+            'Block IPs hitting probed endpoints',
+          ],
         });
         preds.push({
           ...base,
@@ -1048,7 +1073,11 @@ export class AttackCampaignTracker {
           prediction: 'Likely escalating to higher-privilege targets after initial foothold',
           confidence: 0.7,
           recommendedDefense: 'Contain compromised agents; rotate credentials',
-          preemptiveActions: ['Isolate compromised agents', 'Rotate credentials on affected tenants', 'Block lateral tool calls'],
+          preemptiveActions: [
+            'Isolate compromised agents',
+            'Rotate credentials on affected tenants',
+            'Block lateral tool calls',
+          ],
         });
         preds.push({
           ...base,
@@ -1057,7 +1086,10 @@ export class AttackCampaignTracker {
           prediction: 'Likely to target higher-privilege agents and credential stores',
           confidence: 0.6,
           recommendedDefense: 'Harden privileged agents and credential access',
-          preemptiveActions: ['Lock down privileged agents', 'Require approval for credential access'],
+          preemptiveActions: [
+            'Lock down privileged agents',
+            'Require approval for credential access',
+          ],
         });
         break;
       case 'escalation':
@@ -1068,7 +1100,11 @@ export class AttackCampaignTracker {
           prediction: 'Likely attempting persistence on compromised systems',
           confidence: 0.7,
           recommendedDefense: 'Hunt for persistence mechanisms; audit scheduled tasks and configs',
-          preemptiveActions: ['Audit persistence surfaces', 'Monitor for config/scheduled-task changes', 'Snapshot affected agents'],
+          preemptiveActions: [
+            'Audit persistence surfaces',
+            'Monitor for config/scheduled-task changes',
+            'Snapshot affected agents',
+          ],
         });
         preds.push({
           ...base,
@@ -1088,7 +1124,11 @@ export class AttackCampaignTracker {
           prediction: 'Likely to be detected and blocked, or attempt further lateral movement',
           confidence: 0.55,
           recommendedDefense: 'Aggressively hunt and eradicate persistence',
-          preemptiveActions: ['Scan for backdoors', 'Re-verify agent integrity', 'Force re-deployment of affected agents'],
+          preemptiveActions: [
+            'Scan for backdoors',
+            'Re-verify agent integrity',
+            'Force re-deployment of affected agents',
+          ],
         });
         break;
       case 'blocked':
@@ -1098,7 +1138,8 @@ export class AttackCampaignTracker {
           type: 'adaptation_strategy',
           prediction: 'Attacker likely to adapt: rotate source IP/UA, or switch techniques',
           confidence: 0.75,
-          recommendedDefense: 'Prepare for variant attacks; broaden detection to technique families',
+          recommendedDefense:
+            'Prepare for variant attacks; broaden detection to technique families',
           preemptiveActions: [
             'Extend blocks to IP ranges',
             'Add technique-family signatures',
@@ -1145,7 +1186,8 @@ export class AttackCampaignTracker {
 
     for (const pred of built) {
       if (existingTypes.has(pred.type)) continue;
-      if (this.countPredictions(campaign.campaignId) >= this.config.maxPredictionsPerCampaign) break;
+      if (this.countPredictions(campaign.campaignId) >= this.config.maxPredictionsPerCampaign)
+        break;
       this.predictions.set(pred.predictionId, pred);
       this.recordPredictionMade();
       this.logPrediction(campaign, pred);
@@ -1297,11 +1339,14 @@ export class AttackCampaignTracker {
   ): string {
     const parts: string[] = [];
     parts.push(`Campaign ${campaign.name} (${campaign.phase})`);
-    parts.push(`${campaign.totalIncidents} incidents across ${campaign.affectedAgents.size} agent(s)`);
+    parts.push(
+      `${campaign.totalIncidents} incidents across ${campaign.affectedAgents.size} agent(s)`,
+    );
     parts.push(`severity ${e.severityTrend}`);
     parts.push(`targets ${e.targetExpansion}`);
     parts.push(`frequency ${e.attackFrequency}`);
-    if (e.adaptationDetected) parts.push('attacker adaptation detected (technique shift after block)');
+    if (e.adaptationDetected)
+      parts.push('attacker adaptation detected (technique shift after block)');
     parts.push(`${campaign.techniquesUsed.length} technique(s) used`);
     return parts.join('; ');
   }
@@ -1361,7 +1406,11 @@ export class AttackCampaignTracker {
     }
   }
 
-  private logPhaseTransition(campaign: AttackCampaign, phase: CampaignPhase, trigger: string): void {
+  private logPhaseTransition(
+    campaign: AttackCampaign,
+    phase: CampaignPhase,
+    trigger: string,
+  ): void {
     try {
       const severity: SecuritySeverity =
         phase === 'exploitation' || phase === 'escalation' || phase === 'persistence'
@@ -1385,9 +1434,13 @@ export class AttackCampaignTracker {
       reportSilentFailure(err, 'attackCampaignTracker:logPhaseTransition');
     }
     try {
-      getGlobalLogger().warn('AttackCampaignTracker', `Phase transition: ${campaign.campaignId} → ${phase}`, {
-        trigger,
-      });
+      getGlobalLogger().warn(
+        'AttackCampaignTracker',
+        `Phase transition: ${campaign.campaignId} → ${phase}`,
+        {
+          trigger,
+        },
+      );
     } catch (err) {
       reportSilentFailure(err, 'attackCampaignTracker:logPhaseTransition');
     }
@@ -1566,7 +1619,9 @@ const trackerSingleton = createTenantAwareSingleton(() => new AttackCampaignTrac
  * 获取 AttackCampaignTracker 单例。可选配置仅在尚无战役时应用一次，
  * 以避免在运行期反复覆盖配置。
  */
-export function getAttackCampaignTracker(config?: Partial<CampaignTrackerConfig>): AttackCampaignTracker {
+export function getAttackCampaignTracker(
+  config?: Partial<CampaignTrackerConfig>,
+): AttackCampaignTracker {
   const tracker = trackerSingleton.get();
   if (config && tracker.getAllCampaigns().length === 0) {
     tracker.updateConfig(config);

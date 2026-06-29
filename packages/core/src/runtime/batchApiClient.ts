@@ -106,10 +106,15 @@ async function submitOpenAIBatch(
 
     if (!uploadResponse.ok) {
       const err = await uploadResponse.text();
-      return { batchId: '', status: 'failed', provider: 'openai', error: `File upload failed: ${err}` };
+      return {
+        batchId: '',
+        status: 'failed',
+        provider: 'openai',
+        error: `File upload failed: ${err}`,
+      };
     }
 
-    const uploadData = await uploadResponse.json() as { id: string };
+    const uploadData = (await uploadResponse.json()) as { id: string };
     const fileId = uploadData.id;
 
     // Step 2: Create the batch
@@ -128,10 +133,15 @@ async function submitOpenAIBatch(
 
     if (!batchResponse.ok) {
       const err = await batchResponse.text();
-      return { batchId: '', status: 'failed', provider: 'openai', error: `Batch creation failed: ${err}` };
+      return {
+        batchId: '',
+        status: 'failed',
+        provider: 'openai',
+        error: `Batch creation failed: ${err}`,
+      };
     }
 
-    const batchData = await batchResponse.json() as { id: string };
+    const batchData = (await batchResponse.json()) as { id: string };
     return { batchId: batchData.id, status: 'submitted', provider: 'openai' };
   } catch (err) {
     return {
@@ -146,10 +156,7 @@ async function submitOpenAIBatch(
 /**
  * Poll OpenAI batch status until completion or timeout.
  */
-async function pollOpenAIBatch(
-  batchId: string,
-  config: BatchAPIConfig,
-): Promise<BatchPollResult> {
+async function pollOpenAIBatch(batchId: string, config: BatchAPIConfig): Promise<BatchPollResult> {
   const baseUrl = config.baseUrl ?? 'https://api.openai.com/v1';
 
   for (let attempt = 0; attempt < config.maxPollAttempts; attempt++) {
@@ -162,11 +169,15 @@ async function pollOpenAIBatch(
 
       if (!response.ok) {
         const err = await response.text();
-        getGlobalLogger().warn('BatchAPIClient', `OpenAI batch poll error (attempt ${attempt + 1})`, { error: err });
+        getGlobalLogger().warn(
+          'BatchAPIClient',
+          `OpenAI batch poll error (attempt ${attempt + 1})`,
+          { error: err },
+        );
         continue;
       }
 
-      const data = await response.json() as {
+      const data = (await response.json()) as {
         status: string;
         output_file_id?: string;
         error_file_id?: string;
@@ -193,13 +204,20 @@ async function pollOpenAIBatch(
       }
       // status: 'in_progress' | 'finalizing' | 'cancelling' — keep polling
     } catch (err) {
-      getGlobalLogger().warn('BatchAPIClient', `OpenAI batch poll exception (attempt ${attempt + 1})`, {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      getGlobalLogger().warn(
+        'BatchAPIClient',
+        `OpenAI batch poll exception (attempt ${attempt + 1})`,
+        {
+          error: err instanceof Error ? err.message : String(err),
+        },
+      );
     }
   }
 
-  return { status: 'expired', error: `Batch ${batchId} did not complete within ${config.maxPollAttempts * config.pollIntervalMs / 1000}s` };
+  return {
+    status: 'expired',
+    error: `Batch ${batchId} did not complete within ${(config.maxPollAttempts * config.pollIntervalMs) / 1000}s`,
+  };
 }
 
 /**
@@ -213,10 +231,18 @@ function parseOpenAIBatchResult(jsonlContent: string): BatchPollResult {
         response?: {
           body?: {
             choices?: Array<{
-              message?: { content?: string; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> };
+              message?: {
+                content?: string;
+                tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
+              };
               finish_reason?: string;
             }>;
-            usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number; prompt_tokens_details?: { cached_tokens?: number } };
+            usage?: {
+              prompt_tokens: number;
+              completion_tokens: number;
+              total_tokens: number;
+              prompt_tokens_details?: { cached_tokens?: number };
+            };
           };
           status?: number;
         };
@@ -243,7 +269,12 @@ function parseOpenAIBatchResult(jsonlContent: string): BatchPollResult {
         content: choice.message?.content ?? '',
         model: '',
         usage,
-        finishReason: choice.finish_reason === 'stop' ? 'stop' : choice.finish_reason === 'tool_calls' ? 'tool_calls' : 'stop',
+        finishReason:
+          choice.finish_reason === 'stop'
+            ? 'stop'
+            : choice.finish_reason === 'tool_calls'
+              ? 'tool_calls'
+              : 'stop',
         toolCalls: choice.message?.tool_calls?.map((tc) => ({
           id: tc.id,
           name: tc.function.name,
@@ -307,10 +338,15 @@ async function submitAnthropicBatch(
 
     if (!response.ok) {
       const err = await response.text();
-      return { batchId: '', status: 'failed', provider: 'anthropic', error: `Batch creation failed: ${err}` };
+      return {
+        batchId: '',
+        status: 'failed',
+        provider: 'anthropic',
+        error: `Batch creation failed: ${err}`,
+      };
     }
 
-    const data = await response.json() as { id: string };
+    const data = (await response.json()) as { id: string };
     return { batchId: data.id, status: 'submitted', provider: 'anthropic' };
   } catch (err) {
     return {
@@ -344,11 +380,15 @@ async function pollAnthropicBatch(
 
       if (!response.ok) {
         const err = await response.text();
-        getGlobalLogger().warn('BatchAPIClient', `Anthropic batch poll error (attempt ${attempt + 1})`, { error: err });
+        getGlobalLogger().warn(
+          'BatchAPIClient',
+          `Anthropic batch poll error (attempt ${attempt + 1})`,
+          { error: err },
+        );
         continue;
       }
 
-      const data = await response.json() as {
+      const data = (await response.json()) as {
         processing_status: string;
         result_type?: string;
         results?: Record<string, unknown>;
@@ -365,14 +405,21 @@ async function pollAnthropicBatch(
           });
 
           if (resultsResponse.ok) {
-            const resultsData = await resultsResponse.json() as Record<string, {
-              result?: {
-                content?: Array<{ type: string; text?: string }>;
-                usage?: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number };
-                stop_reason?: string;
-              };
-              error?: { type: string; message: string };
-            }>;
+            const resultsData = (await resultsResponse.json()) as Record<
+              string,
+              {
+                result?: {
+                  content?: Array<{ type: string; text?: string }>;
+                  usage?: {
+                    input_tokens: number;
+                    output_tokens: number;
+                    cache_read_input_tokens?: number;
+                  };
+                  stop_reason?: string;
+                };
+                error?: { type: string; message: string };
+              }
+            >;
 
             for (const key of Object.keys(resultsData)) {
               const entry = resultsData[key];
@@ -380,11 +427,15 @@ async function pollAnthropicBatch(
                 return { status: 'failed', error: entry.error.message };
               }
               if (entry.result) {
-                const textParts = entry.result.content?.filter((c) => c.type === 'text').map((c) => c.text ?? '') ?? [];
+                const textParts =
+                  entry.result.content?.filter((c) => c.type === 'text').map((c) => c.text ?? '') ??
+                  [];
                 const usage: TokenUsage = {
                   promptTokens: entry.result.usage?.input_tokens ?? 0,
                   completionTokens: entry.result.usage?.output_tokens ?? 0,
-                  totalTokens: (entry.result.usage?.input_tokens ?? 0) + (entry.result.usage?.output_tokens ?? 0),
+                  totalTokens:
+                    (entry.result.usage?.input_tokens ?? 0) +
+                    (entry.result.usage?.output_tokens ?? 0),
                   cacheReadTokens: entry.result.usage?.cache_read_input_tokens ?? 0,
                 };
                 const result: LLMResponse = {
@@ -407,13 +458,20 @@ async function pollAnthropicBatch(
       }
       // processing_status: 'in_progress' | 'canceling' — keep polling
     } catch (err) {
-      getGlobalLogger().warn('BatchAPIClient', `Anthropic batch poll exception (attempt ${attempt + 1})`, {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      getGlobalLogger().warn(
+        'BatchAPIClient',
+        `Anthropic batch poll exception (attempt ${attempt + 1})`,
+        {
+          error: err instanceof Error ? err.message : String(err),
+        },
+      );
     }
   }
 
-  return { status: 'expired', error: `Batch ${batchId} did not complete within ${config.maxPollAttempts * config.pollIntervalMs / 1000}s` };
+  return {
+    status: 'expired',
+    error: `Batch ${batchId} did not complete within ${(config.maxPollAttempts * config.pollIntervalMs) / 1000}s`,
+  };
 }
 
 // ============================================================================
@@ -466,11 +524,15 @@ export async function executeViaBatchAPI(
   }
 
   // Step 3: Fail-closed — batch didn't complete
-  getGlobalLogger().warn('BatchAPIClient', `${provider} batch did not complete, falling back to standard API`, {
-    batchId: submission.batchId,
-    status: pollResult.status,
-    error: pollResult.error,
-  });
+  getGlobalLogger().warn(
+    'BatchAPIClient',
+    `${provider} batch did not complete, falling back to standard API`,
+    {
+      batchId: submission.batchId,
+      status: pollResult.status,
+      error: pollResult.error,
+    },
+  );
   return null;
 }
 

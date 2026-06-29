@@ -13,15 +13,15 @@ import { URL } from 'node:url';
 // Block requests to private/internal IP ranges and cloud metadata endpoints.
 // Per OWASP SSRF Prevention Cheat Sheet: validate scheme, reject private IPs.
 const PRIVATE_IP_PATTERNS = [
-  /^127\./,                          // Loopback
-  /^10\./,                           // RFC 1918
+  /^127\./, // Loopback
+  /^10\./, // RFC 1918
   /^172\.(1[6-9]|2[0-9]|3[0-1])\./, // RFC 1918
-  /^192\.168\./,                     // RFC 1918
-  /^169\.254\./,                     // Link-local / cloud metadata
-  /^0\./,                            // Current network
-  /^::1$/,                           // IPv6 loopback
-  /^fc00:/,                          // IPv6 ULA
-  /^fe80:/,                          // IPv6 link-local
+  /^192\.168\./, // RFC 1918
+  /^169\.254\./, // Link-local / cloud metadata
+  /^0\./, // Current network
+  /^::1$/, // IPv6 loopback
+  /^fc00:/, // IPv6 ULA
+  /^fe80:/, // IPv6 link-local
 ];
 
 /**

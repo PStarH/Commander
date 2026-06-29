@@ -53,7 +53,10 @@ export interface ITransition {
  *   P = places, T = transitions, F = flow relation
  *   Σ = signature, L = labeling, M₀ = initial marking, c = capacity
  */
-export interface IPetriNetEngine<TPlace extends IPlace = IPlace, TTransition extends ITransition = ITransition> {
+export interface IPetriNetEngine<
+  TPlace extends IPlace = IPlace,
+  TTransition extends ITransition = ITransition,
+> {
   /** Register a place in the net */
   addPlace(place: TPlace): void;
   /** Register a transition in the net */
@@ -148,7 +151,13 @@ export interface ISagaCoordinator {
   getStatus(sagaId: string): SagaStatus;
 }
 
-export type SagaStatus = 'PENDING' | 'EXECUTING' | 'COMPENSATING' | 'COMPLETED' | 'FAILED' | 'ABORTED';
+export type SagaStatus =
+  | 'PENDING'
+  | 'EXECUTING'
+  | 'COMPENSATING'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'ABORTED';
 
 // ============================================================================
 // Backpressure Controller

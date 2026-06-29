@@ -62,7 +62,9 @@ function eventToDatadogSpan(
   return {
     trace_id: parseInt(event.traceId.replace(/-/g, '').slice(0, 15), 16),
     span_id: parseInt(event.spanId.replace(/-/g, '').slice(0, 15), 16),
-    parent_id: event.parentSpanId ? parseInt(event.parentSpanId.replace(/-/g, '').slice(0, 15), 16) : undefined,
+    parent_id: event.parentSpanId
+      ? parseInt(event.parentSpanId.replace(/-/g, '').slice(0, 15), 16)
+      : undefined,
     name: `${event.type}:${event.data.modelInfo?.model ?? event.data.input ?? 'unknown'}`,
     resource: `${event.type}.${event.data.modelInfo?.model ?? 'unknown'}`,
     service: serviceName,

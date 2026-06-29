@@ -91,7 +91,7 @@ export class CodeRefinerTool implements Tool {
       if (codeFile) {
         let resolvedCodeFile: string;
         try {
-          resolvedCodeFile = safePath(codeFile);
+          resolvedCodeFile = await safePath(codeFile);
         } catch (err) {
           reportSilentFailure(err, 'codeRefinerTool:96');
           return `Error: Access denied: codeFile "${codeFile}" is outside workspace`;
