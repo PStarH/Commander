@@ -1104,3 +1104,4 @@ export function createLoggingPlugin(): CommanderPlugin {
 // ragPlugin.ts only has type-only imports from this module, so there is no
 // runtime circular dependency.
 export { createRagPlugin } from './plugins/builtin/ragPlugin';
+export { createTaintTrackingPlugin } from './plugins/builtin/taintTrackingPlugin';
