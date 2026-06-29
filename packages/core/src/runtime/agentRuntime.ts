@@ -1673,7 +1673,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   // Recovery strategy: on 2nd+ consecutive degeneration, the
                   // model has lost coherence — continuing to execute tool
                   // calls will only pollute the context further and produce
-                    // worse outcomes. Force earlyExit by clearing toolCalls so
+                  // worse outcomes. Force earlyExit by clearing toolCalls so
                   // the terminal handler takes over with whatever work was
                   // already completed. On 1st degeneration, preserve toolCalls
                   // (the model may still issue valid calls like update-dep).
@@ -1787,16 +1787,26 @@ export class AgentRuntime implements AgentRuntimeInterface {
               // original goal before a stop signal is accepted. A failed
               // verification (within the attempt budget) injects feedback into
               // the next iteration's context and forces another retry.
-              const verification = await this.goalCompletionVerifier.verify({
-                ctx,
-                runId,
-                routing,
-                steps,
-                request,
-                response,
-                tenantId,
-                attempt,
-              });
+              //
+              // Skip verification when degeneration was detected: the model's
+              // output is unreliable, and injecting feedback into a degenerating
+              // model only accelerates context pollution. Accept whatever work
+              // was already completed and go to terminal handling.
+              const verification = degenerationDetected
+                ? {
+                    isComplete: true,
+                    verificationTrace: 'verification=skipped;reason=degeneration_detected',
+                  }
+                : await this.goalCompletionVerifier.verify({
+                    ctx,
+                    runId,
+                    routing,
+                    steps,
+                    request,
+                    response,
+                    tenantId,
+                    attempt,
+                  });
               if (!verification.isComplete && verification.feedback) {
                 // ── Context-growth guard ──
                 // Each failed verification adds messages to request.messages and
@@ -2401,10 +2411,18 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   }
 
                   const reflections = this.reflexionInjector.getRecentReflections(3);
+                  // Limit feedback length to prevent context bloat. The full
+                  // feedback + reflections can be 1000+ chars, which accelerates
+                  // context growth and triggers model degeneration in small models.
+                  // Truncate to 500 chars (enough for actionable guidance).
+                  const baseFeedback = feedback.slice(0, 500);
                   const augmentedFeedback =
                     reflections.length > 0
-                      ? `${feedback}\n\n[Recent reflections — use these to avoid repeating mistakes]:\n${reflections.map((r, i) => `${i + 1}. ${r.insight}`).join('\n')}`
-                      : feedback;
+                      ? `${baseFeedback}\n\n[Reflections]:\n${reflections.map((r, i) => `${i + 1}. ${r.insight.slice(0, 100)}`).join('\n')}`.slice(
+                          0,
+                          800,
+                        )
+                      : baseFeedback;
                   request.messages.push({ role: 'user', content: augmentedFeedback });
                   continue;
                 }
