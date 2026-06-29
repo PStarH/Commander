@@ -68,7 +68,7 @@ jobs:
       - name: Rebuild better-sqlite3 native binding (Windows MSVC fallback inline)
         # Reuses the same conditional pattern as ci.yml so a Windows
         # runner can also produce the WAL backend ATL-safe.
-        continue-on-error: true
+        # Must NOT be continue-on-error: probe is the authoritative gate.
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
@@ -83,14 +83,34 @@ jobs:
               VS_INSTALL_PATH=$("$cmd_vswhere" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>/dev/null | head -1)
               if [ -n "$VS_INSTALL_PATH" ]; then
                 echo "vswhere found VS at: $VS_INSTALL_PATH"
-                cmd //c "\"${VS_INSTALL_PATH}\\VC\\Auxiliary\\Build\\vcvars64.bat\" && pnpm rebuild better-sqlite3" || true
+                cmd //c "\"${VS_INSTALL_PATH}\\VC\\Auxiliary\\Build\\vcvars64.bat\" && pnpm rebuild better-sqlite3" \
+                  || { echo "::warning::better-sqlite3 rebuild failed — will probe binding next"; true; }
               else
                 echo "vswhere gave no VS install; falling back to pnpm rebuild"
-                pnpm rebuild better-sqlite3 || true
+                pnpm rebuild better-sqlite3 \
+                  || { echo "::warning::better-sqlite3 rebuild failed — will probe binding next"; true; }
               fi
             fi
           else
-            pnpm rebuild better-sqlite3 || true
+            pnpm rebuild better-sqlite3 \
+              || { echo "::warning::better-sqlite3 rebuild failed — will probe binding next"; true; }
+          fi
+          # Probe: authoritative gate — exit 1 if binding does not load
+          if node -e "
+            try {
+              var D=require('better-sqlite3'), db=new D(':memory:');
+              db.exec('CREATE TABLE t (a)');
+              var row=db.prepare('SELECT 1 AS v').get();
+              db.close();
+              process.exit(row&&row.v===1?0:1);
+            } catch(e) { console.error('PROBE_ERROR:', e.message); process.exit(1); }
+          "; then
+            echo "::notice::better-sqlite3 binding loaded — WAL bench can proceed"
+            echo "SQLITE_BINDING_OK=true" >> $GITHUB_ENV
+          else
+            echo "::error::better-sqlite3 binding failed to load — WAL bench cannot run"
+            echo "SQLITE_BINDING_OK=false" >> $GITHUB_ENV
+            exit 1
           fi
 
       - name: Resolve today / yesterday (UTC)
@@ -107,14 +127,17 @@ jobs:
           echo "yesterday=$YESTERDAY" >> "$GITHUB_OUTPUT"
 
       - name: Run WAL throughput bench (captures today baseline)
+        if: success() && env.SQLITE_BINDING_OK != 'false'
         run: |
           ITER="${{ github.event.inputs.iterations || '2000' }}"
           echo "Running pnpm bench:wal:quick (TZ=UTC, iterations=${ITER})..."
           pnpm bench:wal:quick --iterations="${ITER}"
         env:
           TZ: UTC
+          SQLITE_BINDING_OK: ${{ env.SQLITE_BINDING_OK }}
 
       - name: Verify today's baseline JSON exists
+        if: success() && env.SQLITE_BINDING_OK != 'false'
         run: |
           TODAY_FILE="docs/baselines/wal-baseline.${{ steps.dates.outputs.today }}.json"
           if [ ! -s "$TODAY_FILE" ]; then
@@ -147,6 +170,7 @@ jobs:
           echo "metrics extracted → rows-per-sec=${{ steps.metrics.outputs.rowsPerSec }} p99=${{ steps.metrics.outputs.p99Us }}µs"
 
       - name: Compare today vs yesterday (gate)
+        if: success() && env.SQLITE_BINDING_OK != 'false'
         id: regress
         env:
           # Threshold input from workflow_dispatch falls back to 15% when
