@@ -123,6 +123,25 @@ export class UltimateOrchestrator {
     this.metricsHelper = new MetricsHelper({ config: this.config });
     this.agentFileCollector = new AgentFileCollector({ runtime });
     this.synthesizer = new MultiAgentSynthesizer();
+    // #5 Quality gate upgrade: wire up LLM-as-judge when a provider is registered.
+    // Prefers providers in this order: openai > anthropic > google > deepseek > glm.
+    try {
+      const getProvider = (this.runtime as { getProvider?: (name: string) => unknown }).getProvider;
+      if (typeof getProvider === 'function') {
+        const judgeProvider =
+          getProvider.call(this.runtime, 'openai') ??
+          getProvider.call(this.runtime, 'anthropic') ??
+          getProvider.call(this.runtime, 'google') ??
+          getProvider.call(this.runtime, 'deepseek') ??
+          getProvider.call(this.runtime, 'glm');
+        if (judgeProvider) {
+          const judgeModel = process.env.COMMANDER_JUDGE_MODEL ?? 'gpt-4o-mini';
+          this.synthesizer.setLLMEvaluator(judgeProvider as import('../runtime/types').LLMProvider, judgeModel);
+        }
+      }
+    } catch {
+      // No provider available — quality gate falls back to rule-based evaluation
+    }
     this.qualityGateFixer = new QualityGateFixer({
       runtime,
       synthesizer: this.synthesizer,
