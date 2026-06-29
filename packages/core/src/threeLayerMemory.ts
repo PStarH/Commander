@@ -146,7 +146,7 @@ export class ThreeLayerMemory {
    * These are lazily initialized from the global singletons.
    */
   private semanticStore: ReturnType<typeof getGlobalSemanticMemoryStore> | null = null;
-  private episodicStore: ReturnType<typeof getGlobalEpisodicMemoryStore> | null = null;
+  private episodicStore: ReturnType<typeof getGlobalEpisodicStore> | null = null;
 
   constructor(
     config?: Partial<Record<MemoryLayer, LayerConfig>> & {
