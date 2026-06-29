@@ -71,11 +71,21 @@ export class VisionAnalyzeTool implements Tool {
         try {
           resolved = safePath(source);
         } catch (err) {
-          reportSilentFailure(err, 'visionTool:73');
+          reportSilentFailure(err, 'visionTool:71');
           return `Error: Access denied: path "${source}" is outside workspace`;
         }
-        if (!fs.existsSync(resolved)) return `Error: File not found: ${source}`;
-        const buffer = fs.readFileSync(resolved);
+        // Single fs.promises.readFile replaces {existsSync + readFileSync}:
+        // the ENOENT branch surfaces a "file not found" message; any other
+        // error propagates to the outer catch.
+        let buffer: Buffer;
+        try {
+          buffer = await fs.promises.readFile(resolved);
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+            return `Error: File not found: ${source}`;
+          }
+          throw err;
+        }
         const ext = pathModule.extname(resolved).toLowerCase();
         const mediaTypes: Record<string, string> = {
           '.png': 'image/png',
