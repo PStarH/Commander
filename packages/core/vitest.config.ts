@@ -200,6 +200,7 @@ export default defineConfig({
       'tests/security/differentialPrivacyLayer.test.ts',
       'tests/security/security-hardening.test.ts',
       'tests/security/property/invariantPropertyTests.ts',
+      'tests/security/a2aMtls.test.ts',
       // --- harness ---
       'tests/harness/tier1AgentLoop.test.ts',
       'tests/harness/tier1Harness.test.ts',
