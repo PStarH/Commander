@@ -661,7 +661,9 @@ export interface HarnessServices {
   waitForSubAgent(handle: SubAgentHandle, signal?: AbortSignal): Promise<AgentExecutionResult>;
 
   // ── File Watcher (Codex notify crate) ──
-  watchFile(path: string, handler: (event: FileChangeEvent) => void): Unsubscribe;
+  // Promise<Unsubscribe> — safePath became async; canonical-path
+  // resolution must complete before fs.watch registration.
+  watchFile(path: string, handler: (event: FileChangeEvent) => void): Promise<Unsubscribe>;
 
   // ── Session Persistence (Codex JSONL) ──
   saveSession(info: SessionInfo): Promise<void>;

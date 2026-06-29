@@ -94,10 +94,7 @@ const SANDBOX_MODES: SandboxModeMeta[] = [
 ];
 
 // ── Level metadata — color coding: auto=green, semi_auto=yellow, manual=red ──
-const LEVEL_META: Record<
-  ApprovalLevel,
-  { label: string; variant: BadgeVariant; color: string }
-> = {
+const LEVEL_META: Record<ApprovalLevel, { label: string; variant: BadgeVariant; color: string }> = {
   auto: { label: 'auto', variant: 'success', color: 'var(--accent-green)' },
   semi_auto: { label: 'semi_auto', variant: 'warning', color: 'var(--accent-amber)' },
   manual: { label: 'manual', variant: 'error', color: 'var(--accent-red)' },
@@ -187,10 +184,7 @@ export function ApprovalConfigPanel() {
 
   const loadData = useCallback(async () => {
     try {
-      const [cfg, audit] = await Promise.all([
-        fetchApprovalConfig(),
-        fetchApprovalAuditLog(50),
-      ]);
+      const [cfg, audit] = await Promise.all([fetchApprovalConfig(), fetchApprovalAuditLog(50)]);
       setConfig(cfg);
       setAuditEntries(audit.entries);
       setError(null);
@@ -394,8 +388,8 @@ export function ApprovalConfigPanel() {
             <AlertTriangle size={14} />
             <div style={{ flex: 1 }}>
               <strong>Warning: Full Auto mode auto-approves ALL actions</strong>, including shell
-              execution and file writes. This should only be used inside an isolated sandbox. Are you
-              sure you want to continue?
+              execution and file writes. This should only be used inside an isolated sandbox. Are
+              you sure you want to continue?
               <div className="gov-card-acts" style={{ marginTop: 8 }}>
                 <Button
                   variant="danger"
@@ -547,9 +541,7 @@ export function ApprovalConfigPanel() {
                     <td>
                       <Select
                         value={policy.level}
-                        onChange={(e) =>
-                          handleLevelChange(policy, e.target.value as ApprovalLevel)
-                        }
+                        onChange={(e) => handleLevelChange(policy, e.target.value as ApprovalLevel)}
                         disabled={busy}
                         className="approval-level-select"
                         style={{ color: lvl.color, borderColor: lvl.color }}
@@ -587,12 +579,7 @@ export function ApprovalConfigPanel() {
                             >
                               <Check size={12} /> Save
                             </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={cancelEdit}
-                              disabled={busy}
-                            >
+                            <Button variant="ghost" size="sm" onClick={cancelEdit} disabled={busy}>
                               <X size={12} /> Cancel
                             </Button>
                           </>
@@ -658,11 +645,7 @@ export function ApprovalConfigPanel() {
                 {auditEntries.map((entry, i) => {
                   const decision = (entry.decision ?? '').toLowerCase();
                   const decisionVariant: BadgeVariant =
-                    decision === 'approved'
-                      ? 'success'
-                      : decision === 'denied'
-                        ? 'error'
-                        : 'info';
+                    decision === 'approved' ? 'success' : decision === 'denied' ? 'error' : 'info';
                   return (
                     <tr key={`${entry.timestamp}-${i}`}>
                       <td className="approval-time">{formatTimestamp(entry.timestamp)}</td>
@@ -676,9 +659,7 @@ export function ApprovalConfigPanel() {
                       </td>
                       <td>
                         {entry.riskLevel ? (
-                          <Badge variant={riskVariantFor(entry.riskLevel)}>
-                            {entry.riskLevel}
-                          </Badge>
+                          <Badge variant={riskVariantFor(entry.riskLevel)}>{entry.riskLevel}</Badge>
                         ) : (
                           <span>—</span>
                         )}

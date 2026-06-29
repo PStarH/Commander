@@ -71,9 +71,7 @@ function recommendationVariant(
   }
 }
 
-function recommendationIcon(
-  recommendation: HallucinationReportEntry['recommendation'],
-) {
+function recommendationIcon(recommendation: HallucinationReportEntry['recommendation']) {
   switch (recommendation) {
     case 'pass':
       return <ShieldCheck size={14} style={{ color: COLORS.green }} />;
@@ -95,7 +93,9 @@ function severityColor(severity: HallucinationSignal['severity']): string {
   }
 }
 
-function severityVariant(severity: HallucinationSignal['severity']): 'error' | 'warning' | 'success' {
+function severityVariant(
+  severity: HallucinationSignal['severity'],
+): 'error' | 'warning' | 'success' {
   switch (severity) {
     case 'high':
       return 'error';
@@ -200,9 +200,7 @@ export function HallucinationRiskPanel({ runId: initialRunId }: HallucinationRis
   }, [selectedRunId]);
 
   // Aggregate stats across all reports for the selected run.
-  const aggregated = report && report.reports.length > 0
-    ? aggregateReports(report.reports)
-    : null;
+  const aggregated = report && report.reports.length > 0 ? aggregateReports(report.reports) : null;
 
   return (
     <div className="confidence-panel">
@@ -252,17 +250,17 @@ export function HallucinationRiskPanel({ runId: initialRunId }: HallucinationRis
 
       {!loadingReport && !error && !report && (
         <div className="narrative narrative-green">
-          Select a run to view hallucination detection results. The Core HallucinationDetector
-          scans every LLM output for 13 signal types (overconfidence, fabricated references,
-          temporal impossibility, and more) and emits a risk score plus a pass / flag / reject
+          Select a run to view hallucination detection results. The Core HallucinationDetector scans
+          every LLM output for 13 signal types (overconfidence, fabricated references, temporal
+          impossibility, and more) and emits a risk score plus a pass / flag / reject
           recommendation.
         </div>
       )}
 
       {!loadingReport && !error && report && report.reports.length === 0 && (
         <div className="narrative narrative-green">
-          No hallucination signals recorded for this run. Either the run produced no LLM output,
-          or every output passed the grounding checks cleanly.
+          No hallucination signals recorded for this run. Either the run produced no LLM output, or
+          every output passed the grounding checks cleanly.
         </div>
       )}
 
@@ -352,20 +350,14 @@ export function HallucinationRiskPanel({ runId: initialRunId }: HallucinationRis
                     onClick={() => setExpandedReport(isExpanded ? null : entry.eventId)}
                   >
                     <div className="timeline-header">
-                      <span
-                        className="bdg bdg-default"
-                        style={{ borderColor: color, color }}
-                      >
+                      <span className="bdg bdg-default" style={{ borderColor: color, color }}>
                         {entry.eventType}
                       </span>
                       <Badge variant={recommendationVariant(entry.recommendation)}>
                         {entry.recommendation.replace(/_/g, ' ')}
                       </Badge>
                       <span className="timeline-time">{formatTimestamp(entry.timestamp)}</span>
-                      <span
-                        className="timeline-tokens"
-                        style={{ color }}
-                      >
+                      <span className="timeline-tokens" style={{ color }}>
                         {(entry.riskScore * 100).toFixed(0)}% risk
                       </span>
                       {isExpanded ? (
@@ -393,8 +385,7 @@ export function HallucinationRiskPanel({ runId: initialRunId }: HallucinationRis
                         <div className="detail-row">
                           <span className="detail-label">Recommendation</span>
                           <span className="detail-value">
-                            {recommendationIcon(entry.recommendation)}{' '}
-                            {entry.recommendation}
+                            {recommendationIcon(entry.recommendation)} {entry.recommendation}
                           </span>
                         </div>
 

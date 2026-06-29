@@ -123,11 +123,7 @@ const SPAWN_TYPES = new Set([
 ]);
 
 /** Event types that signal an agent handoff (delegation of authority). */
-const HANDOFF_TYPES = new Set([
-  'agent.handoff',
-  'agent_handoff',
-  'handoff',
-]);
+const HANDOFF_TYPES = new Set(['agent.handoff', 'agent_handoff', 'handoff']);
 
 function isSpawnType(type: string): boolean {
   return SPAWN_TYPES.has(type);
@@ -245,9 +241,7 @@ function buildLineageSummary(runId: string, events: TraceEvent[]): LineageSummar
         asString(metadata.instanceId) ??
         asString(metadata.childInstanceId);
       const parentInstanceId =
-        asString(data.parentInstanceId) ??
-        asString(metadata.parentInstanceId) ??
-        null;
+        asString(data.parentInstanceId) ?? asString(metadata.parentInstanceId) ?? null;
       const childAgentId =
         asString(data.agentId) ??
         asString(data.childAgentId) ??
@@ -255,11 +249,8 @@ function buildLineageSummary(runId: string, events: TraceEvent[]): LineageSummar
         asString(metadata.childAgentId) ??
         event.agentId;
       const parentAgentId =
-        asString(data.parentAgentId) ??
-        asString(metadata.parentAgentId) ??
-        undefined;
-      const role =
-        asString(data.role) ?? asString(metadata.role) ?? undefined;
+        asString(data.parentAgentId) ?? asString(metadata.parentAgentId) ?? undefined;
+      const role = asString(data.role) ?? asString(metadata.role) ?? undefined;
 
       if (!childInstanceId && !childAgentId) continue;
 
@@ -293,19 +284,11 @@ function buildLineageSummary(runId: string, events: TraceEvent[]): LineageSummar
       });
     } else if (isHandoffType(event.type)) {
       const fromInstanceId =
-        asString(data.fromInstanceId) ??
-        asString(metadata.fromInstanceId) ??
-        null;
-      const toInstanceId =
-        asString(data.toInstanceId) ??
-        asString(metadata.toInstanceId) ??
-        null;
+        asString(data.fromInstanceId) ?? asString(metadata.fromInstanceId) ?? null;
+      const toInstanceId = asString(data.toInstanceId) ?? asString(metadata.toInstanceId) ?? null;
       const fromAgentId =
-        asString(data.fromAgentId) ??
-        asString(metadata.fromAgentId) ??
-        event.agentId;
-      const toAgentId =
-        asString(data.toAgentId) ?? asString(metadata.toAgentId) ?? undefined;
+        asString(data.fromAgentId) ?? asString(metadata.fromAgentId) ?? event.agentId;
+      const toAgentId = asString(data.toAgentId) ?? asString(metadata.toAgentId) ?? undefined;
       const goal = asString(data.goal) ?? asString(metadata.goal) ?? undefined;
 
       // Ensure both endpoints exist; the "to" side becomes a child of "from".
@@ -375,10 +358,7 @@ function buildLineageSummary(runId: string, events: TraceEvent[]): LineageSummar
   const activeNodes = nodes.filter((n) => !n.revokedAt).length;
 
   // Sort nodes by depth then spawnedAt for stable rendering.
-  nodes.sort(
-    (a, b) =>
-      a.depth - b.depth || (a.spawnedAt || '').localeCompare(b.spawnedAt || ''),
-  );
+  nodes.sort((a, b) => a.depth - b.depth || (a.spawnedAt || '').localeCompare(b.spawnedAt || ''));
 
   return {
     runId,

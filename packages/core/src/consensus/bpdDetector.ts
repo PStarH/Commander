@@ -38,7 +38,7 @@ export interface AgentNode {
 
 export interface CommunicationEdge {
   from: string; // producer agent
-  to: string;   // consumer agent
+  to: string; // consumer agent
   /** Weight: how much the consumer relies on this producer's output (0-1) */
   weight: number;
   /** Timestamp of the communication */
@@ -53,7 +53,12 @@ export interface RejectionSignal {
   /** Severity of rejection (0-1): 1 = completely rejected, 0.5 = significantly modified */
   severity: number;
   /** What type of rejection */
-  type: 'quality_gate_fail' | 'consensus_disagreement' | 'hallucination_detected' | 'downstream_override' | 'verification_fail';
+  type:
+    | 'quality_gate_fail'
+    | 'consensus_disagreement'
+    | 'hallucination_detected'
+    | 'downstream_override'
+    | 'verification_fail';
   /** Human-readable reason */
   reason: string;
   /** Timestamp */
@@ -64,8 +69,8 @@ export interface RejectionSignal {
 
 export interface AgentAnomalyReport {
   agentId: string;
-  anomalyScore: number;       // 0-1, weighted backward-propagated rejection
-  rejectionCount: number;     // direct rejections received
+  anomalyScore: number; // 0-1, weighted backward-propagated rejection
+  rejectionCount: number; // direct rejections received
   downstreamRejections: number; // rejections from agents that consumed this agent's output
   modelFamily?: string;
   flagged: boolean;
@@ -199,8 +204,7 @@ export class BPDDetector {
       let directScore = 0;
       if (directRejections.length > 0) {
         directScore =
-          directRejections.reduce((sum, s) => sum + s.severity, 0) /
-          directRejections.length;
+          directRejections.reduce((sum, s) => sum + s.severity, 0) / directRejections.length;
       }
 
       // Backward propagation: check if agents that consume this agent's output
@@ -219,10 +223,7 @@ export class BPDDetector {
       }
 
       // Combined score: direct + propagated (weighted)
-      const anomalyScore = Math.max(
-        0,
-        Math.min(1, directScore * 0.6 + propagatedScore * 0.4),
-      );
+      const anomalyScore = Math.max(0, Math.min(1, directScore * 0.6 + propagatedScore * 0.4));
 
       if (anomalyScore > 0 || directRejections.length > 0) {
         const flagged = anomalyScore >= this.config.flagThreshold;
@@ -271,8 +272,7 @@ export class BPDDetector {
       const consumerRejections = signals.filter((s) => s.sourceAgentId === consumerId);
       if (consumerRejections.length > 0) {
         const consumerSeverity =
-          consumerRejections.reduce((sum, s) => sum + s.severity, 0) /
-          consumerRejections.length;
+          consumerRejections.reduce((sum, s) => sum + s.severity, 0) / consumerRejections.length;
         // Apply decay based on hop distance
         score += consumerSeverity * Math.pow(this.config.propagationDecay, hop);
       }
@@ -280,13 +280,7 @@ export class BPDDetector {
       // Recurse: check if the consumer's consumers also have rejections
       const nextConsumers = this.getConsumersOf(consumerId);
       if (nextConsumers.size > 0) {
-        score += this.propagateBackward(
-          consumerId,
-          nextConsumers,
-          signals,
-          visited,
-          hop + 1,
-        );
+        score += this.propagateBackward(consumerId, nextConsumers, signals, visited, hop + 1);
       }
     }
 

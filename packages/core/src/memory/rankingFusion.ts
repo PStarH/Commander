@@ -247,9 +247,7 @@ export async function crossEncoderRerank<T>(
     );
   }
   const ceScoreResults = await Promise.allSettled(scoringPromises);
-  const ceScores: number[] = ceScoreResults.map((r, i) =>
-    r.status === 'fulfilled' ? r.value : 0,
-  );
+  const ceScores: number[] = ceScoreResults.map((r, i) => (r.status === 'fulfilled' ? r.value : 0));
 
   // Combine scores: weighted average of normalized RRF and CE
   const rrfWeight = cfg.rrfWeight;

@@ -51,7 +51,7 @@ export interface TimeoutConfig {
 
 export interface TimeoutEvent {
   level: TimeoutLevel;
-  scope: string;          // e.g., "tool:web_search", "step:saga_step_3", "agent:agent_42"
+  scope: string; // e.g., "tool:web_search", "step:saga_step_3", "agent:agent_42"
   action: TimeoutAction;
   firedAt: number;
   durationMs: number;
@@ -304,11 +304,11 @@ export class HierarchicalTimeoutManager {
 
       this.activeTimeouts.delete(currentId);
 
-      getGlobalLogger().warn(
-        'HierarchicalTimeoutManager',
-        event.message,
-        { level: active.level, scope: active.scope, action: active.config.action },
-      );
+      getGlobalLogger().warn('HierarchicalTimeoutManager', event.message, {
+        level: active.level,
+        scope: active.scope,
+        action: active.config.action,
+      });
 
       // Publish to message bus
       if (this.config.publishEvents) {

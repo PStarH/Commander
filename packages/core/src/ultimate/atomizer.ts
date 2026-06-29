@@ -6,7 +6,13 @@
  * STEP mode creates 3–6 execution steps, and RECURSIVE mode splits goal text
  * at paragraph boundaries.
  */
-import type { TaskTreeNode, DeliberationPlan, OrchestrationTopology, ROMARole, EffortLevel } from './types';
+import type {
+  TaskTreeNode,
+  DeliberationPlan,
+  OrchestrationTopology,
+  ROMARole,
+  EffortLevel,
+} from './types';
 import * as path from 'node:path';
 
 /** Ms per estimated token for timeout calculation */
@@ -42,11 +48,27 @@ const STEP_COUNT_BY_EFFORT: Record<EffortLevel, number> = {
 
 /** Aspect templates — ordered by priority; extra aspects are appended for higher effort. */
 const ASPECT_TEMPLATES = [
-  { aspect: 'research',   prefix: 'Research and gather information',  tools: ['web_search', 'document_reader'] },
-  { aspect: 'analysis',  prefix: 'Analyze and evaluate',              tools: ['code_analysis', 'data_processing'] },
-  { aspect: 'synthesis',  prefix: 'Synthesize findings into',         tools: ['reasoning'] },
-  { aspect: 'validation',prefix: 'Validate and cross-check results',  tools: ['web_search', 'code_analysis'] },
-  { aspect: 'optimization', prefix: 'Optimize and refine approach',   tools: ['code_analysis', 'reasoning'] },
+  {
+    aspect: 'research',
+    prefix: 'Research and gather information',
+    tools: ['web_search', 'document_reader'],
+  },
+  {
+    aspect: 'analysis',
+    prefix: 'Analyze and evaluate',
+    tools: ['code_analysis', 'data_processing'],
+  },
+  { aspect: 'synthesis', prefix: 'Synthesize findings into', tools: ['reasoning'] },
+  {
+    aspect: 'validation',
+    prefix: 'Validate and cross-check results',
+    tools: ['web_search', 'code_analysis'],
+  },
+  {
+    aspect: 'optimization',
+    prefix: 'Optimize and refine approach',
+    tools: ['code_analysis', 'reasoning'],
+  },
 ];
 
 /** Step templates — ordered by priority; extra steps are appended for higher effort. */
@@ -256,7 +278,10 @@ Include specific code snippets with line numbers when referencing code.`;
         deliberation: {
           ...deliberation,
           decompositionStrategy: 'NONE',
-          estimatedAgentCount: Math.max(1, Math.floor((deliberation.estimatedAgentCount ?? numAspects) / numAspects)),
+          estimatedAgentCount: Math.max(
+            1,
+            Math.floor((deliberation.estimatedAgentCount ?? numAspects) / numAspects),
+          ),
           estimatedSteps: Math.max(5, Math.floor((deliberation.estimatedSteps ?? 10) / numAspects)),
         },
         dependencies: i > 0 ? [i - 1] : [],
@@ -318,7 +343,7 @@ Include specific code snippets with line numbers when referencing code.`;
           'You MUST take a DISTINCT and INDEPENDENT position. Do NOT agree with other debaters unless your own analysis independently arrives at the same conclusion. Challenge conventional wisdom if your reasoning supports it.',
           'Your job is to find the answer that others might MISS. Consider edge cases, contrarian viewpoints, and approaches that diverge from the obvious. Independence of thought is more valuable than agreement.',
           'Argue from a fundamentally different angle than you expect other debaters to take. If you suspect others will agree with X, seriously consider whether NOT-X might be correct. Do NOT conform to avoid conflict.',
-          'Be the devil\'s advocate. Even if you lean toward the majority view, argue the strongest possible case for the minority position. Only concede if the evidence is overwhelming AND you cannot find any counterargument.',
+          "Be the devil's advocate. Even if you lean toward the majority view, argue the strongest possible case for the minority position. Only concede if the evidence is overwhelming AND you cannot find any counterargument.",
           'Prioritize correctness over consensus. If you believe the popular answer is wrong, say so clearly with evidence. Do NOT cave to social pressure from other debaters. A wrong consensus is worse than a productive disagreement.',
           'Think from first principles. Ignore what other debaters might say. Build your argument from the ground up using only the evidence and reasoning you can verify yourself. If this leads to a unique position, embrace it.',
         ];
@@ -575,7 +600,7 @@ Write a comprehensive output with:
     }
     if (role.startsWith('DEBATER_')) {
       // Feature 7: Free-MAD anti-conformity system prompt for debaters
-      return 'You are a Free-MAD debater. Argue your assigned position with FULL INDEPENDENCE. Do NOT conform to other debaters\' views for the sake of agreement. Your unique perspective — even if contrarian — is valuable. Prioritize correctness over consensus.';
+      return "You are a Free-MAD debater. Argue your assigned position with FULL INDEPENDENCE. Do NOT conform to other debaters' views for the sake of agreement. Your unique perspective — even if contrarian — is valuable. Prioritize correctness over consensus.";
     }
     if (role === 'JUDGE') {
       return 'You are a judge. Evaluate the debate positions and select the best answer with justification.';

@@ -237,7 +237,9 @@ export class CompensationQueue {
     if (!this.stmtListPending || !this.stmtClaim) return null;
     const now = new Date().toISOString();
     const tenantId = getCurrentTenantId() ?? null;
-    const candidates = this.stmtListPending.all(now, tenantId, tenantId, 1) as Array<Record<string, unknown>>;
+    const candidates = this.stmtListPending.all(now, tenantId, tenantId, 1) as Array<
+      Record<string, unknown>
+    >;
     if (candidates.length === 0) return null;
     const id = candidates[0].id as string;
     const result = this.stmtClaim.run(now, id);

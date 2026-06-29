@@ -25,9 +25,7 @@ import type { IPetriNetEngine, IPlace, ITransition } from '../contracts/pillarI'
 // PetriNetEngine Implementation
 // ============================================================================
 
-export class PetriNetEngine
-  implements IPetriNetEngine
-{
+export class PetriNetEngine implements IPetriNetEngine {
   private places: Map<string, IPlace> = new Map();
   private transitions: Map<string, ITransition> = new Map();
   private initialMarking: Map<string, number> = new Map();
@@ -325,9 +323,7 @@ export class PetriNetEngine
       throw new Error(`Marking for '${placeId}' must be non-negative, got ${marking}`);
     }
     if (place.capacity !== Infinity && marking > place.capacity) {
-      throw new Error(
-        `Marking ${marking} for '${placeId}' exceeds capacity ${place.capacity}`,
-      );
+      throw new Error(`Marking ${marking} for '${placeId}' exceeds capacity ${place.capacity}`);
     }
     place.marking = marking;
   }

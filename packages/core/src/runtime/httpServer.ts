@@ -40,11 +40,7 @@ import { MCPServer } from '../mcp/server';
 import { getGlobalLogger } from '../logging';
 import { getMetricsCollector } from './metricsCollector';
 import { installProcessCrashHandlers } from './processCrashSafety';
-import {
-  extractTraceFromHeaders,
-  createTraceContext,
-  runWithTrace,
-} from './distributedTracing';
+import { extractTraceFromHeaders, createTraceContext, runWithTrace } from './distributedTracing';
 import { RecoveryBootstrapper } from '../atr/recoveryBootstrapper';
 import { getDeadLetterQueue } from './deadLetterQueueSingleton';
 import { openApiSpec } from './openapi';
@@ -430,10 +426,7 @@ export class CommanderHttpServer {
     // Event bus info — always available (server owns the bus singleton).
     sources.getEventBusInfo = () => ({
       activeTopics: this.bus.getActiveTopics().length,
-      subscriberCount: Object.values(this.bus.getAllSubscriberCounts()).reduce(
-        (a, b) => a + b,
-        0,
-      ),
+      subscriberCount: Object.values(this.bus.getAllSubscriberCounts()).reduce((a, b) => a + b, 0),
     });
 
     // Circuit breaker + provider info — from the first active runtime.
@@ -444,9 +437,7 @@ export class CommanderHttpServer {
       sources.getCircuitBreakerInfo = () => {
         try {
           const health = rt.getProviderHealth();
-          const open = health
-            .filter((h) => h.state === 'open')
-            .map((h) => h.provider);
+          const open = health.filter((h) => h.state === 'open').map((h) => h.provider);
           return { open, total: health.length };
         } catch {
           return { open: [], total: 0 };
@@ -505,9 +496,7 @@ export class CommanderHttpServer {
   private async probeCapability(
     requiredTools: string[],
   ): Promise<'verified' | 'degraded' | 'unknown'> {
-    const timeout = new Promise<'unknown'>((res) =>
-      setTimeout(() => res('unknown'), 200),
-    );
+    const timeout = new Promise<'unknown'>((res) => setTimeout(() => res('unknown'), 200));
 
     const check = (async (): Promise<'verified' | 'degraded' | 'unknown'> => {
       // No runtime registered → cannot verify anything.
@@ -576,8 +565,7 @@ export class CommanderHttpServer {
         // message bus events — enabling end-to-end request tracing.
         const rawRequestId = req.headers['x-request-id'];
         const requestId = Array.isArray(rawRequestId) ? rawRequestId[0] : rawRequestId;
-        const traceContext =
-          extractTraceFromHeaders(req.headers) ?? createTraceContext(requestId);
+        const traceContext = extractTraceFromHeaders(req.headers) ?? createTraceContext(requestId);
 
         runWithTrace(traceContext, () => {
           this.handleRequest(req, res).catch((err) => {
@@ -911,11 +899,7 @@ export class CommanderHttpServer {
       if (req.method === 'POST' || req.method === 'PUT') {
         reqBody = await this.readRequestBody(req);
       }
-      const result = handleSLOOperationsRequest(
-        req.method ?? 'GET',
-        segments,
-        reqBody,
-      );
+      const result = handleSLOOperationsRequest(req.method ?? 'GET', segments, reqBody);
       if (result) {
         res.writeHead(result.statusCode, result.headers);
         res.end(result.body);
@@ -1047,9 +1031,12 @@ export class CommanderHttpServer {
           extensions: err.extensions,
         });
       } else if (err instanceof HttpRequestError) {
-        const code = err.statusCode === 413 ? 'PAYLOAD_TOO_LARGE'
-          : err.statusCode === 400 ? 'INVALID_JSON'
-          : 'INTERNAL_ERROR';
+        const code =
+          err.statusCode === 413
+            ? 'PAYLOAD_TOO_LARGE'
+            : err.statusCode === 400
+              ? 'INVALID_JSON'
+              : 'INTERNAL_ERROR';
         sendProblem(res, code, err.message, {
           instance: req.url ?? '',
           requestId: this.getRequestId(req),
@@ -1094,12 +1081,20 @@ export class CommanderHttpServer {
       if (!allowAll) res.setHeader('Vary', 'Origin');
     }
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-Id, Accept-Version');
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Authorization, X-Request-Id, Accept-Version',
+    );
 
     // API versioning: add stability and version headers for API endpoints
     const url = req.url ?? '/';
     const pathPart = url.split('?')[0];
-    if (pathPart.startsWith('/api/') || pathPart.startsWith('/slo') || pathPart.startsWith('/alerts') || pathPart.startsWith('/incidents')) {
+    if (
+      pathPart.startsWith('/api/') ||
+      pathPart.startsWith('/slo') ||
+      pathPart.startsWith('/alerts') ||
+      pathPart.startsWith('/incidents')
+    ) {
       try {
         const versionMgr = getAPIVersionManager();
         const deprecationHeaders = versionMgr.getDeprecationHeaders(req.method ?? 'GET', pathPart);
@@ -1134,8 +1129,12 @@ export class CommanderHttpServer {
         if (method === 'POST') {
           const rawBody = await parseBody(req, this.config.maxBodyBytes);
           const body = validateOrThrow<{
-            sessionId?: string; provider?: string; model?: string;
-            apiKey?: string; systemPrompt?: string; maxTokens?: number;
+            sessionId?: string;
+            provider?: string;
+            model?: string;
+            apiKey?: string;
+            systemPrompt?: string;
+            maxTokens?: number;
           }>(rawBody, Schemas.createRuntime);
           const sessionId = body.sessionId ?? `session_${Date.now()}`;
           const runtime = new AgentRuntime();
@@ -1174,9 +1173,15 @@ export class CommanderHttpServer {
           const rawBody = await parseBody(req, this.config.maxBodyBytes);
           // Schema validation — standardized error response
           const body = validateOrThrow<{
-            prompt: string; sessionId?: string; provider?: string;
-            model?: string; outputSchema?: Record<string, unknown>;
-            maxTokens?: number; temperature?: number; runtimeId?: string; tools?: string[];
+            prompt: string;
+            sessionId?: string;
+            provider?: string;
+            model?: string;
+            outputSchema?: Record<string, unknown>;
+            maxTokens?: number;
+            temperature?: number;
+            runtimeId?: string;
+            tools?: string[];
           }>(rawBody, Schemas.execute);
           const sessionId = body.sessionId ?? `session_${Date.now()}`;
           // Derive tenantId from API key (never trust request body for tenant)
@@ -2006,41 +2011,42 @@ export class CommanderHttpServer {
       case 'openrouter':
         return new OpenRouterProvider({ apiKey: resolveSecureApiKey('OPENROUTER_API_KEY') });
       case 'deepseek':
-        return new DeepSeekProvider({ apiKey: process.env.DEEPSEEK_API_KEY ?? '' });
+        return new DeepSeekProvider({ apiKey: resolveSecureApiKey('DEEPSEEK_API_KEY') });
       case 'glm':
-        return new GLMProvider({ apiKey: process.env.ZHIPU_API_KEY ?? '' });
+        return new GLMProvider({ apiKey: resolveSecureApiKey('ZHIPU_API_KEY') });
       case 'mimo':
-        return new MiMoProvider({ apiKey: process.env.MIMO_API_KEY ?? '' });
+        return new MiMoProvider({ apiKey: resolveSecureApiKey('MIMO_API_KEY') });
       case 'xiaomi':
-        return new XiaomiProvider({ apiKey: process.env.XIAOMI_API_KEY ?? '' });
+        return new XiaomiProvider({ apiKey: resolveSecureApiKey('XIAOMI_API_KEY') });
       case 'ollama':
         return new OllamaProvider({});
       case 'vllm':
         return new VLLMProvider({});
       case 'cohere':
         return new CohereProvider({
-          apiKey: (process.env.CO_API_KEY || process.env.COHERE_API_KEY) ?? '',
+          apiKey: resolveSecureApiKey('CO_API_KEY') || resolveSecureApiKey('COHERE_API_KEY'),
         });
       case 'mistral':
-        return new MistralProvider({ apiKey: process.env.MISTRAL_API_KEY ?? '' });
+        return new MistralProvider({ apiKey: resolveSecureApiKey('MISTRAL_API_KEY') });
       case 'groq':
-        return new GroqProvider({ apiKey: process.env.GROQ_API_KEY ?? '' });
+        return new GroqProvider({ apiKey: resolveSecureApiKey('GROQ_API_KEY') });
       case 'together':
-        return new TogetherProvider({ apiKey: process.env.TOGETHER_API_KEY ?? '' });
+        return new TogetherProvider({ apiKey: resolveSecureApiKey('TOGETHER_API_KEY') });
       case 'perplexity':
         return new PerplexityProvider({
-          apiKey: (process.env.PERPLEXITY_API_KEY || process.env.PPLX_API_KEY) ?? '',
+          apiKey: resolveSecureApiKey('PERPLEXITY_API_KEY') || resolveSecureApiKey('PPLX_API_KEY'),
         });
       case 'fireworks':
-        return new FireworksProvider({ apiKey: process.env.FIREWORKS_API_KEY ?? '' });
+        return new FireworksProvider({ apiKey: resolveSecureApiKey('FIREWORKS_API_KEY') });
       case 'replicate':
         return new ReplicateProvider({
-          apiKey: (process.env.REPLICATE_API_TOKEN || process.env.REPLICATE_API_KEY) ?? '',
+          apiKey:
+            resolveSecureApiKey('REPLICATE_API_TOKEN') || resolveSecureApiKey('REPLICATE_API_KEY'),
         });
       case 'bedrock':
         return new BedrockProvider({});
       case 'xai':
-        return new XAIProvider({ apiKey: process.env.XAI_API_KEY ?? '' });
+        return new XAIProvider({ apiKey: resolveSecureApiKey('XAI_API_KEY') });
       case 'anyscale':
         return new AnyscaleProvider({ apiKey: resolveSecureApiKey('ANYSCALE_API_KEY') });
       case 'deepinfra':

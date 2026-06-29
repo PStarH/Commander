@@ -88,9 +88,7 @@ export class A2AServer {
     // SECURITY: A2A server authentication is mandatory. Anonymous A2A endpoints
     // allow any remote agent to submit tasks to the local runtime.
     if (!config.authToken || config.authToken.length < 16) {
-      throw new Error(
-        'A2AServer requires an authToken of at least 16 characters.',
-      );
+      throw new Error('A2AServer requires an authToken of at least 16 characters.');
     }
     this.config = { ...DEFAULT_CONFIG, ...config } as A2AServerConfig;
     this.runtime = runtime;
@@ -179,8 +177,15 @@ export class A2AServer {
       // Security: Authentication is mandatory for all JSON-RPC requests.
       // Per OWASP — never allow unauthenticated A2A access to prevent agentjacking.
       if (!this.config.authToken) {
-        this.sendJson(res, 500, this.makeErrorResponse(null, -32005,
-          'A2A server authToken is not configured. Refusing unauthenticated requests.'));
+        this.sendJson(
+          res,
+          500,
+          this.makeErrorResponse(
+            null,
+            -32005,
+            'A2A server authToken is not configured. Refusing unauthenticated requests.',
+          ),
+        );
         return;
       }
       const providedAuth = req.headers['authorization'] ?? '';

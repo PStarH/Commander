@@ -3,6 +3,12 @@
  *
  * Validates workspace boundary enforcement across all tools modified in
  * the 2026-06 security hardening pass.
+ *
+ * Async note: `safePath` now returns `Promise<string>` (was synchronous).
+ * Tests that called `safePath('x')` directly must `await` the promise;
+ * tests that asserted `assert.throws(() => safePath(x))` must use
+ * `await assert.rejects(async () => safePath(x))` because the rejection
+ * is now Promise-based instead of synchronous.
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
@@ -28,53 +34,53 @@ function isError(s: string): boolean {
 }
 
 // ============================================================================
-// safePath unit tests
+// safePath unit tests — async/await because safePath is now Promise-returning.
 // ============================================================================
 describe('safePath — workspace boundary enforcement', () => {
-  it('accepts paths within workspace', () => {
-    const result = safePath('package.json');
+  it('accepts paths within workspace', async () => {
+    const result = await safePath('package.json');
     assert.ok(result.endsWith('package.json'));
     assert.ok(fs.existsSync(result));
   });
 
-  it('accepts nested paths within workspace', () => {
-    const result = safePath('src/tools/fileSystemTool.ts');
+  it('accepts nested paths within workspace', async () => {
+    const result = await safePath('src/tools/fileSystemTool.ts');
     assert.ok(result.endsWith(path.normalize('src/tools/fileSystemTool.ts')));
     assert.ok(fs.existsSync(result));
   });
 
-  it('accepts dot (.) as current directory', () => {
-    const result = safePath('.');
+  it('accepts dot (.) as current directory', async () => {
+    const result = await safePath('.');
     assert.strictEqual(result, getSafeRoot());
   });
 
-  it('accepts non-existent paths within workspace (ENOENT)', () => {
-    const result = safePath('nonexistent-dir-xyz/nonexistent-file.test');
+  it('accepts non-existent paths within workspace (ENOENT)', async () => {
+    const result = await safePath('nonexistent-dir-xyz/nonexistent-file.test');
     assert.ok(result.endsWith(path.normalize('nonexistent-dir-xyz/nonexistent-file.test')));
     assert.ok(!fs.existsSync(result));
   });
 
-  it('rejects paths outside workspace via ../ traversal', () => {
-    assert.throws(() => safePath('../../../etc/passwd'), /Access denied/);
+  it('rejects paths outside workspace via ../ traversal', async () => {
+    await assert.rejects(() => safePath('../../../etc/passwd'), /Access denied/);
   });
 
-  it('rejects absolute paths outside workspace', () => {
+  it('rejects absolute paths outside workspace', async () => {
     if (process.platform === 'darwin' || process.platform === 'linux') {
-      assert.throws(() => safePath('/etc/passwd'), /Access denied|outside workspace/);
+      await assert.rejects(() => safePath('/etc/passwd'), /Access denied|outside workspace/);
     }
   });
 
-  it('rejects deeply traversed paths', () => {
-    assert.throws(() => safePath('../../../../../../etc/shadow'), /Access denied/);
+  it('rejects deeply traversed paths', async () => {
+    await assert.rejects(() => safePath('../../../../../../etc/shadow'), /Access denied/);
   });
 
-  it('accepts empty string as path (resolves to workspace root)', () => {
-    const result = safePath('');
+  it('accepts empty string as path (resolves to workspace root)', async () => {
+    const result = await safePath('');
     assert.strictEqual(result, getSafeRoot());
   });
 
-  it('handles path with ./ prefix', () => {
-    const result = safePath('./package.json');
+  it('handles path with ./ prefix', async () => {
+    const result = await safePath('./package.json');
     assert.ok(result.endsWith('package.json'));
     assert.ok(
       fs.existsSync(result),
@@ -82,9 +88,9 @@ describe('safePath — workspace boundary enforcement', () => {
     );
   });
 
-  it('rejects traversal that stays in root but not under workspace', () => {
+  it('rejects traversal that stays in root but not under workspace', async () => {
     if (process.platform === 'darwin' || process.platform === 'linux') {
-      assert.throws(() => safePath('/etc'), /Access denied/);
+      await assert.rejects(() => safePath('/etc'), /Access denied/);
     }
   });
 });
@@ -269,7 +275,7 @@ describe('FileWriteTool — edge cases', () => {
       result.includes('Written'),
       `Should write successfully, got: ${result.slice(0, 100)}`,
     );
-    const resolved = safePath(testFile);
+    const resolved = await safePath(testFile);
     assert.ok(fs.existsSync(resolved), 'File should exist on disk');
     assert.strictEqual(fs.readFileSync(resolved, 'utf-8'), 'test content');
   });
@@ -500,7 +506,7 @@ describe('CodeRefinerTool — codeFile workspace boundary', () => {
 });
 
 // ============================================================================
-// CodeSearchTool — COMMANDER_WORKSPACE respect
+// CodeSearchTool — COMMANDER_WORKSPACE respect (uses safePath directly)
 // ============================================================================
 describe('CodeSearchTool — workspace boundary', () => {
   let tool: CodeSearchTool;
@@ -529,11 +535,11 @@ describe('CodeSearchTool — workspace boundary', () => {
       const root = getSafeRoot();
       assert.strictEqual(root, subdir, 'getSafeRoot() should return COMMANDER_WORKSPACE path');
 
-      const pkg = safePath('package.json');
+      const pkg = await safePath('package.json');
       assert.ok(pkg.startsWith(root), `safePath should resolve under override root, got: ${pkg}`);
       assert.ok(pkg.endsWith('package.json'));
 
-      assert.throws(
+      await assert.rejects(
         () => safePath('../../../package.json'),
         /Access denied/,
         'safePath should reject traversal out of the overridden root',
@@ -658,14 +664,15 @@ describe('PatchEngine — workspace boundary', () => {
 });
 
 // ============================================================================
-// FileWatcher — workspace boundary
+// FileWatcher — workspace boundary (FileWatcher.watch async)
 // ============================================================================
 describe('FileWatcher — workspace boundary', () => {
   it('rejects filePath outside workspace with no-op unsubscribe', async () => {
     const { FileWatcher } = await import('../../src/harness/harnessInfrastructure');
     const watcher = new FileWatcher();
     const handler = () => {};
-    const unsub = watcher.watch('/etc/passwd', handler);
+    // safePath rejects → FileWatcher.watch returns Promise<Unsubscribe> of a noop.
+    const unsub = await watcher.watch('/etc/passwd', handler);
     assert.strictEqual(typeof unsub, 'function');
     unsub();
   });
@@ -674,7 +681,7 @@ describe('FileWatcher — workspace boundary', () => {
     const { FileWatcher } = await import('../../src/harness/harnessInfrastructure');
     const watcher = new FileWatcher();
     const handler = () => {};
-    const unsub = watcher.watch('package.json', handler);
+    const unsub = await watcher.watch('package.json', handler);
     assert.strictEqual(typeof unsub, 'function');
     watcher.closeAll();
   });
@@ -684,7 +691,7 @@ describe('FileWatcher — workspace boundary', () => {
     const watcher = new FileWatcher();
     const handler = () => {};
     const absPath = path.resolve(getSafeRoot(), 'package.json');
-    const unsub = watcher.watch(absPath, handler);
+    const unsub = await watcher.watch(absPath, handler);
     assert.strictEqual(typeof unsub, 'function');
     watcher.closeAll();
   });

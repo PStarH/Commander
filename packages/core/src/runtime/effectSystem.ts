@@ -37,9 +37,10 @@ type EffectHandlerFn = (effect: CommanderEffect) => Promise<unknown> | unknown;
  *
  * Register handlers for each effect type (_tag), then run computations.
  */
-export class EffectHandler<E extends CommanderEffect = CommanderEffect, R = unknown>
-  implements IEffectHandler<E, R>
-{
+export class EffectHandler<
+  E extends CommanderEffect = CommanderEffect,
+  R = unknown,
+> implements IEffectHandler<E, R> {
   private handlers: Map<string, EffectHandlerFn> = new Map();
   private logBuffer: Array<{ level: string; message: string; timestamp: number }> = [];
 
@@ -147,7 +148,9 @@ export class EffectHandler<E extends CommanderEffect = CommanderEffect, R = unkn
 
       const handlerResult = handler(effect);
       if (handlerResult instanceof Promise) {
-        throw new Error(`Effect '${effect._tag}' handler is async — use run() instead of runSync()`);
+        throw new Error(
+          `Effect '${effect._tag}' handler is async — use run() instead of runSync()`,
+        );
       }
       result = generator.next(handlerResult);
     }

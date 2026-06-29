@@ -41,8 +41,8 @@ const teeExecPolicy = new ExecPolicyEngine();
 
 // Commands explicitly forbidden from TEE execution regardless of policy rules.
 const TEE_FORBIDDEN_PATTERNS = [
-  /rm\s+-rf\s+\//,       // Recursive root deletion
-  /\bmkfs\b/,             // Filesystem formatting
+  /rm\s+-rf\s+\//, // Recursive root deletion
+  /\bmkfs\b/, // Filesystem formatting
   /\bdd\s+if=.*of=\/dev\//, // Direct device writes
   /:\(\)\s*\{\s*:\|:&\s*\}\s*;/, // Fork bomb
 ];
@@ -63,7 +63,10 @@ function validateTEECommand(cmd: string): { allowed: boolean; reason?: string } 
   // Check against ExecPolicy
   const decision = teeExecPolicy.evaluate(cmd);
   if (decision.decision === 'forbidden') {
-    return { allowed: false, reason: `Blocked by exec policy: ${decision.rule?.justification ?? 'forbidden'}` };
+    return {
+      allowed: false,
+      reason: `Blocked by exec policy: ${decision.rule?.justification ?? 'forbidden'}`,
+    };
   }
 
   return { allowed: true };

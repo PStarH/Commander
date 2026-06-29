@@ -151,9 +151,7 @@ export class PluginLoader {
       }
 
       if (scanBlocked) {
-        throw new Error(
-          `Supply chain scan blocked plugin "${manifest.name}": ${blockReason}`,
-        );
+        throw new Error(`Supply chain scan blocked plugin "${manifest.name}": ${blockReason}`);
       }
 
       // P-SEC: Register permission enforcer BEFORE importing plugin code.
@@ -167,7 +165,10 @@ export class PluginLoader {
       const declaredPerms = enforcer.getDeclaredPermissions();
       getGlobalLogger().info('PluginLoader', 'Plugin permission envelope', {
         plugin: manifest.name,
-        filesystem: { read: declaredPerms.filesystem.read.length, write: declaredPerms.filesystem.write.length },
+        filesystem: {
+          read: declaredPerms.filesystem.read.length,
+          write: declaredPerms.filesystem.write.length,
+        },
         network: { domains: declaredPerms.network.allowedDomains.length },
         process: declaredPerms.process,
         env: declaredPerms.env.length,

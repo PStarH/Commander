@@ -427,11 +427,10 @@ export class IncrementalSCCDetector {
     if (this.deadlockHistory.length > 100) this.deadlockHistory.shift();
 
     if (this.config.logCycles) {
-      getGlobalLogger().warn(
-        'IncrementalSCC',
-        `Cycle detected: ${allNodes.join(' → ')}`,
-        { involvedAgents, edgeReason: triggerEdge.reason },
-      );
+      getGlobalLogger().warn('IncrementalSCC', `Cycle detected: ${allNodes.join(' → ')}`, {
+        involvedAgents,
+        edgeReason: triggerEdge.reason,
+      });
     }
 
     if (this.config.publishAlerts) {
@@ -507,10 +506,7 @@ export class IncrementalSCCDetector {
     for (const [nodeId] of this.nodes) {
       const outEdges = this.edges.get(nodeId);
       const inEdges = this.reverseEdges.get(nodeId);
-      if (
-        outEdges && outEdges.size === 0 &&
-        inEdges && inEdges.size === 0
-      ) {
+      if (outEdges && outEdges.size === 0 && inEdges && inEdges.size === 0) {
         toRemove.push(nodeId);
       }
     }
