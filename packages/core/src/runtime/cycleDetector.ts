@@ -284,12 +284,13 @@ export class CycleDetector {
     const phraseRepeat = text.match(/\b([\w\s]{2,30}?)\1{2,}/);
     if (phraseRepeat) {
       const repeated = phraseRepeat[1].trim();
-      // Any 3+ repetition of a phrase ≥6 chars is degeneration.
-      // Lower threshold: 3 repetitions × "The" (3 chars) = 9 chars match,
-      // but we require ≥6 char match to avoid false positives on short words.
+      // Require matchLen >= 30 to avoid false positives on brief repetitions
+      // that small models can recover from (e.g. "The" x 4 = 12 chars is a
+      // transient hiccup, not sustained degeneration). Real degeneration in
+      // small models typically produces 50+ chars of repetition.
       const matchLen = phraseRepeat[0].length;
       const repetitions = Math.floor(matchLen / phraseRepeat[1].length);
-      if (matchLen >= 6 && repetitions >= 3) {
+      if (matchLen >= 30 && repetitions >= 3) {
         return {
           detected: true,
           type: 'semantic_stagnation',
@@ -301,13 +302,15 @@ export class CycleDetector {
       }
     }
 
-    // Pattern 2: run-length degeneration — any single token repeated 5+ times
-    // Catches "aaaaaaa", "......", "=====", "the the the the the"
-    const tokenRepeat = text.match(/(\b\w+\b)(\s+\1){4,}/gi);
+    // Pattern 2: run-length degeneration — any single token repeated 8+ times
+    // Catches "aaaaaaa", "......", "=====", "the the the the the the the the"
+    // Threshold raised from 5 to 8 to avoid false positives on brief word
+    // repetition that small models recover from naturally.
+    const tokenRepeat = text.match(/(\b\w+\b)(\s+\1){7,}/gi);
     if (tokenRepeat) {
       const match = tokenRepeat[0];
       const wordCount = match.split(/\s+/).length;
-      if (wordCount >= 5) {
+      if (wordCount >= 8) {
         return {
           detected: true,
           type: 'semantic_stagnation',
