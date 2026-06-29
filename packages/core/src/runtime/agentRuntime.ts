@@ -83,6 +83,7 @@ import { getVerificationReportStore } from './verificationReportStore';
 import { StateCheckpointer } from './stateCheckpointer';
 import { installProcessCrashHandlers } from './processCrashSafety';
 import { RunRecovery, type RunRecoveryResult } from './runRecovery';
+import { getGlobalDeterminismCapture } from './determinismCapture';
 import { StepTimeoutManager } from './stepTimeoutManager';
 import {
   ProviderFallbackChain,
@@ -119,7 +120,6 @@ import { InterruptError } from './interruptError';
 import { createContentScanner, type ContentScanner } from '../contentScanner';
 import { scanToolOutputForInjection, enforceToolOutputSecurity } from '../contentScanner';
 import { sanitizeIfNeeded } from '../security/outputSanitizer';
-import { getCostGuard } from '../security/costGuard';
 import { getCapabilityTokenIssuer } from '../security/capabilityToken';
 import { getEnterpriseSecurityGateway } from '../security/enterpriseSecurityGateway';
 import { checkMemoryPoisoning } from '../security/memoryPoisoningGate';
@@ -132,7 +132,7 @@ import {
 } from '../security/securityResponseEngine';
 import type { SecurityAlert } from '../security/securityResponseEngine';
 import { assertInvariants } from '../security/securityInvariantVerifier';
-import { getHallucinationDetector } from '../hallucinationDetector';
+import { getHallucinationDetector, type HallucinationReport } from '../hallucinationDetector';
 import { getSLOManager } from '../observability/sloManager';
 import { getPrivacyRouter } from './privacyRouter';
 import type { TenantProvider, TenantConfig } from './tenantProvider';
@@ -175,8 +175,10 @@ import { getGlobalLogger } from '../logging';
 import { getDataRetentionJanitor } from '../storage/dataRetention';
 import type { CompactTaskType } from './contextCompactor';
 import { getCostEstimator, type CostEstimate } from './costEstimator';
-import { getTokenSentinel } from '../telos/tokenSentinel';
-import { DEFAULT_TELOS_CONFIG, type TELOSBudget } from '../telos/types';
+// TokenSentinel and CostGuard imports removed — both superseded by
+// UnifiedCostAuthority (UCA). The legacy classes remain as @deprecated
+// thin shells for backward compatibility but are no longer invoked
+// from the agent runtime hot path.
 import { getModelPerformanceStore } from './modelPerformanceStore';
 import { getSecurityMonitor } from '../security/securityMonitor';
 import { initializeRuntimeGuardian } from './runtimeGuardianBridge';
@@ -814,11 +816,14 @@ export class AgentRuntime implements AgentRuntimeInterface {
     siblingAbortSignal?: AbortSignal,
   ): Promise<PreToolCallGateResult> {
     // Gate 1: HookManager plugin denial.
+    // Resolve the Tool object for the hook context (G2: taint tracking reads riskMetadata)
+    const resolvedTool = this.getTool(tc.name);
     const hookCtx = {
       toolName: tc.name,
       args: tc.arguments,
       agentId,
       runId,
+      tool: resolvedTool,
     };
     const hookResult = await getHookManager().fireBeforeToolCall(hookCtx);
     if (hookResult !== null) {
@@ -1374,43 +1379,11 @@ export class AgentRuntime implements AgentRuntimeInterface {
             };
           }
 
-          // CostGuard: economic attack detection (once per agent turn, not per retry)
-          try {
-            const estimatedTokens = this.governor.getState().usedTokens + 500;
-            const costDecision = getCostGuard().evaluateRequest({
-              tokens: estimatedTokens,
-              model: routing.modelId,
-              source: ctx.tenantId ?? ctx.agentId,
-            });
-            if (costDecision.action === 'MELT') {
-              const msg = `COSTGUARD_MELT: ${costDecision.reason}`;
-              tracer.recordDecision(runId, msg, 0);
-              bus.publish('agent.failed', ctx.agentId, { runId, error: msg });
-              return {
-                runId,
-                agentId: ctx.agentId,
-                missionId: ctx.missionId,
-                status: 'cancelled',
-                summary: msg,
-                steps: [],
-                totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-                totalDurationMs: 0,
-                error: msg,
-              };
-            }
-            if (costDecision.action === 'THROTTLE') {
-              getGlobalLogger().warn('AgentRuntime', `CostGuard THROTTLE: ${costDecision.reason}`);
-            }
-          } catch (e) {
-            // Fail-closed: CostGuard errors are treated as THROTTLE.
-            // The guard may fail due to misconfiguration, memory pressure, or
-            // state corruption — in all cases the safe default is to reduce
-            // request priority rather than allow unrestricted spending.
-            getGlobalLogger().warn(
-              'AgentRuntime',
-              `CostGuard check failed (fail-closed, throttling): ${(e as Error)?.message}`,
-            );
-          }
+          // Cost enforcement is handled by EnterpriseSecurityGateway.preLLMCheck
+          // (→ UnifiedCostAuthority) inside the LLM call path. The legacy
+          // CostGuard.evaluateRequest() previously duplicated this check on
+          // the hot path; it has been removed to eliminate double-checking.
+          // CostGuard is now @deprecated — see security/costGuard.ts.
 
           for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
             const llmCtx = { request, agentId: ctx.agentId, runId };
@@ -1438,6 +1411,14 @@ export class AgentRuntime implements AgentRuntimeInterface {
             ctx.guard?.check(0);
 
             if (response) {
+              // DeterminismCapture: record LLM response for event replay recovery (Path A).
+              // Fire-and-forget — capture failures never block the critical path.
+              try {
+                const captureStep = getGlobalDeterminismCapture().nextStep(runId);
+                getGlobalDeterminismCapture().captureLLMResponse(runId, captureStep, response);
+              } catch (capErr) {
+                reportSilentFailure(capErr, 'agentRuntime:captureLLMResponse');
+              }
               // Accumulate token usage
               totalTokens.promptTokens += response.usage.promptTokens;
               totalTokens.completionTokens += response.usage.completionTokens;
@@ -1468,20 +1449,22 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 tenantId,
               );
 
-              // Hallucination detection: analyze the LLM response and feed the
-              // result into AdaptiveHITL via onBeforeToolCall signals.
+              // Hallucination detection: single analyze call for both HITL
+              // signal and security event enrichment (previously called twice).
+              let hallucinationReport: HallucinationReport | null = null;
               try {
                 const userInput = request.messages
                   .filter((m) => m.role === 'user')
                   .map((m) => m.content)
                   .join('\n')
                   .slice(0, 4000);
-                const report = getHallucinationDetector().analyze(
+                hallucinationReport = getHallucinationDetector().analyze(
                   userInput,
                   response.content?.slice(0, 4000) ?? '',
                 );
                 this.lastHallucinationDetected =
-                  report.recommendation === 'reject' || report.recommendation === 'flag_for_review';
+                  hallucinationReport.recommendation === 'reject' ||
+                  hallucinationReport.recommendation === 'flag_for_review';
               } catch (err) {
                 reportSilentFailure(err, 'agentRuntime:hallucination-detection');
                 this.lastHallucinationDetected = false;
@@ -1506,27 +1489,18 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   timestamp: Date.now(),
                   severity: 'low' as const,
                 };
-                // Security (OWASP ASI10): Run hallucination detector on LLM output
-                // and pass result to security orchestrator for HITL signal enrichment.
-                try {
-                  const hallucinationReport = getHallucinationDetector().analyze(
-                    ctx.goal ?? '',
-                    response.content ?? '',
-                  );
-                  if (hallucinationReport.recommendation !== 'pass') {
-                    getGlobalLogger().warn('AgentRuntime', 'Hallucination detected', {
-                      agentId: ctx.agentId,
-                      riskScore: hallucinationReport.riskScore,
-                      recommendation: hallucinationReport.recommendation,
-                      signals: hallucinationReport.signals.length,
-                    });
-                    // Enrich the LLM event with hallucination signal
-                    llmEvent.metadata.hallucinationDetected = true;
-                    llmEvent.metadata.hallucinationRiskScore = hallucinationReport.riskScore;
-                    llmEvent.severity = 'medium' as const;
-                  }
-                } catch {
-                  /* best-effort hallucination detection */
+                // Reuse the hallucination report from above (OWASP ASI10) — no
+                // duplicate analyze() call. Enriches the LLM event for HITL.
+                if (hallucinationReport && hallucinationReport.recommendation !== 'pass') {
+                  getGlobalLogger().warn('AgentRuntime', 'Hallucination detected', {
+                    agentId: ctx.agentId,
+                    riskScore: hallucinationReport.riskScore,
+                    recommendation: hallucinationReport.recommendation,
+                    signals: hallucinationReport.signals.length,
+                  });
+                  llmEvent.metadata.hallucinationDetected = true;
+                  llmEvent.metadata.hallucinationRiskScore = hallucinationReport.riskScore;
+                  llmEvent.severity = 'medium' as const;
                 }
                 this.securityOrch.onAgentEvent(llmEvent);
               } catch (err) {
@@ -1575,54 +1549,11 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 /* best-effort learning */
               }
 
-              // TokenSentinel: fine-grained per-run token-budget tracking.
-              // Unlike EnterpriseSecurityGateway's BillExplosionGuard (which
-              // does a pre-LLM cost estimate and hard-blocks the call), the
-              // TokenSentinel checks the *actual* accumulated token usage
-              // against a hard cap and emits a warn log + a 'system.alert'
-              // (token_usage_anomaly variant) MessageBus event when exceeded.
-              // Advisory only — it does NOT throw or abort the run; the
-              // BillExplosionGuard already owns the hard-block path (see
-              // preLLMCheck further down).
-              try {
-                const hardCap =
-                  this.config.budgetHardCapTokens ||
-                  DEFAULT_TELOS_CONFIG.defaultBudget.hardCapTokens;
-                const telosBudget: TELOSBudget = {
-                  hardCapTokens: hardCap,
-                  softCapTokens: Math.floor(hardCap * 0.75),
-                  costCapUsd: DEFAULT_TELOS_CONFIG.defaultBudget.costCapUsd,
-                };
-                const budgetAlert = getTokenSentinel().checkBudget(
-                  runId,
-                  totalTokens.totalTokens,
-                  telosBudget,
-                );
-                if (budgetAlert) {
-                  getGlobalLogger().warn(
-                    'AgentRuntime',
-                    `TokenSentinel budget exceeded: ${budgetAlert.message}`,
-                    {
-                      runId,
-                      agentId: ctx.agentId,
-                      current: budgetAlert.current,
-                      limit: budgetAlert.limit,
-                      type: budgetAlert.type,
-                    },
-                  );
-                  bus.publish('system.alert', ctx.agentId, {
-                    type: 'token_usage_anomaly',
-                    runId,
-                    agentId: ctx.agentId,
-                    alertType: budgetAlert.type,
-                    current: budgetAlert.current,
-                    limit: budgetAlert.limit,
-                    message: budgetAlert.message,
-                  });
-                }
-              } catch (err) {
-                reportSilentFailure(err, 'agentRuntime:tokenSentinel:checkBudget');
-              }
+              // NOTE: TokenSentinel advisory budget check removed — superseded by
+              // UnifiedCostAuthority (UCA). The UCA's postCall (invoked via
+              // EnterpriseSecurityGateway.postLLMCheck) now owns per-run budget
+              // tracking, anomaly observation (3σ), and melt triggering.
+              // Keeping this block as a comment to document the migration.
 
               // ── Degeneration guard (PRE-STEP) ──
               // Detect and sanitize model degeneration BEFORE the step is created.
@@ -1670,14 +1601,15 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     '[Output truncated: model degeneration detected — ' +
                     stagnation.description +
                     ']';
-                  // Recovery strategy: on 2nd+ consecutive degeneration, the
+                  // Recovery strategy: on 3rd+ consecutive degeneration, the
                   // model has lost coherence — continuing to execute tool
                   // calls will only pollute the context further and produce
                   // worse outcomes. Force earlyExit by clearing toolCalls so
                   // the terminal handler takes over with whatever work was
-                  // already completed. On 1st degeneration, preserve toolCalls
-                  // (the model may still issue valid calls like update-dep).
-                  if (consecutiveDegenerationCount >= 2) {
+                  // already completed. On 1st-2nd degeneration, preserve
+                  // toolCalls (the model may still issue valid calls like
+                  // update-dep) and give it a chance to recover.
+                  if (consecutiveDegenerationCount >= 3) {
                     getGlobalLogger().warn(
                       'AgentRuntime',
                       'Forcing earlyExit due to repeated degeneration',
@@ -2754,6 +2686,13 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
       return execResult;
     } finally {
+      // DeterminismCapture: clear in-memory captures for this run to prevent
+      // memory leak. WAL data persists for crash recovery via restoreFromWAL().
+      try {
+        getGlobalDeterminismCapture().clearRun(runId);
+      } catch (capErr) {
+        reportSilentFailure(capErr, 'agentRuntime:clearDeterminismCapture');
+      }
       // Cleanup is delegated to FinallyCleanupHandler (circuit breaker release,
       // run lifecycle, tenant/lane/concurrency slot release, tracer completion,
       // SLO check, OTel export, SOP auto-export, store flush, tenant restore).
@@ -2963,6 +2902,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       const preCheck = gateway.preLLMCheck({
         tenantId: tenantIdForFlight,
         sessionId: taskId,
+        runId: taskId ?? 'unknown',
         model: request.model,
         estimatedTokens,
         source: taskId ?? 'unknown',
@@ -3018,6 +2958,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       const postCheck = gateway.postLLMCheck({
         tenantId: tenantIdForFlight,
         sessionId: taskId,
+        runId: taskId ?? 'unknown',
         model: request.model,
         inputTokens: result.usage.promptTokens,
         outputTokens: result.usage.completionTokens,
@@ -3136,12 +3077,17 @@ export class AgentRuntime implements AgentRuntimeInterface {
     }
 
     const gateway = getEnterpriseSecurityGateway();
+    // 查找工具的 costTier（从 this.tools Map 中获取 ToolDefinition）
+    const toolDef = this.tools.get(toolCall.name);
+    const costTier = toolDef?.definition.costTier;
     const preCheck = gateway.preToolCheck({
       tenantId,
       sessionId: runId,
+      runId,
       toolName: toolCall.name,
       source: agentId,
       input: JSON.stringify(toolCall.arguments).slice(0, 10000),
+      costTier,
     });
     if (!preCheck.allowed) {
       const errorMsg = `SECURITY_GATEWAY_BLOCKED: ${preCheck.reason ?? 'tool policy'}`;
@@ -3164,13 +3110,24 @@ export class AgentRuntime implements AgentRuntimeInterface {
       this.executedMutations,
     );
 
-    // EnterpriseSecurityGateway: post-tool DLP scan on tool output.
+    // DeterminismCapture: record tool response for event replay recovery (Path A).
+    // Fire-and-forget — capture failures never block the critical path.
+    try {
+      const captureStep = getGlobalDeterminismCapture().nextStep(runId);
+      getGlobalDeterminismCapture().captureToolResponse(runId, captureStep, result);
+    } catch (capErr) {
+      reportSilentFailure(capErr, 'agentRuntime:captureToolResponse');
+    }
+
+    // EnterpriseSecurityGateway: post-tool DLP scan on tool output + UCA 成本记录.
     const postCheck = gateway.postToolCheck({
       tenantId,
       sessionId: runId,
+      runId,
       toolName: toolCall.name,
       output: result.output,
       agentId,
+      costTier,
     });
     if (!postCheck.allowed) {
       const errorMsg = `SECURITY_GATEWAY_BLOCKED_OUTPUT: ${postCheck.reason ?? 'DLP policy'}`;

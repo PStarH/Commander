@@ -448,6 +448,7 @@ export class DefaultHarness extends BaseHarness {
         result: toolResult,
         agentId,
         runId,
+        tool,
       });
 
       services.recordToolCall(tc.name, toolResult.durationMs, toolResult.error, tenantId);

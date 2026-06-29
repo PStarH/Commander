@@ -6,6 +6,7 @@ import type {
   AgentExecutionContext,
   AgentExecutionResult,
 } from './runtime/types';
+import type { Tool } from './runtime/types/tool';
 import { getGlobalLogger } from './logging';
 import { getMetricsCollector } from './runtime/metricsCollector';
 import { getGlobalPluginPermissionRegistry } from './security/pluginPermissions';
@@ -49,6 +50,10 @@ export interface BeforeToolCallContext {
   args: Record<string, unknown>;
   agentId: string;
   runId: string;
+  /** Full tool reference — available when the call originates from the
+   * registered ToolRegistry. Plugins may use this to read definition metadata
+   * (riskMetadata, category, etc.). May be undefined for synthetic contexts. */
+  tool?: Tool;
 }
 
 /** Context passed to afterToolCall hooks */
@@ -58,6 +63,8 @@ export interface AfterToolCallContext {
   result: ToolResult;
   agentId: string;
   runId: string;
+  /** Full tool reference (see BeforeToolCallContext). */
+  tool?: Tool;
 }
 
 /** Context passed to beforeLLMCall hooks */
