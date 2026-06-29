@@ -39,7 +39,7 @@ import {
   type BusPayloadMap,
   type MessageBusTopic,
 } from '@commander/core/runtime';
-import { isProductionEnv, describeProdSignal } from './envSignal';
+import { isProductionEnv, describeProdSignal } from '../envSignal';
 
 const CORRELATION_TOPICS = [
   'runtime.cycle_correlated',
