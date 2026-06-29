@@ -147,6 +147,7 @@ export const HARDENED: SandboxProfile = {
   ],
   timeout: 120000,
   memoryLimitMB: 512,
+  cpuLimit: 1, // G8: Single CPU core for production-hardened sandbox
 };
 
 export const PROFILES: Record<string, SandboxProfile> = {
