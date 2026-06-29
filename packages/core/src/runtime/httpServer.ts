@@ -32,7 +32,8 @@ import { XAIProvider } from './providers/xaiProvider';
 import { AnyscaleProvider } from './providers/anyscaleProvider';
 import { DeepInfraProvider } from './providers/deepinfraProvider';
 import { AgnesProvider } from './providers/agnesProvider';
-import { resolveSecureApiKey } from '../security/secureApiKeyResolver';
+import { resolveSecureApiKey, initSecureApiKeyResolver } from '../security/secureApiKeyResolver';
+import { getEncryptedSecretsVault } from '../security/encryptedSecretsVault';
 import { StepFunProvider } from './providers/stepfunProvider';
 import { MiniMaxProvider } from './providers/minimaxProvider';
 import { MCPServer } from '../mcp/server';
@@ -62,6 +63,7 @@ import { getCompensationData, renderDashboardHtml } from './compensationDashboar
 import {
   type MemoryLayer,
   type MemoryQuery,
+  type MemoryEntry,
   getGlobalThreeLayerMemory,
 } from '../threeLayerMemory.js';
 import { runWithTenant } from './tenantContext';
@@ -314,6 +316,37 @@ export class CommanderHttpServer {
   constructor(config?: Partial<HttpServerConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.initializeAuth();
+    this.initializeSecretVault();
+  }
+
+  /**
+   * Security (G5): Initialize the EncryptedSecretsVault and wire it into the
+   * SecureApiKeyResolver. When the vault has a secret stored, keys are
+   * decrypted from AES-256-GCM at-rest storage instead of being read from
+   * plaintext environment variables.
+   *
+   * In production, COMMANDER_MASTER_KEY must be set (>= 32 chars) or the vault
+   * will refuse to initialize. In dev, a temporary key is auto-generated.
+   * If initialization fails for any reason, the resolver falls back to env vars.
+   */
+  private initializeSecretVault(): void {
+    try {
+      const vault = getEncryptedSecretsVault();
+      initSecureApiKeyResolver({
+        retrieve: (name: string) => (vault.hasSecret(name) ? name : null),
+        decrypt: (name: string) => vault.getSecret(name),
+      });
+      getGlobalLogger().info(
+        'HttpServer',
+        'EncryptedSecretsVault initialized — API keys will be resolved from encrypted vault first',
+      );
+    } catch (err) {
+      getGlobalLogger().warn(
+        'HttpServer',
+        'EncryptedSecretsVault initialization failed — falling back to environment variables',
+        { error: (err as Error)?.message },
+      );
+    }
   }
 
   private initializeAuth(): void {
@@ -1269,9 +1302,9 @@ export class CommanderHttpServer {
                 ...(body.limit !== undefined ? { limit: body.limit } : {}),
                 ...(body.since ? { since: body.since } : {}),
               };
-              const entries = memory.query(query);
+              const entries = await memory.query(query);
               sendJson(res, 200, {
-                items: entries.map((e) => ({
+                items: entries.map((e: MemoryEntry) => ({
                   id: e.id,
                   layer: e.layer,
                   content: e.content,
