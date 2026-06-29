@@ -84,6 +84,7 @@ export class DistributedEventBus extends ContractEventBus {
    */
   private async initRedis(redisUrl: string): Promise<void> {
     try {
+      // @ts-ignore — redis is an optional dependency
       const redis = await import('redis');
       const client = redis.createClient({ url: redisUrl });
       await client.connect();
