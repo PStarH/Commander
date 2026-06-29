@@ -61,6 +61,38 @@ export interface BuiltContext {
 export class MemorySystem {
   constructor(private readonly config: MemorySystemConfig) {}
 
+  /**
+   * Assert that a write target is within the calling agent's namespace.
+   * O(1) — pure in-memory string comparison. No async I/O.
+   *
+   * Enforcement order:
+   *   1. Path starts with writer's own namespace → allow
+   *   2. ACL explicitly grants a namespace that contains the path → allow
+   *   3. ACL grants 'tasks' and path is under tasks/ → allow (shared task scope)
+   *   4. Otherwise → throw SecurityInvariantViolation (fail-closed)
+   *
+   * Orchestrator spawn contract: when spawning task-bound sub-agents, the
+   * orchestrator MUST inject 'tasks' (or a specific tasks/<TID> prefix)
+   * into the sub-agent's ACL namespaces, or the first task-log write will
+   * trip this guard.
+   */
+  assertNamespaced(
+    writerAgentId: string,
+    targetPath: string,
+    acl?: { role: string; namespaces: string[] },
+  ): void {
+    const writerNs = `agents/${writerAgentId}`;
+    if (targetPath.startsWith(writerNs)) return;
+
+    if (acl && acl.namespaces.some(ns => targetPath.startsWith(ns))) return;
+
+    if (acl && acl.namespaces.includes('tasks') && targetPath.startsWith('tasks/')) return;
+
+    throw new Error(
+      `MEMORY-001: agent "${writerAgentId}" attempted to write outside its namespace: ${targetPath}`,
+    );
+  }
+
   // ============================================================================
   // Working memory (short-term, session-scoped)
   // ============================================================================
