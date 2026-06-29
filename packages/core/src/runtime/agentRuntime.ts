@@ -1340,6 +1340,10 @@ export class AgentRuntime implements AgentRuntimeInterface {
           };
           // Track content written by file_write tool calls for artifact propagation
           let largestFileWriteContent = '';
+          // Consecutive degeneration counter: when the model degenerates 2+
+          // times in a row, force earlyExit to prevent cascading context
+          // pollution. The model's reasoning quality will not recover.
+          let consecutiveDegenerationCount = 0;
 
           // Per-run sliding window instance to prevent concurrent run corruption
           this.slidingWindow = new SlidingWindowOrchestrator();
@@ -1629,16 +1633,19 @@ export class AgentRuntime implements AgentRuntimeInterface {
               if (response.content) {
                 const stagnation = this.cycleDetector.checkOutput(response.content);
                 if (stagnation.detected && stagnation.type === 'semantic_stagnation') {
+                  consecutiveDegenerationCount++;
                   bus.publish('system.alert', 'runtime', {
                     ...stagnation,
                     runId,
                     agentId: ctx.agentId,
                     stepNumber: steps.length + 1,
+                    consecutive: consecutiveDegenerationCount,
                   });
                   getGlobalLogger().warn('AgentRuntime', 'Semantic stagnation detected', {
                     stepNumber: steps.length + 1,
                     similarity: stagnation.similarity,
                     description: stagnation.description,
+                    consecutive: consecutiveDegenerationCount,
                   });
                   getMetricsCollector().incrementCounter(
                     'degeneration_breaks_total',
@@ -1663,12 +1670,35 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     '[Output truncated: model degeneration detected — ' +
                     stagnation.description +
                     ']';
-                  // Don't clear toolCalls — the model may still issue valid
-                  // tool calls even when its text is degenerate (e.g.
-                  // "TheTheTheThe" + update-dep). Clearing them prevents
-                  // useful work from executing and guarantees checkCompletion
-                  // failure in benchmark cases.
+                  // Recovery strategy: on 2nd+ consecutive degeneration, the
+                  // model has lost coherence — continuing to execute tool
+                  // calls will only pollute the context further and produce
+                    // worse outcomes. Force earlyExit by clearing toolCalls so
+                  // the terminal handler takes over with whatever work was
+                  // already completed. On 1st degeneration, preserve toolCalls
+                  // (the model may still issue valid calls like update-dep).
+                  if (consecutiveDegenerationCount >= 2) {
+                    getGlobalLogger().warn(
+                      'AgentRuntime',
+                      'Forcing earlyExit due to repeated degeneration',
+                      {
+                        consecutiveDegenerationCount,
+                        stepNumber: steps.length + 1,
+                        toolCallsCleared: response.toolCalls?.length ?? 0,
+                      },
+                    );
+                    getMetricsCollector().incrementCounter(
+                      'degeneration_forced_exits_total',
+                      'Early exits forced due to repeated model degeneration',
+                      1,
+                      [{ name: 'reason', value: 'consecutive_degeneration' }],
+                    );
+                    response.toolCalls = [];
+                  }
                   degenerationDetected = true;
+                } else {
+                  // Reset counter when output is healthy
+                  consecutiveDegenerationCount = 0;
                 }
               }
 
