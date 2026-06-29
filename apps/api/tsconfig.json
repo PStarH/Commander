@@ -5,9 +5,7 @@
     "outDir": "dist",
     "paths": {
       "@commander/core": ["../../packages/core/dist/index.d.ts"],
-      "@commander/core/*": ["../../packages/core/dist/*"],
-      "@commander/observability": ["../../packages/observability/dist/index.d.ts"],
-      "@commander/observability/*": ["../../packages/observability/dist/*"]
+      "@commander/core/*": ["../../packages/core/dist/*"]
     }
   },
   "include": ["src"]
