@@ -82,7 +82,7 @@ export class LocalBackend implements ExecutionBackend {
           stderr: `Scheduler deadlock: ${deadlock.recommendation}`,
           exitCode: 1,
           durationMs: Date.now() - start,
-          sandboxMechanism: 'blocked',
+          sandboxMechanism: 'none',
         };
       }
       // Track this execution in the scheduler's Petri net model
