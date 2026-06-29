@@ -166,25 +166,22 @@ export function KnowledgeBase() {
     }
   }, [uploadName, uploadContent, uploadType, load]);
 
-  const handleFileSelected = useCallback(
-    async (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      if (!file) return;
-      try {
-        const text = await file.text();
-        setUploadContent(text);
-        setUploadName(file.name);
-        setUploadType(guessContentType(file));
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to read file');
-      } finally {
-        // Reset input so the same file can be re-selected
-        if (fileInputRef.current) fileInputRef.current.value = '';
-      }
-    },
-    [],
-  );
+  const handleFileSelected = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      setUploadContent(text);
+      setUploadName(file.name);
+      setUploadType(guessContentType(file));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to read file');
+    } finally {
+      // Reset input so the same file can be re-selected
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }, []);
 
   const handleSearch = useCallback(async () => {
     const q = searchQuery.trim();
@@ -301,9 +298,7 @@ export function KnowledgeBase() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <BookOpen size={14} />
           <span className="section-label">Documents</span>
-          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-            {total} total
-          </span>
+          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{total} total</span>
         </div>
         <Button variant="ghost" size="sm" onClick={() => load()} disabled={loading}>
           <RefreshCw size={14} />
@@ -398,12 +393,16 @@ function UploadCard({
         </p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gap: '10px',
+          marginBottom: '10px',
+        }}
+      >
         <div>
-          <label
-            htmlFor="kb-upload-name"
-            style={labelStyle}
-          >
+          <label htmlFor="kb-upload-name" style={labelStyle}>
             Document Name
           </label>
           <input
@@ -447,7 +446,12 @@ function UploadCard({
           value={uploadContent}
           onChange={(e) => onContentChange(e.target.value)}
           rows={6}
-          style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: '0.72rem', resize: 'vertical' }}
+          style={{
+            width: '100%',
+            fontFamily: 'var(--font-mono)',
+            fontSize: '0.72rem',
+            resize: 'vertical',
+          }}
         />
       </div>
 
@@ -524,7 +528,15 @@ function SearchCard({
         </p>
       </div>
 
-      <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', marginBottom: '12px', flexWrap: 'wrap' }}>
+      <div
+        style={{
+          display: 'flex',
+          gap: '10px',
+          alignItems: 'flex-end',
+          marginBottom: '12px',
+          flexWrap: 'wrap',
+        }}
+      >
         <div style={{ flex: 1, minWidth: '260px' }}>
           <label htmlFor="kb-search-query" style={labelStyle}>
             Query
@@ -560,7 +572,12 @@ function SearchCard({
             ))}
           </select>
         </div>
-        <Button variant="primary" size="sm" onClick={onSearch} disabled={searching || !query.trim()}>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={onSearch}
+          disabled={searching || !query.trim()}
+        >
           {searching ? (
             <>
               <Loader2 size={13} className="spin" />
@@ -669,7 +686,11 @@ function DocumentsTable({
     <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
       <div
         className="section-head"
-        style={{ padding: '12px 16px', marginBottom: 0, borderBottom: '1px solid var(--border-color)' }}
+        style={{
+          padding: '12px 16px',
+          marginBottom: 0,
+          borderBottom: '1px solid var(--border-color)',
+        }}
       >
         <div>
           <span className="section-label">Indexed Documents</span>
@@ -706,11 +727,15 @@ function DocumentsTable({
               {documents.map((doc) => (
                 <tr key={doc.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
                   <Td>
-                    <span style={{ fontSize: '0.72rem', color: 'var(--text-primary)', fontWeight: 500 }}>
+                    <span
+                      style={{ fontSize: '0.72rem', color: 'var(--text-primary)', fontWeight: 500 }}
+                    >
                       {doc.name}
                     </span>
                     {doc.tags && doc.tags.length > 0 && (
-                      <div style={{ marginTop: '4px', display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                      <div
+                        style={{ marginTop: '4px', display: 'flex', gap: '4px', flexWrap: 'wrap' }}
+                      >
                         {doc.tags.map((t) => (
                           <span
                             key={t}
@@ -761,7 +786,13 @@ function DocumentsTable({
                     )}
                   </Td>
                   <Td>
-                    <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                    <span
+                      style={{
+                        fontSize: '0.65rem',
+                        color: 'var(--text-muted)',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
                       {formatTimestamp(doc.createdAt)}
                     </span>
                   </Td>
@@ -781,7 +812,12 @@ function DocumentsTable({
                           )}
                           Confirm
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={onCancelDelete} disabled={deletingId === doc.id}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={onCancelDelete}
+                          disabled={deletingId === doc.id}
+                        >
                           Cancel
                         </Button>
                       </div>
@@ -819,7 +855,11 @@ function StatusBadge({ status }: { status: KnowledgeDocument['status'] }) {
     case 'indexing':
       return (
         <Badge variant="warning">
-          <Loader2 size={10} style={{ marginRight: '2px', verticalAlign: 'middle' }} className="spin" />
+          <Loader2
+            size={10}
+            style={{ marginRight: '2px', verticalAlign: 'middle' }}
+            className="spin"
+          />
           Indexing
         </Badge>
       );

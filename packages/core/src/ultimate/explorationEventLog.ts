@@ -19,7 +19,8 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import type { OrchestrationTopology } from './types';
 import { EpsilonStore, type EpsilonOverride } from './epsilonStore';
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 export interface ExplorationEvent {
@@ -260,14 +261,20 @@ export class ExplorationEventLog {
 
   private appendToDisk(event: ExplorationEvent): void {
     if (!this.persistPath) return;
-    try {
-      const dir = dirname(this.persistPath);
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-      appendFileSync(this.persistPath, JSON.stringify(event) + '\n', 'utf-8');
-    } catch (err) {
-      reportSilentFailure(err, 'explorationEventLog:267');
-      /* best-effort persistence */
-    }
+    const path = this.persistPath;
+    const line = JSON.stringify(event) + '\n';
+    const dir = dirname(path);
+    void (async () => {
+      try {
+        if (!existsSync(dir)) {
+          await mkdir(dir, { recursive: true });
+        }
+        await appendFile(path, line, 'utf-8');
+      } catch (err) {
+        reportSilentFailure(err, 'explorationEventLog:appendToDisk');
+        /* best-effort persistence */
+      }
+    })();
   }
 
   /**

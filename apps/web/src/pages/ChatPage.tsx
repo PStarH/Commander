@@ -72,10 +72,7 @@ export function ChatPage() {
       try {
         const data = JSON.parse((e as MessageEvent).data);
         if (data.payload?.toolName) {
-          setStreamingThoughts((prev) => [
-            ...prev,
-            `🔧 Using tool: ${data.payload.toolName}`,
-          ]);
+          setStreamingThoughts((prev) => [...prev, `🔧 Using tool: ${data.payload.toolName}`]);
         }
       } catch {
         // Ignore parse errors
@@ -331,7 +328,15 @@ export function ChatPage() {
             <p style={{ fontSize: '0.9rem' }}>
               Start a conversation with an Agent. Ask questions, give tasks, or request analysis.
             </p>
-            <div style={{ marginTop: '16px', display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <div
+              style={{
+                marginTop: '16px',
+                display: 'flex',
+                gap: '8px',
+                justifyContent: 'center',
+                flexWrap: 'wrap',
+              }}
+            >
               {[
                 'Analyze the current security posture',
                 'What missions are currently running?',
@@ -369,8 +374,7 @@ export function ChatPage() {
                   width: '32px',
                   height: '32px',
                   borderRadius: '50%',
-                  background:
-                    msg.role === 'user' ? 'var(--accent-blue)' : 'var(--accent-green)',
+                  background: msg.role === 'user' ? 'var(--accent-blue)' : 'var(--accent-green)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -388,8 +392,7 @@ export function ChatPage() {
                   maxWidth: '70%',
                   padding: '10px 14px',
                   borderRadius: '10px',
-                  background:
-                    msg.role === 'user' ? 'var(--accent-blue)' : 'var(--bg-elevated)',
+                  background: msg.role === 'user' ? 'var(--accent-blue)' : 'var(--bg-elevated)',
                   color: msg.role === 'user' ? '#fff' : 'var(--text-primary)',
                   fontSize: '0.85rem',
                   lineHeight: 1.6,

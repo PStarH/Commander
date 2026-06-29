@@ -34,18 +34,11 @@ import { MemoryCurator, getMemoryCurator } from './curator';
 import type { CurationResult } from './curator';
 import { UserModelManager, getUserModelManager } from './userModel';
 import type { UserProfile } from './userModel';
-import {
-  fuseAndRerank,
-  getGlobalCrossEncoderScorer,
-} from './rankingFusion';
+import { fuseAndRerank, getGlobalCrossEncoderScorer } from './rankingFusion';
 import type { FusedResult, RankingFusionConfig } from './rankingFusion';
-import {
-  getGlobalSemanticMemoryStore,
-} from './semanticStore';
+import { getGlobalSemanticMemoryStore } from './semanticStore';
 import type { SemanticMemoryStore } from './semanticStore';
-import {
-  getGlobalMemoryFederation,
-} from './federation';
+import { getGlobalMemoryFederation } from './federation';
 import type { MemoryFederation, FederationResult } from './federation';
 
 // ============================================================================
@@ -105,7 +98,14 @@ export interface RecallOptions {
   since?: string;
 }
 
-export type MemorySource = 'working' | 'episodic' | 'longterm' | 'conversations' | 'user_model' | 'semantic' | 'federated';
+export type MemorySource =
+  | 'working'
+  | 'episodic'
+  | 'longterm'
+  | 'conversations'
+  | 'user_model'
+  | 'semantic'
+  | 'federated';
 
 export interface UnifiedRecallResult {
   /** Working memory matches */
@@ -292,7 +292,14 @@ export class UnifiedMemory {
   async recall(options: RecallOptions): Promise<UnifiedRecallResult> {
     this.ensureInitialized();
 
-    const sources = options.sources ?? ['working', 'episodic', 'longterm', 'conversations', 'semantic', 'federated'];
+    const sources = options.sources ?? [
+      'working',
+      'episodic',
+      'longterm',
+      'conversations',
+      'semantic',
+      'federated',
+    ];
     const limit = options.limit ?? 5;
 
     // Search across all sources

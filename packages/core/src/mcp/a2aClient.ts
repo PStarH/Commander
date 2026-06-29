@@ -32,8 +32,15 @@ import { getGlobalLogger } from '../logging';
 // ── Security: SSRF prevention ────────────────────────────────────────────────
 // Per OWASP SSRF Prevention Cheat Sheet: validate scheme, reject private IPs.
 const PRIVATE_IP_PATTERNS = [
-  /^127\./, /^10\./, /^172\.(1[6-9]|2[0-9]|3[0-1])\./, /^192\.168\./,
-  /^169\.254\./, /^0\./, /^::1$/, /^fc00:/, /^fe80:/,
+  /^127\./,
+  /^10\./,
+  /^172\.(1[6-9]|2[0-9]|3[0-1])\./,
+  /^192\.168\./,
+  /^169\.254\./,
+  /^0\./,
+  /^::1$/,
+  /^fc00:/,
+  /^fe80:/,
 ];
 
 function isSafeA2AUrl(urlStr: string): boolean {
@@ -63,11 +70,16 @@ export class A2AClient {
   // mTLS provides channel binding and prevents MITM even if token is leaked.
   private mtlsAgent?: unknown;
 
-  constructor(baseUrl: string, authToken: string, timeoutMs = 30000, mTLSConfig?: {
-    cert: string;
-    key: string;
-    ca: string;
-  }) {
+  constructor(
+    baseUrl: string,
+    authToken: string,
+    timeoutMs = 30000,
+    mTLSConfig?: {
+      cert: string;
+      key: string;
+      ca: string;
+    },
+  ) {
     // Security: SSRF prevention — validate URL at construction time.
     // Per OWASP SSRF Prevention Cheat Sheet: reject private/internal hosts.
     if (!isSafeA2AUrl(baseUrl)) {
@@ -87,7 +99,6 @@ export class A2AClient {
     // Security: Configure mTLS if certificates are provided.
     if (mTLSConfig) {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
         const https = require('node:https');
         this.mtlsAgent = new https.Agent({
           cert: mTLSConfig.cert,
@@ -246,7 +257,10 @@ export class A2AClient {
     timer.unref();
     try {
       // Security: Apply mTLS agent if configured for transport-level authentication.
-      const fetchOptions: RequestInit & { agent?: unknown } = { ...options, signal: controller.signal };
+      const fetchOptions: RequestInit & { agent?: unknown } = {
+        ...options,
+        signal: controller.signal,
+      };
       if (this.mtlsAgent) {
         (fetchOptions as Record<string, unknown>).agent = this.mtlsAgent;
       }

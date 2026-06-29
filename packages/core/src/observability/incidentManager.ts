@@ -136,15 +136,34 @@ export interface IncidentSummary {
 // Severity → SLA mapping (Google SRE style)
 // ============================================================================
 
-const SEVERITY_SLA: Record<IncidentSeverity, {
-  responseTarget: number;  // minutes
-  resolutionTarget: number; // minutes
-  description: string;
-}> = {
-  SEV1: { responseTarget: 5,   resolutionTarget: 60,  description: 'Critical — system down or major user impact' },
-  SEV2: { responseTarget: 15,  resolutionTarget: 240, description: 'High — significant degradation, workaround exists' },
-  SEV3: { responseTarget: 60,  resolutionTarget: 720, description: 'Medium — moderate impact, non-urgent' },
-  SEV4: { responseTarget: 240, resolutionTarget: 2880, description: 'Low — minor issue, no user impact' },
+const SEVERITY_SLA: Record<
+  IncidentSeverity,
+  {
+    responseTarget: number; // minutes
+    resolutionTarget: number; // minutes
+    description: string;
+  }
+> = {
+  SEV1: {
+    responseTarget: 5,
+    resolutionTarget: 60,
+    description: 'Critical — system down or major user impact',
+  },
+  SEV2: {
+    responseTarget: 15,
+    resolutionTarget: 240,
+    description: 'High — significant degradation, workaround exists',
+  },
+  SEV3: {
+    responseTarget: 60,
+    resolutionTarget: 720,
+    description: 'Medium — moderate impact, non-urgent',
+  },
+  SEV4: {
+    responseTarget: 240,
+    resolutionTarget: 2880,
+    description: 'Low — minor issue, no user impact',
+  },
 };
 
 // ============================================================================
@@ -234,22 +253,42 @@ export class IncidentManager {
 
     switch (status) {
       case 'investigating':
-        incident.timeline.push({ timestamp: now, event: 'Investigation started', actor, details: details ? { note: details } : undefined });
+        incident.timeline.push({
+          timestamp: now,
+          event: 'Investigation started',
+          actor,
+          details: details ? { note: details } : undefined,
+        });
         break;
       case 'mitigated':
         incident.mitigatedAt = now;
-        incident.timeline.push({ timestamp: now, event: 'Mitigation applied', actor, details: details ? { note: details } : undefined });
+        incident.timeline.push({
+          timestamp: now,
+          event: 'Mitigation applied',
+          actor,
+          details: details ? { note: details } : undefined,
+        });
         break;
       case 'resolved':
         incident.resolvedAt = now;
-        incident.timeline.push({ timestamp: now, event: 'Incident resolved', actor, details: details ? { note: details } : undefined });
+        incident.timeline.push({
+          timestamp: now,
+          event: 'Incident resolved',
+          actor,
+          details: details ? { note: details } : undefined,
+        });
         // Auto-generate post-mortem draft
         incident.postmortem = this.generatePostmortemDraft(incident);
         incident.status = 'postmortem_pending';
         break;
       case 'closed':
         incident.closedAt = now;
-        incident.timeline.push({ timestamp: now, event: 'Incident closed', actor, details: details ? { note: details } : undefined });
+        incident.timeline.push({
+          timestamp: now,
+          event: 'Incident closed',
+          actor,
+          details: details ? { note: details } : undefined,
+        });
         break;
     }
 
@@ -397,9 +436,7 @@ export class IncidentManager {
       incidents = incidents.filter((i) => new Date(i.detectedAt).getTime() >= cutoff);
     }
 
-    incidents.sort((a, b) =>
-      new Date(b.detectedAt).getTime() - new Date(a.detectedAt).getTime(),
-    );
+    incidents.sort((a, b) => new Date(b.detectedAt).getTime() - new Date(a.detectedAt).getTime());
 
     const limit = filters?.limit ?? 100;
     return incidents.slice(0, limit);
@@ -410,12 +447,10 @@ export class IncidentManager {
    */
   getSummary(): IncidentSummary {
     const all = Array.from(this.incidents.values());
-    const open = all.filter((i) =>
-      i.status !== 'closed' && i.status !== 'resolved',
-    );
+    const open = all.filter((i) => i.status !== 'closed' && i.status !== 'resolved');
     const postmortemPending = all.filter((i) => i.status === 'postmortem_pending');
-    const postmortemCompleted = all.filter((i) =>
-      i.status === 'closed' && i.postmortem?.status === 'approved',
+    const postmortemCompleted = all.filter(
+      (i) => i.status === 'closed' && i.postmortem?.status === 'approved',
     );
 
     // Calculate MTTD/MTTR over last 30 days
@@ -431,15 +466,18 @@ export class IncidentManager {
       const detectTimes = recentResolved.map((i) => {
         const investigateEntry = i.timeline.find((t) => t.event.includes('Investigation'));
         if (investigateEntry) {
-          return (new Date(investigateEntry.timestamp).getTime() - new Date(i.detectedAt).getTime()) / 60000;
+          return (
+            (new Date(investigateEntry.timestamp).getTime() - new Date(i.detectedAt).getTime()) /
+            60000
+          );
         }
         return 0;
       });
       mttdMinutes = detectTimes.reduce((a, b) => a + b, 0) / detectTimes.length;
 
       // MTTR: time from detection to resolution
-      const resolveTimes = recentResolved.map((i) =>
-        (new Date(i.resolvedAt!).getTime() - new Date(i.detectedAt).getTime()) / 60000,
+      const resolveTimes = recentResolved.map(
+        (i) => (new Date(i.resolvedAt!).getTime() - new Date(i.detectedAt).getTime()) / 60000,
       );
       mttrMinutes = resolveTimes.reduce((a, b) => a + b, 0) / resolveTimes.length;
     }
@@ -461,13 +499,15 @@ export class IncidentManager {
   /**
    * Get SLA status for an incident.
    */
-  getSLAStatus(id: string): {
-    withinResponseTarget: boolean;
-    withinResolutionTarget: boolean;
-    responseTargetMinutes: number;
-    resolutionTargetMinutes: number;
-    elapsedMinutes: number;
-  } | undefined {
+  getSLAStatus(id: string):
+    | {
+        withinResponseTarget: boolean;
+        withinResolutionTarget: boolean;
+        responseTargetMinutes: number;
+        resolutionTargetMinutes: number;
+        elapsedMinutes: number;
+      }
+    | undefined {
     const incident = this.incidents.get(id);
     if (!incident) return undefined;
 
@@ -504,18 +544,14 @@ export class IncidentManager {
     const now = new Date().toISOString();
 
     const detectedTime = new Date(incident.detectedAt).getTime();
-    const resolvedTime = incident.resolvedAt
-      ? new Date(incident.resolvedAt).getTime()
-      : Date.now();
-    const mitigatedTime = incident.mitigatedAt
-      ? new Date(incident.mitigatedAt).getTime()
-      : null;
+    const resolvedTime = incident.resolvedAt ? new Date(incident.resolvedAt).getTime() : Date.now();
+    const mitigatedTime = incident.mitigatedAt ? new Date(incident.mitigatedAt).getTime() : null;
 
     const timeToDetectMinutes = 0; // detected immediately by system
     const timeToMitigateMinutes = mitigatedTime
-      ? Math.round((mitigatedTime - detectedTime) / 60000 * 10) / 10
+      ? Math.round(((mitigatedTime - detectedTime) / 60000) * 10) / 10
       : 0;
-    const timeToResolveMinutes = Math.round((resolvedTime - detectedTime) / 60000 * 10) / 10;
+    const timeToResolveMinutes = Math.round(((resolvedTime - detectedTime) / 60000) * 10) / 10;
 
     const sla = SEVERITY_SLA[incident.severity];
     const withinSLA = timeToResolveMinutes <= sla.resolutionTarget;
@@ -523,25 +559,18 @@ export class IncidentManager {
     return {
       incidentId: incident.id,
       status: 'draft',
-      summary: `[AUTO-DRAFT] ${incident.title}. Incident source: ${incident.source}.` +
+      summary:
+        `[AUTO-DRAFT] ${incident.title}. Incident source: ${incident.source}.` +
         ` Severity: ${incident.severity}. Detected: ${incident.detectedAt}.` +
         ` Resolved: ${incident.resolvedAt ?? 'pending'}.` +
         ` Duration: ${timeToResolveMinutes} minutes (SLA target: ${sla.resolutionTarget} min, ${withinSLA ? 'within SLA' : 'BREACHED'}).`,
       impact: `[TODO] Describe user-facing impact. Affected components: ${incident.affectedComponents.join(', ')}.`,
-      rootCauses: [
-        '[TODO] Identify the underlying cause(s) that led to this incident.',
-      ],
+      rootCauses: ['[TODO] Identify the underlying cause(s) that led to this incident.'],
       timeline: incident.timeline,
-      whatWentWell: [
-        '[TODO] List what worked well during detection, response, and recovery.',
-      ],
-      whatWentPoorly: [
-        '[TODO] List what did not work well and caused delays or confusion.',
-      ],
+      whatWentWell: ['[TODO] List what worked well during detection, response, and recovery.'],
+      whatWentPoorly: ['[TODO] List what did not work well and caused delays or confusion.'],
       actionItems: [],
-      lessonsLearned: [
-        '[TODO] What did we learn that should change how we operate?',
-      ],
+      lessonsLearned: ['[TODO] What did we learn that should change how we operate?'],
       timeToDetectMinutes,
       timeToMitigateMinutes,
       timeToResolveMinutes,

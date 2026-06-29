@@ -155,7 +155,12 @@ export function DlqPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <label
                 htmlFor="dlq-category-filter"
-                style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}
+                style={{
+                  fontSize: '0.7rem',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.1em',
+                  color: 'var(--text-tertiary)',
+                }}
               >
                 Category
               </label>
@@ -186,11 +191,7 @@ export function DlqPage() {
           </div>
 
           {/* ── Entries Table ──────────────────────────────────────── */}
-          <EntriesTable
-            entries={entries}
-            replayingId={replayingId}
-            onReplay={handleReplay}
-          />
+          <EntriesTable entries={entries} replayingId={replayingId} onReplay={handleReplay} />
         </div>
       )}
     </div>
@@ -209,7 +210,13 @@ function CategoryBreakdownCard({ stats }: { stats: DlqStats | null }) {
           <h2 style={{ fontSize: '1.1rem' }}>Entries by Failure Category</h2>
         </div>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '8px' }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
+          gap: '8px',
+        }}
+      >
         {categories.map((c) => (
           <div
             key={c.category}
@@ -220,7 +227,14 @@ function CategoryBreakdownCard({ stats }: { stats: DlqStats | null }) {
               borderLeft: '2px solid var(--text-muted)',
             }}
           >
-            <div style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}>
+            <div
+              style={{
+                fontSize: '0.65rem',
+                textTransform: 'uppercase',
+                letterSpacing: '0.1em',
+                color: 'var(--text-tertiary)',
+              }}
+            >
               {c.category}
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginTop: '4px' }}>
@@ -253,11 +267,17 @@ function EntriesTable({
     <div className="card" style={{ padding: '0', overflow: 'hidden' }}>
       <div
         className="section-head"
-        style={{ padding: '12px 16px', marginBottom: 0, borderBottom: '1px solid var(--border-color)' }}
+        style={{
+          padding: '12px 16px',
+          marginBottom: 0,
+          borderBottom: '1px solid var(--border-color)',
+        }}
       >
         <div>
           <span className="section-label">Unrecovered Entries</span>
-          <h2 style={{ fontSize: '1.1rem' }}>{entries.length} entr{entries.length === 1 ? 'y' : 'ies'}</h2>
+          <h2 style={{ fontSize: '1.1rem' }}>
+            {entries.length} entr{entries.length === 1 ? 'y' : 'ies'}
+          </h2>
         </div>
       </div>
 
@@ -281,12 +301,15 @@ function EntriesTable({
             </thead>
             <tbody>
               {entries.map((entry) => (
-                <tr
-                  key={entry.id}
-                  style={{ borderBottom: '1px solid var(--border-color)' }}
-                >
+                <tr key={entry.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
                   <Td>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.68rem', color: 'var(--text-tertiary)' }}>
+                    <span
+                      style={{
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '0.68rem',
+                        color: 'var(--text-tertiary)',
+                      }}
+                    >
                       {entry.id.length > 32 ? `${entry.id.slice(0, 32)}...` : entry.id}
                     </span>
                   </Td>
@@ -306,7 +329,13 @@ function EntriesTable({
                     </span>
                   </Td>
                   <Td>
-                    <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                    <span
+                      style={{
+                        fontSize: '0.65rem',
+                        color: 'var(--text-muted)',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
                       {formatTimestamp(entry.timestamp)}
                     </span>
                   </Td>
@@ -368,7 +397,5 @@ function Th({ children, style }: { children: ReactNode; style?: CSSProperties })
 }
 
 function Td({ children, style }: { children: ReactNode; style?: CSSProperties }) {
-  return (
-    <td style={{ padding: '8px 12px', verticalAlign: 'middle', ...style }}>{children}</td>
-  );
+  return <td style={{ padding: '8px 12px', verticalAlign: 'middle', ...style }}>{children}</td>;
 }

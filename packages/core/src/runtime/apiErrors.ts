@@ -70,7 +70,11 @@ export const ErrorCodes = {
 
   // 403 Forbidden
   FORBIDDEN: { code: 'FORBIDDEN', title: 'Forbidden', status: 403 },
-  INSUFFICIENT_PERMISSIONS: { code: 'INSUFFICIENT_PERMISSIONS', title: 'Insufficient Permissions', status: 403 },
+  INSUFFICIENT_PERMISSIONS: {
+    code: 'INSUFFICIENT_PERMISSIONS',
+    title: 'Insufficient Permissions',
+    status: 403,
+  },
 
   // 404 Not Found
   NOT_FOUND: { code: 'NOT_FOUND', title: 'Not Found', status: 404 },
@@ -175,11 +179,7 @@ export function sendProblem(
  * Wrap an unknown error into a ProblemDetail.
  * If the error is already an ApiError, use its code; otherwise 500.
  */
-export function errorToProblem(
-  err: unknown,
-  instance: string,
-  requestId?: string,
-): ProblemDetail {
+export function errorToProblem(err: unknown, instance: string, requestId?: string): ProblemDetail {
   if (err instanceof ApiError) {
     return createProblem(err.code, err.message, {
       instance,
@@ -196,10 +196,14 @@ export function errorToProblem(
     return createProblem(code, anyErr.message, { instance, requestId });
   }
 
-  return createProblem('INTERNAL_ERROR', (err as Error)?.message ?? 'An unexpected error occurred', {
-    instance,
-    requestId,
-  });
+  return createProblem(
+    'INTERNAL_ERROR',
+    (err as Error)?.message ?? 'An unexpected error occurred',
+    {
+      instance,
+      requestId,
+    },
+  );
 }
 
 /**
@@ -207,16 +211,26 @@ export function errorToProblem(
  */
 function statusToCode(status: number): ErrorCode {
   switch (status) {
-    case 400: return 'VALIDATION_ERROR';
-    case 401: return 'UNAUTHORIZED';
-    case 403: return 'FORBIDDEN';
-    case 404: return 'NOT_FOUND';
-    case 405: return 'METHOD_NOT_ALLOWED';
-    case 409: return 'CONFLICT';
-    case 413: return 'PAYLOAD_TOO_LARGE';
-    case 429: return 'RATE_LIMITED';
-    case 503: return 'SERVICE_UNAVAILABLE';
-    default: return 'INTERNAL_ERROR';
+    case 400:
+      return 'VALIDATION_ERROR';
+    case 401:
+      return 'UNAUTHORIZED';
+    case 403:
+      return 'FORBIDDEN';
+    case 404:
+      return 'NOT_FOUND';
+    case 405:
+      return 'METHOD_NOT_ALLOWED';
+    case 409:
+      return 'CONFLICT';
+    case 413:
+      return 'PAYLOAD_TOO_LARGE';
+    case 429:
+      return 'RATE_LIMITED';
+    case 503:
+      return 'SERVICE_UNAVAILABLE';
+    default:
+      return 'INTERNAL_ERROR';
   }
 }
 

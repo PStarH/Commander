@@ -19,6 +19,7 @@ import type { AgentInbox } from './agentInbox';
 import type { TeamRegistry } from './teamRegistry';
 import type { AgentHandoff } from './agentHandoff';
 import type { CompensationRegistry } from './compensationRegistry';
+import type { ReliabilityEngine } from './reliabilityEngine';
 import type { StepTimeoutManager } from './stepTimeoutManager';
 import type { RunRecoveryResult } from './runRecovery';
 import type { SingleFlightStats } from './singleFlightRequestCache';
@@ -70,6 +71,9 @@ export interface AgentRuntimeInterface {
 
   /** Access the compensation registry for rollback planning. */
   getCompensationRegistry(): CompensationRegistry;
+
+  /** Access the unified reliability engine (circuit breaker, DLQ, compensation, checkpointer). */
+  getReliabilityEngine(): ReliabilityEngine;
 
   /** Cancel all in-flight steps managed by the StepTimeoutManager. */
   cancelAllSteps(): number;

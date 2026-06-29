@@ -288,7 +288,8 @@ export class UnifiedAuditLog {
   constructor(options?: UnifiedAuditLogOptions) {
     this.baseDir = options?.baseDir ?? process.cwd();
     this.userActionsFile =
-      options?.userActionsFile ?? path.join(this.baseDir, '.commander', 'audit', 'user-actions.ndjson');
+      options?.userActionsFile ??
+      path.join(this.baseDir, '.commander', 'audit', 'user-actions.ndjson');
     this.maxLinesPerFile = options?.maxLinesPerFile ?? DEFAULT_MAX_LINES_PER_FILE;
     this.maxEntriesPerSource = options?.maxEntriesPerSource ?? DEFAULT_MAX_ENTRIES_PER_SOURCE;
     this.cacheTtlMs = options?.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
@@ -325,7 +326,10 @@ export class UnifiedAuditLog {
   /**
    * Write a new user-action audit entry to user-actions.ndjson. Never throws.
    */
-  async log(entry: Omit<UnifiedAuditEntry, 'id' | 'timestamp'> & Partial<Pick<UnifiedAuditEntry, 'timestamp'>>): Promise<UnifiedAuditEntry> {
+  async log(
+    entry: Omit<UnifiedAuditEntry, 'id' | 'timestamp'> &
+      Partial<Pick<UnifiedAuditEntry, 'timestamp'>>,
+  ): Promise<UnifiedAuditEntry> {
     const full: UnifiedAuditEntry = {
       id: `ua_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`,
       timestamp: entry.timestamp ?? new Date().toISOString(),
@@ -413,7 +417,10 @@ export class UnifiedAuditLog {
   /**
    * Export the filtered audit trail as JSON or CSV. Returns a string.
    */
-  async exportLogs(filters: AuditQueryFilters = {}, format: AuditExportFormat = 'json'): Promise<string> {
+  async exportLogs(
+    filters: AuditQueryFilters = {},
+    format: AuditExportFormat = 'json',
+  ): Promise<string> {
     const all = await this.loadAll();
     const filtered = this.applyFilters(all, filters);
     if (format === 'csv') {
@@ -442,7 +449,13 @@ export class UnifiedAuditLog {
       eventTypes.push({ category: e.category, eventType: e.eventType });
     }
     eventTypes.sort((a, b) =>
-      a.category < b.category ? -1 : a.category > b.category ? 1 : a.eventType < b.eventType ? -1 : 1,
+      a.category < b.category
+        ? -1
+        : a.category > b.category
+          ? 1
+          : a.eventType < b.eventType
+            ? -1
+            : 1,
     );
     return { categories: CATEGORY_CATALOG, severities: SEVERITY_CATALOG, eventTypes };
   }
@@ -489,9 +502,7 @@ export class UnifiedAuditLog {
       out = out.filter((e) => (e.toolName ?? '').toLowerCase().includes(needle));
     }
     // Sort newest-first. ISO string comparison is valid for UTC timestamps.
-    out = out.sort((a, b) =>
-      a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0,
-    );
+    out = out.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
     return out;
   }
 
@@ -581,7 +592,10 @@ export class UnifiedAuditLog {
 
     // Directory of approval ndjson files.
     const approvalsDir = path.join(commanderDir, 'approvals');
-    const ndFiles = await listFiles(approvalsDir, (n) => n.endsWith('.ndjson') || n.endsWith('.jsonl'));
+    const ndFiles = await listFiles(
+      approvalsDir,
+      (n) => n.endsWith('.ndjson') || n.endsWith('.jsonl'),
+    );
     for (const f of ndFiles) {
       const rows = await readNdjsonFile(f, this.maxLinesPerFile);
       for (let i = 0; i < rows.length; i++) {
@@ -590,7 +604,8 @@ export class UnifiedAuditLog {
         const id = e.id ?? `apr_${e.timestamp}_${i}`;
         if (seenIds.has(id)) continue;
         seenIds.add(id);
-        const isConfig = (e.event ?? e.eventType ?? '').includes('mode') || (e.event ?? '').includes('config');
+        const isConfig =
+          (e.event ?? e.eventType ?? '').includes('mode') || (e.event ?? '').includes('config');
         entries.push(this.toApprovalEntry(e, id, isConfig));
         if (entries.length >= this.maxEntriesPerSource) return entries;
       }

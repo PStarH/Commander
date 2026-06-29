@@ -428,17 +428,19 @@ export class ThreeLayerMemory {
     if (layer !== 'working' && this.semanticStore) {
       try {
         // Ingest as a semantic entity for knowledge graph + HNSW search
-        this.semanticStore.ingest({
-          name: content.slice(0, 80),
-          type: layer,
-          description: `${context} ${tags.join(' ')}`.trim() || content,
-          embedding: this.embedStore.getEmbedding(entry.id) ?? [],
-          relationships: [],
-        }).catch((err: unknown) => {
-          getGlobalLogger().debug('ThreeLayerMemory', 'SemanticStore ingest failed', {
-            error: err instanceof Error ? err.message : String(err),
+        this.semanticStore
+          .ingest({
+            name: content.slice(0, 80),
+            type: layer,
+            description: `${context} ${tags.join(' ')}`.trim() || content,
+            embedding: this.embedStore.getEmbedding(entry.id) ?? [],
+            relationships: [],
+          })
+          .catch((err: unknown) => {
+            getGlobalLogger().debug('ThreeLayerMemory', 'SemanticStore ingest failed', {
+              error: err instanceof Error ? err.message : String(err),
+            });
           });
-        });
       } catch (err) {
         getGlobalLogger().debug('ThreeLayerMemory', 'SemanticStore ingest error', {
           error: (err as Error)?.message,

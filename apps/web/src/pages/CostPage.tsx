@@ -16,9 +16,9 @@ export function CostPage() {
           <h1>Cost Dashboard</h1>
         </div>
         <p className="page-desc">
-          Granular cost analytics aggregated by model, tool, user, and time period.
-          Track spending trends, identify expensive operations, and monitor cache savings
-          to optimize your LLM API costs.
+          Granular cost analytics aggregated by model, tool, user, and time period. Track spending
+          trends, identify expensive operations, and monitor cache savings to optimize your LLM API
+          costs.
         </p>
       </div>
 

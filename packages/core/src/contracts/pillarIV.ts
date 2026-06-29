@@ -165,7 +165,9 @@ export interface IProductionRule {
  */
 export interface IProceduralStore {
   /** Learn a new production rule */
-  learn(rule: Omit<IProductionRule, 'id' | 'utility' | 'invocationCount' | 'successCount'>): Promise<IProductionRule>;
+  learn(
+    rule: Omit<IProductionRule, 'id' | 'utility' | 'invocationCount' | 'successCount'>,
+  ): Promise<IProductionRule>;
   /** Select rules matching the current context */
   select(context: string, goal?: string): Promise<IProductionRule[]>;
   /** Compile declarative knowledge into procedural rules */

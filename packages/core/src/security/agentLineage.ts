@@ -163,7 +163,7 @@ export class AgentLineage {
     if (parentInstanceId !== null && !this.nodes.has(parentInstanceId)) {
       throw new Error(
         `AgentLineage: Cannot spawn child for unknown parent "${parentInstanceId}". ` +
-        'This may indicate an agent identity spoofing attempt (agentjacking).',
+          'This may indicate an agent identity spoofing attempt (agentjacking).',
       );
     }
 

@@ -416,14 +416,16 @@ export const POISONING_PATTERNS: readonly PoisoningPattern[] = [
   {
     id: 'override_system',
     name: '覆盖系统提示词',
-    pattern: /(?:override|replace|reset)\s+(?:the\s+)?(?:system|original)\s+(?:prompt|instructions?)/gi,
+    pattern:
+      /(?:override|replace|reset)\s+(?:the\s+)?(?:system|original)\s+(?:prompt|instructions?)/gi,
     severity: 'MALICIOUS',
     category: 'instruction_override',
   },
   {
     id: 'stop_following_rules',
     name: '要求停止遵守规则',
-    pattern: /stop\s+(?:following|adhering\s+to)\s+(?:your|the)\s+(?:rules|instructions|guidelines)/gi,
+    pattern:
+      /stop\s+(?:following|adhering\s+to)\s+(?:your|the)\s+(?:rules|instructions|guidelines)/gi,
     severity: 'MALICIOUS',
     category: 'instruction_override',
   },
@@ -555,7 +557,8 @@ export const POISONING_PATTERNS: readonly PoisoningPattern[] = [
   {
     id: 'bypass_security',
     name: '要求绕过安全机制',
-    pattern: /bypass\s+(?:security|auth|authentication|sandbox|restrictions?|filters?|guardrails?)/gi,
+    pattern:
+      /bypass\s+(?:security|auth|authentication|sandbox|restrictions?|filters?|guardrails?)/gi,
     severity: 'BLOCKED',
     category: 'privilege_escalation',
   },
@@ -578,7 +581,8 @@ export const POISONING_PATTERNS: readonly PoisoningPattern[] = [
   {
     id: 'css_hidden',
     name: 'CSS 隐藏技术',
-    pattern: /(?:display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0(?:px|pt|em|rem)?|opacity\s*:\s*0(?:\.0+)?)/gi,
+    pattern:
+      /(?:display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0(?:px|pt|em|rem)?|opacity\s*:\s*0(?:\.0+)?)/gi,
     severity: 'SUSPICIOUS',
     category: 'hidden_content',
   },
@@ -617,28 +621,32 @@ export const POISONING_PATTERNS: readonly PoisoningPattern[] = [
   {
     id: 'when_using_tool_also',
     name: '跨工具注入：使用工具 X 时也调用工具 Y',
-    pattern: /when\s+(?:using|calling|invoking)\s+(?:the\s+)?[\w-]+\s+tool,?\s+(?:also|then|you\s+must)\s+(?:call|invoke|use|run)\s+/gi,
+    pattern:
+      /when\s+(?:using|calling|invoking)\s+(?:the\s+)?[\w-]+\s+tool,?\s+(?:also|then|you\s+must)\s+(?:call|invoke|use|run)\s+/gi,
     severity: 'MALICIOUS',
     category: 'cross_tool_injection',
   },
   {
     id: 'before_calling_must',
     name: '跨工具注入：调用本工具前必须先调用另一工具',
-    pattern: /before\s+(?:calling|using|invoking)\s+this\s+tool,?\s+(?:you\s+must|always)\s+(?:first\s+)?(?:call|invoke|use)\s+/gi,
+    pattern:
+      /before\s+(?:calling|using|invoking)\s+this\s+tool,?\s+(?:you\s+must|always)\s+(?:first\s+)?(?:call|invoke|use)\s+/gi,
     severity: 'MALICIOUS',
     category: 'cross_tool_injection',
   },
   {
     id: 'after_using_also',
     name: '跨工具注入：使用本工具后也调用另一工具',
-    pattern: /after\s+(?:you\s+)?(?:use|call|invoke)\s+this\s+tool,?\s+(?:also|then)\s+(?:call|invoke|run|execute)\s+/gi,
+    pattern:
+      /after\s+(?:you\s+)?(?:use|call|invoke)\s+this\s+tool,?\s+(?:also|then)\s+(?:call|invoke|run|execute)\s+/gi,
     severity: 'SUSPICIOUS',
     category: 'cross_tool_injection',
   },
   {
     id: 'also_call_tool',
     name: '跨工具注入：要求额外调用其他工具',
-    pattern: /(?:also|additionally|in\s+addition),?\s+(?:call|invoke|use)\s+(?:the\s+)?[\w-]+\s+tool/gi,
+    pattern:
+      /(?:also|additionally|in\s+addition),?\s+(?:call|invoke|use)\s+(?:the\s+)?[\w-]+\s+tool/gi,
     severity: 'SUSPICIOUS',
     category: 'cross_tool_injection',
   },
@@ -811,7 +819,10 @@ function stripHtmlAndComments(text: string): string {
 export class ToolPoisoningGuard {
   private config: ToolPoisoningConfig;
   private readonly customPatterns: PoisoningPattern[] = [];
-  private readonly integrityRecords: Map<string, { hash: string; trusted: boolean; verifiedAt: string }> = new Map();
+  private readonly integrityRecords: Map<
+    string,
+    { hash: string; trusted: boolean; verifiedAt: string }
+  > = new Map();
   private readonly baselines: Map<string, ToolBehaviorBaseline> = new Map();
   private readonly sandboxes: Map<string, ToolSandbox> = new Map();
   private readonly blockedTools: Set<string> = new Set();
@@ -1212,7 +1223,11 @@ export class ToolPoisoningGuard {
    * @param baseline - 工具行为基线
    */
   registerToolBaseline(toolName: string, baseline: ToolBehaviorBaseline): void {
-    this.baselines.set(toolName, { ...baseline, toolName, lastSeen: baseline.lastSeen || new Date().toISOString() });
+    this.baselines.set(toolName, {
+      ...baseline,
+      toolName,
+      lastSeen: baseline.lastSeen || new Date().toISOString(),
+    });
   }
 
   /**
@@ -1238,7 +1253,9 @@ export class ToolPoisoningGuard {
     // 输出扫描（间接提示注入）
     const outputScan = this.scanToolOutput(toolName, output);
     if (outputScan.severity !== 'SAFE') {
-      deviations.push(`输出包含间接提示注入（${outputScan.severity}，风险评分 ${outputScan.riskScore}）`);
+      deviations.push(
+        `输出包含间接提示注入（${outputScan.severity}，风险评分 ${outputScan.riskScore}）`,
+      );
     }
 
     const baseline = this.baselines.get(toolName);
@@ -1270,8 +1287,10 @@ export class ToolPoisoningGuard {
 
       // 滚动更新基线
       const newCallCount = baseline.callCount + 1;
-      const newAvgParams = (baseline.avgParamsSize * baseline.callCount + paramsSize) / newCallCount;
-      const newAvgOutput = (baseline.avgOutputSize * baseline.callCount + outputSize) / newCallCount;
+      const newAvgParams =
+        (baseline.avgParamsSize * baseline.callCount + paramsSize) / newCallCount;
+      const newAvgOutput =
+        (baseline.avgOutputSize * baseline.callCount + outputSize) / newCallCount;
       this.baselines.set(toolName, {
         ...baseline,
         callCount: newCallCount,
@@ -1284,7 +1303,9 @@ export class ToolPoisoningGuard {
     }
 
     const deviated = deviations.length > 0;
-    const riskScore = deviated ? Math.min(100, outputScan.riskScore + deviations.length * 10) : outputScan.riskScore;
+    const riskScore = deviated
+      ? Math.min(100, outputScan.riskScore + deviations.length * 10)
+      : outputScan.riskScore;
 
     if (deviated) {
       this.stats.behaviorDeviations++;
@@ -1575,7 +1596,8 @@ export class ToolPoisoningGuard {
     const hasSuspicious = findings.some((f) => f.severity === 'SUSPICIOUS');
     if (hasBlocked || riskScore >= this.config.riskScoreThresholds.blocked) return 'BLOCKED';
     if (hasMalicious || riskScore >= this.config.riskScoreThresholds.malicious) return 'MALICIOUS';
-    if (hasSuspicious || riskScore >= this.config.riskScoreThresholds.suspicious) return 'SUSPICIOUS';
+    if (hasSuspicious || riskScore >= this.config.riskScoreThresholds.suspicious)
+      return 'SUSPICIOUS';
     return 'SAFE';
   }
 

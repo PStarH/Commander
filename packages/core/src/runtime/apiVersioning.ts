@@ -209,8 +209,8 @@ export class APIVersionManager {
     }
 
     const headers: Record<string, string> = {
-      'Deprecation': 'true',
-      'Warning': `299 - "This endpoint is deprecated and will be removed on ${endpoint.sunsetAt ?? 'a future date'}. Migrate to ${endpoint.successorPath ?? 'the new API version'}."`,
+      Deprecation: 'true',
+      Warning: `299 - "This endpoint is deprecated and will be removed on ${endpoint.sunsetAt ?? 'a future date'}. Migrate to ${endpoint.successorPath ?? 'the new API version'}."`,
     };
 
     if (endpoint.sunsetAt) {
@@ -255,7 +255,12 @@ export class APIVersionManager {
   /**
    * Get usage statistics for deprecated endpoints.
    */
-  getDeprecatedUsage(): Array<{ method: string; path: string; requests: number; sunsetAt?: string }> {
+  getDeprecatedUsage(): Array<{
+    method: string;
+    path: string;
+    requests: number;
+    sunsetAt?: string;
+  }> {
     const result: Array<{ method: string; path: string; requests: number; sunsetAt?: string }> = [];
     for (const [key, endpoint] of this.endpoints) {
       if (endpoint.stability === 'deprecated') {
@@ -409,6 +414,12 @@ function registerDefaultEndpoints(mgr: APIVersionManager): void {
     mgr.registerEndpoint({ method, path, stability: 'beta', version: 1, description: desc });
   }
   for (const [method, path, desc] of experimental) {
-    mgr.registerEndpoint({ method, path, stability: 'experimental', version: 1, description: desc });
+    mgr.registerEndpoint({
+      method,
+      path,
+      stability: 'experimental',
+      version: 1,
+      description: desc,
+    });
   }
 }

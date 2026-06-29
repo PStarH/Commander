@@ -91,10 +91,7 @@ export interface LLMRequestBuildResult {
  * Derive a stable OpenAI prompt_cache_key for routing stickiness across
  * requests. Kept module-local since it is only used by the request builder.
  */
-function derivePromptCacheKey(
-  ctx: AgentExecutionContext,
-  tenantId: string | undefined,
-): string {
+function derivePromptCacheKey(ctx: AgentExecutionContext, tenantId: string | undefined): string {
   const goal = ctx.goal ?? '';
   let hash = 0;
   for (let i = 0; i < goal.length; i++) {
@@ -231,8 +228,7 @@ export class LLMRequestBuilder {
       projectContext.cacheKey,
     );
     const lastPrefixCacheKey = this.deps.getLastPrefixCacheKey();
-    const cacheHit =
-      lastPrefixCacheKey !== undefined && lastPrefixCacheKey === newPrefixKey;
+    const cacheHit = lastPrefixCacheKey !== undefined && lastPrefixCacheKey === newPrefixKey;
     this.deps.setLastPrefixCacheKey(newPrefixKey);
     try {
       getMetricsCollector().recordPromptPrefixCache(cacheHit, ctx.tenantId);

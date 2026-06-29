@@ -677,6 +677,15 @@ function createMockRuntime(): AgentRuntimeInterface {
     getHandoff: () => ({ handoff: async () => ({ accepted: false }), cancel: () => {} }) as any,
     getExecutionScheduler: () => ({ schedule: () => {}, cancel: () => {}, list: () => [] }) as any,
     getCompensationRegistry: () => ({ register: () => {}, get: () => null, list: () => [] }) as any,
+    getReliabilityEngine: () =>
+      ({
+        getStats: () => ({
+          circuit: { state: 'CLOSED', failureCount: 0 },
+          dlq: [],
+          compensation: { pending: 0, compensated: 0 },
+          checkpointCount: 0,
+        }),
+      }) as any,
     cancelAllSteps: () => 0,
     getStepTimeoutManager: () =>
       ({ register: () => '', cancel: () => {}, cancelAll: () => 0 }) as any,

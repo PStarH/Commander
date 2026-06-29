@@ -60,10 +60,7 @@ export class ContractSagaCoordinator implements ISagaCoordinator {
    *
    * Returns the result of the last step, or throws on failure.
    */
-  async executeSaga(
-    steps: ISagaStep[],
-    options?: { timeoutMs?: number },
-  ): Promise<unknown> {
+  async executeSaga(steps: ISagaStep[], options?: { timeoutMs?: number }): Promise<unknown> {
     const sagaId = crypto.randomUUID();
     const timeoutMs = options?.timeoutMs ?? this.defaultTimeoutMs;
 
@@ -210,12 +207,10 @@ export class ContractSagaCoordinator implements ISagaCoordinator {
         } catch (compErr) {
           // Compensation failure is critical but we continue compensating
           reportSilentFailure(compErr, `sagaCoordinator:compensate:${stepId}`);
-          getGlobalLogger().error(
-            'SagaCoordinator',
-            'Compensation failed',
-            compErr as Error,
-            { sagaId: saga.id, stepId },
-          );
+          getGlobalLogger().error('SagaCoordinator', 'Compensation failed', compErr as Error, {
+            sagaId: saga.id,
+            stepId,
+          });
         }
       }
     }
@@ -229,10 +224,7 @@ export class ContractSagaCoordinator implements ISagaCoordinator {
   /**
    * Execute a function with a timeout.
    */
-  private async executeWithTimeout<T>(
-    fn: () => Promise<T>,
-    timeoutMs: number,
-  ): Promise<T> {
+  private async executeWithTimeout<T>(fn: () => Promise<T>, timeoutMs: number): Promise<T> {
     if (timeoutMs <= 0) {
       return fn();
     }

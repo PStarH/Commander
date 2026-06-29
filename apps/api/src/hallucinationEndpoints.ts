@@ -213,9 +213,9 @@ function extractReport(event: TraceEvent): HallucinationReportEntry | null {
       summary:
         typeof metadata.hallucinationSummary === 'string'
           ? (metadata.hallucinationSummary as string)
-          : (typeof data.hallucinationSummary === 'string'
-              ? (data.hallucinationSummary as string)
-              : ''),
+          : typeof data.hallucinationSummary === 'string'
+            ? (data.hallucinationSummary as string)
+            : '',
     };
   }
 
@@ -226,9 +226,7 @@ function extractReport(event: TraceEvent): HallucinationReportEntry | null {
     const confidence = toNumber(
       data.evaluationScore ?? (data.input as { confidence?: unknown })?.confidence,
     );
-    const signalCount = toNumber(
-      (data.input as { signalCount?: unknown })?.signalCount,
-    );
+    const signalCount = toNumber((data.input as { signalCount?: unknown })?.signalCount);
     if (confidence !== null || signalCount !== null) {
       // Verification confidence is a "groundedness" score (higher = better).
       // Convert to a hallucination risk score (1 - confidence).

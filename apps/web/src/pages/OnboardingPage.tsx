@@ -21,7 +21,5 @@ export function OnboardingPage() {
     navigate('/');
   }, [navigate]);
 
-  return (
-    <OnboardingWizard onComplete={handleComplete} onSkip={handleSkip} />
-  );
+  return <OnboardingWizard onComplete={handleComplete} onSkip={handleSkip} />;
 }

@@ -85,10 +85,7 @@ function installAuthInterceptor(): void {
   if (_interceptorInstalled) return;
   _interceptorInstalled = true;
   const originalFetch = globalThis.fetch.bind(globalThis);
-  globalThis.fetch = async (
-    input: RequestInfo | URL,
-    init?: RequestInit,
-  ): Promise<Response> => {
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const token = getAuthToken();
     if (token) {
       const headers = new Headers(init?.headers ?? undefined);
@@ -476,9 +473,7 @@ export async function sendChatMessageStream(
           callbacks.onDone(parsed as unknown as ChatStreamDone);
           break;
         case 'error':
-          callbacks.onError(
-            (parsed.error as string) || 'Stream error from server',
-          );
+          callbacks.onError((parsed.error as string) || 'Stream error from server');
           break;
         default:
           // Unknown event types are ignored — forward compatibility.
@@ -550,9 +545,7 @@ export async function rollbackToStep(
 export async function fetchHallucinationReport(
   runId: string,
 ): Promise<HallucinationReportResponse> {
-  const response = await fetch(
-    `${API_BASE}/api/hallucination/runs/${encodeURIComponent(runId)}`,
-  );
+  const response = await fetch(`${API_BASE}/api/hallucination/runs/${encodeURIComponent(runId)}`);
   if (!response.ok) {
     throw new Error(await readError(response, 'Failed to load hallucination report'));
   }
@@ -563,12 +556,8 @@ export async function fetchHallucinationReport(
 // Lineage Tracking — agent provenance tree (GAP-05)
 // ============================================================================
 
-export async function fetchLineage(
-  runId: string,
-): Promise<LineageSummaryResponse> {
-  const response = await fetch(
-    `${API_BASE}/api/lineage/runs/${encodeURIComponent(runId)}`,
-  );
+export async function fetchLineage(runId: string): Promise<LineageSummaryResponse> {
+  const response = await fetch(`${API_BASE}/api/lineage/runs/${encodeURIComponent(runId)}`);
   if (!response.ok) {
     throw new Error(await readError(response, 'Failed to load lineage graph'));
   }
@@ -633,10 +622,7 @@ export async function fetchDlqStats(): Promise<DlqStats> {
   return response.json() as Promise<DlqStats>;
 }
 
-export async function fetchDlqEntries(
-  category?: string,
-  limit?: number,
-): Promise<DlqEntry[]> {
+export async function fetchDlqEntries(category?: string, limit?: number): Promise<DlqEntry[]> {
   const url = new URL(`${API_BASE}/api/dlq/entries`);
   if (category) url.searchParams.set('category', category);
   if (limit) url.searchParams.set('limit', String(limit));
@@ -650,10 +636,10 @@ export async function fetchDlqEntries(
 export async function replayDlqEntry(
   entryId: string,
 ): Promise<{ status: string; entryId: string; recovered: boolean }> {
-  const response = await fetch(
-    `${API_BASE}/api/dlq/replay/${encodeURIComponent(entryId)}`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' } },
-  );
+  const response = await fetch(`${API_BASE}/api/dlq/replay/${encodeURIComponent(entryId)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
   if (!response.ok) {
     throw new Error(await readError(response, 'Failed to replay DLQ entry'));
   }
@@ -727,14 +713,11 @@ export async function updateToolPolicy(
   pattern: string,
   updates: ToolPolicyUpdate,
 ): Promise<{ status: string; policy: ToolPolicy }> {
-  const response = await fetch(
-    `${API_BASE}/api/approval/policy/${encodeURIComponent(pattern)}`,
-    {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates),
-    },
-  );
+  const response = await fetch(`${API_BASE}/api/approval/policy/${encodeURIComponent(pattern)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
   if (!response.ok) {
     throw new Error(await readError(response, 'Failed to update tool policy'));
   }
@@ -758,10 +741,9 @@ export async function addToolPolicy(
 export async function removeToolPolicy(
   pattern: string,
 ): Promise<{ status: string; pattern: string }> {
-  const response = await fetch(
-    `${API_BASE}/api/approval/policy/${encodeURIComponent(pattern)}`,
-    { method: 'DELETE' },
-  );
+  const response = await fetch(`${API_BASE}/api/approval/policy/${encodeURIComponent(pattern)}`, {
+    method: 'DELETE',
+  });
   if (!response.ok) {
     throw new Error(await readError(response, 'Failed to remove tool policy'));
   }
@@ -823,13 +805,10 @@ export async function createWebhook(
   });
 }
 
-export async function deleteWebhook(
-  id: string,
-): Promise<{ status: string; id: string }> {
-  return apiFetch<{ status: string; id: string }>(
-    `/api/webhook/config/${encodeURIComponent(id)}`,
-    { method: 'DELETE' },
-  );
+export async function deleteWebhook(id: string): Promise<{ status: string; id: string }> {
+  return apiFetch<{ status: string; id: string }>(`/api/webhook/config/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
 }
 
 // ============================================================================
@@ -965,9 +944,7 @@ function buildAuditQueryParams(query: AuditLogQuery): URLSearchParams {
   return params;
 }
 
-export async function fetchAuditLogs(
-  query: AuditLogQuery = {},
-): Promise<AuditLogsResponse> {
+export async function fetchAuditLogs(query: AuditLogQuery = {}): Promise<AuditLogsResponse> {
   const params = buildAuditQueryParams(query);
   return apiFetch<AuditLogsResponse>(`/api/audit/logs?${params.toString()}`);
 }
@@ -984,13 +961,9 @@ export async function fetchAuditSources(): Promise<AuditSourceInfo[]> {
  * Triggers a JSON file download of the filtered audit logs. Returns a Blob
  * so the caller can surface a browser download (or parse it in-memory).
  */
-export async function exportAuditLogs(
-  query: AuditLogQuery = {},
-): Promise<Blob> {
+export async function exportAuditLogs(query: AuditLogQuery = {}): Promise<Blob> {
   const params = buildAuditQueryParams(query);
-  const response = await fetch(
-    `${API_BASE}/api/audit/logs/export?${params.toString()}`,
-  );
+  const response = await fetch(`${API_BASE}/api/audit/logs/export?${params.toString()}`);
   if (!response.ok) {
     throw new Error(await readError(response, 'Failed to export audit logs'));
   }
@@ -1125,9 +1098,7 @@ export async function exportUnifiedAuditLogs(
 ): Promise<Blob> {
   const params = buildUnifiedAuditParams(query);
   params.set('format', format);
-  const response = await fetch(
-    `${API_BASE}/api/audit-logs/export?${params.toString()}`,
-  );
+  const response = await fetch(`${API_BASE}/api/audit-logs/export?${params.toString()}`);
   if (!response.ok) {
     throw new Error(await readError(response, 'Failed to export audit logs'));
   }
@@ -1211,9 +1182,7 @@ export async function fetchKnowledgeDocuments(
   );
 }
 
-export async function fetchKnowledgeDocument(
-  id: string,
-): Promise<{ document: KnowledgeDocument }> {
+export async function fetchKnowledgeDocument(id: string): Promise<{ document: KnowledgeDocument }> {
   return apiFetch<{ document: KnowledgeDocument }>(
     `/api/knowledge/documents/${encodeURIComponent(id)}`,
   );
@@ -1238,10 +1207,9 @@ export async function uploadKnowledgeDocument(
 }
 
 export async function deleteKnowledgeDocument(id: string): Promise<void> {
-  const response = await fetch(
-    `${API_BASE}/api/knowledge/documents/${encodeURIComponent(id)}`,
-    { method: 'DELETE' },
-  );
+  const response = await fetch(`${API_BASE}/api/knowledge/documents/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
   if (!response.ok) {
     throw new Error(await readError(response, 'Failed to delete knowledge document'));
   }
@@ -1376,10 +1344,7 @@ export async function deleteKbDocument(id: string): Promise<void> {
 }
 
 /** Manual retrieval test against the RAG knowledge base. */
-export async function searchKb(
-  query: string,
-  topK?: number,
-): Promise<KbSearchResult[]> {
+export async function searchKb(query: string, topK?: number): Promise<KbSearchResult[]> {
   const response = await fetch(`${API_BASE}/api/knowledge-base/search`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1499,9 +1464,7 @@ export async function saveOnboardingConfig(
   });
 }
 
-export async function runFirstTask(
-  task: string,
-): Promise<OnboardingFirstTaskResult> {
+export async function runFirstTask(task: string): Promise<OnboardingFirstTaskResult> {
   return apiFetch<OnboardingFirstTaskResult>(`/api/onboarding/run-first-task`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1509,9 +1472,7 @@ export async function runFirstTask(
   });
 }
 
-export async function completeOnboarding(
-  steps?: string[],
-): Promise<OnboardingCompleteResult> {
+export async function completeOnboarding(steps?: string[]): Promise<OnboardingCompleteResult> {
   const body: Record<string, unknown> = {};
   if (steps) body.steps = steps;
   return apiFetch<OnboardingCompleteResult>(`/api/onboarding/complete`, {
@@ -1540,9 +1501,7 @@ export interface OnboardingSampleTasksResponse {
  */
 export async function fetchSampleTasks(): Promise<OnboardingSampleTask[]> {
   try {
-    const data = await apiFetch<OnboardingSampleTasksResponse>(
-      `/api/onboarding/sample-tasks`,
-    );
+    const data = await apiFetch<OnboardingSampleTasksResponse>(`/api/onboarding/sample-tasks`);
     return data.tasks ?? [];
   } catch {
     return [];

@@ -20,7 +20,10 @@ import { getGlobalLogger } from '../logging';
 import { getMetricsCollector } from './metricsCollector';
 import { getHookManager } from '../pluginManager';
 import { getGuardianAgent } from '../security/guardianAgent';
-import { reviewToolCall as guardianReviewToolCall, isRuntimeGuardianAvailable } from './runtimeGuardianBridge';
+import {
+  reviewToolCall as guardianReviewToolCall,
+  isRuntimeGuardianAvailable,
+} from './runtimeGuardianBridge';
 import { getExecutionScheduler, type RunHandle } from '../atr/scheduler';
 import { generateIdempotencyKey } from '../atr/canonicalJson';
 import { StepErrorBoundary } from './stepErrorBoundary';
@@ -33,7 +36,10 @@ import {
 } from './toolCallValidator';
 import { isMutationTool } from './runtimeHelpers';
 import { getCapabilityTokenIssuer } from '../security/capabilityToken';
-import { getGlobalBiscuitCapabilityAdapter, BiscuitCapabilityAdapter } from '../security/biscuitCapabilityAdapter';
+import {
+  getGlobalBiscuitCapabilityAdapter,
+  BiscuitCapabilityAdapter,
+} from '../security/biscuitCapabilityAdapter';
 import { ReflexionGenerator, type Reflexion, type ReflexionContext } from './reflexionGenerator';
 import {
   getPatternTracker,
@@ -98,7 +104,9 @@ export class ToolExecutionService {
 
           if (BiscuitCapabilityAdapter.isBiscuitToken(capabilityToken)) {
             // Biscuit (Ed25519) verification
-            const biscuitVerifier = getGlobalBiscuitCapabilityAdapter().createVerifier(tenantId ?? '*');
+            const biscuitVerifier = getGlobalBiscuitCapabilityAdapter().createVerifier(
+              tenantId ?? '*',
+            );
             verdict = biscuitVerifier.verify(capabilityToken, {
               tool: toolCall.name,
               args: toolCall.arguments as Record<string, unknown>,
@@ -580,7 +588,7 @@ export class ToolExecutionService {
       // Only runs when a provider is available; fails open on errors.
       if (isRuntimeGuardianAvailable()) {
         try {
-          const goal = (this.runtime as any).config?.goal || 'unknown';
+          const goal = (this.runtime as { config?: { goal?: string } }).config?.goal || 'unknown';
           const guardianDecision = await guardianReviewToolCall(toolCall, goal);
           if (!guardianDecision.approved) {
             const errorMsg = `RUNTIME_GUARDIAN_BLOCKED: ${guardianDecision.reason}`;
@@ -871,7 +879,10 @@ export class ToolExecutionService {
       // execution. Only records on success so failed calls don't pollute the
       // pattern database. PatternTracker learns n-gram sequences across tasks.
       try {
-        this.recentToolCalls.push({ name: toolCall.name, arguments: toolCall.arguments as Record<string, unknown> });
+        this.recentToolCalls.push({
+          name: toolCall.name,
+          arguments: toolCall.arguments as Record<string, unknown>,
+        });
         if (this.recentToolCalls.length > ToolExecutionService.MAX_RECENT_CALLS) {
           this.recentToolCalls.shift();
         }
@@ -921,9 +932,11 @@ export class ToolExecutionService {
    * Config: speculativeExecution.enabled must be true (defaults to false).
    */
   async triggerSpeculativeExecution(tenantId?: string): Promise<void> {
-    const specConfig = (this.runtime.config as AgentRuntimeConfig & {
-      speculativeExecution?: { enabled?: boolean };
-    }).speculativeExecution;
+    const specConfig = (
+      this.runtime.config as AgentRuntimeConfig & {
+        speculativeExecution?: { enabled?: boolean };
+      }
+    ).speculativeExecution;
     if (!specConfig?.enabled) return;
 
     try {
@@ -931,11 +944,7 @@ export class ToolExecutionService {
       const recentCalls = this.recentToolCalls;
       const availableTools = Array.from(this.runtime.tools.keys());
 
-      const plan = planSpeculativeExecution(
-        tracker,
-        recentCalls,
-        availableTools,
-      );
+      const plan = planSpeculativeExecution(tracker, recentCalls, availableTools);
 
       if (plan.length === 0) return;
 

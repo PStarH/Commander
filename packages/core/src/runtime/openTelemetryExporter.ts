@@ -224,11 +224,7 @@ export class OpenTelemetryExporter {
    * gen_ai.tool.call.arguments while preserving tool names and IDs.
    */
   private redactSpan(span: OTelSpan): OTelSpan {
-    if (
-      !this.config.redactInput &&
-      !this.config.redactOutput &&
-      !this.config.redactToolArgs
-    ) {
+    if (!this.config.redactInput && !this.config.redactOutput && !this.config.redactToolArgs) {
       return span;
     }
 

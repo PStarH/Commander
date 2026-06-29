@@ -129,7 +129,10 @@ export class BiscuitCapabilityToken implements ICapabilityToken {
   private blocks: TokenBlock[];
   private currentKeyPair: { publicKey: string; privateKey: string };
 
-  private constructor(blocks: TokenBlock[], currentKeyPair: { publicKey: string; privateKey: string }) {
+  private constructor(
+    blocks: TokenBlock[],
+    currentKeyPair: { publicKey: string; privateKey: string },
+  ) {
     this.blocks = blocks;
     this.currentKeyPair = currentKeyPair;
   }
@@ -276,9 +279,13 @@ export class BiscuitCapabilityToken implements ICapabilityToken {
             sig,
           );
           if (!isValid) {
-            getGlobalLogger().warn('BiscuitToken', 'Attenuation block signature verification failed', {
-              blockIndex: i,
-            });
+            getGlobalLogger().warn(
+              'BiscuitToken',
+              'Attenuation block signature verification failed',
+              {
+                blockIndex: i,
+              },
+            );
             return false;
           }
         }
@@ -431,9 +438,7 @@ export class BiscuitCapabilityToken implements ICapabilityToken {
   private evaluateCheck(check: DatalogCheck, facts: DatalogFact[]): boolean {
     // Check: at least one fact must match the query
     const matchingFact = facts.find(
-      (f) =>
-        f.predicate === check.query.predicate &&
-        f.args.length === check.query.args.length,
+      (f) => f.predicate === check.query.predicate && f.args.length === check.query.args.length,
     );
 
     if (!matchingFact) return false;
@@ -517,7 +522,9 @@ export class BiscuitTokenIssuer {
     } else {
       // Generate a new key pair
       const keyPair = crypto.generateKeyPairSync('ed25519');
-      this.privateKey = keyPair.privateKey.export({ type: 'pkcs8', format: 'der' }).toString('base64');
+      this.privateKey = keyPair.privateKey
+        .export({ type: 'pkcs8', format: 'der' })
+        .toString('base64');
       this.publicKey = keyPair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
     }
   }

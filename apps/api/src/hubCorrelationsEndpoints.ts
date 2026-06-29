@@ -39,7 +39,7 @@ import {
   type BusPayloadMap,
   type MessageBusTopic,
 } from '@commander/core/runtime';
-import { isProductionEnv, describeProdSignal } from '../envSignal';
+import { isProductionEnv, describeProdSignal } from './envSignal';
 
 const CORRELATION_TOPICS = [
   'runtime.cycle_correlated',
@@ -256,8 +256,7 @@ export function createHubCorrelationsRouter(): Router {
     const limitN = asPositiveInt(limit, DEFAULT_REST_LIMIT, MAX_REST_LIMIT);
     const start = timeline.length > limitN ? timeline.length - limitN : 0;
     const visible = timeline.slice(start);
-    const nextCursor =
-      visible.length > 0 ? visible[visible.length - 1]!.busId : undefined;
+    const nextCursor = visible.length > 0 ? visible[visible.length - 1]!.busId : undefined;
 
     res.json({
       items: visible,

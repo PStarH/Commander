@@ -123,28 +123,40 @@ export class PluginPermissionEnforcer {
   checkFileRead(filePath: string): PermissionCheckResult {
     const allowed = this.permissions.filesystem.read;
     if (allowed.length === 0) {
-      return this.deny('filesystem.read', `Plugin "${this.pluginName}" has no filesystem read permissions`);
+      return this.deny(
+        'filesystem.read',
+        `Plugin "${this.pluginName}" has no filesystem read permissions`,
+      );
     }
     for (const pattern of allowed) {
       if (this.matchPath(filePath, pattern)) {
         return { allowed: true };
       }
     }
-    return this.deny('filesystem.read', `Path "${filePath}" not in read allowlist for plugin "${this.pluginName}"`);
+    return this.deny(
+      'filesystem.read',
+      `Path "${filePath}" not in read allowlist for plugin "${this.pluginName}"`,
+    );
   }
 
   /** Check filesystem write access for a path */
   checkFileWrite(filePath: string): PermissionCheckResult {
     const allowed = this.permissions.filesystem.write;
     if (allowed.length === 0) {
-      return this.deny('filesystem.write', `Plugin "${this.pluginName}" has no filesystem write permissions`);
+      return this.deny(
+        'filesystem.write',
+        `Plugin "${this.pluginName}" has no filesystem write permissions`,
+      );
     }
     for (const pattern of allowed) {
       if (this.matchPath(filePath, pattern)) {
         return { allowed: true };
       }
     }
-    return this.deny('filesystem.write', `Path "${filePath}" not in write allowlist for plugin "${this.pluginName}"`);
+    return this.deny(
+      'filesystem.write',
+      `Path "${filePath}" not in write allowlist for plugin "${this.pluginName}"`,
+    );
   }
 
   /** Check network access to a domain:port */
@@ -155,7 +167,10 @@ export class PluginPermissionEnforcer {
     }
     const domainAllowed = allowedDomains.some((d) => domain === d || domain.endsWith(`.${d}`));
     if (!domainAllowed) {
-      return this.deny('network', `Domain "${domain}" not in allowlist for plugin "${this.pluginName}"`);
+      return this.deny(
+        'network',
+        `Domain "${domain}" not in allowlist for plugin "${this.pluginName}"`,
+      );
     }
     if (port !== undefined && allowedPorts.length > 0 && !allowedPorts.includes(port)) {
       return this.deny('network', `Port ${port} not in allowlist for plugin "${this.pluginName}"`);
@@ -166,7 +181,10 @@ export class PluginPermissionEnforcer {
   /** Check child_process access */
   checkProcess(): PermissionCheckResult {
     if (!this.permissions.process) {
-      return this.deny('process', `Plugin "${this.pluginName}" does not have process spawn permission`);
+      return this.deny(
+        'process',
+        `Plugin "${this.pluginName}" does not have process spawn permission`,
+      );
     }
     return { allowed: true };
   }
@@ -174,7 +192,10 @@ export class PluginPermissionEnforcer {
   /** Check environment variable access */
   checkEnv(varName: string): PermissionCheckResult {
     if (!this.permissions.env.includes(varName)) {
-      return this.deny('env', `Env var "${varName}" not in allowlist for plugin "${this.pluginName}"`);
+      return this.deny(
+        'env',
+        `Env var "${varName}" not in allowlist for plugin "${this.pluginName}"`,
+      );
     }
     return { allowed: true };
   }
@@ -185,7 +206,10 @@ export class PluginPermissionEnforcer {
       return this.deny('hooks', `Plugin "${this.pluginName}" has no hook permissions`);
     }
     if (!this.permissions.hooks.includes(hookName)) {
-      return this.deny('hooks', `Hook "${hookName}" not in allowlist for plugin "${this.pluginName}"`);
+      return this.deny(
+        'hooks',
+        `Hook "${hookName}" not in allowlist for plugin "${this.pluginName}"`,
+      );
     }
     return { allowed: true };
   }
@@ -196,7 +220,10 @@ export class PluginPermissionEnforcer {
       return this.deny('tools', `Plugin "${this.pluginName}" has no tool registration permissions`);
     }
     if (!this.permissions.tools.includes(toolName)) {
-      return this.deny('tools', `Tool "${toolName}" not in allowlist for plugin "${this.pluginName}"`);
+      return this.deny(
+        'tools',
+        `Tool "${toolName}" not in allowlist for plugin "${this.pluginName}"`,
+      );
     }
     return { allowed: true };
   }
@@ -266,11 +293,7 @@ export class PluginPermissionEnforcer {
 
     // Wildcard match (simple)
     const regex = new RegExp(
-      '^' +
-        normalizedPattern
-          .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-          .replace(/\*/g, '.*') +
-        '$',
+      '^' + normalizedPattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$',
     );
     return regex.test(normalizedPath);
   }
@@ -309,7 +332,10 @@ export class PluginPermissionRegistry {
   }
 
   /** Get all violations across all plugins */
-  getAllViolations(): Array<{ pluginName: string; violations: Array<{ timestamp: string; resource: string; reason: string }> }> {
+  getAllViolations(): Array<{
+    pluginName: string;
+    violations: Array<{ timestamp: string; resource: string; reason: string }>;
+  }> {
     return [...this.enforcers.entries()].map(([name, enforcer]) => ({
       pluginName: name,
       violations: enforcer.getViolations(),

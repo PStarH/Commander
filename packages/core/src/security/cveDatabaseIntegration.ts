@@ -242,7 +242,12 @@ const KNOWN_CVES: CVEEntry[] = [
     severity: 'CRITICAL',
     publishedDate: '2026-03-10',
     affectedProducts: [
-      { name: 'langflow', ecosystem: 'pip', versionRange: '<1.1.0', versions: ['1.0.18', '1.0.19'] },
+      {
+        name: 'langflow',
+        ecosystem: 'pip',
+        versionRange: '<1.1.0',
+        versions: ['1.0.18', '1.0.19'],
+      },
     ],
     fixedVersions: [{ name: 'langflow', version: '1.1.0', ecosystem: 'pip' }],
     references: ['https://nvd.nist.gov/vuln/detail/CVE-2026-33017'],
@@ -254,7 +259,8 @@ const KNOWN_CVES: CVEEntry[] = [
   },
   {
     cveId: 'CVE-2026-20131',
-    description: 'Cisco Firepower Management Center (FMC) 未授权远程代码执行。单请求即可获取 Root 权限。',
+    description:
+      'Cisco Firepower Management Center (FMC) 未授权远程代码执行。单请求即可获取 Root 权限。',
     cvssScore: 10.0,
     cvssVector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H',
     severity: 'CRITICAL',
@@ -277,14 +283,13 @@ const KNOWN_CVES: CVEEntry[] = [
   },
   {
     cveId: 'CVE-2026-37541',
-    description: 'Open Vehicle Monitoring System v3 (OVMS3) 缓冲区溢出，可通过 CAN 总线/MQTT 协议触发 RCE。',
+    description:
+      'Open Vehicle Monitoring System v3 (OVMS3) 缓冲区溢出，可通过 CAN 总线/MQTT 协议触发 RCE。',
     cvssScore: 10.0,
     cvssVector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H',
     severity: 'CRITICAL',
     publishedDate: '2026-03-15',
-    affectedProducts: [
-      { name: 'ovms3', ecosystem: 'other', versionRange: '<3.3.003' },
-    ],
+    affectedProducts: [{ name: 'ovms3', ecosystem: 'other', versionRange: '<3.3.003' }],
     fixedVersions: [{ name: 'ovms3', version: '3.3.003', ecosystem: 'other' }],
     references: ['https://nvd.nist.gov/vuln/detail/CVE-2026-37541'],
     categories: ['rce', 'memory_safety'],
@@ -298,9 +303,7 @@ const KNOWN_CVES: CVEEntry[] = [
     cvssVector: 'CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:H/A:H',
     severity: 'CRITICAL',
     publishedDate: '2026-04-01',
-    affectedProducts: [
-      { name: 'openclaw', ecosystem: 'other', versionRange: '<2.1.0' },
-    ],
+    affectedProducts: [{ name: 'openclaw', ecosystem: 'other', versionRange: '<2.1.0' }],
     fixedVersions: [{ name: 'openclaw', version: '2.1.0', ecosystem: 'other' }],
     references: ['https://nvd.nist.gov/vuln/detail/CVE-2026-28363'],
     categories: ['container_escape', 'privilege_escalation'],
@@ -314,9 +317,7 @@ const KNOWN_CVES: CVEEntry[] = [
     cvssVector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H',
     severity: 'CRITICAL',
     publishedDate: '2026-02-20',
-    affectedProducts: [
-      { name: 'cpanel', ecosystem: 'other', versionRange: '<110.0.28' },
-    ],
+    affectedProducts: [{ name: 'cpanel', ecosystem: 'other', versionRange: '<110.0.28' }],
     fixedVersions: [{ name: 'cpanel', version: '110.0.28', ecosystem: 'other' }],
     references: ['https://nvd.nist.gov/vuln/detail/CVE-2026-41940'],
     categories: ['authentication_bypass'],
@@ -347,9 +348,7 @@ const KNOWN_CVES: CVEEntry[] = [
     cvssVector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N',
     severity: 'CRITICAL',
     publishedDate: '2026-03-20',
-    affectedProducts: [
-      { name: 'nginx', ecosystem: 'other', versionRange: '<1.27.0' },
-    ],
+    affectedProducts: [{ name: 'nginx', ecosystem: 'other', versionRange: '<1.27.0' }],
     fixedVersions: [{ name: 'nginx', version: '1.27.0', ecosystem: 'other' }],
     references: ['https://nvd.nist.gov/vuln/detail/CVE-2026-42945'],
     categories: ['rce', 'memory_safety'],
@@ -381,9 +380,7 @@ const KNOWN_CVES: CVEEntry[] = [
     cvssVector: 'CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:C/C:H/I:H/A:H',
     severity: 'HIGH',
     publishedDate: '2026-04-20',
-    affectedProducts: [
-      { name: 'nx-console', ecosystem: 'npm', versionRange: '<18.0.2' },
-    ],
+    affectedProducts: [{ name: 'nx-console', ecosystem: 'npm', versionRange: '<18.0.2' }],
     fixedVersions: [{ name: 'nx-console', version: '18.0.2', ecosystem: 'npm' }],
     references: ['https://github.com/advisories/GHSA-2026-48027'],
     categories: ['supply_chain', 'data_leak'],
@@ -397,9 +394,7 @@ const KNOWN_CVES: CVEEntry[] = [
     cvssScore: 8.8,
     severity: 'HIGH',
     publishedDate: '2026-04-25',
-    affectedProducts: [
-      { name: 'litespeed', ecosystem: 'other', versionRange: '<1.7.16' },
-    ],
+    affectedProducts: [{ name: 'litespeed', ecosystem: 'other', versionRange: '<1.7.16' }],
     fixedVersions: [{ name: 'litespeed', version: '1.7.16', ecosystem: 'other' }],
     references: [],
     categories: ['privilege_escalation'],
@@ -407,14 +402,13 @@ const KNOWN_CVES: CVEEntry[] = [
   },
   {
     cveId: 'CVE-2025-54322',
-    description: 'AI Agent 自主发现的路由器预认证远程代码执行漏洞（CVSS 10.0）。由 pwn.ai 的自治 AI 智能体独立发现。',
+    description:
+      'AI Agent 自主发现的路由器预认证远程代码执行漏洞（CVSS 10.0）。由 pwn.ai 的自治 AI 智能体独立发现。',
     cvssScore: 10.0,
     cvssVector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H',
     severity: 'CRITICAL',
     publishedDate: '2025-11-15',
-    affectedProducts: [
-      { name: 'multiple-router-firmware', ecosystem: 'other', versionRange: '*' },
-    ],
+    affectedProducts: [{ name: 'multiple-router-firmware', ecosystem: 'other', versionRange: '*' }],
     fixedVersions: [],
     references: ['https://nvd.nist.gov/vuln/detail/CVE-2025-54322'],
     categories: ['rce', 'ai_agent'],
@@ -428,9 +422,7 @@ const KNOWN_CVES: CVEEntry[] = [
     cvssScore: 9.4,
     severity: 'CRITICAL',
     publishedDate: '2026-03-05',
-    affectedProducts: [
-      { name: 'asustor-adm', ecosystem: 'other', versionRange: '<4.2.0' },
-    ],
+    affectedProducts: [{ name: 'asustor-adm', ecosystem: 'other', versionRange: '<4.2.0' }],
     fixedVersions: [{ name: 'asustor-adm', version: '4.2.0', ecosystem: 'other' }],
     references: [],
     categories: ['rce', 'injection'],
@@ -459,9 +451,7 @@ const KNOWN_CVES: CVEEntry[] = [
     cvssScore: 8.7,
     severity: 'HIGH',
     publishedDate: '2026-03-28',
-    affectedProducts: [
-      { name: '@adonisjs/core', ecosystem: 'npm', versionRange: '<6.12.1' },
-    ],
+    affectedProducts: [{ name: '@adonisjs/core', ecosystem: 'npm', versionRange: '<6.12.1' }],
     fixedVersions: [{ name: '@adonisjs/core', version: '6.12.1', ecosystem: 'npm' }],
     references: [],
     categories: ['rce', 'path_traversal'],
@@ -474,9 +464,7 @@ const KNOWN_CVES: CVEEntry[] = [
     cvssScore: 8.6,
     severity: 'HIGH',
     publishedDate: '2026-04-05',
-    affectedProducts: [
-      { name: 'next', ecosystem: 'npm', versionRange: '<14.2.5' },
-    ],
+    affectedProducts: [{ name: 'next', ecosystem: 'npm', versionRange: '<14.2.5' }],
     fixedVersions: [{ name: 'next', version: '14.2.5', ecosystem: 'npm' }],
     references: [],
     categories: ['ssrf'],
@@ -489,9 +477,7 @@ const KNOWN_CVES: CVEEntry[] = [
     cvssScore: 8.8,
     severity: 'HIGH',
     publishedDate: '2026-02-15',
-    affectedProducts: [
-      { name: 'httpd', ecosystem: 'other', versionRange: '>=2.4.66,<2.4.67' },
-    ],
+    affectedProducts: [{ name: 'httpd', ecosystem: 'other', versionRange: '>=2.4.66,<2.4.67' }],
     fixedVersions: [{ name: 'httpd', version: '2.4.67', ecosystem: 'other' }],
     references: [],
     categories: ['memory_safety', 'dos'],
@@ -504,9 +490,7 @@ const KNOWN_CVES: CVEEntry[] = [
     cvssScore: 7.8,
     severity: 'HIGH',
     publishedDate: '2026-04-29',
-    affectedProducts: [
-      { name: 'linux-kernel', ecosystem: 'other', versionRange: '<6.8.10' },
-    ],
+    affectedProducts: [{ name: 'linux-kernel', ecosystem: 'other', versionRange: '<6.8.10' }],
     fixedVersions: [{ name: 'linux-kernel', version: '6.8.10', ecosystem: 'other' }],
     references: [],
     categories: ['privilege_escalation', 'container_escape'],
@@ -523,7 +507,9 @@ const KNOWN_CVES: CVEEntry[] = [
     affectedProducts: [
       { name: 'microsoft-sharepoint', ecosystem: 'other', versionRange: '<16.0.10730.20500' },
     ],
-    fixedVersions: [{ name: 'microsoft-sharepoint', version: '16.0.10730.20500', ecosystem: 'other' }],
+    fixedVersions: [
+      { name: 'microsoft-sharepoint', version: '16.0.10730.20500', ecosystem: 'other' },
+    ],
     references: [],
     categories: ['rce', 'deserialization'],
     source: 'Built-in',
@@ -535,9 +521,7 @@ const KNOWN_CVES: CVEEntry[] = [
     cvssScore: 8.5,
     severity: 'HIGH',
     publishedDate: '2026-01-20',
-    affectedProducts: [
-      { name: 'daemon-tools', ecosystem: 'other', versionRange: '<11.0.1' },
-    ],
+    affectedProducts: [{ name: 'daemon-tools', ecosystem: 'other', versionRange: '<11.0.1' }],
     fixedVersions: [{ name: 'daemon-tools', version: '11.0.1', ecosystem: 'other' }],
     references: [],
     categories: ['supply_chain', 'data_leak'],
@@ -605,7 +589,10 @@ export class CVEDatabaseIntegration {
     this.lastRefreshAt = new Date().toISOString();
 
     try {
-      getGlobalLogger().info('CVEDatabaseIntegration', `Loaded ${KNOWN_CVES.length} built-in CVE entries`);
+      getGlobalLogger().info(
+        'CVEDatabaseIntegration',
+        `Loaded ${KNOWN_CVES.length} built-in CVE entries`,
+      );
     } catch (err) {
       reportSilentFailure(err, 'cveDatabase:loadBuiltinData');
     }
@@ -662,8 +649,10 @@ export class CVEDatabaseIntegration {
 
       for (const cve of this.cveDatabase.values()) {
         for (const affected of cve.affectedProducts) {
-          if (affected.name.toLowerCase() === pkg.name.toLowerCase() &&
-              (affected.ecosystem === ecosystem || affected.ecosystem === 'other')) {
+          if (
+            affected.name.toLowerCase() === pkg.name.toLowerCase() &&
+            (affected.ecosystem === ecosystem || affected.ecosystem === 'other')
+          ) {
             if (this.isVersionAffected(pkg.version, affected.versionRange, affected.versions)) {
               const fixedVersion = cve.fixedVersions.find(
                 (f) => f.name.toLowerCase() === pkg.name.toLowerCase(),
@@ -776,8 +765,13 @@ export class CVEDatabaseIntegration {
       } catch (err) {
         reportSilentFailure(err, `cveDatabase:refreshDatabase:${source.id}`);
         try {
-          getGlobalLogger().warn('CVEDatabaseIntegration', `Failed to sync from ${source.name}: ${(err as Error).message}`);
-        } catch { /* ok */ }
+          getGlobalLogger().warn(
+            'CVEDatabaseIntegration',
+            `Failed to sync from ${source.name}: ${(err as Error).message}`,
+          );
+        } catch {
+          /* ok */
+        }
       }
     }
 
@@ -897,25 +891,37 @@ export class CVEDatabaseIntegration {
     const entries = Array.from(this.cveDatabase.values());
 
     if (format === 'json') {
-      return JSON.stringify({
-        generatedAt: new Date().toISOString(),
-        totalCVEs: entries.length,
-        entries: entries.map((e) => ({
-          cveId: e.cveId,
-          description: e.description,
-          cvssScore: e.cvssScore,
-          severity: e.severity,
-          publishedDate: e.publishedDate,
-          affectedProducts: e.affectedProducts,
-          fixedVersions: e.fixedVersions,
-          categories: e.categories,
-          exploitedInTheWild: e.exploitedInTheWild,
-        })),
-      }, null, 2);
+      return JSON.stringify(
+        {
+          generatedAt: new Date().toISOString(),
+          totalCVEs: entries.length,
+          entries: entries.map((e) => ({
+            cveId: e.cveId,
+            description: e.description,
+            cvssScore: e.cvssScore,
+            severity: e.severity,
+            publishedDate: e.publishedDate,
+            affectedProducts: e.affectedProducts,
+            fixedVersions: e.fixedVersions,
+            categories: e.categories,
+            exploitedInTheWild: e.exploitedInTheWild,
+          })),
+        },
+        null,
+        2,
+      );
     }
 
     // CSV format
-    const headers = ['CVE ID', 'CVSS', 'Severity', 'Published', 'Products', 'Categories', 'Exploited'];
+    const headers = [
+      'CVE ID',
+      'CVSS',
+      'Severity',
+      'Published',
+      'Products',
+      'Categories',
+      'Exploited',
+    ];
     const rows = entries.map((e) => [
       e.cveId,
       String(e.cvssScore),
@@ -1019,7 +1025,10 @@ export class CVEDatabaseIntegration {
    * 清理版本号（去除 ^、~、>= 等前缀）
    */
   private cleanVersion(version: string): string {
-    return version.replace(/^[^0-9]*/, '').split('-')[0].trim();
+    return version
+      .replace(/^[^0-9]*/, '')
+      .split('-')[0]
+      .trim();
   }
 
   /**

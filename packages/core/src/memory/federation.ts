@@ -33,10 +33,7 @@ import * as crypto from 'node:crypto';
 import { getGlobalLogger } from '../logging';
 import { getDifferentialPrivacyLayer } from '../security/differentialPrivacyLayer';
 import type { DPQueryOutcome } from '../security/differentialPrivacyLayer';
-import {
-  getGlobalSemanticMemoryStore,
-  SemanticMemoryStore,
-} from './semanticStore';
+import { getGlobalSemanticMemoryStore, SemanticMemoryStore } from './semanticStore';
 import type { ISemanticEntity } from '../contracts/pillarIV';
 import type { EpisodicMemoryItem, MemoryMeta } from '../memory';
 import type { ProceduralEntry } from './proceduralStore';
@@ -123,10 +120,7 @@ export class MemoryFederation {
   private totalEpsilonSpent = 0;
   private readonly maxTotalEpsilon: number;
 
-  constructor(options?: {
-    semanticStore?: SemanticMemoryStore;
-    maxTotalEpsilon?: number;
-  }) {
+  constructor(options?: { semanticStore?: SemanticMemoryStore; maxTotalEpsilon?: number }) {
     this.sharedSemanticStore = options?.semanticStore ?? getGlobalSemanticMemoryStore();
     this.maxTotalEpsilon = options?.maxTotalEpsilon ?? 100; // Total budget across all agents
   }
@@ -148,10 +142,7 @@ export class MemoryFederation {
    *
    * @returns true if the contribution was accepted, false if privacy budget exhausted
    */
-  async contributeEntity(
-    agentId: string,
-    entity: Omit<ISemanticEntity, 'id'>,
-  ): Promise<boolean> {
+  async contributeEntity(agentId: string, entity: Omit<ISemanticEntity, 'id'>): Promise<boolean> {
     if (!this.agentRegistry.has(agentId)) {
       this.registerAgent(agentId);
     }
@@ -227,10 +218,7 @@ export class MemoryFederation {
    * Only rules with success rate above the threshold are shared.
    * Usage statistics are sanitized via DP.
    */
-  async contributeProceduralRule(
-    agentId: string,
-    rule: ProceduralEntry,
-  ): Promise<boolean> {
+  async contributeProceduralRule(agentId: string, rule: ProceduralEntry): Promise<boolean> {
     if (!this.agentRegistry.has(agentId)) {
       this.registerAgent(agentId);
     }
@@ -314,9 +302,7 @@ export class MemoryFederation {
     // Filter shared procedural rules
     let proceduralRules = [...this.sharedProceduralRules];
     if (options.proceduralType) {
-      proceduralRules = proceduralRules.filter(
-        (r) => r.proceduralType === options.proceduralType,
-      );
+      proceduralRules = proceduralRules.filter((r) => r.proceduralType === options.proceduralType);
     }
     if (options.includeProcedural !== false) {
       // Sort by sanitized success rate (descending)
@@ -415,16 +401,18 @@ export class MemoryFederation {
    * file paths, and other sensitive patterns.
    */
   private sanitizeDescription(text: string): string {
-    return text
-      // Remove file paths
-      .replace(/\/[^\s"']+/g, '[path]')
-      // Remove email addresses
-      .replace(/[\w.-]+@[\w.-]+\.\w+/g, '[email]')
-      // Remove IP addresses
-      .replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, '[ip]')
-      // Remove API keys and tokens (long hex/base64 strings)
-      .replace(/\b[a-fA-F0-9]{32,}\b/g, '[redacted]')
-      .replace(/\b[A-Za-z0-9+/]{40,}={0,2}\b/g, '[redacted]');
+    return (
+      text
+        // Remove file paths
+        .replace(/\/[^\s"']+/g, '[path]')
+        // Remove email addresses
+        .replace(/[\w.-]+@[\w.-]+\.\w+/g, '[email]')
+        // Remove IP addresses
+        .replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, '[ip]')
+        // Remove API keys and tokens (long hex/base64 strings)
+        .replace(/\b[a-fA-F0-9]{32,}\b/g, '[redacted]')
+        .replace(/\b[A-Za-z0-9+/]{40,}={0,2}\b/g, '[redacted]')
+    );
   }
 
   /**
@@ -439,7 +427,9 @@ export class MemoryFederation {
       return Math.max(0, Math.min(1, outcome.result / 100));
     }
     // DP failed — return a neutral default (0.5) rather than leaking original
-    getGlobalLogger().warn('MemoryFederation', 'DP sanitization failed — using safe default', { agentId });
+    getGlobalLogger().warn('MemoryFederation', 'DP sanitization failed — using safe default', {
+      agentId,
+    });
     return 0.5;
   }
 
@@ -454,7 +444,11 @@ export class MemoryFederation {
       return outcome.result;
     }
     // DP failed — return 0 rather than leaking original
-    getGlobalLogger().warn('MemoryFederation', 'DP integer sanitization failed — using safe default', { agentId });
+    getGlobalLogger().warn(
+      'MemoryFederation',
+      'DP integer sanitization failed — using safe default',
+      { agentId },
+    );
     return 0;
   }
 

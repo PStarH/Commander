@@ -279,86 +279,216 @@ interface DangerPattern {
 
 const DANGER_PATTERNS: Record<DangerCategory, DangerPattern[]> = {
   credential_exfiltration: [
-    { pattern: /(?:api[_-]?key|secret|token|password|passwd|credential|access[_-]?key)\b[\s\S]{0,40}(?:send|exfiltrate|upload|post|transmit|curl|wget|fetch)\b/i, weight: 0.95 },
-    { pattern: /(?:send|post|upload|transmit|exfiltrate|leak)\b[\s\S]{0,60}(?:api[_-]?key|secret|token|password|credential)/i, weight: 0.95 },
-    { pattern: /\b(?:keys?|tokens?|secrets?|credentials?)\b[\s\S]{0,30}\b(?:to|via)\b[\s\S]{0,30}(?:http|url|endpoint|server|webhook)/i, weight: 0.85 },
-    { pattern: /(?:echo|print|cat|printf)\s+["'`].*(?:password|secret|token|api[_-]?key)/i, weight: 0.8 },
+    {
+      pattern:
+        /(?:api[_-]?key|secret|token|password|passwd|credential|access[_-]?key)\b[\s\S]{0,40}(?:send|exfiltrate|upload|post|transmit|curl|wget|fetch)\b/i,
+      weight: 0.95,
+    },
+    {
+      pattern:
+        /(?:send|post|upload|transmit|exfiltrate|leak)\b[\s\S]{0,60}(?:api[_-]?key|secret|token|password|credential)/i,
+      weight: 0.95,
+    },
+    {
+      pattern:
+        /\b(?:keys?|tokens?|secrets?|credentials?)\b[\s\S]{0,30}\b(?:to|via)\b[\s\S]{0,30}(?:http|url|endpoint|server|webhook)/i,
+      weight: 0.85,
+    },
+    {
+      pattern: /(?:echo|print|cat|printf)\s+["'`].*(?:password|secret|token|api[_-]?key)/i,
+      weight: 0.8,
+    },
   ],
   data_exfiltration: [
-    { pattern: /(?:upload|exfiltrate|post|send|transfer|leak|dump)\b[\s\S]{0,40}(?:sensitive|private|confidential|personal|pii|secret|internal)/i, weight: 0.9 },
-    { pattern: /(?:curl|wget|fetch|http\.post|requests\.post|axios\.post|urllib)\b[\s\S]{0,60}(?:data|payload|body|files?)/i, weight: 0.7 },
-    { pattern: /(?:base64|btoa|encode)\b[\s\S]{0,30}(?:send|upload|post|exfiltrate|transfer)/i, weight: 0.8 },
+    {
+      pattern:
+        /(?:upload|exfiltrate|post|send|transfer|leak|dump)\b[\s\S]{0,40}(?:sensitive|private|confidential|personal|pii|secret|internal)/i,
+      weight: 0.9,
+    },
+    {
+      pattern:
+        /(?:curl|wget|fetch|http\.post|requests\.post|axios\.post|urllib)\b[\s\S]{0,60}(?:data|payload|body|files?)/i,
+      weight: 0.7,
+    },
+    {
+      pattern: /(?:base64|btoa|encode)\b[\s\S]{0,30}(?:send|upload|post|exfiltrate|transfer)/i,
+      weight: 0.8,
+    },
     { pattern: /(?:pipe|redirect)\b[\s\S]{0,20}(?:nc|netcat|\/dev\/tcp|\/dev\/udp)/i, weight: 0.9 },
   ],
   code_execution: [
     { pattern: /\beval\s*\(/, weight: 0.9 },
     { pattern: /\b(?:exec|execSync|spawn|spawnSync|execFile|system|popen)\s*\(/, weight: 0.9 },
-    { pattern: /\b(?:child_process|subprocess|os\.system|os\.popen|commands\.getoutput)\b/, weight: 0.9 },
+    {
+      pattern: /\b(?:child_process|subprocess|os\.system|os\.popen|commands\.getoutput)\b/,
+      weight: 0.9,
+    },
     { pattern: /\b(?:rm|chmod|chown|killall|shutdown|reboot)\s+-/, weight: 0.75 },
     { pattern: /`[^`]*\$\([^)]*\)[^`]*`/, weight: 0.7 },
   ],
   privilege_escalation: [
-    { pattern: /(?:grant|give|assign|elevate|enable)\b[\s\S]{0,30}(?:admin|root|sudo|superuser|elevated|full[_-]?access|privileged)/i, weight: 0.9 },
+    {
+      pattern:
+        /(?:grant|give|assign|elevate|enable)\b[\s\S]{0,30}(?:admin|root|sudo|superuser|elevated|full[_-]?access|privileged)/i,
+      weight: 0.9,
+    },
     { pattern: /\b(?:chmod|chown)\s+[0-7]{3,4}\b/, weight: 0.7 },
     { pattern: /\bsudo\s+/, weight: 0.6 },
     { pattern: /(?:setuid|setgid|cap_add|--privileged|add[_-]?capability|capsh)/i, weight: 0.85 },
   ],
   persistence: [
-    { pattern: /(?:crontab|cron\s+-|at\s+now|systemctl|launchctl|systemd|timers?)\b/i, weight: 0.85 },
-    { pattern: /(?:startup|autostart|boot|login)\b[\s\S]{0,30}(?:script|hook|entry|item)/i, weight: 0.8 },
+    {
+      pattern: /(?:crontab|cron\s+-|at\s+now|systemctl|launchctl|systemd|timers?)\b/i,
+      weight: 0.85,
+    },
+    {
+      pattern: /(?:startup|autostart|boot|login)\b[\s\S]{0,30}(?:script|hook|entry|item)/i,
+      weight: 0.8,
+    },
     { pattern: /(?:registry|HKLM|HKCU|\\Run\\|\\RunOnce\\|CurrentVersion\\Run)/i, weight: 0.85 },
     { pattern: /\/etc\/(?:rc\.local|init\.d|crontab|profile|cron\.[a-z])\b/, weight: 0.85 },
-    { pattern: /(?:~\/\.bashrc|~\/\.bash_profile|~\/\.zshrc|~\/\.profile|~\/\.bash_login)/, weight: 0.7 },
+    {
+      pattern: /(?:~\/\.bashrc|~\/\.bash_profile|~\/\.zshrc|~\/\.profile|~\/\.bash_login)/,
+      weight: 0.7,
+    },
   ],
   network_beaconing: [
-    { pattern: /(?:every|each|periodically|interval|repeat)\b[\s\S]{0,40}(?:ping|beacon|call[_-]?home|check[_-]?in|heartbeat|phone[_-]?home)/i, weight: 0.85 },
-    { pattern: /setInterval\s*\([\s\S]{0,80}(?:fetch|http|request|axios|urllib|curl)/i, weight: 0.85 },
+    {
+      pattern:
+        /(?:every|each|periodically|interval|repeat)\b[\s\S]{0,40}(?:ping|beacon|call[_-]?home|check[_-]?in|heartbeat|phone[_-]?home)/i,
+      weight: 0.85,
+    },
+    {
+      pattern: /setInterval\s*\([\s\S]{0,80}(?:fetch|http|request|axios|urllib|curl)/i,
+      weight: 0.85,
+    },
     { pattern: /\b(?:c2|command[_-]?and[_-]?control|beacon|callback[_-]?server)\b/i, weight: 0.8 },
   ],
   filesystem_manipulation: [
-    { pattern: /(?:delete|remove|rm|unlink|rmdir|shutil\.rmtree|os\.remove)\b[\s\S]{0,30}(?:\/etc\/|\/var\/|\/usr\/|\/bin\/|\/boot\/|~\/\.ssh|\/root\/|\/proc\/)/i, weight: 0.95 },
-    { pattern: /(?:overwrite|replace|modify|append)\b[\s\S]{0,30}(?:\/etc\/|\/var\/|\/usr\/|\/bin\/|passwd|shadow|hosts|sudoers)/i, weight: 0.9 },
+    {
+      pattern:
+        /(?:delete|remove|rm|unlink|rmdir|shutil\.rmtree|os\.remove)\b[\s\S]{0,30}(?:\/etc\/|\/var\/|\/usr\/|\/bin\/|\/boot\/|~\/\.ssh|\/root\/|\/proc\/)/i,
+      weight: 0.95,
+    },
+    {
+      pattern:
+        /(?:overwrite|replace|modify|append)\b[\s\S]{0,30}(?:\/etc\/|\/var\/|\/usr\/|\/bin\/|passwd|shadow|hosts|sudoers)/i,
+      weight: 0.9,
+    },
     { pattern: /\brm\s+-rf\b\s*\//, weight: 0.95 },
     { pattern: /(?:format|mkfs|dd\s+if=|shred)/i, weight: 0.9 },
   ],
   process_manipulation: [
-    { pattern: /(?:kill|terminate|pkill|killall|taskkill)\s+-9?\s+(?:-?\d+|python|node|agent|java)/i, weight: 0.7 },
-    { pattern: /(?:spawn|fork|exec)\b[\s\S]{0,30}(?:child|subprocess|process|daemon)/i, weight: 0.6 },
-    { pattern: /(?:replace|hijack|inject|hook)\b[\s\S]{0,30}(?:process|binary|executable|syscall)/i, weight: 0.85 },
-    { pattern: /ptrace|process_vm_readv|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_INSERT_LIBRARIES/i, weight: 0.9 },
+    {
+      pattern:
+        /(?:kill|terminate|pkill|killall|taskkill)\s+-9?\s+(?:-?\d+|python|node|agent|java)/i,
+      weight: 0.7,
+    },
+    {
+      pattern: /(?:spawn|fork|exec)\b[\s\S]{0,30}(?:child|subprocess|process|daemon)/i,
+      weight: 0.6,
+    },
+    {
+      pattern: /(?:replace|hijack|inject|hook)\b[\s\S]{0,30}(?:process|binary|executable|syscall)/i,
+      weight: 0.85,
+    },
+    {
+      pattern: /ptrace|process_vm_readv|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_INSERT_LIBRARIES/i,
+      weight: 0.9,
+    },
   ],
   env_var_access: [
-    { pattern: /(?:read|get|access|dump|exfiltrate|print)\b[\s\S]{0,30}(?:env(?:ironment)?[_\s-]?var|process\.env|os\.environ)/i, weight: 0.7 },
+    {
+      pattern:
+        /(?:read|get|access|dump|exfiltrate|print)\b[\s\S]{0,30}(?:env(?:ironment)?[_\s-]?var|process\.env|os\.environ)/i,
+      weight: 0.7,
+    },
     { pattern: /process\.env\b/, weight: 0.5 },
-    { pattern: /(?:set|write|modify|overwrite|export)\b[\s\S]{0,30}(?:PATH|LD_PRELOAD|LD_LIBRARY_PATH|PYTHONPATH|NODE_OPTIONS)/i, weight: 0.85 },
+    {
+      pattern:
+        /(?:set|write|modify|overwrite|export)\b[\s\S]{0,30}(?:PATH|LD_PRELOAD|LD_LIBRARY_PATH|PYTHONPATH|NODE_OPTIONS)/i,
+      weight: 0.85,
+    },
     { pattern: /os\.environ(?:get|set|update)?\b/i, weight: 0.6 },
   ],
   instruction_injection: [
-    { pattern: /ignore\s+(?:all\s+)?previous\s+(?:instructions?|rules?|memor(?:y|ies))/i, weight: 0.95 },
-    { pattern: /disregard\s+(?:all\s+)?(?:prior|previous|above)\s+(?:instructions?|rules?|guidelines?)/i, weight: 0.95 },
-    { pattern: /(?:you\s+are|act\s+as)\s+(?:now|actually)\s+(?:a|an)\s+(?:root|admin|developer|unrestricted|jailbroken)/i, weight: 0.85 },
-    { pattern: /(?:override|replace|bypass|disable)\s+(?:system|security|safety)\s+(?:prompt|instructions?|policy|guardrails?|filters?)/i, weight: 0.95 },
-    { pattern: /your\s+(?:true|real|actual)\s+(?:instructions?|goal|mission|objective)\s+(?:is|are)\s+/i, weight: 0.9 },
+    {
+      pattern: /ignore\s+(?:all\s+)?previous\s+(?:instructions?|rules?|memor(?:y|ies))/i,
+      weight: 0.95,
+    },
+    {
+      pattern:
+        /disregard\s+(?:all\s+)?(?:prior|previous|above)\s+(?:instructions?|rules?|guidelines?)/i,
+      weight: 0.95,
+    },
+    {
+      pattern:
+        /(?:you\s+are|act\s+as)\s+(?:now|actually)\s+(?:a|an)\s+(?:root|admin|developer|unrestricted|jailbroken)/i,
+      weight: 0.85,
+    },
+    {
+      pattern:
+        /(?:override|replace|bypass|disable)\s+(?:system|security|safety)\s+(?:prompt|instructions?|policy|guardrails?|filters?)/i,
+      weight: 0.95,
+    },
+    {
+      pattern:
+        /your\s+(?:true|real|actual)\s+(?:instructions?|goal|mission|objective)\s+(?:is|are)\s+/i,
+      weight: 0.9,
+    },
     { pattern: /\[SYSTEM\]|\[ADMIN\]|\[INST\]|\[\/?(?:system|developer|root):/i, weight: 0.8 },
   ],
   hidden_channel: [
-    { pattern: /(?:covert|steganograph|hidden|subliminal)\s+(?:channel|communication|message|exfil)/i, weight: 0.9 },
-    { pattern: /(?:dns\s+(?:tunnel|exfil)|icmp\s+tunnel|encoding|obfuscat|pack)\s+(?:data|payload|secret)/i, weight: 0.8 },
-    { pattern: /(?:whitespace|zero[_-]?width|unicode|homoglyph)\s+(?:encoding|steganograph|hidden|exfil)/i, weight: 0.85 },
+    {
+      pattern:
+        /(?:covert|steganograph|hidden|subliminal)\s+(?:channel|communication|message|exfil)/i,
+      weight: 0.9,
+    },
+    {
+      pattern:
+        /(?:dns\s+(?:tunnel|exfil)|icmp\s+tunnel|encoding|obfuscat|pack)\s+(?:data|payload|secret)/i,
+      weight: 0.8,
+    },
+    {
+      pattern:
+        /(?:whitespace|zero[_-]?width|unicode|homoglyph)\s+(?:encoding|steganograph|hidden|exfil)/i,
+      weight: 0.85,
+    },
     { pattern: /(?:timing|storage)\s+(?:channel|covert)/i, weight: 0.85 },
   ],
   sandbox_escape: [
-    { pattern: /(?:break|escape|bypass|get[_-]?out)\s+(?:out\s+of\s+)?(?:sandbox|container|isolation|jail|chroot|seccomp)/i, weight: 0.95 },
-    { pattern: /(?:container|docker|k8s|kubernetes|podman)\s+(?:escape|breakout|bypass)/i, weight: 0.95 },
+    {
+      pattern:
+        /(?:break|escape|bypass|get[_-]?out)\s+(?:out\s+of\s+)?(?:sandbox|container|isolation|jail|chroot|seccomp)/i,
+      weight: 0.95,
+    },
+    {
+      pattern: /(?:container|docker|k8s|kubernetes|podman)\s+(?:escape|breakout|bypass)/i,
+      weight: 0.95,
+    },
     { pattern: /(?:nsenter|unshare|mount|umount|pivot_root|chroot)\b/, weight: 0.75 },
     { pattern: /\/proc\/\d+\/(?:root|exe|cwd|mem|environ)/, weight: 0.85 },
-    { pattern: /--privileged|cap_add|security_opt.*privileged|SYS_ADMIN|CAP_SYS_ADMIN/i, weight: 0.9 },
+    {
+      pattern: /--privileged|cap_add|security_opt.*privileged|SYS_ADMIN|CAP_SYS_ADMIN/i,
+      weight: 0.9,
+    },
   ],
   self_replication: [
-    { pattern: /(?:copy|replicate|propagate|spread|clone)\b[\s\S]{0,30}(?:itself|self|to\s+(?:other|all|every))\s+(?:agent|host|location|directory|node|system)/i, weight: 0.9 },
-    { pattern: /(?:install|write|drop|persist)\b[\s\S]{0,30}(?:self|itself|copy|clone)\b[\s\S]{0,30}(?:to|into|across|onto)/i, weight: 0.85 },
+    {
+      pattern:
+        /(?:copy|replicate|propagate|spread|clone)\b[\s\S]{0,30}(?:itself|self|to\s+(?:other|all|every))\s+(?:agent|host|location|directory|node|system)/i,
+      weight: 0.9,
+    },
+    {
+      pattern:
+        /(?:install|write|drop|persist)\b[\s\S]{0,30}(?:self|itself|copy|clone)\b[\s\S]{0,30}(?:to|into|across|onto)/i,
+      weight: 0.85,
+    },
     { pattern: /(?:worm|self[_-]?replicat|viral|parasitic)/i, weight: 0.9 },
-    { pattern: /for\s+each\s+(?:agent|host|node|peer)[\s\S]{0,60}(?:install|copy|write|spread)/i, weight: 0.85 },
+    {
+      pattern: /for\s+each\s+(?:agent|host|node|peer)[\s\S]{0,60}(?:install|copy|write|spread)/i,
+      weight: 0.85,
+    },
   ],
 };
 
@@ -434,19 +564,28 @@ export class SemanticFirewall {
 
     // 零宽字符 —— 移除
     sanitized = sanitized.replace(ZERO_WIDTH_RE, (match) => {
-      removed.push({ type: 'zero_width_char', detail: `removed U+${match.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}` });
+      removed.push({
+        type: 'zero_width_char',
+        detail: `removed U+${match.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}`,
+      });
       return '';
     });
 
     // RTL / LTR 覆盖字符 —— 规范化（移除）
     sanitized = sanitized.replace(RTL_OVERRIDE_RE, (match) => {
-      removed.push({ type: 'rtl_override', detail: `normalized U+${match.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}` });
+      removed.push({
+        type: 'rtl_override',
+        detail: `normalized U+${match.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}`,
+      });
       return '';
     });
 
     // Markdown 隐藏注释标记 —— 移除
     sanitized = sanitized.replace(MARKDOWN_HIDDEN_RE, (line) => {
-      removed.push({ type: 'markdown_hidden_marker', detail: `removed ${line.trim().slice(0, 40)}` });
+      removed.push({
+        type: 'markdown_hidden_marker',
+        detail: `removed ${line.trim().slice(0, 40)}`,
+      });
       return '';
     });
 
@@ -454,7 +593,10 @@ export class SemanticFirewall {
     let base64Count = 0;
     sanitized.replace(BASE64_RE, (match) => {
       base64Count++;
-      removed.push({ type: 'base64_segment', detail: `flagged ${match.length} chars (not removed)` });
+      removed.push({
+        type: 'base64_segment',
+        detail: `flagged ${match.length} chars (not removed)`,
+      });
       return match;
     });
     void base64Count;
@@ -573,13 +715,17 @@ export class SemanticFirewall {
     } else {
       const blockers: string[] = [];
       if (!regexPassed) {
-        blockers.push(`regex risk ${regexRiskScore.toFixed(3)} >= threshold ${effectiveRegexThreshold.toFixed(3)}`);
+        blockers.push(
+          `regex risk ${regexRiskScore.toFixed(3)} >= threshold ${effectiveRegexThreshold.toFixed(3)}`,
+        );
       }
       if (!semanticPassed) {
         if (semantic.failClosed) {
           blockers.push('semantic analyzer failed (fail-closed)');
         } else {
-          blockers.push(`semantic risk ${semanticRiskScore.toFixed(3)} >= threshold ${effectiveSemanticThreshold.toFixed(3)}`);
+          blockers.push(
+            `semantic risk ${semanticRiskScore.toFixed(3)} >= threshold ${effectiveSemanticThreshold.toFixed(3)}`,
+          );
         }
       }
       decision = this.config.quarantineEnabled ? 'quarantine' : 'block';
@@ -640,7 +786,12 @@ export class SemanticFirewall {
   private async runSemantic(
     content: string,
     context: WriteContext,
-  ): Promise<{ passed: boolean; riskScore: number; result?: SemanticAnalysisResult; failClosed: boolean }> {
+  ): Promise<{
+    passed: boolean;
+    riskScore: number;
+    result?: SemanticAnalysisResult;
+    failClosed: boolean;
+  }> {
     if (!this.semanticAnalyzer) {
       if (!this.analyzerAbsentWarned) {
         try {
@@ -875,7 +1026,13 @@ export class SemanticFirewall {
       }
       if (!oldest || item.quarantinedAt < oldest) oldest = item.quarantinedAt;
     }
-    return { total: this.quarantineStore.size, pendingReview: pending, approved, byCategory, oldestQuarantinedAt: oldest };
+    return {
+      total: this.quarantineStore.size,
+      pendingReview: pending,
+      approved,
+      byCategory,
+      oldestQuarantinedAt: oldest,
+    };
   }
 
   // ── Layer 5: 审计日志 ─────────────────────────────────────────────
@@ -906,7 +1063,8 @@ export class SemanticFirewall {
 
     // 汇入统一安全审计流
     try {
-      const severity = result.decision === 'allow' ? 'low' : result.riskScore >= 0.85 ? 'critical' : 'high';
+      const severity =
+        result.decision === 'allow' ? 'low' : result.riskScore >= 0.85 ? 'critical' : 'high';
       getSecurityAuditLogger().logEvent({
         type: result.decision === 'allow' ? 'security_decision' : 'skill_security_violation',
         severity,
@@ -994,10 +1152,9 @@ export class SemanticFirewall {
 // 单例（租户隔离）
 // ============================================================================
 
-const semanticFirewallSingleton = createTenantAwareSingleton(
-  () => new SemanticFirewall(),
-  { componentName: 'SemanticFirewall' },
-);
+const semanticFirewallSingleton = createTenantAwareSingleton(() => new SemanticFirewall(), {
+  componentName: 'SemanticFirewall',
+});
 
 /** 获取语义防火墙的租户隔离单例。 */
 export function getSemanticFirewall(): SemanticFirewall {

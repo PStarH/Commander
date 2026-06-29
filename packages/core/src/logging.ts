@@ -365,7 +365,7 @@ export class MetricsCollector {
   private metrics: Map<string, Metric> = new Map();
   private listeners: Array<(name: string, point: MetricPoint) => void> = [];
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
-  private runtimeCollector: any = null;
+  private runtimeCollector: any = null; // eslint-disable-line @typescript-eslint/no-explicit-any
 
   constructor(config?: Partial<MetricsConfig>) {
     this.config = { ...DEFAULT_METRICS_CONFIG, ...config };

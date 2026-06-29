@@ -59,8 +59,8 @@ export function SecurityPosturePage() {
             {error ?? 'No posture data available'}
           </p>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>
-            Run a security posture assessment to generate real compliance data.
-            The backend reads snapshots from <code>.commander/posture-snapshots.json</code>.
+            Run a security posture assessment to generate real compliance data. The backend reads
+            snapshots from <code>.commander/posture-snapshots.json</code>.
           </p>
         </div>
       </div>

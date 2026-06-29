@@ -230,7 +230,10 @@ export class RegressionGate {
    *   2. Quality has dropped consecutively N times (consecutiveDropThreshold)
    *   3. The drop ratio exceeds minDropRatio
    */
-  private checkPRMRegression(strategyKey: string, history: PRMScoreEntry[]): PRMRegressionAlert | null {
+  private checkPRMRegression(
+    strategyKey: string,
+    history: PRMScoreEntry[],
+  ): PRMRegressionAlert | null {
     if (history.length < 2) return null;
 
     const current = history[history.length - 1];
@@ -306,7 +309,7 @@ export class RegressionGate {
 
   /**
    * Check if a strategy has been early-stopped (should not continue reflecting).
-   */  isEarlyStopped(strategyKey: string): boolean {
+   */ isEarlyStopped(strategyKey: string): boolean {
     return this.earlyStopped.has(strategyKey);
   }
 
@@ -354,9 +357,8 @@ export class RegressionGate {
     message: string,
   ): PRMRegressionAlert {
     const [strategy, modelId] = strategyKey.split('::');
-    const dropRatio = previousQuality > 0
-      ? (previousQuality - currentQuality) / previousQuality
-      : 0;
+    const dropRatio =
+      previousQuality > 0 ? (previousQuality - currentQuality) / previousQuality : 0;
     const alert: PRMRegressionAlert = {
       type,
       strategy: strategy ?? strategyKey,

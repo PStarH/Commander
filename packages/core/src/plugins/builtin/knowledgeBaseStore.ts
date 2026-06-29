@@ -112,17 +112,17 @@ export class KnowledgeBaseStore {
   private readonly maxResults: number;
   private initPromise: Promise<void> | null = null;
 
-  constructor(config: {
-    kbPath?: string;
-    embeddingModel?: string;
-    chunkSize?: number;
-    chunkOverlap?: number;
-    maxResults?: number;
-  } = {}) {
+  constructor(
+    config: {
+      kbPath?: string;
+      embeddingModel?: string;
+      chunkSize?: number;
+      chunkOverlap?: number;
+      maxResults?: number;
+    } = {},
+  ) {
     const rawPath = config.kbPath ?? '.commander/knowledge-base';
-    this.baseDir = path.isAbsolute(rawPath)
-      ? rawPath
-      : path.resolve(process.cwd(), rawPath);
+    this.baseDir = path.isAbsolute(rawPath) ? rawPath : path.resolve(process.cwd(), rawPath);
     this.embedder = createKbEmbeddingFunction(config.embeddingModel);
     this.index = new HNSWIndex({ bruteForceThreshold: 1000 });
     this.chunkSize = config.chunkSize ?? 512;
