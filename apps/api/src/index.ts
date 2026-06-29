@@ -15,7 +15,7 @@ import { createMemoryIndexRouter } from './memoryIndexEndpoints';
 import { createConfidenceRouter } from './confidenceEndpoints';
 import { createNamespacedMemoryRouter } from './namespacedMemoryEndpoints';
 import { createPipelineRouter } from './pipelineEndpoints';
-import { createEvaluationRouter, createMockLLMCall } from './evaluationEndpoints';
+import { createEvaluationRouter, createProductionLLMCall } from './evaluationEndpoints';
 import { LLMEvaluator, ScoreSmoother } from './evaluation';
 import { CheckpointManager } from './governanceCheckpoint';
 import { createGovernanceRouter } from './governanceEndpoints';
@@ -60,7 +60,7 @@ import { createKnowledgeBaseRouter } from './knowledgeBaseEndpoints';
 import { createOnboardingRouter } from './onboardingEndpoints';
 import { createAuditLogRouter } from './auditLogEndpoints';
 import { createAuditMiddleware } from './auditMiddleware';
-import { getUnifiedAuditLog } from '@commander/core/security';
+import { getUnifiedAuditLog, dlpResponseMiddleware } from '@commander/core/security';
 
 const PROJECT_ID = process.env.COMMANDER_PROJECT_ID ?? 'project-war-room';
 const app = express();
@@ -84,8 +84,10 @@ const confidenceReporter = new ConfidenceReporter(actionRationaleStore);
 const agentCardRegistry = new AgentCardRegistry();
 const evaluator = new LLMEvaluator();
 const smoother = new ScoreSmoother();
-const mockLLMCall = createMockLLMCall();
-const evaluationRouter = createEvaluationRouter(evaluator, smoother, mockLLMCall);
+// Security: Use real LLM provider for LLM-as-Judge evaluation.
+// Mock is only used when COMMANDER_EVAL_MOCK=true is explicitly set.
+const productionLLMCall = createProductionLLMCall();
+const evaluationRouter = createEvaluationRouter(evaluator, smoother, productionLLMCall);
 const checkpointManager = new CheckpointManager();
 const governanceRouter = createGovernanceRouter(checkpointManager);
 const a2aTaskManager = new TaskManager();
@@ -162,6 +164,18 @@ app.use(authMiddleware);
 // the response `finish` listener is attached before handlers run. Sensitive
 // body fields are stripped by createAuditMiddleware before persistence.
 app.use(createAuditMiddleware(getUnifiedAuditLog()));
+
+// 7. DLP response middleware — scans all HTTP responses (JSON/text/HTML/XML)
+// for sensitive data (API keys, private keys, JWTs, etc.) and redacts/masks
+// before sending to client. Excludes event-stream to avoid buffering SSE.
+// If DLP is disabled, the middleware passes through with zero overhead.
+// blockOnCritical returns 403 for critical-severity data leakage.
+app.use(
+  dlpResponseMiddleware({
+    contentTypes: ['json', 'text', 'xml', 'html'],
+    blockOnCritical: true,
+  }),
+);
 
 // Initialize default memory domains on startup
 DEFAULT_DOMAINS.forEach(({ domain, description }) => {
@@ -339,10 +353,7 @@ app.use('/', createReplayRouter());
 app.use('/api', createOrchestratorRouter());
 app.use('/api', createTeamRouter());
 
-// ── UX gap-fix routers (mounted directly, not via routes.ts) ────────────────
-// These 6 routers were created to close UX gaps but were never mounted.
-// Mounting them here ensures they are always registered regardless of
-// whether registerRoutes() is called.
+// ── UX gap-fix routers ─────────────────────────────────────────────────────
 app.use(createChatRouter());
 app.use(createDlqRouter());
 app.use(createApprovalConfigRouter());
