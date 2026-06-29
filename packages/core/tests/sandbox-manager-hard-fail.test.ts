@@ -25,8 +25,18 @@ describe('SandboxManager hard-fail behavior', () => {
 
   it('execute uses noop fallback only when explicitly allowed', async () => {
     const allowed = new SandboxManager({ sandboxes: [], allowNoSandbox: true });
-    const result = await allowed.execute('echo hello-fail-closed-test');
+    // G7: NoopSB now refuses non-full network profiles.
+    // Use 'full-access' to explicitly accept unsandboxed execution.
+    const result = await allowed.execute('echo hello-fail-closed-test', 'full-access');
     assert.strictEqual(result.exitCode, 0);
     assert.ok(result.stdout.includes('hello-fail-closed-test'));
+  });
+
+  it('NoopSB refuses to execute with non-full network policy (G7)', async () => {
+    const allowed = new SandboxManager({ sandboxes: [], allowNoSandbox: true });
+    // Default profile is 'workspace-write' with network: 'blocked' — NoopSB must refuse
+    const result = await allowed.execute('echo should-be-blocked');
+    assert.strictEqual(result.exitCode, 126);
+    assert.ok(result.violated?.includes('network_policy_not_enforceable'));
   });
 });
