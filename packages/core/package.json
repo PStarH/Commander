@@ -83,14 +83,15 @@
     "@types/blessed": "^0.1.27",
     "@types/node": "^25.9.3",
     "@vitest/coverage-v8": "^4.1.9",
+    "fast-check": "^4.8.0",
     "tsx": "^4.8.1",
+    "typedoc": "^0.28.19",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.9",
-    "typedoc": "^0.28.19"
+    "vitest": "^4.1.9"
   },
   "dependencies": {
-    "blessed": "^0.1.81",
-    "@commander/plugin-sdk": "workspace:*"
+    "@commander/plugin-sdk": "workspace:*",
+    "blessed": "^0.1.81"
   },
   "optionalDependencies": {
     "better-sqlite3": "^12.11.1",
