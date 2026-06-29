@@ -3,6 +3,7 @@ import fc from 'fast-check';
 import { combineTaint } from '../../../src/security/taintTracker';
 import { preCheckSandboxEscape } from '../../../src/security/sandboxEscapeDetector';
 import type { SandboxProfile } from '../../../src/sandbox/types';
+import { MemorySystem } from '../../../src/memory/memorySystem';
 
 const NUM_RUNS = Number(process.env.COMMANDER_PROPERTY_TEST_NUM_RUNS) || 100;
 
@@ -77,10 +78,31 @@ describe('Security invariant property tests', () => {
     ), { numRuns: NUM_RUNS });
   });
 
-  // ── MEMORY-001 (skipped — unskipped in Task 8 after G10 lands) ──
+  // ── MEMORY-001 (live — exercises MemorySystem.assertNamespaced, G10) ──
 
-  it.skip('MEMORY-001: cross-namespace writes are rejected', () => {
-    // TODO Task 8: unskip after assertNamespaced() + MEMORY-001 invariant land
+  it('MEMORY-001: cross-namespace writes are rejected unless ACL grants them', () => {
+    const ms = new MemorySystem({ unified: { remember: () => {}, getWorkingMemory: () => ({ add: () => {}, getWorkingContext: () => [] }) } } as any);
+    fc.assert(fc.property(
+      fc.record({
+        writerId: fc.string({ minLength: 1 }).filter(s => !s.includes('/')),
+        targetPath: fc.string({ minLength: 1 }),
+        aclNamespaces: fc.array(fc.string()),
+      }),
+      ({ writerId, targetPath, aclNamespaces }) => {
+        const writerNs = `agents/${writerId}`;
+        const inOwnNs = targetPath.startsWith(writerNs);
+        const aclGrants = aclNamespaces.some(ns => targetPath.startsWith(ns));
+        const aclGrantsTasks = aclNamespaces.includes('tasks') && targetPath.startsWith('tasks/');
+        const shouldAllow = inOwnNs || aclGrants || aclGrantsTasks;
+
+        try {
+          ms.assertNamespaced(writerId, targetPath, { role: 'test', namespaces: aclNamespaces });
+          return shouldAllow;
+        } catch (e) {
+          return !shouldAllow;
+        }
+      },
+    ), { numRuns: NUM_RUNS });
   });
 
   // ── FLOW-001 (skipped — unskipped in Task 13 after G2 plugin lands) ──
