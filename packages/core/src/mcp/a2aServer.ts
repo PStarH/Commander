@@ -7,8 +7,19 @@
  * Flow:
  *   Remote Agent → HTTP POST / → A2A JSON-RPC → A2AServer → AgentRuntimeInterface → Response
  */
+/**
+ * SECURITY LIMITATION (Devil Detail A): Node.js only verifies the client
+ * certificate during the TLS handshake. Once an HTTP Keep-Alive connection
+ * is established, certificate revocation (CRL/OCSP) does NOT affect the
+ * live socket — the client can keep sending requests until the socket
+ * closes. For high-sensitivity sessions, combine mTLS with the mandatory
+ * bearer authToken (defense-in-depth) and consider a shorter
+ * shutdownTimeoutMs or disabling Keep-Alive at the reverse-proxy layer.
+ */
 import { reportSilentFailure } from '../silentFailureReporter';
-import { createServer, IncomingMessage, ServerResponse } from 'node:http';
+import { createServer as createHttpServer, IncomingMessage, ServerResponse } from 'node:http';
+import { createServer as createHttpsServer, ServerOptions as HttpsServerOptions } from 'node:https';
+import { readFileSync } from 'node:fs';
 import * as crypto from 'node:crypto';
 import type { AgentRuntimeInterface } from '../runtime';
 import type {
@@ -60,6 +71,21 @@ export interface A2AServerConfig {
    * Security: Per OWASP — authentication is mandatory for A2A servers to
    * prevent agentjacking (unauthorized agents joining the swarm). */
   authToken: string;
+  /** Optional mTLS / TLS configuration. When omitted, server runs plain HTTP
+   * (development only; production deployments MUST supply tls). */
+  tls?: {
+    /** PEM-encoded server certificate (content or file path) */
+    cert: string;
+    /** PEM-encoded server private key (content or file path) */
+    key: string;
+    /** PEM-encoded CA bundle for verifying client certificates.
+     * Required when requestCert is true. */
+    ca?: string;
+    /** If true, server requests client certificate (enables mTLS). */
+    requestCert: boolean;
+    /** If true, rejects clients without a valid verified certificate. */
+    rejectUnauthorized: boolean;
+  };
 }
 
 const DEFAULT_CONFIG: Partial<A2AServerConfig> = {
@@ -77,7 +103,7 @@ const DEFAULT_CONFIG: Partial<A2AServerConfig> = {
 export class A2AServer {
   private config: A2AServerConfig;
   private runtime: AgentRuntimeInterface;
-  private server: ReturnType<typeof createServer> | null = null;
+  private server: ReturnType<typeof createHttpServer> | null = null;
   private tasks: Map<string, A2ATask> = new Map();
   private connections: Set<import('net').Socket> = new Set();
   private logger = getGlobalLogger();
@@ -96,14 +122,37 @@ export class A2AServer {
 
   async start(): Promise<void> {
     return new Promise((resolve) => {
-      this.server = createServer((req, res) => {
+      const requestHandler = (req: IncomingMessage, res: ServerResponse) => {
         const socket = req.socket;
         this.connections.add(socket);
         res.on('finish', () => {
           this.connections.delete(socket);
         });
         this.handleRequest(req, res);
-      });
+      };
+
+      if (this.config.tls) {
+        // Fail-closed: requestCert=true requires ca for client cert verification
+        if (this.config.tls.requestCert && !this.config.tls.ca) {
+          throw new Error(
+            'A2AServer tls.requestCert=true requires tls.ca for client cert verification.',
+          );
+        }
+        const tlsOpts: HttpsServerOptions = {
+          cert: maybeReadFile(this.config.tls.cert),
+          key: maybeReadFile(this.config.tls.key),
+          requestCert: this.config.tls.requestCert,
+          rejectUnauthorized: this.config.tls.rejectUnauthorized,
+        };
+        if (this.config.tls.ca) {
+          tlsOpts.ca = maybeReadFile(this.config.tls.ca);
+        }
+        this.server = createHttpsServer(tlsOpts, requestHandler);
+        this.logger.info('A2AServer', 'A2A server starting with mTLS enabled');
+      } else {
+        this.server = createHttpServer(requestHandler);
+      }
+
       this.server.listen(this.config.port, this.config.host, () => {
         this.logger.info(
           'A2AServer',
@@ -610,6 +659,16 @@ class A2AError extends Error {
     this.code = code;
     this.data = data;
   }
+}
+
+/**
+ * Return PEM content as-is, or read from file path if the string doesn't
+ * look like PEM content. Used for tls.cert / tls.key / tls.ca which may
+ * be supplied as either inline content or a filesystem path.
+ */
+function maybeReadFile(s: string): string {
+  if (s.startsWith('-----BEGIN')) return s;
+  return readFileSync(s, 'utf8');
 }
 
 // ============================================================================
