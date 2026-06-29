@@ -34,6 +34,8 @@ export interface SandboxProfile {
   envVarAllowList?: string[];
   timeout?: number;
   memoryLimitMB?: number;
+  /** CPU limit (number of cores). Default: 2. Enforced by Docker/gVisor via --cpus/--cpu-quota. */
+  cpuLimit?: number;
   runAs?: string;
 }
 
