@@ -1507,3 +1507,57 @@ export async function fetchSampleTasks(): Promise<OnboardingSampleTask[]> {
     return [];
   }
 }
+
+// ============================================================================
+// Eval / Reporting / Consensus plugin control (builtin plugins)
+// ============================================================================
+
+export interface PluginStatus {
+  plugin: string;
+  registered: boolean;
+  enabled: boolean;
+  [key: string]: unknown;
+}
+
+export async function fetchEvalStatus(): Promise<PluginStatus> {
+  return apiFetch<PluginStatus>('/api/eval/status');
+}
+export async function enableEvalPlugin(): Promise<{ enabled: boolean }> {
+  const res = await fetch(`${API_BASE}/api/eval/enable`, { method: 'POST' });
+  if (!res.ok) throw new Error(await readError(res, 'Failed to enable eval plugin'));
+  return res.json();
+}
+export async function disableEvalPlugin(): Promise<{ enabled: boolean }> {
+  const res = await fetch(`${API_BASE}/api/eval/disable`, { method: 'POST' });
+  if (!res.ok) throw new Error(await readError(res, 'Failed to disable eval plugin'));
+  return res.json();
+}
+
+export async function fetchReportingStatus(): Promise<PluginStatus> {
+  return apiFetch<PluginStatus>('/api/reporting/status');
+}
+export async function enableReportingPlugin(): Promise<{ enabled: boolean }> {
+  const res = await fetch(`${API_BASE}/api/reporting/enable`, { method: 'POST' });
+  if (!res.ok) throw new Error(await readError(res, 'Failed to enable reporting plugin'));
+  return res.json();
+}
+export async function disableReportingPlugin(): Promise<{ enabled: boolean }> {
+  const res = await fetch(`${API_BASE}/api/reporting/disable`, { method: 'POST' });
+  if (!res.ok) throw new Error(await readError(res, 'Failed to disable reporting plugin'));
+  return res.json();
+}
+
+export async function fetchConsensusStatus(): Promise<PluginStatus> {
+  return apiFetch<PluginStatus>('/api/consensus/status');
+}
+export async function enableConsensusPlugin(): Promise<{ enabled: boolean }> {
+  const res = await fetch(`${API_BASE}/api/consensus/enable`, { method: 'POST' });
+  if (!res.ok) throw new Error(await readError(res, 'Failed to enable consensus plugin'));
+  return res.json();
+}
+export async function disableConsensusPlugin(): Promise<{ enabled: boolean }> {
+  const res = await fetch(`${API_BASE}/api/consensus/disable`, { method: 'POST' });
+  if (!res.ok) throw new Error(await readError(res, 'Failed to disable consensus plugin'));
+  return res.json();
+}
+
