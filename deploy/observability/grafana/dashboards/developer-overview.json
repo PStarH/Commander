@@ -10,7 +10,7 @@
       "title": "Run Success Rate",
       "type": "stat",
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
-      "targets": [{ "expr": "commander_runs_total{status=\"completed\"} / commander_runs_total", "refId": "A" }],
+      "targets": [{ "expr": "sum(commander_runs_total{status=~\"success|success_early_exit\"}) / sum(commander_runs_total)", "refId": "A" }],
       "fieldConfig": { "defaults": { "unit": "percentunit", "thresholds": { "mode": "absolute", "steps": [{"color":"red","value":null},{"color":"yellow","value":0.8},{"color":"green","value":0.95}] } } }
     },
     {
@@ -24,7 +24,7 @@
       "title": "Token Cost (USD/hour)",
       "type": "stat",
       "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
-      "targets": [{ "expr": "rate(commander_cost_usd_total[1h]) * 3600", "refId": "A" }],
+      "targets": [{ "expr": "rate(commander_run_cost_usd_total[1h]) * 3600", "refId": "A" }],
       "fieldConfig": { "defaults": { "unit": "currencyUSD", "thresholds": { "mode": "absolute", "steps": [{"color":"green","value":null},{"color":"yellow","value":1},{"color":"red","value":10}] } } }
     },
     {
@@ -37,7 +37,7 @@
       "title": "Run Success Rate Over Time",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
-      "targets": [{ "expr": "rate(commander_runs_total{status=\"completed\"}[5m]) / rate(commander_runs_total[5m])", "refId": "A" }],
+      "targets": [{ "expr": "rate(commander_runs_total{status=~\"success|success_early_exit\"}[5m]) / rate(commander_runs_total[5m])", "refId": "A" }],
       "fieldConfig": { "defaults": { "unit": "percentunit" } }
     },
     {
@@ -45,8 +45,7 @@
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
       "targets": [
-        { "expr": "rate(commander_tokens_total{type=\"input\"}[5m])", "legendFormat": "Input", "refId": "A" },
-        { "expr": "rate(commander_tokens_total{type=\"output\"}[5m])", "legendFormat": "Output", "refId": "B" }
+        { "expr": "rate(commander_llm_tokens_total[5m])", "legendFormat": "Total Tokens", "refId": "A" }
       ]
     },
     {
@@ -60,7 +59,7 @@
       "title": "Cost by Component",
       "type": "piechart",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
-      "targets": [{ "expr": "sum by (component) (rate(commander_cost_usd_total[1h]))", "refId": "A" }]
+      "targets": [{ "expr": "sum by (status) (rate(commander_run_cost_usd_total[1h]))", "refId": "A" }]
     }
   ]
 }
