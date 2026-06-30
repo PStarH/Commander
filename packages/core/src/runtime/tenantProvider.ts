@@ -7,8 +7,26 @@
  *  - SimpleTenantProvider: static config map for multi-tenant deployments
  */
 import * as path from 'node:path';
-import { ThreeLayerMemory, getGlobalThreeLayerMemory } from '../threeLayerMemory';
+// NOTE: ThreeLayerMemory is imported lazily to break a value-import cycle:
+// threeLayerMemory → tenantProvider → tenantContext → tenantAwareSingleton →
+// tenantContext → tenantProvider. Loading it at module load time creates a
+// circular dependency. The lazy wrappers below resolve it on first use.
 import { getCurrentTenantId as readCurrentTenantId } from './tenantContext';
+
+let _ThreeLayerMemory: typeof import('../threeLayerMemory').ThreeLayerMemory | null = null;
+let _getGlobalThreeLayerMemory: typeof import('../threeLayerMemory').getGlobalThreeLayerMemory | null = null;
+function lazyThreeLayerMemoryClass(): typeof import('../threeLayerMemory').ThreeLayerMemory {
+  if (!_ThreeLayerMemory) {
+    const mod = require('../threeLayerMemory');
+    _ThreeLayerMemory = mod.ThreeLayerMemory;
+    _getGlobalThreeLayerMemory = mod.getGlobalThreeLayerMemory;
+  }
+  return _ThreeLayerMemory!;
+}
+function lazyGetGlobalThreeLayerMemory(): ReturnType<typeof import('../threeLayerMemory').getGlobalThreeLayerMemory> {
+  lazyThreeLayerMemoryClass();
+  return _getGlobalThreeLayerMemory!();
+}
 
 // ============================================================================
 // Types
@@ -117,15 +135,15 @@ export class SimpleTenantProvider implements TenantProvider {
 // ============================================================================
 
 export class ThreeLayerMemoryRegistry {
-  private instances: Map<string, ThreeLayerMemory> = new Map();
-  private defaultInstance: ThreeLayerMemory | null = null;
+  private instances: Map<string, InstanceType<typeof import('../threeLayerMemory').ThreeLayerMemory>> = new Map();
+  private defaultInstance: InstanceType<typeof import('../threeLayerMemory').ThreeLayerMemory> | null = null;
   private static readonly MAX_INSTANCES = 50;
 
   /** Get or create a memory instance for a tenant. */
-  getOrCreate(tenantId?: string): ThreeLayerMemory {
+  getOrCreate(tenantId?: string): InstanceType<typeof import('../threeLayerMemory').ThreeLayerMemory> {
     if (!tenantId) {
       if (!this.defaultInstance) {
-        this.defaultInstance = getGlobalThreeLayerMemory();
+        this.defaultInstance = lazyGetGlobalThreeLayerMemory();
       }
       return this.defaultInstance;
     }
@@ -136,7 +154,7 @@ export class ThreeLayerMemoryRegistry {
         const firstKey = this.instances.keys().next().value;
         if (firstKey) this.instances.delete(firstKey);
       }
-      mem = new ThreeLayerMemory();
+      mem = new (lazyThreeLayerMemoryClass())();
       this.instances.set(tenantId, mem);
     }
     return mem;

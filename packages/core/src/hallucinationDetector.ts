@@ -2,19 +2,28 @@
  * Hallucination Detector v2
  *
  * Multi-signal hallucination detection for LLM outputs.
- * Uses pattern analysis, confidence calibration, consistency checking,
- * and SelfCheckGPT-style multi-sample verification.
+ * Uses pattern analysis, confidence calibration, and consistency checking.
  *
- * Zero-cost first pass + optional multi-sample verification pass.
+ * Zero-cost first pass — no additional LLM calls.
  *
  * Based on research:
  * - "A Survey on Hallucination in Large Language Models" (Huang et al., 2023)
- * - "SelfCheckGPT: Zero-Resource Black-Box Hallucination Detection" (Manakul et al., 2023)
- * - "FActScore: Fine-grained Atomic Evaluation of Factual Precision" (Min et al., 2023)
  * - "Chain-of-Verification Reduces Hallucination in LLMs" (Dhuliawala et al., 2023)
  * - Vectara HHEM (Hughes Hallucination Evaluation Model) methodology
  * - "Language Models Don't Always Say What They Think" (Turpin et al., 2023)
+ *
+ * Note: The previous SelfCheckGPT-style analyzeMultiSample() and FActScore-style
+ * decomposeClaims() methods were removed — they had no production callers and
+ * were only exercised by unit tests. The remaining analyze() path is the
+ * single live entrypoint used by agentRuntime.
+ *
+ * Enablement: defaults to SecurityProfile (COMMANDER_SECURITY_PROFILE).
+ *   - dev profile: disabled (false positives waste CI time)
+ *   - standard/strict: enabled
+ * Runtime override: COMMANDER_HALLUCINATION_DETECTOR=on|off wins over profile.
  */
+
+import { getSecurityProfileConfig } from './security/securityProfile';
 
 export type HallucinationSignalType =
   | 'overconfidence'
@@ -26,8 +35,6 @@ export type HallucinationSignalType =
   | 'self_contradiction'
   | 'confidence_inconsistency'
   | 'entailment_failure'
-  | 'claim_unverifiable'
-  | 'multi_sample_inconsistency'
   | 'entity_hallucination'
   | 'hedged_as_fact';
 
@@ -43,24 +50,6 @@ export interface HallucinationReport {
   signals: HallucinationSignal[];
   summary: string;
   recommendation: 'pass' | 'flag_for_review' | 'reject';
-  /** Atomic claims decomposed from the output */
-  claims?: string[];
-  /** Per-claim consistency scores from multi-sample check */
-  claimScores?: Array<{ claim: string; score: number; flagged: boolean }>;
-}
-
-/**
- * Multi-sample verification result (SelfCheckGPT-style)
- */
-export interface MultiSampleResult {
-  /** Original output sentences */
-  sentences: string[];
-  /** Per-sentence consistency score (0-1, higher = more consistent) */
-  consistencyScores: number[];
-  /** Sentences flagged as inconsistent */
-  flaggedSentences: Array<{ sentence: string; score: number; index: number }>;
-  /** Overall multi-sample risk score */
-  riskScore: number;
 }
 
 // ============================================================================
@@ -259,74 +248,6 @@ export class HallucinationDetector {
       summary: this.buildSummary(signals, riskScore),
       recommendation,
     };
-  }
-
-  /**
-   * Multi-sample consistency check (SelfCheckGPT-style).
-   * Takes multiple sampled outputs and checks sentence-level consistency.
-   * This is the "second pass" that requires multiple LLM outputs.
-   */
-  analyzeMultiSample(originalOutput: string, sampledOutputs: string[]): MultiSampleResult {
-    const sentences = this.splitSentences(originalOutput);
-    if (sentences.length === 0) {
-      return { sentences: [], consistencyScores: [], flaggedSentences: [], riskScore: 0 };
-    }
-
-    const consistencyScores: number[] = [];
-    const flaggedSentences: Array<{ sentence: string; score: number; index: number }> = [];
-
-    for (let i = 0; i < sentences.length; i++) {
-      const sentence = sentences[i];
-      let supportCount = 0;
-
-      for (const sample of sampledOutputs) {
-        if (this.isSentenceSupported(sentence, sample)) {
-          supportCount++;
-        }
-      }
-
-      const score = sampledOutputs.length > 0 ? supportCount / sampledOutputs.length : 1;
-      consistencyScores.push(score);
-
-      if (score < 0.5) {
-        flaggedSentences.push({ sentence, score, index: i });
-      }
-    }
-
-    // Risk score = fraction of flagged sentences, weighted by how inconsistent they are
-    const avgScore =
-      consistencyScores.length > 0
-        ? consistencyScores.reduce((a, b) => a + b, 0) / consistencyScores.length
-        : 1;
-    const riskScore = 1 - avgScore;
-
-    return { sentences, consistencyScores, flaggedSentences, riskScore };
-  }
-
-  /**
-   * Decompose output into atomic claims for fine-grained checking.
-   * Based on FActScore methodology.
-   */
-  decomposeClaims(output: string): string[] {
-    const claims: string[] = [];
-    const sentences = this.splitSentences(output);
-
-    for (const sentence of sentences) {
-      // Split compound sentences on conjunctions
-      const parts = sentence
-        .split(
-          /\s+(?:,\s*and\s+|\s+and\s+(?:it|the|this|that|these|those|its|their|a|an)\s+|,\s*but\s+|\s+but\s+|\s+while\s+|\s+whereas\s+)/i,
-        )
-        .flatMap((p) => p.split(/\s+and\s+(?=[a-z])/i));
-      for (const part of parts) {
-        const trimmed = part.trim();
-        if (trimmed.length > 10 && this.isClaimSentence(trimmed)) {
-          claims.push(trimmed);
-        }
-      }
-    }
-
-    return claims;
   }
 
   // ---------------------------------------------------------------------------
@@ -722,33 +643,6 @@ export class HallucinationDetector {
     return claimIndicators.some((p) => p.test(sentence));
   }
 
-  /**
-   * Check if a sentence is supported by the sampled output.
-   * Simple word-overlap heuristic (lightweight NLI).
-   */
-  private isSentenceSupported(sentence: string, sample: string): boolean {
-    const sentenceWords = new Set(
-      sentence
-        .toLowerCase()
-        .replace(/[^\w\s]/g, '')
-        .split(/\s+/)
-        .filter((w) => w.length > 3),
-    );
-
-    const sampleLower = sample.toLowerCase();
-    let matchCount = 0;
-
-    for (const word of sentenceWords) {
-      if (sampleLower.includes(word)) {
-        matchCount++;
-      }
-    }
-
-    // Consider supported if >60% of content words appear in sample
-    // This is intentionally strict to catch semantic differences
-    return sentenceWords.size > 0 && matchCount / sentenceWords.size > 0.6;
-  }
-
   // ---------------------------------------------------------------------------
   // Summary
   // ---------------------------------------------------------------------------
@@ -775,13 +669,54 @@ export class HallucinationDetector {
 // Factory
 // ============================================================================
 
+/**
+ * No-op detector returned when hallucination detection is disabled via
+ * COMMANDER_HALLUCINATION_DETECTOR=off. Avoids running 10 regex-based signal
+ * detectors on every LLM response — useful for dev/CI where the false-positive
+ * rate is unacceptable and the cost is wasted.
+ */
+class NoOpHallucinationDetector extends HallucinationDetector {
+  analyze(_input: string, _output: string): HallucinationReport {
+    return {
+      riskScore: 0,
+      signals: [],
+      summary: 'Hallucination detection disabled (COMMANDER_HALLUCINATION_DETECTOR=off).',
+      recommendation: 'pass',
+    };
+  }
+}
+
 let defaultDetector: HallucinationDetector | null = null;
+
+/**
+ * Resolve whether the hallucination detector should be enabled.
+ *
+ * Precedence (highest → lowest):
+ *   1. COMMANDER_HALLUCINATION_DETECTOR=on|off — explicit runtime override
+ *   2. SecurityProfileConfig.enableHallucinationDetector — set by
+ *      COMMANDER_SECURITY_PROFILE (dev=false, standard/strict=true)
+ *
+ * The ENV override exists so operators can flip the detector on/off without
+ * changing the broader profile (e.g. enable in `dev` for one debugging run,
+ * or disable in `standard` if a regression is causing false positives).
+ */
+function shouldEnableHallucinationDetector(): boolean {
+  const envFlag = process.env.COMMANDER_HALLUCINATION_DETECTOR;
+  if (envFlag !== undefined) {
+    return envFlag.toLowerCase() === 'on';
+  }
+  return getSecurityProfileConfig().enableHallucinationDetector;
+}
 
 export function getHallucinationDetector(options?: {
   knowledgeCutOffDate?: Date;
 }): HallucinationDetector {
   if (!defaultDetector) {
-    defaultDetector = new HallucinationDetector(options);
+    if (shouldEnableHallucinationDetector()) {
+      defaultDetector = new HallucinationDetector(options);
+    } else {
+      defaultDetector = new NoOpHallucinationDetector();
+    }
   }
   return defaultDetector;
 }

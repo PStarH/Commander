@@ -1,6 +1,14 @@
 /**
  * CompensationBridge — connect legacy CompensationRegistry to RunLedger.
  *
+ * @deprecated Reversibility audit (2026-06): production code now uses RunLedger
+ * directly. ExecutionScheduler no longer composes this bridge — its
+ * `registerCompensation()` and `registerDefaultCompensations()` methods call
+ * `RunLedger.registerCompensation()` as the single source of truth. The
+ * bridge is retained only for backward compatibility with existing tests and
+ * any external callers that still construct it explicitly. New code MUST NOT
+ * route compensation through this bridge — call RunLedger directly.
+ *
  * The legacy CompensationRegistry is in-memory and per-AgentRuntime. The new
  * RunLedger is crash-safe and saga-correct (REVERSE execution order, 3
  * retries, lease-fenced). The bridge lets existing code keep using the

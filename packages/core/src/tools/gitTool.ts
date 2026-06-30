@@ -67,6 +67,7 @@ export class GitTool implements Tool {
       { name: 'git', arguments: { command: 'diff --stat' } },
     ],
     category: 'development',
+    costTier: 'medium', // git commands — read/write, up to ~5K output tokens
   };
 
   async execute(args: Record<string, unknown>): Promise<string> {

@@ -17,6 +17,7 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
+import { getMetricsCollector } from '../runtime/metricsCollector';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
@@ -415,6 +416,14 @@ export class SqliteDriver implements PersistentDriver {
       } catch (err) {
         reportSilentFailure(err, 'sqliteDriver:416');
         /* rollback failure is swallowed; original error propagates */
+      }
+      // Record SQLITE_BUSY metric for Grafana dashboard visibility
+      if ((err as { code?: string })?.code === 'SQLITE_BUSY') {
+        try {
+          getMetricsCollector().recordSqliteBusyError('transaction');
+        } catch {
+          /* metrics must never break error propagation */
+        }
       }
       throw err;
     }
