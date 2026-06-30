@@ -224,6 +224,27 @@ function calculateCost(
 // Token Sentinel — unified guard
 // ============================================================================
 
+/**
+ * TokenSentinel — pre-flight token estimation + cost tracking.
+ *
+ * The cost-tracking portion (recordCost, recordCostFromUsage, checkCostBudget,
+ * getCostSummary, getMonthlyCostUsd) is @deprecated and superseded by
+ * {@link UnifiedCostAuthority} (UCA). UCA is now the single source of truth
+ * for per-request / per-run / per-tenant / global budget enforcement and
+ * melt triggering.
+ *
+ * The token-estimation portion (estimatePromptTokens, estimateOutputTokens,
+ * check) remains non-deprecated — it provides pre-flight token counting that
+ * UCA does not replicate (UCA consumes estimatedTokens as input rather than
+ * computing it from messages).
+ *
+ * Migration map (TokenSentinel cost → UCA):
+ *   recordCostFromUsage()  → UCA.postCall({ model }, { costUsd, promptTokens, completionTokens })
+ *   checkCostBudget()      → UCA.getSnapshot().perTenantMonthly (MELT auto-triggered in postCall)
+ *   getCostSummary()       → UCA.readLedger() (aggregated by kind/modelOrTool)
+ *   getMonthlyCostUsd()    → UCA.getSnapshot(runId, tenantId).perTenantMonthly.used
+ *   monthlyCostLimitUsd    → UCA DEFAULT_UCA_CONFIG.perTenantMonthlyUsd
+ */
 export class TokenSentinel {
   private costRecords: CostRecord[] = [];
   private budgetAlerts: BudgetAlert[] = [];
@@ -238,6 +259,7 @@ export class TokenSentinel {
     this.maxAlerts = maxAlerts;
     this.monthlyCostLimitUsd = monthlyCostLimitUsd;
     this.monthlyResetDate = new Date().toISOString().slice(0, 7); // YYYY-MM
+    emitTokenSentinelDeprecationWarning();
   }
 
   /** Ensure monthly cost counter is current (auto-reset on month boundary). */
@@ -335,9 +357,10 @@ export class TokenSentinel {
   }
 
   // ========================================================================
-  // Cost Tracking
+  // Cost Tracking (DEPRECATED — use UnifiedCostAuthority instead)
   // ========================================================================
 
+  /** @deprecated Use UnifiedCostAuthority.postCall() for cost recording. */
   recordCost(record: CostRecord): void {
     this.ensureCurrentMonth();
 
@@ -360,6 +383,7 @@ export class TokenSentinel {
     }
   }
 
+  /** @deprecated Use UnifiedCostAuthority.postCall() with actual token counts. */
   recordCostFromUsage(
     runId: string,
     agentId: string,
@@ -403,6 +427,7 @@ export class TokenSentinel {
     return [...this.costRecords];
   }
 
+  /** @deprecated Use UnifiedCostAuthority.readLedger() for cost aggregation. */
   getCostSummary(): CostSummary {
     const summary: CostSummary = {
       totalCostUsd: 0,
@@ -462,6 +487,7 @@ export class TokenSentinel {
     return null;
   }
 
+  /** @deprecated Use UnifiedCostAuthority.postCall() — MELT auto-triggers on budget breach. */
   checkCostBudget(runId: string): BudgetAlert | null {
     this.ensureCurrentMonth();
     if (this.monthlyCostLimitUsd > 0 && this.monthlyCostUsd >= this.monthlyCostLimitUsd) {
@@ -483,6 +509,7 @@ export class TokenSentinel {
     return [...this.budgetAlerts];
   }
 
+  /** @deprecated Use UnifiedCostAuthority.getSnapshot().perTenantMonthly.used. */
   getMonthlyCostUsd(): number {
     this.ensureCurrentMonth();
     return Math.round(this.monthlyCostUsd * 100000) / 100000;
@@ -502,8 +529,37 @@ export class TokenSentinel {
 
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
+/**
+ * Emit a one-time deprecation warning when TokenSentinel is instantiated.
+ * The cost-tracking portion is deprecated in favor of UnifiedCostAuthority;
+ * token estimation remains supported.
+ */
+let tokenSentinelDeprecationWarned = false;
+function emitTokenSentinelDeprecationWarning(): void {
+  if (tokenSentinelDeprecationWarned) return;
+  tokenSentinelDeprecationWarned = true;
+  try {
+    if (typeof process !== 'undefined' && typeof process.emitWarning === 'function') {
+      process.emitWarning(
+        'TokenSentinel cost-tracking is deprecated — use UnifiedCostAuthority ' +
+          '(getUnifiedCostAuthority) for budget enforcement. Token estimation ' +
+          '(estimatePromptTokens/estimateOutputTokens) remains supported.',
+        { type: 'DeprecationWarning', code: 'COMMANDER_TOKENSENTINEL_DEPRECATED' },
+      );
+    }
+  } catch {
+    /* emitWarning must never throw */
+  }
+}
+
 const sentinelSingleton = createTenantAwareSingleton(() => new TokenSentinel());
 
+/**
+ * Get the global TokenSentinel singleton.
+ *
+ * Note: cost-tracking methods are @deprecated — see class JSDoc.
+ * Token estimation methods remain supported.
+ */
 export function getTokenSentinel(): TokenSentinel {
   return sentinelSingleton.get();
 }

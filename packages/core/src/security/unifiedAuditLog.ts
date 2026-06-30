@@ -356,6 +356,14 @@ export class UnifiedAuditLog {
     }
     // Invalidate cache so the new entry is visible on the next read.
     this.cache = null;
+    // Record audit_events_total counter (lazy require to avoid pulling runtime
+    // deps into this deliberately-lightweight security module).
+    try {
+      const { getMetricsCollector } = require('../runtime/metricsCollector');
+      getMetricsCollector().recordAuditEvent(full.category, full.tenantId);
+    } catch {
+      /* metrics must never break audit recording */
+    }
     return full;
   }
 

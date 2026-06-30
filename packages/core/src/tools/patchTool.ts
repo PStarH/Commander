@@ -48,6 +48,7 @@ const DEFINITION: ToolDefinition = {
     { name: 'apply_patch', arguments: { patch: '...', verifyCommand: 'npm test' } },
   ],
   category: 'development',
+  costTier: 'high', // file writes + runs tsc/eslint/test verification — high downstream cost
 };
 
 export class ApplyPatchTool implements Tool {

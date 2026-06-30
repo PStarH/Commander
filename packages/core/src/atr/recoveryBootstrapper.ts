@@ -25,6 +25,8 @@ import { RunLedger, getRunLedgerBundle } from './runLedger';
 import { getExecutionScheduler } from './scheduler';
 import { getDeadLetterQueue } from '../runtime/deadLetterQueueSingleton';
 import { getMessageBus } from '../runtime/messageBus';
+import { StateCheckpointer } from '../runtime/stateCheckpointer';
+import { getGlobalDeterminismCapture } from '../runtime/determinismCapture';
 import type { RunState } from './types';
 
 const log = getGlobalLogger();
@@ -54,6 +56,8 @@ export interface RecoveryDetail {
   state: RunState;
   action: 'resumed' | 'aborted' | 'skipped' | 'fenced_already';
   reason: string;
+  /** Which recovery strategy was selected by RunRecovery (if attempted). */
+  recoveryStrategy?: 'replay' | 'checkpoint' | 'none';
 }
 
 const ZOMBIE_STATES: RunState[] = ['EXECUTING', 'VERIFYING', 'PAUSED'];
@@ -187,16 +191,52 @@ export class RecoveryBootstrapper {
               tags: ['recovery', 'zombie', state],
             });
           } else {
-            // PAUSED — can potentially resume (HITL pause, budget pause)
-            // The resumeRun API returns a RunHandle; the caller must
-            // re-acquire the scheduler and continue.
+            // PAUSED — can potentially resume (HITL pause, budget pause).
+            // Try the 3-path recovery strategy before falling back to a
+            // plain lease-reclaim:
+            //   Path A: Event replay (DeterminismCapture has recordings)
+            //   Path B: Checkpoint resume (StateCheckpointer has a checkpoint)
+            //   Path C: No recovery data — mark as "available for resume" (caller retries)
+            let recoveryStrategy: 'replay' | 'checkpoint' | 'none' = 'none';
+            let recoveryReason = '';
+            try {
+              // Path A: check for event replay captures (restore from WAL first)
+              const capture = getGlobalDeterminismCapture();
+              if (!capture.hasCaptures(runId)) {
+                capture.restoreFromWAL(runId);
+              }
+              if (capture.hasCaptures(runId)) {
+                const replayCtx = capture.buildReplayContext(runId);
+                if (replayCtx) {
+                  recoveryStrategy = 'replay';
+                  recoveryReason = `Recovered via event replay (${replayCtx.size()} captured inputs)`;
+                }
+              }
+              // Path B: check for checkpoint
+              if (recoveryStrategy === 'none') {
+                const checkpointer = new StateCheckpointer(undefined, tenantId);
+                const checkpoint = checkpointer.loadCheckpoint(runId);
+                if (checkpoint) {
+                  recoveryStrategy = 'checkpoint';
+                  recoveryReason = `Recovered from checkpoint (resumeFromStep=${checkpoint.stepNumber})`;
+                }
+              }
+              // Path C: no recovery data
+              if (recoveryStrategy === 'none') {
+                recoveryReason = 'No replay captures or checkpoint found; run available for manual resume';
+              }
+            } catch (recErr) {
+              recoveryReason = `Recovery attempt failed: ${(recErr as Error)?.message ?? 'unknown'}; run available for manual resume`;
+            }
+
             result.recovered++;
             result.details.push({
               runId,
               tenantId,
               state: run.state,
               action: 'resumed',
-              reason: `Run was PAUSED with expired lease; lease reclaimed, run available for resume`,
+              reason: `Run was PAUSED with expired lease; lease reclaimed. ${recoveryReason}`,
+              recoveryStrategy,
             });
 
             dlq.record({
@@ -206,13 +246,13 @@ export class RecoveryBootstrapper {
               agentId: 'recovery-bootstrapper',
               timestamp: new Date().toISOString(),
               errorClass: 'unknown',
-              errorMessage: `RecoveryBootstrapper reclaimed PAUSED run: ${runId} — available for resume`,
+              errorMessage: `RecoveryBootstrapper reclaimed PAUSED run: ${runId} — ${recoveryReason}`,
               retryable: false,
               attemptNumber: 0,
               operationName: 'recovery.reclaim',
               compensated: false,
               recovered: true,
-              tags: ['recovery', 'zombie', 'PAUSED'],
+              tags: ['recovery', 'zombie', 'PAUSED', recoveryStrategy],
             });
           }
 

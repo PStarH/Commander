@@ -29,3 +29,10 @@ export { cmdDebugIntent } from './commands/debug';
 export { cmdBudget } from './commands/budget';
 export { cmdCheckpoint } from './commands/checkpoint';
 export { cmdGoalJudge } from './commands/goalJudge';
+
+// Infrastructure commands (background tasks, notifications, scheduler, webhooks)
+export { cmdJobs, cmdNotify, cmdSchedule, cmdWebhook } from './commands/infra';
+// Security batteries (red-team, compliance audit, adversarial tests)
+export { cmdSecurity } from './commands/security';
+// Workflow scheduler (create/run/schedule workflows)
+export { cmdWorkflow } from './commands/workflow';

@@ -8,6 +8,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
+import { getMetricsCollector } from './metricsCollector';
 import type { ErrorClass } from './llmRetry';
 
 export type DLQCategory =
@@ -88,6 +89,16 @@ export class DeadLetterQueue {
     if (buffer.length >= 100) {
       this.flush(key);
     }
+    // Publish DLQ depth gauge (in-memory pending entries as a lower bound;
+    // full on-disk depth is published by getStats()).
+    this.publishDepthGauge();
+  }
+
+  /** Set the dlq_depth gauge to the total in-memory buffer depth across categories. */
+  private publishDepthGauge(): void {
+    let depth = 0;
+    for (const buf of this.buffers.values()) depth += buf.length;
+    getMetricsCollector().setDlqDepth(depth);
   }
 
   /**
@@ -339,6 +350,7 @@ export class DeadLetterQueue {
     // Flush all buffers so stats reflect pending entries
     this.flush();
     const results: { category: string; count: number }[] = [];
+    let totalDepth = 0;
     try {
       const files = fs.readdirSync(this.baseDir);
       for (const f of files) {
@@ -352,6 +364,9 @@ export class DeadLetterQueue {
             this.lineCounts.set(cat, count);
           }
           results.push({ category: cat, count });
+          totalDepth += count;
+          // Per-category depth gauge
+          getMetricsCollector().setDlqDepth(count, cat);
         }
       }
     } catch (e) {
@@ -359,6 +374,8 @@ export class DeadLetterQueue {
         error: (e as Error)?.message,
       });
     }
+    // Aggregate depth gauge (no category label) for dashboard convenience
+    getMetricsCollector().setDlqDepth(totalDepth);
     return results;
   }
 }

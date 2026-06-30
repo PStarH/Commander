@@ -79,6 +79,22 @@ export class Logger {
   private config: LoggerConfig;
   private entries: LogEntry[] = [];
   private listeners: Array<(entry: LogEntry) => void> = [];
+  /** Lazily-initialized LogPersistence hook (enabled via COMMANDER_LOG_PERSIST=true).
+   *  Typed loosely to avoid a static import that would pull SQLite into this
+   *  foundational module; the real instance is require()'d on first use. */
+  private logPersistenceHook: {
+    enqueue: (entry: {
+      timestamp: string;
+      level: string;
+      component: string;
+      message: string;
+      traceId?: string;
+      runId?: string;
+      tenantId?: string;
+      metadata?: string;
+    }) => void;
+  } | null = null;
+  private logPersistenceChecked = false;
 
   constructor(config?: Partial<LoggerConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -89,6 +105,26 @@ export class Logger {
         this.config.logFormat = 'json';
       }
     }
+  }
+
+  /**
+   * Lazily resolve the global LogPersistence instance (if enabled). Called
+   * once on the first log() invocation; subsequent calls return the cached
+   * result. Returns null when COMMANDER_LOG_PERSIST is unset or SQLite is
+   * unavailable, so the hot path degrades to a cheap null check.
+   */
+  private resolveLogPersistence(): typeof this.logPersistenceHook {
+    if (this.logPersistenceChecked) return this.logPersistenceHook;
+    this.logPersistenceChecked = true;
+    if (process.env.COMMANDER_LOG_PERSIST !== 'true') return null;
+    try {
+      const { getGlobalLogPersistence } = require('./observability/logPersistence');
+      const instance = getGlobalLogPersistence();
+      this.logPersistenceHook = instance as typeof this.logPersistenceHook;
+    } catch {
+      /* LogPersistence unavailable (better-sqlite3 missing, etc.) — fall back to console-only */
+    }
+    return this.logPersistenceHook;
   }
 
   /**
@@ -187,6 +223,27 @@ export class Logger {
     // Console output
     if (this.config.enableConsole) {
       this.consoleLog(entry);
+    }
+
+    // Persist to SQLite when COMMANDER_LOG_PERSIST=true (async, non-blocking).
+    // The hook is resolved once and cached; null when disabled → cheap skip.
+    const persistence = this.resolveLogPersistence();
+    if (persistence) {
+      try {
+        const ctx = entry.context as Record<string, unknown> | undefined;
+        persistence.enqueue({
+          timestamp: entry.timestamp,
+          level: entry.level,
+          component: entry.component,
+          message: entry.message,
+          traceId: typeof ctx?.traceId === 'string' ? ctx.traceId : undefined,
+          runId: typeof ctx?.runId === 'string' ? ctx.runId : undefined,
+          tenantId: typeof ctx?.tenantId === 'string' ? ctx.tenantId : undefined,
+          metadata: JSON.stringify({ context: entry.context ?? null, error: entry.error ?? null }),
+        });
+      } catch {
+        /* persistence must never break the logging hot path */
+      }
     }
 
     // Notify listeners
@@ -360,7 +417,24 @@ const DEFAULT_METRICS_CONFIG: MetricsConfig = {
   sampleInterval: 10000, // 10 seconds
 };
 
-export class MetricsCollector {
+/**
+ * @deprecated This legacy adapter is retained as a thin façade +
+ * time-series query API. The source of truth for Prometheus/OpenMetrics export
+ * is {@link `./runtime/metricsCollector`.MetricsCollector} (accessed via
+ * `getMetricsCollector()`). This class delegates all recording calls to the
+ * runtime collector; the in-memory time-series store is populated lazily
+ * (only when listeners are registered) to avoid a wasteful dual-write on the
+ * hot path. New code should import `getMetricsCollector` from
+ * `runtime/metricsCollector` directly.
+ *
+ * Renamed from `MetricsCollector` to `LegacyMetricsAdapter` to resolve the
+ * naming collision with `runtime/metricsCollector.MetricsCollector`. The
+ * public `@commander/core` package now re-exports the runtime version under
+ * the `MetricsCollector` name; this class is internal-only and surfaced
+ * solely through `getGlobalMetrics()` for the 70+ existing call sites that
+ * use the `(name, value, labels)` signature.
+ */
+export class LegacyMetricsAdapter {
   private config: MetricsConfig;
   private metrics: Map<string, Metric> = new Map();
   private listeners: Array<(name: string, point: MetricPoint) => void> = [];
@@ -422,28 +496,43 @@ export class MetricsCollector {
 
   /**
    * Record histogram value — delegates to runtime MetricsCollector when available.
+   * Uses the runtime collector's default latency buckets since this adapter's
+   * histogram semantics are timestamped points, not Prometheus buckets.
    */
   recordHistogram(name: string, value: number, labels: Record<string, string> = {}): void {
     if (this.runtimeCollector) {
       const labelArray = Object.entries(labels).map(([k, v]) => ({ name: k, value: v }));
-      this.runtimeCollector.recordHistogram(name, name, value, undefined, labelArray);
+      // Default latency buckets (ms): [10, 50, 100, 500, 1000, 3000, 5000, 10000, 30000]
+      const defaultBuckets = [10, 50, 100, 500, 1000, 3000, 5000, 10000, 30000];
+      this.runtimeCollector.recordHistogram(name, name, value, defaultBuckets, labelArray);
     }
     this.record('histogram', name, value, labels);
   }
 
   /**
    * Record timer value — delegates to runtime MetricsCollector when available.
+   * Uses the runtime collector's default latency buckets since this adapter's
+   * timer semantics are timestamped points, not Prometheus buckets.
    */
   recordTimer(name: string, durationMs: number, labels: Record<string, string> = {}): void {
     if (this.runtimeCollector) {
       const labelArray = Object.entries(labels).map(([k, v]) => ({ name: k, value: v }));
-      this.runtimeCollector.recordHistogram(name, name, durationMs, undefined, labelArray);
+      const defaultBuckets = [10, 50, 100, 500, 1000, 3000, 5000, 10000, 30000];
+      this.runtimeCollector.recordHistogram(name, name, durationMs, defaultBuckets, labelArray);
     }
     this.record('timer', name, durationMs, labels);
   }
 
   /**
-   * Core record method
+   * Core record method. Writes a timestamped point to the in-memory
+   * time-series store and notifies any registered listeners.
+   *
+   * This is NOT a "dual write" with the runtime MetricsCollector: the
+   * runtime collector maintains aggregate values (counter totals, gauge
+   * snapshots, histogram buckets) for Prometheus/OpenMetrics export, while
+   * this adapter maintains timestamped points for time-series query APIs
+   * (getLatest / getTimeSeries / getStats / onMetric). The two stores have
+   * distinct purposes and neither can satisfy the other's consumers.
    */
   private record(
     type: Metric['type'],
@@ -616,7 +705,7 @@ export class Timer {
   /**
    * Stop timer and record
    */
-  stop(metrics: MetricsCollector, name: string): number {
+  stop(metrics: LegacyMetricsAdapter, name: string): number {
     const duration = Date.now() - this.startTime;
     metrics.recordTimer(name, duration, this.labels);
     return duration;
@@ -626,11 +715,23 @@ export class Timer {
 // ========================================
 // Global Instances
 // ========================================
+//
+// Static import is safe: the dependency chain
+//   logging → tenantAwareSingleton → tenantContext
+// terminates at tenantContext (which only imports node:async_hooks).
+// Earlier code lazily require()'d this module to break a suspected
+// value-import cycle, but no such cycle exists — tenantContext does
+// not import tenantProvider/threeLayerMemory/episodicStore. The lazy
+// require also broke vitest (native require can't resolve .ts files).
 
 import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
 
-const loggerSingleton = createTenantAwareSingleton(() => new Logger());
-const metricsSingleton = createTenantAwareSingleton(() => new MetricsCollector());
+const loggerSingleton = createTenantAwareSingleton(() => new Logger(), {
+  componentName: 'Logger',
+});
+const metricsSingleton = createTenantAwareSingleton(() => new LegacyMetricsAdapter(), {
+  componentName: 'Metrics',
+});
 
 export function getGlobalLogger(): Logger {
   return loggerSingleton.get();
@@ -646,7 +747,7 @@ export function setGlobalLogFormat(format: LogFormat): void {
   logger.setLogFormat(format);
 }
 
-export function getGlobalMetrics(): MetricsCollector {
+export function getGlobalMetrics(): LegacyMetricsAdapter {
   return metricsSingleton.get();
 }
 

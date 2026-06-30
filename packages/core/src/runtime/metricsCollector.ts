@@ -184,6 +184,13 @@ export class MetricsCollector {
   recordToolCall(toolName: string, durationMs: number, error?: string, tenantId?: string): void {
     const labels: MetricLabel[] = [{ name: 'tool', value: toolName }];
     if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    // Aggregate counter (success + error) so dashboards can compute success rate
+    // via rate(tool_calls_total{status="success"}) / rate(tool_calls_total).
+    const statusLabels = [
+      ...labels,
+      { name: 'status', value: error ? 'error' : 'success' },
+    ];
+    this.incrementCounter('tool_calls_total', 'Total tool calls by status', 1, statusLabels);
     if (error) {
       this.incrementCounter('tool_errors_total', 'Total tool errors', 1, labels);
     } else {
@@ -337,7 +344,11 @@ export class MetricsCollector {
 
   // ── Export ──
 
-  /** Export metrics as OpenMetrics (Prometheus-compatible) text format */
+  /** Export metrics as OpenMetrics (Prometheus-compatible) text format.
+   *  All Commander-defined metrics are namespaced with the `commander_` prefix
+   *  (standard Prometheus convention to avoid collisions). OTel GenAI semantic
+   *  convention metrics (`gen_ai.*`) are emitted unprefixed to remain
+   *  compatible with collector-side semantic-convention processors. */
   exportOpenMetrics(): string {
     return this.formatMetrics('# HELP commander_metrics Built-in Commander metrics');
   }
@@ -349,40 +360,49 @@ export class MetricsCollector {
     );
   }
 
+  /** Apply the `commander_` Prometheus namespace prefix to a metric name,
+   *  skipping OTel GenAI semantic-convention names which must remain unprefixed. */
+  private namespace(name: string): string {
+    return name.startsWith('gen_ai.') ? name : `commander_${name}`;
+  }
+
   /** Shared exporter: formats all counters, gauges, and histograms as OpenMetrics text */
   private formatMetrics(header: string): string {
     const lines: string[] = [];
     lines.push(header);
 
     for (const metric of this.counters.values()) {
-      lines.push(`# TYPE ${metric.name} counter`);
-      lines.push(`# HELP ${metric.name} ${metric.help}`);
-      lines.push(this.formatMetricLine(metric.name, metric.total, metric.labels));
+      const name = this.namespace(metric.name);
+      lines.push(`# TYPE ${name} counter`);
+      lines.push(`# HELP ${name} ${metric.help}`);
+      lines.push(this.formatMetricLine(name, metric.total, metric.labels));
     }
     for (const metric of this.gauges.values()) {
-      lines.push(`# TYPE ${metric.name} gauge`);
-      lines.push(`# HELP ${metric.name} ${metric.help}`);
-      lines.push(this.formatMetricLine(metric.name, metric.value, metric.labels));
+      const name = this.namespace(metric.name);
+      lines.push(`# TYPE ${name} gauge`);
+      lines.push(`# HELP ${name} ${metric.help}`);
+      lines.push(this.formatMetricLine(name, metric.value, metric.labels));
     }
     for (const metric of this.histograms.values()) {
-      lines.push(`# TYPE ${metric.name} histogram`);
-      lines.push(`# HELP ${metric.name} ${metric.help}`);
+      const name = this.namespace(metric.name);
+      lines.push(`# TYPE ${name} histogram`);
+      lines.push(`# HELP ${name} ${metric.help}`);
       let cumulativeTotal = 0;
       for (let i = 0; i < metric.buckets.length; i++) {
         cumulativeTotal += metric.counts[i];
         const bucketLabels = [...metric.labels, { name: 'le', value: String(metric.buckets[i]) }];
-        lines.push(this.formatMetricLine(`${metric.name}_bucket`, cumulativeTotal, bucketLabels));
+        lines.push(this.formatMetricLine(`${name}_bucket`, cumulativeTotal, bucketLabels));
       }
       const infLabels = [...metric.labels, { name: 'le', value: '+Inf' }];
       lines.push(
         this.formatMetricLine(
-          `${metric.name}_bucket`,
+          `${name}_bucket`,
           cumulativeTotal + metric.counts[metric.buckets.length],
           infLabels,
         ),
       );
-      lines.push(this.formatMetricLine(`${metric.name}_sum`, metric.sum, metric.labels));
-      lines.push(this.formatMetricLine(`${metric.name}_count`, metric.count, metric.labels));
+      lines.push(this.formatMetricLine(`${name}_sum`, metric.sum, metric.labels));
+      lines.push(this.formatMetricLine(`${name}_count`, metric.count, metric.labels));
     }
     lines.push('# EOF');
     return lines.join('\n') + '\n';
@@ -593,6 +613,97 @@ export class MetricsCollector {
     this.incrementCounter(
       'partial_runs_total',
       'Runs that ended without terminal state',
+      1,
+      labels,
+    );
+  }
+
+  // ── Subsystem instrumentation (event sourcing / DLQ / circuit breaker / audit / SQLite) ──
+
+  /** Record event-sourcing WAL write latency + total events/snapshots.
+   *  Called by EventSourcingEngine.append() and snapshot(). */
+  recordEventSourcingWrite(durationMs: number, tenantId?: string): void {
+    const labels: MetricLabel[] = [];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.recordHistogram(
+      'event_sourcing_write_ms',
+      'Event-sourcing WAL append latency in ms',
+      durationMs,
+      LATENCY_BUCKETS_MS,
+      labels,
+    );
+  }
+
+  /** Gauge: current WAL file size in bytes (scraped by /metrics health). */
+  setEventSourcingWalSize(bytes: number, tenantId?: string): void {
+    const labels: MetricLabel[] = [];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.setGauge(
+      'event_sourcing_wal_size_bytes',
+      'Event-sourcing WAL file size in bytes',
+      bytes,
+      labels,
+    );
+  }
+
+  /** Gauges for event-sourcing log dimensions (event count + snapshot count). */
+  setEventSourcingTotals(eventCount: number, snapshotCount: number, tenantId?: string): void {
+    const labels: MetricLabel[] = [];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.setGauge(
+      'event_sourcing_total_events',
+      'Total events stored in the event-sourcing log',
+      eventCount,
+      labels,
+    );
+    this.setGauge(
+      'event_sourcing_total_snapshots',
+      'Total snapshots stored in the event-sourcing engine',
+      snapshotCount,
+      labels,
+    );
+  }
+
+  /** Gauge: current DLQ depth (entries across all categories). */
+  setDlqDepth(depth: number, category?: string): void {
+    const labels: MetricLabel[] = [];
+    if (category) labels.push({ name: 'category', value: category });
+    this.setGauge('dlq_depth', 'Dead-letter queue depth (entry count)', depth, labels);
+  }
+
+  /** Gauge: 1 when the circuit breaker is OPEN, 0 otherwise. Scraped per provider. */
+  setCircuitBreakerOpen(isOpen: boolean, provider: string, tenantId?: string): void {
+    const labels: MetricLabel[] = [{ name: 'provider', value: provider }];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.setGauge(
+      'circuit_breaker_open',
+      '1 when circuit breaker is OPEN for the provider, 0 otherwise',
+      isOpen ? 1 : 0,
+      labels,
+    );
+  }
+
+  /** Counter: audit events recorded by UnifiedAuditLog, by category. */
+  recordAuditEvent(category: string, tenantId?: string): void {
+    const labels: MetricLabel[] = [{ name: 'category', value: category }];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('audit_events_total', 'Total audit events recorded', 1, labels);
+  }
+
+  /** Counter: checkpoint creations, by outcome (success/failed). */
+  recordCheckpoint(outcome: 'success' | 'failed', tenantId?: string): void {
+    const labels: MetricLabel[] = [{ name: 'status', value: outcome }];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('checkpoint_total', 'Checkpoint creations by status', 1, labels);
+  }
+
+  /** Counter: SQLite SQLITE_BUSY errors encountered, by call site. */
+  recordSqliteBusyError(callSite: string, tenantId?: string): void {
+    const labels: MetricLabel[] = [{ name: 'site', value: callSite }];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter(
+      'sqlite_busy_errors_total',
+      'SQLite SQLITE_BUSY errors encountered',
       1,
       labels,
     );
