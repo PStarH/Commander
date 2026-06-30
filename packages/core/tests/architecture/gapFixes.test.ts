@@ -1,19 +1,21 @@
 /**
- * Tests for the 4 architecture gap fixes:
+ * Tests for the architecture gap fixes:
  * 1. HNSW vector index (O(log n) ANN search)
- * 2. TEE worker_threads isolation
- * 3. Distributed EventBus (Redis Pub/Sub backend)
- * 4. Petri net scheduler integration (deadlock detection)
+ * 2. Distributed EventBus (Redis Pub/Sub backend)
+ * 3. PetriNetEngine marking API (used by runtime Petri net, not scheduler)
+ *
+ * Note: The previous "Petri Net Scheduler Integration" and "ContractTeeEnclave
+ * (worker_threads)" test blocks were removed together with the underlying
+ * modules. The scheduler's Petri net integration was dead code (admit/complete
+ * transitions never fired on the production path), and contractTeeEnclave was
+ * a half-wired dead path (registered in scheduler.backends but schedule() was
+ * never invoked). See scheduler.ts Simplification note for details.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { HNSWIndex } from '../../src/memory/hnswIndex';
-import { PetriNetSchedulerIntegration } from '../../src/sandbox/petriNetScheduler';
 import { DistributedEventBus, createDistributedEventBus } from '../../src/runtime/distributedEventBus';
-import { ContractTeeEnclave } from '../../src/sandbox/contractTeeEnclave';
 import { PetriNetEngine } from '../../src/runtime/petriNetEngine';
-import { HybridSandboxScheduler } from '../../src/sandbox/scheduler';
-import { assessRisk } from '../../src/sandbox/scheduler';
 
 // ============================================================================
 // 1. HNSW Vector Index Tests
@@ -126,167 +128,7 @@ describe('HNSW Vector Index', () => {
 });
 
 // ============================================================================
-// 2. Petri Net Scheduler Integration Tests
-// ============================================================================
-
-describe('Petri Net Scheduler Integration', () => {
-  let integration: PetriNetSchedulerIntegration;
-
-  beforeEach(() => {
-    integration = new PetriNetSchedulerIntegration({
-      'v8-isolate': 3,
-      'seccomp': 2,
-      'wasm': 1,
-      'tee': 1,
-    });
-  });
-
-  it('should initialize with correct available slots', () => {
-    expect(integration.getAvailableSlots('v8-isolate')).toBe(3);
-    expect(integration.getAvailableSlots('seccomp')).toBe(2);
-    expect(integration.getAvailableSlots('wasm')).toBe(1);
-    expect(integration.getAvailableSlots('tee')).toBe(1);
-  });
-
-  it('should track pending requests', () => {
-    integration.addPendingRequest();
-    integration.addPendingRequest();
-    expect(integration.getPendingCount()).toBe(2);
-  });
-
-  it('should admit requests when slots are available', () => {
-    integration.addPendingRequest();
-    expect(integration.canAdmit('v8-isolate')).toBe(true);
-
-    const admitted = integration.admit('v8-isolate');
-    expect(admitted).toBe(true);
-    expect(integration.getAvailableSlots('v8-isolate')).toBe(2);
-    expect(integration.getExecutingCount()).toBe(1);
-    expect(integration.getPendingCount()).toBe(0);
-  });
-
-  it('should fail to admit when no slots available', () => {
-    // Fill all v8 slots
-    for (let i = 0; i < 3; i++) {
-      integration.addPendingRequest();
-      integration.admit('v8-isolate');
-    }
-
-    expect(integration.getAvailableSlots('v8-isolate')).toBe(0);
-
-    integration.addPendingRequest();
-    expect(integration.canAdmit('v8-isolate')).toBe(false);
-    expect(integration.admit('v8-isolate')).toBe(false);
-  });
-
-  it('should complete execution and return slot', () => {
-    integration.addPendingRequest();
-    integration.admit('v8-isolate');
-    expect(integration.getAvailableSlots('v8-isolate')).toBe(2);
-
-    integration.complete('v8-isolate');
-    expect(integration.getAvailableSlots('v8-isolate')).toBe(3);
-    expect(integration.getExecutingCount()).toBe(0);
-    expect(integration.getCompletedCount()).toBe(1);
-  });
-
-  it('should detect deadlock when all slots exhausted and no executing', () => {
-    // Add pending but no slots available
-    for (let i = 0; i < 3; i++) {
-      integration.addPendingRequest();
-      integration.admit('v8-isolate');
-    }
-    for (let i = 0; i < 2; i++) {
-      integration.addPendingRequest();
-      integration.admit('seccomp');
-    }
-    integration.addPendingRequest();
-    integration.admit('wasm');
-    integration.addPendingRequest();
-    integration.admit('tee');
-
-    // All slots used, now add another pending request
-    integration.addPendingRequest();
-
-    const analysis = integration.analyzeDeadlock();
-    // With executing > 0, it's saturated not deadlocked
-    expect(analysis.isDeadlocked).toBe(false);
-    expect(analysis.recommendation).toContain('SATURATED');
-
-    // Now complete all executions
-    for (let i = 0; i < 3; i++) integration.complete('v8-isolate');
-    for (let i = 0; i < 2; i++) integration.complete('seccomp');
-    integration.complete('wasm');
-    integration.complete('tee');
-
-    // Now we have 1 pending, 0 executing, but slots are back
-    // Actually slots are returned, so it's not deadlocked
-    expect(integration.getAvailableSlots('v8-isolate')).toBe(3);
-  });
-
-  it('should detect true deadlock (pending, no slots, no executing)', () => {
-    // Exhaust all slots without tracking executing properly
-    // Manually set executing to 0 by using setMarking on the PetriNet engine
-    const petriNet = integration.getPetriNetEngine();
-    petriNet.setMarking('pending', 5);
-    petriNet.setMarking('v8_slots', 0);
-    petriNet.setMarking('seccomp_slots', 0);
-    petriNet.setMarking('wasm_slots', 0);
-    petriNet.setMarking('tee_slots', 0);
-    petriNet.setMarking('executing', 0);
-
-    const analysis = integration.analyzeDeadlock();
-    expect(analysis.isDeadlocked).toBe(true);
-    expect(analysis.recommendation).toContain('DEADLOCK');
-  });
-
-  it('should report safe state when resources available', () => {
-    integration.addPendingRequest();
-    const analysis = integration.analyzeDeadlock();
-    expect(analysis.safeState).toBe(true);
-    expect(analysis.recommendation).toContain('SAFE');
-  });
-
-  it('should check if safe to admit', () => {
-    integration.addPendingRequest();
-    expect(integration.isSafeToAdmit('v8-isolate')).toBe(true);
-  });
-
-  it('should get full state snapshot', () => {
-    integration.addPendingRequest();
-    integration.admit('v8-isolate');
-
-    const snapshot = integration.getSnapshot();
-    expect(snapshot.pending).toBe(0);
-    expect(snapshot.executing).toBe(1);
-    expect(snapshot.completed).toBe(0);
-    expect(snapshot.availableSlots['v8-isolate']).toBe(2);
-    expect(snapshot.isDeadlocked).toBe(false);
-  });
-
-  it('should record firing history', () => {
-    integration.addPendingRequest();
-    integration.admit('v8-isolate');
-    integration.complete('v8-isolate');
-
-    const history = integration.getFiringHistory();
-    expect(history).toContain('admit_v8-isolate');
-    expect(history).toContain('complete_v8-isolate');
-  });
-
-  it('should reset to initial state', () => {
-    integration.addPendingRequest();
-    integration.admit('v8-isolate');
-
-    integration.reset();
-    expect(integration.getAvailableSlots('v8-isolate')).toBe(3);
-    expect(integration.getPendingCount()).toBe(0);
-    expect(integration.getExecutingCount()).toBe(0);
-  });
-});
-
-// ============================================================================
-// 3. PetriNetEngine setMarking Tests
+// 2. PetriNetEngine setMarking Tests
 // ============================================================================
 
 describe('PetriNetEngine setMarking', () => {
@@ -336,7 +178,7 @@ describe('PetriNetEngine setMarking', () => {
 });
 
 // ============================================================================
-// 4. Distributed EventBus Tests
+// 3. Distributed EventBus Tests
 // ============================================================================
 
 describe('Distributed EventBus', () => {
@@ -417,109 +259,5 @@ describe('Distributed EventBus', () => {
     const bus = createDistributedEventBus();
     await bus.shutdown();
     // Should not throw
-  });
-});
-
-// ============================================================================
-// 5. TEE Enclave Worker Threads Tests
-// ============================================================================
-
-describe('ContractTeeEnclave (worker_threads)', () => {
-  let enclave: ContractTeeEnclave;
-
-  beforeEach(async () => {
-    enclave = new ContractTeeEnclave();
-    await enclave.initialize();
-  });
-
-  it('should initialize with attestation', () => {
-    expect(enclave.isInitialized()).toBe(true);
-    expect(enclave.getTeeIdentity()).toBeTruthy();
-    expect(enclave.getBackend()).toBe('software-simulation');
-  });
-
-  it('should verify attestation', async () => {
-    const verified = await enclave.verifyAttestation();
-    expect(verified).toBe(true);
-  });
-
-  it('should execute code in isolated worker', async () => {
-    const result = await enclave.executeInEnclave(
-      'return input * 2',
-      21,
-    );
-    expect(result).toBe(42);
-  });
-
-  it('should handle async code in enclave', async () => {
-    const result = await enclave.executeInEnclave(
-      'return Promise.resolve(input + 1)',
-      41,
-    );
-    expect(result).toBe(42);
-  });
-
-  it('should handle execution errors', async () => {
-    await expect(
-      enclave.executeInEnclave('throw new Error("test error")', null),
-    ).rejects.toThrow('test error');
-  });
-
-  it('should seal and unseal data', async () => {
-    const data = new Uint8Array([1, 2, 3, 4, 5]);
-    const sealed = await enclave.seal(data);
-    expect(sealed.length).toBeGreaterThan(data.length);
-
-    const unsealed = await enclave.unseal(sealed);
-    expect(Array.from(unsealed)).toEqual([1, 2, 3, 4, 5]);
-  });
-
-  it('should fail unseal with corrupted data', async () => {
-    const data = new Uint8Array([1, 2, 3]);
-    const sealed = await enclave.seal(data);
-
-    // Corrupt the sealed data
-    sealed[sealed.length - 1] ^= 0xff;
-
-    await expect(enclave.unseal(sealed)).rejects.toThrow();
-  });
-
-  it('should provide crypto access in enclave', async () => {
-    const result = await enclave.executeInEnclave(
-      'return crypto.createHash("sha256").update(String(input)).digest("hex")',
-      'test',
-    );
-    expect(result).toBe(
-      '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
-    );
-  });
-});
-
-// ============================================================================
-// 6. HybridSandboxScheduler with Petri Net Integration Tests
-// ============================================================================
-
-describe('HybridSandboxScheduler Petri Net Integration', () => {
-  it('should initialize with Petri net integration', () => {
-    const scheduler = new HybridSandboxScheduler();
-    const state = scheduler.getPetriState();
-    expect(state.availableSlots['v8-isolate']).toBe(10);
-    expect(state.availableSlots['seccomp']).toBe(4);
-    expect(state.pending).toBe(0);
-    expect(state.executing).toBe(0);
-  });
-
-  it('should analyze deadlock state', () => {
-    const scheduler = new HybridSandboxScheduler();
-    const analysis = scheduler.analyzeDeadlock();
-    expect(analysis).toHaveProperty('isDeadlocked');
-    expect(analysis).toHaveProperty('recommendation');
-    expect(analysis.safeState).toBe(true);
-  });
-
-  it('should check safe to admit', () => {
-    const scheduler = new HybridSandboxScheduler();
-    expect(scheduler.isSafeToAdmit('v8-isolate')).toBe(true);
-    expect(scheduler.isSafeToAdmit('seccomp')).toBe(true);
   });
 });
