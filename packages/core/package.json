@@ -92,7 +92,8 @@
   },
   "dependencies": {
     "@commander/plugin-sdk": "workspace:*",
-    "blessed": "^0.1.81"
+    "blessed": "^0.1.81",
+    "safe-regex": "^2.1.1"
   },
   "optionalDependencies": {
     "better-sqlite3": "^12.11.1",
