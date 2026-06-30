@@ -27,16 +27,16 @@ import {
 } from 'lucide-react';
 import { Button, MetricCard } from './ui';
 import {
-  fetchAuditLogs,
-  fetchAuditStats,
-  fetchAuditSources,
-  exportAuditLogs,
-  type AuditLogEntry,
-  type AuditLogQuery,
-  type AuditStats,
-  type AuditSourceInfo,
-  type AuditSource,
-  type AuditSeverity,
+  fetchUnifiedAuditLogs,
+  fetchUnifiedAuditStats,
+  fetchUnifiedAuditCategories,
+  exportUnifiedAuditLogs,
+  type UnifiedAuditEntry,
+  type UnifiedAuditQuery,
+  type UnifiedAuditStats,
+  type UnifiedAuditCatalog,
+  type UnifiedAuditCategory,
+  type UnifiedAuditSeverity,
 } from '../api';
 
 // ── Constants ─────────────────────────────────────────────────────────────
@@ -55,38 +55,44 @@ const SOURCE_OPTIONS: { value: string; label: string }[] = [
   { value: 'all', label: 'All sources' },
   { value: 'security', label: 'Security' },
   { value: 'approval', label: 'Approval' },
-  { value: 'action', label: 'Action' },
+  { value: 'execution', label: 'Execution' },
+  { value: 'configuration', label: 'Configuration' },
+  { value: 'user_action', label: 'User Action' },
 ];
 
 const SEVERITY_OPTIONS: { value: string; label: string }[] = [
   { value: 'all', label: 'All severities' },
   { value: 'info', label: 'Info' },
-  { value: 'warning', label: 'Warning' },
+  { value: 'warn', label: 'Warning' },
   { value: 'error', label: 'Error' },
   { value: 'critical', label: 'Critical' },
 ];
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
-// Per task spec: info=blue, warning=yellow, error=orange, critical=red.
-const SEVERITY_COLOR: Record<AuditSeverity, string> = {
+// Per task spec: info=blue, warn=yellow, error=orange, critical=red.
+const SEVERITY_COLOR: Record<UnifiedAuditSeverity, string> = {
   info: 'var(--accent-blue)',
-  warning: 'var(--accent-amber)',
+  warn: 'var(--accent-amber)',
   error: '#ff9f43',
   critical: 'var(--accent-red)',
 };
 
-// Per task spec: security=red, approval=purple, action=blue.
-const SOURCE_COLOR: Record<AuditSource, string> = {
+// security=red, approval=purple, execution=blue, configuration=amber, user_action=teal.
+const SOURCE_COLOR: Record<UnifiedAuditCategory, string> = {
   security: 'var(--accent-red)',
   approval: 'var(--accent-purple)',
-  action: 'var(--accent-blue)',
+  execution: 'var(--accent-blue)',
+  configuration: 'var(--accent-amber)',
+  user_action: '#2ec4b6',
 };
 
-const SOURCE_ICON: Record<AuditSource, ReactNode> = {
+const SOURCE_ICON: Record<UnifiedAuditCategory, ReactNode> = {
   security: <ShieldAlert size={13} />,
   approval: <CheckCircle size={13} />,
-  action: <Activity size={13} />,
+  execution: <Activity size={13} />,
+  configuration: <ClipboardList size={13} />,
+  user_action: <Activity size={13} />,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -223,10 +229,10 @@ export function AuditLogViewer() {
   const [customEnd, setCustomEnd] = useState<string>('');
 
   // Data
-  const [logs, setLogs] = useState<AuditLogEntry[]>([]);
+  const [logs, setLogs] = useState<UnifiedAuditEntry[]>([]);
   const [total, setTotal] = useState<number>(0);
-  const [stats, setStats] = useState<AuditStats | null>(null);
-  const [sources, setSources] = useState<AuditSourceInfo[]>([]);
+  const [stats, setStats] = useState<UnifiedAuditStats | null>(null);
+  const [catalog, setCatalog] = useState<UnifiedAuditCatalog | null>(null);
 
   // UI state
   const [loading, setLoading] = useState<boolean>(true);
@@ -238,14 +244,14 @@ export function AuditLogViewer() {
 
   // Build the query object from current filter state.
   const buildQuery = useCallback(
-    (overrides?: { page?: number; pageSize?: number }): AuditLogQuery => {
+    (overrides?: { page?: number; pageSize?: number }): UnifiedAuditQuery => {
       const { startTime, endTime } = computeTimeRange(timeRange, customStart, customEnd);
       const pg = overrides?.page ?? page;
       const ps = overrides?.pageSize ?? pageSize;
       return {
-        source: source !== 'all' ? source : undefined,
-        severity: severity !== 'all' ? severity : undefined,
-        eventType: eventType.trim() || undefined,
+        category: source !== 'all' ? [source as UnifiedAuditCategory] : undefined,
+        severity: severity !== 'all' ? [severity as UnifiedAuditSeverity] : undefined,
+        eventType: eventType.trim() ? [eventType.trim()] : undefined,
         startTime,
         endTime,
         userId: userId.trim() || undefined,
@@ -256,27 +262,28 @@ export function AuditLogViewer() {
     [source, severity, eventType, userId, timeRange, customStart, customEnd, page, pageSize],
   );
 
-  // Load logs + stats + sources. Stats/sources reflect the full (unfiltered)
+  // Load logs + stats + catalog. Stats/catalog reflect the full (unfiltered)
   // corpus so the overview cards stay stable across filter changes.
-  const loadAll = useCallback(async (query: AuditLogQuery) => {
+  const loadAll = useCallback(async (query: UnifiedAuditQuery) => {
     setLoading(true);
     setError(null);
     try {
-      const [logsRes, statsRes, sourcesRes] = await Promise.all([
-        fetchAuditLogs(query),
-        fetchAuditStats(),
-        fetchAuditSources(),
+      const { startTime, endTime } = computeTimeRange(timeRange, customStart, customEnd);
+      const [logsRes, statsRes, catalogRes] = await Promise.all([
+        fetchUnifiedAuditLogs(query),
+        fetchUnifiedAuditStats({ startTime, endTime }),
+        fetchUnifiedAuditCategories(),
       ]);
-      setLogs(logsRes.logs);
+      setLogs(logsRes.entries);
       setTotal(logsRes.total);
       setStats(statsRes);
-      setSources(sourcesRes);
+      setCatalog(catalogRes);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load audit logs');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [timeRange, customStart, customEnd]);
 
   // Initial load.
   useEffect(() => {
@@ -285,12 +292,12 @@ export function AuditLogViewer() {
   }, []);
 
   // Reload logs (only) when page or pageSize changes — keep filters stable.
-  const loadLogs = useCallback(async (query: AuditLogQuery) => {
+  const loadLogs = useCallback(async (query: UnifiedAuditQuery) => {
     setLoading(true);
     setError(null);
     try {
-      const logsRes = await fetchAuditLogs(query);
-      setLogs(logsRes.logs);
+      const logsRes = await fetchUnifiedAuditLogs(query);
+      setLogs(logsRes.entries);
       setTotal(logsRes.total);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load audit logs');
@@ -334,16 +341,15 @@ export function AuditLogViewer() {
     setError(null);
     try {
       // Export uses current filters but ignores pagination.
-      const { startTime, endTime } = computeTimeRange(timeRange, customStart, customEnd);
-      const exportQuery: AuditLogQuery = {
-        source: source !== 'all' ? source : undefined,
-        severity: severity !== 'all' ? severity : undefined,
-        eventType: eventType.trim() || undefined,
-        startTime,
-        endTime,
+      const exportQuery: UnifiedAuditQuery = {
+        category: source !== 'all' ? [source as UnifiedAuditCategory] : undefined,
+        severity: severity !== 'all' ? [severity as UnifiedAuditSeverity] : undefined,
+        eventType: eventType.trim() ? [eventType.trim()] : undefined,
+        startTime: computeTimeRange(timeRange, customStart, customEnd).startTime,
+        endTime: computeTimeRange(timeRange, customStart, customEnd).endTime,
         userId: userId.trim() || undefined,
       };
-      const blob = await exportAuditLogs(exportQuery);
+      const blob = await exportUnifiedAuditLogs(exportQuery, 'json');
       triggerBlobDownload(blob, `audit-logs-${Date.now()}.json`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to export audit logs');
@@ -359,7 +365,7 @@ export function AuditLogViewer() {
     const s = stats?.bySeverity ?? {};
     return {
       info: s['info'] ?? 0,
-      warning: s['warning'] ?? 0,
+      warn: s['warn'] ?? 0,
       error: s['error'] ?? 0,
       critical: s['critical'] ?? 0,
     };
@@ -371,22 +377,22 @@ export function AuditLogViewer() {
       <div className="metric-row">
         <MetricCard
           label="Total Events"
-          value={String(stats?.totalEvents ?? 0)}
+          value={String(stats?.total ?? 0)}
           icon={<ClipboardList size={14} />}
         />
         <MetricCard
           label="Security"
-          value={String(stats?.bySource['security'] ?? 0)}
+          value={String(stats?.byCategory['security'] ?? 0)}
           icon={<ShieldAlert size={14} />}
         />
         <MetricCard
           label="Approval"
-          value={String(stats?.bySource['approval'] ?? 0)}
+          value={String(stats?.byCategory['approval'] ?? 0)}
           icon={<CheckCircle size={14} />}
         />
         <MetricCard
-          label="Action"
-          value={String(stats?.bySource['action'] ?? 0)}
+          label="Execution"
+          value={String(stats?.byCategory['execution'] ?? 0)}
           icon={<Activity size={14} />}
         />
       </div>
@@ -412,7 +418,7 @@ export function AuditLogViewer() {
             onChange={(e) => setSource(e.target.value)}
             style={{ minWidth: '150px' }}
           >
-            {SOURCE_OPTIONS.map((o) => (
+            {(catalog?.categories ?? SOURCE_OPTIONS).map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>
@@ -569,11 +575,11 @@ function FilterField({ label, children }: { label: string; children: ReactNode }
 function SeverityBreakdownCard({
   severity,
 }: {
-  severity: { info: number; warning: number; error: number; critical: number };
+  severity: { info: number; warn: number; error: number; critical: number };
 }) {
-  const items: { key: AuditSeverity; count: number }[] = [
+  const items: { key: UnifiedAuditSeverity; count: number }[] = [
     { key: 'info', count: severity.info },
-    { key: 'warning', count: severity.warning },
+    { key: 'warn', count: severity.warn },
     { key: 'error', count: severity.error },
     { key: 'critical', count: severity.critical },
   ];
@@ -638,7 +644,7 @@ function LogsTable({
   expandedId,
   onToggleRow,
 }: {
-  logs: AuditLogEntry[];
+  logs: UnifiedAuditEntry[];
   loading: boolean;
   expandedId: string | null;
   onToggleRow: (id: string) => void;
@@ -677,7 +683,7 @@ function LogsTable({
               <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
                 <Th style={{ width: '28px' }} />
                 <Th>Time</Th>
-                <Th>Source</Th>
+                <Th>Category</Th>
                 <Th>Event Type</Th>
                 <Th>Severity</Th>
                 <Th>User</Th>
@@ -709,11 +715,11 @@ function LogRow({
   expanded,
   onToggle,
 }: {
-  entry: AuditLogEntry;
+  entry: UnifiedAuditEntry;
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const sourceColor = SOURCE_COLOR[entry.source] ?? 'var(--text-muted)';
+  const sourceColor = SOURCE_COLOR[entry.category] ?? 'var(--text-muted)';
   const severityColor = SEVERITY_COLOR[entry.severity] ?? 'var(--text-muted)';
   const hasDetails = entry.details !== undefined && Object.keys(entry.details).length > 0;
 
@@ -751,8 +757,8 @@ function LogRow({
           </span>
         </Td>
         <Td>
-          <ColoredTag color={sourceColor} icon={SOURCE_ICON[entry.source]}>
-            {entry.source}
+          <ColoredTag color={sourceColor} icon={SOURCE_ICON[entry.category]}>
+            {entry.category}
           </ColoredTag>
         </Td>
         <Td>
