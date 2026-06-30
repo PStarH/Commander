@@ -1,5 +1,12 @@
 /**
- * @experimental — Plugin system scaffolding. Not wired into the main execution flow.
+ * @experimental — Plugin loader for externally-installed plugins.
+ *
+ * Wired into the API startup flow: `getPluginLoader().loadAll()` is invoked from
+ * `apps/api/src/index.ts` at boot to discover and load plugins from
+ * `.commander/plugins/` (project-local) and `~/.commander/plugins/` (user-global).
+ * Disabled plugins (per the persisted enabled-state map) are skipped.
+ * The CLI `commander plugin <install|list|uninstall|enable|disable|info>`
+ * commands also use this loader.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -38,9 +45,69 @@ interface PluginPackage {
 export class PluginLoader {
   private loaded: Map<string, PluginPackage> = new Map();
   private watchDirs: string[] = [];
+  /** Persisted enable/disable map. Absent key = enabled (default). */
+  private enabledState: Map<string, boolean> | null = null;
 
   constructor() {
     this.watchDirs = this.getDefaultWatchDirs();
+  }
+
+  // ── Enabled-state persistence ──────────────────────────────────────────
+
+  private getEnabledStatePath(): string {
+    return path.join(process.cwd(), '.commander', 'plugins', 'enabled.json');
+  }
+
+  private loadEnabledState(): Map<string, boolean> {
+    if (this.enabledState) return this.enabledState;
+    const map = new Map<string, boolean>();
+    try {
+      const file = this.getEnabledStatePath();
+      if (fs.existsSync(file)) {
+        const raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
+        if (raw && typeof raw === 'object') {
+          for (const [k, v] of Object.entries(raw)) {
+            if (typeof v === 'boolean') map.set(k, v);
+          }
+        }
+      }
+    } catch {
+      /* corrupt or missing — treat as empty */
+    }
+    this.enabledState = map;
+    return map;
+  }
+
+  private saveEnabledState(): void {
+    try {
+      const file = this.getEnabledStatePath();
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const obj: Record<string, boolean> = {};
+      for (const [k, v] of this.loadEnabledState()) obj[k] = v;
+      fs.writeFileSync(file, JSON.stringify(obj, null, 2));
+    } catch {
+      /* persistence is best-effort — never block on it */
+    }
+  }
+
+  /** Returns true if the plugin is enabled (default), false if disabled. */
+  isEnabled(name: string): boolean {
+    const state = this.loadEnabledState();
+    return state.get(name) ?? true;
+  }
+
+  /** Persistently enable a plugin so it loads on subsequent startups. */
+  enable(name: string): void {
+    const state = this.loadEnabledState();
+    state.set(name, true);
+    this.saveEnabledState();
+  }
+
+  /** Persistently disable a plugin so it is skipped on subsequent startups. */
+  disable(name: string): void {
+    const state = this.loadEnabledState();
+    state.set(name, false);
+    this.saveEnabledState();
   }
 
   private getDefaultWatchDirs(): string[] {
@@ -210,6 +277,23 @@ export class PluginLoader {
     const results: PluginPackage[] = [];
     for (const dir of dirs) {
       try {
+        // Read the manifest name to check enabled state before loading.
+        const manifestPath = path.join(dir, 'plugin.json');
+        let pluginName = '';
+        if (fs.existsSync(manifestPath)) {
+          try {
+            pluginName = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')).name ?? '';
+          } catch {
+            /* fall through — name stays empty */
+          }
+        }
+        if (pluginName && !this.isEnabled(pluginName)) {
+          getGlobalLogger().info(
+            'PluginLoader',
+            `Skipping disabled plugin "${pluginName}" at ${dir}`,
+          );
+          continue;
+        }
         results.push(await this.loadPlugin(dir));
       } catch (err: unknown) {
         getGlobalLogger().warn(
