@@ -145,6 +145,7 @@ import { getConversationStore } from '../memory/conversationStore';
 import { CacheManager } from './cacheManager';
 import { ConcurrencyController } from './concurrencyController';
 import { RunLifecycleManager } from './runLifecycleManager';
+import { getFreezeDryManager, type ActiveRunState } from './freezeDry';
 import { TenantManager } from './tenantManager';
 import { CompensationService } from './compensationService';
 import type { CompensationPlan } from '../compensation/types';
@@ -1099,6 +1100,26 @@ export class AgentRuntime implements AgentRuntimeInterface {
     }
 
     this.runLifecycle.addRun(runId);
+    // FreezeDry: seed manager with current active runs snapshot so a crash
+    // mid-run leaves a manifest for `commander up --resume`. Best-effort —
+    // failures never block the hot path.
+    try {
+      const freezeMgr = getFreezeDryManager();
+      const activeRuns = new Map<string, ActiveRunState>();
+      for (const activeRunId of this.runLifecycle.getActiveRuns()) {
+        activeRuns.set(activeRunId, {
+          runId: activeRunId,
+          agentId: ctx.agentId,
+          phase: 'executing',
+          stepNumber: 0,
+          goal: ctx.goal,
+          completedToolCalls: 0,
+        });
+      }
+      freezeMgr.setActiveRuns(activeRuns);
+    } catch (err) {
+      reportSilentFailure(err, 'agentRuntime:freezeDryInit');
+    }
     tracer.startRun(runId, ctx.agentId, ctx.missionId, undefined, {
       tenantId: ctx.tenantId,
       parentRunId: ctx.parentRunId,
@@ -1674,6 +1695,21 @@ export class AgentRuntime implements AgentRuntimeInterface {
               });
               response = toolExecResponse;
               largestFileWriteContent = toolExecLargestFileWriteContent;
+
+              // FreezeDry: update run state with current step progress so the
+              // freeze manifest reflects the latest step at crash time.
+              try {
+                getFreezeDryManager().setRunState(runId, {
+                  runId,
+                  agentId: ctx.agentId,
+                  phase: 'executing',
+                  stepNumber,
+                  goal: ctx.goal,
+                  completedToolCalls: steps.length,
+                });
+              } catch (err) {
+                reportSilentFailure(err, 'agentRuntime:freezeDryStepUpdate');
+              }
 
               // Interrupt check: if a tool requested human input, pause execution
               if (interruptData) {

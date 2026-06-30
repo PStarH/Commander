@@ -63,6 +63,14 @@ export class RunRecovery {
     // ── Path A: Event replay recovery (strongest) ──────────────────────
     if (!options.disableReplay) {
       const capture = getGlobalDeterminismCapture();
+      // After a crash, in-memory captures are lost. Rebuild from WAL first
+      // so hasCaptures() reflects what was persisted before the crash.
+      if (!capture.hasCaptures(runId)) {
+        const restored = capture.restoreFromWAL(runId);
+        if (restored > 0) {
+          log.info('RunRecovery', 'Restored captures from WAL', { runId, restored });
+        }
+      }
       if (capture.hasCaptures(runId) || options.forceStrategy === 'replay') {
         const replayContext = capture.buildReplayContext(runId);
         if (replayContext) {
@@ -161,6 +169,10 @@ export class RunRecovery {
     recommendedStrategy: 'replay' | 'checkpoint' | 'none';
   } {
     const capture = getGlobalDeterminismCapture();
+    // Rebuild from WAL in case in-memory state was lost (e.g. after crash)
+    if (!capture.hasCaptures(runId)) {
+      capture.restoreFromWAL(runId);
+    }
     const hasCaptures = capture.hasCaptures(runId);
     const captureCount = capture.getCaptureCount(runId);
     const hasCheckpoint = this.checkpointer.loadCheckpoint(runId) !== null;

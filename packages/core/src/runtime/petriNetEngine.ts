@@ -308,9 +308,9 @@ export class PetriNetEngine implements IPetriNetEngine {
   /**
    * Set the marking of a place directly.
    *
-   * This is used by external integrations (e.g., PetriNetSchedulerIntegration)
-   * to reflect state changes not modeled as transition firings — such as
-   * new request arrivals from outside the net.
+   * This is used by external integrations to reflect state changes not
+   * modeled as transition firings — such as new request arrivals from
+   * outside the net.
    *
    * Validates capacity constraints.
    */

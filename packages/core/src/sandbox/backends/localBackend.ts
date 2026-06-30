@@ -73,7 +73,7 @@ export class LocalBackend implements ExecutionBackend {
     try {
       const scheduler = getGlobalSandboxScheduler();
       const deadlock = scheduler.analyzeDeadlock();
-      if (deadlock.isDeadlocked) {
+      if (deadlock.deadlocked) {
         getGlobalLogger().warn('LocalBackend', 'Execution blocked — scheduler detected deadlock', {
           recommendation: deadlock.recommendation,
         });

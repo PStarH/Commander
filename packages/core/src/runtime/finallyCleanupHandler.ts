@@ -37,6 +37,8 @@ import { getSLOManager } from '../observability/sloManager';
 import { getLaneManager } from '../sandbox/lane';
 import { getMessageBus } from './messageBus';
 import { getGlobalLogger } from '../logging';
+import { reportSilentFailure } from '../silentFailureReporter';
+import { getFreezeDryManager } from './freezeDry';
 
 /**
  * Snapshot of original (pre-tenant-override) runtime services to restore after
@@ -130,6 +132,13 @@ export class FinallyCleanupHandler {
     // 2. GAP-02 + GAP-05: Guarantee cleanup on ALL exit paths (normal, error, exception)
     const runLifecycle = getRunLifecycle();
     runLifecycle.removeRun(runId);
+    // FreezeDry: drop this run from the active-runs snapshot so a subsequent
+    // crash does not leave a stale entry in the freeze manifest. Best-effort.
+    try {
+      getFreezeDryManager().removeRun(runId);
+    } catch (err) {
+      reportSilentFailure(err, 'finallyCleanupHandler:freezeDryRemove');
+    }
     getMetricsCollector().setGauge(
       'active_runs',
       'Active concurrent runs',

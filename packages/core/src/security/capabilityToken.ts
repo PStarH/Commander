@@ -1,6 +1,15 @@
 /**
  * CapabilityToken — Short-lived, HMAC-signed authorization tokens for tool invocations.
  *
+ * ARCHITECTURAL BOUNDARY: This module is purely a TOOL AUTHORIZATION component.
+ * It answers "is this agent allowed to call this tool?" — NOT "can this agent
+ * afford this call?". Cost control is handled by {@link UnifiedCostAuthority}
+ * (UCA) via EnterpriseSecurityGateway.preToolCheck / postToolCheck. The two
+ * systems are intentionally decoupled:
+ *
+ *   CapabilityToken → authorization (identity + scope + TTL + revocation)
+ *   UCA             → cost enforcement (budget + melt + per-tool gating)
+ *
  * Phase 2.1. Closes the gap where {@link ToolApproval.requestApproval} auto-approves
  * every subsequent call after a single human approval. A capability token attests:
  * "this specific agent identity (sub) may invoke this specific tool subset (scope)
