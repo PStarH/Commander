@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   HTMLReportRenderer,
   createWarRoomHTMLReport,
-} from '../../src/reporting/htmlReportRenderer';
+} from '../../src/plugins/builtin/reporting/htmlReportRenderer';
 import type { HTMLReport } from '../../src/runtime/types';
 
 describe('HTMLReportRenderer', () => {

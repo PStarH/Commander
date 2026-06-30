@@ -9,7 +9,7 @@
  * - EnterpriseSecurityGateway: 统一安全网关
  * - AuthMiddleware: 时序安全认证
  */
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'vitest';
 import assert from 'node:assert';
 import * as crypto from 'node:crypto';
 
@@ -253,7 +253,8 @@ describe('BillExplosionGuard', () => {
   });
 
   it('should detect token flood attack pattern', () => {
-    // Send many requests with high token counts rapidly
+    // Send many requests with high token counts rapidly, recording actual
+    // cost after each call so the session cost accumulates toward the cap.
     for (let i = 0; i < 20; i++) {
       guard.checkBeforeCall({
         tenantId: 'tenant-1',
@@ -261,6 +262,13 @@ describe('BillExplosionGuard', () => {
         model: 'gpt-4o',
         estimatedTokens: 5000,
         source: 'attacker',
+      });
+      guard.recordAfterCall({
+        tenantId: 'tenant-1',
+        sessionId: 'session-1',
+        model: 'gpt-4o',
+        inputTokens: 8000,
+        outputTokens: 2000,
       });
     }
 
@@ -347,7 +355,27 @@ describe('DataLossPrevention', () => {
   let dlp: DataLossPrevention;
 
   beforeEach(() => {
-    dlp = new DataLossPrevention();
+    // Construct with all DLP types enabled so the test suite is independent
+    // of the active SecurityProfile (which may exclude industry-specific
+    // types like chinese_id/ssn/bank_account in dev/standard profiles).
+    dlp = new DataLossPrevention({
+      enabledTypes: [
+        'api_key',
+        'jwt_token',
+        'private_key',
+        'credit_card',
+        'ssn',
+        'email',
+        'phone_number',
+        'internal_ip',
+        'database_connection_string',
+        'aws_credential',
+        'gcp_credential',
+        'azure_credential',
+        'chinese_id',
+        'bank_account',
+      ],
+    });
   });
 
   it('should detect API keys in content', () => {
@@ -538,7 +566,6 @@ describe('EnterpriseSecurityGateway', () => {
       enableBillGuard: false, // Disable bill guard for gateway tests (tested separately)
       enableGuardian: false, // Disable for simpler testing
       enableSecurityMonitor: false,
-      enableLegacyCostGuard: false,
       dlpBlockCritical: true,
     });
   });

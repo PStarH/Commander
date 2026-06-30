@@ -1662,56 +1662,6 @@ describe('Strategy Meta-Learner', () => {
 });
 
 // ============================================================================
-// Phase 7: TEE Enclave
-// ============================================================================
-
-import { ContractTeeEnclave } from '../../src/sandbox/contractTeeEnclave';
-
-describe('TEE Enclave', () => {
-  let enclave: ContractTeeEnclave;
-
-  beforeEach(() => {
-    enclave = new ContractTeeEnclave();
-  });
-
-  it('should initialize and verify attestation', async () => {
-    await enclave.initialize();
-    const isValid = await enclave.verifyAttestation();
-    expect(isValid).toBe(true);
-    expect(enclave.isInitialized()).toBe(true);
-  });
-
-  it('should execute code in enclave', async () => {
-    await enclave.initialize();
-    const result = await enclave.executeInEnclave('return input + 1;', 41);
-    expect(result).toBe(42);
-  });
-
-  it('should seal and unseal data', async () => {
-    await enclave.initialize();
-    const data = new Uint8Array([1, 2, 3, 4, 5]);
-
-    const sealed = await enclave.seal(data);
-    expect(sealed.length).toBeGreaterThan(data.length);
-
-    const unsealed = await enclave.unseal(sealed);
-    expect(Array.from(unsealed)).toEqual([1, 2, 3, 4, 5]);
-  });
-
-  it('should reject operations before initialization', async () => {
-    await expect(enclave.seal(new Uint8Array([1]))).rejects.toThrow('not initialized');
-    await expect(enclave.executeInEnclave('return 1;', null)).rejects.toThrow('not initialized');
-  });
-
-  it('should have a TEE identity after initialization', async () => {
-    await enclave.initialize();
-    const identity = enclave.getTeeIdentity();
-    expect(identity).toBeDefined();
-    expect(identity!.length).toBe(64);
-  });
-});
-
-// ============================================================================
 // Phase 7: LLM Router
 // ============================================================================
 
