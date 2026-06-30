@@ -350,6 +350,7 @@ export function initializeServices(
     semanticCache: config.semanticCache,
     singleFlight: config.singleFlight,
     geminiCache: config.geminiCache,
+    enableToolCaching: config.enableToolCaching,
   });
 
   const concurrencyController = new ConcurrencyController(config.maxConcurrency);
@@ -452,7 +453,7 @@ export function initializeServices(
   const cycleDetector = new CycleDetector({
     enabled: config.cycleDetection?.enabled !== false,
   });
-  const contentScanner = createContentScanner();
+  const contentScanner = createContentScanner(config.contentScanner);
   const securityOrch = getSecurityOrchestrator();
   const contextInjector = new ExecutionContextInjector({
     agentInbox,
