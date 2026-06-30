@@ -654,7 +654,9 @@ export { getMetricsCollector, resetMetricsCollector, MetricsCollector } from './
 export { HealthCollector, type HealthSources, type HealthCheckResult } from './runtime/healthCheck';
 
 // Evaluation — LLM-as-Judge, dataset versioning, A/B experiment comparison
-export * from './evaluation';
+// Now delivered via the builtin-eval plugin (plugins/builtin/eval).
+export * from './plugins/builtin/eval';
+export { createEvalPlugin, getSharedJudgeEngine, getSharedDatasetManager, getSharedABComparator } from './plugins/builtin/evalPlugin';
 
 // Tenant Provider — multi-tenant isolation primitives
 export {
@@ -789,8 +791,11 @@ export type {
   SOPFileAccess,
 } from './runtime';
 
-// HTML Reporting
-export { HTMLReportRenderer, getHTMLReportRenderer, createWarRoomHTMLReport } from './reporting';
+// HTML Reporting — now delivered via the builtin-reporting plugin.
+// Public API preserved for backwards compatibility. HTMLReport/HTMLReportSection
+// types remain exported from ./runtime/types (see above).
+export { HTMLReportRenderer, getHTMLReportRenderer, createWarRoomHTMLReport } from './plugins/builtin/reporting';
+export { createReportingPlugin } from './plugins/builtin/reportingPlugin';
 
 // Self-Evolution Engine — Meta-learning & optimization
 export {
@@ -810,6 +815,8 @@ export {
 export { ConsensusChecker, createConsensusChecker } from './consensusCheck';
 
 // Consensus & Fault Tolerance Module (Commander-BFT-C3)
+// Now delivered via the builtin-consensus plugin. Public API preserved for
+// backwards compatibility.
 export {
   // Adaptive stopping (Beta-Binomial + KS test)
   AdaptiveStoppingController,
@@ -830,7 +837,7 @@ export {
   resetSACProtocol,
   // CourtEval (adversarial court evaluation)
   CourtEvalEngine,
-} from './consensus';
+} from './plugins/builtin/consensus';
 export type {
   DebateRound,
   AdaptiveStoppingResult,
@@ -855,7 +862,12 @@ export type {
   DefenseResponse,
   CourtVerdict,
   CourtEvalConfig,
-} from './consensus';
+} from './plugins/builtin/consensus';
+export {
+  createConsensusPlugin,
+  getSharedAdaptiveStopping,
+  getSharedCourtEval,
+} from './plugins/builtin/consensusPlugin';
 
 // Incremental SCC Detector (deadlock prevention)
 export {
@@ -1073,6 +1085,7 @@ export type {
   CommanderPlugin,
   BuiltinPluginTool,
   HookPoint,
+  PluginServiceDeclaration,
   BeforeToolCallContext,
   AfterToolCallContext,
   BeforeLLMCallContext,
@@ -1213,6 +1226,103 @@ export type { ReliabilityEngineConfig, ReliabilityStats } from './runtime/reliab
 // Commander Core — tiered auto-configuration control center (recommended entry)
 export { Commander } from './commander';
 export type { CommanderResult, CommanderStatus } from './commander';
+
+// ============================================================================
+// Orchestration Patterns — Concurrent / Graph(DAG) / MixtureOfAgents / Router
+// 及扩展能力：CrossPollination / DynamicReplanner / AutoLoopRunner
+// 参考 LangGraph / swarms / ClawTeam best practice，补齐企业效率场景缺失的
+// 多 agent 编排模式。详见 orchestrationPatterns.ts 及各模式文件头注释。
+// ============================================================================
+export type {
+  AnyStep,
+  StepExecutor,
+  StepOutput,
+  StepResult,
+  ExecutionContext,
+  OrchestrationRun,
+  OrchestrationRunStatus,
+  OrchestrationPattern,
+  OrchestrationEvent,
+  OrchestrationEventHandler,
+  BaseOrchestrationConfig,
+  PatternMetrics,
+} from './orchestrationPatterns';
+export {
+  executeStepWithRetry,
+  mergeTokenUsage,
+  computePatternMetrics,
+  runWithConcurrencyLimit,
+  StepTimeoutError,
+} from './orchestrationPatterns';
+
+export {
+  runConcurrentWorkflow,
+  ConcurrentWorkflowBuilder,
+} from './orchestrationConcurrent';
+export type { ConcurrentWorkflowConfig } from './orchestrationConcurrent';
+
+export {
+  runGraphWorkflow,
+  GraphWorkflowBuilder,
+  validateGraph,
+  topologicalLayers,
+  findTerminalNodes,
+  GraphValidationError,
+} from './orchestrationGraph';
+export type { GraphWorkflowConfig, GraphNode } from './orchestrationGraph';
+
+export {
+  runMixtureOfAgents,
+  MixtureOfAgentsBuilder,
+} from './orchestrationMixture';
+export type { MixtureOfAgentsConfig, SynthesizerInput } from './orchestrationMixture';
+
+export {
+  runSwarmRouter,
+  SwarmRouterBuilder,
+  decidePattern,
+  RouterConfigError,
+  DEFAULT_ROUTING_RULES,
+} from './orchestrationRouter';
+export type {
+  SwarmRouterConfig,
+  TaskProfile,
+  RouterDecision,
+  RoutingRule,
+  LLMRouter,
+  RoutedSteps,
+} from './orchestrationRouter';
+
+export {
+  CrossPollinationEngine,
+  defaultHeuristicExtractor,
+  buildCrossPollinationReport,
+} from './crossPollination';
+export type {
+  Insight,
+  InsightExtractor,
+  CrossPollinationReport,
+} from './crossPollination';
+
+export { runDynamicReplan } from './dynamicReplanner';
+export type {
+  DynamicReplanConfig,
+  DynamicReplanRun,
+  ReplanDecision,
+  ReplanContext,
+  ReplannerHook,
+} from './dynamicReplanner';
+
+export {
+  runAutoLoop,
+  defaultCompletionDetector,
+  createConvergenceDetector,
+} from './autoLoopRunner';
+export type {
+  AutoLoopConfig,
+  AutoLoopRun,
+  CompletionDetector,
+} from './autoLoopRunner';
 export type { CommanderOptions, DeploymentTier, ResolvedConfig } from './commander/tier';
 export type { ProbeResult } from './commander/probe';
 
