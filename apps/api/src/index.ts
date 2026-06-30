@@ -1,4 +1,4 @@
-import { reportSilentFailure, createRagPlugin, getHookManager } from '@commander/core';
+import { reportSilentFailure, createRagPlugin, createEvalPlugin, createReportingPlugin, createConsensusPlugin, getHookManager, getMetricsCollector, HealthCollector, getPluginLoader } from '@commander/core';
 import express from 'express';
 import { createWarRoomStore } from './store';
 import { ProjectMemoryStore } from './memoryStore';
@@ -57,12 +57,16 @@ import { createSecurityPostureRouter } from './securityPostureEndpoints';
 import { createWebhookRouter } from './webhookEndpoints';
 import { createCostDashboardRouter } from './costDashboardEndpoints';
 import { createKnowledgeBaseRouter } from './knowledgeBaseEndpoints';
+import { createEvalRouter } from './evalEndpoints';
+import { createReportingRouter } from './reportingEndpoints';
+import { createConsensusRouter } from './consensusEndpoints';
 import { createOnboardingRouter } from './onboardingEndpoints';
 import { createAuditLogRouter } from './auditLogEndpoints';
 import { createAuditMiddleware } from './auditMiddleware';
 import { createSagaRouter } from './sagaEndpoints';
 import { createHubCorrelationsRouter } from './hubCorrelationsEndpoints';
 import { getUnifiedAuditLog, dlpResponseMiddleware } from '@commander/core/security';
+import { registerRouter, mountRegisteredRouters } from './routerRegistry';
 
 const PROJECT_ID = process.env.COMMANDER_PROJECT_ID ?? 'project-war-room';
 const app = express();
@@ -131,6 +135,15 @@ const ALLOWED_ORIGINS = new Set([
   `http://127.0.0.1:${WEB_PORT}`,
   ...(process.env.CORS_ORIGINS?.split(',').map((s) => s.trim()) ?? []),
 ]);
+
+// Local-first default: only localhost origins are allowed when CORS_ORIGINS
+// is unset. Surface this at startup so production deployments know to set it.
+if (!process.env.CORS_ORIGINS) {
+  console.warn(
+    `[commander] CORS_ORIGINS not set — only localhost origins are allowed. ` +
+      `For production/browser access from other hosts, set CORS_ORIGINS=https://your-ui-host.example.com`,
+  );
+}
 
 app.use(express.json({ limit: '1mb' }));
 app.use((req, res, next) => {
@@ -232,16 +245,20 @@ app.get('/ready', (_req, res) => {
   });
 });
 
-// Detailed health — includes module-level diagnostics
-app.get('/health/detailed', (_req, res) => {
+// Detailed health — delegates component-level diagnostics to the shared core
+// HealthCollector (memory / disk / circuit-breaker / DLQ / …) so the API layer
+// does not dual-track the same checks that CommanderHttpServer already runs.
+// API-specific module availability is layered on top.
+app.get('/health/detailed', async (_req, res) => {
+  const collector = new HealthCollector();
+  const result = await collector.collect();
   const memUsage = process.memoryUsage();
   const heapUsedMB = Math.floor(memUsage.heapUsed / 1024 / 1024);
   const heapTotalMB = Math.floor(memUsage.heapTotal / 1024 / 1024);
   const rssMB = Math.floor(memUsage.rss / 1024 / 1024);
-  const heapHealthy = heapUsedMB / heapTotalMB < 0.8;
 
-  res.status(heapHealthy ? 200 : 503).json({
-    status: heapHealthy ? 'healthy' : 'degraded',
+  res.status(result.status === 'unhealthy' ? 503 : 200).json({
+    status: result.status,
     projectId: PROJECT_ID,
     uptime: Math.floor(process.uptime()),
     version: API_VERSION,
@@ -251,6 +268,7 @@ app.get('/health/detailed', (_req, res) => {
       heapTotal: `${heapTotalMB}MB`,
       heapPercent: Math.round((heapUsedMB / heapTotalMB) * 100),
     },
+    components: result.checks,
     modules: {
       warRoom: store ? 'active' : 'inactive',
       memoryStore: memoryStore ? 'active' : 'inactive',
@@ -258,14 +276,21 @@ app.get('/health/detailed', (_req, res) => {
       episodicMemoryStore: episodicMemoryStore ? 'active' : 'inactive',
       memoryIndexManager: memoryIndexManager ? 'active' : 'inactive',
       confidenceReporter: confidenceReporter ? 'active' : 'inactive',
-      governance: 'active',
+      governance: checkpointManager
+        ? checkpointManager.getStats().expired > 0
+          ? 'degraded'
+          : 'active'
+        : 'inactive',
       checkpointManager: checkpointManager ? 'active' : 'inactive',
     },
     timestamp: new Date().toISOString(),
   });
 });
 
-// Prometheus metrics endpoint
+// Prometheus metrics endpoint — exports all business metrics via the unified
+// MetricsCollector (counters/gauges/histograms) plus supplementary process-level
+// gauges (heap/rss/uptime/event-loop-lag) that the business collector does not
+// track. Prometheus scrapes both in a single pull.
 app.get('/metrics', (_req, res) => {
   const memUsage = process.memoryUsage();
   const heapUsed = memUsage.heapUsed;
@@ -273,32 +298,32 @@ app.get('/metrics', (_req, res) => {
   const rss = memUsage.rss;
   const uptime = process.uptime();
 
-  res
-    .type('text/plain; version=0.0.4')
-    .send(
-      [
-        '# HELP commander_heap_used_bytes Heap memory used in bytes',
-        '# TYPE commander_heap_used_bytes gauge',
-        `commander_heap_used_bytes ${heapUsed}`,
-        '',
-        '# HELP commander_heap_total_bytes Total heap size in bytes',
-        '# TYPE commander_heap_total_bytes gauge',
-        `commander_heap_total_bytes ${heapTotal}`,
-        '',
-        '# HELP commander_rss_bytes Resident set size in bytes',
-        '# TYPE commander_rss_bytes gauge',
-        `commander_rss_bytes ${rss}`,
-        '',
-        '# HELP commander_uptime_seconds Server uptime in seconds',
-        '# TYPE commander_uptime_seconds gauge',
-        `commander_uptime_seconds ${uptime}`,
-        '',
-        '# HELP commander_heap_percent Heap usage percentage',
-        '# TYPE commander_heap_percent gauge',
-        `commander_heap_percent ${Math.round((heapUsed / heapTotal) * 100)}`,
-        '',
-      ].join('\n'),
-    );
+  const businessMetrics = getMetricsCollector().exportOpenMetrics();
+
+  const processMetrics = [
+    '# HELP commander_heap_used_bytes Heap memory used in bytes',
+    '# TYPE commander_heap_used_bytes gauge',
+    `commander_heap_used_bytes ${heapUsed}`,
+    '',
+    '# HELP commander_heap_total_bytes Total heap size in bytes',
+    '# TYPE commander_heap_total_bytes gauge',
+    `commander_heap_total_bytes ${heapTotal}`,
+    '',
+    '# HELP commander_rss_bytes Resident set size in bytes',
+    '# TYPE commander_rss_bytes gauge',
+    `commander_rss_bytes ${rss}`,
+    '',
+    '# HELP commander_uptime_seconds Server uptime in seconds',
+    '# TYPE commander_uptime_seconds gauge',
+    `commander_uptime_seconds ${uptime}`,
+    '',
+    '# HELP commander_heap_percent Heap usage percentage',
+    '# TYPE commander_heap_percent gauge',
+    `commander_heap_percent ${Math.round((heapUsed / heapTotal) * 100)}`,
+    '',
+  ].join('\n');
+
+  res.type('text/plain; version=0.0.4').send(businessMetrics + processMetrics);
 });
 
 app.get('/system/status', (_req, res) => {
@@ -326,48 +351,70 @@ app.get('/system/status', (_req, res) => {
 });
 
 // ── Routers ─────────────────────────────────────────────────────────────────
-// User authentication (register/login/me/refresh/users) — mounted first so the
+// All routers are registered via the endpoint registry (routerRegistry.ts) as a
+// single declarative manifest. Adding an endpoint is now ONE registerRouter()
+// line here — no separate import+app.use scattered across the file. Factories
+// capture shared state (store/memoryStore/etc.) via closure. Registration order
+// = mount order, which preserves the auth-before-routers invariant.
+//
+// User authentication (register/login/me/refresh/users) is mounted first so the
 // auth endpoints are available before any feature routers.
-app.use(createUserAuthRouter());
+registerRouter({ name: 'user-auth', mountPath: '/', factory: () => createUserAuthRouter() });
 
-app.use(createProjectRouter(store, memoryStore, agentStateStore));
-app.use(createMemoryIndexRouter(memoryIndexManager));
-app.use(createConflictRouter(store));
-app.use(createSecurityRouter());
-app.use(createConfidenceRouter(store, confidenceReporter));
-app.use(createQualityRouter());
-app.use('/api', createSelfAssessmentRouter());
-app.use('/api/evaluation', evaluationRouter);
-app.use('/api/governance', governanceRouter);
-app.use('/api/state-machine', stateMachineRouter);
-app.use('/api', createAgentCardRouter(agentCardRegistry));
-app.use('/api', createReasoningConfigRouter());
-app.use('/api', createEvaluationRunnerRouter());
-app.use(createPipelineRouter());
-app.use(createNamespacedMemoryRouter());
-app.use('/a2a', a2aRouter);
-app.use('/a2a/v2', createA2AV2Router());
-app.use('/mcp', createMCPRouter());
-app.use('/mcp/client', createMCPClientRouter());
-app.use(createStreamRouter());
-app.use('/api/runtime', createRuntimeRouter());
-app.use('/', createCostRouter());
-app.use('/', createPauseRouter());
-app.use('/', createReplayRouter());
-app.use('/api', createOrchestratorRouter());
-app.use('/api', createTeamRouter());
+registerRouter({
+  name: 'project',
+  mountPath: '/',
+  factory: () => createProjectRouter(store, memoryStore, agentStateStore),
+});
+registerRouter({
+  name: 'memory-index',
+  mountPath: '/',
+  factory: () => createMemoryIndexRouter(memoryIndexManager),
+});
+registerRouter({ name: 'conflict', mountPath: '/', factory: () => createConflictRouter(store) });
+registerRouter({ name: 'security', mountPath: '/', factory: () => createSecurityRouter() });
+registerRouter({
+  name: 'confidence',
+  mountPath: '/',
+  factory: () => createConfidenceRouter(store, confidenceReporter),
+});
+registerRouter({ name: 'quality', mountPath: '/', factory: () => createQualityRouter() });
+registerRouter({ name: 'self-assessment', mountPath: '/api', factory: () => createSelfAssessmentRouter() });
+registerRouter({ name: 'evaluation', mountPath: '/api/evaluation', factory: () => evaluationRouter });
+registerRouter({ name: 'governance', mountPath: '/api/governance', factory: () => governanceRouter });
+registerRouter({ name: 'state-machine', mountPath: '/api/state-machine', factory: () => stateMachineRouter });
+registerRouter({
+  name: 'agent-card',
+  mountPath: '/api',
+  factory: () => createAgentCardRouter(agentCardRegistry),
+});
+registerRouter({ name: 'reasoning-config', mountPath: '/api', factory: () => createReasoningConfigRouter() });
+registerRouter({ name: 'evaluation-runner', mountPath: '/api', factory: () => createEvaluationRunnerRouter() });
+registerRouter({ name: 'pipeline', mountPath: '/', factory: () => createPipelineRouter() });
+registerRouter({ name: 'namespaced-memory', mountPath: '/', factory: () => createNamespacedMemoryRouter() });
+registerRouter({ name: 'a2a', mountPath: '/a2a', factory: () => a2aRouter });
+registerRouter({ name: 'a2a-v2', mountPath: '/a2a/v2', factory: () => createA2AV2Router() });
+registerRouter({ name: 'mcp', mountPath: '/mcp', factory: () => createMCPRouter() });
+registerRouter({ name: 'mcp-client', mountPath: '/mcp/client', factory: () => createMCPClientRouter() });
+registerRouter({ name: 'stream', mountPath: '/', factory: () => createStreamRouter() });
+registerRouter({ name: 'runtime', mountPath: '/api/runtime', factory: () => createRuntimeRouter() });
+registerRouter({ name: 'cost', mountPath: '/', factory: () => createCostRouter() });
+registerRouter({ name: 'pause', mountPath: '/', factory: () => createPauseRouter() });
+registerRouter({ name: 'replay', mountPath: '/', factory: () => createReplayRouter() });
+registerRouter({ name: 'orchestrator', mountPath: '/api', factory: () => createOrchestratorRouter() });
+registerRouter({ name: 'team', mountPath: '/api', factory: () => createTeamRouter() });
 
 // ── UX gap-fix routers ─────────────────────────────────────────────────────
-app.use(createChatRouter());
-app.use(createDlqRouter());
-app.use(createApprovalConfigRouter());
-app.use(createHallucinationRouter());
-app.use(createLineageRouter());
-app.use(createSecurityPostureRouter());
-app.use(createWebhookRouter());
+registerRouter({ name: 'chat', mountPath: '/', factory: () => createChatRouter() });
+registerRouter({ name: 'dlq', mountPath: '/', factory: () => createDlqRouter() });
+registerRouter({ name: 'approval-config', mountPath: '/', factory: () => createApprovalConfigRouter() });
+registerRouter({ name: 'hallucination', mountPath: '/', factory: () => createHallucinationRouter() });
+registerRouter({ name: 'lineage', mountPath: '/', factory: () => createLineageRouter() });
+registerRouter({ name: 'security-posture', mountPath: '/', factory: () => createSecurityPostureRouter() });
+registerRouter({ name: 'webhook', mountPath: '/', factory: () => createWebhookRouter() });
 
 // ── Cost Dashboard (enterprise cost analytics) ─────────────────────────────
-app.use(createCostDashboardRouter());
+registerRouter({ name: 'cost-dashboard', mountPath: '/', factory: () => createCostDashboardRouter() });
 
 // ── Knowledge Base / RAG (enterprise document retrieval) ───────────────────
 // Register the built-in RAG CommanderPlugin (default disabled). Enabling it
@@ -384,38 +431,76 @@ getHookManager()
   })
   .catch((err: unknown) => console.error('RAG plugin registration failed:', err));
 
-app.use(createKnowledgeBaseRouter());
+// ── External plugin discovery ──────────────────────────────────────────────
+// Discover and load externally-installed plugins from .commander/plugins/
+// (project-local) and ~/.commander/plugins/ (user-global). Disabled plugins
+// are skipped per the persisted enabled-state map. Failures are non-fatal —
+// a broken third-party plugin must never block API startup.
+getPluginLoader()
+  .loadAll()
+  .then((loaded) => {
+    if (loaded.length > 0) {
+      console.log(`[commander] Loaded ${loaded.length} external plugin(s)`);
+    }
+  })
+  .catch((err: unknown) =>
+    reportSilentFailure(err, 'index:pluginLoader.loadAll'),
+  );
+
+registerRouter({ name: 'knowledge-base', mountPath: '/', factory: () => createKnowledgeBaseRouter() });
+
+// ── Eval / Reporting / Consensus plugin routers (control + data plane) ────
+registerRouter({ name: 'eval', mountPath: '/', factory: () => createEvalRouter() });
+registerRouter({ name: 'reporting', mountPath: '/', factory: () => createReportingRouter() });
+registerRouter({ name: 'consensus', mountPath: '/', factory: () => createConsensusRouter() });
 
 // ── Unified Audit Log (cross-source query/export/stats) ────────────────────
-app.use(createAuditLogRouter());
+registerRouter({ name: 'audit-log', mountPath: '/', factory: () => createAuditLogRouter() });
 
 // ── Onboarding Wizard (Web 端上手引导) ──────────────────────────────────────
 // 解决 POC→生产鸿沟：为新用户提供首次登录后的多步骤引导向导后端能力。
-app.use(createOnboardingRouter());
+registerRouter({ name: 'onboarding', mountPath: '/', factory: () => createOnboardingRouter() });
 
 // ── Saga Compensation (分布式事务补偿) ───────────────────────────────────────
 // Saga 模式长运行事务的管理与补偿：列出运行中事务、查看时间线、
 // 恢复中断事务、分叉新执行路径、实时流传输状态变更。
-app.use(createSagaRouter());
+registerRouter({ name: 'saga', mountPath: '/', factory: () => createSagaRouter() });
 
 // ── Hub Correlations (Tier-0 关联事件可观测性) ──────────────────────────────
 // 跨运行时关联事件的管理员观测端点：循环检测关联、重试阻断关联、
 // 语义断路器关联。支持 REST 摘要查询和 SSE 实时流。
-app.use('/api/v1/hub/correlations', createHubCorrelationsRouter());
+registerRouter({
+  name: 'hub-correlations',
+  mountPath: '/api/v1/hub/correlations',
+  factory: () => createHubCorrelationsRouter(),
+});
 
 // ── API v1 versioned aliases (backward-compatible) ──────────────────────────
 // All routes are accessible under /api/v1/ prefix in addition to their original paths.
 // This provides explicit API versioning without breaking existing clients.
-app.use('/api/v1/evaluation', evaluationRouter);
-app.use('/api/v1/governance', governanceRouter);
-app.use('/api/v1/state-machine', stateMachineRouter);
-app.use('/api/v1', createSelfAssessmentRouter());
-app.use('/api/v1', createAgentCardRouter(agentCardRegistry));
-app.use('/api/v1', createReasoningConfigRouter());
-app.use('/api/v1', createEvaluationRunnerRouter());
-app.use('/api/v1/runtime', createRuntimeRouter());
-app.use('/api/v1', createOrchestratorRouter());
-app.use('/api/v1/observability', createObservabilityRouter());
+registerRouter({ name: 'v1-evaluation', mountPath: '/api/v1/evaluation', factory: () => evaluationRouter });
+registerRouter({ name: 'v1-governance', mountPath: '/api/v1/governance', factory: () => governanceRouter });
+registerRouter({ name: 'v1-state-machine', mountPath: '/api/v1/state-machine', factory: () => stateMachineRouter });
+registerRouter({ name: 'v1-self-assessment', mountPath: '/api/v1', factory: () => createSelfAssessmentRouter() });
+registerRouter({
+  name: 'v1-agent-card',
+  mountPath: '/api/v1',
+  factory: () => createAgentCardRouter(agentCardRegistry),
+});
+registerRouter({ name: 'v1-reasoning-config', mountPath: '/api/v1', factory: () => createReasoningConfigRouter() });
+registerRouter({ name: 'v1-evaluation-runner', mountPath: '/api/v1', factory: () => createEvaluationRunnerRouter() });
+registerRouter({ name: 'v1-runtime', mountPath: '/api/v1/runtime', factory: () => createRuntimeRouter() });
+registerRouter({ name: 'v1-orchestrator', mountPath: '/api/v1', factory: () => createOrchestratorRouter() });
+
+// ── Mount all registered routers in registration order ─────────────────────
+// A single call replaces ~40 scattered app.use() statements. Order is preserved
+// (auth routers first, then features, then v1 aliases).
+registerRouter({
+  name: 'v1-observability',
+  mountPath: '/api/v1/observability',
+  factory: () => createObservabilityRouter(),
+});
+mountRegisteredRouters(app);
 
 // ── OpenAPI ─────────────────────────────────────────────────────────────────
 app.get('/api/openapi.json', (_req, res) => {
