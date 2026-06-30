@@ -1,6 +1,21 @@
 /**
  * CostGuard — Enterprise Economic Attack Detection & Auto Circuit-Breaker
  *
+ * @deprecated Superseded by {@link UnifiedCostAuthority} (UCA). This class
+ * remains as a backward-compatible thin shell for existing callers and tests,
+ * but is no longer invoked from the agent runtime hot path. New code MUST use
+ * UCA via `getUnifiedCostAuthority()` for all cost enforcement decisions.
+ *
+ * Migration map (CostGuard → UCA):
+ *   evaluateRequest()     → UCA.preCall({ model, estimatedTokens })
+ *   evaluateToolCall()    → UCA.preCall({ tool: { name, costTier } })
+ *   recordActualCost()    → UCA.postCall({ model }, { costUsd, promptTokens, completionTokens })
+ *   getReport()           → UCA.getSnapshot(runId, tenantId) + UCA.readLedger()
+ *   tierLimits            → UCA DEFAULT_UCA_CONFIG (per-request/per-run/per-tenant-daily/per-tenant-monthly/global-daily)
+ *   maxToolCallsPerMinute → UCA per-tool perRunCallCap (TIER_DEFAULTS)
+ *   burstThreshold        → handled by rate limiter (not cost control)
+ *   expensiveQueryPatterns → handled by input scanner (not cost control)
+ *
  * Detects and mitigates financial attacks against the AI agent system:
  * - Token floods (single request consuming excessive tokens)
  * - Tool call amplification loops (runaway tool recursion)
@@ -237,6 +252,7 @@ export class CostGuard {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.sessionStartTime = Date.now();
     this.state = this.createFreshState();
+    emitCostGuardDeprecationWarning();
   }
 
   private createFreshState(): CostGuardState {
@@ -813,9 +829,37 @@ export class CostGuard {
 // Singleton
 // ============================================================================
 
+/**
+ * Emit a one-time deprecation warning when CostGuard is instantiated.
+ * Uses process.emitWarning (Node.js standard deprecation mechanism) which
+ * is throttled by default — callers see it once per process, not per call.
+ */
+let costGuardDeprecationWarned = false;
+function emitCostGuardDeprecationWarning(): void {
+  if (costGuardDeprecationWarned) return;
+  costGuardDeprecationWarned = true;
+  try {
+    if (typeof process !== 'undefined' && typeof process.emitWarning === 'function') {
+      process.emitWarning(
+        'CostGuard is deprecated — use UnifiedCostAuthority (getUnifiedCostAuthority) instead. ' +
+          'See security/unifiedCostAuthority.ts for the migration map.',
+        { type: 'DeprecationWarning', code: 'COMMANDER_COSTGUARD_DEPRECATED' },
+      );
+    }
+  } catch {
+    /* emitWarning must never throw on the hot path */
+  }
+}
+
 const costGuardSingleton = createTenantAwareSingleton(() => new CostGuard());
 
-/** Get the global CostGuard (single-tenant) or tenant-scoped (multi-tenant). */
+/**
+ * Get the global CostGuard (single-tenant) or tenant-scoped (multi-tenant).
+ *
+ * @deprecated Use {@link getUnifiedCostAuthority} instead. CostGuard is
+ * retained as a backward-compatible thin shell; the agent runtime no longer
+ * invokes it on the hot path.
+ */
 export function getCostGuard(config?: Partial<CostGuardConfig>): CostGuard {
   if (config) {
     const guard = costGuardSingleton.get();
