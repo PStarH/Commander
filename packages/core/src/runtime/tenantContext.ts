@@ -9,7 +9,17 @@
  * must still key their data by tenant. The helpers below make that easier.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { getGlobalTenantProvider } from './tenantProvider';
+// NOTE: getGlobalTenantProvider is imported lazily to break a value-import
+// cycle: tenantProvider → tenantContext → tenantProvider. Loading it at
+// module load time creates a circular dependency. The lazy wrapper resolves
+// it on first use.
+let _getGlobalTenantProvider: typeof import('./tenantProvider').getGlobalTenantProvider | null = null;
+function getGlobalTenantProviderLazy(): ReturnType<typeof import('./tenantProvider').getGlobalTenantProvider> {
+  if (!_getGlobalTenantProvider) {
+    _getGlobalTenantProvider = require('./tenantProvider').getGlobalTenantProvider;
+  }
+  return _getGlobalTenantProvider!();
+}
 
 export interface TenantContextValue {
   tenantId?: string;
@@ -132,5 +142,5 @@ export function assertSameTenant(tenantId: string): void {
  * (typically `ctx.tenantId`), then undefined.
  */
 export function resolveActiveTenantId(explicitTenantId?: string): string | undefined {
-  return getGlobalTenantProvider().getCurrentTenantId() || explicitTenantId;
+  return getGlobalTenantProviderLazy().getCurrentTenantId() || explicitTenantId;
 }

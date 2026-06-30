@@ -9,6 +9,69 @@ import { Scheduler, WorkflowRegistry } from '../../scheduler';
 import type { ScheduleEntry, WorkflowTrigger } from '../../scheduler';
 import { createRuntime, loadTools, $, onboardingMessage } from './_shared';
 
+// ── Workflow template ─────────────────────────────────────────────────────
+//
+// The default workflow template lives in code as a fallback. Users can
+// customize it by placing a file at `.commander/templates/workflow-default.md`
+// — when present, that file is used instead (with {{name}}, {{description}},
+// {{cron}} placeholders substituted). This keeps the template out of the CLI
+// command logic and lets teams version-control their own scaffolds.
+
+const BUILTIN_WORKFLOW_TEMPLATE = `---
+name: {{name}}
+description: {{description}}
+topology: SEQUENTIAL
+effort: auto
+trigger:
+{{cron}}
+---
+
+## Steps
+
+### 1. Analysis
+goal: Analyze the current state and gather context
+tools: [Read, Grep, Glob]
+model-tier: standard
+parallelizable: false
+
+### 2. Execution
+goal: Perform the main work
+tools: [Read, Write, Edit, Bash]
+model-tier: best
+parallelizable: true
+depends-on: [analysis]
+
+### 3. Verification
+goal: Verify the results are correct
+tools: [Bash, Read]
+model-tier: standard
+depends-on: [execution]
+`;
+
+function getTemplatesDir(): string {
+  return path.join(process.cwd(), '.commander', 'templates');
+}
+
+function resolveWorkflowTemplate(
+  name: string,
+  description: string,
+  cron: string,
+): string {
+  const customPath = path.join(getTemplatesDir(), 'workflow-default.md');
+  let raw = BUILTIN_WORKFLOW_TEMPLATE;
+  if (fs.existsSync(customPath)) {
+    try {
+      raw = fs.readFileSync(customPath, 'utf-8');
+    } catch {
+      /* fall back to builtin */
+    }
+  }
+  return raw
+    .replaceAll('{{name}}', name)
+    .replaceAll('{{description}}', description)
+    .replaceAll('{{cron}}', cron);
+}
+
 export async function cmdWorkflow(subargs: string[]) {
   const subcmd = subargs[0];
   const rest = subargs.slice(1);
@@ -269,38 +332,12 @@ export async function cmdWorkflow(subargs: string[]) {
       const desc = flags.description || `Automated ${name} workflow`;
       const cron = flags.cron ? `  cron: "${flags.cron}"` : '#  cron: "0 6 * * 1-5"';
 
-      const template = `---
-name: ${name}
-description: ${desc}
-topology: SEQUENTIAL
-effort: auto
-trigger:
-${cron}
----
-
-## Steps
-
-### 1. Analysis
-goal: Analyze the current state and gather context
-tools: [Read, Grep, Glob]
-model-tier: standard
-parallelizable: false
-
-### 2. Execution
-goal: Perform the main work
-tools: [Read, Write, Edit, Bash]
-model-tier: best
-parallelizable: true
-depends-on: [analysis]
-
-### 3. Verification
-goal: Verify the results are correct
-tools: [Bash, Read]
-model-tier: standard
-depends-on: [execution]
-`;
+      const template = resolveWorkflowTemplate(name, desc, cron);
       fs.writeFileSync(filePath, template);
       console.log(`  ${$.green}✓ Created workflow: ${filePath}${$.reset}\n`);
+      console.log(
+        `  ${$.dim}Tip: customize the scaffold via .commander/templates/workflow-default.md${$.reset}\n`,
+      );
       break;
     }
 

@@ -5,6 +5,19 @@
 import type { AgentExecutionContext } from './execution';
 
 /**
+ * 工具成本档位。映射到预估输出 token + 每调用预算上限 + 每 run 调用次数上限。
+ *
+ * 定义在基础类型层（runtime/types/tool.ts），由 UnifiedCostAuthority 消费并强制。
+ * 取值参考业界工具成本量级：
+ *   - free:     内存读取、列表查询（输出 < 200 token）
+ *   - low:      搜索、检索（输出 ~1K token）
+ *   - medium:   文件读写、RAG 查询（输出 ~5K token）
+ *   - high:     代码执行、文件写入 + 验证（输出 ~20K token，可能触发下游 LLM 调用）
+ *   - critical: shell 执行、不可逆网络写入（输出可达 100K token）
+ */
+export type ToolCostTier = 'free' | 'low' | 'medium' | 'high' | 'critical';
+
+/**
  * Definition of a tool an agent can call.
  * Enhanced with BFCL-compatible fields for precise function calling.
  */
@@ -18,6 +31,11 @@ export interface ToolDefinition {
   category?: string;
   /** Whether this tool should be hidden from general-purpose models (specialized) */
   hidden?: boolean;
+  /**
+   * Cost tier for UnifiedCostAuthority per-call + per-run budget enforcement.
+   * Defaults to 'low' when unspecified. See TIER_DEFAULTS in unifiedCostAuthority.ts.
+   */
+  costTier?: ToolCostTier;
   /** Side-effect classification for taint tracking and security gates.
    *  - 'none': pure read, no state change
    *  - 'local_state': writes to local filesystem / DB / in-process state

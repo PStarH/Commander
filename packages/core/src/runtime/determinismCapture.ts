@@ -177,6 +177,57 @@ export class DeterminismCapture {
   }
 
   /**
+   * Rebuild in-memory captures for a run from the EventSourcingEngine WAL.
+   *
+   * After a process crash, the in-memory `captured` map is lost. This method
+   * reads `determinism.*` events from the WAL (keyed by correlationId=runId)
+   * and repopulates the in-memory map so that hasCaptures()/buildReplayContext()
+   * work correctly during recovery.
+   *
+   * Called by RunRecovery.attempt() before checking hasCaptures().
+   * Safe to call multiple times — idempotent (overwrites existing entries).
+   */
+  restoreFromWAL(runId: string): number {
+    let restored = 0;
+    try {
+      const engine = getGlobalEventSourcingEngine();
+      const events = engine.getEventsByCorrelationId(runId);
+      for (const event of events) {
+        if (!event.type.startsWith('determinism.')) continue;
+        const type = event.type.slice('determinism.'.length) as NonDeterministicInput;
+        if (!['timestamp', 'random', 'llmResponse', 'toolResponse', 'externalApiCall'].includes(type)) {
+          continue;
+        }
+        const payload = event.payload as { step?: number; value?: unknown; capturedAt?: string } | undefined;
+        if (!payload || typeof payload.step !== 'number') continue;
+
+        const input: CapturedInput = {
+          runId,
+          step: payload.step,
+          type,
+          value: payload.value,
+          capturedAt: payload.capturedAt ?? new Date(event.timestamp).toISOString(),
+        };
+        this.captured.set(this.key(runId, type, payload.step), input);
+        restored++;
+      }
+      if (restored > 0) {
+        // Rebuild stepCounter to avoid collisions with future captures
+        let maxStep = 0;
+        for (const input of this.captured.values()) {
+          if (input.runId === runId && input.step > maxStep) {
+            maxStep = input.step;
+          }
+        }
+        this.stepCounter.set(runId, maxStep);
+      }
+    } catch (err) {
+      reportSilentFailure(err, 'determinismCapture:restoreFromWAL');
+    }
+    return restored;
+  }
+
+  /**
    * Get capture statistics for a run.
    */
   getCaptureCount(runId: string): number {
@@ -250,4 +301,9 @@ export function getGlobalDeterminismCapture(): DeterminismCapture {
     getGlobalLogger().debug('DeterminismCapture', 'Initialized');
   }
   return globalCapture;
+}
+
+/** Reset the global singleton — for test isolation only. */
+export function resetGlobalDeterminismCapture(): void {
+  globalCapture = null;
 }
