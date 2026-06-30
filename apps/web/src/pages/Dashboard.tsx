@@ -1,21 +1,42 @@
+import { useEffect, useState } from 'react';
 import { BattleReport } from '../components/BattleReport';
 import { AgentRoster } from '../components/AgentRoster';
 import { MissionBoard } from '../components/MissionBoard';
 import { ExecutionFeed } from '../components/ExecutionFeed';
 import { MemoryBrowser } from '../components/MemoryBrowser';
 import { TokenTrendChart } from '../components/TokenTrendChart';
-import { TopologyLiveView } from '../components/TopologyLiveView';
+import { TopologyLiveView, type TopologyType } from '../components/TopologyLiveView';
 import type { WarRoomSnapshot, ProjectMemoryItem, MemoryOverview } from '../types';
+import { fetchCostDashboard, type TrendPoint } from '../api';
 
-// Static demo data for TokenTrendChart — replaced by live data when plumbing is ready
-const TOKEN_DEMO_DATA = [
-  { timestamp: '2026-06-16T00:00:00Z', label: '00:00', input: 42000, output: 18000, cache: 8000 },
-  { timestamp: '2026-06-16T04:00:00Z', label: '04:00', input: 38000, output: 16000, cache: 7000 },
-  { timestamp: '2026-06-16T08:00:00Z', label: '08:00', input: 62000, output: 24000, cache: 14000 },
-  { timestamp: '2026-06-16T12:00:00Z', label: '12:00', input: 88000, output: 35000, cache: 25000 },
-  { timestamp: '2026-06-16T16:00:00Z', label: '16:00', input: 104000, output: 44000, cache: 34000 },
-  { timestamp: '2026-06-16T20:00:00Z', label: '20:00', input: 68000, output: 26000, cache: 18000 },
-];
+/**
+ * Derive the currently active topology from the live snapshot rather than
+ * hardcoding "HYBRID". The War Room snapshot does not carry an explicit
+ * topology field, so we infer it from agent/mission state:
+ *   - 0 or 1 active agents → SINGLE
+ *   - multiple agents with running missions → HYBRID (mixed parallel work)
+ *   - multiple agents but none running → SEQUENTIAL
+ */
+function deriveTopology(snapshot: WarRoomSnapshot): TopologyType {
+  const active = snapshot.battleReport.activeAgents;
+  const running = snapshot.battleReport.runningMissionCount;
+  if (active <= 1) return 'SINGLE';
+  if (running > 0) return 'HYBRID';
+  return 'SEQUENTIAL';
+}
+
+/** Map a real cost-dashboard trend point into the chart's data shape. */
+function toChartData(point: TrendPoint): {
+  timestamp: string;
+  label: string;
+  tokens: number;
+} {
+  const d = new Date(point.timestamp);
+  const label = isNaN(d.getTime())
+    ? point.timestamp
+    : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return { timestamp: point.timestamp, label, tokens: point.tokens };
+}
 
 interface DashboardProps {
   snapshot: WarRoomSnapshot | null;
@@ -44,23 +65,48 @@ export function Dashboard({
   onCreateLog,
   onSearchMemory,
 }: DashboardProps) {
+  const [tokenTrend, setTokenTrend] = useState<TrendPoint[]>([]);
+
+  // Fetch real token-consumption trend from the cost dashboard API.
+  // Replaces the previous hardcoded TOKEN_DEMO_DATA.
+  useEffect(() => {
+    let cancelled = false;
+    fetchCostDashboard('7d')
+      .then((resp) => {
+        if (!cancelled) setTokenTrend(resp.trend ?? []);
+      })
+      .catch(() => {
+        // Cost data is best-effort — leave empty so the chart shows an
+        // honest empty state instead of fabricated demo numbers.
+        if (!cancelled) setTokenTrend([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   if (!snapshot) return null;
+
+  const chartData = tokenTrend.map(toChartData);
+  const totalTokens = chartData.reduce((sum, p) => sum + p.tokens, 0);
+  const peakTokens = chartData.reduce((max, p) => Math.max(max, p.tokens), 0);
+  const avgTokensPerInterval = chartData.length > 0 ? Math.round(totalTokens / chartData.length) : 0;
 
   return (
     <div className="dashboard-grid">
       <BattleReport report={snapshot.battleReport} />
 
       <TokenTrendChart
-        data={TOKEN_DEMO_DATA}
-        series={['input', 'output', 'cache']}
-        totalTokens={1420000}
-        avgTokensPerInterval={59000}
-        peakTokens={134000}
+        data={chartData}
+        series={['tokens']}
+        totalTokens={totalTokens}
+        avgTokensPerInterval={avgTokensPerInterval}
+        peakTokens={peakTokens}
         title="Token Consumption"
       />
 
       <TopologyLiveView
-        activeTopology="HYBRID"
+        activeTopology={deriveTopology(snapshot)}
         agentCount={snapshot.battleReport.activeAgents}
         runningCount={snapshot.battleReport.runningMissionCount}
         completedCount={snapshot.battleReport.completedMissionCount}
