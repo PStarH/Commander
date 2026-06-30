@@ -16,23 +16,30 @@ import {
   LogOut,
   User as UserIcon,
   Rocket,
+  FlaskConical,
+  FileText,
+  Network,
 } from 'lucide-react';
 import type { AuthUser } from '../api';
+import { t } from '../i18n';
 
 const NAV_ITEMS = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/chat', icon: MessageSquare, label: 'Chat' },
-  { to: '/agents', icon: Users, label: 'Agents' },
-  { to: '/missions', icon: Kanban, label: 'Missions' },
-  { to: '/execution', icon: ScrollText, label: 'Execution' },
-  { to: '/memory', icon: BookOpen, label: 'Memory' },
-  { to: '/governance', icon: ShieldCheck, label: 'Governance' },
-  { to: '/dlq', icon: AlertTriangle, label: 'DLQ' },
-  { to: '/security', icon: Fingerprint, label: 'Security' },
-  { to: '/audit', icon: ClipboardList, label: '审计日志' },
-  { to: '/knowledge', icon: Library, label: '知识库' },
-  { to: '/cost', icon: DollarSign, label: 'Cost' },
-  { to: '/onboarding', icon: Rocket, label: '上手引导' },
+  { to: '/', icon: LayoutDashboard, label: t('nav.dashboard') },
+  { to: '/chat', icon: MessageSquare, label: t('nav.chat') },
+  { to: '/agents', icon: Users, label: t('nav.agents') },
+  { to: '/missions', icon: Kanban, label: t('nav.missions') },
+  { to: '/execution', icon: ScrollText, label: t('nav.execution') },
+  { to: '/memory', icon: BookOpen, label: t('nav.memory') },
+  { to: '/governance', icon: ShieldCheck, label: t('nav.governance') },
+  { to: '/dlq', icon: AlertTriangle, label: t('nav.dlq') },
+  { to: '/security', icon: Fingerprint, label: t('nav.security') },
+  { to: '/audit', icon: ClipboardList, label: t('nav.audit') },
+  { to: '/knowledge', icon: Library, label: t('nav.knowledge') },
+  { to: '/eval', icon: FlaskConical, label: 'Eval' },
+  { to: '/reporting', icon: FileText, label: 'Reporting' },
+  { to: '/consensus', icon: Network, label: 'Consensus' },
+  { to: '/cost', icon: DollarSign, label: t('nav.cost') },
+  { to: '/onboarding', icon: Rocket, label: t('nav.onboarding') },
 ];
 
 interface SidebarProps {
