@@ -19,7 +19,17 @@
 
 import { reportSilentFailure } from '../silentFailureReporter';
 import type { ModelConfig, ModelTier, RoutingDecision, AgentExecutionContext } from './types';
-import { detectTaskType } from './unifiedVerification';
+// detectTaskType lives in taskAnalyzer.ts (a leaf module that only imports
+// types). Importing it directly from here avoids the cycle
+//   modelRouter → unifiedVerification → goalJudge → modelRouter
+// that would arise if we imported from unifiedVerification.ts (which re-exports
+// detectTaskType). The previous lazy require() broke vitest because native
+// require cannot resolve .ts source files.
+import { detectTaskType } from './taskAnalyzer';
+
+function detectTaskTypeLazy(goal: string): string {
+  return detectTaskType(goal);
+}
 
 // ============================================================================
 // Latency tracking types
@@ -750,7 +760,7 @@ export class ModelRouter {
     registeredProviders?: Set<string>,
   ): RoutingDecision {
     const complexity = scoreComplexity(ctx);
-    const taskType = detectTaskType(ctx.goal);
+    const taskType = detectTaskTypeLazy(ctx.goal);
     const requiredCaps = TASK_CAPABILITY_MAP[taskType] ?? [];
 
     const governor = governorPhase ?? 'relaxed';
@@ -950,7 +960,7 @@ export class ModelRouter {
     registeredProviders?: Set<string>,
   ): { initial: RoutingDecision; escalationChain: ModelConfig[] } {
     const governor = governorPhase ?? 'relaxed';
-    const taskType = detectTaskType(ctx.goal);
+    const taskType = detectTaskTypeLazy(ctx.goal);
 
     // In relaxed/moderate mode, use standard routing (start optimal)
     if (governor === 'relaxed' || governor === 'moderate') {
@@ -1042,7 +1052,7 @@ export class ModelRouter {
    * - Task doesn't require immediate tool interaction
    */
   routeBatch(ctx: AgentExecutionContext, tier?: ModelTier): ModelConfig | undefined {
-    const taskType = detectTaskType(ctx.goal);
+    const taskType = detectTaskTypeLazy(ctx.goal);
     const requiredCaps = TASK_CAPABILITY_MAP[taskType] ?? [];
     const targetTier = tier ?? 'eco';
 

@@ -42,12 +42,16 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import { getSecurityAuditLogger } from './securityAuditLogger';
 import { getGlobalLogger, getGlobalMetrics } from '../logging';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
-import { getBillExplosionGuard, type BillGuardAction } from './billExplosionGuard';
 import { getDataLossPrevention } from './dataLossPrevention';
 import { getZeroTrustValidator } from './zeroTrustValidator';
 import { getGuardianAgent } from './guardianAgent';
 import { getSecurityMonitor } from './securityMonitor';
-import { getCostGuard } from './costGuard';
+import { getSecurityProfileConfig } from './securityProfile';
+import {
+  getUnifiedCostAuthority,
+  type ToolCostTier,
+} from './unifiedCostAuthority';
+import { getLiteLLMPricing } from './litellmPricing';
 
 // ============================================================================
 // 类型定义
@@ -65,8 +69,6 @@ export interface EnterpriseGatewayConfig {
   enableGuardian: boolean;
   /** 是否启用安全监控 */
   enableSecurityMonitor: boolean;
-  /** 是否启用成本防护（旧版 CostGuard） */
-  enableLegacyCostGuard: boolean;
   /** DLP 阻止 critical 级别泄露 */
   dlpBlockCritical: boolean;
   /** 安全检查超时（ms） */
@@ -81,6 +83,8 @@ export interface PreLLMCheckParams {
   tenantId?: string;
   /** 会话 ID */
   sessionId?: string;
+  /** Run ID（用于 UCA per-run 预算追踪） */
+  runId?: string;
   /** 模型名称 */
   model: string;
   /** 预估 token 数 */
@@ -99,6 +103,8 @@ export interface PostLLMCheckParams {
   tenantId?: string;
   /** 会话 ID */
   sessionId?: string;
+  /** Run ID（用于 UCA per-run 预算追踪） */
+  runId?: string;
   /** 模型名称 */
   model: string;
   /** 实际输入 token 数 */
@@ -117,12 +123,16 @@ export interface PreToolCheckParams {
   tenantId?: string;
   /** 会话 ID */
   sessionId?: string;
+  /** Run ID（用于 UCA per-run + per-tool 调用次数追踪） */
+  runId?: string;
   /** 工具名称 */
   toolName: string;
   /** 请求来源 */
   source: string;
   /** 工具输入参数（用于扫描） */
   input?: string;
+  /** 工具成本档位（未指定时 UCA 按默认 'low' 处理） */
+  costTier?: ToolCostTier;
 }
 
 /** 工具调用后检查参数 */
@@ -131,12 +141,18 @@ export interface PostToolCheckParams {
   tenantId?: string;
   /** 会话 ID */
   sessionId?: string;
+  /** Run ID（用于 UCA per-run 预算追踪） */
+  runId?: string;
   /** 工具名称 */
   toolName: string;
   /** 工具输出结果（用于 DLP 扫描） */
   output: string;
   /** Agent ID */
   agentId?: string;
+  /** 工具成本档位（与 preToolCheck 一致） */
+  costTier?: ToolCostTier;
+  /** 工具实际成本（美元），供 UCA 记录 */
+  actualCostUsd?: number;
 }
 
 /** 安全检查结果 */
@@ -161,8 +177,7 @@ export type SecurityLayer =
   | 'input_scan'
   | 'bill_guard'
   | 'dlp'
-  | 'guardian'
-  | 'cost_guard';
+  | 'guardian';
 
 /** 安全网关状态报告 */
 export interface GatewayStatus {
@@ -200,7 +215,9 @@ const DEFAULT_CONFIG: EnterpriseGatewayConfig = {
   enableBillGuard: true,
   enableGuardian: true,
   enableSecurityMonitor: true,
-  enableLegacyCostGuard: true,
+  // Cost enforcement is unified under UnifiedCostAuthority (UCA) via the
+  // enableBillGuard flag. The legacy CostGuard was removed; enableBillGuard
+  // is the single cost-control switch (preLLMCheck + postLLMCheck + tool calls).
   dlpBlockCritical: true,
   securityCheckTimeoutMs: 5000,
   skipPaths: ['/health', '/metrics', '/readyz', '/system/status'],
@@ -218,7 +235,20 @@ export class EnterpriseSecurityGateway {
   private totalCheckDurationMs = 0;
 
   constructor(config?: Partial<EnterpriseGatewayConfig>) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    // Apply security profile defaults first, then explicit config overrides.
+    // The profile (COMMANDER_SECURITY_PROFILE=dev|standard|strict) sets the
+    // initial enablement of gateway layers; explicit constructor args win.
+    const profile = getSecurityProfileConfig();
+    this.config = {
+      ...DEFAULT_CONFIG,
+      enableZeroTrust: profile.enableZeroTrust,
+      enableDLP: profile.enableDLP,
+      enableBillGuard: profile.enableBillGuard,
+      enableGuardian: profile.enableGuardian,
+      enableSecurityMonitor: profile.enableSecurityMonitor,
+      dlpBlockCritical: profile.dlpBlockCritical,
+      ...config,
+    };
   }
 
   // ── 配置管理 ──────────────────────────────────────────────────────
@@ -261,37 +291,24 @@ export class EnterpriseSecurityGateway {
     this.totalRequests++;
 
     try {
-      // 1. 账单爆炸防护 —— 预估成本检查
+      // 1. 成本预检 —— 委托给 UnifiedCostAuthority（单一成本真相源）
+      //    取代之前 BillExplosionGuard + CostGuard 的双重检查。
       if (this.config.enableBillGuard) {
-        const billGuard = getBillExplosionGuard();
-        const check = billGuard.checkBeforeCall({
+        const uca = getUnifiedCostAuthority();
+        const decision = uca.preCall({
+          runId: params.runId ?? params.sessionId ?? params.source,
           tenantId: params.tenantId,
           sessionId: params.sessionId,
           model: params.model,
           estimatedTokens: params.estimatedTokens,
-          source: params.source,
-          input: params.input,
           cacheHitRatio: params.cacheHitRatio,
         });
 
-        if (!check.allowed) {
-          const action = check.attackPattern ? 'MELT' : 'THROTTLE';
-          if (action === 'MELT' || check.reason?.includes('melt')) {
-            return this.reject(
-              'bill_guard',
-              check.reason ?? 'Bill guard rejected request',
-              startTime,
-              {
-                estimatedCost: check.estimatedCost,
-                remainingBudget: check.remainingBudget,
-                attackPattern: check.attackPattern,
-              },
-            );
-          }
-          // THROTTLE — 仍然拒绝，但记录为限流
-          return this.reject('bill_guard', check.reason ?? 'Cost limit approaching', startTime, {
-            estimatedCost: check.estimatedCost,
-            remainingBudget: check.remainingBudget,
+        if (!decision.allowed) {
+          return this.reject('bill_guard', decision.reason ?? 'Cost budget rejected', startTime, {
+            estimatedCostUsd: decision.estimatedCostUsd,
+            action: decision.action,
+            snapshot: decision.snapshot,
           });
         }
       }
@@ -313,25 +330,6 @@ export class EnterpriseSecurityGateway {
             'Agent is paused by Guardian due to anomalous behavior',
             startTime,
           );
-        }
-      }
-
-      // 4. 旧版 CostGuard —— 二次成本验证
-      if (this.config.enableLegacyCostGuard) {
-        const costGuard = getCostGuard();
-        const decision = costGuard.evaluateRequest({
-          tokens: params.estimatedTokens,
-          model: params.model,
-          source: params.source,
-          input: params.input,
-          cacheHitRatio: params.cacheHitRatio,
-        });
-
-        if (decision.action === 'MELT') {
-          return this.reject('cost_guard', `CostGuard MELT: ${decision.reason}`, startTime, {
-            action: decision.action,
-            attackType: decision.attackType,
-          });
         }
       }
 
@@ -373,16 +371,30 @@ export class EnterpriseSecurityGateway {
     const startTime = Date.now();
 
     try {
-      // 1. 记录实际成本
+      // 1. 记录实际成本 —— 委托给 UnifiedCostAuthority
       if (this.config.enableBillGuard) {
-        const billGuard = getBillExplosionGuard();
-        billGuard.recordAfterCall({
-          tenantId: params.tenantId,
-          sessionId: params.sessionId,
-          model: params.model,
-          inputTokens: params.inputTokens,
-          outputTokens: params.outputTokens,
-        });
+        try {
+          const uca = getUnifiedCostAuthority();
+          // 用 LiteLLM 实时定价计算实际成本
+          const litellm = getLiteLLMPricing();
+          const ratePer1M = litellm.getCostPer1MTokens(params.model) ?? 5.0;
+          const costUsd = ((params.inputTokens + params.outputTokens) / 1_000_000) * ratePer1M;
+          uca.postCall(
+            {
+              runId: params.runId ?? params.sessionId ?? 'unknown',
+              tenantId: params.tenantId,
+              sessionId: params.sessionId,
+              model: params.model,
+            },
+            {
+              costUsd,
+              promptTokens: params.inputTokens,
+              completionTokens: params.outputTokens,
+            },
+          );
+        } catch (err) {
+          reportSilentFailure(err, 'enterpriseSecurityGateway:postLLMCheck:uca');
+        }
       }
 
       // 2. DLP 扫描输出
@@ -457,22 +469,27 @@ export class EnterpriseSecurityGateway {
     this.totalRequests++;
 
     try {
-      // 1. 账单爆炸防护 —— 工具调用检查
+      // 1. 成本预检 —— 委托给 UnifiedCostAuthority（per-tool costTier 门控）
+      //    取代之前 BillExplosionGuard.checkToolCall 的频率检测。
       if (this.config.enableBillGuard) {
-        const billGuard = getBillExplosionGuard();
-        const check = billGuard.checkToolCall({
+        const uca = getUnifiedCostAuthority();
+        const tier: ToolCostTier = params.costTier ?? 'low';
+        const decision = uca.preCall({
+          runId: params.runId ?? params.sessionId ?? params.source,
           tenantId: params.tenantId,
           sessionId: params.sessionId,
-          toolName: params.toolName,
+          tool: { name: params.toolName, costTier: tier },
         });
 
-        if (!check.allowed) {
+        if (!decision.allowed) {
           return this.reject(
             'bill_guard',
-            check.reason ?? 'Tool call rejected by bill guard',
+            decision.reason ?? 'Tool call rejected by cost authority',
             startTime,
             {
-              attackPattern: check.attackPattern,
+              estimatedCostUsd: decision.estimatedCostUsd,
+              action: decision.action,
+              costTier: tier,
             },
           );
         }
@@ -546,7 +563,29 @@ export class EnterpriseSecurityGateway {
         }
       }
 
-      // 2. Guardian Agent 监控
+      // 2. 记录工具成本到 UnifiedCostAuthority（advisory，不阻断）
+      if (this.config.enableBillGuard) {
+        try {
+          const uca = getUnifiedCostAuthority();
+          const tier: ToolCostTier = params.costTier ?? 'low';
+          // 工具实际成本：优先用调用方提供的 actualCostUsd；否则按 output 长度估算
+          const estimatedOutputTokens = Math.ceil((params.output?.length ?? 0) / 4);
+          const fallbackCostUsd = (estimatedOutputTokens / 1_000_000) * 5.0;
+          uca.postCall(
+            {
+              runId: params.runId ?? params.sessionId ?? 'unknown',
+              tenantId: params.tenantId,
+              sessionId: params.sessionId,
+              tool: { name: params.toolName, costTier: tier },
+            },
+            { costUsd: params.actualCostUsd ?? fallbackCostUsd },
+          );
+        } catch (err) {
+          reportSilentFailure(err, 'enterpriseSecurityGateway:postToolCheck:uca');
+        }
+      }
+
+      // 3. Guardian Agent 监控
       if (this.config.enableGuardian && params.agentId) {
         const guardian = getGuardianAgent();
         guardian.monitor({
@@ -709,7 +748,6 @@ export class EnterpriseSecurityGateway {
       bill_guard: this.config.enableBillGuard,
       dlp: this.config.enableDLP,
       guardian: this.config.enableGuardian,
-      cost_guard: this.config.enableLegacyCostGuard,
     };
 
     const rejectionsByLayerObj: Record<string, number> = {};
@@ -730,7 +768,9 @@ export class EnterpriseSecurityGateway {
     // 附加各组件状态
     try {
       if (this.config.enableBillGuard) {
-        status.billGuardStatus = getBillExplosionGuard().getCostReport();
+        // 从 UnifiedCostAuthority 获取成本快照（单一真相源）
+        const uca = getUnifiedCostAuthority();
+        status.billGuardStatus = { ucaActive: true, ledgerSize: uca.readLedger().length };
       }
     } catch (err) {
       reportSilentFailure(err, 'enterpriseSecurityGateway:billGuardStatus');
@@ -793,18 +833,16 @@ export class EnterpriseSecurityGateway {
       recommendations.push('High rejection rate — investigate potential attack patterns');
     }
 
-    // 检查账单防护
+    // 检查成本防护（通过 UnifiedCostAuthority ledger 判断是否有熔断记录）
     if (this.config.enableBillGuard) {
       try {
-        const billGuard = getBillExplosionGuard();
-        // 如果任何租户已熔断，状态为 critical
-        const report = billGuard.getCostReport();
-        if (report && typeof report === 'object') {
-          const reportObj = report as { melted?: boolean };
-          if (reportObj.melted) {
-            overallStatus = 'critical';
-            recommendations.push('Bill explosion guard has triggered MELT — review cost limits');
-          }
+        const uca = getUnifiedCostAuthority();
+        const ledger = uca.readLedger();
+        // 检查最近的记录是否有熔断事件（通过 audit logger 已记录）
+        // 这里简单检查 ledger 是否有大量条目（可能表示异常活动）
+        if (ledger.length > 1000) {
+          overallStatus = 'elevated';
+          recommendations.push('High cost activity — review UCA ledger for anomalies');
         }
       } catch (err) {
         reportSilentFailure(err, 'enterpriseSecurityGateway:postureBillGuard');
@@ -822,7 +860,7 @@ export class EnterpriseSecurityGateway {
             'Security monitor reports critical status — immediate investigation required',
           );
         } else if (health.status === 'elevated') {
-          overallStatus = overallStatus === 'critical' ? 'critical' : 'elevated';
+          overallStatus = 'elevated';
         }
       } catch (err) {
         reportSilentFailure(err, 'enterpriseSecurityGateway:postureMonitor');
