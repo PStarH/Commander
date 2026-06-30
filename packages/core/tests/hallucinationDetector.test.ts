@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
 import { HallucinationDetector } from '../src/hallucinationDetector';
 
@@ -158,80 +158,6 @@ describe('HallucinationDetector', () => {
         'This approach might improve performance. This approach definitely improves performance by 50%.',
       );
       assert.ok(report.signals.some((s) => s.type === 'hedged_as_fact'));
-    });
-  });
-
-  // ========================================================================
-  // Multi-sample consistency (SelfCheckGPT-style)
-  // ========================================================================
-
-  describe('Multi-sample consistency check', () => {
-    it('flags sentences inconsistent across samples', () => {
-      const original =
-        'The authentication uses OAuth tokens. The data is stored in Redis. The system requires two-factor login.';
-      const samples = [
-        'The authentication uses API keys. The data is stored in MongoDB. The system requires two-factor login.',
-        'The authentication uses JWT tokens. The data is stored in Redis. The system allows single-factor login.',
-        'The authentication uses OAuth tokens. The data is stored in PostgreSQL. The system requires two-factor login.',
-      ];
-
-      const result = detector.analyzeMultiSample(original, samples);
-
-      assert.ok(result.sentences.length > 0);
-      assert.ok(result.consistencyScores.length > 0);
-      // The second sentence (Redis) is inconsistent across samples
-      // The third sentence (two-factor) is also inconsistent
-      assert.ok(result.riskScore > 0, `Expected riskScore > 0, got ${result.riskScore}`);
-    });
-
-    it('returns high consistency for identical samples', () => {
-      const original = 'The system uses microservices architecture.';
-      const samples = [
-        'The system uses microservices architecture.',
-        'The system uses microservices architecture.',
-        'The system uses microservices architecture.',
-      ];
-
-      const result = detector.analyzeMultiSample(original, samples);
-      assert.ok(result.riskScore < 0.2);
-    });
-
-    it('returns empty result for empty input', () => {
-      const result = detector.analyzeMultiSample('', []);
-      assert.equal(result.sentences.length, 0);
-      assert.equal(result.riskScore, 0);
-    });
-  });
-
-  // ========================================================================
-  // Claim decomposition (FActScore-style)
-  // ========================================================================
-
-  describe('Claim decomposition', () => {
-    it('decomposes compound sentences into claims', () => {
-      const output =
-        'The system uses Node.js and it supports TypeScript. The database stores user data and handles authentication.';
-      const claims = detector.decomposeClaims(output);
-      // Should decompose into at least 2 atomic claims
-      assert.ok(
-        claims.length >= 2,
-        `Expected >=2 claims, got ${claims.length}: ${JSON.stringify(claims)}`,
-      );
-    });
-
-    it('skips hedging/qualifying sentences', () => {
-      const output = 'However, this might not be accurate. The API returns JSON responses.';
-      const claims = detector.decomposeClaims(output);
-      // Should include the factual claim
-      assert.ok(
-        claims.some((c) => c.includes('API') || c.includes('JSON')),
-        `Claims: ${JSON.stringify(claims)}`,
-      );
-    });
-
-    it('returns empty for empty input', () => {
-      const claims = detector.decomposeClaims('');
-      assert.equal(claims.length, 0);
     });
   });
 

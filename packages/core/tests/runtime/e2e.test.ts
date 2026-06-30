@@ -12,7 +12,7 @@ import { MetaLearner, getMetaLearner, resetMetaLearner } from '../../src/selfEvo
 import {
   HTMLReportRenderer,
   createWarRoomHTMLReport,
-} from '../../src/reporting/htmlReportRenderer';
+} from '../../src/plugins/builtin/reporting/htmlReportRenderer';
 import type { AgentExecutionContext, Tool, ExecutionExperience } from '../../src/runtime/types';
 
 describe('Runtime E2E: Full Pipeline', () => {

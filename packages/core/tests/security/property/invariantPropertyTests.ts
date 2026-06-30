@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
-import { combineTaint } from '../../../src/security/taintTracker';
+import { combineTaint, canFlow } from '../../../src/security/taintTracker';
 import { preCheckSandboxEscape } from '../../../src/security/sandboxEscapeDetector';
 import type { SandboxProfile } from '../../../src/sandbox/types';
 import { MemorySystem } from '../../../src/memory/memorySystem';
@@ -105,9 +105,18 @@ describe('Security invariant property tests', () => {
     ), { numRuns: NUM_RUNS });
   });
 
-  // ── FLOW-001 (skipped — unskipped in Task 13 after G2 plugin lands) ──
+  // ── FLOW-001 (live — exercises canFlow() from taintTracker.ts, G2) ──
 
-  it.skip('FLOW-001: untrusted data cannot flow to system_prompt', () => {
-    // TODO Task 13: unskip after taintTrackingPlugin lands
+  it('FLOW-001: untrusted data cannot flow to system_prompt', () => {
+    // Exercises the existing canFlow() from taintTracker.ts — this property
+    // holds regardless of whether the taint plugin is enabled.
+    fc.assert(fc.property(
+      fc.constantFrom('trusted', 'untrusted', 'external'),
+      (taint) => {
+        const result = canFlow(taint, 'system_prompt');
+        if (taint === 'trusted') return result.allowed === true;
+        return result.allowed === false;
+      },
+    ), { numRuns: NUM_RUNS });
   });
 });

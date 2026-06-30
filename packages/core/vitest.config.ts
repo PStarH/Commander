@@ -44,6 +44,7 @@ export default defineConfig({
       'tests/runtime/cycleDetector.test.ts',
       'tests/runtime/dagConverter.test.ts',
       'tests/runtime/deadLetterQueue.test.ts',
+      'tests/runtime/determinismCapture.test.ts',
       'tests/runtime/dlqRetryWorker.test.ts',
       'tests/runtime/healthCheck.test.ts',
       'tests/runtime/mcpRemoteRuntime.test.ts',
@@ -166,6 +167,11 @@ export default defineConfig({
       'tests/storage/persistentStore.test.ts',
 
       // --- security ---
+      // EnterpriseSecurityGateway + BillExplosionGuard + DLP integration.
+      // HallucinationDetector signal coverage (overconfidence, entailment,
+      // self-contradiction, hedging-aware, temporal, edge cases).
+      'tests/enterprise-security.test.ts',
+      'tests/hallucinationDetector.test.ts',
       'tests/security/guardianAgent.test.ts',
       'tests/security/guardianDangerousToolCall.test.ts',
       'tests/security/capabilityToken.test.ts',
@@ -174,6 +180,9 @@ export default defineConfig({
       'tests/security/federatedIdentity.test.ts',
       'tests/security/outputSanitizer.test.ts',
       'tests/security/costGuard.test.ts',
+      // UnifiedCostAuthority (UCA) — single source of truth for cost control.
+      // Replaces the legacy BillExplosionGuard + CostGuard + TokenSentinel overlap.
+      'tests/security/unifiedCostAuthority.test.ts',
       'tests/security/agentSoc.test.ts',
       'tests/security/euAiActCompliance.test.ts',
       'tests/security/agentStandbyManager.test.ts',
@@ -201,6 +210,8 @@ export default defineConfig({
       'tests/security/security-hardening.test.ts',
       'tests/security/property/invariantPropertyTests.ts',
       'tests/security/a2aMtls.test.ts',
+      'tests/security/memoryIsolation.test.ts',
+      'tests/security/taintTrackingPlugin.test.ts',
       // --- harness ---
       'tests/harness/tier1AgentLoop.test.ts',
       'tests/harness/tier1Harness.test.ts',
@@ -256,6 +267,8 @@ export default defineConfig({
       // 'tests/benchmark/advancedPerformanceBenchmark.test.ts', // skipped: environment-dependent latency assertion
       // 'tests/benchmark/realWorldBenchmark.test.ts', // skipped: requires external StepFun API and times out in CI
       // 'tests/benchmark/multiAgentBenchmark.metrics.test.ts', // TODO: depends on missing src/benchmark/multiAgentBenchmark module
+      // --- orchestration patterns (Concurrent/Graph/MoA/Router/CrossPollination/AutoLoop/DynamicReplanner) ---
+      'tests/orchestration/orchestrationPatterns.test.ts',
     ],
     environment: 'node',
     coverage: {

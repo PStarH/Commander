@@ -67,29 +67,29 @@ describe('MetricsCollector', () => {
       mc.recordHistogram('latency_ms', 'Latency', 30, buckets);
       // 30 falls into bucket 50 (le=50), not 10 (le=10)
       const result = mc.exportOpenMetrics();
-      assert.ok(result.includes('latency_ms_bucket{le="10"} 0'));
-      assert.ok(result.includes('latency_ms_bucket{le="50"} 1'));
-      assert.ok(result.includes('latency_ms_bucket{le="100"} 1'));
-      assert.ok(result.includes('latency_ms_bucket{le="+Inf"} 1'));
+      assert.ok(result.includes('commander_latency_ms_bucket{le="10"} 0'));
+      assert.ok(result.includes('commander_latency_ms_bucket{le="50"} 1'));
+      assert.ok(result.includes('commander_latency_ms_bucket{le="100"} 1'));
+      assert.ok(result.includes('commander_latency_ms_bucket{le="+Inf"} 1'));
     });
 
     it('records values in +Inf bucket when above max bucket', () => {
       mc.recordHistogram('latency_ms', 'Latency', 200, buckets);
       const result = mc.exportOpenMetrics();
-      assert.ok(result.includes('latency_ms_bucket{le="+Inf"} 1'));
+      assert.ok(result.includes('commander_latency_ms_bucket{le="+Inf"} 1'));
     });
 
     it('accumulates sum and count', () => {
       mc.recordHistogram('latency_ms', 'Latency', 10, buckets);
       mc.recordHistogram('latency_ms', 'Latency', 20, buckets);
       const result = mc.exportOpenMetrics();
-      assert.ok(result.includes('latency_ms_sum 30'));
-      assert.ok(result.includes('latency_ms_count 2'));
+      assert.ok(result.includes('commander_latency_ms_sum 30'));
+      assert.ok(result.includes('commander_latency_ms_count 2'));
     });
 
     it('handles single value', () => {
       mc.recordHistogram('latency_ms', 'Latency', 5, buckets);
-      assert.ok(mc.exportOpenMetrics().includes('latency_ms_bucket{le="10"} 1'));
+      assert.ok(mc.exportOpenMetrics().includes('commander_latency_ms_bucket{le="10"} 1'));
     });
   });
 
@@ -122,7 +122,7 @@ describe('MetricsCollector', () => {
       mc.recordToolCall('search', 10);
       mc.recordToolCall('search', 200);
       const result = mc.exportOpenMetrics();
-      assert.ok(result.includes('tool_duration_ms_count{tool="search"} 2'));
+      assert.ok(result.includes('commander_tool_duration_ms_count{tool="search"} 2'));
     });
   });
 
@@ -187,16 +187,16 @@ describe('MetricsCollector', () => {
 
       const output = mc.exportOpenMetrics();
       assert.ok(output.startsWith('# HELP commander_metrics'));
-      assert.ok(output.includes('# TYPE requests_total counter'));
-      assert.ok(output.includes('# TYPE uptime_seconds gauge'));
-      assert.ok(output.includes('# TYPE duration_ms histogram'));
+      assert.ok(output.includes('# TYPE commander_requests_total counter'));
+      assert.ok(output.includes('# TYPE commander_uptime_seconds gauge'));
+      assert.ok(output.includes('# TYPE commander_duration_ms histogram'));
       assert.ok(output.endsWith('# EOF\n'));
     });
 
     it('includes label values with quoting', () => {
       mc.incrementCounter('ops_total', 'Ops', 1, [{ name: 'kind', value: 'read' }]);
       const output = mc.exportOpenMetrics();
-      assert.ok(output.includes('ops_total{kind="read"} 1'));
+      assert.ok(output.includes('commander_ops_total{kind="read"} 1'));
     });
   });
 
