@@ -1,6 +1,16 @@
 # =============================================================================
 # Commander — Docker Compose
 # One-command deployment: docker compose up
+#
+# Optional add-on stacks (started only when their profile is requested):
+#   docker compose --profile distributed up      # Redis for distributed EventBus
+#   docker compose --profile observability up    # Prometheus + Grafana
+#   docker compose --profile tracing up          # Jaeger (OTLP traces)
+#   docker compose --profile distributed --profile observability up
+# =============================================================================
+# Local-first design: the default `docker compose up` runs ONLY api + web with
+# in-memory EventBus. Distributed/observability services are opt-in so single-box
+# deployments stay lightweight (no Redis/Prometheus overhead unless requested).
 # =============================================================================
 
 services:
@@ -22,6 +32,15 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      # Distributed EventBus — defaults to in-memory (local-first). Set to
+      # `redis` + provide COMMANDER_EVENT_BUS_REDIS_URL to enable cross-node
+      # fan-out. When the `distributed` profile is active, the `redis` service
+      # below provides the URL automatically.
+      - COMMANDER_EVENT_BUS_BACKEND=${COMMANDER_EVENT_BUS_BACKEND:-memory}
+      - COMMANDER_EVENT_BUS_REDIS_URL=${COMMANDER_EVENT_BUS_REDIS_URL:-redis://redis:6379}
+      # OTLP exporter — points at the `otel-collector`/`jaeger` service when the
+      # tracing profile is active. No-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset.
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes:
       - commander_state:/app/.commander_state
       - commander_traces:/app/.commander_traces
@@ -47,8 +66,110 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # ── Redis — distributed EventBus backend (opt-in) ──────────────────────
+  # Started only with: docker compose --profile distributed up
+  # Enables cross-node pub/sub for DistributedEventBus (BackendType='redis').
+  # Memory-only single-box deployments do not need this service.
+  redis:
+    image: redis:7-alpine
+    container_name: commander-redis
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    command: ['redis-server', '--appendonly', 'yes', '--maxmemory', '256mb', '--maxmemory-policy', 'allkeys-lru']
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    profiles:
+      - distributed
+
+  # ── Prometheus — metrics scraping (opt-in) ─────────────────────────────
+  # Started only with: docker compose --profile observability up
+  # Scrapes the api /metrics endpoint. Uses prometheus.compose.yml which
+  # targets `api:4000` (service name) instead of host.docker.internal.
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: commander-prometheus
+    ports:
+      - '9090:9090'
+    volumes:
+      - ./deploy/observability/prometheus/prometheus.compose.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    depends_on:
+      - api
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:9090/-/healthy']
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    profiles:
+      - observability
+
+  # ── Grafana — pre-configured dashboards (opt-in) ───────────────────────────
+  # Started only with: docker compose --profile observability up
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: commander-grafana
+    ports:
+      - '3001:3000'
+    volumes:
+      - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/developer-overview.json
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:3000/api/health || exit 1']
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    profiles:
+      - observability
+
+  # ── Jaeger — OTLP trace receiver (opt-in) ──────────────────────────────────
+  # Started only with: docker compose --profile tracing up
+  # Point Commander at it via OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+  jaeger:
+    image: jaegertracing/all-in-one:1.55
+    container_name: commander-jaeger
+    ports:
+      - '16686:16686' # UI
+      - '4318:4318' # OTLP HTTP
+      - '4317:4317' # OTLP gRPC
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:14269/']
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    profiles:
+      - tracing
+
 volumes:
   commander_state:
   commander_traces:
   commander_memory:
   commander_results:
+  redis-data:
+  prometheus-data:
+  grafana-data:
