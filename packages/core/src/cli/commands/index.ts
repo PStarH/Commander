@@ -14,6 +14,13 @@ export { cmdCompletion } from './completion';
 export { cmdFeedback } from './feedback';
 export { cmdSaga } from './saga';
 
+// Infrastructure commands (background tasks, notifications, scheduler, webhooks)
+export { cmdJobs, cmdNotify, cmdSchedule, cmdWebhook } from './infra';
+// Security batteries (red-team, compliance audit, adversarial tests)
+export { cmdSecurity } from './security';
+// Workflow scheduler (create/run/schedule workflows)
+export { cmdWorkflow } from './workflow';
+
 // Small features
 export {
   cmdAsk,

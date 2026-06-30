@@ -10,6 +10,7 @@
 
 import type { LLMMessage } from './types';
 import { CheckpointStore, getCheckpointStore, type CheckpointSnapshot } from './checkpointStore';
+import { getMetricsCollector } from './metricsCollector';
 
 // ============================================================================
 // Types
@@ -109,6 +110,13 @@ export class CheckpointManager {
 
     while (this.checkpoints.length > this.maxCheckpoints) {
       this.checkpoints.shift();
+    }
+
+    // Record checkpoint_total counter (success outcome)
+    try {
+      getMetricsCollector().recordCheckpoint('success', this.runId);
+    } catch {
+      /* metrics must never break checkpointing */
     }
 
     return checkpoint;

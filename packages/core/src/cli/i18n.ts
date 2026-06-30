@@ -1,9 +1,15 @@
 /**
  * Commander CLI i18n — Lightweight internationalization.
  *
- * WARNING: All translations are hardcoded in this 2,700+ line TypeScript file.
- * Translators cannot edit without TypeScript tooling. The file must be recompiled
- * for any translation change. No lazy loading of locale files.
+ * Built-in translations are defined in this TypeScript file (the baseline), but
+ * translators can override or add keys WITHOUT TypeScript tooling by placing a
+ * flat JSON file at one of:
+ *   ./.commander/locales/<locale>.json          (project-local)
+ *   ~/.commander/locales/<locale>.json          (user-global)
+ *   $COMMANDER_LOCALES_DIR/<locale>.json        (explicit override)
+ * External overrides are merged on top of the built-in table at module load
+ * (and on demand via `reloadLocaleOverrides()`), so partial translations are
+ * safe — missing keys fall through to the built-in baseline.
  *
  * Supports en (English) and zh-CN (Simplified Chinese).
  * Detects locale from LANG, LC_ALL, or COMMANDER_LANG env vars.
@@ -2726,13 +2732,93 @@ const translations: Record<Locale, Record<string, string>> = {
 
 let currentLocale: Locale = detectLocale();
 
+// ── External locale overrides ──────────────────────────────────────────────
+// Translators can override or add keys without touching this TS file by
+// placing a JSON file at one of:
+//   ./.commander/locales/<locale>.json          (project-local)
+//   ~/.commander/locales/<locale>.json          (user-global)
+//   $COMMANDER_LOCALES_DIR/<locale>.json        (explicit override)
+// The JSON is a flat { "key": "value" } map merged on top of the built-in
+// `translations` table. Missing keys fall through to the built-in baseline,
+// so partial overrides are safe. Load is synchronous (CLI startup) and
+// failure-tolerant: a corrupt file is ignored with a warning.
+const localeOverrides: Record<Locale, Record<string, string>> = {
+  en: {},
+  'zh-CN': {},
+};
+
+function resolveLocaleDir(candidates: string[]): string | null {
+  const fs = require('node:fs') as typeof import('node:fs');
+  const path = require('node:path') as typeof import('node:path');
+  for (const dir of candidates) {
+    if (!dir) continue;
+    try {
+      if (fs.existsSync(dir)) return dir;
+    } catch {
+      /* ignore unreadable dirs */
+    }
+  }
+  return null;
+}
+
+function loadLocaleOverride(locale: Locale): void {
+  const fs = require('node:fs') as typeof import('node:fs');
+  const path = require('node:path') as typeof import('node:path');
+  const os = require('node:os') as typeof import('node:os');
+
+  const dir = resolveLocaleDir([
+    process.env.COMMANDER_LOCALES_DIR ?? '',
+    path.join(process.cwd(), '.commander', 'locales'),
+    path.join(os.homedir(), '.commander', 'locales'),
+  ]);
+  if (!dir) return;
+
+  const file = path.join(dir, `${locale}.json`);
+  try {
+    if (!fs.existsSync(file)) return;
+    const raw = fs.readFileSync(file, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      const merged: Record<string, string> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof v === 'string') merged[k] = v;
+      }
+      localeOverrides[locale] = merged;
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[commander] Ignoring invalid locale file ${file}: ${msg}\n`);
+  }
+}
+
+/** Reload locale overrides from disk (e.g. after a translator edits a file). */
+export function reloadLocaleOverrides(): void {
+  loadLocaleOverride('en');
+  loadLocaleOverride('zh-CN');
+}
+
+// Load overrides once at module init for the active locale (and en so
+// fallback overrides also apply). This is cheap and runs only at startup.
+loadLocaleOverride('en');
+loadLocaleOverride('zh-CN');
+
 /**
  * Translate a key to the current locale.
  * Supports simple interpolation: t('key', { name: 'value' }) replaces {name} with 'value'.
+ *
+ * Lookup order: external override (current locale) → built-in (current locale)
+ * → built-in (en) → external override (en) → key itself.
  */
 export function t(key: string, params?: Record<string, string | number>): string {
+  const overrides = localeOverrides[currentLocale];
+  const enOverrides = localeOverrides['en'];
   const dict = translations[currentLocale] || translations['en'];
-  let text = dict[key] || translations['en'][key] || key;
+  let text =
+    overrides[key] ??
+    dict[key] ??
+    translations['en'][key] ??
+    enOverrides[key] ??
+    key;
 
   if (params) {
     for (const [k, v] of Object.entries(params)) {

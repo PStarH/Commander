@@ -45,6 +45,14 @@ export interface OTelExporterConfig {
   redactOutput?: boolean;
   /** PII redaction: drop tool call arguments from spans. Default true. */
   redactToolArgs?: boolean;
+  /** Head-based sampling rate (0–1). Spans are deterministically sampled
+   *  per traceId so all spans in a trace share the same fate. Error spans
+   *  (status code 2) always bypass sampling. Default 1.0 (no sampling).
+   *  Set via OTEL_TRACES_SAMPLER_ARG env var for production. */
+  samplingRate?: number;
+  /** Max in-memory queue size before spans are dropped (oldest first).
+   *  Default 10000. Overflow count is tracked in getStats(). */
+  maxBufferSize?: number;
 }
 
 export interface OTelSpan {
@@ -130,13 +138,18 @@ function toOtlpTraceRequest(spans: OTelSpan[], serviceName: string): Record<stri
 export class OpenTelemetryExporter {
   private config: Required<OTelExporterConfig>;
   private queue: OTelSpan[] = [];
-  private static readonly MAX_QUEUE_SIZE = 10000;
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private totalExported = 0;
   private totalFailed = 0;
+  private bufferOverflowCount = 0;
+  private spansSampledOut = 0;
 
   constructor(config: OTelExporterConfig = {}) {
+    // Resolve sampling rate: explicit config > OTEL_TRACES_SAMPLER_ARG env > 1.0 (no sampling)
+    const envSamplingRate =
+      typeof process !== 'undefined' ? process.env?.OTEL_TRACES_SAMPLER_ARG : undefined;
+    const resolvedSamplingRate = config.samplingRate ?? (envSamplingRate ? parseFloat(envSamplingRate) : 1.0);
     this.config = {
       endpoint: config.endpoint || 'http://localhost:4318/v1/traces',
       serviceName: config.serviceName || 'commander',
@@ -149,6 +162,8 @@ export class OpenTelemetryExporter {
       redactInput: config.redactInput ?? true,
       redactOutput: config.redactOutput ?? true,
       redactToolArgs: config.redactToolArgs ?? true,
+      samplingRate: isNaN(resolvedSamplingRate) ? 1.0 : Math.max(0, Math.min(1, resolvedSamplingRate)),
+      maxBufferSize: config.maxBufferSize ?? 10000,
     };
     // Try env var override
     const envEndpoint =
@@ -156,6 +171,25 @@ export class OpenTelemetryExporter {
     if (envEndpoint) {
       this.config.endpoint = envEndpoint;
     }
+  }
+
+  /**
+   * Deterministic head-sampling: hashes the traceId to a 0–1 value and
+   * keeps the span if the hash falls below the sampling rate. All spans
+   * in the same trace share the same traceId so they share the same fate.
+   * Error spans (status code 2) always bypass sampling.
+   */
+  private shouldSample(span: OTelSpan): boolean {
+    if (this.config.samplingRate >= 1.0) return true;
+    // Always keep error spans — they are high-signal and low-volume
+    if (span.status?.code === 2) return true;
+    // djb2 hash → [0, 1)
+    let hash = 5381;
+    for (let i = 0; i < span.traceId.length; i++) {
+      hash = ((hash << 5) + hash + span.traceId.charCodeAt(i)) | 0;
+    }
+    const normalized = (hash >>> 0) / 0x100000000;
+    return normalized < this.config.samplingRate;
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────
@@ -201,14 +235,22 @@ export class OpenTelemetryExporter {
    * are enabled (default: all true).
    */
   exportSpan(span: OTelSpan): void {
+    // Head-based sampling: drop low-signal spans deterministically per traceId.
+    // Error spans always bypass sampling (see shouldSample).
+    if (!this.shouldSample(span)) {
+      this.spansSampledOut++;
+      return;
+    }
     if (!this.running) {
       getGlobalLogger().warn('OTelExporter', 'Exporter not started — queuing span');
     }
     // P0: Apply PII redaction before the span enters the queue so no
     // raw prompt/completion/tool-args ever touch the network or disk.
     const redactedSpan = this.redactSpan(span);
-    if (this.queue.length >= OpenTelemetryExporter.MAX_QUEUE_SIZE) {
+    if (this.queue.length >= this.config.maxBufferSize) {
+      // Buffer overflow: drop oldest and track for observability
       this.queue.shift();
+      this.bufferOverflowCount++;
     }
     this.queue.push(redactedSpan);
     if (this.queue.length >= this.config.batchSize) {
@@ -261,11 +303,23 @@ export class OpenTelemetryExporter {
     return redacted ? { ...span, attributes: attrs } : span;
   }
 
-  getStats(): { queued: number; totalExported: number; totalFailed: number } {
+  getStats(): {
+    queued: number;
+    totalExported: number;
+    totalFailed: number;
+    bufferOverflowCount: number;
+    spansSampledOut: number;
+    samplingRate: number;
+    maxBufferSize: number;
+  } {
     return {
       queued: this.queue.length,
       totalExported: this.totalExported,
       totalFailed: this.totalFailed,
+      bufferOverflowCount: this.bufferOverflowCount,
+      spansSampledOut: this.spansSampledOut,
+      samplingRate: this.config.samplingRate,
+      maxBufferSize: this.config.maxBufferSize,
     };
   }
 
@@ -359,7 +413,7 @@ export class OpenTelemetryExporter {
           const data = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf-8'));
           if (Array.isArray(data)) {
             for (const span of data) {
-              if (this.queue.length < OpenTelemetryExporter.MAX_QUEUE_SIZE) {
+              if (this.queue.length < this.config.maxBufferSize) {
                 this.queue.push(span);
               }
             }

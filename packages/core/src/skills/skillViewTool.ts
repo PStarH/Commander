@@ -16,6 +16,7 @@ const DEFINITION: ToolDefinition = {
     required: ['name'],
   },
   category: 'knowledge',
+  costTier: 'free', // load skill instructions — < 200 output tokens of overhead, no LLM cost
 };
 
 export class SkillViewTool implements Tool {

@@ -172,7 +172,7 @@ export class HealthCollector {
       };
     } catch (err) {
       reportSilentFailure(err, 'healthCheck:174');
-      return { status: 'healthy', message: 'Circuit breaker check failed — assuming healthy' };
+      return { status: 'degraded', message: 'Circuit breaker check failed — status unknown' };
     }
   }
 
@@ -197,7 +197,7 @@ export class HealthCollector {
       };
     } catch (err) {
       reportSilentFailure(err, 'healthCheck:199');
-      return { status: 'healthy', message: 'DLQ check failed — assuming healthy' };
+      return { status: 'degraded', message: 'DLQ check failed — status unknown' };
     }
   }
 
@@ -229,7 +229,7 @@ export class HealthCollector {
       };
     } catch (err) {
       reportSilentFailure(err, 'healthCheck:231');
-      return { status: 'healthy', message: 'Checkpoint directory not accessible' };
+      return { status: 'degraded', message: 'Checkpoint directory not accessible' };
     }
   }
 
@@ -254,7 +254,7 @@ export class HealthCollector {
       };
     } catch (err) {
       reportSilentFailure(err, 'healthCheck:256');
-      return { status: 'healthy', message: 'Compensation check failed — assuming healthy' };
+      return { status: 'degraded', message: 'Compensation check failed — status unknown' };
     }
   }
 
@@ -272,7 +272,7 @@ export class HealthCollector {
       };
     } catch (err) {
       reportSilentFailure(err, 'healthCheck:274');
-      return { status: 'healthy', message: 'Event bus check failed — assuming healthy' };
+      return { status: 'degraded', message: 'Event bus check failed — status unknown' };
     }
   }
 
@@ -304,7 +304,7 @@ export class HealthCollector {
       };
     } catch (err) {
       reportSilentFailure(err, 'healthCheck:306');
-      return { status: 'healthy', message: 'Provider check failed — assuming healthy' };
+      return { status: 'degraded', message: 'Provider check failed — status unknown' };
     }
   }
 
@@ -338,7 +338,7 @@ export class HealthCollector {
       };
     } catch (err) {
       reportSilentFailure(err, 'healthCheck:340');
-      return { status: 'healthy', message: 'Disk space check not available' };
+      return { status: 'degraded', message: 'Disk space check not available' };
     }
   }
 }

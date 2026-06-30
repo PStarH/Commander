@@ -14,7 +14,7 @@
  * runs with its own safety checks.
  */
 
-import type { Tool, ToolDefinition } from '../runtime/types';
+import type { Tool, ToolDefinition, ToolCostTier } from '../runtime/types';
 
 export interface MetaToolStep {
   toolName: string;
@@ -32,6 +32,11 @@ export interface MetaToolSpec {
   description: string;
   /** How each step maps meta-tool args to sub-tool args */
   steps: MetaToolStep[];
+  /**
+   * Cost tier for UnifiedCostAuthority budget enforcement.
+   * Should reflect the highest-cost sub-tool in the sequence.
+   */
+  costTier?: ToolCostTier;
   /** Execution function injected at runtime */
   executor?: (toolName: string, args: Record<string, unknown>) => Promise<string>;
 }
@@ -46,6 +51,7 @@ const BUILTIN_META_SPECS: MetaToolSpec[] = [
     name: 'research_topic',
     description:
       'Search the web for a topic then fetch the top result. Single call replaces search+fetch.',
+    costTier: 'low', // web search + fetch — bounded ~1K output tokens per step
     steps: [
       { toolName: 'web', argumentMap: { query: 'query' }, constants: { action: 'search' } },
       { toolName: 'web', argumentMap: { url: 'url' }, constants: { action: 'fetch' } },
@@ -56,6 +62,7 @@ const BUILTIN_META_SPECS: MetaToolSpec[] = [
     name: 'find_and_read',
     description:
       'Search for a file by pattern then read its contents. Single call replaces search+read.',
+    costTier: 'medium', // file search + read — up to ~5K output tokens (file.read dominates)
     steps: [
       {
         toolName: 'file',
@@ -70,6 +77,7 @@ const BUILTIN_META_SPECS: MetaToolSpec[] = [
     name: 'research_and_save',
     description:
       'Search the web, fetch a page, and save to file. Three-step research workflow in one call.',
+    costTier: 'medium', // web + file.write — file.write is medium tier, web steps are low
     steps: [
       { toolName: 'web', argumentMap: { query: 'query' }, constants: { action: 'search' } },
       { toolName: 'web', argumentMap: { url: 'url' }, constants: { action: 'fetch' } },

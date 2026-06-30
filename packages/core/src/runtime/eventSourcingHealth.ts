@@ -26,6 +26,8 @@ export interface EventSourcingHealthResult {
     hashChainValid?: boolean | null;
     lastVerificationTime?: string | null;
     backlogRatio?: number;
+    /** p95 of recent WAL append durations (ms), or null if no writes recorded. */
+    walWriteLatencyP95Ms?: number | null;
   };
 }
 
@@ -34,6 +36,9 @@ const WAL_SIZE_DEGRADED_MB = 100; // 100MB → suggest compaction
 const WAL_SIZE_UNHEALTHY_MB = 500; // 500MB → must compact
 const BACKLOG_DEGRADED_RATIO = 1000; // events per snapshot
 const BACKLOG_UNHEALTHY_RATIO = 10000;
+// WAL write latency thresholds (p95 of recent appends)
+const WAL_LATENCY_DEGRADED_MS = 100; // p95 > 100ms → degraded
+const WAL_LATENCY_UNHEALTHY_MS = 500; // p95 > 500ms → unhealthy
 
 /**
  * Check the health of the EventSourcingEngine.
@@ -70,6 +75,9 @@ export async function checkEventSourcingHealth(): Promise<EventSourcingHealthRes
     // Calculate backlog ratio
     const backlogRatio = totalSnapshots > 0 ? totalEvents / totalSnapshots : totalEvents;
 
+    // p95 write latency (recent appends)
+    const walWriteLatencyP95Ms = engine.getWriteLatencyP95();
+
     // Determine status based on thresholds
     const issues: string[] = [];
 
@@ -97,6 +105,19 @@ export async function checkEventSourcingHealth(): Promise<EventSourcingHealthRes
       );
     }
 
+    // WAL write latency check (p95)
+    if (walWriteLatencyP95Ms !== null) {
+      if (walWriteLatencyP95Ms >= WAL_LATENCY_UNHEALTHY_MS) {
+        issues.push(
+          `WAL p95 write latency ${walWriteLatencyP95Ms}ms exceeds ${WAL_LATENCY_UNHEALTHY_MS}ms — write path unhealthy`,
+        );
+      } else if (walWriteLatencyP95Ms >= WAL_LATENCY_DEGRADED_MS) {
+        issues.push(
+          `WAL p95 write latency ${walWriteLatencyP95Ms}ms exceeds ${WAL_LATENCY_DEGRADED_MS}ms — write path degraded`,
+        );
+      }
+    }
+
     // Hash chain integrity — only check if we have events
     let hashChainValid: boolean | null = null;
     if (totalEvents > 0) {
@@ -114,7 +135,9 @@ export async function checkEventSourcingHealth(): Promise<EventSourcingHealthRes
     // Determine final status
     let status: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
     if (issues.length > 0) {
-      const hasUnhealthy = issues.some((i) => i.includes('required') || i.includes('FAILED'));
+      const hasUnhealthy = issues.some(
+        (i) => i.includes('required') || i.includes('FAILED') || i.includes('unhealthy'),
+      );
       status = hasUnhealthy ? 'unhealthy' : 'degraded';
     }
 
@@ -128,6 +151,7 @@ export async function checkEventSourcingHealth(): Promise<EventSourcingHealthRes
         walFileSizeMB,
         hashChainValid,
         backlogRatio: Math.round(backlogRatio),
+        walWriteLatencyP95Ms,
       },
     };
   } catch (err) {

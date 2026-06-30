@@ -76,6 +76,7 @@ Content hashes stay valid even when line numbers change.`,
       },
     ],
     category: 'filesystem',
+    costTier: 'medium', // hash-anchored file edits — up to ~5K output tokens
   };
 
   async execute(args: Record<string, unknown>): Promise<string> {
