@@ -281,16 +281,22 @@ export class CycleDetector {
     // Pattern 1: immediate word/phrase repetition (no whitespace separator)
     // Matches "TheTheThe", "I willI willI will", "step step step step"
     // Uses a backreference: \1+ means "the captured group, 2 or more times"
-    const phraseRepeat = text.match(/\b([\w\s]{2,30}?)\1{2,}/);
-    if (phraseRepeat) {
-      const repeated = phraseRepeat[1].trim();
-      // Require matchLen >= 30 to avoid false positives on brief repetitions
+    // Use matchAll to find ALL repetition matches — degenerate output often
+    // contains a short match early (e.g. "TheTheTheThe" = 12 chars) followed
+    // by a longer sustained match later (e.g. "audit command audit command
+    // audit command" = 42 chars). If we only check the first match, we miss
+    // the longer degeneration and the false-positive short match is rejected
+    // by the threshold, so no degeneration is reported at all.
+    const phraseRepeats = [...text.matchAll(/\b([\w\s]{2,30}?)\1{2,}/g)];
+    for (const m of phraseRepeats) {
+      const repeated = m[1].trim();
+      // Require matchLen >= 20 to avoid false positives on brief repetitions
       // that small models can recover from (e.g. "The" x 4 = 12 chars is a
-      // transient hiccup, not sustained degeneration). Real degeneration in
-      // small models typically produces 50+ chars of repetition.
-      const matchLen = phraseRepeat[0].length;
-      const repetitions = Math.floor(matchLen / phraseRepeat[1].length);
-      if (matchLen >= 30 && repetitions >= 3) {
+      // transient hiccup, not sustained degeneration). "The" x 7 = 21 chars
+      // is sustained degeneration the model won't recover from.
+      const matchLen = m[0].length;
+      const repetitions = Math.floor(matchLen / m[1].length);
+      if (matchLen >= 20 && repetitions >= 3) {
         return {
           detected: true,
           type: 'semantic_stagnation',
