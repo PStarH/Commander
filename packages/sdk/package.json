@@ -25,7 +25,7 @@
   "devDependencies": {
     "@commander/core": "workspace:*",
     "@types/node": "^25.9.3",
-    "typescript": "^5.0.0"
+    "typescript": "^6.0.3"
   },
   "author": "PStarH <sampan090611@gmail.com>",
   "license": "MIT",
