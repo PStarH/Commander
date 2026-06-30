@@ -1,10 +1,12 @@
 /**
- * Plugin CLI Commands — Install, list, uninstall Commander plugins.
+ * Plugin CLI Commands — Install, list, uninstall, enable, disable Commander plugins.
  *
  * Usage:
  *   commander plugin install <source>   Install a plugin (npm/git/local)
  *   commander plugin list (ls)          List installed plugins
  *   commander plugin uninstall <name>   Uninstall a plugin
+ *   commander plugin enable <name>      Persistently enable a plugin
+ *   commander plugin disable <name>     Persistently disable a plugin
  *   commander plugin info <name>        Show plugin details
  */
 import { section, kv, $, startSpinner } from '../util';
@@ -67,9 +69,13 @@ export async function cmdPlugin(subargs: string[]) {
 
     section(`PLUGINS (${loaded.length})`);
     for (const pkg of loaded) {
-      const status = `${$.green}●${$.reset}`;
+      const enabled = loader.isEnabled(pkg.manifest.name);
+      const status = enabled ? `${$.green}●${$.reset}` : `${$.red}○${$.reset}`;
+      const stateLabel = enabled
+        ? `${$.green}enabled${$.reset}`
+        : `${$.red}disabled${$.reset}`;
       console.log(
-        `  ${status} ${$.bold}${pkg.manifest.name}${$.reset} ${$.dim}v${pkg.manifest.version}${$.reset}`,
+        `  ${status} ${$.bold}${pkg.manifest.name}${$.reset} ${$.dim}v${pkg.manifest.version}${$.reset} [${stateLabel}]`,
       );
       console.log(`    ${$.dim}${pkg.directory}${$.reset}`);
     }
@@ -100,6 +106,46 @@ export async function cmdPlugin(subargs: string[]) {
     return;
   }
 
+  // ── plugin enable <name> ──
+  if (sub === 'enable') {
+    const name = subargs[1];
+    if (!name) {
+      console.error(`  ${$.red}Usage:${$.reset} commander plugin enable <name>\n`);
+      return;
+    }
+
+    const { getPluginLoader } = await import('../../pluginLoader');
+    const loader = getPluginLoader();
+    loader.enable(name);
+    console.log(`  ${$.green}✓${$.reset} Plugin "${$.bold}${name}${$.reset}" ${$.green}enabled${$.reset}`);
+    console.log(`  ${$.dim}It will load on the next startup.${$.reset}\n`);
+    return;
+  }
+
+  // ── plugin disable <name> ──
+  if (sub === 'disable') {
+    const name = subargs[1];
+    if (!name) {
+      console.error(`  ${$.red}Usage:${$.reset} commander plugin disable <name>\n`);
+      return;
+    }
+
+    const { getPluginLoader } = await import('../../pluginLoader');
+    const loader = getPluginLoader();
+    loader.disable(name);
+    // If currently loaded, unload it immediately.
+    if (loader.isLoaded(name)) {
+      await loader.unloadPlugin(name);
+      console.log(
+        `  ${$.green}✓${$.reset} Plugin "${$.bold}${name}${$.reset}" ${$.red}disabled${$.reset} and unloaded`,
+      );
+    } else {
+      console.log(`  ${$.green}✓${$.reset} Plugin "${$.bold}${name}${$.reset}" ${$.red}disabled${$.reset}`);
+    }
+    console.log(`  ${$.dim}It will be skipped on the next startup.${$.reset}\n`);
+    return;
+  }
+
   // ── plugin info <name> ──
   if (sub === 'info') {
     const name = subargs[1];
@@ -122,6 +168,7 @@ export async function cmdPlugin(subargs: string[]) {
     kv('Version', loaded.manifest.version);
     kv('Description', loaded.manifest.description ?? '(none)');
     kv('Status', 'Loaded', $.green);
+    kv('Enabled', loader.isEnabled(name) ? 'yes' : 'no', loader.isEnabled(name) ? $.green : $.red);
     kv('Path', loaded.directory);
     console.log();
     return;
@@ -133,12 +180,15 @@ export async function cmdPlugin(subargs: string[]) {
     ${$.cyan}commander plugin install <source>${$.reset}   Install a plugin (npm/git/local)
     ${$.cyan}commander plugin list${$.reset}               List installed plugins
     ${$.cyan}commander plugin uninstall <name>${$.reset}   Uninstall a plugin
+    ${$.cyan}commander plugin enable <name>${$.reset}      Persistently enable a plugin
+    ${$.cyan}commander plugin disable <name>${$.reset}     Persistently disable a plugin
     ${$.cyan}commander plugin info <name>${$.reset}        Show plugin details
 
   ${$.dim}Examples:${$.reset}
     ${$.cyan}commander plugin install @commander/web-scraper${$.reset}
     ${$.cyan}commander plugin install github:user/repo${$.reset}
     ${$.cyan}commander plugin install ./my-plugin${$.reset}
+    ${$.cyan}commander plugin disable my-plugin${$.reset}
     ${$.cyan}commander plugin list${$.reset}
   `);
 }
