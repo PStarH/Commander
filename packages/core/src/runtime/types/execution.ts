@@ -313,4 +313,17 @@ export interface AgentRuntimeConfig {
      *  and re-prompt the agent after a failed verification. Default: 3. */
     verificationAttempts?: number;
   };
+  /** Content scanner configuration. Controls which security scan categories
+   *  are active on LLM outputs. All categories default to enabled. */
+  contentScanner?: {
+    enableHtmlScan?: boolean;
+    enableCssScan?: boolean;
+    enableMetadataScan?: boolean;
+    enableUnicodeScan?: boolean;
+    enablePromptInjectionScan?: boolean;
+    enableSocialEngineeringScan?: boolean;
+    enableSemanticManipulationScan?: boolean;
+    maxContentLength?: number;
+    timeout?: number;
+  };
 }

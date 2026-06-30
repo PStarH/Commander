@@ -2,7 +2,7 @@
  * ExecutionScheduler — the single ATR entry point.
  *
  * Owns: run lease, idempotency, checkpoint version, saga state machine.
- * Composes: LeaseManager + IdempotencyStore + RunLedger + CompensationBridge + StateCheckpointer.
+ * Composes: LeaseManager + IdempotencyStore + RunLedger + StateCheckpointer.
  *
  * Every state-mutating call is lease-validated. A zombie process that resumes
  * a run gets its writes rejected at the boundary, not at the side effect.
@@ -15,6 +15,10 @@
  * `beginRun / resumeRun` return a RunHandle — a snapshot of the lease
  * credentials + state at call time. Pass them back to every subsequent
  * schedule/commit/abort call. The scheduler does NOT cache them.
+ *
+ * Reversibility audit: CompensationBridge is no longer composed here — new
+ * code uses RunLedger directly (single source of truth). The bridge is
+ * retained only as a @deprecated transitional adapter for legacy callers.
  */
 
 import type { CheckpointState } from '../runtime/stateCheckpointer';
@@ -29,7 +33,6 @@ import { hashIntent } from './canonicalJson';
 import { LeaseManager } from './leaseManager';
 import { IdempotencyStore } from './idempotencyStore';
 import { RunLedger, getRunLedgerBundle, type CompensationOutcome } from './runLedger';
-import { CompensationBridge } from './compensationBridge';
 import { defaultCompensationHandlers } from './defaultCompensation';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 import { createGitSnapshot, restoreGitSnapshot, clearGitSnapshot } from './gitSnapshot';
@@ -107,7 +110,12 @@ export interface ExecutionSchedulerOptions {
   lease: LeaseManager;
   idempotency: IdempotencyStore;
   ledger: RunLedger;
-  bridge: CompensationBridge;
+  /**
+   * @deprecated CompensationBridge is no longer used by the scheduler — new
+   * code uses RunLedger directly. Retained only for backward compatibility
+   * with tests that construct ExecutionScheduler explicitly.
+   */
+  bridge?: unknown;
   checkpointer?: StateCheckpointer;
 }
 
@@ -115,14 +123,12 @@ export class ExecutionScheduler {
   private lease: LeaseManager;
   private idempotency: IdempotencyStore;
   private ledger: RunLedger;
-  private bridge: CompensationBridge;
   private checkpointer?: StateCheckpointer;
 
   constructor(opts: ExecutionSchedulerOptions) {
     this.lease = opts.lease;
     this.idempotency = opts.idempotency;
     this.ledger = opts.ledger;
-    this.bridge = opts.bridge;
     this.checkpointer = opts.checkpointer;
   }
 
@@ -400,15 +406,19 @@ export class ExecutionScheduler {
   }
 
   registerCompensation(toolName: string, handler: CompensationHandler): void {
+    // Reversibility audit: register only with RunLedger (single source of
+    // truth). The legacy CompensationBridge dual-write was removed — its
+    // internal `legacy.register()` was a redundant in-memory copy and its
+    // `bundle.ledger.registerCompensation()` was a duplicate of this call.
     this.ledger.registerCompensation(toolName, handler);
-    this.bridge.register(toolName, handler);
   }
 
   registerDefaultCompensations(): void {
-    const bridge = this.bridge;
     for (const [toolName, handler] of Object.entries(defaultCompensationHandlers)) {
-      this.ledger.registerCompensation(toolName, handler as Parameters<typeof bridge.register>[1]);
-      bridge.register(toolName, handler as Parameters<typeof bridge.register>[1]);
+      this.ledger.registerCompensation(
+        toolName,
+        handler as CompensationHandler,
+      );
     }
   }
 }
@@ -423,7 +433,6 @@ function createSchedulerSingleton() {
         lease: bundle.lease,
         idempotency: bundle.idempotency,
         ledger: bundle.ledger,
-        bridge: new CompensationBridge(),
       });
       scheduler.registerDefaultCompensations();
       return scheduler;

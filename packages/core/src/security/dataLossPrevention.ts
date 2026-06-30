@@ -62,6 +62,7 @@ import { getGlobalLogger, getGlobalMetrics } from '../logging';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getSecurityAuditLogger } from './securityAuditLogger';
+import { getSecurityProfileConfig } from './securityProfile';
 
 // ============================================================================
 // 类型定义
@@ -565,7 +566,16 @@ export class DataLossPrevention {
    * @param config - 可选的部分配置，将与默认配置合并
    */
   constructor(config?: Partial<DLPConfig>) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    // Apply security profile defaults first, then explicit config overrides.
+    // The profile controls which DLP types are enabled by default:
+    //   dev/standard → common types only (credentials, PII, network)
+    //   strict       → all 14 types (incl. industry-specific: SSN, CN ID, bank)
+    const profile = getSecurityProfileConfig();
+    this.config = {
+      ...DEFAULT_CONFIG,
+      enabledTypes: profile.dlpEnabledTypes as SensitiveDataType[],
+      ...config,
+    };
     this.effectivePatterns = this.buildEffectivePatterns();
     this.stats = {
       totalScans: 0,

@@ -178,6 +178,7 @@ export class FileResourceTool implements Tool {
         'Interact with the file system: read, write, edit, search, list, glob. Use `action` to choose the operation.',
       inputSchema: buildInputSchema(this.actions),
       category: 'filesystem',
+      costTier: 'medium', // file read/write/edit — up to ~5K output tokens
     };
   }
 
@@ -221,6 +222,7 @@ export class MemoryResourceTool implements Tool {
         'Persistent key-value memory: store, recall, list keys. Use `action` to choose the operation.',
       inputSchema: buildInputSchema(this.actions),
       category: 'memory',
+      costTier: 'free', // key-value store/recall — < 200 output tokens
     };
   }
 
@@ -256,6 +258,7 @@ export class WebResourceTool implements Tool {
         'Search the web or fetch content from URLs. Use `action` to choose the operation.',
       inputSchema: buildInputSchema(this.actions),
       category: 'web',
+      costTier: 'low', // web search/fetch — ~1K output tokens
     };
   }
 
@@ -291,6 +294,7 @@ export class BrowserResourceTool implements Tool {
         'Control a browser to search the web or fetch pages. Use `action` to choose the operation.',
       inputSchema: buildInputSchema(this.actions),
       category: 'web',
+      costTier: 'low', // browser search/fetch — ~1K output tokens
     };
   }
 
@@ -335,6 +339,7 @@ export class CodeResourceTool implements Tool {
       description: 'Search, refine, and fix code. Use `action` to choose the operation.',
       inputSchema: buildInputSchema(this.actions),
       category: 'code',
+      costTier: 'high', // code search/refine/fix — may trigger downstream LLM calls
     };
   }
 
@@ -397,6 +402,7 @@ export class CheckpointResourceTool implements Tool {
         'Save, rewind, list, and collapse conversation checkpoints. Use `action` to choose the operation.',
       inputSchema: buildInputSchema(this.actions),
       category: 'workflow',
+      costTier: 'medium', // checkpoint save/rewind/list/collapse — ~5K output tokens
     };
   }
 
@@ -458,6 +464,7 @@ export class HandoffResourceTool implements Tool {
         'Hand off tasks to another agent or check handoff status. Use `action` to choose the operation.',
       inputSchema: buildInputSchema(this.actions),
       category: 'development',
+      costTier: 'medium', // agent handoff — ~5K output tokens for context transfer
     };
   }
 
@@ -537,6 +544,7 @@ export class ExecResourceTool implements Tool {
         'Execute Python, shell, or JavaScript scripts. Use `action` to choose the execution mode.',
       inputSchema: buildInputSchema(this.actions),
       category: 'code',
+      costTier: 'critical', // shell/python execution — irreversible, up to 100K+ output tokens
     };
   }
 
@@ -597,6 +605,7 @@ export class MediaResourceTool implements Tool {
         'Analyze images, capture screenshots, and extract PDF text. Use `action` to choose the operation.',
       inputSchema: buildInputSchema(this.actions),
       category: 'multimodal',
+      costTier: 'medium', // image analyze/screenshot/pdf extract — ~5K output tokens
     };
   }
 
@@ -653,6 +662,7 @@ export class SystemResourceTool implements Tool {
         'Request human input or retrieve a tool schema on demand. Use `action` to choose the operation.',
       inputSchema: buildInputSchema(this.actions),
       category: 'control',
+      costTier: 'free', // human_input/tool_schema request — < 200 output tokens
     };
   }
 

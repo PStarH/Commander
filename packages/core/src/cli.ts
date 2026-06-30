@@ -50,6 +50,12 @@ import {
   cmdGoalJudge,
   cmdPlugin,
   cmdUp,
+  cmdJobs,
+  cmdNotify,
+  cmdSchedule,
+  cmdWebhook,
+  cmdSecurity,
+  cmdWorkflow,
 } from './cli/commands';
 import { cmdFix } from './cli/commands/convenience';
 import { cmdSandbox } from './cli/commands/sandbox';
@@ -88,6 +94,13 @@ const COMMAND_HELP: Record<string, string> = {
   goal: `  ${$.bold}commander goal <subcommand> [flags]${$.reset}\n\n  Multi-round goal-driven execution with independent judge verification.\n\n  ${$.bold}Subcommands:${$.reset}\n    judge <task>                   Judge a task against stop conditions\n    conditions [subcmd]            Manage global stop conditions\n\n  ${$.bold}Conditions subcommands:${$.reset}\n    list                           List all global stop conditions\n    set --add=<id> [...]           Add/update a stop condition\n    delete --delete=<id>           Remove a stop condition\n    clear                          Clear all stop conditions\n\n  ${$.bold}Condition flags (set):${$.reset}\n    --add=<id>                     Condition ID (e.g., "no-ts-errors")\n    --desc=<text>                  Human-readable description\n    --type=<type>                  MUST_HAVE | MUST_NOT_HAVE | MUST_MATCH | MUST_BE_ABOVE | CUSTOM\n    --pattern=<regex>              Pattern to match\n    --threshold=<N>                Numeric threshold (for MUST_BE_ABOVE)\n    --custom=<prompt>              Custom evaluation prompt (for CUSTOM)\n\n  ${$.dim}Examples:${$.reset}\n    commander goal conditions set --add=no-ts --desc="No TS errors" --type=MUST_NOT_HAVE --pattern="error TS"\n    commander goal conditions list\n    commander goal judge "Fix all TypeScript errors in src/"\n`,
   budget: `  ${$.bold}commander budget [runId]${$.reset}\n\n  View real-time token budget status across active runs.\n\n  ${$.bold}Usage:${$.reset}\n    commander budget                    List all active token budgets\n    commander budget <runId>            Detailed budget breakdown for a run\n\n  ${$.bold}Shows:${$.reset}\n    Per-run: phase (relaxed/moderate/tight/critical/exceeded), utilization bar chart\n    Per-sub-agent: allocated vs used tokens, over-budget warnings\n\n  ${$.dim}Example:${$.reset}\n    commander budget\n    commander budget ultimate_1718_42\n`,
   checkpoint: `  ${$.bold}commander checkpoint [runId] [flags]${$.reset}\n\n  View MiMo-style checkpoint documents. Written automatically at 20%, 45%, and 70%\n  token budget by an independent checkpoint-writer sub-agent (outside main agent attention).\n\n  ${$.bold}Usage:${$.reset}\n    commander checkpoint               List all checkpoint files\n    commander checkpoint <runId>       View specific checkpoint (progress + decisions)\n    commander checkpoint --prune N     Keep only the N newest checkpoints\n\n  ${$.bold}Shows:${$.reset}\n    Per-checkpoint: version, trigger%, progress (completed/pending/failed),\n    token budget bar, key decisions, errors, next action\n\n  ${$.dim}Examples:${$.reset}\n    commander checkpoint\n    commander checkpoint ultimate_1718_42\n    commander checkpoint --prune 20\n`,
+  // ── Infrastructure ──────────────────────────────────────────────────────
+  jobs: `  ${$.bold}commander jobs [jobId] [flags]${$.reset}\n\n  Manage background tasks (list, inspect, stop).\n\n  ${$.bold}Usage:${$.reset}\n    commander jobs                    List recent background jobs\n    commander jobs <jobId>            Show job details\n    commander jobs <jobId> --logs     Show last 50 log lines\n    commander jobs <jobId> --stop     Stop a running job\n`,
+  notify: `  ${$.bold}commander notify <message> [flags]${$.reset}\n\n  Send a notification via configured channels.\n\n  ${$.bold}Flags:${$.reset}\n    --slack              Send via Slack\n    --discord            Send via Discord\n    --webhook            Send via custom webhook\n    --priority=<level>   low | normal | high | urgent\n`,
+  schedule: `  ${$.bold}commander schedule <subcommand>${$.reset}\n\n  Manage the recurring task scheduler.\n\n  ${$.bold}Subcommands:${$.reset}\n    (none) | list        List scheduled tasks\n    add <name> <task>    Add a task (--cron="0 2 * * *" or --every="30m")\n    remove <id>          Remove a scheduled task\n    enable <id>          Enable a task\n    disable <id>         Disable a task\n`,
+  webhook: `  ${$.bold}commander webhook <subcommand>${$.reset}\n\n  Manage webhook rules and start the webhook receiver.\n\n  ${$.bold}Subcommands:${$.reset}\n    (none) | list                          List webhook rules\n    add <source> --events <list> --task <t>  Add a rule (github/gitlab/bitbucket/custom)\n    remove <id>                            Remove a rule\n    start [--port=9876]                    Start the webhook server\n`,
+  security: `  ${$.bold}commander security <subcommand> [args]${$.reset}\n\n  Run Commander's adversarial / red-team / compliance test batteries.\n\n  ${$.bold}Subcommands:${$.reset}\n    redteam              Red-team battery\n    compliance-audit     Compliance audit\n    adversarial-llm      Adversarial LLM test\n    hard-adversarial     Hard adversarial test\n    unknown-adversarial  Unknown-attack adversarial test\n\n  ${$.dim}Example:${$.reset}\n    commander security redteam --rounds 3\n`,
+  workflow: `  ${$.bold}commander workflow <subcommand>${$.reset}\n\n  Manage workflows and the scheduler daemon.\n\n  ${$.bold}Subcommands:${$.reset}\n    ls                       List available and scheduled workflows\n    run <id>                Execute a workflow\n    create <name>           Scaffold a new workflow (--description= --cron=)\n    schedule <id>            Schedule a workflow (--cron="..." --interval="30m")\n    unschedule <id>          Remove a schedule\n    pause <id> | resume <id>  Pause / resume a schedule\n    history [wfId]          Show execution history\n    daemon                  Start the scheduler daemon\n    stop                     Stop the scheduler daemon\n`,
 };
 
 function showCommandHelp(cmd: string): boolean {
@@ -231,6 +244,24 @@ async function main() {
     case 'saga':
       await cmdSaga(rest);
       break;
+    case 'jobs':
+      await cmdJobs(rest);
+      break;
+    case 'notify': {
+      const { positional, flags } = parseFlags(rest);
+      if (positional.length === 0) {
+        showCommandHelp('notify');
+        process.exit(1);
+      }
+      await cmdNotify(positional.join(' '), flags);
+      break;
+    }
+    case 'schedule':
+      await cmdSchedule(rest);
+      break;
+    case 'webhook':
+      await cmdWebhook(rest);
+      break;
     case 'resume': {
       const { positional, flags } = parseFlags(rest);
       await cmdResume(positional, flags);
@@ -302,6 +333,17 @@ async function main() {
       await cmdSandbox(rest);
       break;
 
+    // ── Security batteries ──
+    case 'security':
+      await cmdSecurity(rest);
+      break;
+
+    // ── Workflow scheduler ──
+    case 'workflow':
+    case 'wf':
+      await cmdWorkflow(rest);
+      break;
+
     // ── Viz (execution topology visualizer) ──
     case 'viz': {
       // Security: Use spawn with explicit argv array instead of execSync with
@@ -353,6 +395,12 @@ async function main() {
         'feedback',
         'sandbox',
         'viz',
+        'jobs',
+        'notify',
+        'schedule',
+        'webhook',
+        'security',
+        'workflow',
       ];
       const didYouMean = validCmds.filter((c) => c.startsWith(cmd.toLowerCase()));
       const hint =

@@ -2,6 +2,19 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
+// Single source of truth for provider metadata + factory. The 6 derived
+// Records below (PROVIDER_ORDER / ENV_MAP / DEFAULT_URLS / DEFAULT_MODELS /
+// DISPLAY_NAMES / API_TYPE) are all generated from this registry, so adding a
+// new provider is a ONE-STEP operation in providerRegistry.ts instead of
+// touching 8+ files across 2 packages.
+import {
+  getProviderOrder,
+  getEnvMap,
+  getDefaultUrls,
+  getDefaultModels,
+  getDisplayNames,
+  getApiTypes,
+} from '../runtime/providers/providerRegistry';
 
 export type ProviderType =
   | 'openai'
@@ -25,157 +38,38 @@ export type ProviderType =
   | 'xai'
   | 'anyscale'
   | 'deepinfra'
-  | 'agnes';
+  | 'agnes'
+  | 'stepfun'
+  | 'minimax';
 
-export const PROVIDER_ORDER: ProviderType[] = [
-  'ollama',
-  'vllm',
-  'deepinfra',
-  'anyscale',
-  'replicate',
-  'cohere',
-  'mistral',
-  'groq',
-  'together',
-  'perplexity',
-  'fireworks',
-  'xiaomi',
-  'mimo',
-  'deepseek',
-  'glm',
-  'xai',
-  'bedrock',
-  'agnes',
-  'openrouter',
-  'anthropic',
-  'google',
-  'openai',
-];
+// All 6 Records below are DERIVED from the provider registry — see
+// runtime/providers/providerRegistry.ts. To add a provider, register it there
+// and these Records update automatically. The `as Record<ProviderType, …>`
+// casts are safe because the registry registers exactly the ProviderType union.
+export const PROVIDER_ORDER: ProviderType[] = getProviderOrder() as ProviderType[];
 
-export const ENV_MAP: Record<ProviderType, { key: string; url: string; model: string }> = {
-  openai: { key: 'OPENAI_API_KEY', url: 'OPENAI_BASE_URL', model: 'OPENAI_MODEL' },
-  anthropic: { key: 'ANTHROPIC_API_KEY', url: 'ANTHROPIC_BASE_URL', model: 'ANTHROPIC_MODEL' },
-  google: { key: 'GOOGLE_API_KEY', url: 'GOOGLE_BASE_URL', model: 'GOOGLE_MODEL' },
-  openrouter: { key: 'OPENROUTER_API_KEY', url: 'OPENROUTER_BASE_URL', model: 'OPENROUTER_MODEL' },
-  mimo: { key: 'MIMO_API_KEY', url: 'MIMO_BASE_URL', model: 'MIMO_MODEL' },
-  deepseek: { key: 'DEEPSEEK_API_KEY', url: 'DEEPSEEK_BASE_URL', model: 'DEEPSEEK_MODEL' },
-  glm: { key: 'ZHIPU_API_KEY', url: 'ZHIPU_BASE_URL', model: 'ZHIPU_MODEL' },
-  xiaomi: { key: 'XIAOMI_API_KEY', url: 'XIAOMI_BASE_URL', model: 'XIAOMI_MODEL' },
-  ollama: { key: 'OLLAMA_API_KEY', url: 'OLLAMA_BASE_URL', model: 'OLLAMA_MODEL' },
-  vllm: { key: 'VLLM_API_KEY', url: 'VLLM_BASE_URL', model: 'VLLM_MODEL' },
-  cohere: { key: 'CO_API_KEY', url: 'COHERE_BASE_URL', model: 'COHERE_MODEL' },
-  mistral: { key: 'MISTRAL_API_KEY', url: 'MISTRAL_BASE_URL', model: 'MISTRAL_MODEL' },
-  groq: { key: 'GROQ_API_KEY', url: 'GROQ_BASE_URL', model: 'GROQ_MODEL' },
-  together: { key: 'TOGETHER_API_KEY', url: 'TOGETHER_BASE_URL', model: 'TOGETHER_MODEL' },
-  perplexity: { key: 'PERPLEXITY_API_KEY', url: 'PERPLEXITY_BASE_URL', model: 'PERPLEXITY_MODEL' },
-  fireworks: { key: 'FIREWORKS_API_KEY', url: 'FIREWORKS_BASE_URL', model: 'FIREWORKS_MODEL' },
-  replicate: { key: 'REPLICATE_API_TOKEN', url: 'REPLICATE_BASE_URL', model: 'REPLICATE_MODEL' },
-  bedrock: { key: 'AWS_ACCESS_KEY_ID', url: 'AWS_BASE_URL', model: 'BEDROCK_MODEL' },
-  xai: { key: 'XAI_API_KEY', url: 'XAI_BASE_URL', model: 'XAI_MODEL' },
-  anyscale: { key: 'ANYSCALE_API_KEY', url: 'ANYSCALE_BASE_URL', model: 'ANYSCALE_MODEL' },
-  deepinfra: { key: 'DEEPINFRA_API_KEY', url: 'DEEPINFRA_BASE_URL', model: 'DEEPINFRA_MODEL' },
-  agnes: { key: 'AGNES_API_KEY', url: 'AGNES_BASE_URL', model: 'AGNES_MODEL' },
-};
+export const ENV_MAP: Record<ProviderType, { key: string; url: string; model: string }> =
+  getEnvMap() as Record<ProviderType, { key: string; url: string; model: string }>;
 
-export const DEFAULT_URLS: Record<ProviderType, string> = {
-  openai: 'https://api.openai.com/v1',
-  anthropic: 'https://api.anthropic.com/v1',
-  google: 'https://generativelanguage.googleapis.com/v1beta',
-  openrouter: 'https://openrouter.ai/api/v1',
-  mimo: 'https://token-plan-sgp.xiaomimimo.com/v1',
-  deepseek: 'https://api.deepseek.com',
-  glm: 'https://open.bigmodel.cn/api/paas/v4',
-  xiaomi: 'https://api.xiaomimimo.com/v1',
-  ollama: 'http://localhost:11434/v1',
-  vllm: 'http://localhost:8000/v1',
-  cohere: 'https://api.cohere.com',
-  mistral: 'https://api.mistral.ai/v1',
-  groq: 'https://api.groq.com/openai/v1',
-  together: 'https://api.together.ai/v1',
-  perplexity: 'https://api.perplexity.ai/v1',
-  fireworks: 'https://api.fireworks.ai/inference/v1',
-  replicate: 'https://api.replicate.com/v1',
-  bedrock: 'https://bedrock-runtime.us-east-1.amazonaws.com',
-  xai: 'https://api.x.ai/v1',
-  anyscale: 'https://api.endpoints.anyscale.com/v1',
-  deepinfra: 'https://api.deepinfra.com/v1/openai',
-  agnes: 'https://apihub.agnes-ai.com/v1',
-};
+export const DEFAULT_URLS: Record<ProviderType, string> = getDefaultUrls() as Record<
+  ProviderType,
+  string
+>;
 
-export const DEFAULT_MODELS: Record<ProviderType, string> = {
-  openai: 'gpt-4o',
-  anthropic: 'claude-3-5-sonnet-20241022',
-  google: 'gemini-2.0-flash',
-  openrouter: 'openai/gpt-4o-mini',
-  mimo: 'mimo-v2.5',
-  deepseek: 'deepseek-v4-flash',
-  glm: 'glm-4.7',
-  xiaomi: 'mimo-v2-flash',
-  ollama: 'llama3.2',
-  vllm: 'meta-llama/Llama-3.2-3B-Instruct',
-  cohere: 'command-a-plus-05-2026',
-  mistral: 'mistral-large-latest',
-  groq: 'llama-3.3-70b-versatile',
-  together: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
-  perplexity: 'sonar-pro',
-  fireworks: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
-  replicate: 'meta/meta-llama-3.3-70b-instruct',
-  bedrock: 'anthropic.claude-3-5-sonnet-20241022-v2:0',
-  xai: 'grok-2-latest',
-  anyscale: 'meta-llama/Llama-3.3-70B-Instruct',
-  deepinfra: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
-  agnes: 'agnes-2.0-flash',
-};
+export const DEFAULT_MODELS: Record<ProviderType, string> = getDefaultModels() as Record<
+  ProviderType,
+  string
+>;
 
-const DISPLAY_NAMES: Record<ProviderType, string> = {
-  openai: 'OpenAI',
-  anthropic: 'Anthropic',
-  google: 'Google Gemini',
-  openrouter: 'OpenRouter',
-  mimo: 'MiMo',
-  deepseek: 'DeepSeek',
-  glm: 'GLM (Zhipu AI)',
-  xiaomi: 'Xiaomi MiMo',
-  ollama: 'Ollama (Local)',
-  vllm: 'vLLM (Local)',
-  cohere: 'Cohere',
-  mistral: 'Mistral AI',
-  groq: 'Groq',
-  together: 'Together AI',
-  perplexity: 'Perplexity',
-  fireworks: 'Fireworks AI',
-  replicate: 'Replicate',
-  bedrock: 'AWS Bedrock',
-  xai: 'xAI (Grok)',
-  anyscale: 'Anyscale',
-  deepinfra: 'DeepInfra',
-  agnes: 'Agnes AI',
-};
+const DISPLAY_NAMES: Record<ProviderType, string> = getDisplayNames() as Record<
+  ProviderType,
+  string
+>;
 
-export const API_TYPE: Record<ProviderType, 'openai' | 'anthropic' | 'google'> = {
-  openai: 'openai',
-  anthropic: 'anthropic',
-  google: 'google',
-  openrouter: 'openai',
-  mimo: 'openai',
-  deepseek: 'openai',
-  glm: 'openai',
-  xiaomi: 'openai',
-  ollama: 'openai',
-  vllm: 'openai',
-  cohere: 'openai',
-  mistral: 'openai',
-  groq: 'openai',
-  together: 'openai',
-  perplexity: 'openai',
-  fireworks: 'openai',
-  replicate: 'openai',
-  bedrock: 'openai',
-  xai: 'openai',
-  anyscale: 'openai',
-  deepinfra: 'openai',
-  agnes: 'openai',
-};
+export const API_TYPE: Record<ProviderType, 'openai' | 'anthropic' | 'google'> = getApiTypes() as Record<
+  ProviderType,
+  'openai' | 'anthropic' | 'google'
+>;
 
 export interface ProviderInfo {
   type: ProviderType;

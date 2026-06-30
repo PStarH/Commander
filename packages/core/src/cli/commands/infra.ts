@@ -98,11 +98,13 @@ export async function cmdJobs(args: string[]): Promise<void> {
 export async function cmdNotify(message: string, flags: Record<string, string>): Promise<void> {
   const manager = getNotificationManager();
 
-  const channel = flags['--slack']
+  // parseFlags() strips the leading "--" from flag keys, so keys are bare
+  // names (e.g. "slack", "priority"). Booleans are encoded as "true".
+  const channel = flags['slack']
     ? 'slack'
-    : flags['--discord']
+    : flags['discord']
       ? 'discord'
-      : flags['--webhook']
+      : flags['webhook']
         ? 'webhook'
         : undefined;
 
@@ -110,7 +112,7 @@ export async function cmdNotify(message: string, flags: Record<string, string>):
     title: 'Commander',
     body: message,
     channel: channel as 'desktop' | 'terminal' | 'slack' | 'discord' | 'webhook' | undefined,
-    priority: (flags['--priority'] as 'low' | 'normal' | 'high' | 'urgent' | undefined) ?? 'normal',
+    priority: (flags['priority'] as 'low' | 'normal' | 'high' | 'urgent' | undefined) ?? 'normal',
   });
 
   console.log(`  ${$.green}✓${$.reset} Notification sent`);

@@ -35,6 +35,7 @@ export type {
 // Re-export from tool.ts
 export type {
   ToolDefinition,
+  ToolCostTier,
   ToolCall,
   ToolResult,
   IdempotencyKeyContext,

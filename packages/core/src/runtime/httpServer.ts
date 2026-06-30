@@ -10,32 +10,9 @@ import type { JSONRPCRequest } from '../mcp/types';
 import { AgentRuntime } from './agentRuntime';
 import { SSEStream } from './sseStream';
 import { getMessageBus } from './messageBus';
-import { OpenAIProvider } from './providers/openaiProvider';
-import { AnthropicProvider } from './providers/anthropicProvider';
-import { GoogleProvider } from './providers/googleProvider';
-import { OpenRouterProvider } from './providers/openRouterProvider';
-import { DeepSeekProvider } from './providers/deepseekProvider';
-import { GLMProvider } from './providers/glmProvider';
-import { MiMoProvider } from './providers/mimoProvider';
-import { XiaomiProvider } from './providers/xiaomiProvider';
-import { OllamaProvider } from './providers/ollamaProvider';
-import { VLLMProvider } from './providers/vllmProvider';
-import { CohereProvider } from './providers/cohereProvider';
-import { MistralProvider } from './providers/mistralProvider';
-import { GroqProvider } from './providers/groqProvider';
-import { TogetherProvider } from './providers/togetherProvider';
-import { PerplexityProvider } from './providers/perplexityProvider';
-import { FireworksProvider } from './providers/fireworksProvider';
-import { ReplicateProvider } from './providers/replicateProvider';
-import { BedrockProvider } from './providers/bedrockProvider';
-import { XAIProvider } from './providers/xaiProvider';
-import { AnyscaleProvider } from './providers/anyscaleProvider';
-import { DeepInfraProvider } from './providers/deepinfraProvider';
-import { AgnesProvider } from './providers/agnesProvider';
-import { resolveSecureApiKey, initSecureApiKeyResolver } from '../security/secureApiKeyResolver';
+import { createProvider } from './providers/providerRegistry';
+import { initSecureApiKeyResolver } from '../security/secureApiKeyResolver';
 import { getEncryptedSecretsVault } from '../security/encryptedSecretsVault';
-import { StepFunProvider } from './providers/stepfunProvider';
-import { MiniMaxProvider } from './providers/minimaxProvider';
 import { MCPServer } from '../mcp/server';
 import { getGlobalLogger } from '../logging';
 import { getMetricsCollector } from './metricsCollector';
@@ -2001,65 +1978,10 @@ export class CommanderHttpServer {
   private getDefaultProvider(provider: string = 'openai'): LLMProvider {
     // Security: Use SecureApiKeyResolver instead of direct process.env access.
     // Keys are decrypted from EncryptedSecretsVault at rest, with env var fallback.
-    switch (provider) {
-      case 'openai':
-        return new OpenAIProvider({ apiKey: resolveSecureApiKey('OPENAI_API_KEY') });
-      case 'anthropic':
-        return new AnthropicProvider({ apiKey: resolveSecureApiKey('ANTHROPIC_API_KEY') });
-      case 'google':
-        return new GoogleProvider({ apiKey: resolveSecureApiKey('GOOGLE_API_KEY') });
-      case 'openrouter':
-        return new OpenRouterProvider({ apiKey: resolveSecureApiKey('OPENROUTER_API_KEY') });
-      case 'deepseek':
-        return new DeepSeekProvider({ apiKey: resolveSecureApiKey('DEEPSEEK_API_KEY') });
-      case 'glm':
-        return new GLMProvider({ apiKey: resolveSecureApiKey('ZHIPU_API_KEY') });
-      case 'mimo':
-        return new MiMoProvider({ apiKey: resolveSecureApiKey('MIMO_API_KEY') });
-      case 'xiaomi':
-        return new XiaomiProvider({ apiKey: resolveSecureApiKey('XIAOMI_API_KEY') });
-      case 'ollama':
-        return new OllamaProvider({});
-      case 'vllm':
-        return new VLLMProvider({});
-      case 'cohere':
-        return new CohereProvider({
-          apiKey: resolveSecureApiKey('CO_API_KEY') || resolveSecureApiKey('COHERE_API_KEY'),
-        });
-      case 'mistral':
-        return new MistralProvider({ apiKey: resolveSecureApiKey('MISTRAL_API_KEY') });
-      case 'groq':
-        return new GroqProvider({ apiKey: resolveSecureApiKey('GROQ_API_KEY') });
-      case 'together':
-        return new TogetherProvider({ apiKey: resolveSecureApiKey('TOGETHER_API_KEY') });
-      case 'perplexity':
-        return new PerplexityProvider({
-          apiKey: resolveSecureApiKey('PERPLEXITY_API_KEY') || resolveSecureApiKey('PPLX_API_KEY'),
-        });
-      case 'fireworks':
-        return new FireworksProvider({ apiKey: resolveSecureApiKey('FIREWORKS_API_KEY') });
-      case 'replicate':
-        return new ReplicateProvider({
-          apiKey:
-            resolveSecureApiKey('REPLICATE_API_TOKEN') || resolveSecureApiKey('REPLICATE_API_KEY'),
-        });
-      case 'bedrock':
-        return new BedrockProvider({});
-      case 'xai':
-        return new XAIProvider({ apiKey: resolveSecureApiKey('XAI_API_KEY') });
-      case 'anyscale':
-        return new AnyscaleProvider({ apiKey: resolveSecureApiKey('ANYSCALE_API_KEY') });
-      case 'deepinfra':
-        return new DeepInfraProvider({ apiKey: resolveSecureApiKey('DEEPINFRA_API_KEY') });
-      case 'agnes':
-        return new AgnesProvider({ apiKey: resolveSecureApiKey('AGNES_API_KEY') });
-      case 'stepfun':
-        return new StepFunProvider({ apiKey: resolveSecureApiKey('STEPFUN_API_KEY') });
-      case 'minimax':
-        return new MiniMaxProvider({ apiKey: resolveSecureApiKey('MINIMAX_API_KEY') });
-      default:
-        return new OpenAIProvider({ apiKey: resolveSecureApiKey('OPENAI_API_KEY') });
-    }
+    // Provider construction is delegated to the provider registry — see
+    // runtime/providers/providerRegistry.ts. Adding a provider is now a one-step
+    // registration there instead of editing this 24-case switch.
+    return createProvider(provider);
   }
 }
 

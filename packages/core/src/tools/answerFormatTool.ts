@@ -35,6 +35,7 @@ const DEFINITION: ToolDefinition = {
     },
   ],
   category: 'development',
+  costTier: 'free', // pure format verification — < 200 output tokens, no LLM/IO cost
 };
 
 export class AnswerFormatTool implements Tool {

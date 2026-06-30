@@ -21,6 +21,8 @@ export interface CacheManagerConfig {
   semanticCache?: AgentRuntimeConfig['semanticCache'];
   singleFlight?: AgentRuntimeConfig['singleFlight'];
   geminiCache?: AgentRuntimeConfig['geminiCache'];
+  /** Enable ToolResultCache for read-only tool results (defaults to true). */
+  enableToolCaching?: boolean;
 }
 
 export class CacheManager {
@@ -31,7 +33,7 @@ export class CacheManager {
 
   constructor(config: CacheManagerConfig = {}) {
     this.toolCache = new ToolResultCache({
-      enabled: true,
+      enabled: config.enableToolCaching !== false,
       maxEntries: 512,
       defaultTtlMs: 1_800_000,
     });
