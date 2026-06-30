@@ -694,21 +694,6 @@ export {
   resetCVEDatabaseIntegration,
 } from './cveDatabaseIntegration';
 
-// ZeroDayDefenseEngine — 零日攻击防御引擎（行为基线 + 统计异常 + 未知攻击推测）
-export {
-  ZeroDayDefenseEngine,
-  getZeroDayDefenseEngine,
-  resetZeroDayDefenseEngine,
-} from './zeroDayDefenseEngine';
-export type {
-  BehaviorBaseline,
-  AnomalySignal,
-  ZeroDayRiskAssessment,
-  RecommendedAction as ZeroDayRecommendedAction,
-  ZeroDayConfig,
-  MetricType,
-} from './zeroDayDefenseEngine';
-
 // ActiveDeceptionSystem — 主动欺骗防御系统（蜜罐端点 + 金丝雀令牌 + 诱饵凭证）
 export {
   ActiveDeceptionSystem,
@@ -725,39 +710,6 @@ export type {
   CanaryTokenType,
 } from './activeDeceptionSystem';
 
-// SecuritySelfHealingEngine — 安全自愈引擎（自动隔离 + 恢复 + 加固 + 攻击后分析）
-export {
-  SecuritySelfHealingEngine,
-  getSecuritySelfHealingEngine,
-  resetSecuritySelfHealingEngine,
-  BUILTIN_PLAYBOOKS,
-} from './securitySelfHealingEngine';
-export type {
-  Playbook as SelfHealingPlaybook,
-  PlaybookStep,
-  PlaybookAction as SelfHealingPlaybookAction,
-  HealingResult,
-  AttackTimeline,
-  AttackTimelineEvent,
-  SelfHealingConfig,
-  IsolationScope,
-} from './securitySelfHealingEngine';
-
-// UltimateDefenseCoordinator — 终极防御协调器（12 层防御矩阵统一指挥中枢）
-export {
-  UltimateDefenseCoordinator,
-  getUltimateDefenseCoordinator,
-  resetUltimateDefenseCoordinator,
-} from './ultimateDefenseCoordinator';
-export type {
-  DefenseLayer,
-  DefenseLayerStatus,
-  DefensePosture,
-  RequestSecurityContext,
-  UltimateSecurityResult,
-  LayerCheckSummary,
-  UDCConfig,
-} from './ultimateDefenseCoordinator';
 export type {
   CVEEntry,
   CVESeverity,
