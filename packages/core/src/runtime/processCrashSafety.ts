@@ -22,6 +22,7 @@ import { getGlobalLogger } from '../logging';
 import type { DeadLetterQueue, DeadLetterEntry } from './deadLetterQueue';
 import type { LeaseManager } from '../atr/leaseManager';
 import { getExecutionScheduler } from '../atr/scheduler';
+import { getFreezeDryManager } from './freezeDry';
 
 export type CrashSource =
   | 'uncaughtException'
@@ -140,6 +141,21 @@ export function installProcessCrashHandlers(deps: CrashSafetyDeps): void {
       runsAborted,
       errorMessage,
     });
+
+    // FreezeDry: write a manifest of the (now-aborted) active runs so the
+    // operator can resume them via `commander up --resume` after restart.
+    // Best-effort — must not block process exit.
+    try {
+      const manifest = getFreezeDryManager().freeze();
+      if (manifest && manifest.runs.length > 0) {
+        log.info('ProcessCrashSafety', 'FreezeDry manifest written', {
+          frozenRuns: manifest.runs.length,
+          suggestedCommand: manifest.suggestedCommand,
+        });
+      }
+    } catch (err) {
+      reportSilentFailure(err, 'processCrashSafety:freezeDry');
+    }
 
     try {
       deps.onShutdownComplete?.();

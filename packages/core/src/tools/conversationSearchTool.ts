@@ -65,6 +65,7 @@ export class SearchConversationsTool implements Tool {
       },
     ],
     category: 'memory',
+    costTier: 'low', // FTS5 search — ~1K output tokens, bounded by limit
   };
 
   isConcurrencySafe = true;

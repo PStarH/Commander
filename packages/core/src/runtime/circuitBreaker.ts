@@ -1,4 +1,5 @@
 import { reportSilentFailure } from '../silentFailureReporter';
+import { getMetricsCollector } from './metricsCollector';
 export type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
 
 export interface CircuitStats {
@@ -364,6 +365,15 @@ export class CircuitBreaker {
       } catch (err) {
         reportSilentFailure(err, 'circuitBreaker:319');
         /* best-effort */
+      }
+      // Publish circuit_breaker_open gauge (1 when OPEN, 0 otherwise)
+      try {
+        getMetricsCollector().setCircuitBreakerOpen(
+          newState === 'OPEN',
+          this.providerName ?? 'unknown',
+        );
+      } catch {
+        /* metrics must never break the circuit breaker critical path */
       }
     }
   }

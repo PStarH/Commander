@@ -19,6 +19,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
 import { reportSilentFailure } from '../silentFailureReporter';
+import { getMetricsCollector } from './metricsCollector';
 import type { IEventSourcingEngine, IEvent } from '../contracts/pillarI';
 
 // ============================================================================
@@ -42,6 +43,9 @@ interface Snapshot {
 // EventSourcingEngine Implementation
 // ============================================================================
 
+// Number of recent write latencies to retain for p95 calculation.
+const WRITE_LATENCY_WINDOW = 200;
+
 export class EventSourcingEngine implements IEventSourcingEngine {
   private events: StoredEvent[] = [];
   private snapshots: Map<string, Snapshot> = new Map();
@@ -49,6 +53,10 @@ export class EventSourcingEngine implements IEventSourcingEngine {
   private lastHash: string = '';
   private writeLock: Promise<void> = Promise.resolve();
   private initialized = false;
+  /** Incrementally tracked WAL file size in bytes (avoids per-append stat syscall). */
+  private walSizeBytes = 0;
+  /** Ring buffer of recent WAL append durations (ms) for p95 reporting. */
+  private writeLatencies: number[] = [];
 
   constructor(options?: { walPath?: string }) {
     this.walPath = options?.walPath ?? null;
@@ -88,37 +96,64 @@ export class EventSourcingEngine implements IEventSourcingEngine {
             count: this.events.length,
           });
         }
+        // Initialize incremental WAL size tracker from the on-disk file
+        const stat = await fs.promises.stat(this.walPath);
+        this.walSizeBytes = stat.size;
       } catch {
         // WAL file doesn't exist yet — will be created on first append
       }
     }
+    // Publish initial gauges so /metrics reflects state before the first append
+    this.publishMetrics();
+  }
+
+  /** Push current log dimensions + WAL size + write latency into MetricsCollector. */
+  private publishMetrics(latencyMs?: number): void {
+    const mc = getMetricsCollector();
+    mc.setEventSourcingWalSize(this.walSizeBytes);
+    mc.setEventSourcingTotals(this.events.length, this.snapshots.size);
+    if (latencyMs !== undefined) mc.recordEventSourcingWrite(latencyMs);
   }
 
   /**
    * Atomic append to the WAL.
    * Computes the hash chain and persists to disk (if configured).
+   *
+   * The prevHash snapshot, event ID generation, and hash computation all
+   * happen INSIDE the writeLock callback. This is critical: if prevHash is
+   * read outside the lock, two concurrent append() calls would both snapshot
+   * the same lastHash, producing two events whose previousHash fields point
+   * to the same predecessor — breaking the hash chain and causing
+   * verifyIntegrity() to fail. Moving the entire chain-extension logic
+   * inside the lock guarantees each append observes the correct predecessor.
    */
   async append(event: Omit<IEvent, 'id' | 'timestamp' | 'previousHash'>): Promise<IEvent> {
-    // Serialize writes to prevent hash chain corruption
-    const prevHash = this.lastHash;
-    const timestamp = Date.now();
-    const id = crypto.randomUUID();
+    const writeStart = Date.now();
 
-    const fullEvent: IEvent = {
-      ...event,
-      id,
-      timestamp,
-      previousHash: prevHash || undefined,
-    };
+    // Result holder — populated inside the lock callback, returned after.
+    let resultEvent: IEvent | null = null;
 
-    // Compute hash: SHA-256(previousHash + type + id + timestamp + serialized payload)
-    const hashInput = `${prevHash}|${fullEvent.type}|${id}|${timestamp}|${JSON.stringify(fullEvent.payload)}`;
-    const hash = crypto.createHash('sha256').update(hashInput).digest('hex');
-
-    const storedEvent: StoredEvent = { ...fullEvent, hash };
-
-    // Chain the write to ensure ordering
+    // Chain the write to ensure ordering. All chain-sensitive computation
+    // (prevHash snapshot, id generation, hash computation) happens inside
+    // the lock to prevent concurrent appends from corrupting the chain.
     this.writeLock = this.writeLock.then(async () => {
+      const prevHash = this.lastHash;
+      const timestamp = Date.now();
+      const id = crypto.randomUUID();
+
+      const fullEvent: IEvent = {
+        ...event,
+        id,
+        timestamp,
+        previousHash: prevHash || undefined,
+      };
+
+      // Compute hash: SHA-256(previousHash + type + id + timestamp + serialized payload)
+      const hashInput = `${prevHash}|${fullEvent.type}|${id}|${timestamp}|${JSON.stringify(fullEvent.payload)}`;
+      const hash = crypto.createHash('sha256').update(hashInput).digest('hex');
+
+      const storedEvent: StoredEvent = { ...fullEvent, hash };
+
       this.events.push(storedEvent);
       this.lastHash = hash;
 
@@ -126,6 +161,7 @@ export class EventSourcingEngine implements IEventSourcingEngine {
         try {
           const line = JSON.stringify(storedEvent) + '\n';
           await fs.promises.appendFile(this.walPath, line, 'utf8');
+          this.walSizeBytes += Buffer.byteLength(line, 'utf8');
         } catch (err) {
           reportSilentFailure(err, 'eventSourcingEngine:append:write');
           getGlobalLogger().error('EventSourcingEngine', 'WAL write failed', err as Error, {
@@ -133,11 +169,22 @@ export class EventSourcingEngine implements IEventSourcingEngine {
           });
         }
       }
+
+      resultEvent = { ...fullEvent };
     });
 
     await this.writeLock;
 
-    return { ...fullEvent };
+    // Record write latency for p95 health reporting
+    const latency = Date.now() - writeStart;
+    this.writeLatencies.push(latency);
+    if (this.writeLatencies.length > WRITE_LATENCY_WINDOW) {
+      this.writeLatencies.shift();
+    }
+    // Publish event-sourcing metrics (write latency + WAL size + totals)
+    this.publishMetrics(latency);
+
+    return resultEvent!;
   }
 
   /**
@@ -191,6 +238,8 @@ export class EventSourcingEngine implements IEventSourcingEngine {
       snapshotId: id,
       eventCount: this.events.length,
     });
+    // Refresh totals gauge so the new snapshot count is observable
+    this.publishMetrics();
 
     return id;
   }
@@ -268,6 +317,8 @@ export class EventSourcingEngine implements IEventSourcingEngine {
       try {
         const lines = this.events.map((e) => JSON.stringify(e)).join('\n') + '\n';
         await fs.promises.writeFile(this.walPath, lines, 'utf8');
+        // Re-sync WAL size tracker after rewrite (line-based estimate drifted)
+        this.walSizeBytes = Buffer.byteLength(lines, 'utf8');
       } catch (err) {
         reportSilentFailure(err, 'eventSourcingEngine:compact:write');
         getGlobalLogger().error(
@@ -284,6 +335,8 @@ export class EventSourcingEngine implements IEventSourcingEngine {
       removedCount,
       remainingCount: this.events.length,
     });
+    // Refresh gauges so post-compaction dimensions are observable
+    this.publishMetrics();
 
     return removedCount;
   }
@@ -327,6 +380,36 @@ export class EventSourcingEngine implements IEventSourcingEngine {
     }
     return count;
   }
+
+  /**
+   * Get all events matching a correlationId (typically a runId).
+   * Used by DeterminismCapture.restoreFromWAL() to rebuild in-memory
+   * capture state after a process crash, enabling Path A replay recovery.
+   */
+  getEventsByCorrelationId(correlationId: string): IEvent[] {
+    const result: IEvent[] = [];
+    for (const e of this.events) {
+      if (e.correlationId === correlationId) {
+        const { hash, ...rest } = e;
+        result.push({ ...rest });
+      }
+    }
+    return result;
+  }
+
+  /**
+   * p95 of recent WAL append latencies (ms), or null if no writes recorded.
+   * Used by eventSourcingHealth to report write-latency degradation.
+   */
+  getWriteLatencyP95(): number | null {
+    if (this.writeLatencies.length === 0) return null;
+    const sorted = [...this.writeLatencies].sort((a, b) => a - b);
+    const idx = Math.min(
+      sorted.length - 1,
+      Math.floor(sorted.length * 0.95),
+    );
+    return sorted[idx];
+  }
 }
 
 // ============================================================================
@@ -354,4 +437,9 @@ export function getGlobalEventSourcingEngine(options?: { walPath?: string }): Ev
     });
   }
   return globalEventSourcingEngine;
+}
+
+/** Reset the global singleton — for test isolation only. */
+export function resetGlobalEventSourcingEngine(): void {
+  globalEventSourcingEngine = null;
 }

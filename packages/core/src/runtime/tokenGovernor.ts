@@ -1,5 +1,20 @@
 /**
- * Token Budget Governor
+ * Token Budget Governor — Advisory Optimization Layer (Layer 4 of UCA architecture)
+ *
+ * ADVISORY / NON-ENFORCEMENT. This class provides token optimization strategy
+ * recommendations based on budget pressure. It NEVER blocks, rejects, or
+ * mandates — all enforcement decisions are owned by UnifiedCostAuthority
+ * (UCA, the Layer 2 BudgetEnforcer).
+ *
+ * 职责分层（Separation of Concerns）：
+ *   UCA Layer 2 (BudgetEnforcer)  → 硬阻断（THROTTLE/MELT）— "能不能花"
+ *   TokenGovernor (this class)    → 软优化（recommendations）— "怎么花得更省"
+ *
+ * The governor tracks token usage pressure (relaxed → moderate → tight → critical)
+ * and selects optimization strategies (observation_mask, context_compaction,
+ * tool_output_truncate, response_format, verification_skip, prompt_compression).
+ * Callers consume recommendations via shouldApply() / getRecommendations() and
+ * apply them at their own discretion.
  *
  * Central coordinator for token optimization. Tracks usage in real-time,
  * selects optimization strategies based on budget pressure and task type,
@@ -298,9 +313,15 @@ export class TokenGovernor {
   }
 
   // ---------------------------------------------------------------------------
-  // Strategy decisions (cached)
+  // Strategy decisions (cached, ADVISORY — never enforces)
   // ---------------------------------------------------------------------------
 
+  /**
+   * Get optimization strategy recommendations for the current budget phase.
+   *
+   * ADVISORY: Returns suggestions only. Callers decide whether to apply.
+   * For hard budget enforcement, use UnifiedCostAuthority.preCall() instead.
+   */
   getRecommendations(): GovernorDecision[] {
     const state = this.getState();
 
@@ -341,6 +362,13 @@ export class TokenGovernor {
     return decisions;
   }
 
+  /**
+   * Check whether a given optimization strategy should be applied.
+   *
+   * ADVISORY: Returns a recommendation, not a mandate. The caller retains
+   * full discretion to ignore the suggestion. For hard enforcement, use
+   * UnifiedCostAuthority.preCall() which can THROTTLE/MELT.
+   */
   shouldApply(strategy: OptimizationStrategy): { apply: boolean; intensity: number } {
     // Ensure recommendations are built
     this.getRecommendations();

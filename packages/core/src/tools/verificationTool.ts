@@ -39,6 +39,7 @@ const DEFINITION: ToolDefinition = {
     { name: 'verify', arguments: { checks: ['lint', 'build'], fix: true } },
   ],
   category: 'development',
+  costTier: 'high', // runs linters/typecheck/test/build — long-running, may trigger downstream operations
 };
 
 interface CheckResult {
