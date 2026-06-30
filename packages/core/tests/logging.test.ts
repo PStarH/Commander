@@ -2,7 +2,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import {
   Logger,
-  MetricsCollector,
+  LegacyMetricsAdapter,
   Timer,
   type LogLevel,
   type LogEntry,
@@ -17,11 +17,11 @@ function freezeTime(iso: string): Date {
   return new Date(iso);
 }
 
-/** Create a MetricsCollector that will NOT fire its cleanup timer during the
+/** Create a LegacyMetricsAdapter that will NOT fire its cleanup timer during the
  *  test (retention set to a very large value).  We also unref the timer so
  *  the process can exit cleanly. */
-function makeMetrics(retentionMs = 3_600_000): MetricsCollector {
-  return new MetricsCollector({ retentionPeriod: retentionMs, sampleInterval: 10_000 });
+function makeMetrics(retentionMs = 3_600_000): LegacyMetricsAdapter {
+  return new LegacyMetricsAdapter({ retentionPeriod: retentionMs, sampleInterval: 10_000 });
 }
 
 // ===========================================================================
@@ -476,11 +476,12 @@ describe('Logger', () => {
 });
 
 // ===========================================================================
-// MetricsCollector
+// LegacyMetricsAdapter (formerly MetricsCollector — renamed to resolve naming
+// collision with runtime/metricsCollector.MetricsCollector)
 // ===========================================================================
 
-describe('MetricsCollector', () => {
-  let metrics: MetricsCollector;
+describe('LegacyMetricsAdapter', () => {
+  let metrics: LegacyMetricsAdapter;
 
   beforeEach(() => {
     metrics = makeMetrics();
@@ -496,7 +497,7 @@ describe('MetricsCollector', () => {
 
   describe('constructor', () => {
     it('accepts partial config', () => {
-      const m = new MetricsCollector({ retentionPeriod: 60000 });
+      const m = new LegacyMetricsAdapter({ retentionPeriod: 60000 });
       m.dispose();
     });
 
@@ -952,7 +953,7 @@ describe('MetricsCollector', () => {
 // ===========================================================================
 
 describe('Timer', () => {
-  let metrics: MetricsCollector;
+  let metrics: LegacyMetricsAdapter;
 
   beforeEach(() => {
     metrics = makeMetrics();
@@ -1020,10 +1021,10 @@ describe('Timer', () => {
 });
 
 // ===========================================================================
-// Integration: Logger + MetricsCollector working together
+// Integration: Logger + LegacyMetricsAdapter working together
 // ===========================================================================
 
-describe('Logger + MetricsCollector integration', () => {
+describe('Logger + LegacyMetricsAdapter integration', () => {
   it('listener on logger can feed metrics', () => {
     const logger = new Logger({ enableConsole: false });
     const metrics = makeMetrics();
