@@ -20,14 +20,9 @@ vi.mock('../../src/security/securityResponseEngine', () => ({
   processSecurityAlert: vi.fn(() => ({ actions: ['log'], success: true })),
 }));
 
-// Mock safe-regex to bypass the load-time ReDoS validation guard. The plugin's
-// `ignore_instructions` pattern (nested optional alternations) is flagged
-// unsafe by safe-regex, which would make onLoad throw and prevent exercising
-// the detector runtime logic — which is what these tests cover. The ReDoS
-// validation itself is a load-time concern, not a detector-behavior concern.
-vi.mock('safe-regex', () => ({
-  default: () => true,
-}));
+// safe-regex is NOT mocked — all regexes must pass validation in onLoad.
+// The ignore_instructions regex uses bounded wildcards (.{0,20}) instead
+// of nested optional alternations to pass safe-regex.
 
 import { processSecurityAlert } from '../../src/security/securityResponseEngine';
 
