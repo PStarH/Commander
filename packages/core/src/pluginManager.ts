@@ -104,6 +104,7 @@ export function createLoggingPlugin(): CommanderPlugin {
 // runtime circular dependency.
 export { createRagPlugin } from './plugins/builtin/ragPlugin';
 export { createTaintTrackingPlugin } from './plugins/builtin/taintTrackingPlugin';
+export { createRaspExtensionsPlugin } from './plugins/builtin/raspExtensionsPlugin';
 export { createEvalPlugin } from './plugins/builtin/evalPlugin';
 export { createReportingPlugin } from './plugins/builtin/reportingPlugin';
 export { createConsensusPlugin } from './plugins/builtin/consensusPlugin';
