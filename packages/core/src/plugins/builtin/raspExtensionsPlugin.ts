@@ -68,8 +68,11 @@ const BASE64_PAYLOAD_THRESHOLD = 512;
 const INJECTION_PATTERNS: InjectionPattern[] = [
   {
     id: 'ignore_instructions',
+    // Simplified to pass safe-regex: use bounded wildcards instead of nested
+    // optional alternations. Matches "ignore previous instructions",
+    // "forget all prior rules", "disregard the above directives", etc.
     regex:
-      /(?:ignore|disregard|forget)\s+(?:all\s+|the\s+|any\s+)?(?:previous|prior|above|earlier)\s+(?:instructions?|prompts?|rules?|directives?)/i,
+      /(?:ignore|disregard|forget).{0,20}(?:previous|prior|above|earlier).{0,20}(?:instructions?|prompts?|rules?|directives?)/i,
     severity: 'high',
   },
   {
