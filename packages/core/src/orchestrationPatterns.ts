@@ -410,11 +410,7 @@ export class StepTimeoutError extends Error {
   }
 }
 
-async function withTimeout<T>(
-  p: Promise<T>,
-  ms: number,
-  stepId: string,
-): Promise<T> {
+async function withTimeout<T>(p: Promise<T>, ms: number, stepId: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new StepTimeoutError(stepId, ms)), ms);
@@ -433,10 +429,7 @@ async function withTimeout<T>(
  * ultimate/sequential.ts 的 TokenUsage 额外含 estimatedCost。
  * 此函数保守处理：若运行时 delta 上有 estimatedCost 则累加，否则忽略。
  */
-export function mergeTokenUsage(
-  acc: TokenUsage,
-  delta?: TokenUsage,
-): TokenUsage {
+export function mergeTokenUsage(acc: TokenUsage, delta?: TokenUsage): TokenUsage {
   if (!delta) return acc;
   const result: TokenUsage = {
     promptTokens: acc.promptTokens + delta.promptTokens,

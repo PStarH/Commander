@@ -186,10 +186,7 @@ export class MetricsCollector {
     if (tenantId) labels.push({ name: 'tenant', value: tenantId });
     // Aggregate counter (success + error) so dashboards can compute success rate
     // via rate(tool_calls_total{status="success"}) / rate(tool_calls_total).
-    const statusLabels = [
-      ...labels,
-      { name: 'status', value: error ? 'error' : 'success' },
-    ];
+    const statusLabels = [...labels, { name: 'status', value: error ? 'error' : 'success' }];
     this.incrementCounter('tool_calls_total', 'Total tool calls by status', 1, statusLabels);
     if (error) {
       this.incrementCounter('tool_errors_total', 'Total tool errors', 1, labels);

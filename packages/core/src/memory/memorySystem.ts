@@ -84,7 +84,7 @@ export class MemorySystem {
     const writerNs = `agents/${writerAgentId}`;
     if (targetPath.startsWith(writerNs)) return;
 
-    if (acl && acl.namespaces.some(ns => targetPath.startsWith(ns))) return;
+    if (acl && acl.namespaces.some((ns) => targetPath.startsWith(ns))) return;
 
     if (acl && acl.namespaces.includes('tasks') && targetPath.startsWith('tasks/')) return;
 
