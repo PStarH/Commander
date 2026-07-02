@@ -7,6 +7,7 @@ import {
   getHookManager,
   getMetricsCollector,
   HealthCollector,
+  buildHealthSources,
   getPluginLoader,
 } from '@commander/core';
 import express from 'express';
@@ -259,8 +260,20 @@ app.get('/ready', (_req, res) => {
 // HealthCollector (memory / disk / circuit-breaker / DLQ / …) so the API layer
 // does not dual-track the same checks that CommanderHttpServer already runs.
 // API-specific module availability is layered on top.
+//
+// Audit-fix (C-P0-2): previously `new HealthCollector()` was constructed
+// without sources, so 5 of the 8 internal checks (circuit breaker, DLQ,
+// compensation, event bus, providers) silently returned
+// `{ status: 'healthy', message: '... not wired' }` regardless of the
+// underlying component state. This made the probe unverifiable: a DLQ that
+// had crashed OR a toppled circuit breaker would still report green, and
+// k8s/PaaS readiness gates would keep forwarding traffic to a doomed node.
+// Wired via `buildHealthSources()` so the bus + DLQ getters reflect live
+// singletons; circuit-breaker / compensation / provider checks remain
+// "not wired" until apps/api gains AgentRuntime session support, at which
+// point the same getter-functions block can be extended here.
 app.get('/health/detailed', async (_req, res) => {
-  const collector = new HealthCollector();
+  const collector = new HealthCollector({ sources: buildHealthSources() });
   const result = await collector.collect();
   const memUsage = process.memoryUsage();
   const heapUsedMB = Math.floor(memUsage.heapUsed / 1024 / 1024);
