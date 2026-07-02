@@ -94,10 +94,7 @@ export function buildHealthSources(): HealthSources {
         const bus = getMessageBus();
         return {
           activeTopics: bus.getActiveTopics().length,
-          subscriberCount: Object.values(bus.getAllSubscriberCounts()).reduce(
-            (a, b) => a + b,
-            0,
-          ),
+          subscriberCount: Object.values(bus.getAllSubscriberCounts()).reduce((a, b) => a + b, 0),
         };
       } catch (err) {
         reportSilentFailure(err, 'healthCheck:buildHealthSources.bus');
@@ -285,9 +282,7 @@ export class HealthCollector {
       // by treating them as "unknown mtime" (= not stale) so a single
       // unreadable file does not flip the whole probe to degraded.
       const stats = await Promise.all(
-        jsonFiles.map((f) =>
-          fs.promises.stat(path.join(checkpointsDir, f)).catch(() => null),
-        ),
+        jsonFiles.map((f) => fs.promises.stat(path.join(checkpointsDir, f)).catch(() => null)),
       );
       const staleCount = stats.filter(
         (s): s is import('node:fs').Stats => s !== null && s.mtimeMs < oneHourAgo,
