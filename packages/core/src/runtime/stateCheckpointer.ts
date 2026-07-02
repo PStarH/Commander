@@ -291,10 +291,14 @@ export class StateCheckpointer {
           await fs.promises.unlink(chkPath);
         } catch (unlinkError) {
           if ((unlinkError as NodeJS.ErrnoException).code !== 'ENOENT') {
-            getGlobalLogger().warn('StateCheckpointer', 'Failed to remove corrupt checkpoint (async)', {
-              error: (unlinkError as Error)?.message,
-              runId,
-            });
+            getGlobalLogger().warn(
+              'StateCheckpointer',
+              'Failed to remove corrupt checkpoint (async)',
+              {
+                error: (unlinkError as Error)?.message,
+                runId,
+              },
+            );
           }
         }
         return null;
@@ -414,11 +418,7 @@ export class StateCheckpointer {
       for (let i = 0; i < candidates.length; i++) {
         const state = states[i];
         const f = candidates[i];
-        if (
-          state &&
-          typeof state.phase === 'string' &&
-          typeof state.timestamp === 'string'
-        ) {
+        if (state && typeof state.phase === 'string' && typeof state.timestamp === 'string') {
           const runId = f.replace(/\.(checkpoint|json)$/, '');
           out.push({ runId, phase: state.phase, timestamp: state.timestamp });
         }
@@ -430,9 +430,7 @@ export class StateCheckpointer {
       gatherFromDir(this.baseDir),
       gatherFromDir(path.join(this.baseDir, 'completed')),
     ]);
-    return [...primary, ...completed].sort((a, b) =>
-      b.timestamp.localeCompare(a.timestamp),
-    );
+    return [...primary, ...completed].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
   }
 
   deleteCheckpoint(runId: string): void {

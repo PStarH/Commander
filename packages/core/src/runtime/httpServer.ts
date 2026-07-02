@@ -1818,10 +1818,7 @@ export class CommanderHttpServer {
           do {
             const data = await getSOPDashboardDataAsync();
             if (stream.isClosed) return;
-            stream.emitStructured(
-              'sop.update',
-              data as unknown as Record<string, unknown>,
-            );
+            stream.emitStructured('sop.update', data as unknown as Record<string, unknown>);
             // Reset dirty AFTER emit so a sustained burst (fires faster
             // than `getSOPDashboardDataAsync` resolves) terminates the
             // loop at the first zero-fire yield rather than polling one
