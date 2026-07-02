@@ -78,9 +78,7 @@ export interface SynthesizerInput {
  * });
  * ```
  */
-export async function runMixtureOfAgents(
-  config: MixtureOfAgentsConfig,
-): Promise<OrchestrationRun> {
+export async function runMixtureOfAgents(config: MixtureOfAgentsConfig): Promise<OrchestrationRun> {
   const {
     experts,
     synthesizer,
@@ -329,7 +327,13 @@ export class MixtureOfAgentsBuilder {
   private executor?: StepExecutor;
 
   constructor(projectId: string) {
-    this.config = { projectId, maxParallel: 8, failFast: false, minExperts: 1, detectConflicts: true };
+    this.config = {
+      projectId,
+      maxParallel: 8,
+      failFast: false,
+      minExperts: 1,
+      detectConflicts: true,
+    };
   }
 
   addExpert(step: AnyStep): this {

@@ -404,10 +404,7 @@ export class EventSourcingEngine implements IEventSourcingEngine {
   getWriteLatencyP95(): number | null {
     if (this.writeLatencies.length === 0) return null;
     const sorted = [...this.writeLatencies].sort((a, b) => a - b);
-    const idx = Math.min(
-      sorted.length - 1,
-      Math.floor(sorted.length * 0.95),
-    );
+    const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95));
     return sorted[idx];
   }
 }

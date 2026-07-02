@@ -419,10 +419,7 @@ export interface PluginEntry {
  * can invoke it. Tool names are namespaced as `${pluginName}__${toolName}`
  * to avoid collisions between plugins and with built-in tools.
  */
-export function adaptBuiltinPluginTool(
-  pluginName: string,
-  builtinTool: BuiltinPluginTool,
-): Tool {
+export function adaptBuiltinPluginTool(pluginName: string, builtinTool: BuiltinPluginTool): Tool {
   const namespacedName = `${pluginName}__${builtinTool.name}`;
   return {
     definition: {

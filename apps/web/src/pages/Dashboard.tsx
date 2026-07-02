@@ -90,7 +90,8 @@ export function Dashboard({
   const chartData = tokenTrend.map(toChartData);
   const totalTokens = chartData.reduce((sum, p) => sum + p.tokens, 0);
   const peakTokens = chartData.reduce((max, p) => Math.max(max, p.tokens), 0);
-  const avgTokensPerInterval = chartData.length > 0 ? Math.round(totalTokens / chartData.length) : 0;
+  const avgTokensPerInterval =
+    chartData.length > 0 ? Math.round(totalTokens / chartData.length) : 0;
 
   return (
     <div className="dashboard-grid">

@@ -195,10 +195,14 @@ export class DeterminismCapture {
       for (const event of events) {
         if (!event.type.startsWith('determinism.')) continue;
         const type = event.type.slice('determinism.'.length) as NonDeterministicInput;
-        if (!['timestamp', 'random', 'llmResponse', 'toolResponse', 'externalApiCall'].includes(type)) {
+        if (
+          !['timestamp', 'random', 'llmResponse', 'toolResponse', 'externalApiCall'].includes(type)
+        ) {
           continue;
         }
-        const payload = event.payload as { step?: number; value?: unknown; capturedAt?: string } | undefined;
+        const payload = event.payload as
+          | { step?: number; value?: unknown; capturedAt?: string }
+          | undefined;
         if (!payload || typeof payload.step !== 'number') continue;
 
         const input: CapturedInput = {

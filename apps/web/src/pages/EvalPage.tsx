@@ -7,12 +7,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { FlaskConical, Power, PowerOff, RefreshCw } from 'lucide-react';
 import { Badge, Button, MetricCard } from '../components/ui';
-import {
-  fetchEvalStatus,
-  enableEvalPlugin,
-  disableEvalPlugin,
-  type PluginStatus,
-} from '../api';
+import { fetchEvalStatus, enableEvalPlugin, disableEvalPlugin, type PluginStatus } from '../api';
 
 export function EvalPage() {
   const [status, setStatus] = useState<PluginStatus | null>(null);
@@ -55,7 +50,8 @@ export function EvalPage() {
 
   const registered = status?.registered ?? false;
   const enabled = status?.enabled ?? false;
-  const judgeStats = (status?.judgeStats as { totalRuns?: number; successCount?: number } | null) ?? null;
+  const judgeStats =
+    (status?.judgeStats as { totalRuns?: number; successCount?: number } | null) ?? null;
 
   return (
     <div className="page">
@@ -67,7 +63,14 @@ export function EvalPage() {
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 12,
+          }}
+        >
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <strong>builtin-eval</strong>
             {!registered && <Badge variant="error">Not Registered</Badge>}
@@ -102,9 +105,10 @@ export function EvalPage() {
       <div className="card">
         <h3>About</h3>
         <p style={{ color: 'var(--text-dim)', fontSize: '0.85rem' }}>
-          This plugin provides LLM-as-Judge evaluation (5-dimension scoring with cost circuit breaker),
-          dataset version management, and A/B experiment comparison using Wilcoxon signed-rank test.
-          It is a development-time toolset — enable it when benchmarking agents, disable in production.
+          This plugin provides LLM-as-Judge evaluation (5-dimension scoring with cost circuit
+          breaker), dataset version management, and A/B experiment comparison using Wilcoxon
+          signed-rank test. It is a development-time toolset — enable it when benchmarking agents,
+          disable in production.
         </p>
       </div>
     </div>
