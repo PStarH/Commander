@@ -122,10 +122,13 @@ export class SamplesStore {
   /** Create a run manifest with full parameter provenance. */
   async recordRunManifest(runId: string, manifest: Record<string, unknown>): Promise<void> {
     const dir = path.join(this.baseDir, 'runs');
-    fs.mkdirSync(dir, { recursive: true });
+    // Async mkdir — the write enqueued below also tolerates a missing
+    // parent dir, but doing the mkdir here unblocks the event loop for
+    // manifest writes that race with run lifecycle transitions.
+    await fs.promises.mkdir(dir, { recursive: true });
     const filePath = path.join(dir, `${runId}.json`);
     this.enqueueWrite(async () => {
-      fs.writeFileSync(filePath, JSON.stringify(manifest, null, 2), 'utf-8');
+      await fs.promises.writeFile(filePath, JSON.stringify(manifest, null, 2), 'utf-8');
     });
   }
 
@@ -153,6 +156,34 @@ export class SamplesStore {
   /** Get total record count for verifications (approximate). */
   getVerificationCount(): number {
     return this.readAllLines('verifications.ndjson').length;
+  }
+
+  /** Async variant of getCallCount. */
+  async getCallCountAsync(): Promise<number> {
+    return (await this.readAllLinesAsync('llm_calls.ndjson')).length;
+  }
+
+  /** Async variant of getVerificationCount. */
+  async getVerificationCountAsync(): Promise<number> {
+    return (await this.readAllLinesAsync('verifications.ndjson')).length;
+  }
+
+  /** Async reader over a single NDJSON file; tolerates ENOENT. */
+  async readAllLinesAsync(fileName: string): Promise<string[]> {
+    const p = path.join(this.baseDir, fileName);
+    try {
+      const content = await fs.promises.readFile(p, 'utf-8');
+      const trimmed = content.trim();
+      if (!trimmed) return [];
+      return trimmed.split('\n').filter((l) => l.length > 0);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      getGlobalLogger().warn('SamplesStore', 'Failed to read sample file', {
+        error: (err as Error)?.message,
+        fileName,
+      });
+      return [];
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -267,13 +298,18 @@ export class SamplesStore {
   /** Append a JSON line to a given file with rotation. */
   private async appendLine(fileName: string, data: unknown): Promise<void> {
     const filePath = path.join(this.baseDir, fileName);
-    // GAP-21: Rotate file if it exceeds max size
+    // GAP-21: Rotate file if it exceeds max size.
+    // Async stat (ENOENT → size=0) keeps this hot path non-blocking.
     try {
-      if (fs.existsSync(filePath)) {
-        const stat = fs.statSync(filePath);
-        if (stat.size >= this.MAX_FILE_BYTES) {
-          this.rotateFile(fileName);
-        }
+      let stat: import('node:fs').Stats | undefined;
+      try {
+        stat = await fs.promises.stat(filePath);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+        stat = undefined;
+      }
+      if (stat && stat.size >= this.MAX_FILE_BYTES) {
+        await this.rotateFile(fileName);
       }
     } catch (e) {
       getGlobalLogger().warn('SamplesStore', 'Failed to inspect sample file before append', {
@@ -282,48 +318,48 @@ export class SamplesStore {
       });
     }
     const line = JSON.stringify(data) + '\n';
-    fs.appendFileSync(filePath, line, 'utf-8');
+    await fs.promises.appendFile(filePath, line, 'utf-8');
   }
 
-  // GAP-21: Rotate NDJSON files — shift .1, .2, .3, delete oldest
-  private rotateFile(fileName: string): void {
+  // GAP-21: Rotate NDJSON files — shift .1, .2, .3, delete oldest.
+  // Async: each step is awaited so a crash mid-rotation leaves a
+  // consistent shifting state. ENOENT at each step is benign because
+  // rotated files may not exist on a fresh boot.
+  private async rotateFile(fileName: string): Promise<void> {
     const dir = this.baseDir;
     const base = path.join(dir, fileName);
-    // Delete oldest rotation
     const oldest = `${base}.${this.MAX_ROTATED_FILES}`;
-    if (fs.existsSync(oldest)) {
-      try {
-        fs.unlinkSync(oldest);
-      } catch (e) {
+    try {
+      await fs.promises.unlink(oldest);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
         getGlobalLogger().warn('SamplesStore', 'Failed to delete oldest rotated sample file', {
-          error: (e as Error)?.message,
+          error: (err as Error)?.message,
           oldest,
         });
       }
     }
-    // Shift existing rotations: .2 → .3, .1 → .2
     for (let i = this.MAX_ROTATED_FILES - 1; i >= 1; i--) {
       const from = `${base}.${i}`;
       const to = `${base}.${i + 1}`;
-      if (fs.existsSync(from)) {
-        try {
-          fs.renameSync(from, to);
-        } catch (e) {
+      try {
+        await fs.promises.rename(from, to);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
           getGlobalLogger().warn('SamplesStore', 'Failed to rotate sample file', {
-            error: (e as Error)?.message,
+            error: (err as Error)?.message,
             from,
             to,
           });
         }
       }
     }
-    // Current → .1
-    if (fs.existsSync(base)) {
-      try {
-        fs.renameSync(base, `${base}.1`);
-      } catch (e) {
+    try {
+      await fs.promises.rename(base, `${base}.1`);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
         getGlobalLogger().warn('SamplesStore', 'Failed to rotate current sample file', {
-          error: (e as Error)?.message,
+          error: (err as Error)?.message,
           base,
         });
       }
