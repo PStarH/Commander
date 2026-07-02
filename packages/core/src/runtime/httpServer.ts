@@ -43,10 +43,15 @@ import { runWithTenant } from './tenantContext';
 import { TokenGovernor } from './tokenGovernor';
 import {
   getSOPDashboardData,
+  getSOPDashboardDataAsync,
   listSOPs,
+  listSOPsAsync,
   getSOP,
+  getSOPAsync,
   getSOPMarkdown,
+  getSOPMarkdownAsync,
   renderSOPDashboardHtml,
+  renderSOPDashboardHtmlAsync,
 } from './sopDashboard';
 import { getTraceRecorder } from './executionTrace';
 import { getCostModel } from '../observability/costModel';
@@ -904,9 +909,25 @@ export class CommanderHttpServer {
     }
 
     // SOP dashboard (HTML page — bypasses auth for local dev)
+    //
+    // Async migration: renderSOPDashboardHtmlAsync uses fs.promises under
+    // the hood, so the response can be prepared in the background while
+    // other in-flight requests continue to be served. Previously, the sync
+    // version did readdirSync + readFileSync + statSync per SOP file,
+    // which lagged the event loop for the entire render.
     if (segments[0] === 'dashboard' && segments[1] === 'sop' && (req.method ?? 'GET') === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(renderSOPDashboardHtml());
+      try {
+        const html = await renderSOPDashboardHtmlAsync();
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(html);
+      } catch (err) {
+        getGlobalLogger().warn('HttpServer', 'Failed to render SOP dashboard', {
+          error: (err as Error)?.message,
+        });
+        reportSilentFailure(err, 'httpServer:renderSOPDashboardHtmlAsync');
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('Failed to render SOP dashboard');
+      }
       return;
     }
 
@@ -1488,22 +1509,27 @@ export class CommanderHttpServer {
         // GET /api/v1/sops/:agentId — list SOPs for an agent
         // GET /api/v1/sops/:agentId/:runId — retrieve specific SOP as JSON
         // GET /api/v1/sops/:agentId/:runId/markdown — retrieve SOP as Markdown
+        //
+        // Async migration: every read below uses an `*Async` variant so
+        // the /.commander/sops disk-scan no longer blocks the event loop
+        // for the duration of a multi-agent directory listing.
         if (method === 'GET') {
           // Skip 'v1' and 'sops' (2 elements) to get agentId, runId, format
           const [, , agentId, runId, format] = segments;
           if (!agentId) {
-            sendJson(res, 200, getSOPDashboardData());
+            const data = await getSOPDashboardDataAsync();
+            sendJson(res, 200, data);
             return;
           }
           if (!runId) {
             // List SOPs for a specific agent
-            const allSops = listSOPs();
+            const allSops = await listSOPsAsync();
             const filtered = allSops.filter((s) => s.agentId === agentId);
             sendJson(res, 200, { agentId, sops: filtered, total: filtered.length });
             return;
           }
           if (format === 'markdown') {
-            const md = getSOPMarkdown(agentId, runId);
+            const md = await getSOPMarkdownAsync(agentId, runId);
             if (!md) {
               sendJson(res, 404, { error: 'SOP not found' });
               return;
@@ -1513,7 +1539,7 @@ export class CommanderHttpServer {
             return;
           }
           // Default: return structured JSON
-          const sop = getSOP(agentId, runId);
+          const sop = await getSOPAsync(agentId, runId);
           if (!sop) {
             sendJson(res, 404, { error: 'SOP not found' });
             return;
@@ -1761,13 +1787,58 @@ export class CommanderHttpServer {
       Connection: 'keep-alive',
     });
 
-    // Subscribe to SOP bus events and emit structured snapshots
+    // Subscribe to SOP bus events and emit structured snapshots.
+    //
+    // Async migration: the bus callback below is sync (MessageBus.subscribe
+    // does not await fire-and-forget promises), so the async data fetch
+    // is dispatched via `void (async () => { ... })()`. Each `sop.generated`
+    // event spawns an async IIFE that awaits `getSOPDashboardDataAsync()`
+    // (no fs.Sync reads of the SOP directory) and then emits the snapshot.
+    // If the stream closed before the IIFE resolved, the inner guard skips
+    // emission so we don't write to a dead socket.
+    //
+    // I/O-storm protection (06-30 fix): `inflight` suppresses concurrent
+    // re-reads when `sop.generated` fires repeatedly during burst runs.
+    // The dirty flag triggers ONE trailing re-emit so a stale snapshot is
+    // corrected after the initial pass resolves. Without this guard, N
+    // rapid bus fires would launch N parallel `fs.promises.readdir` scans
+    // of `.commander/sops` — the exact bottleneck the migration was meant
+    // to eliminate.
+    let inflight = false;
+    let dirty = false;
     const unsubGenerated = this.bus.subscribe('sop.generated', () => {
       if (stream.isClosed) return;
-      stream.emitStructured(
-        'sop.update',
-        getSOPDashboardData() as unknown as Record<string, unknown>,
-      );
+      if (inflight) {
+        dirty = true;
+        return;
+      }
+      void (async (): Promise<void> => {
+        inflight = true;
+        try {
+          do {
+            const data = await getSOPDashboardDataAsync();
+            if (stream.isClosed) return;
+            stream.emitStructured(
+              'sop.update',
+              data as unknown as Record<string, unknown>,
+            );
+            // Reset dirty AFTER emit so a sustained burst (fires faster
+            // than `getSOPDashboardDataAsync` resolves) terminates the
+            // loop at the first zero-fire yield rather than polling one
+            // extra read.
+            dirty = false;
+          } while (dirty && !stream.isClosed);
+        } catch (err) {
+          getGlobalLogger().warn(
+            'HttpServer',
+            'Failed to build SOP update snapshot for SSE stream',
+            { error: (err as Error)?.message },
+          );
+          reportSilentFailure(err, 'httpServer:handleSOPStreamRequest');
+        } finally {
+          inflight = false;
+        }
+      })();
     });
 
     req.on('close', () => {

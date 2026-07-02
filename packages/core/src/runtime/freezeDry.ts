@@ -117,6 +117,76 @@ export class FreezeDryManager {
     return manifest;
   }
 
+  /**
+   * Async variant of freeze(). Per-run mkdir + the manifest tmp-then-rename
+   * sequence are parallelised via fs.promises so a freeze with N runs does
+   * not block the event loop for the duration of N mkdir writes.
+   */
+  async freezeAsync(): Promise<FreezeManifest | null> {
+    if (this.frozen) return null;
+    this.frozen = true;
+
+    const log = getGlobalLogger();
+    const now = new Date().toISOString();
+    const runEntries: FreezeRunInfo[] = [];
+
+    // Build the manifest entry list while mkdir proceeds in parallel.
+    const runs = Array.from(this.activeRuns.entries());
+    await Promise.all(
+      runs.map(async ([runId, runState]) => {
+        const runDir = path.join(this.stateDir, runId);
+        try {
+          await fs.promises.mkdir(runDir, { recursive: true, mode: 0o700 });
+        } catch (err) {
+          reportSilentFailure(err, 'freezeDry:freezeAsync.mkdir');
+        }
+        log.info(
+          'FreezeDry',
+          `Frozen run ${runId} at step ${runState.stepNumber} (${runState.phase})`,
+        );
+      }),
+    );
+    for (const [runId, runState] of runs) {
+      runEntries.push({
+        runId,
+        agentId: runState.agentId,
+        phase: runState.phase,
+        stepNumber: runState.stepNumber,
+        goal: runState.goal.slice(0, 500),
+        frozenAt: now,
+        completedToolCalls: runState.completedToolCalls,
+      });
+    }
+
+    const manifest: FreezeManifest = {
+      version: FREEZE_VERSION,
+      frozenAt: now,
+      runs: runEntries,
+      suggestedCommand: 'commander up --resume',
+      cwd: process.cwd(),
+    };
+
+    const manifestPath = path.join(this.stateDir, MANIFEST_FILE);
+    const tmpPath = manifestPath + '.tmp';
+    try {
+      await fs.promises.writeFile(tmpPath, JSON.stringify(manifest, null, 2), {
+        encoding: 'utf-8',
+        mode: 0o600,
+      });
+      await fs.promises.rename(tmpPath, manifestPath);
+      log.info(
+        'FreezeDry',
+        `Freeze manifest written to ${manifestPath} (${runEntries.length} runs)`,
+      );
+    } catch (e) {
+      log.error('FreezeDry', 'Failed to write freeze manifest (async)', e as Error);
+      this.frozen = false;
+      return null;
+    }
+
+    return manifest;
+  }
+
   detectFreeze(): FreezeManifest | null {
     const manifestPath = path.join(this.stateDir, MANIFEST_FILE);
     try {
@@ -125,6 +195,19 @@ export class FreezeDryManager {
       return JSON.parse(raw) as FreezeManifest;
     } catch (err) {
       reportSilentFailure(err, 'freezeDry:126');
+      return null;
+    }
+  }
+
+  /** Async variant of detectFreeze. */
+  async detectFreezeAsync(): Promise<FreezeManifest | null> {
+    const manifestPath = path.join(this.stateDir, MANIFEST_FILE);
+    try {
+      const raw = await fs.promises.readFile(manifestPath, 'utf-8');
+      return JSON.parse(raw) as FreezeManifest;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      reportSilentFailure(err, 'freezeDry:detectAsync');
       return null;
     }
   }
@@ -143,6 +226,28 @@ export class FreezeDryManager {
       log.info('FreezeDry', `Freeze manifest archived to ${archived}`);
     } catch (e) {
       log.warn('FreezeDry', 'Failed to archive freeze manifest', { error: (e as Error).message });
+    }
+
+    return manifest;
+  }
+
+  /** Async variant of thaw. */
+  async thawAsync(): Promise<FreezeManifest | null> {
+    const manifest = await this.detectFreezeAsync();
+    if (!manifest) return null;
+
+    const log = getGlobalLogger();
+    log.info('FreezeDry', `Thawing ${manifest.runs.length} frozen run(s)`);
+
+    const manifestPath = path.join(this.stateDir, MANIFEST_FILE);
+    try {
+      const archived = manifestPath + '.thawed';
+      await fs.promises.rename(manifestPath, archived);
+      log.info('FreezeDry', `Freeze manifest archived to ${archived} (async)`);
+    } catch (e) {
+      log.warn('FreezeDry', 'Failed to archive freeze manifest (async)', {
+        error: (e as Error).message,
+      });
     }
 
     return manifest;
@@ -171,6 +276,43 @@ export class FreezeDryManager {
     } catch (err) {
       reportSilentFailure(err, 'freezeDry:171');
       void 0;
+    }
+    return pruned;
+  }
+
+  /** Async variant of prune. Stats all candidates in parallel; ENOENT is benign. */
+  async pruneAsync(): Promise<number> {
+    let pruned = 0;
+    const now = Date.now();
+    let entries: string[];
+    try {
+      entries = await fs.promises.readdir(this.stateDir);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+      reportSilentFailure(err, 'freezeDry:pruneAsync:readdir');
+      return 0;
+    }
+    const candidates = entries.filter(
+      (e) => e.endsWith('.thawed') || e.endsWith('.archived'),
+    );
+    const stats = await Promise.all(
+      candidates.map((entry) =>
+        fs.promises
+          .stat(path.join(this.stateDir, entry))
+          .then((stat) => ({ entry, stat }))
+          .catch(() => null),
+      ),
+    );
+    for (const entry of stats) {
+      if (!entry) continue;
+      if (now - entry.stat.mtimeMs > PRUNE_AFTER_MS) {
+        try {
+          await fs.promises.unlink(path.join(this.stateDir, entry.entry));
+          pruned++;
+        } catch (err) {
+          reportSilentFailure(err, 'freezeDry:pruneAsync:unlink');
+        }
+      }
     }
     return pruned;
   }

@@ -268,6 +268,52 @@ export class StateCheckpointer {
     return null;
   }
 
+  /**
+   * Async variant of resume(). RecoveryBootstrapper calls resume() in a
+   * loop on startup; using the async variant lets concurrent zombie-scans
+   * not serialize behind a synchronous fs.readFileSync per resume.
+   */
+  async resumeAsync(runId: string): Promise<CheckpointState | null> {
+    const chkPath = path.join(this.baseDir, `${runId}.checkpoint`);
+    try {
+      await fs.promises.access(chkPath);
+      const raw = await fs.promises.readFile(chkPath, 'utf-8');
+      return JSON.parse(raw) as CheckpointState;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        // Fall through to completed-dir lookup.
+      } else {
+        getGlobalLogger().warn('StateCheckpointer', 'Failed to resume from checkpoint (async)', {
+          error: (err as Error)?.message,
+          runId,
+        });
+        try {
+          await fs.promises.unlink(chkPath);
+        } catch (unlinkError) {
+          if ((unlinkError as NodeJS.ErrnoException).code !== 'ENOENT') {
+            getGlobalLogger().warn('StateCheckpointer', 'Failed to remove corrupt checkpoint (async)', {
+              error: (unlinkError as Error)?.message,
+              runId,
+            });
+          }
+        }
+        return null;
+      }
+    }
+    const donePath = path.join(this.baseDir, 'completed', `${runId}.json`);
+    try {
+      const raw = await fs.promises.readFile(donePath, 'utf-8');
+      return JSON.parse(raw) as CheckpointState;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      getGlobalLogger().warn('StateCheckpointer', 'Failed to read completed checkpoint (async)', {
+        error: (err as Error)?.message,
+        runId,
+      });
+      return null;
+    }
+  }
+
   listCheckpoints(): { runId: string; phase: string; timestamp: string }[] {
     if (this.store) {
       try {
@@ -318,6 +364,77 @@ export class StateCheckpointer {
     return results.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
   }
 
+  /**
+   * Async variant of listCheckpoints(). Reads run manifests from .commander_state/
+   * and the completed/ subdir via fs.promises in parallel; same semantics as
+   * the sync version. Used by GET /api/v1/state-machine endpoints under load.
+   */
+  async listCheckpointsAsync(): Promise<{ runId: string; phase: string; timestamp: string }[]> {
+    if (this.store) {
+      try {
+        const records = this.store.getLatestByRun('');
+        if (records) {
+          const summaries = this.store.listByRun('*');
+          if (summaries.length > 0) {
+            return summaries
+              .filter((s) => s.phase)
+              .map((s) => ({
+                runId: s.runId,
+                phase: s.phase!,
+                timestamp: s.createdAt,
+              }));
+          }
+        }
+      } catch (err) {
+        reportSilentFailure(err, 'stateCheckpointer:listAsync:store');
+        /* fall through to file-based listing */
+      }
+    }
+
+    const gatherFromDir = async (dir: string) => {
+      let entries: string[] = [];
+      try {
+        entries = await fs.promises.readdir(dir);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+        getGlobalLogger().warn('StateCheckpointer', 'Failed to list checkpoints (async)', {
+          error: (err as Error)?.message,
+          dir,
+        });
+        return [];
+      }
+      const candidates = entries.filter(
+        (f) => !f.endsWith('.tmp') && (f.endsWith('.checkpoint') || f.endsWith('.json')),
+      );
+      // Parallel reads — cheaper than a sequential readdir-then-loop.
+      const states = await Promise.all(
+        candidates.map((f) => this._readFileAsync(path.join(dir, f))),
+      );
+      const out: { runId: string; phase: string; timestamp: string }[] = [];
+      for (let i = 0; i < candidates.length; i++) {
+        const state = states[i];
+        const f = candidates[i];
+        if (
+          state &&
+          typeof state.phase === 'string' &&
+          typeof state.timestamp === 'string'
+        ) {
+          const runId = f.replace(/\.(checkpoint|json)$/, '');
+          out.push({ runId, phase: state.phase, timestamp: state.timestamp });
+        }
+      }
+      return out;
+    };
+
+    const [primary, completed] = await Promise.all([
+      gatherFromDir(this.baseDir),
+      gatherFromDir(path.join(this.baseDir, 'completed')),
+    ]);
+    return [...primary, ...completed].sort((a, b) =>
+      b.timestamp.localeCompare(a.timestamp),
+    );
+  }
+
   deleteCheckpoint(runId: string): void {
     for (const p of [
       path.join(this.baseDir, `${runId}.checkpoint`),
@@ -363,6 +480,32 @@ export class StateCheckpointer {
       });
       if (!live) {
         getGlobalLogger().warn('StateCheckpointer', 'Fenced: checkpoint read rejected', {
+          runId,
+          token: state.leaseToken,
+          epoch: state.fencingEpoch,
+        });
+        return null;
+      }
+    }
+    return state;
+  }
+
+  /**
+   * Async variant of loadCheckpoint(). Lease validation is identical to
+   * the sync version; only the file read differs. Use this from async
+   * hot paths (e.g., Resume-from-failure in harness) where a sync
+   * readFileSync would otherwise block the event loop during recovery.
+   */
+  async loadCheckpointAsync(runId: string): Promise<CheckpointState | null> {
+    const chkPath = path.join(this.baseDir, `${runId}.checkpoint`);
+    const state = await this._readFileAsync(chkPath);
+    if (!state) return null;
+    if (this.leaseManager && state.leaseToken && typeof state.fencingEpoch === 'number') {
+      const live = this.leaseManager.validate(runId, state.leaseToken, state.fencingEpoch, {
+        tenantId: this.tenantId,
+      });
+      if (!live) {
+        getGlobalLogger().warn('StateCheckpointer', 'Fenced: checkpoint read rejected (async)', {
           runId,
           token: state.leaseToken,
           epoch: state.fencingEpoch,
@@ -421,6 +564,33 @@ export class StateCheckpointer {
       return JSON.parse(raw) as CheckpointState;
     } catch (e) {
       getGlobalLogger().warn('StateCheckpointer', 'Failed to read checkpoint file', {
+        error: (e as Error)?.message,
+        filePath,
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Async counterpart to _readFile. ENOENT is a benign miss (return
+   * null) so callers can avoid noisy warn logs for first-time lookups.
+   */
+  private async _readFileAsync(filePath: string): Promise<CheckpointState | null> {
+    let raw: string;
+    try {
+      raw = await fs.promises.readFile(filePath, 'utf-8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      getGlobalLogger().warn('StateCheckpointer', 'Failed to read checkpoint file (async)', {
+        error: (err as Error)?.message,
+        filePath,
+      });
+      return null;
+    }
+    try {
+      return JSON.parse(raw) as CheckpointState;
+    } catch (e) {
+      getGlobalLogger().warn('StateCheckpointer', 'Checkpoint JSON parse failed (async)', {
         error: (e as Error)?.message,
         filePath,
       });
