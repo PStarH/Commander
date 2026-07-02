@@ -112,7 +112,7 @@ jobs:
 
       - name: Upload compliance report (markdown)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: compliance-audit-report-${{ github.run_id }}.md
           path: /tmp/compliance-audit-report.md
@@ -120,7 +120,7 @@ jobs:
 
       - name: Upload compliance report (JSON)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: compliance-audit-report-${{ github.run_id }}.json
           path: /tmp/compliance-audit-report.json
@@ -128,7 +128,7 @@ jobs:
 
       - name: Upload snapshot history (cross-run persistence)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: posture-snapshots-latest
           path: packages/core/.commander/posture-snapshots.json
