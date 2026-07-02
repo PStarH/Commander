@@ -74,7 +74,11 @@ export function createReportingPlugin(): CommanderPlugin {
           properties: {
             projectName: { type: 'string', description: 'Project name' },
             operationCodename: { type: 'string', description: 'Operation codename' },
-            health: { type: 'string', enum: ['GREEN', 'AMBER', 'RED'], description: 'Overall health status' },
+            health: {
+              type: 'string',
+              enum: ['GREEN', 'AMBER', 'RED'],
+              description: 'Overall health status',
+            },
             metrics: { type: 'object', description: 'Key-value metrics to display' },
             narrative: { type: 'string', description: 'Free-form narrative text' },
             topAgents: {
@@ -114,7 +118,11 @@ export function createReportingPlugin(): CommanderPlugin {
             narrative: (args.narrative as string) ?? '',
             topAgents: (args.topAgents as Array<{ name: string; completed: number }>) ?? [],
             missionSummary: (args.missionSummary as Record<string, number>) ?? {},
-            recentEvents: args.recentEvents as Array<{ timestamp: string; level: string; message: string }>,
+            recentEvents: args.recentEvents as Array<{
+              timestamp: string;
+              level: string;
+              message: string;
+            }>,
           });
           return r.render(report);
         },

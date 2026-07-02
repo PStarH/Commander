@@ -1,4 +1,14 @@
-import { reportSilentFailure, createRagPlugin, createEvalPlugin, createReportingPlugin, createConsensusPlugin, getHookManager, getMetricsCollector, HealthCollector, getPluginLoader } from '@commander/core';
+import {
+  reportSilentFailure,
+  createRagPlugin,
+  createEvalPlugin,
+  createReportingPlugin,
+  createConsensusPlugin,
+  getHookManager,
+  getMetricsCollector,
+  HealthCollector,
+  getPluginLoader,
+} from '@commander/core';
 import express from 'express';
 import { createWarRoomStore } from './store';
 import { ProjectMemoryStore } from './memoryStore';
@@ -379,42 +389,98 @@ registerRouter({
   factory: () => createConfidenceRouter(store, confidenceReporter),
 });
 registerRouter({ name: 'quality', mountPath: '/', factory: () => createQualityRouter() });
-registerRouter({ name: 'self-assessment', mountPath: '/api', factory: () => createSelfAssessmentRouter() });
-registerRouter({ name: 'evaluation', mountPath: '/api/evaluation', factory: () => evaluationRouter });
-registerRouter({ name: 'governance', mountPath: '/api/governance', factory: () => governanceRouter });
-registerRouter({ name: 'state-machine', mountPath: '/api/state-machine', factory: () => stateMachineRouter });
+registerRouter({
+  name: 'self-assessment',
+  mountPath: '/api',
+  factory: () => createSelfAssessmentRouter(),
+});
+registerRouter({
+  name: 'evaluation',
+  mountPath: '/api/evaluation',
+  factory: () => evaluationRouter,
+});
+registerRouter({
+  name: 'governance',
+  mountPath: '/api/governance',
+  factory: () => governanceRouter,
+});
+registerRouter({
+  name: 'state-machine',
+  mountPath: '/api/state-machine',
+  factory: () => stateMachineRouter,
+});
 registerRouter({
   name: 'agent-card',
   mountPath: '/api',
   factory: () => createAgentCardRouter(agentCardRegistry),
 });
-registerRouter({ name: 'reasoning-config', mountPath: '/api', factory: () => createReasoningConfigRouter() });
-registerRouter({ name: 'evaluation-runner', mountPath: '/api', factory: () => createEvaluationRunnerRouter() });
+registerRouter({
+  name: 'reasoning-config',
+  mountPath: '/api',
+  factory: () => createReasoningConfigRouter(),
+});
+registerRouter({
+  name: 'evaluation-runner',
+  mountPath: '/api',
+  factory: () => createEvaluationRunnerRouter(),
+});
 registerRouter({ name: 'pipeline', mountPath: '/', factory: () => createPipelineRouter() });
-registerRouter({ name: 'namespaced-memory', mountPath: '/', factory: () => createNamespacedMemoryRouter() });
+registerRouter({
+  name: 'namespaced-memory',
+  mountPath: '/',
+  factory: () => createNamespacedMemoryRouter(),
+});
 registerRouter({ name: 'a2a', mountPath: '/a2a', factory: () => a2aRouter });
 registerRouter({ name: 'a2a-v2', mountPath: '/a2a/v2', factory: () => createA2AV2Router() });
 registerRouter({ name: 'mcp', mountPath: '/mcp', factory: () => createMCPRouter() });
-registerRouter({ name: 'mcp-client', mountPath: '/mcp/client', factory: () => createMCPClientRouter() });
+registerRouter({
+  name: 'mcp-client',
+  mountPath: '/mcp/client',
+  factory: () => createMCPClientRouter(),
+});
 registerRouter({ name: 'stream', mountPath: '/', factory: () => createStreamRouter() });
-registerRouter({ name: 'runtime', mountPath: '/api/runtime', factory: () => createRuntimeRouter() });
+registerRouter({
+  name: 'runtime',
+  mountPath: '/api/runtime',
+  factory: () => createRuntimeRouter(),
+});
 registerRouter({ name: 'cost', mountPath: '/', factory: () => createCostRouter() });
 registerRouter({ name: 'pause', mountPath: '/', factory: () => createPauseRouter() });
 registerRouter({ name: 'replay', mountPath: '/', factory: () => createReplayRouter() });
-registerRouter({ name: 'orchestrator', mountPath: '/api', factory: () => createOrchestratorRouter() });
+registerRouter({
+  name: 'orchestrator',
+  mountPath: '/api',
+  factory: () => createOrchestratorRouter(),
+});
 registerRouter({ name: 'team', mountPath: '/api', factory: () => createTeamRouter() });
 
 // ── UX gap-fix routers ─────────────────────────────────────────────────────
 registerRouter({ name: 'chat', mountPath: '/', factory: () => createChatRouter() });
 registerRouter({ name: 'dlq', mountPath: '/', factory: () => createDlqRouter() });
-registerRouter({ name: 'approval-config', mountPath: '/', factory: () => createApprovalConfigRouter() });
-registerRouter({ name: 'hallucination', mountPath: '/', factory: () => createHallucinationRouter() });
+registerRouter({
+  name: 'approval-config',
+  mountPath: '/',
+  factory: () => createApprovalConfigRouter(),
+});
+registerRouter({
+  name: 'hallucination',
+  mountPath: '/',
+  factory: () => createHallucinationRouter(),
+});
 registerRouter({ name: 'lineage', mountPath: '/', factory: () => createLineageRouter() });
-registerRouter({ name: 'security-posture', mountPath: '/', factory: () => createSecurityPostureRouter() });
+registerRouter({
+  name: 'security-posture',
+  mountPath: '/',
+  factory: () => createSecurityPostureRouter(),
+});
 registerRouter({ name: 'webhook', mountPath: '/', factory: () => createWebhookRouter() });
 
 // ── Cost Dashboard (enterprise cost analytics) ─────────────────────────────
-registerRouter({ name: 'cost-dashboard', mountPath: '/', factory: () => createCostDashboardRouter() });
+registerRouter({
+  name: 'cost-dashboard',
+  mountPath: '/',
+  factory: () => createCostDashboardRouter(),
+});
 
 // ── Knowledge Base / RAG (enterprise document retrieval) ───────────────────
 // Register the built-in RAG CommanderPlugin (default disabled). Enabling it
@@ -443,11 +509,13 @@ getPluginLoader()
       console.log(`[commander] Loaded ${loaded.length} external plugin(s)`);
     }
   })
-  .catch((err: unknown) =>
-    reportSilentFailure(err, 'index:pluginLoader.loadAll'),
-  );
+  .catch((err: unknown) => reportSilentFailure(err, 'index:pluginLoader.loadAll'));
 
-registerRouter({ name: 'knowledge-base', mountPath: '/', factory: () => createKnowledgeBaseRouter() });
+registerRouter({
+  name: 'knowledge-base',
+  mountPath: '/',
+  factory: () => createKnowledgeBaseRouter(),
+});
 
 // ── Eval / Reporting / Consensus plugin routers (control + data plane) ────
 registerRouter({ name: 'eval', mountPath: '/', factory: () => createEvalRouter() });
@@ -478,19 +546,51 @@ registerRouter({
 // ── API v1 versioned aliases (backward-compatible) ──────────────────────────
 // All routes are accessible under /api/v1/ prefix in addition to their original paths.
 // This provides explicit API versioning without breaking existing clients.
-registerRouter({ name: 'v1-evaluation', mountPath: '/api/v1/evaluation', factory: () => evaluationRouter });
-registerRouter({ name: 'v1-governance', mountPath: '/api/v1/governance', factory: () => governanceRouter });
-registerRouter({ name: 'v1-state-machine', mountPath: '/api/v1/state-machine', factory: () => stateMachineRouter });
-registerRouter({ name: 'v1-self-assessment', mountPath: '/api/v1', factory: () => createSelfAssessmentRouter() });
+registerRouter({
+  name: 'v1-evaluation',
+  mountPath: '/api/v1/evaluation',
+  factory: () => evaluationRouter,
+});
+registerRouter({
+  name: 'v1-governance',
+  mountPath: '/api/v1/governance',
+  factory: () => governanceRouter,
+});
+registerRouter({
+  name: 'v1-state-machine',
+  mountPath: '/api/v1/state-machine',
+  factory: () => stateMachineRouter,
+});
+registerRouter({
+  name: 'v1-self-assessment',
+  mountPath: '/api/v1',
+  factory: () => createSelfAssessmentRouter(),
+});
 registerRouter({
   name: 'v1-agent-card',
   mountPath: '/api/v1',
   factory: () => createAgentCardRouter(agentCardRegistry),
 });
-registerRouter({ name: 'v1-reasoning-config', mountPath: '/api/v1', factory: () => createReasoningConfigRouter() });
-registerRouter({ name: 'v1-evaluation-runner', mountPath: '/api/v1', factory: () => createEvaluationRunnerRouter() });
-registerRouter({ name: 'v1-runtime', mountPath: '/api/v1/runtime', factory: () => createRuntimeRouter() });
-registerRouter({ name: 'v1-orchestrator', mountPath: '/api/v1', factory: () => createOrchestratorRouter() });
+registerRouter({
+  name: 'v1-reasoning-config',
+  mountPath: '/api/v1',
+  factory: () => createReasoningConfigRouter(),
+});
+registerRouter({
+  name: 'v1-evaluation-runner',
+  mountPath: '/api/v1',
+  factory: () => createEvaluationRunnerRouter(),
+});
+registerRouter({
+  name: 'v1-runtime',
+  mountPath: '/api/v1/runtime',
+  factory: () => createRuntimeRouter(),
+});
+registerRouter({
+  name: 'v1-orchestrator',
+  mountPath: '/api/v1',
+  factory: () => createOrchestratorRouter(),
+});
 
 // ── Mount all registered routers in registration order ─────────────────────
 // A single call replaces ~40 scattered app.use() statements. Order is preserved

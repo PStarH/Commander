@@ -2813,12 +2813,7 @@ export function t(key: string, params?: Record<string, string | number>): string
   const overrides = localeOverrides[currentLocale];
   const enOverrides = localeOverrides['en'];
   const dict = translations[currentLocale] || translations['en'];
-  let text =
-    overrides[key] ??
-    dict[key] ??
-    translations['en'][key] ??
-    enOverrides[key] ??
-    key;
+  let text = overrides[key] ?? dict[key] ?? translations['en'][key] ?? enOverrides[key] ?? key;
 
   if (params) {
     for (const [k, v] of Object.entries(params)) {

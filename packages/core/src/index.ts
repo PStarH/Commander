@@ -648,7 +648,11 @@ export { buildDecisions, decisionsSummary } from './observability/decisionProven
 export { captureProvenance } from './runtime/provenance';
 
 // Metrics (from metricsCollector, not the logging re-export)
-export { getMetricsCollector, resetMetricsCollector, MetricsCollector } from './runtime/metricsCollector';
+export {
+  getMetricsCollector,
+  resetMetricsCollector,
+  MetricsCollector,
+} from './runtime/metricsCollector';
 
 // Health checks (shared HealthCollector so the API layer does not dual-track)
 export { HealthCollector, type HealthSources, type HealthCheckResult } from './runtime/healthCheck';
@@ -656,7 +660,12 @@ export { HealthCollector, type HealthSources, type HealthCheckResult } from './r
 // Evaluation — LLM-as-Judge, dataset versioning, A/B experiment comparison
 // Now delivered via the builtin-eval plugin (plugins/builtin/eval).
 export * from './plugins/builtin/eval';
-export { createEvalPlugin, getSharedJudgeEngine, getSharedDatasetManager, getSharedABComparator } from './plugins/builtin/evalPlugin';
+export {
+  createEvalPlugin,
+  getSharedJudgeEngine,
+  getSharedDatasetManager,
+  getSharedABComparator,
+} from './plugins/builtin/evalPlugin';
 
 // Tenant Provider — multi-tenant isolation primitives
 export {
@@ -794,7 +803,11 @@ export type {
 // HTML Reporting — now delivered via the builtin-reporting plugin.
 // Public API preserved for backwards compatibility. HTMLReport/HTMLReportSection
 // types remain exported from ./runtime/types (see above).
-export { HTMLReportRenderer, getHTMLReportRenderer, createWarRoomHTMLReport } from './plugins/builtin/reporting';
+export {
+  HTMLReportRenderer,
+  getHTMLReportRenderer,
+  createWarRoomHTMLReport,
+} from './plugins/builtin/reporting';
 export { createReportingPlugin } from './plugins/builtin/reportingPlugin';
 
 // Self-Evolution Engine — Meta-learning & optimization
@@ -1255,10 +1268,7 @@ export {
   StepTimeoutError,
 } from './orchestrationPatterns';
 
-export {
-  runConcurrentWorkflow,
-  ConcurrentWorkflowBuilder,
-} from './orchestrationConcurrent';
+export { runConcurrentWorkflow, ConcurrentWorkflowBuilder } from './orchestrationConcurrent';
 export type { ConcurrentWorkflowConfig } from './orchestrationConcurrent';
 
 export {
@@ -1271,10 +1281,7 @@ export {
 } from './orchestrationGraph';
 export type { GraphWorkflowConfig, GraphNode } from './orchestrationGraph';
 
-export {
-  runMixtureOfAgents,
-  MixtureOfAgentsBuilder,
-} from './orchestrationMixture';
+export { runMixtureOfAgents, MixtureOfAgentsBuilder } from './orchestrationMixture';
 export type { MixtureOfAgentsConfig, SynthesizerInput } from './orchestrationMixture';
 
 export {
@@ -1298,11 +1305,7 @@ export {
   defaultHeuristicExtractor,
   buildCrossPollinationReport,
 } from './crossPollination';
-export type {
-  Insight,
-  InsightExtractor,
-  CrossPollinationReport,
-} from './crossPollination';
+export type { Insight, InsightExtractor, CrossPollinationReport } from './crossPollination';
 
 export { runDynamicReplan } from './dynamicReplanner';
 export type {
@@ -1318,11 +1321,7 @@ export {
   defaultCompletionDetector,
   createConvergenceDetector,
 } from './autoLoopRunner';
-export type {
-  AutoLoopConfig,
-  AutoLoopRun,
-  CompletionDetector,
-} from './autoLoopRunner';
+export type { AutoLoopConfig, AutoLoopRun, CompletionDetector } from './autoLoopRunner';
 export type { CommanderOptions, DeploymentTier, ResolvedConfig } from './commander/tier';
 export type { ProbeResult } from './commander/probe';
 

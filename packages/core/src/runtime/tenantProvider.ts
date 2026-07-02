@@ -14,7 +14,9 @@ import * as path from 'node:path';
 import { getCurrentTenantId as readCurrentTenantId } from './tenantContext';
 
 let _ThreeLayerMemory: typeof import('../threeLayerMemory').ThreeLayerMemory | null = null;
-let _getGlobalThreeLayerMemory: typeof import('../threeLayerMemory').getGlobalThreeLayerMemory | null = null;
+let _getGlobalThreeLayerMemory:
+  | typeof import('../threeLayerMemory').getGlobalThreeLayerMemory
+  | null = null;
 function lazyThreeLayerMemoryClass(): typeof import('../threeLayerMemory').ThreeLayerMemory {
   if (!_ThreeLayerMemory) {
     const mod = require('../threeLayerMemory');
@@ -23,7 +25,9 @@ function lazyThreeLayerMemoryClass(): typeof import('../threeLayerMemory').Three
   }
   return _ThreeLayerMemory!;
 }
-function lazyGetGlobalThreeLayerMemory(): ReturnType<typeof import('../threeLayerMemory').getGlobalThreeLayerMemory> {
+function lazyGetGlobalThreeLayerMemory(): ReturnType<
+  typeof import('../threeLayerMemory').getGlobalThreeLayerMemory
+> {
   lazyThreeLayerMemoryClass();
   return _getGlobalThreeLayerMemory!();
 }
@@ -135,12 +139,19 @@ export class SimpleTenantProvider implements TenantProvider {
 // ============================================================================
 
 export class ThreeLayerMemoryRegistry {
-  private instances: Map<string, InstanceType<typeof import('../threeLayerMemory').ThreeLayerMemory>> = new Map();
-  private defaultInstance: InstanceType<typeof import('../threeLayerMemory').ThreeLayerMemory> | null = null;
+  private instances: Map<
+    string,
+    InstanceType<typeof import('../threeLayerMemory').ThreeLayerMemory>
+  > = new Map();
+  private defaultInstance: InstanceType<
+    typeof import('../threeLayerMemory').ThreeLayerMemory
+  > | null = null;
   private static readonly MAX_INSTANCES = 50;
 
   /** Get or create a memory instance for a tenant. */
-  getOrCreate(tenantId?: string): InstanceType<typeof import('../threeLayerMemory').ThreeLayerMemory> {
+  getOrCreate(
+    tenantId?: string,
+  ): InstanceType<typeof import('../threeLayerMemory').ThreeLayerMemory> {
     if (!tenantId) {
       if (!this.defaultInstance) {
         this.defaultInstance = lazyGetGlobalThreeLayerMemory();

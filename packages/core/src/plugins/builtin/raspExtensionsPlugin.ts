@@ -83,12 +83,14 @@ const INJECTION_PATTERNS: InjectionPattern[] = [
   },
   {
     id: 'role_override',
-    regex: /(?:you\s+are\s+now|act\s+as|pretend\s+to\s+be|from\s+now\s+on\s+you\s+(?:are|will)|new\s+role\s*:)/i,
+    regex:
+      /(?:you\s+are\s+now|act\s+as|pretend\s+to\s+be|from\s+now\s+on\s+you\s+(?:are|will)|new\s+role\s*:)/i,
     severity: 'high',
   },
   {
     id: 'tag_injection',
-    regex: /<\/(?:system|assistant|user|im_start|im_end)\s*>|<\|(?:system|assistant|user|im_start|im_end)\|>/i,
+    regex:
+      /<\/(?:system|assistant|user|im_start|im_end)\s*>|<\|(?:system|assistant|user|im_start|im_end)\|>/i,
     severity: 'high',
   },
   {
@@ -179,7 +181,8 @@ export function createRaspExtensionsPlugin(): CommanderPlugin {
         },
         toolFailureWindow: {
           type: 'number',
-          description: 'Sliding window size (number of recent tool calls) for failure-rate detection',
+          description:
+            'Sliding window size (number of recent tool calls) for failure-rate detection',
           default: 10,
         },
         regexBudgetMs: {

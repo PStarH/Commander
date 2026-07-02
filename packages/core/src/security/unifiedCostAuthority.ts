@@ -210,7 +210,11 @@ class CostPredictor {
    * 成本驱动 = 工具输出回流 LLM 的 token 消耗。
    * 使用档位默认值或工具声明的 estimatedOutputTokens。
    */
-  predictToolCost(toolName: string, tier: ToolCostTier, profile?: ToolCostProfile): {
+  predictToolCost(
+    toolName: string,
+    tier: ToolCostTier,
+    profile?: ToolCostProfile,
+  ): {
     costUsd: number;
     outputTokens: number;
   } {
@@ -349,7 +353,11 @@ class BudgetEnforcer {
       };
     }
     if (utilization >= 0.8) {
-      return { allowed: true, action: 'WARN', reason: `Per-run budget at ${(utilization * 100).toFixed(0)}%` };
+      return {
+        allowed: true,
+        action: 'WARN',
+        reason: `Per-run budget at ${(utilization * 100).toFixed(0)}%`,
+      };
     }
 
     return { allowed: true, action: 'ALLOW' };
@@ -374,19 +382,31 @@ class BudgetEnforcer {
     this.globalDailyUsedUsd += actual.costUsd;
 
     if (ctx.tool) {
-      runState.toolCallCounts.set(ctx.tool.name, (runState.toolCallCounts.get(ctx.tool.name) ?? 0) + 1);
+      runState.toolCallCounts.set(
+        ctx.tool.name,
+        (runState.toolCallCounts.get(ctx.tool.name) ?? 0) + 1,
+      );
     }
 
     // MELT 检查（基于实际成本）
     const caps = this.effectiveCaps(tenantState);
     if (runState.usedUsd >= caps.perRunUsd) {
-      return { melted: true, reason: `Per-run budget MELT: $${runState.usedUsd.toFixed(4)} >= $${caps.perRunUsd}` };
+      return {
+        melted: true,
+        reason: `Per-run budget MELT: $${runState.usedUsd.toFixed(4)} >= $${caps.perRunUsd}`,
+      };
     }
     if (tenantState.dailyUsedUsd >= caps.perTenantDailyUsd) {
-      return { melted: true, reason: `Per-tenant daily MELT: $${tenantState.dailyUsedUsd.toFixed(4)} >= $${caps.perTenantDailyUsd}` };
+      return {
+        melted: true,
+        reason: `Per-tenant daily MELT: $${tenantState.dailyUsedUsd.toFixed(4)} >= $${caps.perTenantDailyUsd}`,
+      };
     }
     if (this.globalDailyUsedUsd >= caps.globalDailyUsd) {
-      return { melted: true, reason: `Global daily MELT: $${this.globalDailyUsedUsd.toFixed(4)} >= $${caps.globalDailyUsd}` };
+      return {
+        melted: true,
+        reason: `Global daily MELT: $${this.globalDailyUsedUsd.toFixed(4)} >= $${caps.globalDailyUsd}`,
+      };
     }
 
     return { melted: false };
@@ -571,7 +591,11 @@ export class UnifiedCostAuthority {
       const result = this.predictor.predictToolCost(ctx.tool.name, ctx.tool.costTier);
       estimatedCostUsd = result.costUsd;
     } else if (ctx.model && ctx.estimatedTokens) {
-      estimatedCostUsd = this.predictor.predictLLMCost(ctx.model, ctx.estimatedTokens, ctx.cacheHitRatio ?? 0);
+      estimatedCostUsd = this.predictor.predictLLMCost(
+        ctx.model,
+        ctx.estimatedTokens,
+        ctx.cacheHitRatio ?? 0,
+      );
     }
 
     const check = this.enforcer.preCheck(ctx, estimatedCostUsd);
@@ -724,7 +748,7 @@ export function resetUnifiedCostAuthority(): void {
   singleton.reset();
 }
 
-const singleton = createTenantAwareSingleton(
-  () => new UnifiedCostAuthority(),
-  { componentName: 'UnifiedCostAuthority', allowGlobalFallback: true },
-);
+const singleton = createTenantAwareSingleton(() => new UnifiedCostAuthority(), {
+  componentName: 'UnifiedCostAuthority',
+  allowGlobalFallback: true,
+});

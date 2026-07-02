@@ -1560,4 +1560,3 @@ export async function disableConsensusPlugin(): Promise<{ enabled: boolean }> {
   if (!res.ok) throw new Error(await readError(res, 'Failed to disable consensus plugin'));
   return res.json();
 }
-
