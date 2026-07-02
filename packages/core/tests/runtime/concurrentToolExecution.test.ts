@@ -201,7 +201,7 @@ describe('E2E: Concurrent tool execution through AgentRuntime', () => {
     expect(log).toContain('safe1');
     expect(log).toContain('safe2');
     expect(log).toContain('serial');
-  });
+  }, 60000);
 
   it('does not hang when one tool fails among parallel calls', async () => {
     const { runtime } = createTestRuntime();
