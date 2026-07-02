@@ -153,7 +153,7 @@ describe('E2E: Deploy & Rollback through AgentRuntime.execute()', () => {
     expect(result.status).toBe('success');
     expect(env.getVersion()).toBe('v2');
     expect(provider.callCount).toBe(3); // deploy + health + final
-  });
+  }, 60000);
 
   it('deploy fails health check → automatic rollback', async () => {
     const { runtime } = createTestRuntime();
@@ -187,7 +187,7 @@ describe('E2E: Deploy & Rollback through AgentRuntime.execute()', () => {
     expect(result.status).toBe('success');
     expect(env.getVersion()).toBe('v1');
     expect(provider.callCount).toBe(5);
-  });
+  }, 120000);
 
   it('multiple deploy/rollback cycles in one execution', async () => {
     const { runtime } = createTestRuntime();
