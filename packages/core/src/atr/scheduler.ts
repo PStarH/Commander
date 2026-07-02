@@ -415,10 +415,7 @@ export class ExecutionScheduler {
 
   registerDefaultCompensations(): void {
     for (const [toolName, handler] of Object.entries(defaultCompensationHandlers)) {
-      this.ledger.registerCompensation(
-        toolName,
-        handler as CompensationHandler,
-      );
+      this.ledger.registerCompensation(toolName, handler as CompensationHandler);
     }
   }
 }

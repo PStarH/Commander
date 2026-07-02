@@ -107,16 +107,20 @@ export function createConsensusRouter(): Router {
     }
   });
 
-  router.post('/api/consensus/topology/force', validateBody(forceStateSchema), (req: Request, res: Response) => {
-    try {
-      const tsm = getTopologyStateMachine();
-      const state = req.body.state as TopologyState;
-      tsm.forceState(state, req.body.reason);
-      res.json({ ok: true, state: tsm.getState(), reason: req.body.reason });
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  });
+  router.post(
+    '/api/consensus/topology/force',
+    validateBody(forceStateSchema),
+    (req: Request, res: Response) => {
+      try {
+        const tsm = getTopologyStateMachine();
+        const state = req.body.state as TopologyState;
+        tsm.forceState(state, req.body.reason);
+        res.json({ ok: true, state: tsm.getState(), reason: req.body.reason });
+      } catch (error) {
+        res.status(500).json({ error: toErrorMessage(error) });
+      }
+    },
+  );
 
   router.get('/api/consensus/bpd/detect', (_req: Request, res: Response) => {
     try {
@@ -137,29 +141,37 @@ export function createConsensusRouter(): Router {
     }
   });
 
-  router.post('/api/consensus/sac/consensus', validateBody(sacConsensusSchema), (req: Request, res: Response) => {
-    try {
-      const sac = getSACProtocol();
-      const result = sac.computeConsensus(req.body.proposals, req.body.evaluations);
-      res.json(result);
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  });
-
-  router.post('/api/consensus/stopping/record', validateBody(stoppingRecordSchema), (req: Request, res: Response) => {
-    try {
-      const controller = getSharedAdaptiveStopping();
-      if (!controller) {
-        res.status(503).json({ error: 'AdaptiveStopping controller not initialized' });
-        return;
+  router.post(
+    '/api/consensus/sac/consensus',
+    validateBody(sacConsensusSchema),
+    (req: Request, res: Response) => {
+      try {
+        const sac = getSACProtocol();
+        const result = sac.computeConsensus(req.body.proposals, req.body.evaluations);
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ error: toErrorMessage(error) });
       }
-      const result = controller.recordRound(req.body.round);
-      res.json(result);
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  });
+    },
+  );
+
+  router.post(
+    '/api/consensus/stopping/record',
+    validateBody(stoppingRecordSchema),
+    (req: Request, res: Response) => {
+      try {
+        const controller = getSharedAdaptiveStopping();
+        if (!controller) {
+          res.status(503).json({ error: 'AdaptiveStopping controller not initialized' });
+          return;
+        }
+        const result = controller.recordRound(req.body.round);
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ error: toErrorMessage(error) });
+      }
+    },
+  );
 
   router.get('/api/consensus/stopping/summary', (_req: Request, res: Response) => {
     try {
