@@ -56,6 +56,22 @@ export class FreezeDryManager {
     this.activeRuns.delete(runId);
   }
 
+  /**
+   * Test-only accessor: returns the number of runs currently tracked in
+   * the in-memory activeRuns Map. Lets async-migration tests assert
+   * pre-freeze and post-freeze state without reaching into the
+   * TypeScript-private `activeRuns` Map field, which would couple
+   * the test to the internal field name.
+   *
+   * @internal — not part of the supported FreezeDryManager interface.
+   *             Production code should use the public methods
+   *             (setActiveRuns/setRunState/removeRun) and read the
+   *             FreezeManifest returned by freeze/freezeAsync.
+   */
+  getActiveRunCount(): number {
+    return this.activeRuns.size;
+  }
+
   isFrozen(): boolean {
     return this.frozen;
   }
@@ -292,9 +308,7 @@ export class FreezeDryManager {
       reportSilentFailure(err, 'freezeDry:pruneAsync:readdir');
       return 0;
     }
-    const candidates = entries.filter(
-      (e) => e.endsWith('.thawed') || e.endsWith('.archived'),
-    );
+    const candidates = entries.filter((e) => e.endsWith('.thawed') || e.endsWith('.archived'));
     const stats = await Promise.all(
       candidates.map((entry) =>
         fs.promises
