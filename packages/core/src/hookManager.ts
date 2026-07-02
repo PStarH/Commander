@@ -639,6 +639,7 @@ export class HookManager {
    * (pluginTypes / hookManager must remain importable by the tool layer).
    */
   private syncPluginToolsToRegistry(): void {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let ToolRegistry: any = null;
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
