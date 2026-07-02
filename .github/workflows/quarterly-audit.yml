@@ -1,0 +1,56 @@
+name: Quarterly Architecture Audit
+
+on:
+  schedule:
+    - cron: '0 2 1 1,4,7,10 *'  # 1st of Jan, Apr, Jul, Oct at 02:00 UTC
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build
+        run: pnpm --filter @commander/core build
+
+      - name: Run quarterly audit
+        run: npx tsx packages/core/src/cli/commands/audit-quarterly.ts
+        env:
+          COMMANDER_GAP_ENABLED: 'true'
+
+      - name: Upload audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: quarterly-audit-${{ github.run_id }}
+          path: docs/audits/
+          retention-days: 365
+
+      - name: Notify on open gaps
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = '.commander/gaps/registry.ndjson';
+            if (!fs.existsSync(path)) return;
+            const lines = fs.readFileSync(path, 'utf-8').split('\n').filter(Boolean);
+            const open = lines.map(l => JSON.parse(l)).filter(g => g.status === 'open').length;
+            if (open > 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `[quarterly-audit] ${open} open gaps detected`,
+                body: `Quarterly audit detected ${open} open gaps. See artifact for details.`,
+                labels: ['gap-discovery', 'quarterly-audit'],
+              });
+            }
