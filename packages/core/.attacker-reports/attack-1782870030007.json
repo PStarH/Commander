@@ -1,0 +1,122 @@
+{
+  "findings": [
+    {
+      "id": "ATK-001",
+      "vulnerability": "PII scrubber does not scrub request body",
+      "severity": "high",
+      "cvss": 7.5,
+      "evidence": "body retained: {\"email\":\"alice@globex.com\",\"apiKey\":\"sk-abcdef1234567890abcdef1234\"}",
+      "recommendation": "scrubRequest must recursively walk body and apply redactPii to all string fields"
+    },
+    {
+      "id": "ATK-002",
+      "vulnerability": "Authorization bearer token leaks when ignoreFields=[]",
+      "severity": "high",
+      "cvss": 7.8,
+      "evidence": "result: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig",
+      "recommendation": "Authorization should be in DEFAULT_IGNORE_FIELDS unconditionally, not user-overridable"
+    },
+    {
+      "id": "ATK-003",
+      "vulnerability": "Email regex bypassed by space between localpart and @",
+      "severity": "medium",
+      "cvss": 5.3,
+      "evidence": "original: 'contact alice @globex.com please', result: 'contact alice @globex.com please'",
+      "recommendation": "preprocess: strip whitespace adjacent to @ before regex match"
+    },
+    {
+      "id": "ATK-004",
+      "vulnerability": "OpenAI key regex {20,} allows 19-char prefixes to leak (low impact — cannot authenticate)",
+      "severity": "low",
+      "cvss": 2,
+      "evidence": "key passes through: sk-abcdef1234567890abc (real OpenAI keys are 51 chars, this is not a valid credential)",
+      "recommendation": "no fix needed; verify against actual OpenAI key format on GitHub push instead of generic regex"
+    },
+    {
+      "id": "ATK-005",
+      "vulnerability": "Private key markers (PEM headers) not scrubbed",
+      "severity": "critical",
+      "cvss": 9,
+      "evidence": "PEM header passes through: -----BEGIN RSA PRIVATE KEY-----",
+      "recommendation": "add pattern: -----BEGIN [A-Z ]+PRIVATE KEY-----"
+    },
+    {
+      "id": "ATK-006",
+      "vulnerability": "IPv4 addresses not scrubbed (may be PII per GDPR)",
+      "severity": "low",
+      "cvss": 3.5,
+      "evidence": "IP passes through: server 192.168.1.100 logged the request",
+      "recommendation": "add pattern: \\b\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b (opt-in via config flag)"
+    },
+    {
+      "id": "ATK-007",
+      "vulnerability": "US Social Security Numbers not scrubbed",
+      "severity": "high",
+      "cvss": 7,
+      "evidence": "SSN passes through: SSN: 123-45-6789",
+      "recommendation": "add pattern: \\b\\d{3}-\\d{2}-\\d{4}\\b"
+    },
+    {
+      "id": "ATK-008",
+      "vulnerability": "Gap registry has no signature — forgeries trivial",
+      "severity": "high",
+      "cvss": 7.5,
+      "evidence": "wrote forged entry directly to .ndjson, accepted with no validation",
+      "recommendation": "sign entries with HMAC like RedTeamBaseline does; reject tampered files on load"
+    },
+    {
+      "id": "ATK-009",
+      "vulnerability": "close() accepts empty regression test ids — gap \"fixed\" without verification",
+      "severity": "high",
+      "cvss": 7.4,
+      "evidence": "gap gap-2026-07-01-001 closed with status=fixed, testIds=[]",
+      "recommendation": "require at least one regressionTestId; verify the test exists in red team battery"
+    },
+    {
+      "id": "ATK-010",
+      "vulnerability": "Gap description is free text — renders in issue body, prompt-injection vector",
+      "severity": "high",
+      "cvss": 7.3,
+      "evidence": "description with system-prompt injection persisted verbatim into NDJSON → GitHub issue body",
+      "recommendation": "sanitize descriptions (strip control chars, code-fence limits, length cap) before storage"
+    },
+    {
+      "id": "ATK-011",
+      "vulnerability": "RecoveryVerifier calls bootstrap() once per layer (4× in full battery) without checking if fault actually injected",
+      "severity": "medium",
+      "cvss": 4.2,
+      "evidence": "4 layers → 4 bootstrap calls. If bootstrap is heavy (e.g., DB migration), this is a self-DoS",
+      "recommendation": "gate bootstrap on actual fault detection; pass `faultInjected` flag from runLayer to verifyAndRecover"
+    },
+    {
+      "id": "ATK-012",
+      "vulnerability": "SlaEnforcer forwards attacker URL into PagerDuty incident",
+      "severity": "high",
+      "cvss": 7.5,
+      "evidence": "pagerduty title: Critical gap overdue: <!channel> @here @everyone SECURITY BREACH — click https://evil.com/pwn?phish=alice@corp.com (gap-2026-06-30-001)",
+      "recommendation": "URL allowlist or strip in pdTitle before sending"
+    },
+    {
+      "id": "ATK-013",
+      "vulnerability": "Plugin supply chain scenarios contain prompt-injection payloads in their description field — they render in any UI that displays scenario name/description",
+      "severity": "low",
+      "cvss": 3,
+      "evidence": "2 scenarios with injection-shaped payloads in description field",
+      "recommendation": "use unique synthetic IDs (e.g. PLUGIN-SUPPLY-002.example) instead of injection-style payloads in the description"
+    },
+    {
+      "id": "ATK-014",
+      "vulnerability": "Shadow proxy forwards unsanitized request body to shadow endpoint",
+      "severity": "critical",
+      "cvss": 9.1,
+      "evidence": "captured body: {\"prompt\":\"send to alice@globex.com with sk-abcdef1234567890abcdef1234\"}",
+      "recommendation": "ShadowProxy.mirror must scrub body fields the same way it scrubs headers; use scrubRequest on a body-shaped object"
+    }
+  ],
+  "summary": {
+    "critCount": 2,
+    "highCount": 7,
+    "medCount": 2,
+    "lowCount": 3
+  }
+}
