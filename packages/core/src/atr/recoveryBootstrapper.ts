@@ -223,7 +223,8 @@ export class RecoveryBootstrapper {
               }
               // Path C: no recovery data
               if (recoveryStrategy === 'none') {
-                recoveryReason = 'No replay captures or checkpoint found; run available for manual resume';
+                recoveryReason =
+                  'No replay captures or checkpoint found; run available for manual resume';
               }
             } catch (recErr) {
               recoveryReason = `Recovery attempt failed: ${(recErr as Error)?.message ?? 'unknown'}; run available for manual resume`;

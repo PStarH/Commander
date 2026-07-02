@@ -231,8 +231,7 @@ registerProvider({
   apiType: 'openai',
   factory: () =>
     new PerplexityProvider({
-      apiKey:
-        resolveSecureApiKey('PERPLEXITY_API_KEY') || resolveSecureApiKey('PPLX_API_KEY'),
+      apiKey: resolveSecureApiKey('PERPLEXITY_API_KEY') || resolveSecureApiKey('PPLX_API_KEY'),
     }),
 });
 

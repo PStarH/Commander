@@ -149,7 +149,8 @@ export class OpenTelemetryExporter {
     // Resolve sampling rate: explicit config > OTEL_TRACES_SAMPLER_ARG env > 1.0 (no sampling)
     const envSamplingRate =
       typeof process !== 'undefined' ? process.env?.OTEL_TRACES_SAMPLER_ARG : undefined;
-    const resolvedSamplingRate = config.samplingRate ?? (envSamplingRate ? parseFloat(envSamplingRate) : 1.0);
+    const resolvedSamplingRate =
+      config.samplingRate ?? (envSamplingRate ? parseFloat(envSamplingRate) : 1.0);
     this.config = {
       endpoint: config.endpoint || 'http://localhost:4318/v1/traces',
       serviceName: config.serviceName || 'commander',
@@ -162,7 +163,9 @@ export class OpenTelemetryExporter {
       redactInput: config.redactInput ?? true,
       redactOutput: config.redactOutput ?? true,
       redactToolArgs: config.redactToolArgs ?? true,
-      samplingRate: isNaN(resolvedSamplingRate) ? 1.0 : Math.max(0, Math.min(1, resolvedSamplingRate)),
+      samplingRate: isNaN(resolvedSamplingRate)
+        ? 1.0
+        : Math.max(0, Math.min(1, resolvedSamplingRate)),
       maxBufferSize: config.maxBufferSize ?? 10000,
     };
     // Try env var override

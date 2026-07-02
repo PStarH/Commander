@@ -35,16 +35,13 @@ interface RunState {
 }
 
 /** Tool names whose outputs are internal/trusted. */
-const INTERNAL_TOOLS = new Set([
-  'code_search',
-  'file_read',
-  'list_files',
-  'index_search',
-]);
+const INTERNAL_TOOLS = new Set(['code_search', 'file_read', 'list_files', 'index_search']);
 
 /** Fallback: tools without riskMetadata that match these names are external. */
 function isKnownExternalTool(name: string): boolean {
-  return /^(web_search|web_fetch|http_request|a2a_delegate|send_email|webhook_send|mcp_call)/.test(name);
+  return /^(web_search|web_fetch|http_request|a2a_delegate|send_email|webhook_send|mcp_call)/.test(
+    name,
+  );
 }
 
 export function createTaintTrackingPlugin(): CommanderPlugin {
@@ -68,7 +65,8 @@ export function createTaintTrackingPlugin(): CommanderPlugin {
         },
         outboundToolWhitelist: {
           type: 'array',
-          description: 'Outbound tools exempt from taint blocking (e.g. allow web_search to chain even after external fetch)',
+          description:
+            'Outbound tools exempt from taint blocking (e.g. allow web_search to chain even after external fetch)',
           default: [],
         },
       },
@@ -107,7 +105,7 @@ export function createTaintTrackingPlugin(): CommanderPlugin {
       // Belt-and-suspenders: if any tool message is in history and tier
       // is still CLEAN, bump to LOCAL_DIRTY. The afterToolCall hook is
       // the primary tier-promotion path.
-      const hasToolMsg = (ctx.request.messages ?? []).some(m => m.role === 'tool');
+      const hasToolMsg = (ctx.request.messages ?? []).some((m) => m.role === 'tool');
       if (hasToolMsg && state.tier === 'CLEAN') {
         state.tier = 'LOCAL_DIRTY';
       }
@@ -150,9 +148,10 @@ export function createTaintTrackingPlugin(): CommanderPlugin {
       if (!state) return ctx.result;
 
       const sideEffect = ctx.tool?.definition?.riskMetadata?.sideEffect;
-      const isExternal = !INTERNAL_TOOLS.has(ctx.toolName) &&
-                         (sideEffect === 'external_egress' ||
-                          (sideEffect === undefined && isKnownExternalTool(ctx.toolName)));
+      const isExternal =
+        !INTERNAL_TOOLS.has(ctx.toolName) &&
+        (sideEffect === 'external_egress' ||
+          (sideEffect === undefined && isKnownExternalTool(ctx.toolName)));
 
       if (isExternal && state.tier !== 'EXTERNAL_DIRTY') {
         state.tier = 'EXTERNAL_DIRTY';

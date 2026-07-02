@@ -40,11 +40,7 @@ export interface GraphWorkflowConfig extends BaseOrchestrationConfig {
    * - 'last': 最后完成的终端节点输出
    * - custom 函数
    */
-  aggregateTerminal?:
-    | 'array'
-    | 'map'
-    | 'last'
-    | ((terminalResults: StepResult[]) => unknown);
+  aggregateTerminal?: 'array' | 'map' | 'last' | ((terminalResults: StepResult[]) => unknown);
 }
 
 /**
@@ -204,9 +200,7 @@ function buildNodeInput(
  * // arch 先执行 → be1/be2 自动并行 → test 等两者完成
  * ```
  */
-export async function runGraphWorkflow(
-  config: GraphWorkflowConfig,
-): Promise<OrchestrationRun> {
+export async function runGraphWorkflow(config: GraphWorkflowConfig): Promise<OrchestrationRun> {
   const {
     nodes,
     initialInput,
@@ -253,9 +247,7 @@ export async function runGraphWorkflow(
     // 跳过依赖已失败的节点（在 layer 内逐个判定）
     const runnable = layer.filter((node) => {
       if (skippedIds.has(node.id) || failedIds.has(node.id)) return false;
-      const depFailed = node.dependencies.some(
-        (d) => failedIds.has(d) || skippedIds.has(d),
-      );
+      const depFailed = node.dependencies.some((d) => failedIds.has(d) || skippedIds.has(d));
       if (depFailed) {
         const skipped: StepResult = {
           stepId: node.id,
@@ -313,14 +305,7 @@ export async function runGraphWorkflow(
       if (currentlyActive > peakConcurrency) peakConcurrency = currentlyActive;
       try {
         const input = buildNodeInput(node, initialInput, allResults);
-        const result = await executeStepWithRetry(
-          node,
-          input,
-          context,
-          executor,
-          onEvent,
-          'graph',
-        );
+        const result = await executeStepWithRetry(node, input, context, executor, onEvent, 'graph');
         if (result.tokenUsage) {
           consumedTokens = mergeTokenUsage(
             { promptTokens: consumedTokens, completionTokens: 0, totalTokens: consumedTokens },
@@ -390,9 +375,7 @@ export async function runGraphWorkflow(
   if (typeof aggregateTerminal === 'function') {
     finalOutput = aggregateTerminal(terminalResults);
   } else if (aggregateTerminal === 'map') {
-    finalOutput = Object.fromEntries(
-      terminalResults.map((r) => [r.stepId, r.output]),
-    );
+    finalOutput = Object.fromEntries(terminalResults.map((r) => [r.stepId, r.output]));
   } else if (aggregateTerminal === 'last') {
     finalOutput = terminalResults[terminalResults.length - 1]?.output;
   } else {
@@ -457,7 +440,11 @@ export class GraphWorkflowBuilder {
   }
 
   /** 便捷方法：声明节点 + 一条边 */
-  addNodeWithDeps(id: string, deps: string[], partial: Omit<GraphNode, 'id' | 'dependencies'>): this {
+  addNodeWithDeps(
+    id: string,
+    deps: string[],
+    partial: Omit<GraphNode, 'id' | 'dependencies'>,
+  ): this {
     this.nodes.push({ id, dependencies: deps, ...partial });
     return this;
   }
@@ -467,9 +454,7 @@ export class GraphWorkflowBuilder {
     return this;
   }
 
-  withAggregateTerminal(
-    mode: NonNullable<GraphWorkflowConfig['aggregateTerminal']>,
-  ): this {
+  withAggregateTerminal(mode: NonNullable<GraphWorkflowConfig['aggregateTerminal']>): this {
     this.config.aggregateTerminal = mode;
     return this;
   }
