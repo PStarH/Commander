@@ -45,11 +45,15 @@ const judgeSchema = z.object({
 
 const createDatasetSchema = z.object({
   name: z.string().min(1).max(256),
-  cases: z.array(z.object({
-    input: z.string(),
-    output: z.string(),
-    expected: z.string().optional(),
-  })).min(1),
+  cases: z
+    .array(
+      z.object({
+        input: z.string(),
+        output: z.string(),
+        expected: z.string().optional(),
+      }),
+    )
+    .min(1),
 });
 
 const compareABSchema = z.object({
@@ -59,10 +63,14 @@ const compareABSchema = z.object({
     direction: z.enum(['higher', 'lower']),
     alpha: z.number().min(0).max(1).optional(),
   }),
-  pairs: z.array(z.object({
-    a: z.object({ score: z.number() }),
-    b: z.object({ score: z.number() }),
-  })).min(1),
+  pairs: z
+    .array(
+      z.object({
+        a: z.object({ score: z.number() }),
+        b: z.object({ score: z.number() }),
+      }),
+    )
+    .min(1),
 });
 
 const wilcoxonSchema = z.object({
@@ -161,43 +169,48 @@ export function createEvalRouter(): Router {
     }
   });
 
-  router.post('/api/eval/datasets', validateBody(createDatasetSchema), (req: Request, res: Response) => {
-    try {
-      const dm = getSharedDatasetManager() ?? getGlobalDatasetManager();
-      if (!dm) {
-        res.status(503).json({ error: 'DatasetManager not initialized' });
-        return;
+  router.post(
+    '/api/eval/datasets',
+    validateBody(createDatasetSchema),
+    (req: Request, res: Response) => {
+      try {
+        const dm = getSharedDatasetManager() ?? getGlobalDatasetManager();
+        if (!dm) {
+          res.status(503).json({ error: 'DatasetManager not initialized' });
+          return;
+        }
+        const dataset = dm.create({
+          name: req.body.name,
+          cases: req.body.cases,
+        });
+        res.status(201).json(dataset);
+      } catch (error) {
+        res.status(500).json({ error: toErrorMessage(error) });
       }
-      const dataset = dm.create({
-        name: req.body.name,
-        cases: req.body.cases,
-      });
-      res.status(201).json(dataset);
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  });
+    },
+  );
 
-  router.post('/api/eval/compare-ab', validateBody(compareABSchema), (req: Request, res: Response) => {
-    try {
-      const comparator = getSharedABComparator() ?? getGlobalABComparator();
-      if (!comparator) {
-        res.status(503).json({ error: 'ABComparator not initialized' });
-        return;
+  router.post(
+    '/api/eval/compare-ab',
+    validateBody(compareABSchema),
+    (req: Request, res: Response) => {
+      try {
+        const comparator = getSharedABComparator() ?? getGlobalABComparator();
+        if (!comparator) {
+          res.status(503).json({ error: 'ABComparator not initialized' });
+          return;
+        }
+        const result = comparator.compare(req.body.config, req.body.pairs);
+        res.json({ experimentId: req.body.experimentId, result });
+      } catch (error) {
+        res.status(500).json({ error: toErrorMessage(error) });
       }
-      const result = comparator.compare(req.body.config, req.body.pairs);
-      res.json({ experimentId: req.body.experimentId, result });
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  });
+    },
+  );
 
   router.post('/api/eval/wilcoxon', validateBody(wilcoxonSchema), (req: Request, res: Response) => {
     try {
-      const result = wilcoxonSignedRankTest(
-        req.body.deltas,
-        req.body.alpha ?? 0.05,
-      );
+      const result = wilcoxonSignedRankTest(req.body.deltas, req.body.alpha ?? 0.05);
       res.json(result);
     } catch (error) {
       res.status(500).json({ error: toErrorMessage(error) });

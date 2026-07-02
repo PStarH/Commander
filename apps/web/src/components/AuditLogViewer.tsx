@@ -264,26 +264,29 @@ export function AuditLogViewer() {
 
   // Load logs + stats + catalog. Stats/catalog reflect the full (unfiltered)
   // corpus so the overview cards stay stable across filter changes.
-  const loadAll = useCallback(async (query: UnifiedAuditQuery) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const { startTime, endTime } = computeTimeRange(timeRange, customStart, customEnd);
-      const [logsRes, statsRes, catalogRes] = await Promise.all([
-        fetchUnifiedAuditLogs(query),
-        fetchUnifiedAuditStats({ startTime, endTime }),
-        fetchUnifiedAuditCategories(),
-      ]);
-      setLogs(logsRes.entries);
-      setTotal(logsRes.total);
-      setStats(statsRes);
-      setCatalog(catalogRes);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load audit logs');
-    } finally {
-      setLoading(false);
-    }
-  }, [timeRange, customStart, customEnd]);
+  const loadAll = useCallback(
+    async (query: UnifiedAuditQuery) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const { startTime, endTime } = computeTimeRange(timeRange, customStart, customEnd);
+        const [logsRes, statsRes, catalogRes] = await Promise.all([
+          fetchUnifiedAuditLogs(query),
+          fetchUnifiedAuditStats({ startTime, endTime }),
+          fetchUnifiedAuditCategories(),
+        ]);
+        setLogs(logsRes.entries);
+        setTotal(logsRes.total);
+        setStats(statsRes);
+        setCatalog(catalogRes);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load audit logs');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [timeRange, customStart, customEnd],
+  );
 
   // Initial load.
   useEffect(() => {

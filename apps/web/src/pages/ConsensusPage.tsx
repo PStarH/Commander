@@ -63,11 +63,15 @@ export function ConsensusPage() {
 
   const stateVariant = (state: string): 'success' | 'warning' | 'error' | 'info' => {
     switch (state) {
-      case 'NORMAL': return 'success';
-      case 'ALERT': return 'warning';
+      case 'NORMAL':
+        return 'success';
+      case 'ALERT':
+        return 'warning';
       case 'LOCKDOWN':
-      case 'ESCALATE': return 'error';
-      default: return 'info';
+      case 'ESCALATE':
+        return 'error';
+      default:
+        return 'info';
     }
   };
 
@@ -81,7 +85,14 @@ export function ConsensusPage() {
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 12,
+          }}
+        >
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <strong>builtin-consensus</strong>
             {!registered && <Badge variant="error">Not Registered</Badge>}
@@ -119,11 +130,11 @@ export function ConsensusPage() {
       <div className="card">
         <h3>About</h3>
         <p style={{ color: 'var(--text-dim)', fontSize: '0.85rem' }}>
-          This plugin provides the Commander-BFT-C3 consensus and fault tolerance stack:
-          SAC protocol (receiver-side evaluation), CourtEval (adversarial court evaluation),
-          BPD detector (backward propagation detection), topology state machine (4-state
-          dynamic switching), and adaptive stopping (Beta-Binomial + KS test). It is
-          heavy-weight — enable only for multi-agent runs that need Byzantine fault tolerance.
+          This plugin provides the Commander-BFT-C3 consensus and fault tolerance stack: SAC
+          protocol (receiver-side evaluation), CourtEval (adversarial court evaluation), BPD
+          detector (backward propagation detection), topology state machine (4-state dynamic
+          switching), and adaptive stopping (Beta-Binomial + KS test). It is heavy-weight — enable
+          only for multi-agent runs that need Byzantine fault tolerance.
         </p>
       </div>
     </div>

@@ -74,7 +74,8 @@ export function createConsensusPlugin(): CommanderPlugin {
   return {
     name: 'builtin-consensus',
     version: '0.1.0',
-    description: 'Commander-BFT-C3 consensus: SAC, CourtEval, BPD, topology state machine, adaptive stopping',
+    description:
+      'Commander-BFT-C3 consensus: SAC, CourtEval, BPD, topology state machine, adaptive stopping',
     category: 'optimization',
     configSchema: {
       type: 'object',
@@ -301,7 +302,8 @@ export function createConsensusPlugin(): CommanderPlugin {
       },
       {
         name: 'consensus_stopping_summary',
-        description: 'Get the adaptive stopping summary (rounds recorded, novelty probability, distinct count).',
+        description:
+          'Get the adaptive stopping summary (rounds recorded, novelty probability, distinct count).',
         inputSchema: { type: 'object', properties: {} },
         execute: async () => {
           const controller = sharedAdaptiveStopping ?? new AdaptiveStoppingController();
