@@ -324,8 +324,9 @@ export class CheckpointWriter {
       }
     }
 
-    // Persist to disk
-    const filePath = this.persist(params.runId, !!provider, doc);
+    // Persist to disk (async — survives the LLM enrichment write burst without
+    // blocking the event loop between writes and the bus.publish() below).
+    const filePath = await this.persist(params.runId, !!provider, doc);
 
     // Emit event (also serves as observability signal)
     try {
@@ -361,9 +362,19 @@ export class CheckpointWriter {
   // Persistence
   // ========================================================================
 
-  private persist(runId: string, llmEnriched: boolean, doc: CheckpointDocument): string {
+  /**
+   * Async persist: writes the markdown to <storageDir>/<runId>.md via the
+   * tmp-then-rename atomic pattern. Called from the async writeCheckpoint()
+   * entry point so the event loop is not blocked while serialising large
+   * composed documents (completed/pending subtasks can reach several MB).
+   */
+  private async persist(
+    runId: string,
+    llmEnriched: boolean,
+    doc: CheckpointDocument,
+  ): Promise<string> {
     const dir = this.config.storageDir!;
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
 
     const filePath = path.join(dir, `${runId}.md`);
 
@@ -371,12 +382,12 @@ export class CheckpointWriter {
     const tmpPath = filePath + '.tmp';
 
     try {
-      fs.writeFileSync(tmpPath, markdown, { encoding: 'utf-8', mode: 0o600 });
-      fs.renameSync(tmpPath, filePath);
+      await fs.promises.writeFile(tmpPath, markdown, { encoding: 'utf-8', mode: 0o600 });
+      await fs.promises.rename(tmpPath, filePath);
       try {
-        fs.chmodSync(filePath, 0o600);
+        await fs.promises.chmod(filePath, 0o600);
       } catch (err) {
-        reportSilentFailure(err, 'checkpointWriter:379');
+        reportSilentFailure(err, 'checkpointWriter:persist.chmod');
         /* best-effort */
       }
     } catch (e) {
@@ -595,6 +606,22 @@ export class CheckpointWriter {
     }
   }
 
+  /** Async variant of loadCheckpoint for rebuild/resume hot-paths. */
+  async loadCheckpointAsync(runId: string): Promise<CheckpointDocument | null> {
+    const filePath = path.join(this.config.storageDir!, `${runId}.md`);
+    try {
+      const raw = await fs.promises.readFile(filePath, 'utf-8');
+      return this.parseMarkdown(raw, runId);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      getGlobalLogger().warn('CheckpointWriter', 'Failed to load checkpoint (async)', {
+        error: (err as Error)?.message,
+        runId,
+      });
+      return null;
+    }
+  }
+
   /**
    * List all checkpoint files on disk.
    */
@@ -629,6 +656,56 @@ export class CheckpointWriter {
   }
 
   /**
+   * Async variant of listCheckpoints. Reads .md entries in the storage
+   * directory via fs.promises and stats each one in parallel.
+   */
+  async listCheckpointsAsync(): Promise<
+    Array<{
+      runId: string;
+      filePath: string;
+      size: number;
+      modifiedAt: string;
+    }>
+  > {
+    const dir = this.config.storageDir!;
+    let entries: string[];
+    try {
+      entries = await fs.promises.readdir(dir);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      reportSilentFailure(err, 'checkpointWriter:listAsync');
+      return [];
+    }
+    const mdFiles = entries.filter((f) => f.endsWith('.md'));
+    const stats = await Promise.all(
+      mdFiles.map((f) =>
+        fs.promises
+          .stat(path.join(dir, f))
+          .then((stat) => ({ f, stat }))
+          .catch(() => null),
+      ),
+    );
+    const results: Array<{
+      runId: string;
+      filePath: string;
+      size: number;
+      modifiedAt: string;
+    }> = [];
+    for (const entry of stats) {
+      if (!entry) continue;
+      const fp = path.join(dir, entry.f);
+      results.push({
+        runId: entry.f.replace(/\.md$/, ''),
+        filePath: fp,
+        size: entry.stat.size,
+        modifiedAt: entry.stat.mtime.toISOString(),
+      });
+    }
+    results.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
+    return results;
+  }
+
+  /**
    * Delete all checkpoints for a run.
    */
   deleteCheckpoints(runId: string): void {
@@ -642,6 +719,20 @@ export class CheckpointWriter {
     } catch (err) {
       reportSilentFailure(err, 'checkpointWriter:643');
       /* ignore */
+    }
+  }
+
+  /** Async variant of deleteCheckpoints. */
+  async deleteCheckpointsAsync(runId: string): Promise<void> {
+    this.firedTriggers.delete(runId);
+    this.lastCheckpointTime.delete(runId);
+    this.versionCounter.delete(runId);
+    const filePath = path.join(this.config.storageDir!, `${runId}.md`);
+    try {
+      await fs.promises.unlink(filePath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+      reportSilentFailure(err, 'checkpointWriter:deleteAsync');
     }
   }
 

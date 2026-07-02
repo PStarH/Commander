@@ -16,6 +16,7 @@ import type { PersistentTraceStore } from './traceStore';
 import { generateRollbackPlan } from '../compensation/rollbackPlanner';
 import type { PlannedToolCall, PlanInput } from '../compensation/rollbackPlanner';
 import type { CompensationPlan } from '../compensation/types';
+import * as fsp from 'node:fs/promises';
 
 export interface CompensationServiceDeps {
   dlq: DeadLetterQueue;
@@ -256,14 +257,23 @@ export class CompensationService {
       if (typeof filePath !== 'string') return { success: true };
       const snapshotPath = `${filePath}.atr-snapshot.${action.actionId}`;
       try {
-        const fs = await import('fs');
-        if (!fs.existsSync(snapshotPath)) {
-          if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        // Async I/O — don't block the event loop on disk I/O during compensation.
+        // Same semantics as the legacy sync impl: if no snapshot is on
+        // disk, just unlink the live file; otherwise restore from snapshot
+        // and remove the snapshot. ENOENT on unlink of filePath is benign.
+        try {
+          await fsp.access(snapshotPath);
+        } catch {
+          try {
+            await fsp.unlink(filePath);
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+          }
           return { success: true };
         }
-        const original = fs.readFileSync(snapshotPath, 'utf-8');
-        fs.writeFileSync(filePath, original, 'utf-8');
-        fs.unlinkSync(snapshotPath);
+        const original = await fsp.readFile(snapshotPath, 'utf-8');
+        await fsp.writeFile(filePath, original, 'utf-8');
+        await fsp.unlink(snapshotPath);
         return { success: true };
       } catch (err) {
         return { success: false, error: (err as Error).message };
@@ -279,9 +289,14 @@ export class CompensationService {
       const dir = action.args.path ?? action.args.dir;
       if (typeof dir !== 'string') return { success: true };
       try {
-        const fs = await import('fs');
-        if (fs.existsSync(dir) && fs.readdirSync(dir).length === 0) {
-          fs.rmdirSync(dir);
+        try {
+          await fsp.access(dir);
+        } catch {
+          return { success: true };
+        }
+        const entries = await fsp.readdir(dir);
+        if (entries.length === 0) {
+          await fsp.rmdir(dir);
         }
         return { success: true };
       } catch (err) {
@@ -292,13 +307,17 @@ export class CompensationService {
       const key = action.args.key;
       if (typeof key !== 'string') return { success: true };
       try {
-        const fs = await import('fs');
         const path = await import('path');
         const memoryPath = path.join(process.cwd(), '.commander', 'memory.json');
-        if (!fs.existsSync(memoryPath)) return { success: true };
-        const data = JSON.parse(fs.readFileSync(memoryPath, 'utf-8')) as Array<{ key: string }>;
+        try {
+          await fsp.access(memoryPath);
+        } catch {
+          return { success: true };
+        }
+        const raw = await fsp.readFile(memoryPath, 'utf-8');
+        const data = JSON.parse(raw) as Array<{ key: string }>;
         const filtered = data.filter((e) => e.key !== key);
-        fs.writeFileSync(memoryPath, JSON.stringify(filtered, null, 2), 'utf-8');
+        await fsp.writeFile(memoryPath, JSON.stringify(filtered, null, 2), 'utf-8');
         return { success: true };
       } catch (err) {
         return { success: false, error: (err as Error).message };
