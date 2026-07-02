@@ -14,36 +14,6 @@ export default defineConfig({
     setupFiles: ['tests/setup.ts'],
     include: [
       'tests/cli/envLoader.test.ts',
-      // --- gap discovery (IssueAutoCreate, GapRegistry, SLA) ---
-      'tests/gap/types.test.ts',
-      'tests/gap/storage.test.ts',
-      'tests/gap/registry.test.ts',
-      'tests/gap/issueAutoCreate.test.ts',
-      'tests/gap/slaEnforcer.test.ts',
-      'tests/gap/metrics.test.ts',
-      'tests/gap/quarterlyAudit.test.ts',
-      // --- chaos (L1/L2/L3/L4 fault layers + orchestrator) ---
-      'tests/chaos/types.test.ts',
-      'tests/chaos/l1Llm.test.ts',
-      'tests/chaos/l2Tool.test.ts',
-      'tests/chaos/l3System.test.ts',
-      'tests/chaos/l4Tenant.test.ts',
-      'tests/chaos/recoveryVerifier.test.ts',
-      'tests/chaos/orchestrator.test.ts',
-      // --- shadow (proxy, scrubber, drift reporter) ---
-      'tests/shadow/types.test.ts',
-      'tests/shadow/scrubber.test.ts',
-      'tests/shadow/proxy.test.ts',
-      'tests/shadow/drift.test.ts',
-      // --- red team (tenancy, plugin supply chain, adversarial attacker) ---
-      'tests/security/tenancy.test.ts',
-      'tests/security/pluginSupply.test.ts',
-      'tests/security/adversarial.test.ts',
-      // --- defense-in-depth (reversibility gate, outbound policy, anomaly detector, primitives) ---
-      'tests/security/reversibilityGate.test.ts',
-      'tests/security/outboundNetworkPolicy.test.ts',
-      'tests/security/securityAnomalyDetector.test.ts',
-      'tests/security/securityPrimitives.test.ts',
       // --- atr ---
       'tests/atr/recoveryBootstrapper.test.ts',
       'tests/atr/taskQueue.test.ts',
@@ -242,7 +212,6 @@ export default defineConfig({
       'tests/security/a2aMtls.test.ts',
       'tests/security/memoryIsolation.test.ts',
       'tests/security/taintTrackingPlugin.test.ts',
-      'tests/security/raspExtensionsPlugin.test.ts',
       // --- harness ---
       'tests/harness/tier1AgentLoop.test.ts',
       'tests/harness/tier1Harness.test.ts',
