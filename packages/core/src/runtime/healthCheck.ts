@@ -9,6 +9,8 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import fs from 'node:fs';
 import path from 'node:path';
+import { getMessageBus } from './messageBus';
+import { getDeadLetterQueue } from './deadLetterQueueSingleton';
 
 // ============================================================================
 // Types
@@ -64,6 +66,59 @@ export interface HealthSources {
 
 // DLQ size threshold — when total entries exceeds this, mark as degraded
 const DLQ_DEGRADED_THRESHOLD = 100;
+
+// ============================================================================
+// buildHealthSources
+// ============================================================================
+/**
+ * Build HealthSources from the global runtime singletons that EXIST in
+ * non-CLI surfaces (apps/api, scripts) where there is no live AgentRuntime
+ * to query for circuit-breaker / compensation / provider info.
+ *
+ * The two sources exposed here — message bus (subscribe count, active
+ * topics) and DLQ (per-category entry counts) — are process-global
+ * singletons that every surface already imports. Wiring them takes the
+ * /health/detailed probe from a fake-friendly "not wired" stub to a
+ * real status report; any caller can extend this with additional
+ * sources (e.g., when apps/api grows session support, add the same
+ * getCircuitBreakerInfo/getProviderInfo blocks that
+ * CommanderHttpServer.buildHealthSources uses).
+ *
+ * Each getter swallows its own errors and falls back to a zero/empty
+ * report so a single broken singleton cannot crash the whole probe.
+ */
+export function buildHealthSources(): HealthSources {
+  return {
+    getEventBusInfo: () => {
+      try {
+        const bus = getMessageBus();
+        return {
+          activeTopics: bus.getActiveTopics().length,
+          subscriberCount: Object.values(bus.getAllSubscriberCounts()).reduce(
+            (a, b) => a + b,
+            0,
+          ),
+        };
+      } catch (err) {
+        reportSilentFailure(err, 'healthCheck:buildHealthSources.bus');
+        return { activeTopics: 0, subscriberCount: 0 };
+      }
+    },
+    getDLQInfo: () => {
+      try {
+        const dlq = getDeadLetterQueue();
+        const byCategory = dlq.getStats();
+        return {
+          totalEntries: byCategory.reduce((s, c) => s + c.count, 0),
+          byCategory,
+        };
+      } catch (err) {
+        reportSilentFailure(err, 'healthCheck:buildHealthSources.dlq');
+        return { totalEntries: 0, byCategory: [] };
+      }
+    },
+  };
+}
 
 // ============================================================================
 // HealthCollector
@@ -204,31 +259,55 @@ export class HealthCollector {
   private async checkCheckpoint(): Promise<ComponentCheck> {
     try {
       const checkpointsDir = path.join(process.cwd(), '.commander', 'checkpoints');
-      if (!fs.existsSync(checkpointsDir)) {
+      // Async stat so /health/detailed probes don't block the Node.js event
+      // loop on cold or cold-restart checkpoints volumes. We map ENOENT to
+      // the "no directory" success case (a cold-start process is not
+      // degraded just because no checkpoints exist yet) and treat the
+      // path being something other than a directory as a skip rather than
+      // a failure.
+      let dirStat: import('node:fs').Stats | undefined;
+      try {
+        dirStat = await fs.promises.stat(checkpointsDir);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          return { status: 'healthy', message: 'No checkpoints directory' };
+        }
+        throw err;
+      }
+      if (!dirStat.isDirectory()) {
         return { status: 'healthy', message: 'No checkpoints directory' };
       }
 
-      const files = fs.readdirSync(checkpointsDir).filter((f) => f.endsWith('.json'));
-      const staleCount = files.filter((f) => {
-        const stat = fs.statSync(path.join(checkpointsDir, f));
-        return Date.now() - stat.mtimeMs > 3600_000;
-      }).length;
+      const fileNames = await fs.promises.readdir(checkpointsDir);
+      const jsonFiles = fileNames.filter((f) => f.endsWith('.json'));
+      const oneHourAgo = Date.now() - 3600_000;
+      // Stat each checkpoint file in parallel; tolerate per-file failures
+      // by treating them as "unknown mtime" (= not stale) so a single
+      // unreadable file does not flip the whole probe to degraded.
+      const stats = await Promise.all(
+        jsonFiles.map((f) =>
+          fs.promises.stat(path.join(checkpointsDir, f)).catch(() => null),
+        ),
+      );
+      const staleCount = stats.filter(
+        (s): s is import('node:fs').Stats => s !== null && s.mtimeMs < oneHourAgo,
+      ).length;
 
       if (staleCount > 0) {
         return {
           status: 'degraded',
           message: `${staleCount} stale checkpoint(s) older than 1 hour`,
-          details: { total: files.length, stale: staleCount },
+          details: { total: jsonFiles.length, stale: staleCount },
         };
       }
 
       return {
         status: 'healthy',
-        message: `${files.length} checkpoint(s) healthy`,
-        details: { total: files.length },
+        message: `${jsonFiles.length} checkpoint(s) healthy`,
+        details: { total: jsonFiles.length },
       };
     } catch (err) {
-      reportSilentFailure(err, 'healthCheck:231');
+      reportSilentFailure(err, 'healthCheck:230');
       return { status: 'degraded', message: 'Checkpoint directory not accessible' };
     }
   }
