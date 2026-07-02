@@ -283,14 +283,17 @@ export class LLMJudgeEvaluator implements QualityGateEvaluator {
       maxTokens: 256,
     };
 
-    let response: LLMResponse;
+    let response: LLMResponse | undefined;
     try {
       response = await this.provider.call(request);
     } catch {
       return { score: 0.5, reason: 'LLM judge unavailable; falling back to neutral score' };
     }
-
-    const content = response.content?.trim() ?? '';
+    // Provider may resolve to undefined (fake/test providers) or an object
+    // missing `.content` (e.g. error envelopes). Treat both as "no usable
+    // judge output" and fall back to the neutral score instead of crashing
+    // the whole orchestration pipeline.
+    const content = (response?.content ?? '').toString().trim();
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       return { score: 0.5, reason: 'LLM judge did not return parseable JSON' };

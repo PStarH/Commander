@@ -3,6 +3,29 @@
  *
  * Re-exports all public types, interfaces, and classes.
  */
+
+// ============================================================================
+// DEPRECATION INDEX (2026-07-02)
+//
+// All items below carry `@deprecated` JSDoc at their definition site. This
+// index is the single source of truth for what is deprecated, the migration
+// target, and the planned removal window. Search for `@deprecated` to find
+// the inline marker + full context.
+//
+// | Item                                           | Migration target                          | Removal target  |
+// |------------------------------------------------|-------------------------------------------|-----------------|
+// | security/costGuard.ts (CostGuard, getCostGuard)| UnifiedCostAuthority (security/unifiedCostAuthority) | 2026-Q4 (0.x→1.0 major) |
+// | telos/tokenSentinel.ts recordCost/postCall*    | UnifiedCostAuthority.postCall/readLedger  | 2026-Q4 (0.x→1.0 major) |
+// | atr/compensationBridge.ts (file)               | atr/scheduler.ts (ExecutionScheduler)     | advisory only — file retained |
+// | atr/runtimeIntegration.ts (file)               | atr/scheduler.ts (ExecutionScheduler)     | advisory only — file retained |
+// | threeLayerMemory.ts:1023 (createThreeLayerMemory legacy path) | createThreeLayerMemory factory | 2026-Q4 |
+// | pluginTypes.ts:296 (permissions field)         | PluginLoader + sandbox context            | advisory only |
+// | runtime/tenantAwareSingleton.ts:50 (get() sig) | get({ allowGlobalFallback: true })        | 2026-Q4 |
+// | saga/sagaCoordinator.ts:475 (collect)          | collectAllCompensable()                   | 2026-Q4 |
+// | ultimate/types.ts:52,63 (topology aliases)     | D3.2 canonical topology names             | 2026-Q4 (2-minor-version window) |
+// | security/rotationSignoffVerifier.ts sync API   | verifyShaAsync / runVerifierAsync         | advisory only — sync retained |
+// | logging.ts:421 (legacy adapter)                | Logger factory in @commander/core/logging | 2026-Q4 |
+// ============================================================================
 export * from './models';
 export { reportSilentFailure } from './silentFailureReporter';
 
@@ -655,7 +678,18 @@ export {
 } from './runtime/metricsCollector';
 
 // Health checks (shared HealthCollector so the API layer does not dual-track)
-export { HealthCollector, type HealthSources, type HealthCheckResult } from './runtime/healthCheck';
+// buildHealthSources() wires HealthSources to the global runtime singletons
+// (message bus + dead-letter queue) so /health/detailed reports real status
+// instead of the previous fake "not wired" stub. Exposed so surfaces like
+// apps/api can construct a wired HealthCollector without re-implementing the
+// per-getter error-fallback plumbing each time.
+export {
+  HealthCollector,
+  buildHealthSources,
+  type HealthSources,
+  type HealthCheckResult,
+  type DLQCategoryCount,
+} from './runtime/healthCheck';
 
 // Evaluation — LLM-as-Judge, dataset versioning, A/B experiment comparison
 // Now delivered via the builtin-eval plugin (plugins/builtin/eval).
