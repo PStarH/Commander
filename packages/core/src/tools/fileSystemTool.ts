@@ -37,6 +37,14 @@ export function isWithinRoot(resolved: string, root: string): boolean {
  *
  * Re-exports for use by other tools (patchTool, multimodal tools).
  */
+async function statIfExists(p: string): Promise<import('node:fs').Stats | undefined> {
+  try {
+    return await fs.promises.stat(p);
+  } catch {
+    return undefined;
+  }
+}
+
 export async function safePath(target: string): Promise<string> {
   const resolved = path.resolve(getSafeRoot(), target);
   // Resolve symlinks for the resolved path (e.g., /tmp -> /private/tmp on macOS)
@@ -47,10 +55,7 @@ export async function safePath(target: string): Promise<string> {
     reportSilentFailure(err, 'fileSystemTool:50');
     // File doesn't exist yet — resolve the parent directory
     let parent = path.dirname(resolved);
-    while (
-      parent !== '/' &&
-      (await fs.promises.stat(parent, { throwIfNoEntry: false })) === undefined
-    ) {
+    while (parent !== '/' && (await statIfExists(parent)) === undefined) {
       parent = path.dirname(parent);
     }
     try {
@@ -73,10 +78,7 @@ export async function safePath(target: string): Promise<string> {
   } catch (err: unknown) {
     if (err instanceof Error && 'code' in err && (err as { code: string }).code === 'ENOENT') {
       let ancestor = path.dirname(resolved);
-      while (
-        ancestor !== getSafeRoot() &&
-        (await fs.promises.stat(ancestor, { throwIfNoEntry: false })) === undefined
-      ) {
+      while (ancestor !== getSafeRoot() && (await statIfExists(ancestor)) === undefined) {
         ancestor = path.dirname(ancestor);
       }
       try {

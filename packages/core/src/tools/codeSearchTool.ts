@@ -86,6 +86,7 @@ export class CodeSearchTool implements Tool {
       // This prevents command injection via pattern/filePattern containing shell metacharacters
       const args: string[] = [
         '-rn',
+        '--max-count=1',
         '-B',
         String(contextLines),
         '-A',
@@ -113,7 +114,7 @@ export class CodeSearchTool implements Tool {
       try {
         stdout = execFileSync('grep', args, {
           cwd: searchDir,
-          timeout: 15000,
+          timeout: 30000,
           maxBuffer: 10 * 1024 * 1024,
           encoding: 'utf-8',
         });
