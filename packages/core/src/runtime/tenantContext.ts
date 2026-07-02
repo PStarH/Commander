@@ -13,8 +13,11 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 // cycle: tenantProvider → tenantContext → tenantProvider. Loading it at
 // module load time creates a circular dependency. The lazy wrapper resolves
 // it on first use.
-let _getGlobalTenantProvider: typeof import('./tenantProvider').getGlobalTenantProvider | null = null;
-function getGlobalTenantProviderLazy(): ReturnType<typeof import('./tenantProvider').getGlobalTenantProvider> {
+let _getGlobalTenantProvider: typeof import('./tenantProvider').getGlobalTenantProvider | null =
+  null;
+function getGlobalTenantProviderLazy(): ReturnType<
+  typeof import('./tenantProvider').getGlobalTenantProvider
+> {
   if (!_getGlobalTenantProvider) {
     _getGlobalTenantProvider = require('./tenantProvider').getGlobalTenantProvider;
   }

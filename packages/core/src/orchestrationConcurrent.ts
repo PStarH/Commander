@@ -160,8 +160,7 @@ export async function runConcurrentWorkflow(
       settled.map((s, i) => {
         if (s.status === 'fulfilled') return s.value as StepResult;
         const reason = s.reason as Error;
-        const isBudgetExhausted =
-          reason?.message === 'TOKEN_BUDGET_EXHAUSTED';
+        const isBudgetExhausted = reason?.message === 'TOKEN_BUDGET_EXHAUSTED';
         return {
           stepId: steps[i].id,
           status: isBudgetExhausted ? 'SKIPPED' : 'FAILURE',
@@ -181,11 +180,7 @@ export async function runConcurrentWorkflow(
       ]);
       results = mapSettled(settled);
     } else {
-      const settled = await runWithConcurrencyLimit(
-        instrumentedTasks,
-        maxParallel,
-        shouldSkipNew,
-      );
+      const settled = await runWithConcurrencyLimit(instrumentedTasks, maxParallel, shouldSkipNew);
       results = mapSettled(settled);
     }
   } catch (e) {

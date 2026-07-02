@@ -211,7 +211,12 @@ export function createEvalPlugin(): CommanderPlugin {
               items: { type: 'number' },
               description: 'Array of paired differences (A - B)',
             },
-            alpha: { type: 'number', minimum: 0, maximum: 1, description: 'Significance level (default 0.05)' },
+            alpha: {
+              type: 'number',
+              minimum: 0,
+              maximum: 1,
+              description: 'Significance level (default 0.05)',
+            },
           },
           required: ['deltas'],
         },

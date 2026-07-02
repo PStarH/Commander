@@ -71,9 +71,7 @@ export async function cmdPlugin(subargs: string[]) {
     for (const pkg of loaded) {
       const enabled = loader.isEnabled(pkg.manifest.name);
       const status = enabled ? `${$.green}●${$.reset}` : `${$.red}○${$.reset}`;
-      const stateLabel = enabled
-        ? `${$.green}enabled${$.reset}`
-        : `${$.red}disabled${$.reset}`;
+      const stateLabel = enabled ? `${$.green}enabled${$.reset}` : `${$.red}disabled${$.reset}`;
       console.log(
         `  ${status} ${$.bold}${pkg.manifest.name}${$.reset} ${$.dim}v${pkg.manifest.version}${$.reset} [${stateLabel}]`,
       );
@@ -117,7 +115,9 @@ export async function cmdPlugin(subargs: string[]) {
     const { getPluginLoader } = await import('../../pluginLoader');
     const loader = getPluginLoader();
     loader.enable(name);
-    console.log(`  ${$.green}✓${$.reset} Plugin "${$.bold}${name}${$.reset}" ${$.green}enabled${$.reset}`);
+    console.log(
+      `  ${$.green}✓${$.reset} Plugin "${$.bold}${name}${$.reset}" ${$.green}enabled${$.reset}`,
+    );
     console.log(`  ${$.dim}It will load on the next startup.${$.reset}\n`);
     return;
   }
@@ -140,7 +140,9 @@ export async function cmdPlugin(subargs: string[]) {
         `  ${$.green}✓${$.reset} Plugin "${$.bold}${name}${$.reset}" ${$.red}disabled${$.reset} and unloaded`,
       );
     } else {
-      console.log(`  ${$.green}✓${$.reset} Plugin "${$.bold}${name}${$.reset}" ${$.red}disabled${$.reset}`);
+      console.log(
+        `  ${$.green}✓${$.reset} Plugin "${$.bold}${name}${$.reset}" ${$.red}disabled${$.reset}`,
+      );
     }
     console.log(`  ${$.dim}It will be skipped on the next startup.${$.reset}\n`);
     return;

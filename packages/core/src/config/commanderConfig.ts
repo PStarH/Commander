@@ -66,10 +66,8 @@ const DISPLAY_NAMES: Record<ProviderType, string> = getDisplayNames() as Record<
   string
 >;
 
-export const API_TYPE: Record<ProviderType, 'openai' | 'anthropic' | 'google'> = getApiTypes() as Record<
-  ProviderType,
-  'openai' | 'anthropic' | 'google'
->;
+export const API_TYPE: Record<ProviderType, 'openai' | 'anthropic' | 'google'> =
+  getApiTypes() as Record<ProviderType, 'openai' | 'anthropic' | 'google'>;
 
 export interface ProviderInfo {
   type: ProviderType;

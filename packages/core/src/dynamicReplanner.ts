@@ -12,12 +12,7 @@
  * - 与 EventSourcing 集成：每次再规划记入事件日志，可重放
  */
 
-import type {
-  AnyStep,
-  ExecutionContext,
-  StepExecutor,
-  StepResult,
-} from './orchestrationPatterns';
+import type { AnyStep, ExecutionContext, StepExecutor, StepResult } from './orchestrationPatterns';
 import { CrossPollinationEngine } from './crossPollination';
 import type { Insight } from './crossPollination';
 
@@ -165,9 +160,7 @@ export interface DynamicReplanRun {
  * });
  * ```
  */
-export async function runDynamicReplan(
-  config: DynamicReplanConfig,
-): Promise<DynamicReplanRun> {
+export async function runDynamicReplan(config: DynamicReplanConfig): Promise<DynamicReplanRun> {
   const {
     projectId,
     initialSteps,
@@ -192,9 +185,7 @@ export async function runDynamicReplan(
 
   const allResults: StepResult[] = [];
   const replanHistory: ReplanDecision[] = [];
-  const crossPollination = enableCrossPollination
-    ? new CrossPollinationEngine()
-    : undefined;
+  const crossPollination = enableCrossPollination ? new CrossPollinationEngine() : undefined;
   let consumedTokens = 0;
   let replanRounds = 0;
 
@@ -203,10 +194,7 @@ export async function runDynamicReplan(
   let currentInput = initialInput;
 
   // 执行一批 step 的内部函数（复用并发池逻辑）
-  const executeBatch = async (
-    steps: AnyStep[],
-    input: unknown,
-  ): Promise<StepResult[]> => {
+  const executeBatch = async (steps: AnyStep[], input: unknown): Promise<StepResult[]> => {
     // 简化版并发执行（不引入 orchestrationConcurrent 的完整功能避免循环依赖）
     const effective = Math.max(1, Math.min(maxParallel, steps.length));
     const results: StepResult[] = new Array(steps.length);
