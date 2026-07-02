@@ -133,15 +133,63 @@ export class PersistentTraceStore implements TraceStore {
     this.bufferTimestamps.delete(key);
   }
 
+  /**
+   * Async variant of flush() — unblocks the event loop when draining many
+   * run buffers concurrently (e.g. graceful shutdown of N parallel runs).
+   * Tolerates the same ENOENT / EACCES semantics as the sync version.
+   */
+  async flushAsync(runId: string): Promise<void> {
+    const key = sanitizeRunId(runId);
+    const buffer = this.buffers.get(key);
+    if (!buffer || buffer.length === 0) return;
+
+    const filePath = path.join(this.baseDir, `${key}.ndjson`);
+    try {
+      // Probe for existing file via fsp.access — faster than stat since
+      // we only need the boolean, and cheaper than an extra existsSync.
+      try {
+        await fs.promises.access(filePath);
+        await fs.promises.appendFile(filePath, buffer.join('\n') + '\n', 'utf-8');
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+        const tmpPath = `${filePath}.tmp`;
+        await fs.promises.writeFile(tmpPath, buffer.join('\n') + '\n', {
+          encoding: 'utf-8',
+          mode: 0o600,
+        });
+        await fs.promises.rename(tmpPath, filePath);
+      }
+    } catch (e) {
+      getGlobalLogger().warn('TraceStore', 'Failed to flush trace buffer (async)', {
+        error: (e as Error)?.message,
+        runId: key,
+      });
+    }
+    this.buffers.delete(key);
+    this.bufferTimestamps.delete(key);
+  }
+
   flushAll(): void {
     for (const key of this.buffers.keys()) {
       this.flush(key);
     }
   }
 
+  /** Async variant of flushAll — drains all buffered runs in parallel. */
+  async flushAllAsync(): Promise<void> {
+    await Promise.all(Array.from(this.buffers.keys()).map((k) => this.flushAsync(k)));
+  }
+
   // GAP-04: Graceful shutdown — flush all buffers and clear maps
   shutdown(): void {
     this.flushAll();
+    this.buffers.clear();
+    this.bufferTimestamps.clear();
+  }
+
+  /** Async graceful shutdown — drains in parallel. */
+  async shutdownAsync(): Promise<void> {
+    await this.flushAllAsync();
     this.buffers.clear();
     this.bufferTimestamps.clear();
   }
@@ -172,5 +220,40 @@ export class PersistentTraceStore implements TraceStore {
       });
       return [];
     }
+  }
+
+  /**
+   * Async variant of readTrace. SSE stream consumers in /api/v1/observability
+   * call this on every event tick; leaving it sync blocked the event loop
+   * for the duration of file reads at high event rates.
+   */
+  async readTraceAsync(runId: string): Promise<TraceEvent[]> {
+    const key = sanitizeRunId(runId);
+    const filePath = path.join(this.baseDir, `${key}.ndjson`);
+    let raw: string;
+    try {
+      raw = await fs.promises.readFile(filePath, 'utf-8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      getGlobalLogger().warn('TraceStore', 'Failed to read trace file (async)', {
+        error: (err as Error)?.message,
+        runId: key,
+      });
+      return [];
+    }
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+    const events: TraceEvent[] = [];
+    for (const line of trimmed.split('\n')) {
+      try {
+        events.push(JSON.parse(line));
+      } catch (e) {
+        getGlobalLogger().warn('TraceStore', 'Skipped corrupt trace line (async)', {
+          error: (e as Error)?.message,
+          runId: key,
+        });
+      }
+    }
+    return events;
   }
 }

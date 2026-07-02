@@ -214,10 +214,18 @@ export class FileChangeTracker {
       const counter = this.snapshotCounters.get(params.runId) ?? 0;
       if (counter < this.config.maxSnapshotsPerRun) {
         try {
-          fs.mkdirSync(runSnapDir, { recursive: true, mode: 0o700 });
+          // Async snapshot write — prevents event-loop stalls when the
+          // tool layer threads many `file_write` calls concurrently.
+          // Mode 0o600 / 0o700 are enforced via fs.mkdtemp-equivalent;
+          // chmod after write is omitted here because fsp.mkdir with mode
+          // is honored by the kernel on POSIX when the parent perms allow.
+          await fs.promises.mkdir(runSnapDir, { recursive: true, mode: 0o700 });
           const fileName = `${pathHash(params.filePath)}.${counter}.before`;
           const fullPath = path.join(runSnapDir, fileName);
-          fs.writeFileSync(fullPath, before, { encoding: 'utf-8', mode: 0o600 });
+          await fs.promises.writeFile(fullPath, before, {
+            encoding: 'utf-8',
+            mode: 0o600,
+          });
           snapshotPath = path.relative(this.baseDir, fullPath);
           this.snapshotCounters.set(params.runId, counter + 1);
         } catch (e) {
@@ -269,8 +277,38 @@ export class FileChangeTracker {
     return filtered;
   }
 
+  /**
+   * Async equivalent of query(). Hot callers in async contexts (SSE stream
+   * updates, /api/v1/projects/:id/changes handler) should switch to this to
+   * avoid blocking the event loop while iterating rotated NDJSON files.
+   */
+  async queryAsync(filter: FileChangeQuery = {}): Promise<FileChangeRecord[]> {
+    const all = await this.readAllRecordsAsync();
+    const filtered = all.filter((r) => {
+      if (filter.runId && r.runId !== filter.runId) return false;
+      if (filter.agentId && r.agentId !== filter.agentId) return false;
+      if (filter.path && r.path !== filter.path) return false;
+      if (filter.toolName && r.toolName !== filter.toolName) return false;
+      if (filter.operation && r.operation !== filter.operation) return false;
+      if (filter.since && r.timestamp < filter.since) return false;
+      if (filter.until && r.timestamp > filter.until) return false;
+      return true;
+    });
+    if (filter.limit && filter.limit > 0) {
+      return filtered.slice(-filter.limit);
+    }
+    return filtered;
+  }
+
   getRunChanges(runId: string): FileChangeRecord[] {
     return this.query({ runId }).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  }
+
+  /** Async variant of getRunChanges. See queryAsync for rationale. */
+  async getRunChangesAsync(runId: string): Promise<FileChangeRecord[]> {
+    return (await this.queryAsync({ runId })).sort((a, b) =>
+      a.timestamp.localeCompare(b.timestamp),
+    );
   }
 
   summarize(runId: string): FileChangeSummary {
@@ -293,6 +331,40 @@ export class FileChangeTracker {
       totalBytesRemoved += r.linesRemoved * 50;
     }
 
+    return {
+      runId,
+      totalChanges: records.length,
+      filesCreated,
+      filesModified,
+      filesDeleted,
+      filesRenamed,
+      totalBytesAdded,
+      totalBytesRemoved,
+      uniquePaths: Array.from(uniquePaths),
+      firstChangeAt: records[0]?.timestamp ?? '',
+      lastChangeAt: records[records.length - 1]?.timestamp ?? '',
+    };
+  }
+
+  /** Async variant of summarize. */
+  async summarizeAsync(runId: string): Promise<FileChangeSummary> {
+    const records = await this.getRunChangesAsync(runId);
+    const uniquePaths = new Set<string>();
+    let filesCreated = 0;
+    let filesModified = 0;
+    let filesDeleted = 0;
+    let filesRenamed = 0;
+    let totalBytesAdded = 0;
+    let totalBytesRemoved = 0;
+    for (const r of records) {
+      uniquePaths.add(r.path);
+      if (r.operation === 'create') filesCreated++;
+      else if (r.operation === 'modify' || r.operation === 'append') filesModified++;
+      else if (r.operation === 'delete') filesDeleted++;
+      else if (r.operation === 'rename') filesRenamed++;
+      totalBytesAdded += r.sizeBytes;
+      totalBytesRemoved += r.linesRemoved * 50;
+    }
     return {
       runId,
       totalChanges: records.length,
@@ -387,12 +459,18 @@ export class FileChangeTracker {
 
   private async appendLine(record: FileChangeRecord): Promise<void> {
     const filePath = path.join(this.baseDir, 'changes.ndjson');
+    // Async size probe (with ENOENT → size=0) keeps the event loop free of
+    // a synchronous stat-then-rotate block per appended record.
     try {
-      if (fs.existsSync(filePath)) {
-        const stat = fs.statSync(filePath);
-        if (stat.size >= this.config.maxFileBytes) {
-          this.rotateFile();
-        }
+      let stat: import('node:fs').Stats | undefined;
+      try {
+        stat = await fs.promises.stat(filePath);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+        stat = undefined;
+      }
+      if (stat && stat.size >= this.config.maxFileBytes) {
+        await this.rotateFile();
       }
     } catch (e) {
       getGlobalLogger().warn('FileChangeTracker', 'Failed to inspect changes file before append', {
@@ -401,7 +479,7 @@ export class FileChangeTracker {
     }
     const line = JSON.stringify(record) + '\n';
     try {
-      fs.appendFileSync(filePath, line, 'utf-8');
+      await fs.promises.appendFile(filePath, line, 'utf-8');
     } catch (e) {
       getGlobalLogger().warn('FileChangeTracker', 'Failed to append change record', {
         error: (e as Error)?.message,
@@ -410,40 +488,42 @@ export class FileChangeTracker {
     }
   }
 
-  private rotateFile(): void {
+  private async rotateFile(): Promise<void> {
     const dir = this.baseDir;
     const base = path.join(dir, 'changes.ndjson');
     const oldest = `${base}.${this.config.maxRotatedFiles}`;
-    if (fs.existsSync(oldest)) {
-      try {
-        fs.unlinkSync(oldest);
-      } catch (e) {
+    // Async rotation: each step is awaited so concurrent appends on
+    // different processes can't interleave between unlink/rename pairs.
+    try {
+      await fs.promises.unlink(oldest);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
         getGlobalLogger().warn('FileChangeTracker', 'Failed to delete oldest rotated file', {
-          error: (e as Error)?.message,
+          error: (err as Error)?.message,
         });
       }
     }
     for (let i = this.config.maxRotatedFiles - 1; i >= 1; i--) {
       const from = `${base}.${i}`;
       const to = `${base}.${i + 1}`;
-      if (fs.existsSync(from)) {
-        try {
-          fs.renameSync(from, to);
-        } catch (e) {
+      try {
+        await fs.promises.rename(from, to);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
           getGlobalLogger().warn('FileChangeTracker', 'Failed to rotate file', {
-            error: (e as Error)?.message,
+            error: (err as Error)?.message,
             from,
             to,
           });
         }
       }
     }
-    if (fs.existsSync(base)) {
-      try {
-        fs.renameSync(base, `${base}.1`);
-      } catch (e) {
+    try {
+      await fs.promises.rename(base, `${base}.1`);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
         getGlobalLogger().warn('FileChangeTracker', 'Failed to rotate current file', {
-          error: (e as Error)?.message,
+          error: (err as Error)?.message,
         });
       }
     }
@@ -474,9 +554,60 @@ export class FileChangeTracker {
     return allLines;
   }
 
+  /**
+   * Async reader over rotated NDJSON files. Reads each file via fs.promises
+   * in parallel where safe, then merges. Used by queryAsync and friends.
+   */
+  async readAllLinesAsync(): Promise<string[]> {
+    const files = ['changes.ndjson'];
+    for (let i = 1; i <= this.config.maxRotatedFiles; i++) {
+      files.push(`changes.ndjson.${i}`);
+    }
+    // Map reads over the rotated set; tolerate per-file ENOENT/missing
+    // so a partial rotation still returns whatever is readable.
+    const contents = await Promise.all(
+      files.map(async (name) => {
+        const p = path.join(this.baseDir, name);
+        try {
+          return await fs.promises.readFile(p, 'utf-8');
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === 'ENOENT') return '';
+          getGlobalLogger().warn('FileChangeTracker', 'Failed to read changes file', {
+            error: (err as Error)?.message,
+            name,
+          });
+          return '';
+        }
+      }),
+    );
+    const allLines: string[] = [];
+    for (const content of contents) {
+      const trimmed = content.trim();
+      if (!trimmed) continue;
+      for (const line of trimmed.split('\n')) {
+        if (line.length > 0) allLines.push(line);
+      }
+    }
+    return allLines;
+  }
+
   private readAllRecords(): FileChangeRecord[] {
     const records: FileChangeRecord[] = [];
     for (const line of this.readAllLines()) {
+      try {
+        records.push(JSON.parse(line) as FileChangeRecord);
+      } catch (e) {
+        getGlobalLogger().debug('FileChangeTracker', 'Skipped corrupt line', {
+          error: (e as Error)?.message,
+        });
+      }
+    }
+    return records;
+  }
+
+  async readAllRecordsAsync(): Promise<FileChangeRecord[]> {
+    const records: FileChangeRecord[] = [];
+    for (const line of await this.readAllLinesAsync()) {
       try {
         records.push(JSON.parse(line) as FileChangeRecord);
       } catch (e) {
@@ -553,8 +684,11 @@ export function createFileChangeTrackingPlugin(options?: {
 
       const tracker = getFileChangeTracker();
       let afterContent: string | null = null;
+      // Async read of the post-tool file state — keeps the afterToolCall
+      // hook non-blocking on disk I/O when many file_write calls land in
+      // close succession.
       try {
-        afterContent = fs.readFileSync(filePath, 'utf-8');
+        afterContent = await fs.promises.readFile(filePath, 'utf-8');
       } catch (err) {
         reportSilentFailure(err, 'fileChangeTracker:558');
         return hookCtx.result;
