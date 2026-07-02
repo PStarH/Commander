@@ -1,0 +1,265 @@
+{
+  "$schemaVersion": "1.0",
+  "generatedAt": "2026-07-02",
+  "repoVersion": "0.2.0",
+  "statusLegend": {
+    "verified": "Claim backed by test or wired code at the cited file:line. Read the evidence before believing.",
+    "partial": "Capability exists but a documented gap blocks production use.",
+    "missing": "Capability is not implemented or live-stubbed."
+  },
+  "categories": [
+    {
+      "name": "LLM Providers",
+      "items": [
+        {
+          "id": "providers.count",
+          "claim": "22+ providers supported",
+          "status": "verified",
+          "evidence": "packages/core/src/runtime/providers/providerRegistry.ts:42-188 — registers 24 providers (OpenAI, Anthropic, Google, Azure, Bedrock, OpenRouter, DeepSeek, GLM, MiMo, Xiaomi, Cohere, Mistral, Groq, Together, Perplexity, Fireworks, Replicate, XAI, Anyscale, DeepInfra, Agnes, Ollama, VLLM, StepFun)",
+          "verifiedCount": 24
+        },
+        {
+          "id": "providers.keyResolution",
+          "claim": "All 24 providers resolve via EncryptedSecretsVault when available, plain env-var fallback otherwise",
+          "status": "verified",
+          "evidence": "packages/core/src/security/secureApiKeyResolver.ts — resolveSecureApiKey covers all providers in the registry; G5 vault initialized in CommanderHttpServer.start() before any provider call (packages/core/src/runtime/httpServer.ts:790-810)",
+          "notes": "Zero remaining direct process.env.<PROVIDER>_API_KEY reads in production code paths verified 2026-07-02."
+        }
+      ]
+    },
+    {
+      "name": "Orchestration Topologies",
+      "items": [
+        {
+          "id": "topologies.canonical",
+          "claim": "5 canonical topologies (SINGLE / CHAIN / DISPATCH / ORCHESTRATOR / REVIEW)",
+          "status": "verified",
+          "evidence": "packages/core/src/ultimate/types.ts:52,63 — OrchestrationTopology union; selectTopologyForEffort & classifyEffortLevel in effortRules.ts",
+          "notes": "Older alias names retained @deprecated for 0.x → 1.0 transition window."
+        },
+        {
+          "id": "topologies.autoSelection",
+          "claim": "Thompson-sampling-based automatic topology selection",
+          "status": "verified",
+          "evidence": "packages/core/src/ultimate/topologyOptimizer.ts — ReflexionTopologicalOptimizer + epsilon-greedy store; ablation evidence in docs/results-2026-06-23.json"
+        }
+      ]
+    },
+    {
+      "name": "Streaming",
+      "items": [
+        {
+          "id": "streaming.sse",
+          "claim": "SSE streaming with backpressure-aware emit",
+          "status": "verified",
+          "evidence": "packages/core/src/runtime/sseStream.ts handles res.writeHead/text-event-stream; 4 named streaming subscribers in CommanderHttpServer.handleStreamRequest"
+        },
+        {
+          "id": "streaming.sseDoSProtection",
+          "claim": "Per-IP SSE connection limit (10/IP) + connection drain on shutdown",
+          "status": "verified",
+          "evidence": "CommanderHttpServer.MAX_SSE_PER_IP=10 enforced in handleStreamRequest; gracefulShutdown drains via server.close + 10s force-close timeout",
+          "notes": "Without this guard, EACH /stream request would consume a Node HTTP connection indefinitely — pre-fix was the documented S1-Audit finding."
+        }
+      ]
+    },
+    {
+      "name": "Resilience",
+      "items": [
+        {
+          "id": "circuitBreaker",
+          "claim": "Per-provider circuit breaker with OPEN/HALF_OPEN/CLOSED states",
+          "status": "verified",
+          "evidence": "packages/core/src/sandbox/circuitBreakerRegistry.ts — class-level breakerFor + Providers.getProviderHealth() surface state"
+        },
+        {
+          "id": "deadLetterQueue",
+          "claim": "Per-category dead-letter queue with NDJSON append-only storage",
+          "status": "verified",
+          "evidence": "packages/core/src/runtime/deadLetterQueue.ts:1-7 — append-only NDJSON; 7 categories (llm/tool/execution/verification/circuit_breaker/compensation/semantic_drift); FailureMode discriminator standardized Tier 4.1"
+        },
+        {
+          "id": "compensation",
+          "claim": "Saga-based compensating transaction runtime",
+          "status": "verified",
+          "evidence": "packages/core/src/saga — CompensationScheduler, SagaCoordinator, InMemorySagaStore, FileSagaStore, CompensationFn retry policy"
+        },
+        {
+          "id": "checkpointing",
+          "claim": "WAL + JSON dual-write checkpointing with crash-safe recovery",
+          "status": "verified",
+          "evidence": "packages/core/src/runtime/checkpointWriter.ts; packages/core/src/atr/recoveryBootstrapper.ts (zombie-scan + fence + reclaim)"
+        }
+      ]
+    },
+    {
+      "name": "Multi-tenancy",
+      "items": [
+        {
+          "id": "tenancy.isolation",
+          "claim": "Tenant-aware singletons + runWithTenant AsyncLocalStorage",
+          "status": "partial",
+          "evidence": "packages/core/src/runtime/tenantAwareSingleton.ts (singleton utility); CommanderHttpServer.requireTenant() gates multi-tenant endpoints",
+          "notes": "Isolation requires the storage backend to filter by tenantId; the singleton layer provides the API but does not enforce DB-level isolation. Pilot customers must verify their storage backend. See ENTERPRISE_READINESS.md."
+        },
+        {
+          "id": "tenancy.crossTenantFuzz",
+          "claim": "Automated cross-tenant fuzz test suite",
+          "status": "missing",
+          "evidence": null,
+          "notes": "Listed in security_architecture_hardening_roadmap.md G6; not yet delivered. Tracked in ENTERPRISE_READINESS.md."
+        }
+      ]
+    },
+    {
+      "name": "Plugin System",
+      "items": [
+        {
+          "id": "plugins.hookPoints",
+          "claim": "Hook manager with beforeLLMCall/afterLLMCall/beforeToolCall/afterToolCall/agentStart/agentComplete/error hooks",
+          "status": "verified",
+          "evidence": "packages/core/src/pluginManager.ts; exported hook-point types from index.ts; builtin-evidence plugins live in packages/core/src/plugins/builtin/"
+        },
+        {
+          "id": "plugins.discovery",
+          "claim": "Auto-discovery from .commander/plugins/ and ~/.commander/plugins/",
+          "status": "verified",
+          "evidence": "packages/core/src/pluginLoader.ts — getPluginLoader().loadAll() called by apps/api on startup (index.ts)"
+        },
+        {
+          "id": "pluginSdk",
+          "claim": "@commander/plugin-sdk consumer-ready API surface for external plugin authors",
+          "status": "partial",
+          "evidence": "packages/plugin-sdk exists with exports; no third-party consumer observed in the wild",
+          "notes": "Surface is stable, ecosystem is empty. README claims 'Under development' until a third-party ships a non-trivial plugin using the surface."
+        }
+      ]
+    },
+    {
+      "name": "Quality Gates",
+      "items": [
+        {
+          "id": "quality.heuristic",
+          "claim": "Heuristic regex gates: hallucination check, hedging detection",
+          "status": "verified",
+          "evidence": "packages/core/src/ultimate/qualityGates.ts — HALLUCINATION_CHECK, CONSISTENCY, COMPLETENESS, LLM_JUDGE"
+        },
+        {
+          "id": "quality.llmJudge",
+          "claim": "LLM-as-judge evaluation with dataset versioning and A/B comparison",
+          "status": "verified",
+          "evidence": "packages/core/src/plugins/builtin/eval — LLMJudgeEvaluator + getSharedJudgeEngine + getSharedDatasetManager + getSharedABComparator",
+          "notes": "Replaces the previous regex hedging false-positives that penalized 'on the other hand' / 'might be' phrasing."
+        }
+      ]
+    },
+    {
+      "name": "Self-optimization",
+      "items": [
+        {
+          "id": "selfEvolution.metaLearner",
+          "claim": "Meta-learning trajectory analyzer + evolver agent",
+          "status": "verified",
+          "evidence": "packages/core/src/selfEvolution/metaLearner.ts"
+        },
+        {
+          "id": "selfEvolution.warmStart",
+          "claim": "Activation requires 5+ runs",
+          "status": "partial",
+          "evidence": "Documented in README; activation window in selfEvolution; not externally validated at scale",
+          "notes": "Cold-start users will see limited adaptation in first 5 runs; this is by design — there is no historical data to learn from."
+        }
+      ]
+    },
+    {
+      "name": "Security",
+      "items": [
+        {
+          "id": "security.g5.vault",
+          "claim": "AES-256-GCM EncryptedSecretsVault backed API key resolution",
+          "status": "verified",
+          "evidence": "packages/core/src/security/encryptedSecretsVault.ts; CommanderHttpServer.initializeSecretVault() wires it on startup"
+        },
+        {
+          "id": "security.g5.migration",
+          "claim": "Zero remaining direct process.env._API_KEY reads for any provider",
+          "status": "verified",
+          "evidence": "grep -rn 'process\\.env\\.[A-Z_]+_KEY' packages/core/src/runtime/providers (2026-07-02) returns no matches; all 24 providers in registry use resolveSecureApiKey"
+        },
+        {
+          "id": "security.redTeam",
+          "claim": "Automated adversarial testing harness with regression baselines",
+          "status": "verified",
+          "evidence": "packages/core/src/security/redTeamFramework.ts; .github/workflows/red-team.yml + adversarial-corpus.yml"
+        },
+        {
+          "id": "security.complianceReports",
+          "claim": "ISO 42001 / NIST AI RMF / EU AI Act automated report generation",
+          "status": "verified",
+          "evidence": "packages/core/src/security/complianceAuditReport.ts (ISO 42001 + NIST AI RMF); packages/core/src/security/euAiActCompliance.ts (Articles 12/13/14)",
+          "notes": "Reporters read existing security state (audit chain, security monitor, posture snapshots). Exposed via /api/v1/security/{compliance-audit,eu-ai-act,owasp-agentic-ai-top10}."
+        },
+        {
+          "id": "security.raspExtensions",
+          "claim": "Runtime Application Self-Protection (G1 hardening)",
+          "status": "partial",
+          "evidence": "packages/core/src/plugins/builtin/rasp-extensions (G1); event handlers wired into HookManager",
+          "notes": "Recent scan coverage gap: agentload/observability-shield scenarios. Tracked in security_architecture_hardening_roadmap.md."
+        }
+      ]
+    },
+    {
+      "name": "Observability",
+      "items": [
+        {
+          "id": "observability.tracing",
+          "claim": "W3C distributed trace context propagation end-to-end",
+          "status": "verified",
+          "evidence": "packages/core/src/runtime/distributedTracing.ts — extractTraceFromHeaders + createTraceContext + runWithTrace"
+        },
+        {
+          "id": "observability.otel",
+          "claim": "OpenTelemetry exporter + persistence",
+          "status": "verified",
+          "evidence": "packages/core/src/runtime/openTelemetryExporter.ts (getOTelExporter singleton)"
+        },
+        {
+          "id": "observability.metrics",
+          "claim": "Prometheus-compatible /metrics endpoint",
+          "status": "verified",
+          "evidence": "apps/api/src/index.ts:/metrics (text/plain; version=0.0.4 + businessMetrics merge) + CommanderHttpServer /metrics endpoint"
+        }
+      ]
+    },
+    {
+      "name": "Ops UI (apps/web)",
+      "items": [
+        {
+          "id": "ops.liveMetrics",
+          "claim": "War Room SSE dashboard",
+          "status": "partial",
+          "evidence": "apps/web/components/LiveMetrics.tsx — consumes /projects/:projectId/events via API_BASE",
+          "notes": "Previously hardcoded http://localhost:4000; now correctly bound to configured API_BASE. See commit fb3a14e."
+        },
+        {
+          "id": "ops.topologyDiagram",
+          "claim": "Xyflow topology visualization + Recharts cost dashboard + dnd-kit workflow editor",
+          "status": "verified",
+          "evidence": "apps/web/components/ — TopologyDiagram.tsx, CostDashboard.tsx, WorkflowEditor.tsx"
+        }
+      ]
+    },
+    {
+      "name": "Run-to-first-token",
+      "items": [
+        {
+          "id": "pocTime.steps",
+          "claim": "<90s from `git clone` to first agent token",
+          "status": "partial",
+          "evidence": "pnpm install (~60-90s on clean checkout) + pnpm gui start window",
+          "notes": "Known limitations: Windows SQLite requires MSVC fallback (documented); `commander gui` requires both @commander/web and @commander/api workspaces built. See docs/deploy.md."
+        }
+      ]
+    }
+  ]
+}
