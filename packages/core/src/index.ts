@@ -1098,7 +1098,6 @@ export type {
 // Built-in Plugins — RAG Knowledge Base
 export { createRagPlugin } from './plugins/builtin/ragPlugin';
 export { createTaintTrackingPlugin } from './plugins/builtin/taintTrackingPlugin';
-export { createRaspExtensionsPlugin } from './plugins/builtin/raspExtensionsPlugin';
 export {
   KnowledgeBaseStore,
   createKbEmbeddingFunction,
