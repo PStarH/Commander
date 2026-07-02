@@ -528,7 +528,7 @@ describe('CodeSearchTool — workspace boundary', () => {
 
   it('respects COMMANDER_WORKSPACE env var override', { timeout: 30000 }, async () => {
     const original = process.env.COMMANDER_WORKSPACE;
-    const subdir = path.resolve(getSafeRoot(), 'packages/core');
+    const subdir = path.resolve(getSafeRoot(), '..');
     try {
       process.env.COMMANDER_WORKSPACE = subdir;
 
