@@ -1,0 +1,31 @@
+// packages/core/tests/shadow/scrubber.test.ts
+import { describe, it, expect } from 'vitest';
+import { scrubRequest, redactPii, DEFAULT_IGNORE_FIELDS } from '../../src/shadow/scrubber';
+
+describe('scrubber', () => {
+  it('redacts Authorization header', () => {
+    const result = scrubRequest({ headers: { Authorization: 'Bearer secret' } }, DEFAULT_IGNORE_FIELDS);
+    expect(result.headers['Authorization']).toBe('[REDACTED]');
+  });
+
+  it('preserves non-sensitive headers', () => {
+    const result = scrubRequest({ headers: { 'content-type': 'application/json' } }, DEFAULT_IGNORE_FIELDS);
+    expect(result.headers['content-type']).toBe('application/json');
+  });
+
+  it('redactPii removes emails', () => {
+    const result = redactPii('Contact me at user@example.com');
+    expect(result).not.toContain('user@example.com');
+  });
+
+  it('redactPii removes phone numbers', () => {
+    const result = redactPii('Call +1-555-123-4567');
+    expect(result).not.toContain('555-123-4567');
+  });
+
+  it('redactPii removes OpenAI keys', () => {
+    const result = redactPii('My key is sk-abcdefghijklmnopqrstuvwxyz');
+    expect(result).toContain('sk-[REDACTED]');
+    expect(result).not.toContain('sk-abcdefghijklmnopqrstuvwxyz');
+  });
+});
