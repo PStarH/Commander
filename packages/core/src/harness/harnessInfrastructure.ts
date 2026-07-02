@@ -320,13 +320,9 @@ export class FileWatcher {
   }
 
   watch(filePath: string, handler: (event: FileChangeEvent) => void): Promise<Unsubscribe> {
-    let absolutePath: string;
-    try {
-      // safePath is now async — we await the canonical-path resolution
-      // before registering the fs.watch subscription so the watcher
-      // always operates on the resolved path (no race between symlink
-      // resolution and watch registration).
-      return safePath(filePath).then((absolutePath) => {
+    const noop: Unsubscribe = () => {};
+    return safePath(filePath)
+      .then((absolutePath) => {
         let entry = this.watchers.get(absolutePath);
         if (!entry) {
           entry = {
@@ -348,14 +344,12 @@ export class FileWatcher {
             this.watchers.delete(absolutePath);
           }
         };
+      })
+      .catch((err) => {
+        reportSilentFailure(err, 'harnessInfrastructure:326');
+        getGlobalLogger().warn('FileWatcher', `Cannot watch path outside workspace: ${filePath}`);
+        return noop;
       });
-    } catch (err) {
-      reportSilentFailure(err, 'harnessInfrastructure:326');
-      getGlobalLogger().warn('FileWatcher', `Cannot watch path outside workspace: ${filePath}`);
-      // Return a resolved no-op Unsubscribe so callers always receive
-      // Promise<Unsubscribe> per the type contract.
-      return Promise.resolve<Unsubscribe>(() => {});
-    }
   }
 
   private startWatching(entry: WatcherEntry): void {

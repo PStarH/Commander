@@ -19,9 +19,9 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import type { OrchestrationTopology } from './types';
 import { EpsilonStore, type EpsilonOverride } from './epsilonStore';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { appendFile, mkdir } from 'node:fs/promises';
+import { mkdir, readFile, access, appendFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { constants as fsConstants } from 'node:fs';
 
 export interface ExplorationEvent {
   /** ISO-8601 timestamp recorded at insertion time. */
@@ -192,6 +192,21 @@ export class ExplorationEventLog {
   private readonly epsilonStore: EpsilonStore;
 
   private readonly persistPath?: string;
+  /**
+   * Resolves when the constructor-initiated `loadFromDisk()` completes.
+   * `null` when no persistPath is set. Tests use `waitForReady()` to
+   * await the in-memory population from disk before asserting on it.
+   */
+  private readyPromise: Promise<void> | null = null;
+  private resolveReady: (() => void) | null = null;
+  /**
+   * Pending in-flight disk appends (incremented in `record()`,
+   * decremented when the append settles). Tests use
+   * `whenLastAppended()` to await the deterministic write completion
+   * instead of racing a `setTimeout(50)` against the I/O queue.
+   */
+  private pendingAppends = 0;
+  private lastAppendSettled: (() => void) | null = null;
 
   constructor(
     maxSize: number = DEFAULT_MAX_SIZE,
@@ -202,7 +217,14 @@ export class ExplorationEventLog {
     this.epsilonStore = epsilonStore ?? new EpsilonStore();
     this.persistPath = persistPath;
     if (this.persistPath) {
-      this.loadFromDisk();
+      // Track load completion so `waitForReady()` resolves once the
+      // constructor's `loadFromDisk()` has populated in-memory state.
+      // Fire-and-forget from the caller's perspective — events are
+      // still recorded going forward regardless of load outcome.
+      this.readyPromise = new Promise<void>((resolve) => {
+        this.resolveReady = resolve;
+      });
+      void this.loadFromDisk();
     }
   }
 
@@ -214,67 +236,119 @@ export class ExplorationEventLog {
     return this.epsilonStore;
   }
 
-  private loadFromDisk(): void {
-    if (!this.persistPath || !existsSync(this.persistPath)) return;
-    const lines = readFileSync(this.persistPath, 'utf-8').split('\n');
-    for (const line of lines) {
-      if (!line.trim()) continue;
+  /**
+   * Resolve when the constructor-initiated `loadFromDisk()` finishes
+   * populating in-memory state from `persistPath`. Resolves
+   * immediately when no `persistPath` is configured. Tests use this
+   * to deterministically wait for persisted events before asserting.
+   */
+  async waitForReady(): Promise<void> {
+    if (!this.readyPromise) return;
+    await this.readyPromise;
+  }
+
+  /**
+   * Resolve when the most recent fire-and-forget `record()`'s disk
+   * append has settled (success or best-effort failure). Used by
+   * tests to await deterministic persistence before reading the
+   * on-disk JSONL. Safe to call before any append — resolves
+   * immediately when no appends are in flight.
+   */
+  async whenLastAppended(): Promise<void> {
+    if (this.pendingAppends === 0) return;
+    return new Promise<void>((resolve) => {
+      this.lastAppendSettled = resolve;
+    });
+  }
+
+  private async loadFromDisk(): Promise<void> {
+    if (!this.persistPath) return;
+    try {
       try {
-        const event = JSON.parse(line) as ExplorationEvent;
-        if (!event.eventId || !event.timestamp || !event.tenantId) continue;
-        this.events.push(event);
-        this.nextEventId = Math.max(this.nextEventId, event.eventId);
-        this.routingCount += 1;
-        if (event.diverged) {
-          this.explorationCount += 1;
-          this.divergenceCount += 1;
-        }
-        if (event.coordinationOverride) {
-          this.coordinationOverrideCount += 1;
-        }
-        const tenant = this.perTenant.get(event.tenantId) ?? {
-          routing: 0,
-          exploration: 0,
-          divergence: 0,
-          coordinationOverride: 0,
-        };
-        tenant.routing += 1;
-        if (event.diverged) {
-          tenant.exploration += 1;
-          tenant.divergence += 1;
-        }
-        if (event.coordinationOverride) {
-          tenant.coordinationOverride += 1;
-        }
-        this.perTenant.set(event.tenantId, tenant);
-      } catch (err) {
-        reportSilentFailure(err, 'explorationEventLog:249');
-        /* skip corrupt lines */
+        await access(this.persistPath, fsConstants.R_OK);
+      } catch {
+        // File absent or unreadable — resolve ready (no data to load).
+        this.resolveReady?.();
+        return;
       }
-    }
-    // Trim to maxSize in case the persisted file grew larger
-    while (this.events.length > this.maxSize) {
-      this.events.shift();
-      this.overflowCount += 1;
+      let text: string;
+      try {
+        text = await readFile(this.persistPath, 'utf-8');
+      } catch (err) {
+        reportSilentFailure(err, 'explorationEventLog:loadFromDisk');
+        this.resolveReady?.();
+        return;
+      }
+      const lines = text.split('\n');
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const event = JSON.parse(line) as ExplorationEvent;
+          if (!event.eventId || !event.timestamp || !event.tenantId) continue;
+          this.events.push(event);
+          this.nextEventId = Math.max(this.nextEventId, event.eventId);
+          this.routingCount += 1;
+          if (event.diverged) {
+            this.explorationCount += 1;
+            this.divergenceCount += 1;
+          }
+          if (event.coordinationOverride) {
+            this.coordinationOverrideCount += 1;
+          }
+          const tenant = this.perTenant.get(event.tenantId) ?? {
+            routing: 0,
+            exploration: 0,
+            divergence: 0,
+            coordinationOverride: 0,
+          };
+          tenant.routing += 1;
+          if (event.diverged) {
+            tenant.exploration += 1;
+            tenant.divergence += 1;
+          }
+          if (event.coordinationOverride) {
+            tenant.coordinationOverride += 1;
+          }
+          this.perTenant.set(event.tenantId, tenant);
+        } catch (err) {
+          reportSilentFailure(err, 'explorationEventLog:249');
+          /* skip corrupt lines */
+        }
+      }
+      // Trim to maxSize in case the persisted file grew larger
+      while (this.events.length > this.maxSize) {
+        this.events.shift();
+        this.overflowCount += 1;
+      }
+    } finally {
+      this.resolveReady?.();
     }
   }
 
-  private appendToDisk(event: ExplorationEvent): void {
+  private async appendToDisk(event: ExplorationEvent): Promise<void> {
     if (!this.persistPath) return;
     const path = this.persistPath;
     const line = JSON.stringify(event) + '\n';
     const dir = dirname(path);
-    void (async () => {
+    this.pendingAppends += 1;
+    try {
       try {
-        if (!existsSync(dir)) {
-          await mkdir(dir, { recursive: true });
-        }
-        await appendFile(path, line, 'utf-8');
-      } catch (err) {
-        reportSilentFailure(err, 'explorationEventLog:appendToDisk');
-        /* best-effort persistence */
+        await access(dir, fsConstants.R_OK);
+      } catch {
+        await mkdir(dir, { recursive: true });
       }
-    })();
+      await appendFile(path, line, 'utf-8');
+    } catch (err) {
+      reportSilentFailure(err, 'explorationEventLog:appendToDisk');
+      /* best-effort persistence */
+    } finally {
+      this.pendingAppends -= 1;
+      if (this.pendingAppends === 0) {
+        const resolve = this.lastAppendSettled;
+        this.lastAppendSettled = null;
+        resolve?.();
+      }
+    }
   }
 
   /**
@@ -326,7 +400,9 @@ export class ExplorationEventLog {
       tenant.coordinationOverride += 1;
     }
     this.perTenant.set(event.tenantId, tenant);
-    this.appendToDisk(fullEvent);
+    // Fire-and-forget: persistence is best-effort; callers shouldn't
+    // pay an event-loop stall for an optional disk write.
+    void this.appendToDisk(fullEvent);
     return { eventId, timestamp };
   }
 
