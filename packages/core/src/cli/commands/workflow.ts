@@ -52,11 +52,7 @@ function getTemplatesDir(): string {
   return path.join(process.cwd(), '.commander', 'templates');
 }
 
-function resolveWorkflowTemplate(
-  name: string,
-  description: string,
-  cron: string,
-): string {
+function resolveWorkflowTemplate(name: string, description: string, cron: string): string {
   const customPath = path.join(getTemplatesDir(), 'workflow-default.md');
   let raw = BUILTIN_WORKFLOW_TEMPLATE;
   if (fs.existsSync(customPath)) {

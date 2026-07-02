@@ -97,8 +97,8 @@ export function ReportingPage() {
         <h3>About</h3>
         <p style={{ color: 'var(--text-dim)', fontSize: '0.85rem' }}>
           This plugin provides HTML report rendering (WarRoom style). The renderer is also
-          accessible via the existing <code>POST /api/runtime/render-report</code> endpoint.
-          Enable this plugin to expose the <code>render_report</code> tool to agents.
+          accessible via the existing <code>POST /api/runtime/render-report</code> endpoint. Enable
+          this plugin to expose the <code>render_report</code> tool to agents.
         </p>
       </div>
     </div>

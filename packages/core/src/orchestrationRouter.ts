@@ -21,10 +21,7 @@ import type {
 import type { GraphNode } from './orchestrationGraph';
 import { runConcurrentWorkflow, type ConcurrentWorkflowConfig } from './orchestrationConcurrent';
 import { runGraphWorkflow, type GraphWorkflowConfig } from './orchestrationGraph';
-import {
-  runMixtureOfAgents,
-  type MixtureOfAgentsConfig,
-} from './orchestrationMixture';
+import { runMixtureOfAgents, type MixtureOfAgentsConfig } from './orchestrationMixture';
 
 // ============================================================================
 // 任务画像
@@ -173,9 +170,10 @@ export const DEFAULT_ROUTING_RULES: RoutingRule[] = [
  * LLM 路由器接口 — 可选增强。Commander 现有 LLM provider 可注入。
  */
 export interface LLMRouter {
-  (profile: TaskProfile, availableSteps: AnyStep[]): Promise<
-    Pick<RouterDecision, 'pattern' | 'reasoning'>
-  >;
+  (
+    profile: TaskProfile,
+    availableSteps: AnyStep[],
+  ): Promise<Pick<RouterDecision, 'pattern' | 'reasoning'>>;
 }
 
 // ============================================================================

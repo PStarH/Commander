@@ -9,10 +9,7 @@
  */
 
 import { reportSilentFailure } from './silentFailureReporter';
-import type {
-  ToolResult,
-  LLMRequest,
-} from './runtime/types';
+import type { ToolResult, LLMRequest } from './runtime/types';
 import { getGlobalLogger } from './logging';
 import { getMetricsCollector } from './runtime/metricsCollector';
 import { getGlobalPluginPermissionRegistry } from './security/pluginPermissions';

@@ -194,8 +194,9 @@ export function registerDefaultInvariants(): void {
   // MEMORY invariants (G10)
   registerInvariant({
     id: 'MEMORY-001',
-    description: 'All memory writes must stay within the writer agent\'s namespace or ACL-granted namespaces',
-    domain: 'AGENT',  // reuse AGENT domain — memory is an agent-lifecycle concern
+    description:
+      "All memory writes must stay within the writer agent's namespace or ACL-granted namespaces",
+    domain: 'AGENT', // reuse AGENT domain — memory is an agent-lifecycle concern
     check: (ctx) => {
       // O(1) — pure memory comparison, never async.
       // The assertNamespaced() guard in MemorySystem throws before this check

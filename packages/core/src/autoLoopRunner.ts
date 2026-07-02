@@ -12,12 +12,7 @@
  * - 默认 detector 是启发式（零成本），LLM detector 可选注入
  */
 
-import type {
-  AnyStep,
-  ExecutionContext,
-  StepExecutor,
-  StepResult,
-} from './orchestrationPatterns';
+import type { AnyStep, ExecutionContext, StepExecutor, StepResult } from './orchestrationPatterns';
 
 // ============================================================================
 // 完成检测
@@ -43,7 +38,10 @@ export interface CompletionDetector {
  * - 结构化标记：output 是对象且含 done=true / status="complete"
  * - 收敛信号：连续 2 轮输出高度相似（hash 相同）→ 视为收敛完成
  */
-export const defaultCompletionDetector: CompletionDetector = (output, ctx): {
+export const defaultCompletionDetector: CompletionDetector = (
+  output,
+  ctx,
+): {
   done: boolean;
   reason: string;
 } => {
@@ -89,7 +87,10 @@ export function createConvergenceDetector(consecutiveMatches = 2): CompletionDet
     // 检查最近 consecutiveMatches+1 个是否全相同
     const recent = hashes.slice(-consecutiveMatches - 1);
     if (recent.every((h) => h === recent[0])) {
-      return { done: true, reason: `converged: ${consecutiveMatches} consecutive identical outputs` };
+      return {
+        done: true,
+        reason: `converged: ${consecutiveMatches} consecutive identical outputs`,
+      };
     }
     return { done: false, reason: 'outputs still diverging' };
   };
@@ -142,7 +143,13 @@ export interface AutoLoopConfig {
 export interface AutoLoopRun {
   runId: string;
   projectId: string;
-  status: 'COMPLETED' | 'PARTIAL' | 'TIMEOUT' | 'TOKEN_BUDGET_EXHAUSTED' | 'CANCELLED' | 'HARD_CAP_REACHED';
+  status:
+    | 'COMPLETED'
+    | 'PARTIAL'
+    | 'TIMEOUT'
+    | 'TOKEN_BUDGET_EXHAUSTED'
+    | 'CANCELLED'
+    | 'HARD_CAP_REACHED';
   /** 每轮的 step 结果 */
   loopResults: StepResult[];
   /** 实际执行的轮次 */

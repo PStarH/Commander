@@ -47,9 +47,7 @@ export interface Insight {
  * 提取器函数签名 — 用户可自定义提取逻辑。
  * 默认实现用启发式规则；高级用户可注入 LLM 提取器。
  */
-export type InsightExtractor = (
-  result: StepResult,
-) => Insight[] | Promise<Insight[]>;
+export type InsightExtractor = (result: StepResult) => Insight[] | Promise<Insight[]>;
 
 // ============================================================================
 // CrossPollinationEngine
@@ -106,9 +104,7 @@ export class CrossPollinationEngine {
    * 获取 top-K insights（按 confidence 降序）。
    */
   getTopInsights(k: number): Insight[] {
-    return [...this.insights]
-      .sort((a, b) => b.confidence - a.confidence)
-      .slice(0, k);
+    return [...this.insights].sort((a, b) => b.confidence - a.confidence).slice(0, k);
   }
 
   /**
@@ -169,9 +165,7 @@ export class CrossPollinationEngine {
  */
 export const defaultHeuristicExtractor: InsightExtractor = (result): Insight[] => {
   const text =
-    typeof result.output === 'string'
-      ? result.output
-      : JSON.stringify(result.output ?? '');
+    typeof result.output === 'string' ? result.output : JSON.stringify(result.output ?? '');
   if (!text || text.length < 10) return [];
 
   const insights: Insight[] = [];
