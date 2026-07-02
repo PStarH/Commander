@@ -1,0 +1,66 @@
+{
+  "findings": [
+    {
+      "id": "ATK-001",
+      "vulnerability": "Email regex bypassed by space between localpart and @",
+      "severity": "medium",
+      "cvss": 5.3,
+      "evidence": "original: 'contact alice @globex.com please', result: 'contact alice @globex.com please'",
+      "recommendation": "preprocess: strip whitespace adjacent to @ before regex match"
+    },
+    {
+      "id": "ATK-002",
+      "vulnerability": "OpenAI key regex {20,} allows 19-char prefixes to leak (low impact — cannot authenticate)",
+      "severity": "low",
+      "cvss": 2,
+      "evidence": "key passes through: sk-abcdef1234567890abc (real OpenAI keys are 51 chars, this is not a valid credential)",
+      "recommendation": "no fix needed; verify against actual OpenAI key format on GitHub push instead of generic regex"
+    },
+    {
+      "id": "ATK-003",
+      "vulnerability": "IPv4 addresses not scrubbed (may be PII per GDPR)",
+      "severity": "low",
+      "cvss": 3.5,
+      "evidence": "IP passes through: server 192.168.1.100 logged the request",
+      "recommendation": "add pattern: \\b\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b (opt-in via config flag)"
+    },
+    {
+      "id": "ATK-004",
+      "vulnerability": "Gap description is free text — renders in issue body, prompt-injection vector",
+      "severity": "high",
+      "cvss": 7.3,
+      "evidence": "description with system-prompt injection persisted verbatim into NDJSON → GitHub issue body",
+      "recommendation": "sanitize descriptions (strip control chars, code-fence limits, length cap) before storage"
+    },
+    {
+      "id": "ATK-005",
+      "vulnerability": "RecoveryVerifier calls bootstrap() once per layer (4× in full battery) without checking if fault actually injected",
+      "severity": "medium",
+      "cvss": 4.2,
+      "evidence": "4 layers → 4 bootstrap calls. If bootstrap is heavy (e.g., DB migration), this is a self-DoS",
+      "recommendation": "gate bootstrap on actual fault detection; pass `faultInjected` flag from runLayer to verifyAndRecover"
+    },
+    {
+      "id": "ATK-006",
+      "vulnerability": "Plugin supply chain scenarios contain prompt-injection payloads in their description field — they render in any UI that displays scenario name/description",
+      "severity": "low",
+      "cvss": 3,
+      "evidence": "2 scenarios with injection-shaped payloads in description field",
+      "recommendation": "use unique synthetic IDs (e.g. PLUGIN-SUPPLY-002.example) instead of injection-style payloads in the description"
+    },
+    {
+      "id": "ATK-007",
+      "vulnerability": "Shadow proxy forwards unsanitized request body to shadow endpoint",
+      "severity": "critical",
+      "cvss": 9.1,
+      "evidence": "captured body: {\"prompt\":\"send to alice@globex.com with sk-abcdef1234567890abcdef1234\"}",
+      "recommendation": "ShadowProxy.mirror must scrub body fields the same way it scrubs headers; use scrubRequest on a body-shaped object"
+    }
+  ],
+  "summary": {
+    "critCount": 1,
+    "highCount": 1,
+    "medCount": 2,
+    "lowCount": 3
+  }
+}
