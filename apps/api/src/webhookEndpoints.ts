@@ -197,7 +197,9 @@ export function createWebhookRouter(): Router {
   const router = Router();
 
   // ── POST /api/webhook/dingtalk/:id? — DingTalk robot callback ─────────
-  router.post('/api/webhook/dingtalk/:id?', async (req: Request, res: Response) => {
+  // Express 5 / path-to-regexp v8 drops :param? optional syntax. Register
+  // both paths explicitly so either /dingtalk and /dingtalk/:id match.
+  async function dingtalkHandler(req: Request, res: Response): Promise<void> {
     try {
       const id = typeof req.params.id === 'string' ? req.params.id : undefined;
       const config = id ? findIMWebhook(id) : undefined;
@@ -208,7 +210,8 @@ export function createWebhookRouter(): Router {
         const timestamp = req.query.timestamp as string | undefined;
         const sign = req.query.sign as string | undefined;
         if (!timestamp || !sign || !verifyDingTalkSignature(timestamp, sign, secret)) {
-          return res.status(401).json({ error: 'Invalid signature' });
+          res.status(401).json({ error: 'Invalid signature' });
+          return;
         }
       }
 
@@ -228,7 +231,8 @@ export function createWebhookRouter(): Router {
       // Strip @bot prefix (DingTalk sends "@botName message")
       messageText = messageText.replace(/^\s*@\S+\s*/, '').trim();
       if (!messageText) {
-        return res.json({ msgtype: 'text', text: { content: 'Please send a message.' } });
+        res.json({ msgtype: 'text', text: { content: 'Please send a message.' } });
+        return;
       }
 
       const agentId = config?.agentId ?? 'agent-commander';
@@ -238,10 +242,12 @@ export function createWebhookRouter(): Router {
     } catch (error) {
       res.status(500).json({ error: toErrorMessage(error) });
     }
-  });
+  }
+  router.post('/api/webhook/dingtalk', dingtalkHandler);
+  router.post('/api/webhook/dingtalk/:id', dingtalkHandler);
 
   // ── POST /api/webhook/feishu/:id? — Feishu bot callback ───────────────
-  router.post('/api/webhook/feishu/:id?', async (req: Request, res: Response) => {
+  async function feishuHandler(req: Request, res: Response): Promise<void> {
     try {
       const id = typeof req.params.id === 'string' ? req.params.id : undefined;
       const config = id ? findIMWebhook(id) : undefined;
@@ -259,14 +265,16 @@ export function createWebhookRouter(): Router {
       if (config && config.secret) {
         const token = typeof header.token === 'string' ? header.token : '';
         if (token && token !== config.secret) {
-          return res.status(401).json({ error: 'Invalid verification token' });
+          res.status(401).json({ error: 'Invalid verification token' });
+          return;
         }
       }
 
       // Handle url_verification challenge
       if (eventType === 'url_verification' || body.challenge !== undefined) {
         const challenge = typeof body.challenge === 'string' ? body.challenge : '';
-        return res.json({ challenge });
+        res.json({ challenge });
+        return;
       }
 
       // Handle message.receive_v1 event
@@ -286,7 +294,8 @@ export function createWebhookRouter(): Router {
         // Strip @bot mention
         messageText = messageText.replace(/@_user_\d+/g, '').trim();
         if (!messageText) {
-          return res.json({ code: 0, msg: 'success' });
+          res.json({ code: 0, msg: 'success' });
+          return;
         }
 
         const agentId = config?.agentId ?? 'agent-commander';
@@ -302,10 +311,12 @@ export function createWebhookRouter(): Router {
     } catch (error) {
       res.status(500).json({ error: toErrorMessage(error) });
     }
-  });
+  }
+  router.post('/api/webhook/feishu', feishuHandler);
+  router.post('/api/webhook/feishu/:id', feishuHandler);
 
   // ── POST /api/webhook/wecom/:id? — WeCom app callback ─────────────────
-  router.post('/api/webhook/wecom/:id?', async (req: Request, res: Response) => {
+  async function wecomHandler(req: Request, res: Response): Promise<void> {
     try {
       const id = typeof req.params.id === 'string' ? req.params.id : undefined;
       const config = id ? findIMWebhook(id) : undefined;
@@ -324,7 +335,8 @@ export function createWebhookRouter(): Router {
       // Basic signature verification (skipping full AES decryption per task constraints)
       if (config && config.secret && msgSignature && timestamp && nonce && encrypt) {
         if (!verifyWeComSignature(config.secret, timestamp, nonce, encrypt, msgSignature)) {
-          return res.status(401).json({ error: 'Invalid msg_signature' });
+          res.status(401).json({ error: 'Invalid msg_signature' });
+          return;
         }
       }
 
@@ -335,7 +347,8 @@ export function createWebhookRouter(): Router {
       // Handle echostr verification (GET-style, but sometimes POSTed)
       const echostr = req.query.echostr as string | undefined;
       if (echostr) {
-        return res.send(echostr);
+        res.send(echostr);
+        return;
       }
 
       if (msgType === 'text' && content) {
@@ -360,7 +373,9 @@ export function createWebhookRouter(): Router {
     } catch (error) {
       res.status(500).json({ error: toErrorMessage(error) });
     }
-  });
+  }
+  router.post('/api/webhook/wecom', wecomHandler);
+  router.post('/api/webhook/wecom/:id', wecomHandler);
 
   // ── GET /api/webhook/config — list IM webhooks ────────────────────────
   router.get('/api/webhook/config', (_req: Request, res: Response) => {

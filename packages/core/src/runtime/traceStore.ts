@@ -70,6 +70,24 @@ export class PersistentTraceStore implements TraceStore {
   }
 
   /**
+   * Test-only accessor: number of unsynced trace events currently
+   * buffered in memory for {@link runId}. Returns 0 if no buffer
+   * exists yet (same semantics as `buffers.get(...)?.length ?? 0`).
+   *
+   * Lets async-migration tests assert pre-flush state without
+   * reaching into the TypeScript-private `buffers` Map field, which
+   * would couple the test to the internal field name.
+   *
+   * @internal — not part of the supported TraceStore interface.
+   *             Production code should rely on append/flush and read
+   *             the on-disk ndjson rather than this in-memory count.
+   */
+  getBufferCount(runId: string): number {
+    const key = sanitizeRunId(runId);
+    return this.buffers.get(key)?.length ?? 0;
+  }
+
+  /**
    * Append a critical event with fsync — guarantees the bytes are on disk
    * before returning. Use sparingly: e.g. circuit-breaker transitions,
    * compensation exhaustion, intent-log writes. Higher latency than append().

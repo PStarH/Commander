@@ -15,6 +15,8 @@ from ._types import (
     StepSummary,
     SystemStatus,
 )
+from .advisor import TrajectoryAdvisor, AdvisorHint
+from .governance import ToolCallGovernance
 
 __all__ = [
     "CommanderClient",
@@ -30,4 +32,7 @@ __all__ = [
     "SSEEvent",
     "StepSummary",
     "SystemStatus",
+    "TrajectoryAdvisor",
+    "AdvisorHint",
+    "ToolCallGovernance",
 ]
