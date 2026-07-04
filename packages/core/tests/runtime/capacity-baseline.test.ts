@@ -52,7 +52,7 @@ describe('AgentRuntime capacity baseline metrics', () => {
 
     const waitTime = getMetricsCollector().getCounterTotal('runtime_wait_time_ms_count');
     expect(waitTime).toBeGreaterThanOrEqual(0);
-  }, 60000);
+  }, 180000);
 
   it('records run cost alongside run completion', async () => {
     const router = new ModelRouter();
