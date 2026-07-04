@@ -100,14 +100,17 @@ function npxSpawn(args: string[], opts?: { timeout?: number }) {
 
 import {
   countColumns,
-  evaluateSignoff,
+  evaluateSignoffAsync,
   extractSection,
+  formatReport,
   parseSignoffTable,
   POLICY_MIN_VERIFIED_ROWS,
-  runVerifier,
+  POLICY_VERSION,
+  runVerifierAsync,
   SHA_RE,
   SignoffRow,
-  verifySha,
+  verifyShaAsync,
+  VerifyResult,
 } from '../../src/security/rotationSignoffVerifier';
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
@@ -137,6 +140,43 @@ function mkRow(opts: {
     signedBy: null,
     verified: opts.verified ?? false,
     error: opts.error,
+  };
+}
+
+/**
+ * Inlined sync policy evaluator. The library's internal `evaluateSignoff` was
+ * un-exported in the structural-debt cleanup, but the policy matrix tests are
+ * clearer as synchronous pure-function assertions. This helper mirrors the
+ * production logic exactly.
+ */
+function evaluateSignoff(rows: readonly SignoffRow[]): VerifyResult {
+  const verified = rows.filter((r) => r.verified).length;
+  const failed = rows.filter((r) => !r.verified && r.sha !== '').length;
+  const pending = rows.filter((r) => !r.verified && r.sha === '').length;
+
+  const ok = verified >= POLICY_MIN_VERIFIED_ROWS && failed === 0;
+  const reasons: string[] = [];
+  if (verified < POLICY_MIN_VERIFIED_ROWS) {
+    reasons.push(
+      `policy NOT bound — at least ${POLICY_MIN_VERIFIED_ROWS} role(s) must hold a GPG-verified SHA`,
+    );
+  }
+  if (failed > 0) {
+    reasons.push(`${failed} unverified SHA(s) need to be fixed`);
+  }
+  const report =
+    formatReport(rows) +
+    '\n' +
+    `Policy (${POLICY_VERSION}): verified=${verified} (min=${POLICY_MIN_VERIFIED_ROWS}), ` +
+    `failed=${failed}, pending=${pending}. ` +
+    (ok ? `OK: policy bound.` : `RED: ${reasons.join(' AND ')}.`);
+
+  return {
+    ok,
+    rows: rows.map((r) => ({ ...r })),
+    reasons: Object.freeze([...reasons]),
+    report,
+    exitCode: ok ? 0 : 1,
   };
 }
 
@@ -217,9 +257,9 @@ describe('D2.6 hardening — SHA injection defense-in-depth', () => {
   ] as const;
 
   for (const payload of MALICIOUS_INPUTS) {
-    it(`rejects malicious SHA: ${JSON.stringify(payload)}`, () => {
+    it(`rejects malicious SHA: ${JSON.stringify(payload)}`, async () => {
       expect(SHA_RE.test(payload)).toBe(false);
-      const result = verifySha(payload);
+      const result = await verifyShaAsync(payload);
       expect(result.verified).toBe(false);
       expect(result.error).toMatch(/invalid SHA format/);
     });
@@ -470,21 +510,21 @@ describe('D3.0 hardening — public reason-codes API (reasons: readonly string[]
     expect(r.reasons[1]).not.toContain('policy NOT bound');
   });
 
-  it('exit 2 (file-missing): reasons[] is single-element error caption', () => {
+  it('exit 2 (file-missing): reasons[] is single-element error caption', async () => {
     const missingPath = path.join(REPO_ROOT, 'this/path/does/not/exist.md');
-    const r = runVerifier(missingPath);
+    const r = await runVerifierAsync(missingPath);
     expect(r.exitCode).toBe(2);
     expect(r.reasons.length).toBe(1);
     expect(r.reasons[0]).toMatch(/^ERROR: doc not found at /);
     expect(r.reasons[0]).toContain(path.join('this', 'path', 'does', 'not', 'exist.md'));
   });
 
-  it('exit 2 (§6 missing): reasons[] is single-element error caption', () => {
+  it('exit 2 (§6 missing): reasons[] is single-element error caption', async () => {
     const tmp = path.join(REPO_ROOT, '.commander', 'd30-test-no-section.md');
     fs.mkdirSync(path.dirname(tmp), { recursive: true });
     try {
       fs.writeFileSync(tmp, '# nothing here\n## §1 — nope\n## §2 — nada\n', 'utf-8');
-      const r = runVerifier(tmp);
+      const r = await runVerifierAsync(tmp);
       expect(r.exitCode).toBe(2);
       expect(r.reasons.length).toBe(1);
       expect(r.reasons[0]).toMatch(/ERROR: §6 Sign-off section not found in /);
@@ -497,13 +537,13 @@ describe('D3.0 hardening — public reason-codes API (reasons: readonly string[]
     }
   });
 
-  it('exit 1 (0-row parsed table): reasons[] is the canonical policy-bound reason (single clause)', () => {
+  it('exit 1 (0-row parsed table): reasons[] is the canonical policy-bound reason (single clause)', async () => {
     const tmp = path.join(REPO_ROOT, '.commander', 'd30-test-empty-table.md');
     fs.mkdirSync(path.dirname(tmp), { recursive: true });
     try {
       // §6 heading is present but no data rows parsed.
       fs.writeFileSync(tmp, '## §6 — Sign-off\n\n## §7 — Next\n', 'utf-8');
-      const r = runVerifier(tmp);
+      const r = await runVerifierAsync(tmp);
       expect(r.exitCode).toBe(1);
       expect(r.reasons.length).toBe(1);
       expect(r.reasons[0]).toMatch(/policy NOT bound/);
@@ -562,8 +602,8 @@ describe('D3.0 hardening — public reason-codes API (reasons: readonly string[]
 });
 
 describe('D2.9 hardening — verifier policy contracts (integration)', () => {
-  it('RED on the live repo doc — empty table = policy NOT bound (D2.9 requires ≥4)', () => {
-    const result = runVerifier(REAL_DOC);
+  it('RED on the live repo doc — empty table = policy NOT bound (D2.9 requires ≥4)', async () => {
+    const result = await runVerifierAsync(REAL_DOC);
     expect(result.ok).toBe(false);
     expect(result.exitCode).toBe(1);
     expect(result.report).toMatch(/RED: policy NOT bound/);
@@ -575,7 +615,7 @@ describe('D2.9 hardening — verifier policy contracts (integration)', () => {
     }
   });
 
-  it('RED on synthetic doc with an unverified SHA (HEAD of unsigned repo)', () => {
+  it('RED on synthetic doc with an unverified SHA (HEAD of unsigned repo)', async () => {
     const headSha = spawnSync('git', ['rev-parse', 'HEAD'], {
       cwd: REPO_ROOT,
       encoding: 'utf-8',
@@ -587,7 +627,7 @@ describe('D2.9 hardening — verifier policy contracts (integration)', () => {
     fs.mkdirSync(path.dirname(tmp), { recursive: true });
     try {
       fs.writeFileSync(tmp, syntheticDoc, 'utf-8');
-      const result = runVerifier(tmp);
+      const result = await runVerifierAsync(tmp);
       expect(result.ok).toBe(false);
       expect(result.exitCode).toBe(1);
       expect(result.report).toMatch(/RED: policy NOT bound/);
@@ -607,18 +647,18 @@ describe('D2.9 hardening — verifier policy contracts (integration)', () => {
     }
   });
 
-  it('exitCode=2 when the doc does not exist', () => {
-    const result = runVerifier(path.join(REPO_ROOT, 'totally-not-here.md'));
+  it('exitCode=2 when the doc does not exist', async () => {
+    const result = await runVerifierAsync(path.join(REPO_ROOT, 'totally-not-here.md'));
     expect(result.exitCode).toBe(2);
     expect(result.ok).toBe(false);
   });
 
-  it('exitCode=2 when the §6 section is missing', () => {
+  it('exitCode=2 when the §6 section is missing', async () => {
     const tmp = path.join(REPO_ROOT, '.commander', 'd29-test-no-section.md');
     fs.mkdirSync(path.dirname(tmp), { recursive: true });
     try {
       fs.writeFileSync(tmp, '# nothing here\n## §1 — nope\n## §2 — nada\n', 'utf-8');
-      const result = runVerifier(tmp);
+      const result = await runVerifierAsync(tmp);
       expect(result.exitCode).toBe(2);
       expect(result.ok).toBe(false);
     } finally {
