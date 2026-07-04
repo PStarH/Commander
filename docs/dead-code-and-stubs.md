@@ -1,6 +1,6 @@
 # Dead Code, Stubs, and Unwired Modules Audit
 
-> Full codebase scan: 2026-06-24. Last updated: 2026-06-24.
+> Full codebase scan: 2026-06-24. Last updated: 2026-07-05.
 > Organized by severity. Resolve or remove before v1.0.0.
 
 ---
@@ -18,6 +18,37 @@ The following orphaned modules were identified and have been **deleted**:
 | `tokenBudgetAllocator.ts`                                       | 393   | **DELETED** — half-orphaned, no active callers                                                                                     |
 | `tests/integration.test.ts`                                     | 448   | **DELETED** — sole consumer of `TokenBudgetAllocator` / `AdaptiveOrchestrator` / `InspectorAgent`; test target was itself orphaned |
 | `tests/e2e.test.ts`                                             | 418   | **DELETED** — same verdict; integration tested deleted subsystems                                                                  |
+
+---
+
+## DELETED — Structural Debt Cleanup (2026-07-05)
+
+The following dead code / test artifacts were removed as part of Task 1 in
+`docs/superpowers/plans/2026-07-04-structural-debt-cleanup.md`:
+
+| Module / Path                                                                 | Kind       | Notes                                                                            |
+| ----------------------------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------- |
+| `packages/core/broken.ts`                                                       | orphan     | stale throw-away reproduction script                                             |
+| `packages/core/test-import.ts`                                                  | orphan     | temporary import test                                                            |
+| `packages/core/test.txt`                                                        | artifact   | empty test artifact                                                              |
+| `packages/core/test-empty.txt`                                                  | artifact   | empty test artifact                                                              |
+| `packages/core/output.txt`                                                      | artifact   | stale output file                                                                |
+| `packages/core/nested/`                                                         | directory  | stale scratch directory                                                          |
+| `packages/core/tests/baseline-known-failures.txt`                               | artifact   | obsolete baseline file                                                           |
+| `packages/core/src/atr/index.ts`                                                | dead code  | empty barrel; nothing re-exported                                                |
+| `packages/core/src/contracts/index.ts`                                          | dead code  | empty barrel; nothing re-exported                                                |
+| `packages/core/src/runtime/effectSystem.ts`                                     | dead code  | no active callers                                                                |
+| `packages/core/src/atr/runtimeIntegration.ts`                                   | dead code  | superseded by `ExecutionScheduler`; no active callers                            |
+| `packages/core/src/atr/compensationBridge.ts`                                   | dead code  | superseded by `ExecutionScheduler`; no active callers                            |
+| `packages/core/tests/atr/runtimeIntegration.test.ts`                            | test       | tested deleted `runtimeIntegration.ts`                                           |
+| `packages/core/tests/atr/compensationBridge.test.ts`                            | test       | tested deleted `compensationBridge.ts`                                           |
+| `packages/core/tests/architecture/architectureBlueprint.test.ts`                | test       | tested deleted `ArchitectureBlueprint`                                           |
+| `packages/core/src/security/rotationSignoffVerifier.ts` sync API (`verifySha`, `evaluateSignoff`, `runVerifier`) | dead API | removed; async variants (`verifyShaAsync`, `evaluateSignoffAsync`, `runVerifierAsync`) remain |
+
+Dependent tests that still imported `CompensationBridge` were updated to use
+`ExecutionScheduler` without the bridge parameter. The policy-matrix tests for
+`rotationSignoffVerifier` now inline a private sync `evaluateSignoff` helper
+while using the async surface for I/O-bound assertions.
 
 ---
 
@@ -57,10 +88,9 @@ The following orphaned modules were identified and have been **deleted**:
 
 ## MEDIUM — Deprecated but Not Removed
 
-| File:Line                                         | Deprecated     | Replacement                  | Status                       |
-| ------------------------------------------------- | -------------- | ---------------------------- | ---------------------------- |
-| `atr/runtimeIntegration.ts:4`                     | Entire file    | `ExecutionScheduler`         | Has replacement, not deleted |
-| `security/rotationSignoffVerifier.ts:438,772,933` | 3 sync methods | Corresponding Async versions | Marked advisory-only         |
+| File:Line | Deprecated | Replacement | Status |
+| --------- | ---------- | ----------- | ------ |
+| _(none currently)_ | — | — | — |
 
 ---
 
@@ -178,7 +208,7 @@ Note: `AdaptiveExecutionResult` kept locally because it uses `AgentExecutionResu
 | `McpHarness` empty stub                                                               | **FIXED**    | 2026-06-24                                                                                                                            |
 | `deliberation.ts:225` hardcoded year `2025`/`2026` in temporal detection              | **FIXED**    | 2026-06-24                                                                                                                            |
 | `inspectorAgent` deprecated, replacement exists                                       | **DELETED**  | 2026-06-24                                                                                                                            |
-| `atr/runtimeIntegration` deprecated, replacement exists                               | **OPEN**     | —                                                                                                                                     |
+| `atr/runtimeIntegration` deprecated, replacement exists                               | **DELETED**  | 2026-07-05 — removed alongside `compensationBridge.ts`, empty barrels, stale artifacts, and rotation sign-off sync API               |
 | Circuit-breaker snapshot only reflects CLOSED (no HALF-OPEN detection)                | **OPEN**     | —                                                                                                                                     |
 | DLQ >500 unhealthy threshold is process-wide (not per-tenant)                         | **RESOLVED** | 2026-06-25 — `tenantManager.ts` provides per-tenant store isolation with per-tenant rate limits, concurrency caps, and storage quotas |
 | `/api/runtime/health` does not yet surface `HealthCheckResult` (doc promises it)      | **FIXED**    | 2026-06-25 — `buildHealthSources()` wires real data to all 3 health endpoints                                                       |
