@@ -116,6 +116,11 @@ function fullReset(): void {
 // ============================================================================
 
 describe('SecurityOrchestrator Integration — agentRuntime.ts wiring', () => {
+  // E2E tests under contention: AgentRuntime.execute() does ~30s of real
+  // work per call (IntentLog sync writes, OTel flush, trace record, etc.)
+  // and the full 220-file suite can push that above 120s wall time. The
+  // global testTimeout was bumped to 120s and individual `it` cases that
+  // exceed that get explicit per-`it` timeouts of 180s.
   let runtime: AgentRuntime;
   let router: ModelRouter;
 
@@ -132,6 +137,11 @@ describe('SecurityOrchestrator Integration — agentRuntime.ts wiring', () => {
 
   describe('onBeforeToolCall — high-risk tool blocking', () => {
     it('should block a high-risk tool during execution', async () => {
+      // E2E test under contention: AgentRuntime.execute() does ~30s of
+      // real work per call (IntentLog sync writes, OTel flush, trace
+      // record, etc.) and the full 220-file suite can push that above
+      // 120s wall time. 180s gives enough retry headroom for the
+      // (retry=2) global config.
       const provider = new ToolCallMockProvider('openai', {
         defaultResponse: 'I will use a shell tool for this.',
       });
@@ -186,7 +196,7 @@ describe('SecurityOrchestrator Integration — agentRuntime.ts wiring', () => {
       const resultEvents = events.filter((e) => e.type === 'tool_result');
       expect(resultEvents.length).toBeGreaterThan(0);
       expect(resultEvents[0].metadata.hasError).toBe(true);
-    });
+    }, 180000);
 
     it('should allow a low-risk tool to execute', async () => {
       const provider = new ToolCallMockProvider('openai', {

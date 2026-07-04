@@ -21,6 +21,7 @@ export class SamplesStore {
   private tenantId?: string;
   private writeQueue: Array<() => Promise<void>> = [];
   private flushing = false;
+  private _flushPromise: Promise<void> | null = null;
   private readonly MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB
   private readonly MAX_ROTATED_FILES = 3;
 
@@ -134,7 +135,14 @@ export class SamplesStore {
 
   /** Drain all pending writes to disk. Call before shutdown. */
   async flush(): Promise<void> {
-    if (this.flushing) return;
+    // drainQueue calls itself recursively (fire-and-forget) when new items
+    // arrive during a drain.  We must wait for the entire chain of drains
+    // before returning, otherwise the caller may remove the base directory
+    // while a drain is still writing to it, producing unhandled ENOENT.
+    while (this.flushing && this._flushPromise) {
+      await this._flushPromise;
+    }
+    // Drain any remaining items ourselves.
     this.flushing = true;
     try {
       let idx = 0;
@@ -278,21 +286,26 @@ export class SamplesStore {
   }
 
   private async drainQueue(): Promise<void> {
-    try {
-      let idx = 0;
-      while (idx < this.writeQueue.length) {
-        const task = this.writeQueue[idx++];
-        if (task) await task();
+    const p = (async () => {
+      try {
+        let idx = 0;
+        while (idx < this.writeQueue.length) {
+          const task = this.writeQueue[idx++];
+          if (task) await task();
+        }
+        this.writeQueue.length = 0;
+      } finally {
+        this.flushing = false;
+        this._flushPromise = null;
+        // If new items were enqueued while draining, start another drain
+        if (this.writeQueue.length > 0) {
+          this.flushing = true;
+          this.drainQueue();
+        }
       }
-      this.writeQueue.length = 0;
-    } finally {
-      this.flushing = false;
-      // If new items were enqueued while draining, start another drain
-      if (this.writeQueue.length > 0) {
-        this.flushing = true;
-        this.drainQueue();
-      }
-    }
+    })();
+    this._flushPromise = p;
+    await p;
   }
 
   /** Append a JSON line to a given file with rotation. */
