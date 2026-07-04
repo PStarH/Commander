@@ -6,7 +6,6 @@ import { getExecutionScheduler, resetExecutionScheduler } from '../../src/atr/sc
 import { resetDeadLetterQueue } from '../../src/runtime/deadLetterQueueSingleton';
 import { resetMessageBus } from '../../src/runtime/messageBus';
 import { resetIdempotencyStore } from '../../src/atr/idempotencyStore';
-import { resetCompensationBridge } from '../../src/atr/compensationBridge';
 
 describe('RecoveryBootstrapper', () => {
   beforeEach(() => {
@@ -17,7 +16,6 @@ describe('RecoveryBootstrapper', () => {
     resetDeadLetterQueue();
     resetMessageBus();
     resetIdempotencyStore();
-    resetCompensationBridge();
   });
 
   afterEach(() => {
@@ -26,7 +24,6 @@ describe('RecoveryBootstrapper', () => {
     resetDeadLetterQueue();
     resetMessageBus();
     resetIdempotencyStore();
-    resetCompensationBridge();
     delete process.env.COMMANDER_ATR_MEMORY;
     delete process.env.COMMANDER_ATR_IDEMPOTENCY_PATH;
   });

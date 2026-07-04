@@ -7,12 +7,10 @@ import {
   GitHubClientError,
   type GitHubClient,
 } from '../../../src/atr/adapters/github';
-import { CompensationBridge } from '../../../src/atr/compensationBridge';
 import { ExecutionScheduler } from '../../../src/atr/scheduler';
 import { IdempotencyStore, resetIdempotencyStore } from '../../../src/atr/idempotencyStore';
 import { LeaseManager } from '../../../src/atr/leaseManager';
 import { RunLedger, resetRunLedgerBundle } from '../../../src/atr/runLedger';
-import { resetCompensationBridge } from '../../../src/atr/compensationBridge';
 
 class MockClient implements GitHubClient {
   createPrImpl?: (a: unknown) => Promise<{ number: number; url: string }>;
@@ -46,7 +44,6 @@ function makeStack(client: GitHubClient) {
   process.env.COMMANDER_ATR_IDEMPOTENCY_PATH = ':memory:';
   resetIdempotencyStore();
   resetRunLedgerBundle();
-  resetCompensationBridge();
   const lm = new LeaseManager({
     filePath: ':memory:',
     defaultTtlSeconds: 60,
@@ -58,8 +55,7 @@ function makeStack(client: GitHubClient) {
     defaultTtlSeconds: 60,
     defaultHolder: 'test',
   });
-  const bridge = new CompensationBridge();
-  const scheduler = new ExecutionScheduler({ lease: lm, idempotency: idem, ledger, bridge });
+  const scheduler = new ExecutionScheduler({ lease: lm, idempotency: idem, ledger });
   const handlers = getGitHubCompensationHandlers(client);
   for (const [name, h] of Object.entries(handlers)) {
     scheduler.registerCompensation(name, h);
@@ -69,7 +65,6 @@ function makeStack(client: GitHubClient) {
     lm,
     idem,
     ledger,
-    bridge,
     close: () => {
       lm.close();
       idem.close();
@@ -83,13 +78,11 @@ describe('GitHub adapter', () => {
     process.env.COMMANDER_ATR_IDEMPOTENCY_PATH = ':memory:';
     resetIdempotencyStore();
     resetRunLedgerBundle();
-    resetCompensationBridge();
   });
 
   afterEach(() => {
     resetIdempotencyStore();
     resetRunLedgerBundle();
-    resetCompensationBridge();
     delete process.env.COMMANDER_ATR_IDEMPOTENCY_PATH;
   });
 
