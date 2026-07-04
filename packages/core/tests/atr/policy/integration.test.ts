@@ -2,18 +2,15 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { PolicyHook, buildPolicyInput } from '../../../src/atr/policy/integration/scheduler';
 import { ExecutionScheduler } from '../../../src/atr/scheduler';
-import { CompensationBridge } from '../../../src/atr/compensationBridge';
 import { RunLedger } from '../../../src/atr/runLedger';
 import { LeaseManager } from '../../../src/atr/leaseManager';
 import { IdempotencyStore, resetIdempotencyStore } from '../../../src/atr/idempotencyStore';
 import { resetRunLedgerBundle } from '../../../src/atr/runLedger';
-import { resetCompensationBridge } from '../../../src/atr/compensationBridge';
 
 function makeStack() {
   process.env.COMMANDER_ATR_IDEMPOTENCY_PATH = ':memory:';
   resetIdempotencyStore();
   resetRunLedgerBundle();
-  resetCompensationBridge();
   const lm = new LeaseManager({
     filePath: ':memory:',
     defaultTtlSeconds: 60,
@@ -25,14 +22,12 @@ function makeStack() {
     defaultTtlSeconds: 60,
     defaultHolder: 'test',
   });
-  const bridge = new CompensationBridge();
-  const scheduler = new ExecutionScheduler({ lease: lm, idempotency: idem, ledger, bridge });
+  const scheduler = new ExecutionScheduler({ lease: lm, idempotency: idem, ledger });
   return {
     scheduler,
     lm,
     idem,
     ledger,
-    bridge,
     close: () => {
       lm.close();
       idem.close();
@@ -46,7 +41,6 @@ describe('PolicyHook integration', () => {
     process.env.COMMANDER_ATR_IDEMPOTENCY_PATH = ':memory:';
     resetIdempotencyStore();
     resetRunLedgerBundle();
-    resetCompensationBridge();
   });
   afterEach(() => {
     delete process.env.COMMANDER_ATR_IDEMPOTENCY_PATH;
