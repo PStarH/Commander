@@ -13,7 +13,10 @@ describe('SamplesStore', () => {
     store = new SamplesStore(tmpDir);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Drain all pending writes before removing the temp directory, otherwise
+    // drainQueue's appendFile calls race with rmSync and throw unhandled ENOENT.
+    if (store) await store.flush();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 

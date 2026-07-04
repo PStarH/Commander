@@ -327,6 +327,19 @@ export class CompensationRegistry {
   getCompensatedCount(): number {
     return this.compensated.size;
   }
+
+  /**
+   * Test-only accessor: returns whether {@link actionId} is currently
+   * in the pending-actions Map. Proxies to `pendingActions.has()`.
+   * Lets async-migration / idempotency tests assert pre/post-
+   * `compensate()` action state without reaching into the
+   * TypeScript-private `pendingActions` Map.
+   *
+   * @internal — not part of the supported CompensationRegistry interface.
+   */
+  hasPendingAction(actionId: string): boolean {
+    return this.pendingActions.has(actionId);
+  }
   clear(): void {
     this.pendingActions.clear();
     this.compensated.clear();

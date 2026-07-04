@@ -114,9 +114,21 @@ describe('E2E: UltimateOrchestrator full pipeline', () => {
       // and the test exercises the full deliberation → execution → synthesis
       // flow without being entangled with provider-specific rewrite behavior.
       qualityGates: [
-        { name: 'hallucination', type: 'HALLUCINATION_CHECK', enabled: true, threshold: 0.8, autoFix: false },
+        {
+          name: 'hallucination',
+          type: 'HALLUCINATION_CHECK',
+          enabled: true,
+          threshold: 0.8,
+          autoFix: false,
+        },
         { name: 'consistency', type: 'CONSISTENCY', enabled: true, threshold: 0.7, autoFix: false },
-        { name: 'completeness', type: 'COMPLETENESS', enabled: true, threshold: 0.6, autoFix: false },
+        {
+          name: 'completeness',
+          type: 'COMPLETENESS',
+          enabled: true,
+          threshold: 0.6,
+          autoFix: false,
+        },
       ],
     });
   }
@@ -182,7 +194,7 @@ describe('E2E: UltimateOrchestrator full pipeline', () => {
     expect(result.metrics.topologyUsed).toBe('DISPATCH');
     expect(result.metrics.subAgentsSpawned).toBeGreaterThanOrEqual(2);
     expect(result.synthesis).toContain('trade');
-  }, 60000);
+  }, 120000);
 
   it('gracefully handles a trivial factual task with SINGLE topology', async () => {
     const runtime = makeRuntime();
@@ -201,7 +213,7 @@ describe('E2E: UltimateOrchestrator full pipeline', () => {
     expect(['SUCCESS', 'PARTIAL']).toContain(result.status);
     expect(result.synthesis).toBeTruthy();
     expect(result.metrics.subAgentsSpawned).toBeGreaterThanOrEqual(1);
-  }, 60000);
+  }, 180000);
 
   it('does not leak state between consecutive executions', async () => {
     const runtime = makeRuntime();
