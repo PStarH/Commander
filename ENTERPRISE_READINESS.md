@@ -30,14 +30,21 @@
 | OBS-3 | Prometheus `/metrics` endpoint in **both** HTTP server (CommanderHttpServer) **and** apps/api | ✅ | @observability | `CommanderHttpServer.metrics`; `apps/api/src/index.ts:/metrics` | 2026-Q3 |
 | OBS-4 | Grafana dashboard template for SLO tracking | ❌ | @observability | Mentioned in `docs/runbooks/chaos.md` but no committed JSON template | 2026-Q4 |
 
-### Multi-tenancy — verified isolation
+### Multi-tenancy — Alpha (API context isolation only)
+
+⚠️ **Alpha.** Commander provides tenant-aware singletons and request-context
+isolation via `runWithTenant` + `AsyncLocalStorage`. Storage-layer isolation
+(SQLite per-tenant path, per-tenant budgets) is opt-in and must be verified by
+the deployment operator. Do not rely on the current implementation for strict
+inter-tenant data separation without configuring the storage backend and
+setting `allowGlobalFallback: false` on tenant-aware singletons.
 
 | # | Item | Status | Owner | Evidence | Target |
 |---|------|--------|-------|----------|--------|
 | TEN-1 | Tenant-aware singletons gated by `runWithTenant` AsyncLocalStorage | 🟡 | @multi-tenancy | `runtime/tenantAwareSingleton.ts` provides the *interface*; storage backend cooperation is customer-side | 2026-Q3 (interface delivered, customer-side verification ongoing) |
 | TEN-2 | SQLite per-tenant (instead of optional filtering) | 🟡 | @multi-tenancy | `storage/cachedDriver.ts` shipped 2026-06-29; per-tenant path is opt-in | 2026-Q4 |
 | TEN-3 | Cross-tenant fuzz test (TEN-1 + TEN-2 verification harness) | ❌ | @security-team | Accepts seed memories as Tenant A, asserts no read leakage as Tenant B | 2026-Q4 |
-| TEN-4 | Documented "no global fallback" boundary (when set, refuses silent fallback) | ❌ | @multi-tenancy | JSDoc in `tenantAwareSingleton.ts:50` advises; not enforced | 2026-Q4 |
+| TEN-4 | Enforce "no global fallback" boundary outside development | ❌ | @multi-tenancy | `tenantAwareSingleton.ts` logs a runtime warning; enforcement is pending | 2026-Q4 |
 
 ### SLA / SLO — committed to customer
 

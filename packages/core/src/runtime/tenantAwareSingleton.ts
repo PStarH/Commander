@@ -208,9 +208,14 @@ export function createTenantAwareSingleton<T>(
       );
     }
 
-    log('warn', 'Using global fallback instance outside tenant context', {
-      allowGlobalFallback,
-    });
+    const isDev = process.env.NODE_ENV === 'development';
+    log(
+      'warn',
+      `Using global fallback instance outside tenant context — ${isDev ? 'acceptable in development' : 'data is NOT isolated by tenant'}`,
+      {
+        allowGlobalFallback,
+      },
+    );
     if (!globalInstance) {
       globalInstance = factory();
     }
