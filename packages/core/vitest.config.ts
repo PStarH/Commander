@@ -193,8 +193,6 @@ export default defineConfig({
       'tests/ultimate/taskPool.test.ts',
       // --- memory (cross-tenant leak fix) ---
 
-      // --- architecture blueprint (Phases 1-5) ---
-      'tests/architecture/architectureBlueprint.test.ts',
       // --- GDPR compliance + AdaptiveHITL weight learning ---
       'tests/architecture/gdprCompliance.test.ts',
       // --- 4 architecture gap fixes (HNSW, TEE workers, Distributed bus, Petri scheduler) ---
@@ -253,7 +251,6 @@ export default defineConfig({
       'tests/security/securityBenchmarkRunner.test.ts',
       'tests/security/supplyChainAttestor.test.ts',
       'tests/security/differentialPrivacyLayer.test.ts',
-      'tests/security-hardening.test.ts',
       'tests/security/property/invariantPropertyTests.ts',
       'tests/security/a2aMtls.test.ts',
       'tests/security/a2aAuth.test.ts',

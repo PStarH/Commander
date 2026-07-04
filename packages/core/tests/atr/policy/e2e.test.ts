@@ -17,12 +17,10 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { createGitHubTools, type GitHubClient } from '../../../src/atr/adapters/github';
-import { CompensationBridge } from '../../../src/atr/compensationBridge';
 import { ExecutionScheduler } from '../../../src/atr/scheduler';
 import { IdempotencyStore, resetIdempotencyStore } from '../../../src/atr/idempotencyStore';
 import { LeaseManager } from '../../../src/atr/leaseManager';
 import { RunLedger, resetRunLedgerBundle } from '../../../src/atr/runLedger';
-import { resetCompensationBridge } from '../../../src/atr/compensationBridge';
 import { PolicyHook, buildPolicyInput } from '../../../src/atr/policy/integration/scheduler';
 import {
   resetSecurityAuditLogger,
@@ -48,7 +46,6 @@ function makeStack() {
   process.env.COMMANDER_ATR_IDEMPOTENCY_PATH = ':memory:';
   resetIdempotencyStore();
   resetRunLedgerBundle();
-  resetCompensationBridge();
   resetSecurityAuditLogger();
   const lm = new LeaseManager({
     filePath: ':memory:',
@@ -61,9 +58,8 @@ function makeStack() {
     defaultTtlSeconds: 60,
     defaultHolder: 'e2e',
   });
-  const bridge = new CompensationBridge();
-  const scheduler = new ExecutionScheduler({ lease: lm, idempotency: idem, ledger, bridge });
-  return { lm, idem, ledger, bridge, scheduler };
+  const scheduler = new ExecutionScheduler({ lease: lm, idempotency: idem, ledger });
+  return { lm, idem, ledger, scheduler };
 }
 
 describe('E2E: agent + GitHub adapter + PolicyHook', () => {

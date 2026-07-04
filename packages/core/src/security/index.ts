@@ -534,22 +534,20 @@ export type {
 } from './owaspAgenticAiTop10';
 
 // RotationSignoffVerifier — D2.6 + D2.7 + D2.8 + D2.9 + D3.0 + D3.1 + D3.2 hardening policy gate.
-// §6 sign-off binding via GPG-verified commit SHAs. Library-grade pure functions
-// (`runVerifier`, `runVerifierAsync`, `evaluateSignoff`, `evaluateSignoffAsync`,
-// `verifySha`, `verifyShaAsync`, `verifyShasConcurrent`, `parseArgs`, …) plus
-// public types (`SignoffRow`, `VerifyResult`, `CliArgs`, `VerifyShaResult`,
-// `RunVerifierOptions`, `RunVerifierAsyncOptions`) and policy constants
-// (`POLICY_MIN_VERIFIED_ROWS`, `POLICY_VERSION`, `VERIFY_CONCURRENCY_DEFAULT`).
-// Stable library surface — both the CLI wrapper and any `Commander`-internal
-// programmatic consumer can drive the policy gate without re-implementing
-// parsing or evaluation.
+// §6 sign-off binding via GPG-verified commit SHAs. Library-grade async pure
+// functions (`runVerifierAsync`, `evaluateSignoffAsync`, `verifyShaAsync`,
+// `verifyShasConcurrent`, `parseArgs`, …) plus public types (`SignoffRow`,
+// `VerifyResult`, `CliArgs`, `VerifyShaResult`, `RunVerifierOptions`,
+// `RunVerifierAsyncOptions`) and policy constants (`POLICY_MIN_VERIFIED_ROWS`,
+// `POLICY_VERSION`, `VERIFY_CONCURRENCY_DEFAULT`). Stable library surface — both
+// the CLI wrapper and any `Commander`-internal programmatic consumer can drive
+// the policy gate without re-implementing parsing or evaluation.
 //
 // D3.2 async surface: `verifyShaAsync`, `evaluateSignoffAsync`, `runVerifierAsync`,
-// `verifyShasConcurrent` mirror the sync surface with bounded concurrency +
-// AbortSignal cancellation. The sync surface (`verifySha`, `evaluateSignoff`,
-// `runVerifier`) is soft-deprecated via JSDoc — it remains exported and
-// functional for backward compatibility, but new programmatic consumers should
-// prefer the async variants to avoid blocking the event loop on N×git calls.
+// `verifyShasConcurrent` provide bounded concurrency + AbortSignal cancellation.
+// The legacy sync surface (`verifySha`, `evaluateSignoff`, `runVerifier`) was
+// removed in the structural-debt cleanup; all consumers should use the async
+// variants.
 export {
   SHA_RE,
   DEFAULT_DOC_PATH,
@@ -559,11 +557,8 @@ export {
   extractSection,
   parseSignoffTable,
   countColumns,
-  verifySha,
   verifyShaAsync,
-  evaluateSignoff,
   evaluateSignoffAsync,
-  runVerifier,
   runVerifierAsync,
   verifyShasConcurrent,
   formatReport,
@@ -736,7 +731,7 @@ export type {
   // from `./capabilityToken` (used by AuthManager), and TypeScript forbids
   // duplicate identifiers at the barrel surface. Consumers should reach this
   // module's `VerifyResult` via one of three alternatives:
-  //   • Value-inference:  const r = evaluateSignoff(rows);  // r: VerifyResult
+  //   • Value-inference:  const r = await evaluateSignoffAsync(rows);  // r: VerifyResult
   //   • Direct path:      import type { VerifyResult } from
   //                        '@commander/core/security/rotationSignoffVerifier'
   //   • Main-barrel alias: import type { RotationSignoffResult } from '@commander/core'

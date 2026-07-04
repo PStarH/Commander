@@ -16,14 +16,14 @@
 // |------------------------------------------------|-------------------------------------------|-----------------|
 // | security/costGuard.ts (CostGuard, getCostGuard)| UnifiedCostAuthority (security/unifiedCostAuthority) | 2026-Q4 (0.x→1.0 major) |
 // | telos/tokenSentinel.ts recordCost/postCall*    | UnifiedCostAuthority.postCall/readLedger  | 2026-Q4 (0.x→1.0 major) |
-// | atr/compensationBridge.ts (file)               | atr/scheduler.ts (ExecutionScheduler)     | advisory only — file retained |
-// | atr/runtimeIntegration.ts (file)               | atr/scheduler.ts (ExecutionScheduler)     | advisory only — file retained |
+// | atr/compensationBridge.ts (file)               | atr/scheduler.ts (ExecutionScheduler)     | deleted in structural-debt cleanup |
+// | atr/runtimeIntegration.ts (file)               | atr/scheduler.ts (ExecutionScheduler)     | deleted in structural-debt cleanup |
 // | threeLayerMemory.ts:1023 (createThreeLayerMemory legacy path) | createThreeLayerMemory factory | 2026-Q4 |
 // | pluginTypes.ts:296 (permissions field)         | PluginLoader + sandbox context            | advisory only |
 // | runtime/tenantAwareSingleton.ts:50 (get() sig) | get({ allowGlobalFallback: true })        | 2026-Q4 |
 // | saga/sagaCoordinator.ts:475 (collect)          | collectAllCompensable()                   | 2026-Q4 |
 // | ultimate/types.ts:52,63 (topology aliases)     | D3.2 canonical topology names             | 2026-Q4 (2-minor-version window) |
-// | security/rotationSignoffVerifier.ts sync API   | verifyShaAsync / runVerifierAsync         | advisory only — sync retained |
+// | security/rotationSignoffVerifier.ts sync API   | verifyShaAsync / runVerifierAsync         | removed in structural-debt cleanup |
 // | logging.ts:421 (legacy adapter)                | Logger factory in @commander/core/logging | 2026-Q4 |
 // ============================================================================
 export * from './models';
@@ -1470,18 +1470,18 @@ export {
 } from './saga';
 
 // RotationSignoffVerifier — D2.6 + D2.7 + D2.8 + D2.9 + D3.0 + D3.1 + D3.2 hardening policy gate.
-// §6 sign-off binding via GPG-verified commit SHAs. Library-grade surface: pure
-// functions (`runVerifier`, `runVerifierAsync`, `evaluateSignoff`, `evaluateSignoffAsync`,
-// `verifySha`, `verifyShaAsync`, `verifyShasConcurrent`, `parseArgs`, …) plus
-// public types (`SignoffRow`, `VerifyResult`, `CliArgs`, `VerifyShaResult`,
-// `RunVerifierOptions`, `RunVerifierAsyncOptions`) and policy constants
-// (`POLICY_MIN_VERIFIED_ROWS`, `POLICY_VERSION`, `VERIFY_CONCURRENCY_DEFAULT`).
-// Stable programmatic API; the CLI wrapper at `scripts/verify-rotation-signoff.ts`
-// drives the same surface (D3.2 — wrapper now uses the async surface).
+// §6 sign-off binding via GPG-verified commit SHAs. Library-grade async surface:
+// pure functions (`runVerifierAsync`, `evaluateSignoffAsync`, `verifyShaAsync`,
+// `verifyShasConcurrent`, `parseArgs`, …) plus public types (`SignoffRow`,
+// `VerifyResult`, `CliArgs`, `VerifyShaResult`, `RunVerifierOptions`,
+// `RunVerifierAsyncOptions`) and policy constants (`POLICY_MIN_VERIFIED_ROWS`,
+// `POLICY_VERSION`, `VERIFY_CONCURRENCY_DEFAULT`). Stable programmatic API; the
+// CLI wrapper at `scripts/verify-rotation-signoff.ts` drives the async surface.
 //
-// D3.2 async surface: async mirrors + bounded-concurrency batcher +
-// AbortSignal cancellation. Sync variants carry `@deprecated` JSDoc but
-// remain exported + functional for backward compatibility.
+// D3.2 async surface: bounded-concurrency batcher + AbortSignal cancellation.
+// The legacy sync surface (`verifySha`, `evaluateSignoff`, `runVerifier`) was
+// removed in the structural-debt cleanup; all consumers should use the async
+// variants.
 export {
   SHA_RE,
   DEFAULT_DOC_PATH,
@@ -1491,11 +1491,8 @@ export {
   extractSection,
   parseSignoffTable,
   countColumns,
-  verifySha,
   verifyShaAsync,
-  evaluateSignoff,
   evaluateSignoffAsync,
-  runVerifier,
   runVerifierAsync,
   verifyShasConcurrent,
   formatReport,
