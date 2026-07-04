@@ -79,6 +79,31 @@ export class CompensationService {
   }
 
   /**
+   * Test-only accessor: returns whether the periodic queue-processing
+   * timer (`queueTimer`) is active. True after construction until
+   * `dispose()` is called. Lets async-migration / lifecycle tests
+   * assert pre/post-dispose timer state without reaching into the
+   * TypeScript-private `queueTimer` field, which would couple the
+   * test to the internal field name.
+   *
+   * @internal — not part of the supported CompensationService interface.
+   */
+  isQueueTimerActive(): boolean {
+    return this.queueTimer !== null;
+  }
+
+  /**
+   * Test-only accessor: returns whether the bus event subscriber is
+   * currently subscribed to compensation events. Proxies to
+   * `eventSubscriber.isSubscribed()`.
+   *
+   * @internal — not part of the supported CompensationService interface.
+   */
+  isEventSubscriberActive(): boolean {
+    return this.eventSubscriber.isSubscribed();
+  }
+
+  /**
    * Handle a mutation tool failure by generating a rollback plan and triggering compensation.
    * Publishes a 'tool.compensation_planned' bus event with plan metadata.
    * For safe plans, auto-executes compensation via the saga runner.

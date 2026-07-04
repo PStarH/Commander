@@ -10,48 +10,39 @@ import type { AgentRuntimeInterface } from '../../src/runtime';
 // server and client certs with it so the TLS trust chain is valid.
 async function generateTestCerts() {
   // Step 1: self-signed CA with CA:TRUE basic constraint
-  const ca = await selfsigned.generate(
-    [{ name: 'commonName', value: 'test-ca' }],
-    {
-      keySize: 2048,
-      algorithm: 'sha256',
-      extensions: [
-        { name: 'basicConstraints', cA: true, critical: true },
-        { name: 'keyUsage', keyCertSign: true, cRLSign: true, critical: true },
-      ],
-    },
-  );
+  const ca = await selfsigned.generate([{ name: 'commonName', value: 'test-ca' }], {
+    keySize: 2048,
+    algorithm: 'sha256',
+    extensions: [
+      { name: 'basicConstraints', cA: true, critical: true },
+      { name: 'keyUsage', keyCertSign: true, cRLSign: true, critical: true },
+    ],
+  });
 
   // Step 2: server cert signed by the CA (CN + SAN = localhost, EKU = serverAuth)
-  const server = await selfsigned.generate(
-    [{ name: 'commonName', value: 'localhost' }],
-    {
-      keySize: 2048,
-      algorithm: 'sha256',
-      extensions: [
-        { name: 'basicConstraints', cA: false },
-        { name: 'keyUsage', digitalSignature: true, keyEncipherment: true },
-        { name: 'extKeyUsage', serverAuth: true },
-        { name: 'subjectAltName', altNames: [{ type: 2, value: 'localhost' }] },
-      ],
-      ca: { key: ca.private, cert: ca.cert },
-    },
-  );
+  const server = await selfsigned.generate([{ name: 'commonName', value: 'localhost' }], {
+    keySize: 2048,
+    algorithm: 'sha256',
+    extensions: [
+      { name: 'basicConstraints', cA: false },
+      { name: 'keyUsage', digitalSignature: true, keyEncipherment: true },
+      { name: 'extKeyUsage', serverAuth: true },
+      { name: 'subjectAltName', altNames: [{ type: 2, value: 'localhost' }] },
+    ],
+    ca: { key: ca.private, cert: ca.cert },
+  });
 
   // Step 3: client cert signed by the CA (EKU = clientAuth)
-  const client = await selfsigned.generate(
-    [{ name: 'commonName', value: 'a2a-client' }],
-    {
-      keySize: 2048,
-      algorithm: 'sha256',
-      extensions: [
-        { name: 'basicConstraints', cA: false },
-        { name: 'keyUsage', digitalSignature: true, keyEncipherment: true },
-        { name: 'extKeyUsage', clientAuth: true },
-      ],
-      ca: { key: ca.private, cert: ca.cert },
-    },
-  );
+  const client = await selfsigned.generate([{ name: 'commonName', value: 'a2a-client' }], {
+    keySize: 2048,
+    algorithm: 'sha256',
+    extensions: [
+      { name: 'basicConstraints', cA: false },
+      { name: 'keyUsage', digitalSignature: true, keyEncipherment: true },
+      { name: 'extKeyUsage', clientAuth: true },
+    ],
+    ca: { key: ca.private, cert: ca.cert },
+  });
 
   return {
     ca: ca.cert,
@@ -77,43 +68,57 @@ function fetchAgentCardMtls(
   port: number,
   certs: Awaited<ReturnType<typeof generateTestCerts>>,
 ): Promise<{ name: string; version: string }> {
-  return new Promise((resolve, reject) => {
-    const req = https.request(
-      {
-        hostname: 'localhost',
-        port,
-        path: '/.well-known/agent-card.json',
-        method: 'GET',
-        ca: certs.ca,
-        cert: certs.clientCert,
-        key: certs.clientKey,
-        rejectUnauthorized: true,
-        servername: 'localhost',
-      },
-      (res) => {
-        let data = '';
-        res.on('data', (chunk: Buffer) => {
-          data += chunk.toString();
-        });
-        res.on('end', () => {
-          if (res.statusCode !== 200) {
-            reject(new Error(`HTTP ${res.statusCode}: ${data}`));
-            return;
-          }
-          try {
-            resolve(JSON.parse(data));
-          } catch (e) {
-            reject(e);
-          }
-        });
-      },
-    );
-    req.on('error', reject);
-    req.setTimeout(5000, () => {
-      req.destroy(new Error('mTLS request timed out'));
+  const attempt = (
+    remaining: number,
+    delayMs: number,
+  ): Promise<{ name: string; version: string }> =>
+    new Promise((resolve, reject) => {
+      const req = https.request(
+        {
+          hostname: 'localhost',
+          port,
+          path: '/.well-known/agent-card.json',
+          method: 'GET',
+          ca: certs.ca,
+          cert: certs.clientCert,
+          key: certs.clientKey,
+          rejectUnauthorized: true,
+          servername: 'localhost',
+        },
+        (res) => {
+          let data = '';
+          res.on('data', (chunk: Buffer) => {
+            data += chunk.toString();
+          });
+          res.on('end', () => {
+            if (res.statusCode !== 200) {
+              reject(new Error(`HTTP ${res.statusCode}: ${data}`));
+              return;
+            }
+            try {
+              resolve(JSON.parse(data));
+            } catch (e) {
+              reject(e);
+            }
+          });
+        },
+      );
+      req.on('error', (err) => {
+        const isAddrErr = (err as NodeJS.ErrnoException)?.code === 'EADDRNOTAVAIL';
+        if (isAddrErr && remaining > 0) {
+          setTimeout(() => {
+            attempt(remaining - 1, delayMs * 2).then(resolve, reject);
+          }, delayMs);
+        } else {
+          reject(err);
+        }
+      });
+      req.setTimeout(5000, () => {
+        req.destroy(new Error('mTLS request timed out'));
+      });
+      req.end();
     });
-    req.end();
-  });
+  return attempt(8, 100);
 }
 
 describe('A2AServer mTLS', () => {

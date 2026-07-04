@@ -24,39 +24,61 @@ function jsonReq(
   body?: unknown,
   headers: Record<string, string> = {},
 ): Promise<{ status: number; body: unknown }> {
-  return new Promise((resolve, reject) => {
-    const data = body !== undefined ? JSON.stringify(body) : undefined;
-    const req = http.request(
-      {
-        host: '127.0.0.1',
-        port,
-        path,
-        method,
-        headers: {
-          'content-type': 'application/json',
-          'content-length': data ? Buffer.byteLength(data).toString() : '0',
-          ...headers,
+  const data = body !== undefined ? JSON.stringify(body) : undefined;
+  // Under heavy contention the OS can briefly run out of ephemeral
+  // ports for the connecting socket (EADDRNOTAVAIL). Retry with a
+  // moderate exponential backoff — the server's listen() has already
+  // succeeded so the destination is reachable; we just need a free
+  // source port to bind to. With 8 attempts and 100ms initial backoff
+  // the worst-case wait is ~25s, which covers TIME_WAIT transitions
+  // in the macOS ephemeral port range under heavy vitest load.
+  const attempt = (
+    remaining: number,
+    delayMs: number,
+  ): Promise<{ status: number; body: unknown }> =>
+    new Promise((resolve, reject) => {
+      const req = http.request(
+        {
+          host: '127.0.0.1',
+          port,
+          path,
+          method,
+          headers: {
+            'content-type': 'application/json',
+            'content-length': data ? Buffer.byteLength(data).toString() : '0',
+            ...headers,
+          },
         },
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (chunk: Buffer) => chunks.push(chunk));
-        res.on('end', () => {
-          const raw = Buffer.concat(chunks).toString('utf-8');
-          let parsed: unknown;
-          try {
-            parsed = raw ? JSON.parse(raw) : undefined;
-          } catch {
-            parsed = raw;
-          }
-          resolve({ status: res.statusCode ?? 0, body: parsed });
-        });
-      },
-    );
-    req.on('error', reject);
-    if (data) req.write(data);
-    req.end();
-  });
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk: Buffer) => chunks.push(chunk));
+          res.on('end', () => {
+            const raw = Buffer.concat(chunks).toString('utf-8');
+            let parsed: unknown;
+            try {
+              parsed = raw ? JSON.parse(raw) : undefined;
+            } catch {
+              parsed = raw;
+            }
+            resolve({ status: res.statusCode ?? 0, body: parsed });
+          });
+        },
+      );
+      req.on('error', (err) => {
+        const isAddrErr = (err as NodeJS.ErrnoException)?.code === 'EADDRNOTAVAIL';
+        if (isAddrErr && remaining > 0) {
+          setTimeout(() => {
+            attempt(remaining - 1, delayMs * 2).then(resolve, reject);
+          }, delayMs);
+        } else {
+          reject(err);
+        }
+      });
+      if (data) req.write(data);
+      req.end();
+    });
+
+  return attempt(8, 100);
 }
 
 async function newServer(opts: { authDisabled?: boolean } = {}): Promise<CommanderHttpServer> {

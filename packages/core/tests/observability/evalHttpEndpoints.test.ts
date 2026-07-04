@@ -78,26 +78,40 @@ function startServer(
 }
 
 function get(server: { port: number }, path: string): Promise<{ status: number; body: unknown }> {
-  return new Promise((resolve, reject) => {
-    const req = http.request(
-      { hostname: '127.0.0.1', port: server.port, path, method: 'GET' },
-      (res) => {
-        let data = '';
-        res.on('data', (c) => (data += c));
-        res.on('end', () => {
-          let body: unknown = data;
-          try {
-            body = JSON.parse(data);
-          } catch {
-            /* keep as text */
-          }
-          resolve({ status: res.statusCode ?? 0, body });
-        });
-      },
-    );
-    req.on('error', reject);
-    req.end();
-  });
+  const attempt = (
+    remaining: number,
+    delayMs: number,
+  ): Promise<{ status: number; body: unknown }> =>
+    new Promise((resolve, reject) => {
+      const req = http.request(
+        { hostname: '127.0.0.1', port: server.port, path, method: 'GET' },
+        (res) => {
+          let data = '';
+          res.on('data', (c) => (data += c));
+          res.on('end', () => {
+            let body: unknown = data;
+            try {
+              body = JSON.parse(data);
+            } catch {
+              /* keep as text */
+            }
+            resolve({ status: res.statusCode ?? 0, body });
+          });
+        },
+      );
+      req.on('error', (err) => {
+        const isAddrErr = (err as NodeJS.ErrnoException)?.code === 'EADDRNOTAVAIL';
+        if (isAddrErr && remaining > 0) {
+          setTimeout(() => {
+            attempt(remaining - 1, delayMs * 2).then(resolve, reject);
+          }, delayMs);
+        } else {
+          reject(err);
+        }
+      });
+      req.end();
+    });
+  return attempt(8, 100);
 }
 
 function send(
@@ -106,34 +120,57 @@ function send(
   path: string,
   payload?: unknown,
 ): Promise<{ status: number; body: unknown }> {
-  return new Promise((resolve, reject) => {
-    const body = payload === undefined ? '' : JSON.stringify(payload);
-    const req = http.request(
-      {
-        hostname: '127.0.0.1',
-        port: server.port,
-        path,
-        method,
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-      },
-      (res) => {
-        let data = '';
-        res.on('data', (c) => (data += c));
-        res.on('end', () => {
-          let parsed: unknown = data;
-          try {
-            parsed = JSON.parse(data);
-          } catch {
-            /* keep as text */
-          }
-          resolve({ status: res.statusCode ?? 0, body: parsed });
-        });
-      },
-    );
-    req.on('error', reject);
-    if (body) req.write(body);
-    req.end();
-  });
+  const body = payload === undefined ? '' : JSON.stringify(payload);
+  // Under heavy contention the OS can briefly run out of ephemeral
+  // ports for the connecting socket (EADDRNOTAVAIL). Retry with a
+  // small exponential backoff — the server's listen() has already
+  // succeeded so the destination is reachable; we just need a free
+  // source port to bind to.
+  const attempt = (
+    remaining: number,
+    delayMs: number,
+  ): Promise<{ status: number; body: unknown }> =>
+    new Promise((resolve, reject) => {
+      const req = http.request(
+        {
+          hostname: '127.0.0.1',
+          port: server.port,
+          path,
+          method,
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(body),
+          },
+        },
+        (res) => {
+          let data = '';
+          res.on('data', (c) => (data += c));
+          res.on('end', () => {
+            let parsed: unknown = data;
+            try {
+              parsed = JSON.parse(data);
+            } catch {
+              /* keep as text */
+            }
+            resolve({ status: res.statusCode ?? 0, body: parsed });
+          });
+        },
+      );
+      req.on('error', (err) => {
+        const isAddrErr = (err as NodeJS.ErrnoException)?.code === 'EADDRNOTAVAIL';
+        if (isAddrErr && remaining > 0) {
+          setTimeout(() => {
+            attempt(remaining - 1, delayMs * 2).then(resolve, reject);
+          }, delayMs);
+        } else {
+          reject(err);
+        }
+      });
+      if (body) req.write(body);
+      req.end();
+    });
+
+  return attempt(8, 100);
 }
 
 const mockJudge: JudgeProvider = {
