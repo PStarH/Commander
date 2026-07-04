@@ -159,11 +159,16 @@ export class HealthCollector {
       diskSpace: checks[7],
     };
 
+    const checkEntries = Object.entries(statusMap) as [keyof typeof statusMap, ComponentCheck][];
+    const degradedComponents = checkEntries
+      .filter(([, check]) => check.status === 'degraded' || check.status === 'unhealthy')
+      .map(([name]) => name);
     const overallStatus = this.determineOverallStatus(Object.values(statusMap));
 
     return {
       status: overallStatus,
       checks: statusMap,
+      degradedComponents,
       timestamp: new Date().toISOString(),
     };
   }
