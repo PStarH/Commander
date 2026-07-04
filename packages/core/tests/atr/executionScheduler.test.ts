@@ -4,7 +4,6 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { ExecutionScheduler } from '../../src/atr/scheduler';
-import { CompensationBridge } from '../../src/atr/compensationBridge';
 import { RunLedger, getRunLedgerBundle, resetRunLedgerBundle } from '../../src/atr/runLedger';
 import { LeaseManager } from '../../src/atr/leaseManager';
 import { IdempotencyStore, resetIdempotencyStore } from '../../src/atr/idempotencyStore';
@@ -26,8 +25,7 @@ function makeBundle() {
     defaultTtlSeconds: 60,
     defaultHolder: 'test',
   });
-  const bridge = new CompensationBridge();
-  return { lm, idem, ledger, bridge };
+  return { lm, idem, ledger };
 }
 
 function makeScheduler(opts?: { checkpointer?: StateCheckpointer; tenantId?: string }): {
@@ -40,7 +38,6 @@ function makeScheduler(opts?: { checkpointer?: StateCheckpointer; tenantId?: str
     lease: bundle.lm,
     idempotency: bundle.idem,
     ledger: bundle.ledger,
-    bridge: bundle.bridge,
     checkpointer: opts?.checkpointer,
   });
   return {
@@ -577,8 +574,7 @@ describe('ExecutionScheduler', () => {
         defaultTtlSeconds: 60,
         defaultHolder: 't',
       });
-      const bridge = new CompensationBridge();
-      const scheduler = new ExecutionScheduler({ lease: lm, idempotency: idem, ledger, bridge });
+      const scheduler = new ExecutionScheduler({ lease: lm, idempotency: idem, ledger });
       try {
         const h = scheduler.beginRun({ runId: 'r-x', goal: 'g', tenantId: 'tenant-a' });
 

@@ -14,7 +14,7 @@
  * GPG-signed commits. This module enforces that binding programmatically:
  *
  *   1. Parse the §6 table from `docs/security/keys-rotation.md` (or any path
- *      passed to `runVerifier({ docPath })`).
+      passed to `runVerifierAsync({ docPath })`).
  *   2. For every row whose Signed-Commit SHA cell is non-empty:
  *        a. Strictly validate the SHA against `/^[0-9a-f]{7,64}$/i` (no CRLF,
  *           no semicolons, no command injection — defense in depth).
@@ -42,7 +42,7 @@
  *     + D3.2 coverage).
  *
  * ──────────────────────────────────────────────────────────────────────────
- * Worked Example — Library Consumer Pattern (sync + async paths)
+ * Worked Example — Library Consumer Pattern (async paths)
  * ──────────────────────────────────────────────────────────────────────────
  * ```ts
  * import {
@@ -113,14 +113,12 @@
  * Async surface (D3.2)
  * ─────────────────────
  * For CI runners that batch N×git-verification calls across multiple SHAs,
- * the sync surface (`verifySha`, `evaluateSignoff`, `runVerifier`) blocks
- * the event loop on each `spawnSync` call. The D3.2 async mirror
- * (`verifyShaAsync`, `evaluateSignoffAsync`, `runVerifierAsync`) plus the
- * bounded-concurrency batcher (`verifyShasConcurrent`) keep the verifier
- * event-loop-friendly under high SHAs-per-doc ratios. The sync surface is
- * soft-deprecated: it remains exported + functional for single-doc CLI
- * scripts and existing test suites, but new programmatic consumers should
- * prefer the async surface.
+ * the D3.2 async surface (`verifyShaAsync`, `evaluateSignoffAsync`,
+ * `runVerifierAsync`) plus the bounded-concurrency batcher
+ * (`verifyShasConcurrent`) keep the verifier event-loop-friendly under high
+ * SHAs-per-doc ratios. The legacy sync surface was removed in the
+ * structural-debt cleanup; all programmatic consumers should use the async
+ * variants.
  *
  * Importing — canonical type names from the SECURITY barrel
  * ─────────────────────────────────────────────────────────
@@ -148,9 +146,9 @@
  *   import type { RotationSignoffResult } from '@commander/core';
  *   ```
  *
- * The MAIN barrel (`@commander/core`) re-exports all verifier VALUES plus
- * type-aliased forms (`RotationSignoffResult`, `RotationSignoffRow`,
- * `RotationSignoffCliArgs`, `RotateVerifyShaResult`,
+ * The MAIN barrel (`@commander/core`) re-exports the async verifier VALUES
+ * plus type-aliased forms (`RotationSignoffResult`, `RotationSignoffRow`,
+ * `RotationSignoffCliArgs`, `RotationVerifyShaResult`,
  * `RotationRunVerifierAsyncOptions`). The rotate-prefixed names are the
  * bleed-free default for any consumer that wants a single unbroken type
  * chain from `@commander/core`.
@@ -163,7 +161,7 @@
 // instead of wrapping `spawnSync` — preserves arg-array (no shell interpretation).
 
 import { reportSilentFailure } from '../silentFailureReporter';
-import { spawnSync, execFile } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -233,9 +231,9 @@ export interface VerifyResult {
 }
 
 /**
- * Per-SHA verification result. Returned by both `verifySha` (sync) and
- * `verifyShaAsync` (D3.2 async). Extracted as a named type so consumers
- * can type their own batchers / dashboards without spelunking the source.
+ * Per-SHA verification result. Returned by `verifyShaAsync` (D3.2 async).
+ * Extracted as a named type so consumers can type their own batchers /
+ * dashboards without spelunking the source.
  */
 export interface VerifyShaResult {
   /** Result of `git verify-commit <sha>`. False on any failure (incl. format). */
@@ -319,10 +317,9 @@ export const POLICY_VERSION = 'D2.9';
 export const VERIFY_CONCURRENCY_DEFAULT = 4;
 
 /**
- * D3.2: per-git-invocation timeout in milliseconds. Applies to both
- * `verifySha` (sync via spawnSync) and `verifyShaAsync` (via execFile).
- * At 30s, an unusually slow `git verify-commit` (large keyring, slow
- * GPG agent) won't block CI forever.
+ * D3.2: per-git-invocation timeout in milliseconds. Applies to
+ * `verifyShaAsync` (via execFile). At 30s, an unusually slow
+ * `git verify-commit` (large keyring, slow GPG agent) won't block CI forever.
  */
 const GIT_INVOCATION_TIMEOUT_MS = 30_000;
 
@@ -414,85 +411,16 @@ export function countColumns(line: string): number {
 }
 
 // ===========================================================================
-// Git invocation — sync + async surfaces
+// Git invocation — async surface
 // ===========================================================================
 
 /**
- * Compose the canonical "invalid SHA format" reason. Shared between the
- * sync + async paths so the rejection rationale is consistent across the
- * surface (callers comparing verifySha vs verifyShaAsync results can rely
- * on identical error strings).
+ * Compose the canonical "invalid SHA format" reason. The rejection
+ * rationale is consistent across the async surface so callers can rely on
+ * identical error strings.
  */
 function invalidShaReason(sha: string): string {
   return `invalid SHA format: ${JSON.stringify(sha.slice(0, 64))}`;
-}
-
-/**
- * Spawn `git verify-commit` and `git log -1 --format=%aI` for a single
- * SHA. SYNCHRONOUS — blocks the event loop on each call. For CI runners
- * batching N×SHAs concurrently, prefer `verifyShaAsync` (D3.2).
- *
- * SECURITY: spawnSync with arg-array mode — NO shell interpretation. Even
- * if a malicious SHA bypassed the `SHA_RE` pre-filter, the args reach git
- * verbatim, never via `/bin/sh -c`.
- *
- * @deprecated Prefer `verifyShaAsync` or `verifyShasConcurrent` for new
- * consumers — async variants don't block the event loop on N×git calls
- * and support bounded concurrency + cancellation. This function is
- * soft-deprecated: it remains exported + functional for single-doc CLI
- * scripts and existing test suites. No removal planned; the `@deprecated`
- * marker is advisory-only (TypeScript may surface it as a hint on import).
- *
- * @example
- * ```ts
- * const result = verifySha('abc1234def567890', '/path/to/repo');
- * if (!result.verified) throw new Error(`SHA failed: ${result.error}`);
- * console.log(`Signed at ${result.signedAt} by ${result.signedBy}`);
- * ```
- */
-export function verifySha(sha: string, cwd: string = process.cwd()): VerifyShaResult {
-  if (!SHA_RE.test(sha)) {
-    return {
-      verified: false,
-      signedAt: null,
-      signedBy: null,
-      error: invalidShaReason(sha),
-    };
-  }
-  const verify = spawnSync('git', ['verify-commit', sha], {
-    cwd,
-    encoding: 'utf-8',
-    timeout: GIT_INVOCATION_TIMEOUT_MS,
-  });
-  const dateResult = spawnSync('git', ['log', '-1', '--format=%aI', sha], {
-    cwd,
-    encoding: 'utf-8',
-    timeout: GIT_INVOCATION_TIMEOUT_MS,
-  });
-  const verified = verify.status === 0;
-  const signedAt = dateResult.status === 0 ? dateResult.stdout.trim() || null : null;
-  if (verified) {
-    const sigMatch = verify.stdout.match(/Good signature from "([^"]+)"/);
-    return {
-      verified: true,
-      signedAt,
-      signedBy: sigMatch ? sigMatch[1]! : '(unknown signer)',
-      error: null,
-    };
-  }
-  const errLine =
-    verify.stderr
-      ?.split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .slice(-3)
-      .join(' • ') ?? `git verify-commit exited ${verify.status ?? 'unknown'}`;
-  return {
-    verified: false,
-    signedAt,
-    signedBy: null,
-    error: errLine,
-  };
 }
 
 /**
@@ -526,7 +454,7 @@ function runGit(
         // child process is killed if the signal aborts, and the callback
         // fires with an AbortError. We catch that and yield a status=-1
         // sentinel rather than rejecting, so `verifyShaAsync` returns
-        // a structured VerifyShaResult consistent with the sync path.
+        // a structured VerifyShaResult.
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
       },
       (err, stdout, stderr) => {
@@ -553,18 +481,16 @@ function runGit(
 }
 
 /**
- * D3.2: Async mirror of `verifySha`. Uses `execFile` for native Promise
- * delivery — no event-loop block per SHA, no shell interpretation, args
- * reach git verbatim. Result shape is identical to the sync version so
- * callers can swap implementations without changing result-handling code.
+ * D3.2: Async SHA verifier. Uses `execFile` for native Promise delivery —
+ * no event-loop block per SHA, no shell interpretation, args reach git
+ * verbatim.
  *
  * SECURITY: arg-array mode preserved. SHA_RE pre-filter runs BEFORE the
- * execFile call (mirrors the sync `verifySha`), so a malicious SHA never
- * reaches git at all.
+ * execFile call, so a malicious SHA never reaches git at all.
  *
  * Error model:
  *   • Promise resolves with `{ verified: false, error: 'invalid SHA format…' }`
- *     for SHA_RE failures (mirrors sync).
+ *     for SHA_RE failures.
  *   • Promise resolves with `{ verified: false, error: <stderr snippet> }`
  *     when execFile exits non-zero.
  *   • When `options.signal` aborts: Promise resolves with
@@ -620,10 +546,10 @@ export function verifyShaAsync(
     }
     // Compute `signedAt` ONCE outside the verified/unverified branches so
     // both shapes inherit identical metadata when `git log -1` succeeded.
-    // Mirrors the sync `verifySha()` contract — the unverified-fallback
-    // path still surfaces the timestamp if the date extraction worked.
-    // `dateOk` is the single shared predicate (DRY): both `signedAt` and
-    // `verified` derive from the same `dateOut.status === 0` check.
+    // The unverified-fallback path still surfaces the timestamp if the date
+    // extraction worked. `dateOk` is the single shared predicate (DRY): both
+    // `signedAt` and `verified` derive from the same `dateOut.status === 0`
+    // check.
     const dateOk = dateOut.status === 0;
     const signedAt = dateOk ? (dateOut.stdout ?? '').trim() || null : null;
     const verified = verifyOut.status === 0 && dateOk;
@@ -756,7 +682,7 @@ export function verifyShasConcurrent(
 }
 
 // ===========================================================================
-// POLICY evaluator — sync + async mirror
+// POLICY evaluator — internal logic + async surface
 // ===========================================================================
 
 /**
@@ -770,18 +696,10 @@ export function verifyShasConcurrent(
  * " AND " for prose readability, but structured consumers iterate
  * `reasons[]` directly.
  *
- * @deprecated Prefer `evaluateSignoffAsync`. This sync function retains
- * the surface for backward compatibility with the CLI script + tests;
- * no removal planned. The `@deprecated` marker is advisory-only.
- *
- * @example
- * ```ts
- * const rows: SignoffRow[] = [canonicalCisoRow(), canonicalHoSRow()];
- * const result = evaluateSignoff(rows);
- * if (result.ok) deployPipeline.release('rotation-verified');
- * ```
+ * Internal implementation shared by `evaluateSignoffAsync` and
+ * `runVerifierAsync`. Use the exported async surface for programmatic access.
  */
-export function evaluateSignoff(rows: readonly SignoffRow[]): VerifyResult {
+function evaluateSignoff(rows: readonly SignoffRow[]): VerifyResult {
   const verified = rows.filter((r) => r.verified).length;
   const failed = rows.filter((r) => !r.verified && r.sha !== '').length;
   const pending = rows.filter((r) => !r.verified && r.sha === '').length;
@@ -813,11 +731,10 @@ export function evaluateSignoff(rows: readonly SignoffRow[]): VerifyResult {
 }
 
 /**
- * D3.2: Async mirror of `evaluateSignoff`. The body is identical —
- * `evaluateSignoff` is a pure function with no I/O. The `Promise.resolve`
- * wrapper exists for call-site symmetry with `verifyShaAsync` /
- * `runVerifierAsync`, so a uniform async pipeline (one async fn after
- * another) reads consistently across the surface.
+ * D3.2: Async policy evaluator. Wraps the internal `evaluateSignoff` pure
+ * function in `Promise.resolve` for call-site symmetry with `verifyShaAsync`
+ * / `runVerifierAsync`, so a uniform async pipeline reads consistently across
+ * the surface.
  *
  * @example
  * ```ts
@@ -835,8 +752,8 @@ export function evaluateSignoffAsync(rows: readonly SignoffRow[]): Promise<Verif
 
 /**
  * Build a deterministic, line-friendly report including one row per parsed
- * §6 entry. Pure function — used internally by `evaluateSignoff` to compose
- * `result.report`; can also be used standalone for partial outputs.
+ * §6 entry. Pure function — used internally by the policy evaluator to
+ * compose `result.report`; can also be used standalone for partial outputs.
  *
  * @example
  * ```ts
@@ -878,12 +795,12 @@ export function formatReport(rows: readonly SignoffRow[]): string {
 }
 
 // ===========================================================================
-// Top-level run — sync (D3.2 soft-deprecated) + async + options
+// Top-level run — async + options
 // ===========================================================================
 
 /**
- * Options accepted by `runVerifier()`. All fields optional — sensible
- * defaults are applied for missing values.
+ * Options accepted by the async verifier surface. All fields optional —
+ * sensible defaults are applied for missing values.
  */
 export interface RunVerifierOptions {
   /**
@@ -916,102 +833,17 @@ export interface RunVerifierAsyncOptions extends RunVerifierOptions {
 }
 
 /**
- * Run the verifier end-to-end on a given doc path. SYNCHRONOUS — blocks
- * the event loop on `fs.readFileSync` + sequential `verifySha` calls.
- * For non-blocking / batched behavior, prefer `runVerifierAsync` (D3.2).
+ * D3.2: Async end-to-end verifier. Performs the orchestration steps
+ * (parse, SHA-verify, policy evaluate, report) using `fs.promises.readFile`
+ * + `verifyShasConcurrent` for non-blocking I/O. The Promise resolves with
+ * the same `VerifyResult` shape as the legacy sync surface so callers can
+ * swap implementations without changing result-handling code.
  *
- * IMPORTANT (throw contract): this function's POLICY LOGIC never throws.
- * File-level parse failures (missing doc, missing §6) and policy-level
- * failures (insufficient verified rows, any FAILED row) are ALL surfaced
- * via `VerifyResult` with the appropriate `exitCode` (2 / 1 / 0). Callers
- * do NOT need to wrap this in try/catch for verifier logic — check
- * `result.exitCode` and `result.reasons`.
- *
- * Default-invocation contract: calling `runVerifier()` with NO arguments
- * produces an absolute `docPath` from `path.join(process.cwd(), DEFAULT_DOC_PATH)`,
- * and uses `cwd` as the repo root for `git verify-commit` invocations.
- *
- * @deprecated Prefer `runVerifierAsync`. The sync function retains the
- * surface for backward compatibility with the CLI script + test matrix;
- * no removal planned. The `@deprecated` marker is advisory-only.
- *
- * @example
- * ```ts
- * const result = runVerifier();
- * if (!result.ok) process.exit(result.exitCode);
- * ```
- */
-export function runVerifier(
-  docPath: string = path.join(process.cwd(), DEFAULT_DOC_PATH),
-  options: RunVerifierOptions = {},
-): VerifyResult {
-  const repoRoot = options.repoRoot ?? process.cwd();
-  const resolvedDocPath = path.isAbsolute(docPath) ? docPath : path.resolve(repoRoot, docPath);
-
-  if (!fs.existsSync(resolvedDocPath)) {
-    const msg = `ERROR: doc not found at ${resolvedDocPath}`;
-    return {
-      ok: false,
-      rows: [],
-      reasons: Object.freeze([msg]),
-      report: msg,
-      exitCode: 2,
-    };
-  }
-  const text = fs.readFileSync(resolvedDocPath, 'utf-8');
-  const section = extractSection(text, '§6 — Sign-off');
-  if (section === null) {
-    const msg = `ERROR: §6 Sign-off section not found in ${resolvedDocPath}`;
-    return {
-      ok: false,
-      rows: [],
-      reasons: Object.freeze([msg]),
-      report: msg,
-      exitCode: 2,
-    };
-  }
-  const parsed = parseSignoffTable(section);
-  if (parsed.length === 0) {
-    const reason = `policy NOT bound — at least ${POLICY_MIN_VERIFIED_ROWS} role(s) must hold a GPG-verified SHA`;
-    return {
-      ok: false,
-      rows: [],
-      reasons: Object.freeze([reason]),
-      report:
-        `${POLICY_VERSION} rotation sign-off verification report\n` +
-        '==========================================\n' +
-        '  (no role rows parsed from §6 table — policy not bound)\n' +
-        '------------------------------------------\n' +
-        `Policy (${POLICY_VERSION}): verified=0 (min=${POLICY_MIN_VERIFIED_ROWS}), failed=0, pending=0.\n` +
-        `RED: ${reason}.`,
-      exitCode: 1,
-    };
-  }
-  for (const row of parsed) {
-    if (row.sha === '') continue;
-    const result = verifySha(row.sha, repoRoot);
-    row.verified = result.verified;
-    row.signedAt = result.signedAt;
-    row.signedBy = result.signedBy;
-    row.error = result.error;
-  }
-  return evaluateSignoff(parsed);
-}
-
-/**
- * D3.2: Async mirror of `runVerifier`. Performs the same orchestration
- * steps as the sync version (parse, SHA-verify, policy evaluate, report)
- * but uses `fs.promises.readFile` + `verifyShasConcurrent` for non-
- * blocking I/O. The Promise resolves with the same `VerifyResult` shape
- * so callers can swap implementations without changing result-handling
- * code.
- *
- * Throw contract: same as sync. POLICY LOGIC never throws (returns
- * exitCode=2 for missing doc / missing §6). However, OUTER I/O such as
- * `fs.promises.readFile` rejecting on ENOENT race / permission denied
- * etc. CAN surface as Promise rejection — defensively wrapping at the
- * consumer layer is fine but not required for the verifier's core
- * correctness invariants.
+ * Throw contract: POLICY LOGIC never throws (returns exitCode=2 for missing
+ * doc / missing §6). However, OUTER I/O such as `fs.promises.readFile`
+ * rejecting on ENOENT race / permission denied etc. CAN surface as Promise
+ * rejection — defensively wrapping at the consumer layer is fine but not
+ * required for the verifier's core correctness invariants.
  *
  * @example
  * ```ts

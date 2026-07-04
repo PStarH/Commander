@@ -4,12 +4,10 @@ import { Readable, Writable } from 'stream';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { handleAtrHttpRequest, type AtrHttpDeps } from '../../src/atr/atrHttp';
 import { ExecutionScheduler } from '../../src/atr/scheduler';
-import { CompensationBridge } from '../../src/atr/compensationBridge';
 import { RunLedger } from '../../src/atr/runLedger';
 import { LeaseManager } from '../../src/atr/leaseManager';
 import { IdempotencyStore, resetIdempotencyStore } from '../../src/atr/idempotencyStore';
 import { resetRunLedgerBundle } from '../../src/atr/runLedger';
-import { resetCompensationBridge } from '../../src/atr/compensationBridge';
 
 class MockRes extends Writable {
   statusCode = 200;
@@ -50,7 +48,6 @@ interface Stack {
   lm: LeaseManager;
   idem: IdempotencyStore;
   ledger: RunLedger;
-  bridge: CompensationBridge;
   close: () => void;
 }
 
@@ -58,7 +55,6 @@ function makeStack(tenantId?: string): Stack {
   process.env.COMMANDER_ATR_IDEMPOTENCY_PATH = ':memory:';
   resetIdempotencyStore();
   resetRunLedgerBundle();
-  resetCompensationBridge();
   const lm = new LeaseManager({
     filePath: ':memory:',
     defaultTtlSeconds: 60,
@@ -70,14 +66,12 @@ function makeStack(tenantId?: string): Stack {
     defaultTtlSeconds: 60,
     defaultHolder: 'test',
   });
-  const bridge = new CompensationBridge();
-  const scheduler = new ExecutionScheduler({ lease: lm, idempotency: idem, ledger, bridge });
+  const scheduler = new ExecutionScheduler({ lease: lm, idempotency: idem, ledger });
   return {
     scheduler,
     lm,
     idem,
     ledger,
-    bridge,
     close: () => {
       lm.close();
       idem.close();
@@ -113,13 +107,11 @@ describe('ATR HTTP router', () => {
     process.env.COMMANDER_ATR_IDEMPOTENCY_PATH = ':memory:';
     resetIdempotencyStore();
     resetRunLedgerBundle();
-    resetCompensationBridge();
   });
 
   afterEach(() => {
     resetIdempotencyStore();
     resetRunLedgerBundle();
-    resetCompensationBridge();
     delete process.env.COMMANDER_ATR_IDEMPOTENCY_PATH;
   });
 
