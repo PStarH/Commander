@@ -58,13 +58,22 @@ export class LiteLLMPricing {
    * Safe to call multiple times — only the first call triggers a fetch.
    * Does NOT await — the fetch runs in the background so synchronous
    * callers (CostGuard.estimateCost) are never blocked.
+   *
+   * Network failures are expected in offline / sandboxed / test
+   * environments, so the rejected promise is swallowed to prevent
+   * `unhandledRejection` from firing the process-crash handler and
+   * blocking the calling test (see #6421).
    */
   ensureLoaded(): void {
     if (this.data) return; // already have data
     if (this.fetchPromise) return; // already fetching
-    this.fetchPromise = this.doFetch().finally(() => {
-      this.fetchPromise = null;
-    });
+    this.fetchPromise = this.doFetch()
+      .catch(() => {
+        /* background fetch failure is non-fatal — hardcoded fallback applies */
+      })
+      .finally(() => {
+        this.fetchPromise = null;
+      });
   }
 
   /**
@@ -175,8 +184,20 @@ export class LiteLLMPricing {
   // ── Internals ──────────────────────────────────────────────────────
 
   private async doFetch(): Promise<void> {
+    // Skip the network call entirely in test environments — there is no
+    // benefit to attempting a 30s+ DNS timeout for a pricing file the
+    // tests never read. Hardcoded fallback is always sufficient.
+    if (process.env.NODE_ENV === 'test' || process.env.VITEST === 'true') {
+      return;
+    }
     try {
-      const resp = await fetch(LITELLM_URL);
+      // Hard cap the fetch at 10s so a slow/blocked DNS lookup cannot
+      // stall callers that call ensureLoaded() in the background.
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10_000);
+      if (typeof timer.unref === 'function') timer.unref();
+      const resp = await fetch(LITELLM_URL, { signal: controller.signal });
+      clearTimeout(timer);
       if (!resp.ok) {
         throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
       }

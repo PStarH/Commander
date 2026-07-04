@@ -26,16 +26,24 @@ describe('E2E: Concurrent tool execution through AgentRuntime', () => {
     const { runtime } = createTestRuntime();
     const executionLog: string[] = [];
 
-    const slow1 = makeTool('slow1', async () => {
-      await new Promise((r) => setTimeout(r, 50));
-      executionLog.push('slow1');
-      return 'slow1 done';
-    }, { isConcurrencySafe: true });
-    const slow2 = makeTool('slow2', async () => {
-      await new Promise((r) => setTimeout(r, 50));
-      executionLog.push('slow2');
-      return 'slow2 done';
-    }, { isConcurrencySafe: true });
+    const slow1 = makeTool(
+      'slow1',
+      async () => {
+        await new Promise((r) => setTimeout(r, 50));
+        executionLog.push('slow1');
+        return 'slow1 done';
+      },
+      { isConcurrencySafe: true },
+    );
+    const slow2 = makeTool(
+      'slow2',
+      async () => {
+        await new Promise((r) => setTimeout(r, 50));
+        executionLog.push('slow2');
+        return 'slow2 done';
+      },
+      { isConcurrencySafe: true },
+    );
 
     runtime.registerTool('slow1', slow1);
     runtime.registerTool('slow2', slow2);
@@ -144,9 +152,7 @@ describe('E2E: Concurrent tool execution through AgentRuntime', () => {
     ]);
     runtime.registerProvider('mock', provider);
 
-    const result = await runtime.execute(
-      makeContext({ availableTools: ['tool1', 'tool2'] }),
-    );
+    const result = await runtime.execute(makeContext({ availableTools: ['tool1', 'tool2'] }));
 
     expect(result.status).toBe('success');
     expect(executionOrder).toHaveLength(2);
@@ -201,15 +207,19 @@ describe('E2E: Concurrent tool execution through AgentRuntime', () => {
     expect(log).toContain('safe1');
     expect(log).toContain('safe2');
     expect(log).toContain('serial');
-  }, 60000);
+  }, 180000);
 
   it('does not hang when one tool fails among parallel calls', async () => {
     const { runtime } = createTestRuntime();
 
     const ok = makeTool('ok-tool', async () => 'ok result', { isConcurrencySafe: true });
-    const fail = makeTool('fail-tool', async () => {
-      throw new Error('Parallel failure');
-    }, { isConcurrencySafe: true });
+    const fail = makeTool(
+      'fail-tool',
+      async () => {
+        throw new Error('Parallel failure');
+      },
+      { isConcurrencySafe: true },
+    );
 
     runtime.registerTool('ok-tool', ok);
     runtime.registerTool('fail-tool', fail);
@@ -225,9 +235,7 @@ describe('E2E: Concurrent tool execution through AgentRuntime', () => {
     ]);
     runtime.registerProvider('mock', provider);
 
-    const result = await runtime.execute(
-      makeContext({ availableTools: ['ok-tool', 'fail-tool'] }),
-    );
+    const result = await runtime.execute(makeContext({ availableTools: ['ok-tool', 'fail-tool'] }));
 
     // Should complete without hanging
     expect(result.status).toBe('success');
@@ -236,8 +244,14 @@ describe('E2E: Concurrent tool execution through AgentRuntime', () => {
   it('accumulates token usage across multiple tool-call rounds', async () => {
     const { runtime } = createTestRuntime();
 
-    runtime.registerTool('echo1', makeTool('echo1', async () => 'echo1', { isConcurrencySafe: true }));
-    runtime.registerTool('echo2', makeTool('echo2', async () => 'echo2', { isConcurrencySafe: true }));
+    runtime.registerTool(
+      'echo1',
+      makeTool('echo1', async () => 'echo1', { isConcurrencySafe: true }),
+    );
+    runtime.registerTool(
+      'echo2',
+      makeTool('echo2', async () => 'echo2', { isConcurrencySafe: true }),
+    );
 
     const provider = new ScriptedLLMProvider([
       {
@@ -250,9 +264,7 @@ describe('E2E: Concurrent tool execution through AgentRuntime', () => {
     ]);
     runtime.registerProvider('mock', provider);
 
-    const result = await runtime.execute(
-      makeContext({ availableTools: ['echo1', 'echo2'] }),
-    );
+    const result = await runtime.execute(makeContext({ availableTools: ['echo1', 'echo2'] }));
 
     expect(result.status).toBe('success');
     // Token usage should accumulate across 3 LLM calls

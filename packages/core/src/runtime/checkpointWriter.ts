@@ -227,6 +227,32 @@ export class CheckpointWriter {
     };
   }
 
+  /**
+   * Test-only accessor: returns whether {@link percent} (as a fraction,
+   * e.g. 0.2 / 0.45 / 0.7) has already fired for {@link runId}.
+   * Lets async-migration / idempotency tests assert the trigger-fire
+   * tracking Map without reaching into the TypeScript-private
+   * `firedTriggers` Set field, which would couple the test to the
+   * internal field name.
+   *
+   * @internal — not part of the supported CheckpointWriter interface.
+   */
+  isTriggerFired(runId: string, percent: number): boolean {
+    const fired = this.firedTriggers.get(runId);
+    return fired ? fired.has(percent) : false;
+  }
+
+  /**
+   * Test-only accessor: number of distinct trigger points fired for
+   * {@link runId}. Useful for idempotency tests that need to verify
+   * `shouldTrigger` returns null after a point has been consumed.
+   *
+   * @internal — not part of the supported CheckpointWriter interface.
+   */
+  getTriggerFiredCount(runId: string): number {
+    return this.firedTriggers.get(runId)?.size ?? 0;
+  }
+
   // ========================================================================
   // Checkpoint Writing
   // ========================================================================
