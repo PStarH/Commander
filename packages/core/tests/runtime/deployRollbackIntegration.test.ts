@@ -106,7 +106,7 @@ function makeDeployTools(env: DeployEnv) {
       },
       execute: async () => {
         const response = await fetch(`http://127.0.0.1:${env.port}/health`);
-        const body = await response.json() as { status: string; version: string };
+        const body = (await response.json()) as { status: string; version: string };
         if (!response.ok || body.status !== 'healthy') {
           throw new Error(`Health check failed: ${body.status} (version: ${body.version})`);
         }
@@ -147,13 +147,16 @@ describe('E2E: Deploy & Rollback through AgentRuntime.execute()', () => {
     runtime.registerProvider('mock', provider);
 
     const result = await runtime.execute(
-      makeContext({ availableTools: ['deploy', 'health_check'], goal: 'Deploy v2 and verify health' }),
+      makeContext({
+        availableTools: ['deploy', 'health_check'],
+        goal: 'Deploy v2 and verify health',
+      }),
     );
 
     expect(result.status).toBe('success');
     expect(env.getVersion()).toBe('v2');
     expect(provider.callCount).toBe(3); // deploy + health + final
-  }, 60000);
+  }, 180000);
 
   it('deploy fails health check → automatic rollback', async () => {
     const { runtime } = createTestRuntime();

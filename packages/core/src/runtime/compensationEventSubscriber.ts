@@ -148,4 +148,19 @@ export class CompensationEventSubscriber {
       this.unsubStep = null;
     }
   }
+
+  /**
+   * Test-only accessor: returns whether bus subscriptions are currently
+   * active. True after `start()` until `stop()` is called. Lets async-
+   * migration / lifecycle tests assert pre/post-dispose subscriber
+   * state without reaching into the TypeScript-private `unsubPlanned`
+   * and `unsubStep` unsubscribe handles, which would couple the test
+   * to the internal field names.
+   *
+   * @internal — not part of the supported CompensationEventSubscriber
+   *             interface.
+   */
+  isSubscribed(): boolean {
+    return this.unsubPlanned !== null && this.unsubStep !== null;
+  }
 }
