@@ -1,7 +1,6 @@
 import { reportSilentFailure } from './silentFailureReporter';
-import { AgentRuntime } from './runtime/agentRuntime';
-import { getMessageBus } from './runtime/messageBus';
-import { createAllTools, wireResourceToolDependencies } from './tools/index';
+import { AgentRuntime, getMessageBus, getGlobalTenantProvider } from './runtime';
+import { createAllTools, wireResourceToolDependencies } from './tools';
 import { AgentTool } from './tools/agentTool';
 import { UltimateOrchestrator } from './ultimate/orchestrator';
 import { TELOSOrchestrator } from './telos/telosOrchestrator';
@@ -15,7 +14,6 @@ import { A2ADiscoveryManager } from './mcp/a2aClient';
 import { A2ADelegateTool } from './tools/a2aDelegateTool';
 import type { A2AAgentCard } from './mcp/a2aCompliance';
 import { getGlobalLogger } from './logging';
-import { getGlobalTenantProvider } from './runtime/tenantProvider';
 
 export interface AgentLoopConfig {
   projectRoot: string;
