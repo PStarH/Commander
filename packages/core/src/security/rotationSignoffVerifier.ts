@@ -531,6 +531,17 @@ export function verifyShaAsync(
       error: invalidShaReason(sha),
     });
   }
+  // Allow CI/sandbox runners without a usable GPG keyring to skip the actual
+  // signature verification while still exercising SHA validation and policy
+  // evaluation. This must be opt-in via env var so production still verifies.
+  if (process.env.ROTATION_SIGNOFF_NO_GPG_VERIFY === '1') {
+    return Promise.resolve({
+      verified: false,
+      signedAt: null,
+      signedBy: null,
+      error: 'GPG verification skipped (ROTATION_SIGNOFF_NO_GPG_VERIFY=1)',
+    });
+  }
   return Promise.all([
     runGit(['verify-commit', sha], cwd, options),
     runGit(['log', '-1', '--format=%aI', sha], cwd, options),
