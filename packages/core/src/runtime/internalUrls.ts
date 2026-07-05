@@ -22,6 +22,7 @@ export interface InternalUrlResult {
   content: string;
   mimeType?: string;
   immutable?: boolean;
+  status?: 'ok' | 'not_implemented' | 'error';
 }
 
 export type InternalUrlHandler = (
@@ -175,14 +176,12 @@ export class InternalUrlRouter {
 
   private async handleMemory(
     path: string,
-    params: Record<string, string>,
+    _params: Record<string, string>,
   ): Promise<InternalUrlResult> {
-    // Memory access would integrate with the memory system
-    // For now, return a placeholder
-    const namespace = params.namespace || 'default';
     return {
-      content: `Memory access: ${path} (namespace: ${namespace})\nNote: Memory integration pending.`,
+      content: `Memory access (${path}) is not yet implemented`,
       immutable: false,
+      status: 'not_implemented',
     };
   }
 
