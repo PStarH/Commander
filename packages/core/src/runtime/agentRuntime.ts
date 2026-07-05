@@ -85,11 +85,7 @@ import { installProcessCrashHandlers } from './processCrashSafety';
 import { RunRecovery, type RunRecoveryResult } from './runRecovery';
 import { getGlobalDeterminismCapture } from './determinismCapture';
 import { StepTimeoutManager } from './stepTimeoutManager';
-import {
-  ProviderFallbackChain,
-  FallbackChainExhaustedError,
-  type ProviderEntry,
-} from './providerFallbackChain';
+import { ProviderFallbackChain } from './providerFallbackChain';
 import { ReflexionInjector, type ReflectionEntry } from '../memory/reflexionInjector';
 import { DeadLetterQueue } from './deadLetterQueue';
 import { getMetricsCollector } from './metricsCollector';
@@ -108,7 +104,6 @@ import { runWithTenant } from './tenantContext';
 import { getHookManager } from '../pluginManager';
 import { ToolOutputManager } from './toolOutputManager';
 import { ToolOrchestrator } from './toolOrchestrator';
-import { SyntheticErrorRow, toolErrorRow, type PreToolCallGateResult } from './toolResultShape';
 import { ToolApproval } from './toolApproval';
 import { ToolPlanner } from './toolPlanner';
 import { CycleDetector } from './cycleDetector';
@@ -149,7 +144,7 @@ import { getFreezeDryManager, type ActiveRunState } from './freezeDry';
 import { TenantManager } from './tenantManager';
 import { CompensationService } from './compensationService';
 import type { CompensationPlan } from '../compensation/types';
-import { SingleFlightRequestCache, type SingleFlightStats } from './singleFlightRequestCache';
+import type { SingleFlightStats } from './singleFlightRequestCache';
 import type { GeminiCacheStats } from './geminiCacheManager';
 import { ToolExecutionService } from './toolExecutionService';
 import { initializeServices, type InitializedServices } from './serviceInitializer';
@@ -169,6 +164,11 @@ import { FinallyCleanupHandler, type TenantOverrides } from './finallyCleanupHan
 import { LLMRequestBuilder } from './llmRequestBuilder';
 import { GoalCompletionVerifier } from './goalCompletionVerifier';
 import { ToolExecutionHandler } from './toolExecutionHandler';
+import { LlmCaller } from './llm/llmCaller';
+import { normalizeToolCall } from './tool/toolCallNormalizer';
+import { ToolCallRetryLoopDetector } from './tool/toolCallRetryLoopDetector';
+import { ToolCallSecurityGate } from './tool/toolCallSecurityGate';
+import { TenantContextResolver } from './tenant/tenantContextResolver';
 import { ReflexionGenerator, type ReflexionContext } from './reflexionGenerator';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -183,35 +183,9 @@ import { getCostEstimator, type CostEstimate } from './costEstimator';
 import { getModelPerformanceStore } from './modelPerformanceStore';
 import { getSecurityMonitor } from '../security/securityMonitor';
 import { initializeRuntimeGuardian } from './runtimeGuardianBridge';
-import { SecurityOrchestrator, type SecurityOrchestratorDecision } from './securityOrchestrator';
+import { SecurityOrchestrator } from './securityOrchestrator';
 import type { CrossAgentEvent } from '../security/crossAgentCorrelator';
 import { DEFAULT_CONFIG, generateId, now, delay } from './runtimeHelpers';
-
-// ============================================================================
-// Tenant context resolution — extracted from execute() for clarity
-// ============================================================================
-// NOTE: TenantOverrides is now imported from ./finallyCleanupHandler to keep a
-// single source of truth shared with the cleanup handler.
-
-interface TenantResolutionResult {
-  allowed: boolean;
-  error?: string;
-  overrides?: TenantOverrides;
-}
-
-/** Recursively sort object keys for stable JSON comparison of tool arguments. */
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(value, (_key, val) => {
-    if (val && typeof val === 'object' && !Array.isArray(val)) {
-      const sorted: Record<string, unknown> = {};
-      for (const k of Object.keys(val).sort()) {
-        sorted[k] = (val as Record<string, unknown>)[k];
-      }
-      return sorted;
-    }
-    return val;
-  });
-}
 
 export class AgentRuntime implements AgentRuntimeInterface {
   private config: AgentRuntimeConfig;
@@ -290,6 +264,12 @@ export class AgentRuntime implements AgentRuntimeInterface {
   // Extracted from execute()'s retry loop — owns the per-response tool-execution
   // phase (onStepStart → tool dispatch → result redaction → onStepComplete).
   private toolExecutionHandler: ToolExecutionHandler;
+
+  // Extracted from AgentRuntime private methods — shrink the god object.
+  private llmCaller: LlmCaller;
+  private toolCallRetryLoopDetector: ToolCallRetryLoopDetector;
+  private toolCallSecurityGate: ToolCallSecurityGate;
+  private tenantContextResolver: TenantContextResolver;
 
   // Tenant config provider (kept for direct lookups in execute())
   private tenantProvider: TenantProvider;
@@ -422,7 +402,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       getTraceStore: () => this.traceStore,
       getConversationStore: () => this.conversationStore,
       restoreTenantOverrides: (overrides, tenantId) =>
-        this.restoreTenantOverrides(overrides, tenantId),
+        this.tenantContextResolver.restoreTenantOverrides(overrides, tenantId),
     });
 
     // LLMRequestBuilder — dependency-injected via getter/setter callbacks so it
@@ -472,7 +452,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       getSlidingWindow: () => this.slidingWindow,
       getMemory: () => this.memory,
       getCompactor: () => this.compactor,
-      normalizeToolCall: (tc) => this.normalizeToolCall(tc),
+      normalizeToolCall: (tc) => normalizeToolCall(tc),
       applyPreToolCallGates: (
         tc,
         agentId,
@@ -482,7 +462,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
         toolLoopCount,
         siblingAbortSignal,
       ) =>
-        this.applyPreToolCallGates(
+        this.toolCallSecurityGate.applyPreToolCallGates(
           tc,
           agentId,
           runId,
@@ -492,17 +472,64 @@ export class AgentRuntime implements AgentRuntimeInterface {
           siblingAbortSignal,
         ),
       applyBeforeToolCallSecurity: (tc, agentId, runId) =>
-        this.applyBeforeToolCallSecurity(tc, agentId, runId),
+        this.toolCallSecurityGate.applyBeforeToolCallSecurity(tc, agentId, runId),
       executeTool: (runId, toolCall, agentId, tenantId, allowedTools, agentCtx) =>
         this.executeTool(runId, toolCall, agentId, tenantId, allowedTools, agentCtx),
       invalidateMutationCache: (toolName) => this.invalidateMutationCache(toolName),
       callWithTimeout: (request, routing, attemptNumber, taskId) =>
-        this.callWithTimeout(request, routing, attemptNumber, taskId),
+        this.llmCaller.callWithTimeout(request, routing, attemptNumber, taskId),
       setExecutedMutations: (mutations) => {
         this.executedMutations = mutations;
       },
       setLastHallucinationDetected: (value) => {
         this.lastHallucinationDetected = value;
+      },
+    });
+
+    // LlmCaller — owns the LLM provider invocation chain previously implemented
+    // by the private methods callWithTimeout / callProviderOrThrow / callProvider.
+    this.llmCaller = new LlmCaller({
+      getProviders: () => this.providers,
+      getLastProviderError: () => this.lastProviderError,
+      setLastProviderError: (err) => {
+        this.lastProviderError = err;
+      },
+      samplesStore: this.samplesStore,
+      cacheManager: this.cacheManager,
+      stepTimeout: this.stepTimeout,
+      fallbackChain: this.fallbackChain,
+      llmTimeoutMs: this.config.llmTimeoutMs,
+    });
+
+    // ToolCallRetryLoopDetector — pure helper, no runtime dependencies.
+    this.toolCallRetryLoopDetector = new ToolCallRetryLoopDetector();
+
+    // ToolCallSecurityGate — centralizes SecurityOrchestrator pre-tool-call
+    // checks and the four pre-tool-call safety gates.
+    this.toolCallSecurityGate = new ToolCallSecurityGate({
+      getSecurityOrch: () => this.securityOrch,
+      getCycleDetector: () => this.cycleDetector,
+      getTool: (name) => this.getTool(name),
+      getLastHallucinationDetected: () => this.lastHallucinationDetected,
+      retryLoopDetector: this.toolCallRetryLoopDetector,
+    });
+
+    // TenantContextResolver — multi-tenant store swapping and restore.
+    this.tenantContextResolver = new TenantContextResolver({
+      getTenantManager: () => this.tenantManager,
+      getTenantStores: () => ({
+        origSamplesStore: this.samplesStore,
+        origTraceStore: this.traceStore,
+        origCheckpointer: this.checkpointer,
+        origMemory: this.memory,
+        origGovernor: this.governor,
+      }),
+      setTenantStores: (stores) => {
+        this.samplesStore = stores.origSamplesStore;
+        this.traceStore = stores.origTraceStore;
+        this.checkpointer = stores.origCheckpointer;
+        this.memory = stores.origMemory;
+        this.governor = stores.origGovernor;
       },
     });
 
@@ -607,263 +634,6 @@ export class AgentRuntime implements AgentRuntimeInterface {
       // Shell commands may mutate filesystem; invalidate file_read broadly
       toolCache.invalidatePattern('file_read');
     }
-  }
-
-  /**
-   * Check if the same tool+args pattern appears ≥3 times in recent calls.
-   * Uses stable (alphabetically-sorted) JSON.stringify for deterministic keys.
-   * On detection, publishes system.alert, increments metrics, and writes intent log.
-   * Returns { retryLoopDetected, count } — caller should break the execution loop.
-   */
-  private checkRetryLoop(
-    toolName: string,
-    args: Record<string, unknown>,
-    patterns: string[],
-    runId: string,
-    tenantId: string | undefined,
-    toolLoopCount: number,
-  ): { detected: boolean; count: number } {
-    // Stable key ordering: recursively sort object keys so nested arguments
-    // (e.g. payload.round) are included deterministically.
-    const canonicalArgs = canonicalJson(args);
-    const pattern = `${toolName}:${canonicalArgs}`;
-    patterns.push(pattern);
-    if (patterns.length > RETRY_LOOP_PATTERN_HISTORY) patterns.shift();
-    const count = patterns.filter((p) => p === pattern).length;
-    if (count >= RETRY_LOOP_THRESHOLD) {
-      const bus = getMessageBus();
-      bus.publish('system.alert', 'runtime', {
-        type: 'retry_loop_detected',
-        toolName,
-        pattern: `${toolName}:${canonicalArgs.slice(0, TOOL_PATTERN_MAX_CHARS)}`,
-        consecutiveCalls: count,
-        toolLoopCount,
-        // `runId` propagates so Phase 2 Hub Glue
-        // RetryHookCorrelator can dedup by run
-        // (key `${runId}:${toolName}:${pattern}`) instead of
-        // collapsing concurrent runs that hit the same
-        // tool/args within the 5s TTL window. `runId`
-        // is the local param from `checkRetryLoop`'s
-        // closure — same value as agentRuntime.execute()'s
-        // top-level `const runId = generateId()`.
-        runId,
-      });
-      try {
-        getMetricsCollector().incrementCounter(
-          'retry_loops_detected_total',
-          'Retry loops detected',
-          1,
-          [{ name: 'tool', value: toolName }],
-        );
-      } catch (err) {
-        reportSilentFailure(err, 'agentRuntime:798');
-        /* best-effort */
-      }
-      try {
-        getIntentLog(tenantId).write({
-          schemaVersion: 1,
-          runId,
-          capturedAt: new Date().toISOString(),
-          stage: 'agentRuntime.tool_loop',
-          decision: 'retry_loop_detected',
-          reason: `${toolName} called ${count} times with identical arguments`,
-          payload: { toolName, calls: count, toolLoopCount },
-        });
-      } catch (err) {
-        reportSilentFailure(err, 'agentRuntime:812');
-        /* best-effort */
-      }
-      return { detected: true, count };
-    }
-    return { detected: false, count: 0 };
-  }
-
-  /**
-   * Apply SecurityOrchestrator pre-tool-call checks shared by both the
-   * concurrent-safe and the serial execution paths in execute().
-   *
-   * Previously this 30-line block was duplicated in two places (concurrent
-   * Promise.allSettled path and serial for-of path). Extracting into one
-   * helper closes the divergence risk where one path could silently drift
-   * from the other (e.g. one gets a new correlated event type, the other
-   * doesn't), and centralizes the synthetic blocked-result shape so logged
-   * errors, tool_call metadata, and tool_result shapes stay consistent
-   * across both execution modes.
-   *
-   * Behavior — must match the original duplicated code byte-for-byte:
-   *   1. Calls `onBeforeToolCall(name, args, agentId, runId)` and awaits it.
-   *   2. Best-effort emits a `tool_call` CrossAgentEvent into the correlator
-   *      (severity stays `low` if allowed, `high` if blocked).
-   *   3. When denied, publishes a `tool.blocked` bus event with
-   *      reason='security_orchestrator_denied' and blockReason in `detail`.
-   *   4. When denied, returns BOTH synthetic result shapes the two callers
-   *      need: a raw-result row for the concurrent Promise.allSettled
-   *      array, and a ToolResult for the serial for-of path.
-   */
-  private async applyBeforeToolCallSecurity(
-    tc: ToolCall,
-    agentId: string,
-    runId: string,
-  ): Promise<{
-    decision: SecurityOrchestratorDecision;
-    allowed: boolean;
-    /** Synthetic raw-result row for the concurrent parallel-results array. */
-    blockedRawResult?: SyntheticErrorRow;
-    /** Synthetic ToolResult for the serial execution path. */
-    blockedToolResult?: ToolResult;
-  }> {
-    const decision = await this.securityOrch.onBeforeToolCall(
-      tc.name,
-      tc.arguments as Record<string, unknown>,
-      agentId,
-      runId,
-      {
-        verification: {
-          confidence: 0.95,
-          gateFailures: [],
-          hallucinationDetected: this.lastHallucinationDetected,
-        },
-      },
-    );
-
-    // Feed tool_call event to correlator (DoS detection, lateral movement,
-    // collusion). Wrapped in try/catch — Guardian/Correlator sink failures
-    // must NEVER block the underlying security decision.
-    try {
-      this.securityOrch.onAgentEvent({
-        id: generateId(),
-        agentId,
-        runId,
-        type: 'tool_call',
-        summary: `Tool ${tc.name} (${decision.allowed ? 'allowed' : 'blocked'})`,
-        metadata: {
-          toolName: tc.name,
-          allowed: decision.allowed,
-          hitlStrategy: decision.hitlStrategy,
-          hitlSources: decision.sources,
-        },
-        timestamp: Date.now(),
-        severity: decision.allowed ? 'low' : 'high',
-      } as CrossAgentEvent);
-    } catch (err) {
-      reportSilentFailure(err, 'agentRuntime:881');
-      /* best-effort */
-    }
-
-    if (decision.allowed) {
-      return { decision, allowed: true };
-    }
-
-    // Blocked: publish a tool.blocked bus event FIRST (matching the original
-    // duplicated code byte-for-byte — original left this unprotected so a
-    // throwing subscriber propagates), then synthesize both result shapes
-    // the two callers each need.
-    const blockReason = decision.blockReason ?? 'AdaptiveHITL blocked';
-    getMessageBus().publish('tool.blocked', agentId, {
-      runId,
-      toolName: tc.name,
-      reason: 'security_orchestrator_denied',
-      detail: blockReason,
-    });
-    const reasonStr = `Security blocked: ${blockReason}`;
-    const blockedRawResult = toolErrorRow(tc, reasonStr);
-    const blockedToolResult: ToolResult = toolErrorRow(tc, reasonStr);
-
-    return {
-      decision,
-      allowed: false,
-      blockedRawResult,
-      blockedToolResult,
-    };
-  }
-
-  /**
-   * Apply the pre-tool-call safety gates that previously ran as ~70 lines
-   * of duplicated logic in both the concurrent-safe `Promise.allSettled`
-   * path and the serial `for-of` path of execute().
-   *
-   * Three sequential gates:
-   *   1. HookManager.fireBeforeToolCall: plugin deny → action='continue'
-   *      (skip just this tc). Original sequence preserves plugin-check before
-   *      sibling-abort and before retry/cycle.
-   *   2. sibling-abort (concurrent-only): if the sibling AbortSignal is
-   *      already fired due to an earlier tool error, action='continue'.
-   *      Only meaningful for concurrent paths; serial passes `undefined`.
-   *   3. retry-loop detection: this.checkRetryLoop() finds a 3× same
-   *      (tool,args) repetition → action='break' (exit all tc iterations).
-   *   4. cycle detection: cycleDetector.check() finds a tool-call cycle →
-   *      action='break'. Also publishes system.alert + tool.blocked bus
-   *      events and increments retry-loop metrics on the way through.
-   *
-   * All side-effects (bus.publish, metrics, intent log, recentToolPatterns
-   * mutation) match the original duplicated code byte-for-byte. Only the
-   * orchestration differs: caller inspects `action` to decide whether to
-   * `return`, `break`, or `continue` based on execution mode.
-   */
-  // Discriminated-union return type for applyPreToolCallGates. The helper is
-  // a pure decision function: it inspects the four pre-tool-call gates and
-  // returns the outcome PLUS minimum context for the caller to format
-  // observable side effects (bus publishes, outer-loop flag mutations,
-  // synthetic-error rows). All bus.publish calls live at the call site —
-  // never inside the helper — so we can spy on the bus to prove that no
-  // double-publish path exists.
-  private async applyPreToolCallGates(
-    tc: ToolCall,
-    agentId: string,
-    runId: string,
-    tenantId: string | undefined,
-    recentToolPatterns: string[],
-    toolLoopCount: number,
-    siblingAbortSignal?: AbortSignal,
-  ): Promise<PreToolCallGateResult> {
-    // Gate 1: HookManager plugin denial.
-    // Resolve the Tool object for the hook context (G2: taint tracking reads riskMetadata)
-    const resolvedTool = this.getTool(tc.name);
-    const hookCtx = {
-      toolName: tc.name,
-      args: tc.arguments,
-      agentId,
-      runId,
-      tool: resolvedTool,
-    };
-    const hookResult = await getHookManager().fireBeforeToolCall(hookCtx);
-    if (hookResult !== null) {
-      return { kind: 'hooked', errorMsg: hookResult.error ?? '' };
-    }
-
-    // Gate 2: sibling-abort cancellation (concurrent-only).
-    // The serial path passes `undefined` for `siblingAbortSignal`, so this
-    // branch only fires inside the Promise.allSettled closure.
-    if (siblingAbortSignal?.aborted) {
-      return {
-        kind: 'siblingAbort',
-        row: toolErrorRow(tc, 'Cancelled: sibling tool error'),
-      };
-    }
-
-    // Gate 3: retry-loop detection.
-    const rlCheck = this.checkRetryLoop(
-      tc.name,
-      tc.arguments as Record<string, unknown>,
-      recentToolPatterns,
-      runId,
-      tenantId,
-      toolLoopCount,
-    );
-    if (rlCheck.detected) {
-      // The caller will set retryLoopDetected=true and assign retryLoopCount
-      // from this count; we surface a count that matches the value the
-      // previous helper wired in (which was `toolLoopCount`).
-      return { kind: 'retry', count: toolLoopCount };
-    }
-
-    // Gate 4: cycle detection.
-    const cycleCheck = this.cycleDetector.check(tc.name, tc.arguments, toolLoopCount);
-    if (cycleCheck.detected) {
-      return { kind: 'cycle', description: cycleCheck.description ?? '' };
-    }
-
-    return { kind: 'allowed' };
   }
 
   registerProvider(name: string, provider: LLMProvider): void {
@@ -986,51 +756,6 @@ export class AgentRuntime implements AgentRuntimeInterface {
   }
 
   /**
-   * Resolve tenant context: enforce rate limits, concurrency limits, and set up
-   * tenant-scoped storage instances. Returns overrides that must be restored in finally.
-   */
-  private resolveTenantContext(
-    tenantId: string | undefined,
-    tenantCfg: TenantConfig | undefined,
-    _runId: string,
-    _agentId: string,
-    _missionId?: string,
-  ): TenantResolutionResult {
-    const result = this.tenantManager.resolveTenantContext(tenantId, tenantCfg, {
-      samplesStore: this.samplesStore,
-      traceStore: this.traceStore,
-      checkpointer: this.checkpointer,
-      memory: this.memory,
-      governor: this.governor,
-    });
-
-    if (result.allowed && tenantId && tenantCfg?.enabled) {
-      const stores = this.tenantManager.getTenantStores(tenantId);
-      this.samplesStore = stores.samplesStore;
-      this.traceStore = stores.traceStore;
-      this.checkpointer = stores.checkpointer;
-      this.memory = stores.memory;
-    }
-
-    return result;
-  }
-
-  /**
-   * Restore tenant overrides after run completes or fails.
-   */
-  private restoreTenantOverrides(
-    overrides: TenantOverrides | undefined,
-    _tenantId: string | undefined,
-  ): void {
-    if (!overrides) return;
-    this.samplesStore = overrides.origSamplesStore;
-    this.traceStore = overrides.origTraceStore;
-    this.checkpointer = overrides.origCheckpointer;
-    this.memory = overrides.origMemory;
-    this.governor = overrides.origGovernor;
-  }
-
-  /**
    * Execute an agent task end-to-end.
    * Wraps entire body in try/finally to guarantee cleanup (GAP-02, GAP-05).
    * Enforces maxConcurrency via semaphore (GAP-07).
@@ -1049,7 +774,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
     const tenantId = getGlobalTenantProvider().getCurrentTenantId() ?? ctx.tenantId ?? undefined;
     const tenantCfg = tenantId ? this.tenantProvider.getTenantConfig(tenantId) : undefined;
 
-    const tenantResolution = this.resolveTenantContext(
+    const tenantResolution = this.tenantContextResolver.resolveTenantContext(
       tenantId,
       tenantCfg,
       runId,
@@ -1419,7 +1144,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
               reportSilentFailure(err, 'agentRuntime:speculativeTrigger');
             }
 
-            let response = await this.callWithTimeout(llmRequest, routing);
+            let response = await this.llmCaller.callWithTimeout(llmRequest, routing);
             await getHookManager().fireAfterLLMCall({
               request: llmRequest,
               response,
@@ -2216,7 +1941,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     request.messages.push({ role: 'user', content: currentFeedback });
 
                     const reflexionStart = Date.now();
-                    const reflexionResponse = await this.callWithTimeout(request, routing, attempt);
+                    const reflexionResponse = await this.llmCaller.callWithTimeout(request, routing, attempt);
                     if (!reflexionResponse) break;
 
                     response = reflexionResponse;
@@ -2746,286 +2471,6 @@ export class AgentRuntime implements AgentRuntimeInterface {
     }
   }
 
-  private async callWithTimeout(
-    request: LLMRequest,
-    routing: RoutingDecision,
-    attemptNumber: number = 0,
-    taskId?: string,
-  ): Promise<LLMResponse | null> {
-    // Build fallback chain: primary provider first, then all others as backups.
-    // ProviderFallbackChain handles circuit-breaker-aware sequential failover.
-    // Plugin hook: beforeBackendSelect — can override the selected provider
-    const hookSelected = await getHookManager()
-      .fireBeforeBackendSelect({
-        toolName: routing.provider,
-        args: request as unknown as Record<string, unknown>,
-        agentId: taskId ?? 'unknown',
-        runId: taskId ?? 'unknown',
-      })
-      .catch(() => null);
-    const resolvedProvider = hookSelected ?? routing.provider;
-
-    const primaryProvider = this.providers.get(resolvedProvider);
-    const entries: ProviderEntry<import('./types').LLMResponse>[] = [];
-
-    if (primaryProvider) {
-      entries.push({
-        name: resolvedProvider,
-        attempt: () =>
-          this.callProviderOrThrow(
-            primaryProvider,
-            resolvedProvider,
-            request,
-            attemptNumber,
-            taskId,
-          ),
-      });
-    }
-
-    for (const [name, provider] of this.providers) {
-      if (name === routing.provider) continue;
-      entries.push({
-        name,
-        attempt: () => this.callProviderOrThrow(provider, name, request, attemptNumber, taskId),
-      });
-    }
-
-    if (entries.length === 0) {
-      this.samplesStore.recordLLMCall(request, null, {
-        provider: 'none',
-        durationMs: 0,
-        attemptNumber,
-        error: 'No provider available',
-      });
-      return null;
-    }
-
-    try {
-      const { result } = await this.fallbackChain.tryProviders(entries);
-      getHookManager()
-        .fireAfterBackendSelect({
-          toolName: routing.provider,
-          args: request as unknown as Record<string, unknown>,
-          selectedBackend: resolvedProvider,
-          agentId: taskId ?? 'unknown',
-          runId: taskId ?? 'unknown',
-        })
-        .catch(() => {});
-      return result;
-    } catch (err) {
-      if (err instanceof FallbackChainExhaustedError) {
-        this.samplesStore.recordLLMCall(request, null, {
-          provider: 'fallback_exhausted',
-          durationMs: 0,
-          attemptNumber,
-          error: err.message,
-        });
-      }
-      getGlobalLogger().warn('AgentRuntime', 'All providers exhausted in fallback chain', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return null;
-    }
-  }
-
-  /** Thin forwarder that adapts callProvider's nullable return for ProviderFallbackChain.
-   *  ProviderFallbackChain treats non-throwing returns as success, so we throw on null.
-   *  Preserves the original provider error so the retry loop can classify it (429 vs 400 etc). */
-  private async callProviderOrThrow(
-    provider: LLMProvider,
-    providerName: string,
-    request: LLMRequest,
-    attemptNumber: number,
-    taskId?: string,
-  ): Promise<import('./types').LLMResponse> {
-    const result = await this.callProvider(provider, providerName, request, attemptNumber, taskId);
-    if (!result) {
-      // The original error is preserved in this.lastProviderError by callProvider.
-      // Throw it directly so ProviderFallbackChain and the retry loop can classify
-      // it properly (e.g., 429 = retryable, 400 = permanent).
-      // Do NOT clear this.lastProviderError here — the retry loop reads it later.
-      if (this.lastProviderError) {
-        throw this.lastProviderError;
-      }
-      throw new Error(`Provider "${providerName}" returned null (likely timeout or unavailable)`);
-    }
-    // Clear on success — no error to preserve
-    this.lastProviderError = null;
-    return result;
-  }
-
-  private async callProvider(
-    provider: LLMProvider,
-    providerName: string,
-    request: LLMRequest,
-    attemptNumber: number,
-    taskId?: string,
-  ): Promise<LLMResponse | null> {
-    const startMs = Date.now();
-    try {
-      const cached = await this.cacheManager.lookupSemantic(request);
-      if (cached) {
-        try {
-          getMetricsCollector().recordSemanticCacheEvent(
-            'hit',
-            0,
-            getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
-          );
-        } catch (err) {
-          reportSilentFailure(err, 'agentRuntime:4441');
-          /* best-effort */
-        }
-        return cached;
-      }
-      try {
-        getMetricsCollector().recordSemanticCacheEvent(
-          'miss',
-          0,
-          getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
-        );
-      } catch (err) {
-        reportSilentFailure(err, 'agentRuntime:4453');
-        /* best-effort */
-      }
-
-      // Google Gemini cachedContent wiring: when the provider is Google and the request carries
-      // a system prompt, try to attach a server-side cached content name. Failures fall through
-      // (cachedContent is a cost optimization, not a correctness requirement).
-      if (providerName === 'google' && request.cacheConfig) {
-        const systemMsg = request.messages.find((m) => m.role === 'system');
-        const tenantForGemini = getGlobalTenantProvider().getCurrentTenantId() ?? undefined;
-        try {
-          const lookup = await this.cacheManager.getGeminiCachedContent({
-            systemInstruction: systemMsg?.content,
-            tools: request.tools,
-            model: request.model,
-            apiKey: process.env.GOOGLE_API_KEY ?? '',
-            baseUrl: process.env.GOOGLE_BASE_URL,
-            tenantId: tenantForGemini,
-          });
-          if (lookup.cachedContentName) {
-            request.cacheConfig.geminiCachedContentName = lookup.cachedContentName;
-            try {
-              getMetricsCollector().recordGeminiCacheEvent(
-                lookup.createdNow ? 'create' : 'hit',
-                tenantForGemini,
-              );
-            } catch (err) {
-              reportSilentFailure(err, 'agentRuntime:4480');
-              /* best-effort */
-            }
-          }
-        } catch (err) {
-          reportSilentFailure(err, 'agentRuntime:4485');
-          try {
-            getMetricsCollector().recordGeminiCacheEvent('error', tenantForGemini);
-          } catch (err) {
-            reportSilentFailure(err, 'agentRuntime:4489');
-            /* best-effort */
-          }
-        }
-      }
-
-      const tenantIdForFlight = getGlobalTenantProvider().getCurrentTenantId() ?? undefined;
-      const flightKey = SingleFlightRequestCache.computeKey(request, tenantIdForFlight);
-      const evictionsBefore = this.cacheManager.getSingleFlightStats().evictions;
-      const inflightBefore = this.cacheManager.getSingleFlightInflightCount();
-      const llmTimeoutMs = this.config.llmTimeoutMs ?? DEFAULT_LLM_TIMEOUT_MS;
-
-      // EnterpriseSecurityGateway: pre-LLM cost + input-scan gate.
-      const estimatedTokens = this.estimateRequestTokens(request);
-      const gateway = getEnterpriseSecurityGateway();
-      const preCheck = gateway.preLLMCheck({
-        tenantId: tenantIdForFlight,
-        sessionId: taskId,
-        runId: taskId ?? 'unknown',
-        model: request.model,
-        estimatedTokens,
-        source: taskId ?? 'unknown',
-        input: request.messages
-          .map((m) => m.content)
-          .join('\n')
-          .slice(0, 10000),
-      });
-      if (!preCheck.allowed) {
-        throw new Error(`Security gateway blocked LLM call: ${preCheck.reason ?? 'policy'}`);
-      }
-
-      const result: LLMResponse = await this.cacheManager.dedupeSingleFlight(
-        flightKey,
-        async () => {
-          return this.stepTimeout.wrap(provider.call(request), {
-            timeoutMs: llmTimeoutMs,
-            stepId: `llm-${providerName}-${attemptNumber}-${taskId ?? 'main'}`,
-          });
-        },
-        tenantIdForFlight,
-      );
-      const recentEvictionDelta =
-        this.cacheManager.getSingleFlightStats().evictions - evictionsBefore;
-      const wasHit = this.cacheManager.getSingleFlightInflightCount() === inflightBefore;
-      try {
-        getMetricsCollector().recordSingleFlightEvent(wasHit ? 'hit' : 'miss', tenantIdForFlight);
-      } catch (err) {
-        reportSilentFailure(err, 'agentRuntime:4517');
-        /* best-effort */
-      }
-      if (recentEvictionDelta > 0) {
-        try {
-          getMetricsCollector().recordSingleFlightEvent('eviction', tenantIdForFlight);
-        } catch (err) {
-          reportSilentFailure(err, 'agentRuntime:4524');
-          /* best-effort */
-        }
-      }
-      this.cacheManager.storeSemantic(request, result);
-      try {
-        getMetricsCollector().recordSemanticCacheEvent(
-          'store',
-          0,
-          getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
-        );
-      } catch (err) {
-        reportSilentFailure(err, 'agentRuntime:4536');
-        /* best-effort */
-      }
-
-      // EnterpriseSecurityGateway: post-LLM cost accounting + DLP scan.
-      const postCheck = gateway.postLLMCheck({
-        tenantId: tenantIdForFlight,
-        sessionId: taskId,
-        runId: taskId ?? 'unknown',
-        model: request.model,
-        inputTokens: result.usage.promptTokens,
-        outputTokens: result.usage.completionTokens,
-        agentId: taskId,
-        output: result.content,
-      });
-      if (!postCheck.allowed) {
-        throw new Error(`Security gateway blocked LLM output: ${postCheck.reason ?? 'DLP policy'}`);
-      }
-
-      this.samplesStore.recordLLMCall(request, result, {
-        provider: providerName,
-        durationMs: Date.now() - startMs,
-        attemptNumber,
-        taskId,
-      });
-      return result;
-    } catch (err) {
-      this.lastProviderError = err instanceof Error ? err : new Error(String(err));
-      this.samplesStore.recordLLMCall(request, null, {
-        provider: providerName,
-        durationMs: Date.now() - startMs,
-        attemptNumber,
-        error: String(err),
-        taskId,
-      });
-      getGlobalLogger().error('AgentRuntime', 'Provider call failed', err as Error);
-      return null;
-    }
-  }
-
   /** Tier 4.4 helper: estimate cost of a failed step and attribute it to a failure mode. */
   private recordCostByFailureMode(mode: string, response?: LLMResponse | null): void {
     if (!response) return;
@@ -3183,45 +2628,6 @@ export class AgentRuntime implements AgentRuntimeInterface {
   }
   private generateActionId(): string {
     return `act_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-  }
-
-  /** Rough token estimator for the enterprise security gateway pre-LLM check. */
-  private estimateRequestTokens(request: LLMRequest): number {
-    const text = request.messages.map((m) => m.content).join('\n');
-    // Approximate 4 chars per token; include tool definitions if present.
-    const toolText = request.tools
-      ? request.tools
-          .map((t) => `${t.name}\n${t.description ?? ''}\n${JSON.stringify(t.inputSchema ?? {})}`)
-          .join('\n')
-      : '';
-    return Math.ceil((text.length + toolText.length) / 4);
-  }
-
-  /**
-   * Normalize a tool_call payload from either the internal flat format or the
-   * OpenAI-style `{ function: { name, arguments } }` format into the flat
-   * `{ id, name, arguments }` shape the rest of the runtime expects.
-   */
-  private normalizeToolCall(
-    tc: ToolCall & { function?: { name?: string; arguments?: string } },
-  ): ToolCall {
-    if (tc.name && tc.arguments !== undefined) {
-      return tc;
-    }
-    const fn = tc.function;
-    let args: Record<string, unknown> = {};
-    if (fn?.arguments) {
-      try {
-        args = JSON.parse(fn.arguments);
-      } catch {
-        args = { raw: fn.arguments };
-      }
-    }
-    return {
-      id: tc.id ?? `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      name: fn?.name ?? tc.name ?? '',
-      arguments: args,
-    };
   }
 
   // ---------------------------------------------------------------------------
