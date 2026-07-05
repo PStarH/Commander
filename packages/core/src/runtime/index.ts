@@ -257,3 +257,17 @@ export {
   resetGlobalMemoryRegistry,
 } from './tenantProvider';
 export type { TenantConfig } from './tenantProvider';
+
+// Extracted runtime modules (structural-debt cleanup baseline 2026-07-05)
+export { LlmCaller, type LLMCallerDeps, type LLMCallerCallInput } from './llm/llmCaller';
+export { normalizeToolCall } from './tool/toolCallNormalizer';
+export { ToolCallRetryLoopDetector } from './tool/toolCallRetryLoopDetector';
+export {
+  ToolCallSecurityGate,
+  type ToolCallSecurityGateDeps,
+  type BeforeToolCallSecurityResult,
+} from './tool/toolCallSecurityGate';
+export {
+  TenantContextResolver,
+  type TenantContextResolverDeps,
+} from './tenant/tenantContextResolver';
