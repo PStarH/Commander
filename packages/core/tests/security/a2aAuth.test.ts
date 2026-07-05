@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import * as http from 'node:http';
 import { A2AServer } from '../../src/mcp/a2aServer';
 import type { AgentRuntimeInterface } from '../../src/runtime';
@@ -52,12 +52,9 @@ function postJson(
 
 describe('A2AServer bearer auth', () => {
   let server: A2AServer;
+  let port: number;
 
-  afterEach(async () => {
-    if (server) await server.stop();
-  });
-
-  it('rejects JSON-RPC requests without Authorization header', async () => {
+  beforeAll(async () => {
     server = new A2AServer(
       {
         port: 0,
@@ -68,8 +65,15 @@ describe('A2AServer bearer auth', () => {
       stubRuntime,
     );
     await server.start();
+    port = server.getPort();
+  });
 
-    const res = await postJson(server.getPort(), '/', {
+  afterAll(async () => {
+    if (server) await server.stop();
+  });
+
+  it('rejects JSON-RPC requests without Authorization header', async () => {
+    const res = await postJson(port, '/', {
       jsonrpc: '2.0',
       id: 1,
       method: 'tasks/list',
@@ -80,19 +84,8 @@ describe('A2AServer bearer auth', () => {
   });
 
   it('rejects JSON-RPC requests with wrong bearer token', async () => {
-    server = new A2AServer(
-      {
-        port: 0,
-        host: '127.0.0.1',
-        agentCard: { name: 'test', version: '1.0', capabilities: {} } as any,
-        authToken: AUTH_TOKEN,
-      },
-      stubRuntime,
-    );
-    await server.start();
-
     const res = await postJson(
-      server.getPort(),
+      port,
       '/',
       { jsonrpc: '2.0', id: 1, method: 'tasks/list', params: {} },
       { Authorization: 'Bearer wrong-token' },
@@ -102,19 +95,8 @@ describe('A2AServer bearer auth', () => {
   });
 
   it('accepts JSON-RPC requests with correct bearer token', async () => {
-    server = new A2AServer(
-      {
-        port: 0,
-        host: '127.0.0.1',
-        agentCard: { name: 'test', version: '1.0', capabilities: {} } as any,
-        authToken: AUTH_TOKEN,
-      },
-      stubRuntime,
-    );
-    await server.start();
-
     const res = await postJson(
-      server.getPort(),
+      port,
       '/',
       { jsonrpc: '2.0', id: 1, method: 'tasks/list', params: {} },
       { Authorization: `Bearer ${AUTH_TOKEN}` },
