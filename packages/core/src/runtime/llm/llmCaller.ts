@@ -4,9 +4,8 @@
  *
  * Owns the per-attempt LLM provider invocation chain — previously the three
  * private methods `callWithTimeout` + `callProviderOrThrow` + `callProvider`
- * on the AgentRuntime god object (lines 2749-3030 prior to the extraction).
- * Also absorbs `estimateRequestTokens` (line 3189-3202 prior), which only
- * `callProvider` consumes from inside the pre-LLM gateway check.
+ * on the AgentRuntime god object. Also absorbs `estimateRequestTokens`, which
+ * only `callProvider` consumes from inside the pre-LLM gateway check.
  *
  * Behavioural contract — preserved byte-for-byte from the source:
  *   1. `fireBeforeBackendSelect` may return a provider-name override (string)
@@ -51,19 +50,19 @@ import {
   ProviderFallbackChain,
   FallbackChainExhaustedError,
   type ProviderEntry,
-} from './providerFallbackChain';
-import { DEFAULT_LLM_TIMEOUT_MS } from './runtimeConstants';
-import { getEnterpriseSecurityGateway } from '../security/enterpriseSecurityGateway';
-import { reportSilentFailure } from '../silentFailureReporter';
-import { getHookManager } from '../pluginManager';
-import { getMetricsCollector } from './metricsCollector';
-import { getGlobalLogger } from '../logging';
-import { getGlobalTenantProvider } from './tenantProvider';
-import { SingleFlightRequestCache } from './singleFlightRequestCache';
-import type { LLMProvider, LLMRequest, LLMResponse, RoutingDecision } from './types';
-import type { CacheManager } from './cacheManager';
-import type { StepTimeoutManager } from './stepTimeoutManager';
-import type { SamplesStore } from './samplesStore';
+} from '../providerFallbackChain';
+import { DEFAULT_LLM_TIMEOUT_MS } from '../runtimeConstants';
+import { getEnterpriseSecurityGateway } from '../../security/enterpriseSecurityGateway';
+import { reportSilentFailure } from '../../silentFailureReporter';
+import { getHookManager } from '../../pluginManager';
+import { getMetricsCollector } from '../metricsCollector';
+import { getGlobalLogger } from '../../logging';
+import { getGlobalTenantProvider } from '../tenantProvider';
+import { SingleFlightRequestCache } from '../singleFlightRequestCache';
+import type { LLMProvider, LLMRequest, LLMResponse, RoutingDecision } from '../types';
+import type { CacheManager } from '../cacheManager';
+import type { StepTimeoutManager } from '../stepTimeoutManager';
+import type { SamplesStore } from '../samplesStore';
 
 export interface LLMCallerDeps {
   /** Return the live providers map. Callback so `registerProvider()` mutations after construction are visible. */
@@ -93,8 +92,22 @@ export interface LLMCallerCallInput {
   taskId?: string;
 }
 
-export class LLMCaller {
+export class LlmCaller {
   constructor(private readonly deps: LLMCallerDeps) {}
+
+  /**
+   * AgentRuntime-compatible signature. Delegates to the canonical `call`
+   * implementation so both the legacy `call(input)` shape and the runtime's
+   * `callWithTimeout(request, routing, ...)` shape are satisfied.
+   */
+  async callWithTimeout(
+    request: LLMRequest,
+    routing: RoutingDecision,
+    attemptNumber: number = 0,
+    taskId?: string,
+  ): Promise<LLMResponse | null> {
+    return this.call({ request, routing, attemptNumber, taskId });
+  }
 
   async call(input: LLMCallerCallInput): Promise<LLMResponse | null> {
     const { request, routing, attemptNumber = 0, taskId } = input;
@@ -199,7 +212,7 @@ export class LLMCaller {
     if (!result) {
       // The original error is preserved in lastProviderError by callProvider.
       // Throw it directly so ProviderFallbackChain and the retry loop can
-      // classify it properly (e.g. 429 = retryable, 400 = permanent).
+      // classify it properly (e.g., 429 = retryable, 400 = permanent).
       // Do NOT clear lastProviderError here — the retry loop reads it later.
       const lastErr = this.deps.getLastProviderError();
       if (lastErr) {
