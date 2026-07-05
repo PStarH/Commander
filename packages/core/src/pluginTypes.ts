@@ -12,8 +12,8 @@ import type {
   LLMResponse,
   AgentExecutionContext,
   AgentExecutionResult,
-} from './runtime/types';
-import type { Tool } from './runtime/types/tool';
+  Tool,
+} from './runtime';
 
 // ============================================================================
 // Hook Types
