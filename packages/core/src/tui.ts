@@ -21,9 +21,8 @@
 
 import * as blessed from 'blessed';
 import type { Widgets } from 'blessed';
-import { getMessageBus } from './runtime/messageBus';
-import type { MessageBusTopic, BusMessage } from './runtime/types';
-import { StateCheckpointer } from './runtime/stateCheckpointer';
+import { getMessageBus, StateCheckpointer } from './runtime';
+import type { MessageBusTopic, BusMessage } from './runtime';
 import { getGlobalLogger } from './logging';
 import { detectProvider, getEffectiveModel } from './config/commanderConfig';
 import * as path from 'node:path';

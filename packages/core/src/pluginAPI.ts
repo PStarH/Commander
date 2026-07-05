@@ -13,7 +13,7 @@ import type {
   CommandOpts,
 } from '@commander/plugin-sdk';
 import { getGlobalLogger } from './logging';
-import type { Tool, ToolDefinition } from './runtime/types';
+import type { Tool, ToolDefinition } from './runtime';
 
 // ============================================================================
 // Plugin Tool Adapter — wraps PluginTool as internal Tool

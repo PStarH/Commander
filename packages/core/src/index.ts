@@ -228,14 +228,6 @@ export {
 } from './runtime/webhookDispatcher';
 export type { WebhookConfig, WebhookEvent, WebhookDelivery } from './runtime/webhookDispatcher';
 
-// OpenTelemetry Exporter
-export {
-  OpenTelemetryExporter,
-  getOTelExporter,
-  resetOTelExporter,
-} from './runtime/openTelemetryExporter';
-export type { OTelExporterConfig, OTelSpan } from './runtime/openTelemetryExporter';
-
 // ThreeLayerMemory
 export {
   ThreeLayerMemory,
@@ -245,14 +237,6 @@ export {
 } from './threeLayerMemory';
 
 // Logging & Metrics
-export {
-  parseStructuredOutput,
-  validateStructuredOutput,
-  validateShape,
-} from './runtime/structuredOutput';
-export { ContextWindowManager, estimateTotalTokens } from './runtime/contextWindow';
-export type { ContextWindowConfig, WindowAction } from './runtime/contextWindow';
-
 export { Logger, getGlobalLogger, getGlobalMetrics } from './logging';
 
 // Error Handler
@@ -727,41 +711,11 @@ export type { CostBreakdown, TokenBreakdown, ModelPricing } from './observabilit
 export { handleObservabilityRequest, OBSERVABILITY_HTTP_ROUTES } from './observability/httpApi';
 export type { ObservabilityDeps, ObservabilityResult } from './observability/httpApi';
 
-// Trace Store — durable execution-trace persistence (single source of truth in core)
-export { PersistentTraceStore } from './runtime/traceStore';
-export type { TraceStore } from './runtime/traceStore';
-
 // Runtime System — Agent Execution Engine
-export type {
-  LLMMessage,
-  LLMRequest,
-  LLMResponse,
-  LLMProvider,
-  CacheConfig,
-  CacheUsage,
-  ToolDefinition,
-  ToolCall,
-  ToolResult,
-  Tool,
-  ModelTier,
-  ModelConfig,
-  RoutingDecision,
-  AgentExecutionContext,
-  AgentExecutionStep,
-  AgentExecutionResult,
-  AgentRuntimeConfig,
-  MessageBusTopic,
-  MessagePriority as BusMessagePriority,
-  BusMessage,
-  MessageHandler,
-  TraceEvent,
-  ExecutionTrace,
-  HTMLReportSection,
-  HTMLReport,
-  ExecutionExperience,
-  OptimizationSuggestion,
-  StrategyPerformance,
-} from './runtime/types';
+// The './runtime' barrel above already re-exports the common runtime types.
+// Only CacheConfig/CacheUsage are kept from the concrete './runtime/types'
+// file because they are not currently exported through the barrel.
+export type { CacheConfig, CacheUsage } from './runtime/types';
 export {
   ModelRouter,
   getModelRouter,
@@ -817,6 +771,55 @@ export {
   getSOPMarkdown,
   getSOPDashboardData,
   renderSOPDashboardHtml,
+  // OpenTelemetry Exporter
+  OpenTelemetryExporter,
+  getOTelExporter,
+  resetOTelExporter,
+  // Structured output & context window
+  parseStructuredOutput,
+  validateStructuredOutput,
+  validateShape,
+  ContextWindowManager,
+  estimateTotalTokens,
+  // Trace store
+  PersistentTraceStore,
+  // HTTP server & channel adapter
+  CommanderHttpServer,
+  createHttpServer,
+  BaseChannelAdapter,
+  // Unified verification & task analysis
+  UnifiedVerificationPipeline,
+  detectTaskType,
+  classifyProvisionIntent,
+  // Token governor
+  TokenGovernor,
+  getTokenGovernor,
+  resetTokenGovernor,
+  // Tool calling infrastructure
+  ToolResultCache,
+  ToolOutputManager,
+  ToolOrchestrator,
+  toolErrorRow,
+  ToolAvailabilityManager,
+  evaluate,
+  allOf,
+  anyOf,
+  not,
+  always,
+  never,
+  earlySteps,
+  budgetRelaxed,
+  budgetNotCritical,
+  notYetUsed,
+  requiresTool,
+  maxErrors,
+  createDefaultRules,
+  ToolPlanner,
+  // Reliability & privacy
+  ReliabilityEngine,
+  PrivacyRouter,
+  getPrivacyRouter,
+  resetPrivacyRouter,
 } from './runtime';
 export type { AgentRuntimeInterface } from './runtime';
 export type {
@@ -832,6 +835,50 @@ export type {
   SOPDecision,
   SOPToolCall,
   SOPFileAccess,
+  // OpenTelemetry
+  OTelExporterConfig,
+  OTelSpan,
+  // Token governor
+  OptimizationStrategy,
+  BudgetState,
+  GovernorDecision,
+  GovernorConfig,
+  TaskCategory,
+  // Context window
+  ContextWindowConfig,
+  WindowAction,
+  // Trace store
+  TraceStore,
+  // Tool calling infrastructure
+  OrchestratorConfig,
+  OrchestratedResult,
+  ToolExecutionPlan,
+  ToolExecutionContext,
+  SyntheticErrorRow,
+  PreToolCallGateResult,
+  AvailabilityContext,
+  AvailabilityExpression,
+  ToolAvailabilityRule,
+  ExecutionPlan,
+  ExecutionStage,
+  DependencyEdge,
+  ResourceConflict,
+  // Reliability & privacy
+  ReliabilityEngineConfig,
+  ReliabilityStats,
+  PrivacyRouterConfig,
+  PrivacyDecision,
+  PrivacyRoute,
+  SensitivityMatch,
+  SensitivityCategory as PrivacySensitivityCategory,
+  // Channel adapter
+  ChannelAdapter,
+  ChannelConfig,
+  ChannelMessage,
+  ChannelStatus,
+  ChannelAttachment,
+  SendOptions,
+  MessageRole,
 } from './runtime';
 
 // HTML Reporting — now delivered via the builtin-reporting plugin.
@@ -987,12 +1034,7 @@ export type {
   EvolutionResult,
   EvolutionOptions,
 } from './runtime/evolutionaryWorkflowTypes';
-export { CommanderHttpServer, createHttpServer } from './runtime/httpServer';
-export { BaseChannelAdapter } from './runtime/channelAdapter';
-
 // Unified Verification Pipeline
-export { UnifiedVerificationPipeline } from './runtime/unifiedVerification';
-export { detectTaskType, classifyProvisionIntent } from './runtime/taskAnalyzer';
 export type {
   VerificationSignal,
   VerificationReport,
@@ -1003,7 +1045,6 @@ export type {
 } from './runtime/unifiedVerificationTypes';
 
 // Token Budget Governor
-export { TokenGovernor, getTokenGovernor, resetTokenGovernor } from './runtime/tokenGovernor';
 
 // Token Budget Manager — per-run proportional sub-agent allocation
 export {
@@ -1047,71 +1088,6 @@ export {
   isRebuilt,
 } from './runtime/rebuildPrompt';
 export type { RebuildParams, RebuildSection, RebuildResult } from './runtime/rebuildPrompt';
-export type {
-  OptimizationStrategy,
-  BudgetState,
-  GovernorDecision,
-  GovernorConfig,
-  TaskCategory,
-} from './runtime/tokenGovernor';
-
-// Tool Calling Infrastructure
-export { ToolResultCache } from './runtime/toolResultCache';
-export type { ToolCacheConfig, ToolCacheStats } from './runtime/toolResultCache';
-export { ToolOutputManager } from './runtime/toolOutputManager';
-export type { ToolOutputConfig, ManagedOutput, TurnBudgetState } from './runtime/toolOutputManager';
-export { ToolOrchestrator } from './runtime/toolOrchestrator';
-
-// Canonical synthetic-error row shape shared by AgentRuntime pre-tool-call
-// gates and ToolOrchestrator boundary — exported as part of the public API
-// so SDK consumers can construct symbol-compatible error rows when implementing
-// custom tools, gates, or boundary callbacks.
-export { toolErrorRow } from './runtime/toolResultShape';
-export type { SyntheticErrorRow, PreToolCallGateResult } from './runtime/toolResultShape';
-export type {
-  OrchestratorConfig,
-  OrchestratedResult,
-  ToolExecutionPlan,
-  ToolExecutionContext,
-} from './runtime/toolOrchestrator';
-export {
-  ToolAvailabilityManager,
-  evaluate,
-  allOf,
-  anyOf,
-  not,
-  always,
-  never,
-  earlySteps,
-  budgetRelaxed,
-  budgetNotCritical,
-  notYetUsed,
-  requiresTool,
-  maxErrors,
-  createDefaultRules,
-} from './runtime/toolAvailability';
-export type {
-  AvailabilityContext,
-  AvailabilityExpression,
-  ToolAvailabilityRule,
-} from './runtime/toolAvailability';
-export { ToolPlanner } from './runtime/toolPlanner';
-export type {
-  ExecutionPlan,
-  ExecutionStage,
-  DependencyEdge,
-  ResourceConflict,
-} from './runtime/toolPlanner';
-export type {
-  ChannelAdapter,
-  ChannelConfig,
-  ChannelMessage,
-  ChannelStatus,
-  ChannelAttachment,
-  SendOptions,
-  MessageRole,
-} from './runtime/channelAdapter';
-
 // Topology & Workflow Optimization
 export {
   ReflexionTopologicalOptimizer as TopologyOptimizer,
@@ -1267,8 +1243,6 @@ export type {
   SecurityOrchestratorDecision,
   SecurityOrchestratorConfig,
 } from './runtime/securityOrchestrator';
-export { ReliabilityEngine } from './runtime/reliabilityEngine';
-export type { ReliabilityEngineConfig, ReliabilityStats } from './runtime/reliabilityEngine';
 
 // Commander Core — tiered auto-configuration control center (recommended entry)
 export { Commander } from './commander';
@@ -1359,16 +1333,6 @@ export type { AutoLoopConfig, AutoLoopRun, CompletionDetector } from './autoLoop
 export type { CommanderOptions, DeploymentTier, ResolvedConfig } from './commander/tier';
 export type { ProbeResult } from './commander/probe';
 
-// PrivacyRouter — Sensitive content detection + local model fallback
-export { PrivacyRouter, getPrivacyRouter, resetPrivacyRouter } from './runtime/privacyRouter';
-export type {
-  PrivacyRouterConfig,
-  PrivacyDecision,
-  PrivacyRoute,
-  SensitivityMatch,
-  SensitivityCategory as PrivacySensitivityCategory,
-} from './runtime/privacyRouter';
-
 // Compensation Primitives — in-memory mutation rollback registry
 // ---------------------------------------------------------
 // CompensationRegistry (class) + CompensableAction + CompensationHandler
@@ -1381,8 +1345,8 @@ export type {
 // items back into in-memory handlers via claimNext()). Use the saga scheduler
 // for DAG-ordered retry semantics; per-step policy lives in `CompensationFn`
 // + `defaultCompensationRetryPolicy`.
-export { CompensationRegistry } from './runtime';
-export type { CompensableAction, CompensationHandler } from './runtime';
+//
+// These symbols are already exported via the './runtime' barrel above.
 
 // Saga Runtime — durable compensating transactions
 export {
