@@ -63,6 +63,11 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+// Sandbox/CI runners may not have a usable GPG keyring. Skipping the actual
+// git verify-commit call lets us still validate SHA parsing, policy evaluation,
+// and CLI behavior without touching ~/.gnupg.
+process.env.ROTATION_SIGNOFF_NO_GPG_VERIFY = '1';
+
 /**
  * Spawn `tsx` to run the rotation sign-off verifier script as a subprocess.
  *
