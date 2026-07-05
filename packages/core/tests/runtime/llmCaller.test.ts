@@ -66,7 +66,8 @@ vi.mock('../../src/logging', () => ({
 import {
   LLMCaller,
   type LLMCallerDeps,
-} from '../../src/runtime/llmCaller';
+  type LLMCallerCallInput,
+} from '../../src/runtime/llm/llmCaller';
 import {
   FallbackChainExhaustedError,
   ProviderFallbackChain,

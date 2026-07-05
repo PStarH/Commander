@@ -73,6 +73,37 @@ utility was not feasible without introducing new code.
 
 ---
 
+## MODIFIED — AgentRuntime God-Object Baseline (2026-07-05)
+
+Task 4 in `docs/superpowers/plans/2026-07-04-structural-debt-cleanup.md` extracted
+nine clearly-bounded private methods from `packages/core/src/runtime/agentRuntime.ts`
+into new modules without changing `AgentRuntimeInterface` or external behavior.
+
+| Metric | Value |
+| ------ | ----- |
+| `agentRuntime.ts` before extraction | 3,372 lines |
+| `agentRuntime.ts` after extraction | 2,778 lines |
+| Lines removed | 594 |
+
+| Extracted Module | Original Private Method(s) | Notes |
+| ---------------- | -------------------------- | ----- |
+| `packages/core/src/runtime/llm/llmCaller.ts` | `callWithTimeout`, `callProviderOrThrow`, `callProvider` | Includes `estimateRequestTokens`; wired as `this.llmCaller` |
+| `packages/core/src/runtime/tool/toolCallNormalizer.ts` | `normalizeToolCall` | Pure function, no runtime state |
+| `packages/core/src/runtime/tool/toolCallRetryLoopDetector.ts` | `checkRetryLoop` | Includes stable `canonicalJson` helper |
+| `packages/core/src/runtime/tool/toolCallSecurityGate.ts` | `applyBeforeToolCallSecurity`, `applyPreToolCallGates` | Depends on `ToolCallRetryLoopDetector` |
+| `packages/core/src/runtime/tenant/tenantContextResolver.ts` | `resolveTenantContext`, `restoreTenantOverrides` | Bridges `TenantManager` store swapping |
+
+All new modules are exported from `packages/core/src/runtime/index.ts`.
+
+### Skipped extractions
+
+No methods were skipped. Every target in Task 4 was extracted because each had
+a clearly-bounded contract and the required runtime state could be supplied
+through the existing callback-dependency pattern used by `ToolExecutionHandler`
+and `FinallyCleanupHandler`.
+
+---
+
 ## HIGH — Duplicate / Overlapping Modules (RESOLVED 2026-06-24)
 
 | New Module                              | Old Module               | Action                                                                                      |
@@ -203,7 +234,7 @@ Note: `AdaptiveExecutionResult` kept locally because it uses `AgentExecutionResu
 
 | File                           | Issue                                                              | Severity |
 | ------------------------------ | ------------------------------------------------------------------ | -------- |
-| `runtime/agentRuntime.ts`      | 4,607-line God object, 76 singletons, 110 catch blocks (61 silent) | Critical |
+| `runtime/agentRuntime.ts`      | 2,778-line God object (was 3,372), 76 singletons, 110 catch blocks (61 silent) | Critical |
 | `ultimate/orchestrator.ts`     | 2,010-line God class, `execute()` ~900 lines                       | Critical |
 | `ultimate/deliberation.ts:557` | `deliberateWithLLM` adds latency with no behavioral benefit        | Medium   |
 | `ultimate/atomizer.ts`         | ASPECT always 3 subtasks, STEP always 4 — not adaptive             | Medium   |
