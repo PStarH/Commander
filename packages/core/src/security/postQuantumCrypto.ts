@@ -353,12 +353,9 @@ export class PostQuantumCrypto {
    * security. Use established cryptographic channels instead.
    */
   generateSharedSecret(peerPublicKey: string, localKeyPair: PqKeyPair): Buffer {
-    // Placeholder PQ-safe key agreement using HKDF-like construction.
-    // In production this should be replaced with ML-KEM-768 encapsulation.
-    const privateKey = Buffer.from(localKeyPair.privateKey, 'hex');
-    const peerKey = Buffer.from(peerPublicKey, 'hex');
-    const salt = Buffer.from(`commander:pq:kex:${localKeyPair.algorithm}`);
-    return crypto.createHmac('sha512', privateKey).update(peerKey).update(salt).digest();
+    throw new Error(
+      `ML-KEM-768 shared secret generation is not yet implemented (algorithm=${localKeyPair.algorithm})`,
+    );
   }
 
   // ── CSPRNG (PQ-strength) ──────────────────────────────────────────
