@@ -579,6 +579,13 @@ export type {
   VaultStats,
 } from './encryptedSecretsVault';
 
+// SecureApiKeyResolver — vault-first API key resolution with env fallback
+export {
+  resolveSecureApiKey,
+  resolveSecureApiKeys,
+  initSecureApiKeyResolver,
+} from './secureApiKeyResolver';
+
 // DataLossPrevention — 全面数据泄露防护系统，覆盖 API/日志/工具/Agent/SSE 出口点
 export {
   DataLossPrevention,

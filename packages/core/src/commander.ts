@@ -30,8 +30,8 @@ import { createWiredRuntime } from './commander/factory';
 import type { ProbeResult } from './commander/probe';
 import type { CommanderOptions, DeploymentTier, ResolvedConfig } from './commander/tier';
 import type { WiredRuntime } from './commander/factory';
-import type { AgentRuntimeInterface } from './runtime';
-import type { AgentExecutionResult } from './runtime/types';
+import type { AgentRuntimeInterface, AgentExecutionResult } from './runtime';
+import { AgentRuntime, getMessageBus } from './runtime';
 import { getGlobalLogger } from './logging';
 
 // Re-export types for consumers
