@@ -147,10 +147,11 @@ describe('PostQuantumCrypto', () => {
   });
 
   describe('shared secret', () => {
-    it('generates a shared secret', () => {
+    it('throws a not-implemented error', () => {
       const kp = pq.generateKeyPair();
-      const secret = pq.generateSharedSecret(kp.publicKey, kp);
-      expect(secret.length).toBe(64); // SHA-512 HMAC output
+      expect(() => pq.generateSharedSecret(kp.publicKey, kp)).toThrow(
+        'ML-KEM-768 shared secret generation is not yet implemented',
+      );
     });
   });
 
