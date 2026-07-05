@@ -242,3 +242,18 @@ export { BatchLLMProvider, createBatchProvider } from './batchProvider';
 export type { BatchJob, BatchProviderConfig } from './batchProvider';
 export { executeViaBatchAPI, supportsNativeBatchAPI } from './batchApiClient';
 export type { BatchAPIConfig, BatchSubmissionResult, BatchPollResult } from './batchApiClient';
+
+// Tenant Provider — re-exported through the runtime barrel so core internal
+// consumers can import alongside other runtime primitives.
+export {
+  TenantProvider,
+  NullTenantProvider,
+  SimpleTenantProvider,
+  ThreeLayerMemoryRegistry,
+  getGlobalTenantProvider,
+  setGlobalTenantProvider,
+  resetGlobalTenantProvider,
+  getGlobalMemoryRegistry,
+  resetGlobalMemoryRegistry,
+} from './tenantProvider';
+export type { TenantConfig } from './tenantProvider';
