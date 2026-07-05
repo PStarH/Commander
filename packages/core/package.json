@@ -32,7 +32,19 @@
       "types": "./dist/security/index.d.ts",
       "default": "./dist/security/index.js"
     },
-    "./security/*": "./dist/security/*"
+    "./security/*": {
+      "types": "./dist/security/*.d.ts",
+      "default": "./dist/security/*.js"
+    },
+    "./observability": {
+      "types": "./dist/observability/index.d.ts",
+      "default": "./dist/observability/index.js"
+    },
+    "./observability/*": {
+      "types": "./dist/observability/*.d.ts",
+      "default": "./dist/observability/*.js"
+    },
+    "./package.json": "./package.json"
   },
   "keywords": [
     "multi-agent",
