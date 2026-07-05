@@ -60,6 +60,13 @@ export interface ApiCheckpointConfigRow {
   fallback_on_timeout: string;
 }
 
+export interface MissionCheckpoints {
+  missionId: string;
+  checkpoints: ApiCheckpointRow[];
+  status: 'ok' | 'not_implemented';
+  note?: string;
+}
+
 export interface SqliteApiStore {
   readonly backend: ApiStoreBackend;
   readonly dbPath: string;
@@ -252,7 +259,14 @@ function createMemoryApiStore(dbPath: string): SqliteApiStore {
       return row;
     },
     getCheckpointStats(missionId?: string) {
-      const rows = missionId ? checkpointsForMission(missionId) : Array.from(checkpoints.values());
+      if (!missionId) {
+        return statsFromRows(Array.from(checkpoints.values()));
+      }
+      const mission = checkpointsForMission(missionId);
+      const rows =
+        mission.status === 'not_implemented'
+          ? Array.from(checkpoints.values()).filter((c) => c.mission_id === missionId)
+          : mission.checkpoints;
       return statsFromRows(rows);
     },
     cleanup() {
@@ -549,7 +563,14 @@ function createSqliteApiStore(dbPath: string): SqliteApiStore {
       return row;
     },
     getCheckpointStats(missionId?: string) {
-      const rows = missionId ? (stmtListCheckpoints.all() as ApiCheckpointRow[]) : [];
+      if (!missionId) {
+        return statsFromRows([]);
+      }
+      const mission = checkpointsForMission(missionId);
+      const rows =
+        mission.status === 'not_implemented'
+          ? (stmtListCheckpoints.all() as ApiCheckpointRow[])
+          : mission.checkpoints;
       return statsFromRows(rows);
     },
     cleanup() {
@@ -573,8 +594,13 @@ export function createApiStore(options?: {
   return createSqliteApiStore(dbPath);
 }
 
-function checkpointsForMission(missionId: string): ApiCheckpointRow[] {
-  throw new Error('Not implemented for direct SQLite rows');
+function checkpointsForMission(missionId: string): MissionCheckpoints {
+  return {
+    missionId,
+    checkpoints: [],
+    status: 'not_implemented',
+    note: 'Direct SQLite checkpoint aggregation is not yet implemented',
+  };
 }
 
 function statsFromRows(rows: ApiCheckpointRow[]) {
