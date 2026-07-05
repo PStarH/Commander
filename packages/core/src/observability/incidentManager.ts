@@ -564,13 +564,13 @@ export class IncidentManager {
         ` Severity: ${incident.severity}. Detected: ${incident.detectedAt}.` +
         ` Resolved: ${incident.resolvedAt ?? 'pending'}.` +
         ` Duration: ${timeToResolveMinutes} minutes (SLA target: ${sla.resolutionTarget} min, ${withinSLA ? 'within SLA' : 'BREACHED'}).`,
-      impact: `[TODO] Describe user-facing impact. Affected components: ${incident.affectedComponents.join(', ')}.`,
-      rootCauses: ['[TODO] Identify the underlying cause(s) that led to this incident.'],
+      impact: `[AUTO-DRAFT] User-facing impact not yet analyzed. Affected components: ${incident.affectedComponents.join(', ')}.`,
+      rootCauses: ['Root cause analysis not yet completed.'],
       timeline: incident.timeline,
-      whatWentWell: ['[TODO] List what worked well during detection, response, and recovery.'],
-      whatWentPoorly: ['[TODO] List what did not work well and caused delays or confusion.'],
+      whatWentWell: ['Response workflow not yet reviewed.'],
+      whatWentPoorly: ['Areas for improvement not yet reviewed.'],
       actionItems: [],
-      lessonsLearned: ['[TODO] What did we learn that should change how we operate?'],
+      lessonsLearned: ['Operational learnings not yet captured.'],
       timeToDetectMinutes,
       timeToMitigateMinutes,
       timeToResolveMinutes,
