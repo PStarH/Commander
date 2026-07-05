@@ -78,27 +78,54 @@ export async function atomicWriteFile(
  * process teardown — the hot path (atomicWriteFile itself) is fully async.
  * ───────────────────────────────────────────────────────────────────────────
  */
-export function registerTmpCleanup(directory: string): () => void {
-  const cleanup = (): void => {
-    try {
-      const entries = fs.readdirSync(directory);
-      for (const entry of entries) {
-        if (entry.includes('.tmp')) {
-          try {
-            fs.unlinkSync(path.join(directory, entry));
-          } catch (_silentE_) {
-            reportSilentFailure(_silentE_, 'atomicWrite:88');
-          }
+async function cleanupAsync(directory: string): Promise<void> {
+  try {
+    const entries = await fs.promises.readdir(directory);
+    for (const entry of entries) {
+      if (entry.includes('.tmp')) {
+        try {
+          await fs.promises.unlink(path.join(directory, entry));
+        } catch (_silentE_) {
+          reportSilentFailure(_silentE_, 'atomicWrite:cleanupAsync');
         }
       }
-    } catch (_silentE_) {
-      reportSilentFailure(_silentE_, 'atomicWrite:91');
     }
-  };
+  } catch (_silentE_) {
+    reportSilentFailure(_silentE_, 'atomicWrite:cleanupAsync:readdir');
+  }
+}
 
-  const onExit = (): void => cleanup();
-  const onSignal = (_sig: NodeJS.Signals): void => {
-    cleanup();
+function cleanupSync(directory: string): void {
+  try {
+    const entries = fs.readdirSync(directory);
+    for (const entry of entries) {
+      if (entry.includes('.tmp')) {
+        try {
+          fs.unlinkSync(path.join(directory, entry));
+        } catch (_silentE_) {
+          reportSilentFailure(_silentE_, 'atomicWrite:cleanupSync');
+        }
+      }
+    }
+  } catch (_silentE_) {
+    reportSilentFailure(_silentE_, 'atomicWrite:cleanupSync:readdir');
+  }
+}
+
+/**
+ * Register a cleanup hook so .tmp files in the target directory are
+ * removed on process exit / SIGINT / SIGTERM. Best-effort: this is a
+ * safety net for crashes, not a replacement for try/catch in callers.
+ *
+ * The `process.on('exit')` listener must remain synchronous because Node.js
+ * docs forbid async I/O inside that event. SIGINT/SIGTERM handlers, however,
+ * are allowed to perform async cleanup, so they route through `cleanupAsync`
+ * to avoid blocking the event loop during graceful shutdown.
+ */
+export function registerTmpCleanup(directory: string): () => void {
+  const onExit = (): void => cleanupSync(directory);
+  const onSignal = async (_sig: NodeJS.Signals): Promise<void> => {
+    await cleanupAsync(directory);
   };
 
   process.on('exit', onExit);
