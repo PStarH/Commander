@@ -13,7 +13,7 @@
  */
 
 import { reportSilentFailure } from '../../silentFailureReporter';
-import { $ } from '../util';
+import { $, warn } from '../util';
 
 // ============================================================================
 // 1. commander pr — Create PR with one command
@@ -268,8 +268,11 @@ export async function cmdTest(flags: Record<string, string>): Promise<void> {
       if (flags['--fix']) {
         console.log(`\n  ${$.bold}Attempting auto-fix...${$.reset}`);
         // Try to identify and fix common issues
-        console.log(`  ${$.dim}Auto-fix not yet implemented. Run manually:${$.reset}`);
-        console.log(`    pnpm test`);
+        warn(
+          'Auto-fix not yet implemented for this failure type; manual intervention required.',
+          'pnpm test',
+        );
+        process.exitCode = 1;
       }
     }
   } catch (err) {
