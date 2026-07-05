@@ -5,7 +5,7 @@
 
 import express, { Request, Response, Router } from 'express';
 import { LLMEvaluator, ScoreSmoother, EvaluationCriterion, EvaluationRequest } from './evaluation';
-import { resolveSecureApiKey } from '@commander/core/security/secureApiKeyResolver';
+import { resolveSecureApiKey } from '@commander/core/security';
 
 export function createEvaluationRouter(
   evaluator: LLMEvaluator,

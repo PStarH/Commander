@@ -121,8 +121,8 @@ const DEFAULT_CONFIG: Record<MemoryLayer, LayerConfig> = {
 // Three-Layer Memory
 // ========================================
 
-import { calculateMemoryScore, InMemoryEmbeddingStore } from './runtime/embedding';
-import type { EmbeddingFunction } from './runtime/embedding';
+import { calculateMemoryScore, InMemoryEmbeddingStore } from './runtime';
+import type { EmbeddingFunction } from './runtime';
 import { getGlobalLogger } from './logging';
 
 export class ThreeLayerMemory {
