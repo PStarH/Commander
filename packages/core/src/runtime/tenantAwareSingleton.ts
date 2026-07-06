@@ -16,6 +16,8 @@
  */
 import { getCurrentTenantId, validateTenantId, TenantIsolationError } from './tenantContext';
 
+let warnedGlobalFallback = false;
+
 export interface TenantQuota {
   /** Max number of tenants that can be active at once. */
   maxTenants: number;
@@ -209,13 +211,16 @@ export function createTenantAwareSingleton<T>(
     }
 
     const isDev = process.env.NODE_ENV === 'development';
-    log(
-      'warn',
-      `Using global fallback instance outside tenant context — ${isDev ? 'acceptable in development' : 'data is NOT isolated by tenant'}`,
-      {
-        allowGlobalFallback,
-      },
-    );
+    if (!warnedGlobalFallback) {
+      warnedGlobalFallback = true;
+      log(
+        'warn',
+        `Using global fallback instance outside tenant context — ${isDev ? 'acceptable in development' : 'data is NOT isolated by tenant'}`,
+        {
+          allowGlobalFallback,
+        },
+      );
+    }
     if (!globalInstance) {
       globalInstance = factory();
     }
