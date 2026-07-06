@@ -2,13 +2,14 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    pool: 'threads',
-    // Cap threads to avoid EMFILE under heavy network/mock server suites;
-    // integration suites that mutate shared process state opt back into
-    // singleThread via their file-level metadata or the list below.
-    maxThreads: 2,
-    minThreads: 1,
-    singleThread: ['tests/runtime/determinismCapture.test.ts', 'tests/runtime/stateIsolation.test.ts'],
+    // Single-threaded default. The suite has ~220 test files, many of which
+    // exercise full AgentRuntime loops, share SQLite WAL paths, open HTTP
+    // servers, or mutate singleton registries. Attempts to run multi-threaded
+    // or multi-fork produced SIGSEGV (better-sqlite3), EMFILE, and EADDRNOTAVAIL
+    // races. Keep serial until integration tests are isolated enough for workers.
+    pool: 'forks',
+    maxForks: 1,
+    minForks: 1,
     // Integration tests exercise full AgentRuntime execution loops (tool
     // calling, security correlators, tenant isolation). 180s testTimeout gives
     // realistic headroom for E2E flows; slow E2E tests further override with
