@@ -4,12 +4,10 @@ export default defineConfig({
   test: {
     // Single-threaded default. The suite has ~220 test files, many of which
     // exercise full AgentRuntime loops, share SQLite WAL paths, open HTTP
-    // servers, or mutate singleton registries. Attempts to run multi-threaded
-    // or multi-fork produced SIGSEGV (better-sqlite3), EMFILE, and EADDRNOTAVAIL
-    // races. Keep serial until integration tests are isolated enough for workers.
-    pool: 'forks',
-    maxForks: 1,
-    minForks: 1,
+    // servers, or mutate singleton registries. Multi-threaded/fork runs caused
+    // SIGSEGV (better-sqlite3), EMFILE, and EADDRNOTAVAIL races. Keep serial
+    // until integration tests are isolated enough for workers.
+    threads: false,
     // Integration tests exercise full AgentRuntime execution loops (tool
     // calling, security correlators, tenant isolation). 180s testTimeout gives
     // realistic headroom for E2E flows; slow E2E tests further override with
