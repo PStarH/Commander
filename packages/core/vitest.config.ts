@@ -2,15 +2,21 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    threads: false,
+    pool: 'threads',
+    poolOptions: {
+      threads: {
+        // Cap threads to avoid EMFILE under heavy network/mock server suites;
+        // integration suites that mutate shared process state opt back into
+        // singleThread via their file-level metadata or the list below.
+        maxThreads: 2,
+        minThreads: 1,
+        singleThread: ['tests/runtime/determinismCapture.test.ts', 'tests/runtime/stateIsolation.test.ts'],
+      },
+    },
     // Integration tests exercise full AgentRuntime execution loops (tool
-    // calling, security correlators, tenant isolation). Under the single-thread
-    // in-process pool with ~220 test files, CPU contention makes per-test
-    // wall time grow non-linearly — a single mocked AgentRuntime.execute()
-    // takes ~32s in isolation but >60s in the full suite. 180s testTimeout
-    // gives realistic headroom for E2E flows; the slow E2E tests further
-    // override with explicit per-`it` timeouts of 180s-240s so they don't
-    // fight the global ceiling.
+    // calling, security correlators, tenant isolation). 180s testTimeout gives
+    // realistic headroom for E2E flows; slow E2E tests further override with
+    // explicit per-`it` timeouts so they don't fight the global ceiling.
     testTimeout: 180000,
     retry: 2,
     setupFiles: ['tests/setup.ts'],
