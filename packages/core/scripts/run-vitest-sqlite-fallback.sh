@@ -73,4 +73,4 @@ for s in "${SUITES[@]}"; do
   echo "  • $s" >&2
 done
 
-exec pnpm exec vitest run --no-cache "${EXCLUDES[@]}" "$@"
+exec ./node_modules/.bin/vitest run --no-cache "${EXCLUDES[@]}" "$@"
