@@ -28,16 +28,26 @@ set -euo pipefail
 # additions always land at a predictable location. CI runs these only when
 # better-sqlite3's native binding successfully loads.
 SUITES=(
-  # CheckpointStore.openDb in src/runtime/checkpointStore.ts:178 calls
-  # `new Database(filePath)` synchronously at construction time → fails on a
-  # runner without a usable native binding (verified across ubuntu 20/22,
-  # macos 20/22 in run 28353649360). Discovered via CI triage after the
-  # initial 7-suite exclude list missed this transitive caller.
+  'tests/atr/adapters/github.test.ts'
+  'tests/atr/atrHttp.test.ts'
+  'tests/atr/c6AgentRuntimeLease.test.ts'
+  'tests/atr/checkpointLease.test.ts'
+  'tests/atr/executionScheduler.test.ts'
+  'tests/atr/leaseManager.test.ts'
+  'tests/atr/policy/e2e.test.ts'
+  'tests/atr/policy/integration.test.ts'
+  'tests/atr/runLedger.test.ts'
   'tests/checkpointStore.test.ts'
+  'tests/e2e/sloMeasurement.test.ts'
   'tests/recovery/kill9.test.ts'
+  'tests/runtime/determinismCapture.test.ts'
+  'tests/runtime/processCrashSafety.test.ts'
+  'tests/runtime/runRecovery.test.ts'
   'tests/security/filePermissions.test.ts'
   'tests/storage/persistentStore.test.ts'
+  'tests/storage/sqliteDriver.test.ts'
   'tests/tools/conversationSearchTool.test.ts'
+  'tests/ultimate/chaos/_workers/t1-claimWorker.ts'
   'tests/ultimate/tenantWorkCoordinatorRegistry.test.ts'
   'tests/ultimate/workCoordinator.test.ts'
   'tests/ultimate/workQueueStore.test.ts'
