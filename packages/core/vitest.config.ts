@@ -2,12 +2,15 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    // Single-threaded default. The suite has ~220 test files, many of which
-    // exercise full AgentRuntime loops, share SQLite WAL paths, open HTTP
-    // servers, or mutate singleton registries. Multi-threaded/fork runs caused
-    // SIGSEGV (better-sqlite3), EMFILE, and EADDRNOTAVAIL races. Keep serial
-    // until integration tests are isolated enough for workers.
+    // Serial execution. The suite has ~220 test files, many of which exercise
+    // full AgentRuntime loops, share SQLite WAL paths, open HTTP servers, or
+    // mutate singleton registries. Multi-threaded/fork runs caused SIGSEGV
+    // (better-sqlite3), EMFILE, and EADDRNOTAVAIL races. fileParallelism:false
+    // runs test files sequentially; sequential configs inside individual files
+    // keep tests within a file from competing for the same resources.
+    pool: 'threads',
     threads: false,
+    fileParallelism: false,
     // Integration tests exercise full AgentRuntime execution loops (tool
     // calling, security correlators, tenant isolation). 180s testTimeout gives
     // realistic headroom for E2E flows; slow E2E tests further override with
@@ -28,6 +31,7 @@ export default defineConfig({
       'tests/runtime/incrementalSCC.integration.test.ts',
       'tests/runtime/agentInbox.test.ts',
       'tests/runtime/agentRuntime.test.ts',
+      'tests/runtime/runInitializer.test.ts',
       'tests/runtime/executionContextInjector.test.ts',
       'tests/runtime/executionRouter.test.ts',
       'tests/runtime/agentRuntime.integration.test.ts',
