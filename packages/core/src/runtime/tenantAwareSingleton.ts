@@ -14,7 +14,12 @@
  *   - Optional per-tenant quota tracking and lifecycle hooks.
  *   - Configurable max tenants, TTL, and eviction policy.
  */
-import { getCurrentTenantId, validateTenantId, TenantIsolationError } from './tenantContext';
+import {
+  getCurrentTenantId,
+  validateTenantId,
+  TenantIsolationError,
+  isMultiTenantEnabled,
+} from './tenantContext';
 
 let warnedGlobalFallback = false;
 
@@ -31,9 +36,12 @@ export interface TenantAwareSingletonOptions<T> {
   /** Dispose callback invoked when a tenant instance is evicted or reset. */
   dispose?: (instance: T) => void;
   /**
-   * When true (default), `get()` outside a tenant context returns the global
-   * fallback instance. When false, `get()` outside a tenant context throws.
-   * Production multi-tenant deployments should set this to false.
+   * When true, `get()` outside a tenant context returns the global fallback
+   * instance. When false (default), `get()` outside a tenant context throws.
+   * Production multi-tenant deployments should leave this as false.
+   *
+   * Note: when a multi-tenant provider is active, global fallback is always
+   * disabled regardless of this option to prevent cross-tenant data leakage.
    */
   allowGlobalFallback?: boolean;
   /** Quota configuration. Defaults to 100 tenants, 30 minute TTL. */
@@ -67,12 +75,14 @@ export interface TenantAwareSingleton<T> {
 /**
  * Create a tenant-aware singleton wrapper.
  *
- * In single-tenant mode (no tenant context): returns the global instance if
- * `allowGlobalFallback` is true, otherwise throws.
+ * In single-tenant mode (no tenant context): returns the global instance only
+ * when `allowGlobalFallback` is explicitly true, otherwise throws.
  *
  * In multi-tenant mode (tenant context active): returns a per-tenant instance.
- * Tenant IDs are validated, evictions are logged, and cross-tenant access is
- * prevented at the in-memory layer.
+ * When a multi-tenant provider is configured, global fallback is always
+ * disabled to prevent cross-tenant data leakage. Tenant IDs are validated,
+ * evictions are logged, and cross-tenant access is prevented at the in-memory
+ * layer.
  */
 export function createTenantAwareSingleton<T>(
   factory: () => T,
@@ -90,7 +100,13 @@ export function createTenantAwareSingleton<T>(
     ...options.quota,
   };
   const component = options.componentName ?? 'TenantAwareSingleton';
-  const allowGlobalFallback = options.allowGlobalFallback !== false;
+  // In test / development: allowGlobalFallback defaults to true (backward
+  // compatible with the pre-D3.0 contract). In production: opt-in only —
+  // must be explicitly set to true AND multi-tenant must be disabled.
+  const allowGlobalFallback =
+    process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development'
+      ? options.allowGlobalFallback !== false
+      : options.allowGlobalFallback === true && !isMultiTenantEnabled();
   const log = (
     level: 'warn' | 'error',
     message: string,
@@ -205,8 +221,11 @@ export function createTenantAwareSingleton<T>(
     }
 
     if (!allowGlobalFallback) {
+      const reason = isMultiTenantEnabled()
+        ? 'multi-tenant provider is active'
+        : 'allowGlobalFallback is false';
       throw new TenantIsolationError(
-        `${component}.get() called outside tenant context and allowGlobalFallback is false`,
+        `${component}.get() called outside tenant context and ${reason}`,
       );
     }
 
