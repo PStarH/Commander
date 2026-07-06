@@ -13,6 +13,12 @@
  * ToolOrchestrator are all real.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
+
+// These E2E tests mutate shared singleton state (circuit breakers, DLQ,
+// budgets). Force sequential execution within the file to prevent cross-test
+// leakage under multi-threaded vitest.
+export const config = { sequence: { concurrent: false } };
+
 import {
   createTestRuntime,
   ScriptedLLMProvider,
