@@ -4,6 +4,10 @@ import * as https from 'node:https';
 import { A2AServer } from '../../src/mcp/a2aServer';
 import type { AgentRuntimeInterface } from '../../src/runtime';
 
+// Starting/stopping HTTPS servers per-test races for local ports under
+// concurrent execution. Force sequential execution inside this file.
+export const config = { sequence: { concurrent: false } };
+
 // Generate a CA + server cert + client cert pair for mTLS tests.
 // selfsigned v5 generate() is async and supports CA-signed cert generation
 // via the `ca: { key, cert }` option. We generate a proper CA and sign the
