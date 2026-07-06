@@ -11,6 +11,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+
+// This suite mutates shared global singletons and tmp WAL files; force
+// sequential execution within the file even when running multi-threaded.
+export const config = { sequence: { concurrent: false } };
+
 import {
   EventSourcingEngine,
   getGlobalEventSourcingEngine,
