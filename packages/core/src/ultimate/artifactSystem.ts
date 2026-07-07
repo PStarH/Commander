@@ -202,7 +202,9 @@ export class ArtifactSystem {
 
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
-const artifactSystemSingleton = createTenantAwareSingleton(() => new ArtifactSystem());
+const artifactSystemSingleton = createTenantAwareSingleton(() => new ArtifactSystem(), {
+  allowGlobalFallback: true,
+});
 
 export function getArtifactSystem(): ArtifactSystem {
   return artifactSystemSingleton.get();

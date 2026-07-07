@@ -408,7 +408,9 @@ export class BPDDetector {
 
 import { createTenantAwareSingleton } from '../../../runtime/tenantAwareSingleton';
 
-const bpdDetectorSingleton = createTenantAwareSingleton(() => new BPDDetector());
+const bpdDetectorSingleton = createTenantAwareSingleton(() => new BPDDetector(), {
+  allowGlobalFallback: true,
+});
 
 export function getBPDDetector(): BPDDetector {
   return bpdDetectorSingleton.get();

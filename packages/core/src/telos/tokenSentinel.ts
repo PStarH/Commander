@@ -552,7 +552,9 @@ function emitTokenSentinelDeprecationWarning(): void {
   }
 }
 
-const sentinelSingleton = createTenantAwareSingleton(() => new TokenSentinel());
+const sentinelSingleton = createTenantAwareSingleton(() => new TokenSentinel(), {
+  allowGlobalFallback: true,
+});
 
 /**
  * Get the global TokenSentinel singleton.

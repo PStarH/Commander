@@ -392,6 +392,7 @@ let _traceStore: TraceStore | undefined;
 
 const traceRecorderSingleton = createTenantAwareSingleton(
   () => new ExecutionTraceRecorder(500, _traceStore),
+  { allowGlobalFallback: true },
 );
 
 export function getTraceRecorder(store?: TraceStore): ExecutionTraceRecorder {

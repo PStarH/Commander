@@ -191,6 +191,7 @@ const credentialManagerSingleton = createTenantAwareSingleton(
     return cm;
   },
   {
+    allowGlobalFallback: true,
     dispose: (cm) => cm.clear(),
   },
 );

@@ -219,6 +219,13 @@ export {
   ROLE_HIERARCHY,
 } from './runtime/authManager';
 export type { AuthRole, AuthUser, ApiKeyEntry } from './runtime/authManager';
+export { OIDCAuthPlugin, createOIDCPluginFromEnv } from './runtime/oidcAuthPlugin';
+export type {
+  OIDCPluginConfig,
+  AuthPlugin,
+  AuthPluginResult,
+  JWKWithKid,
+} from './runtime/oidcAuthPlugin';
 
 // Webhook Dispatcher
 export {
@@ -227,6 +234,25 @@ export {
   resetWebhookDispatcher,
 } from './runtime/webhookDispatcher';
 export type { WebhookConfig, WebhookEvent, WebhookDelivery } from './runtime/webhookDispatcher';
+
+// Runtime Types
+export type {
+  AgentExecutionContext,
+  AgentExecutionResult,
+  AgentExecutionStep,
+  AgentRuntimeConfig,
+  RetryConfig,
+} from './runtime/types/execution';
+export type {
+  LLMProvider,
+  LLMRequest,
+  LLMResponse,
+  LLMMessage,
+  LLMStreamChunk,
+  ReasoningConfig,
+} from './runtime/types/llm';
+export type { ModelTier } from './runtime/types/shared';
+export type { MessageBusTopic, BusMessage } from './runtime/types/messageBus';
 
 // ThreeLayerMemory
 export {
@@ -495,6 +521,39 @@ export type {
   FuzzRunReport,
   FuzzerConfig,
 } from './security/fuzzTestFramework';
+
+// CrossTenantFuzzTest — mutation-based tenant isolation fuzzer
+export {
+  CrossTenantFuzzTest,
+  createInMemoryCrossTenantTarget,
+  getCrossTenantFuzzTest,
+  resetCrossTenantFuzzTest,
+} from './security/crossTenantFuzz';
+export type {
+  CrossTenantAttackVector,
+  CrossTenantFuzzConfig,
+  CrossTenantTarget,
+  CrossTenantFuzzCase,
+  CrossTenantLeak,
+  CrossTenantFuzzResult,
+  CrossTenantFuzzReport,
+} from './security/crossTenantFuzz';
+
+// DataLeakageVerifier — deterministic cross-tenant data leakage validation
+export {
+  DataLeakageVerifier,
+  createInMemoryLeakageTarget,
+  getDataLeakageVerifier,
+  resetDataLeakageVerifier,
+} from './security/dataLeakageVerifier';
+export type {
+  LeakageVector,
+  DataLeakageConfig,
+  DataLeakageTarget,
+  LeakageTestCase,
+  DataLeak,
+  DataLeakageReport,
+} from './security/dataLeakageVerifier';
 
 // PostQuantumCrypto — PQ-safe hash (SHAKE-256), key generation, MAC creation/verification
 export {

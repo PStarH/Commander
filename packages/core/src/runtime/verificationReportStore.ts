@@ -120,7 +120,9 @@ function sanitizeRunId(runId: string): string {
 
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
-const verificationStoreSingleton = createTenantAwareSingleton(() => new VerificationReportStore());
+const verificationStoreSingleton = createTenantAwareSingleton(() => new VerificationReportStore(), {
+  allowGlobalFallback: true,
+});
 
 export function getVerificationReportStore(tenantId?: string): VerificationReportStore {
   if (tenantId) return verificationStoreSingleton.getForTenant(tenantId);
