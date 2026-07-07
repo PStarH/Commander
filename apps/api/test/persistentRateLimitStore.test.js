@@ -126,7 +126,7 @@ test('PersistentRateLimitStore: listActive returns non-expired rows ordered by r
     store.set('middle', 3, now + 60_000);
     const rows = store.listActive(now);
     assert.deepEqual(
-      rows.map((r) => r.ip),
+      rows.map((r) => r.key),
       ['soonest', 'middle', 'later'],
     );
     assert.deepEqual(

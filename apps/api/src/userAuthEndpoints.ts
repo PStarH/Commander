@@ -10,6 +10,10 @@ import {
   updateUserRole,
   updateLastLogin,
   toSafeUserPublic,
+  updateUser,
+  resetUserPassword,
+  deleteUser,
+  countAdmins,
   type UserRole,
   type SafeUser,
 } from './userStore';
@@ -41,6 +45,29 @@ const refreshSchema = z.object({
 
 const roleUpdateSchema = z.object({
   role: z.enum(['admin', 'operator', 'viewer']),
+});
+
+const adminCreateUserSchema = z.object({
+  username: z
+    .string()
+    .min(3, 'Username must be at least 3 characters')
+    .max(32, 'Username must be at most 32 characters')
+    .regex(
+      /^[a-zA-Z0-9_.-]+$/,
+      'Username may only contain letters, numbers, dots, hyphens and underscores',
+    ),
+  email: z.string().email('Invalid email address').max(255),
+  password: z.string().min(6, 'Password must be at least 6 characters').max(128),
+  role: z.enum(['admin', 'operator', 'viewer']).default('viewer'),
+});
+
+const adminUpdateUserSchema = z.object({
+  email: z.string().email('Invalid email address').max(255).optional(),
+  role: z.enum(['admin', 'operator', 'viewer']).optional(),
+});
+
+const resetPasswordSchema = z.object({
+  newPassword: z.string().min(6, 'Password must be at least 6 characters').max(128),
 });
 
 // ── Auth guard middleware ───────────────────────────────────────────────────
@@ -245,6 +272,112 @@ export function createUserAuthRouter(): Router {
       }
 
       const updated = updateUserRole(id, parsed.data.role as UserRole);
+      if (!updated) {
+        res.status(404).json({ error: 'User not found' });
+        return;
+      }
+      res.json({ user: updated });
+    },
+  );
+
+  // ── POST /api/auth/users  (admin only) ───────────────────────────────────
+  router.post('/api/auth/users', requireAuth, requireAdmin, (req: Request, res: Response) => {
+    const parsed = adminCreateUserSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: 'Validation error',
+        details: parsed.error.issues.map((i) => ({
+          path: i.path.join('.'),
+          message: i.message,
+        })),
+      });
+      return;
+    }
+
+    const result = createUser(parsed.data);
+    if ('error' in result) {
+      res.status(409).json({ error: result.error });
+      return;
+    }
+    res.status(201).json({ user: result.user });
+  });
+
+  // ── PATCH /api/auth/users/:id  (admin only) ───────────────────────────────
+  router.patch('/api/auth/users/:id', requireAuth, requireAdmin, (req: Request, res: Response) => {
+    const parsed = adminUpdateUserSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: 'Validation error',
+        details: parsed.error.issues.map((i) => ({
+          path: i.path.join('.'),
+          message: i.message,
+        })),
+      });
+      return;
+    }
+
+    const id = String(req.params.id);
+    const targetUser = findUserById(id);
+    if (!targetUser) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    // Prevent removing admin role from the last admin.
+    if (
+      parsed.data.role !== undefined &&
+      parsed.data.role !== 'admin' &&
+      targetUser.role === 'admin' &&
+      countAdmins() <= 1
+    ) {
+      res.status(400).json({ error: 'Cannot demote the last admin account' });
+      return;
+    }
+
+    const updated = updateUser(id, parsed.data);
+    if ('error' in updated) {
+      res.status(409).json({ error: updated.error });
+      return;
+    }
+    res.json({ user: updated });
+  });
+
+  // ── DELETE /api/auth/users/:id  (admin only) ──────────────────────────────
+  router.delete('/api/auth/users/:id', requireAuth, requireAdmin, (req: Request, res: Response) => {
+    const id = String(req.params.id);
+    if (req.user!.id === id) {
+      res.status(400).json({ error: 'You cannot delete your own account' });
+      return;
+    }
+
+    const result = deleteUser(id);
+    if (!result.success) {
+      res.status(result.error === 'User not found' ? 404 : 400).json({ error: result.error });
+      return;
+    }
+    res.json({ success: true });
+  });
+
+  // ── POST /api/auth/users/:id/reset-password  (admin only) ────────────────
+  router.post(
+    '/api/auth/users/:id/reset-password',
+    requireAuth,
+    requireAdmin,
+    (req: Request, res: Response) => {
+      const parsed = resetPasswordSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: 'Validation error',
+          details: parsed.error.issues.map((i) => ({
+            path: i.path.join('.'),
+            message: i.message,
+          })),
+        });
+        return;
+      }
+
+      const id = String(req.params.id);
+      const updated = resetUserPassword(id, parsed.data.newPassword);
       if (!updated) {
         res.status(404).json({ error: 'User not found' });
         return;

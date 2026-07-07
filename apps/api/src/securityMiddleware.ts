@@ -3,7 +3,7 @@
  *
  * Provides:
  * - Request ID tracking (X-Request-ID)
- * - Rate limiting (per-IP)
+ * - Rate limiting (per-tenant / per-user / per-IP)
  * - Security headers (X-Content-Type-Options, X-Frame-Options, etc.)
  * - Error sanitization (don't leak internal details)
  * - Request body validation
@@ -22,8 +22,10 @@ import { PersistentRateLimitStore } from './persistentRateLimitStore';
 // SQL on init. The store is optional so dev/CI runs don't have to ship
 // better-sqlite3 cold; turn off with API_RATE_LIMIT_PERSISTENT=off.
 let persistentRateLimitStore: PersistentRateLimitStore | null = null;
-const RATE_LIMIT_PERSISTENT_ENABLED =
-  (process.env.API_RATE_LIMIT_PERSISTENT ?? 'on').toLowerCase() !== 'off';
+
+function isRateLimitPersistenceEnabled(): boolean {
+  return (process.env.API_RATE_LIMIT_PERSISTENT ?? 'on').toLowerCase() !== 'off';
+}
 
 // ============================================================================
 // Request ID Tracking
@@ -70,13 +72,24 @@ export function securityHeaders(_req: Request, res: Response, next: NextFunction
 }
 
 // ============================================================================
-// Rate Limiting (per-IP, in-memory)
+// Rate Limiting (per-identity: tenant → user → IP)
 // ============================================================================
 
 interface RateLimitEntry {
   count: number;
   resetAt: number;
 }
+
+interface RateLimitIdentity {
+  ip: string;
+  userId?: string;
+  tenantId?: string;
+}
+
+// Mirrors the tenant-id validation in core/runtime/tenantContext.ts.
+// Inlined so the API server does not need a pre-built @commander/core dist
+// just to validate an optional HTTP header.
+const TENANT_ID_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
 
 /**
  * Rate-limit tier classification (audit MED item 3 — security theater fix).
@@ -112,6 +125,11 @@ function classifyTier(url: string, method: string = 'GET'): RateLimitTier {
 const rateLimitStore = new Map<string, RateLimitEntry>();
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
 const RATE_LIMIT_MAX = parseInt(process.env.API_RATE_LIMIT ?? '120', 10);
+const RATE_LIMIT_USER_MAX = parseInt(process.env.API_RATE_LIMIT_USER ?? String(RATE_LIMIT_MAX), 10);
+const RATE_LIMIT_TENANT_MAX = parseInt(
+  process.env.API_RATE_LIMIT_TENANT ?? String(RATE_LIMIT_MAX),
+  10,
+);
 // Cap rateLimitStore size (audit MED item 3 — RAM-DoS amplifier mitigation).
 // Without a max-entries bound, an attacker rotating source IPs (e.g. spoofed
 // X-Forwarded-For in permissive CORS, IPv6 prefix brute), grows the Map
@@ -156,18 +174,18 @@ function consumeGlobalToken(now: number): boolean {
 // only do ~1 extra SQL op per allowed request, well within p99 budget.
 
 /**
- * writeThroughSet — upsert (ip, count, resetAt) into SQL after the in-memory
+ * writeThroughSet — upsert (key, count, resetAt) into SQL after the in-memory
  * Map write. Called on every counted request so the persistent counter
  * never lags the Map counter (defeats the auth-reset bypass). Failures log.
  */
-function writeThroughSet(ip: string, entry: RateLimitEntry): void {
-  rateLimitStore.set(ip, entry);
+function writeThroughSet(key: string, entry: RateLimitEntry): void {
+  rateLimitStore.set(key, entry);
   if (persistentRateLimitStore) {
     try {
-      persistentRateLimitStore.set(ip, entry.count, entry.resetAt);
+      persistentRateLimitStore.set(key, entry.count, entry.resetAt);
     } catch (e) {
       process.stderr.write(
-        `[RateLimit] Persistent set failed for ip=${ip}: ${(e as Error).message}\n`,
+        `[RateLimit] Persistent set failed for key=${key}: ${(e as Error).message}\n`,
       );
     }
   }
@@ -179,14 +197,14 @@ function writeThroughSet(ip: string, entry: RateLimitEntry): void {
  * Per-request memory-pressure evictions are Map-only (handled inline) so
  * the SQL op doesn't fire on every flood.
  */
-function writeThroughDelete(ip: string): void {
-  rateLimitStore.delete(ip);
+function writeThroughDelete(key: string): void {
+  rateLimitStore.delete(key);
   if (persistentRateLimitStore) {
     try {
-      persistentRateLimitStore.delete(ip);
+      persistentRateLimitStore.delete(key);
     } catch (e) {
       process.stderr.write(
-        `[RateLimit] Persistent delete failed for ip=${ip}: ${(e as Error).message}\n`,
+        `[RateLimit] Persistent delete failed for key=${key}: ${(e as Error).message}\n`,
       );
     }
   }
@@ -229,7 +247,7 @@ setInterval(() => {
 let initialized = false;
 export async function initRateLimitStore(now: number = Date.now()): Promise<void> {
   if (initialized) return;
-  if (!RATE_LIMIT_PERSISTENT_ENABLED) {
+  if (!isRateLimitPersistenceEnabled()) {
     initialized = true;
     process.stdout.write('[RateLimit] Persistent store disabled (API_RATE_LIMIT_PERSISTENT=off)\n');
     return;
@@ -238,7 +256,7 @@ export async function initRateLimitStore(now: number = Date.now()): Promise<void
     persistentRateLimitStore = new PersistentRateLimitStore(process.env.API_RATE_LIMIT_DB_PATH);
     const activeRows = persistentRateLimitStore.listActive(now);
     for (const row of activeRows) {
-      rateLimitStore.set(row.ip, { count: row.count, resetAt: row.resetAt });
+      rateLimitStore.set(row.key, { count: row.count, resetAt: row.resetAt });
     }
     initialized = true;
     process.stdout.write(
@@ -283,12 +301,71 @@ export function _resetRateLimitStoreForTesting(): void {
   rateLimitStore.clear();
 }
 
+function getClientIp(req: Request): string {
+  return req.ip ?? req.socket.remoteAddress ?? 'unknown';
+}
+
+function extractTenantId(req: Request): string | undefined {
+  const raw = req.headers['x-tenant-id'];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof value !== 'string') return undefined;
+  if (!TENANT_ID_RE.test(value)) return undefined;
+  return value;
+}
+
+function buildRateLimitIdentity(req: Request): RateLimitIdentity {
+  return {
+    ip: getClientIp(req),
+    userId: req.user?.id ?? req.apiKeyId,
+    tenantId: extractTenantId(req),
+  };
+}
+
+interface RateLimitScope {
+  key: string;
+  prefix: 'tenant' | 'user' | 'ip';
+  max: number;
+}
+
+function buildScopes(identity: RateLimitIdentity, tier: RateLimitTier): RateLimitScope[] {
+  const scopes: RateLimitScope[] = [];
+  // Tenant is the broadest identity-aware bucket: it caps aggregate usage
+  // across all users belonging to the same tenant.
+  if (identity.tenantId) {
+    scopes.push({
+      key: `tenant:${identity.tenantId}`,
+      prefix: 'tenant',
+      max: Math.max(1, Math.floor(RATE_LIMIT_TENANT_MAX * TIER_MULTIPLIER[tier])),
+    });
+  }
+  // User bucket isolates individual accounts, so one compromised user cannot
+  // exhaust the tenant-wide budget.
+  if (identity.userId) {
+    scopes.push({
+      key: `user:${identity.userId}`,
+      prefix: 'user',
+      max: Math.max(1, Math.floor(RATE_LIMIT_USER_MAX * TIER_MULTIPLIER[tier])),
+    });
+  }
+  // IP bucket is the fallback for anonymous / unauthenticated traffic only.
+  // For authenticated requests we enforce the more specific tenant/user
+  // buckets so that a shared corporate NAT does not artificially cap users.
+  if (scopes.length === 0) {
+    scopes.push({
+      key: `ip:${identity.ip}`,
+      prefix: 'ip',
+      max: Math.max(1, Math.floor(RATE_LIMIT_MAX * TIER_MULTIPLIER[tier])),
+    });
+  }
+  return scopes;
+}
+
 export function rateLimitMiddleware(req: Request, res: Response, next: NextFunction): void {
-  const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown';
+  const identity = buildRateLimitIdentity(req);
   const now = Date.now();
 
-  // Layer 1: GLOBAL token bucket — takes precedence over per-IP so an
-  // attacker spraying IPs cannot bypass by spreading load.
+  // Layer 1: GLOBAL token bucket — takes precedence over per-identity limits
+  // so an attacker spraying IPs/users cannot bypass by spreading load.
   if (!consumeGlobalToken(now)) {
     res.setHeader('X-RateLimit-Reason', 'global-token-bucket');
     res.setHeader('Retry-After', '1');
@@ -299,10 +376,11 @@ export function rateLimitMiddleware(req: Request, res: Response, next: NextFunct
     return;
   }
 
-  // Layer 2: per-tier per-IP. Tier ceilings are scaled from RATE_LIMIT_MAX
-  // so /health-monitoring isn't knocked off by a /execute spike.
+  // Layer 2: per-tier per-identity. Tier ceilings are scaled independently
+  // so /health-monitoring isn't knocked off by a /execute spike, and a
+  // privileged user or noisy tenant can be capped on its own limit.
   const tier = classifyTier(req.url ?? '/', req.method ?? 'GET');
-  const tierMax = Math.max(1, Math.floor(RATE_LIMIT_MAX * TIER_MULTIPLIER[tier]));
+  const scopes = buildScopes(identity, tier);
 
   // Memory-pressure guard: when the rateLimitStore exceeds the cap, evict
   // one expired entry opportunistically and (if none are expired) the FIFO
@@ -326,34 +404,64 @@ export function rateLimitMiddleware(req: Request, res: Response, next: NextFunct
     }
   }
 
-  let entry = rateLimitStore.get(ip);
-  if (!entry || entry.resetAt < now) {
-    entry = { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+  let blockingScope:
+    | { prefix: 'tenant' | 'user' | 'ip'; entry: RateLimitEntry; max: number }
+    | undefined;
+  let primaryScope: RateLimitScope | undefined;
+
+  for (const scope of scopes) {
+    let entry = rateLimitStore.get(scope.key);
+    if (!entry || entry.resetAt < now) {
+      entry = { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+    }
+    entry.count++;
+    // writeThroughSet AFTER increment so the persistent counter matches the
+    // in-memory one — defeats the auth-reset bypass where a restart between
+    // the Map write and the SQL upsert would cause counter drift.
+    writeThroughSet(scope.key, entry);
+
+    if (!blockingScope && entry.count > scope.max) {
+      blockingScope = { prefix: scope.prefix, entry, max: scope.max };
+    }
+
+    // The "primary" scope drives the response headers: prefer the most
+    // specific identity we have (user > tenant > ip) so SDKs see a limit
+    // that matches the dimension actually being enforced.
+    if (
+      !primaryScope ||
+      (scope.prefix === 'user' && primaryScope.prefix !== 'user') ||
+      (scope.prefix === 'tenant' && primaryScope.prefix === 'ip')
+    ) {
+      primaryScope = scope;
+    }
   }
-  entry.count++;
-  // writeThroughSet AFTER increment so the persistent counter matches the
-  // in-memory one — defeats the auth-reset bypass where a restart between
-  // the Map write and the SQL upsert would cause counter drift.
-  writeThroughSet(ip, entry);
 
-  res.setHeader('X-RateLimit-Limit', tierMax);
+  const primaryEntry = rateLimitStore.get(primaryScope!.key)!;
+
+  res.setHeader('X-RateLimit-Limit', primaryScope!.max);
   res.setHeader('X-RateLimit-Tier', tier);
-  res.setHeader('X-RateLimit-Remaining', Math.max(0, tierMax - entry.count));
-  res.setHeader('X-RateLimit-Reset', Math.ceil(entry.resetAt / 1000));
+  res.setHeader('X-RateLimit-Remaining', Math.max(0, primaryScope!.max - primaryEntry.count));
+  res.setHeader('X-RateLimit-Reset', Math.ceil(primaryEntry.resetAt / 1000));
 
-  if (entry.count > tierMax) {
-    res.setHeader('X-RateLimit-Reason', `per-ip-tier-${tier}`);
+  if (blockingScope) {
+    res.setHeader('X-RateLimit-Reason', `per-${blockingScope.prefix}-tier-${tier}`);
     // Best-effort structured stderr audit so SIEM tier (Phase 2) can pick
     // this up via /api/v1/security/owasp-ingest without proxying through the
     // full audit bus.
     process.stderr.write(
-      `[RateLimit] ip=${ip} tier=${tier} count=${entry.count} max=${tierMax} url=${req.url ?? '/'}\n`,
+      `[RateLimit] prefix=${blockingScope.prefix} identity=${
+        blockingScope.prefix === 'ip'
+          ? identity.ip
+          : blockingScope.prefix === 'user'
+            ? identity.userId
+            : identity.tenantId
+      } tier=${tier} count=${blockingScope.entry.count} max=${blockingScope.max} url=${req.url ?? '/'}\n`,
     );
     res.status(429).json({
       error: 'Too many requests',
-      retryAfter: Math.ceil((entry.resetAt - now) / 1000),
+      retryAfter: Math.ceil((blockingScope.entry.resetAt - now) / 1000),
       tier,
-      limit: tierMax,
+      limit: blockingScope.max,
     });
     return;
   }

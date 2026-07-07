@@ -12,7 +12,7 @@ import Database from 'better-sqlite3';
 const DEFAULT_DB_PATH = path.resolve(__dirname, '../data/rate-limit.sqlite');
 
 export interface RateLimitEntryRow {
-  ip: string;
+  key: string;
   count: number;
   resetAt: number;
 }
@@ -32,35 +32,61 @@ export class PersistentRateLimitStore {
   private init(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS rate_limit_entries (
-        ip TEXT PRIMARY KEY,
+        key TEXT PRIMARY KEY,
         count INTEGER NOT NULL DEFAULT 0,
         reset_at INTEGER NOT NULL
       )
     `);
+
+    // Migration: older installations used an `ip` column. SQLite supports
+    // RENAME COLUMN since 3.25; better-sqlite3 bundles a recent release.
+    // If the rename fails (unexpected old SQLite), we drop and recreate —
+    // losing transient rate-limit counters is acceptable and avoids startup
+    // crashes on schema skew.
+    const columns = this.db.prepare('PRAGMA table_info(rate_limit_entries)').all() as Array<{
+      name: string;
+    }>;
+    if (columns.some((c) => c.name === 'ip') && !columns.some((c) => c.name === 'key')) {
+      try {
+        this.db.exec('ALTER TABLE rate_limit_entries RENAME COLUMN ip TO key');
+      } catch (e) {
+        process.stderr.write(
+          `[PersistentRateLimitStore] Schema migration failed, recreating table: ${(e as Error).message}\n`,
+        );
+        this.db.exec('DROP TABLE rate_limit_entries');
+        this.db.exec(`
+          CREATE TABLE rate_limit_entries (
+            key TEXT PRIMARY KEY,
+            count INTEGER NOT NULL DEFAULT 0,
+            reset_at INTEGER NOT NULL
+          )
+        `);
+      }
+    }
   }
 
-  get(ip: string, now: number): { count: number; resetAt: number } | null {
+  get(key: string, now: number): { count: number; resetAt: number } | null {
     const row = this.db
-      .prepare('SELECT count, reset_at FROM rate_limit_entries WHERE ip = ?')
-      .get(ip) as { count: number; reset_at: number } | undefined;
+      .prepare('SELECT count, reset_at FROM rate_limit_entries WHERE key = ?')
+      .get(key) as { count: number; reset_at: number } | undefined;
     if (!row) return null;
     if (row.reset_at < now) {
-      this.db.prepare('DELETE FROM rate_limit_entries WHERE ip = ?').run(ip);
+      this.db.prepare('DELETE FROM rate_limit_entries WHERE key = ?').run(key);
       return null;
     }
     return { count: row.count, resetAt: row.reset_at };
   }
 
-  set(ip: string, count: number, resetAt: number): void {
+  set(key: string, count: number, resetAt: number): void {
     this.db
       .prepare(
-        'INSERT INTO rate_limit_entries (ip, count, reset_at) VALUES (?, ?, ?) ON CONFLICT(ip) DO UPDATE SET count = excluded.count, reset_at = excluded.reset_at',
+        'INSERT INTO rate_limit_entries (key, count, reset_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET count = excluded.count, reset_at = excluded.reset_at',
       )
-      .run(ip, count, resetAt);
+      .run(key, count, resetAt);
   }
 
-  delete(ip: string): void {
-    this.db.prepare('DELETE FROM rate_limit_entries WHERE ip = ?').run(ip);
+  delete(key: string): void {
+    this.db.prepare('DELETE FROM rate_limit_entries WHERE key = ?').run(key);
   }
 
   cleanup(now: number): number {
@@ -80,15 +106,15 @@ export class PersistentRateLimitStore {
    */
   listActive(now: number, limit?: number): RateLimitEntryRow[] {
     const sql =
-      `SELECT ip, count, reset_at AS resetAt FROM rate_limit_entries ` +
+      `SELECT key, count, reset_at AS resetAt FROM rate_limit_entries ` +
       `WHERE reset_at >= ? ORDER BY reset_at ASC` +
       (limit ? ` LIMIT ${Math.max(1, Math.floor(limit))}` : '');
     const rows = this.db.prepare(sql).all(now) as Array<{
-      ip: string;
+      key: string;
       count: number;
       resetAt: number;
     }>;
-    return rows.map((r) => ({ ip: r.ip, count: r.count, resetAt: r.resetAt }));
+    return rows.map((r) => ({ key: r.key, count: r.count, resetAt: r.resetAt }));
   }
 
   /**
