@@ -233,7 +233,8 @@ describe('CycleDetector', () => {
     });
 
     it('detects long token repetition (step step step step step)', () => {
-      const text = 'step step step step step step step step step step step step step step step done';
+      const text =
+        'step step step step step step step step step step step step step step step done';
       const result = CycleDetector.detectRepetition(text);
       expect(result.detected).toBe(true);
     });

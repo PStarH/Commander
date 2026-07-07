@@ -77,9 +77,7 @@ class FakeTable<T extends { id: string }> implements PersistentTable<T> {
     return this.rows.delete(id);
   }
   query(filter?: Partial<T>): T[] {
-    const all = Array.from(this.rows.values()).map((r) =>
-      JSON.parse(JSON.stringify(r)) as T,
-    );
+    const all = Array.from(this.rows.values()).map((r) => JSON.parse(JSON.stringify(r)) as T);
     if (!filter) return all;
     return all.filter((r) => {
       for (const k of Object.keys(filter) as Array<keyof T>) {

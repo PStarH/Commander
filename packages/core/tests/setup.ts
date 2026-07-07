@@ -27,6 +27,14 @@ import { resetTokenSentinel } from '../src/telos/tokenSentinel';
 import { resetSLOManager } from '../src/observability/sloManager';
 import { resetAlertRuleEngine } from '../src/observability/alertRuleEngine';
 import { resetIncidentManager } from '../src/observability/incidentManager';
+import { resetCrossTenantFuzzTest } from '../src/security/crossTenantFuzz';
+import { resetDataLeakageVerifier } from '../src/security/dataLeakageVerifier';
+import { resetTokenMetrics } from '../src/edit/tokenMetrics';
+import { resetLspManager } from '../src/lsp/lspManager';
+import { resetTtsrEngine } from '../src/security/ttsrEngine';
+import { resetWebhookDispatcher } from '../src/runtime/webhookDispatcher';
+import { resetGlobalSemanticMemoryStore } from '../src/memory/semanticStore';
+import { resetGlobalEpisodicStore } from '../src/memory/episodicStore';
 
 /**
  * Global test isolation reset.
@@ -66,4 +74,12 @@ beforeEach(() => {
   resetSLOManager();
   resetAlertRuleEngine();
   resetIncidentManager();
+  resetCrossTenantFuzzTest();
+  resetDataLeakageVerifier();
+  resetTokenMetrics();
+  resetLspManager();
+  resetTtsrEngine();
+  resetWebhookDispatcher();
+  resetGlobalSemanticMemoryStore();
+  resetGlobalEpisodicStore();
 });

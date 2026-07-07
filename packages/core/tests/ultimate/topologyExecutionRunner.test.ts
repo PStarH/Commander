@@ -36,13 +36,11 @@ function makeTree(subtaskCount: number): TaskTreeNode {
 
 function mockExecutor() {
   const callOrder: string[] = [];
-  const executeNode = vi.fn(
-    async (sub: TaskTreeNode) => {
-      callOrder.push(sub.id);
-      sub.status = 'COMPLETED';
-      sub.result = `result:${sub.id}`;
-    },
-  );
+  const executeNode = vi.fn(async (sub: TaskTreeNode) => {
+    callOrder.push(sub.id);
+    sub.status = 'COMPLETED';
+    sub.result = `result:${sub.id}`;
+  });
   return { executeNode, callOrder };
 }
 

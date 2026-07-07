@@ -59,8 +59,26 @@ describe('PlanValidator', () => {
   describe('validatePlanFeasibility', () => {
     it('returns feasible when all non-buffered steps have handlers', () => {
       const plan = makePlan([
-        { forwardAction: { toolName: 'tool_a', actionId: 'a', args: {}, description: '', tags: [], runId: '' } },
-        { forwardAction: { toolName: 'tool_b', actionId: 'b', args: {}, description: '', tags: [], runId: '' } },
+        {
+          forwardAction: {
+            toolName: 'tool_a',
+            actionId: 'a',
+            args: {},
+            description: '',
+            tags: [],
+            runId: '',
+          },
+        },
+        {
+          forwardAction: {
+            toolName: 'tool_b',
+            actionId: 'b',
+            args: {},
+            description: '',
+            tags: [],
+            runId: '',
+          },
+        },
       ]);
       const handlers: HandlerMap = {
         tool_a: async () => ({ success: true }),
@@ -75,8 +93,26 @@ describe('PlanValidator', () => {
 
     it('returns infeasible when a non-buffered step lacks a handler', () => {
       const plan = makePlan([
-        { forwardAction: { toolName: 'tool_a', actionId: 'a', args: {}, description: '', tags: [], runId: '' } },
-        { forwardAction: { toolName: 'tool_b', actionId: 'b', args: {}, description: '', tags: [], runId: '' } },
+        {
+          forwardAction: {
+            toolName: 'tool_a',
+            actionId: 'a',
+            args: {},
+            description: '',
+            tags: [],
+            runId: '',
+          },
+        },
+        {
+          forwardAction: {
+            toolName: 'tool_b',
+            actionId: 'b',
+            args: {},
+            description: '',
+            tags: [],
+            runId: '',
+          },
+        },
       ]);
       const handlers: HandlerMap = {
         tool_a: async () => ({ success: true }),
@@ -93,11 +129,27 @@ describe('PlanValidator', () => {
     it('does not block on buffered steps without handlers', () => {
       const plan = makePlan([
         {
-          forwardAction: { toolName: 'send_email', actionId: 'a', args: {}, description: '', tags: [], runId: '' },
+          forwardAction: {
+            toolName: 'send_email',
+            actionId: 'a',
+            args: {},
+            description: '',
+            tags: [],
+            runId: '',
+          },
           buffered: true,
           bufferedReason: 'Irreversible',
         },
-        { forwardAction: { toolName: 'file_write', actionId: 'b', args: {}, description: '', tags: [], runId: '' } },
+        {
+          forwardAction: {
+            toolName: 'file_write',
+            actionId: 'b',
+            args: {},
+            description: '',
+            tags: [],
+            runId: '',
+          },
+        },
       ]);
       const handlers: HandlerMap = {
         file_write: async () => ({ success: true }),
@@ -117,9 +169,36 @@ describe('PlanValidator', () => {
 
     it('deduplicates gap entries for the same tool', () => {
       const plan = makePlan([
-        { forwardAction: { toolName: 'missing_tool', actionId: 'a', args: {}, description: '', tags: [], runId: '' } },
-        { forwardAction: { toolName: 'missing_tool', actionId: 'b', args: {}, description: '', tags: [], runId: '' } },
-        { forwardAction: { toolName: 'missing_tool', actionId: 'c', args: {}, description: '', tags: [], runId: '' } },
+        {
+          forwardAction: {
+            toolName: 'missing_tool',
+            actionId: 'a',
+            args: {},
+            description: '',
+            tags: [],
+            runId: '',
+          },
+        },
+        {
+          forwardAction: {
+            toolName: 'missing_tool',
+            actionId: 'b',
+            args: {},
+            description: '',
+            tags: [],
+            runId: '',
+          },
+        },
+        {
+          forwardAction: {
+            toolName: 'missing_tool',
+            actionId: 'c',
+            args: {},
+            description: '',
+            tags: [],
+            runId: '',
+          },
+        },
       ]);
       const report = validatePlanFeasibility(plan, {});
       assert.strictEqual(report.feasible, false);
@@ -130,7 +209,16 @@ describe('PlanValidator', () => {
 
     it('works with no handlers at all (all steps become gaps)', () => {
       const plan = makePlan([
-        { forwardAction: { toolName: 'tool_a', actionId: 'a', args: {}, description: '', tags: [], runId: '' } },
+        {
+          forwardAction: {
+            toolName: 'tool_a',
+            actionId: 'a',
+            args: {},
+            description: '',
+            tags: [],
+            runId: '',
+          },
+        },
       ]);
       const report = validatePlanFeasibility(plan);
       assert.strictEqual(report.feasible, false);
@@ -141,7 +229,16 @@ describe('PlanValidator', () => {
   describe('assertPlanFeasible', () => {
     it('does not throw when plan is feasible', () => {
       const plan = makePlan([
-        { forwardAction: { toolName: 'tool_a', actionId: 'a', args: {}, description: '', tags: [], runId: '' } },
+        {
+          forwardAction: {
+            toolName: 'tool_a',
+            actionId: 'a',
+            args: {},
+            description: '',
+            tags: [],
+            runId: '',
+          },
+        },
       ]);
       const handlers: HandlerMap = {
         tool_a: async () => ({ success: true }),
@@ -151,17 +248,32 @@ describe('PlanValidator', () => {
 
     it('throws CompensationPlanInfeasibleError when plan is infeasible', () => {
       const plan = makePlan([
-        { forwardAction: { toolName: 'missing_tool', actionId: 'a', args: {}, description: '', tags: [], runId: '' } },
+        {
+          forwardAction: {
+            toolName: 'missing_tool',
+            actionId: 'a',
+            args: {},
+            description: '',
+            tags: [],
+            runId: '',
+          },
+        },
       ]);
-      assert.throws(
-        () => assertPlanFeasible(plan, {}),
-        CompensationPlanInfeasibleError,
-      );
+      assert.throws(() => assertPlanFeasible(plan, {}), CompensationPlanInfeasibleError);
     });
 
     it('error contains full feasibility report', () => {
       const plan = makePlan([
-        { forwardAction: { toolName: 'missing_tool', actionId: 'a', args: {}, description: '', tags: [], runId: '' } },
+        {
+          forwardAction: {
+            toolName: 'missing_tool',
+            actionId: 'a',
+            args: {},
+            description: '',
+            tags: [],
+            runId: '',
+          },
+        },
       ]);
       try {
         assertPlanFeasible(plan, {});
@@ -184,10 +296,7 @@ describe('PlanValidator', () => {
         ],
       });
       // Without handlers → infeasible
-      assert.throws(
-        () => assertPlanFeasible(plan, {}),
-        CompensationPlanInfeasibleError,
-      );
+      assert.throws(() => assertPlanFeasible(plan, {}), CompensationPlanInfeasibleError);
       // With handlers → feasible
       const handlers: HandlerMap = {
         file_write: async () => ({ success: true }),

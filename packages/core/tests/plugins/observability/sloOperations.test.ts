@@ -109,7 +109,9 @@ describe('SLO Monitoring Engine', () => {
   it('should fire alert callback on warning severity', () => {
     engine.registerSLO('alert-slo', 99.0);
     let alertFired = false;
-    engine.onAlert(() => { alertFired = true; });
+    engine.onAlert(() => {
+      alertFired = true;
+    });
 
     // 5% failure rate, burn rate = 5x → warning
     for (let i = 0; i < 95; i++) {
@@ -126,7 +128,9 @@ describe('SLO Monitoring Engine', () => {
   it('should fire incident callback on page severity', () => {
     engine.registerSLO('page-slo', 99.9);
     let incidentFired = false;
-    engine.onIncident(() => { incidentFired = true; });
+    engine.onIncident(() => {
+      incidentFired = true;
+    });
 
     // 50% failure rate → burn rate ~500x → page
     for (let i = 0; i < 50; i++) {
@@ -387,11 +391,15 @@ describe('Incident Manager', () => {
     });
 
     manager.updateStatus(incident.id, 'resolved', 'responder');
-    manager.submitPostmortem(incident.id, {
-      summary: 'Root cause was a misconfigured timeout.',
-      rootCauses: ['Timeout set to 100ms instead of 1000ms'],
-      status: 'approved',
-    }, 'responder');
+    manager.submitPostmortem(
+      incident.id,
+      {
+        summary: 'Root cause was a misconfigured timeout.',
+        rootCauses: ['Timeout set to 100ms instead of 1000ms'],
+        status: 'approved',
+      },
+      'responder',
+    );
 
     const closed = manager.getIncident(incident.id);
     expect(closed?.status).toBe('closed');
@@ -610,7 +618,11 @@ describe('SLO Operations HTTP Handlers', () => {
       enabled: true,
     };
 
-    const result = handleSLOOperationsRequest('POST', ['alerts', 'rules'], JSON.stringify(ruleData));
+    const result = handleSLOOperationsRequest(
+      'POST',
+      ['alerts', 'rules'],
+      JSON.stringify(ruleData),
+    );
     expect(result?.statusCode).toBe(201);
 
     const body = JSON.parse(result!.body);
@@ -645,18 +657,26 @@ describe('SLO Operations HTTP Handlers', () => {
 
   it('PUT /incidents/:id updates status', () => {
     // Create incident first
-    const createResult = handleSLOOperationsRequest('POST', ['incidents'], JSON.stringify({
-      title: 'Test',
-      severity: 'SEV2',
-      affectedComponents: [],
-    }));
+    const createResult = handleSLOOperationsRequest(
+      'POST',
+      ['incidents'],
+      JSON.stringify({
+        title: 'Test',
+        severity: 'SEV2',
+        affectedComponents: [],
+      }),
+    );
     const incidentId = JSON.parse(createResult!.body).id;
 
     // Update status
-    const result = handleSLOOperationsRequest('PUT', ['incidents', incidentId], JSON.stringify({
-      status: 'investigating',
-      actor: 'test-user',
-    }));
+    const result = handleSLOOperationsRequest(
+      'PUT',
+      ['incidents', incidentId],
+      JSON.stringify({
+        status: 'investigating',
+        actor: 'test-user',
+      }),
+    );
 
     expect(result?.statusCode).toBe(200);
     const body = JSON.parse(result!.body);

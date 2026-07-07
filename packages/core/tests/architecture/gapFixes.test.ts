@@ -14,7 +14,10 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { HNSWIndex } from '../../src/memory/hnswIndex';
-import { DistributedEventBus, createDistributedEventBus } from '../../src/runtime/distributedEventBus';
+import {
+  DistributedEventBus,
+  createDistributedEventBus,
+} from '../../src/runtime/distributedEventBus';
 import { PetriNetEngine } from '../../src/runtime/petriNetEngine';
 
 // ============================================================================
@@ -109,10 +112,22 @@ describe('HNSW Vector Index', () => {
 
   it('should handle high-dimensional vectors', () => {
     const dim = 256;
-    index.add('a', Array(dim).fill(0).map((_, i) => Math.sin(i)));
-    index.add('b', Array(dim).fill(0).map((_, i) => Math.cos(i)));
+    index.add(
+      'a',
+      Array(dim)
+        .fill(0)
+        .map((_, i) => Math.sin(i)),
+    );
+    index.add(
+      'b',
+      Array(dim)
+        .fill(0)
+        .map((_, i) => Math.cos(i)),
+    );
 
-    const query = Array(dim).fill(0).map((_, i) => Math.sin(i));
+    const query = Array(dim)
+      .fill(0)
+      .map((_, i) => Math.sin(i));
     const results = index.search(query, 2);
     expect(results[0].id).toBe('a');
   });
@@ -168,7 +183,8 @@ describe('PetriNetEngine setMarking', () => {
     engine.addPlace({ id: 'p1', label: 'P1', marking: 1, capacity: Infinity });
     engine.addPlace({ id: 'p2', label: 'P2', marking: 0, capacity: Infinity });
     engine.addTransition({
-      id: 't1', label: 'T1',
+      id: 't1',
+      label: 'T1',
       inputs: new Map([['p1', 1]]),
       outputs: new Map([['p2', 1]]),
     });
