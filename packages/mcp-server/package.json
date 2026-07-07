@@ -1,0 +1,61 @@
+{
+  "name": "@commander/mcp-server",
+  "version": "0.2.0",
+  "description": "Publishable MCP server for Commander — exposes Commander tools via stdin/stdout JSON-RPC.",
+  "license": "MIT",
+  "author": "PStarH <sampan090611@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PStarH/Commander"
+  },
+  "bugs": {
+    "url": "https://github.com/PStarH/Commander/issues"
+  },
+  "homepage": "https://github.com/PStarH/Commander#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "bin": {
+    "commander-mcp-server": "./dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --no-cache",
+    "test:watch": "vitest",
+    "prepublishOnly": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@commander/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "commander",
+    "multi-agent",
+    "ai",
+    "tools"
+  ]
+}
