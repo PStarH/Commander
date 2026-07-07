@@ -743,7 +743,9 @@ export class MultimodalContentScanner {
 // Singleton
 // ============================================================================
 
-const scannerSingleton = createTenantAwareSingleton(() => new MultimodalContentScanner());
+const scannerSingleton = createTenantAwareSingleton(() => new MultimodalContentScanner(), {
+  allowGlobalFallback: true,
+});
 
 export function getMultimodalContentScanner(
   _config?: Partial<MultimodalScannerConfig>,

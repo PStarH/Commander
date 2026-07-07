@@ -450,7 +450,9 @@ export class SandboxVerifier {
 // Singleton
 // ============================================================================
 
-const verifierSingleton = createTenantAwareSingleton(() => new SandboxVerifier());
+const verifierSingleton = createTenantAwareSingleton(() => new SandboxVerifier(), {
+  allowGlobalFallback: true,
+});
 
 export function getSandboxVerifier(_config?: Partial<VerifierConfig>): SandboxVerifier {
   return verifierSingleton.get();

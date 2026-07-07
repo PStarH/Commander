@@ -182,6 +182,70 @@ export const DEFAULT_PRICING: ModelPricing[] = [
     outputPer1k: 0.0009,
     cachedInputPer1k: 0.00003,
   },
+  {
+    provider: 'stepfun',
+    model: 'step-3.5-flash',
+    inputPer1k: 0.0005,
+    outputPer1k: 0.002,
+    cachedInputPer1k: 0.00025,
+  },
+  // ── Newer models mirrored from costEstimator DEFAULT_PRICING (must stay in sync) ──
+  // Anthropic next-gen
+  {
+    provider: 'anthropic',
+    model: 'claude-sonnet-4-6',
+    inputPer1k: 0.003,
+    outputPer1k: 0.015,
+    cachedInputPer1k: 0.0003,
+  },
+  {
+    provider: 'anthropic',
+    model: 'claude-haiku-4-5',
+    inputPer1k: 0.0008,
+    outputPer1k: 0.004,
+    cachedInputPer1k: 0.00008,
+  },
+  {
+    provider: 'anthropic',
+    model: 'claude-opus-4-8',
+    inputPer1k: 0.015,
+    outputPer1k: 0.075,
+    cachedInputPer1k: 0.0015,
+  },
+  // Google Gemini 2.x
+  {
+    provider: 'google',
+    model: 'gemini-2-pro',
+    inputPer1k: 0.0015,
+    outputPer1k: 0.0075,
+    cachedInputPer1k: 0.000375,
+  },
+  {
+    provider: 'google',
+    model: 'gemini-2-flash',
+    inputPer1k: 0.0001,
+    outputPer1k: 0.0004,
+    cachedInputPer1k: 0.000025,
+  },
+  // Deepseek deep tier
+  {
+    provider: 'deepseek',
+    model: 'deepseek-v4-pro',
+    inputPer1k: 0.002,
+    outputPer1k: 0.008,
+    cachedInputPer1k: 0.00002,
+  },
+  // xAI Grok-3 (non-suffixed)
+  { provider: 'xai', model: 'grok-3', inputPer1k: 0.003, outputPer1k: 0.015 },
+  // MiMo power tier
+  {
+    provider: 'mimo',
+    model: 'mimo-v2.5-pro',
+    inputPer1k: 0.004,
+    outputPer1k: 0.012,
+  },
+  // GLM 5.x
+  { provider: 'glm', model: 'glm-5.1', inputPer1k: 0.002, outputPer1k: 0.008 },
 ];
 
 const FALLBACK_PRICING: ModelPricing = {

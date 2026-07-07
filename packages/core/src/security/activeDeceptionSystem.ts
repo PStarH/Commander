@@ -1665,7 +1665,9 @@ export class ActiveDeceptionSystem {
 // 单例
 // ============================================================================
 
-const deceptionSingleton = createTenantAwareSingleton(() => new ActiveDeceptionSystem());
+const deceptionSingleton = createTenantAwareSingleton(() => new ActiveDeceptionSystem(), {
+  allowGlobalFallback: true,
+});
 
 /**
  * 获取全局 ActiveDeceptionSystem 实例（单租户）或租户范围的实例。

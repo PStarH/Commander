@@ -149,7 +149,7 @@ export class SecurityAnomalyDetector {
   /**
    * Process a single MessageBus event and check for anomalies.
    */
-  processEvent(message: BusMessage): void {
+  processEvent(message: Partial<BusMessage>): void {
     const agentId = this.extractAgentId(message);
     if (!agentId) return;
 
@@ -224,7 +224,7 @@ export class SecurityAnomalyDetector {
     }
   }
 
-  private extractAgentId(message: BusMessage): string | null {
+  private extractAgentId(message: Partial<BusMessage>): string | null {
     const payload = (message.payload ?? {}) as Record<string, unknown>;
     return (payload.agentId as string) ?? (message.source as string) ?? null;
   }
