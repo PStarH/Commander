@@ -31,62 +31,31 @@ import type {
   LLMResponse,
   LLMMessage,
   AgentExecutionContext,
-  AgentExecutionStep,
   AgentExecutionResult,
   AgentRuntimeConfig,
   Tool,
   ToolCall,
   ToolResult,
   ToolDefinition,
-  RoutingDecision,
-  TokenUsage,
-  ModelConfig,
-  ModelTier,
 } from './types';
-import {
-  DEFAULT_CONTEXT_WINDOW_TOKENS,
-  GOAL_TELEMETRY_MAX_CHARS,
-  GOAL_RESULT_MAX_CHARS,
-  GOAL_FULL_MAX_CHARS,
-  OUTPUT_PREFIX_MAX_CHARS,
-  SUMMARY_MAX_CHARS,
-  ERROR_MAX_CHARS,
-  TOOL_PATTERN_MAX_CHARS,
-  RESULT_CONTENT_MAX_CHARS,
-  RETRY_LOOP_THRESHOLD,
-  RETRY_LOOP_PATTERN_HISTORY,
-  DEFAULT_LLM_TIMEOUT_MS,
-} from './runtimeConstants';
+
 import type { AgentRuntimeInterface } from './agentRuntimeInterface';
 import { ModelRouter, getModelRouter } from './modelRouter';
 import { SmartModelRouter, type ModelRouterUserConfig } from './smartModelRouter';
-import { getMessageBus } from './messageBus';
 import { getTraceRecorder } from './executionTrace';
-import { getAnomalyDetector } from '../observability/anomalyDetector';
 import { PersistentTraceStore } from './traceStore';
 import { ContextCompactor } from './contextCompactor';
 import { SlidingWindowOrchestrator } from './slidingWindowOrchestrator';
-import { classifyLLMError, computeBackoff } from './llmRetry';
 import { CircuitBreaker } from './circuitBreaker';
-import { createParameterControllerPlugin } from './parameterController';
-import {
-  UnifiedVerificationPipeline,
-  type UVPTaskContext,
-  detectTaskType,
-} from './unifiedVerification';
-import { provisionTools } from './toolProvisioner';
+import { UnifiedVerificationPipeline } from './unifiedVerification';
 import { TokenGovernor } from './tokenGovernor';
 import { SamplesStore } from './samplesStore';
-import { captureProvenance } from './provenance';
-import { getIntentLog } from './intentLog';
-import { getVerificationReportStore } from './verificationReportStore';
 import { StateCheckpointer } from './stateCheckpointer';
-import { installProcessCrashHandlers } from './processCrashSafety';
-import { RunRecovery, type RunRecoveryResult } from './runRecovery';
+import type { RunRecoveryResult } from './runRecovery';
 import { getGlobalDeterminismCapture } from './determinismCapture';
 import { StepTimeoutManager } from './stepTimeoutManager';
 import { ProviderFallbackChain } from './providerFallbackChain';
-import { ReflexionInjector, type ReflectionEntry } from '../memory/reflexionInjector';
+import { ReflexionInjector } from '../memory/reflexionInjector';
 import { DeadLetterQueue } from './deadLetterQueue';
 import { getMetricsCollector } from './metricsCollector';
 import { CompensationRegistry } from './compensationRegistry';
@@ -97,85 +66,54 @@ import { ExecutionRouter } from './executionRouter';
 import { TeamRegistry } from './teamRegistry';
 import { AgentHandoff } from './agentHandoff';
 import { getGlobalThreeLayerMemory } from '../threeLayerMemory';
-import { getAgentIntelligence } from '../intelligence/agentIntegration';
-import { getMetaLearner } from '../selfEvolution/metaLearner';
-import { getFailurePatternLearner } from '../intelligence/failurePatterns';
 import { runWithTenant } from './tenantContext';
 import { getHookManager } from '../pluginManager';
 import { ToolOutputManager } from './toolOutputManager';
 import { ToolOrchestrator } from './toolOrchestrator';
-import { ToolApproval } from './toolApproval';
 import { ToolPlanner } from './toolPlanner';
 import { CycleDetector } from './cycleDetector';
-import { parseStructuredOutput } from './structuredOutput';
 import { getExecutionScheduler, type RunHandle } from '../atr/scheduler';
 import { LeaseManager } from '../atr/leaseManager';
-import { isConfidentResponse } from './entropyGater';
-import { InterruptError } from './interruptError';
 import { createContentScanner, type ContentScanner } from '../contentScanner';
-import { scanToolOutputForInjection, enforceToolOutputSecurity } from '../contentScanner';
-import { sanitizeIfNeeded } from '../security/outputSanitizer';
-import { getCapabilityTokenIssuer } from '../security/capabilityToken';
 import { getEnterpriseSecurityGateway } from '../security/enterpriseSecurityGateway';
-import { checkMemoryPoisoning } from '../security/memoryPoisoningGate';
-import { getMemoryPoisoningDefenseEngine } from '../security/memoryPoisoningDefenseEngine';
-import {
-  isAgentSuspended,
-  isAgentQuarantined,
-  getThrottleMultiplier,
-  processSecurityAlert,
-} from '../security/securityResponseEngine';
-import type { SecurityAlert } from '../security/securityResponseEngine';
+import { isAgentSuspended, isAgentQuarantined } from '../security/securityResponseEngine';
 import { assertInvariants } from '../security/securityInvariantVerifier';
-import { getHallucinationDetector, type HallucinationReport } from '../hallucinationDetector';
-import { getSLOManager } from '../observability/sloManager';
-import { getPrivacyRouter } from './privacyRouter';
 import type { TenantProvider, TenantConfig } from './tenantProvider';
 import type { PlannedToolCall } from '../compensation/rollbackPlanner';
 import { getGlobalTenantProvider } from './tenantProvider';
 import { getLaneManager } from '../sandbox/lane';
-import { createMemoryStore } from '../memory';
 import type { MemoryStore } from '../memory';
 import { getConversationStore } from '../memory/conversationStore';
 import { CacheManager } from './cacheManager';
 import { ConcurrencyController } from './concurrencyController';
 import { RunLifecycleManager } from './runLifecycleManager';
-import { getFreezeDryManager, type ActiveRunState } from './freezeDry';
+import { getFreezeDryManager } from './freezeDry';
 import { TenantManager } from './tenantManager';
 import { CompensationService } from './compensationService';
 import type { CompensationPlan } from '../compensation/types';
 import type { SingleFlightStats } from './singleFlightRequestCache';
 import type { GeminiCacheStats } from './geminiCacheManager';
 import { ToolExecutionService } from './toolExecutionService';
-import { initializeServices, type InitializedServices } from './serviceInitializer';
+import { initializeServices } from './serviceInitializer';
 import { CheckpointingPhase } from './phases/checkpointing';
 import { RunTelemetryRecorder } from './runTelemetryRecorder';
-import {
-  createInitialAgentExecutionState,
-  type AgentExecutionState,
-} from './phases/AgentExecutionState';
-import {
-  OpenTelemetryExporter,
-  getOTelExporter,
-  executionTraceToOtlpSpans,
-} from './openTelemetryExporter';
-import { exportSOPFromTrace, formatSOPAsMarkdown } from './sopExport';
+import { OpenTelemetryExporter } from './openTelemetryExporter';
 import { FinallyCleanupHandler, type TenantOverrides } from './finallyCleanupHandler';
 import { LLMRequestBuilder } from './llmRequestBuilder';
 import { GoalCompletionVerifier } from './goalCompletionVerifier';
 import { ToolExecutionHandler } from './toolExecutionHandler';
+import { RunInitializer, type InitResult } from './runInitializer';
+import { PreLoopSetup } from './preLoopSetup';
+import { AgentLoopOrchestrator } from './agentLoopOrchestrator';
 import { LlmCaller } from './llm/llmCaller';
 import { normalizeToolCall } from './tool/toolCallNormalizer';
 import { ToolCallRetryLoopDetector } from './tool/toolCallRetryLoopDetector';
 import { ToolCallSecurityGate } from './tool/toolCallSecurityGate';
 import { TenantContextResolver } from './tenant/tenantContextResolver';
-import { ReflexionGenerator, type ReflexionContext } from './reflexionGenerator';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+import { ReflexionGenerator } from './reflexionGenerator';
 import { getGlobalLogger } from '../logging';
 import { getDataRetentionJanitor } from '../storage/dataRetention';
-import type { CompactTaskType } from './contextCompactor';
-import { getCostEstimator, type CostEstimate } from './costEstimator';
+import { getCostEstimator } from './costEstimator';
 // TokenSentinel and CostGuard imports removed — both superseded by
 // UnifiedCostAuthority (UCA). The legacy classes remain as @deprecated
 // thin shells for backward compatibility but are no longer invoked
@@ -184,8 +122,7 @@ import { getModelPerformanceStore } from './modelPerformanceStore';
 import { getSecurityMonitor } from '../security/securityMonitor';
 import { initializeRuntimeGuardian } from './runtimeGuardianBridge';
 import { SecurityOrchestrator } from './securityOrchestrator';
-import type { CrossAgentEvent } from '../security/crossAgentCorrelator';
-import { DEFAULT_CONFIG, generateId, now, delay } from './runtimeHelpers';
+import { DEFAULT_CONFIG, generateId } from './runtimeHelpers';
 
 export class AgentRuntime implements AgentRuntimeInterface {
   private config: AgentRuntimeConfig;
@@ -264,6 +201,19 @@ export class AgentRuntime implements AgentRuntimeInterface {
   // Extracted from execute()'s retry loop — owns the per-response tool-execution
   // phase (onStepStart → tool dispatch → result redaction → onStepComplete).
   private toolExecutionHandler: ToolExecutionHandler;
+
+  // Extracted from execute() step 1 — acquires concurrency/lane, seeds FreezeDry,
+  // starts the tracer, writes the intent log, and registers with the scheduler.
+  private runInitializer: RunInitializer;
+
+  // Extracted from execute() step 3 — per-run setup inside runWithTenant before
+  // the retry loop: budget check, routing, LLM request build, context injection,
+  // event emission, and circuit-breaker check.
+  private preLoopSetup: PreLoopSetup;
+
+  // Extracted from execute() step 4 — the retry loop: LLM call, tool execution,
+  // verification, early exit, checkpointing, and result construction.
+  private agentLoopOrchestrator: AgentLoopOrchestrator;
 
   // Extracted from AgentRuntime private methods — shrink the god object.
   private llmCaller: LlmCaller;
@@ -486,6 +436,53 @@ export class AgentRuntime implements AgentRuntimeInterface {
       },
     });
 
+    // RunInitializer — extracted from the top of execute(). Acquires the
+    // concurrency/lane slots, seeds FreezeDry, starts the tracer, writes the
+    // intent log, sets the active-runs gauge, and registers with the scheduler.
+    this.runInitializer = new RunInitializer({
+      getConfig: () => this.config,
+      getConcurrencyController: () => this.concurrencyController,
+      getTenantProvider: () => this.tenantProvider,
+      getTenantManager: () => this.tenantManager,
+      getLaneManager: () => getLaneManager(),
+      getRunLifecycle: () => this.runLifecycle,
+      getFreezeDryManager: () => getFreezeDryManager(),
+      getTracer: () => getTraceRecorder(),
+      getExecutionScheduler: () => getExecutionScheduler(),
+    });
+
+    // PreLoopSetup — extracted from the pre-loop body inside runWithTenant.
+    // Owns context-data lift, budget check, routing, LLM request construction,
+    // tool provisioning, checkpoint start, context injection, started event,
+    // onAgentStart hooks, sliding-window creation, and circuit-breaker check.
+    this.preLoopSetup = new PreLoopSetup({
+      getConfig: () => this.config,
+      getRouter: () => this.router,
+      getExecutionRouter: () => this.executionRouter,
+      getLLMRequestBuilder: () => this.llmRequestBuilder,
+      getContextInjector: () => this.contextInjector,
+      getCheckpointingPhase: () => this.checkpointingPhase,
+      getSamplesStore: () => this.samplesStore,
+      getGovernor: () => this.governor,
+      getCircuitBreaker: () => this.circuitBreaker,
+      getProviders: () => this.providers,
+      getTools: () => this.tools,
+      getCacheManager: () => this.cacheManager,
+      getSmartRouterActive: () => this.smartRouterActive,
+      setSmartRouterActive: (enabled) => {
+        this.smartRouterActive = enabled;
+      },
+      setGovernor: (governor) => {
+        this.governor = governor;
+      },
+      setSlidingWindow: (sw) => {
+        this.slidingWindow = sw;
+      },
+      setVerificationPipelineEvaluator: (provider) => {
+        this.verificationPipeline.setEvaluatorProvider(provider);
+      },
+    });
+
     // LlmCaller — owns the LLM provider invocation chain previously implemented
     // by the private methods callWithTimeout / callProviderOrThrow / callProvider.
     this.llmCaller = new LlmCaller({
@@ -499,6 +496,49 @@ export class AgentRuntime implements AgentRuntimeInterface {
       stepTimeout: this.stepTimeout,
       fallbackChain: this.fallbackChain,
       llmTimeoutMs: this.config.llmTimeoutMs,
+    });
+
+    // AgentLoopOrchestrator — extracted from execute()'s retry loop. Owns the
+    // LLM call, tool execution, verification, early exit, checkpointing, and
+    // result construction. Getter callbacks keep it decoupled from per-run state.
+    this.agentLoopOrchestrator = new AgentLoopOrchestrator({
+      getConfig: () => this.config,
+      getProviders: () => this.providers,
+      getRouter: () => this.router,
+      getSmartRouter: () => this.smartRouter,
+      getGovernor: () => this.governor,
+      getCircuitBreaker: () => this.circuitBreaker,
+      getToolExecutionHandler: () => this.toolExecutionHandler,
+      getToolExecutionService: () => this.toolExecutionService,
+      getGoalCompletionVerifier: () => this.goalCompletionVerifier,
+      getVerificationPipeline: () => this.verificationPipeline,
+      getContentScanner: () => this.contentScanner,
+      getMemory: () => this.memory,
+      getCheckpointingPhase: () => this.checkpointingPhase,
+      getSamplesStore: () => this.samplesStore,
+      getCompactor: () => this.compactor,
+      getCycleDetector: () => this.cycleDetector,
+      getReflexionInjector: () => this.reflexionInjector,
+      getReflexionGenerator: () => this.reflexionGenerator,
+      getSecurityOrch: () => this.securityOrch,
+      getRunTelemetryRecorder: () => this.runTelemetryRecorder,
+      getMetricsCollector: () => getMetricsCollector(),
+      getCostEstimator: () => getCostEstimator(),
+      getHookManager: () => getHookManager(),
+      getLastProviderError: () => this.lastProviderError,
+      setLastProviderError: (err) => {
+        this.lastProviderError = err;
+      },
+      setLastHallucinationDetected: (value) => {
+        this.lastHallucinationDetected = value;
+      },
+      onCircuitReleased: () => {
+        // Circuit-released flag is tracked by mutating init.circuitReleased
+        // inside the orchestrator so the finally cleanup handler reads the
+        // correct per-run value.
+      },
+      executeTool: this.executeTool.bind(this),
+      callWithTimeout: this.llmCaller.callWithTimeout.bind(this.llmCaller),
     });
 
     // ToolCallRetryLoopDetector — pure helper, no runtime dependencies.
@@ -761,30 +801,19 @@ export class AgentRuntime implements AgentRuntimeInterface {
    * Enforces maxConcurrency via semaphore (GAP-07).
    */
   async execute(ctx: AgentExecutionContext): Promise<AgentExecutionResult> {
-    await this.concurrencyController.acquireSlot();
-
-    const runId = generateId();
-    const bus = getMessageBus();
-    const tracer = getTraceRecorder();
-    const costEstimator = getCostEstimator();
-    const startTime = Date.now();
-    const state = createInitialAgentExecutionState(ctx);
-    (state as { runId: string }).runId = runId;
-
-    const tenantId = getGlobalTenantProvider().getCurrentTenantId() ?? ctx.tenantId ?? undefined;
-    const tenantCfg = tenantId ? this.tenantProvider.getTenantConfig(tenantId) : undefined;
+    let tenantId = getGlobalTenantProvider().getCurrentTenantId() ?? ctx.tenantId ?? undefined;
+    let tenantCfg = tenantId ? this.tenantProvider.getTenantConfig(tenantId) : undefined;
 
     const tenantResolution = this.tenantContextResolver.resolveTenantContext(
       tenantId,
       tenantCfg,
-      runId,
+      generateId(),
       ctx.agentId,
       ctx.missionId,
     );
     if (!tenantResolution.allowed) {
-      this.concurrencyController.releaseSlot();
       return {
-        runId,
+        runId: generateId(),
         agentId: ctx.agentId,
         missionId: ctx.missionId,
         status: 'failed',
@@ -797,1641 +826,32 @@ export class AgentRuntime implements AgentRuntimeInterface {
     }
     const tenantOverrides = tenantResolution.overrides;
 
-    // Execution Lane: acquire a lane slot (concurrent execution isolation)
-    let currentLane: string;
-    try {
-      currentLane = await getLaneManager().acquireSlot({
-        tenantId: getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
-        agentId: ctx.agentId,
-        runId,
-        args: ctx.lane ? { lane: ctx.lane } : undefined,
-      });
-    } catch (err) {
-      reportSilentFailure(err, 'agentRuntime:1188');
-      // Decrement tenant running count on lane acquisition failure
-      this.tenantManager.releaseTenantConcurrency(tenantId);
-      this.concurrencyController.releaseSlot();
-      return {
-        runId,
-        agentId: ctx.agentId,
-        missionId: ctx.missionId,
-        status: 'failed',
-        summary: 'Failed to acquire lane slot',
-        steps: [],
-        totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-        totalDurationMs: 0,
-        error: 'LANE_ACQUISITION_FAILED',
-      };
-    }
-
-    this.runLifecycle.addRun(runId);
-    // FreezeDry: seed manager with current active runs snapshot so a crash
-    // mid-run leaves a manifest for `commander up --resume`. Best-effort —
-    // failures never block the hot path.
-    try {
-      const freezeMgr = getFreezeDryManager();
-      const activeRuns = new Map<string, ActiveRunState>();
-      for (const activeRunId of this.runLifecycle.getActiveRuns()) {
-        activeRuns.set(activeRunId, {
-          runId: activeRunId,
-          agentId: ctx.agentId,
-          phase: 'executing',
-          stepNumber: 0,
-          goal: ctx.goal,
-          completedToolCalls: 0,
-        });
-      }
-      freezeMgr.setActiveRuns(activeRuns);
-    } catch (err) {
-      reportSilentFailure(err, 'agentRuntime:freezeDryInit');
-    }
-    tracer.startRun(runId, ctx.agentId, ctx.missionId, undefined, {
-      tenantId: ctx.tenantId,
-      parentRunId: ctx.parentRunId,
-      subAgentDepth: ctx.subAgentDepth,
-      subAgentRole: ctx.subAgentRole,
-    });
-    try {
-      getIntentLog(ctx.tenantId).write({
-        schemaVersion: 1,
-        runId,
-        capturedAt: new Date().toISOString(),
-        stage: 'agentRuntime.execute',
-        decision: 'start',
-        reason: 'execute() entered',
-        payload: {
-          agentId: ctx.agentId,
-          goal: ctx.goal.slice(0, 200),
-          parentRunId: ctx.parentRunId,
-          subAgentDepth: ctx.subAgentDepth,
-        },
-      });
-    } catch (err) {
-      reportSilentFailure(err, 'agentRuntime:1228');
-      /* best-effort */
-    }
-    getMetricsCollector().setGauge(
-      'active_runs',
-      'Active concurrent runs',
-      this.runLifecycle.getActiveRunCount(),
-    );
-    let circuitReleased = false;
-
-    // Phase 3: register this run with the centralized ExecutionScheduler
-    try {
-      this.runHandle = getExecutionScheduler().beginRun({
-        runId,
-        goal: ctx.goal,
-        tenantId: getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
-        metadata: { agentId: ctx.agentId, missionId: ctx.missionId },
-        holder: 'agent-runtime',
-      });
-    } catch (e) {
-      getGlobalLogger().warn('AgentRuntime', 'Failed to register run with execution scheduler', {
-        error: e instanceof Error ? e.message : String(e),
-      });
-      return {
-        runId,
-        agentId: ctx.agentId,
-        missionId: ctx.missionId,
-        status: 'failed',
-        summary: 'Failed to register run with execution scheduler',
-        steps: [],
-        totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-        totalDurationMs: 0,
-        error: 'SCHEDULER_REGISTRATION_FAILED',
-      };
-    }
+    const init: InitResult = await this.runInitializer.initialize(ctx);
+    tenantId = init.tenantId;
+    tenantCfg = init.tenantCfg;
+    this.runHandle = init.runHandle;
 
     let execResult: AgentExecutionResult | undefined;
     try {
       execResult = await runWithTenant(
         getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
         async () => {
-          // ── Late-stage override — lift CLI-provided routing hints from
-          //    contextData into top-level ctx fields so the routing block,
-          //    samplesStore manifest, smart router, and tracer all see them.
-          //    Without this lift, --model/--tier flags injected into
-          //    contextData never reach `ctx.preferredModel` /
-          //    `ctx.preferredModelTier` which is what every downstream
-          //    consumer reads. (Audit P0-2 follow-up.)
-          const cd = (ctx as unknown as { contextData?: Record<string, unknown> }).contextData;
-          if (cd?.preferredModel && typeof cd.preferredModel === 'string') {
-            (ctx as unknown as { preferredModel?: string }).preferredModel = cd.preferredModel;
+          const setup = await this.preLoopSetup.prepare(ctx, init);
+          if ('status' in setup) {
+            return setup;
           }
-          if (cd?.preferredModelTier && typeof cd.preferredModelTier === 'string') {
-            (ctx as unknown as { preferredModelTier?: ModelTier }).preferredModelTier =
-              cd.preferredModelTier as ModelTier;
-          }
-          if (cd?.cascadeEnabled === true) {
-            this.smartRouterActive = true;
-          } else if (cd?.cascadeEnabled === false) {
-            this.smartRouterActive = false;
-          }
-          // qualityThreshold is applied via orchestrator.setQualityGateThreshold()
-          // before execute() — not here, because the orchestrator owns the gate
-          // config and is constructed at the CLI layer.
-
-          // Record run manifest (provenance, config, params)
-          this.samplesStore.recordRunManifest(runId, {
-            ...captureProvenance(),
-            agentId: ctx.agentId,
-            missionId: ctx.missionId,
-            goal: ctx.goal.slice(0, 500),
-            tokenBudget: ctx.tokenBudget,
-            availableTools: ctx.availableTools,
-            modelId: this.router.route(
-              ctx,
-              undefined,
-              ctx.preferredModelTier,
-              new Set(this.providers.keys()),
-            ).modelId,
-            config: { ...this.config },
-            timestamp: new Date().toISOString(),
-          });
-
-          // Per-run governor to prevent concurrent run corruption (was shared instance)
-          this.governor = new TokenGovernor({
-            totalBudget: ctx.tokenBudget || this.config.budgetHardCapTokens || 200000,
-          });
-          // Detect task type for strategy selection
-          const taskType = detectTaskType(ctx.goal);
-          this.governor.setTaskCategory(
-            taskType === 'code'
-              ? 'code'
-              : taskType === 'search'
-                ? 'search'
-                : taskType === 'analysis'
-                  ? 'analysis'
-                  : taskType === 'structured'
-                    ? 'structured'
-                    : 'general',
-          );
-
-          // 0. Pre-execution budget check (hard enforcement, not advisory)
-          if (
-            this.config.budgetHardCapTokens > 0 &&
-            ctx.tokenBudget > this.config.budgetHardCapTokens
-          ) {
-            const msg = `BUDGET_EXCEEDED: requested ${ctx.tokenBudget} > hard cap ${this.config.budgetHardCapTokens}`;
-            tracer.recordDecision(runId, msg, 0);
-            bus.publish('agent.failed', ctx.agentId, { runId, error: msg });
-            return {
-              runId,
-              agentId: ctx.agentId,
-              missionId: ctx.missionId,
-              status: 'cancelled',
-              summary: msg,
-              steps: [],
-              totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-              totalDurationMs: 0,
-              error: msg,
-            };
-          }
-
-          // 1. Model routing + Privacy + Cost estimation
-          const routeResult = await this.executionRouter.route({
-            ctx,
-            runId,
-            tenantId,
-            bus,
-            tracer,
-          });
-          if (routeResult.status === 'cancelled') {
-            return {
-              runId,
-              agentId: ctx.agentId,
-              missionId: ctx.missionId,
-              status: 'cancelled',
-              summary: routeResult.summary,
-              steps: [],
-              totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-              totalDurationMs: 0,
-              error: routeResult.summary,
-            };
-          }
-          let routing = routeResult.routing;
-          let currentEscalationChain = routeResult.escalationChain;
-          const batchRouting = routeResult.batchRouting;
-          const costEstimate = routeResult.costEstimate;
-
-          // 2. Build LLM request with cache-optimized prompt structure
-          //    Stable content (system, tools) FIRST for maximum cache hits.
-          //    Variable content (user message) LAST.
-          //    (Extracted into LLMRequestBuilder — see llmRequestBuilder.ts)
-          const { request, projectContext } = this.llmRequestBuilder.build({
-            ctx,
-            routing,
-            batchRouting,
-            taskType,
-            tenantId,
-          });
-
-          // Pre-LLM tool provisioning: detect tool needs and inject results before LLM sees the question
-          try {
-            const provisioned = await provisionTools(
-              ctx.goal,
-              request,
-              this.tools,
-              this.cacheManager.getToolCache(),
-            );
-            if (provisioned) {
-              bus.publish('system.alert', 'runtime', { type: 'tool_provisioned' });
-            }
-          } catch (e) {
-            getGlobalLogger().debug('AgentRuntime', 'Tool provisioning failed (best-effort)', {
-              error: (e as Error)?.message,
-            });
-          }
-
-          state.activeProjectContext = projectContext;
-          await this.checkpointingPhase.checkpointStart(ctx, state, {
-            request,
-            projectContext,
-          });
-
-          // Dynamic context injection (inbox, memory, skills, skill recall)
-          const injected = await this.contextInjector.inject({
-            ctx,
-            tokenBudget: ctx.tokenBudget,
-          });
-          if (injected.partCount > 0) {
-            request.messages.splice(request.messages.length - 1, 0, {
-              role: 'system' as const,
-              content: injected.content,
-            });
-          }
-
-          // 3. Emit started event
-          bus.publish('agent.started', ctx.agentId, {
-            runId,
-            missionId: ctx.missionId,
-            model: routing.modelId,
-            goal: ctx.goal,
-          });
-
-          // Fire plugin onAgentStart hooks
-          getHookManager()
-            .fireOnAgentStart({ ctx, runId })
-            .catch((e) =>
-              getGlobalLogger().debug('AgentRuntime', 'onAgentStart hook failed', {
-                error: (e as Error)?.message,
-              }),
-            );
-
-          // 4. Execute with retry and circuit breaker
-          let lastError: string | undefined;
-          let lastErrorIsPermanent = false;
-          const steps: AgentExecutionStep[] = [];
-          const totalTokens: TokenUsage = {
-            promptTokens: 0,
-            completionTokens: 0,
-            totalTokens: 0,
-            cacheReadTokens: 0,
-          };
-          // Track content written by file_write tool calls for artifact propagation
-          let largestFileWriteContent = '';
-          // Consecutive degeneration counter: when the model degenerates 2+
-          // times in a row, force earlyExit to prevent cascading context
-          // pollution. The model's reasoning quality will not recover.
-          let consecutiveDegenerationCount = 0;
-
-          // Per-run sliding window instance to prevent concurrent run corruption
-          this.slidingWindow = new SlidingWindowOrchestrator();
-
-          // Resolve evaluator provider for verification pipeline (echo chamber breaker)
-          if (this.config.evaluatorProviderName) {
-            const evalProvider = this.providers.get(this.config.evaluatorProviderName);
-            if (evalProvider) {
-              this.verificationPipeline.setEvaluatorProvider(evalProvider);
-            }
-          }
-
-          // Check circuit breaker before first attempt
-          if (!this.circuitBreaker.isAvailable()) {
-            const msg = 'CIRCUIT_OPEN: Too many recent failures. Cooling down.';
-            tracer.recordDecision(runId, msg, 0);
-            bus.publish('agent.failed', ctx.agentId, { runId, error: msg });
-            return {
-              runId,
-              agentId: ctx.agentId,
-              missionId: ctx.missionId,
-              status: 'cancelled',
-              summary: msg,
-              steps: [],
-              totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-              totalDurationMs: 0,
-              error: msg,
-            };
-          }
-
-          // Cost enforcement is handled by EnterpriseSecurityGateway.preLLMCheck
-          // (→ UnifiedCostAuthority) inside the LLM call path. The legacy
-          // CostGuard.evaluateRequest() previously duplicated this check on
-          // the hot path; it has been removed to eliminate double-checking.
-          // CostGuard is now @deprecated — see security/costGuard.ts.
-
-          for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
-            const llmCtx = { request, agentId: ctx.agentId, runId };
-            const llmRequest = await getHookManager().fireBeforeLLMCall(llmCtx);
-
-            // PASTE speculative execution: pre-execute predicted read-only tools
-            // during LLM thinking time. Fire-and-forget — results land in
-            // ToolResultCache and are consumed transparently on cache hit.
-            try {
-              this.toolExecutionService.triggerSpeculativeExecution(tenantId).catch(() => {});
-            } catch (err) {
-              reportSilentFailure(err, 'agentRuntime:speculativeTrigger');
-            }
-
-            let response = await this.llmCaller.callWithTimeout(llmRequest, routing);
-            await getHookManager().fireAfterLLMCall({
-              request: llmRequest,
-              response,
-              agentId: ctx.agentId,
-              runId,
-            });
-            const stepDuration = Date.now() - startTime;
-
-            // Enforce sub-agent step limits (only when ctx.guard is set by subAgentExecutor)
-            ctx.guard?.check(0);
-
-            if (response) {
-              // DeterminismCapture: record LLM response for event replay recovery (Path A).
-              // Fire-and-forget — capture failures never block the critical path.
-              try {
-                const captureStep = getGlobalDeterminismCapture().nextStep(runId);
-                getGlobalDeterminismCapture().captureLLMResponse(runId, captureStep, response);
-              } catch (capErr) {
-                reportSilentFailure(capErr, 'agentRuntime:captureLLMResponse');
-              }
-              // Accumulate token usage
-              totalTokens.promptTokens += response.usage.promptTokens;
-              totalTokens.completionTokens += response.usage.completionTokens;
-              totalTokens.totalTokens += response.usage.totalTokens;
-              totalTokens.cacheReadTokens =
-                (totalTokens.cacheReadTokens ?? 0) + (response.usage.cacheReadTokens ?? 0);
-              this.governor.reportUsage(response.usage.totalTokens);
-              ctx.guard?.recordTokens(response.usage.totalTokens);
-
-              const _traceEventId = tracer.recordLLMCall(
-                runId,
-                routing.modelId,
-                routing.provider,
-                routing.tier,
-                request,
-                response,
-                response.usage,
-                stepDuration,
-                undefined,
-                { taskCategory: costEstimate.taskCategory },
-              );
-              getMetricsCollector().recordLLMCall(
-                routing.modelId,
-                routing.provider,
-                response.usage.totalTokens,
-                stepDuration,
-                undefined,
-                tenantId,
-              );
-
-              // Hallucination detection: single analyze call for both HITL
-              // signal and security event enrichment (previously called twice).
-              let hallucinationReport: HallucinationReport | null = null;
-              try {
-                const userInput = request.messages
-                  .filter((m) => m.role === 'user')
-                  .map((m) => m.content)
-                  .join('\n')
-                  .slice(0, 4000);
-                hallucinationReport = getHallucinationDetector().analyze(
-                  userInput,
-                  response.content?.slice(0, 4000) ?? '',
-                );
-                this.lastHallucinationDetected =
-                  hallucinationReport.recommendation === 'reject' ||
-                  hallucinationReport.recommendation === 'flag_for_review';
-              } catch (err) {
-                reportSilentFailure(err, 'agentRuntime:hallucination-detection');
-                this.lastHallucinationDetected = false;
-              }
-
-              // SecurityOrchestrator: feed LLM call into GuardianAgent + CrossAgentCorrelator
-              try {
-                const llmEvent: CrossAgentEvent = {
-                  id: generateId(),
-                  agentId: ctx.agentId,
-                  runId,
-                  type: 'llm_call',
-                  summary: `LLM call to ${routing.modelId}: ${response.content?.slice(0, 80) ?? ''}`,
-                  metadata: {
-                    model: routing.modelId,
-                    provider: routing.provider,
-                    tier: routing.tier,
-                    tokenUsage: response.usage,
-                    stepDuration,
-                    hasToolCalls: !!(response.toolCalls && response.toolCalls.length > 0),
-                  },
-                  timestamp: Date.now(),
-                  severity: 'low' as const,
-                };
-                // Reuse the hallucination report from above (OWASP ASI10) — no
-                // duplicate analyze() call. Enriches the LLM event for HITL.
-                if (hallucinationReport && hallucinationReport.recommendation !== 'pass') {
-                  getGlobalLogger().warn('AgentRuntime', 'Hallucination detected', {
-                    agentId: ctx.agentId,
-                    riskScore: hallucinationReport.riskScore,
-                    recommendation: hallucinationReport.recommendation,
-                    signals: hallucinationReport.signals.length,
-                  });
-                  llmEvent.metadata.hallucinationDetected = true;
-                  llmEvent.metadata.hallucinationRiskScore = hallucinationReport.riskScore;
-                  llmEvent.severity = 'medium' as const;
-                }
-                this.securityOrch.onAgentEvent(llmEvent);
-              } catch (err) {
-                reportSilentFailure(err, 'agentRuntime:2104');
-                /* best-effort */
-              }
-
-              // Record actual cost for estimator learning (per-step)
-              try {
-                const modelCfg = this.router.getModel(routing.modelId);
-                costEstimator.recordActualCost(
-                  costEstimate.taskCategory,
-                  routing.tier,
-                  response.usage.promptTokens,
-                  response.usage.completionTokens,
-                  response.usage.cacheReadTokens ?? 0,
-                  modelCfg?.costPer1MInput ?? 3,
-                  modelCfg?.costPer1MOutput ?? 10,
-                  modelCfg?.costPer1MCachedInput,
-                  stepDuration,
-                  true,
-                );
-                // Record model performance for cross-session learning
-                this.router.recordOutcome(
-                  routing.modelId,
-                  costEstimate.taskCategory,
-                  true,
-                  stepDuration,
-                  response.usage.totalTokens,
-                );
-                try {
-                  getModelPerformanceStore().record({
-                    modelId: routing.modelId,
-                    taskType: costEstimate.taskCategory,
-                    success: true,
-                    durationMs: stepDuration,
-                    tokensUsed: response.usage.totalTokens,
-                    timestamp: Date.now(),
-                  });
-                } catch (err) {
-                  reportSilentFailure(err, 'agentRuntime:2141');
-                  /* best-effort */
-                }
-              } catch (err) {
-                reportSilentFailure(err, 'agentRuntime:2145');
-                /* best-effort learning */
-              }
-
-              // NOTE: TokenSentinel advisory budget check removed — superseded by
-              // UnifiedCostAuthority (UCA). The UCA's postCall (invoked via
-              // EnterpriseSecurityGateway.postLLMCheck) now owns per-run budget
-              // tracking, anomaly observation (3σ), and melt triggering.
-              // Keeping this block as a comment to document the migration.
-
-              // ── Degeneration guard (PRE-STEP) ──
-              // Detect and sanitize model degeneration BEFORE the step is created.
-              // This prevents degenerate content (e.g., "TheTheTheThe…") from
-              // entering step history, where it would contaminate the final
-              // summary when the terminal handler pulls from steps.
-              let degenerationDetected = false;
-              if (response.content) {
-                const stagnation = this.cycleDetector.checkOutput(response.content);
-                if (stagnation.detected && stagnation.type === 'semantic_stagnation') {
-                  consecutiveDegenerationCount++;
-                  bus.publish('system.alert', 'runtime', {
-                    ...stagnation,
-                    runId,
-                    agentId: ctx.agentId,
-                    stepNumber: steps.length + 1,
-                    consecutive: consecutiveDegenerationCount,
-                  });
-                  getGlobalLogger().warn('AgentRuntime', 'Semantic stagnation detected', {
-                    stepNumber: steps.length + 1,
-                    similarity: stagnation.similarity,
-                    description: stagnation.description,
-                    consecutive: consecutiveDegenerationCount,
-                  });
-                  getMetricsCollector().incrementCounter(
-                    'degeneration_breaks_total',
-                    'Retry loops broken due to model output degeneration',
-                    1,
-                    [{ name: 'type', value: 'repetition' }],
-                  );
-
-                  // Sanitize: truncate to the first non-degenerate sentence.
-                  const sentences = response.content.split(/(?<=[.!?])\s+/);
-                  const cleanSentences: string[] = [];
-                  for (const s of sentences) {
-                    if (!CycleDetector.detectRepetition(s).detected) {
-                      cleanSentences.push(s);
-                    } else {
-                      break;
-                    }
-                  }
-                  const cleanContent = cleanSentences.join(' ').trim();
-                  response.content =
-                    (cleanContent.length > 20 ? cleanContent.slice(0, 2000) : '') +
-                    '[Output truncated: model degeneration detected — ' +
-                    stagnation.description +
-                    ']';
-                  // Recovery strategy: on 3rd+ consecutive degeneration, the
-                  // model has lost coherence — continuing to execute tool
-                  // calls will only pollute the context further and produce
-                  // worse outcomes. Force earlyExit by clearing toolCalls so
-                  // the terminal handler takes over with whatever work was
-                  // already completed. On 1st-2nd degeneration, preserve
-                  // toolCalls (the model may still issue valid calls like
-                  // update-dep) and give it a chance to recover.
-                  if (consecutiveDegenerationCount >= 3) {
-                    getGlobalLogger().warn(
-                      'AgentRuntime',
-                      'Forcing earlyExit due to repeated degeneration',
-                      {
-                        consecutiveDegenerationCount,
-                        stepNumber: steps.length + 1,
-                        toolCallsCleared: response.toolCalls?.length ?? 0,
-                      },
-                    );
-                    getMetricsCollector().incrementCounter(
-                      'degeneration_forced_exits_total',
-                      'Early exits forced due to repeated model degeneration',
-                      1,
-                      [{ name: 'reason', value: 'consecutive_degeneration' }],
-                    );
-                    response.toolCalls = [];
-                  }
-                  degenerationDetected = true;
-                } else {
-                  // Reset counter when output is healthy
-                  consecutiveDegenerationCount = 0;
-                }
-              }
-
-              // Record step (content is already sanitized if degeneration was detected)
-              const stepNumber = steps.length + 1;
-              const step: AgentExecutionStep = {
-                stepNumber,
-                timestamp: now(),
-                type: 'response',
-                content:
-                  response.content ||
-                  (response as { reasoning_content?: string }).reasoning_content ||
-                  '',
-                tokenUsage: response.usage,
-                durationMs: stepDuration,
-              };
-
-              // ── Tool execution phase (extracted to ToolExecutionHandler) ──
-              // Owns onStepStart → tool dispatch → result redaction → onStepComplete
-              // → follow-up LLM call. Returns control signals for the post-loop
-              // interrupt check, goal-completion verification, and early-exit path.
-              const {
-                response: toolExecResponse,
-                earlyExit,
-                interruptData,
-                largestFileWriteContent: toolExecLargestFileWriteContent,
-              } = await this.toolExecutionHandler.executeStep({
-                ctx,
-                runId,
-                response,
-                request,
-                steps,
-                totalTokens,
-                bus,
-                tenantId,
-                routing,
-                step,
-                stepNumber,
-                degenerationDetected,
-                largestFileWriteContent,
-              });
-              response = toolExecResponse;
-              largestFileWriteContent = toolExecLargestFileWriteContent;
-
-              // FreezeDry: update run state with current step progress so the
-              // freeze manifest reflects the latest step at crash time.
-              try {
-                getFreezeDryManager().setRunState(runId, {
-                  runId,
-                  agentId: ctx.agentId,
-                  phase: 'executing',
-                  stepNumber,
-                  goal: ctx.goal,
-                  completedToolCalls: steps.length,
-                });
-              } catch (err) {
-                reportSilentFailure(err, 'agentRuntime:freezeDryStepUpdate');
-              }
-
-              // Interrupt check: if a tool requested human input, pause execution
-              if (interruptData) {
-                const id = interruptData as { reason: string; value: unknown };
-                const totalDurationMs = Date.now() - startTime;
-                const result: AgentExecutionResult = {
-                  runId,
-                  agentId: ctx.agentId,
-                  missionId: ctx.missionId,
-                  status: 'interrupted',
-                  summary: `Interrupted: ${id.reason}`,
-                  steps,
-                  totalTokenUsage: totalTokens,
-                  totalDurationMs,
-                  interrupt: id,
-                };
-                state.totalTokenUsage = totalTokens;
-                state.steps = steps;
-                await this.checkpointingPhase.checkpointTerminal(ctx, state, 'interrupted', {
-                  request,
-                  attempt,
-                  stepNumber: steps.length,
-                  exitSummary: result.summary,
-                });
-                tracer.recordDecision(runId, `Interrupted: ${id.reason}`, steps.length);
-                bus.publish('agent.interrupted', ctx.agentId, { runId, reason: id.reason });
-                try {
-                  getMetricsCollector().recordSubAgentOutcome(
-                    ctx.agentId,
-                    'interrupted',
-                    ctx.subAgentDepth ?? 0,
-                    ctx.tenantId,
-                  );
-                } catch (err) {
-                  reportSilentFailure(err, 'agentRuntime:3046');
-                  /* best-effort */
-                }
-                return result;
-              }
-
-              // ── Goal-completion verification gate ──
-              // Verifies whether the agent's accumulated work has satisfied the
-              // original goal before a stop signal is accepted. A failed
-              // verification (within the attempt budget) injects feedback into
-              // the next iteration's context and forces another retry.
-              //
-              // Skip verification when degeneration was detected: the model's
-              // output is unreliable, and injecting feedback into a degenerating
-              // model only accelerates context pollution. Accept whatever work
-              // was already completed and go to terminal handling.
-              const verification = degenerationDetected
-                ? {
-                    isComplete: true,
-                    verificationTrace: 'verification=skipped;reason=degeneration_detected',
-                  }
-                : await this.goalCompletionVerifier.verify({
-                    ctx,
-                    runId,
-                    routing,
-                    steps,
-                    request,
-                    response,
-                    tenantId,
-                    attempt,
-                  });
-              if (!verification.isComplete && verification.feedback) {
-                // ── Context-growth guard ──
-                // Each failed verification adds messages to request.messages and
-                // forces another retry. Under long-context stress, small models
-                // degenerate rapidly. Estimate the current context size and break
-                // if it exceeds a safe threshold (~80% of a typical 128k window).
-                const estimatedContextTokens = request.messages.reduce(
-                  (sum, m) => sum + Math.ceil(String(m.content ?? '').length / 4),
-                  0,
-                );
-                const contextTokenLimit = 102400; // 80% of typical 128k context window
-                if (estimatedContextTokens > contextTokenLimit) {
-                  getGlobalLogger().warn(
-                    'AgentRuntime',
-                    'Context-growth guard: breaking retry loop',
-                    {
-                      estimatedContextTokens,
-                      contextTokenLimit,
-                      attempt,
-                      maxRetries: this.config.maxRetries,
-                    },
-                  );
-                  getMetricsCollector().incrementCounter(
-                    'context_growth_breaks_total',
-                    'Retry loops broken due to context window exhaustion',
-                    1,
-                    [{ name: 'reason', value: 'context_limit' }],
-                  );
-                  break;
-                }
-                lastError = verification.feedback;
-                continue;
-              }
-
-              // Early exit: skip verification when model is confident and has no tool calls.
-              // This saves the verification token cost (~500-2000 tokens) and avoids
-              // unnecessary retries on confident responses.
-              if (earlyExit) {
-                let safeContent =
-                  response.content ||
-                  (response as { reasoning_content?: string }).reasoning_content ||
-                  '';
-                // Hoisted scan-then-gate: previously lived as `await (async () => {...})()`
-                // inside the result.summary assignment, which fired bus events during
-                // object construction. Extracting the side effects out of the object
-                // literal makes the data flow obvious: safeContent is sanitized in
-                // place, then the result object captures it.
-                let scannedSummary = safeContent;
-                try {
-                  const earlyExitScan = await this.contentScanner.scan(safeContent);
-                  if (!earlyExitScan.isSafe) {
-                    getMessageBus().publish('system.alert', 'runtime', {
-                      type: 'content_threat_blocked',
-                      via: 'early_exit_scan',
-                      runId,
-                      agentId: ctx.agentId,
-                      threats: earlyExitScan.threats.map((t) => `${t.type}:${t.severity}`),
-                      riskScore: earlyExitScan.riskScore,
-                    });
-                    scannedSummary = `[Content blocked: ${earlyExitScan.threats.length} threat(s) (risk=${earlyExitScan.riskScore})]`;
-                    safeContent = scannedSummary;
-                  }
-                } catch (e) {
-                  getGlobalLogger().debug('AgentRuntime', 'earlyExit content scan failed', {
-                    error: (e as Error)?.message,
-                  });
-                }
-                const totalDurationMs = Date.now() - startTime;
-                const result: AgentExecutionResult = {
-                  runId,
-                  agentId: ctx.agentId,
-                  missionId: ctx.missionId,
-                  status: 'success',
-                  summary: scannedSummary || '[Early exit: confident response]',
-                  steps,
-                  totalTokenUsage: totalTokens,
-                  totalDurationMs,
-                };
-
-                state.totalTokenUsage = totalTokens;
-                state.steps = steps;
-                await this.checkpointingPhase.checkpointTerminal(
-                  ctx,
-                  state,
-                  'completed_early_exit',
-                  {
-                    request,
-                    attempt,
-                    stepNumber: steps.length,
-                    exitSummary: result.summary,
-                  },
-                );
-
-                if (this.memory) {
-                  try {
-                    const _memContent = `[EARLY_EXIT] ${ctx.goal.slice(0, GOAL_TELEMETRY_MAX_CHARS)}`;
-                    // Security (OWASP ASI07): Memory poisoning detection gate.
-                    const _poisoningCheck = checkMemoryPoisoning(
-                      _memContent,
-                      `agent:${ctx.agentId}`,
-                      ctx.agentId,
-                    );
-                    if (!_poisoningCheck.allowed) {
-                      getGlobalLogger().warn(
-                        'AgentRuntime',
-                        'Memory write blocked by poisoning gate',
-                        { reason: _poisoningCheck.reason },
-                      );
-                    } else {
-                      // Security (G4): Advanced defense engine — entropy, Unicode, Base64, rate limit, taint tracking
-                      let _defenseBlocked = false;
-                      try {
-                        const _defenseResult =
-                          getMemoryPoisoningDefenseEngine().validateMemoryWrite({
-                            content: _memContent,
-                            source: `agent:${ctx.agentId}`,
-                            agentId: ctx.agentId,
-                            memoryType: 'episodic',
-                            sourceCredibility: 'agent_generated',
-                            sessionId: runId,
-                            metadata: { phase: 'early_exit' },
-                          });
-                        if (!_defenseResult.allowed) {
-                          _defenseBlocked = true;
-                          getGlobalLogger().warn(
-                            'AgentRuntime',
-                            'Memory write blocked by defense engine',
-                            {
-                              reason: _defenseResult.reason,
-                              riskScore: _defenseResult.riskScore,
-                              severity: _defenseResult.severity,
-                            },
-                          );
-                        }
-                      } catch (err) {
-                        reportSilentFailure(err, 'agentRuntime:defenseEngine:early_exit');
-                      }
-                      if (!_defenseBlocked) {
-                        this.memory.add(
-                          _memContent,
-                          'episodic',
-                          `run:${runId}|tokens:${totalTokens.totalTokens}|dur:${totalDurationMs}ms|steps:${steps.length}`,
-                          0.6,
-                          ['execution', 'early_exit', ...ctx.availableTools.slice(0, 3)],
-                          {
-                            runId,
-                            goal: ctx.goal.slice(0, GOAL_RESULT_MAX_CHARS),
-                            tokenUsage: totalTokens,
-                            durationMs: totalDurationMs,
-                          },
-                        );
-                      } // end defense engine check
-                    } // end poisoning gate else
-                  } catch (err) {
-                    reportSilentFailure(err, 'agentRuntime:3226');
-                    /* best-effort */
-                  }
-                }
-
-                getMetricsCollector().recordRunComplete(
-                  'success_early_exit',
-                  totalDurationMs,
-                  steps.length,
-                  tenantId,
-                  getCostEstimator().estimateCostFromUsage(
-                    routing.modelId,
-                    totalTokens.promptTokens,
-                    totalTokens.completionTokens,
-                  ),
-                );
-                bus.publish('agent.completed', ctx.agentId, {
-                  runId,
-                  status: 'success',
-                  summary: safeContent.slice(0, RESULT_CONTENT_MAX_CHARS),
-                  tokenUsage: totalTokens,
-                  durationMs: totalDurationMs,
-                });
-
-                // Record final cost for estimator learning
-                try {
-                  const modelCfg = this.router.getModel(routing.modelId);
-                  costEstimator.recordActualCost(
-                    costEstimate.taskCategory,
-                    routing.tier,
-                    totalTokens.promptTokens,
-                    totalTokens.completionTokens,
-                    totalTokens.cacheReadTokens ?? 0,
-                    modelCfg?.costPer1MInput ?? 3,
-                    modelCfg?.costPer1MOutput ?? 10,
-                    modelCfg?.costPer1MCachedInput,
-                    totalDurationMs,
-                    true,
-                  );
-                } catch (err) {
-                  reportSilentFailure(err, 'agentRuntime:3266');
-                  /* best-effort */
-                }
-
-                return result;
-              }
-
-              // ── Hook: onSessionArchive (before checkpoint) ──
-              getHookManager()
-                .fireOnSessionArchive({
-                  runId,
-                  phase: 'tool_execution',
-                  stepNumber: steps.length,
-                  tokenUsage: { totalTokens: totalTokens.totalTokens },
-                })
-                .catch((e) =>
-                  getGlobalLogger().debug('AgentRuntime', 'onSessionArchive hook failed', {
-                    error: (e as Error)?.message,
-                  }),
-                );
-
-              // Count successful tool results for sub-agent progress tracking
-              const evidenceCount = steps.filter(
-                (s) =>
-                  s.type === 'tool_result' &&
-                  !s.content?.startsWith('error:') &&
-                  !s.content?.startsWith('TOOL_'),
-              ).length;
-
-              state.totalTokenUsage = totalTokens;
-              state.steps = steps;
-              await this.checkpointingPhase.checkpointAfterStep(ctx, state, 'tool_execution', {
-                request,
-                attempt,
-                stepNumber: steps.length,
-              });
-
-              // Enforce sub-agent progress and step limits
-              ctx.guard?.check(evidenceCount);
-
-              // Unified Verification Pipeline: tiered zero-cost-first verification
-              // Governor strategy: skip LLM verification when budget is tight and model is confident
-              const verifSkipDecision = this.governor.shouldApply('verification_skip');
-              const shouldSkipVerification =
-                verifSkipDecision.apply &&
-                verifSkipDecision.intensity > 0.7 &&
-                (!response.toolCalls || response.toolCalls.length === 0) &&
-                isConfidentResponse(response);
-
-              let verifReport;
-              if (shouldSkipVerification) {
-                // Skip verification to save tokens (500-2000 tokens saved)
-                verifReport = {
-                  passed: true,
-                  confidence: 0.85,
-                  signals: [],
-                  tokensUsed: 0,
-                  stagesRun: [],
-                  taskType: detectTaskType(ctx.goal),
-                  skipped: true,
-                  skipReason: 'verification_skip_governor',
-                };
-                try {
-                  getMetricsCollector().incrementCounter(
-                    'verification_skipped_total',
-                    'Verifications skipped by governor',
-                    1,
-                    [{ name: 'reason', value: 'governor_skip' }],
-                  );
-                } catch (err) {
-                  reportSilentFailure(err, 'agentRuntime:3351');
-                  /* best-effort */
-                }
-              } else {
-                const verifCtx: UVPTaskContext = {
-                  goal: ctx.goal,
-                  output: response.content,
-                  language:
-                    typeof ctx.goal === 'string'
-                      ? ctx.goal.toLowerCase().includes('python')
-                        ? 'python'
-                        : undefined
-                      : undefined,
-                  schema: ctx.outputSchema,
-                  toolsUsed: ctx.availableTools,
-                  tokenBudgetRemaining: this.governor.getState().remainingTokens,
-                  previousFailures: lastError ? [lastError] : undefined,
-                };
-                const verifStart = Date.now();
-                verifReport = await this.verificationPipeline.verify(verifCtx);
-                this.governor.reportUsage(verifReport.tokensUsed);
-                try {
-                  getMetricsCollector().recordStepLatency(
-                    'verification',
-                    Date.now() - verifStart,
-                    getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
-                  );
-                } catch (err) {
-                  reportSilentFailure(err, 'agentRuntime:3379');
-                  /* best-effort */
-                }
-                if (!verifReport.passed) {
-                  this.recordCostByFailureMode('verification', response);
-                }
-              }
-
-              // Record verification result to samples store
-              this.samplesStore.recordVerification(ctx.goal, response.content, {
-                passed: verifReport.passed,
-                confidence: verifReport.confidence,
-                signalCount: verifReport.signals.length,
-                tokensUsed: verifReport.tokensUsed,
-                stagesRun: verifReport.stagesRun,
-                skipReason: verifReport.skipReason,
-              });
-              tracer.recordVerification(
-                runId,
-                verifReport.passed,
-                verifReport.confidence,
-                verifReport.signals.length,
-                verifReport.tokensUsed > 0 ? 1 : 0,
-              );
-              try {
-                getMetricsCollector().recordVerificationResult(
-                  verifReport.confidence,
-                  verifReport.passed,
-                  verifReport.signals.length,
-                  verifReport.signals.map(
-                    (s) =>
-                      (s as { type?: string }).type ?? (s as { name?: string }).name ?? 'unknown',
-                  ),
-                  getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
-                );
-              } catch (err) {
-                reportSilentFailure(err, 'agentRuntime:3415');
-                /* best-effort */
-              }
-              try {
-                getVerificationReportStore(ctx.tenantId).write({
-                  schemaVersion: 1,
-                  runId,
-                  agentId: ctx.agentId,
-                  capturedAt: new Date().toISOString(),
-                  attempt,
-                  passed: verifReport.passed,
-                  confidence: verifReport.confidence,
-                  skipReason: verifReport.skipReason,
-                  outputPrefix: response.content.slice(0, OUTPUT_PREFIX_MAX_CHARS),
-                  goal: ctx.goal.slice(0, GOAL_FULL_MAX_CHARS),
-                  report: verifReport,
-                });
-              } catch (err) {
-                reportSilentFailure(err, 'agentRuntime:3433');
-                /* best-effort */
-              }
-
-              state.totalTokenUsage = totalTokens;
-              state.steps = steps;
-              state.lastError = lastError;
-              await this.checkpointingPhase.checkpointAfterStep(ctx, state, 'verification', {
-                request,
-                attempt,
-                stepNumber: steps.length,
-                lastError,
-              });
-
-              // Tier 3.2: Record reflection from this verification attempt so future
-              // retries can learn from prior outcomes (Reflexion: Shinn et al., 2023).
-              const reflectionInsight: ReflectionEntry = verifReport.passed
-                ? {
-                    id: `${runId}-${attempt}-ok`,
-                    insight: `Attempt ${attempt + 1} passed verification with confidence ${verifReport.confidence.toFixed(2)}.`,
-                    type: 'success',
-                    timestamp: Date.now(),
-                  }
-                : {
-                    id: `${runId}-${attempt}-fail`,
-                    insight: `Attempt ${attempt + 1} failed verification: ${(verifReport.signals[0] && ((verifReport.signals[0] as { type?: string }).type ?? (verifReport.signals[0] as { name?: string }).name)) || 'unknown'} signal.`,
-                    type: 'failure',
-                    timestamp: Date.now(),
-                  };
-              this.reflexionInjector.addReflection(reflectionInsight);
-
-              // Semantic circuit breaker: track consecutive verification failures.
-              // When verification repeatedly fails, the circuit breaker can trigger
-              // semantic-level intervention (e.g., escalate to stronger model).
-              if (!verifReport.passed) {
-                this.circuitBreaker.recordSemanticFailure(
-                  `verification_failed: ${(verifReport.signals[0] && ((verifReport.signals[0] as { type?: string }).type ?? (verifReport.signals[0] as { name?: string }).name)) || 'unknown'}`,
-                  // Phase 2 Hub Glue / SemanticCircuitCorrelator: stamp the
-                  // current runId so the semantic_circuit_trip callback can
-                  // correlate with the corresponding `tool.blocked circuit_broken`
-                  // via the runId-strengthened 1-tuple key. toolName is intentionally
-                  // OMITTED — see pairCorrelator.ts requireToolNameOnAlert:false.
-                  { runId },
-                );
-              } else {
-                this.circuitBreaker.recordSemanticSuccess();
-              }
-
-              if (!verifReport.passed && attempt < this.config.maxRetries) {
-                const maxReflexion = this.config.reflexionMaxIterations ?? 2;
-
-                // Tier 3.2 (RFC v2): explicit reflection-driven self-correction loop for
-                // low-confidence verification failures. Heuristic-only generation avoids
-                // an extra LLM call; cap iterations to prevent runaway cost.
-                if (verifReport.confidence < 0.5 && maxReflexion > 0) {
-                  let reflexionAttempt = 0;
-                  let currentFeedback = this.verificationPipeline.toFeedback(verifReport);
-
-                  while (
-                    reflexionAttempt < maxReflexion &&
-                    currentFeedback &&
-                    !verifReport.passed
-                  ) {
-                    reflexionAttempt++;
-
-                    const firstSignal = verifReport.signals[0];
-                    const reflexionCtx: ReflexionContext = {
-                      goal: ctx.goal,
-                      attemptedAction: 'LLM response generation',
-                      actionResult: response.content,
-                      error:
-                        (firstSignal &&
-                          ((firstSignal as { message?: string }).message ??
-                            (firstSignal as { name?: string }).name)) ||
-                        'verification failed',
-                      errorClass: 'permanent',
-                      attemptNumber: reflexionAttempt,
-                    };
-
-                    const reflexion = await this.reflexionGenerator.generate(reflexionCtx);
-
-                    this.reflexionInjector.addReflection({
-                      id: `${runId}-${attempt}-reflexion-${reflexionAttempt}`,
-                      insight: ReflexionGenerator.formatForContext(reflexionCtx, reflexion),
-                      type: 'failure',
-                      timestamp: Date.now(),
-                    });
-
-                    request.messages.push({
-                      role: 'system',
-                      content: `[Reflexion guidance ${reflexionAttempt}/${maxReflexion}]\n${ReflexionGenerator.formatForContext(reflexionCtx, reflexion)}`,
-                    });
-                    request.messages.push({ role: 'user', content: currentFeedback });
-
-                    const reflexionStart = Date.now();
-                    const reflexionResponse = await this.llmCaller.callWithTimeout(request, routing, attempt);
-                    if (!reflexionResponse) break;
-
-                    response = reflexionResponse;
-                    totalTokens.promptTokens += reflexionResponse.usage.promptTokens;
-                    totalTokens.completionTokens += reflexionResponse.usage.completionTokens;
-                    totalTokens.totalTokens += reflexionResponse.usage.totalTokens;
-                    totalTokens.cacheReadTokens =
-                      (totalTokens.cacheReadTokens ?? 0) +
-                      (reflexionResponse.usage.cacheReadTokens ?? 0);
-                    this.governor.reportUsage(reflexionResponse.usage.totalTokens);
-
-                    verifReport = await this.verificationPipeline.verify({
-                      goal: ctx.goal,
-                      output: response.content,
-                      language:
-                        typeof ctx.goal === 'string'
-                          ? ctx.goal.toLowerCase().includes('python')
-                            ? 'python'
-                            : undefined
-                          : undefined,
-                      schema: ctx.outputSchema,
-                      toolsUsed: ctx.availableTools,
-                      tokenBudgetRemaining: this.governor.getState().remainingTokens,
-                      previousFailures: lastError ? [lastError] : undefined,
-                    });
-                    this.governor.reportUsage(verifReport.tokensUsed);
-
-                    try {
-                      getMetricsCollector().recordStepLatency(
-                        'reflexion',
-                        Date.now() - reflexionStart,
-                        getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
-                      );
-                    } catch (err) {
-                      reportSilentFailure(err, 'agentRuntime:3571');
-                      /* best-effort */
-                    }
-
-                    if (!verifReport.passed) {
-                      currentFeedback = this.verificationPipeline.toFeedback(verifReport);
-                    }
-                  }
-                }
-
-                const feedback = this.verificationPipeline.toFeedback(verifReport);
-                if (feedback && !verifReport.passed) {
-                  this.recordCostByFailureMode('verification', response);
-                  lastError = feedback;
-                  tracer.recordDecision(
-                    runId,
-                    `verification (attempt ${attempt + 1}, confidence ${verifReport.confidence.toFixed(2)}): ${feedback.slice(0, 100)}`,
-                    0,
-                  );
-
-                  // Compact context before retry to avoid replaying bloated history.
-                  // First, record which messages correlated with this verification failure
-                  // so the compactor can prune failure-prone context first.
-                  const failureSignal =
-                    (verifReport.signals[0] &&
-                      ((verifReport.signals[0] as { type?: string }).type ??
-                        (verifReport.signals[0] as { name?: string }).name)) ||
-                    undefined;
-                  this.compactor.recordFailureCorrelation(runId, request.messages, failureSignal);
-
-                  const tokensBeforeRetry = this.compactor.getUsage(request.messages).total;
-                  const tt = detectTaskType(ctx.goal);
-                  const taskType: CompactTaskType = tt === 'creative' ? 'general' : tt;
-                  const retryCompact = this.compactor.compact(
-                    request.messages,
-                    undefined,
-                    taskType,
-                  );
-                  if (retryCompact.action.droppedCount > 0) {
-                    request.messages = retryCompact.messages;
-                    this.governor.recordOutcome(
-                      'context_compaction',
-                      tokensBeforeRetry,
-                      this.compactor.getUsage(request.messages).total,
-                    );
-                    bus.publish('system.alert', 'runtime', {
-                      type: 'context_compaction',
-                      layer: retryCompact.action.layer,
-                      droppedCount: retryCompact.action.droppedCount,
-                      tokensSaved: retryCompact.action.tokensSaved,
-                    });
-                  }
-
-                  // Cascade escalation: try a more capable model on verification failure
-                  // FrugalGPT pattern: escalate to stronger model when quality is insufficient
-                  // Uses the escalation chain from routeWithCascade if available, otherwise falls back to getFallbackModel
-                  let fallbackModel: ModelConfig | undefined;
-                  if (this.smartRouter && currentEscalationChain.length > 0) {
-                    const nextId = this.smartRouter.getNextEscalation(
-                      routing.modelId,
-                      currentEscalationChain.map((m) => m.id),
-                    );
-                    fallbackModel = nextId
-                      ? (this.smartRouter.getModel(nextId.id) as ModelConfig | undefined)
-                      : undefined;
-                  } else {
-                    fallbackModel =
-                      currentEscalationChain.length > 0
-                        ? this.router.getNextEscalation(routing.modelId, currentEscalationChain)
-                        : this.router.getFallbackModel(routing.modelId, tt);
-                  }
-                  if (fallbackModel && fallbackModel.tier !== routing.tier) {
-                    const newRouting: RoutingDecision = {
-                      modelId: fallbackModel.id,
-                      tier: fallbackModel.tier,
-                      provider: fallbackModel.provider,
-                      reasoning: [
-                        ...routing.reasoning,
-                        `cascade_escalation: ${routing.modelId} → ${fallbackModel.id} (verification failed)`,
-                      ],
-                      estimatedCost: routing.estimatedCost * 1.5,
-                      maxTokens: routing.maxTokens,
-                    };
-                    routing = newRouting;
-                    // Remove the escalated model from the chain so we don't escalate to it again
-                    currentEscalationChain = currentEscalationChain.filter(
-                      (m) => m.id !== fallbackModel.id,
-                    );
-                    request.model =
-                      (fallbackModel.id || '').replace(/@\w+$/, '') || fallbackModel.id;
-                    tracer.recordDecision(
-                      runId,
-                      `cascade escalation: ${routing.modelId} (${routing.tier}) chain_remaining=${currentEscalationChain.length}`,
-                      0,
-                    );
-                    bus.publish('system.alert', 'runtime', {
-                      type: 'cascade_escalation',
-                      from: routing.modelId,
-                      to: fallbackModel.id,
-                    });
-                    try {
-                      getMetricsCollector().recordCascadeEscalation(
-                        routing.modelId,
-                        fallbackModel.id,
-                        'verification_failed',
-                        getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
-                      );
-                    } catch (err) {
-                      reportSilentFailure(err, 'agentRuntime:3679');
-                      /* best-effort */
-                    }
-                    try {
-                      getIntentLog(ctx.tenantId).write({
-                        schemaVersion: 1,
-                        runId,
-                        capturedAt: new Date().toISOString(),
-                        stage: 'agentRuntime.cascade',
-                        decision: 'escalate',
-                        reason: 'verification_failed',
-                        payload: { from: routing.modelId, to: fallbackModel.id },
-                      });
-                    } catch (err) {
-                      reportSilentFailure(err, 'agentRuntime:3693');
-                      /* best-effort */
-                    }
-                  }
-
-                  const reflections = this.reflexionInjector.getRecentReflections(3);
-                  // Limit feedback length to prevent context bloat. The full
-                  // feedback + reflections can be 1000+ chars, which accelerates
-                  // context growth and triggers model degeneration in small models.
-                  // Truncate to 500 chars (enough for actionable guidance).
-                  const baseFeedback = feedback.slice(0, 500);
-                  const augmentedFeedback =
-                    reflections.length > 0
-                      ? `${baseFeedback}\n\n[Reflections]:\n${reflections.map((r, i) => `${i + 1}. ${r.insight.slice(0, 100)}`).join('\n')}`.slice(
-                          0,
-                          800,
-                        )
-                      : baseFeedback;
-                  request.messages.push({ role: 'user', content: augmentedFeedback });
-                  continue;
-                }
-              }
-
-              // Content safety scan before returning result
-              // Reasoning models (MiMo, DeepSeek-R) put output in reasoning_content.
-              // Merge so downstream code (synthesis, summary) can read it.
-              let safeContent =
-                response.content ||
-                (response as { reasoning_content?: string }).reasoning_content ||
-                '';
-              try {
-                const scanResult = await this.contentScanner.scan(safeContent);
-                if (!scanResult.isSafe) {
-                  // Any non-safe result blocks -- covers both HIGH/CRITICAL single
-                  // threats AND composite MEDIUM threats that pushed riskScore >= 50.
-                  bus.publish('system.alert', 'runtime', {
-                    type: 'content_threat_blocked',
-                    threats: scanResult.threats.map((t) => `${t.type}:${t.severity}`),
-                    riskScore: scanResult.riskScore,
-                  });
-                  safeContent = `[Content blocked: ${scanResult.threats.length} security threat(s) detected (risk=${scanResult.riskScore}). Review and resubmit.]`;
-                }
-              } catch (e) {
-                getGlobalLogger().warn('AgentRuntime', 'Content scan failed (best-effort)', {
-                  error: (e as Error)?.message,
-                });
-              }
-
-              // Output format: apply configurable formatting preference to the summary
-              // - 'concise': truncate verbose responses to first paragraph
-              // - 'structured': if response looks like JSON, pass through; otherwise no transformation
-              // - 'freeform' and 'auto': pass through without transformation
-              const outputFormat = this.config.outputFormat ?? 'auto';
-              if (outputFormat === 'concise' && safeContent && safeContent.length > 500) {
-                const firstParagraph = safeContent.split('\n\n')[0];
-                if (firstParagraph && firstParagraph.length > 50) {
-                  safeContent = firstParagraph;
-                }
-              } else if (outputFormat === 'structured' && safeContent) {
-                try {
-                  JSON.parse(safeContent);
-                } catch (err) {
-                  reportSilentFailure(err, 'agentRuntime:3747');
-                  // Not JSON — no transformation applied
-                }
-              }
-
-              // If the final response has no text content (tool_call-only response),
-              // find the last text response from the step history for the summary.
-              // Safety net: skip steps with degenerate content.
-              if (!safeContent || safeContent.length === 0) {
-                for (let si = steps.length - 1; si >= 0; si--) {
-                  const s = steps[si];
-                  if (s.type === 'response' && s.content && !s.content.includes('<tool_call>')) {
-                    // Skip degenerate content in step history
-                    if (CycleDetector.detectRepetition(s.content).detected) {
-                      continue;
-                    }
-                    safeContent = s.content;
-                    break;
-                  }
-                }
-              }
-
-              // If still empty, use the last tool result or provisioning data as summary
-              if (!safeContent || safeContent.length === 0) {
-                // Look for the last system message with tool results (provisioning injected)
-                for (let mi = request.messages.length - 1; mi >= 0; mi--) {
-                  const msg = request.messages[mi];
-                  if (msg.role === 'system' && msg.content?.startsWith('[Tool:')) {
-                    safeContent = msg.content.slice(0, ERROR_MAX_CHARS);
-                    break;
-                  }
-                }
-              }
-
-              // Last resort: use the last step's content (even if tool result)
-              // Safety net: skip steps with degenerate content.
-              if (!safeContent || safeContent.length === 0) {
-                for (let si = steps.length - 1; si >= 0; si--) {
-                  const s = steps[si];
-                  if (s.content && s.content.length > 0) {
-                    if (CycleDetector.detectRepetition(s.content).detected) {
-                      continue;
-                    }
-                    safeContent = s.content.slice(0, 2000);
-                    break;
-                  }
-                }
-              }
-
-              // Absolute last resort: reflect the goal
-              if (!safeContent || safeContent.length === 0) {
-                safeContent = `[No text response generated by agent] Goal: ${ctx.goal.slice(0, GOAL_TELEMETRY_MAX_CHARS)}`;
-              }
-
-              // Final degeneration guard: if safeContent still contains degenerate
-              // content (from any source), sanitize it before building the result.
-              if (safeContent && CycleDetector.detectRepetition(safeContent).detected) {
-                const rep = CycleDetector.detectRepetition(safeContent);
-                if (rep.detected) {
-                  getGlobalLogger().warn(
-                    'AgentRuntime',
-                    'Terminal degeneration guard: sanitizing safeContent',
-                    {
-                      description: rep.description,
-                    },
-                  );
-                  safeContent =
-                    '[Output truncated: model degeneration detected — ' + rep.description + ']';
-                }
-              }
-
-              const totalDurationMs = Date.now() - startTime;
-              const result: AgentExecutionResult = {
-                runId,
-                agentId: ctx.agentId,
-                missionId: ctx.missionId,
-                status: 'success',
-                summary: safeContent,
-                steps,
-                totalTokenUsage: totalTokens,
-                totalDurationMs,
-                artifactContent: largestFileWriteContent || undefined,
-              };
-
-              // Record final actual cost for estimator learning
-              try {
-                const modelCfg = this.router.getModel(routing.modelId);
-                costEstimator.recordActualCost(
-                  costEstimate.taskCategory,
-                  routing.tier,
-                  totalTokens.promptTokens,
-                  totalTokens.completionTokens,
-                  totalTokens.cacheReadTokens ?? 0,
-                  modelCfg?.costPer1MInput ?? 3,
-                  modelCfg?.costPer1MOutput ?? 10,
-                  modelCfg?.costPer1MCachedInput,
-                  totalDurationMs,
-                  true,
-                );
-                // Log prediction accuracy for observability
-                const accuracy =
-                  costEstimate.predictedTotalTokens > 0
-                    ? Math.min(
-                        2,
-                        Math.max(0.1, totalTokens.totalTokens / costEstimate.predictedTotalTokens),
-                      )
-                    : 1.0;
-                getMetricsCollector().setGauge(
-                  'cost_prediction_accuracy',
-                  'Ratio of actual to predicted tokens (1.0 = perfect)',
-                  accuracy,
-                  [
-                    { name: 'task_category', value: costEstimate.taskCategory },
-                    { name: 'model_tier', value: routing.tier },
-                  ],
-                );
-              } catch (err) {
-                reportSilentFailure(err, 'agentRuntime:3838');
-                /* best-effort learning */
-              }
-
-              state.totalTokenUsage = totalTokens;
-              state.steps = steps;
-              await this.checkpointingPhase.checkpointTerminal(ctx, state, 'completed', {
-                request,
-                attempt,
-                stepNumber: steps.length,
-                exitSummary: result.summary,
-              });
-
-              if (this.memory) {
-                try {
-                  const _memContent2 = `[SUCCESS] ${ctx.goal.slice(0, GOAL_TELEMETRY_MAX_CHARS)}`;
-                  // Security (OWASP ASI07): Memory poisoning detection gate.
-                  const _poisoningCheck2 = checkMemoryPoisoning(
-                    _memContent2,
-                    `agent:${ctx.agentId}`,
-                    ctx.agentId,
-                  );
-                  if (!_poisoningCheck2.allowed) {
-                    getGlobalLogger().warn(
-                      'AgentRuntime',
-                      'Memory write blocked by poisoning gate',
-                      { reason: _poisoningCheck2.reason },
-                    );
-                  } else {
-                    // Security (G4): Advanced defense engine — entropy, Unicode, Base64, rate limit, taint tracking
-                    let _defenseBlocked2 = false;
-                    try {
-                      const _defenseResult2 = getMemoryPoisoningDefenseEngine().validateMemoryWrite(
-                        {
-                          content: _memContent2,
-                          source: `agent:${ctx.agentId}`,
-                          agentId: ctx.agentId,
-                          memoryType: 'episodic',
-                          sourceCredibility: 'agent_generated',
-                          sessionId: runId,
-                          metadata: { phase: 'success' },
-                        },
-                      );
-                      if (!_defenseResult2.allowed) {
-                        _defenseBlocked2 = true;
-                        getGlobalLogger().warn(
-                          'AgentRuntime',
-                          'Memory write blocked by defense engine',
-                          {
-                            reason: _defenseResult2.reason,
-                            riskScore: _defenseResult2.riskScore,
-                            severity: _defenseResult2.severity,
-                          },
-                        );
-                      }
-                    } catch (err) {
-                      reportSilentFailure(err, 'agentRuntime:defenseEngine:success');
-                    }
-                    if (!_defenseBlocked2) {
-                      this.memory.add(
-                        _memContent2,
-                        'episodic',
-                        `run:${runId}|tokens:${totalTokens.totalTokens}|dur:${totalDurationMs}ms|steps:${steps.length}`,
-                        0.7,
-                        ['execution', 'success', ...ctx.availableTools.slice(0, 3)],
-                        {
-                          runId,
-                          goal: ctx.goal.slice(0, 500),
-                          tokenUsage: totalTokens,
-                          durationMs: totalDurationMs,
-                        },
-                      );
-                    } // end defense engine check
-                  } // end poisoning gate else
-                } catch (e) {
-                  getGlobalLogger().warn('AgentRuntime', 'Failed to record success memory', {
-                    error: (e as Error)?.message,
-                  });
-                }
-              }
-
-              // Record success telemetry (plugin hooks, run-complete metrics,
-              // agent.completed bus event, circuit-breaker success, agent
-              // intelligence, meta-learner experience, scheduler commitRun) -
-              // extracted to RunTelemetryRecorder.recordSuccess().
-              this.runTelemetryRecorder.recordSuccess({
-                ctx,
-                runId,
-                routing,
-                taskType,
-                result,
-                totalTokens,
-                steps,
-                startTime,
-                tenantId,
-                costEstimate,
-              });
-              circuitReleased = true;
-              return result;
-            }
-
-            // Handle failure with error classification
-            // Use the preserved provider error for accurate classification,
-            // falling back to lastError or a generic message.
-            const errorToClassify =
-              this.lastProviderError ?? new Error(lastError || 'Unknown error');
-            const ce = classifyLLMError(errorToClassify);
-            lastError = ce.message;
-            lastErrorIsPermanent = !ce.retryable;
-            // Reset for the next attempt
-            this.lastProviderError = null;
-            tracer.recordError(runId, `${ce.errorClass}: ${ce.message}`, Date.now() - startTime);
-
-            if (ce.retryable && attempt < this.config.maxRetries) {
-              const delayMs = ce.retryAfter ?? computeBackoff(attempt, this.config.retryDelayMs);
-              await delay(delayMs);
-            } else if (!ce.retryable) {
-              this.circuitBreaker.onFailure();
-              circuitReleased = true;
-              break; // Don't retry permanent errors
-            }
-          }
-
-          // Record failure telemetry (trace error, actual cost, model
-          // performance, onError hooks, terminal checkpoint, failure memory
-          // with poisoning gate, run-complete metrics, agent.failed bus event,
-          // agent intelligence, meta-learner experience, failure-pattern
-          // learner) - extracted to RunTelemetryRecorder.recordFailure(),
-          // which returns the failed AgentExecutionResult.
-          return await this.runTelemetryRecorder.recordFailure({
-            ctx,
-            runId,
-            routing,
-            taskType,
-            lastError,
-            lastErrorIsPermanent,
-            totalTokens,
-            steps,
-            startTime,
-            tenantId,
-            costEstimate,
-            state,
-            request,
-          });
+          return await this.agentLoopOrchestrator.run(ctx, init, setup);
         },
       );
 
       // GAP-08: Call scheduler abortRun for failed runs — triggers compensation
       // for any recorded compensable actions and releases the scheduler-level lease.
-      // On success, commitRun is called inside the runWithTenant callback (line ~2002).
+      // On success, commitRun is called inside the runWithTenant callback.
       if (execResult && execResult.status === 'failed' && this.runHandle) {
         const handle = this.runHandle as RunHandle;
         try {
           await getExecutionScheduler().abortRun({
-            runId,
+            runId: init.runId,
             leaseToken: handle.leaseToken,
             fencingEpoch: handle.fencingEpoch,
             tenantId: getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
@@ -2439,7 +859,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
           });
         } catch (e) {
           getGlobalLogger().debug('AgentRuntime', 'Scheduler abortRun failed', {
-            runId,
+            runId: init.runId,
             error: (e as Error).message,
           });
         }
@@ -2450,7 +870,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       // DeterminismCapture: clear in-memory captures for this run to prevent
       // memory leak. WAL data persists for crash recovery via restoreFromWAL().
       try {
-        getGlobalDeterminismCapture().clearRun(runId);
+        getGlobalDeterminismCapture().clearRun(init.runId);
       } catch (capErr) {
         reportSilentFailure(capErr, 'agentRuntime:clearDeterminismCapture');
       }
@@ -2458,13 +878,13 @@ export class AgentRuntime implements AgentRuntimeInterface {
       // run lifecycle, tenant/lane/concurrency slot release, tracer completion,
       // SLO check, OTel export, SOP auto-export, store flush, tenant restore).
       await this.finallyCleanupHandler.cleanup({
-        runId,
+        runId: init.runId,
         ctx,
-        circuitReleased,
+        circuitReleased: init.circuitReleased,
         tenantCfg,
         tenantId,
-        currentLane,
-        startTime,
+        currentLane: init.currentLane,
+        startTime: init.startTime,
         execResult,
         tenantOverrides,
       });

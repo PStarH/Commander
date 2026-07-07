@@ -643,6 +643,9 @@ const TOOL_OUTPUT_INJECTION_PATTERNS = [
   /忽略(之前|上面|所有)(的)?(指令|提示|规则|命令)/gi,
   /无视(之前|上面|所有)(的)?(指令|提示|规则|命令)/gi,
   /你现在(是|变成|扮演)/gi,
+  // AgentDojo-style system-impersonation tags used to frame injected instructions inside tool output
+  /<\/?(INFORMATION|IMPORTANT|SYSTEM|INSTRUCTION|SYSTEM_OVERRIDE|SYSTEM_INSTRUCTION|ADMIN|SYSTEM_MESSAGE|ASSISTANT_INSTRUCTION)\b[^>]*>/gi,
+  /<\/?(重要|系统|指令|系统指令)(?=[\s>])/gi,
 ];
 
 /**

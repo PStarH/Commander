@@ -20,6 +20,7 @@ import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getMetricsCollector } from './metricsCollector';
+import { getCurrentTenantId } from './tenantContext';
 import type { IEventSourcingEngine, IEvent } from '../contracts/pillarI';
 
 // ============================================================================
@@ -29,6 +30,8 @@ import type { IEventSourcingEngine, IEvent } from '../contracts/pillarI';
 interface StoredEvent extends IEvent {
   /** SHA-256 hash of (previousHash + serialized payload) */
   hash: string;
+  /** Tenant ID captured at append time for replay-time filtering. */
+  tenantId?: string;
 }
 
 interface Snapshot {
@@ -140,6 +143,8 @@ export class EventSourcingEngine implements IEventSourcingEngine {
       const prevHash = this.lastHash;
       const timestamp = Date.now();
       const id = crypto.randomUUID();
+      // Capture tenant at append time so replay can filter deterministically.
+      const tenantId = getCurrentTenantId() ?? undefined;
 
       const fullEvent: IEvent = {
         ...event,
@@ -148,11 +153,13 @@ export class EventSourcingEngine implements IEventSourcingEngine {
         previousHash: prevHash || undefined,
       };
 
-      // Compute hash: SHA-256(previousHash + type + id + timestamp + serialized payload)
-      const hashInput = `${prevHash}|${fullEvent.type}|${id}|${timestamp}|${JSON.stringify(fullEvent.payload)}`;
+      // Compute hash: SHA-256(previousHash + type + id + timestamp + tenantId + serialized payload)
+      // Including tenantId in the hash input prevents cross-tenant hash collisions
+      // and ensures tamper-evidence covers the tenant attribution.
+      const hashInput = `${prevHash}|${fullEvent.type}|${id}|${timestamp}|${tenantId ?? ''}|${JSON.stringify(fullEvent.payload)}`;
       const hash = crypto.createHash('sha256').update(hashInput).digest('hex');
 
-      const storedEvent: StoredEvent = { ...fullEvent, hash };
+      const storedEvent: StoredEvent = { ...fullEvent, hash, tenantId };
 
       this.events.push(storedEvent);
       this.lastHash = hash;
@@ -190,9 +197,12 @@ export class EventSourcingEngine implements IEventSourcingEngine {
   /**
    * Streaming read from a given event ID (for replay).
    * If no eventId given, reads from the beginning.
+   * When a tenant context is active, only events appended by the same tenant
+   * are yielded — preventing cross-tenant data exposure during replay.
    */
   async *readFrom(eventId?: string): AsyncIterable<IEvent> {
     let startIndex = 0;
+    const currentTenant = getCurrentTenantId() ?? undefined;
 
     if (eventId) {
       const idx = this.events.findIndex((e) => e.id === eventId);
@@ -204,7 +214,13 @@ export class EventSourcingEngine implements IEventSourcingEngine {
     }
 
     for (let i = startIndex; i < this.events.length; i++) {
-      const { hash, ...event } = this.events[i];
+      const stored = this.events[i];
+      // Tenant filter: skip events from other tenants. Events without a
+      // recorded tenantId (legacy or single-tenant mode) are always yielded.
+      if (currentTenant && stored.tenantId && stored.tenantId !== currentTenant) {
+        continue;
+      }
+      const { hash, tenantId: _t, ...event } = stored;
       yield { ...event };
     }
   }
@@ -268,8 +284,10 @@ export class EventSourcingEngine implements IEventSourcingEngine {
         }
       }
 
-      // Recompute hash
-      const hashInput = `${prevHash}|${event.type}|${event.id}|${event.timestamp}|${JSON.stringify(event.payload)}`;
+      // Recompute hash — must mirror append() exactly, including tenantId,
+      // otherwise tamper-evidence checks fail on tenant-attributed events.
+      const stored = event as StoredEvent;
+      const hashInput = `${prevHash}|${event.type}|${event.id}|${event.timestamp}|${stored.tenantId ?? ''}|${JSON.stringify(event.payload)}`;
       const computedHash = crypto.createHash('sha256').update(hashInput).digest('hex');
 
       if (computedHash !== event.hash) {

@@ -30,6 +30,7 @@ import * as crypto from 'node:crypto';
 import * as https from 'node:https';
 import { getGlobalLogger } from '../logging';
 import { getSecurityAuditLogger } from '../security/securityAuditLogger';
+import type { AuthPlugin, AuthPluginResult } from './authPlugin';
 import type { AuthRole } from './authManager';
 
 // ============================================================================
@@ -67,25 +68,7 @@ export interface OIDCPluginConfig {
   allowedAlgorithms?: string[];
 }
 
-export interface AuthPlugin {
-  /** Unique name for this plugin */
-  readonly name: string;
-  /** Authenticate a Bearer token. Returns user info + role on success, null on failure. */
-  authenticate(bearerToken: string): Promise<AuthPluginResult | null>;
-}
-
-export interface AuthPluginResult {
-  /** Stable user identifier from the OIDC provider */
-  userId: string;
-  /** Human-readable username/email */
-  username: string;
-  /** Commander role mapped from OIDC claims */
-  role: AuthRole;
-  /** Optional tenant ID for multi-tenant mapping */
-  tenantId?: string;
-  /** Raw claims from the JWT (for audit) */
-  claims?: Record<string, unknown>;
-}
+export type { AuthPlugin, AuthPluginResult };
 
 // ============================================================================
 // JWKS Cache

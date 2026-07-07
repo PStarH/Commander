@@ -10,7 +10,11 @@ import type { ToolCall, ToolResult } from '../types';
 import { getHookManager } from '../../pluginManager';
 import { generateId } from '../runtimeHelpers';
 import { reportSilentFailure } from '../../silentFailureReporter';
-import { toolErrorRow, type SyntheticErrorRow, type PreToolCallGateResult } from '../toolResultShape';
+import {
+  toolErrorRow,
+  type SyntheticErrorRow,
+  type PreToolCallGateResult,
+} from '../toolResultShape';
 import type { SecurityOrchestrator, SecurityOrchestratorDecision } from '../securityOrchestrator';
 import type { CrossAgentEvent } from '../../security/crossAgentCorrelator';
 import { getMessageBus } from '../messageBus';
@@ -47,19 +51,15 @@ export class ToolCallSecurityGate {
     agentId: string,
     runId: string,
   ): Promise<BeforeToolCallSecurityResult> {
-    const decision = await this.deps.getSecurityOrch().onBeforeToolCall(
-      tc.name,
-      tc.arguments as Record<string, unknown>,
-      agentId,
-      runId,
-      {
+    const decision = await this.deps
+      .getSecurityOrch()
+      .onBeforeToolCall(tc.name, tc.arguments as Record<string, unknown>, agentId, runId, {
         verification: {
           confidence: 0.95,
           gateFailures: [],
           hallucinationDetected: this.deps.getLastHallucinationDetected(),
         },
-      },
-    );
+      });
 
     // Feed tool_call event to correlator (DoS detection, lateral movement,
     // collusion). Wrapped in try/catch — Guardian/Correlator sink failures

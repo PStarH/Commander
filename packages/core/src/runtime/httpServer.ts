@@ -11,7 +11,7 @@ import { AgentRuntime } from './agentRuntime';
 import { SSEStream } from './sseStream';
 import { getMessageBus } from './messageBus';
 import { createProvider } from './providers/providerRegistry';
-import { initSecureApiKeyResolver } from '../security/secureApiKeyResolver';
+import { initSecureApiKeyResolver } from '../security/secureApiKeyResolver'; // retained for test overrides
 import { getEncryptedSecretsVault } from '../security/encryptedSecretsVault';
 import { MCPServer } from '../mcp/server';
 import { getGlobalLogger } from '../logging';
@@ -58,7 +58,8 @@ import { getCostModel } from '../observability/costModel';
 import { getGlobalExplorationEventLog } from '../ultimate/topologyStores';
 import { PersistentTraceStore } from './traceStore';
 import { LeaseManager } from '../atr/leaseManager';
-import type { AuthPlugin } from './oidcAuthPlugin';
+import type { AuthPlugin } from './authPlugin';
+import type { SAMLAuthPlugin } from './samlAuthPlugin';
 import type { SIEMForwarder } from './siemForwarder';
 import type { SecurityEvent } from '../security/securityAuditLogger';
 import { type DataRetentionJanitor, getDataRetentionJanitor } from '../storage/dataRetention';
@@ -309,14 +310,16 @@ export class CommanderHttpServer {
    */
   private initializeSecretVault(): void {
     try {
+      // The SecureApiKeyResolver now resolves the vault lazily via the
+      // tenant-aware getEncryptedSecretsVault() singleton. We only need to
+      // verify the vault initializes successfully — no explicit wiring required.
       const vault = getEncryptedSecretsVault();
-      initSecureApiKeyResolver({
-        retrieve: (name: string) => (vault.hasSecret(name) ? name : null),
-        decrypt: (name: string) => vault.getSecret(name),
-      });
+      // Sanity check: vault must be constructible. Master key resolution may
+      // throw in production if COMMANDER_MASTER_KEY is unset.
+      void vault;
       getGlobalLogger().info(
         'HttpServer',
-        'EncryptedSecretsVault initialized — API keys will be resolved from encrypted vault first',
+        'EncryptedSecretsVault initialized — API keys will be resolved from tenant-aware encrypted vault first',
       );
     } catch (err) {
       getGlobalLogger().warn(
@@ -369,6 +372,22 @@ export class CommanderHttpServer {
           error: (e as Error)?.message,
         });
       }
+    }
+
+    // Initialize SAML auth plugin from env if configured
+    try {
+      const { createSAMLPluginFromEnv } = require('./samlAuthPlugin');
+      const plugin = createSAMLPluginFromEnv();
+      if (plugin) {
+        this.registerAuthPlugin(plugin);
+        getGlobalLogger().info('HttpServer', 'SAML auth plugin initialized', {
+          idpEntityId: plugin['config']?.idpEntityId,
+        });
+      }
+    } catch (e) {
+      getGlobalLogger().debug('HttpServer', 'SAML plugin not available', {
+        error: (e as Error)?.message,
+      });
     }
 
     // Initialize SIEM forwarder from env if configured
@@ -959,6 +978,17 @@ export class CommanderHttpServer {
       return;
     }
 
+    // SAML SSO endpoints must be public (the user has no session yet).
+    if (
+      segments[0] === 'api' &&
+      segments[1] === 'v1' &&
+      segments[2] === 'auth' &&
+      segments[3] === 'saml'
+    ) {
+      await this.handleSamlAuthRequest(req, res, segments, queryStr);
+      return;
+    }
+
     if (!(await this.authenticateRequest(req, res))) return;
 
     // Reject new run requests during graceful shutdown to prevent new runtimes
@@ -1114,6 +1144,65 @@ export class CommanderHttpServer {
     return crypto.randomUUID();
   }
 
+  /**
+   * Handle public SAML 2.0 SSO endpoints (/api/v1/auth/saml/login and /acs).
+   * Called before API key authentication so unauthenticated users can log in.
+   */
+  private async handleSamlAuthRequest(
+    req: IncomingMessage,
+    res: ServerResponse,
+    segments: string[],
+    queryStr: string,
+  ): Promise<void> {
+    const method = req.method ?? 'GET';
+    const action = segments[4];
+    const samlPlugin = this.authPlugins.find((p) => p.name === 'saml') as
+      | SAMLAuthPlugin
+      | undefined;
+    if (!samlPlugin) {
+      sendJson(res, 501, { error: 'SAML authentication is not configured' });
+      return;
+    }
+
+    if (action === 'login' && method === 'GET') {
+      const relayState = queryStr
+        ? (new URLSearchParams(queryStr).get('relayState') ?? undefined)
+        : undefined;
+      const redirectUrl = samlPlugin.createLoginRedirectUrl(relayState);
+      res.writeHead(302, { Location: redirectUrl });
+      res.end();
+      return;
+    }
+
+    if (action === 'acs' && method === 'POST') {
+      const rawBody = await this.readRequestBody(req);
+      const body = new URLSearchParams(rawBody);
+      const samlResponse = body.get('SAMLResponse');
+      const relayState = body.get('RelayState') ?? undefined;
+      if (!samlResponse) {
+        sendJson(res, 400, { error: 'SAMLResponse missing' });
+        return;
+      }
+      const result = await samlPlugin.validateSamlResponse(samlResponse, {
+        allowIdpInitiated: true,
+      });
+      if (!result) {
+        sendJson(res, 401, { error: 'SAML authentication failed' });
+        return;
+      }
+      sendJson(res, 200, {
+        userId: result.userId,
+        username: result.username,
+        role: result.role,
+        tenantId: result.tenantId,
+        relayState,
+      });
+      return;
+    }
+
+    sendJson(res, 404, { error: 'Unknown SAML endpoint. Use /login or /acs.' });
+  }
+
   private async handleApiRequest(
     req: IncomingMessage,
     res: ServerResponse,
@@ -1122,7 +1211,8 @@ export class CommanderHttpServer {
   ): Promise<void> {
     const method = req.method ?? 'GET';
     if (segments[0] === 'v1') {
-      const [, resource, id] = segments;
+      const [, resource] = segments;
+      const id = segments[3];
       if (resource === 'runtime') {
         if (method === 'POST') {
           const rawBody = await parseBody(req, this.config.maxBodyBytes);
@@ -2029,6 +2119,35 @@ export class CommanderHttpServer {
       });
     }
     return tenantId;
+  }
+
+  /**
+   * Cross-tenant authorization gate. Call this when a handler receives a
+   * target tenant ID from the request path/query/body. It verifies that the
+   * authenticated tenant matches the requested target — preventing tenant A
+   * from accessing tenant B's resources even if the target is explicitly
+   * passed in the URL.
+   *
+   * Returns true if access is allowed (or multi-tenant mode is disabled).
+   * Returns false and sends a 403 response if the tenants mismatch.
+   */
+  private assertTenantAccess(
+    res: ServerResponse,
+    authenticatedTenant: string | undefined,
+    targetTenant: string | undefined,
+    url: string,
+  ): boolean {
+    // Single-tenant mode: no enforcement.
+    if (this.tenantApiKeyHashes.size === 0) return true;
+    // No target specified — allowed (handler will use authenticated tenant).
+    if (!targetTenant) return true;
+    // Match — allowed.
+    if (authenticatedTenant === targetTenant) return true;
+    // Mismatch — deny.
+    sendJson(res, 403, {
+      error: `Cross-tenant access denied: authenticated tenant "${authenticatedTenant ?? 'unknown'}" cannot access resources for tenant "${targetTenant}" on ${url}.`,
+    });
+    return false;
   }
 
   private checkRateLimit(ip: string): boolean {

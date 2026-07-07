@@ -377,7 +377,9 @@ import * as os from 'node:os';
 
 import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
 
-const pluginLoaderSingleton = createTenantAwareSingleton(() => new PluginLoader());
+const pluginLoaderSingleton = createTenantAwareSingleton(() => new PluginLoader(), {
+  allowGlobalFallback: true,
+});
 
 export function getPluginLoader(): PluginLoader {
   return pluginLoaderSingleton.get();

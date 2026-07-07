@@ -18,6 +18,7 @@ import type { ToolCall, ToolResult } from './types';
 import { getMetricsCollector } from './metricsCollector';
 import { createContentScanner } from '../contentScanner';
 import { getGlobalLogger } from '../logging';
+import { getCurrentTenantId, isMultiTenantEnabled, TenantIsolationError } from './tenantContext';
 
 // FNV-1a hash — fast, non-cryptographic, sufficient for in-memory cache keys
 function fnv1a(str: string): string {
@@ -170,18 +171,27 @@ export class ToolResultCache {
   /**
    * Check if a tool call result is in cache and still valid.
    * When tenantId is provided, cache lookup is scoped to that tenant.
+   * In multi-tenant mode, tenantId is mandatory — missing it throws.
    */
   get(toolCall: ToolCall, tenantId?: string): ToolResult | undefined {
     if (!this.config.enabled) return undefined;
     if (this.isNeverCache(toolCall.name)) return undefined;
 
-    const key = ToolResultCache.computeKey(toolCall.name, toolCall.arguments, tenantId);
+    // Multi-tenant fail-closed: enforce tenant scoping.
+    const effectiveTenant = tenantId ?? getCurrentTenantId();
+    if (isMultiTenantEnabled() && !effectiveTenant) {
+      throw new TenantIsolationError(
+        'ToolResultCache.get() called outside tenant context in multi-tenant mode',
+      );
+    }
+
+    const key = ToolResultCache.computeKey(toolCall.name, toolCall.arguments, effectiveTenant);
     const entry = this.cache.get(key);
 
     if (!entry) {
       this.stats.misses++;
       try {
-        getMetricsCollector().recordToolCacheEvent('miss', tenantId);
+        getMetricsCollector().recordToolCacheEvent('miss', effectiveTenant);
       } catch (err) {
         reportSilentFailure(err, 'toolResultCache:184');
         /* best-effort */
@@ -195,7 +205,7 @@ export class ToolResultCache {
       this.cache.delete(key);
       this.stats.misses++;
       try {
-        getMetricsCollector().recordToolCacheEvent('miss', tenantId);
+        getMetricsCollector().recordToolCacheEvent('miss', effectiveTenant);
       } catch (err) {
         reportSilentFailure(err, 'toolResultCache:198');
         /* best-effort */
@@ -211,7 +221,7 @@ export class ToolResultCache {
 
     // Record metrics
     try {
-      getMetricsCollector().recordToolCacheEvent('hit', tenantId);
+      getMetricsCollector().recordToolCacheEvent('hit', effectiveTenant);
     } catch (err) {
       reportSilentFailure(err, 'toolResultCache:214');
       /* best-effort */
@@ -237,7 +247,15 @@ export class ToolResultCache {
     if (this.isNeverCache(toolCall.name)) return;
     if (result.error) return;
 
-    const key = ToolResultCache.computeKey(toolCall.name, toolCall.arguments, tenantId);
+    // Multi-tenant fail-closed: enforce tenant scoping.
+    const effectiveTenant = tenantId ?? getCurrentTenantId();
+    if (isMultiTenantEnabled() && !effectiveTenant) {
+      throw new TenantIsolationError(
+        'ToolResultCache.set() called outside tenant context in multi-tenant mode',
+      );
+    }
+
+    const key = ToolResultCache.computeKey(toolCall.name, toolCall.arguments, effectiveTenant);
     const ttlMs = this.config.toolTtls[toolCall.name] ?? this.config.defaultTtlMs;
 
     // LRU eviction if at capacity
