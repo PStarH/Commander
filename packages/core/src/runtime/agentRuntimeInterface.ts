@@ -129,6 +129,9 @@ export interface AgentRuntimeInterface {
     lastFailureAt: number;
   }>;
 
+  /** Return the names of all registered tools (used by HTTP server capability probe). */
+  listToolNames(): string[];
+
   /** Dispose sub-resources (timers, file handles) when this runtime is discarded. */
   dispose(): void;
 }
