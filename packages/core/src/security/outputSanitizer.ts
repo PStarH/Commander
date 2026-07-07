@@ -725,7 +725,9 @@ export function sanitizeIfNeeded(
 // Singleton
 // ============================================================================
 
-const outputSanitizerSingleton = createTenantAwareSingleton(() => new OutputSanitizer());
+const outputSanitizerSingleton = createTenantAwareSingleton(() => new OutputSanitizer(), {
+  allowGlobalFallback: true,
+});
 
 export function getOutputSanitizer(): OutputSanitizer {
   return outputSanitizerSingleton.get();

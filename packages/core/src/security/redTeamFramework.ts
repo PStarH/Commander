@@ -1339,7 +1339,9 @@ export function generateSecurityReportJson(report: RedTeamRunReport): string {
 // Singleton
 // ============================================================================
 
-const redTeamSingleton = createTenantAwareSingleton(() => new RedTeamFramework());
+const redTeamSingleton = createTenantAwareSingleton(() => new RedTeamFramework(), {
+  allowGlobalFallback: true,
+});
 
 export function getRedTeamFramework(): RedTeamFramework {
   return redTeamSingleton.get();
