@@ -1,0 +1,212 @@
+name: Memory Poisoning Bench
+
+# Companion to .github/workflows/tenant-isolation-bench.yml. The two workflows
+# guard the same class-level attack surface against cross-tenant data bleed —
+# tenant-isolation-bench.yml covers the in-memory key/value target
+# (CrossTenantFuzzTest), and this workflow covers the 3-layer memory
+# (ThreeLayerMemory) attack surface.
+#
+# The bench exits 1 on the FIRST cross-tenant leak (security-bench fail-loud
+# semantic, mirrors scripts/bench-tenant-isolation.ts). There is no
+# today.summary.passed=true workflow-day this baseline is green; the bench
+# surfaces real class-level gaps for the security team to triage. As long as
+# summary.leakCount DOES NOT INCREASE day-over-day, the regress gate accepts
+# the run (a regression red-flags the PR).
+#
+# Triggers:
+#   - workflow_dispatch: manual run; supports overriding the leak-count
+#     tolerance (default 0 = strict no-new-leaks).
+#   - schedule: 07:30 UTC daily. Distinct slot from wal-bench (06:00),
+#     cost-bench (06:30), cost-model-drift-bench (06:45), slo-bench (07:00),
+#     tenant-isolation-bench (07:15).
+#
+# Outputs:
+#   - docs/baselines/memory-poisoning.<UTC-today>.json
+#   - GitHub Step Summary markdown table
+#   - exit 0: leakCount unchanged or fewer leaks vs yesterday
+#   - exit 1: any new leak vector vs yesterday
+
+on:
+  workflow_dispatch:
+    inputs:
+      maxNewLeaks:
+        description: 'Maximum additional leaks tolerated vs yesterday (default 0)'
+        required: false
+        default: '0'
+  schedule:
+    - cron: '30 7 * * *'
+
+jobs:
+  bench-memory-poisoning-regress:
+    name: Cross-Tenant Memory Poisoning Regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TZ: UTC
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve today / yesterday (UTC)
+        id: dates
+        run: |
+          TODAY=$(date -u +%Y-%m-%d)
+          YESTERDAY=$(node -e "const d=new Date();d.setUTCDate(d.getUTCDate()-1);console.log(d.toISOString().slice(0,10))")
+          echo "today=$TODAY"        >> "$GITHUB_OUTPUT"
+          echo "yesterday=$YESTERDAY" >> "$GITHUB_OUTPUT"
+
+      - name: Run memory-poisoning bench (captures today baseline)
+        run: pnpm bench:memory-poisoning
+
+      - name: Verify today's baseline JSON exists
+        run: |
+          TODAY_FILE="docs/baselines/memory-poisoning.${{ steps.dates.outputs.today }}.json"
+          if [ ! -s "$TODAY_FILE" ]; then
+            echo "::error::$TODAY_FILE is missing or empty"
+            exit 2
+          fi
+          echo "today's baseline: $TODAY_FILE"
+
+      - name: Extract today's metrics (leakCount is the gate signal)
+        id: metrics
+        if: always()
+        run: |
+          TODAY_FILE="docs/baselines/memory-poisoning.${{ steps.dates.outputs.today }}.json"
+          node -e '
+            const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf-8"));
+            const out = (k, v) => console.log(`${k}=${v}`);
+            out("totalCases", d.report.totalCases);
+            out("defended", d.report.defended);
+            out("leakCount", d.summary.leakCount ?? d.report.leaks.length);
+            out("durationMs", d.report.durationMs);
+          ' "$TODAY_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Compare today vs yesterday (leak-count delta gate)
+        if: always()
+        id: regress
+        env:
+          MAX_NEW_LEAKS: ${{ github.event.inputs.maxNewLeaks || '0' }}
+        run: |
+          TODAY_FILE="docs/baselines/memory-poisoning.${{ steps.dates.outputs.today }}.json"
+          YESTERDAY_FILE="docs/baselines/memory-poisoning.${{ steps.dates.outputs.yesterday }}.json"
+          SUMMARY="$RUNNER_TEMP/memory-poisoning-regress-summary.md"
+          if [ ! -s "$YESTERDAY_FILE" ]; then
+            cat > "$SUMMARY" <<EOF
+          ## Memory Poisoning Regression - ${{ steps.dates.outputs.today }}
+
+          First-day run: no yesterday baseline available. Leak-count delta gate skipped.
+
+          | metric | today |
+          |---|---|
+          | leakCount | ${{ steps.metrics.outputs.leakCount }} |
+          | defended | ${{ steps.metrics.outputs.defended }} / ${{ steps.metrics.outputs.totalCases }} |
+          | durationMs | ${{ steps.metrics.outputs.durationMs }} |
+          EOF
+            echo "first-day=true"  >> "$GITHUB_OUTPUT"
+            echo "regressed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::first-day run; leak-count delta gate skipped"
+            exit 0
+          fi
+          node -e '
+            const fs = require("fs");
+            const today = JSON.parse(fs.readFileSync(process.argv[1], "utf-8"));
+            const yesterday = JSON.parse(fs.readFileSync(process.argv[2], "utf-8"));
+            const MAX_NEW = Number(process.env.MAX_NEW_LEAKS);
+            const todayLeaks = today.summary.leakCount ?? today.report.leaks.length;
+            const yesterdayLeaks = yesterday.summary.leakCount ?? yesterday.report.leaks.length;
+            const leakDelta = todayLeaks - yesterdayLeaks;
+            const deltaOk = leakDelta <= MAX_NEW;
+            // Per-vector regression: a NEW vector leaking today that was defended
+            // yesterday is a strict regression regardless of total count.
+            const yesterdayVectors = new Set(
+              (yesterday.report.leaks ?? []).map((l) => l.vector),
+            );
+            const newVectorLeaks = (today.report.leaks ?? [])
+              .filter((l) => !yesterdayVectors.has(l.vector))
+              .map((l) => l.vector);
+            const newVectorOk = newVectorLeaks.length === 0;
+            const md = [
+              `## Memory Poisoning Regression - ${today.runAt.slice(0,10)}`,
+              ``,
+              `> Gates: leakCount delta <= **${MAX_NEW}**; NO new leak vectors vs yesterday.`,
+              ``,
+              `| metric | today | yesterday | delta |`,
+              `|---|---|---|---|`,
+              `| leakCount | ${todayLeaks} | ${yesterdayLeaks} | ${leakDelta >= 0 ? "+" : ""}${leakDelta} |`,
+              `| defended | ${today.report.defended} / ${today.report.totalCases} | ${yesterday.report.defended} / ${yesterday.report.totalCases} | - |`,
+              `| durationMs | ${today.report.durationMs} | ${yesterday.report.durationMs} | - |`,
+              ``,
+              newVectorLeaks.length > 0
+                ? `NEW vectors leaking: ${newVectorLeaks.join(", ")}`
+                : `No new leak vectors.`,
+              ``,
+              (deltaOk && newVectorOk) ? `PASS` : `REGRESS DETECTED (deltaOk=${deltaOk}, newVectorOk=${newVectorOk})`,
+            ].join("\\n");
+            fs.writeFileSync(process.argv[3], md);
+            if (!deltaOk || !newVectorOk) {
+              console.log("regressed=true");
+              console.log(`::error::memory-poisoning regression: leakDelta=${leakDelta}, newVectors=${newVectorLeaks.length}`);
+              process.exit(1);
+            }
+            console.log("regressed=false");
+          ' "$TODAY_FILE" "$YESTERDAY_FILE" "$SUMMARY"
+
+      - name: Append markdown to GitHub Step Summary
+        if: always()
+        run: |
+          SUMMARY="$RUNNER_TEMP/memory-poisoning-regress-summary.md"
+          if [ -s "$SUMMARY" ]; then cat "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"; else exit 2; fi
+
+      # Day-N+1 regress gate dependency: PR auto-creation pairs with team
+      # auto-merge policy (Settings -> General -> Allow auto-merge + branch
+      # rule matching labels automated+ci-bench). Until auto-merge is
+      # enabled, tomorrow sees first-day SKIP for the day the PR is open
+      # but not yet merged; the day AFTER it merges, the gate fires for
+      # real. If strict day-N+1 continuity is later required, switch this
+      # guard to `if: always() && hashFiles('docs/baselines/memory-poisoning.*.json')`.
+      - name: Open PR for today's memory-poisoning baseline
+        if: success()
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: bench/memory-poisoning-baseline-${{ steps.dates.outputs.today }}
+          delete-branch: true
+          title: 'ci(memory-poisoning-bench): baseline ${{ steps.dates.outputs.today }} - leaks=${{ steps.metrics.outputs.leakCount }}/${{ steps.metrics.outputs.totalCases }}'
+          commit-message: |
+            ci(memory-poisoning-bench): baseline ${{ steps.dates.outputs.today }}
+
+            Auto-generated by .github/workflows/memory-poisoning-bench.yml.
+
+            leakCount: ${{ steps.metrics.outputs.leakCount }}
+            defended: ${{ steps.metrics.outputs.defended }} / ${{ steps.metrics.outputs.totalCases }}
+          body: |
+            ## Memory poisoning baseline - ${{ steps.dates.outputs.today }}
+
+            Auto-generated by [`.github/workflows/memory-poisoning-bench.yml`](../workflows/memory-poisoning-bench.yml).
+            Triggered daily at `07:30 UTC` or via manual `workflow_dispatch`.
+
+            | Metric | Value |
+            |---|---|
+            | leakCount | **${{ steps.metrics.outputs.leakCount }}** |
+            | defended / total | **${{ steps.metrics.outputs.defended }} / ${{ steps.metrics.outputs.totalCases }}** |
+            | durationMs | **${{ steps.metrics.outputs.durationMs }}** |
+
+            > The bench is a security fail-loud test by design. Per-vector leakage is a class-level attack surface that must be closed in `packages/core/src/threeLayerMemory.ts`; this PR only persists the baseline JSON for forensic comparisons.
+
+            Generated by `.github/workflows/memory-poisoning-bench.yml`
+          labels: |
+            automated
+            ci-bench
