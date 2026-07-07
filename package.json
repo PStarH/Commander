@@ -24,7 +24,11 @@
   ],
   "scripts": {
     "build": "pnpm -r build",
-    "build:core": "cd packages/core && npx tsc -p tsconfig.json",
+    "build:core": "cd packages/core && tsc -p tsconfig.json",
+    "build:mcp-server": "pnpm --filter @commander/mcp-server build",
+    "test:mcp-server": "pnpm --filter @commander/mcp-server test",
+    "publish:mcp-server": "pnpm --filter @commander/mcp-server publish --access public --no-git-checks",
+    "release:mcp-server": "pnpm run build:mcp-server && pnpm run test:mcp-server && pnpm run publish:mcp-server",
     "dev:api": "pnpm --filter api dev",
     "dev:web": "pnpm --filter web dev",
     "dev": "pnpm -r dev",
