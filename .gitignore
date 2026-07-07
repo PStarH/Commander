@@ -162,6 +162,9 @@ apps/api/dist/
 .sisyphus/
 .codex/
 
+# Root-level HTML artifacts (research reports, benchmark outputs) — regenerated on demand, do not commit
+/*.html
+
 # Benchmark files — entire directories (intermediate results, responses, configs)
 benchmarks/
 packages/core/benchmarks/
