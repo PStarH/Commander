@@ -164,6 +164,7 @@ apps/api/dist/
 
 # Benchmark files — entire directories (intermediate results, responses, configs)
 benchmarks/
+!benchmarks/chaos-runner/
 packages/core/benchmarks/
 packages/core/src/benchmark/
 docs/benchmark-results/
@@ -276,3 +277,9 @@ packages/core/src/**/*.js
 packages/core/src/**/*.d.ts
 report.json
 .commander/e2e_cassettes/
+
+# Auto-generated AI-tool share-export directory (binary zip, not source)
+.trae-html-share-packages/
+
+# Auto-generated AI-tool share-export directory (binary zip, not source)
+.trae-html-share-packages/

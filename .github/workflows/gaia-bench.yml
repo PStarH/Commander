@@ -1,0 +1,323 @@
+name: GAIA Bench Regression
+
+# Day 7 closeout: capture today's GAIA spine-pinned benchmark baseline via
+# `npx tsx scripts/benchmark-gaia.ts --quick --output=<path>`, compare against
+# yesterday's baseline JSON, gate on passed/summary.spineErrors=0/
+# summary.scoringRegressions=0 + their day-over-day deltas.
+#
+# Companion to ENTERPRISE_READINESS.md Capability-benchmarks section.
+# Mirrors the regression-gate pattern of slo-bench.yml +
+# tenant-isolation-bench.yml + cost-bench.yml + memory-poisoning-bench.yml
+# + chaos-bench.yml.
+#
+# Mode: --quick (the only working mode today; the 165-task GAIA fixture
+# is Phase 2 work and exits 4 with the --full path). The --quick mode
+# runs 10 synthetic tasks through ExecutionScheduler + UltimateOrchestrator
+# class-loadability test + 8-case scoring self-test, all offline (no API
+# keys, in-memory ledger via COMMANDER_ATR_MEMORY=1).
+#
+# Why `--output=<path>` flag here specifically: the previous benchmark-gaia.ts
+# only wrote to stdout. This workflow canonically extracts a baseline JSON,
+# so day-over-day drift gates can compute spineErrors/scoringRegressions
+# delta using the same shape as the other cron benches.
+#
+# Triggers:
+#   - workflow_dispatch: maxNewSpineErrors override (default 0).
+#   - schedule: 08:00 UTC daily. Closes out the morning cron block
+#     (06:00-08:00) — last gate before team working hours.
+#
+# Outputs:
+#   - docs/baselines/gaia-quick.<UTC-today>.json  (committed artifact)
+#   - GitHub Step Summary markdown table
+#   - exit 0: passed=true AND spineErrors=0 AND scoringRegressions=0 AND
+#     both deltas vs yesterday <= maxNewSpineErrors
+#   - exit 1: passed=false OR spineErrors/scoringRegressions regressed
+#   - exit 2: today's baseline JSON missing (bench crashed before write)
+
+on:
+  workflow_dispatch:
+    inputs:
+      maxNewSpineErrors:
+        description: 'Maximum additional spine errors vs yesterday (default 0)'
+        required: false
+        default: '0'
+  schedule:
+    - cron: '0 8 * * *'
+
+jobs:
+  bench-gaia-regress:
+    name: GAIA Regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Force UTC so downstream code reading `new Date().toISOString().slice(0,10)`
+      # matches the date the workflow's yesterday-lookup step computes. Same
+      # pattern as the other cron benches.
+      TZ: UTC
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 is required so today's run can compare against
+          # yesterday's baseline JSON committed to HEAD by the previous day's
+          # scheduled run. Without it the regress step would always see
+          # "first-day run".
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve today / yesterday (UTC)
+        id: dates
+        run: |
+          TODAY=$(date -u +%Y-%m-%d)
+          # Portable yesterday via Node - avoids OS-specific date(1) flags
+          # (-d on Linux, -v on macOS) and keeps UTC alignment.
+          YESTERDAY=$(node -e "const d=new Date();d.setUTCDate(d.getUTCDate()-1);console.log(d.toISOString().slice(0,10))")
+          echo "today=$TODAY"
+          echo "yesterday=$YESTERDAY"
+          echo "today=$TODAY"        >> "$GITHUB_OUTPUT"
+          echo "yesterday=$YESTERDAY" >> "$GITHUB_OUTPUT"
+
+      - name: Run GAIA bench (captures today baseline JSON)
+        # `set -e` ensures a bench crash (exit 1/2/3 from benchmark-gaia
+        # itself) triggers the verify step's missing-file exit 2 path,
+        # mirroring slo-bench / tenant-isolation-bench pattern. The
+        # benchmark-gaia script writes JSON BEFORE returning the exit
+        # code, so even a failed run produces a baseline file we can
+        # diff against — it's the same shape as a successful baseline
+        # (with `passed: false, exitCode: <non-zero>, failedReason`).
+        run: |
+          set -e
+          npx tsx scripts/benchmark-gaia.ts --quick --output=/tmp/gaia-report.json
+
+      - name: Move report to docs/baselines/
+        if: always()
+        run: |
+          TODAY_FILE="docs/baselines/gaia-quick.${{ steps.dates.outputs.today }}.json"
+          mkdir -p "$(dirname "$TODAY_FILE")"
+          cp /tmp/gaia-report.json "$TODAY_FILE"
+          echo "today's baseline: $TODAY_FILE"
+
+      - name: Verify today's baseline JSON exists
+        if: always()
+        run: |
+          TODAY_FILE="docs/baselines/gaia-quick.${{ steps.dates.outputs.today }}.json"
+          if [ ! -s "$TODAY_FILE" ]; then
+            echo "::error::$TODAY_FILE is missing or empty - benchmark-gaia.ts did not write a baseline (bench likely crashed)"
+            exit 2
+          fi
+          echo "today's baseline: $TODAY_FILE"
+
+      - name: Extract today's metrics for PR body
+        id: metrics
+        if: always()
+        run: |
+          TODAY_FILE="docs/baselines/gaia-quick.${{ steps.dates.outputs.today }}.json"
+          node -e '
+            const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf-8"));
+            const s = d.summary;
+            const out = (k, v) => console.log(`${k}=${v}`);
+            out("passed", d.passed);
+            out("exitCode", d.exitCode);
+            out("total", s.total);
+            out("correct", s.correct);
+            out("incorrect", s.incorrect);
+            out("ungraded", s.ungraded);
+            out("ungradedRate", s.ungradedRate.toFixed(1));
+            out("effectiveScore", s.effectiveScore.toFixed(1));
+            out("spineErrors", s.spineErrors);
+            out("scoringRegressions", s.scoringRegressions);
+            out("durationMs", d.durationMs);
+          ' "$TODAY_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Compare today vs yesterday (drift gate)
+        if: always()
+        id: regress
+        env:
+          MAX_NEW_SPINE_ERRORS: ${{ github.event.inputs.maxNewSpineErrors || '0' }}
+        run: |
+          TODAY_FILE="docs/baselines/gaia-quick.${{ steps.dates.outputs.today }}.json"
+          YESTERDAY_FILE="docs/baselines/gaia-quick.${{ steps.dates.outputs.yesterday }}.json"
+          SUMMARY="$RUNNER_TEMP/gaia-regress-summary.md"
+          # First-day run (no yesterday baseline): log + skip regress gate.
+          # The bench's OWN `passed === true` gate is enforced by the
+          # metrics step below; the regress gate only adds a *drift* check.
+          if [ ! -s "$YESTERDAY_FILE" ]; then
+            cat > "$SUMMARY" <<EOF
+          ## GAIA Regression - ${{ steps.dates.outputs.today }}
+
+          First-day run: no yesterday baseline available. Drift gate skipped.
+
+          | metric | today | yesterday |
+          |---|---|---|
+          | passed | ${{ steps.metrics.outputs.passed }} | n/a |
+          | correct | ${{ steps.metrics.outputs.correct }} | n/a |
+          | spineErrors | ${{ steps.metrics.outputs.spineErrors }} | n/a |
+          | scoringRegressions | ${{ steps.metrics.outputs.scoringRegressions }} | n/a |
+          | effectiveScore | ${{ steps.metrics.outputs.effectiveScore }}% | n/a |
+          EOF
+            echo "first-day=true"  >> "$GITHUB_OUTPUT"
+            PASSED=${{ steps.metrics.outputs.passed }}
+            # Absolute gate on day 0: a red baseline cannot auto-merge.
+            # Mirrors the chaos-bench.yml first-day guard — both workflows
+            # intentionally trip the PR-creation `if: success()` skip when
+            # today's bench fails, instead of letting the red JSON propagate.
+            if [ "$PASSED" != "true" ]; then
+              echo "regressed=true" >> "$GITHUB_OUTPUT"
+              echo "::error::first-day hard-fail: passed=$PASSED — PR auto-merge prevented"
+              exit 1
+            fi
+            echo "regressed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::first-day run; drift gate skipped"
+            exit 0
+          fi
+
+          # Drift gate: passed=true AND spineErrors=0 AND scoringRegressions=0
+          # AND both new-numbers vs yesterday <= MAX_NEW_SPINE_ERRORS.
+          # Mirrors the slo-bench drift-gate pattern; GAIA-specific fields
+          # (correct/incorrect/ungraded/effectiveScore) are reported for
+          # context but the gate is binary (passed + 0 spine errors +
+          # 0 scoring regressions) so day-to-day PRNG noise on
+          # Mock-output strings does NOT falsely trip the gate.
+          node -e '
+            const fs = require("fs");
+            const today = JSON.parse(fs.readFileSync(process.argv[1], "utf-8"));
+            const yesterday = JSON.parse(fs.readFileSync(process.argv[2], "utf-8"));
+            const MAX_NEW = Number(process.env.MAX_NEW_SPINE_ERRORS);
+            const todaySpine = today.summary.spineErrors;
+            const yesterdaySpine = yesterday.summary.spineErrors;
+            const todayScore = today.summary.scoringRegressions;
+            const yesterdayScore = yesterday.summary.scoringRegressions;
+            const newSpineErrors = todaySpine - yesterdaySpine;
+            const newScoringRegressions = todayScore - yesterdayScore;
+            const passOk = today.passed === true && todaySpine === 0 && todayScore === 0;
+            const driftOk = newSpineErrors <= MAX_NEW && newScoringRegressions <= MAX_NEW;
+            const md = [
+              `## GAIA Regression - ${today.runAt.slice(0,10)}`,
+              ``,
+              `> Gates: passed must be true; spineErrors must be 0; scoringRegressions must be 0; both deltas vs yesterday <= **${MAX_NEW}**.`,
+              ``,
+              `| metric | today | yesterday | delta |`,
+              `|---|---|---|---|`,
+              `| passed | ${today.passed} | ${yesterday.passed} | - |`,
+              `| exitCode | ${today.exitCode} | ${yesterday.exitCode} | - |`,
+              `| correct | ${today.summary.correct} | ${yesterday.summary.correct} | - |`,
+              `| incorrect | ${today.summary.incorrect} | ${yesterday.summary.incorrect} | - |`,
+              `| ungraded | ${today.summary.ungraded} | ${yesterday.summary.ungraded} | - |`,
+              `| ungradedRate | ${today.summary.ungradedRate.toFixed(1)}% | ${yesterday.summary.ungradedRate.toFixed(1)}% | - |`,
+              `| effectiveScore | ${today.summary.effectiveScore.toFixed(1)}% | ${yesterday.summary.effectiveScore.toFixed(1)}% | - |`,
+              `| spineErrors | ${todaySpine} | ${yesterdaySpine} | ${newSpineErrors >= 0 ? "+" : ""}${newSpineErrors} |`,
+              `| scoringRegressions | ${todayScore} | ${yesterdayScore} | ${newScoringRegressions >= 0 ? "+" : ""}${newScoringRegressions} |`,
+              `| durationMs | ${today.durationMs} | ${yesterday.durationMs} | - |`,
+              ``,
+              (passOk && driftOk) ? `PASS` : `REGRESS DETECTED (passOk=${passOk}, driftOk=${driftOk})`,
+            ].join("\n");
+            fs.writeFileSync(process.argv[3], md);
+            if (!passOk || !driftOk) {
+              console.log("regressed=true");
+              console.log(`::error::gaia drift detected: passOk=${passOk} newSpineErrors=${newSpineErrors} newScoring=${newScoringRegressions}`);
+              process.exit(1);
+            }
+            console.log("regressed=false");
+          ' "$TODAY_FILE" "$YESTERDAY_FILE" "$SUMMARY"
+
+      - name: Append markdown to GitHub Step Summary
+        if: always()
+        run: |
+          SUMMARY="$RUNNER_TEMP/gaia-regress-summary.md"
+          if [ -s "$SUMMARY" ]; then
+            cat "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::regress step did not write a summary file at $SUMMARY"
+            exit 2
+          fi
+
+      - name: Upload today's baseline as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gaia-baseline-${{ steps.dates.outputs.today }}
+          path: docs/baselines/gaia-quick.${{ steps.dates.outputs.today }}.json
+          retention-days: 90
+          if-no-files-found: error
+
+      # Day-N+1 regress gate dependency: this PR is the commit-back path so
+      # tomorrow's `actions/checkout@v4 fetch-depth: 0` finds today's JSON in
+      # HEAD. Mirrors slo-bench / tenant-isolation-bench / cost-bench /
+      # memory-poisoning-bench / chaos-bench day-N+1 continuity model.
+      # `if: success()` excludes BOTH the bench-internal failures
+      # (exit 1/2/3 from benchmark-gaia itself) AND the drift-gate failure
+      # (drift > maxNewSpineErrors). In both cases the red baseline JSON is
+      # still preserved as a 90-day artifact above for forensic inspection.
+      - name: Open PR for today's GAIA baseline
+        if: success()
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: bench/gaia-baseline-${{ steps.dates.outputs.today }}
+          delete-branch: true
+          title: 'ci(gaia-bench): baseline ${{ steps.dates.outputs.today }} - passed=${{ steps.metrics.outputs.passed }}, score=${{ steps.metrics.outputs.effectiveScore }}%'
+          commit-message: |
+            ci(gaia-bench): baseline ${{ steps.dates.outputs.today }}
+
+            Auto-generated by .github/workflows/gaia-bench.yml. Provides yesterday's
+            GAIA spine baseline for the next day's regress gate.
+
+            passed:           ${{ steps.metrics.outputs.passed }}
+            correct:          ${{ steps.metrics.outputs.correct }}
+            spineErrors:      ${{ steps.metrics.outputs.spineErrors }}
+            scoringRegressions: ${{ steps.metrics.outputs.scoringRegressions }}
+            durationMs:       ${{ steps.metrics.outputs.durationMs }}
+          body: |
+            ## GAIA bench baseline - ${{ steps.dates.outputs.today }}
+
+            Auto-generated by [`.github/workflows/gaia-bench.yml`](../workflows/gaia-bench.yml).
+            Triggered daily at `08:00 UTC` or via manual `workflow_dispatch`.
+
+            Today's metrics (10-task offline spine-pin run; tests
+            ExecutionScheduler + UltimateOrchestrator class-loadability +
+            8-case scoring self-test including the historical empty-expected
+            regression):
+
+            | Metric | Value |
+            |---|---|
+            | passed | **${{ steps.metrics.outputs.passed }}** |
+            | correct | **${{ steps.metrics.outputs.correct }}** |
+            | incorrect | **${{ steps.metrics.outputs.incorrect }}** |
+            | ungraded | **${{ steps.metrics.outputs.ungraded }}** |
+            | ungradedRate | **${{ steps.metrics.outputs.ungradedRate }}%** |
+            | effectiveScore | **${{ steps.metrics.outputs.effectiveScore }}%** |
+            | spineErrors | **${{ steps.metrics.outputs.spineErrors }}** |
+            | scoringRegressions | **${{ steps.metrics.outputs.scoringRegressions }}** |
+            | durationMs | **${{ steps.metrics.outputs.durationMs }}** |
+
+            ### What this PR does
+
+            Commits today's `docs/baselines/gaia-quick.<TODAY>.json` to the
+            default branch so tomorrow's workflow run finds it as yesterday's
+            baseline via `actions/checkout@v4 fetch-depth: 0`. Without this
+            commit-back, tomorrow's regress gate would perpetually see
+            "first-day run" and never fire.
+
+            ### Gates
+
+            - `passed` must be **true** (spine healthy + scoring preserves
+              UNGRADED for empty expected + ungradedRate within 25-35% band).
+            - `summary.spineErrors` must stay **0**; new spine errors vs
+              yesterday must not exceed **0** (default).
+            - `summary.scoringRegressions` must stay **0**; new scoring
+              regressions vs yesterday must not exceed **0** (default).
+
+            Generated by `.github/workflows/gaia-bench.yml`
+          labels: |
+            automated
+            ci-bench
