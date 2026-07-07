@@ -1020,7 +1020,9 @@ export class EnterpriseSecurityGateway {
 // 单例
 // ============================================================================
 
-const gatewaySingleton = createTenantAwareSingleton(() => new EnterpriseSecurityGateway());
+const gatewaySingleton = createTenantAwareSingleton(() => new EnterpriseSecurityGateway(), {
+  allowGlobalFallback: true,
+});
 
 /**
  * 获取全局 EnterpriseSecurityGateway（单租户）或租户范围的实例

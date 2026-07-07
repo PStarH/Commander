@@ -1153,6 +1153,7 @@ export class SemanticFirewall {
 // ============================================================================
 
 const semanticFirewallSingleton = createTenantAwareSingleton(() => new SemanticFirewall(), {
+  allowGlobalFallback: true,
   componentName: 'SemanticFirewall',
 });
 
