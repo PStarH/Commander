@@ -108,6 +108,19 @@ export class CommanderAgentLoop {
         );
       });
     }
+    if (process.env.AZURE_OPENAI_API_KEY) {
+      const apiKey = process.env.AZURE_OPENAI_API_KEY;
+      const baseUrl = process.env.AZURE_OPENAI_BASE_URL;
+      const defaultModel = process.env.AZURE_OPENAI_MODEL || 'gpt-4o';
+      const apiVersion = process.env.AZURE_OPENAI_API_VERSION;
+      registrations.push(async () => {
+        const { AzureOpenAIProvider } = await import('./runtime/providers/azureOpenAIProvider');
+        this.runtime.registerProvider(
+          'azure',
+          new AzureOpenAIProvider({ apiKey, baseUrl, defaultModel, apiVersion }),
+        );
+      });
+    }
     if (process.env.ANTHROPIC_API_KEY) {
       const apiKey = process.env.ANTHROPIC_API_KEY;
       registrations.push(async () => {
