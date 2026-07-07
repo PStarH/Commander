@@ -36,6 +36,9 @@ export const MCP_ERROR_CODES = {
   INTERNAL_ERROR: -32603,
 } as const;
 
+/** MCP protocol version shared by the local server and client implementations. */
+export const MCP_PROTOCOL_VERSION = '2024-11-05';
+
 // ---------------------------------------------------------------------------
 // MCP Primitives
 // ---------------------------------------------------------------------------
