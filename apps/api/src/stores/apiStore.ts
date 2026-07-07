@@ -4,7 +4,7 @@ import * as path from 'path';
 
 const DEFAULT_DB_PATH = path.resolve(process.cwd(), '.commander', 'api_state.db');
 
-export type ApiStoreBackend = 'sqlite' | 'memory';
+export type ApiStoreBackend = 'sqlite' | 'memory' | 'postgres';
 
 export interface ApiTaskRow {
   id: string;
@@ -68,7 +68,7 @@ export interface MissionCheckpoints {
 }
 
 export interface SqliteApiStore {
-  readonly backend: ApiStoreBackend;
+  readonly backend: Exclude<ApiStoreBackend, 'postgres'>;
   readonly dbPath: string;
   close(): void;
   listTasksByStatus(status: string): ApiTaskRow[];
@@ -117,6 +117,60 @@ export interface SqliteApiStore {
   };
   cleanup(): void;
 }
+
+/** Async PostgreSQL-backed API store. */
+export interface PostgresApiStore {
+  readonly backend: 'postgres';
+  readonly connectionString: string;
+  close(): Promise<void>;
+  listTasksByStatus(status: string): Promise<ApiTaskRow[]>;
+  listTasksByClient(clientId: string): Promise<ApiTaskRow[]>;
+  listTasksByAgent(agentId: string): Promise<ApiTaskRow[]>;
+  listAllTasks(): Promise<ApiTaskRow[]>;
+  getTask(id: string): Promise<ApiTaskRow | null>;
+  putTask(row: ApiTaskRow): Promise<ApiTaskRow>;
+  deleteTask(id: string): Promise<void>;
+  getArtifact(id: string): Promise<ApiArtifactRow | null>;
+  putArtifact(row: ApiArtifactRow): Promise<ApiArtifactRow>;
+  getArtifactsByTask(taskId: string): Promise<ApiArtifactRow[]>;
+  getCheckpoint(id: string): Promise<ApiCheckpointRow | null>;
+  putCheckpoint(row: ApiCheckpointRow): Promise<ApiCheckpointRow>;
+  listCheckpoints(missionId?: string): Promise<ApiCheckpointRow[]>;
+  getPendingCheckpointsForApprover(approverId: string): Promise<ApiCheckpointRow[]>;
+  getPendingCheckpointsByMission(missionId: string): Promise<ApiCheckpointRow[]>;
+  approveCheckpoint(
+    checkpointId: string,
+    reviewerId: string,
+    reason?: string,
+    conditions?: string[],
+  ): Promise<ApiCheckpointRow | null>;
+  rejectCheckpoint(
+    checkpointId: string,
+    reviewerId: string,
+    reason: string,
+  ): Promise<ApiCheckpointRow | null>;
+  expireCheckpoints(now: Date): Promise<ApiCheckpointRow[]>;
+  addCheckpointEvidence(
+    checkpointId: string,
+    evidence: { type: string; timestamp: string; content: string; source: string },
+  ): Promise<ApiCheckpointRow | null>;
+  getCheckpointConfig(missionId: string): Promise<ApiCheckpointConfigRow | null>;
+  putCheckpointConfig(row: ApiCheckpointConfigRow): Promise<ApiCheckpointConfigRow>;
+  getCheckpointStats(missionId?: string): Promise<{
+    total: number;
+    pending: number;
+    approved: number;
+    rejected: number;
+    expired: number;
+    mandatoryCount: number;
+    conditionalCount: number;
+    automaticCount: number;
+    averageApprovalTime: number | null;
+  }>;
+  cleanup(): Promise<void>;
+}
+
+export type ApiStore = SqliteApiStore | PostgresApiStore;
 
 function createMemoryApiStore(dbPath: string): SqliteApiStore {
   const tasks = new Map<string, ApiTaskRow>();
@@ -583,14 +637,522 @@ function createSqliteApiStore(dbPath: string): SqliteApiStore {
   return store;
 }
 
+function createPostgresApiStore(connectionString: string): PostgresApiStore {
+  let Pool: new (config: { connectionString: string }) => {
+    query<T = Record<string, unknown>>(sql: string, values?: unknown[]): Promise<{ rows: T[] }>;
+    end(): Promise<void>;
+  };
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    Pool = require('pg').Pool;
+  } catch (err) {
+    reportSilentFailure(err, 'apiStore:pg-load');
+    throw new Error('PostgresApiStore requires the "pg" package. Install it with: pnpm add pg');
+  }
+
+  const pool = new Pool({ connectionString });
+
+  const exec = async (sql: string, values?: unknown[]): Promise<void> => {
+    await pool.query(sql, values);
+  };
+
+  const queryOne = async <T = Record<string, unknown>>(
+    sql: string,
+    values?: unknown[],
+  ): Promise<T | undefined> => {
+    const { rows } = await pool.query<T>(sql, values);
+    return rows[0];
+  };
+
+  const queryAll = async <T = Record<string, unknown>>(
+    sql: string,
+    values?: unknown[],
+  ): Promise<T[]> => {
+    const { rows } = await pool.query<T>(sql, values);
+    return rows;
+  };
+
+  const initSchema = async (): Promise<void> => {
+    await exec(`
+      CREATE TABLE IF NOT EXISTS api_tasks (
+        id TEXT PRIMARY KEY,
+        client_id TEXT NOT NULL,
+        agent_id TEXT,
+        description TEXT NOT NULL,
+        priority TEXT NOT NULL DEFAULT 'medium',
+        status TEXT NOT NULL DEFAULT 'pending',
+        input_json TEXT NOT NULL DEFAULT '{}',
+        artifact_id TEXT,
+        progress INTEGER NOT NULL DEFAULT 0,
+        error TEXT,
+        messages_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS api_artifacts (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        content_type TEXT NOT NULL,
+        content TEXT NOT NULL,
+        url TEXT,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS api_governance_checkpoints (
+        id TEXT PRIMARY KEY,
+        mission_id TEXT,
+        task_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        risk_score INTEGER NOT NULL DEFAULT 0,
+        risk_level TEXT NOT NULL DEFAULT 'LOW',
+        required_approvals_json TEXT NOT NULL DEFAULT '[]',
+        current_approvals_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        expires_at TEXT,
+        approved_at TEXT,
+        fallback_action TEXT NOT NULL DEFAULT 'abort',
+        context_json TEXT NOT NULL DEFAULT '{}'
+      );
+
+      CREATE TABLE IF NOT EXISTS api_governance_configs (
+        mission_id TEXT PRIMARY KEY,
+        mode TEXT NOT NULL,
+        risk_threshold INTEGER,
+        approvers_json TEXT NOT NULL DEFAULT '[]',
+        timeout INTEGER,
+        fallback_on_timeout TEXT NOT NULL DEFAULT 'abort'
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_api_tasks_status ON api_tasks(status);
+      CREATE INDEX IF NOT EXISTS idx_api_tasks_client ON api_tasks(client_id);
+      CREATE INDEX IF NOT EXISTS idx_api_tasks_agent ON api_tasks(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_api_artifacts_task ON api_artifacts(task_id);
+      CREATE INDEX IF NOT EXISTS idx_api_ck_mission ON api_governance_checkpoints(mission_id);
+      CREATE INDEX IF NOT EXISTS idx_api_ck_status ON api_governance_checkpoints(status);
+    `);
+  };
+
+  const schemaPromise = initSchema().catch((err) => {
+    reportSilentFailure(err, 'apiStore:pg-schema');
+    throw err;
+  });
+
+  const rowToTask = (row: Record<string, unknown>): ApiTaskRow => ({
+    id: String(row.id),
+    client_id: String(row.client_id),
+    agent_id: row.agent_id != null ? String(row.agent_id) : null,
+    description: String(row.description),
+    priority: String(row.priority),
+    status: String(row.status),
+    input_json: String(row.input_json),
+    artifact_id: row.artifact_id != null ? String(row.artifact_id) : null,
+    progress: Number(row.progress),
+    error: row.error != null ? String(row.error) : null,
+    messages_json: String(row.messages_json),
+    created_at: String(row.created_at),
+    started_at: row.started_at != null ? String(row.started_at) : null,
+    completed_at: row.completed_at != null ? String(row.completed_at) : null,
+    updated_at: String(row.updated_at),
+  });
+
+  const rowToArtifact = (row: Record<string, unknown>): ApiArtifactRow => ({
+    id: String(row.id),
+    task_id: String(row.task_id),
+    content_type: String(row.content_type),
+    content: String(row.content),
+    url: row.url != null ? String(row.url) : null,
+    metadata_json: String(row.metadata_json),
+    created_at: String(row.created_at),
+  });
+
+  const rowToCheckpoint = (row: Record<string, unknown>): ApiCheckpointRow => ({
+    id: String(row.id),
+    mission_id: row.mission_id != null ? String(row.mission_id) : null,
+    task_id: String(row.task_id),
+    type: String(row.type),
+    status: String(row.status),
+    risk_score: Number(row.risk_score),
+    risk_level: String(row.risk_level),
+    required_approvals_json: String(row.required_approvals_json),
+    current_approvals_json: String(row.current_approvals_json),
+    created_at: String(row.created_at),
+    expires_at: row.expires_at != null ? String(row.expires_at) : null,
+    approved_at: row.approved_at != null ? String(row.approved_at) : null,
+    fallback_action: String(row.fallback_action),
+    context_json: String(row.context_json),
+  });
+
+  const rowToConfig = (row: Record<string, unknown>): ApiCheckpointConfigRow => ({
+    mission_id: String(row.mission_id),
+    mode: String(row.mode),
+    risk_threshold: row.risk_threshold != null ? Number(row.risk_threshold) : null,
+    approvers_json: String(row.approvers_json),
+    timeout: row.timeout != null ? Number(row.timeout) : null,
+    fallback_on_timeout: String(row.fallback_on_timeout),
+  });
+
+  const awaitSchema = async <T>(fn: () => Promise<T>): Promise<T> => {
+    await schemaPromise;
+    return fn();
+  };
+
+  const store: PostgresApiStore = {
+    backend: 'postgres',
+    connectionString,
+    close: async () => {
+      try {
+        await pool.end();
+      } catch (err) {
+        reportSilentFailure(err, 'apiStore:pg-close');
+      }
+    },
+    listTasksByStatus: (status: string) =>
+      awaitSchema(() =>
+        queryAll('SELECT * FROM api_tasks WHERE status = $1 ORDER BY created_at ASC', [
+          status,
+        ]).then((rows) => rows.map(rowToTask)),
+      ),
+    listTasksByClient: (clientId: string) =>
+      awaitSchema(() =>
+        queryAll('SELECT * FROM api_tasks WHERE client_id = $1 ORDER BY created_at ASC', [
+          clientId,
+        ]).then((rows) => rows.map(rowToTask)),
+      ),
+    listTasksByAgent: (agentId: string) =>
+      awaitSchema(() =>
+        queryAll('SELECT * FROM api_tasks WHERE agent_id = $1 ORDER BY created_at ASC', [
+          agentId,
+        ]).then((rows) => rows.map(rowToTask)),
+      ),
+    listAllTasks: () =>
+      awaitSchema(() =>
+        queryAll('SELECT * FROM api_tasks ORDER BY created_at ASC').then((rows) =>
+          rows.map(rowToTask),
+        ),
+      ),
+    getTask: (id: string) =>
+      awaitSchema(() =>
+        queryOne('SELECT * FROM api_tasks WHERE id = $1 LIMIT 1', [id]).then((row) =>
+          row ? rowToTask(row) : null,
+        ),
+      ),
+    putTask: (row: ApiTaskRow) =>
+      awaitSchema(async () => {
+        await exec(
+          `INSERT INTO api_tasks
+            (id, client_id, agent_id, description, priority, status, input_json, artifact_id, progress, error, messages_json, created_at, started_at, completed_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+           ON CONFLICT (id) DO UPDATE SET
+             client_id = EXCLUDED.client_id,
+             agent_id = EXCLUDED.agent_id,
+             description = EXCLUDED.description,
+             priority = EXCLUDED.priority,
+             status = EXCLUDED.status,
+             input_json = EXCLUDED.input_json,
+             artifact_id = EXCLUDED.artifact_id,
+             progress = EXCLUDED.progress,
+             error = EXCLUDED.error,
+             messages_json = EXCLUDED.messages_json,
+             created_at = EXCLUDED.created_at,
+             started_at = EXCLUDED.started_at,
+             completed_at = EXCLUDED.completed_at,
+             updated_at = EXCLUDED.updated_at`,
+          [
+            row.id,
+            row.client_id,
+            row.agent_id,
+            row.description,
+            row.priority,
+            row.status,
+            row.input_json,
+            row.artifact_id,
+            row.progress,
+            row.error,
+            row.messages_json,
+            row.created_at,
+            row.started_at,
+            row.completed_at,
+            row.updated_at,
+          ],
+        );
+        return row;
+      }),
+    deleteTask: (id: string) =>
+      awaitSchema(() => exec('DELETE FROM api_tasks WHERE id = $1', [id])),
+    getArtifact: (id: string) =>
+      awaitSchema(() =>
+        queryOne('SELECT * FROM api_artifacts WHERE id = $1 LIMIT 1', [id]).then((row) =>
+          row ? rowToArtifact(row) : null,
+        ),
+      ),
+    putArtifact: (row: ApiArtifactRow) =>
+      awaitSchema(async () => {
+        await exec(
+          `INSERT INTO api_artifacts (id, task_id, content_type, content, url, metadata_json, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (id) DO UPDATE SET
+             task_id = EXCLUDED.task_id,
+             content_type = EXCLUDED.content_type,
+             content = EXCLUDED.content,
+             url = EXCLUDED.url,
+             metadata_json = EXCLUDED.metadata_json,
+             created_at = EXCLUDED.created_at`,
+          [
+            row.id,
+            row.task_id,
+            row.content_type,
+            row.content,
+            row.url,
+            row.metadata_json,
+            row.created_at,
+          ],
+        );
+        return row;
+      }),
+    getArtifactsByTask: (taskId: string) =>
+      awaitSchema(() =>
+        queryAll('SELECT * FROM api_artifacts WHERE task_id = $1 ORDER BY created_at ASC', [
+          taskId,
+        ]).then((rows) => rows.map(rowToArtifact)),
+      ),
+    getCheckpoint: (id: string) =>
+      awaitSchema(() =>
+        queryOne('SELECT * FROM api_governance_checkpoints WHERE id = $1 LIMIT 1', [id]).then(
+          (row) => (row ? rowToCheckpoint(row) : null),
+        ),
+      ),
+    putCheckpoint: (row: ApiCheckpointRow) =>
+      awaitSchema(async () => {
+        await exec(
+          `INSERT INTO api_governance_checkpoints
+            (id, mission_id, task_id, type, status, risk_score, risk_level, required_approvals_json, current_approvals_json, created_at, expires_at, approved_at, fallback_action, context_json)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+           ON CONFLICT (id) DO UPDATE SET
+             mission_id = EXCLUDED.mission_id,
+             task_id = EXCLUDED.task_id,
+             type = EXCLUDED.type,
+             status = EXCLUDED.status,
+             risk_score = EXCLUDED.risk_score,
+             risk_level = EXCLUDED.risk_level,
+             required_approvals_json = EXCLUDED.required_approvals_json,
+             current_approvals_json = EXCLUDED.current_approvals_json,
+             created_at = EXCLUDED.created_at,
+             expires_at = EXCLUDED.expires_at,
+             approved_at = EXCLUDED.approved_at,
+             fallback_action = EXCLUDED.fallback_action,
+             context_json = EXCLUDED.context_json`,
+          [
+            row.id,
+            row.mission_id,
+            row.task_id,
+            row.type,
+            row.status,
+            row.risk_score,
+            row.risk_level,
+            row.required_approvals_json,
+            row.current_approvals_json,
+            row.created_at,
+            row.expires_at,
+            row.approved_at,
+            row.fallback_action,
+            row.context_json,
+          ],
+        );
+        return row;
+      }),
+    listCheckpoints: (missionId?: string) =>
+      awaitSchema(async () => {
+        const rows = await queryAll(
+          'SELECT * FROM api_governance_checkpoints ORDER BY created_at ASC',
+        );
+        if (!missionId) return rows.map(rowToCheckpoint);
+        return rows.filter((c) => c.mission_id === missionId).map(rowToCheckpoint);
+      }),
+    getPendingCheckpointsForApprover: (approverId: string) =>
+      awaitSchema(async () => {
+        const rows = await queryAll(
+          "SELECT * FROM api_governance_checkpoints WHERE status = 'pending' ORDER BY created_at ASC",
+        );
+        return rows.map(rowToCheckpoint).filter((c) => {
+          try {
+            const required = JSON.parse(c.required_approvals_json || '[]');
+            return Array.isArray(required) && required.includes(approverId);
+          } catch (err) {
+            reportSilentFailure(err, 'apiStore:pg-approver');
+            return false;
+          }
+        });
+      }),
+    getPendingCheckpointsByMission: (missionId: string) =>
+      awaitSchema(() =>
+        queryAll(
+          "SELECT * FROM api_governance_checkpoints WHERE mission_id = $1 AND status = 'pending' ORDER BY created_at ASC",
+          [missionId],
+        ).then((rows) => rows.map(rowToCheckpoint)),
+      ),
+    approveCheckpoint: (
+      checkpointId: string,
+      reviewerId: string,
+      reason?: string,
+      conditions?: string[],
+    ) =>
+      awaitSchema(async () => {
+        const row = await queryOne(
+          'SELECT * FROM api_governance_checkpoints WHERE id = $1 LIMIT 1',
+          [checkpointId],
+        );
+        if (!row) return null;
+        const checkpoint = rowToCheckpoint(row);
+        const approvals = JSON.parse(checkpoint.current_approvals_json || '[]');
+        approvals.push({
+          approved: true,
+          reviewerId,
+          reviewedAt: new Date().toISOString(),
+          reason,
+          conditions,
+        });
+        const required = JSON.parse(checkpoint.required_approvals_json || '[]');
+        checkpoint.current_approvals_json = JSON.stringify(approvals);
+        if (approvals.length >= required.length) {
+          checkpoint.status = 'approved';
+          checkpoint.approved_at = new Date().toISOString();
+        }
+        await store.putCheckpoint(checkpoint);
+        return checkpoint;
+      }),
+    rejectCheckpoint: (checkpointId: string, reviewerId: string, reason: string) =>
+      awaitSchema(async () => {
+        const row = await queryOne(
+          'SELECT * FROM api_governance_checkpoints WHERE id = $1 LIMIT 1',
+          [checkpointId],
+        );
+        if (!row) return null;
+        const checkpoint = rowToCheckpoint(row);
+        const approvals = JSON.parse(checkpoint.current_approvals_json || '[]');
+        approvals.push({
+          approved: false,
+          reviewerId,
+          reviewedAt: new Date().toISOString(),
+          reason,
+        });
+        checkpoint.current_approvals_json = JSON.stringify(approvals);
+        checkpoint.status = 'rejected';
+        await store.putCheckpoint(checkpoint);
+        return checkpoint;
+      }),
+    expireCheckpoints: (now: Date) =>
+      awaitSchema(async () => {
+        const expired: ApiCheckpointRow[] = [];
+        const rows = await queryAll(
+          "SELECT * FROM api_governance_checkpoints WHERE status = 'pending' AND expires_at IS NOT NULL",
+        );
+        for (const row of rows) {
+          const checkpoint = rowToCheckpoint(row);
+          if (new Date(checkpoint.expires_at!) < now) {
+            checkpoint.status = checkpoint.fallback_action === 'proceed' ? 'approved' : 'expired';
+            if (checkpoint.status === 'approved') checkpoint.approved_at = new Date().toISOString();
+            await store.putCheckpoint(checkpoint);
+            expired.push(checkpoint);
+          }
+        }
+        return expired;
+      }),
+    addCheckpointEvidence: (
+      checkpointId: string,
+      evidence: { type: string; timestamp: string; content: string; source: string },
+    ) =>
+      awaitSchema(async () => {
+        const row = await queryOne(
+          'SELECT * FROM api_governance_checkpoints WHERE id = $1 LIMIT 1',
+          [checkpointId],
+        );
+        if (!row) return null;
+        const checkpoint = rowToCheckpoint(row);
+        const context = JSON.parse(checkpoint.context_json || '{}');
+        context.evidence = context.evidence || [];
+        context.evidence.push(evidence);
+        checkpoint.context_json = JSON.stringify(context);
+        await store.putCheckpoint(checkpoint);
+        return checkpoint;
+      }),
+    getCheckpointConfig: (missionId: string) =>
+      awaitSchema(() =>
+        queryOne('SELECT * FROM api_governance_configs WHERE mission_id = $1 LIMIT 1', [
+          missionId,
+        ]).then((row) => (row ? rowToConfig(row) : null)),
+      ),
+    putCheckpointConfig: (row: ApiCheckpointConfigRow) =>
+      awaitSchema(async () => {
+        await exec(
+          `INSERT INTO api_governance_configs (mission_id, mode, risk_threshold, approvers_json, timeout, fallback_on_timeout)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (mission_id) DO UPDATE SET
+             mode = EXCLUDED.mode,
+             risk_threshold = EXCLUDED.risk_threshold,
+             approvers_json = EXCLUDED.approvers_json,
+             timeout = EXCLUDED.timeout,
+             fallback_on_timeout = EXCLUDED.fallback_on_timeout`,
+          [
+            row.mission_id,
+            row.mode,
+            row.risk_threshold,
+            row.approvers_json,
+            row.timeout,
+            row.fallback_on_timeout,
+          ],
+        );
+        return row;
+      }),
+    getCheckpointStats: (missionId?: string) =>
+      awaitSchema(async () => {
+        if (!missionId) {
+          return statsFromRows([]);
+        }
+        const mission = checkpointsForMission(missionId);
+        const rows =
+          mission.status === 'not_implemented'
+            ? (await queryAll('SELECT * FROM api_governance_checkpoints')).map(rowToCheckpoint)
+            : mission.checkpoints;
+        return statsFromRows(rows);
+      }),
+    cleanup: () =>
+      awaitSchema(async () => {
+        await exec('DELETE FROM api_tasks');
+        await exec('DELETE FROM api_artifacts');
+        await exec('DELETE FROM api_governance_checkpoints');
+        await exec('DELETE FROM api_governance_configs');
+      }),
+  };
+
+  return store;
+}
+
 export function createApiStore(options?: {
+  backend?: ApiStoreBackend;
   dbPath?: string;
+  connectionString?: string;
   forceMemory?: boolean;
-}): SqliteApiStore {
+}): ApiStore {
+  const backend = options?.backend ?? (process.env.DATABASE_URL ? 'postgres' : 'sqlite');
   const dbPath = options?.dbPath ?? DEFAULT_DB_PATH;
-  if (options?.forceMemory) {
+
+  if (options?.forceMemory || backend === 'memory') {
     return createMemoryApiStore(dbPath);
   }
+
+  if (backend === 'postgres') {
+    const connectionString = options?.connectionString ?? process.env.DATABASE_URL;
+    if (!connectionString) {
+      throw new Error('PostgreSQL backend requires DATABASE_URL or options.connectionString');
+    }
+    return createPostgresApiStore(connectionString);
+  }
+
   return createSqliteApiStore(dbPath);
 }
 

@@ -18,6 +18,11 @@ import { ReportingPage } from './pages/ReportingPage';
 import { ConsensusPage } from './pages/ConsensusPage';
 import { LoginPage } from './pages/LoginPage';
 import { OnboardingPage } from './pages/OnboardingPage';
+import { AlertsPage } from './pages/AlertsPage';
+import { UsersPage } from './pages/UsersPage';
+import { OIDCSettingsPage } from './pages/OIDCSettingsPage';
+import { SettingsPage } from './pages/SettingsPage';
+import { WorkflowsPage } from './pages/WorkflowsPage';
 import { useWarRoom } from './hooks/useWarRoom';
 import { useAuth } from './hooks/useAuth';
 import { fetchOnboardingStatus } from './api';
@@ -174,7 +179,12 @@ export default function App() {
           <Route path="/audit" element={<AuditLogPage />} />
           <Route path="/cost" element={<CostPage />} />
           <Route path="/knowledge" element={<KnowledgeBasePage />} />
+          <Route path="/alerts" element={<AlertsPage />} />
           <Route path="/onboarding" element={<OnboardingPage />} />
+          <Route path="/users" element={<UsersPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/settings/sso" element={<OIDCSettingsPage />} />
+          <Route path="/workflows" element={<WorkflowsPage />} />
         </Routes>
       </main>
     </div>
