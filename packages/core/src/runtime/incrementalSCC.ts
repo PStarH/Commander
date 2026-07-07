@@ -522,7 +522,9 @@ export class IncrementalSCCDetector {
 
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
-const incrementalSCCSingleton = createTenantAwareSingleton(() => new IncrementalSCCDetector());
+const incrementalSCCSingleton = createTenantAwareSingleton(() => new IncrementalSCCDetector(), {
+  allowGlobalFallback: true,
+});
 
 export function getIncrementalSCCDetector(): IncrementalSCCDetector {
   return incrementalSCCSingleton.get();
