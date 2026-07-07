@@ -19,10 +19,20 @@ describe('ChaosOrchestrator', () => {
   it('gapDiscovery is called when a real fault is injected AND recovery fails', async () => {
     const gap = vi.fn();
     const orch = new ChaosOrchestrator(
-      { bootstrap: async () => { throw new Error('recovery failed'); }, delayMs: 1 },
+      {
+        bootstrap: async () => {
+          throw new Error('recovery failed');
+        },
+        delayMs: 1,
+      },
       { onGapDetected: gap },
     );
-    await orch.run({ layers: ['L1'], tenantId: 'test', durationSec: 1, faultTypes: ['rate_limit_429'] });
+    await orch.run({
+      layers: ['L1'],
+      tenantId: 'test',
+      durationSec: 1,
+      faultTypes: ['rate_limit_429'],
+    });
     expect(gap).toHaveBeenCalled();
   });
 
@@ -33,13 +43,21 @@ describe('ChaosOrchestrator', () => {
       { onGapDetected: gap },
     );
     // faultTypes present but recovery succeeds → not a gap
-    await orch.run({ layers: ['L1'], tenantId: 'test', durationSec: 1, faultTypes: ['rate_limit_429'] });
+    await orch.run({
+      layers: ['L1'],
+      tenantId: 'test',
+      durationSec: 1,
+      faultTypes: ['rate_limit_429'],
+    });
     expect(gap).not.toHaveBeenCalled();
   });
 
   it('gapDiscovery is NOT called for healthy runs (ATK-011)', async () => {
     const gap = vi.fn();
-    const orch = new ChaosOrchestrator({ bootstrap: async () => {}, delayMs: 1 }, { onGapDetected: gap });
+    const orch = new ChaosOrchestrator(
+      { bootstrap: async () => {}, delayMs: 1 },
+      { onGapDetected: gap },
+    );
     // No faultTypes → orchestrator must NOT report a gap
     await orch.run({ layers: ['L1'], tenantId: 'test', durationSec: 1 });
     expect(gap).not.toHaveBeenCalled();

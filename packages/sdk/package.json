@@ -17,6 +17,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
     "prepublishOnly": "tsc -p tsconfig.json"
   },
   "peerDependencies": {
@@ -25,6 +26,7 @@
   "devDependencies": {
     "@commander/core": "workspace:*",
     "@types/node": "^25.9.3",
+    "tsx": "^4.8.1",
     "typescript": "^5.0.0"
   },
   "author": "PStarH <sampan090611@gmail.com>",

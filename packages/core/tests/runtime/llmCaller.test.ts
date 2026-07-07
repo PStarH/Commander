@@ -169,11 +169,7 @@ function makeDeps(overrides: Partial<LLMCallerDeps> = {}): {
   });
 
   const samplesStore = {
-    recordLLMCall: (
-      _req: LLMRequest,
-      resp: LLMResponse | null,
-      meta: Record<string, unknown>,
-    ) => {
+    recordLLMCall: (_req: LLMRequest, resp: LLMResponse | null, meta: Record<string, unknown>) => {
       samples.calls.push({ resp, meta });
     },
   } as unknown as LLMCallerDeps['samplesStore'];
@@ -419,9 +415,7 @@ describe('LLMCaller — extracted Phase 1 helpers', () => {
     // Two sample calls expected: (1) inner catch in callProvider (provider='openai')
     // and (2) outer catch in LLMCaller.call (provider='fallback_exhausted').
     // We assert the chain-exhausted sample by filtering, not by index.
-    const chainExhausted = env.samples.calls.find(
-      (c) => c.meta.provider === 'fallback_exhausted',
-    );
+    const chainExhausted = env.samples.calls.find((c) => c.meta.provider === 'fallback_exhausted');
     expect(chainExhausted).toBeDefined();
     expect(env.samples.calls.length).toBeGreaterThanOrEqual(2);
     expect(mockLogger.warn).toHaveBeenCalledWith(
@@ -437,9 +431,7 @@ describe('LLMCaller — extracted Phase 1 helpers', () => {
     // and third-party plugin regressions.
     const env = makeDeps();
     env.setProvider('openai', makeProvider(makeResponse('after-hook-throw')));
-    mockHookManager.fireBeforeBackendSelect.mockRejectedValueOnce(
-      new Error('plugin crashed'),
-    );
+    mockHookManager.fireBeforeBackendSelect.mockRejectedValueOnce(new Error('plugin crashed'));
 
     const caller = new LLMCaller(env.deps);
     const result = await caller.call({
@@ -478,10 +470,7 @@ describe('LLMCaller — extracted Phase 1 helpers', () => {
     expect(result?.content).toBe('google-resp');
     // The contract: cache wiring mutates request.cacheConfig.geminiCachedContentName.
     expect(req.cacheConfig?.geminiCachedContentName).toBe('cached/name/42');
-    expect(mockMetrics.recordGeminiCacheEvent).toHaveBeenCalledWith(
-      'create',
-      expect.anything(),
-    );
+    expect(mockMetrics.recordGeminiCacheEvent).toHaveBeenCalledWith('create', expect.anything());
   });
 
   // Sanity: confirm we aren't leaking the FallbackChainExhaustedError class shape

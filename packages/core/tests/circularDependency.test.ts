@@ -23,7 +23,7 @@ import path from 'node:path';
 
 interface ImportEdge {
   from: string; // absolute path of importing file
-  to: string;   // absolute path of imported file
+  to: string; // absolute path of imported file
   isTypeOnly: boolean;
 }
 
@@ -165,10 +165,7 @@ describe('circular dependency detection (A-grade modularity guard)', () => {
   it('pluginManager.ts is now a barrel (no class definitions)', () => {
     // Regression guard: ensure pluginManager.ts stays a thin re-export and
     // doesn't grow back the 1280-line HookManager class.
-    const src = fs.readFileSync(
-      path.join(SRC_ROOT, 'pluginManager.ts'),
-      'utf8',
-    );
+    const src = fs.readFileSync(path.join(SRC_ROOT, 'pluginManager.ts'), 'utf8');
     assert.ok(
       !/^export\s+class\s+HookManager/m.test(src),
       'pluginManager.ts must not define class HookManager — it should re-export from hookManager.ts',
@@ -187,10 +184,7 @@ describe('circular dependency detection (A-grade modularity guard)', () => {
     // Regression guard: ensure commanderConfig.ts derives provider metadata
     // from providerRegistry via the get*() accessors, NOT via hardcoded
     // object literals (which would require editing 8+ files per new provider).
-    const cfgSrc = fs.readFileSync(
-      path.join(SRC_ROOT, 'config', 'commanderConfig.ts'),
-      'utf8',
-    );
+    const cfgSrc = fs.readFileSync(path.join(SRC_ROOT, 'config', 'commanderConfig.ts'), 'utf8');
     // Must import from providerRegistry.
     assert.ok(
       /from\s+['"][^'"]*providerRegistry['"]/.test(cfgSrc),
@@ -198,12 +192,15 @@ describe('circular dependency detection (A-grade modularity guard)', () => {
     );
     // Must call at least one of the get*() accessors.
     assert.ok(
-      /getProviderOrder|getEnvMap|getDefaultUrls|getDefaultModels|getDisplayNames|getApiTypes/.test(cfgSrc),
+      /getProviderOrder|getEnvMap|getDefaultUrls|getDefaultModels|getDisplayNames|getApiTypes/.test(
+        cfgSrc,
+      ),
       'commanderConfig.ts must derive provider metadata from providerRegistry accessors',
     );
     // Must NOT have a literal 20+ key object literal assignment to PROVIDER_ORDER etc.
     // (Detect by spotting many string literal keys followed by `:`.)
-    const literalBlockRegex = /(?:PROVIDER_ORDER|ENV_MAP|DEFAULT_URLS|DEFAULT_MODELS|DISPLAY_NAMES|API_TYPE)\s*[:=]\s*\{[\s\S]{0,200}?['"][a-z]+['"]\s*:/;
+    const literalBlockRegex =
+      /(?:PROVIDER_ORDER|ENV_MAP|DEFAULT_URLS|DEFAULT_MODELS|DISPLAY_NAMES|API_TYPE)\s*[:=]\s*\{[\s\S]{0,200}?['"][a-z]+['"]\s*:/;
     assert.ok(
       !literalBlockRegex.test(cfgSrc),
       'commanderConfig.ts must not contain a literal provider Record — derive from providerRegistry',
@@ -212,13 +209,12 @@ describe('circular dependency detection (A-grade modularity guard)', () => {
 
   it('httpServer.ts getDefaultProvider is a one-line factory call', () => {
     // Regression guard: the 60-line 24-case switch must not come back.
-    const src = fs.readFileSync(
-      path.join(SRC_ROOT, 'runtime', 'httpServer.ts'),
-      'utf8',
-    );
+    const src = fs.readFileSync(path.join(SRC_ROOT, 'runtime', 'httpServer.ts'), 'utf8');
     // Find the getDefaultProvider DEFINITION (not call sites). Must be a
     // method/function declaration, not `this.getDefaultProvider(...)`.
-    const fnMatch = src.match(/(?:private|public|protected|function)\s+getDefaultProvider\s*\([^)]*\)[^{]*\{[\s\S]*?\n\s*\}/);
+    const fnMatch = src.match(
+      /(?:private|public|protected|function)\s+getDefaultProvider\s*\([^)]*\)[^{]*\{[\s\S]*?\n\s*\}/,
+    );
     assert.ok(fnMatch, 'getDefaultProvider definition must exist in httpServer.ts');
     const fnBody = fnMatch[0];
     assert.ok(

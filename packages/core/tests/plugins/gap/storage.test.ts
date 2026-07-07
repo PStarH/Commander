@@ -31,7 +31,10 @@ describe('storage', () => {
 
   it('readNdjson parses lines into objects', () => {
     const file = path.join(tmpDir, 'test.ndjson');
-    appendNdjson(file, [{ a: 1, b: 'x' }, { a: 2, b: 'y' }]);
+    appendNdjson(file, [
+      { a: 1, b: 'x' },
+      { a: 2, b: 'y' },
+    ]);
     const result = readNdjson<{ a: number; b: string }>(file);
     expect(result).toEqual([
       { a: 1, b: 'x' },

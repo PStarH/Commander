@@ -60,15 +60,51 @@ function sleep(ms: number): Promise<void> {
 // Realistic Fake Runtime
 // ============================================================================
 
-const TASK_PROFILES: Array<{ goal: string; expectedTopology: OrchestrationTopology; desc: string }> = [
-  { goal: 'Summarize the key features of TypeScript in one sentence.', expectedTopology: 'SINGLE', desc: 'simple-factual' },
-  { goal: 'Analyze the system architecture for potential improvements and provide a detailed report.', expectedTopology: 'ORCHESTRATOR', desc: 'analysis-complex' },
-  { goal: 'Research the latest trends in AI agents and compare three frameworks.', expectedTopology: 'DISPATCH', desc: 'research-parallel' },
-  { goal: 'Write a Python function to sort a list, then review it for bugs.', expectedTopology: 'CHAIN', desc: 'coding-sequential' },
-  { goal: 'Evaluate the security posture of the application and suggest fixes.', expectedTopology: 'REVIEW', desc: 'review-iterative' },
-  { goal: 'Debug the failing test in the authentication module step by step.', expectedTopology: 'CHAIN', desc: 'debug-sequential' },
-  { goal: 'Generate three alternative designs for the API and pick the best one.', expectedTopology: 'REVIEW', desc: 'creative-review' },
-  { goal: 'Fetch data from three sources, merge results, and summarize.', expectedTopology: 'DISPATCH', desc: 'data-parallel' },
+const TASK_PROFILES: Array<{
+  goal: string;
+  expectedTopology: OrchestrationTopology;
+  desc: string;
+}> = [
+  {
+    goal: 'Summarize the key features of TypeScript in one sentence.',
+    expectedTopology: 'SINGLE',
+    desc: 'simple-factual',
+  },
+  {
+    goal: 'Analyze the system architecture for potential improvements and provide a detailed report.',
+    expectedTopology: 'ORCHESTRATOR',
+    desc: 'analysis-complex',
+  },
+  {
+    goal: 'Research the latest trends in AI agents and compare three frameworks.',
+    expectedTopology: 'DISPATCH',
+    desc: 'research-parallel',
+  },
+  {
+    goal: 'Write a Python function to sort a list, then review it for bugs.',
+    expectedTopology: 'CHAIN',
+    desc: 'coding-sequential',
+  },
+  {
+    goal: 'Evaluate the security posture of the application and suggest fixes.',
+    expectedTopology: 'REVIEW',
+    desc: 'review-iterative',
+  },
+  {
+    goal: 'Debug the failing test in the authentication module step by step.',
+    expectedTopology: 'CHAIN',
+    desc: 'debug-sequential',
+  },
+  {
+    goal: 'Generate three alternative designs for the API and pick the best one.',
+    expectedTopology: 'REVIEW',
+    desc: 'creative-review',
+  },
+  {
+    goal: 'Fetch data from three sources, merge results, and summarize.',
+    expectedTopology: 'DISPATCH',
+    desc: 'data-parallel',
+  },
 ];
 
 function makeFakeRuntime(): AgentRuntimeInterface {
@@ -131,7 +167,13 @@ function makeFakeRuntime(): AgentRuntimeInterface {
     },
     registerProvider: () => {},
     registerTool: () => {},
-    getProvider: (() => ({ name: 'fake', call: async () => ({ content: 'ok', usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 } }) })) as () => LLMProvider,
+    getProvider: (() => ({
+      name: 'fake',
+      call: async () => ({
+        content: 'ok',
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      }),
+    })) as () => LLMProvider,
     getSmartRouter: () => null,
     getTool: () => undefined,
     getConfig: (() => ({})) as () => AgentRuntimeConfig,
@@ -300,26 +342,40 @@ async function runBenchmark(config: BenchmarkConfig): Promise<void> {
     console.log(`  Total tasks:     ${records.length}`);
     console.log(`  Successes:       ${records.length - failures.length}`);
     console.log(`  Failures:        ${failures.length}`);
-    console.log(`  Failure rate:    ${fmt(failureRate, 2)}%  ${failureRate < 1 ? '✅ PASS' : '❌ FAIL'}`);
+    console.log(
+      `  Failure rate:    ${fmt(failureRate, 2)}%  ${failureRate < 1 ? '✅ PASS' : '❌ FAIL'}`,
+    );
     console.log(`  Throughput:      ${fmt(throughput, 1)} tasks/sec`);
     console.log(`  Batch duration:  ${fmt(batchDuration, 0)}ms`);
-    console.log(`  Latency (ms):    P50=${fmt(latP50, 1)}  P95=${fmt(latP95, 1)}  P99=${fmt(latP99, 1)}`);
-    console.log(`  Cost (USD):      P50=${fmt(costP50, 6)}  P95=${fmt(costP95, 6)}  P99=${fmt(costP99, 6)}`);
+    console.log(
+      `  Latency (ms):    P50=${fmt(latP50, 1)}  P95=${fmt(latP95, 1)}  P99=${fmt(latP99, 1)}`,
+    );
+    console.log(
+      `  Cost (USD):      P50=${fmt(costP50, 6)}  P95=${fmt(costP95, 6)}  P99=${fmt(costP99, 6)}`,
+    );
 
     // Topology distribution
     const topoCounts: Record<string, number> = {};
     for (const r of records) {
       topoCounts[r.topology] = (topoCounts[r.topology] ?? 0) + 1;
     }
-    console.log(`  Topology dist:   ${Object.entries(topoCounts).map(([t, c]) => `${t}=${c}`).join(', ')}`);
+    console.log(
+      `  Topology dist:   ${Object.entries(topoCounts)
+        .map(([t, c]) => `${t}=${c}`)
+        .join(', ')}`,
+    );
   }
 
   // Summary table
   console.log('\n' + '='.repeat(70));
   console.log('  SUMMARY: Topology Failure Rate & Percentiles');
   console.log('='.repeat(70));
-  console.log('  Conc | FailRate | LatP50  | LatP95  | LatP99  | CostP50     | CostP95     | CostP99');
-  console.log('  -----|----------|---------|---------|---------|-------------|-------------|------------');
+  console.log(
+    '  Conc | FailRate | LatP50  | LatP95  | LatP99  | CostP50     | CostP95     | CostP99',
+  );
+  console.log(
+    '  -----|----------|---------|---------|---------|-------------|-------------|------------',
+  );
 
   let allPass = true;
   for (const concurrency of config.concurrencies) {
@@ -336,12 +392,15 @@ async function runBenchmark(config: BenchmarkConfig): Promise<void> {
     );
   }
 
-  console.log('\n' + `  Overall: ${allPass ? '✅ ALL PASS (failure rate < 1%)' : '❌ FAILURES DETECTED'}\n`);
+  console.log(
+    '\n' + `  Overall: ${allPass ? '✅ ALL PASS (failure rate < 1%)' : '❌ FAILURES DETECTED'}\n`,
+  );
 
   // Save JSON report
   const reportDir = path.join(process.cwd(), '.commander_benchmarks');
   fs.mkdirSync(reportDir, { recursive: true });
-  const reportPath = config.outputJson ?? path.join(reportDir, `topology-prod-benchmark-${Date.now()}.json`);
+  const reportPath =
+    config.outputJson ?? path.join(reportDir, `topology-prod-benchmark-${Date.now()}.json`);
 
   const report = {
     timestamp: new Date().toISOString(),
@@ -374,10 +433,13 @@ async function runBenchmark(config: BenchmarkConfig): Promise<void> {
           max: costs[costs.length - 1],
           mean: costs.reduce((a, b) => a + b, 0) / costs.length,
         },
-        topologyDistribution: records.reduce((acc, r) => {
-          acc[r.topology] = (acc[r.topology] ?? 0) + 1;
-          return acc;
-        }, {} as Record<string, number>),
+        topologyDistribution: records.reduce(
+          (acc, r) => {
+            acc[r.topology] = (acc[r.topology] ?? 0) + 1;
+            return acc;
+          },
+          {} as Record<string, number>,
+        ),
       };
     }),
   };

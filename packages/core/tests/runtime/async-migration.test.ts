@@ -19,14 +19,7 @@
  * migration.
  */
 import { describe, it, beforeEach, afterEach, expect } from 'vitest';
-import {
-  mkdtempSync,
-  rmSync,
-  mkdirSync,
-  writeFileSync,
-  readFileSync,
-  existsSync,
-} from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -66,9 +59,7 @@ describe('async-migration / buildHealthSources returns live values', () => {
 
   it('reflects dlq.enqueue activity in getDLQInfo()', async () => {
     const { buildHealthSources } = await import('../../src/runtime/healthCheck');
-    const { getDeadLetterQueue } = await import(
-      '../../src/runtime/deadLetterQueueSingleton'
-    );
+    const { getDeadLetterQueue } = await import('../../src/runtime/deadLetterQueueSingleton');
     const sources = buildHealthSources();
     const dlq = getDeadLetterQueue();
 
@@ -101,9 +92,7 @@ describe('async-migration / buildHealthSources returns live values', () => {
     // Direct fallback path: simulate the "singleton throws" branch by
     // calling the getter after monkey-patching one of the underlying
     // methods to throw. The getter must catch and return defaults.
-    const { buildHealthSources } = await import(
-      '../../src/runtime/healthCheck'
-    );
+    const { buildHealthSources } = await import('../../src/runtime/healthCheck');
     const { getMessageBus } = await import('../../src/runtime/messageBus');
     const bus = getMessageBus();
     const sources = buildHealthSources();
@@ -140,9 +129,7 @@ describe('async-migration / compensationService mkdir handler', () => {
   });
 
   it('noop on non-empty directory — file in dir survives compensation', async () => {
-    const { CompensationService } = await import(
-      '../../src/runtime/compensationService'
-    );
+    const { CompensationService } = await import('../../src/runtime/compensationService');
     const { DeadLetterQueue } = await import('../../src/runtime/deadLetterQueue');
     const { PersistentTraceStore } = await import('../../src/runtime/traceStore');
 
@@ -183,9 +170,7 @@ describe('async-migration / compensationService mkdir handler', () => {
   });
 
   it('removes empty directory — confirms handler still works for empty case', async () => {
-    const { CompensationService } = await import(
-      '../../src/runtime/compensationService'
-    );
+    const { CompensationService } = await import('../../src/runtime/compensationService');
     const { DeadLetterQueue } = await import('../../src/runtime/deadLetterQueue');
     const { PersistentTraceStore } = await import('../../src/runtime/traceStore');
 

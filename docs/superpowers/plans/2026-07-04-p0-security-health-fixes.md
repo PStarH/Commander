@@ -2,7 +2,7 @@
 
 > **For agentic workers:** Use `general_purpose_task` subagent to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 消除 `code-quality-audit-report.html` 与 `COMMANDER_TASK_PACKAGES.md` 标定的 P0 阻断器，让 `/health` 真实反映系统状态，并堵上可直接利用的安全缺口。
+**Goal:** 消除代码质量审计报告与 `COMMANDER_TASK_PACKAGES.md` 标定的 P0 阻断器，让 `/health` 真实反映系统状态，并堵上可直接利用的安全缺口。
 
 **Architecture:** 本方向聚焦“可观测的欺骗性”和“可直接利用的入口”。修复点集中在 `runtime/healthCheck.ts`、`runtime/httpServer.ts`、`ultimate/artifactSystem.ts`、`mcp/a2aServer.ts` 以及 API 限流层。所有改动遵循 project_memory 中 3-Layer Defense 架构：统一走 `UniversalSanitizer`、不可逆工具走 `ReversibilityGate`、外部调用走 `ResourceGovernor`。
 

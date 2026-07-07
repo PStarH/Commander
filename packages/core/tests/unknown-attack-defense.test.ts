@@ -70,7 +70,11 @@ describe('AdaptiveThreatLearningEngine', () => {
       };
       const sig1 = engine.extractSignature(ctx);
       const sig2 = engine.extractSignature({ ...ctx, timestamp: new Date().toISOString() });
-      assert.strictEqual(sig1.signatureId, sig2.signatureId, 'Same attack should produce same signature ID');
+      assert.strictEqual(
+        sig1.signatureId,
+        sig2.signatureId,
+        'Same attack should produce same signature ID',
+      );
       assert.strictEqual(sig2.occurrenceCount, 2, 'Occurrence count should increment');
     });
 
@@ -101,7 +105,11 @@ describe('AdaptiveThreatLearningEngine', () => {
         requestCount: 50,
         requestSize: 500000,
       });
-      assert.notStrictEqual(sig1.signatureId, sig2.signatureId, 'Different attacks should have different IDs');
+      assert.notStrictEqual(
+        sig1.signatureId,
+        sig2.signatureId,
+        'Different attacks should have different IDs',
+      );
     });
   });
 
@@ -185,7 +193,10 @@ describe('AdaptiveThreatLearningEngine', () => {
       assert.ok(rule, 'Should synthesize a rule');
       assert.ok(rule!.ruleId, 'Should have a rule ID');
       assert.ok(rule!.conditions.length > 0, 'Should have detection conditions');
-      assert.ok(rule!.confidence < 0.7, 'Initial confidence should be below auto-activate threshold');
+      assert.ok(
+        rule!.confidence < 0.7,
+        'Initial confidence should be below auto-activate threshold',
+      );
     });
 
     it('应列出所有合成规则', () => {
@@ -357,8 +368,12 @@ describe('DynamicCostGuardian', () => {
       const thresholds = guardian.getDynamicThresholds('tenant-brand-new');
       assert.ok(thresholds, 'Should return default thresholds');
       assert.ok(thresholds.perRequestTokenLimit > 0, 'Should have default token limit');
-      assert.ok(thresholds.reason.includes('默认') || thresholds.reason.includes('default') || thresholds.reason.includes('保守'),
-        `Should mention default/conservative, got: ${thresholds.reason}`);
+      assert.ok(
+        thresholds.reason.includes('默认') ||
+          thresholds.reason.includes('default') ||
+          thresholds.reason.includes('保守'),
+        `Should mention default/conservative, got: ${thresholds.reason}`,
+      );
     });
   });
 
@@ -395,7 +410,10 @@ describe('DynamicCostGuardian', () => {
         timestamp: new Date().toISOString(),
       });
       assert.ok(detection.detected, 'Should detect the spike');
-      assert.ok(detection.deviationSigma > 3, `Should be >3 sigma deviation, got ${detection.deviationSigma}`);
+      assert.ok(
+        detection.deviationSigma > 3,
+        `Should be >3 sigma deviation, got ${detection.deviationSigma}`,
+      );
     });
 
     it('应检测模型切换攻击 (model_switching)', () => {
@@ -468,8 +486,10 @@ describe('DynamicCostGuardian', () => {
       });
       // Should either not detect, or detect with very low confidence (false positive)
       if (detection.detected) {
-        assert.ok(detection.confidence < 0.5,
-          `Normal spending should not be high-confidence detection (conf=${detection.confidence}, type=${detection.attackType})`);
+        assert.ok(
+          detection.confidence < 0.5,
+          `Normal spending should not be high-confidence detection (conf=${detection.confidence}, type=${detection.attackType})`,
+        );
       }
     });
 
@@ -581,8 +601,11 @@ describe('AttackCampaignTracker', () => {
       const campaign2 = tracker.trackAttackEvent(event2);
       // Second event should be grouped into the same campaign
       if (campaign1 && campaign2) {
-        assert.strictEqual(campaign1.campaignId, campaign2.campaignId,
-          'Related events should be in the same campaign');
+        assert.strictEqual(
+          campaign1.campaignId,
+          campaign2.campaignId,
+          'Related events should be in the same campaign',
+        );
         assert.ok(campaign2.incidents.length >= 2, 'Campaign should have 2+ incidents');
       }
     });
@@ -619,8 +642,11 @@ describe('AttackCampaignTracker', () => {
       const c1 = tracker.trackAttackEvent(event1);
       const c2 = tracker.trackAttackEvent(event2);
       if (c1 && c2) {
-        assert.notStrictEqual(c1.campaignId, c2.campaignId,
-          'Unrelated attacks should be in different campaigns');
+        assert.notStrictEqual(
+          c1.campaignId,
+          c2.campaignId,
+          'Unrelated attacks should be in different campaigns',
+        );
       }
     });
 
@@ -631,7 +657,7 @@ describe('AttackCampaignTracker', () => {
           eventId: `e-phase-${i}`,
           timestamp: new Date(Date.now() + i * 60000).toISOString(),
           attackType: 'prompt_injection',
-          severity: i < 2 ? 'medium' : 'high' as const,
+          severity: i < 2 ? 'medium' : ('high' as const),
           sourceModule: 'goalHijackDetector',
           sourceIp: '192.168.1.200',
           userAgent: 'attacker-tool',
@@ -657,7 +683,7 @@ describe('AttackCampaignTracker', () => {
           eventId: `e-evo-${i}`,
           timestamp: new Date(Date.now() + i * 120000).toISOString(),
           attackType: 'prompt_injection',
-          severity: i < 3 ? 'medium' : 'high' as const,
+          severity: i < 3 ? 'medium' : ('high' as const),
           sourceModule: 'goalHijackDetector',
           sourceIp: '192.168.1.300',
           userAgent: 'evolving-attacker',
@@ -761,7 +787,11 @@ describe('AttackCampaignTracker', () => {
           eventId: `e-pred-${i}`,
           timestamp: new Date(Date.now() + i * 1800000).toISOString(),
           attackType: 'escalating_attack',
-          severity: ['low', 'medium', 'medium', 'high', 'high', 'critical'][i] as 'low' | 'medium' | 'high' | 'critical',
+          severity: ['low', 'medium', 'medium', 'high', 'high', 'critical'][i] as
+            | 'low'
+            | 'medium'
+            | 'high'
+            | 'critical',
           sourceModule: 'securityMonitor',
           sourceIp: '198.51.100.10',
           userAgent: 'escalator',

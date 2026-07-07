@@ -4,12 +4,18 @@ import { scrubRequest, redactPii, DEFAULT_IGNORE_FIELDS } from '../../src/shadow
 
 describe('scrubber', () => {
   it('redacts Authorization header', () => {
-    const result = scrubRequest({ headers: { Authorization: 'Bearer secret' } }, DEFAULT_IGNORE_FIELDS);
+    const result = scrubRequest(
+      { headers: { Authorization: 'Bearer secret' } },
+      DEFAULT_IGNORE_FIELDS,
+    );
     expect(result.headers['Authorization']).toBe('[REDACTED]');
   });
 
   it('preserves non-sensitive headers', () => {
-    const result = scrubRequest({ headers: { 'content-type': 'application/json' } }, DEFAULT_IGNORE_FIELDS);
+    const result = scrubRequest(
+      { headers: { 'content-type': 'application/json' } },
+      DEFAULT_IGNORE_FIELDS,
+    );
     expect(result.headers['content-type']).toBe('application/json');
   });
 
