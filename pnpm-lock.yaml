@@ -171,6 +171,9 @@ importers:
       isolated-vm:
         specifier: ^5.0.1
         version: 5.0.4
+      pg:
+        specifier: ^8.15.0
+        version: 8.22.0
       playwright:
         specifier: ^1.61.0
         version: 1.61.0
@@ -202,6 +205,22 @@ importers:
       typedoc:
         specifier: ^0.28.19
         version: 0.28.19(typescript@6.0.3)
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^4.1.9
+        version: 4.1.9(@types/node@25.9.3)(@vitest/coverage-v8@4.1.9)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.28.1)(tsx@4.22.4)(yaml@2.9.0))
+
+  packages/mcp-server:
+    dependencies:
+      '@commander/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.9.3
+        version: 25.9.3
       typescript:
         specifier: ^6.0.3
         version: 6.0.3

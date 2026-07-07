@@ -81,6 +81,11 @@ const PROVIDER_DOMAINS: ProviderDomainEntry[] = [
   { envVar: 'XIAOMI_API_KEY', defaultDomain: 'api.minimax.chat' },
   { envVar: 'GOOGLE_API_KEY', defaultDomain: 'generativelanguage.googleapis.com' },
   { envVar: 'AWS_ACCESS_KEY_ID', defaultDomain: 'bedrock-runtime.us-east-1.amazonaws.com' },
+  {
+    envVar: 'AZURE_OPENAI_API_KEY',
+    defaultDomain: 'openai.azure.com',
+    baseUrlEnv: 'AZURE_OPENAI_BASE_URL',
+  },
 ];
 
 // ============================================================================

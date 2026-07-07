@@ -98,6 +98,16 @@ export function createMCPRouter(): Router {
     });
   });
 
+  // GET /mcp/status — server status and tool inventory
+  router.get('/status', (_req, res) => {
+    const status = server.getStatus();
+    res.json({
+      status: status.initialized ? 'initialized' : 'ready',
+      ...status,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
   // POST /mcp/discover — Auto-discover and inject an external MCP server's tools
   router.post('/discover', async (req, res) => {
     const { url, transport, command, args: toolArgs, headers, label } = req.body ?? {};
