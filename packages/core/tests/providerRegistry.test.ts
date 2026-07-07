@@ -35,8 +35,8 @@ import {
 // As of writing: ollama, vllm, deepinfra, anyscale, replicate, cohere,
 // mistral, groq, together, perplexity, fireworks, xiaomi, mimo, deepseek,
 // glm, xai, bedrock, agnes, stepfun, minimax, openrouter, anthropic,
-// google, openai → 24.
-const EXPECTED_BUILTIN_COUNT = 24;
+// google, azure, openai → 25.
+const EXPECTED_BUILTIN_COUNT = 25;
 const EXPECTED_BUILTIN_TYPES = new Set([
   'ollama',
   'vllm',
@@ -61,6 +61,7 @@ const EXPECTED_BUILTIN_TYPES = new Set([
   'openrouter',
   'anthropic',
   'google',
+  'azure',
   'openai',
 ]);
 
@@ -161,6 +162,7 @@ describe('providerRegistry: createProvider factory', () => {
     'STEPFUN_API_KEY',
     'MINIMAX_API_KEY',
     'REPLICATE_API_TOKEN',
+    'AZURE_OPENAI_API_KEY',
   ];
   beforeEach(() => {
     for (const k of envVarsToClear) delete process.env[k];

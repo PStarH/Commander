@@ -63,6 +63,25 @@ export interface OpenAICompatibleConfig {
   isLocal?: boolean;
   /** Extra headers to send with every request */
   extraHeaders?: Record<string, string>;
+  /**
+   * Optional URL builder override for chat-completions. Receives the configured
+   * `baseUrl` and the resolved model name. Default is `${baseUrl}/chat/completions`.
+   * Use providers like Azure OpenAI whose URL embeds the deployment name in the
+   * path AND a query string for the api-version:
+   *   `${baseUrl}/openai/deployments/${encodeURIComponent(model)}/chat/completions?api-version=${apiVersion}`
+   */
+  urlBuilder?: (baseUrl: string, model: string) => string;
+  /**
+   * Optional auth header name override. Default `Authorization`. Azure OpenAI
+   * uses `api-key` instead, per the Azure OpenAI REST API contract.
+   */
+  authHeaderName?: string;
+  /**
+   * Optional auth header value prefix override. Default `Bearer ` (sends
+   * `Authorization: Bearer <key>`). Azure OpenAI sends the key with no prefix
+   * (`api-key: <key>`). Leave empty for that case.
+   */
+  authHeaderPrefix?: string;
 }
 
 // ============================================================================
@@ -358,6 +377,16 @@ export async function callOpenAICompatibleAPI(
   const useStreaming = request.cacheConfig?.useCacheControl ?? true;
   const logger = getGlobalLogger();
 
+  // Providers can override the URL builder (e.g. Azure) and the auth header
+  // scheme (e.g. Azure's `api-key` instead of `Authorization: Bearer`). These
+  // are resolved once per call so the retry loop reuses the same endpoint —
+  // recomputing per attempt would risk inconsistencies under provider rotation.
+  const url = config.urlBuilder
+    ? config.urlBuilder(config.baseUrl, model)
+    : `${config.baseUrl}/chat/completions`;
+  const authHeaderName = config.authHeaderName ?? 'Authorization';
+  const authHeaderPrefix = config.authHeaderPrefix ?? 'Bearer ';
+
   // Retry transient HTTP errors (429, 5xx) at the provider level.
   // This catches rate limits before they bubble up to the runtime's
   // retry loop, which has limited error context.
@@ -368,11 +397,11 @@ export async function callOpenAICompatibleAPI(
   let lastError: Error | undefined;
 
   for (let httpAttempt = 0; httpAttempt <= MAX_HTTP_RETRIES; httpAttempt++) {
-    const response = await fetch(`${config.baseUrl}/chat/completions`, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.apiKey}`,
+        [authHeaderName]: `${authHeaderPrefix}${config.apiKey}`,
         ...config.extraHeaders,
       },
       body: JSON.stringify({ ...body, stream: useStreaming }),
@@ -446,7 +475,7 @@ export async function callOpenAICompatibleAPI(
         attempt: httpAttempt + 1,
         maxAttempts: MAX_HTTP_RETRIES + 1,
         delayMs,
-        endpoint: `${config.baseUrl}/chat/completions`,
+        endpoint: url,
       });
 
       await new Promise<void>((resolve) => {
