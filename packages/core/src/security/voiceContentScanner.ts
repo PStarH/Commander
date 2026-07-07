@@ -516,7 +516,9 @@ export class VoiceContentScanner {
 // Singleton
 // ============================================================================
 
-const scannerSingleton = createTenantAwareSingleton(() => new VoiceContentScanner());
+const scannerSingleton = createTenantAwareSingleton(() => new VoiceContentScanner(), {
+  allowGlobalFallback: true,
+});
 
 export function getVoiceContentScanner(_config?: Partial<VoiceScannerConfig>): VoiceContentScanner {
   return scannerSingleton.get();

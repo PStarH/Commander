@@ -1102,7 +1102,9 @@ export class MitreAtlasMapper {
 
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
-const mapperSingleton = createTenantAwareSingleton(() => new MitreAtlasMapper());
+const mapperSingleton = createTenantAwareSingleton(() => new MitreAtlasMapper(), {
+  allowGlobalFallback: true,
+});
 
 export function getMitreAtlasMapper(): MitreAtlasMapper {
   return mapperSingleton.get();

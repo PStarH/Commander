@@ -21,6 +21,7 @@
 import type { AgentExecutionContext, RoutingDecision, ModelConfig } from './types';
 import type { TaskCategory } from './tokenGovernor';
 import { detectTaskType } from './unifiedVerification';
+import { getGlobalLogger } from '../logging';
 
 // ============================================================================
 // Types
@@ -112,15 +113,125 @@ const COMPLEXITY_MULTIPLIERS = {
 };
 
 // ============================================================================
+// Model pricing table (per 1M tokens, in USD)
+//
+// Single source of truth for CostEstimator-aligned pricing. The values mirror
+// `packages/core/src/observability/costModel.ts` DEFAULT_PRICING (which is
+// per-1K), and are spelt out as per-1M here to match CostEstimator's existing
+// `costPer1MInput` / `costPer1MOutput` convention.
+//
+// We intentionally inline this table rather than importing from `costModel.ts`:
+//   1. CostEstimator must do synchronous lookups (no LiteLLM fetch latency).
+//   2. Avoid runtime → observability cross-import that the layering has not
+//      yet declared safe.
+//   3. Keep bench-cost-prediction.ts (which only passes bare model names
+//      like 'gpt-4o-mini', not 'openai:gpt-4o-mini') working without a
+//      provider prefix.
+//
+// When updated, mirror changes in `costModel.ts`. Drift here will surface as
+// cost-prediction bench regressions.
+// ============================================================================
+
+export interface PricingEntry {
+  /** USD per 1M input tokens (uncached). */
+  inputPer1M: number;
+  /** USD per 1M output tokens. */
+  outputPer1M: number;
+  /** Optional USD per 1M cached input tokens (prompt-cache discount). */
+  cachedInputPer1M?: number;
+  /** Optional provider tag (informational; not used as primary lookup key). */
+  provider?: string;
+  /** Tier classification (informational; not used for lookup). */
+  tier?: string;
+}
+
+/**
+ * Source-of-truth pricing table. Exported (read-only) so external benchmarks
+ * and audits can iterate the full set without poking the private `pricingTable`
+ * Map. Mutations should still go through `CostEstimator.addPricing()` so the
+ * live instance stays in sync; this export is for inspection/parity-check
+ * tooling only. See scripts/bench-cost-model-drift.ts for the parity
+ * cross-check vs `packages/core/src/observability/costModel.ts` `DEFAULT_PRICING`.
+ *
+ * Mirror additions to `packages/core/src/observability/costModel.ts`
+ * `DEFAULT_PRICING` (per-1K = per-1M / 1000). Drift detected by
+ * `scripts/bench-cost-model-drift.ts` (`doc/baselines/cost-model-drift.*.json`).
+ */
+export const DEFAULT_PRICING: Array<[string, PricingEntry]> = [
+  // ── OpenAI ──────────────────────────────────────────────────────────────
+  ['gpt-4o', { inputPer1M: 2.5, outputPer1M: 10.0, cachedInputPer1M: 1.25, provider: 'openai', tier: 'standard' }],
+  ['gpt-4o-mini', { inputPer1M: 0.15, outputPer1M: 0.6, cachedInputPer1M: 0.075, provider: 'openai', tier: 'eco' }],
+  ['gpt-4-turbo', { inputPer1M: 10, outputPer1M: 30, provider: 'openai', tier: 'standard' }],
+  ['gpt-3.5-turbo', { inputPer1M: 0.5, outputPer1M: 1.5, provider: 'openai', tier: 'eco' }],
+  ['o1', { inputPer1M: 15, outputPer1M: 60, provider: 'openai', tier: 'power' }],
+  ['o1-mini', { inputPer1M: 3, outputPer1M: 12, provider: 'openai', tier: 'standard' }],
+  ['o3-mini', { inputPer1M: 1.1, outputPer1M: 4.4, provider: 'openai', tier: 'standard' }],
+  // ── Anthropic ────────────────────────────────────────────────────────────
+  ['claude-3-5-sonnet', { inputPer1M: 3.0, outputPer1M: 15.0, cachedInputPer1M: 0.3, provider: 'anthropic', tier: 'standard' }],
+  ['claude-sonnet-4-6', { inputPer1M: 3, outputPer1M: 15, cachedInputPer1M: 0.3, provider: 'anthropic', tier: 'standard' }],
+  ['claude-3-5-haiku', { inputPer1M: 0.8, outputPer1M: 4.0, cachedInputPer1M: 0.08, provider: 'anthropic', tier: 'eco' }],
+  ['claude-haiku-4-5', { inputPer1M: 0.8, outputPer1M: 4, cachedInputPer1M: 0.08, provider: 'anthropic', tier: 'eco' }],
+  ['claude-3-opus', { inputPer1M: 15, outputPer1M: 75, provider: 'anthropic', tier: 'power' }],
+  ['claude-opus-4-8', { inputPer1M: 15, outputPer1M: 75, cachedInputPer1M: 1.5, provider: 'anthropic', tier: 'power' }],
+  // ── Google ───────────────────────────────────────────────────────────────
+  ['gemini-1.5-pro', { inputPer1M: 1.25, outputPer1M: 5.0, cachedInputPer1M: 0.31, provider: 'google', tier: 'standard' }],
+  ['gemini-2-pro', { inputPer1M: 1.5, outputPer1M: 7.5, cachedInputPer1M: 0.375, provider: 'google', tier: 'standard' }],
+  ['gemini-1.5-flash', { inputPer1M: 0.075, outputPer1M: 0.3, cachedInputPer1M: 0.01875, provider: 'google', tier: 'eco' }],
+  ['gemini-2-flash', { inputPer1M: 0.1, outputPer1M: 0.4, cachedInputPer1M: 0.025, provider: 'google', tier: 'eco' }],
+  ['gemini-2.0-flash', { inputPer1M: 0.1, outputPer1M: 0.4, cachedInputPer1M: 0.025, provider: 'google', tier: 'eco' }],
+  // ── Deepseek ─────────────────────────────────────────────────────────────
+  ['deepseek-chat', { inputPer1M: 0.14, outputPer1M: 0.28, cachedInputPer1M: 0.014, provider: 'deepseek', tier: 'eco' }],
+  ['deepseek-reasoner', { inputPer1M: 0.14, outputPer1M: 2.19, cachedInputPer1M: 0.014, provider: 'deepseek', tier: 'standard' }],
+  ['deepseek-v4-pro', { inputPer1M: 2, outputPer1M: 8, cachedInputPer1M: 0.02, provider: 'deepseek', tier: 'power' }],
+  // ── xAI Grok ─────────────────────────────────────────────────────────────
+  ['grok-2-latest', { inputPer1M: 2.0, outputPer1M: 10.0, cachedInputPer1M: 1.0, provider: 'xai', tier: 'standard' }],
+  ['grok-3-latest', { inputPer1M: 3.0, outputPer1M: 15.0, cachedInputPer1M: 1.5, provider: 'xai', tier: 'standard' }],
+  ['grok-3', { inputPer1M: 3, outputPer1M: 15, provider: 'xai', tier: 'standard' }],
+  // ── Mistral ──────────────────────────────────────────────────────────────
+  ['mistral-large-latest', { inputPer1M: 2.0, outputPer1M: 6.0, cachedInputPer1M: 1.0, provider: 'mistral', tier: 'standard' }],
+  ['mistral-small-latest', { inputPer1M: 0.2, outputPer1M: 0.6, cachedInputPer1M: 0.1, provider: 'mistral', tier: 'eco' }],
+  // ── Cohere ───────────────────────────────────────────────────────────────
+  ['command-a-plus', { inputPer1M: 2.5, outputPer1M: 10.0, cachedInputPer1M: 1.25, provider: 'cohere', tier: 'standard' }],
+  ['command-r-plus', { inputPer1M: 2.5, outputPer1M: 10.0, cachedInputPer1M: 1.25, provider: 'cohere', tier: 'standard' }],
+  // ── MiniMax / GLM / Xiaomi / MiMo / StepFun ─────────────────────────────
+  ['minimax-m3', { inputPer1M: 1, outputPer1M: 4, cachedInputPer1M: 0.1, provider: 'minimax', tier: 'standard' }],
+  ['glm-4.7', { inputPer1M: 0.7, outputPer1M: 2.8, cachedInputPer1M: 0.07, provider: 'glm', tier: 'standard' }],
+  ['glm-4.6', { inputPer1M: 0.7, outputPer1M: 2.8, cachedInputPer1M: 0.07, provider: 'glm', tier: 'standard' }],
+  ['glm-5.1', { inputPer1M: 2, outputPer1M: 8, provider: 'glm', tier: 'power' }],
+  ['mimo-v2-flash', { inputPer1M: 0.18, outputPer1M: 0.18, cachedInputPer1M: 0.018, provider: 'xiaomi', tier: 'eco' }],
+  ['mimo-v2-pro', { inputPer1M: 0.7, outputPer1M: 2.8, cachedInputPer1M: 0.07, provider: 'xiaomi', tier: 'standard' }],
+  ['mimo-v2.5', { inputPer1M: 0.7, outputPer1M: 2.8, cachedInputPer1M: 0.07, provider: 'mimo', tier: 'standard' }],
+  ['mimo-v2.5-pro', { inputPer1M: 4, outputPer1M: 12, provider: 'mimo', tier: 'power' }],
+  ['step-3.7-flash', { inputPer1M: 0.3, outputPer1M: 0.9, cachedInputPer1M: 0.03, provider: 'stepfun', tier: 'eco' }],
+  ['step-3.5-flash', { inputPer1M: 0.5, outputPer1M: 2, cachedInputPer1M: 0.25, provider: 'stepfun', tier: 'eco' }],
+];
+
+// Freeze the exported table so the docstring's "read-only" claim is enforced
+// at runtime. A push/pop on a frozen array throws in strict mode (ES2022+).
+// Each tuple's entry object is also frozen so a caller cannot mutate
+// `DEFAULT_PRICING[i][1].inputPer1M` without breaking the live `pricingTable`
+// Map invariant (the Map is built once at construction from this array).
+Object.freeze(DEFAULT_PRICING);
+for (const tuple of DEFAULT_PRICING) {
+  Object.freeze(tuple);
+  Object.freeze(tuple[1]);
+}
+
+// ============================================================================
 // CostEstimator
 // ============================================================================
 
 export class CostEstimator {
   private config: CostEstimatorConfig;
   private history: Map<string, HistoricalTaskCost[]> = new Map();
+  private readonly pricingTable: Map<string, PricingEntry>;
 
   constructor(config?: Partial<CostEstimatorConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.pricingTable = new Map();
+    for (const [key, value] of DEFAULT_PRICING) {
+      this.pricingTable.set(key, value);
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -199,6 +310,16 @@ export class CostEstimator {
 
   /**
    * Estimate cost for a specific model, useful for model comparison in routing.
+   *
+   * Pricing precedence:
+   *   1. If the caller passes explicit `costPer1MInput` / `costPer1MOutput`
+   *      on the `model` argument, those rates are authoritative (back-compat).
+   *   2. Otherwise, look up `model.id` in `pricingTable` (with @tier suffix
+   *      stripping and provider-prefix matching). This is the new path that
+   *      makes `bench-cost-prediction` produce non-zero predictions for
+   *      `{ model: 'gpt-4o-mini', tier: 'eco' }` shape inputs.
+   *   3. If nothing matches, fall back to the per-tier blended rates (old
+   *      behavior so callers never regress to $0).
    */
   estimateForModel(
     ctx: AgentExecutionContext,
@@ -211,12 +332,14 @@ export class CostEstimator {
     const inputTokens = Math.round(baseline.input * multiplier);
     const outputTokens = Math.round(baseline.output * multiplier);
 
+    const { inputPer1M, outputPer1M } = this.resolveModelRates(model);
+
     return {
       inputTokens,
       outputTokens,
       costUsd:
-        (inputTokens / 1_000_000) * model.costPer1MInput +
-        (outputTokens / 1_000_000) * model.costPer1MOutput,
+        (inputTokens / 1_000_000) * inputPer1M +
+        (outputTokens / 1_000_000) * outputPer1M,
     };
   }
 
@@ -337,19 +460,26 @@ export class CostEstimator {
     }>,
   ): void {
     for (const r of records) {
-      // Infer task category and model tier from model name
+      // Prefer actual pricing-table rates over per-tier blended rates when
+      // the historical record names a known model. This makes the per-tier
+      // history blocks more accurate for the actual cost-attribution curve.
+      const tableRate = this.getPricingForModel(r.model);
       const tier = this.inferModelTier(r.model);
-      if (!tier) continue;
+      if (!tier && !tableRate) continue;
+
+      const inputRate = tableRate?.inputPer1M ?? this.estimateCostPerM(tier ?? 'standard', 'input');
+      const outputRate = tableRate?.outputPer1M ?? this.estimateCostPerM(tier ?? 'standard', 'output');
+      const tierKey = tableRate?.tier ?? tier ?? 'standard';
 
       this.recordActualCost(
         'general', // default — we don't have task category from raw records
-        tier,
+        tierKey,
         r.promptTokens,
         r.completionTokens,
         0, // no cache info in historical records
-        this.estimateCostPerM(tier, 'input'),
-        this.estimateCostPerM(tier, 'output'),
-        undefined, // no cached rate — use uncached input rate
+        inputRate,
+        outputRate,
+        tableRate?.cachedInputPer1M,
         0,
         !r.error,
       );
@@ -392,17 +522,34 @@ export class CostEstimator {
   // Internals
   // --------------------------------------------------------------------------
 
+  private static missingFieldsWarned = false;
+
   private scoreComplexity(ctx: AgentExecutionContext): number {
     let score = 0;
-    if (ctx.goal.length > 400) score += 3;
-    else if (ctx.goal.length > 150) score += 2;
-    else if (ctx.goal.length > 50) score += 1;
+    // Defensive: callers may pass partial contexts (e.g. bench scripts with
+    // `{ goal, taskCategory } as any` cast). Treat missing fields as the
+    // cheapest/shortest case so we never throw on the complexity path.
+    const goalLen = ctx.goal?.length ?? 0;
+    const toolsLen = ctx.availableTools?.length ?? 0;
+    const budget = ctx.tokenBudget ?? 0;
+    if (!CostEstimator.missingFieldsWarned && (ctx.availableTools === undefined || ctx.tokenBudget === undefined)) {
+      CostEstimator.missingFieldsWarned = true;
+      getGlobalLogger().warn(
+        'CostEstimator',
+        'ctx missing availableTools / tokenBudget — using cheapest-case estimate. ' +
+          'Production callers should pass a complete AgentExecutionContext.',
+      );
+    }
 
-    if (ctx.availableTools.length > 5) score += 2;
-    else if (ctx.availableTools.length > 3) score += 1;
+    if (goalLen > 400) score += 3;
+    else if (goalLen > 150) score += 2;
+    else if (goalLen > 50) score += 1;
 
-    if (ctx.tokenBudget > 20000) score += 2;
-    else if (ctx.tokenBudget > 6000) score += 1;
+    if (toolsLen > 5) score += 2;
+    else if (toolsLen > 3) score += 1;
+
+    if (budget > 20000) score += 2;
+    else if (budget > 6000) score += 1;
 
     return Math.min(score, 10);
   }
@@ -413,17 +560,22 @@ export class CostEstimator {
   ): number {
     let multiplier = 1.0;
 
+    // Defensive against missing optional fields — see scoreComplexity note.
+    const goalLen = ctx.goal?.length ?? 0;
+    const toolsLen = ctx.availableTools?.length ?? 0;
+    const budget = ctx.tokenBudget ?? 0;
+
     // Goal length
-    if (ctx.goal.length > 400) multiplier *= COMPLEXITY_MULTIPLIERS.longGoal;
-    else if (ctx.goal.length < 50) multiplier *= COMPLEXITY_MULTIPLIERS.shortGoal;
+    if (goalLen > 400) multiplier *= COMPLEXITY_MULTIPLIERS.longGoal;
+    else if (goalLen < 50) multiplier *= COMPLEXITY_MULTIPLIERS.shortGoal;
 
     // Tool count
-    if (ctx.availableTools.length > 5) multiplier *= COMPLEXITY_MULTIPLIERS.manyTools;
-    else if (ctx.availableTools.length <= 2) multiplier *= COMPLEXITY_MULTIPLIERS.fewTools;
+    if (toolsLen > 5) multiplier *= COMPLEXITY_MULTIPLIERS.manyTools;
+    else if (toolsLen <= 2) multiplier *= COMPLEXITY_MULTIPLIERS.fewTools;
 
     // Budget signal
-    if (ctx.tokenBudget > 20000) multiplier *= COMPLEXITY_MULTIPLIERS.largeBudget;
-    else if (ctx.tokenBudget < 3000) multiplier *= COMPLEXITY_MULTIPLIERS.smallBudget;
+    if (budget > 20000) multiplier *= COMPLEXITY_MULTIPLIERS.largeBudget;
+    else if (budget < 3000) multiplier *= COMPLEXITY_MULTIPLIERS.smallBudget;
 
     return multiplier;
   }
@@ -472,7 +624,8 @@ export class CostEstimator {
   }
 
   private estimateCostPerM(tier: string, type: 'input' | 'output'): number {
-    // Blended rates by tier (USD per 1M tokens)
+    // Blended rates by tier (USD per 1M tokens). Used as a last-resort fallback
+    // when neither an explicit rate nor a pricingTable lookup resolves.
     const rates: Record<string, { input: number; output: number }> = {
       eco: { input: 0.5, output: 1.5 },
       standard: { input: 3.0, output: 10.0 },
@@ -483,11 +636,157 @@ export class CostEstimator {
   }
 
   private estimateCostFromTokens(model: string, inputTokens: number, outputTokens: number): number {
+    // Try pricingTable first. The caller may pass model="gpt-4o", "gpt-4o@standard",
+    // "openai/gpt-4o-mini" or a bare name — getPricingForModel normalizes all of these.
+    const tableRate = this.getPricingForModel(model);
+    if (tableRate) {
+      return (inputTokens / 1_000_000) * tableRate.inputPer1M + (outputTokens / 1_000_000) * tableRate.outputPer1M;
+    }
+    // Fall back to per-tier blended rates.
     const tier = this.inferModelTier(model);
     if (!tier) return 0;
     const inputRate = this.estimateCostPerM(tier, 'input');
     const outputRate = this.estimateCostPerM(tier, 'output');
     return (inputTokens / 1_000_000) * inputRate + (outputTokens / 1_000_000) * outputRate;
+  }
+
+  // --------------------------------------------------------------------------
+  // PricingTable API (public methods)
+  // --------------------------------------------------------------------------
+
+  /**
+   * Add (or override) a pricing entry for `model` at runtime. Useful for
+   * tests and for callers that want to inject enterprise-contract pricing
+   * without rebuilding the estimator.
+   *
+   * Keys are normalized: lowercased and `@tier` suffix stripped, so callers
+   * can pass any common shape ('gpt-4o', 'gpt-4o@standard', 'openai/gpt-4o-mini').
+   */
+  addPricing(model: string, entry: PricingEntry): void {
+    const key = this.normalizeModelKey(model);
+    if (key === null) {
+      // Don't throw — callers may pass config-derived values that happen to
+      // be empty — but warn so a misconfigured enterprise-contract override
+      // doesn't get silently dropped into the void.
+      getGlobalLogger().warn('CostEstimator', 'addPricing ignored: empty model key', { model });
+      return;
+    }
+    this.pricingTable.set(key, entry);
+  }
+
+  /**
+   * Number of pricing entries currently registered. Useful for tests and
+   * health probes that want to verify the table is wired correctly.
+   */
+  getPricingTableSize(): number {
+    return this.pricingTable.size;
+  }
+
+  /**
+   * Resolve per-1M input / output rates for a `ModelConfig` argument.
+   * - Explicit rates on the config always win (back-compat).
+   * - Otherwise, look up the model identifier (preferring `id`, falling back
+   *   to `model` or `name` to support callers like scripts/bench-cost-prediction.ts
+   *   that pass `{ model: '...', tier: '...' } as any` instead of full
+   *   ModelConfig).
+   * - Fall back to per-tier blended rates when no entry is found.
+   */
+  private resolveModelRates(model: ModelConfig): { inputPer1M: number; outputPer1M: number } {
+    if (
+      typeof model.costPer1MInput === 'number' &&
+      Number.isFinite(model.costPer1MInput) &&
+      typeof model.costPer1MOutput === 'number' &&
+      Number.isFinite(model.costPer1MOutput)
+    ) {
+      return { inputPer1M: model.costPer1MInput, outputPer1M: model.costPer1MOutput };
+    }
+    // Probe the two identifier shapes we actively support:
+    //   - ModelConfig canonical: `{ id: 'gpt-4o-mini', tier: 'eco', ... }`
+    //   - Bench / lightweight shape: `{ model: 'gpt-4o-mini', tier: 'eco' } as any`
+    // First non-empty string wins. We deliberately do NOT probe `name` (collides
+    // with provider display names) or `modelId` (lives on `RoutingDecision`,
+    // not `ModelConfig` — including it would make this function look like a
+    // polymorphic RoutingDecision bridge that it isn't).
+    const candidates = [
+      (model as { id?: unknown }).id,
+      (model as { model?: unknown }).model,
+    ];
+    let tableRate: PricingEntry | null = null;
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string' && candidate.length > 0) {
+        tableRate = this.getPricingForModel(candidate, model.provider);
+        if (tableRate) break;
+      }
+    }
+    if (tableRate) return { inputPer1M: tableRate.inputPer1M, outputPer1M: tableRate.outputPer1M };
+    const tier = model.tier ?? 'standard';
+    return {
+      inputPer1M: this.estimateCostPerM(tier, 'input'),
+      outputPer1M: this.estimateCostPerM(tier, 'output'),
+    };
+  }
+
+  /**
+   * Normalize a model identifier for pricing-table lookup. Strips an
+   * optional `@tier` suffix (`gpt-4o@eco` -> `gpt-4o`), trims an optional
+   * `provider/` prefix (`openai/gpt-4o-mini` -> `gpt-4o-mini`), and
+   * lowercases the result. Returns null when the input has no usable model
+   * portion.
+   */
+  private normalizeModelKey(rawModel: string): string | null {
+    if (typeof rawModel !== 'string') return null;
+    let model = rawModel.trim();
+    if (model.length === 0) return null;
+    // Strip @tier suffix (e.g. 'gpt-4o@eco', 'claude-3-5-sonnet@standard').
+    const atIdx = model.indexOf('@');
+    if (atIdx > 0) model = model.slice(0, atIdx);
+    // Strip optional provider/ prefix.
+    const slashIdx = model.indexOf('/');
+    if (slashIdx > 0 && slashIdx < model.length - 1) {
+      model = model.slice(slashIdx + 1);
+    }
+    return model.toLowerCase();
+  }
+
+  /**
+   * Look up pricing for `model`. Strips any `@tier` suffix, trims an
+   * optional provider prefix, and tries:
+   *   1. exact match (after normalization)
+   *   2. longest prefix match (so `gpt-4o-2024-08-06` resolves to `gpt-4o`)
+   *   3. provider-scoped prefix match when `provider` is given
+   * Returns null when nothing in the table matches.
+   */
+  getPricingForModel(model: string, provider?: string): PricingEntry | null {
+    const normalized = this.normalizeModelKey(model);
+    if (!normalized) return null;
+
+    // 1. Exact match.
+    const exact = this.pricingTable.get(normalized);
+    if (exact) return exact;
+
+    // 2. Provider-scoped prefix match.
+    if (provider) {
+      const providerLower = provider.toLowerCase();
+      for (const [key, value] of this.pricingTable) {
+        if (value.provider?.toLowerCase() === providerLower && normalized.startsWith(key)) {
+          return value;
+        }
+      }
+    }
+
+    // 3. Longest-prefix fallback (skip 'gpt-4o' before 'gpt-4-turbo' precedence).
+    let bestMatch: { key: string; entry: PricingEntry } | null = null;
+    for (const [key, entry] of this.pricingTable) {
+      if (normalized.startsWith(key) && (!bestMatch || key.length > bestMatch.key.length)) {
+        // Disambiguate similar prefixes: 'gpt-4-turbo' must not match 'gpt-4o'.
+        // Require prefix to be at a token boundary (followed by '-' or end).
+        const after = normalized[key.length];
+        if (after === '' || after === '-') {
+          bestMatch = { key, entry };
+        }
+      }
+    }
+    return bestMatch ? bestMatch.entry : null;
   }
 
   private inferModelTier(model: string): string | null {
@@ -553,7 +852,9 @@ export class CostEstimator {
 
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
-const estimatorSingleton = createTenantAwareSingleton(() => new CostEstimator());
+const estimatorSingleton = createTenantAwareSingleton(() => new CostEstimator(), {
+  allowGlobalFallback: true,
+});
 
 /** Get the global CostEstimator (single-tenant) or tenant-scoped (multi-tenant). */
 export function getCostEstimator(): CostEstimator {

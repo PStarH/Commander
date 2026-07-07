@@ -1839,6 +1839,7 @@ function fingerprint0(state: TenantFingerprintState): number {
 // ============================================================================
 
 const dynamicCostGuardianSingleton = createTenantAwareSingleton(() => new DynamicCostGuardian(), {
+  allowGlobalFallback: true,
   componentName: 'DynamicCostGuardian',
 });
 

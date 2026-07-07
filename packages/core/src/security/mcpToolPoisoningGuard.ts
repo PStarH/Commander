@@ -1804,6 +1804,7 @@ export class MCPToolPoisoningGuard {
 // ============================================================================
 
 const poisoningGuardSingleton = createTenantAwareSingleton(() => new MCPToolPoisoningGuard(), {
+  allowGlobalFallback: true,
   componentName: 'MCPToolPoisoningGuard',
 });
 

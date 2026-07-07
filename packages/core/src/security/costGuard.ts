@@ -851,7 +851,9 @@ function emitCostGuardDeprecationWarning(): void {
   }
 }
 
-const costGuardSingleton = createTenantAwareSingleton(() => new CostGuard());
+const costGuardSingleton = createTenantAwareSingleton(() => new CostGuard(), {
+  allowGlobalFallback: true,
+});
 
 /**
  * Get the global CostGuard (single-tenant) or tenant-scoped (multi-tenant).

@@ -2274,6 +2274,7 @@ export class BillExplosionGuard {
 // ============================================================================
 
 const billExplosionGuardSingleton = createTenantAwareSingleton(() => new BillExplosionGuard(), {
+  allowGlobalFallback: true,
   componentName: 'BillExplosionGuard',
 });
 
