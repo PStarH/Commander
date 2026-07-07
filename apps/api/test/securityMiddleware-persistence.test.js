@@ -177,6 +177,7 @@ test('write-through: rate-limit counters persist to SQL after every counted requ
       try {
         const rows = fresh.listActive(Date.now());
         assert.equal(rows.length, 1, 'exactly one row expected post-fire');
+        assert.equal(rows[0].key, 'ip:127.0.0.1', 'row key is prefixed ip scope');
         assert.equal(rows[0].count, 5, 'counter matches last seen count');
         assert.ok(rows[0].resetAt > Date.now(), 'resetAt is in the future');
       } finally {
@@ -222,6 +223,7 @@ test('restart round-trip: counter survives a fresh process handle against the sa
     try {
       const rows = reopened.listActive(Date.now());
       assert.equal(rows.length, 1, 'one row survives restart');
+      assert.equal(rows[0].key, 'ip:127.0.0.1', 'row key is prefixed ip scope');
       assert.equal(rows[0].count, 3, 'counter === 3 after restart — defeats the auth-reset bypass');
       assert.ok(rows[0].resetAt > Date.now(), 'resetAt still in the future after restart');
 
@@ -278,11 +280,11 @@ test('hydrate-on-init: rows in the DB are loaded into the in-memory Map before t
       const reopened = new PersistentRateLimitStore(dbPath);
       try {
         const rows = reopened.listActive(Date.now());
-        const byIp = Object.fromEntries(rows.map((r) => [r.ip, r]));
-        assert.ok(byIp['1.2.3.4'], 'seeded row preserved across restart');
-        assert.equal(byIp['1.2.3.4'].count, 7);
-        assert.ok(byIp['127.0.0.1'], 'loopback IP 127.0.0.1 present (explicit bind)');
-        assert.equal(byIp['127.0.0.1'].count, 1, 'fresh request was counted exactly once');
+        const byKey = Object.fromEntries(rows.map((r) => [r.key, r]));
+        assert.ok(byKey['1.2.3.4'], 'seeded row preserved across restart');
+        assert.equal(byKey['1.2.3.4'].count, 7);
+        assert.ok(byKey['ip:127.0.0.1'], 'loopback IP 127.0.0.1 present (explicit bind)');
+        assert.equal(byKey['ip:127.0.0.1'].count, 1, 'fresh request was counted exactly once');
       } finally {
         reopened.close();
       }
