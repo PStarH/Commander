@@ -17,7 +17,7 @@ import type {
   ReadResourceResult,
   GetPromptResult,
 } from './types';
-import { MCP_ERROR_CODES } from './types';
+import { MCP_ERROR_CODES, MCP_PROTOCOL_VERSION } from './types';
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<MCPToolResult | MCPContentItem[]>;
 type ResourceReader = (uri: string) => Promise<MCPResourceContents[]>;
@@ -113,6 +113,27 @@ export class MCPServer {
     return caps;
   }
 
+  /** Return current server status for health/observability endpoints. */
+  getStatus(): {
+    initialized: boolean;
+    name: string;
+    version: string;
+    toolCount: number;
+    resourceCount: number;
+    promptCount: number;
+    capabilities: MCPServerCapabilities;
+  } {
+    return {
+      initialized: this.initialized,
+      name: this.serverName,
+      version: this.serverVersion,
+      toolCount: this.tools.size,
+      resourceCount: this.resources.size,
+      promptCount: this.prompts.size,
+      capabilities: this.getCapabilities(),
+    };
+  }
+
   /**
    * Handle a single JSON-RPC request. Returns the response.
    * This is the main entry point for both HTTP and stdio transports.
@@ -142,7 +163,7 @@ export class MCPServer {
           jsonrpc: '2.0',
           id,
           result: {
-            protocolVersion: '2024-11-05',
+            protocolVersion: MCP_PROTOCOL_VERSION,
             capabilities: this.getCapabilities(),
             serverInfo: { name: this.serverName, version: this.serverVersion },
           } satisfies MCPInitializeResult,
