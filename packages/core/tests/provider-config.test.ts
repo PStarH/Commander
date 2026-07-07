@@ -411,6 +411,87 @@ describe('ReplicateProvider', () => {
 });
 
 // ============================================================================
+// Azure OpenAI
+// ============================================================================
+describe('AzureOpenAIProvider', () => {
+  beforeEach(() => {
+    delete process.env.AZURE_OPENAI_BASE_URL;
+    delete process.env.AZURE_OPENAI_MODEL;
+    delete process.env.AZURE_OPENAI_API_VERSION;
+  });
+
+  it('has correct name', async () => {
+    const { AzureOpenAIProvider } = await import('../src/runtime/providers/azureOpenAIProvider');
+    const p = new AzureOpenAIProvider({ apiKey: 'test' });
+    assert.strictEqual(p.name, 'azure');
+  });
+
+  it('defaults to placeholder Azure base URL', async () => {
+    const { AzureOpenAIProvider } = await import('../src/runtime/providers/azureOpenAIProvider');
+    const p = new AzureOpenAIProvider({ apiKey: 'test' });
+    assert.strictEqual(p.getDefaultBaseUrl(), 'https://your-resource.openai.azure.com');
+  });
+
+  it('uses correct default model', async () => {
+    const { AzureOpenAIProvider } = await import('../src/runtime/providers/azureOpenAIProvider');
+    assert.strictEqual(new AzureOpenAIProvider({ apiKey: 'test' }).getDefaultModel(), 'gpt-4o');
+  });
+
+  it('respects AZURE_OPENAI_BASE_URL env var', async () => {
+    const { AzureOpenAIProvider } = await import('../src/runtime/providers/azureOpenAIProvider');
+    process.env.AZURE_OPENAI_BASE_URL = 'https://my-resource.openai.azure.com';
+    assert.strictEqual(
+      new AzureOpenAIProvider({ apiKey: 'test' }).getDefaultBaseUrl(),
+      'https://my-resource.openai.azure.com',
+    );
+  });
+
+  it('respects AZURE_OPENAI_MODEL env var', async () => {
+    const { AzureOpenAIProvider } = await import('../src/runtime/providers/azureOpenAIProvider');
+    process.env.AZURE_OPENAI_MODEL = 'gpt-4o-mini';
+    assert.strictEqual(
+      new AzureOpenAIProvider({ apiKey: 'test' }).getDefaultModel(),
+      'gpt-4o-mini',
+    );
+  });
+
+  it('uses api-key header instead of Authorization Bearer', async () => {
+    const { AzureOpenAIProvider } = await import('../src/runtime/providers/azureOpenAIProvider');
+    const p = new AzureOpenAIProvider({ apiKey: 'azure-key' });
+    let capturedRequest: { url: string; headers: Record<string, string>; body: unknown } | null =
+      null;
+    const originalFetch = global.fetch;
+    global.fetch = async (url: RequestInfo | URL, init?: RequestInit) => {
+      capturedRequest = {
+        url: url.toString(),
+        headers: Object.fromEntries(new Headers(init?.headers).entries()),
+        body: init?.body,
+      };
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: 'hi' } }], usage: {} }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    };
+    try {
+      await p.call({ messages: [{ role: 'user', content: 'hello' }] });
+      assert.ok(capturedRequest, 'fetch should have been called');
+      assert.strictEqual(capturedRequest!.headers['api-key'], 'azure-key');
+      assert.strictEqual(capturedRequest!.headers['authorization'], undefined);
+      assert.ok(
+        capturedRequest!.url.includes('/openai/deployments/gpt-4o/chat/completions'),
+        `unexpected url: ${capturedRequest!.url}`,
+      );
+      assert.ok(
+        capturedRequest!.url.includes('api-version=2024-06-01'),
+        `missing api-version: ${capturedRequest!.url}`,
+      );
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+});
+
+// ============================================================================
 // AWS Bedrock
 // ============================================================================
 describe('BedrockProvider', () => {
@@ -543,11 +624,12 @@ describe('Provider registration consistency', () => {
       'agnes',
       'stepfun',
       'minimax',
+      'azure',
     ];
     for (const provider of expectedVars) {
       assert.ok(ENV_MAP[provider], `Missing ENV_MAP entry for ${provider}`);
     }
-    assert.strictEqual(Object.keys(ENV_MAP).length, 24);
+    assert.strictEqual(Object.keys(ENV_MAP).length, 25);
   });
 
   it('all providers are in PROVIDER_ORDER', async () => {
@@ -577,26 +659,27 @@ describe('Provider registration consistency', () => {
       'agnes',
       'stepfun',
       'minimax',
+      'azure',
     ];
     for (const provider of expectedProviders) {
       assert.ok(PROVIDER_ORDER.includes(provider), `Missing from PROVIDER_ORDER: ${provider}`);
     }
-    assert.strictEqual(PROVIDER_ORDER.length, 24);
+    assert.strictEqual(PROVIDER_ORDER.length, 25);
   });
 
   it('all providers are in DEFAULT_MODELS', async () => {
     const { DEFAULT_MODELS } = await import('../src/config/commanderConfig');
-    assert.strictEqual(Object.keys(DEFAULT_MODELS).length, 24);
+    assert.strictEqual(Object.keys(DEFAULT_MODELS).length, 25);
   });
 
   it('all providers are in DEFAULT_URLS', async () => {
     const { DEFAULT_URLS } = await import('../src/config/commanderConfig');
-    assert.strictEqual(Object.keys(DEFAULT_URLS).length, 24);
+    assert.strictEqual(Object.keys(DEFAULT_URLS).length, 25);
   });
 
   it('all providers are in API_TYPE', async () => {
     const { API_TYPE } = await import('../src/config/commanderConfig');
-    assert.strictEqual(Object.keys(API_TYPE).length, 24);
+    assert.strictEqual(Object.keys(API_TYPE).length, 25);
   });
 });
 
@@ -644,6 +727,10 @@ describe('detectProvider', () => {
       'AGNES_API_KEY',
       'XAI_API_KEY',
       'BEDROCK_MODEL',
+      'AZURE_OPENAI_API_KEY',
+      'AZURE_OPENAI_BASE_URL',
+      'AZURE_OPENAI_MODEL',
+      'AZURE_OPENAI_API_VERSION',
     ];
     for (const v of allVars) delete process.env[v];
   });
@@ -780,5 +867,18 @@ describe('detectProvider', () => {
     const result = detectProvider();
     assert.ok(result, 'Should detect a provider');
     assert.strictEqual(result?.type, 'ollama');
+  });
+
+  it('detects Azure OpenAI with AZURE_OPENAI_API_KEY', async () => {
+    const { detectProvider } = await import('../src/config/commanderConfig');
+    process.env.AZURE_OPENAI_API_KEY = 'azure-key';
+    process.env.AZURE_OPENAI_BASE_URL = 'https://my-resource.openai.azure.com';
+    process.env.AZURE_OPENAI_MODEL = 'gpt-4o-mini';
+    const result = detectProvider();
+    assert.ok(result, 'Should detect Azure OpenAI');
+    assert.strictEqual(result?.type, 'azure');
+    assert.strictEqual(result?.baseUrl, 'https://my-resource.openai.azure.com');
+    assert.strictEqual(result?.defaultModel, 'gpt-4o-mini');
+    assert.strictEqual(result?.apiKey, 'azure-key');
   });
 });
