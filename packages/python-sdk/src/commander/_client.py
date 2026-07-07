@@ -6,6 +6,8 @@ import asyncio
 import json
 import os
 import random
+from datetime import datetime, timezone
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -19,6 +21,8 @@ from ._exceptions import (
 from ._streaming import CommanderSSEStream
 from ._types import (
     ActiveRuns,
+    AgentConfig,
+    AgentSnapshot,
     AgentState,
     ApiKeyCreateResult,
     ApiKeyList,
@@ -56,6 +60,7 @@ from ._types import (
     EvalJudgeResult,
     EvalStatus,
     EvalWilcoxonResult,
+    ExecutionEvent,
     ExecutionResult,
     HealthStatus,
     KnowledgeDocument,
@@ -93,12 +98,16 @@ from ._types import (
     ReplayResult,
     ResumeResponse,
     RollbackResponse,
+    SDKReliabilityStats,
     SecurityPostureHistory,
     SecurityPostureReport,
     SecurityPostureSnapshot,
     SecurityScanResult,
     SecurityStats,
+    SessionSummary,
     SystemStatus,
+    Task,
+    TaskHandle,
     TeamAgentList,
     TeamReassignResult,
     TeamStatus,
@@ -120,6 +129,61 @@ from ._types import (
 _DEFAULT_BASE_URL = "http://localhost:3001"
 _DEFAULT_TIMEOUT = 300.0
 _DEFAULT_MAX_RETRIES = 3
+
+_agent_id_counter = 0
+
+
+class Agent:
+    """A configured persona within Commander.
+
+    Mirrors the TypeScript SDK ``Agent`` class. Agents are lightweight
+    client-side configuration objects; their lifecycle is managed by
+    ``CommanderClient``.
+    """
+
+    def __init__(self, config: AgentConfig) -> None:
+        global _agent_id_counter
+        if not config.name or not config.role:
+            raise ValueError("Agent requires both `name` and `role`.")
+        self.id: str = config.id or f"agent_{_agent_id_counter + 1}"
+        _agent_id_counter += 1
+        self.config: AgentConfig = config
+        self.created_at: str = datetime.now(timezone.utc).isoformat()
+        self.run_count: int = 0
+        self.total_tokens_used: int = 0
+        self.last_run_at: str | None = None
+
+    def snapshot(self) -> AgentSnapshot:
+        """Return a serializable snapshot of this agent's state."""
+        return AgentSnapshot(
+            id=self.id,
+            name=self.config.name,
+            role=self.config.role,
+            tools=self.config.tools or [],
+            topology=self.config.topology,
+            runCount=self.run_count,
+            totalTokensUsed=self.total_tokens_used,
+            createdAt=self.created_at,
+            lastRunAt=self.last_run_at,
+        )
+
+    @classmethod
+    def from_snapshot(cls, snapshot: AgentSnapshot) -> Agent:
+        """Restore an Agent from a snapshot."""
+        agent = cls(
+            AgentConfig(
+                id=snapshot.id,
+                name=snapshot.name,
+                role=snapshot.role,
+                tools=snapshot.tools,
+                topology=snapshot.topology,
+                maxSteps=None,
+            )
+        )
+        agent.run_count = snapshot.run_count
+        agent.total_tokens_used = snapshot.total_tokens_used
+        agent.last_run_at = snapshot.last_run_at
+        return agent
 
 
 class CommanderClient:
@@ -147,6 +211,17 @@ class CommanderClient:
             timeout=httpx.Timeout(timeout, connect=10.0),
             headers=self._build_headers(),
         )
+        # SDK-aligned local state (mirrors TypeScript SDK surface)
+        self._connected: bool = False
+        self._start_time: float = 0.0
+        self._run_count: int = 0
+        self._active_sessions: int = 0
+        self._agents: dict[str, Agent] = {}
+        self._tasks: dict[str, TaskHandle] = {}
+        self._task_counter: int = 0
+        self._sessions: list[SessionSummary] = []
+        self._event_handlers: set[Callable[[ExecutionEvent], None]] = set()
+        self._running_tasks: set[asyncio.Task] = set()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -158,8 +233,34 @@ class CommanderClient:
     async def __aexit__(self, *args: object) -> None:
         await self.close()
 
+    async def connect(self) -> None:
+        """Verify connectivity to the Commander server.
+
+        Unlike the TypeScript SDK, the Python client is a thin HTTP wrapper;
+        ``connect`` performs a lightweight readiness probe and marks the
+        client as connected. It is safe to call multiple times.
+        """
+        if self._connected:
+            return
+        await self._request("GET", "/ready")
+        self._start_time = asyncio.get_event_loop().time()
+        self._connected = True
+
+    async def disconnect(self) -> None:
+        """Close the HTTP client and clear local SDK state."""
+        await self.close()
+        self._event_handlers.clear()
+        self._running_tasks.clear()
+        self._connected = False
+
     async def close(self) -> None:
+        """Close the underlying HTTP client."""
         await self._http.aclose()
+
+    @property
+    def is_connected(self) -> bool:
+        """Whether the client has been explicitly connected."""
+        return self._connected
 
     # ------------------------------------------------------------------
     # Execution (legacy / v1)
@@ -173,6 +274,8 @@ class CommanderClient:
         provider: str | None = None,
         model: str | None = None,
         output_schema: dict[str, Any] | None = None,
+        agent_id: str | None = None,
+        tools: list[str] | None = None,
     ) -> ExecutionResult:
         """Execute an agent task.
 
@@ -182,6 +285,8 @@ class CommanderClient:
             provider: LLM provider override.
             model: Model override.
             output_schema: Optional structured output schema.
+            agent_id: Optional agent identifier for agent-based execution.
+            tools: Optional tool names available to the agent.
 
         Returns:
             Execution result with status, summary, and token usage.
@@ -195,8 +300,14 @@ class CommanderClient:
             body["model"] = model
         if output_schema is not None:
             body["outputSchema"] = output_schema
+        if agent_id is not None:
+            body["agentId"] = agent_id
+        if tools is not None:
+            body["tools"] = tools
         data = await self._request("POST", "/api/v1/execute", json=body)
-        return ExecutionResult(**data)
+        result = ExecutionResult(**data)
+        self._record_session(prompt, result, agent_id=agent_id)
+        return result
 
     async def plan(
         self,
@@ -236,6 +347,318 @@ class CommanderClient:
             An async iterable of ``SSEEvent`` objects.
         """
         return CommanderSSEStream(self._http, session_id, self._base_url)
+
+    # ------------------------------------------------------------------
+    # Agent Management
+    # ------------------------------------------------------------------
+
+    def create_agent(self, config: AgentConfig) -> Agent:
+        """Create and register a new agent.
+
+        Args:
+            config: Agent configuration (name, role, tools, topology, ...).
+
+        Returns:
+            The created Agent instance.
+        """
+        agent = Agent(config)
+        self._agents[agent.id] = agent
+        return agent
+
+    def get_agent(self, agent_id: str) -> Agent | None:
+        """Get a registered agent by id."""
+        return self._agents.get(agent_id)
+
+    def list_agents(self) -> list[Agent]:
+        """List all registered agents."""
+        return list(self._agents.values())
+
+    def remove_agent(self, agent_id: str) -> bool:
+        """Remove a registered agent.
+
+        Returns:
+            True if the agent existed and was removed.
+        """
+        if agent_id in self._agents:
+            del self._agents[agent_id]
+            return True
+        return False
+
+    def get_agent_snapshots(self) -> list[AgentSnapshot]:
+        """Return serializable snapshots of all registered agents."""
+        return [a.snapshot() for a in self._agents.values()]
+
+    # ------------------------------------------------------------------
+    # Task Submission
+    # ------------------------------------------------------------------
+
+    def submit_task(self, agent: Agent, task: Task) -> TaskHandle:
+        """Submit a task for asynchronous execution by an agent.
+
+        Args:
+            agent: The agent that will execute the task.
+            task: Task definition (goal, output schema, context, ...).
+
+        Returns:
+            A TaskHandle with execution metadata.
+        """
+        self._task_counter += 1
+        handle = TaskHandle(
+            id=f"task_{self._task_counter}",
+            task=task,
+            status="pending",
+            agentId=agent.id,
+            submittedAt=datetime.now(timezone.utc).isoformat(),
+            completedAt=None,
+        )
+        self._tasks[handle.id] = handle
+
+        # Schedule execution without awaiting so the caller gets the handle immediately.
+        bg_task = asyncio.create_task(self._execute_task(agent, handle))
+        self._running_tasks.add(bg_task)
+        bg_task.add_done_callback(self._running_tasks.discard)
+        return handle
+
+    async def await_task(
+        self, task_id: str, timeout_ms: int = 120_000
+    ) -> ExecutionResult | None:
+        """Wait for a submitted task to complete.
+
+        Args:
+            task_id: Task handle id returned by ``submit_task``.
+            timeout_ms: Maximum time to wait in milliseconds.
+
+        Returns:
+            The execution result, or None if the task was not found or timed out.
+        """
+        handle = self._tasks.get(task_id)
+        if not handle:
+            return None
+        if handle.result is not None:
+            return handle.result
+        deadline = asyncio.get_event_loop().time() + (timeout_ms / 1000.0)
+        while asyncio.get_event_loop().time() < deadline:
+            handle = self._tasks.get(task_id)
+            if handle is None:
+                return None
+            if handle.result is not None:
+                return handle.result
+            await asyncio.sleep(0.2)
+        return None
+
+    def get_task_handle(self, task_id: str) -> TaskHandle | None:
+        """Get a task handle by id."""
+        return self._tasks.get(task_id)
+
+    def cancel_task(self, task_id: str) -> bool:
+        """Cancel a pending or running task.
+
+        Returns:
+            True if the task was in a cancellable state.
+        """
+        handle = self._tasks.get(task_id)
+        if not handle or handle.status in {"completed", "failed", "cancelled"}:
+            return False
+        handle.status = "cancelled"
+        handle.completed_at = datetime.now(timezone.utc).isoformat()
+        return True
+
+    async def _execute_task(self, agent: Agent, handle: TaskHandle) -> None:
+        """Internal coroutine that executes a task and updates its handle."""
+        handle.status = "running"
+        agent.last_run_at = datetime.now(timezone.utc).isoformat()
+        self._active_sessions += 1
+        self._dispatch_event(
+            ExecutionEvent(
+                type="agent.started",
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                data={"agentId": agent.id, "taskId": handle.id},
+            )
+        )
+        try:
+            result = await self.run(
+                handle.task.goal,
+                output_schema=handle.task.output_schema,
+                agent_id=agent.id,
+                tools=agent.config.tools,
+            )
+            handle.status = "completed"
+            handle.completed_at = datetime.now(timezone.utc).isoformat()
+            handle.result = result
+            agent.run_count += 1
+            agent.total_tokens_used += result.total_token_usage
+            self._run_count += 1
+            self._dispatch_event(
+                ExecutionEvent(
+                    type="agent.completed",
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    data={
+                        "agentId": agent.id,
+                        "taskId": handle.id,
+                        "status": result.status,
+                    },
+                )
+            )
+        except Exception as exc:
+            error = str(exc)
+            handle.status = "failed"
+            handle.completed_at = datetime.now(timezone.utc).isoformat()
+            handle.result = ExecutionResult(
+                status="FAILED",
+                summary=error,
+                error=error,
+            )
+            self._dispatch_event(
+                ExecutionEvent(
+                    type="agent.failed",
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    data={"agentId": agent.id, "taskId": handle.id, "error": error},
+                )
+            )
+        finally:
+            self._active_sessions = max(0, self._active_sessions - 1)
+
+    # ------------------------------------------------------------------
+    # Events
+    # ------------------------------------------------------------------
+
+    def on_event(self, handler: Callable[[ExecutionEvent], None]) -> Callable[[], None]:
+        """Register a handler for execution lifecycle events.
+
+        Args:
+            handler: Callback receiving an ExecutionEvent.
+
+        Returns:
+            A function that unsubscribes the handler when called.
+        """
+        self._event_handlers.add(handler)
+
+        def unsubscribe() -> None:
+            self._event_handlers.discard(handler)
+
+        return unsubscribe
+
+    def _dispatch_event(self, event: ExecutionEvent) -> None:
+        """Dispatch an event to all registered handlers (best-effort)."""
+        for handler in list(self._event_handlers):
+            try:
+                handler(event)
+            except Exception:
+                # One failing handler must not disrupt the others.
+                pass
+
+    # ------------------------------------------------------------------
+    # Session History
+    # ------------------------------------------------------------------
+
+    def list_sessions(self) -> list[SessionSummary]:
+        """List execution sessions, most recent first."""
+        return sorted(
+            self._sessions,
+            key=lambda s: s.timestamp,
+            reverse=True,
+        )
+
+    def _record_session(
+        self,
+        task: str,
+        result: ExecutionResult,
+        *,
+        agent_id: str | None = None,
+    ) -> None:
+        """Record a session summary after a run completes."""
+        status = result.status.upper() if result.status else "UNKNOWN"
+        self._sessions.append(
+            SessionSummary(
+                runId=result.run_id or "",
+                task=task[:80],
+                status=status,
+                agentId=agent_id or "commander-sdk",
+                topology="SINGLE",
+                tokenUsage=result.total_token_usage,
+                durationMs=result.total_duration_ms,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                error=result.error,
+            )
+        )
+        if len(self._sessions) > 1000:
+            self._sessions = self._sessions[-1000:]
+
+    # ------------------------------------------------------------------
+    # System Status & Stats
+    # ------------------------------------------------------------------
+
+    async def get_stats(self) -> MemoryStats:
+        """Get live memory statistics from the server.
+
+        Returns:
+            Memory statistics from the Three-Layer Memory system.
+        """
+        return await self.memory_stats()
+
+    async def get_status(self) -> SystemStatus:
+        """Get current system status, merging server state with local counters."""
+        data = await self._request("GET", "/api/v1/status")
+        status = SystemStatus(**data)
+        # Merge local agent count into subscriber_counts for SDK alignment.
+        if "agents" not in status.subscriber_counts:
+            status.subscriber_counts["agents"] = len(self._agents)
+        return status
+
+    async def get_reliability_stats(self) -> SDKReliabilityStats:
+        """Get reliability statistics from available server endpoints.
+
+        This is a best-effort aggregation for HTTP clients. The TypeScript
+        SDK can read the runtime reliability engine directly; the Python
+        client derives equivalent signals from DLQ, compensation, checkpoint,
+        and health endpoints.
+        """
+        circuit_state = "CLOSED"
+        circuit_failures = 0
+        pending_compensations = 0
+        checkpoint_count = 0
+        dlq_total_entries = 0
+
+        try:
+            dlq_stats = await self.get_dlq_stats()
+            dlq_total_entries = dlq_stats.total_entries
+        except Exception:
+            pass
+
+        try:
+            compensation = await self._request("GET", "/api/v1/compensation")
+            if isinstance(compensation, dict):
+                pending_compensations = int(compensation.get("pending", 0) or 0)
+        except Exception:
+            pass
+
+        try:
+            checkpoints = await self.list_checkpoints()
+            checkpoint_count = checkpoints.count
+        except Exception:
+            pass
+
+        try:
+            health = await self.health_detailed()
+            if isinstance(health, dict):
+                for component in health.get("components", []):
+                    name = component.get("name", "").lower()
+                    if name == "circuit_breaker" and isinstance(
+                        component.get("status"), str
+                    ):
+                        circuit_state = component["status"].upper()
+                    if name == "circuit_breaker" and "failures" in component:
+                        circuit_failures = int(component["failures"])
+        except Exception:
+            pass
+
+        return SDKReliabilityStats(
+            circuitState=circuit_state,
+            circuitFailures=circuit_failures,
+            dlqTotalEntries=dlq_total_entries,
+            pendingCompensations=pending_compensations,
+            checkpointCount=checkpoint_count,
+        )
 
     # ------------------------------------------------------------------
     # Runtime
