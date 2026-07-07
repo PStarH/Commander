@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createGitSnapshot, restoreGitSnapshot, getGitSnapshot, clearGitSnapshot, hasGitSnapshot } from '../../src/atr/gitSnapshot';
+import {
+  createGitSnapshot,
+  restoreGitSnapshot,
+  getGitSnapshot,
+  clearGitSnapshot,
+  hasGitSnapshot,
+} from '../../src/atr/gitSnapshot';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import random
 from typing import Any
 
 import httpx
@@ -16,13 +18,103 @@ from ._exceptions import (
 )
 from ._streaming import CommanderSSEStream
 from ._types import (
+    ActiveRuns,
+    AgentState,
+    ApiKeyCreateResult,
+    ApiKeyList,
+    AppSettings,
+    ApprovalAuditLog,
+    ApprovalMode,
+    ApprovalModeUpdated,
+    ApprovalPatternRemoved,
+    ApprovalPolicyResult,
+    AuditLogs,
+    AuditSourceInfo,
+    AuditStats,
+    AuthTokens,
+    BusTopics,
+    ChatHistory,
+    ChatResponse,
+    ChatStreamEvent,
+    Checkpoint,
+    CheckpointList,
+    ConflictDetectionResult,
+    ConflictSummary,
+    CostBudget,
+    CostDashboardResponse,
+    CostRecords,
+    CostTimeRange,
+    CostReport,
+    CostSummary,
+    DlqEntry,
+    DlqReplayResult,
+    DlqStats,
+    DocumentList,
+    EvalCompareResult,
+    EvalDataset,
+    EvalDatasetList,
+    EvalJudgeResult,
+    EvalStatus,
+    EvalWilcoxonResult,
     ExecutionResult,
     HealthStatus,
+    KnowledgeDocument,
+    KnowledgeSearchResults,
+    KnowledgeStats,
+    MemoryDomain,
+    MemoryDomainList,
+    MemoryIndexEntry,
+    MemoryIndexReconcileResult,
     MemoryQueryResult,
     MemoryStats,
     MemoryWriteResult,
+    Mission,
+    MissionConfidenceAlerts,
+    NamespacedMemoryAcl,
+    NamespacedMemoryAudit,
+    NamespacedMemoryItem,
+    NamespacedMemorySearch,
+    NamespacedMemoryWriteResult,
+    OIDCAuthResult,
+    OIDCConfig,
+    OIDCSettingsSaved,
+    OIDCSettingsUpdate,
+    OutgoingWebhook,
+    OutgoingWebhookCreate,
+    OutgoingWebhookDeliveries,
+    OutgoingWebhookList,
+    OutgoingWebhookStats,
     PlanResult,
+    ProjectLogEntry,
+    ProjectMemoryItem,
+    RagQueryResult,
+    ReactiveConflictResult,
+    ReportingStatus,
+    ReplayResult,
+    ResumeResponse,
+    RollbackResponse,
+    SecurityPostureHistory,
+    SecurityPostureReport,
+    SecurityPostureSnapshot,
+    SecurityScanResult,
+    SecurityStats,
     SystemStatus,
+    TeamAgentList,
+    TeamReassignResult,
+    TeamStatus,
+    TeamWorkList,
+    TimelineView,
+    ToolPolicy,
+    TraceList,
+    TraceTimelineNode,
+    UnifiedApprovalConfig,
+    User,
+    UserList,
+    WorkflowDefinition,
+    WorkflowExecution,
+    WorkflowList,
+    ConfidenceReport,
+    ConfidenceThresholdInfo,
 )
 
 _DEFAULT_BASE_URL = "http://localhost:3001"
@@ -70,7 +162,7 @@ class CommanderClient:
         await self._http.aclose()
 
     # ------------------------------------------------------------------
-    # Execution
+    # Execution (legacy / v1)
     # ------------------------------------------------------------------
 
     async def run(
@@ -144,6 +236,268 @@ class CommanderClient:
             An async iterable of ``SSEEvent`` objects.
         """
         return CommanderSSEStream(self._http, session_id, self._base_url)
+
+    # ------------------------------------------------------------------
+    # Runtime
+    # ------------------------------------------------------------------
+
+    async def runtime_execute(
+        self,
+        agent_id: str,
+        goal: str,
+        *,
+        project_id: str = "default",
+        mission_id: str | None = None,
+        context_data: dict[str, Any] | None = None,
+        available_tools: list[str] | None = None,
+        token_budget: int = 8000,
+    ) -> ExecutionResult:
+        """Execute an agent task via the runtime API.
+
+        Args:
+            agent_id: Agent identifier.
+            goal: Task description.
+            project_id: Project identifier.
+            mission_id: Optional mission identifier.
+            context_data: Additional context key/value data.
+            available_tools: Tool names available to the agent.
+            token_budget: Maximum tokens for the run.
+
+        Returns:
+            Execution result.
+        """
+        body: dict[str, Any] = {
+            "agentId": agent_id,
+            "goal": goal,
+            "projectId": project_id,
+            "contextData": context_data or {},
+            "availableTools": available_tools or [],
+            "tokenBudget": token_budget,
+        }
+        if mission_id is not None:
+            body["missionId"] = mission_id
+        data = await self._request("POST", "/api/runtime/execute", json=body)
+        return ExecutionResult(**data)
+
+    async def runtime_route(
+        self,
+        goal: str,
+        *,
+        token_budget: int = 4000,
+        available_tools: list[str] | None = None,
+        context_data: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Preview the routing decision for a goal.
+
+        Args:
+            goal: Task description.
+            token_budget: Token budget hint.
+            available_tools: Tool names available.
+            context_data: Additional context.
+
+        Returns:
+            Routing decision dictionary.
+        """
+        body: dict[str, Any] = {
+            "goal": goal,
+            "tokenBudget": token_budget,
+            "availableTools": available_tools or [],
+            "contextData": context_data or {},
+        }
+        return await self._request("POST", "/api/runtime/route", json=body)
+
+    async def list_traces(
+        self,
+        *,
+        agent_id: str | None = None,
+        limit: int = 50,
+    ) -> TraceList:
+        """List execution traces.
+
+        Args:
+            agent_id: Optional agent filter.
+            limit: Maximum traces to return.
+
+        Returns:
+            List of trace records.
+        """
+        params: dict[str, Any] = {"limit": limit}
+        if agent_id is not None:
+            params["agentId"] = agent_id
+        data = await self._request("GET", "/api/runtime/traces", params=params)
+        return TraceList(**data)
+
+    async def get_trace(self, run_id: str) -> dict[str, Any]:
+        """Get a specific execution trace.
+
+        Args:
+            run_id: Run identifier.
+
+        Returns:
+            Trace detail dictionary.
+        """
+        return await self._request("GET", f"/api/runtime/traces/{run_id}")
+
+    async def trace_summary(self) -> dict[str, Any]:
+        """Get trace summary statistics."""
+        return await self._request("GET", "/api/runtime/traces/summary")
+
+    async def bus_topics(self) -> BusTopics:
+        """Get active message bus topics and subscriber counts."""
+        data = await self._request("GET", "/api/runtime/bus/topics")
+        return BusTopics(**data)
+
+    async def learner_stats(self) -> dict[str, Any]:
+        """Get meta-learner statistics and suggestions."""
+        return await self._request("GET", "/api/runtime/learner/stats")
+
+    # ------------------------------------------------------------------
+    # Runtime control
+    # ------------------------------------------------------------------
+
+    async def pause_run(self, run_id: str) -> dict[str, Any]:
+        """Signal a running execution to pause.
+
+        Args:
+            run_id: Run identifier.
+
+        Returns:
+            Control response dictionary.
+        """
+        return await self._request("POST", "/api/runtime/pause", json={"runId": run_id})
+
+    async def resume_run(
+        self,
+        run_id: str,
+        *,
+        user_instructions: str | None = None,
+    ) -> ResumeResponse:
+        """Resume a paused execution.
+
+        Args:
+            run_id: Run identifier.
+            user_instructions: Optional instructions to inject on resume.
+
+        Returns:
+            Resume response.
+        """
+        body: dict[str, Any] = {"runId": run_id}
+        if user_instructions is not None:
+            body["userInstructions"] = user_instructions
+        data = await self._request("POST", "/api/runtime/resume", json=body)
+        return ResumeResponse(**data)
+
+    async def rollback_run(
+        self,
+        run_id: str,
+        step_number: int,
+        *,
+        user_instructions: str | None = None,
+    ) -> RollbackResponse:
+        """Rollback a run to a specific step and re-execute.
+
+        Args:
+            run_id: Run identifier.
+            step_number: Target step number.
+            user_instructions: Optional correction instructions.
+
+        Returns:
+            Rollback response.
+        """
+        body: dict[str, Any] = {"runId": run_id, "stepNumber": step_number}
+        if user_instructions is not None:
+            body["userInstructions"] = user_instructions
+        data = await self._request("POST", "/api/runtime/rollback", json=body)
+        return RollbackResponse(**data)
+
+    async def active_runs(self) -> ActiveRuns:
+        """List currently active runs."""
+        data = await self._request("GET", "/api/runtime/active")
+        return ActiveRuns(**data)
+
+    # ------------------------------------------------------------------
+    # Chat
+    # ------------------------------------------------------------------
+
+    async def chat(
+        self,
+        message: str,
+        *,
+        agent_id: str | None = None,
+        mission_id: str | None = None,
+        project_id: str | None = None,
+    ) -> ChatResponse:
+        """Send a chat message to an agent.
+
+        Args:
+            message: User message.
+            agent_id: Optional agent identifier.
+            mission_id: Optional mission identifier.
+            project_id: Optional project identifier.
+
+        Returns:
+            Chat response.
+        """
+        body: dict[str, Any] = {"message": message}
+        if agent_id is not None:
+            body["agentId"] = agent_id
+        if mission_id is not None:
+            body["missionId"] = mission_id
+        if project_id is not None:
+            body["projectId"] = project_id
+        data = await self._request("POST", "/api/chat", json=body)
+        return ChatResponse(**data)
+
+    async def chat_stream(
+        self,
+        message: str,
+        *,
+        agent_id: str | None = None,
+        mission_id: str | None = None,
+        project_id: str | None = None,
+    ) -> "_ChatSSEStream":
+        """Send a streaming chat message to an agent.
+
+        Returns:
+            An async iterable of ``ChatStreamEvent`` objects.
+        """
+        params = {"stream": "true"}
+        body: dict[str, Any] = {"message": message}
+        if agent_id is not None:
+            body["agentId"] = agent_id
+        if mission_id is not None:
+            body["missionId"] = mission_id
+        if project_id is not None:
+            body["projectId"] = project_id
+        return _ChatSSEStream(self._http, "/api/chat", params, body)
+
+    async def chat_history(
+        self,
+        *,
+        project_id: str | None = None,
+    ) -> ChatHistory:
+        """Retrieve chat history.
+
+        Args:
+            project_id: Optional project identifier.
+
+        Returns:
+            Chat history.
+        """
+        params: dict[str, Any] = {}
+        if project_id is not None:
+            params["projectId"] = project_id
+        data = await self._request("GET", "/api/chat/history", params=params)
+        # Server returns the list directly under a project key; normalize.
+        if isinstance(data, list):
+            return ChatHistory(
+                project_id=project_id or "",
+                messages=data,
+            )
+        return ChatHistory(
+            project_id=data.get("projectId", project_id or ""),
+            messages=data.get("messages", data),
+        )
 
     # ------------------------------------------------------------------
     # Memory
@@ -221,6 +575,275 @@ class CommanderClient:
         return MemoryStats(**data)
 
     # ------------------------------------------------------------------
+    # Governance
+    # ------------------------------------------------------------------
+
+    async def create_checkpoint(
+        self,
+        mission_id: str,
+        task_id: str,
+        agent_id: str,
+        task_description: str,
+        *,
+        agent_role: str = "agent",
+        governance_mode: str = "SINGLE",
+        risk_score: float = 0.0,
+        risk_level: str = "LOW",
+        risk_factors: list[dict[str, Any]] | None = None,
+        approvers: list[str] | None = None,
+        timeout: int | None = None,
+    ) -> Checkpoint:
+        """Create a governance checkpoint.
+
+        Args:
+            mission_id: Mission identifier.
+            task_id: Task identifier.
+            agent_id: Agent identifier.
+            task_description: Description of the task requiring approval.
+            agent_role: Role of the agent.
+            governance_mode: SINGLE, MULTI, or AUTO.
+            risk_score: Numeric risk score.
+            risk_level: LOW, MEDIUM, HIGH, or CRITICAL.
+            risk_factors: List of risk factor dictionaries.
+            approvers: List of approver identifiers.
+            timeout: Optional timeout in seconds.
+
+        Returns:
+            Created checkpoint.
+        """
+        body: dict[str, Any] = {
+            "missionId": mission_id,
+            "taskId": task_id,
+            "agentId": agent_id,
+            "agentRole": agent_role,
+            "taskDescription": task_description,
+            "governanceMode": governance_mode,
+            "riskScore": risk_score,
+            "riskLevel": risk_level,
+            "riskFactors": risk_factors or [],
+            "approvers": approvers or [],
+        }
+        if timeout is not None:
+            body["timeout"] = timeout
+        data = await self._request("POST", "/api/governance/checkpoints", json=body)
+        return Checkpoint(**data)
+
+    async def get_checkpoint(self, checkpoint_id: str) -> Checkpoint:
+        """Get a checkpoint by id."""
+        data = await self._request(
+            "GET", f"/api/governance/checkpoints/{checkpoint_id}"
+        )
+        return Checkpoint(**data)
+
+    async def list_checkpoints(
+        self,
+        *,
+        mission_id: str | None = None,
+        approver_id: str | None = None,
+        status: str | None = None,
+    ) -> CheckpointList:
+        """List governance checkpoints with optional filters."""
+        params: dict[str, Any] = {}
+        if mission_id is not None:
+            params["missionId"] = mission_id
+        if approver_id is not None:
+            params["approverId"] = approver_id
+        if status is not None:
+            params["status"] = status
+        data = await self._request("GET", "/api/governance/checkpoints", params=params)
+        return CheckpointList(**data)
+
+    async def approve_checkpoint(
+        self,
+        checkpoint_id: str,
+        reviewer_id: str,
+        *,
+        reason: str | None = None,
+        conditions: list[dict[str, Any]] | None = None,
+    ) -> Checkpoint:
+        """Approve a checkpoint."""
+        body: dict[str, Any] = {"reviewerId": reviewer_id}
+        if reason is not None:
+            body["reason"] = reason
+        if conditions is not None:
+            body["conditions"] = conditions
+        data = await self._request(
+            "POST",
+            f"/api/governance/checkpoints/{checkpoint_id}/approve",
+            json=body,
+        )
+        return Checkpoint(**data)
+
+    async def reject_checkpoint(
+        self,
+        checkpoint_id: str,
+        reviewer_id: str,
+        reason: str,
+    ) -> Checkpoint:
+        """Reject a checkpoint."""
+        data = await self._request(
+            "POST",
+            f"/api/governance/checkpoints/{checkpoint_id}/reject",
+            json={"reviewerId": reviewer_id, "reason": reason},
+        )
+        return Checkpoint(**data)
+
+    # ------------------------------------------------------------------
+    # Cost
+    # ------------------------------------------------------------------
+
+    async def cost_summary(self) -> CostSummary:
+        """Get aggregated cost summary."""
+        data = await self._request("GET", "/api/cost/summary")
+        return CostSummary(**data)
+
+    async def cost_records(
+        self,
+        *,
+        run_id: str | None = None,
+        limit: int = 50,
+    ) -> CostRecords:
+        """Get recent LLM cost records.
+
+        Args:
+            run_id: Optional run filter.
+            limit: Maximum records (max 500).
+
+        Returns:
+            Cost records.
+        """
+        params: dict[str, Any] = {"limit": min(limit, 500)}
+        if run_id is not None:
+            params["runId"] = run_id
+        data = await self._request("GET", "/api/cost/records", params=params)
+        return CostRecords(**data)
+
+    async def cost_budget(self) -> CostBudget:
+        """Get monthly budget status and alerts."""
+        data = await self._request("GET", "/api/cost/budget")
+        return CostBudget(**data)
+
+    async def cost_dashboard(
+        self, *, time_range: CostTimeRange = "7d"
+    ) -> CostDashboardResponse:
+        """Get comprehensive cost analytics dashboard.
+
+        Args:
+            time_range: Time window for aggregation.
+
+        Returns:
+            Dashboard with summary, per-model/tool/user breakdown, and trend.
+        """
+        data = await self._request(
+            "GET", "/api/cost/dashboard", params={"timeRange": time_range}
+        )
+        return CostDashboardResponse(**data)
+
+    # ------------------------------------------------------------------
+    # Knowledge Base
+    # ------------------------------------------------------------------
+
+    async def upload_document(
+        self,
+        content: str,
+        name: str,
+        type: str,
+        *,
+        tags: list[str] | None = None,
+    ) -> KnowledgeDocument:
+        """Upload and index a document in the knowledge base.
+
+        Args:
+            content: Raw document content.
+            name: Document name.
+            type: Document type (e.g., markdown, text, json).
+            tags: Optional tags.
+
+        Returns:
+            Created document.
+        """
+        body: dict[str, Any] = {
+            "content": content,
+            "name": name,
+            "type": type,
+        }
+        if tags is not None:
+            body["tags"] = tags
+        data = await self._request("POST", "/api/knowledge/documents", json=body)
+        return KnowledgeDocument(**data.get("document", data))
+
+    async def list_documents(
+        self,
+        *,
+        page: int = 1,
+        limit: int = 20,
+    ) -> DocumentList:
+        """List knowledge base documents (paginated)."""
+        params = {"page": page, "limit": limit}
+        data = await self._request("GET", "/api/knowledge/documents", params=params)
+        return DocumentList(**data)
+
+    async def get_document(self, document_id: str) -> KnowledgeDocument:
+        """Get a single knowledge document."""
+        data = await self._request("GET", f"/api/knowledge/documents/{document_id}")
+        return KnowledgeDocument(**data)
+
+    async def delete_document(self, document_id: str) -> None:
+        """Delete a knowledge document and its chunks."""
+        await self._request("DELETE", f"/api/knowledge/documents/{document_id}")
+
+    async def search_knowledge(
+        self,
+        query: str,
+        *,
+        top_k: int = 10,
+        doc_ids: list[str] | None = None,
+    ) -> KnowledgeSearchResults:
+        """Semantic search over the knowledge base.
+
+        Args:
+            query: Search query.
+            top_k: Number of top results.
+            doc_ids: Optional document ids to restrict search.
+
+        Returns:
+            Search results.
+        """
+        body: dict[str, Any] = {"query": query, "topK": top_k}
+        if doc_ids is not None:
+            body["docIds"] = doc_ids
+        data = await self._request("POST", "/api/knowledge/search", json=body)
+        return KnowledgeSearchResults(**data)
+
+    async def rag_query(
+        self,
+        query: str,
+        *,
+        top_k: int = 10,
+        doc_ids: list[str] | None = None,
+    ) -> RagQueryResult:
+        """Run a RAG query (search + context string).
+
+        Args:
+            query: Query string.
+            top_k: Number of top chunks to retrieve.
+            doc_ids: Optional document ids to restrict search.
+
+        Returns:
+            RAG query result with context string.
+        """
+        body: dict[str, Any] = {"query": query, "topK": top_k}
+        if doc_ids is not None:
+            body["docIds"] = doc_ids
+        data = await self._request("POST", "/api/knowledge/query", json=body)
+        return RagQueryResult(**data)
+
+    async def knowledge_stats(self) -> KnowledgeStats:
+        """Get knowledge base aggregate statistics."""
+        data = await self._request("GET", "/api/knowledge/stats")
+        return KnowledgeStats(**data)
+
+    # ------------------------------------------------------------------
     # Monitoring
     # ------------------------------------------------------------------
 
@@ -241,6 +864,10 @@ class CommanderClient:
             DLQ size, checkpoint staleness, etc.
         """
         return await self._request("GET", "/health/detailed")
+
+    async def readiness(self) -> dict[str, Any]:
+        """Readiness probe."""
+        return await self._request("GET", "/ready")
 
     async def system_status(self) -> SystemStatus:
         """System status snapshot.
@@ -265,6 +892,1094 @@ class CommanderClient:
         return response.text
 
     # ------------------------------------------------------------------
+    # Projects
+    # ------------------------------------------------------------------
+
+    async def list_projects(self) -> list[dict[str, Any]]:
+        """List all projects."""
+        data = await self._request("GET", "/projects")
+        return data if isinstance(data, list) else []
+
+    async def get_project_war_room(self, project_id: str) -> dict[str, Any]:
+        """Get the war-room snapshot for a project."""
+        return await self._request("GET", f"/projects/{project_id}/war-room")
+
+    async def list_project_agents(self, project_id: str) -> list[dict[str, Any]]:
+        """List agents belonging to a project."""
+        data = await self._request("GET", f"/projects/{project_id}/agents")
+        return data if isinstance(data, list) else []
+
+    async def get_agent_state(self, project_id: str, agent_id: str) -> AgentState:
+        """Get persisted state for a project agent."""
+        data = await self._request(
+            "GET", f"/projects/{project_id}/agents/{agent_id}/state"
+        )
+        return AgentState(**data)
+
+    async def update_agent_state(
+        self,
+        project_id: str,
+        agent_id: str,
+        *,
+        summary: str | None = None,
+        preferences: str | None = None,
+        tags: list[str] | None = None,
+    ) -> AgentState:
+        """Update persisted state for a project agent."""
+        body: dict[str, Any] = {}
+        if summary is not None:
+            body["summary"] = summary
+        if preferences is not None:
+            body["preferences"] = preferences
+        if tags is not None:
+            body["tags"] = tags
+        data = await self._request(
+            "PATCH", f"/projects/{project_id}/agents/{agent_id}/state", json=body
+        )
+        return AgentState(**data)
+
+    async def get_run_context(
+        self,
+        project_id: str,
+        *,
+        agent_id: str | None = None,
+        mission_id: str | None = None,
+        memory_limit: int | None = None,
+        intent: str | None = None,
+        run_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Build a run context for a project (missions, memory, roster)."""
+        params: dict[str, Any] = {}
+        if agent_id is not None:
+            params["agentId"] = agent_id
+        if mission_id is not None:
+            params["missionId"] = mission_id
+        if memory_limit is not None:
+            params["memoryLimit"] = memory_limit
+        if intent is not None:
+            params["intent"] = intent
+        if run_id is not None:
+            params["runId"] = run_id
+        return await self._request(
+            "GET", f"/projects/{project_id}/run-context", params=params
+        )
+
+    async def list_project_memory(
+        self, project_id: str, *, limit: int = 24
+    ) -> list[ProjectMemoryItem]:
+        """List project-scoped memory items."""
+        data = await self._request(
+            "GET", f"/projects/{project_id}/memory", params={"limit": limit}
+        )
+        items = data if isinstance(data, list) else []
+        return [ProjectMemoryItem(**item) for item in items]
+
+    async def search_project_memory(
+        self,
+        project_id: str,
+        *,
+        query: str | None = None,
+        kind: str | None = None,
+        tags: list[str] | None = None,
+        limit: int | None = None,
+    ) -> list[ProjectMemoryItem]:
+        """Search project-scoped memory."""
+        params: dict[str, Any] = {}
+        if query is not None:
+            params["q"] = query
+        if kind is not None:
+            params["kind"] = kind
+        if tags is not None:
+            params["tags"] = ",".join(tags)
+        if limit is not None:
+            params["limit"] = limit
+        data = await self._request(
+            "GET", f"/projects/{project_id}/memory/search", params=params
+        )
+        items = data if isinstance(data, list) else []
+        return [ProjectMemoryItem(**item) for item in items]
+
+    async def create_project_memory(
+        self,
+        project_id: str,
+        title: str,
+        content: str,
+        *,
+        kind: str = "SUMMARY",
+        mission_id: str | None = None,
+        agent_id: str | None = None,
+        tags: list[str] | None = None,
+    ) -> ProjectMemoryItem:
+        """Append an item to project memory."""
+        body: dict[str, Any] = {
+            "title": title,
+            "content": content,
+            "kind": kind,
+        }
+        if mission_id is not None:
+            body["missionId"] = mission_id
+        if agent_id is not None:
+            body["agentId"] = agent_id
+        if tags is not None:
+            body["tags"] = tags
+        data = await self._request("POST", f"/projects/{project_id}/memory", json=body)
+        return ProjectMemoryItem(**data)
+
+    async def create_mission(
+        self,
+        project_id: str,
+        title: str,
+        assigned_agent_id: str,
+        *,
+        objective: str | None = None,
+        priority: str = "MEDIUM",
+        risk_level: str | None = None,
+        governance_mode: str | None = None,
+    ) -> Mission:
+        """Create a mission inside a project."""
+        body: dict[str, Any] = {
+            "title": title,
+            "assignedAgentId": assigned_agent_id,
+            "priority": priority,
+        }
+        if objective is not None:
+            body["objective"] = objective
+        if risk_level is not None:
+            body["riskLevel"] = risk_level
+        if governance_mode is not None:
+            body["governanceMode"] = governance_mode
+        data = await self._request(
+            "POST", f"/projects/{project_id}/missions", json=body
+        )
+        return Mission(**data)
+
+    async def update_mission(
+        self,
+        mission_id: str,
+        *,
+        status: str | None = None,
+        priority: str | None = None,
+        assigned_agent_id: str | None = None,
+        title: str | None = None,
+        objective: str | None = None,
+        risk_level: str | None = None,
+        governance_mode: str | None = None,
+    ) -> Mission:
+        """Update a mission."""
+        body: dict[str, Any] = {}
+        if status is not None:
+            body["status"] = status
+        if priority is not None:
+            body["priority"] = priority
+        if assigned_agent_id is not None:
+            body["assignedAgentId"] = assigned_agent_id
+        if title is not None:
+            body["title"] = title
+        if objective is not None:
+            body["objective"] = objective
+        if risk_level is not None:
+            body["riskLevel"] = risk_level
+        if governance_mode is not None:
+            body["governanceMode"] = governance_mode
+        data = await self._request("PATCH", f"/missions/{mission_id}", json=body)
+        return Mission(**data)
+
+    async def approve_mission(
+        self,
+        mission_id: str,
+        *,
+        approver: str | None = None,
+        comment: str | None = None,
+    ) -> Mission:
+        """Explicitly approve a HIGH/CRITICAL mission in MANUAL governance mode."""
+        body: dict[str, Any] = {}
+        if approver is not None:
+            body["approver"] = approver
+        if comment is not None:
+            body["comment"] = comment
+        data = await self._request("POST", f"/missions/{mission_id}/approve", json=body)
+        return Mission(**data)
+
+    async def create_mission_log(
+        self, mission_id: str, message: str, *, level: str = "INFO"
+    ) -> ProjectLogEntry:
+        """Create a log entry for a mission."""
+        data = await self._request(
+            "POST",
+            f"/missions/{mission_id}/logs",
+            json={"message": message, "level": level},
+        )
+        return ProjectLogEntry(**data)
+
+    async def get_project_governance_stats(self, project_id: str) -> dict[str, Any]:
+        """Get governance statistics for a project."""
+        return await self._request("GET", f"/projects/{project_id}/governance/stats")
+
+    async def get_project_governance_alerts(
+        self, project_id: str
+    ) -> list[dict[str, Any]]:
+        """Get governance alerts for a project."""
+        data = await self._request("GET", f"/projects/{project_id}/governance/alerts")
+        return data if isinstance(data, list) else []
+
+    async def get_project_governance_weekly_report(self, project_id: str) -> str:
+        """Get the weekly governance report as Markdown text."""
+        response = await self._http.get(
+            f"/projects/{project_id}/governance/weekly-report",
+            headers={"Accept": "text/markdown"},
+        )
+        response.raise_for_status()
+        return response.text
+
+    # ------------------------------------------------------------------
+    # Workflows
+    # ------------------------------------------------------------------
+
+    async def list_workflows(self) -> WorkflowList:
+        """List all stored workflows (summary view)."""
+        data = await self._request("GET", "/api/workflows")
+        return WorkflowList(**data)
+
+    async def create_workflow(
+        self,
+        name: str,
+        nodes: list[dict[str, Any]],
+        edges: list[dict[str, Any]],
+        *,
+        description: str | None = None,
+    ) -> WorkflowDefinition:
+        """Create a new workflow definition."""
+        body: dict[str, Any] = {
+            "name": name,
+            "nodes": nodes,
+            "edges": edges,
+        }
+        if description is not None:
+            body["description"] = description
+        data = await self._request("POST", "/api/workflows", json=body)
+        return WorkflowDefinition(**data.get("workflow", data))
+
+    async def get_workflow(self, workflow_id: str) -> WorkflowDefinition:
+        """Get a workflow definition by id."""
+        data = await self._request("GET", f"/api/workflows/{workflow_id}")
+        return WorkflowDefinition(**data.get("workflow", data))
+
+    async def update_workflow(
+        self,
+        workflow_id: str,
+        name: str,
+        nodes: list[dict[str, Any]],
+        edges: list[dict[str, Any]],
+        *,
+        description: str | None = None,
+    ) -> WorkflowDefinition:
+        """Update an existing workflow definition."""
+        body: dict[str, Any] = {
+            "name": name,
+            "nodes": nodes,
+            "edges": edges,
+        }
+        if description is not None:
+            body["description"] = description
+        data = await self._request("PUT", f"/api/workflows/{workflow_id}", json=body)
+        return WorkflowDefinition(**data.get("workflow", data))
+
+    async def delete_workflow(self, workflow_id: str) -> dict[str, Any]:
+        """Delete a workflow definition."""
+        return await self._request("DELETE", f"/api/workflows/{workflow_id}")
+
+    async def execute_workflow(self, workflow_id: str) -> WorkflowExecution:
+        """Preview-execute a workflow and return the generated pipeline."""
+        data = await self._request("POST", f"/api/workflows/{workflow_id}/execute")
+        return WorkflowExecution(**data)
+
+    # ------------------------------------------------------------------
+    # Audit Logs
+    # ------------------------------------------------------------------
+
+    async def list_audit_logs(
+        self,
+        *,
+        source: str | None = None,
+        severity: str | None = None,
+        event_type: str | None = None,
+        start_time: str | None = None,
+        end_time: str | None = None,
+        user_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> AuditLogs:
+        """Query unified audit logs with filters and pagination."""
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if source is not None:
+            params["source"] = source
+        if severity is not None:
+            params["severity"] = severity
+        if event_type is not None:
+            params["eventType"] = event_type
+        if start_time is not None:
+            params["startTime"] = start_time
+        if end_time is not None:
+            params["endTime"] = end_time
+        if user_id is not None:
+            params["userId"] = user_id
+        data = await self._request("GET", "/api/audit/logs", params=params)
+        return AuditLogs(**data)
+
+    async def get_audit_stats(self) -> AuditStats:
+        """Get aggregate audit log statistics."""
+        data = await self._request("GET", "/api/audit/stats")
+        return AuditStats(**data)
+
+    async def get_audit_sources(self) -> list[AuditSourceInfo]:
+        """Get per-source availability and recency."""
+        data = await self._request("GET", "/api/audit/sources")
+        items = data if isinstance(data, list) else []
+        return [AuditSourceInfo(**item) for item in items]
+
+    async def export_audit_logs(
+        self,
+        *,
+        source: str | None = None,
+        severity: str | None = None,
+        event_type: str | None = None,
+        start_time: str | None = None,
+        end_time: str | None = None,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Export audit logs with the same filters (no pagination)."""
+        params: dict[str, Any] = {}
+        if source is not None:
+            params["source"] = source
+        if severity is not None:
+            params["severity"] = severity
+        if event_type is not None:
+            params["eventType"] = event_type
+        if start_time is not None:
+            params["startTime"] = start_time
+        if end_time is not None:
+            params["endTime"] = end_time
+        if user_id is not None:
+            params["userId"] = user_id
+        return await self._request("GET", "/api/audit/logs/export", params=params)
+
+    # ------------------------------------------------------------------
+    # API Keys
+    # ------------------------------------------------------------------
+
+    async def list_api_keys(self) -> ApiKeyList:
+        """List API key records (admin only, no secrets)."""
+        data = await self._request("GET", "/api/admin/api-keys")
+        return ApiKeyList(**data)
+
+    async def create_api_key(
+        self, name: str, scopes: list[str] | None = None
+    ) -> ApiKeyCreateResult:
+        """Create a new API key (admin only)."""
+        body: dict[str, Any] = {"name": name}
+        if scopes is not None:
+            body["scopes"] = scopes
+        data = await self._request("POST", "/api/admin/api-keys", json=body)
+        return ApiKeyCreateResult(**data)
+
+    async def revoke_api_key(self, key_id: str) -> dict[str, Any]:
+        """Revoke an API key (admin only)."""
+        return await self._request("DELETE", f"/api/admin/api-keys/{key_id}")
+
+    # ------------------------------------------------------------------
+    # Settings
+    # ------------------------------------------------------------------
+
+    async def get_settings(self) -> AppSettings:
+        """Read current global settings."""
+        data = await self._request("GET", "/api/settings")
+        return AppSettings(**data.get("settings", data))
+
+    async def update_settings(self, settings: AppSettings) -> AppSettings:
+        """Update global settings (admin only)."""
+        data = await self._request(
+            "PUT",
+            "/api/settings",
+            json=settings.model_dump(by_alias=False, exclude_none=True),
+        )
+        return AppSettings(**data.get("settings", data))
+
+    # ------------------------------------------------------------------
+    # Security Posture
+    # ------------------------------------------------------------------
+
+    async def get_security_posture(self) -> SecurityPostureReport:
+        """Get the latest full compliance report."""
+        data = await self._request("GET", "/api/security/posture")
+        return SecurityPostureReport(**data)
+
+    async def get_security_posture_history(
+        self, *, limit: int = 50
+    ) -> SecurityPostureHistory:
+        """Get security posture snapshot history."""
+        data = await self._request(
+            "GET", "/api/security/posture/history", params={"limit": limit}
+        )
+        return SecurityPostureHistory(**data)
+
+    async def get_security_posture_snapshot(
+        self, snapshot_id: str
+    ) -> SecurityPostureSnapshot:
+        """Get a specific posture snapshot by id."""
+        data = await self._request("GET", f"/api/security/posture/{snapshot_id}")
+        return SecurityPostureSnapshot(**data)
+
+    # ------------------------------------------------------------------
+    # Auth
+    # ------------------------------------------------------------------
+
+    async def get_current_user(self) -> User:
+        """Get the currently authenticated user."""
+        data = await self._request("GET", "/api/auth/me")
+        return User(**data.get("user", data))
+
+    async def list_users(self) -> UserList:
+        """List all users (admin only)."""
+        data = await self._request("GET", "/api/auth/users")
+        return UserList(**data)
+
+    async def refresh_auth_token(self, refresh_token: str) -> AuthTokens:
+        """Refresh access and refresh tokens."""
+        data = await self._request(
+            "POST", "/api/auth/refresh", json={"refreshToken": refresh_token}
+        )
+        return AuthTokens(**data)
+
+    async def get_oidc_config(self) -> OIDCConfig:
+        """Get public OIDC SSO configuration."""
+        data = await self._request("GET", "/api/auth/oidc/config")
+        return OIDCConfig(**data)
+
+    async def exchange_oidc_token(self, id_token: str) -> OIDCAuthResult:
+        """Exchange an OIDC id_token for Commander JWT credentials.
+
+        Args:
+            id_token: Verified OIDC ID token.
+
+        Returns:
+            Commander access token, refresh token, and user.
+        """
+        data = await self._request(
+            "POST", "/api/auth/oidc/exchange", json={"idToken": id_token}
+        )
+        return OIDCAuthResult(**data)
+
+    async def get_oidc_settings(self) -> OIDCConfig:
+        """Get persisted OIDC configuration (admin only)."""
+        data = await self._request("GET", "/api/auth/oidc/settings")
+        return OIDCConfig(**data)
+
+    async def update_oidc_settings(
+        self, settings: OIDCSettingsUpdate
+    ) -> OIDCSettingsSaved:
+        """Update persisted OIDC configuration (admin only)."""
+        data = await self._request(
+            "PUT",
+            "/api/auth/oidc/settings",
+            json=settings.model_dump(by_alias=True, exclude_none=True),
+        )
+        return OIDCSettingsSaved(**data)
+
+    # ------------------------------------------------------------------
+    # Reporting
+    # ------------------------------------------------------------------
+
+    async def get_reporting_status(self) -> ReportingStatus:
+        """Get builtin-reporting plugin status."""
+        data = await self._request("GET", "/api/reporting/status")
+        return ReportingStatus(**data)
+
+    async def enable_reporting(self) -> dict[str, Any]:
+        """Enable the builtin-reporting plugin."""
+        return await self._request("POST", "/api/reporting/enable")
+
+    async def disable_reporting(self) -> dict[str, Any]:
+        """Disable the builtin-reporting plugin."""
+        return await self._request("POST", "/api/reporting/disable")
+
+    async def render_report(self, report_config: dict[str, Any]) -> str:
+        """Render a WarRoom HTML report.
+
+        Args:
+            report_config: Report payload including projectName,
+                operationCodename, health, metrics, narrative, etc.
+
+        Returns:
+            HTML report string.
+        """
+        response = await self._http.post(
+            "/api/reporting/render",
+            json=report_config,
+            headers={"Accept": "text/html"},
+        )
+        response.raise_for_status()
+        return response.text
+
+    # ------------------------------------------------------------------
+    # Security Scanner
+    # ------------------------------------------------------------------
+
+    async def get_security_stats(self) -> SecurityStats:
+        """Get content scanner service statistics."""
+        data = await self._request("GET", "/api/security/stats")
+        return SecurityStats(**data)
+
+    async def security_scan(
+        self,
+        content: str,
+        *,
+        content_type: str | None = None,
+    ) -> SecurityScanResult:
+        """Scan content for security threats.
+
+        Args:
+            content: Content to scan.
+            content_type: Optional content type (html, markdown, text, json).
+                When omitted, uses the generic /api/security/scan endpoint.
+
+        Returns:
+            Scan result with threats and sanitized content.
+        """
+        body: dict[str, Any] = {"content": content}
+        if content_type is not None:
+            body["contentType"] = content_type
+        if content_type in ("html", "markdown", "text", "json"):
+            data = await self._request(
+                "POST", f"/api/security/scan/{content_type}", json=body
+            )
+        else:
+            data = await self._request("POST", "/api/security/scan", json=body)
+        return SecurityScanResult(**data)
+
+    # ------------------------------------------------------------------
+    # Confidence
+    # ------------------------------------------------------------------
+
+    async def get_mission_confidence(
+        self, project_id: str, mission_id: str
+    ) -> ConfidenceReport:
+        """Get confidence report for a mission."""
+        data = await self._request(
+            "GET", f"/projects/{project_id}/missions/{mission_id}/confidence"
+        )
+        return ConfidenceReport(**data)
+
+    async def get_agent_confidence(
+        self,
+        project_id: str,
+        agent_id: str,
+        *,
+        mission_id: str | None = None,
+    ) -> ConfidenceReport:
+        """Get confidence report for an agent."""
+        params: dict[str, Any] = {}
+        if mission_id is not None:
+            params["missionId"] = mission_id
+        data = await self._request(
+            "GET",
+            f"/projects/{project_id}/agents/{agent_id}/confidence",
+            params=params,
+        )
+        return ConfidenceReport(**data)
+
+    async def get_mission_confidence_alerts(
+        self, project_id: str, mission_id: str
+    ) -> MissionConfidenceAlerts:
+        """Get low-confidence alerts for a mission."""
+        data = await self._request(
+            "GET", f"/projects/{project_id}/missions/{mission_id}/confidence/alerts"
+        )
+        return MissionConfidenceAlerts(**data)
+
+    async def get_confidence_thresholds(self) -> ConfidenceThresholdInfo:
+        """Get confidence threshold values and descriptions."""
+        data = await self._request("GET", "/api/confidence/thresholds")
+        return ConfidenceThresholdInfo(**data)
+
+    # ------------------------------------------------------------------
+    # Conflict Detection
+    # ------------------------------------------------------------------
+
+    async def proactive_conflict_check(
+        self,
+        project_id: str,
+        agent_id: str,
+        proposed_action: dict[str, Any],
+    ) -> ConflictDetectionResult:
+        """Check whether a proposed action would create a conflict.
+
+        Args:
+            project_id: Project identifier.
+            agent_id: Agent proposing the action.
+            proposed_action: Action payload for conflict detection.
+
+        Returns:
+            Conflict detection result with reasoning.
+        """
+        data = await self._request(
+            "POST",
+            f"/projects/{project_id}/conflict-detection/proactive",
+            json={"agentId": agent_id, "proposedAction": proposed_action},
+        )
+        return ConflictDetectionResult(**data)
+
+    async def reactive_conflict_monitor(
+        self,
+        project_id: str,
+        recent_actions: list[dict[str, Any]],
+    ) -> ReactiveConflictResult:
+        """Run reactive conflict monitoring over recent actions."""
+        data = await self._request(
+            "POST",
+            f"/projects/{project_id}/conflict-detection/reactive",
+            json={"recentActions": recent_actions},
+        )
+        return ReactiveConflictResult(**data)
+
+    async def get_conflict_summary(self, project_id: str) -> ConflictSummary:
+        """Get project-level conflict summary and recommendations."""
+        data = await self._request(
+            "GET", f"/projects/{project_id}/conflict-detection/summary"
+        )
+        return ConflictSummary(**data)
+
+    # ------------------------------------------------------------------
+    # Team / Work Coordinator
+    # ------------------------------------------------------------------
+
+    async def get_team_status(self, run_id: str) -> TeamStatus:
+        """Get aggregate team status for a run."""
+        data = await self._request("GET", f"/api/teams/{run_id}/status")
+        return TeamStatus(**data)
+
+    async def list_team_work(self, run_id: str) -> TeamWorkList:
+        """List work items for a team run."""
+        data = await self._request("GET", f"/api/teams/{run_id}/work")
+        return TeamWorkList(**data)
+
+    async def list_team_agents(self, run_id: str) -> TeamAgentList:
+        """List per-agent workload summaries for a team run."""
+        data = await self._request("GET", f"/api/teams/{run_id}/agents")
+        return TeamAgentList(**data)
+
+    async def reassign_team_work(self, run_id: str, work_id: str) -> TeamReassignResult:
+        """Reassign a work item to a different agent."""
+        data = await self._request(
+            "POST",
+            f"/api/teams/{run_id}/reassign",
+            json={"workId": work_id},
+        )
+        return TeamReassignResult(**data)
+
+    # ------------------------------------------------------------------
+    # Approval Config
+    # ------------------------------------------------------------------
+
+    async def get_approval_config(self) -> UnifiedApprovalConfig:
+        """Get unified approval configuration."""
+        data = await self._request("GET", "/api/approval/config")
+        return UnifiedApprovalConfig(**data)
+
+    async def update_approval_sandbox_mode(
+        self, mode: ApprovalMode
+    ) -> ApprovalModeUpdated:
+        """Update the sandbox approval mode."""
+        data = await self._request(
+            "PUT", "/api/approval/sandbox-mode", json={"mode": mode}
+        )
+        return ApprovalModeUpdated(**data)
+
+    async def add_approval_policy(self, policy: ToolPolicy) -> ApprovalPolicyResult:
+        """Add or replace a tool approval policy."""
+        data = await self._request(
+            "POST",
+            "/api/approval/policy",
+            json=policy.model_dump(by_alias=True, exclude_none=True),
+        )
+        return ApprovalPolicyResult(**data)
+
+    async def update_approval_policy(
+        self, pattern: str, policy: ToolPolicy
+    ) -> ApprovalPolicyResult:
+        """Update an existing tool approval policy."""
+        data = await self._request(
+            "PUT",
+            f"/api/approval/policy/{pattern}",
+            json=policy.model_dump(by_alias=True, exclude_none=True),
+        )
+        return ApprovalPolicyResult(**data)
+
+    async def delete_approval_policy(self, pattern: str) -> ApprovalPatternRemoved:
+        """Remove a custom tool approval policy."""
+        data = await self._request("DELETE", f"/api/approval/policy/{pattern}")
+        return ApprovalPatternRemoved(**data)
+
+    async def get_approval_audit_log(self, *, limit: int = 50) -> ApprovalAuditLog:
+        """Get recent approval decision audit log entries."""
+        data = await self._request(
+            "GET", "/api/approval/audit-log", params={"limit": limit}
+        )
+        return ApprovalAuditLog(**data)
+
+    # ------------------------------------------------------------------
+    # Outgoing Webhooks
+    # ------------------------------------------------------------------
+
+    async def list_outgoing_webhooks(self) -> OutgoingWebhookList:
+        """List configured outgoing webhooks."""
+        data = await self._request("GET", "/api/outgoing-webhooks")
+        return OutgoingWebhookList(**data)
+
+    async def create_outgoing_webhook(
+        self, webhook: OutgoingWebhookCreate
+    ) -> OutgoingWebhook:
+        """Create a new outgoing webhook (admin only)."""
+        data = await self._request(
+            "POST",
+            "/api/outgoing-webhooks",
+            json=webhook.model_dump(by_alias=True, exclude_none=True),
+        )
+        return OutgoingWebhook(**data.get("webhook", data))
+
+    async def get_outgoing_webhook(self, webhook_id: str) -> OutgoingWebhook:
+        """Get a single outgoing webhook configuration."""
+        data = await self._request("GET", f"/api/outgoing-webhooks/{webhook_id}")
+        return OutgoingWebhook(**data.get("webhook", data))
+
+    async def delete_outgoing_webhook(self, webhook_id: str) -> dict[str, Any]:
+        """Delete an outgoing webhook (admin only)."""
+        return await self._request("DELETE", f"/api/outgoing-webhooks/{webhook_id}")
+
+    async def get_outgoing_webhook_stats(self) -> OutgoingWebhookStats:
+        """Get outgoing webhook dispatcher statistics."""
+        data = await self._request("GET", "/api/outgoing-webhooks/stats")
+        return OutgoingWebhookStats(**data)
+
+    async def get_outgoing_webhook_deliveries(
+        self, webhook_id: str, *, limit: int = 50
+    ) -> OutgoingWebhookDeliveries:
+        """Get delivery log for a specific webhook."""
+        data = await self._request(
+            "GET",
+            f"/api/outgoing-webhooks/{webhook_id}/deliveries",
+            params={"limit": limit},
+        )
+        return OutgoingWebhookDeliveries(**data)
+
+    async def get_recent_webhook_deliveries(
+        self, *, limit: int = 50
+    ) -> OutgoingWebhookDeliveries:
+        """Get recent deliveries across all outgoing webhooks."""
+        data = await self._request(
+            "GET",
+            "/api/outgoing-webhooks/deliveries/recent",
+            params={"limit": limit},
+        )
+        return OutgoingWebhookDeliveries(**data)
+
+    # ------------------------------------------------------------------
+    # Observability
+    # ------------------------------------------------------------------
+
+    async def get_trace_timeline(self, run_id: str) -> TimelineView:
+        """Get the high-level timeline view for a run."""
+        data = await self._request(
+            "GET", f"/api/v1/observability/runs/{run_id}/timeline"
+        )
+        return TimelineView(**data)
+
+    async def get_trace_cost_report(self, run_id: str) -> CostReport:
+        """Get the cost report for a run."""
+        data = await self._request("GET", f"/api/v1/observability/runs/{run_id}/cost")
+        return CostReport(**data)
+
+    async def get_trace_span(self, run_id: str, span_id: str) -> TraceTimelineNode:
+        """Get a single span from a run trace."""
+        data = await self._request(
+            "GET", f"/api/v1/observability/runs/{run_id}/spans/{span_id}"
+        )
+        return TraceTimelineNode(**data)
+
+    async def replay_run(
+        self,
+        run_id: str,
+        *,
+        re_execute_llm: bool = False,
+        model_override: str | None = None,
+        only_span_ids: list[str] | None = None,
+    ) -> ReplayResult:
+        """Replay a run from observability data.
+
+        Args:
+            run_id: Run identifier.
+            re_execute_llm: Whether to re-run LLM calls.
+            model_override: Optional model override for replay.
+            only_span_ids: Optional span ids to restrict replay.
+
+        Returns:
+            Replay result with original and replay summaries.
+        """
+        body: dict[str, Any] = {"reExecuteLlm": re_execute_llm}
+        if model_override is not None:
+            body["modelOverride"] = model_override
+        if only_span_ids is not None:
+            body["onlySpanIds"] = only_span_ids
+        data = await self._request(
+            "POST", f"/api/v1/observability/runs/{run_id}/replay", json=body
+        )
+        return ReplayResult(**data)
+
+    # ------------------------------------------------------------------
+    # Namespaced Memory
+    # ------------------------------------------------------------------
+
+    async def write_namespaced_memory(
+        self,
+        namespace: str,
+        key: str,
+        value: str,
+        *,
+        agent_id: str | None = None,
+        project_id: str | None = None,
+        kind: str | None = None,
+        title: str | None = None,
+        tags: list[str] | None = None,
+    ) -> NamespacedMemoryWriteResult:
+        """Write a key/value entry into a namespaced memory store."""
+        body: dict[str, Any] = {"key": key, "value": value}
+        if agent_id is not None:
+            body["agentId"] = agent_id
+        if project_id is not None:
+            body["projectId"] = project_id
+        if kind is not None:
+            body["kind"] = kind
+        if title is not None:
+            body["title"] = title
+        if tags is not None:
+            body["tags"] = tags
+        data = await self._request(
+            "POST", f"/api/namespaced-memory/{namespace}/write", json=body
+        )
+        return NamespacedMemoryWriteResult(**data)
+
+    async def read_namespaced_memory(
+        self, namespace: str, entry_id: str
+    ) -> NamespacedMemoryItem:
+        """Read a single namespaced memory entry by id."""
+        data = await self._request(
+            "GET", f"/api/namespaced-memory/{namespace}/read/{entry_id}"
+        )
+        return NamespacedMemoryItem(**data)
+
+    async def search_namespaced_memory(
+        self,
+        namespace: str,
+        *,
+        query: str = "",
+        agent_id: str | None = None,
+        project_id: str | None = None,
+    ) -> NamespacedMemorySearch:
+        """Search within a namespaced memory store."""
+        params: dict[str, Any] = {"q": query}
+        if agent_id is not None:
+            params["agentId"] = agent_id
+        if project_id is not None:
+            params["projectId"] = project_id
+        data = await self._request(
+            "GET", f"/api/namespaced-memory/{namespace}/search", params=params
+        )
+        return NamespacedMemorySearch(**data)
+
+    async def get_namespaced_memory_stats(self, namespace: str) -> dict[str, Any]:
+        """Get statistics for a namespaced memory store."""
+        return await self._request("GET", f"/api/namespaced-memory/{namespace}/stats")
+
+    async def get_namespaced_memory_audit(
+        self, namespace: str, *, limit: int = 50
+    ) -> NamespacedMemoryAudit:
+        """Get audit log entries for a namespace."""
+        data = await self._request(
+            "GET",
+            f"/api/namespaced-memory/{namespace}/audit",
+            params={"limit": limit},
+        )
+        return NamespacedMemoryAudit(**data)
+
+    async def get_namespaced_memory_acl(self) -> NamespacedMemoryAcl:
+        """Get ACL rules for namespaced memory."""
+        data = await self._request("GET", "/api/namespaced-memory/acl")
+        return NamespacedMemoryAcl(**data)
+
+    # ------------------------------------------------------------------
+    # Memory Index
+    # ------------------------------------------------------------------
+
+    async def list_memory_domains(self, project_id: str) -> MemoryDomainList:
+        """List memory index domains for a project."""
+        data = await self._request(
+            "GET", f"/projects/{project_id}/memory-index/domains"
+        )
+        return MemoryDomainList(domains=data)
+
+    async def create_memory_domain(
+        self, project_id: str, domain: str, *, description: str = ""
+    ) -> MemoryDomain:
+        """Create a memory index domain."""
+        data = await self._request(
+            "POST",
+            f"/projects/{project_id}/memory-index/domains",
+            json={"domain": domain, "description": description},
+        )
+        return MemoryDomain(**data)
+
+    async def get_memory_domain(self, project_id: str, domain: str) -> MemoryDomain:
+        """Read a memory index domain."""
+        data = await self._request(
+            "GET", f"/projects/{project_id}/memory-index/domains/{domain}"
+        )
+        return MemoryDomain(**data)
+
+    async def add_memory_index_entry(
+        self,
+        project_id: str,
+        domain: str,
+        type: str,
+        title: str,
+        content: str,
+        *,
+        tags: list[str] | None = None,
+    ) -> MemoryIndexEntry:
+        """Add an entry to a memory index domain."""
+        body: dict[str, Any] = {
+            "type": type,
+            "title": title,
+            "content": content,
+        }
+        if tags is not None:
+            body["tags"] = tags
+        data = await self._request(
+            "POST",
+            f"/projects/{project_id}/memory-index/domains/{domain}/entries",
+            json=body,
+        )
+        return MemoryIndexEntry(**data)
+
+    async def reconcile_memory_index(
+        self, project_id: str
+    ) -> MemoryIndexReconcileResult:
+        """Reconcile the memory index for a project."""
+        data = await self._request(
+            "POST", f"/projects/{project_id}/memory-index/reconcile"
+        )
+        return MemoryIndexReconcileResult(**data)
+
+    # ------------------------------------------------------------------
+    # Dead Letter Queue
+    # ------------------------------------------------------------------
+
+    async def get_dlq_stats(self) -> DlqStats:
+        """Get aggregate DLQ statistics."""
+        data = await self._request("GET", "/api/dlq/stats")
+        return DlqStats(**data)
+
+    async def get_dlq_categories(self) -> list[dict[str, Any]]:
+        """Get DLQ categories with entry counts."""
+        data = await self._request("GET", "/api/dlq/categories")
+        return data if isinstance(data, list) else []
+
+    async def list_dlq_entries(
+        self, *, category: str | None = None, limit: int = 50
+    ) -> list[DlqEntry]:
+        """List unrecovered DLQ entries."""
+        params: dict[str, Any] = {"limit": limit}
+        if category is not None:
+            params["category"] = category
+        data = await self._request("GET", "/api/dlq/entries", params=params)
+        items = data if isinstance(data, list) else []
+        return [DlqEntry(**item) for item in items]
+
+    async def replay_dlq_entry(self, entry_id: str) -> DlqReplayResult:
+        """Mark a DLQ entry as recovered (replay)."""
+        data = await self._request("POST", f"/api/dlq/replay/{entry_id}")
+        return DlqReplayResult(**data)
+
+    # ------------------------------------------------------------------
+    # Evaluation
+    # ------------------------------------------------------------------
+
+    async def get_eval_status(self) -> EvalStatus:
+        """Get builtin-eval plugin status and engine stats."""
+        data = await self._request("GET", "/api/eval/status")
+        return EvalStatus(**data)
+
+    async def enable_eval(self) -> dict[str, Any]:
+        """Enable the builtin-eval plugin."""
+        return await self._request("POST", "/api/eval/enable")
+
+    async def disable_eval(self) -> dict[str, Any]:
+        """Disable the builtin-eval plugin."""
+        return await self._request("POST", "/api/eval/disable")
+
+    async def eval_judge(
+        self,
+        input: str,
+        output: str,
+        *,
+        expected: str | None = None,
+        evaluated_model: str | None = None,
+    ) -> EvalJudgeResult:
+        """Run LLM-as-Judge on a single target."""
+        body: dict[str, Any] = {"input": input, "output": output}
+        if expected is not None:
+            body["expected"] = expected
+        if evaluated_model is not None:
+            body["evaluatedModel"] = evaluated_model
+        data = await self._request("POST", "/api/eval/judge", json=body)
+        return EvalJudgeResult(**data)
+
+    async def list_eval_datasets(self) -> EvalDatasetList:
+        """List versioned evaluation datasets."""
+        data = await self._request("GET", "/api/eval/datasets")
+        return EvalDatasetList(**data)
+
+    async def create_eval_dataset(
+        self, name: str, cases: list[dict[str, Any]]
+    ) -> EvalDataset:
+        """Create a new evaluation dataset."""
+        data = await self._request(
+            "POST", "/api/eval/datasets", json={"name": name, "cases": cases}
+        )
+        return EvalDataset(**data)
+
+    async def compare_eval_ab(
+        self,
+        experiment_id: str,
+        config: dict[str, Any],
+        pairs: list[dict[str, Any]],
+    ) -> EvalCompareResult:
+        """Run an A/B comparison on paired scores."""
+        data = await self._request(
+            "POST",
+            "/api/eval/compare-ab",
+            json={"experimentId": experiment_id, "config": config, "pairs": pairs},
+        )
+        return EvalCompareResult(**data)
+
+    async def eval_wilcoxon(
+        self, deltas: list[float], *, alpha: float = 0.05
+    ) -> EvalWilcoxonResult:
+        """Run a Wilcoxon signed-rank test on score deltas."""
+        data = await self._request(
+            "POST", "/api/eval/wilcoxon", json={"deltas": deltas, "alpha": alpha}
+        )
+        return EvalWilcoxonResult(**data)
+
+    # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
@@ -279,7 +1994,8 @@ class CommanderClient:
         method: str,
         path: str,
         **kwargs: Any,
-    ) -> dict[str, Any]:
+    ) -> Any:
+        last_exception: Exception | None = None
         for attempt in range(self._max_retries):
             try:
                 response = await self._http.request(method, path, **kwargs)
@@ -290,20 +2006,26 @@ class CommanderClient:
                         retry_after=retry_after,
                     )
                 response.raise_for_status()
-                result: dict[str, Any] = response.json()
-                return result
+                if response.status_code in (204, 205) or response.content == b"":
+                    return {}
+                return response.json()
             except httpx.HTTPStatusError as exc:
                 body = exc.response.text
                 raise map_status_to_error(exc.response.status_code, body) from exc
             except (httpx.ConnectError, httpx.ReadTimeout) as exc:
+                last_exception = exc
                 if attempt < self._max_retries - 1:
-                    await asyncio.sleep(2**attempt)
+                    # Exponential backoff with full jitter.
+                    delay = (2**attempt) * (0.5 + random.random())
+                    await asyncio.sleep(delay)
                     continue
                 raise ConnectionError(
                     f"Failed after {self._max_retries} retries"
                 ) from exc
         # Should not reach here, but satisfy the type checker
-        raise CommanderError("Unexpected error in request retry loop")
+        raise CommanderError(
+            f"Unexpected error in request retry loop: {last_exception}"
+        )
 
 
 def _parse_retry_after(response: httpx.Response) -> float | None:
@@ -314,3 +2036,62 @@ def _parse_retry_after(response: httpx.Response) -> float | None:
         return float(raw)
     except ValueError:
         return None
+
+
+class _ChatSSEStream:
+    """Async generator that yields chat SSE events.
+
+    The chat endpoint emits a simpler event format than the runtime stream::
+
+        event: start
+        data: {"agentId":"...","timestamp":"..."}
+
+        event: step
+        data: {"type":"thought","content":"..."}
+
+        event: done
+        data: {}
+
+        data: [DONE]
+    """
+
+    _DONE_MARKER = "[DONE]"
+
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        path: str,
+        params: dict[str, Any],
+        body: dict[str, Any],
+    ) -> None:
+        self._client = client
+        self._path = path
+        self._params = params
+        self._body = body
+
+    async def __aiter__(self):
+        current_event: str | None = None
+        async with self._client.stream(
+            "POST", self._path, params=self._params, json=self._body
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if line.startswith(":") or line.startswith("id:"):
+                    continue
+                if line.startswith("event:"):
+                    current_event = line[len("event:") :].strip()
+                    continue
+                if line.startswith("data:"):
+                    raw = line[len("data:") :].strip()
+                    if raw == self._DONE_MARKER:
+                        return
+                    try:
+                        payload = {} if raw == "" else json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    yield ChatStreamEvent(
+                        event=current_event or payload.get("event", ""),
+                        data=payload if isinstance(payload, dict) else {},
+                    )
+                    continue
+                current_event = None

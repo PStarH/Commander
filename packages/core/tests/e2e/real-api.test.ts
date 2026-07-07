@@ -243,8 +243,7 @@ describe.skipIf(SKIP)('E2E Real-API: StepFun step-3.7-flash', () => {
       // Register a real tool the LLM can choose to call
       const calcDef: ToolDefinition = {
         name: 'calculator',
-        description:
-          'Perform a mathematical calculation. Use this for any arithmetic.',
+        description: 'Perform a mathematical calculation. Use this for any arithmetic.',
         inputSchema: {
           type: 'object',
           properties: {

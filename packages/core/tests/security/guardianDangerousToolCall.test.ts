@@ -108,7 +108,9 @@ describe('GuardianAgent.detectDangerousToolCall', () => {
     });
 
     it('should block DROP DATABASE', () => {
-      const result = checkToolCall('shell_execute', { command: 'psql -c "DROP DATABASE production"' });
+      const result = checkToolCall('shell_execute', {
+        command: 'psql -c "DROP DATABASE production"',
+      });
       expect(result).toBe('dangerous_tool_call');
     });
 

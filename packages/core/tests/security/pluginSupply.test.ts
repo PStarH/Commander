@@ -28,9 +28,7 @@ describe('Plugin Supply Chain Scenarios', () => {
   });
 
   it('sandbox escape scenario has critical severity', () => {
-    const escape = PLUGIN_SUPPLY_CHAIN_SCENARIOS.find((s) =>
-      s.tags.includes('sandbox-escape'),
-    );
+    const escape = PLUGIN_SUPPLY_CHAIN_SCENARIOS.find((s) => s.tags.includes('sandbox-escape'));
     expect(escape).toBeDefined();
     expect(escape!.severity).toBe('critical');
     expect(escape!.cvssScore).toBeGreaterThanOrEqual(9.0);

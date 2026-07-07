@@ -91,7 +91,9 @@ describe('OutboundNetworkPolicy', () => {
       const original = globalThis.fetch;
       policy.install();
       expect(globalThis.fetch).not.toBe(original);
-      expect((globalThis.fetch as unknown as { __outboundPolicy?: boolean }).__outboundPolicy).toBe(true);
+      expect((globalThis.fetch as unknown as { __outboundPolicy?: boolean }).__outboundPolicy).toBe(
+        true,
+      );
     });
 
     it('restores original fetch when uninstalled', () => {

@@ -16,12 +16,7 @@ import { resetRuntimeGuardian } from '../../src/runtime/runtimeGuardianBridge';
 import { resetCostGuard } from '../../src/security/costGuard';
 import { resetBillExplosionGuard } from '../../src/security/billExplosionGuard';
 import { MockLLMProvider } from '../../src/runtime/mockLLMProvider';
-import type {
-  AgentExecutionContext,
-  Tool,
-  LLMRequest,
-  LLMResponse,
-} from '../../src/runtime/types';
+import type { AgentExecutionContext, Tool, LLMRequest, LLMResponse } from '../../src/runtime/types';
 
 /**
  * A mock LLM provider that returns scripted tool calls in sequence.
@@ -158,7 +153,12 @@ export function makeFlakyTool(
     },
     opts,
   );
-  return Object.assign(tool, { callCount: 0, get callCount() { return callCount; } });
+  return Object.assign(tool, {
+    callCount: 0,
+    get callCount() {
+      return callCount;
+    },
+  });
 }
 
 /** Create a standard AgentExecutionContext for tests. */
@@ -191,9 +191,10 @@ export function resetGlobalState(): void {
  * Create a fresh AgentRuntime with a clean state.
  * Uses low retry settings for fast tests, but real CircuitBreaker/DLQ/CostGuard.
  */
-export function createTestRuntime(
-  config?: Record<string, unknown>,
-): { runtime: AgentRuntime; router: ModelRouter } {
+export function createTestRuntime(config?: Record<string, unknown>): {
+  runtime: AgentRuntime;
+  router: ModelRouter;
+} {
   resetGlobalState();
   const router = new ModelRouter();
   const runtime = new AgentRuntime(

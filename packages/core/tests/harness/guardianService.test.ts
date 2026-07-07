@@ -24,11 +24,14 @@ function makeToolCall(name: string, args: Record<string, unknown> = {}): ToolCal
 
 function makeServices(providerOverride?: unknown): HarnessServices {
   // Use explicit undefined check so null is preserved (for "provider not available" tests)
-  const provider = providerOverride !== undefined ? providerOverride : {
-    call: async () => ({
-      content: JSON.stringify({ approved: true, reason: 'Looks safe' }),
-    }),
-  };
+  const provider =
+    providerOverride !== undefined
+      ? providerOverride
+      : {
+          call: async () => ({
+            content: JSON.stringify({ approved: true, reason: 'Looks safe' }),
+          }),
+        };
   return {
     getProvider: () => provider as any,
   } as unknown as HarnessServices;
@@ -78,13 +81,18 @@ describe('GuardianService', () => {
 
     it('auto-approves read-only tools without LLM call', async () => {
       const svc = new GuardianService({ enabled: true });
-      const readOnlyTools = ['file_read', 'file_search', 'file_list', 'code_search', 'glob', 'grep', 'web_search', 'web_fetch'];
+      const readOnlyTools = [
+        'file_read',
+        'file_search',
+        'file_list',
+        'code_search',
+        'glob',
+        'grep',
+        'web_search',
+        'web_fetch',
+      ];
       for (const toolName of readOnlyTools) {
-        const decision = await svc.review(
-          makeToolCall(toolName, {}),
-          'test goal',
-          makeServices(),
-        );
+        const decision = await svc.review(makeToolCall(toolName, {}), 'test goal', makeServices());
         assert.strictEqual(decision.approved, true, `${toolName} should be auto-approved`);
         assert.ok(decision.reason.includes('Read-only'));
       }
@@ -154,11 +162,7 @@ describe('GuardianService', () => {
     it('auto-approves when provider is not available', async () => {
       const services = makeServices(null);
       const svc = new GuardianService({ enabled: true });
-      const decision = await svc.review(
-        makeToolCall('shell_execute', {}),
-        'test goal',
-        services,
-      );
+      const decision = await svc.review(makeToolCall('shell_execute', {}), 'test goal', services);
       assert.strictEqual(decision.approved, true);
       assert.ok(decision.reason.includes('not available'));
     });
@@ -168,11 +172,7 @@ describe('GuardianService', () => {
         call: async () => ({ content: '' }),
       });
       const svc = new GuardianService({ enabled: true });
-      const decision = await svc.review(
-        makeToolCall('shell_execute', {}),
-        'test goal',
-        services,
-      );
+      const decision = await svc.review(makeToolCall('shell_execute', {}), 'test goal', services);
       assert.strictEqual(decision.approved, true);
       assert.ok(decision.reason.includes('empty'));
     });
@@ -182,11 +182,7 @@ describe('GuardianService', () => {
         call: async () => ({ content: 'I cannot decide' }),
       });
       const svc = new GuardianService({ enabled: true });
-      const decision = await svc.review(
-        makeToolCall('shell_execute', {}),
-        'test goal',
-        services,
-      );
+      const decision = await svc.review(makeToolCall('shell_execute', {}), 'test goal', services);
       assert.strictEqual(decision.approved, true);
       assert.ok(decision.reason.includes('parse'));
     });
@@ -214,11 +210,7 @@ describe('GuardianService', () => {
         },
       });
       const svc = new GuardianService({ enabled: true });
-      const decision = await svc.review(
-        makeToolCall('shell_execute', {}),
-        'test goal',
-        services,
-      );
+      const decision = await svc.review(makeToolCall('shell_execute', {}), 'test goal', services);
       assert.strictEqual(decision.approved, true);
       assert.ok(decision.reason.includes('fail-open'));
     });
@@ -230,11 +222,7 @@ describe('GuardianService', () => {
         }),
       });
       const svc = new GuardianService({ enabled: true });
-      const decision = await svc.review(
-        makeToolCall('shell_execute', {}),
-        'test goal',
-        services,
-      );
+      const decision = await svc.review(makeToolCall('shell_execute', {}), 'test goal', services);
       // approved !== false → approved
       assert.strictEqual(decision.approved, true);
     });

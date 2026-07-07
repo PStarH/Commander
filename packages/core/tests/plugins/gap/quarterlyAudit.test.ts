@@ -1,6 +1,9 @@
 // packages/core/tests/plugins/gap/quarterlyAudit.test.ts
 import { describe, it, expect } from 'vitest';
-import { runQuarterlyAudit, renderAuditMarkdown } from '../../../src/plugins/builtin/gap/quarterlyAudit';
+import {
+  runQuarterlyAudit,
+  renderAuditMarkdown,
+} from '../../../src/plugins/builtin/gap/quarterlyAudit';
 
 describe('quarterlyAudit', () => {
   it('runQuarterlyAudit returns a valid report', () => {

@@ -136,9 +136,7 @@ describe('DatadogExporter', () => {
     });
 
     it('does not throw when exporting a trace with parent span', () => {
-      const trace = makeTrace([
-        makeEvent({ parentSpanId: 'parent-aaa-bbb-ccc-ddd' }),
-      ]);
+      const trace = makeTrace([makeEvent({ parentSpanId: 'parent-aaa-bbb-ccc-ddd' })]);
       assert.doesNotThrow(() => exporter.exportTrace(trace));
     });
 

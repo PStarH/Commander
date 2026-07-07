@@ -198,7 +198,12 @@ describe('SpeculativeExecutor - triggerSpeculativeExecution integration', () => 
   it('triggerSpeculativeExecution does not execute when no patterns learned', async () => {
     const { ToolExecutionService } = await import('../../src/runtime/toolExecutionService');
     let executeCalled = false;
-    const mockTool = { execute: async () => { executeCalled = true; return 'result'; } };
+    const mockTool = {
+      execute: async () => {
+        executeCalled = true;
+        return 'result';
+      },
+    };
     const tools = new Map([['file_read', mockTool as never]]);
     const mockCache = { get: () => null, set: () => {} };
     const svc = new ToolExecutionService({

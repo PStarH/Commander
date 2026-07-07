@@ -3,7 +3,11 @@ import { CheckpointManager } from '../../src/ultimate/checkpointManager';
 import { resetCheckpointWriter } from '../../src/runtime/checkpointWriter';
 import { resetMessageBus } from '../../src/runtime/messageBus';
 import { resetGlobalLogger, getGlobalLogger } from '../../src/logging';
-import type { TaskTreeNode, ExecutionError, UltimateOrchestratorConfig } from '../../src/ultimate/types';
+import type {
+  TaskTreeNode,
+  ExecutionError,
+  UltimateOrchestratorConfig,
+} from '../../src/ultimate/types';
 import type { AgentRuntimeInterface } from '../../src/runtime';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -175,13 +179,7 @@ describe('CheckpointManager', () => {
       'Shadow model detected',
     ];
 
-    await mgr.maybeCheckpoint(
-      'exec-decisions',
-      makeTaskTree(),
-      { goal: 'test' },
-      [],
-      reasoning,
-    );
+    await mgr.maybeCheckpoint('exec-decisions', makeTaskTree(), { goal: 'test' }, [], reasoning);
 
     // The checkpoint line should be appended
     expect(reasoning.length).toBeGreaterThan(7);

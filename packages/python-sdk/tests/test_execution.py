@@ -142,7 +142,9 @@ class TestPlan:
                 await client.plan("test", provider="openai")
 
     async def test_plan_empty_task(self, mock_api: respx.MockRouter) -> None:
-        mock_api.post("/api/v1/plan").respond(400, text="plan requires a non-empty task string.")
+        mock_api.post("/api/v1/plan").respond(
+            400, text="plan requires a non-empty task string."
+        )
         async with CommanderClient(api_key="test") as client:
             async with mock_api:
                 from commander._exceptions import ValidationError
@@ -164,7 +166,7 @@ class TestStream:
             "event: output.delta\n"
             'data: {"event":"output.delta","data":{"content":" World"},"timestamp":"2026-01-01T00:00:02Z","seq":3}\n'
             "\n"
-            'data: [DONE]\n'
+            "data: [DONE]\n"
             "\n"
         )
         mock_api.get("/api/v1/stream/test_session").respond(
@@ -209,12 +211,7 @@ class TestStream:
 
     async def test_stream_heartbeat_ignored(self, mock_api: respx.MockRouter) -> None:
         """SSE comments (heartbeat lines starting with :) are ignored."""
-        sse_lines = (
-            ": heartbeat\n"
-            "\n"
-            'data: [DONE]\n'
-            "\n"
-        )
+        sse_lines = ": heartbeat\n\ndata: [DONE]\n\n"
         mock_api.get("/api/v1/stream/test_session").respond(
             200,
             text=sse_lines,

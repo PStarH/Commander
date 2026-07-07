@@ -36,7 +36,12 @@ describe('FailureInjection', () => {
       inj1.addRule({ target: 'http', mode: 'http_500', probability: 0.5 });
       inj2.addRule({ target: 'http', mode: 'http_500', probability: 0.5 });
       // Same seed → same random sequence
-      const send = async (): Promise<HttpResponse> => ({ status: 200, headers: {}, body: '', ok: true });
+      const send = async (): Promise<HttpResponse> => ({
+        status: 200,
+        headers: {},
+        body: '',
+        ok: true,
+      });
       const wrapped1 = inj1.wrapHttp(send);
       const wrapped2 = inj2.wrapHttp(send);
       // Both should produce the same injection pattern
@@ -86,7 +91,12 @@ describe('FailureInjection', () => {
     it('injects HTTP 500', async () => {
       const inj = new FailureInjector({ seed: 1 });
       inj.addRule({ target: 'http', mode: 'http_500' });
-      const send = async (): Promise<HttpResponse> => ({ status: 200, headers: {}, body: '', ok: true });
+      const send = async (): Promise<HttpResponse> => ({
+        status: 200,
+        headers: {},
+        body: '',
+        ok: true,
+      });
       const wrapped = inj.wrapHttp(send);
       const res = await wrapped({ method: 'GET', url: 'http://test' });
       assert.strictEqual(res.status, 500);
@@ -97,7 +107,12 @@ describe('FailureInjection', () => {
     it('injects HTTP 429 with retry-after header', async () => {
       const inj = new FailureInjector({ seed: 1 });
       inj.addRule({ target: 'http', mode: 'http_429' });
-      const send = async (): Promise<HttpResponse> => ({ status: 200, headers: {}, body: '', ok: true });
+      const send = async (): Promise<HttpResponse> => ({
+        status: 200,
+        headers: {},
+        body: '',
+        ok: true,
+      });
       const wrapped = inj.wrapHttp(send);
       const res = await wrapped({ method: 'GET', url: 'http://test' });
       assert.strictEqual(res.status, 429);
@@ -107,7 +122,12 @@ describe('FailureInjection', () => {
     it('injects connection refused', async () => {
       const inj = new FailureInjector({ seed: 1 });
       inj.addRule({ target: 'http', mode: 'refused' });
-      const send = async (): Promise<HttpResponse> => ({ status: 200, headers: {}, body: '', ok: true });
+      const send = async (): Promise<HttpResponse> => ({
+        status: 200,
+        headers: {},
+        body: '',
+        ok: true,
+      });
       const wrapped = inj.wrapHttp(send);
       const res = await wrapped({ method: 'GET', url: 'http://test' });
       assert.strictEqual(res.status, 0);
@@ -118,7 +138,12 @@ describe('FailureInjection', () => {
     it('injects auth expired (401)', async () => {
       const inj = new FailureInjector({ seed: 1 });
       inj.addRule({ target: 'http', mode: 'auth_expired' });
-      const send = async (): Promise<HttpResponse> => ({ status: 200, headers: {}, body: '', ok: true });
+      const send = async (): Promise<HttpResponse> => ({
+        status: 200,
+        headers: {},
+        body: '',
+        ok: true,
+      });
       const wrapped = inj.wrapHttp(send);
       const res = await wrapped({ method: 'GET', url: 'http://test' });
       assert.strictEqual(res.status, 401);
@@ -127,7 +152,12 @@ describe('FailureInjection', () => {
     it('injects IAM deny (403)', async () => {
       const inj = new FailureInjector({ seed: 1 });
       inj.addRule({ target: 'http', mode: 'iam_deny' });
-      const send = async (): Promise<HttpResponse> => ({ status: 200, headers: {}, body: '', ok: true });
+      const send = async (): Promise<HttpResponse> => ({
+        status: 200,
+        headers: {},
+        body: '',
+        ok: true,
+      });
       const wrapped = inj.wrapHttp(send);
       const res = await wrapped({ method: 'GET', url: 'http://test' });
       assert.strictEqual(res.status, 403);
@@ -136,7 +166,12 @@ describe('FailureInjection', () => {
     it('respects probability setting', async () => {
       const inj = new FailureInjector({ seed: 42 });
       inj.addRule({ target: 'http', mode: 'http_500', probability: 0.0 });
-      const send = async (): Promise<HttpResponse> => ({ status: 200, headers: {}, body: 'ok', ok: true });
+      const send = async (): Promise<HttpResponse> => ({
+        status: 200,
+        headers: {},
+        body: 'ok',
+        ok: true,
+      });
       const wrapped = inj.wrapHttp(send);
       // With probability 0, should never inject
       for (let i = 0; i < 10; i++) {
@@ -149,7 +184,12 @@ describe('FailureInjection', () => {
     it('respects maxInvocations', async () => {
       const inj = new FailureInjector({ seed: 1 });
       inj.addRule({ target: 'http', mode: 'http_500', maxInvocations: 2 });
-      const send = async (): Promise<HttpResponse> => ({ status: 200, headers: {}, body: 'ok', ok: true });
+      const send = async (): Promise<HttpResponse> => ({
+        status: 200,
+        headers: {},
+        body: 'ok',
+        ok: true,
+      });
       const wrapped = inj.wrapHttp(send);
       // First two calls should inject
       const r1 = await wrapped({ method: 'GET', url: 'http://t' });
@@ -171,10 +211,7 @@ describe('FailureInjection', () => {
         query: () => 'result',
       };
       const wrapped = inj.wrapDb(mockDb);
-      assert.throws(
-        () => wrapped.query('SELECT 1'),
-        /SQLITE_BUSY/,
-      );
+      assert.throws(() => wrapped.query('SELECT 1'), /SQLITE_BUSY/);
       assert.strictEqual(inj.injectedCount(), 1);
     });
 
@@ -183,10 +220,7 @@ describe('FailureInjection', () => {
       inj.addRule({ target: 'db', mode: 'db_failover' });
       const mockDb = { query: () => 'ok' };
       const wrapped = inj.wrapDb(mockDb);
-      assert.throws(
-        () => wrapped.query('SELECT 1'),
-        /failover/,
-      );
+      assert.throws(() => wrapped.query('SELECT 1'), /failover/);
     });
 
     it('passes through when no db rule matches', () => {
@@ -203,10 +237,7 @@ describe('FailureInjection', () => {
       inj.addRule({ target: 'fs', mode: 'disk_full' });
       const mockFs = { writeFileSync: () => {} };
       const wrapped = inj.wrapFs(mockFs);
-      assert.throws(
-        () => wrapped.writeFileSync('/test', 'data'),
-        /ENOSPC/,
-      );
+      assert.throws(() => wrapped.writeFileSync('/test', 'data'), /ENOSPC/);
       assert.strictEqual(inj.injectedCount(), 1);
     });
 
@@ -215,10 +246,7 @@ describe('FailureInjection', () => {
       inj.addRule({ target: 'fs', mode: 'io_hang' });
       const mockFs = { readFileSync: () => 'data' };
       const wrapped = inj.wrapFs(mockFs);
-      assert.throws(
-        () => wrapped.readFileSync('/test'),
-        /I\/O hang/,
-      );
+      assert.throws(() => wrapped.readFileSync('/test'), /I\/O hang/);
     });
 
     it('passes through when no fs rule matches', () => {
@@ -254,7 +282,12 @@ describe('FailureInjection', () => {
     it('can be added via addScenario', async () => {
       const inj = new FailureInjector({ seed: 1 });
       inj.addScenario('network-500');
-      const send = async (): Promise<HttpResponse> => ({ status: 200, headers: {}, body: '', ok: true });
+      const send = async (): Promise<HttpResponse> => ({
+        status: 200,
+        headers: {},
+        body: '',
+        ok: true,
+      });
       const wrapped = inj.wrapHttp(send);
       const res = await wrapped({ method: 'GET', url: 'http://t' });
       assert.strictEqual(res.status, 500);
@@ -265,7 +298,12 @@ describe('FailureInjection', () => {
     it('runs a scenario and returns a report', async () => {
       const inj = new FailureInjector({ seed: 1 });
       inj.addScenario('network-500');
-      const send = async (): Promise<HttpResponse> => ({ status: 200, headers: {}, body: '', ok: true });
+      const send = async (): Promise<HttpResponse> => ({
+        status: 200,
+        headers: {},
+        body: '',
+        ok: true,
+      });
       const wrapped = inj.wrapHttp(send);
 
       const report = await runScenario({
@@ -320,7 +358,12 @@ describe('FailureInjection', () => {
     it('categorizes injected failures correctly', async () => {
       const inj = new FailureInjector({ seed: 1 });
       inj.addScenario('network-500');
-      const send = async (): Promise<HttpResponse> => ({ status: 200, headers: {}, body: '', ok: true });
+      const send = async (): Promise<HttpResponse> => ({
+        status: 200,
+        headers: {},
+        body: '',
+        ok: true,
+      });
       const wrapped = inj.wrapHttp(send);
 
       const report = await runScenario({

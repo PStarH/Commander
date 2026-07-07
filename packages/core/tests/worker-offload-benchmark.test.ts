@@ -1,9 +1,21 @@
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
+import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { ContextCompactor } from '../src/runtime/contextCompactor';
 import { CPUWorkerPool, resetCPUWorkerPool } from '../src/runtime/cpuWorkerPool';
 import { getMetricsCollector, resetMetricsCollector } from '../src/runtime/metricsCollector';
 import type { LLMMessage } from '../src/runtime/types';
+
+// ============================================================================
+// Baseline collector
+// ============================================================================
+const baselineResults: Record<string, unknown> = {
+  benchmark: 'worker-offload',
+  runAt: new Date().toISOString(),
+  nodeVersion: process.version,
+  sections: {} as Record<string, unknown>,
+};
 
 function makeTurns(n: number): LLMMessage[] {
   const msgs: LLMMessage[] = [{ role: 'system', content: 'You are a helpful assistant.' }];
@@ -162,3 +174,20 @@ async function measureLag(): Promise<number> {
     });
   });
 }
+
+// ============================================================================
+// Persist baseline JSON after all tests complete
+// ============================================================================
+after(() => {
+  const dir = resolve('.commander_benchmarks');
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  const path = resolve(dir, `worker-baseline-${new Date().toISOString().slice(0, 10)}.json`);
+  try {
+    writeFileSync(path, JSON.stringify(baselineResults, null, 2), { mode: 0o644 });
+    console.log(`\n  📊 Worker offload benchmark baseline saved to ${path}`);
+  } catch (e) {
+    console.log(`\n  ⚠ Failed to save worker baseline: ${(e as Error).message}`);
+  }
+});
