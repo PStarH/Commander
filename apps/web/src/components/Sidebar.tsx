@@ -19,6 +19,9 @@ import {
   FlaskConical,
   FileText,
   Network,
+  Workflow,
+  Settings,
+  Key,
 } from 'lucide-react';
 import type { AuthUser } from '../api';
 import { t } from '../i18n';
@@ -31,6 +34,7 @@ const NAV_ITEMS = [
   { to: '/execution', icon: ScrollText, label: t('nav.execution') },
   { to: '/memory', icon: BookOpen, label: t('nav.memory') },
   { to: '/governance', icon: ShieldCheck, label: t('nav.governance') },
+  { to: '/workflows', icon: Workflow, label: t('nav.workflows') },
   { to: '/dlq', icon: AlertTriangle, label: t('nav.dlq') },
   { to: '/security', icon: Fingerprint, label: t('nav.security') },
   { to: '/audit', icon: ClipboardList, label: t('nav.audit') },
@@ -39,8 +43,12 @@ const NAV_ITEMS = [
   { to: '/reporting', icon: FileText, label: 'Reporting' },
   { to: '/consensus', icon: Network, label: 'Consensus' },
   { to: '/cost', icon: DollarSign, label: t('nav.cost') },
+  { to: '/settings', icon: Settings, label: t('nav.settings') },
   { to: '/onboarding', icon: Rocket, label: t('nav.onboarding') },
+  { to: '/settings/sso', icon: Key, label: t('nav.sso') },
 ];
+
+const ADMIN_ONLY_PATHS = new Set(['/users', '/settings', '/settings/sso']);
 
 interface SidebarProps {
   currentUser?: AuthUser | null;
@@ -61,7 +69,9 @@ export function Sidebar({ currentUser, onLogout }: SidebarProps) {
       </div>
 
       <nav className="sidebar-nav">
-        {NAV_ITEMS.map((item) => (
+        {NAV_ITEMS.filter(
+          (item) => !ADMIN_ONLY_PATHS.has(item.to) || currentUser?.role === 'admin',
+        ).map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
