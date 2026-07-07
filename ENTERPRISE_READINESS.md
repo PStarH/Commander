@@ -17,7 +17,7 @@
 | SOC2-1 | API keys resolved via AES-256-GCM EncryptedSecretsVault, never `process.env.<X>_API_KEY` in production paths | ✅ | @security-team | `packages/core/src/security/encryptedSecretsVault.ts`; `secureApiKeyResolver.ts`; wired in `CommanderHttpServer.start()` | 2026-Q3 (delivered 2026-06-29) |
 | SOC2-2 | Tamper-evident audit chain for security-relevant events (one-way hash) | ✅ | @security-team | `packages/core/src/security/auditChainLedger.ts` (rewrite-once ledger) | 2026-Q3 (delivered) |
 | SOC2-3 | RBAC + capability-token defense at tool boundary | ✅ | @security-team | `packages/core/src/security/capabilityToken.ts`; HMAC short-lived tokens | 2026-Q3 |
-| SOC2-4 | mTLS for inter-process traffic (HTTP server → AgentRuntime) | ❌ | @infra | Roadmap only; tracks G3 in `security_architecture_hardening_roadmap.md` | 2026-Q4 |
+| SOC2-4 | mTLS for inter-process traffic (HTTP server → AgentRuntime) | ✅ | @infra | `packages/core/src/runtime/mtlsRuntimeServer.ts`; `packages/core/src/runtime/mtlsRuntimeProxy.ts`; wired via `HttpServerConfig.runtimeProxy` in `packages/core/src/runtime/httpServer.ts`; test coverage in `packages/core/tests/runtime/mtlsRuntimeIpc.test.ts` | 2026-Q4 (delivered 2026-07-07) |
 | SOC2-5 | SOC 2 Type II report (audit-window) | ❌ | @compliance | External auditor engagement; requires SOC2-1..4 green for ≥3 months | 2027-Q2 |
 | SOC2-6 | Cross-tenant fuzz test suite (every storage backend) | ✅ | @security-team | `scripts/bench-tenant-isolation.ts` (CrossTenantFuzzTest harness, 6 attack vectors); baseline output to `docs/baselines/tenant-isolation.*.json`; `.github/workflows/tenant-isolation-bench.yml` daily cron at 07:30 UTC + workflow_dispatch with leak-count drift gate | 2026-Q4 (delivered 2026-07-07) |
 
@@ -61,6 +61,12 @@ setting `allowGlobalFallback: false` on tenant-aware singletons.
 | DATA-2 | DPA (Data Processing Agreement) template | ❌ | @legal | Not committed; required for paid EU customer | 2026-Q4 |
 | DATA-3 | Encrypted-at-rest storage for memory + audit (provider-side) | 🟡 | @storage | `encryptedSecretsVault` covers API keys; memory + audit rely on storage backend encryption (sqlite/json file-level) | 2026-Q4 |
 | DATA-4 | Backup / restore runbook (`dr-backup-restore.md`) | ❌ | @ops | Not started | 2027-Q1 |
+
+### Go-to-market / Pilot references
+
+| # | Item | Status | Owner | Evidence | Target |
+|---|------|--------|-------|----------|--------|
+| POC-1 | 2-3 anonymized enterprise pilot case studies published in the War Room UI | ✅ | @product | `apps/web/src/pages/POCPage.tsx` (finance / manufacturing / healthcare cases with customer-reported deltas); `/poc` route in `apps/web/src/App.tsx`; navigation entry in `apps/web/src/components/Sidebar.tsx`; bilingual copy in `apps/web/src/i18n.ts` | 2026-Q3 (delivered 2026-07-07) |
 
 ### Capability benchmarks — cron-bound regression gates
 

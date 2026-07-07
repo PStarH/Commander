@@ -213,6 +213,10 @@ export {
 } from './sopDashboard';
 
 export { CommanderHttpServer, createHttpServer } from './httpServer';
+export { MtlsRuntimeServer } from './mtlsRuntimeServer';
+export type { MtlsRuntimeServerConfig } from './mtlsRuntimeServer';
+export { MtlsRuntimeProxy } from './mtlsRuntimeProxy';
+export type { MtlsRuntimeProxyConfig } from './mtlsRuntimeProxy';
 export { BaseChannelAdapter } from './channelAdapter';
 export { TelegramAdapter, createTelegramAdapter } from './adapters/telegramAdapter';
 export type {

@@ -8,6 +8,7 @@ import {
 import type { LLMProvider, MessageBusTopic, Tool } from './types';
 import type { JSONRPCRequest } from '../mcp/types';
 import { AgentRuntime } from './agentRuntime';
+import type { AgentRuntimeInterface } from './agentRuntimeInterface';
 import { SSEStream } from './sseStream';
 import { getMessageBus } from './messageBus';
 import { createProvider } from './providers/providerRegistry';
@@ -98,6 +99,13 @@ export interface HttpServerConfig {
   siemForwarder?: SIEMForwarder;
   /** Require authentication on health/readiness/metrics endpoints. Default: false. */
   protectHealthEndpoints?: boolean;
+  /**
+   * Optional remote AgentRuntime exposed over mTLS. When provided, the HTTP server
+   * forwards execution traffic to this runtime instead of creating local
+   * AgentRuntime instances. Use with MtlsRuntimeServer/MtlsRuntimeProxy to run
+   * the HTTP server and runtime in separate processes with mutual TLS.
+   */
+  runtimeProxy?: AgentRuntimeInterface;
 }
 
 function pickTopology(
@@ -270,7 +278,7 @@ export class CommanderHttpServer {
     | ReturnType<typeof createNodeHttpServer>
     | ReturnType<typeof createHttpsServer>
     | null = null;
-  private runtimes: Map<string, { runtime: AgentRuntime; lastAccessedAt: number }> = new Map();
+  private runtimes: Map<string, { runtime: AgentRuntimeInterface; lastAccessedAt: number }> = new Map();
   private bus = getMessageBus();
   private mcpServer: MCPServer | null = null;
   // Rate limiting: IP → { count, resetAt }
@@ -1225,11 +1233,7 @@ export class CommanderHttpServer {
             maxTokens?: number;
           }>(rawBody, Schemas.createRuntime);
           const sessionId = body.sessionId ?? `session_${Date.now()}`;
-          const runtime = new AgentRuntime();
-          runtime.registerProvider(
-            body.provider ?? 'openai',
-            this.getDefaultProvider(body.provider),
-          );
+          const runtime = this.createRuntime(body.provider ?? 'openai');
           this.runtimes.set(sessionId, { runtime, lastAccessedAt: Date.now() });
           sendJson(res, 201, { sessionId, status: 'created' });
           return;
@@ -1284,11 +1288,7 @@ export class CommanderHttpServer {
               });
               return;
             }
-            const runtime = new AgentRuntime();
-            runtime.registerProvider(
-              body.provider ?? 'openai',
-              this.getDefaultProvider(body.provider),
-            );
+            const runtime = this.createRuntime(body.provider ?? 'openai');
             entry = { runtime, lastAccessedAt: Date.now() };
             this.runtimes.set(sessionId, entry);
           }
@@ -2160,6 +2160,15 @@ export class CommanderHttpServer {
     if (entry.count >= this.config.rateLimitPerMinute) return false;
     entry.count++;
     return true;
+  }
+
+  private createRuntime(provider: string = 'openai'): AgentRuntimeInterface {
+    if (this.config.runtimeProxy) {
+      return this.config.runtimeProxy;
+    }
+    const runtime = new AgentRuntime();
+    runtime.registerProvider(provider, this.getDefaultProvider(provider));
+    return runtime;
   }
 
   private getDefaultProvider(provider: string = 'openai'): LLMProvider {
