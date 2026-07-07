@@ -32,6 +32,8 @@ export default defineConfig({
       'tests/runtime/agentInbox.test.ts',
       'tests/runtime/agentRuntime.test.ts',
       'tests/runtime/runInitializer.test.ts',
+      'tests/runtime/preLoopSetup.test.ts',
+      'tests/runtime/agentLoopOrchestrator.test.ts',
       'tests/runtime/executionContextInjector.test.ts',
       'tests/runtime/executionRouter.test.ts',
       'tests/runtime/agentRuntime.integration.test.ts',
@@ -64,6 +66,7 @@ export default defineConfig({
       'tests/runtime/htmlReport.test.ts',
       'tests/runtime/llmRetry.test.ts',
       'tests/runtime/oidcAuthPlugin.test.ts',
+      'tests/runtime/samlAuthPlugin.test.ts',
       'tests/runtime/owaspAsiHttpRoute.test.ts',
       'tests/runtime/siemForwarder.test.ts',
       'tests/runtime/localEmbedding.test.ts',
@@ -103,7 +106,7 @@ export default defineConfig({
       'tests/runtime/toolRetriever.test.ts',
       'tests/runtime/vcrProvider.test.ts',
       'tests/runtime/batchProvider.test.ts',
-      // 'tests/runtime/webhookDispatcher.test.ts', // skipped: intermittent timeout in CI
+      'tests/runtime/webhookDispatcher.test.ts',
       'tests/runtime/runtimeGuardianBridge.test.ts',
       'tests/runtime/workflowPopulation.test.ts',
       'tests/runtime/sopDashboard.test.ts',
@@ -171,7 +174,8 @@ export default defineConfig({
       // --- security (3-layer defense regression — reversible gate, anomaly
       // detector, universal sanitizer, tenancy boundary, plugin supply) ---
       'tests/security/adversarial.test.ts',
-      // 'tests/security/agentdojoDefense.test.ts', // skipped: imports `createCommanderDefender` which doesn't exist in securityBenchmarkRunner.ts — only `getSecurityBenchmarkRunner()` and `SecurityBenchmarkRunner` class are exported
+      // 'tests/security/agentdojoDefense.test.ts', // FIXED: createCommanderDefender now implemented in securityBenchmarkRunner.ts
+      'tests/security/agentdojoDefense.test.ts',
       'tests/security/outboundNetworkPolicy.test.ts',
       'tests/security/pluginSupply.test.ts',
       'tests/security/raspExtensionsPlugin.test.ts',
@@ -248,6 +252,8 @@ export default defineConfig({
       'tests/security/crossAgentCorrelator.test.ts',
       'tests/security/mlInjectionDetector.test.ts',
       'tests/security/fuzzTestFramework.test.ts',
+      'tests/security/crossTenantFuzz.test.ts',
+      'tests/security/dataLeakageVerifier.test.ts',
       'tests/security/postQuantumCrypto.test.ts',
       'tests/security/multimodalContentScanner.test.ts',
       'tests/security/voiceContentScanner.test.ts',
@@ -313,7 +319,8 @@ export default defineConfig({
       // 'tests/benchmark/comparisonBenchmark.test.ts', // skipped: environment-dependent latency assertion
       // 'tests/benchmark/advancedPerformanceBenchmark.test.ts', // skipped: environment-dependent latency assertion
       // 'tests/benchmark/realWorldBenchmark.test.ts', // skipped: requires external StepFun API and times out in CI
-      // 'tests/benchmark/multiAgentBenchmark.metrics.test.ts', // TODO: depends on missing src/benchmark/multiAgentBenchmark module
+      // 'tests/benchmark/multiAgentBenchmark.metrics.test.ts', // FIXED: src/benchmark/multiAgentBenchmark module now implemented
+      'tests/benchmark/multiAgentBenchmark.metrics.test.ts',
       // --- orchestration patterns (Concurrent/Graph/MoA/Router/CrossPollination/AutoLoop/DynamicReplanner) ---
       'tests/orchestration/orchestrationPatterns.test.ts',
     ],

@@ -43,10 +43,10 @@ class CommanderSSEStream:
                 if line.startswith(":") or line.startswith("id:"):
                     continue
                 if line.startswith("event:"):
-                    current_event = line[len("event:"):].strip()
+                    current_event = line[len("event:") :].strip()
                     continue
                 if line.startswith("data:"):
-                    raw = line[len("data:"):].strip()
+                    raw = line[len("data:") :].strip()
                     if raw == _DONE_MARKER:
                         return
                     try:
@@ -76,10 +76,10 @@ class CommanderSSEStream:
             if line.startswith(":") or line.startswith("id:"):
                 continue
             if line.startswith("event:"):
-                current_event = line[len("event:"):].strip()
+                current_event = line[len("event:") :].strip()
                 continue
             if line.startswith("data:"):
-                raw = line[len("data:"):].strip()
+                raw = line[len("data:") :].strip()
                 if raw == _DONE_MARKER:
                     return
                 try:

@@ -327,11 +327,15 @@ function runExecPolicySmoke(): void {
   // file path is relative to the package root.
   const vitestCwd = path.join(REPO_ROOT, 'packages', 'core');
   try {
-    execFileSync('npx', ['vitest', 'run', EXECPOLICY_TEST_FILE, '--no-cache', '--reporter=default'], {
-      cwd: vitestCwd,
-      stdio: 'inherit',
-      env: { ...process.env, NODE_ENV: 'test' },
-    });
+    execFileSync(
+      'npx',
+      ['vitest', 'run', EXECPOLICY_TEST_FILE, '--no-cache', '--reporter=default'],
+      {
+        cwd: vitestCwd,
+        stdio: 'inherit',
+        env: { ...process.env, NODE_ENV: 'test' },
+      },
+    );
     console.log('[D3 hook] ExecPolicy smoke green ✅');
   } catch (err) {
     reportSilentFailure(err, 'precommitHook:335');

@@ -16,7 +16,9 @@ function makeCtx(overrides?: Partial<AgentExecutionContext>): AgentExecutionCont
   } as AgentExecutionContext;
 }
 
-function makeInbox(messages: Array<{ id: string; from: string; subject: string; body: string }> = []) {
+function makeInbox(
+  messages: Array<{ id: string; from: string; subject: string; body: string }> = [],
+) {
   return {
     pollInbox: vi.fn(() => messages),
     acknowledge: vi.fn(),
@@ -74,7 +76,12 @@ describe('ExecutionContextInjector', () => {
 
   it('injects inbox messages when available', async () => {
     const inbox = makeInbox([
-      { id: 'msg-1', from: 'coordinator', subject: 'Priority task', body: 'Please focus on the API layer' },
+      {
+        id: 'msg-1',
+        from: 'coordinator',
+        subject: 'Priority task',
+        body: 'Please focus on the API layer',
+      },
     ]);
     injector = new ExecutionContextInjector({
       agentInbox: inbox,
@@ -92,7 +99,12 @@ describe('ExecutionContextInjector', () => {
 
   it('injects memory entries when available', async () => {
     const memories = [
-      { layer: 'episodic', content: 'Last time we used a chain topology for similar tasks', importance: 0.8, tags: ['topology', 'chain'] },
+      {
+        layer: 'episodic',
+        content: 'Last time we used a chain topology for similar tasks',
+        importance: 0.8,
+        tags: ['topology', 'chain'],
+      },
     ];
     const memory = makeMemory(memories);
     injector = new ExecutionContextInjector({
@@ -172,7 +184,12 @@ describe('ExecutionContextInjector', () => {
       { id: 'msg-1', from: 'agent-2', subject: 'Handoff', body: 'Here are the files you need' },
     ]);
     const memories = [
-      { layer: 'semantic', content: 'The project uses TypeScript with vitest', importance: 0.9, tags: ['typescript', 'vitest'] },
+      {
+        layer: 'semantic',
+        content: 'The project uses TypeScript with vitest',
+        importance: 0.9,
+        tags: ['typescript', 'vitest'],
+      },
     ];
     injector = new ExecutionContextInjector({
       agentInbox: inbox,

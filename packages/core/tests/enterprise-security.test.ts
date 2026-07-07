@@ -404,7 +404,8 @@ describe('DataLossPrevention', () => {
   });
 
   it('should detect PEM private keys', () => {
-    const content = '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----';
+    const content =
+      '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----';
     const result = dlp.scan(content, 'tool_result');
 
     assert.strictEqual(result.isClean, false);
@@ -412,7 +413,8 @@ describe('DataLossPrevention', () => {
   });
 
   it('should detect JWT tokens', () => {
-    const content = 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
+    const content =
+      'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
     const result = dlp.scan(content, 'agent_output');
 
     assert.strictEqual(result.isClean, false);
@@ -557,8 +559,16 @@ describe('EnterpriseSecurityGateway', () => {
 
   beforeEach(() => {
     // Reset all singletons to ensure clean state
-    try { resetBillExplosionGuard(); } catch { /* ok */ }
-    try { resetDataLossPrevention(); } catch { /* ok */ }
+    try {
+      resetBillExplosionGuard();
+    } catch {
+      /* ok */
+    }
+    try {
+      resetDataLossPrevention();
+    } catch {
+      /* ok */
+    }
 
     gateway = new EnterpriseSecurityGateway({
       enableZeroTrust: false, // Disable for simpler testing
@@ -702,7 +712,10 @@ describe('Auth Middleware timing safety', () => {
     // Verify SHA-256 hashing is used
     assert.ok(authCode.includes('createHash') || authCode.includes('sha256'), 'Should use SHA-256');
     // Verify auth failure lockout is implemented
-    assert.ok(authCode.includes('lockedOut') || authCode.includes('LOCKOUT'), 'Should have lockout');
+    assert.ok(
+      authCode.includes('lockedOut') || authCode.includes('LOCKOUT'),
+      'Should have lockout',
+    );
     // Verify plaintext keys are not stored
     assert.ok(!authCode.includes('apiKeys.set(parts[0]'), 'Should not store raw keys in Map');
   });

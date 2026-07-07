@@ -16,7 +16,11 @@ import assert from 'node:assert';
 import { CostModel, DEFAULT_PRICING, getCostModel } from '../../src/observability/costModel';
 import type { TokenBreakdown } from '../../src/observability/types';
 import { ModelRouter, getModelRouter } from '../../src/runtime/modelRouter';
-import { supportsNativeBatchAPI, executeViaBatchAPI, type BatchAPIConfig } from '../../src/runtime/batchApiClient';
+import {
+  supportsNativeBatchAPI,
+  executeViaBatchAPI,
+  type BatchAPIConfig,
+} from '../../src/runtime/batchApiClient';
 import type { AgentExecutionContext } from '../../src/runtime/types/execution';
 
 // ============================================================================
@@ -27,7 +31,9 @@ function makeTokenBreakdown(input: number, output: number, cached = 0): TokenBre
   return { input, output, cached, reasoning: 0, total: input + output + cached };
 }
 
-function makeExecutionContext(overrides: Partial<AgentExecutionContext> = {}): AgentExecutionContext {
+function makeExecutionContext(
+  overrides: Partial<AgentExecutionContext> = {},
+): AgentExecutionContext {
   return {
     agentId: 'test-agent',
     projectId: 'test-project',
@@ -45,7 +51,6 @@ function makeExecutionContext(overrides: Partial<AgentExecutionContext> = {}): A
 // ============================================================================
 
 describe('Block 1 — CostModel LiteLLM + Batch Pricing', () => {
-
   describe('LiteLLM sync', () => {
     it('syncFromLiteLLM does not crash when LiteLLM data is unavailable', () => {
       const model = new CostModel();
@@ -182,7 +187,6 @@ describe('Block 3a — Batch Model Registration', () => {
 // ============================================================================
 
 describe('Block 3f — isBatchEligible Fail-Closed Guards', () => {
-
   it('returns false when maxSteps > 5 (interactive tasks)', () => {
     const ctx = makeExecutionContext({ maxSteps: 10 });
     assert.strictEqual(ModelRouter.isBatchEligible(ctx), false);
@@ -296,7 +300,6 @@ describe('Block 3a — routeBatch', () => {
 // ============================================================================
 
 describe('Block 3b — BatchAPIClient', () => {
-
   it('supportsNativeBatchAPI returns true for openai', () => {
     assert.strictEqual(supportsNativeBatchAPI('openai'), true);
   });
@@ -367,7 +370,6 @@ describe('Block 3b — BatchAPIClient', () => {
 // ============================================================================
 
 describe('Block 3e — Batch Savings Integration', () => {
-
   it('addCost preserves batchSavingsUsd', () => {
     const cm = getCostModel();
     const tokens = makeTokenBreakdown(5000, 2000);

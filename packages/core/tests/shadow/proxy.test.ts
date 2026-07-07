@@ -25,7 +25,12 @@ describe('ShadowProxy', () => {
 
   it('mirrors when enabled and sampled', async () => {
     mockFetch.mockResolvedValue({ status: 200 });
-    const cfg = { ...defaultShadowConfig(), enabled: true, sampleRate: 1.0, endpoint: 'http://shadow:9999' };
+    const cfg = {
+      ...defaultShadowConfig(),
+      enabled: true,
+      sampleRate: 1.0,
+      endpoint: 'http://shadow:9999',
+    };
     const proxy = new ShadowProxy(cfg, { seed: 1 });
     const ctx = {
       request: { method: 'POST', url: '/api/x', headers: { Authorization: 'Bearer t' } },
@@ -40,7 +45,12 @@ describe('ShadowProxy', () => {
 
   it('does not block production on shadow failure', async () => {
     mockFetch.mockRejectedValue(new Error('shadow down'));
-    const cfg = { ...defaultShadowConfig(), enabled: true, sampleRate: 1.0, endpoint: 'http://shadow:9999' };
+    const cfg = {
+      ...defaultShadowConfig(),
+      enabled: true,
+      sampleRate: 1.0,
+      endpoint: 'http://shadow:9999',
+    };
     const proxy = new ShadowProxy(cfg, { seed: 1 });
     const ctx = {
       request: { method: 'GET', url: '/x', headers: {} },

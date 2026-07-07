@@ -49,7 +49,9 @@ function mockFetchWithCapture(responseData: unknown): {
     });
   }) as typeof fetch;
   return {
-    restore: () => { global.fetch = originalFetch; },
+    restore: () => {
+      global.fetch = originalFetch;
+    },
     getBody: () => capturedBody,
   };
 }
@@ -59,7 +61,6 @@ function mockFetchWithCapture(responseData: unknown): {
 // ============================================================================
 
 describe('Round 2 Provider Optimizations', () => {
-
   // ==========================================================================
   // GLM Provider
   // ==========================================================================
@@ -76,10 +77,12 @@ describe('Round 2 Provider Optimizations', () => {
         },
       });
       try {
-        const result = await provider.call(makeRequest({
-          model: 'glm-4.7',
-          cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
-        }));
+        const result = await provider.call(
+          makeRequest({
+            model: 'glm-4.7',
+            cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
+          }),
+        );
         assert.strictEqual(result.usage.cacheReadTokens ?? 0, 700);
       } finally {
         mock.restore();
@@ -93,10 +96,12 @@ describe('Round 2 Provider Optimizations', () => {
         usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
       });
       try {
-        const result = await provider.call(makeRequest({
-          model: 'glm-4.7',
-          cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
-        }));
+        const result = await provider.call(
+          makeRequest({
+            model: 'glm-4.7',
+            cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
+          }),
+        );
         assert.strictEqual(result.usage.cacheReadTokens ?? 0, 0);
       } finally {
         mock.restore();
@@ -110,15 +115,17 @@ describe('Round 2 Provider Optimizations', () => {
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
       });
       try {
-        await provider.call(makeRequest({
-          model: 'glm-4.7',
-          cacheConfig: {
-            cacheSystemPrompt: true,
-            cacheTools: false,
-            useCacheControl: false,
-            promptCacheKey: 'glm-cache-001',
-          },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'glm-4.7',
+            cacheConfig: {
+              cacheSystemPrompt: true,
+              cacheTools: false,
+              useCacheControl: false,
+              promptCacheKey: 'glm-cache-001',
+            },
+          }),
+        );
         assert.strictEqual(mock.getBody().prompt_cache_key, 'glm-cache-001');
       } finally {
         mock.restore();
@@ -132,11 +139,13 @@ describe('Round 2 Provider Optimizations', () => {
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
       });
       try {
-        await provider.call(makeRequest({
-          model: 'glm-4.7',
-          reasoningConfig: { enabled: true, effort: 'high', budget: 4096 },
-          cacheConfig: { useCacheControl: false },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'glm-4.7',
+            reasoningConfig: { enabled: true, effort: 'high', budget: 4096 },
+            cacheConfig: { useCacheControl: false },
+          }),
+        );
         const body = mock.getBody();
         assert.strictEqual(body.enable_thinking, true);
         assert.strictEqual(body.reasoning_effort, 'high');
@@ -153,10 +162,12 @@ describe('Round 2 Provider Optimizations', () => {
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
       });
       try {
-        await provider.call(makeRequest({
-          model: 'glm-4.7',
-          cacheConfig: { useCacheControl: false },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'glm-4.7',
+            cacheConfig: { useCacheControl: false },
+          }),
+        );
         const body = mock.getBody();
         assert.strictEqual(body.enable_thinking, undefined);
         assert.strictEqual(body.reasoning_effort, undefined);
@@ -182,10 +193,12 @@ describe('Round 2 Provider Optimizations', () => {
         },
       });
       try {
-        const result = await provider.call(makeRequest({
-          model: 'mimo-v2-flash',
-          cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
-        }));
+        const result = await provider.call(
+          makeRequest({
+            model: 'mimo-v2-flash',
+            cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
+          }),
+        );
         assert.strictEqual(result.usage.cacheReadTokens ?? 0, 500);
       } finally {
         mock.restore();
@@ -199,15 +212,17 @@ describe('Round 2 Provider Optimizations', () => {
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
       });
       try {
-        await provider.call(makeRequest({
-          model: 'mimo-v2-flash',
-          cacheConfig: {
-            cacheSystemPrompt: true,
-            cacheTools: false,
-            useCacheControl: false,
-            promptCacheKey: 'xm-cache-99',
-          },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'mimo-v2-flash',
+            cacheConfig: {
+              cacheSystemPrompt: true,
+              cacheTools: false,
+              useCacheControl: false,
+              promptCacheKey: 'xm-cache-99',
+            },
+          }),
+        );
         assert.strictEqual(mock.getBody().prompt_cache_key, 'xm-cache-99');
       } finally {
         mock.restore();
@@ -221,11 +236,13 @@ describe('Round 2 Provider Optimizations', () => {
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
       });
       try {
-        await provider.call(makeRequest({
-          model: 'mimo-v2-pro',
-          reasoningConfig: { enabled: true, effort: 'low', budget: 1024 },
-          cacheConfig: { useCacheControl: false },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'mimo-v2-pro',
+            reasoningConfig: { enabled: true, effort: 'low', budget: 1024 },
+            cacheConfig: { useCacheControl: false },
+          }),
+        );
         const body = mock.getBody();
         assert.strictEqual(body.enable_thinking, true);
         assert.strictEqual(body.reasoning_effort, 'low');
@@ -252,10 +269,12 @@ describe('Round 2 Provider Optimizations', () => {
         },
       });
       try {
-        const result = await provider.call(makeRequest({
-          model: 'mimo-v2.5',
-          cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
-        }));
+        const result = await provider.call(
+          makeRequest({
+            model: 'mimo-v2.5',
+            cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
+          }),
+        );
         assert.strictEqual(result.usage.cacheReadTokens ?? 0, 400);
       } finally {
         mock.restore();
@@ -269,10 +288,12 @@ describe('Round 2 Provider Optimizations', () => {
         usage: { prompt_tokens: 50, completion_tokens: 5, total_tokens: 55 },
       });
       try {
-        const result = await provider.call(makeRequest({
-          model: 'mimo-v2.5',
-          cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
-        }));
+        const result = await provider.call(
+          makeRequest({
+            model: 'mimo-v2.5',
+            cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
+          }),
+        );
         assert.strictEqual(result.usage.cacheReadTokens ?? 0, 0);
       } finally {
         mock.restore();
@@ -286,15 +307,17 @@ describe('Round 2 Provider Optimizations', () => {
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
       });
       try {
-        await provider.call(makeRequest({
-          model: 'mimo-v2.5',
-          cacheConfig: {
-            cacheSystemPrompt: true,
-            cacheTools: false,
-            useCacheControl: false,
-            promptCacheKey: 'mimo-key-42',
-          },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'mimo-v2.5',
+            cacheConfig: {
+              cacheSystemPrompt: true,
+              cacheTools: false,
+              useCacheControl: false,
+              promptCacheKey: 'mimo-key-42',
+            },
+          }),
+        );
         assert.strictEqual(mock.getBody().prompt_cache_key, 'mimo-key-42');
       } finally {
         mock.restore();
@@ -308,10 +331,12 @@ describe('Round 2 Provider Optimizations', () => {
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
       });
       try {
-        await provider.call(makeRequest({
-          model: 'mimo-v2.5',
-          cacheConfig: { useCacheControl: false },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'mimo-v2.5',
+            cacheConfig: { useCacheControl: false },
+          }),
+        );
         assert.strictEqual(mock.getBody().prompt_cache_key, undefined);
       } finally {
         mock.restore();
@@ -330,11 +355,13 @@ describe('Round 2 Provider Optimizations', () => {
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
       });
       try {
-        await provider.call(makeRequest({
-          model: 'step-3.7-flash',
-          reasoningConfig: { enabled: true, effort: 'high' },
-          cacheConfig: { useCacheControl: false },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'step-3.7-flash',
+            reasoningConfig: { enabled: true, effort: 'high' },
+            cacheConfig: { useCacheControl: false },
+          }),
+        );
         const body = mock.getBody();
         assert.strictEqual(body.reasoning_effort, 'high');
       } finally {
@@ -349,11 +376,13 @@ describe('Round 2 Provider Optimizations', () => {
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
       });
       try {
-        await provider.call(makeRequest({
-          model: 'step-3.5-flash',
-          reasoningConfig: { enabled: true, effort: 'low', budget: 512 },
-          cacheConfig: { useCacheControl: false },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'step-3.5-flash',
+            reasoningConfig: { enabled: true, effort: 'low', budget: 512 },
+            cacheConfig: { useCacheControl: false },
+          }),
+        );
         const body = mock.getBody();
         assert.strictEqual(body.reasoning_effort, 'low');
         assert.strictEqual(body.max_thinking_tokens, 512);
@@ -369,10 +398,12 @@ describe('Round 2 Provider Optimizations', () => {
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
       });
       try {
-        await provider.call(makeRequest({
-          model: 'step-3.7-flash',
-          cacheConfig: { useCacheControl: false },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'step-3.7-flash',
+            cacheConfig: { useCacheControl: false },
+          }),
+        );
         assert.strictEqual(mock.getBody().reasoning_effort, 'medium');
       } finally {
         mock.restore();
@@ -386,11 +417,13 @@ describe('Round 2 Provider Optimizations', () => {
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
       });
       try {
-        await provider.call(makeRequest({
-          model: 'step-router-v1',
-          reasoningConfig: { enabled: true, effort: 'high' },
-          cacheConfig: { useCacheControl: false },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'step-router-v1',
+            reasoningConfig: { enabled: true, effort: 'high' },
+            cacheConfig: { useCacheControl: false },
+          }),
+        );
         // Base class propagates reasoning_effort regardless of model name;
         // StepFun's getExtraBody only adds defaults for step-3 models
         assert.strictEqual(mock.getBody().reasoning_effort, 'high');
@@ -406,11 +439,13 @@ describe('Round 2 Provider Optimizations', () => {
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
       });
       try {
-        await provider.call(makeRequest({
-          model: 'step-3.7-flash',
-          reasoningConfig: { enabled: false },
-          cacheConfig: { useCacheControl: false },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'step-3.7-flash',
+            reasoningConfig: { enabled: false },
+            cacheConfig: { useCacheControl: false },
+          }),
+        );
         // When reasoningConfig.enabled === false, should NOT set any reasoning_effort
         assert.strictEqual(mock.getBody().reasoning_effort, undefined);
       } finally {
@@ -444,15 +479,17 @@ describe('Round 2 Provider Optimizations', () => {
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
       });
       try {
-        await provider.call(makeRequest({
-          model: 'MiniMax-M3',
-          cacheConfig: {
-            cacheSystemPrompt: true,
-            cacheTools: false,
-            useCacheControl: false,
-            promptCacheKey: 'mm-cache-007',
-          },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'MiniMax-M3',
+            cacheConfig: {
+              cacheSystemPrompt: true,
+              cacheTools: false,
+              useCacheControl: false,
+              promptCacheKey: 'mm-cache-007',
+            },
+          }),
+        );
         assert.strictEqual(mock.getBody().prompt_cache_key, 'mm-cache-007');
       } finally {
         mock.restore();
@@ -466,11 +503,13 @@ describe('Round 2 Provider Optimizations', () => {
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
       });
       try {
-        await provider.call(makeRequest({
-          model: 'MiniMax-M3',
-          reasoningConfig: { enabled: true, effort: 'high' },
-          cacheConfig: { useCacheControl: false },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'MiniMax-M3',
+            reasoningConfig: { enabled: true, effort: 'high' },
+            cacheConfig: { useCacheControl: false },
+          }),
+        );
         assert.strictEqual(mock.getBody().reasoning_effort, 'high');
       } finally {
         mock.restore();
@@ -489,10 +528,12 @@ describe('Round 2 Provider Optimizations', () => {
         },
       });
       try {
-        const result = await provider.call(makeRequest({
-          model: 'MiniMax-M3',
-          cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
-        }));
+        const result = await provider.call(
+          makeRequest({
+            model: 'MiniMax-M3',
+            cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
+          }),
+        );
         assert.strictEqual(result.usage.cacheReadTokens ?? 0, 1500);
       } finally {
         mock.restore();
@@ -514,18 +555,14 @@ describe('Round 2 Provider Optimizations', () => {
     });
 
     it('returns pricing for GLM 4.7', () => {
-      const entry = DEFAULT_PRICING.find(
-        (p) => p.provider === 'glm' && p.model === 'glm-4.7',
-      );
+      const entry = DEFAULT_PRICING.find((p) => p.provider === 'glm' && p.model === 'glm-4.7');
       assert.ok(entry);
       assert.ok(entry!.cachedInputPer1k !== undefined);
       assert.strictEqual(entry!.cachedInputPer1k!, 0.00007);
     });
 
     it('returns pricing for GLM 4.6', () => {
-      const entry = DEFAULT_PRICING.find(
-        (p) => p.provider === 'glm' && p.model === 'glm-4.6',
-      );
+      const entry = DEFAULT_PRICING.find((p) => p.provider === 'glm' && p.model === 'glm-4.6');
       assert.ok(entry);
       assert.ok(entry!.cachedInputPer1k !== undefined);
     });
@@ -548,9 +585,7 @@ describe('Round 2 Provider Optimizations', () => {
     });
 
     it('returns pricing for MiMo v2.5', () => {
-      const entry = DEFAULT_PRICING.find(
-        (p) => p.provider === 'mimo' && p.model === 'mimo-v2.5',
-      );
+      const entry = DEFAULT_PRICING.find((p) => p.provider === 'mimo' && p.model === 'mimo-v2.5');
       assert.ok(entry);
       assert.ok(entry!.cachedInputPer1k !== undefined);
     });

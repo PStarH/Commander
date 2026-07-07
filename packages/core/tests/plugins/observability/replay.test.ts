@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { dryReplay, liveReplay, type LiveReplayContext } from '../../../src/plugins/builtin/observability/replay';
+import {
+  dryReplay,
+  liveReplay,
+  type LiveReplayContext,
+} from '../../../src/plugins/builtin/observability/replay';
 import type { ExecutionTrace, TraceEvent } from '../../../src/runtime/types';
 
 function llm(spanId: string, ts: string, output: string): TraceEvent {

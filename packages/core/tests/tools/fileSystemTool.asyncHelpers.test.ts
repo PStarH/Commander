@@ -76,12 +76,7 @@ async function makeTool(): Promise<import('../../src/tools/fileSystemTool').File
 // reachable at runtime. We intentionally use a cast rather than a
 // test-export seam so production code stays small. A method rename
 // fails loudly here — that IS the desired signal.
-type GlobFn = (
-  dir: string,
-  root: string,
-  pattern: string,
-  results: string[],
-) => Promise<void>;
+type GlobFn = (dir: string, root: string, pattern: string, results: string[]) => Promise<void>;
 
 // Bound invocation — preserves `this` for the prototype method
 // `globRecurse` which references `this.matchGlob(...)` on every match
@@ -107,9 +102,7 @@ describe('FileSearchTool async glob helpers — TOCTOU-safe skip semantics', () 
   beforeEach(async () => {
     loggerWarnSpy.mockReset();
     vi.mocked(fsp.readdir).mockReset();
-    vi.mocked(fsp.readdir).mockImplementation(
-      realRefs.readdir as typeof fsp.readdir,
-    );
+    vi.mocked(fsp.readdir).mockImplementation(realRefs.readdir as typeof fsp.readdir);
     tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'globRecurse-'));
     tool = await makeTool();
   });
@@ -149,21 +142,19 @@ describe('FileSearchTool async glob helpers — TOCTOU-safe skip semantics', () 
   });
 
   it('globRecurse falls back to a warn (and skips) when readdir throws EACCES', async () => {
-    vi.mocked(fsp.readdir).mockImplementation(
-      ((p: unknown, opts?: unknown) => {
-        if (String(p) === tmp) {
-          const err = new Error(
-            `EACCES: permission denied, scandir '${String(p)}'`,
-          ) as NodeJS.ErrnoException;
-          err.code = 'EACCES';
-          throw err;
-        }
-        return (realRefs.readdir as typeof fsp.readdir)(
-          p as Parameters<typeof fsp.readdir>[0],
-          opts as Parameters<typeof fsp.readdir>[1],
-        );
-      }) as typeof fsp.readdir,
-    );
+    vi.mocked(fsp.readdir).mockImplementation(((p: unknown, opts?: unknown) => {
+      if (String(p) === tmp) {
+        const err = new Error(
+          `EACCES: permission denied, scandir '${String(p)}'`,
+        ) as NodeJS.ErrnoException;
+        err.code = 'EACCES';
+        throw err;
+      }
+      return (realRefs.readdir as typeof fsp.readdir)(
+        p as Parameters<typeof fsp.readdir>[0],
+        opts as Parameters<typeof fsp.readdir>[1],
+      );
+    }) as typeof fsp.readdir);
     const out = await invokeGlob(tool, 'globRecurse', tmp, tmp, '*.txt');
     expect(out).toEqual([]);
     // Wrong-reason guard: readdir WAS called on the tmp dir (so the

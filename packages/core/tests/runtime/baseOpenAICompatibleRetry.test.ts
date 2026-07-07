@@ -137,11 +137,13 @@ describe('E2E: Provider retry through AgentRuntime.execute()', () => {
             model: request.model,
             usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
             finishReason: 'tool_calls',
-            toolCalls: [{
-            id: 'tc1',
-            type: 'function' as const,
-            function: { name: 'echo', arguments: JSON.stringify({ message: 'hello' }) },
-          }],
+            toolCalls: [
+              {
+                id: 'tc1',
+                type: 'function' as const,
+                function: { name: 'echo', arguments: JSON.stringify({ message: 'hello' }) },
+              },
+            ],
           };
         }
         return {

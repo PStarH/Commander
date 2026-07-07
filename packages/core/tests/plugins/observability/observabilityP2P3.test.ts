@@ -1,7 +1,10 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { ToolMetricsCollector } from '../../../src/plugins/builtin/observability/toolMetrics';
-import { buildDecisions, decisionsSummary } from '../../../src/plugins/builtin/observability/decisionProvenance';
+import {
+  buildDecisions,
+  decisionsSummary,
+} from '../../../src/plugins/builtin/observability/decisionProvenance';
 import {
   CostModel,
   getCostModel,

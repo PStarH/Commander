@@ -41,6 +41,10 @@ services:
       # OTLP exporter — points at the `otel-collector`/`jaeger` service when the
       # tracing profile is active. No-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset.
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      # Database backend: sqlite (default) | postgres. When postgres is selected,
+      # DATABASE_URL must point at a running PostgreSQL instance (see `database` profile).
+      - API_STORE_BACKEND=${API_STORE_BACKEND:-sqlite}
+      - DATABASE_URL=${DATABASE_URL:-}
     volumes:
       - commander_state:/app/.commander_state
       - commander_traces:/app/.commander_traces
@@ -65,6 +69,31 @@ services:
       api:
         condition: service_healthy
     restart: unless-stopped
+
+  # ── PostgreSQL — production database backend (opt-in) ──────────────────
+  # Started only with: docker compose --profile database up
+  # Enables persistent, multi-replica-safe storage for the API state store.
+  # Set API_STORE_BACKEND=postgres and DATABASE_URL=postgres://commander:commander@postgres:5432/commander
+  postgres:
+    image: postgres:16-alpine
+    container_name: commander-postgres
+    ports:
+      - '5432:5432'
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-commander}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-commander}
+      - POSTGRES_DB=${POSTGRES_DB:-commander}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-commander} -d ${POSTGRES_DB:-commander}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    profiles:
+      - database
 
   # ── Redis — distributed EventBus backend (opt-in) ──────────────────────
   # Started only with: docker compose --profile distributed up
@@ -170,6 +199,7 @@ volumes:
   commander_traces:
   commander_memory:
   commander_results:
+  postgres-data:
   redis-data:
   prometheus-data:
   grafana-data:

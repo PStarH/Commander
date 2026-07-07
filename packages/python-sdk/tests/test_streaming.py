@@ -16,7 +16,7 @@ async def test_parse_structured_event():
         "event: output.delta\n"
         'data: {"event":"output.delta","data":{"content":"Hello"},"timestamp":"2026-01-01T00:00:00Z","seq":1}\n'
         "\n"
-        'data: [DONE]\n'
+        "data: [DONE]\n"
         "\n"
     )
     async with httpx.AsyncClient() as client:
@@ -39,7 +39,7 @@ async def test_parse_raw_event_fallback():
     sse = (
         'data: {"event":"output.delta","data":{"content":"raw"},"timestamp":"...","seq":1}\n'
         "\n"
-        'data: [DONE]\n'
+        "data: [DONE]\n"
         "\n"
     )
     async with httpx.AsyncClient() as client:
@@ -61,7 +61,7 @@ async def test_parse_multiple_events():
         "\n"
         'data: {"event":"tool_call.started","data":{"toolName":"grep"},"timestamp":"...","seq":2}\n'
         "\n"
-        'data: [DONE]\n'
+        "data: [DONE]\n"
         "\n"
     )
     async with httpx.AsyncClient() as client:
@@ -80,11 +80,11 @@ async def test_parse_multiple_events():
 async def test_malformed_json_skipped():
     """Malformed JSON in data field is silently skipped."""
     sse = (
-        'data: {invalid json}\n'
+        "data: {invalid json}\n"
         "\n"
         'data: {"event":"ok","data":{},"timestamp":"...","seq":1}\n'
         "\n"
-        'data: [DONE]\n'
+        "data: [DONE]\n"
         "\n"
     )
     async with httpx.AsyncClient() as client:
@@ -103,7 +103,7 @@ async def test_stream_from_response():
     sse = (
         'data: {"event":"test","data":{"x":1},"timestamp":"...","seq":1}\n'
         "\n"
-        'data: [DONE]\n'
+        "data: [DONE]\n"
         "\n"
     )
     async with httpx.AsyncClient() as client:

@@ -86,9 +86,7 @@ describe('pathExists', () => {
     // vi.mock factory execution BEFORE vitest wrapped the export.
     // Using `realRefs.access` (not `fsp.access`) avoids the recursion
     // bug from calling a live spy from inside its own mock impl.
-    vi.mocked(fsp.access).mockImplementation(
-      realRefs.access as typeof fsp.access,
-    );
+    vi.mocked(fsp.access).mockImplementation(realRefs.access as typeof fsp.access);
     tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'pathExists-'));
   });
 
@@ -125,22 +123,17 @@ describe('pathExists', () => {
   it('reports non-ENOENT errors via reportSilentFailure and still returns false', async () => {
     const target = path.join(tmp, 'perm-denied');
     await fsp.writeFile(target, '', 'utf-8');
-    vi.mocked(fsp.access).mockImplementation(
-      ((p: unknown, _mode?: number) => {
-        if (p === target) {
-          const err = new Error(
-            `EACCES: permission denied, access '${String(p)}'`,
-          ) as NodeJS.ErrnoException;
-          err.code = 'EACCES';
-          throw err;
-        }
-        // Unrelated probes fall through to the real impl via refs.
-        return (realRefs.access as typeof fsp.access)(
-          p as Parameters<typeof fsp.access>[0],
-          _mode,
-        );
-      }) as typeof fsp.access,
-    );
+    vi.mocked(fsp.access).mockImplementation(((p: unknown, _mode?: number) => {
+      if (p === target) {
+        const err = new Error(
+          `EACCES: permission denied, access '${String(p)}'`,
+        ) as NodeJS.ErrnoException;
+        err.code = 'EACCES';
+        throw err;
+      }
+      // Unrelated probes fall through to the real impl via refs.
+      return (realRefs.access as typeof fsp.access)(p as Parameters<typeof fsp.access>[0], _mode);
+    }) as typeof fsp.access);
 
     await expect(pathExistsMocked(target)).resolves.toBe(false);
     // Wrong-reason guard: the access call must actually have been issued
