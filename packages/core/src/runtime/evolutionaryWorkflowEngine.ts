@@ -388,6 +388,7 @@ let _evolutionConfig: Partial<EvolutionConfig> | undefined;
 
 const evolutionEngineSingleton = createTenantAwareSingleton(
   () => new EvolutionaryWorkflowEngine(_evolutionConfig),
+  { allowGlobalFallback: true },
 );
 
 export function getEvolutionEngine(config?: Partial<EvolutionConfig>): EvolutionaryWorkflowEngine {

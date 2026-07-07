@@ -8,6 +8,7 @@ export {
   GlobTool,
 } from './fileSystemTool';
 export { FileHashEditTool } from './fileHashEditTool';
+export { LspResourceTool } from './lspResourceTool';
 export { PythonExecuteTool, ShellExecuteTool } from './codeExecutionTool';
 export { MemoryStoreTool, MemoryRecallTool, MemoryListTool } from './persistenceTool';
 export { GitTool } from './gitTool';
@@ -80,6 +81,7 @@ import {
   SystemResourceTool,
 } from './resourceTools';
 import { FileHashEditTool } from './fileHashEditTool';
+import { LspResourceTool } from './lspResourceTool';
 
 /**
  * Create the full set of tools exposed to the LLM.
@@ -109,6 +111,7 @@ export function createAllTools(options?: { enableMetaTools?: boolean }): Map<str
     ['verify', new VerificationTool()],
     ['apply_patch', new ApplyPatchTool()],
     ['file_hash_edit', new FileHashEditTool()],
+    ['lsp', new LspResourceTool()],
     ['verify_answer', new AnswerFormatTool()],
     ['skill_view', new SkillViewTool()],
     ['search_conversations', new SearchConversationsTool()],

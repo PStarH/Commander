@@ -405,6 +405,7 @@ export class WebhookDispatcher {
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
 const dispatcherSingleton = createTenantAwareSingleton(() => new WebhookDispatcher(), {
+  allowGlobalFallback: true,
   dispose: (d) => d.stop(),
 });
 
@@ -414,4 +415,13 @@ export function getWebhookDispatcher(): WebhookDispatcher {
 
 export function resetWebhookDispatcher(): void {
   dispatcherSingleton.reset();
+  // Wipe persisted webhooks so the next constructed instance starts clean.
+  // This prevents stale test fixtures from leaking between runs.
+  try {
+    if (fs.existsSync(WEBHOOKS_FILE)) {
+      fs.unlinkSync(WEBHOOKS_FILE);
+    }
+  } catch {
+    // Ignore permission/race errors — the next load() will simply see no file.
+  }
 }

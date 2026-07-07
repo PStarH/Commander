@@ -396,6 +396,7 @@ export class ProviderPool {
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
 const providerPoolSingleton = createTenantAwareSingleton(() => new ProviderPool(), {
+  allowGlobalFallback: true,
   dispose: (pool) => pool.dispose(),
 });
 
