@@ -43,6 +43,7 @@ export {
   probeSqlite,
   _resetSqliteProbeForTesting,
 } from './sqliteDriver';
+export { PostgresDriver, probePostgres } from './postgresDriver';
 export type { SqliteAvailability, SqliteAvailable, SqliteUnavailable } from './sqliteDriver';
 
 export { createDriver, createDriverSoft, isSqliteUsable, listAvailableBackends } from './factory';
