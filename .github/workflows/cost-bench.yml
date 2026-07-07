@@ -1,0 +1,298 @@
+name: Cost Bench Regression
+
+# Day 6 closeout: capture today's cost-prediction baseline via
+# `pnpm bench:cost-prediction`, compare against yesterday's baseline JSON,
+# fail the run if `summary.passed` is false OR MAE regressed > 25% relative.
+#
+# Triggers:
+#   - workflow_dispatch: manual run, supports overriding the max-cost cap
+#     (default $0.30 - 24-record aggregate envelope is realistically
+#     ~$0.10-0.30 with gpt-4o + claude-3-5-sonnet dominating) and the
+#     P95 gate (default 50%) and MAE drift threshold (default 25% relative).
+#   - schedule: 06:30 UTC daily. 06:30 (not 06:00) so it does not collide
+#     with the WAL bench cron; the two workflows share runners and we want
+#     their job-queue windows offset by ~30 minutes.
+#
+# Outputs:
+#   - docs/baselines/cost-prediction.<UTC-today>.json  (committed-artifact)
+#   - GitHub Step Summary markdown table (passed, MAE, P95,
+#     totalActualCostUsd, maxCostUsd cap, vs-yesterday deltas)
+#   - exit 0: summary.passed AND MAE drift within threshold OR first-day run
+#   - exit 1: summary.passed=false OR MAE drift > 25% relative
+
+on:
+  workflow_dispatch:
+    inputs:
+      maxCostUsd:
+        description: 'BENCH_MAX_COST_USD cap override (USD, default 0.30). 24-record aggregate envelope is realistically ~$0.10-0.30 (gpt-4o + claude-3-5-sonnet dominate); 0.30 catches 3-5x regressions without false-positive on token-mix variance.'
+        required: false
+        default: '0.30'
+      maeDriftPct:
+        description: 'MAE regression threshold vs yesterday (percent, default 25)'
+        required: false
+        default: '25'
+      maxP95:
+        description: 'P95 error gate (percent, default 50)'
+        required: false
+        default: '50'
+  schedule:
+    # Daily at 06:30 UTC. Offset 30 minutes from WAL bench (06:00 UTC)
+    # so the two cron jobs do not race for the same runner pool slot.
+    - cron: '30 6 * * *'
+
+jobs:
+  bench-cost-regress:
+    name: Cost Prediction Regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Force UTC so downstream code reading `new Date().toISOString().slice(0,10)`
+      # matches the date the workflow's yesterday-lookup step computes. Same
+      # pattern as wal-bench.yml.
+      TZ: UTC
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          # fetch-depth: 0 is required so today's run can compare against
+          # yesterday's baseline JSON committed to HEAD by the previous day's
+          # scheduled run. Without it the regress step would always see
+          # "first-day run".
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve today / yesterday (UTC)
+        id: dates
+        run: |
+          TODAY=$(date -u +%Y-%m-%d)
+          # Portable yesterday via Node - avoids OS-specific date(1) flags
+          # (-d on Linux, -v on macOS) and keeps UTC alignment.
+          YESTERDAY=$(node -e "const d=new Date();d.setUTCDate(d.getUTCDate()-1);console.log(d.toISOString().slice(0,10))")
+          echo "today=$TODAY"
+          echo "yesterday=$YESTERDAY"
+          echo "today=$TODAY"        >> "$GITHUB_OUTPUT"
+          echo "yesterday=$YESTERDAY" >> "$GITHUB_OUTPUT"
+
+      - name: Run cost prediction bench (captures today baseline)
+        env:
+          BENCH_MAX_COST_USD: ${{ github.event.inputs.maxCostUsd || '0.30' }}
+        run: pnpm bench:cost-prediction
+
+      - name: Verify today's baseline JSON exists
+        run: |
+          TODAY_FILE="docs/baselines/cost-prediction.${{ steps.dates.outputs.today }}.json"
+          if [ ! -s "$TODAY_FILE" ]; then
+            echo "::error::$TODAY_FILE is missing or empty - bench-cost-prediction.ts did not write a baseline"
+            exit 2
+          fi
+          echo "today's baseline: $TODAY_FILE"
+
+      - name: Extract today's metrics for PR body
+        id: metrics
+        if: success()
+        run: |
+          TODAY_FILE="docs/baselines/cost-prediction.${{ steps.dates.outputs.today }}.json"
+          node -e '
+            const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf-8"));
+            const out = (k, v) => console.log(`${k}=${v}`);
+            out("passed", d.summary.passed);
+            out("mae", d.summary.mae.toFixed(2));
+            out("p95", d.summary.p95.toFixed(2));
+            out("totalActualCostUsd", (d.summary.totalActualCostUsd ?? 0).toFixed(4));
+            out("maxCostUsd", d.summary.maxCostUsd ?? "none");
+            out("costOverrunUsd", (d.summary.costOverrunUsd ?? 0).toFixed(4));
+          ' "$TODAY_FILE" >> "$GITHUB_OUTPUT"
+          echo "metrics extracted - MAE=${{ steps.metrics.outputs.mae }}% P95=${{ steps.metrics.outputs.p95 }}% passed=${{ steps.metrics.outputs.passed }}"
+
+      - name: Compare today vs yesterday (drift gate)
+        if: success()
+        id: regress
+        env:
+          MAX_P95_PCT: ${{ github.event.inputs.maxP95 || '50' }}
+          MAE_DRIFT_PCT: ${{ github.event.inputs.maeDriftPct || '25' }}
+        run: |
+          TODAY_FILE="docs/baselines/cost-prediction.${{ steps.dates.outputs.today }}.json"
+          YESTERDAY_FILE="docs/baselines/cost-prediction.${{ steps.dates.outputs.yesterday }}.json"
+          SUMMARY="$RUNNER_TEMP/cost-regress-summary.md"
+          # First-day run (no yesterday baseline): log + skip regress gate.
+          # The bench's OWN internal `summary.passed` is the authoritative
+          # gate for accuracy; the regress gate only adds a *drift* check.
+          if [ ! -s "$YESTERDAY_FILE" ]; then
+            cat > "$SUMMARY" <<EOF
+          ## Cost Prediction Regression - ${{ steps.dates.outputs.today }}
+
+          First-day run: no yesterday baseline available. Drift gate skipped.
+
+          | metric | today | yesterday | delta |
+          |---|---|---|---|
+          | passed | ${{ steps.metrics.outputs.passed }} | n/a | n/a |
+          | MAE | ${{ steps.metrics.outputs.mae }}% | n/a | n/a |
+          | P95 | ${{ steps.metrics.outputs.p95 }}% | n/a | n/a |
+          | totalActualCostUsd | \$${{ steps.metrics.outputs.totalActualCostUsd }} | n/a | n/a |
+          EOF
+            echo "first-day=true"   >> "$GITHUB_OUTPUT"
+            echo "regressed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::first-day run; drift gate skipped"
+            exit 0
+          fi
+
+          # Drift gate: summary.passed must be true AND MAE must not have
+          # regressed > MAE_DRIFT_PCT versus yesterday. P95 is reported for
+          # context only (the bench's own `p95<50%` gate is enforced inside
+          # scripts/bench-cost-prediction.ts; this workflow doesn't re-enforce
+          # it to avoid double-counting CR-style failures).
+          node -e '
+            const fs = require("fs");
+            const today = JSON.parse(fs.readFileSync(process.argv[1], "utf-8"));
+            const yesterday = JSON.parse(fs.readFileSync(process.argv[2], "utf-8"));
+            const MAE_DRIFT = Number(process.env.MAE_DRIFT_PCT);
+
+            const passedOk = today.summary.passed === true;
+            const maeDeltaPct = yesterday.summary.mae > 0
+              ? ((today.summary.mae - yesterday.summary.mae) / yesterday.summary.mae) * 100
+              : 0;
+            const p95DeltaPct = yesterday.summary.p95 > 0
+              ? ((today.summary.p95 - yesterday.summary.p95) / yesterday.summary.p95) * 100
+              : 0;
+            const maeOk = maeDeltaPct <= MAE_DRIFT || yesterday.summary.mae === 0;
+
+            const md = [
+              `## Cost Prediction Regression - ${today.runAt.slice(0,10)}`,
+              ``,
+              `> Gates: passed must be **true**; MAE must not regress > **${MAE_DRIFT}%** vs yesterday.`,
+              ``,
+              `| metric | today | yesterday | delta |`,
+              `|---|---|---|---|`,
+              `| passed | ${today.summary.passed} | ${yesterday.summary.passed} | - |`,
+              `| MAE | ${today.summary.mae.toFixed(2)}% | ${yesterday.summary.mae.toFixed(2)}% | ${maeDeltaPct >= 0 ? "+" : ""}${maeDeltaPct.toFixed(2)}% |`,
+              `| P95 | ${today.summary.p95.toFixed(2)}% | ${yesterday.summary.p95.toFixed(2)}% | ${p95DeltaPct >= 0 ? "+" : ""}${p95DeltaPct.toFixed(2)}% |`,
+              `| totalActualCostUsd | $${(today.summary.totalActualCostUsd ?? 0).toFixed(4)} | $${(yesterday.summary.totalActualCostUsd ?? 0).toFixed(4)} | - |`,
+              `| maxCostUsd cap | $${today.summary.maxCostUsd ?? "none"} | $${yesterday.summary.maxCostUsd ?? "none"} | - |`,
+              ``,
+              (passedOk && maeOk) ? `PASS` : `REGRESS DETECTED (passedOk=${passedOk}, maeOk=${maeOk})`,
+            ].join("\n");
+            fs.writeFileSync(process.argv[3], md);
+            if (!passedOk || !maeOk) {
+              console.log("regressed=true");
+              console.log(`::error::drift detected: passedOk=${passedOk} maeOk=${maeOk}`);
+              process.exit(1);
+            }
+            console.log("regressed=false");
+          ' "$TODAY_FILE" "$YESTERDAY_FILE" "$SUMMARY"
+
+      - name: Append markdown to GitHub Step Summary
+        if: always()
+        run: |
+          SUMMARY="$RUNNER_TEMP/cost-regress-summary.md"
+          if [ -s "$SUMMARY" ]; then
+            cat "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::regress step did not write a summary file at $SUMMARY"
+            exit 2
+          fi
+
+      - name: Upload today's baseline as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cost-prediction-baseline-${{ steps.dates.outputs.today }}
+          path: docs/baselines/cost-prediction.${{ steps.dates.outputs.today }}.json
+          retention-days: 90
+          if-no-files-found: error
+
+      # Day-N+1 regress gate dependency: this PR is the commit-back path so
+      # tomorrow's `actions/checkout@v6 fetch-depth: 0` finds today's JSON in
+      # HEAD. PR auto-creation pairs with team auto-merge policy (Settings
+      # -> General -> "Allow auto-merge" + branch rule matching labels
+      # `automated` + `ci-bench`). Until auto-merge is enabled, the next run
+      # sees a first-day SKIP for the day the PR is open but not yet merged;
+      # the day AFTER it merges, the gate fires for real.
+      #
+      # `if: success()` excludes BOTH failure modes: (1) bench internal
+      # `summary.passed === false` causes the bench step itself to exit with
+      # code 1, and (2) MAE drift > MAE_DRIFT_PCT causes the regress step
+      # node script to exit 1. In both cases the red baseline JSON is
+      # still preserved as a 90-day artifact above for forensic inspection
+      # (actions/upload-artifact@v4 with retention-days: 90), even though
+      # it does not accumulate as a peter-evans PR. This mirrors the
+      # wal-bench.yml skip-on-red semantic and is the documented trade-off
+      # for cost-bench day-N+1 continuity; if strict continuity is preferred
+      # in the future, switch this guard to `if: always() && hashFiles('docs/baselines/cost-prediction.*.json')`.
+      - name: Open PR for today's cost prediction baseline
+        if: success()
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: bench/cost-prediction-baseline-${{ steps.dates.outputs.today }}
+          delete-branch: true
+          title: 'ci(cost-bench): baseline ${{ steps.dates.outputs.today }} - MAE=${{ steps.metrics.outputs.mae }}%, P95=${{ steps.metrics.outputs.p95 }}%'
+          commit-message: |
+            ci(cost-bench): baseline ${{ steps.dates.outputs.today }}
+
+            Auto-generated by .github/workflows/cost-bench.yml. Provides yesterday's
+            cost prediction baseline for the next day's regress gate (see
+            scripts/bench-cost-prediction.ts seeded PRNG + BENCH_MAX_COST_USD gate).
+
+            MAE:                  ${{ steps.metrics.outputs.mae }}%
+            P95:                  ${{ steps.metrics.outputs.p95 }}%
+            passed:               ${{ steps.metrics.outputs.passed }}
+            totalActualCostUsd:   ${{ steps.metrics.outputs.totalActualCostUsd }}
+            maxCostUsd cap:       ${{ steps.metrics.outputs.maxCostUsd }}
+            costOverrunUsd:       ${{ steps.metrics.outputs.costOverrunUsd }}
+          body: |
+            ## Cost prediction bench baseline - ${{ steps.dates.outputs.today }}
+
+            Auto-generated by [`.github/workflows/cost-bench.yml`](../workflows/cost-bench.yml).
+            Triggered daily at `06:30 UTC` or via manual `workflow_dispatch`.
+
+            Today's metrics (CostEstimator pricingTable accuracy vs. known fixture rates,
+            seeded-PRNG jitter, +/-15% around predicted tokens):
+
+            | Metric | Value |
+            |---|---|
+            | passed | **${{ steps.metrics.outputs.passed }}** |
+            | MAE | **${{ steps.metrics.outputs.mae }}%** |
+            | P95 | **${{ steps.metrics.outputs.p95 }}%** |
+            | totalActualCostUsd | **\$${{ steps.metrics.outputs.totalActualCostUsd }}** |
+            | maxCostUsd cap | **\$${{ steps.metrics.outputs.maxCostUsd }}** |
+            | costOverrunUsd | **\$${{ steps.metrics.outputs.costOverrunUsd }}** |
+
+            ### What this PR does
+
+            Commits today's `docs/baselines/cost-prediction.<TODAY>.json` to the
+            default branch so tomorrow's workflow run finds it as yesterday's
+            baseline via `actions/checkout@v6 fetch-depth: 0`. Without this
+            commit-back, tomorrow's regress gate would perpetually see
+            "first-day run" and never fire.
+
+            ### Gates
+
+            - `summary.passed` must be **true** (P95 < 50% AND aggregate actual
+              cost within `BENCH_MAX_COST_USD`).
+            - MAE drift vs yesterday must not exceed **25%** (relative). Allows
+              routine per-run PRNG noise while catching real regressions in
+              the pricingTable contract.
+
+            ### Recommended team policy
+
+            To make the day-N+1 gate fully automatic without manual clicks:
+
+            1. Settings -> General -> **Allow auto-merge**
+            2. Add a branch rule for the default branch matching labels
+               `automated` + `ci-bench` with **auto-merge enabled** and
+               "Squash" merge method.
+
+            Generated by `.github/workflows/cost-bench.yml`
+          labels: |
+            automated
+            ci-bench

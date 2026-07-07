@@ -1,0 +1,42 @@
+{
+  "benchmark": "slo",
+  "runAt": "2026-07-06T08:28:41.721Z",
+  "nodeVersion": "v26.3.1",
+  "thresholds": {
+    "recovery": 5000,
+    "failover": 10000,
+    "compensation": 30000,
+    "dlq": 60000
+  },
+  "measurements": [
+    {
+      "name": "recovery",
+      "actualMs": 0,
+      "thresholdMs": 5000,
+      "passed": true
+    },
+    {
+      "name": "failover",
+      "actualMs": 0,
+      "thresholdMs": 10000,
+      "passed": true
+    },
+    {
+      "name": "compensation",
+      "actualMs": 0,
+      "thresholdMs": 30000,
+      "passed": true
+    },
+    {
+      "name": "dlq",
+      "actualMs": 1,
+      "thresholdMs": 60000,
+      "passed": true
+    }
+  ],
+  "summary": {
+    "total": 4,
+    "passed": 4,
+    "failed": 0
+  }
+}
