@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import * as crypto from 'node:crypto';
 import { isProductionEnv, describeProdSignal } from './envSignal';
+import { getApiKeyStore } from './apiKeyStore';
 
 declare global {
   namespace Express {
@@ -121,6 +122,17 @@ function findKey(token: string, storedKeys: Map<string, StoredKey>): StoredKey |
       }
     } catch {
       // Length mismatch or other error — continue
+    }
+  }
+  // Fallback to the persistent API key store (created via /api/admin/api-keys).
+  if (!match) {
+    const storeRecord = getApiKeyStore().findByHash(tokenHash.toString('hex'));
+    if (storeRecord) {
+      match = {
+        hash: Buffer.from(storeRecord.hash, 'hex'),
+        name: storeRecord.name,
+        scopes: storeRecord.scopes,
+      };
     }
   }
   return match;
