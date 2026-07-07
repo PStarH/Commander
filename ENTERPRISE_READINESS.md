@@ -4,7 +4,7 @@
 > **Purpose:** Explicit checklist of what must be true before a customer can pilot Commander in production-tier workloads.
 > **Confidence:** Items marked ✅ have a wired commit; items marked 🟡 have a documented gap; items marked ❌ have no implementation yet.
 
-> **CI rule:** Every ✅ entry below must have an evidence pointer (commit SHA or file:line) and be reflected in `docs/status.json`. The `pnpm check:readiness` script (referenced from `.github/workflows/ci.yml`) fails the build if any ✅ marker is stale.
+> **CI rule:** Every ✅ entry below must have an evidence pointer (commit SHA or file:line) and be reflected in `docs/status.json`. The `pnpm check:readiness` script (`scripts/check-readiness.ts`) verifies that all required benchmark baselines exist and are current. It fails the build if any required baseline is missing.
 
 ---
 
@@ -19,7 +19,7 @@
 | SOC2-3 | RBAC + capability-token defense at tool boundary | ✅ | @security-team | `packages/core/src/security/capabilityToken.ts`; HMAC short-lived tokens | 2026-Q3 |
 | SOC2-4 | mTLS for inter-process traffic (HTTP server → AgentRuntime) | ❌ | @infra | Roadmap only; tracks G3 in `security_architecture_hardening_roadmap.md` | 2026-Q4 |
 | SOC2-5 | SOC 2 Type II report (audit-window) | ❌ | @compliance | External auditor engagement; requires SOC2-1..4 green for ≥3 months | 2027-Q2 |
-| SOC2-6 | Cross-tenant fuzz test suite (every storage backend) | ❌ | @security-team | Listed in G6; not started | 2026-Q4 |
+| SOC2-6 | Cross-tenant fuzz test suite (every storage backend) | ✅ | @security-team | `scripts/bench-tenant-isolation.ts` (CrossTenantFuzzTest harness, 6 attack vectors); baseline output to `docs/baselines/tenant-isolation.*.json`; `.github/workflows/tenant-isolation-bench.yml` daily cron at 07:30 UTC + workflow_dispatch with leak-count drift gate | 2026-Q4 (delivered 2026-07-07) |
 
 ### Observability — Tier-1 certifiable
 
@@ -43,14 +43,14 @@ setting `allowGlobalFallback: false` on tenant-aware singletons.
 |---|------|--------|-------|----------|--------|
 | TEN-1 | Tenant-aware singletons gated by `runWithTenant` AsyncLocalStorage | 🟡 | @multi-tenancy | `runtime/tenantAwareSingleton.ts` provides the *interface*; storage backend cooperation is customer-side | 2026-Q3 (interface delivered, customer-side verification ongoing) |
 | TEN-2 | SQLite per-tenant (instead of optional filtering) | 🟡 | @multi-tenancy | `storage/cachedDriver.ts` shipped 2026-06-29; per-tenant path is opt-in | 2026-Q4 |
-| TEN-3 | Cross-tenant fuzz test (TEN-1 + TEN-2 verification harness) | ❌ | @security-team | Accepts seed memories as Tenant A, asserts no read leakage as Tenant B | 2026-Q4 |
+| TEN-3 | Cross-tenant fuzz test (TEN-1 + TEN-2 verification harness) | ✅ | @security-team | `scripts/bench-tenant-isolation.ts` + `packages/core/src/security/crossTenantFuzz.ts` (6 attack vectors, 1000 mutations); baseline to `docs/baselines/`; `.github/workflows/tenant-isolation-bench.yml` daily cron at 07:30 UTC | 2026-Q4 (delivered 2026-07-07) |
 | TEN-4 | Enforce "no global fallback" boundary outside development | ❌ | @multi-tenancy | `tenantAwareSingleton.ts` logs a runtime warning; enforcement is pending | 2026-Q4 |
 
 ### SLA / SLO — committed to customer
 
 | # | Item | Status | Owner | Evidence | Target |
 |---|------|--------|-------|----------|--------|
-| SLO-1 | `test:slo` cron-bound CI check (latency / cost / drift regression) | 🟡 | @observability | Referenced in README; command wiring in `commander-fix-list.md` | 2026-Q4 |
+| SLO-1 | `test:slo` cron-bound CI check (latency / cost / drift regression) | ✅ | @observability | `scripts/bench-slo-baseline.ts` (4 SLO measurements with fail-loud catch: actualMs=NaN/passed=false/reason=err on throw); `.github/workflows/slo-bench.yml` daily cron at 07:00 UTC + drift gate (today.summary.failed must be 0; new failures vs yesterday ≤ input threshold); 7,10,30,60s thresholds for recovery/failover/compensation/dlq | 2026-Q4 (delivered 2026-07-07) |
 | SLO-2 | Public SLO dashboard (99.5% API success rate, <2s p95 plan latency) | ❌ | @ops | No dashboard committed yet | 2026-Q4 |
 
 ### Data governance
@@ -61,6 +61,19 @@ setting `allowGlobalFallback: false` on tenant-aware singletons.
 | DATA-2 | DPA (Data Processing Agreement) template | ❌ | @legal | Not committed; required for paid EU customer | 2026-Q4 |
 | DATA-3 | Encrypted-at-rest storage for memory + audit (provider-side) | 🟡 | @storage | `encryptedSecretsVault` covers API keys; memory + audit rely on storage backend encryption (sqlite/json file-level) | 2026-Q4 |
 | DATA-4 | Backup / restore runbook (`dr-backup-restore.md`) | ❌ | @ops | Not started | 2027-Q1 |
+
+### Capability benchmarks — cron-bound regression gates
+
+Trend toward Tier-1 certification: every Commander capability benchmark must
+be cron-bound with a day-over-day drift gate, not runnable only ad-hoc via
+`workflow_dispatch`. The two rows below close the gap that was previously
+filled by `benchmark:chaos` and `benchmark:gaia` being invoked only at
+release time.
+
+| # | Item | Status | Owner | Evidence | Target |
+|---|------|--------|-------|----------|--------|
+| BENCH-CAP-1 | Chaos Engineering benchmark v2 (200 synthetic + 55 mutation cases) cron-bound daily drift gate | ✅ | @runtime | `benchmarks/chaos-runner/src/index.ts run --simulated --scripted --output=<path>` (real ExecutionHarness + scripted mock LLM responses so the cron never fails on missing e2e cassettes; chaos-255 day exposed as `workflow_dispatch` `maxCases=255+` override); `benchmarks/chaos-runner/src/reporter.ts BenchmarkReport` JSON shape (`summary.{total_cases,passed,failed,skipped,pass_rate,overall_score,mttd_ms,mttr_ms}` + dimension_scores + capability_scores); `.github/workflows/chaos-bench.yml` daily cron at `07:45 UTC` + `summary.failed=0` + pass_rate regression-vs-yesterday gate (`10%` default, only regression direction) | 2026-Q3 (delivered 2026-07-07) |
+| BENCH-CAP-2 | GAIA spine benchmark (UltimateOrchestrator + ExecutionScheduler pinned) cron-bound daily drift gate | ✅ | @runtime | `scripts/benchmark-gaia.ts --quick --output=<path>` (10-task offline run with `--quick` mode — the 165-task GAIA fixture is Phase 2 work and exits `4` with the `--full` path; `COMMANDER_ATR_MEMORY=1` for in-memory ledger re-runnability; 8-case scoring self-test covers the historical empty-expected grading regression + all-punctuation post-normalize-empty edge case); `--output` writes canonical baseline JSON BEFORE `process.exit` so failed runs (exit `1`/`2`/`3`) still produce a baseline artifact for day-N+1 diffing; `.github/workflows/gaia-bench.yml` daily cron at `08:00 UTC` + `passed/spineErrors=0/scoringRegressions=0` + day-over-day delta gates (`maxNewSpineErrors=0` default) | 2026-Q3 (delivered 2026-07-07) |
 
 ---
 
@@ -73,7 +86,7 @@ setting `allowGlobalFallback: false` on tenant-aware singletons.
 | P1-3 | Replace placeholder hardcoded zeros in `@commander/sdk` `commanderClient.ts` (queryMemory/getStats) with `getGlobalThreeLayerMemory` lookups | ❌ | @sdk | 2026-Q4 |
 | P1-4 | Delete confirmed dead-code modules (`atr/runtimeIntegration.ts`, `_unmounted/*`) | 🟡 | @runtime | 2026-Q4 |
 | P1-5 | Multi-language SDK — Python (`packages/python-sdk`) parity with `@commander/sdk` | 🟡 | @sdk | 2026-Q4 |
-| P1-6 | Add cost-predictive test:slo guardrails (`max cost per test: $X`) | ❌ | @observability | 2026-Q4 |
+| P1-6 | Add cost-predictive test:slo guardrails (`max cost per test: $X`) | ✅ | @observability | `scripts/bench-cost-prediction.ts` (`BENCH_MAX_COST_USD` aggregate cost cap + seeded PRNG jitter for reproducible baselines); `packages/core/src/runtime/costEstimator.ts` `DEFAULT_PRICING` (40+ models); `packages/core/tests/runtime/costEstimator.test.ts` `bench fixture parity` block (4 model parity assertions) | 2026-Q4 (delivered 2026-07-06) |
 | P1-7 | Tier-1 enterprise demo feat: cross-team War Room with shared memory namespaces | 🟡 | @product | 2026-Q4 |
 
 ---

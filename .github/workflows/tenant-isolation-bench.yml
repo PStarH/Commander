@@ -1,0 +1,233 @@
+name: Tenant Isolation Bench Regression
+
+# Day 7 closeout: capture today's cross-tenant fuzz baseline via
+# `pnpm bench:tenant-isolation`, compare against yesterday's baseline
+# JSON, fail the run if any tenant isolation leak was detected.
+#
+# This is the cron-bound companion to ENTERPRISE_READINESS.md SOC2-6
+# and TEN-3. The bench itself (`bench-tenant-isolation.ts` driving
+# `CrossTenantFuzzTest` harness) is unchanged; this workflow promotes
+# it from manual invocation to a daily gate.
+#
+# Triggers:
+#   - workflow_dispatch: manual run; supports overriding the regress
+#     threshold (default 0 additional leaks vs yesterday).
+#   - schedule: 07:30 UTC daily. Distinct slot from wal-bench (06:00),
+#     cost-bench (06:30), and slo-bench (07:00).
+#
+# Outputs:
+#   - docs/baselines/tenant-isolation.<UTC-today>.json
+#   - GitHub Step Summary markdown table
+#   - exit 0: no leaks detected, OR first-day run
+#   - exit 1: any leak detected, OR drift > threshold
+
+on:
+  workflow_dispatch:
+    inputs:
+      maxNewLeaks:
+        description: 'Maximum additional leaks vs yesterday (default 0)'
+        required: false
+        default: '0'
+  schedule:
+    - cron: '30 7 * * *'
+
+jobs:
+  bench-tenant-isolation-regress:
+    name: Tenant Isolation Regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TZ: UTC
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve today / yesterday (UTC)
+        id: dates
+        run: |
+          TODAY=$(date -u +%Y-%m-%d)
+          YESTERDAY=$(node -e "const d=new Date();d.setUTCDate(d.getUTCDate()-1);console.log(d.toISOString().slice(0,10))")
+          echo "today=$TODAY"        >> "$GITHUB_OUTPUT"
+          echo "yesterday=$YESTERDAY" >> "$GITHUB_OUTPUT"
+
+      - name: Run tenant-isolation bench (captures today baseline)
+        run: pnpm bench:tenant-isolation
+
+      - name: Verify today's baseline JSON exists
+        run: |
+          TODAY_FILE="docs/baselines/tenant-isolation.${{ steps.dates.outputs.today }}.json"
+          if [ ! -s "$TODAY_FILE" ]; then
+            echo "::error::$TODAY_FILE is missing or empty"
+            exit 2
+          fi
+          echo "today's baseline: $TODAY_FILE"
+
+      - name: Extract today's metrics
+        id: metrics
+        if: always()
+        run: |
+          TODAY_FILE="docs/baselines/tenant-isolation.${{ steps.dates.outputs.today }}.json"
+          node -e '
+            const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf-8"));
+            const out = (k, v) => console.log(`${k}=${v}`);
+            // The bench writes the report under `report.*` (see scripts/bench-tenant-isolation.ts
+            // baseline writer). Fall back to top-level / summary fields for back-compat with
+            // any earlier writer.
+            const leakCount =
+              (d.report && Array.isArray(d.report.leaks) ? d.report.leaks.length : null) ??
+              (Array.isArray(d.leaks) ? d.leaks.length : null) ??
+              (d.summary ? d.summary.leakCount : 0) ??
+              0;
+            const totalCases =
+              (d.report && d.report.totalCases) ??
+              d.totalCases ??
+              (d.summary ? d.summary.totalCases : 0) ??
+              0;
+            const defended =
+              (d.report && d.report.defended) ??
+              d.defended ??
+              (d.summary ? d.summary.defended : 0) ??
+              0;
+            const passed = leakCount === 0;
+            out("passed", passed);
+            out("leakCount", leakCount);
+            out("totalCases", totalCases);
+            out("defended", defended);
+          ' "$TODAY_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Compare today vs yesterday (drift gate)
+        if: always()
+        id: regress
+        env:
+          MAX_NEW_LEAKS: ${{ github.event.inputs.maxNewLeaks || '0' }}
+        run: |
+          TODAY_FILE="docs/baselines/tenant-isolation.${{ steps.dates.outputs.today }}.json"
+          YESTERDAY_FILE="docs/baselines/tenant-isolation.${{ steps.dates.outputs.yesterday }}.json"
+          SUMMARY="$RUNNER_TEMP/tenant-isolation-regress-summary.md"
+          if [ ! -s "$YESTERDAY_FILE" ]; then
+            cat > "$SUMMARY" <<EOF
+          ## Tenant Isolation Regression - ${{ steps.dates.outputs.today }}
+
+          First-day run: no yesterday baseline available. Drift gate skipped.
+
+          | metric | today | yesterday |
+          |---|---|---|
+          | leakCount | ${{ steps.metrics.outputs.leakCount }} | n/a |
+          | totalCases | ${{ steps.metrics.outputs.totalCases }} | n/a |
+          | defended | ${{ steps.metrics.outputs.defended }} | n/a |
+          EOF
+            echo "first-day=true"   >> "$GITHUB_OUTPUT"
+            echo "regressed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          node -e '
+            const fs = require("fs");
+            const today = JSON.parse(fs.readFileSync(process.argv[1], "utf-8"));
+            const yesterday = JSON.parse(fs.readFileSync(process.argv[2], "utf-8"));
+            const MAX_NEW = Number(process.env.MAX_NEW_LEAKS);
+            // Read the same shape as the metrics step: `report.*` first, then top-level
+            // / summary fallback. Mirroring the resolution logic prevents the two
+            // steps from disagreeing on what today / yesterday actually look like.
+            const readLeakCount = (d) =>
+              (d.report && Array.isArray(d.report.leaks) ? d.report.leaks.length : null) ??
+              (Array.isArray(d.leaks) ? d.leaks.length : null) ??
+              (d.summary ? d.summary.leakCount : 0) ??
+              0;
+            const readTotalCases = (d) =>
+              (d.report && d.report.totalCases) ??
+              d.totalCases ??
+              (d.summary ? d.summary.totalCases : 0) ??
+              0;
+            const readDefended = (d) =>
+              (d.report && d.report.defended) ??
+              d.defended ??
+              (d.summary ? d.summary.defended : 0) ??
+              0;
+            const todayLeaks = readLeakCount(today);
+            const yesterdayLeaks = readLeakCount(yesterday);
+            const newLeaks = todayLeaks - yesterdayLeaks;
+            const passOk = todayLeaks === 0;
+            const driftOk = newLeaks <= MAX_NEW;
+            const md = [
+              `## Tenant Isolation Regression - ${today.runAt.slice(0,10)}`,
+              ``,
+              `> Gates: leakCount must be 0; new leaks vs yesterday <= **${MAX_NEW}**.`,
+              ``,
+              `| metric | today | yesterday | delta |`,
+              `|---|---|---|---|`,
+              `| leakCount | ${todayLeaks} | ${yesterdayLeaks} | ${newLeaks >= 0 ? "+" : ""}${newLeaks} |`,
+              `| totalCases | ${readTotalCases(today)} | ${readTotalCases(yesterday)} | - |`,
+              `| defended | ${readDefended(today)} | ${readDefended(yesterday)} | - |`,
+              ``,
+              (passOk && driftOk) ? `PASS` : `REGRESS DETECTED (passOk=${passOk}, driftOk=${driftOk})`,
+            ].join("\n");
+            fs.writeFileSync(process.argv[3], md);
+            if (!passOk || !driftOk) {
+              console.log("regressed=true");
+              console.log(`::error::tenant-isolation leak drift: today=${todayLeaks} yesterday=${yesterdayLeaks}`);
+              process.exit(1);
+            }
+            console.log("regressed=false");
+          ' "$TODAY_FILE" "$YESTERDAY_FILE" "$SUMMARY"
+
+      - name: Append markdown to GitHub Step Summary
+        if: always()
+        run: |
+          SUMMARY="$RUNNER_TEMP/tenant-isolation-regress-summary.md"
+          if [ -s "$SUMMARY" ]; then cat "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"; else exit 2; fi
+
+      - name: Upload today's baseline as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tenant-isolation-baseline-${{ steps.dates.outputs.today }}
+          path: docs/baselines/tenant-isolation.${{ steps.dates.outputs.today }}.json
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Open PR for today's tenant-isolation baseline
+        if: success()
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: bench/tenant-isolation-baseline-${{ steps.dates.outputs.today }}
+          delete-branch: true
+          title: 'ci(tenant-isolation-bench): baseline ${{ steps.dates.outputs.today }} - leaks=${{ steps.metrics.outputs.leakCount }}/${{ steps.metrics.outputs.totalCases }}'
+          commit-message: |
+            ci(tenant-isolation-bench): baseline ${{ steps.dates.outputs.today }}
+
+            Auto-generated by .github/workflows/tenant-isolation-bench.yml.
+
+            leakCount: ${{ steps.metrics.outputs.leakCount }}
+            totalCases: ${{ steps.metrics.outputs.totalCases }}
+            defended: ${{ steps.metrics.outputs.defended }}
+          body: |
+            ## Tenant isolation baseline - ${{ steps.dates.outputs.today }}
+
+            Auto-generated by [`.github/workflows/tenant-isolation-bench.yml`](../workflows/tenant-isolation-bench.yml).
+            Triggered daily at `07:30 UTC` or via manual `workflow_dispatch`.
+
+            | Metric | Value |
+            |---|---|
+            | passed | **${{ steps.metrics.outputs.passed }}** |
+            | leakCount | **${{ steps.metrics.outputs.leakCount }}** |
+            | totalCases | **${{ steps.metrics.outputs.totalCases }}** |
+            | defended | **${{ steps.metrics.outputs.defended }}** |
+
+            Generated by `.github/workflows/tenant-isolation-bench.yml`
+          labels: |
+            automated
+            ci-bench
