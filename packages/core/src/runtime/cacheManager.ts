@@ -15,6 +15,7 @@ import {
   LocalEmbeddingFunction,
 } from './embedding';
 import { getGlobalLogger } from '../logging';
+import { getCurrentTenantId, isMultiTenantEnabled, TenantIsolationError } from './tenantContext';
 import type { LLMRequest, LLMResponse, AgentRuntimeConfig, ToolDefinition } from './types';
 
 export interface CacheManagerConfig {
@@ -55,11 +56,26 @@ export class CacheManager {
   }
 
   async lookupSemantic(request: LLMRequest): Promise<LLMResponse | null> {
-    return this.semanticCache.lookup(request);
+    // Auto-inject tenantId from current context to prevent cross-tenant cache
+    // hits. In multi-tenant mode, missing tenant context is a fail-closed
+    // error — the caller must be inside runWithTenant().
+    const tenantId = getCurrentTenantId();
+    if (isMultiTenantEnabled() && !tenantId) {
+      throw new TenantIsolationError(
+        'CacheManager.lookupSemantic() called outside tenant context in multi-tenant mode',
+      );
+    }
+    return this.semanticCache.lookup(request, tenantId);
   }
 
   storeSemantic(request: LLMRequest, response: LLMResponse): void {
-    this.semanticCache.store(request, response);
+    const tenantId = getCurrentTenantId();
+    if (isMultiTenantEnabled() && !tenantId) {
+      throw new TenantIsolationError(
+        'CacheManager.storeSemantic() called outside tenant context in multi-tenant mode',
+      );
+    }
+    this.semanticCache.store(request, response, tenantId);
   }
 
   async dedupeSingleFlight(

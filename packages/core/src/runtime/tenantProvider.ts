@@ -11,7 +11,7 @@ import * as path from 'node:path';
 // threeLayerMemory → tenantProvider → tenantContext → tenantAwareSingleton →
 // tenantContext → tenantProvider. Loading it at module load time creates a
 // circular dependency. The lazy wrappers below resolve it on first use.
-import { getCurrentTenantId as readCurrentTenantId } from './tenantContext';
+import { getCurrentTenantId as readCurrentTenantId, setMultiTenantEnabled } from './tenantContext';
 
 let _ThreeLayerMemory: typeof import('../threeLayerMemory').ThreeLayerMemory | null = null;
 let _getGlobalThreeLayerMemory:
@@ -196,13 +196,17 @@ export function getGlobalTenantProvider(): TenantProvider {
 
 export function setGlobalTenantProvider(provider: TenantProvider): void {
   globalTenantProvider = provider;
+  setMultiTenantEnabled(!(provider instanceof NullTenantProvider));
 }
 
 export function resetGlobalTenantProvider(): void {
   globalTenantProvider = new NullTenantProvider();
+  setMultiTenantEnabled(false);
 }
 
-const memoryRegistrySingleton = createTenantAwareSingleton(() => new ThreeLayerMemoryRegistry());
+const memoryRegistrySingleton = createTenantAwareSingleton(() => new ThreeLayerMemoryRegistry(), {
+  allowGlobalFallback: true,
+});
 
 export function getGlobalMemoryRegistry(): ThreeLayerMemoryRegistry {
   return memoryRegistrySingleton.get();

@@ -243,7 +243,9 @@ export class HumanApprovalManager {
 
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
-const approvalManagerSingleton = createTenantAwareSingleton(() => new HumanApprovalManager());
+const approvalManagerSingleton = createTenantAwareSingleton(() => new HumanApprovalManager(), {
+  allowGlobalFallback: true,
+});
 
 export function getHumanApprovalManager(): HumanApprovalManager {
   return approvalManagerSingleton.get();

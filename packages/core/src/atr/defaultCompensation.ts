@@ -17,16 +17,18 @@ import * as path from 'node:path';
 import type { CompensableAction } from './types';
 import { getGlobalLogger } from '../logging';
 
-const log = getGlobalLogger();
-
 /** Marker for actions we acknowledge cannot be undone. */
 async function nonCompensable(
   action: CompensableAction,
 ): Promise<{ success: false; error: string }> {
-  log.warn('ATR', `Tool ${action.toolName} is non-compensable; side effect committed`, {
-    actionId: action.actionId,
-    description: action.description,
-  });
+  getGlobalLogger().warn(
+    'ATR',
+    `Tool ${action.toolName} is non-compensable; side effect committed`,
+    {
+      actionId: action.actionId,
+      description: action.description,
+    },
+  );
   return {
     success: false,
     error: `Tool ${action.toolName} is non-compensable; manual intervention required`,
@@ -73,7 +75,11 @@ export function takeSnapshot(filePath: string, actionId: string): void {
       fs.copyFileSync(filePath, snapshotPath);
     }
   } catch (err) {
-    log.warn('ATR', 'Snapshot failed', { filePath, actionId, error: (err as Error).message });
+    getGlobalLogger().warn('ATR', 'Snapshot failed', {
+      filePath,
+      actionId,
+      error: (err as Error).message,
+    });
   }
 }
 

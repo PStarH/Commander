@@ -43,6 +43,24 @@ export class TenantIsolationError extends Error {
   }
 }
 
+let _multiTenantEnabled = false;
+
+/**
+ * Mark whether a multi-tenant provider is active. Called by tenant provider
+ * lifecycle helpers; consumers should use isMultiTenantEnabled().
+ */
+export function setMultiTenantEnabled(enabled: boolean): void {
+  _multiTenantEnabled = enabled;
+}
+
+/**
+ * Returns true when a multi-tenant provider has been configured. Global
+ * fallback for tenant-aware singletons is forbidden while this is true.
+ */
+export function isMultiTenantEnabled(): boolean {
+  return _multiTenantEnabled;
+}
+
 /**
  * Validate a tenant identifier. Throws TenantIsolationError if invalid.
  */

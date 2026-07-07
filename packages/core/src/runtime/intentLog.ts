@@ -185,7 +185,9 @@ function sanitizeRunId(runId: string): string {
 
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
-const intentLogSingleton = createTenantAwareSingleton(() => new IntentLog());
+const intentLogSingleton = createTenantAwareSingleton(() => new IntentLog(), {
+  allowGlobalFallback: true,
+});
 
 export function getIntentLog(tenantId?: string): IntentLog {
   if (tenantId) return intentLogSingleton.getForTenant(tenantId);
