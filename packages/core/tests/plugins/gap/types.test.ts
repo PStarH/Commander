@@ -21,7 +21,7 @@ describe('gap types', () => {
   it('computeSlaDeadline returns correct windows', () => {
     const now = new Date('2026-06-30T00:00:00Z');
     expect(computeSlaDeadline('critical', now)).toBe('2026-07-01T00:00:00.000Z'); // 24h detect
-    expect(computeSlaDeadline('high', now)).toBe('2026-07-07T00:00:00.000Z');     // 7d detect
-    expect(computeSlaDeadline('medium', now)).toBe('2026-07-30T00:00:00.000Z');   // 30d detect
+    expect(computeSlaDeadline('high', now)).toBe('2026-07-07T00:00:00.000Z'); // 7d detect
+    expect(computeSlaDeadline('medium', now)).toBe('2026-07-30T00:00:00.000Z'); // 30d detect
   });
 });

@@ -62,6 +62,8 @@ describe('DriftReporter', () => {
   });
 
   it('isDriftThresholdBreached returns true when status differs', () => {
-    expect(isDriftThresholdBreached({ statusDeltaPct: 100, latencyDeltaPct: 0, costDeltaPct: 0 })).toBe(true);
+    expect(
+      isDriftThresholdBreached({ statusDeltaPct: 100, latencyDeltaPct: 0, costDeltaPct: 0 }),
+    ).toBe(true);
   });
 });

@@ -93,10 +93,7 @@ describe('UnifiedCostAuthority', () => {
       const runId = 'test-run-melt';
       const localUca = new UnifiedCostAuthority();
       // per-run cap is $50; record $51
-      const result = localUca.postCall(
-        { runId, model: 'gpt-4o' },
-        { costUsd: 51.0 },
-      );
+      const result = localUca.postCall({ runId, model: 'gpt-4o' }, { costUsd: 51.0 });
       assert.equal(result.melted, true);
       assert.ok(result.reason?.includes('Per-run budget MELT'));
     });
@@ -268,10 +265,7 @@ describe('UnifiedCostAuthority', () => {
           tool: { name: 'tool_a', costTier: 'low' },
         });
         assert.equal(da.allowed, true);
-        localUca.postCall(
-          { runId, tool: { name: 'tool_a', costTier: 'low' } },
-          { costUsd: 0.001 },
-        );
+        localUca.postCall({ runId, tool: { name: 'tool_a', costTier: 'low' } }, { costUsd: 0.001 });
 
         const db = localUca.preCall({
           runId,
@@ -327,10 +321,7 @@ describe('UnifiedCostAuthority', () => {
       const runId = 'test-tenant-iso';
       const localUca = new UnifiedCostAuthority();
       // Tenant A uses $10
-      localUca.postCall(
-        { runId, tenantId: 'tenant-a', model: 'gpt-4o' },
-        { costUsd: 10.0 },
-      );
+      localUca.postCall({ runId, tenantId: 'tenant-a', model: 'gpt-4o' }, { costUsd: 10.0 });
       // Tenant B's snapshot for same runId should be 0
       const snapshotB = localUca.getSnapshot(runId, 'tenant-b');
       assert.equal(snapshotB.perRun.used, 0);

@@ -24,17 +24,19 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from typing import Any
 from enum import Enum
-from collections import Counter, defaultdict
+from collections import Counter
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SanitizeContext
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class SanitizeContext(str, Enum):
     """Context for sanitization dispatch (mirrors TS SanitizeContext)."""
+
     INPUT = "input"
     OUTPUT = "output"
     TOOL_ARGS = "tool_args"
@@ -48,6 +50,7 @@ class SanitizeContext(str, Enum):
 @dataclass
 class SanitizeResult:
     """Result of a sanitization operation."""
+
     sanitized: str
     modified: bool
     patterns: list = field(default_factory=list)
@@ -56,6 +59,7 @@ class SanitizeResult:
 # ═══════════════════════════════════════════════════════════════════════════════
 # UniversalSanitizer — port of securityPrimitives.ts
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class UniversalSanitizer:
     """
@@ -75,28 +79,86 @@ class UniversalSanitizer:
     # ── PII patterns ──────────────────────────────────────────────────────────
     PII_PATTERNS: list[tuple[str, re.Pattern, str]] = [
         ("api_key", re.compile(r"\b(sk-[a-zA-Z0-9]{20,})\b"), "sk-[REDACTED]"),
-        ("anthropic_key", re.compile(r"\b(sk-ant-[a-zA-Z0-9]{20,})\b"), "sk-ant-[REDACTED]"),
-        ("github_token", re.compile(r"\b(gh[pousr]_[A-Za-z0-9]{36,})\b"), "ghp_[REDACTED]"),
+        (
+            "anthropic_key",
+            re.compile(r"\b(sk-ant-[a-zA-Z0-9]{20,})\b"),
+            "sk-ant-[REDACTED]",
+        ),
+        (
+            "github_token",
+            re.compile(r"\b(gh[pousr]_[A-Za-z0-9]{36,})\b"),
+            "ghp_[REDACTED]",
+        ),
         ("aws_key", re.compile(r"\b(AKIA[0-9A-Z]{16})\b"), "AKIA[REDACTED]"),
-        ("jwt", re.compile(r"\beyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\b"), "[JWT_REDACTED]"),
-        ("pem_key_full", re.compile(
-            r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |)PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA |)PRIVATE KEY-----"
-        ), "[PEM_REDACTED]"),
-        ("pem_header", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |)PRIVATE KEY-----"), "[PEM_REDACTED]"),
-        ("pem_footer", re.compile(r"-----END (?:RSA |EC |OPENSSH |DSA |)PRIVATE KEY-----"), "[PEM_REDACTED]"),
+        (
+            "jwt",
+            re.compile(r"\beyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\b"),
+            "[JWT_REDACTED]",
+        ),
+        (
+            "pem_key_full",
+            re.compile(
+                r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |)PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA |)PRIVATE KEY-----"
+            ),
+            "[PEM_REDACTED]",
+        ),
+        (
+            "pem_header",
+            re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |)PRIVATE KEY-----"),
+            "[PEM_REDACTED]",
+        ),
+        (
+            "pem_footer",
+            re.compile(r"-----END (?:RSA |EC |OPENSSH |DSA |)PRIVATE KEY-----"),
+            "[PEM_REDACTED]",
+        ),
         ("ssn", re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "[SSN_REDACTED]"),
-        ("phone", re.compile(r"\+?\d{1,2}[-.\s]\d{3}[-.\s]\d{3}[-.\s]\d{4}"), "[PHONE_REDACTED]"),
-        ("email", re.compile(r"\b[a-zA-Z0-9._%+-]+\s*@\s*[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b"), "[EMAIL_REDACTED]"),
-        ("password", re.compile(r"(?:password|passwd|pwd)\s*[=:]\s*\S+", re.IGNORECASE), "password=[REDACTED]"),
-        ("stripe_key", re.compile(r"\b(sk_live_[a-zA-Z0-9]{24,})\b"), "sk_live_[REDACTED]"),
-        ("slack_token", re.compile(r"\b(xox[baprs]-[a-zA-Z0-9-]+)\b"), "xox-[REDACTED]"),
+        (
+            "phone",
+            re.compile(r"\+?\d{1,2}[-.\s]\d{3}[-.\s]\d{3}[-.\s]\d{4}"),
+            "[PHONE_REDACTED]",
+        ),
+        (
+            "email",
+            re.compile(r"\b[a-zA-Z0-9._%+-]+\s*@\s*[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b"),
+            "[EMAIL_REDACTED]",
+        ),
+        (
+            "password",
+            re.compile(r"(?:password|passwd|pwd)\s*[=:]\s*\S+", re.IGNORECASE),
+            "password=[REDACTED]",
+        ),
+        (
+            "stripe_key",
+            re.compile(r"\b(sk_live_[a-zA-Z0-9]{24,})\b"),
+            "sk_live_[REDACTED]",
+        ),
+        (
+            "slack_token",
+            re.compile(r"\b(xox[baprs]-[a-zA-Z0-9-]+)\b"),
+            "xox-[REDACTED]",
+        ),
     ]
 
     # ── XSS patterns ──────────────────────────────────────────────────────────
     XSS_PATTERNS: list[tuple[str, re.Pattern, str]] = [
-        ("script_tag", re.compile(r"<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>", re.IGNORECASE), ""),
-        ("event_handler_double", re.compile(r'\son\w+\s*=\s*"[^"]*"', re.IGNORECASE), ""),
-        ("event_handler_single", re.compile(r"\son\w+\s*=\s*'[^']*'", re.IGNORECASE), ""),
+        (
+            "script_tag",
+            re.compile(
+                r"<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>", re.IGNORECASE
+            ),
+            "",
+        ),
+        (
+            "event_handler_double",
+            re.compile(r'\son\w+\s*=\s*"[^"]*"', re.IGNORECASE),
+            "",
+        ),
+        (
+            "event_handler_single",
+            re.compile(r"\son\w+\s*=\s*'[^']*'", re.IGNORECASE),
+            "",
+        ),
         ("javascript_url", re.compile(r"javascript:", re.IGNORECASE), ""),
         ("data_url_html", re.compile(r"data:text/html", re.IGNORECASE), ""),
     ]
@@ -119,47 +181,140 @@ class UniversalSanitizer:
     PROMPT_INJECTION_PATTERNS: list[tuple[str, re.Pattern, str]] = [
         # AgentDojo important_instructions: remove entire <INFORMATION>...</INFORMATION> block
         # This catches the complete injection including the payload instructions
-        ("full_injection_block", re.compile(
-            r"<INFORMATION>[\s\S]*?</INFORMATION>", re.IGNORECASE
-        ), "[INJECTION BLOCKED]"),
+        (
+            "full_injection_block",
+            re.compile(r"<INFORMATION>[\s\S]*?</INFORMATION>", re.IGNORECASE),
+            "[INJECTION BLOCKED]",
+        ),
         # Also catch untagged injection blocks: "This is an important message...Signed,..."
-        ("full_injection_block_untagged", re.compile(
-            r"This is an important message from me,?\s*\w+,?\s*to you,?\s*\w+\..*?Signed,\s*\n+\s*\w+\s+\w+",
-            re.IGNORECASE | re.DOTALL
-        ), "[INJECTION BLOCKED]"),
+        (
+            "full_injection_block_untagged",
+            re.compile(
+                r"This is an important message from me,?\s*\w+,?\s*to you,?\s*\w+\..*?Signed,\s*\n+\s*\w+\s+\w+",
+                re.IGNORECASE | re.DOTALL,
+            ),
+            "[INJECTION BLOCKED]",
+        ),
         # Chat role prefixes at line start
-        ("chat_role_prefix", re.compile(r"^[ \t]*(system|assistant|user)\s*:", re.IGNORECASE | re.MULTILINE), "[$1:]"),
+        (
+            "chat_role_prefix",
+            re.compile(
+                r"^[ \t]*(system|assistant|user)\s*:", re.IGNORECASE | re.MULTILINE
+            ),
+            "[$1:]",
+        ),
         # HTML comments
         ("html_comment", re.compile(r"<!--[\s\S]*?-->"), "[comment]"),
         # Explicit injection phrases
-        ("ignore_instructions", re.compile(r"ignore\s+(?:all\s+)?(?:previous|prior)\s+instructions", re.IGNORECASE), "[redacted]"),
+        (
+            "ignore_instructions",
+            re.compile(
+                r"ignore\s+(?:all\s+)?(?:previous|prior)\s+instructions", re.IGNORECASE
+            ),
+            "[redacted]",
+        ),
         # Remaining impersonation tags (if block was partially removed)
-        ("impersonation_tag", re.compile(r"<\/?(INFORMATION|IMPORTANT|SYSTEM|ADMIN|SYSTEM_INSTRUCTION|INSTRUCTION|SYSTEM_MESSAGE|ASSISTANT_INSTRUCTION)\b[^>]*>", re.IGNORECASE), ""),
+        (
+            "impersonation_tag",
+            re.compile(
+                r"<\/?(INFORMATION|IMPORTANT|SYSTEM|ADMIN|SYSTEM_INSTRUCTION|INSTRUCTION|SYSTEM_MESSAGE|ASSISTANT_INSTRUCTION)\b[^>]*>",
+                re.IGNORECASE,
+            ),
+            "",
+        ),
         # Remaining injection phrases (if block was partially removed)
-        ("important_message_impersonation", re.compile(r"This is an important message from me,?\s*\w+,?\s*to you,?\s*\w+\.", re.IGNORECASE), "[INJECTION BLOCKED]"),
-        ("task_redirection_directive", re.compile(r"Before you can solve the task.*?please do the following first:", re.IGNORECASE | re.DOTALL), "[INJECTION BLOCKED]"),
-        ("injection_closing_phrase", re.compile(r"After you do that, you can solve the task.*?Thanks!", re.IGNORECASE | re.DOTALL), "[INJECTION BLOCKED]"),
-        ("injection_signature", re.compile(r"Signed,\s*\n+\s*\w+\s+\w+", re.IGNORECASE), ""),
-        ("do_following_first", re.compile(r"please\s+do\s+the\s+following\s+first\s*:", re.IGNORECASE), "[INJECTION BLOCKED]"),
+        (
+            "important_message_impersonation",
+            re.compile(
+                r"This is an important message from me,?\s*\w+,?\s*to you,?\s*\w+\.",
+                re.IGNORECASE,
+            ),
+            "[INJECTION BLOCKED]",
+        ),
+        (
+            "task_redirection_directive",
+            re.compile(
+                r"Before you can solve the task.*?please do the following first:",
+                re.IGNORECASE | re.DOTALL,
+            ),
+            "[INJECTION BLOCKED]",
+        ),
+        (
+            "injection_closing_phrase",
+            re.compile(
+                r"After you do that, you can solve the task.*?Thanks!",
+                re.IGNORECASE | re.DOTALL,
+            ),
+            "[INJECTION BLOCKED]",
+        ),
+        (
+            "injection_signature",
+            re.compile(r"Signed,\s*\n+\s*\w+\s+\w+", re.IGNORECASE),
+            "",
+        ),
+        (
+            "do_following_first",
+            re.compile(r"please\s+do\s+the\s+following\s+first\s*:", re.IGNORECASE),
+            "[INJECTION BLOCKED]",
+        ),
         # ChatML / special token injection
-        ("chatml_tokens", re.compile(r"<\|?(?:im_start|im_end|system|assistant|user)\|?>", re.IGNORECASE), "[blocked]"),
+        (
+            "chatml_tokens",
+            re.compile(
+                r"<\|?(?:im_start|im_end|system|assistant|user)\|?>", re.IGNORECASE
+            ),
+            "[blocked]",
+        ),
         # Role manipulation
-        ("role_manipulation", re.compile(r"act\s+as\s+(?:a|an)\s+(?:different|new|admin|root|developer)", re.IGNORECASE), "[redacted]"),
+        (
+            "role_manipulation",
+            re.compile(
+                r"act\s+as\s+(?:a|an)\s+(?:different|new|admin|root|developer)",
+                re.IGNORECASE,
+            ),
+            "[redacted]",
+        ),
         # Jailbreak attempts
-        ("jailbreak_attempt", re.compile(r"(?:DAN|jailbreak|do\s+anything\s+now|developer\s+mode|god\s+mode|unrestricted)\b", re.IGNORECASE), "[redacted]"),
+        (
+            "jailbreak_attempt",
+            re.compile(
+                r"(?:DAN|jailbreak|do\s+anything\s+now|developer\s+mode|god\s+mode|unrestricted)\b",
+                re.IGNORECASE,
+            ),
+            "[redacted]",
+        ),
         # System prompt exfiltration
-        ("prompt_exfiltration", re.compile(r"(?:reveal|show|print|repeat|output).*(?:system\s+prompt|instructions?|rules?)", re.IGNORECASE), "[redacted]"),
+        (
+            "prompt_exfiltration",
+            re.compile(
+                r"(?:reveal|show|print|repeat|output).*(?:system\s+prompt|instructions?|rules?)",
+                re.IGNORECASE,
+            ),
+            "[redacted]",
+        ),
         # Data exfiltration directives
-        ("data_exfiltration_directive", re.compile(r"(?:send|forward|email|post)\s+(?:the\s+)?(?:api\s+key|password|token|secret|credential|security\s+code|verification\s+code)\s+(?:to|via|through)", re.IGNORECASE), "[INJECTION BLOCKED]"),
+        (
+            "data_exfiltration_directive",
+            re.compile(
+                r"(?:send|forward|email|post)\s+(?:the\s+)?(?:api\s+key|password|token|secret|credential|security\s+code|verification\s+code)\s+(?:to|via|through)",
+                re.IGNORECASE,
+            ),
+            "[INJECTION BLOCKED]",
+        ),
     ]
 
     def __init__(self):
         pass
 
-    def sanitize(self, input_str: str, context: str | SanitizeContext = SanitizeContext.INPUT) -> SanitizeResult:
+    def sanitize(
+        self, input_str: str, context: str | SanitizeContext = SanitizeContext.INPUT
+    ) -> SanitizeResult:
         """Sanitize a string based on context."""
         if not isinstance(input_str, str):
-            return SanitizeResult(sanitized=str(input_str) if input_str is not None else "", modified=False)
+            return SanitizeResult(
+                sanitized=str(input_str) if input_str is not None else "",
+                modified=False,
+            )
 
         ctx = context.value if isinstance(context, SanitizeContext) else context
         result = input_str
@@ -230,9 +385,13 @@ class UniversalSanitizer:
                 patterns.append("path_traversal")
                 result = self.PATH_TRAVERSAL.sub("", result)
 
-        return SanitizeResult(sanitized=result, modified=result != input_str, patterns=patterns)
+        return SanitizeResult(
+            sanitized=result, modified=result != input_str, patterns=patterns
+        )
 
-    def sanitize_object(self, obj: Any, context: str | SanitizeContext = SanitizeContext.INPUT) -> Any:
+    def sanitize_object(
+        self, obj: Any, context: str | SanitizeContext = SanitizeContext.INPUT
+    ) -> Any:
         """Recursively sanitize an object's string values."""
         if isinstance(obj, str):
             return self.sanitize(obj, context).sanitized
@@ -247,6 +406,7 @@ class UniversalSanitizer:
 # PromptInjectionDetector — enhanced detection
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class PromptInjectionDetector:
     """
     Detects prompt injection in tool results and user messages.
@@ -255,45 +415,72 @@ class PromptInjectionDetector:
 
     # High-confidence injection patterns (broader than sanitizer patterns)
     INJECTION_PATTERNS: list[tuple[str, re.Pattern]] = [
-        ("system_prompt_leak", re.compile(
-            r"(?:reveal|show|print|repeat|output|display|what\s+(?:are|is))\s+"
-            r"(?:the\s+)?(?:system\s+)?(?:prompt|instructions?|rules?|guidelines?)",
-            re.IGNORECASE
-        )),
-        ("role_manipulation", re.compile(
-            r"(?:you\s+are\s+now|act\s+as|pretend\s+to\s+be|from\s+now\s+on\s+you\s+are)",
-            re.IGNORECASE
-        )),
-        ("ignore_instructions", re.compile(
-            r"(?:ignore|disregard|forget|override)\s+(?:all\s+|previous\s+|prior\s+)?"
-            r"(?:instructions?|rules?|guidelines?|prompts?)",
-            re.IGNORECASE
-        )),
-        ("new_instructions", re.compile(
-            r"(?:new|updated|real|actual)\s+(?:instructions?|rules?|task)\s*:",
-            re.IGNORECASE
-        )),
-        ("jailbreak_attempt", re.compile(
-            r"(?:DAN|jailbreak|do\s+anything\s+now|developer\s+mode|god\s+mode|unrestricted)",
-            re.IGNORECASE
-        )),
-        ("data_exfiltration", re.compile(
-            r"(?:send|post|upload|transfer|email|forward)\s+"
-            r"(?:the\s+)?(?:api\s+key|password|token|secret|credential|data|security\s+code)\s+"
-            r"(?:to|via|through)\s+",
-            re.IGNORECASE
-        )),
-        ("privileged_action", re.compile(
-            r"(?:delete\s+all|drop\s+table|rm\s+-rf|format\s+disk|sudo|chmod\s+777)",
-            re.IGNORECASE
-        )),
+        (
+            "system_prompt_leak",
+            re.compile(
+                r"(?:reveal|show|print|repeat|output|display|what\s+(?:are|is))\s+"
+                r"(?:the\s+)?(?:system\s+)?(?:prompt|instructions?|rules?|guidelines?)",
+                re.IGNORECASE,
+            ),
+        ),
+        (
+            "role_manipulation",
+            re.compile(
+                r"(?:you\s+are\s+now|act\s+as|pretend\s+to\s+be|from\s+now\s+on\s+you\s+are)",
+                re.IGNORECASE,
+            ),
+        ),
+        (
+            "ignore_instructions",
+            re.compile(
+                r"(?:ignore|disregard|forget|override)\s+(?:all\s+|previous\s+|prior\s+)?"
+                r"(?:instructions?|rules?|guidelines?|prompts?)",
+                re.IGNORECASE,
+            ),
+        ),
+        (
+            "new_instructions",
+            re.compile(
+                r"(?:new|updated|real|actual)\s+(?:instructions?|rules?|task)\s*:",
+                re.IGNORECASE,
+            ),
+        ),
+        (
+            "jailbreak_attempt",
+            re.compile(
+                r"(?:DAN|jailbreak|do\s+anything\s+now|developer\s+mode|god\s+mode|unrestricted)",
+                re.IGNORECASE,
+            ),
+        ),
+        (
+            "data_exfiltration",
+            re.compile(
+                r"(?:send|post|upload|transfer|email|forward)\s+"
+                r"(?:the\s+)?(?:api\s+key|password|token|secret|credential|data|security\s+code)\s+"
+                r"(?:to|via|through)\s+",
+                re.IGNORECASE,
+            ),
+        ),
+        (
+            "privileged_action",
+            re.compile(
+                r"(?:delete\s+all|drop\s+table|rm\s+-rf|format\s+disk|sudo|chmod\s+777)",
+                re.IGNORECASE,
+            ),
+        ),
         # AgentDojo important_instructions attack
         ("information_tag", re.compile(r"<INFORMATION>", re.IGNORECASE)),
-        ("important_message_from", re.compile(r"This is an important message from me", re.IGNORECASE)),
-        ("before_you_solve", re.compile(
-            r"Before you can solve the task.*?please do the following first",
-            re.IGNORECASE | re.DOTALL
-        )),
+        (
+            "important_message_from",
+            re.compile(r"This is an important message from me", re.IGNORECASE),
+        ),
+        (
+            "before_you_solve",
+            re.compile(
+                r"Before you can solve the task.*?please do the following first",
+                re.IGNORECASE | re.DOTALL,
+            ),
+        ),
     ]
 
     @classmethod
@@ -354,6 +541,7 @@ class PromptInjectionDetector:
 # ReversibilityGate — port of reversibilityGate.ts
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class ToolRiskLevel(str, Enum):
     SAFE = "safe"
     REVERSIBLE = "reversible"
@@ -372,20 +560,50 @@ class ReversibilityGate:
     # NOTE: delete_file is NOT here — it's a legitimate tool in agent workflows.
     # Instead, suspicious delete patterns are handled in SUSPICIOUS_TOOL_PATTERNS.
     IRREVERSIBLE_TOOLS = {
-        "git_push", "shell_execute", "python_execute", "web_fetch",
-        "rm", "format", "drop",
+        "git_push",
+        "shell_execute",
+        "python_execute",
+        "web_fetch",
+        "rm",
+        "format",
+        "drop",
     }
 
     # Dangerous argument patterns
     DANGEROUS_ARG_PATTERNS: list[tuple[str, re.Pattern]] = [
-        ("destructive_shell", re.compile(r"(?:rm\s+-rf|format\s+|mkfs|dd\s+if=|>\s*/dev/sd)", re.IGNORECASE)),
-        ("network_exfil", re.compile(
-            r"(?:curl\s+|wget\s+|nc\s+|netcat|scp\s+|rsync\s+).*(?:api_key|password|token|secret)",
-            re.IGNORECASE
-        )),
-        ("privilege_escalation", re.compile(r"(?:sudo|chmod\s+777|chown\s+root|/etc/passwd|/etc/shadow)", re.IGNORECASE)),
-        ("sql_injection", re.compile(r"(?:DROP\s+TABLE|DELETE\s+FROM|UNION\s+SELECT|;\s*DROP)", re.IGNORECASE)),
-        ("path_traversal", re.compile(r"(?:\.\./|\.\.%2f|\.\.%5c|/etc/passwd|/etc/shadow|/root/)", re.IGNORECASE)),
+        (
+            "destructive_shell",
+            re.compile(
+                r"(?:rm\s+-rf|format\s+|mkfs|dd\s+if=|>\s*/dev/sd)", re.IGNORECASE
+            ),
+        ),
+        (
+            "network_exfil",
+            re.compile(
+                r"(?:curl\s+|wget\s+|nc\s+|netcat|scp\s+|rsync\s+).*(?:api_key|password|token|secret)",
+                re.IGNORECASE,
+            ),
+        ),
+        (
+            "privilege_escalation",
+            re.compile(
+                r"(?:sudo|chmod\s+777|chown\s+root|/etc/passwd|/etc/shadow)",
+                re.IGNORECASE,
+            ),
+        ),
+        (
+            "sql_injection",
+            re.compile(
+                r"(?:DROP\s+TABLE|DELETE\s+FROM|UNION\s+SELECT|;\s*DROP)", re.IGNORECASE
+            ),
+        ),
+        (
+            "path_traversal",
+            re.compile(
+                r"(?:\.\./|\.\.%2f|\.\.%5c|/etc/passwd|/etc/shadow|/root/)",
+                re.IGNORECASE,
+            ),
+        ),
     ]
 
     # Suspicious tool-specific patterns (data exfiltration, destructive actions)
@@ -396,12 +614,18 @@ class ReversibilityGate:
     SUSPICIOUS_TOOL_PATTERNS: dict[str, dict] = {
         "send_email": {
             # Only block when sending to known attacker addresses
-            "blocked_recipients": re.compile(r"mark\.black.*?@gmail\.com", re.IGNORECASE),
+            "blocked_recipients": re.compile(
+                r"mark\.black.*?@gmail\.com", re.IGNORECASE
+            ),
             # Only block when body contains security code exfiltration
-            "security_code_forward": re.compile(r"(?:security\s+code|verification\s+code|OTP|MFA)", re.IGNORECASE),
+            "security_code_forward": re.compile(
+                r"(?:security\s+code|verification\s+code|OTP|MFA)", re.IGNORECASE
+            ),
         },
         "create_calendar_event": {
-            "blocked_participants": re.compile(r"mark\.black.*?@gmail\.com", re.IGNORECASE),
+            "blocked_participants": re.compile(
+                r"mark\.black.*?@gmail\.com", re.IGNORECASE
+            ),
         },
     }
 
@@ -427,13 +651,19 @@ class ReversibilityGate:
         # Check irreversible tools
         for pattern in cls.IRREVERSIBLE_TOOLS:
             if pattern in tool_name.lower():
-                return True, f"Blocked by ReversibilityGate: irreversible tool '{tool_name}' requires approval"
+                return (
+                    True,
+                    f"Blocked by ReversibilityGate: irreversible tool '{tool_name}' requires approval",
+                )
 
         # Check dangerous argument patterns
         args_str = str(tool_args)
         for name, pattern in cls.DANGEROUS_ARG_PATTERNS:
             if pattern.search(args_str):
-                return True, f"Blocked by ReversibilityGate: dangerous argument pattern '{name}' detected"
+                return (
+                    True,
+                    f"Blocked by ReversibilityGate: dangerous argument pattern '{name}' detected",
+                )
 
         # Check suspicious tool-specific patterns
         if tool_name in cls.SUSPICIOUS_TOOL_PATTERNS:
@@ -445,7 +675,10 @@ class ReversibilityGate:
                     recipients = [recipients]
                 for rec in recipients:
                     if patterns["blocked_recipients"].search(str(rec)):
-                        return True, "Blocked by ReversibilityGate: data exfiltration to suspicious address"
+                        return (
+                            True,
+                            "Blocked by ReversibilityGate: data exfiltration to suspicious address",
+                        )
 
             if "blocked_participants" in patterns:
                 participants = tool_args.get("participants", []) or []
@@ -453,12 +686,20 @@ class ReversibilityGate:
                     participants = [participants]
                 for p in participants:
                     if patterns["blocked_participants"].search(str(p)):
-                        return True, "Blocked by ReversibilityGate: suspicious calendar participant"
+                        return (
+                            True,
+                            "Blocked by ReversibilityGate: suspicious calendar participant",
+                        )
 
             if "security_code_forward" in patterns:
-                body = str(tool_args.get("body", "")) + str(tool_args.get("subject", ""))
+                body = str(tool_args.get("body", "")) + str(
+                    tool_args.get("subject", "")
+                )
                 if patterns["security_code_forward"].search(body):
-                    return True, "Blocked by ReversibilityGate: security code exfiltration attempt"
+                    return (
+                        True,
+                        "Blocked by ReversibilityGate: security code exfiltration attempt",
+                    )
 
         return False, ""
 
@@ -466,6 +707,7 @@ class ReversibilityGate:
 # ═══════════════════════════════════════════════════════════════════════════════
 # SecurityAnomalyDetector — port of securityAnomalyDetector.ts
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class SecurityAnomalyDetector:
     """
@@ -484,7 +726,9 @@ class SecurityAnomalyDetector:
     def record_tool_call(self, tool_name: str):
         now = time.time()
         self.tool_calls.append((now, tool_name))
-        self.tool_calls = [(t, n) for t, n in self.tool_calls if now - t < self.window_seconds]
+        self.tool_calls = [
+            (t, n) for t, n in self.tool_calls if now - t < self.window_seconds
+        ]
 
     def detect_tool_burst(self, threshold: int = 50) -> bool:
         """Detect if too many tool calls in 60s window. Threshold raised to 50

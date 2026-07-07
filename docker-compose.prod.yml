@@ -34,6 +34,12 @@ services:
       # Multi-tenant settings
       - TENANT_PROVIDER=${TENANT_PROVIDER:-simple}
       - TENANT_CONFIG_PATH=${TENANT_CONFIG_PATH:-/app/config/tenants.json}
+      # Production database: PostgreSQL is the default for multi-replica deployments
+      - API_STORE_BACKEND=${API_STORE_BACKEND:-postgres}
+      - DATABASE_URL=${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?err}@postgres:5432/commander}
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - commander_state:/app/.commander_state
       - commander_traces:/app/.commander_traces
@@ -63,6 +69,23 @@ services:
         max-file: '3'
     restart: always
 
+  postgres:
+    image: postgres:16-alpine
+    container_name: commander-postgres
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-commander}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?err}
+      - POSTGRES_DB=${POSTGRES_DB:-commander}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-commander} -d ${POSTGRES_DB:-commander}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: always
+
 volumes:
   commander_state:
     driver: local
@@ -71,4 +94,6 @@ volumes:
   commander_memory:
     driver: local
   commander_results:
+    driver: local
+  postgres-data:
     driver: local

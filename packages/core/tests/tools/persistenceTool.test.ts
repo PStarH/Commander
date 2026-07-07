@@ -65,9 +65,7 @@ describe('persistenceTool lazy async init contract', () => {
     // assertions in tests 2-4 are checking for.
     vi.resetModules();
     vi.mocked(fsp.mkdir).mockReset();
-    vi.mocked(fsp.mkdir).mockImplementation(
-      realRefs.mkdir as typeof fsp.mkdir,
-    );
+    vi.mocked(fsp.mkdir).mockImplementation(realRefs.mkdir as typeof fsp.mkdir);
   });
 
   afterEach(async () => {
@@ -78,12 +76,13 @@ describe('persistenceTool lazy async init contract', () => {
     // beforeEach already called vi.resetModules(); we just install the
     // counting override before re-importing the module under test.
     const mkdirCallsForMemoryDir: Array<unknown[]> = [];
-    vi.mocked(fsp.mkdir).mockImplementation(
-      ((p: unknown, opts: unknown) => {
-        if (p === EXPECTED_MEMORY_DIR) mkdirCallsForMemoryDir.push([p, opts]);
-        return (realRefs.mkdir as typeof fsp.mkdir)(p as Parameters<typeof fsp.mkdir>[0], opts as Parameters<typeof fsp.mkdir>[1]);
-      }) as typeof fsp.mkdir,
-    );
+    vi.mocked(fsp.mkdir).mockImplementation(((p: unknown, opts: unknown) => {
+      if (p === EXPECTED_MEMORY_DIR) mkdirCallsForMemoryDir.push([p, opts]);
+      return (realRefs.mkdir as typeof fsp.mkdir)(
+        p as Parameters<typeof fsp.mkdir>[0],
+        opts as Parameters<typeof fsp.mkdir>[1],
+      );
+    }) as typeof fsp.mkdir);
 
     await import('../../src/tools/persistenceTool');
 
@@ -121,33 +120,30 @@ describe('persistenceTool lazy async init contract', () => {
 
   it('mkdir failure on first call: rejection propagates + cache resets + retry succeeds', async () => {
     let memoryDirCalls = 0;
-    vi.mocked(fsp.mkdir).mockImplementation(
-      ((p: unknown, opts: unknown) => {
-        if (p === EXPECTED_MEMORY_DIR) {
-          memoryDirCalls += 1;
-          if (memoryDirCalls === 1) {
-            const err = new Error(
-              'simulated transient EACCES on memory dir',
-            ) as NodeJS.ErrnoException;
-            err.code = 'EACCES';
-            throw err;
-          }
+    vi.mocked(fsp.mkdir).mockImplementation(((p: unknown, opts: unknown) => {
+      if (p === EXPECTED_MEMORY_DIR) {
+        memoryDirCalls += 1;
+        if (memoryDirCalls === 1) {
+          const err = new Error(
+            'simulated transient EACCES on memory dir',
+          ) as NodeJS.ErrnoException;
+          err.code = 'EACCES';
+          throw err;
         }
-        return (realRefs.mkdir as typeof fsp.mkdir)(p as Parameters<typeof fsp.mkdir>[0], opts as Parameters<typeof fsp.mkdir>[1]);
-      }) as typeof fsp.mkdir,
-    );
+      }
+      return (realRefs.mkdir as typeof fsp.mkdir)(
+        p as Parameters<typeof fsp.mkdir>[0],
+        opts as Parameters<typeof fsp.mkdir>[1],
+      );
+    }) as typeof fsp.mkdir);
 
     const storeMod = await import('../../src/tools/persistenceTool');
     const storeTool = new storeMod.MemoryStoreTool();
 
-    await expect(
-      storeTool.execute({ key: 'k1', value: 'v1' }),
-    ).rejects.toThrow(/EACCES/);
+    await expect(storeTool.execute({ key: 'k1', value: 'v1' })).rejects.toThrow(/EACCES/);
     expect(memoryDirCalls).toBe(1);
 
-    await expect(
-      storeTool.execute({ key: 'k2', value: 'v2' }),
-    ).resolves.toMatch(/^Stored "k2"/);
+    await expect(storeTool.execute({ key: 'k2', value: 'v2' })).resolves.toMatch(/^Stored "k2"/);
     expect(memoryDirCalls).toBe(2);
   });
 

@@ -135,7 +135,9 @@ describe('recordPromptCacheSavings', () => {
   it('omits the tenant label when tenantId is undefined', () => {
     metrics.recordPromptCacheSavings(usage(10_000, 5_000), 'anthropic', 'claude-3-5-sonnet');
     const lines = metrics.exportOpenMetrics().split('\n');
-    const dollarLine = lines.find((l) => l.startsWith('commander_prompt_cache_cost_saved_usd_total{'));
+    const dollarLine = lines.find((l) =>
+      l.startsWith('commander_prompt_cache_cost_saved_usd_total{'),
+    );
     expect(dollarLine).toBeDefined();
     expect(dollarLine).not.toContain('tenant=');
     expect(dollarLine).toContain('provider="anthropic"');

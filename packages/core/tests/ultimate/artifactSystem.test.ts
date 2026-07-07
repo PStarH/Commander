@@ -10,8 +10,20 @@ describe('ArtifactSystem', () => {
 
   describe('search', () => {
     it('treats user query as literal text, not regex', async () => {
-      await system.write('agent-1', 'text', 'Budget report 2024', 'Summary', 'The budget is $1,000.');
-      await system.write('agent-1', 'text', 'Wildcard notes', 'Summary', 'Notes about test.* regex');
+      await system.write(
+        'agent-1',
+        'text',
+        'Budget report 2024',
+        'Summary',
+        'The budget is $1,000.',
+      );
+      await system.write(
+        'agent-1',
+        'text',
+        'Wildcard notes',
+        'Summary',
+        'Notes about test.* regex',
+      );
 
       // If the query were interpreted as regex, "test.*" would match both "test" and "test regex".
       const results = await system.search('test.*');

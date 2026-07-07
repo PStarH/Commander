@@ -38,10 +38,30 @@ import {
 // google, openai → 24.
 const EXPECTED_BUILTIN_COUNT = 24;
 const EXPECTED_BUILTIN_TYPES = new Set([
-  'ollama', 'vllm', 'deepinfra', 'anyscale', 'replicate', 'cohere',
-  'mistral', 'groq', 'together', 'perplexity', 'fireworks', 'xiaomi',
-  'mimo', 'deepseek', 'glm', 'xai', 'bedrock', 'agnes', 'stepfun',
-  'minimax', 'openrouter', 'anthropic', 'google', 'openai',
+  'ollama',
+  'vllm',
+  'deepinfra',
+  'anyscale',
+  'replicate',
+  'cohere',
+  'mistral',
+  'groq',
+  'together',
+  'perplexity',
+  'fireworks',
+  'xiaomi',
+  'mimo',
+  'deepseek',
+  'glm',
+  'xai',
+  'bedrock',
+  'agnes',
+  'stepfun',
+  'minimax',
+  'openrouter',
+  'anthropic',
+  'google',
+  'openai',
 ]);
 
 describe('providerRegistry: built-in coverage', () => {
@@ -117,17 +137,37 @@ describe('providerRegistry: derived accessors cover all registered', () => {
 describe('providerRegistry: createProvider factory', () => {
   // Clear env vars so factories don't pick up real keys during construction.
   const envVarsToClear = [
-    'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GOOGLE_API_KEY',
-    'DEEPSEEK_API_KEY', 'ZHIPU_API_KEY', 'GROQ_API_KEY',
-    'OLLAMA_API_KEY', 'VLLM_API_KEY', 'CO_API_KEY', 'COHERE_API_KEY',
-    'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'PERPLEXITY_API_KEY',
-    'FIREWORKS_API_KEY', 'XIAOMI_API_KEY', 'MIMO_API_KEY',
-    'OPENROUTER_API_KEY', 'XAI_API_KEY', 'ANYSCALE_API_KEY',
-    'DEEPINFRA_API_KEY', 'AGNES_API_KEY', 'STEPFUN_API_KEY',
-    'MINIMAX_API_KEY', 'REPLICATE_API_TOKEN',
+    'OPENAI_API_KEY',
+    'ANTHROPIC_API_KEY',
+    'GOOGLE_API_KEY',
+    'DEEPSEEK_API_KEY',
+    'ZHIPU_API_KEY',
+    'GROQ_API_KEY',
+    'OLLAMA_API_KEY',
+    'VLLM_API_KEY',
+    'CO_API_KEY',
+    'COHERE_API_KEY',
+    'MISTRAL_API_KEY',
+    'TOGETHER_API_KEY',
+    'PERPLEXITY_API_KEY',
+    'FIREWORKS_API_KEY',
+    'XIAOMI_API_KEY',
+    'MIMO_API_KEY',
+    'OPENROUTER_API_KEY',
+    'XAI_API_KEY',
+    'ANYSCALE_API_KEY',
+    'DEEPINFRA_API_KEY',
+    'AGNES_API_KEY',
+    'STEPFUN_API_KEY',
+    'MINIMAX_API_KEY',
+    'REPLICATE_API_TOKEN',
   ];
-  beforeEach(() => { for (const k of envVarsToClear) delete process.env[k]; });
-  afterEach(() => { for (const k of envVarsToClear) delete process.env[k]; });
+  beforeEach(() => {
+    for (const k of envVarsToClear) delete process.env[k];
+  });
+  afterEach(() => {
+    for (const k of envVarsToClear) delete process.env[k];
+  });
 
   it('creates a provider for every registered type', () => {
     for (const type of listProviderTypes()) {
@@ -180,14 +220,19 @@ describe('providerRegistry: extensibility contract (third-party registration)', 
       defaultModel: 'test-model-v1',
       displayName: 'Test Provider',
       apiType: 'openai',
-      factory: () => ({
-        name: TEST_TYPE,
-        async call() {
-          return { content: 'test response' };
-        },
-        getDefaultModel() { return 'test-model-v1'; },
-        getDefaultBaseUrl() { return 'https://test.example.com/v1'; },
-      }) as any,
+      factory: () =>
+        ({
+          name: TEST_TYPE,
+          async call() {
+            return { content: 'test response' };
+          },
+          getDefaultModel() {
+            return 'test-model-v1';
+          },
+          getDefaultBaseUrl() {
+            return 'https://test.example.com/v1';
+          },
+        }) as any,
     });
 
     assert.ok(hasProvider(TEST_TYPE), 'third-party provider must be registered');
@@ -219,12 +264,19 @@ describe('providerRegistry: extensibility contract (third-party registration)', 
       defaultModel: 'test-model-v2',
       displayName: 'Test Provider V2',
       apiType: 'openai',
-      factory: () => ({
-        name: TEST_TYPE,
-        async call() { return { content: 'v2' }; },
-        getDefaultModel() { return 'test-model-v2'; },
-        getDefaultBaseUrl() { return 'https://v2.example.com/v1'; },
-      }) as any,
+      factory: () =>
+        ({
+          name: TEST_TYPE,
+          async call() {
+            return { content: 'v2' };
+          },
+          getDefaultModel() {
+            return 'test-model-v2';
+          },
+          getDefaultBaseUrl() {
+            return 'https://v2.example.com/v1';
+          },
+        }) as any,
     });
 
     const types = listProviderTypes();

@@ -158,14 +158,23 @@ describe('AgentDojo coverage matrix (attack format × defense layer)', () => {
         expect(r.blocked).toBe(true);
       }
       // eslint-disable-next-line no-console
-      console.log(`  ${formatClass}: ${rs.length} case(s) — all blocked (layers: ${rs.map((r) => r.defense).join(', ')})`);
+      console.log(
+        `  ${formatClass}: ${rs.length} case(s) — all blocked (layers: ${rs.map((r) => r.defense).join(', ')})`,
+      );
     }
   });
 
   it('tag_injection format should be blocked by Layer 1 (scanToolOutputForInjection or UniversalSanitizer)', async () => {
     const tagCases = cases.filter((c) =>
-      ['email_exfiltration', 'credential_theft', 'financial_fraud', 'data_destruction',
-       'security_code_forwarding', 'external_egress', 'multi_language'].includes(c.subCategory ?? ''),
+      [
+        'email_exfiltration',
+        'credential_theft',
+        'financial_fraud',
+        'data_destruction',
+        'security_code_forwarding',
+        'external_egress',
+        'multi_language',
+      ].includes(c.subCategory ?? ''),
     );
 
     for (const tc of tagCases) {

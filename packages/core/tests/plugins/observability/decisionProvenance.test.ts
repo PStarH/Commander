@@ -1,6 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { buildDecisions, decisionsSummary } from '../../../src/plugins/builtin/observability/decisionProvenance';
+import {
+  buildDecisions,
+  decisionsSummary,
+} from '../../../src/plugins/builtin/observability/decisionProvenance';
 import type { ExecutionTrace, TraceEvent } from '../../../src/runtime/types';
 
 function llm(spanId: string, ts: string, output: unknown): TraceEvent {

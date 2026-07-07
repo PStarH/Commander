@@ -294,9 +294,7 @@ describe('MetricsCollector', () => {
     it('attaches tenant label when provided', () => {
       collector.setEventSourcingWalSize(2048, 'tenant-b');
       const output = collector.exportOpenMetrics();
-      expect(output).toContain(
-        'commander_event_sourcing_wal_size_bytes{tenant="tenant-b"} 2048',
-      );
+      expect(output).toContain('commander_event_sourcing_wal_size_bytes{tenant="tenant-b"} 2048');
     });
   });
 
@@ -317,12 +315,8 @@ describe('MetricsCollector', () => {
     it('propagates tenantId to both gauges', () => {
       collector.setEventSourcingTotals(100, 5, 'tenant-c');
       const output = collector.exportOpenMetrics();
-      expect(output).toContain(
-        'commander_event_sourcing_total_events{tenant="tenant-c"} 100',
-      );
-      expect(output).toContain(
-        'commander_event_sourcing_total_snapshots{tenant="tenant-c"} 5',
-      );
+      expect(output).toContain('commander_event_sourcing_total_events{tenant="tenant-c"} 100');
+      expect(output).toContain('commander_event_sourcing_total_snapshots{tenant="tenant-c"} 5');
     });
   });
 
@@ -353,9 +347,7 @@ describe('MetricsCollector', () => {
     it('emits gauge value 1 when breaker is OPEN', () => {
       collector.setCircuitBreakerOpen(true, 'anthropic');
       const output = collector.exportOpenMetrics();
-      expect(output).toContain(
-        'commander_circuit_breaker_open{provider="anthropic"} 1',
-      );
+      expect(output).toContain('commander_circuit_breaker_open{provider="anthropic"} 1');
     });
 
     it('emits gauge value 0 when breaker is CLOSED', () => {
@@ -418,12 +410,12 @@ describe('MetricsCollector', () => {
       collector.recordCheckpoint('success');
       collector.recordCheckpoint('success');
       collector.recordCheckpoint('failed');
-      expect(
-        collector.getCounter('checkpoint_total', [{ name: 'status', value: 'success' }]),
-      ).toBe(2);
-      expect(
-        collector.getCounter('checkpoint_total', [{ name: 'status', value: 'failed' }]),
-      ).toBe(1);
+      expect(collector.getCounter('checkpoint_total', [{ name: 'status', value: 'success' }])).toBe(
+        2,
+      );
+      expect(collector.getCounter('checkpoint_total', [{ name: 'status', value: 'failed' }])).toBe(
+        1,
+      );
     });
 
     it('uses status label (not outcome) to match Grafana dashboard contract', () => {
@@ -437,9 +429,7 @@ describe('MetricsCollector', () => {
     it('attaches tenant label when provided', () => {
       collector.recordCheckpoint('success', 'tenant-f');
       const output = collector.exportOpenMetrics();
-      expect(output).toContain(
-        'commander_checkpoint_total{status="success",tenant="tenant-f"} 1',
-      );
+      expect(output).toContain('commander_checkpoint_total{status="success",tenant="tenant-f"} 1');
     });
   });
 

@@ -22,7 +22,13 @@ function makeTaskTree(): TaskTreeNode {
 
 function makeGates(overrides?: Partial<QualityGateConfig>[]): QualityGateConfig[] {
   const base: QualityGateConfig[] = [
-    { name: 'hallucination', type: 'HALLUCINATION_CHECK', enabled: true, threshold: 0.8, autoFix: true },
+    {
+      name: 'hallucination',
+      type: 'HALLUCINATION_CHECK',
+      enabled: true,
+      threshold: 0.8,
+      autoFix: true,
+    },
     { name: 'consistency', type: 'CONSISTENCY', enabled: true, threshold: 0.7, autoFix: true },
     { name: 'completeness', type: 'COMPLETENESS', enabled: true, threshold: 0.6, autoFix: false },
   ];
@@ -104,9 +110,7 @@ describe('QualityGateFixer', () => {
 
   it('skips fix loop when no failed gate has autoFix enabled', async () => {
     const runtime = makeRuntime();
-    const synthesizer = makeSynthesizer([
-      { gate: 'completeness', passed: false, score: 0.3 },
-    ]);
+    const synthesizer = makeSynthesizer([{ gate: 'completeness', passed: false, score: 0.3 }]);
     const fixer = new QualityGateFixer({
       runtime,
       synthesizer,
@@ -164,11 +168,10 @@ describe('QualityGateFixer', () => {
   });
 
   it('stops early when fix produces identical output', async () => {
-    const identicalSynth = 'Original synthesis that is long enough to pass the minimum length check.';
+    const identicalSynth =
+      'Original synthesis that is long enough to pass the minimum length check.';
     const runtime = makeRuntime({ summary: identicalSynth });
-    const synthesizer = makeSynthesizer([
-      { gate: 'hallucination', passed: false, score: 0.3 },
-    ]);
+    const synthesizer = makeSynthesizer([{ gate: 'hallucination', passed: false, score: 0.3 }]);
     const fixer = new QualityGateFixer({
       runtime,
       synthesizer,
@@ -210,9 +213,7 @@ describe('QualityGateFixer', () => {
     } as unknown as AgentRuntimeInterface;
 
     // After fix: score stays the same (0.3 → 0.3)
-    const synthesizer = makeSynthesizer([
-      { gate: 'hallucination', passed: false, score: 0.3 },
-    ]);
+    const synthesizer = makeSynthesizer([{ gate: 'hallucination', passed: false, score: 0.3 }]);
     const fixer = new QualityGateFixer({
       runtime,
       synthesizer,
@@ -267,9 +268,7 @@ describe('QualityGateFixer', () => {
 
   it('builds consistency-specific fix instructions', async () => {
     const runtime = makeRuntime();
-    const synthesizer = makeSynthesizer([
-      { gate: 'consistency', passed: true, score: 0.9 },
-    ]);
+    const synthesizer = makeSynthesizer([{ gate: 'consistency', passed: true, score: 0.9 }]);
     const fixer = new QualityGateFixer({
       runtime,
       synthesizer,
@@ -294,16 +293,18 @@ describe('QualityGateFixer', () => {
 
   it('builds completeness-specific fix instructions', async () => {
     const gates = makeGates([
-      { name: 'completeness', type: 'COMPLETENESS', enabled: true, threshold: 0.6, autoFix: true } as any,
+      {
+        name: 'completeness',
+        type: 'COMPLETENESS',
+        enabled: true,
+        threshold: 0.6,
+        autoFix: true,
+      } as any,
     ]);
     // Override the default completeness gate to have autoFix: true
-    const allGates = gates.map((g) =>
-      g.name === 'completeness' ? { ...g, autoFix: true } : g,
-    );
+    const allGates = gates.map((g) => (g.name === 'completeness' ? { ...g, autoFix: true } : g));
     const runtime = makeRuntime();
-    const synthesizer = makeSynthesizer([
-      { gate: 'completeness', passed: true, score: 0.8 },
-    ]);
+    const synthesizer = makeSynthesizer([{ gate: 'completeness', passed: true, score: 0.8 }]);
     const fixer = new QualityGateFixer({
       runtime,
       synthesizer,
@@ -393,9 +394,7 @@ describe('QualityGateFixer', () => {
 
   it('passes contextData and projectId to runtime.execute', async () => {
     const runtime = makeRuntime();
-    const synthesizer = makeSynthesizer([
-      { gate: 'hallucination', passed: true, score: 0.9 },
-    ]);
+    const synthesizer = makeSynthesizer([{ gate: 'hallucination', passed: true, score: 0.9 }]);
     const fixer = new QualityGateFixer({
       runtime,
       synthesizer,

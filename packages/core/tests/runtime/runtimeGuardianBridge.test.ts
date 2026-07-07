@@ -11,15 +11,23 @@ import type { ToolCall } from '../../src/runtime/types';
 // Mock provider for testing
 function createMockProvider(approve: boolean, delayMs = 0) {
   return {
-    call: vi.fn().mockImplementation((input: { model: string; messages: { role: string; content: string }[]; maxTokens: number }) => {
-      return new Promise<{ content?: string }>((resolve) => {
-        setTimeout(() => {
-          resolve({
-            content: `APPROVED: ${approve}\nREASON: Test decision\nSUGGESTION: None`,
+    call: vi
+      .fn()
+      .mockImplementation(
+        (input: {
+          model: string;
+          messages: { role: string; content: string }[];
+          maxTokens: number;
+        }) => {
+          return new Promise<{ content?: string }>((resolve) => {
+            setTimeout(() => {
+              resolve({
+                content: `APPROVED: ${approve}\nREASON: Test decision\nSUGGESTION: None`,
+              });
+            }, delayMs);
           });
-        }, delayMs);
-      });
-    }),
+        },
+      ),
   };
 }
 

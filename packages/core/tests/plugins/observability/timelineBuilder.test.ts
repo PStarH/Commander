@@ -1,6 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { buildTimeline, buildSpanTree } from '../../../src/plugins/builtin/observability/timelineBuilder';
+import {
+  buildTimeline,
+  buildSpanTree,
+} from '../../../src/plugins/builtin/observability/timelineBuilder';
 import type { ExecutionTrace, TraceEvent } from '../../../src/runtime/types';
 
 function makeTrace(events: TraceEvent[]): ExecutionTrace {
