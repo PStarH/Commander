@@ -86,6 +86,12 @@ spec:
             - name: REDIS_URL
               value: redis://{{ include "commander.fullname" . }}-redis:{{ .Values.redis.port }}
             {{- end }}
+            {{- if .Values.database.enabled }}
+            - name: API_STORE_BACKEND
+              value: {{ .Values.database.backend | quote }}
+            - name: DATABASE_URL
+              value: {{ .Values.database.connectionString | default (printf "postgres://%s:%s@%s-postgres:%s/%s" .Values.database.postgres.user .Values.database.postgres.password (include "commander.fullname" .) (.Values.database.postgres.port | toString) .Values.database.postgres.database) | quote }}
+            {{- end }}
             {{- if .Values.observability.otel.enabled }}
             - name: OTEL_EXPORTER_ENDPOINT
               value: {{ .Values.observability.otel.endpoint | quote }}

@@ -879,7 +879,10 @@ describe('M19: Tier 4 observability → DLQ tags, latency histograms, cost-by-fa
     });
 
     const metrics = getMetricsCollector().exportOpenMetrics();
-    assert.ok(metrics.includes('commander_step_latency_ms'), 'Expected commander_step_latency_ms metric');
+    assert.ok(
+      metrics.includes('commander_step_latency_ms'),
+      'Expected commander_step_latency_ms metric',
+    );
   });
 
   it('v2 fix: verification failure attributes cost to failure mode', async () => {

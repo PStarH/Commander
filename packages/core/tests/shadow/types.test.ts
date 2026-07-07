@@ -21,8 +21,12 @@ describe('shadow types', () => {
   });
 
   it('isDriftThresholdBreached returns true when drift > 5%', () => {
-    expect(isDriftThresholdBreached({ statusDeltaPct: 6, latencyDeltaPct: 1, costDeltaPct: 1 })).toBe(true);
-    expect(isDriftThresholdBreached({ statusDeltaPct: 3, latencyDeltaPct: 3, costDeltaPct: 3 })).toBe(false);
+    expect(
+      isDriftThresholdBreached({ statusDeltaPct: 6, latencyDeltaPct: 1, costDeltaPct: 1 }),
+    ).toBe(true);
+    expect(
+      isDriftThresholdBreached({ statusDeltaPct: 3, latencyDeltaPct: 3, costDeltaPct: 3 }),
+    ).toBe(false);
   });
 
   it('loadShadowConfig returns default when no config file', () => {

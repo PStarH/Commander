@@ -61,3 +61,24 @@ spec:
     {{- include "commander.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: redis
 {{- end }}
+
+---
+{{- if and .Values.database.enabled (eq .Values.database.backend "postgres") (not .Values.database.connectionString) }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "commander.fullname" . }}-postgres
+  labels:
+    {{- include "commander.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.database.postgres.port }}
+      targetPort: postgres
+      protocol: TCP
+      name: postgres
+  selector:
+    {{- include "commander.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+{{- end }}

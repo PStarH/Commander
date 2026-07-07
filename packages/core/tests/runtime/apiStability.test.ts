@@ -22,28 +22,42 @@ import {
   errorToProblem,
   ErrorCodes,
 } from '../../src/runtime/apiErrors';
-import {
-  validateBody,
-  validateOrThrow,
-  Schemas,
-} from '../../src/runtime/apiValidation';
+import { validateBody, validateOrThrow, Schemas } from '../../src/runtime/apiValidation';
 import type { ServerResponse, IncomingMessage } from 'http';
 
 // ============================================================================
 // Mock helpers
 // ============================================================================
 
-function mockResponse(): { res: ServerResponse; body: string; statusCode: number; headers: Record<string, string> } {
+function mockResponse(): {
+  res: ServerResponse;
+  body: string;
+  statusCode: number;
+  headers: Record<string, string>;
+} {
   const state = { body: '', statusCode: 0, headers: {} as Record<string, string> };
   const res = {
     writeHead: (code: number, hdrs?: Record<string, string>) => {
       state.statusCode = code;
       if (hdrs) Object.assign(state.headers, hdrs);
     },
-    end: (data?: string) => { state.body = data ?? ''; },
+    end: (data?: string) => {
+      state.body = data ?? '';
+    },
     setHeader: () => {},
   } as unknown as ServerResponse;
-  return { res, get body() { return state.body; }, get statusCode() { return state.statusCode; }, get headers() { return state.headers; } };
+  return {
+    res,
+    get body() {
+      return state.body;
+    },
+    get statusCode() {
+      return state.statusCode;
+    },
+    get headers() {
+      return state.headers;
+    },
+  };
 }
 
 // ============================================================================
@@ -99,9 +113,27 @@ describe('APIVersionManager', () => {
   });
 
   it('should list endpoints with filters', () => {
-    mgr.registerEndpoint({ method: 'POST', path: '/api/v1/execute', stability: 'stable', version: 1, description: '' });
-    mgr.registerEndpoint({ method: 'POST', path: '/api/v1/plan', stability: 'beta', version: 1, description: '' });
-    mgr.registerEndpoint({ method: 'GET', path: '/api/v1/memory', stability: 'experimental', version: 1, description: '' });
+    mgr.registerEndpoint({
+      method: 'POST',
+      path: '/api/v1/execute',
+      stability: 'stable',
+      version: 1,
+      description: '',
+    });
+    mgr.registerEndpoint({
+      method: 'POST',
+      path: '/api/v1/plan',
+      stability: 'beta',
+      version: 1,
+      description: '',
+    });
+    mgr.registerEndpoint({
+      method: 'GET',
+      path: '/api/v1/memory',
+      stability: 'experimental',
+      version: 1,
+      description: '',
+    });
 
     expect(mgr.listEndpoints({ stability: 'stable' })).toHaveLength(1);
     expect(mgr.listEndpoints({ stability: 'beta' })).toHaveLength(1);
@@ -295,7 +327,9 @@ describe('API Error Standardization (RFC 7807)', () => {
   });
 
   it('should support ApiError factory methods', () => {
-    const validation = ApiError.validation([{ field: 'prompt', message: 'is required', code: 'MISSING_FIELD' }]);
+    const validation = ApiError.validation([
+      { field: 'prompt', message: 'is required', code: 'MISSING_FIELD' },
+    ]);
     expect(validation.statusCode).toBe(400);
     expect(validation.fieldErrors).toHaveLength(1);
 
@@ -348,54 +382,72 @@ describe('API Error Standardization (RFC 7807)', () => {
 
 describe('Schema Validation', () => {
   it('should validate execute schema with valid input', () => {
-    const errors = validateBody({
-      prompt: 'Hello, world!',
-      provider: 'openai',
-      model: 'gpt-4',
-    }, Schemas.execute);
+    const errors = validateBody(
+      {
+        prompt: 'Hello, world!',
+        provider: 'openai',
+        model: 'gpt-4',
+      },
+      Schemas.execute,
+    );
     expect(errors).toHaveLength(0);
   });
 
   it('should reject execute schema without prompt', () => {
-    const errors = validateBody({
-      provider: 'openai',
-    }, Schemas.execute);
+    const errors = validateBody(
+      {
+        provider: 'openai',
+      },
+      Schemas.execute,
+    );
     expect(errors).toHaveLength(1);
     expect(errors[0].field).toBe('prompt');
     expect(errors[0].code).toBe('MISSING_FIELD');
   });
 
   it('should reject execute with empty prompt', () => {
-    const errors = validateBody({
-      prompt: '',
-    }, Schemas.execute);
+    const errors = validateBody(
+      {
+        prompt: '',
+      },
+      Schemas.execute,
+    );
     expect(errors).toHaveLength(1);
     expect(errors[0].code).toBe('TOO_SHORT');
   });
 
   it('should reject execute with invalid provider', () => {
-    const errors = validateBody({
-      prompt: 'test',
-      provider: 'invalid-provider',
-    }, Schemas.execute);
+    const errors = validateBody(
+      {
+        prompt: 'test',
+        provider: 'invalid-provider',
+      },
+      Schemas.execute,
+    );
     expect(errors).toHaveLength(1);
     expect(errors[0].code).toBe('INVALID_ENUM');
   });
 
   it('should reject execute with too many tokens', () => {
-    const errors = validateBody({
-      prompt: 'test',
-      maxTokens: 2000000,
-    }, Schemas.execute);
+    const errors = validateBody(
+      {
+        prompt: 'test',
+        maxTokens: 2000000,
+      },
+      Schemas.execute,
+    );
     expect(errors).toHaveLength(1);
     expect(errors[0].code).toBe('TOO_LARGE');
   });
 
   it('should validate createRuntime schema', () => {
-    const errors = validateBody({
-      provider: 'anthropic',
-      model: 'claude-3',
-    }, Schemas.createRuntime);
+    const errors = validateBody(
+      {
+        provider: 'anthropic',
+        model: 'claude-3',
+      },
+      Schemas.createRuntime,
+    );
     expect(errors).toHaveLength(0);
 
     const errors2 = validateBody({}, Schemas.createRuntime);
@@ -404,9 +456,12 @@ describe('Schema Validation', () => {
   });
 
   it('should validate plan schema', () => {
-    const errors = validateBody({
-      task: 'Analyze the system',
-    }, Schemas.plan);
+    const errors = validateBody(
+      {
+        task: 'Analyze the system',
+      },
+      Schemas.plan,
+    );
     expect(errors).toHaveLength(0);
 
     const errors2 = validateBody({}, Schemas.plan);
@@ -415,43 +470,55 @@ describe('Schema Validation', () => {
   });
 
   it('should validate alertRule schema', () => {
-    const errors = validateBody({
-      name: 'High latency',
-      description: 'Test',
-      metric: 'latency.p99_ms',
-      condition: 'gt',
-      threshold: 500,
-      severity: 'warning',
-      channels: ['slack'],
-      forDurationMs: 0,
-      autoResolveAfterMs: 5000,
-      enabled: true,
-    }, Schemas.alertRule);
+    const errors = validateBody(
+      {
+        name: 'High latency',
+        description: 'Test',
+        metric: 'latency.p99_ms',
+        condition: 'gt',
+        threshold: 500,
+        severity: 'warning',
+        channels: ['slack'],
+        forDurationMs: 0,
+        autoResolveAfterMs: 5000,
+        enabled: true,
+      },
+      Schemas.alertRule,
+    );
     expect(errors).toHaveLength(0);
   });
 
   it('should reject alertRule with invalid condition', () => {
-    const errors = validateBody({
-      name: 'Test',
-      metric: 'm',
-      condition: 'invalid',
-      threshold: 1,
-      severity: 'warning',
-    }, Schemas.alertRule);
+    const errors = validateBody(
+      {
+        name: 'Test',
+        metric: 'm',
+        condition: 'invalid',
+        threshold: 1,
+        severity: 'warning',
+      },
+      Schemas.alertRule,
+    );
     expect(errors.some((e) => e.field === 'condition' && e.code === 'INVALID_ENUM')).toBe(true);
   });
 
   it('should validate incident schema', () => {
-    const errors = validateBody({
-      title: 'Test incident',
-      severity: 'SEV1',
-    }, Schemas.incident);
+    const errors = validateBody(
+      {
+        title: 'Test incident',
+        severity: 'SEV1',
+      },
+      Schemas.incident,
+    );
     expect(errors).toHaveLength(0);
 
-    const errors2 = validateBody({
-      title: 'Test',
-      severity: 'INVALID',
-    }, Schemas.incident);
+    const errors2 = validateBody(
+      {
+        title: 'Test',
+        severity: 'INVALID',
+      },
+      Schemas.incident,
+    );
     expect(errors2.some((e) => e.field === 'severity')).toBe(true);
   });
 
@@ -471,20 +538,26 @@ describe('Schema Validation', () => {
   });
 
   it('should validate nested object properties', () => {
-    const errors = validateBody({
-      task: 'test',
-      constraints: {
-        maxSteps: -5, // invalid: min is 1
+    const errors = validateBody(
+      {
+        task: 'test',
+        constraints: {
+          maxSteps: -5, // invalid: min is 1
+        },
       },
-    }, Schemas.plan);
+      Schemas.plan,
+    );
     expect(errors.some((e) => e.code === 'TOO_SMALL')).toBe(true);
   });
 
   it('should validate array items', () => {
-    const errors = validateBody({
-      prompt: 'test',
-      tools: ['valid', 'also-valid', 123], // 123 is not a string
-    }, Schemas.execute);
+    const errors = validateBody(
+      {
+        prompt: 'test',
+        tools: ['valid', 'also-valid', 123], // 123 is not a string
+      },
+      Schemas.execute,
+    );
     expect(errors.some((e) => e.code === 'INVALID_TYPE')).toBe(true);
   });
 });

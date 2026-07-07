@@ -23,7 +23,12 @@ describe('metrics', () => {
     const entries = [
       makeEntry({ id: 'a', status: 'open', slaDeadline: '2020-01-01' }),
       makeEntry({ id: 'b', status: 'open', slaDeadline: '2030-01-01' }),
-      makeEntry({ id: 'c', status: 'fixed', closedAt: '2026-06-15T00:00:00Z', slaDeadline: '2020-01-01' }),
+      makeEntry({
+        id: 'c',
+        status: 'fixed',
+        closedAt: '2026-06-15T00:00:00Z',
+        slaDeadline: '2020-01-01',
+      }),
     ];
     const m = computeMetrics(entries, new Date('2026-06-30T12:00:00Z'));
     expect(m.open).toBe(2);
@@ -33,8 +38,16 @@ describe('metrics', () => {
 
   it('computes avg time to fix in days', () => {
     const entries = [
-      makeEntry({ status: 'fixed', detectedAt: '2026-06-01T00:00:00Z', closedAt: '2026-06-11T00:00:00Z' }),
-      makeEntry({ status: 'fixed', detectedAt: '2026-06-05T00:00:00Z', closedAt: '2026-06-12T00:00:00Z' }),
+      makeEntry({
+        status: 'fixed',
+        detectedAt: '2026-06-01T00:00:00Z',
+        closedAt: '2026-06-11T00:00:00Z',
+      }),
+      makeEntry({
+        status: 'fixed',
+        detectedAt: '2026-06-05T00:00:00Z',
+        closedAt: '2026-06-12T00:00:00Z',
+      }),
     ];
     const m = computeMetrics(entries);
     expect(m.avgTimeToFixDays).toBeCloseTo(8.5, 0);

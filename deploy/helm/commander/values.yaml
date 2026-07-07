@@ -80,6 +80,36 @@ redis:
     size: 10Gi
     storageClass: ''
 
+# Database backend configuration
+# When `database.enabled` is true, a PostgreSQL StatefulSet is deployed and the
+# API is configured to use it via DATABASE_URL. When false, the API falls back
+# to the local SQLite file backend (single-replica only).
+database:
+  enabled: false
+  backend: sqlite
+  # Built-in PostgreSQL (set backend: postgres to use)
+  postgres:
+    image:
+      repository: postgres
+      tag: '16-alpine'
+    port: 5432
+    user: commander
+    password: commander
+    database: commander
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: ''
+  # Override the auto-generated DATABASE_URL (e.g. to use an external managed DB)
+  connectionString: ''
+
 # Persistence
 persistence:
   enabled: true

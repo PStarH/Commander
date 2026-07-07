@@ -10,7 +10,7 @@
 <h1 align="center">Commander</h1>
 <p align="center"><strong>Multi-agent orchestration framework.</strong></p>
 
-> **v0.2.0 — Pre-production.** Checkpointing is SQLite-backed with WAL persistence. The SLO targets below are design goals only — they are not measured in CI yet. See [ARCHITECTURE.md](ARCHITECTURE.md) §6 for measurement status.
+> **v0.2.0 — Pre-production.** Checkpointing is SQLite-backed with WAL persistence. SLO targets are measured via `pnpm bench:slo` (baseline) and `pnpm bench:slo:regress` (regression gate). See [BENCHMARK.md](BENCHMARK.md) for the full benchmark matrix and [ARCHITECTURE.md](ARCHITECTURE.md) §6 for measurement status.
 
 <p align="center">
   <code>npx tsx packages/core/src/cli.ts run "audit this repo" --stream</code><br>

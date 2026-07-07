@@ -22,7 +22,10 @@ import { OpenAIProvider } from '../../src/runtime/providers/openaiProvider';
 import { AnthropicProvider } from '../../src/runtime/providers/anthropicProvider';
 import { MistralProvider } from '../../src/runtime/providers/mistralProvider';
 import { CohereProvider } from '../../src/runtime/providers/cohereProvider';
-import { BaseOpenAICompatibleProvider, buildOpenAIBody } from '../../src/runtime/providers/baseOpenAICompatible';
+import {
+  BaseOpenAICompatibleProvider,
+  buildOpenAIBody,
+} from '../../src/runtime/providers/baseOpenAICompatible';
 import type { LLMRequest, LLMResponse } from '../../src/runtime/types/llm';
 import { CostModel, DEFAULT_PRICING } from '../../src/observability/costModel';
 
@@ -44,34 +47,39 @@ function makeRequest(overrides: Partial<LLMRequest> = {}): LLMRequest {
 // ============================================================================
 
 describe('Provider Performance Optimizations', () => {
-
   describe('DeepSeek — prompt_cache_hit_tokens parsing', () => {
     it('parses prompt_cache_hit_tokens from non-streaming response', async () => {
       const provider = new DeepSeekProvider({ apiKey: 'test' });
       // Mock fetch to return a response with prompt_cache_hit_tokens
       const originalFetch = global.fetch;
       global.fetch = (async () =>
-        new Response(JSON.stringify({
-          choices: [{
-            message: { content: 'Hello back', role: 'assistant' },
-            finish_reason: 'stop',
-          }],
-          usage: {
-            prompt_tokens: 1000,
-            completion_tokens: 50,
-            total_tokens: 1050,
-            prompt_cache_hit_tokens: 800,
-            prompt_cache_miss_tokens: 200,
-          },
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
-      ) as typeof fetch;
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: { content: 'Hello back', role: 'assistant' },
+                finish_reason: 'stop',
+              },
+            ],
+            usage: {
+              prompt_tokens: 1000,
+              completion_tokens: 50,
+              total_tokens: 1050,
+              prompt_cache_hit_tokens: 800,
+              prompt_cache_miss_tokens: 200,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )) as typeof fetch;
 
       try {
         // useCacheControl: false forces non-streaming path
-        const result = await provider.call(makeRequest({
-          model: 'deepseek-chat',
-          cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
-        }));
+        const result = await provider.call(
+          makeRequest({
+            model: 'deepseek-chat',
+            cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
+          }),
+        );
         assert.strictEqual(result.usage.cacheReadTokens ?? 0, 800);
       } finally {
         global.fetch = originalFetch;
@@ -82,22 +90,26 @@ describe('Provider Performance Optimizations', () => {
       const provider = new DeepSeekProvider({ apiKey: 'test' });
       const originalFetch = global.fetch;
       global.fetch = (async () =>
-        new Response(JSON.stringify({
-          choices: [{ message: { content: 'Hi', role: 'assistant' }, finish_reason: 'stop' }],
-          usage: {
-            prompt_tokens: 500,
-            completion_tokens: 10,
-            total_tokens: 510,
-            prompt_tokens_details: { cached_tokens: 300 },
-          },
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
-      ) as typeof fetch;
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: 'Hi', role: 'assistant' }, finish_reason: 'stop' }],
+            usage: {
+              prompt_tokens: 500,
+              completion_tokens: 10,
+              total_tokens: 510,
+              prompt_tokens_details: { cached_tokens: 300 },
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )) as typeof fetch;
 
       try {
-        const result = await provider.call(makeRequest({
-          model: 'deepseek-chat',
-          cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
-        }));
+        const result = await provider.call(
+          makeRequest({
+            model: 'deepseek-chat',
+            cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
+          }),
+        );
         assert.strictEqual(result.usage.cacheReadTokens ?? 0, 300);
       } finally {
         global.fetch = originalFetch;
@@ -108,17 +120,21 @@ describe('Provider Performance Optimizations', () => {
       const provider = new DeepSeekProvider({ apiKey: 'test' });
       const originalFetch = global.fetch;
       global.fetch = (async () =>
-        new Response(JSON.stringify({
-          choices: [{ message: { content: 'Hi', role: 'assistant' }, finish_reason: 'stop' }],
-          usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
-      ) as typeof fetch;
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: 'Hi', role: 'assistant' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )) as typeof fetch;
 
       try {
-        const result = await provider.call(makeRequest({
-          model: 'deepseek-chat',
-          cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
-        }));
+        const result = await provider.call(
+          makeRequest({
+            model: 'deepseek-chat',
+            cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
+          }),
+        );
         assert.strictEqual(result.usage.cacheReadTokens ?? 0, 0);
       } finally {
         global.fetch = originalFetch;
@@ -131,16 +147,18 @@ describe('Provider Performance Optimizations', () => {
       const provider = new GoogleProvider({ apiKey: 'test' });
       const originalFetch = global.fetch;
       global.fetch = (async () =>
-        new Response(JSON.stringify({
-          candidates: [{ content: { parts: [{ text: 'Hello' }] }, finishReason: 'STOP' }],
-          usageMetadata: {
-            promptTokenCount: 2000,
-            candidatesTokenCount: 50,
-            totalTokenCount: 2050,
-            cachedContentTokenCount: 1500,
-          },
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
-      ) as typeof fetch;
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: 'Hello' }] }, finishReason: 'STOP' }],
+            usageMetadata: {
+              promptTokenCount: 2000,
+              candidatesTokenCount: 50,
+              totalTokenCount: 2050,
+              cachedContentTokenCount: 1500,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )) as typeof fetch;
 
       try {
         const result = await provider.call(makeRequest({ model: 'gemini-2.0-flash' }));
@@ -154,15 +172,17 @@ describe('Provider Performance Optimizations', () => {
       const provider = new GoogleProvider({ apiKey: 'test' });
       const originalFetch = global.fetch;
       global.fetch = (async () =>
-        new Response(JSON.stringify({
-          candidates: [{ content: { parts: [{ text: 'Hello' }] }, finishReason: 'STOP' }],
-          usageMetadata: {
-            promptTokenCount: 500,
-            candidatesTokenCount: 10,
-            totalTokenCount: 510,
-          },
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
-      ) as typeof fetch;
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: 'Hello' }] }, finishReason: 'STOP' }],
+            usageMetadata: {
+              promptTokenCount: 500,
+              candidatesTokenCount: 10,
+              totalTokenCount: 510,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )) as typeof fetch;
 
       try {
         const result = await provider.call(makeRequest({ model: 'gemini-2.0-flash' }));
@@ -248,23 +268,28 @@ describe('Provider Performance Optimizations', () => {
       let capturedBody: any;
       global.fetch = (async (_url: any, init: any) => {
         capturedBody = JSON.parse(init.body);
-        return new Response(JSON.stringify({
-          choices: [{ message: { content: 'Hi', role: 'assistant' }, finish_reason: 'stop' }],
-          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        return new Response(
+          JSON.stringify({
+            choices: [{ message: { content: 'Hi', role: 'assistant' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
       }) as typeof fetch;
 
       try {
-        await provider.call(makeRequest({
-          model: 'gpt-4o',
-          cacheConfig: {
-            cacheSystemPrompt: true,
-            cacheTools: false,
-            useCacheControl: false,
-            promptCacheKey: 'key1',
-            promptCacheRetention: '24h',
-          },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'gpt-4o',
+            cacheConfig: {
+              cacheSystemPrompt: true,
+              cacheTools: false,
+              useCacheControl: false,
+              promptCacheKey: 'key1',
+              promptCacheRetention: '24h',
+            },
+          }),
+        );
         assert.strictEqual(capturedBody.prompt_cache_retention, '24h');
         assert.strictEqual(capturedBody.prompt_cache_key, 'key1');
       } finally {
@@ -278,21 +303,26 @@ describe('Provider Performance Optimizations', () => {
       let capturedBody: any;
       global.fetch = (async (_url: any, init: any) => {
         capturedBody = JSON.parse(init.body);
-        return new Response(JSON.stringify({
-          choices: [{ message: { content: 'Hi', role: 'assistant' }, finish_reason: 'stop' }],
-          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        return new Response(
+          JSON.stringify({
+            choices: [{ message: { content: 'Hi', role: 'assistant' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
       }) as typeof fetch;
 
       try {
-        await provider.call(makeRequest({
-          model: 'gpt-4o',
-          cacheConfig: {
-            cacheSystemPrompt: true,
-            cacheTools: false,
-            useCacheControl: false,
-          },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'gpt-4o',
+            cacheConfig: {
+              cacheSystemPrompt: true,
+              cacheTools: false,
+              useCacheControl: false,
+            },
+          }),
+        );
         assert.strictEqual(capturedBody.prompt_cache_retention, undefined);
       } finally {
         global.fetch = originalFetch;
@@ -307,24 +337,29 @@ describe('Provider Performance Optimizations', () => {
       let capturedBody: any;
       global.fetch = (async (_url: any, init: any) => {
         capturedBody = JSON.parse(init.body);
-        return new Response(JSON.stringify({
-          content: [{ type: 'text', text: 'Hi' }],
-          model: 'claude-sonnet-4-20250514',
-          usage: { input_tokens: 10, output_tokens: 5 },
-          stop_reason: 'end_turn',
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        return new Response(
+          JSON.stringify({
+            content: [{ type: 'text', text: 'Hi' }],
+            model: 'claude-sonnet-4-20250514',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            stop_reason: 'end_turn',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
       }) as typeof fetch;
 
       try {
-        await provider.call(makeRequest({
-          model: 'claude-sonnet-4-20250514',
-          cacheConfig: {
-            cacheSystemPrompt: true,
-            cacheTools: false,
-            useCacheControl: true,
-            cacheTtl: '1h',
-          },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'claude-sonnet-4-20250514',
+            cacheConfig: {
+              cacheSystemPrompt: true,
+              cacheTools: false,
+              useCacheControl: true,
+              cacheTtl: '1h',
+            },
+          }),
+        );
         assert.deepStrictEqual(capturedBody.cache_control, { type: 'ephemeral', ttl: '1h' });
       } finally {
         global.fetch = originalFetch;
@@ -339,19 +374,24 @@ describe('Provider Performance Optimizations', () => {
       global.fetch = (async (_url: any, init: any) => {
         capturedBody = JSON.parse(init.body);
         capturedHeaders = init.headers;
-        return new Response(JSON.stringify({
-          content: [{ type: 'text', text: 'Hi' }],
-          model: 'claude-sonnet-4-20250514',
-          usage: { input_tokens: 10, output_tokens: 5 },
-          stop_reason: 'end_turn',
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        return new Response(
+          JSON.stringify({
+            content: [{ type: 'text', text: 'Hi' }],
+            model: 'claude-sonnet-4-20250514',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            stop_reason: 'end_turn',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
       }) as typeof fetch;
 
       try {
-        await provider.call(makeRequest({
-          model: 'claude-sonnet-4-20250514',
-          reasoningConfig: { enabled: true, budget: 8192 },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'claude-sonnet-4-20250514',
+            reasoningConfig: { enabled: true, budget: 8192 },
+          }),
+        );
         assert.deepStrictEqual(capturedBody.thinking, { type: 'enabled', budget_tokens: 8192 });
         assert.strictEqual(capturedHeaders['anthropic-beta'], 'interleaved-thinking-2025-05-14');
       } finally {
@@ -367,12 +407,15 @@ describe('Provider Performance Optimizations', () => {
       global.fetch = (async (_url: any, init: any) => {
         capturedBody = JSON.parse(init.body);
         capturedHeaders = init.headers;
-        return new Response(JSON.stringify({
-          content: [{ type: 'text', text: 'Hi' }],
-          model: 'claude-sonnet-4-20250514',
-          usage: { input_tokens: 10, output_tokens: 5 },
-          stop_reason: 'end_turn',
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        return new Response(
+          JSON.stringify({
+            content: [{ type: 'text', text: 'Hi' }],
+            model: 'claude-sonnet-4-20250514',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            stop_reason: 'end_turn',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
       }) as typeof fetch;
 
       try {
@@ -392,17 +435,22 @@ describe('Provider Performance Optimizations', () => {
       let capturedUrl: string;
       global.fetch = (async (url: any) => {
         capturedUrl = url as string;
-        return new Response(JSON.stringify({
-          candidates: [{ content: { parts: [{ text: 'Hi' }] }, finishReason: 'STOP' }],
-          usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15 },
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        return new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: 'Hi' }] }, finishReason: 'STOP' }],
+            usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
       }) as typeof fetch;
 
       try {
-        await provider.call(makeRequest({
-          model: 'gemini-2.5-flash',
-          reasoningConfig: { enabled: true, budget: 2048 },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'gemini-2.5-flash',
+            reasoningConfig: { enabled: true, budget: 2048 },
+          }),
+        );
         // We can't easily inspect the body since GoogleProvider builds it internally,
         // but we can verify the request didn't throw
         assert.ok(capturedUrl!);
@@ -415,17 +463,21 @@ describe('Provider Performance Optimizations', () => {
       const provider = new GoogleProvider({ apiKey: 'test' });
       const originalFetch = global.fetch;
       global.fetch = (async () =>
-        new Response(JSON.stringify({
-          candidates: [{ content: { parts: [{ text: 'Hi' }] }, finishReason: 'STOP' }],
-          usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15 },
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
-      ) as typeof fetch;
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: 'Hi' }] }, finishReason: 'STOP' }],
+            usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )) as typeof fetch;
 
       try {
-        await provider.call(makeRequest({
-          model: 'gemini-2.5-flash',
-          reasoningConfig: { enabled: true, effort: 'none' },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'gemini-2.5-flash',
+            reasoningConfig: { enabled: true, effort: 'none' },
+          }),
+        );
         // Should not throw
         assert.ok(true);
       } finally {
@@ -441,17 +493,22 @@ describe('Provider Performance Optimizations', () => {
       let capturedBody: any;
       global.fetch = (async (_url: any, init: any) => {
         capturedBody = JSON.parse(init.body);
-        return new Response(JSON.stringify({
-          choices: [{ message: { content: 'Hi', role: 'assistant' }, finish_reason: 'stop' }],
-          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        return new Response(
+          JSON.stringify({
+            choices: [{ message: { content: 'Hi', role: 'assistant' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
       }) as typeof fetch;
 
       try {
-        await provider.call(makeRequest({
-          model: 'mistral-large-latest',
-          safePrompt: true,
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'mistral-large-latest',
+            safePrompt: true,
+          }),
+        );
         assert.strictEqual(capturedBody.safe_prompt, true);
       } finally {
         global.fetch = originalFetch;
@@ -464,10 +521,13 @@ describe('Provider Performance Optimizations', () => {
       let capturedBody: any;
       global.fetch = (async (_url: any, init: any) => {
         capturedBody = JSON.parse(init.body);
-        return new Response(JSON.stringify({
-          choices: [{ message: { content: 'Hi', role: 'assistant' }, finish_reason: 'stop' }],
-          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        return new Response(
+          JSON.stringify({
+            choices: [{ message: { content: 'Hi', role: 'assistant' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
       }) as typeof fetch;
 
       try {
@@ -486,18 +546,23 @@ describe('Provider Performance Optimizations', () => {
       let capturedBody: any;
       global.fetch = (async (_url: any, init: any) => {
         capturedBody = JSON.parse(init.body);
-        return new Response(JSON.stringify({
-          message: { content: [{ type: 'text', text: 'Hi' }] },
-          finish_reason: 'COMPLETE',
-          usage: { billed_units: { input_tokens: 10, output_tokens: 5 } },
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        return new Response(
+          JSON.stringify({
+            message: { content: [{ type: 'text', text: 'Hi' }] },
+            finish_reason: 'COMPLETE',
+            usage: { billed_units: { input_tokens: 10, output_tokens: 5 } },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
       }) as typeof fetch;
 
       try {
-        await provider.call(makeRequest({
-          model: 'command-a-plus',
-          reasoningConfig: { enabled: true, effort: 'high' },
-        }));
+        await provider.call(
+          makeRequest({
+            model: 'command-a-plus',
+            reasoningConfig: { enabled: true, effort: 'high' },
+          }),
+        );
         assert.strictEqual(capturedBody.reasoning_effort, 'high');
       } finally {
         global.fetch = originalFetch;

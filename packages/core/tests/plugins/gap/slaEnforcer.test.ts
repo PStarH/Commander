@@ -7,12 +7,28 @@ describe('SlaEnforcer', () => {
   it('triggers PagerDuty for critical overdue', async () => {
     const pagerDuty = vi.fn();
     const slack = vi.fn();
-    const enforcer = new SlaEnforcer({ pagerDuty, slack, getRunbookUrl: () => 'https://wiki/runbook' });
+    const enforcer = new SlaEnforcer({
+      pagerDuty,
+      slack,
+      getRunbookUrl: () => 'https://wiki/runbook',
+    });
     const entries: GapEntry[] = [
-      { id: 'g1', source: 'chaos', severity: 'critical', title: 't', description: 'd', detectedAt: 'x', status: 'open', relatedIssues: [], slaDeadline: '2020-01-01' },
+      {
+        id: 'g1',
+        source: 'chaos',
+        severity: 'critical',
+        title: 't',
+        description: 'd',
+        detectedAt: 'x',
+        status: 'open',
+        relatedIssues: [],
+        slaDeadline: '2020-01-01',
+      },
     ];
     await enforcer.enforce(entries);
-    expect(pagerDuty).toHaveBeenCalledWith(expect.objectContaining({ title: expect.stringContaining('g1') }));
+    expect(pagerDuty).toHaveBeenCalledWith(
+      expect.objectContaining({ title: expect.stringContaining('g1') }),
+    );
   });
 
   it('sends slack alert for high overdue', async () => {
@@ -20,7 +36,17 @@ describe('SlaEnforcer', () => {
     const slack = vi.fn();
     const enforcer = new SlaEnforcer({ pagerDuty, slack, getRunbookUrl: () => '' });
     const entries: GapEntry[] = [
-      { id: 'g2', source: 'chaos', severity: 'high', title: 't', description: 'd', detectedAt: 'x', status: 'open', relatedIssues: [], slaDeadline: '2020-01-01' },
+      {
+        id: 'g2',
+        source: 'chaos',
+        severity: 'high',
+        title: 't',
+        description: 'd',
+        detectedAt: 'x',
+        status: 'open',
+        relatedIssues: [],
+        slaDeadline: '2020-01-01',
+      },
     ];
     await enforcer.enforce(entries);
     expect(slack).toHaveBeenCalledWith(expect.stringContaining('g2'));
@@ -32,7 +58,17 @@ describe('SlaEnforcer', () => {
     const slack = vi.fn();
     const enforcer = new SlaEnforcer({ pagerDuty, slack, getRunbookUrl: () => '' });
     const entries: GapEntry[] = [
-      { id: 'g3', source: 'chaos', severity: 'medium', title: 't', description: 'd', detectedAt: 'x', status: 'open', relatedIssues: [], slaDeadline: '2020-01-01' },
+      {
+        id: 'g3',
+        source: 'chaos',
+        severity: 'medium',
+        title: 't',
+        description: 'd',
+        detectedAt: 'x',
+        status: 'open',
+        relatedIssues: [],
+        slaDeadline: '2020-01-01',
+      },
     ];
     await enforcer.enforce(entries);
     expect(pagerDuty).not.toHaveBeenCalled();
