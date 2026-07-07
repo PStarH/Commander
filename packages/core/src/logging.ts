@@ -727,9 +727,11 @@ export class Timer {
 import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
 
 const loggerSingleton = createTenantAwareSingleton(() => new Logger(), {
+  allowGlobalFallback: true,
   componentName: 'Logger',
 });
 const metricsSingleton = createTenantAwareSingleton(() => new LegacyMetricsAdapter(), {
+  allowGlobalFallback: true,
   componentName: 'Metrics',
 });
 

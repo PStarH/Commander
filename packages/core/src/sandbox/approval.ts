@@ -271,7 +271,9 @@ export class ApprovalSystem {
 
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
-const approvalSingleton = createTenantAwareSingleton(() => new ApprovalSystem());
+const approvalSingleton = createTenantAwareSingleton(() => new ApprovalSystem(), {
+  allowGlobalFallback: true,
+});
 
 export function getApprovalSystem(): ApprovalSystem {
   return approvalSingleton.get();

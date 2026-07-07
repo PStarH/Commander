@@ -29,8 +29,6 @@ import { StateCheckpointer } from '../runtime/stateCheckpointer';
 import { getGlobalDeterminismCapture } from '../runtime/determinismCapture';
 import type { RunState } from './types';
 
-const log = getGlobalLogger();
-
 export interface RecoveryBootstrapperOptions {
   /** LeaseManager instance. Defaults to the global singleton. */
   leaseManager?: LeaseManager;
@@ -273,10 +271,10 @@ export class RecoveryBootstrapper {
         });
       }
     } catch (err) {
-      log.error('RecoveryBootstrapper', 'Bootstrap scan failed', err as Error);
+      getGlobalLogger().error('RecoveryBootstrapper', 'Bootstrap scan failed', err as Error);
     }
 
-    log.info('RecoveryBootstrapper', 'Bootstrap complete', {
+    getGlobalLogger().info('RecoveryBootstrapper', 'Bootstrap complete', {
       scanned: result.scanned,
       recovered: result.recovered,
       aborted: result.aborted,

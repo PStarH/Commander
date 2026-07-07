@@ -378,7 +378,9 @@ export async function safeExecute<T>(
 
 import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
 
-const errorHandlerSingleton = createTenantAwareSingleton(() => new ErrorHandler());
+const errorHandlerSingleton = createTenantAwareSingleton(() => new ErrorHandler(), {
+  allowGlobalFallback: true,
+});
 
 export function getGlobalErrorHandler(): ErrorHandler {
   return errorHandlerSingleton.get();
