@@ -362,18 +362,31 @@ export class SemanticMemoryStore implements ISemanticStore {
 }
 
 // ============================================================================
-// Singleton
+// Singleton — tenant-aware for multi-tenant isolation
 // ============================================================================
 
-let globalSemanticStore: SemanticMemoryStore | null = null;
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+
+const semanticStoreSingleton = createTenantAwareSingleton(() => new SemanticMemoryStore(), {
+  allowGlobalFallback: true,
+  componentName: 'SemanticMemoryStore',
+});
 
 export function getGlobalSemanticMemoryStore(): SemanticMemoryStore {
-  if (!globalSemanticStore) {
-    globalSemanticStore = new SemanticMemoryStore();
-  }
-  return globalSemanticStore;
+  return semanticStoreSingleton.get();
 }
 
+/**
+ * @deprecated Use tenant context via `runWithTenant` instead. Direct store
+ * replacement bypasses tenant isolation and is retained only for tests.
+ */
 export function setGlobalSemanticMemoryStore(store: SemanticMemoryStore | null): void {
-  globalSemanticStore = store;
+  // Best-effort: reset the singleton so the next get() re-creates from the
+  // factory. Tests that need a custom store should use runWithTenant + a
+  // tenant-scoped factory override instead.
+  semanticStoreSingleton.reset();
+}
+
+export function resetGlobalSemanticMemoryStore(): void {
+  semanticStoreSingleton.reset();
 }
