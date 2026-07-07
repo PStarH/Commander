@@ -44,6 +44,7 @@ import { DeepInfraProvider } from './deepinfraProvider';
 import { AgnesProvider } from './agnesProvider';
 import { StepFunProvider } from './stepfunProvider';
 import { MiniMaxProvider } from './minimaxProvider';
+import { AzureOpenAIProvider } from './azureOpenAIProvider';
 
 export type ProviderApiType = 'openai' | 'anthropic' | 'google';
 
@@ -389,6 +390,24 @@ registerProvider({
   displayName: 'Google Gemini',
   apiType: 'google',
   factory: () => new GoogleProvider({ apiKey: resolveSecureApiKey('GOOGLE_API_KEY') }),
+});
+
+registerProvider({
+  type: 'azure',
+  envKey: 'AZURE_OPENAI_API_KEY',
+  envBaseUrlKey: 'AZURE_OPENAI_BASE_URL',
+  envModelKey: 'AZURE_OPENAI_MODEL',
+  defaultUrl: 'https://your-resource.openai.azure.com',
+  defaultModel: 'gpt-4o',
+  displayName: 'Azure OpenAI',
+  apiType: 'openai',
+  factory: () =>
+    new AzureOpenAIProvider({
+      apiKey: resolveSecureApiKey('AZURE_OPENAI_API_KEY'),
+      baseUrl: process.env.AZURE_OPENAI_BASE_URL,
+      defaultModel: process.env.AZURE_OPENAI_MODEL,
+      apiVersion: process.env.AZURE_OPENAI_API_VERSION,
+    }),
 });
 
 registerProvider({
