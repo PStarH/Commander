@@ -205,6 +205,13 @@
           "status": "partial",
           "evidence": "packages/core/src/plugins/builtin/rasp-extensions (G1); event handlers wired into HookManager",
           "notes": "Recent scan coverage gap: agentload/observability-shield scenarios. Tracked in security_architecture_hardening_roadmap.md."
+        },
+        {
+          "id": "security.mtlsRuntimeIpc",
+          "claim": "mTLS for inter-process traffic between HTTP server and AgentRuntime",
+          "status": "verified",
+          "evidence": "packages/core/src/runtime/mtlsRuntimeServer.ts (HTTPS server with requestCert + rejectUnauthorized + method allowlist); packages/core/src/runtime/mtlsRuntimeProxy.ts (AgentRuntimeInterface over mTLS HTTPS JSON-RPC); HttpServerConfig.runtimeProxy integration in packages/core/src/runtime/httpServer.ts; unit tests in packages/core/tests/runtime/mtlsRuntimeIpc.test.ts cover execute() forwarding, untrusted-client rejection, and disallowed-method blocking. Caveat: rpcSync busy-waits the event loop bounded by timeoutMs (sub-50ms typical); follow-up replaces with async-only proxy surface.",
+          "deliveredAt": "2026-07-07"
         }
       ]
     },
@@ -288,6 +295,13 @@
           "claim": "Xyflow topology visualization + Recharts cost dashboard + dnd-kit workflow editor",
           "status": "verified",
           "evidence": "apps/web/components/ - TopologyDiagram.tsx, CostDashboard.tsx, WorkflowEditor.tsx"
+        },
+        {
+          "id": "ops.pocCenter",
+          "claim": "Proof-of-Value center with 3 anonymized enterprise pilot case studies",
+          "status": "verified",
+          "evidence": "apps/web/src/pages/POCPage.tsx (finance/manufacturing/healthcare case studies with quantified outcomes); apps/web/src/App.tsx:/poc route; apps/web/src/components/Sidebar.tsx:/poc navigation; apps/web/src/i18n.ts 'poc.*' keys for en/zh-CN",
+          "deliveredAt": "2026-07-07"
         }
       ]
     },
