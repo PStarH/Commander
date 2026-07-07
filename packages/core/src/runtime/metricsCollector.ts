@@ -156,6 +156,16 @@ export class MetricsCollector {
     return this.gauges.get(this.key(name, labels))?.value ?? 0;
   }
 
+  /**
+   * Gauge: current number of concurrently executing agent runs.
+   * Updated by the runtime lifecycle manager when a run starts or completes.
+   */
+  setActiveRuns(count: number, tenantId?: string): void {
+    const labels: MetricLabel[] = [];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.setGauge('active_runs', 'Active concurrent agent runs', count, labels);
+  }
+
   // ── Histograms ──
 
   recordHistogram(
