@@ -1,4 +1,4 @@
-version: "3.8"
+version: '3.8'
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Commander Observability Stack
@@ -13,14 +13,15 @@ services:
     image: prom/prometheus:v2.51.0
     container_name: commander-prometheus
     ports:
-      - "9090:9090"
+      - '9090:9090'
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
       - prometheus-data:/prometheus
     command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.retention.time=30d"
-      - "--web.enable-lifecycle"
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
     restart: unless-stopped
 
   # ── Grafana — pre-configured dashboards ───────────────────────────────
@@ -28,7 +29,7 @@ services:
     image: grafana/grafana:10.4.0
     container_name: commander-grafana
     ports:
-      - "3001:3000"
+      - '3001:3000'
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
@@ -46,14 +47,14 @@ services:
     image: jaegertracing/all-in-one:1.55
     container_name: commander-jaeger
     ports:
-      - "16686:16686"  # UI
-      - "4318:4318"    # OTLP HTTP
-      - "4317:4317"    # OTLP gRPC
+      - '16686:16686' # UI
+      - '4318:4318' # OTLP HTTP
+      - '4317:4317' # OTLP gRPC
     environment:
       - COLLECTOR_OTLP_ENABLED=true
     restart: unless-stopped
     profiles:
-      - tracing  # Only started with: docker compose --profile tracing up
+      - tracing # Only started with: docker compose --profile tracing up
 
 volumes:
   prometheus-data:

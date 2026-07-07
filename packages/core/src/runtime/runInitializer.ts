@@ -12,7 +12,6 @@ import type { TenantOverrides } from './finallyCleanupHandler';
 import { getMessageBus } from './messageBus';
 import { getGlobalLogger } from '../logging';
 import { getGlobalTenantProvider } from './tenantProvider';
-import { getMetricsCollector } from './metricsCollector';
 import { getIntentLog } from './intentLog';
 import { reportSilentFailure } from '../silentFailureReporter';
 
@@ -110,12 +109,6 @@ export class RunInitializer {
     } catch (err) {
       reportSilentFailure(err, 'runInitializer:intentLog');
     }
-
-    getMetricsCollector().setGauge(
-      'active_runs',
-      'Active concurrent runs',
-      this.deps.getRunLifecycle().getActiveRunCount(),
-    );
 
     const runHandle = this.deps.getExecutionScheduler().beginRun({
       runId,

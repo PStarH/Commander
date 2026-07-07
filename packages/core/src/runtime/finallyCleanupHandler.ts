@@ -139,12 +139,6 @@ export class FinallyCleanupHandler {
     } catch (err) {
       reportSilentFailure(err, 'finallyCleanupHandler:freezeDryRemove');
     }
-    getMetricsCollector().setGauge(
-      'active_runs',
-      'Active concurrent runs',
-      runLifecycle.getActiveRunCount(),
-    );
-
     // 3. Tenant concurrency release
     if (tenantCfg?.enabled && tenantCfg.maxConcurrency > 0 && tenantId) {
       getTenantManager().releaseTenantConcurrency(tenantId);

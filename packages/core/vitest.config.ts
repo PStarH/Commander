@@ -220,6 +220,7 @@ export default defineConfig({
       'tests/storage/dataRetention.test.ts',
       'tests/storage/inMemoryDriver.test.ts',
       'tests/storage/jsonDriver.test.ts',
+      'tests/storage/postgresDriver.test.ts',
       'tests/storage/sqliteDriver.test.ts',
       'tests/storage/persistentStore.test.ts',
 
