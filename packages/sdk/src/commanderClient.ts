@@ -500,6 +500,15 @@ export class CommanderClient {
   // System Status
   // ==========================================================================
 
+  /**
+   * Alias for `getMemoryStats()` — returns live statistics from the Three-Layer
+   * Memory system. Previously returned hard-coded zeros; now backed by real
+   * `getGlobalThreeLayerMemory()` lookups.
+   */
+  getStats(): Promise<MemoryStats> {
+    return this.getMemoryStats();
+  }
+
   async getStatus(): Promise<SystemStatus> {
     this.ensureConnected();
     const coreStatus = this.commander!.getStatus();

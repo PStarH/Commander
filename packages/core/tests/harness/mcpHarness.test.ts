@@ -58,15 +58,18 @@ function mockFn(impl?: (...args: unknown[]) => unknown) {
 
 function createMockProvider(overrides: Partial<LLMResponse> = {}) {
   return {
-    call: mockFn(async () => ({
-      content: 'Task completed',
-      toolCalls: [],
-      usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
-      finishReason: 'stop',
-      model: 'test-model',
-      provider: 'test-provider',
-      ...overrides,
-    } as LLMResponse)),
+    call: mockFn(
+      async () =>
+        ({
+          content: 'Task completed',
+          toolCalls: [],
+          usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+          finishReason: 'stop',
+          model: 'test-model',
+          provider: 'test-provider',
+          ...overrides,
+        }) as LLMResponse,
+    ),
   };
 }
 
@@ -221,7 +224,7 @@ describe('McpHarness', () => {
       // The raw error message goes to result.error, the formatted message to result.summary
       assert.ok(
         result.error?.includes('LLM service unavailable') ||
-        result.summary?.includes('LLM call failed'),
+          result.summary?.includes('LLM call failed'),
         `Expected error about LLM failure, got: ${result.error} / ${result.summary}`,
       );
     });
@@ -354,7 +357,9 @@ describe('McpHarness', () => {
       assert.ok(toolResultSteps.length > 0, 'Should have tool_result steps for blocked tool');
       // The content should mention the block
       const blockedSteps = result.steps.filter(
-        (s) => s.type === 'tool_result' && (s.content?.includes('blocked') || s.content?.includes('Blocked')),
+        (s) =>
+          s.type === 'tool_result' &&
+          (s.content?.includes('blocked') || s.content?.includes('Blocked')),
       );
       // If the blocked content is present, verify it; otherwise just verify the tool wasn't executed
       if (blockedSteps.length > 0) {

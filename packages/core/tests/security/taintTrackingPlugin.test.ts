@@ -13,10 +13,7 @@ import type { Tool, ToolDefinition, ToolResult } from '../../src/runtime/types/t
 // invoked because the plugin short-circuits via beforeToolCall before the
 // tool is run.
 
-function makeTool(
-  name: string,
-  sideEffect?: 'none' | 'local_state' | 'external_egress',
-): Tool {
+function makeTool(name: string, sideEffect?: 'none' | 'local_state' | 'external_egress'): Tool {
   const def: ToolDefinition = {
     name,
     description: `test tool ${name}`,
@@ -38,19 +35,11 @@ function makeToolResult(name: string): ToolResult {
   };
 }
 
-function makeBeforeCtx(
-  toolName: string,
-  runId: string,
-  tool?: Tool,
-): BeforeToolCallContext {
+function makeBeforeCtx(toolName: string, runId: string, tool?: Tool): BeforeToolCallContext {
   return { toolName, args: {}, agentId: 'a1', runId, tool };
 }
 
-function makeAfterCtx(
-  toolName: string,
-  runId: string,
-  tool: Tool,
-): AfterToolCallContext {
+function makeAfterCtx(toolName: string, runId: string, tool: Tool): AfterToolCallContext {
   return {
     toolName,
     args: {},
@@ -139,9 +128,7 @@ describe('builtin-taint-tracking plugin', () => {
   it('promotes to LOCAL_DIRTY (not EXTERNAL) for internal tools', async () => {
     await plugin.onAgentStart!({ runId: 'r1' } as any);
     // code_search is internal — should NOT promote to EXTERNAL_DIRTY.
-    await plugin.afterToolCall!(
-      makeAfterCtx('code_search', 'r1', makeTool('code_search', 'none')),
-    );
+    await plugin.afterToolCall!(makeAfterCtx('code_search', 'r1', makeTool('code_search', 'none')));
     // Outbound should still be allowed (tier is LOCAL_DIRTY, not EXTERNAL_DIRTY).
     const result = await plugin.beforeToolCall!(
       makeBeforeCtx('send_email', 'r1', makeTool('send_email', 'external_egress')),
@@ -153,9 +140,7 @@ describe('builtin-taint-tracking plugin', () => {
     await plugin.onAgentStart!({ runId: 'r1' } as any);
     // web_search without riskMetadata — fallback regex should catch it and
     // promote the run to EXTERNAL_DIRTY.
-    await plugin.afterToolCall!(
-      makeAfterCtx('web_search', 'r1', makeTool('web_search')),
-    );
+    await plugin.afterToolCall!(makeAfterCtx('web_search', 'r1', makeTool('web_search')));
     // Now send_email should be blocked.
     const result = await plugin.beforeToolCall!(
       makeBeforeCtx('send_email', 'r1', makeTool('send_email', 'external_egress')),

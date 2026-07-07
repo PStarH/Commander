@@ -475,7 +475,7 @@ describe('Cross-process WAL recovery (e2e)', () => {
    *   disk WAL → engine.init() → getEventsByCorrelationId
    *   → restoreFromWAL → buildReplayContext → RunRecovery Path A
    */
-  it('Process B restores captures from Process A\'s WAL file', async () => {
+  it("Process B restores captures from Process A's WAL file", async () => {
     const crossProcessWalPath = path.join(tmpDir, 'cross-process.wal');
 
     // ── Process A: write captures, then "crash" ───────────────────────
@@ -533,7 +533,7 @@ describe('Cross-process WAL recovery (e2e)', () => {
     expect(ctx!.getLLMResponse(3)).toEqual({ content: 'proc-A-llm-2' });
   });
 
-  it('Process B activates Path A recovery using Process A\'s WAL', async () => {
+  it("Process B activates Path A recovery using Process A's WAL", async () => {
     const crossProcessWalPath = path.join(tmpDir, 'cross-process-recovery.wal');
 
     // ── Process A: write captures and "crash" ─────────────────────────

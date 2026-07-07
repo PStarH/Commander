@@ -77,7 +77,10 @@ describe('E2E: State isolation between AgentRuntime.execute() calls', () => {
   it('multiple consecutive runs maintain independent token counts', async () => {
     const { runtime } = createTestRuntime();
 
-    runtime.registerTool('echo', makeTool('echo', async () => 'echo', { isConcurrencySafe: true }));
+    runtime.registerTool(
+      'echo',
+      makeTool('echo', async () => 'echo', { isConcurrencySafe: true }),
+    );
 
     const tokenUsages: number[] = [];
 
@@ -118,7 +121,10 @@ describe('E2E: State isolation between AgentRuntime.execute() calls', () => {
     runtime.flushDeadLetterQueue();
 
     // Run 2: different tool, should succeed without DLQ interference
-    runtime.registerTool('good-tool', makeTool('good-tool', async () => 'good', { isConcurrencySafe: true }));
+    runtime.registerTool(
+      'good-tool',
+      makeTool('good-tool', async () => 'good', { isConcurrencySafe: true }),
+    );
     const provider2 = new ScriptedLLMProvider([
       { toolCalls: [{ id: 'c2', name: 'good-tool', arguments: {} }] },
       { response: 'Run 2 completed cleanly.', finishReason: 'stop' },
@@ -131,7 +137,10 @@ describe('E2E: State isolation between AgentRuntime.execute() calls', () => {
   it('5 consecutive runs with alternating success/failure tools', async () => {
     const { runtime } = createTestRuntime();
 
-    runtime.registerTool('ok', makeTool('ok', async () => 'ok', { isConcurrencySafe: true }));
+    runtime.registerTool(
+      'ok',
+      makeTool('ok', async () => 'ok', { isConcurrencySafe: true }),
+    );
     runtime.registerTool('fail', makeFailingTool('fail', 'Alternating failure'));
 
     for (let i = 0; i < 5; i++) {
@@ -173,7 +182,10 @@ describe('E2E: State isolation between AgentRuntime.execute() calls', () => {
   it('simulates 10 rapid consecutive runs without state leakage', async () => {
     const { runtime } = createTestRuntime();
 
-    runtime.registerTool('echo', makeTool('echo', async () => 'echo', { isConcurrencySafe: true }));
+    runtime.registerTool(
+      'echo',
+      makeTool('echo', async () => 'echo', { isConcurrencySafe: true }),
+    );
 
     let totalCalls = 0;
     for (let i = 0; i < 10; i++) {

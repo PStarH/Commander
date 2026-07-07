@@ -6,12 +6,41 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from typing import Any
 
 from ._client import CommanderClient as _CommanderClient
-from ._types import ExecutionResult, HealthStatus, PlanResult
 
 
+def _make_sync_method(name: str):
+    """Create a synchronous wrapper for an async CommanderClient method."""
+
+    def _sync_method(self: "CommanderClientSync", *args: Any, **kwargs: Any) -> Any:
+        return asyncio.run(getattr(self._get_client(), name)(*args, **kwargs))
+
+    # Copy docstring and signature metadata for better introspection.
+    async_method = getattr(_CommanderClient, name)
+    _sync_method.__doc__ = async_method.__doc__
+    _sync_method.__name__ = name
+    return _sync_method
+
+
+def _attach_sync_methods(
+    cls: type["CommanderClientSync"],
+) -> type["CommanderClientSync"]:
+    """Attach sync wrappers for every public async method on CommanderClient."""
+    skip = {"close", "__aenter__", "__aexit__"}
+    for name, method in inspect.getmembers(
+        _CommanderClient, predicate=inspect.isfunction
+    ):
+        if name.startswith("_") or name in skip:
+            continue
+        if inspect.iscoroutinefunction(method):
+            setattr(cls, name, _make_sync_method(name))
+    return cls
+
+
+@_attach_sync_methods
 class CommanderClientSync:
     """Synchronous Commander client for scripts and simple automation.
 
@@ -31,15 +60,6 @@ class CommanderClientSync:
         if self._client is None:
             self._client = _CommanderClient(**self._kwargs)
         return self._client
-
-    def run(self, prompt: str, **kwargs: Any) -> ExecutionResult:
-        return asyncio.run(self._get_client().run(prompt, **kwargs))
-
-    def plan(self, task: str, **kwargs: Any) -> PlanResult:
-        return asyncio.run(self._get_client().plan(task, **kwargs))
-
-    def health(self) -> HealthStatus:
-        return asyncio.run(self._get_client().health())
 
     def close(self) -> None:
         if self._client is not None:

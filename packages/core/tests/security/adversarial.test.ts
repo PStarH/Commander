@@ -1,6 +1,10 @@
 // packages/core/tests/security/adversarial.test.ts
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { AdversarialLLMAttacker, type AttackerConfig, type BaselineScenario } from '../../src/security/adversarialAttacker';
+import {
+  AdversarialLLMAttacker,
+  type AttackerConfig,
+  type BaselineScenario,
+} from '../../src/security/adversarialAttacker';
 
 const mockFetch = vi.fn();
 
@@ -58,9 +62,7 @@ describe('AdversarialLLMAttacker.generateCorpus', () => {
       ok: true,
       status: 200,
       json: async () => ({
-        choices: [
-          { message: { content: 'v1\nv2\nv3\nv4\nv5' } },
-        ],
+        choices: [{ message: { content: 'v1\nv2\nv3\nv4\nv5' } }],
         usage: { total_tokens: 100 },
       }),
     });

@@ -106,85 +106,89 @@ describe('E2E: load test', () => {
     resetGlobals();
   });
 
-  it('meets latency SLO at 1/5/10/50 concurrent agents', { retry: 2, timeout: 120000 }, async () => {
-    const runner = getBenchmarkRunner();
-    runner.start();
+  it(
+    'meets latency SLO at 1/5/10/50 concurrent agents',
+    { retry: 2, timeout: 120000 },
+    async () => {
+      const runner = getBenchmarkRunner();
+      runner.start();
 
-    const concurrencies = [1, 5, 10, 50];
-    const goal = 'Summarize the key features of TypeScript in one sentence.';
+      const concurrencies = [1, 5, 10, 50];
+      const goal = 'Summarize the key features of TypeScript in one sentence.';
 
-    resetGlobals();
-    const fake = makeFakeRuntime();
-    const telos = new TELOSOrchestrator(fake);
+      resetGlobals();
+      const fake = makeFakeRuntime();
+      const telos = new TELOSOrchestrator(fake);
 
-    // Warm up.
-    for (let i = 0; i < 3; i++) {
-      const plan = telos.plan({
-        projectId: 'warmup',
-        agentId: `warmup-${i}`,
-        goal,
-      });
-      await telos.execute(plan.planId);
-    }
-
-    let fiftyResult: BenchmarkResult | null = null;
-
-    for (const concurrency of concurrencies) {
-      const start = performance.now();
-      const latencies: number[] = [];
-
-      const promises: Promise<void>[] = [];
-      for (let i = 0; i < concurrency; i++) {
-        const reqStart = performance.now();
+      // Warm up.
+      for (let i = 0; i < 3; i++) {
         const plan = telos.plan({
-          projectId: `load-${concurrency}`,
-          agentId: `load-agent-${i}`,
+          projectId: 'warmup',
+          agentId: `warmup-${i}`,
           goal,
         });
-        const p = telos.execute(plan.planId).then(() => {
-          latencies.push(performance.now() - reqStart);
-        });
-        promises.push(p);
+        await telos.execute(plan.planId);
       }
 
-      await Promise.all(promises);
-      const totalDurationMs = performance.now() - start;
+      let fiftyResult: BenchmarkResult | null = null;
 
-      latencies.sort((a, b) => a - b);
-      const p50 = percentile(latencies, 50);
-      const p95 = percentile(latencies, 95);
-      const p99 = percentile(latencies, 99);
-      const throughput = concurrency / (totalDurationMs / 1000);
+      for (const concurrency of concurrencies) {
+        const start = performance.now();
+        const latencies: number[] = [];
 
-      const result: BenchmarkResult = {
-        name: `telos_concurrent_${concurrency}`,
-        category: 'load',
-        metrics: {
-          concurrency,
-          total_duration_ms: Number(totalDurationMs.toFixed(2)),
-          requests_per_sec: Number(throughput.toFixed(2)),
-          p50_ms: Number(p50.toFixed(3)),
-          p95_ms: Number(p95.toFixed(3)),
-          p99_ms: Number(p99.toFixed(3)),
-        },
-        timestamp: new Date().toISOString(),
-        durationMs: totalDurationMs,
-        passed: p99 < P99_THRESHOLD,
-        threshold: P99_THRESHOLD,
-        actual: p99,
-      };
+        const promises: Promise<void>[] = [];
+        for (let i = 0; i < concurrency; i++) {
+          const reqStart = performance.now();
+          const plan = telos.plan({
+            projectId: `load-${concurrency}`,
+            agentId: `load-agent-${i}`,
+            goal,
+          });
+          const p = telos.execute(plan.planId).then(() => {
+            latencies.push(performance.now() - reqStart);
+          });
+          promises.push(p);
+        }
 
-      runner.addResult(result);
-      if (concurrency === 50) {
-        fiftyResult = result;
+        await Promise.all(promises);
+        const totalDurationMs = performance.now() - start;
+
+        latencies.sort((a, b) => a - b);
+        const p50 = percentile(latencies, 50);
+        const p95 = percentile(latencies, 95);
+        const p99 = percentile(latencies, 99);
+        const throughput = concurrency / (totalDurationMs / 1000);
+
+        const result: BenchmarkResult = {
+          name: `telos_concurrent_${concurrency}`,
+          category: 'load',
+          metrics: {
+            concurrency,
+            total_duration_ms: Number(totalDurationMs.toFixed(2)),
+            requests_per_sec: Number(throughput.toFixed(2)),
+            p50_ms: Number(p50.toFixed(3)),
+            p95_ms: Number(p95.toFixed(3)),
+            p99_ms: Number(p99.toFixed(3)),
+          },
+          timestamp: new Date().toISOString(),
+          durationMs: totalDurationMs,
+          passed: p99 < P99_THRESHOLD,
+          threshold: P99_THRESHOLD,
+          actual: p99,
+        };
+
+        runner.addResult(result);
+        if (concurrency === 50) {
+          fiftyResult = result;
+        }
       }
-    }
 
-    const report = runner.finish();
+      const report = runner.finish();
 
-    // Only the 50-concurrent case is a hard acceptance criterion.
-    expect(fiftyResult).not.toBeNull();
-    expect(fiftyResult!.metrics.p99_ms).toBeLessThan(P99_THRESHOLD);
-    expect(report.summary.failed).toBe(0);
-  });
+      // Only the 50-concurrent case is a hard acceptance criterion.
+      expect(fiftyResult).not.toBeNull();
+      expect(fiftyResult!.metrics.p99_ms).toBeLessThan(P99_THRESHOLD);
+      expect(report.summary.failed).toBe(0);
+    },
+  );
 });
