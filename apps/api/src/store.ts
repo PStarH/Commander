@@ -1,6 +1,8 @@
 import { reportSilentFailure } from '@commander/core';
 import fs from 'fs';
 import path from 'path';
+import { createApiStore } from './stores';
+import type { ApiStore } from './stores/apiStore';
 import {
   Agent,
   ExecutionLog,
@@ -1030,3 +1032,10 @@ export function createWarRoomStore(): IWarRoomStore {
 
   return new WarRoomStore();
 }
+
+// ---------------------------------------------------------------------------
+// Shared A2A API store (wired when API_STORE_BACKEND=postgres)
+// ---------------------------------------------------------------------------
+
+/** Global ApiStore instance selected by API_STORE_BACKEND / DATABASE_URL. */
+export const apiStore: ApiStore = createApiStore();

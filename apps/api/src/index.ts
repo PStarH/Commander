@@ -12,7 +12,7 @@ import {
   getWebhookDispatcher,
 } from '@commander/core';
 import express from 'express';
-import { createWarRoomStore } from './store';
+import { createWarRoomStore, apiStore } from './store';
 import { ProjectMemoryStore } from './memoryStore';
 import { AgentStateStore } from './agentStateStore';
 import { MemoryIndexManager, DEFAULT_DOMAINS } from './memoryIndexManager';
@@ -98,6 +98,8 @@ try {
 
 // ── Shared state ────────────────────────────────────────────────────────────
 const store = createWarRoomStore();
+// Wired when API_STORE_BACKEND=postgres (or sqlite/memory fallback)
+const apiStoreInstance = apiStore;
 const memoryStore = new ProjectMemoryStore();
 const agentStateStore = new AgentStateStore();
 const memoryIndexManager = new MemoryIndexManager(PROJECT_ID);
@@ -250,6 +252,7 @@ app.get('/health', (_req, res) => {
 app.get('/ready', (_req, res) => {
   const checks: Record<string, 'ok' | 'fail'> = {
     warRoom: store ? 'ok' : 'fail',
+    apiStore: apiStoreInstance ? 'ok' : 'fail',
     memoryStore: memoryStore ? 'ok' : 'fail',
     agentStateStore: agentStateStore ? 'ok' : 'fail',
     episodicMemoryStore: episodicMemoryStore ? 'ok' : 'fail',
@@ -303,6 +306,7 @@ app.get('/health/detailed', async (_req, res) => {
     components: result.checks,
     modules: {
       warRoom: store ? 'active' : 'inactive',
+      apiStore: apiStoreInstance ? 'active' : 'inactive',
       memoryStore: memoryStore ? 'active' : 'inactive',
       agentStateStore: agentStateStore ? 'active' : 'inactive',
       episodicMemoryStore: episodicMemoryStore ? 'active' : 'inactive',
@@ -372,6 +376,7 @@ app.get('/system/status', (_req, res) => {
     modules: {
       core: 'loaded',
       warRoom: store ? 'active' : 'inactive',
+      apiStore: apiStoreInstance ? 'active' : 'inactive',
       memoryStore: memoryStore ? 'active' : 'inactive',
       agentStateStore: agentStateStore ? 'active' : 'inactive',
       episodicMemoryStore: episodicMemoryStore ? 'active' : 'inactive',
@@ -910,7 +915,7 @@ function gracefulShutdown(signal: string) {
   process.stdout.write(`\n[${signal}] Shutting down gracefully...\n`);
 
   // Stop accepting new connections.
-  httpServer?.close(() => {
+  httpServer?.close(async () => {
     process.stdout.write('[shutdown] HTTP server closed\n');
 
     // Stop the outgoing webhook dispatcher to prevent in-flight retries
@@ -933,6 +938,13 @@ function gracefulShutdown(signal: string) {
       store.close();
     } catch (closeErr) {
       process.stderr.write(`[shutdown] Failed to close store: ${closeErr}\n`);
+    }
+
+    // Close the A2A API store (PostgresPool-backed when API_STORE_BACKEND=postgres)
+    try {
+      await apiStoreInstance.close();
+    } catch (closeErr) {
+      process.stderr.write(`[shutdown] Failed to close API store: ${closeErr}\n`);
     }
 
     // Close the rate-limit persistent store (audit MED item 3 follow-up).
