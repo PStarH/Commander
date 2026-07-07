@@ -315,14 +315,20 @@ export class EpisodicMemoryStore implements IEpisodicStore {
 }
 
 // ============================================================================
-// Singleton
+// Singleton — tenant-aware for multi-tenant isolation
 // ============================================================================
 
-let globalEpisodicStore: EpisodicMemoryStore | null = null;
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+
+const episodicStoreSingleton = createTenantAwareSingleton(() => new EpisodicMemoryStore(), {
+  allowGlobalFallback: true,
+  componentName: 'EpisodicMemoryStore',
+});
 
 export function getGlobalEpisodicStore(): EpisodicMemoryStore {
-  if (!globalEpisodicStore) {
-    globalEpisodicStore = new EpisodicMemoryStore();
-  }
-  return globalEpisodicStore;
+  return episodicStoreSingleton.get();
+}
+
+export function resetGlobalEpisodicStore(): void {
+  episodicStoreSingleton.reset();
 }
