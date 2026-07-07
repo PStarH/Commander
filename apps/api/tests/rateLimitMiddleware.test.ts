@@ -1,6 +1,8 @@
 import { describe, it, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Request, Response } from 'express';
+import type { AuthUser } from '../src/jwtMiddleware';
+import type { UserRole } from '../src/userStore';
 
 // RATE_LIMIT_MAX is parsed at module load time, so we must set the env before
 // importing the middleware.
@@ -9,6 +11,10 @@ process.env.API_RATE_LIMIT_PERSISTENT = 'off';
 
 let rateLimitMiddleware: (req: Request, res: Response, next: () => void) => void;
 let _resetRateLimitStoreForTesting: () => void;
+
+function makeAuthUser(id: string, role: UserRole = 'user'): AuthUser {
+  return { id, username: id, role };
+}
 
 function makeMockRequest(overrides: Partial<Request> = {}): Request {
   return {
@@ -95,5 +101,66 @@ describe('rateLimitMiddleware', async () => {
 
     assert.equal(res._headers['X-RateLimit-Tier'], 'health');
     assert.equal(res._headers['X-RateLimit-Limit'], 20); // floor(2 * 10)
+  });
+
+  it('tracks different users on the same IP independently', () => {
+    const reqA = makeMockRequest({ user: makeAuthUser('user-a') });
+    const reqB = makeMockRequest({ user: makeAuthUser('user-b') });
+    const resA1 = makeMockResponse();
+    const resA2 = makeMockResponse();
+    const resB1 = makeMockResponse();
+
+    rateLimitMiddleware(reqA, resA1 as unknown as Response, () => {});
+    rateLimitMiddleware(reqA, resA2 as unknown as Response, () => {});
+    rateLimitMiddleware(reqB, resB1 as unknown as Response, () => {});
+
+    assert.equal(resA1._status, 200);
+    assert.equal(resA2._status, 429);
+    assert.equal(resA2._headers['X-RateLimit-Reason'], 'per-user-tier-write');
+    assert.equal(resB1._status, 200, 'user-b should not be blocked by user-a');
+  });
+
+  it('tracks different tenants on the same IP independently', () => {
+    const reqA = makeMockRequest({ headers: { 'x-tenant-id': 'tenant-a' } });
+    const reqB = makeMockRequest({ headers: { 'x-tenant-id': 'tenant-b' } });
+    const resA1 = makeMockResponse();
+    const resA2 = makeMockResponse();
+    const resB1 = makeMockResponse();
+
+    rateLimitMiddleware(reqA, resA1 as unknown as Response, () => {});
+    rateLimitMiddleware(reqA, resA2 as unknown as Response, () => {});
+    rateLimitMiddleware(reqB, resB1 as unknown as Response, () => {});
+
+    assert.equal(resA1._status, 200);
+    assert.equal(resA2._status, 429);
+    assert.equal(resA2._headers['X-RateLimit-Reason'], 'per-tenant-tier-write');
+    assert.equal(resB1._status, 200, 'tenant-b should not be blocked by tenant-a');
+  });
+
+  it('prefers user bucket over tenant and IP when both are present', () => {
+    const req = makeMockRequest({
+      user: makeAuthUser('user-x'),
+      headers: { 'x-tenant-id': 'tenant-x' },
+    });
+    const res = makeMockResponse();
+
+    rateLimitMiddleware(req, res as unknown as Response, () => {});
+
+    assert.equal(res._headers['X-RateLimit-Limit'], 1);
+    assert.equal(res._headers['X-RateLimit-Reason'], undefined);
+  });
+
+  it('falls back to IP bucket when X-Tenant-ID is invalid', () => {
+    const req1 = makeMockRequest({ headers: { 'x-tenant-id': '../evil' } });
+    const req2 = makeMockRequest({ headers: { 'x-tenant-id': '../evil' } });
+    const res1 = makeMockResponse();
+    const res2 = makeMockResponse();
+
+    rateLimitMiddleware(req1, res1 as unknown as Response, () => {});
+    rateLimitMiddleware(req2, res2 as unknown as Response, () => {});
+
+    assert.equal(res1._status, 200);
+    assert.equal(res2._status, 429);
+    assert.equal(res2._headers['X-RateLimit-Reason'], 'per-ip-tier-write');
   });
 });

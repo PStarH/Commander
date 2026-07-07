@@ -194,6 +194,76 @@ export function updateUserRole(userId: string, role: UserRole): SafeUser | null 
   return toSafeUser(user);
 }
 
+export function updateUser(
+  userId: string,
+  updates: Partial<Pick<User, 'email' | 'role' | 'username'>>,
+): SafeUser | { error: string } {
+  const users = getUsers();
+  const user = users.find((u) => u.id === userId);
+  if (!user) {
+    return { error: 'User not found' };
+  }
+
+  if (updates.username !== undefined) {
+    const conflict = users.find(
+      (u) => u.id !== userId && u.username.toLowerCase() === updates.username!.toLowerCase(),
+    );
+    if (conflict) {
+      return { error: 'Username already exists' };
+    }
+    user.username = updates.username;
+  }
+
+  if (updates.email !== undefined) {
+    const conflict = users.find(
+      (u) => u.id !== userId && u.email.toLowerCase() === updates.email!.toLowerCase(),
+    );
+    if (conflict) {
+      return { error: 'Email already registered' };
+    }
+    user.email = updates.email;
+  }
+
+  if (updates.role !== undefined) {
+    user.role = updates.role;
+  }
+
+  persist(users);
+  return toSafeUser(user);
+}
+
+export function resetUserPassword(userId: string, newPassword: string): SafeUser | null {
+  const users = getUsers();
+  const user = users.find((u) => u.id === userId);
+  if (!user) {
+    return null;
+  }
+  user.passwordHash = hashSync(newPassword, 10);
+  persist(users);
+  return toSafeUser(user);
+}
+
+export function deleteUser(userId: string): { success: boolean; error?: string } {
+  const users = getUsers();
+  const user = users.find((u) => u.id === userId);
+  if (!user) {
+    return { success: false, error: 'User not found' };
+  }
+
+  const adminCount = users.filter((u) => u.role === 'admin').length;
+  if (user.role === 'admin' && adminCount <= 1) {
+    return { success: false, error: 'Cannot delete the last admin account' };
+  }
+
+  const remaining = users.filter((u) => u.id !== userId);
+  persist(remaining);
+  return { success: true };
+}
+
+export function countAdmins(): number {
+  return getUsers().filter((u) => u.role === 'admin').length;
+}
+
 export function toSafeUserPublic(user: User): SafeUser {
   return toSafeUser(user);
 }

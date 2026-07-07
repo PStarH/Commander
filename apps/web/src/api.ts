@@ -10,6 +10,7 @@ import type {
   CostSummary,
   CostRecord,
   BudgetStatus,
+  BudgetAlert,
   CostRecordsResponse,
   ActiveRunsResponse,
   PauseResumeResponse,
@@ -145,6 +146,61 @@ export async function fetchRegister(
 
 export async function fetchCurrentUser(): Promise<{ user: AuthUser }> {
   return apiFetch<{ user: AuthUser }>('/api/auth/me');
+}
+
+export interface CreateUserPayload {
+  username: string;
+  email: string;
+  password: string;
+  role?: UserRole;
+}
+
+export interface UpdateUserPayload {
+  email?: string;
+  role?: UserRole;
+}
+
+export async function fetchUsers(): Promise<{ users: AuthUser[] }> {
+  return apiFetch<{ users: AuthUser[] }>('/api/auth/users');
+}
+
+export async function createUser(payload: CreateUserPayload): Promise<{ user: AuthUser }> {
+  return apiFetch<{ user: AuthUser }>('/api/auth/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateUser(
+  userId: string,
+  payload: UpdateUserPayload,
+): Promise<{ user: AuthUser }> {
+  return apiFetch<{ user: AuthUser }>(`/api/auth/users/${encodeURIComponent(userId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteUser(userId: string): Promise<{ success: boolean }> {
+  return apiFetch<{ success: boolean }>(`/api/auth/users/${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function resetUserPassword(
+  userId: string,
+  newPassword: string,
+): Promise<{ user: AuthUser }> {
+  return apiFetch<{ user: AuthUser }>(
+    `/api/auth/users/${encodeURIComponent(userId)}/reset-password`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newPassword }),
+    },
+  );
 }
 
 export async function refreshAuthToken(refreshToken: string): Promise<AuthResponse> {
@@ -1509,6 +1565,104 @@ export async function fetchSampleTasks(): Promise<OnboardingSampleTask[]> {
 }
 
 // ============================================================================
+// Workflow Visual Editor — drag-and-drop orchestration definitions
+// ============================================================================
+
+export type WorkflowNodeType = 'start' | 'agent' | 'tool' | 'condition' | 'end';
+
+export interface WorkflowNode {
+  id: string;
+  type: WorkflowNodeType;
+  position: { x: number; y: number };
+  data: Record<string, unknown>;
+}
+
+export interface WorkflowEdge {
+  id: string;
+  source: string;
+  target: string;
+  label?: string;
+  condition?: string;
+}
+
+export interface Workflow {
+  id: string;
+  name: string;
+  description?: string;
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowSummary {
+  id: string;
+  name: string;
+  description?: string;
+  nodeCount: number;
+  edgeCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowExecutionPlan {
+  workflowId: string;
+  pipeline: {
+    id: string;
+    name: string;
+    steps: Array<Record<string, unknown>>;
+  };
+}
+
+export interface CreateWorkflowPayload {
+  name: string;
+  description?: string;
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+}
+
+export async function fetchWorkflows(): Promise<{ workflows: WorkflowSummary[] }> {
+  return apiFetch<{ workflows: WorkflowSummary[] }>('/api/workflows');
+}
+
+export async function fetchWorkflow(id: string): Promise<{ workflow: Workflow }> {
+  return apiFetch<{ workflow: Workflow }>(`/api/workflows/${encodeURIComponent(id)}`);
+}
+
+export async function createWorkflow(
+  payload: CreateWorkflowPayload,
+): Promise<{ workflow: Workflow }> {
+  return apiFetch<{ workflow: Workflow }>('/api/workflows', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateWorkflow(
+  id: string,
+  payload: CreateWorkflowPayload,
+): Promise<{ workflow: Workflow }> {
+  return apiFetch<{ workflow: Workflow }>(`/api/workflows/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteWorkflow(id: string): Promise<{ success: boolean }> {
+  return apiFetch<{ success: boolean }>(`/api/workflows/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function executeWorkflow(id: string): Promise<WorkflowExecutionPlan> {
+  return apiFetch<WorkflowExecutionPlan>(`/api/workflows/${encodeURIComponent(id)}/execute`, {
+    method: 'POST',
+  });
+}
+
+// ============================================================================
 // Eval / Reporting / Consensus plugin control (builtin plugins)
 // ============================================================================
 
@@ -1559,4 +1713,484 @@ export async function disableConsensusPlugin(): Promise<{ enabled: boolean }> {
   const res = await fetch(`${API_BASE}/api/consensus/disable`, { method: 'POST' });
   if (!res.ok) throw new Error(await readError(res, 'Failed to disable consensus plugin'));
   return res.json();
+}
+
+// ============================================================================
+// Global Settings — model, feature flags, notifications
+// ============================================================================
+
+export interface NotificationSettings {
+  emailEnabled?: boolean;
+  email?: string;
+  webhookUrl?: string;
+  slackWebhook?: string;
+  alertsEnabled?: boolean;
+}
+
+export interface AppSettings {
+  model?: string;
+  enableMetaTools?: boolean;
+  toolRetrieval?: boolean;
+  entropyGating?: boolean;
+  speculativeExecution?: boolean;
+  notifications?: NotificationSettings;
+}
+
+export async function fetchSettings(): Promise<{ settings: AppSettings }> {
+  return apiFetch<{ settings: AppSettings }>('/api/settings');
+}
+
+export async function updateSettings(
+  settings: Partial<AppSettings>,
+): Promise<{ settings: AppSettings }> {
+  return apiFetch<{ settings: AppSettings }>('/api/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  });
+}
+
+// ============================================================================
+// API Key Management — create / list / revoke
+// ============================================================================
+
+export interface ApiKeyRecord {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: string[];
+  enabled: boolean;
+  createdAt: string;
+  revokedAt?: string;
+}
+
+export async function fetchApiKeys(): Promise<{ keys: ApiKeyRecord[] }> {
+  return apiFetch<{ keys: ApiKeyRecord[] }>('/api/admin/api-keys');
+}
+
+export async function createApiKey(
+  name: string,
+  scopes: string[] = ['read', 'write'],
+): Promise<{ key: string; record: ApiKeyRecord }> {
+  return apiFetch<{ key: string; record: ApiKeyRecord }>('/api/admin/api-keys', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, scopes }),
+  });
+}
+
+export async function revokeApiKey(id: string): Promise<{ status: string; record: ApiKeyRecord }> {
+  return apiFetch<{ status: string; record: ApiKeyRecord }>(
+    `/api/admin/api-keys/${encodeURIComponent(id)}`,
+    {
+      method: 'DELETE',
+    },
+  );
+}
+
+// ============================================================================
+// Outgoing Webhooks — CRUD + delivery tracking
+// ============================================================================
+
+export interface OutgoingWebhookConfig {
+  id: string;
+  url: string;
+  events: string[];
+  retryMax?: number;
+  headers?: Record<string, string>;
+  enabled: boolean;
+  createdAt: string;
+  name?: string;
+  description?: string;
+}
+
+export interface WebhookDelivery {
+  webhookId: string;
+  event: string;
+  status: 'success' | 'failed' | 'retrying';
+  statusCode?: number;
+  attempts: number;
+  error?: string;
+  deliveredAt: string;
+}
+
+export interface CreateOutgoingWebhookPayload {
+  name?: string;
+  description?: string;
+  url: string;
+  events: string[];
+  secret?: string;
+  retryMax?: number;
+  headers?: Record<string, string>;
+  enabled?: boolean;
+}
+
+export async function fetchOutgoingWebhooks(): Promise<{ webhooks: OutgoingWebhookConfig[] }> {
+  return apiFetch<{ webhooks: OutgoingWebhookConfig[] }>('/api/outgoing-webhooks');
+}
+
+export async function createOutgoingWebhook(
+  payload: CreateOutgoingWebhookPayload,
+): Promise<{ webhook: OutgoingWebhookConfig }> {
+  return apiFetch<{ webhook: OutgoingWebhookConfig }>('/api/outgoing-webhooks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteOutgoingWebhook(id: string): Promise<{ status: string; id: string }> {
+  return apiFetch<{ status: string; id: string }>(
+    `/api/outgoing-webhooks/${encodeURIComponent(id)}`,
+    {
+      method: 'DELETE',
+    },
+  );
+}
+
+export async function fetchOutgoingWebhookStats(): Promise<{
+  total: number;
+  enabled: number;
+  deliveries: number;
+}> {
+  return apiFetch<{ total: number; enabled: number; deliveries: number }>(
+    '/api/outgoing-webhooks/stats',
+  );
+}
+
+export async function fetchWebhookDeliveries(
+  webhookId: string,
+  limit = 50,
+): Promise<{ deliveries: WebhookDelivery[]; total: number }> {
+  return apiFetch<{ deliveries: WebhookDelivery[]; total: number }>(
+    `/api/outgoing-webhooks/${encodeURIComponent(webhookId)}/deliveries?limit=${limit}`,
+  );
+}
+
+export async function fetchRecentDeliveries(
+  limit = 50,
+): Promise<{ deliveries: WebhookDelivery[] }> {
+  return apiFetch<{ deliveries: WebhookDelivery[] }>(
+    `/api/outgoing-webhooks/deliveries/recent?limit=${limit}`,
+  );
+}
+
+// ============================================================================
+// Unified Alert Center — aggregates scattered governance / cost / confidence alerts
+// ============================================================================
+
+export type AlertSource = 'governance' | 'cost' | 'confidence';
+export type AlertSeverity = 'critical' | 'warning' | 'info';
+
+export interface GovernanceAlertItem {
+  type: 'LESSON' | 'ISSUE' | 'WARNING';
+  message: string;
+  agentId?: string;
+  timestamp: string;
+}
+
+export interface ConfidenceAlertItem {
+  actionId: string;
+  missionId: string;
+  agentId: string;
+  actionType: string;
+  confidenceScore: number;
+  severity: 'low' | 'medium' | 'high';
+  rationale: string;
+  timestamp: string;
+  recommendation: string;
+}
+
+export interface UnifiedAlert {
+  id: string;
+  source: AlertSource;
+  severity: AlertSeverity;
+  message: string;
+  timestamp: string;
+  /** Human-readable category label */
+  category: string;
+  /** Optional link target within the app */
+  link?: { to: string; label: string };
+  /** Raw payload for detail expansion */
+  payload?: Record<string, unknown>;
+}
+
+export interface UnifiedAlertsResponse {
+  alerts: UnifiedAlert[];
+  total: number;
+  bySource: Record<AlertSource, number>;
+  bySeverity: Record<AlertSeverity, number>;
+}
+
+function mapGovernanceType(type: GovernanceAlertItem['type']): AlertSeverity {
+  switch (type) {
+    case 'ISSUE':
+      return 'critical';
+    case 'WARNING':
+      return 'warning';
+    case 'LESSON':
+      return 'info';
+    default:
+      return 'info';
+  }
+}
+
+function mapBudgetType(type: BudgetAlert['type']): AlertSeverity {
+  switch (type) {
+    case 'budget_exhausted':
+    case 'hard_cap_reached':
+      return 'critical';
+    case 'cost_cap_reached':
+    case 'soft_cap_warning':
+      return 'warning';
+    default:
+      return 'warning';
+  }
+}
+
+function mapConfidenceSeverity(severity: ConfidenceAlertItem['severity']): AlertSeverity {
+  switch (severity) {
+    case 'high':
+      return 'critical';
+    case 'medium':
+      return 'warning';
+    case 'low':
+      return 'info';
+    default:
+      return 'info';
+  }
+}
+
+function generateAlertId(source: AlertSource, raw: { timestamp: string }): string {
+  const key = `${source}:${raw.timestamp}:${JSON.stringify(raw).slice(0, 80)}`;
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) {
+    hash = (hash << 5) - hash + key.charCodeAt(i);
+    hash |= 0;
+  }
+  return `${source}-${Math.abs(hash).toString(36)}`;
+}
+
+/**
+ * Fetch governance alerts generated by the governance observer.
+ */
+export async function fetchGovernanceAlerts(): Promise<GovernanceAlertItem[]> {
+  return apiFetch<GovernanceAlertItem[]>(`/projects/${PROJECT_ID}/governance/alerts`);
+}
+
+/**
+ * Fetch budget alerts from the token sentinel.
+ */
+export async function fetchBudgetAlerts(): Promise<BudgetAlert[]> {
+  const status = await apiFetch<BudgetStatus>('/api/cost/budget');
+  return status.alerts ?? [];
+}
+
+/**
+ * Fetch low-confidence alerts across all missions.
+ *
+ * This iterates over missions in the war-room snapshot. To keep request volume
+ * bounded, only active (RUNNING / BLOCKED) missions are scanned by default.
+ */
+export async function fetchConfidenceAlerts(activeOnly = true): Promise<ConfidenceAlertItem[]> {
+  const snapshot = await fetchWarRoomSnapshot();
+  const missions = activeOnly
+    ? snapshot.missions.filter((m) => m.status === 'RUNNING' || m.status === 'BLOCKED')
+    : snapshot.missions;
+
+  if (missions.length === 0) return [];
+
+  const results = await Promise.all(
+    missions.map(async (mission) => {
+      try {
+        const res = await fetch(
+          `${API_BASE}/projects/${PROJECT_ID}/missions/${mission.id}/confidence/alerts`,
+        );
+        if (!res.ok) return [];
+        const data = (await res.json()) as { alerts: ConfidenceAlertItem[] };
+        return data.alerts ?? [];
+      } catch {
+        return [];
+      }
+    }),
+  );
+  return results.flat();
+}
+
+/**
+ * Aggregate all alert sources into a single, filterable list.
+ */
+export async function fetchUnifiedAlerts(
+  activeConfidenceOnly = true,
+): Promise<UnifiedAlertsResponse> {
+  const [governance, budget, confidence] = await Promise.all([
+    fetchGovernanceAlerts().catch(() => [] as GovernanceAlertItem[]),
+    fetchBudgetAlerts().catch(() => [] as BudgetAlert[]),
+    fetchConfidenceAlerts(activeConfidenceOnly).catch(() => [] as ConfidenceAlertItem[]),
+  ]);
+
+  const alerts: UnifiedAlert[] = [
+    ...governance.map((a) => ({
+      id: generateAlertId('governance', a),
+      source: 'governance' as AlertSource,
+      severity: mapGovernanceType(a.type),
+      message: a.message,
+      timestamp: a.timestamp,
+      category: a.type,
+      link: a.agentId ? { to: `/agents`, label: 'View agent' } : undefined,
+      payload: a as unknown as Record<string, unknown>,
+    })),
+    ...budget.map((a) => ({
+      id: generateAlertId('cost', { timestamp: new Date().toISOString(), ...a }),
+      source: 'cost' as AlertSource,
+      severity: mapBudgetType(a.type),
+      message: a.message,
+      timestamp: new Date().toISOString(), // BudgetAlert has no timestamp; use now.
+      category: a.type,
+      link: { to: '/cost', label: 'Cost dashboard' },
+      payload: a as unknown as Record<string, unknown>,
+    })),
+    ...confidence.map((a) => ({
+      id: generateAlertId('confidence', a),
+      source: 'confidence' as AlertSource,
+      severity: mapConfidenceSeverity(a.severity),
+      message: `Low confidence: ${a.actionType} (${(a.confidenceScore * 100).toFixed(0)}%) — ${a.rationale.slice(0, 120)}`,
+      timestamp: a.timestamp,
+      category: a.severity,
+      link: { to: `/missions`, label: 'View mission' },
+      payload: a as unknown as Record<string, unknown>,
+    })),
+  ];
+
+  alerts.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+
+  const bySource: Record<AlertSource, number> = { governance: 0, cost: 0, confidence: 0 };
+  const bySeverity: Record<AlertSeverity, number> = { critical: 0, warning: 0, info: 0 };
+  for (const alert of alerts) {
+    bySource[alert.source]++;
+    bySeverity[alert.severity]++;
+  }
+
+  return { alerts, total: alerts.length, bySource, bySeverity };
+}
+
+// ============================================================================
+// OIDC SSO
+// ============================================================================
+
+export interface OIDCConfig {
+  enabled: boolean;
+  issuer: string | null;
+  clientId: string | null;
+  roleClaim: string;
+  adminRoles: string[];
+  operatorRoles: string[];
+  redirectUri: string | null;
+}
+
+export interface OIDCSettingsPayload {
+  enabled: boolean;
+  issuer: string;
+  clientId: string;
+  roleClaim: string;
+  adminRoles: string[];
+  operatorRoles: string[];
+  redirectUri: string;
+}
+
+export interface OIDCSettingsResponse {
+  status: string;
+  config: OIDCConfig;
+}
+
+export async function fetchOIDCConfig(): Promise<OIDCConfig> {
+  return apiFetch<OIDCConfig>('/api/auth/oidc/config');
+}
+
+export async function exchangeOIDCToken(idToken: string): Promise<AuthResponse> {
+  return apiFetch<AuthResponse>('/api/auth/oidc/exchange', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ idToken }),
+  });
+}
+
+export async function fetchOIDCSettings(): Promise<OIDCConfig> {
+  return apiFetch<OIDCConfig>('/api/auth/oidc/settings');
+}
+
+export async function updateOIDCSettings(
+  payload: OIDCSettingsPayload,
+): Promise<OIDCSettingsResponse> {
+  return apiFetch<OIDCSettingsResponse>('/api/auth/oidc/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface OIDCDiscoveryDocument {
+  authorization_endpoint: string;
+  token_endpoint?: string;
+  userinfo_endpoint?: string;
+  jwks_uri?: string;
+  scopes_supported?: string[];
+}
+
+/**
+ * Discover the OIDC provider authorization endpoint via its well-known
+ * configuration document. Falls back to common issuer URL patterns when
+ * discovery fails (e.g. due to missing CORS headers).
+ */
+export async function discoverOIDCAuthorizationEndpoint(issuer: string): Promise<string> {
+  const normalizedIssuer = issuer.replace(/\/$/, '');
+  try {
+    const response = await fetch(`${normalizedIssuer}/.well-known/openid-configuration`);
+    if (response.ok) {
+      const doc = (await response.json()) as OIDCDiscoveryDocument;
+      if (doc.authorization_endpoint) return doc.authorization_endpoint;
+    }
+  } catch {
+    /* discovery failed — fall through to heuristic URLs */
+  }
+
+  // Common provider patterns as a last resort.
+  const heuristics = [
+    `${normalizedIssuer}/oauth2/authorize`,
+    `${normalizedIssuer}/protocol/openid-connect/auth`,
+    `${normalizedIssuer}/authorize`,
+  ];
+  return heuristics[0];
+}
+
+/**
+ * Build the OIDC authorization URL for the implicit/id_token flow.
+ *
+ * Uses `id_token` response type so the provider redirects back with the JWT
+ * in the URL fragment, which the frontend then exchanges for a Commander
+ * token via the backend.
+ */
+export function buildOIDCAuthorizationUrl(
+  authorizationEndpoint: string,
+  clientId: string,
+  redirectUri: string,
+  state?: string,
+  nonce?: string,
+): string {
+  const url = new URL(authorizationEndpoint);
+  url.searchParams.set('response_type', 'id_token');
+  url.searchParams.set('response_mode', 'fragment');
+  url.searchParams.set('client_id', clientId);
+  url.searchParams.set('redirect_uri', redirectUri);
+  url.searchParams.set('scope', 'openid email profile');
+  url.searchParams.set('nonce', nonce ?? generateOIDCState());
+  if (state) url.searchParams.set('state', state);
+  return url.toString();
+}
+
+/** Generate a short random state/nonce value for OIDC requests. */
+export function generateOIDCState(): string {
+  const array = new Uint8Array(16);
+  crypto.getRandomValues(array);
+  return Array.from(array, (b) => b.toString(16).padStart(2, '0')).join('');
 }
