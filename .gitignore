@@ -164,7 +164,6 @@ apps/api/dist/
 
 # Benchmark files — entire directories (intermediate results, responses, configs)
 benchmarks/
-!benchmarks/chaos-runner/
 packages/core/benchmarks/
 packages/core/src/benchmark/
 docs/benchmark-results/
