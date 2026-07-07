@@ -2,7 +2,11 @@
  * RunLifecycleManager — tracks active and paused runs for AgentRuntime.
  *
  * Extracted from AgentRuntime so the god object only delegates.
+ * Keeps the `commander_active_runs` Prometheus gauge in sync on every
+ * add/remove so the dashboard never drifts from the runtime state.
  */
+
+import { getMetricsCollector } from './metricsCollector';
 
 export class RunLifecycleManager {
   private activeRuns: Set<string> = new Set();
@@ -10,11 +14,13 @@ export class RunLifecycleManager {
 
   addRun(runId: string): void {
     this.activeRuns.add(runId);
+    this.emitActiveRuns();
   }
 
   removeRun(runId: string): void {
     this.activeRuns.delete(runId);
     this.pausedRuns.delete(runId);
+    this.emitActiveRuns();
   }
 
   pauseRun(runId: string): boolean {
@@ -41,5 +47,9 @@ export class RunLifecycleManager {
 
   getActiveRuns(): string[] {
     return Array.from(this.activeRuns);
+  }
+
+  private emitActiveRuns(): void {
+    getMetricsCollector().setActiveRuns(this.activeRuns.size);
   }
 }

@@ -1138,7 +1138,10 @@ export function createApiStore(options?: {
   connectionString?: string;
   forceMemory?: boolean;
 }): ApiStore {
-  const backend = options?.backend ?? (process.env.DATABASE_URL ? 'postgres' : 'sqlite');
+  const backend =
+    options?.backend ??
+    (process.env.API_STORE_BACKEND as ApiStoreBackend) ??
+    (process.env.DATABASE_URL ? 'postgres' : 'sqlite');
   const dbPath = options?.dbPath ?? DEFAULT_DB_PATH;
 
   if (options?.forceMemory || backend === 'memory') {

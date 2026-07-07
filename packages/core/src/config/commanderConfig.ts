@@ -40,7 +40,8 @@ export type ProviderType =
   | 'deepinfra'
   | 'agnes'
   | 'stepfun'
-  | 'minimax';
+  | 'minimax'
+  | 'azure';
 
 // All 6 Records below are DERIVED from the provider registry — see
 // runtime/providers/providerRegistry.ts. To add a provider, register it there
@@ -371,6 +372,10 @@ export function listModels(): void {
     {
       provider: 'bedrock',
       name: 'Claude 3.5 Sonnet/Haiku/Opus, Llama 3 70B/8B, Mistral Large (AWS)',
+    },
+    {
+      provider: 'azure',
+      name: 'gpt-4o, gpt-4o-mini, gpt-4, gpt-35-turbo (Azure OpenAI)',
     },
   ];
   for (const p of all) {

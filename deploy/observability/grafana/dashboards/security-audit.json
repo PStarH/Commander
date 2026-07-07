@@ -1,8 +1,8 @@
 {
-  "title": "Developer Overview",
-  "uid": "developer-overview",
+  "title": "Security Audit",
+  "uid": "security-audit",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 1,
   "editable": true,
   "time": { "from": "now-1h", "to": "now" },
   "refresh": "10s",
@@ -24,7 +24,20 @@
         "name": "tenant",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${datasource}" },
-        "query": "label_values(commander_runs_total, tenant)",
+        "query": "label_values(commander_audit_events_total, tenant)",
+        "current": { "selected": false, "text": "All", "value": "$__all" },
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "options": [],
+        "refresh": 1,
+        "sort": 1
+      },
+      {
+        "name": "category",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": "label_values(commander_audit_events_total{tenant=~\"$tenant\"}, category)",
         "current": { "selected": false, "text": "All", "value": "$__all" },
         "hide": 0,
         "includeAll": true,
@@ -38,53 +51,39 @@
   "annotations": { "list": [] },
   "panels": [
     {
-      "title": "Run Success Rate",
+      "title": "Audit Events / sec",
       "type": "stat",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
       "targets": [
         {
-          "expr": "sum(rate(commander_runs_total{status=~\"success|success_early_exit\",tenant=~\"$tenant\"}[5m])) / sum(rate(commander_runs_total{tenant=~\"$tenant\"}[5m]))",
+          "expr": "sum(rate(commander_audit_events_total{tenant=~\"$tenant\",category=~\"$category\"}[5m]))",
           "refId": "A"
         }
       ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "min": 0,
-          "max": 1,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "red", "value": null },
-              { "color": "yellow", "value": 0.8 },
-              { "color": "green", "value": 0.95 }
-            ]
-          }
-        }
-      },
+      "fieldConfig": { "defaults": { "unit": "cps" } },
       "options": { "graphMode": "area", "colorMode": "value" }
     },
     {
-      "title": "P95 Latency (ms)",
+      "title": "Security Errors / sec",
       "type": "stat",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(commander_run_duration_ms_bucket{tenant=~\"$tenant\"}[5m])))",
+          "expr": "sum(rate(commander_errors_total{class=~\"Security.*|.*Security.*|.*Denied.*|.*Blocked.*\",tenant=~\"$tenant\"}[5m]))",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "ms",
+          "unit": "cps",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 5000 },
-              { "color": "red", "value": 10000 }
+              { "color": "yellow", "value": 0.1 },
+              { "color": "red", "value": 1 }
             ]
           }
         }
@@ -92,39 +91,13 @@
       "options": { "graphMode": "area", "colorMode": "value" }
     },
     {
-      "title": "Token Cost (USD/hour)",
+      "title": "DLQ Depth",
       "type": "stat",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
       "targets": [
         {
-          "expr": "sum(rate(commander_run_cost_usd_total{tenant=~\"$tenant\"}[1h])) * 3600",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "currencyUSD",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 1 },
-              { "color": "red", "value": 10 }
-            ]
-          }
-        }
-      },
-      "options": { "graphMode": "area", "colorMode": "value" }
-    },
-    {
-      "title": "Active Runs",
-      "type": "stat",
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
-      "targets": [
-        {
-          "expr": "sum(commander_active_runs)",
+          "expr": "sum(commander_dlq_depth)",
           "refId": "A"
         }
       ],
@@ -136,7 +109,7 @@
             "steps": [
               { "color": "green", "value": null },
               { "color": "yellow", "value": 10 },
-              { "color": "red", "value": 25 }
+              { "color": "red", "value": 50 }
             ]
           }
         }
@@ -144,76 +117,105 @@
       "options": { "graphMode": "area", "colorMode": "value" }
     },
     {
-      "title": "Run Success Rate Over Time",
+      "title": "Circuit Breakers Open",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(commander_circuit_breaker_open{tenant=~\"$tenant\"})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      },
+      "options": { "graphMode": "area", "colorMode": "value" }
+    },
+    {
+      "title": "Audit Events by Category",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
       "targets": [
         {
-          "expr": "sum(rate(commander_runs_total{status=~\"success|success_early_exit\",tenant=~\"$tenant\"}[5m])) / sum(rate(commander_runs_total{tenant=~\"$tenant\"}[5m]))",
+          "expr": "sum by (category) (rate(commander_audit_events_total{tenant=~\"$tenant\",category=~\"$category\"}[5m]))",
+          "legendFormat": "{{category}}",
           "refId": "A"
         }
       ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "min": 0,
-          "max": 1,
-          "custom": { "lineWidth": 2, "fillOpacity": 10 }
-        }
-      }
+      "fieldConfig": { "defaults": { "unit": "cps", "custom": { "lineWidth": 2, "fillOpacity": 10 } } }
     },
     {
-      "title": "Token Usage Over Time",
+      "title": "Errors by Class",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
       "targets": [
         {
-          "expr": "sum by (model) (rate(commander_llm_tokens_total{tenant=~\"$tenant\"}[5m]))",
-          "legendFormat": "{{model}}",
+          "expr": "sum by (class) (rate(commander_errors_total{tenant=~\"$tenant\"}[5m]))",
+          "legendFormat": "{{class}}",
           "refId": "A"
         }
       ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "tps",
-          "custom": { "lineWidth": 2, "fillOpacity": 10 }
-        }
-      }
+      "fieldConfig": { "defaults": { "unit": "cps", "custom": { "lineWidth": 2, "fillOpacity": 10 } } }
     },
     {
-      "title": "Tool Call Success Rate",
+      "title": "Hook Failures / sec",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
       "targets": [
         {
-          "expr": "sum(rate(commander_tool_calls_total{status=\"success\",tenant=~\"$tenant\"}[5m])) / sum(rate(commander_tool_calls_total{tenant=~\"$tenant\"}[5m]))",
+          "expr": "sum by (plugin) (rate(commander_hook_failures_total{tenant=~\"$tenant\"}[5m]))",
+          "legendFormat": "{{plugin}}",
           "refId": "A"
         }
       ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "min": 0,
-          "max": 1,
-          "custom": { "lineWidth": 2, "fillOpacity": 10 }
-        }
-      }
+      "fieldConfig": { "defaults": { "unit": "cps", "custom": { "lineWidth": 2, "fillOpacity": 10 } } }
     },
     {
-      "title": "Cost by Component",
-      "type": "piechart",
+      "title": "Verification Failures",
+      "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
       "targets": [
         {
-          "expr": "sum by (status) (rate(commander_run_cost_usd_total{tenant=~\"$tenant\"}[1h]))",
-          "refId": "A",
-          "legendFormat": "{{status}}"
+          "expr": "sum(rate(commander_verification_results_total{passed=\"false\",tenant=~\"$tenant\"}[5m]))",
+          "legendFormat": "failures",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(commander_verification_results_total{tenant=~\"$tenant\"}[5m]))",
+          "legendFormat": "total",
+          "refId": "B"
         }
-      ]
+      ],
+      "fieldConfig": { "defaults": { "unit": "cps", "custom": { "lineWidth": 2, "fillOpacity": 10 } } }
+    },
+    {
+      "title": "Compensation Outcomes",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(commander_compensation_total{tenant=~\"$tenant\"}[5m]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "cps", "custom": { "lineWidth": 2, "fillOpacity": 10 } } }
     }
   ]
 }
