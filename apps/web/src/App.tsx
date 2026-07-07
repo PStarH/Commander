@@ -23,6 +23,7 @@ import { UsersPage } from './pages/UsersPage';
 import { OIDCSettingsPage } from './pages/OIDCSettingsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { WorkflowsPage } from './pages/WorkflowsPage';
+import { POCPage } from './pages/POCPage';
 import { useWarRoom } from './hooks/useWarRoom';
 import { useAuth } from './hooks/useAuth';
 import { fetchOnboardingStatus } from './api';
@@ -185,6 +186,7 @@ export default function App() {
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/settings/sso" element={<OIDCSettingsPage />} />
           <Route path="/workflows" element={<WorkflowsPage />} />
+          <Route path="/poc" element={<POCPage />} />
         </Routes>
       </main>
     </div>

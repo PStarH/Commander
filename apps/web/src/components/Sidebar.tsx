@@ -22,6 +22,7 @@ import {
   Workflow,
   Settings,
   Key,
+  Briefcase,
 } from 'lucide-react';
 import type { AuthUser } from '../api';
 import { t } from '../i18n';
@@ -35,6 +36,7 @@ const NAV_ITEMS = [
   { to: '/memory', icon: BookOpen, label: t('nav.memory') },
   { to: '/governance', icon: ShieldCheck, label: t('nav.governance') },
   { to: '/workflows', icon: Workflow, label: t('nav.workflows') },
+  { to: '/poc', icon: Briefcase, label: t('nav.poc') },
   { to: '/dlq', icon: AlertTriangle, label: t('nav.dlq') },
   { to: '/security', icon: Fingerprint, label: t('nav.security') },
   { to: '/audit', icon: ClipboardList, label: t('nav.audit') },
