@@ -1765,6 +1765,7 @@ export class AdaptiveThreatLearningEngine {
 const adaptiveLearningSingleton = createTenantAwareSingleton(
   () => new AdaptiveThreatLearningEngine(),
   {
+    allowGlobalFallback: true,
     componentName: 'AdaptiveThreatLearningEngine',
     dispose: (instance: AdaptiveThreatLearningEngine) => {
       instance.dispose();
