@@ -1,0 +1,87 @@
+{
+  "benchmark": "event-sourcing-replay",
+  "runAt": "2026-07-06T08:26:41.075Z",
+  "nodeVersion": "v26.3.1",
+  "results": [
+    {
+      "eventCount": 1000,
+      "appendTotalMs": 79,
+      "appendPerEventMs": 0.079,
+      "replayTotalMs": 0,
+      "replayEventsPerSec": null,
+      "replayPerEventMs": 0,
+      "verifyIntegrityMs": 1,
+      "snapshotMs": 1,
+      "replayFromSnapshotMs": 0,
+      "snapshotSpeedup": 0,
+      "heapUsedMB": 9
+    },
+    {
+      "eventCount": 10000,
+      "appendTotalMs": 612,
+      "appendPerEventMs": 0.0612,
+      "replayTotalMs": 6,
+      "replayEventsPerSec": 1666667,
+      "replayPerEventMs": 0.0006,
+      "verifyIntegrityMs": 11,
+      "snapshotMs": 1,
+      "replayFromSnapshotMs": 0,
+      "snapshotSpeedup": 0,
+      "heapUsedMB": 19
+    },
+    {
+      "eventCount": 100000,
+      "appendTotalMs": 8738,
+      "appendPerEventMs": 0.08738,
+      "replayTotalMs": 39,
+      "replayEventsPerSec": 2564103,
+      "replayPerEventMs": 0.00039,
+      "verifyIntegrityMs": 120,
+      "snapshotMs": 4,
+      "replayFromSnapshotMs": 0,
+      "snapshotSpeedup": 0,
+      "heapUsedMB": 63
+    }
+  ],
+  "summary": {
+    "scale1k": {
+      "eventCount": 1000,
+      "appendTotalMs": 79,
+      "appendPerEventMs": 0.079,
+      "replayTotalMs": 0,
+      "replayEventsPerSec": null,
+      "replayPerEventMs": 0,
+      "verifyIntegrityMs": 1,
+      "snapshotMs": 1,
+      "replayFromSnapshotMs": 0,
+      "snapshotSpeedup": 0,
+      "heapUsedMB": 9
+    },
+    "scale10k": {
+      "eventCount": 10000,
+      "appendTotalMs": 612,
+      "appendPerEventMs": 0.0612,
+      "replayTotalMs": 6,
+      "replayEventsPerSec": 1666667,
+      "replayPerEventMs": 0.0006,
+      "verifyIntegrityMs": 11,
+      "snapshotMs": 1,
+      "replayFromSnapshotMs": 0,
+      "snapshotSpeedup": 0,
+      "heapUsedMB": 19
+    },
+    "scale100k": {
+      "eventCount": 100000,
+      "appendTotalMs": 8738,
+      "appendPerEventMs": 0.08738,
+      "replayTotalMs": 39,
+      "replayEventsPerSec": 2564103,
+      "replayPerEventMs": 0.00039,
+      "verifyIntegrityMs": 120,
+      "snapshotMs": 4,
+      "replayFromSnapshotMs": 0,
+      "snapshotSpeedup": 0,
+      "heapUsedMB": 63
+    }
+  }
+}

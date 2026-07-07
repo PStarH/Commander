@@ -1,0 +1,204 @@
+name: Cost Model Drift Bench
+
+# Day 7 closeout: capture today's costModel <-> costEstimator drift baseline
+# via `pnpm bench:cost-model-drift`, compare against yesterday's baseline
+# JSON, fail the run if any model's drift exceeds the threshold (default 5%)
+# or any new model is missing on either side.
+#
+# Companion to ENTERPRISE_READINESS.md cost-attribution accuracy gate.
+# Mirrors the cost-bench.yml daily cron at 06:30 UTC; the drift gate runs
+# at 06:45 UTC so it sees the same-day cost-prediction baseline if needed
+# for cross-correlation. The two workflows are independent (drift gate
+# runs first; cost-prediction accuracy gate validates estimator output
+# shape separately).
+#
+# Triggers:
+#   - workflow_dispatch: manual run; supports overriding the drift
+#     threshold (default 5%).
+#   - schedule: 06:45 UTC daily. Distinct slot from wal-bench (06:00),
+#     cost-bench (06:30), slo-bench (07:00), tenant-isolation-bench (07:30).
+#
+# Outputs:
+#   - docs/baselines/cost-model-drift.<UTC-today>.json
+#   - GitHub Step Summary markdown table
+#   - exit 0: no drift > threshold, OR first-day run
+#   - exit 1: any drift > threshold, OR drift delta > threshold
+
+on:
+  workflow_dispatch:
+    inputs:
+      maxDriftDeltaPct:
+        description: 'Maximum additional drift pct vs yesterday (default 0)'
+        required: false
+        default: '0'
+  schedule:
+    - cron: '45 6 * * *'
+
+jobs:
+  bench-cost-model-drift-regress:
+    name: Cost Model Drift Regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TZ: UTC
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve today / yesterday (UTC)
+        id: dates
+        run: |
+          TODAY=$(date -u +%Y-%m-%d)
+          YESTERDAY=$(node -e "const d=new Date();d.setUTCDate(d.getUTCDate()-1);console.log(d.toISOString().slice(0,10))")
+          echo "today=$TODAY"        >> "$GITHUB_OUTPUT"
+          echo "yesterday=$YESTERDAY" >> "$GITHUB_OUTPUT"
+
+      - name: Run cost-model-drift bench (captures today baseline)
+        run: pnpm bench:cost-model-drift
+
+      - name: Verify today's baseline JSON exists
+        run: |
+          TODAY_FILE="docs/baselines/cost-model-drift.${{ steps.dates.outputs.today }}.json"
+          if [ ! -s "$TODAY_FILE" ]; then
+            echo "::error::$TODAY_FILE is missing or empty"
+            exit 2
+          fi
+          echo "today's baseline: $TODAY_FILE"
+
+      - name: Extract today's metrics
+        id: metrics
+        if: always()
+        run: |
+          TODAY_FILE="docs/baselines/cost-model-drift.${{ steps.dates.outputs.today }}.json"
+          node -e '
+            const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf-8"));
+            const out = (k, v) => console.log(`${k}=${v}`);
+            out("passed", d.summary.passed);
+            out("maxDriftPct", d.summary.maxObservedDriftPct);
+            out("totalA", d.summary.directionA.total);
+            out("driftedA", d.summary.directionA.drifted);
+            out("missingA", d.summary.directionA.missing);
+            out("totalB", d.summary.directionB.total);
+            out("driftedB", d.summary.directionB.drifted);
+            out("missingB", d.summary.directionB.missing);
+          ' "$TODAY_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Compare today vs yesterday (drift gate)
+        if: always()
+        id: regress
+        env:
+          MAX_DRIFT_DELTA_PCT: ${{ github.event.inputs.maxDriftDeltaPct || '0' }}
+        run: |
+          TODAY_FILE="docs/baselines/cost-model-drift.${{ steps.dates.outputs.today }}.json"
+          YESTERDAY_FILE="docs/baselines/cost-model-drift.${{ steps.dates.outputs.yesterday }}.json"
+          SUMMARY="$RUNNER_TEMP/cost-model-drift-regress-summary.md"
+          if [ ! -s "$YESTERDAY_FILE" ]; then
+            cat > "$SUMMARY" <<EOF
+          ## Cost Model Drift Regression - ${{ steps.dates.outputs.today }}
+
+          First-day run: no yesterday baseline available. Drift gate skipped.
+
+          | metric | today | yesterday |
+          |---|---|---|
+          | maxDriftPct | ${{ steps.metrics.outputs.maxDriftPct }} | n/a |
+          | A drifted | ${{ steps.metrics.outputs.driftedA }} | n/a |
+          | B drifted | ${{ steps.metrics.outputs.driftedB }} | n/a |
+          EOF
+            echo "first-day=true"   >> "$GITHUB_OUTPUT"
+            echo "regressed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::first-day run; drift gate skipped"
+            exit 0
+          fi
+          node -e '
+            const fs = require("fs");
+            const today = JSON.parse(fs.readFileSync(process.argv[1], "utf-8"));
+            const yesterday = JSON.parse(fs.readFileSync(process.argv[2], "utf-8"));
+            const MAX_DELTA = Number(process.env.MAX_DRIFT_DELTA_PCT);
+            const driftDelta = today.summary.maxObservedDriftPct - yesterday.summary.maxObservedDriftPct;
+            const passOk = today.summary.passed;
+            const driftOk = driftDelta <= MAX_DELTA;
+            const md = [
+              `## Cost Model Drift Regression - ${today.runAt.slice(0,10)}`,
+              ``,
+              `> Gates: today.summary.passed must be true; driftDelta <= **${MAX_DELTA}%**.`,
+              ``,
+              `| metric | today | yesterday | delta |`,
+              `|---|---|---|---|`,
+              `| maxDriftPct | ${today.summary.maxObservedDriftPct.toFixed(4)}% | ${yesterday.summary.maxObservedDriftPct.toFixed(4)}% | ${driftDelta >= 0 ? "+" : ""}${driftDelta.toFixed(4)}% |`,
+              `| A drifted | ${today.summary.directionA.drifted} | ${yesterday.summary.directionA.drifted} | - |`,
+              `| A missing | ${today.summary.directionA.missing} | ${yesterday.summary.directionA.missing} | - |`,
+              `| B drifted | ${today.summary.directionB.drifted} | ${yesterday.summary.directionB.drifted} | - |`,
+              `| B missing | ${today.summary.directionB.missing} | ${yesterday.summary.directionB.missing} | - |`,
+              ``,
+              (passOk && driftOk) ? `PASS` : `REGRESS DETECTED (passOk=${passOk}, driftOk=${driftOk})`,
+            ].join("\n");
+            fs.writeFileSync(process.argv[3], md);
+            if (!passOk || !driftOk) {
+              console.log("regressed=true");
+              console.log(`::error::cost-model-drift drift detected: passOk=${passOk} driftOk=${driftOk} driftDelta=${driftDelta.toFixed(4)}%`);
+              process.exit(1);
+            }
+            console.log("regressed=false");
+          ' "$TODAY_FILE" "$YESTERDAY_FILE" "$SUMMARY"
+
+      - name: Append markdown to GitHub Step Summary
+        if: always()
+        run: |
+          SUMMARY="$RUNNER_TEMP/cost-model-drift-regress-summary.md"
+          if [ -s "$SUMMARY" ]; then cat "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"; else exit 2; fi
+
+      - name: Upload today's baseline as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cost-model-drift-baseline-${{ steps.dates.outputs.today }}
+          path: docs/baselines/cost-model-drift.${{ steps.dates.outputs.today }}.json
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Open PR for today's cost-model-drift baseline
+        if: success()
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: bench/cost-model-drift-baseline-${{ steps.dates.outputs.today }}
+          delete-branch: true
+          title: 'ci(cost-model-drift-bench): baseline ${{ steps.dates.outputs.today }} - maxDriftPct=${{ steps.metrics.outputs.maxDriftPct }}'
+          commit-message: |
+            ci(cost-model-drift-bench): baseline ${{ steps.dates.outputs.today }}
+
+            Auto-generated by .github/workflows/cost-model-drift-bench.yml.
+
+            maxDriftPct: ${{ steps.metrics.outputs.maxDriftPct }}
+            A drifted: ${{ steps.metrics.outputs.driftedA }} / ${{ steps.metrics.outputs.totalA }}
+            B drifted: ${{ steps.metrics.outputs.driftedB }} / ${{ steps.metrics.outputs.totalB }}
+          body: |
+            ## Cost model drift baseline - ${{ steps.dates.outputs.today }}
+
+            Auto-generated by [`.github/workflows/cost-model-drift-bench.yml`](../workflows/cost-model-drift-bench.yml).
+            Triggered daily at `06:45 UTC` or via manual `workflow_dispatch`.
+
+            | Metric | Value |
+            |---|---|
+            | passed | **${{ steps.metrics.outputs.passed }}** |
+            | maxDriftPct | **${{ steps.metrics.outputs.maxDriftPct }}** |
+            | A drifted | **${{ steps.metrics.outputs.driftedA }} / ${{ steps.metrics.outputs.totalA }}** |
+            | B drifted | **${{ steps.metrics.outputs.driftedB }} / ${{ steps.metrics.outputs.totalB }}** |
+
+            Generated by `.github/workflows/cost-model-drift-bench.yml`
+          labels: |
+            automated
+            ci-bench

@@ -1,6 +1,6 @@
 {
   "$schemaVersion": "1.0",
-  "generatedAt": "2026-07-02",
+  "generatedAt": "2026-07-07",
   "repoVersion": "0.2.0",
   "statusLegend": {
     "verified": "Claim backed by test or wired code at the cited file:line. Read the evidence before believing.",
@@ -15,14 +15,14 @@
           "id": "providers.count",
           "claim": "22+ providers supported",
           "status": "verified",
-          "evidence": "packages/core/src/runtime/providers/providerRegistry.ts:42-188 — registers 24 providers (OpenAI, Anthropic, Google, Azure, Bedrock, OpenRouter, DeepSeek, GLM, MiMo, Xiaomi, Cohere, Mistral, Groq, Together, Perplexity, Fireworks, Replicate, XAI, Anyscale, DeepInfra, Agnes, Ollama, VLLM, StepFun)",
+          "evidence": "packages/core/src/runtime/providers/providerRegistry.ts:42-188 - registers 24 providers (OpenAI, Anthropic, Google, Azure, Bedrock, OpenRouter, DeepSeek, GLM, MiMo, Xiaomi, Cohere, Mistral, Groq, Together, Perplexity, Fireworks, Replicate, XAI, Anyscale, DeepInfra, Agnes, Ollama, VLLM, StepFun)",
           "verifiedCount": 24
         },
         {
           "id": "providers.keyResolution",
           "claim": "All 24 providers resolve via EncryptedSecretsVault when available, plain env-var fallback otherwise",
           "status": "verified",
-          "evidence": "packages/core/src/security/secureApiKeyResolver.ts — resolveSecureApiKey covers all providers in the registry; G5 vault initialized in CommanderHttpServer.start() before any provider call (packages/core/src/runtime/httpServer.ts:790-810)",
+          "evidence": "packages/core/src/security/secureApiKeyResolver.ts - resolveSecureApiKey covers all providers in the registry; G5 vault initialized in CommanderHttpServer.start() before any provider call (packages/core/src/runtime/httpServer.ts:790-810)",
           "notes": "Zero remaining direct process.env.<PROVIDER>_API_KEY reads in production code paths verified 2026-07-02."
         }
       ]
@@ -34,14 +34,14 @@
           "id": "topologies.canonical",
           "claim": "5 canonical topologies (SINGLE / CHAIN / DISPATCH / ORCHESTRATOR / REVIEW)",
           "status": "verified",
-          "evidence": "packages/core/src/ultimate/types.ts:52,63 — OrchestrationTopology union; selectTopologyForEffort & classifyEffortLevel in effortRules.ts",
-          "notes": "Older alias names retained @deprecated for 0.x → 1.0 transition window."
+          "evidence": "packages/core/src/ultimate/types.ts:52,63 - OrchestrationTopology union; selectTopologyForEffort & classifyEffortLevel in effortRules.ts",
+          "notes": "Older alias names retained @deprecated for 0.x -> 1.0 transition window."
         },
         {
           "id": "topologies.autoSelection",
           "claim": "Thompson-sampling-based automatic topology selection",
           "status": "verified",
-          "evidence": "packages/core/src/ultimate/topologyOptimizer.ts — ReflexionTopologicalOptimizer + epsilon-greedy store; ablation evidence in docs/results-2026-06-23.json"
+          "evidence": "packages/core/src/ultimate/topologyOptimizer.ts - ReflexionTopologicalOptimizer + epsilon-greedy store; ablation evidence in docs/results-2026-06-23.json"
         }
       ]
     },
@@ -59,7 +59,7 @@
           "claim": "Per-IP SSE connection limit (10/IP) + connection drain on shutdown",
           "status": "verified",
           "evidence": "CommanderHttpServer.MAX_SSE_PER_IP=10 enforced in handleStreamRequest; gracefulShutdown drains via server.close + 10s force-close timeout",
-          "notes": "Without this guard, EACH /stream request would consume a Node HTTP connection indefinitely — pre-fix was the documented S1-Audit finding."
+          "notes": "Without this guard, EACH /stream request would consume a Node HTTP connection indefinitely - pre-fix was the documented S1-Audit finding."
         }
       ]
     },
@@ -70,19 +70,19 @@
           "id": "circuitBreaker",
           "claim": "Per-provider circuit breaker with OPEN/HALF_OPEN/CLOSED states",
           "status": "verified",
-          "evidence": "packages/core/src/sandbox/circuitBreakerRegistry.ts — class-level breakerFor + Providers.getProviderHealth() surface state"
+          "evidence": "packages/core/src/sandbox/circuitBreakerRegistry.ts - class-level breakerFor + Providers.getProviderHealth() surface state"
         },
         {
           "id": "deadLetterQueue",
           "claim": "Per-category dead-letter queue with NDJSON append-only storage",
           "status": "verified",
-          "evidence": "packages/core/src/runtime/deadLetterQueue.ts:1-7 — append-only NDJSON; 7 categories (llm/tool/execution/verification/circuit_breaker/compensation/semantic_drift); FailureMode discriminator standardized Tier 4.1"
+          "evidence": "packages/core/src/runtime/deadLetterQueue.ts:1-7 - append-only NDJSON; 7 categories (llm/tool/execution/verification/circuit_breaker/compensation/semantic_drift); FailureMode discriminator standardized Tier 4.1"
         },
         {
           "id": "compensation",
           "claim": "Saga-based compensating transaction runtime",
           "status": "verified",
-          "evidence": "packages/core/src/saga — CompensationScheduler, SagaCoordinator, InMemorySagaStore, FileSagaStore, CompensationFn retry policy"
+          "evidence": "packages/core/src/saga - CompensationScheduler, SagaCoordinator, InMemorySagaStore, FileSagaStore, CompensationFn retry policy"
         },
         {
           "id": "checkpointing",
@@ -104,10 +104,10 @@
         },
         {
           "id": "tenancy.crossTenantFuzz",
-          "claim": "Automated cross-tenant fuzz test suite",
-          "status": "missing",
-          "evidence": null,
-          "notes": "Listed in security_architecture_hardening_roadmap.md G6; not yet delivered. Tracked in ENTERPRISE_READINESS.md."
+          "claim": "Automated cross-tenant fuzz test suite with daily cron-bound regression gate",
+          "status": "verified",
+          "evidence": "packages/core/src/security/crossTenantFuzz.ts CrossTenantFuzzTest (6 attack vectors: tenant_id_spoof, path_traversal, key_collision, prompt_injection, header_injection, async_context_leak; 1000 mutations default); scripts/bench-tenant-isolation.ts harness driver; .github/workflows/tenant-isolation-bench.yml daily cron 07:30 UTC + workflow_dispatch (maxNewLeaks=0 default) + day-over-day leak-count drift gate; ENTERPRISE_READINESS.md SOC2-6 + TEN-3 rows",
+          "deliveredAt": "2026-07-07"
         }
       ]
     },
@@ -124,7 +124,7 @@
           "id": "plugins.discovery",
           "claim": "Auto-discovery from .commander/plugins/ and ~/.commander/plugins/",
           "status": "verified",
-          "evidence": "packages/core/src/pluginLoader.ts — getPluginLoader().loadAll() called by apps/api on startup (index.ts)"
+          "evidence": "packages/core/src/pluginLoader.ts - getPluginLoader().loadAll() called by apps/api on startup (index.ts)"
         },
         {
           "id": "pluginSdk",
@@ -142,13 +142,13 @@
           "id": "quality.heuristic",
           "claim": "Heuristic regex gates: hallucination check, hedging detection",
           "status": "verified",
-          "evidence": "packages/core/src/ultimate/qualityGates.ts — HALLUCINATION_CHECK, CONSISTENCY, COMPLETENESS, LLM_JUDGE"
+          "evidence": "packages/core/src/ultimate/qualityGates.ts - HALLUCINATION_CHECK, CONSISTENCY, COMPLETENESS, LLM_JUDGE"
         },
         {
           "id": "quality.llmJudge",
           "claim": "LLM-as-judge evaluation with dataset versioning and A/B comparison",
           "status": "verified",
-          "evidence": "packages/core/src/plugins/builtin/eval — LLMJudgeEvaluator + getSharedJudgeEngine + getSharedDatasetManager + getSharedABComparator",
+          "evidence": "packages/core/src/plugins/builtin/eval - LLMJudgeEvaluator + getSharedJudgeEngine + getSharedDatasetManager + getSharedABComparator",
           "notes": "Replaces the previous regex hedging false-positives that penalized 'on the other hand' / 'might be' phrasing."
         }
       ]
@@ -167,7 +167,7 @@
           "claim": "Activation requires 5+ runs",
           "status": "partial",
           "evidence": "Documented in README; activation window in selfEvolution; not externally validated at scale",
-          "notes": "Cold-start users will see limited adaptation in first 5 runs; this is by design — there is no historical data to learn from."
+          "notes": "Cold-start users will see limited adaptation in first 5 runs; this is by design - there is no historical data to learn from."
         }
       ]
     },
@@ -215,7 +215,7 @@
           "id": "observability.tracing",
           "claim": "W3C distributed trace context propagation end-to-end",
           "status": "verified",
-          "evidence": "packages/core/src/runtime/distributedTracing.ts — extractTraceFromHeaders + createTraceContext + runWithTrace"
+          "evidence": "packages/core/src/runtime/distributedTracing.ts - extractTraceFromHeaders + createTraceContext + runWithTrace"
         },
         {
           "id": "observability.otel",
@@ -228,6 +228,48 @@
           "claim": "Prometheus-compatible /metrics endpoint",
           "status": "verified",
           "evidence": "apps/api/src/index.ts:/metrics (text/plain; version=0.0.4 + businessMetrics merge) + CommanderHttpServer /metrics endpoint"
+        },
+        {
+          "id": "costPrediction.benchGuardrails",
+          "claim": "Cost-prediction bench: MAE/P95 accuracy gate + BENCH_MAX_COST_USD cost cap + seeded-PRNG deterministic baselines + per-model pricing-table parity test",
+          "status": "verified",
+          "evidence": "scripts/bench-cost-prediction.ts:73 TEST_MODEL_FIXTURES (4 model canonical rates, exported for parity test); :97-114 seeded djb2+mulberry32 PRNG keyed on (model, category) for daily-run determinism; :118-147 BENCH_MAX_COST_USD env cap; :193 P95<50% accuracy gate; packages/core/src/runtime/costEstimator.ts DEFAULT_PRICING (40+ models); packages/core/tests/runtime/costEstimator.test.ts 'bench fixture parity' describe block (4 fixture-rate assertions); .github/workflows/cost-bench.yml daily cron 06:30 UTC + workflow_dispatch + day-over-day MAE drift gate; ENTERPRISE_READINESS.md P1-6 row",
+          "deliveredAt": "2026-07-06"
+        },
+        {
+          "id": "sloBench.regressGate",
+          "claim": "SLO bench with fail-loud catch + cron-bound daily drift gate",
+          "status": "verified",
+          "evidence": "scripts/bench-slo-baseline.ts (rewritten: 4 catch blocks now record actualMs=NaN, passed=false, reason=err.message; previously silently greenlit failures as actualMs=0/passed=true); .github/workflows/slo-bench.yml daily cron 07:00 UTC + workflow_dispatch (maxNewFailures=0 default) + day-over-day new-failures drift gate; 7s/10s/30s/60s thresholds for recovery/failover/compensation/dlq; ENTERPRISE_READINESS.md SLO-1 row",
+          "deliveredAt": "2026-07-07"
+        },
+        {
+          "id": "costModelDrift.detector",
+          "claim": "Bidirectional cross-table drift detector between costModel.DEFAULT_PRICING and costEstimator.DEFAULT_PRICING (5% threshold)",
+          "status": "verified",
+          "evidence": "scripts/bench-cost-model-drift.ts (rewritten 2026-07-07: Direction A costModel->costEstimator catches projected-cost inaccuracy; Direction B costEstimator->costModel catches recorded-cost inaccuracy from missing costModel entries; both directions fail the bench when drift >5% configurable via BENCH_DRIFT_THRESHOLD_PCT env, or when any model is missing on either side; reports per-direction clean/drifted/missing counts); packages/core/src/observability/costModel.ts DEFAULT_PRICING; packages/core/src/runtime/costEstimator.ts DEFAULT_PRICING; .github/workflows/cost-model-drift-bench.yml daily cron 06:45 UTC + workflow_dispatch (maxDriftDeltaPct=0) + day-over-day maxObservedDriftPct drift gate; packages/core/src/runtime/costEstimator.ts#export getPricingForModel",
+          "deliveredAt": "2026-07-07"
+        },
+        {
+          "id": "memoryPoisoning.fuzzBench",
+          "claim": "Cross-tenant memory poisoning fuzz benchmark covering 6 attack vectors against 3-layer memory",
+          "status": "verified",
+          "evidence": "scripts/bench-memory-poisoning.ts (6 attack vectors: V1 tenant_id_spoof_in_metadata, V2 longterm_cross_tenant_promotion, V3 searchRelated_keyword_collision, V4 importance_threshold_bypass, V5 contradictionIds_metadata_leak, V6 promoteToLongTerm_layer_transition; bench FAILS on first cross-tenant leak not on a fixed threshold; baseline to docs/baselines/memory-poisoning.<date>.json with report.{targetName,totalCases,defended,leaks[],vectorDetails[]} shape; exit 1 on any leak); packages/core/src/threeLayerMemory.ts ThreeLayerMemory class (the class-level attack surface that the singleton layer does NOT defend against)",
+          "deliveredAt": "2026-07-07"
+        },
+        {
+          "id": "chaosBench.cronGate",
+          "claim": "Chaos Engineering benchmark v2 (200 synthetic + 55 mutation cases) cron-bound daily drift gate",
+          "status": "verified",
+          "evidence": "benchmarks/chaos-runner/src/index.ts run --simulated --scripted --output=<path> (real ExecutionHarness with scripted mock LLM responses - cassette-independent for CI); benchmarks/chaos-runner/src/reporter.ts BenchmarkReport JSON shape (summary.{total_cases,passed,failed,skipped,pass_rate,overall_score,mttd_ms,mttr_ms} + dimension_scores + capability_scores); .github/workflows/chaos-bench.yml daily cron 07:45 UTC + workflow_dispatch maxCases override (chaos-255 day = 310 cases) + summary.failed=0 + pass_rate regression-vs-yesterday gate (10% default); ENTERPRISE_READINESS.md Capability-benchmarks BENCH-CHAOS row",
+          "deliveredAt": "2026-07-07"
+        },
+        {
+          "id": "gaiaBench.cronGate",
+          "claim": "GAIA spine benchmark (UltimateOrchestrator + ExecutionScheduler pinned) cron-bound daily drift gate with 3-way verdict UNGRADED-for-empty-expected regression check",
+          "status": "verified",
+          "evidence": "scripts/benchmark-gaia.ts --quick (10 synthetic tasks; in-memory ledger via COMMANDER_ATR_MEMORY=1; 8-case scoring self-test covers historical empty-expected grading bug + all-punctuation post-normalize-empty edge case; pinned to getExecutionScheduler() so lease/idempotency/RunLedger invariants are exercised on every task); + new --output=<path> JSON emit (runAt/mode/passed/exitCode/failedReason/summary.{total,correct,incorrect,ungraded,ungradedRate,effectiveScore,spineErrors,scoringRegressions}/durationMs) before process.exit so failed runs still produce a baseline artifact; .github/workflows/gaia-bench.yml daily cron 08:00 UTC + workflow_dispatch maxNewSpineErrors override + passed/spineErrors=0/scoringRegressions=0 day-over-day gate; ENTERPRISE_READINESS.md Capability-benchmarks BENCH-GAIA row",
+          "deliveredAt": "2026-07-07"
         }
       ]
     },
@@ -238,14 +280,14 @@
           "id": "ops.liveMetrics",
           "claim": "War Room SSE dashboard",
           "status": "partial",
-          "evidence": "apps/web/components/LiveMetrics.tsx — consumes /projects/:projectId/events via API_BASE",
+          "evidence": "apps/web/components/LiveMetrics.tsx - consumes /projects/:projectId/events via API_BASE",
           "notes": "Previously hardcoded http://localhost:4000; now correctly bound to configured API_BASE. See commit fb3a14e."
         },
         {
           "id": "ops.topologyDiagram",
           "claim": "Xyflow topology visualization + Recharts cost dashboard + dnd-kit workflow editor",
           "status": "verified",
-          "evidence": "apps/web/components/ — TopologyDiagram.tsx, CostDashboard.tsx, WorkflowEditor.tsx"
+          "evidence": "apps/web/components/ - TopologyDiagram.tsx, CostDashboard.tsx, WorkflowEditor.tsx"
         }
       ]
     },

@@ -40,6 +40,14 @@
  *      Phase 2 work and not yet implemented. Split from code 2 so CI
  *      dashboards can distinguish a scoring bug from a missing-fixture bug.
  *
+ * Cron-gate contract: When invoked with `--output=<path>`, the script writes
+ *   a canonical baseline JSON BEFORE returning the exit code above, so the
+ *   cron workflow's day-over-day drift gate (`.github/workflows/gaia-bench.yml`)
+ *   still has a baseline artifact to diff against when the run fails. The
+ *   shape mirrors the other bench-* scripts (slo, tenant-isolation, cost,
+ *   memory-poisoning) so the cron baseline writer/plotter tooling does not
+ *   need a per-bench special case.
+ *
  * Re-runnability: process.env.COMMANDER_ATR_MEMORY=1 is set at module-load
  *   time so the file-backed RunLedger at .commander/atr_ledger.db is bypassed
  *   in favor of an in-memory SQLite DB. Without this, the dry-run would only
@@ -72,6 +80,8 @@ import { TELOSOrchestrator } from '../packages/core/src/telos/telosOrchestrator'
 import { getExecutionScheduler } from '../packages/core/src/atr/scheduler';
 import type { AgentRuntimeInterface } from '../packages/core/src/runtime/agentRuntimeInterface';
 import { score, type Verdict, type ScoreResult } from '../packages/core/src/observability/score';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scoring — 3-way verdict (CORRECT / INCORRECT / UNGRADED)
@@ -585,27 +595,72 @@ async function main(): Promise<number> {
   console.log(`Duration:           ${(durationMs / 1000).toFixed(2)}s`);
   console.log('');
 
-  // Phase C — exit code mapping
+  // Phase C — exit code mapping. Captured into a variable (instead of
+  // direct `return N`) so the JSON emit phase (Phase D) can run BEFORE
+  // process.exit() and surface the full baseline JSON artifact even when
+  // the bench fails. This matches the cron-gate contract documented at the
+  // top of .github/workflows/gaia-bench.yml.
+  let exitCode = 0;
+  let failedReason: string | null = null;
   if (summary.spineErrors > 0) {
-    console.error(`FAILED: spine health check tripped. (${summary.spineErrors} task(s))`);
-    return 1;
-  }
-  if (summary.scoringRegressions > 0) {
-    console.error(
-      'FAILED: scoring regression. Empty-expected tasks graded as something other than UNGRADED.',
-    );
-    return 2;
-  }
-  if (ungradedRate < 25 || ungradedRate > 35) {
+    failedReason = `spine health check tripped (${summary.spineErrors} task(s))`;
+    console.error(`FAILED: ${failedReason}`);
+    exitCode = 1;
+  } else if (summary.scoringRegressions > 0) {
+    failedReason =
+      'scoring regression: empty-expected tasks graded as something other than UNGRADED';
+    console.error(`FAILED: ${failedReason}`);
+    exitCode = 2;
+  } else if (ungradedRate < 25 || ungradedRate > 35) {
     // We expect 3/10 = 30% ungraded. Outside this band means either we
     // accidentally removed the regression tasks or something else is wrong.
-    console.error(
-      `FAILED: ungraded rate ${ungradedRate.toFixed(1)}% outside expected 25-35% band (should be 30%=3/10)`,
+    failedReason = `ungraded rate ${ungradedRate.toFixed(
+      1,
+    )}% outside expected 25-35% band (should be 30%=3/10)`;
+    console.error(`FAILED: ${failedReason}`);
+    exitCode = 2;
+  } else {
+    console.log(
+      'PASSED: spine healthy + scoring correct (UNGRADED preserved for empty expected).',
     );
-    return 2;
   }
-  console.log('PASSED: spine healthy + scoring correct (UNGRADED preserved for empty expected).');
-  return 0;
+
+  // Phase D — JSON result emit (optional, cron-gate contract).
+  // When invoked as `benchmark-gaia.ts --quick --output=<path>`, write the
+  // canonical baseline JSON so the cron workflow's day-over-day drift gate
+  // can read it without parsing stdout. Shape matches the other bench-*
+  // scripts (slo / tenant-isolation / cost / memory-poisoning).
+  const outputArg = argv.find((a) => a.startsWith('--output='));
+  const outputPath = outputArg ? outputArg.slice('--output='.length) : null;
+  if (outputPath) {
+    try {
+      const result = {
+        runAt: new Date().toISOString(),
+        mode: quick ? 'quick' : 'full',
+        passed: exitCode === 0,
+        exitCode,
+        failedReason,
+        summary: {
+          total,
+          correct: summary.correct,
+          incorrect: summary.incorrect,
+          ungraded: summary.ungraded,
+          ungradedRate,
+          effectiveScore,
+          spineErrors: summary.spineErrors,
+          scoringRegressions: summary.scoringRegressions,
+        },
+        durationMs,
+      };
+      const dir = dirname(outputPath);
+      if (dir && dir !== '.') mkdirSync(dir, { recursive: true });
+      writeFileSync(outputPath, JSON.stringify(result, null, 2), 'utf-8');
+      console.log(`Result JSON written: ${outputPath}`);
+    } catch (err) {
+      console.error(`Failed to write result JSON: ${(err as Error).message}`);
+    }
+  }
+  return exitCode;
 }
 
 main().then(

@@ -1,0 +1,322 @@
+name: Chaos Bench Regression
+
+# Day 7 closeout: capture today's Chaos Engineering benchmark v2 baseline
+# via `npx tsx benchmarks/chaos-runner/src/index.ts run --simulated --scripted`,
+# compare against yesterday's baseline JSON, fail the run if any case failed
+# OR the pass-rate regressed by more than the configured percentage.
+#
+# Companion to ENTERPRISE_READINESS.md Capability-benchmarks section.
+# Mirrors the regression-gate pattern of slo-bench.yml +
+# tenant-isolation-bench.yml + cost-bench.yml + memory-poisoning-bench.yml.
+#
+# Mode selection (--simulated --scripted):
+#   - `--simulated` runs the real ExecutionHarness (vs `--dry-run` Math.random)
+#   - `--scripted` uses scripted mock LLM responses (vs default `e2e-replay`
+#     which requires cassettes at `.commander/e2e_cassettes/`)
+#   - Together: deterministic, no network io, no cassette dependency.
+#
+# Triggers:
+#   - workflow_dispatch: maxCases override (0 = all cases; the chaos-255 day
+#     is 200 synthetic + 55 mutation = ~310 cases, exposed via this input).
+#   - schedule: 07:45 UTC daily. Distinct slot after memory-poisoning-bench
+#     (07:30) and before gaia-bench (08:00).
+#
+# Outputs:
+#   - docs/baselines/chaos-runner.<UTC-today>.json  (committed artifact)
+#   - GitHub Step Summary markdown table
+#   - exit 0: summary.failed = 0 AND pass-rate drift >= -PASS_RATE_DRIFT_PCT
+#     (regression direction only; improvements happily pass)
+#   - exit 1: any case failed OR pass-rate regression > threshold
+#   - exit 2: today's baseline JSON missing (bench crashed)
+
+on:
+  workflow_dispatch:
+    inputs:
+      maxCases:
+        description: 'Chaos-runner --max override (0 = all cases; chaos-255 day sets this to 255+)'
+        required: false
+        default: '0'
+      passRateDriftPct:
+        description: 'Pass-rate regression threshold (percent rel., default 10)'
+        required: false
+        default: '10'
+  schedule:
+    # Daily at 07:45 UTC. Slot 4 of 4 in the morning cron block —
+    # 07:30 memory-poisoning + 07:45 chaos + 08:00 gaia close out the gate.
+    - cron: '45 7 * * *'
+
+jobs:
+  bench-chaos-regress:
+    name: Chaos Regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Force UTC so downstream code reading `new Date().toISOString().slice(0,10)`
+      # matches the date the workflow's yesterday-lookup step computes. Same
+      # pattern as slo-bench.yml / cost-bench.yml.
+      TZ: UTC
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 is required so today's run can compare against
+          # yesterday's baseline JSON committed to HEAD by the previous day's
+          # scheduled run. Without it the regress step would always see
+          # "first-day run".
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve today / yesterday (UTC)
+        id: dates
+        run: |
+          TODAY=$(date -u +%Y-%m-%d)
+          # Portable yesterday via Node - avoids OS-specific date(1) flags
+          # (-d on Linux, -v on macOS) and keeps UTC alignment.
+          YESTERDAY=$(node -e "const d=new Date();d.setUTCDate(d.getUTCDate()-1);console.log(d.toISOString().slice(0,10))")
+          echo "today=$TODAY"
+          echo "yesterday=$YESTERDAY"
+          echo "today=$TODAY"        >> "$GITHUB_OUTPUT"
+          echo "yesterday=$YESTERDAY" >> "$GITHUB_OUTPUT"
+
+      - name: Run chaos bench (captures today baseline)
+        env:
+          MAX_CASES: ${{ github.event.inputs.maxCases || '0' }}
+        run: |
+          # Build the chaos-runner argv. `--simulated --scripted` is the
+          # CI-safe combo (real ExecutionHarness, no cassettes). The
+          # `set -e` ensures a bench crash (chaos-runner exits 1 on
+          # fatal) funnels into the verify step's missing-file exit 2.
+          #
+          # NOTE on `--output=`: chaos-runner parseArgs accepts BOTH
+          # `--output=path` (EQUAL form, used here) and `--output path`
+          # (SPACE form) as of 2026-07-07 — see the dual-form comment in
+          # benchmarks/chaos-runner/src/index.ts#parseArgs. EQUAL is the
+          # canonical form for cron workflows because it is shell-quote-safe
+          # and matches the convention used by sibling benches.
+          set -e
+          ARGS="run --simulated --scripted --output=/tmp/chaos-report.json"
+          if [ "$MAX_CASES" != "0" ]; then
+            ARGS="$ARGS --max=$MAX_CASES"
+          fi
+          npx tsx benchmarks/chaos-runner/src/index.ts $ARGS
+
+      - name: Move report to docs/baselines/
+        if: always()
+        run: |
+          TODAY_FILE="docs/baselines/chaos-runner.${{ steps.dates.outputs.today }}.json"
+          mkdir -p "$(dirname "$TODAY_FILE")"
+          cp /tmp/chaos-report.json "$TODAY_FILE"
+          echo "today's baseline: $TODAY_FILE"
+
+      - name: Verify today's baseline JSON exists
+        if: always()
+        run: |
+          TODAY_FILE="docs/baselines/chaos-runner.${{ steps.dates.outputs.today }}.json"
+          if [ ! -s "$TODAY_FILE" ]; then
+            echo "::error::$TODAY_FILE is missing or empty - chaos-runner did not write a baseline (bench likely crashed)"
+            exit 2
+          fi
+          echo "today's baseline: $TODAY_FILE"
+
+      - name: Extract today's metrics for PR body
+        id: metrics
+        if: always()
+        run: |
+          TODAY_FILE="docs/baselines/chaos-runner.${{ steps.dates.outputs.today }}.json"
+          node -e '
+            const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf-8"));
+            const s = d.summary;
+            const out = (k, v) => console.log(`${k}=${v}`);
+            out("totalCases", s.total_cases);
+            out("passed", s.passed);
+            out("failed", s.failed);
+            out("skipped", s.skipped);
+            out("passRate", s.pass_rate);
+            out("overallScore", s.overall_score);
+            out("mttdMs", s.mttd_ms);
+            out("mttrMs", s.mttr_ms);
+          ' "$TODAY_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Compare today vs yesterday (drift gate)
+        if: always()
+        id: regress
+        env:
+          PASS_RATE_DRIFT_PCT: ${{ github.event.inputs.passRateDriftPct || '10' }}
+        run: |
+          TODAY_FILE="docs/baselines/chaos-runner.${{ steps.dates.outputs.today }}.json"
+          YESTERDAY_FILE="docs/baselines/chaos-runner.${{ steps.dates.outputs.yesterday }}.json"
+          SUMMARY="$RUNNER_TEMP/chaos-regress-summary.md"
+          # First-day run (no yesterday baseline): write the basic summary,
+          # then ENFORCE the absolute `summary.failed === 0` gate inline
+          # so a red day-1 baseline cannot propagate via PR auto-merge.
+          #
+          # The PR-creation step (`peter-evans/create-pull-request@v6`)
+          # has `if: success()`, so an `exit 0` here would let a red
+          # baseline auto-commit to default branch on day 0 and forever
+          # pollute the day-N+1 drift gate. The fix: keep the first-day
+          # branch from auto-passing if the absolute gate fails.
+          if [ ! -s "$YESTERDAY_FILE" ]; then
+            cat > "$SUMMARY" <<EOF
+          ## Chaos Regression - ${{ steps.dates.outputs.today }}
+
+          First-day run: no yesterday baseline available. Drift gate skipped.
+
+          | metric | today | yesterday |
+          |---|---|---|
+          | failed | ${{ steps.metrics.outputs.failed }} | n/a |
+          | pass_rate | ${{ steps.metrics.outputs.passRate }}% | n/a |
+          | overall_score | ${{ steps.metrics.outputs.overallScore }} | n/a |
+          | mttd_ms | ${{ steps.metrics.outputs.mttdMs }} | n/a |
+          | mttr_ms | ${{ steps.metrics.outputs.mttrMs }} | n/a |
+          EOF
+            echo "first-day=true"  >> "$GITHUB_OUTPUT"
+            FAILED=${{ steps.metrics.outputs.failed }}
+            # Absolute gate on day 0: a red baseline cannot auto-merge.
+            # Without this check, peter-evans PR-creation (if: success())
+            # would silently commit the failed JSON to default branch.
+            if [ "$FAILED" != "0" ]; then
+              echo "regressed=true" >> "$GITHUB_OUTPUT"
+              echo "::error::first-day hard-fail: summary.failed=$FAILED > 0 — PR auto-merge prevented"
+              exit 1
+            fi
+            echo "regressed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::first-day run; drift gate skipped"
+            exit 0
+          fi
+
+          # Drift gate: summary.failed must be 0; pass_rate must not have
+          # regressed (negative delta) by more than PASS_RATE_DRIFT_PCT
+          # versus yesterday. Improvements (positive delta) always pass.
+          # The bench's actual exit code is 0 even when summary.failed > 0
+          # (chaos-runner only exits 1 on fatal crash); so this workflow
+          # enforces the summary.failed === 0 gate inline.
+          node -e '
+            const fs = require("fs");
+            const today = JSON.parse(fs.readFileSync(process.argv[1], "utf-8"));
+            const yesterday = JSON.parse(fs.readFileSync(process.argv[2], "utf-8"));
+            const MAX_DRIFT = Number(process.env.PASS_RATE_DRIFT_PCT);
+            const todayRate = today.summary.pass_rate;
+            const yesterdayRate = yesterday.summary.pass_rate;
+            const driftPct = yesterdayRate > 0
+              ? ((todayRate - yesterdayRate) / yesterdayRate) * 100
+              : 0;
+            const failedDelta = today.summary.failed - yesterday.summary.failed;
+            const passOk = today.summary.failed === 0;
+            const driftOk = driftPct >= -MAX_DRIFT; // only regress direction
+            const md = [
+              `## Chaos Regression - ${today.timestamp.slice(0,10)}`,
+              ``,
+              `> Gates: summary.failed must be 0; pass_rate regression vs yesterday must not exceed **${MAX_DRIFT}%** (improvements always pass).`,
+              ``,
+              `| metric | today | yesterday | delta |`,
+              `|---|---|---|---|`,
+              `| total_cases | ${today.summary.total_cases} | ${yesterday.summary.total_cases} | - |`,
+              `| passed | ${today.summary.passed} | ${yesterday.summary.passed} | - |`,
+              `| failed | ${today.summary.failed} | ${yesterday.summary.failed} | ${failedDelta >= 0 ? "+" : ""}${failedDelta} |`,
+              `| pass_rate | ${today.summary.pass_rate}% | ${yesterday.summary.pass_rate}% | ${driftPct >= 0 ? "+" : ""}${driftPct.toFixed(2)}% |`,
+              `| overall_score | ${today.summary.overall_score} | ${yesterday.summary.overall_score} | - |`,
+              `| mttd_ms | ${today.summary.mttd_ms} | ${yesterday.summary.mttd_ms} | - |`,
+              `| mttr_ms | ${today.summary.mttr_ms} | ${yesterday.summary.mttr_ms} | - |`,
+              ``,
+              (passOk && driftOk) ? `PASS` : `REGRESS DETECTED (passOk=${passOk}, driftOk=${driftOk})`,
+            ].join("\n");
+            fs.writeFileSync(process.argv[3], md);
+            if (!passOk || !driftOk) {
+              console.log("regressed=true");
+              console.log(`::error::chaos drift detected: passOk=${passOk} drift=${driftPct.toFixed(2)}% failed=${today.summary.failed}`);
+              process.exit(1);
+            }
+            console.log("regressed=false");
+          ' "$TODAY_FILE" "$YESTERDAY_FILE" "$SUMMARY"
+
+      - name: Append markdown to GitHub Step Summary
+        if: always()
+        run: |
+          SUMMARY="$RUNNER_TEMP/chaos-regress-summary.md"
+          if [ -s "$SUMMARY" ]; then
+            cat "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::regress step did not write a summary file at $SUMMARY"
+            exit 2
+          fi
+
+      - name: Upload today's baseline as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-runner-baseline-${{ steps.dates.outputs.today }}
+          path: docs/baselines/chaos-runner.${{ steps.dates.outputs.today }}.json
+          retention-days: 90
+          if-no-files-found: error
+
+      # Day-N+1 regress gate dependency: PR auto-creation pairs with team
+      # auto-merge policy (Settings -> General -> Allow auto-merge + branch
+      # rule matching labels automated+ci-bench). Until auto-merge is
+      # enabled, tomorrow sees first-day SKIP for the day the PR is open
+      # but not yet merged; the day AFTER it merges, the gate fires for
+      # real. Mirrors slo-bench.yml / tenant-isolation-bench.yml pattern.
+      - name: Open PR for today's chaos baseline
+        if: success()
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: bench/chaos-runner-baseline-${{ steps.dates.outputs.today }}
+          delete-branch: true
+          title: 'ci(chaos-bench): baseline ${{ steps.dates.outputs.today }} - passRate=${{ steps.metrics.outputs.passRate }}%, failed=${{ steps.metrics.outputs.failed }}'
+          commit-message: |
+            ci(chaos-bench): baseline ${{ steps.dates.outputs.today }}
+
+            Auto-generated by .github/workflows/chaos-bench.yml. Provides yesterday's
+            Chaos Engineering benchmark v2 baseline for the next day's regress gate.
+
+            passRate:    ${{ steps.metrics.outputs.passRate }}%
+            failed:      ${{ steps.metrics.outputs.failed }}
+            totalCases:  ${{ steps.metrics.outputs.totalCases }}
+            overallScore: ${{ steps.metrics.outputs.overallScore }}
+          body: |
+            ## Chaos bench baseline - ${{ steps.dates.outputs.today }}
+
+            Auto-generated by [`.github/workflows/chaos-bench.yml`](../workflows/chaos-bench.yml).
+            Triggered daily at `07:45 UTC` or via manual `workflow_dispatch`.
+
+            Today's metrics (Chaos Engineering benchmark v2 - 200 synthetic +
+            55 mutation cases run with `--simulated --scripted`):
+
+            | Metric | Value |
+            |---|---|
+            | passed | **${{ steps.metrics.outputs.passed }}** |
+            | failed | **${{ steps.metrics.outputs.failed }}** |
+            | totalCases | **${{ steps.metrics.outputs.totalCases }}** |
+            | passRate | **${{ steps.metrics.outputs.passRate }}%** |
+            | overallScore | **${{ steps.metrics.outputs.overallScore }}** |
+            | mttd_ms | **${{ steps.metrics.outputs.mttdMs }}** |
+            | mttr_ms | **${{ steps.metrics.outputs.mttrMs }}** |
+
+            ### What this PR does
+
+            Commits today's `docs/baselines/chaos-runner.<TODAY>.json` to the
+            default branch so tomorrow's workflow run finds it as yesterday's
+            baseline via `actions/checkout@v4 fetch-depth: 0`. Without this
+            commit-back, tomorrow's regress gate would perpetually see
+            "first-day run" and never fire.
+
+            ### Gates
+
+            - `summary.failed` must be **0** (any case failure breaks the gate).
+            - `summary.pass_rate` regression vs yesterday must not exceed
+              **10%** (relative). Improvements always pass.
+
+            Generated by `.github/workflows/chaos-bench.yml`
+          labels: |
+            automated
+            ci-bench
