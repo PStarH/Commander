@@ -22,6 +22,93 @@ class CommanderModel(_PydanticBaseModel):
 ExecutionStatus = Literal["SUCCESS", "FAILED", "PARTIAL", "CANCELLED", "INTERRUPTED"]
 
 
+# ============================================================================
+# Agent & Task
+# ============================================================================
+
+
+class AgentConfig(CommanderModel):
+    """Configuration for creating an Agent."""
+
+    id: str | None = None
+    name: str
+    role: str
+    tools: list[str] | None = None
+    topology: Topology = "SINGLE"
+    effort: Literal["minimal", "low", "standard", "high", "maximum"] | None = None
+    token_budget: int | None = None
+    max_steps: int | None = Field(None, alias="maxSteps")
+
+
+class AgentSnapshot(CommanderModel):
+    """Stored agent state (for persistence and recovery)."""
+
+    id: str
+    name: str
+    role: str
+    tools: list[str]
+    topology: Topology
+    run_count: int = Field(0, alias="runCount")
+    total_tokens_used: int = Field(0, alias="totalTokensUsed")
+    created_at: str = Field("", alias="createdAt")
+    last_run_at: str | None = Field(None, alias="lastRunAt")
+
+
+class Task(CommanderModel):
+    """A task to be executed by one or more agents."""
+
+    goal: str
+    output_schema: dict[str, Any] | None = Field(None, alias="outputSchema")
+    context: dict[str, Any] | None = None
+    priority: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"] | None = None
+    deadline_ms: int | None = Field(None, alias="deadlineMs")
+    batch_eligible: bool | None = Field(None, alias="batchEligible")
+
+
+class TaskHandle(CommanderModel):
+    """Task with execution metadata (after submission)."""
+
+    id: str
+    task: Task
+    status: Literal["pending", "running", "completed", "failed", "cancelled"] = (
+        "pending"
+    )
+    agent_id: str = Field("", alias="agentId")
+    submitted_at: str = Field("", alias="submittedAt")
+    completed_at: str | None = Field(None, alias="completedAt")
+    result: ExecutionResult | None = None
+
+
+# ============================================================================
+# Streaming / Events
+# ============================================================================
+
+ExecutionEventType = Literal[
+    "agent.started",
+    "agent.completed",
+    "agent.failed",
+    "agent.message",
+    "agent.interrupted",
+    "tool.started",
+    "tool.executed",
+    "tool.completed",
+    "tool.blocked",
+    "system.alert",
+    "output.delta",
+    "output.completed",
+    "reasoning.delta",
+    "mission.updated",
+]
+
+
+class ExecutionEvent(CommanderModel):
+    """Event emitted during streaming execution."""
+
+    type: ExecutionEventType = "agent.message"
+    timestamp: str = ""
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
 class StepSummary(CommanderModel):
     """Summary of a single execution step."""
 
@@ -49,7 +136,16 @@ class ExecutionResult(CommanderModel):
 # Plan
 # ============================================================================
 
-Topology = Literal["SINGLE", "SEQUENTIAL", "PARALLEL", "HIERARCHICAL"]
+Topology = Literal[
+    "SINGLE",
+    "SEQUENTIAL",
+    "PARALLEL",
+    "HIERARCHICAL",
+    "HYBRID",
+    "DEBATE",
+    "ENSEMBLE",
+    "EVALUATOR_OPTIMIZER",
+]
 CostBand = Literal["low", "medium", "high"]
 
 
@@ -163,6 +259,30 @@ class SystemStatus(CommanderModel):
     active_sessions: int = 0
     bus_topics: list[str] = []
     subscriber_counts: dict[str, int] = {}
+
+
+class SessionSummary(CommanderModel):
+    """Summary of an execution session (past or in-progress)."""
+
+    run_id: str = Field("", alias="runId")
+    task: str = ""
+    status: str = ""
+    agent_id: str = Field("", alias="agentId")
+    topology: Topology = "SINGLE"
+    token_usage: int = Field(0, alias="tokenUsage")
+    duration_ms: int = Field(0, alias="durationMs")
+    timestamp: str = ""
+    error: str | None = None
+
+
+class SDKReliabilityStats(CommanderModel):
+    """Reliability engine statistics surfaced by the SDK."""
+
+    circuit_state: str = Field("CLOSED", alias="circuitState")
+    circuit_failures: int = Field(0, alias="circuitFailures")
+    dlq_total_entries: int = Field(0, alias="dlqTotalEntries")
+    pending_compensations: int = Field(0, alias="pendingCompensations")
+    checkpoint_count: int = Field(0, alias="checkpointCount")
 
 
 # ============================================================================
