@@ -16,6 +16,7 @@ import { DriverBackend, DriverConfig, DriverDescription, PersistentDriver } from
 import { InMemoryDriver } from './inMemoryDriver';
 import { SqliteDriver, SqliteOpenError, probeSqlite } from './sqliteDriver';
 import { JsonDriver } from './jsonDriver';
+import { PostgresDriver, probePostgres } from './postgresDriver';
 
 export interface CreateDriverResult {
   driver: PersistentDriver;
@@ -37,6 +38,8 @@ export function createDriver(config: DriverConfig): PersistentDriver {
       return new JsonDriver(config);
     case 'sqlite':
       return new SqliteDriver(config);
+    case 'postgres':
+      return new PostgresDriver(config);
     default:
       throw new Error(
         `createDriver: unknown backend ${String((config as { backend: string }).backend)}`,
@@ -58,17 +61,30 @@ export function createDriverSoft(config: DriverConfig): CreateDriverResult {
       fellBack: false,
     };
   } catch (err) {
-    // Only fall back if the requested backend was sqlite — json/memory
-    // failure is the caller's bug, not an availability issue.
-    if (config.backend !== 'sqlite') throw err;
-    const mem = new InMemoryDriver();
-    return {
-      driver: mem,
-      description: { ...mem.describe(), fellBack: true },
-      fellBack: true,
-      fallbackReason:
-        (err as Error)?.message ?? (err instanceof SqliteOpenError ? 'SqliteOpenError' : 'unknown'),
-    };
+    // Fall back to in-memory only when the requested backend's native
+    // dependency is unavailable. Connection/config errors still throw so
+    // callers are not silently degraded.
+    if (config.backend === 'sqlite') {
+      const mem = new InMemoryDriver();
+      return {
+        driver: mem,
+        description: { ...mem.describe(), fellBack: true },
+        fellBack: true,
+        fallbackReason:
+          (err as Error)?.message ??
+          (err instanceof SqliteOpenError ? 'SqliteOpenError' : 'unknown'),
+      };
+    }
+    if (config.backend === 'postgres' && !probePostgres().available) {
+      const mem = new InMemoryDriver();
+      return {
+        driver: mem,
+        description: { ...mem.describe(), fellBack: true },
+        fellBack: true,
+        fallbackReason: (err as Error)?.message ?? 'pg module unavailable',
+      };
+    }
+    throw err;
   }
 }
 
@@ -81,12 +97,20 @@ export function isSqliteUsable(): boolean {
 }
 
 /**
+ * Cheap pre-flight check — returns true iff pg is loadable.
+ */
+export function isPostgresUsable(): boolean {
+  return probePostgres().available;
+}
+
+/**
  * Returns the list of available backends. Always includes 'memory';
  * 'sqlite' iff better-sqlite3 is loadable; 'json' iff fs is available
- * (always true in node).
+ * (always true in node); 'postgres' iff pg is loadable.
  */
 export function listAvailableBackends(): DriverBackend[] {
   const out: DriverBackend[] = ['memory', 'json'];
   if (isSqliteUsable()) out.unshift('sqlite');
+  if (isPostgresUsable()) out.push('postgres');
   return out;
 }

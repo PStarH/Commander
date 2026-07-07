@@ -45,7 +45,7 @@ export interface DriverConfig {
   namespace?: string;
 }
 
-export type DriverBackend = 'sqlite' | 'json' | 'memory' | 'cache-sqlite';
+export type DriverBackend = 'sqlite' | 'json' | 'memory' | 'cache-sqlite' | 'postgres';
 
 export interface DriverDescription {
   backend: string;
