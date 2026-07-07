@@ -1,21 +1,22 @@
 import { reportSilentFailure } from '../silentFailureReporter';
-import type {
-  MCPTransport,
-  MCPClientConfig,
-  MCPTool,
-  MCPResource,
-  MCPPrompt,
-  MCPToolResult,
-  MCPResourceContents,
-  JSONRPCRequest,
-  JSONRPCResponse,
-  ListToolsResult,
-  ListResourcesResult,
-  ListPromptsResult,
-  GetPromptResult,
-  ReadResourceResult,
-  MCPInitializeResult,
-  MCPServerCapabilities,
+import {
+  MCP_PROTOCOL_VERSION,
+  type MCPTransport,
+  type MCPClientConfig,
+  type MCPTool,
+  type MCPResource,
+  type MCPPrompt,
+  type MCPToolResult,
+  type MCPResourceContents,
+  type JSONRPCRequest,
+  type JSONRPCResponse,
+  type ListToolsResult,
+  type ListResourcesResult,
+  type ListPromptsResult,
+  type GetPromptResult,
+  type ReadResourceResult,
+  type MCPInitializeResult,
+  type MCPServerCapabilities,
 } from './types';
 import { ChildProcess } from 'node:child_process';
 import { getGlobalLogger } from '../logging';
@@ -263,9 +264,9 @@ export class MCPClient {
       id: 'init-1',
       method: 'initialize',
       params: {
-        protocolVersion: '0.1.0',
+        protocolVersion: MCP_PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: 'telos-mcp-client', version: '1.0.0' },
+        clientInfo: { name: 'commander-mcp-client', version: '1.0.0' },
       },
     });
 

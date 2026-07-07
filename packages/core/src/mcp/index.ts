@@ -16,7 +16,7 @@ export type {
   ListToolsResult,
   CallToolResult,
 } from './types';
-export { MCP_ERROR_CODES } from './types';
+export { MCP_ERROR_CODES, MCP_PROTOCOL_VERSION } from './types';
 
 export {
   MCPClient,
