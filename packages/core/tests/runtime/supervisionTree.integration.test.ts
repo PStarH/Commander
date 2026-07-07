@@ -98,8 +98,7 @@ describe('SupervisionTree integration', () => {
     resetMessageBus();
   });
 
-  const findChild = (id: string) =>
-    supervisor.getChildren().find((c) => c.id === id);
+  const findChild = (id: string) => supervisor.getChildren().find((c) => c.id === id);
 
   it('getSupervisionTreeRegistry returns a singleton', () => {
     const a = getSupervisionTreeRegistry();
@@ -169,9 +168,7 @@ describe('SupervisionTree integration', () => {
 
     // A child_crashed event carrying the isAlive() reason must have been emitted.
     const events = supervisor.getEventHistory();
-    const crash = events.find(
-      (e) => e.type === 'child_crashed' && e.message.includes('isAlive'),
-    );
+    const crash = events.find((e) => e.type === 'child_crashed' && e.message.includes('isAlive'));
     expect(crash).toBeDefined();
   });
 

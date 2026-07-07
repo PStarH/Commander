@@ -173,7 +173,7 @@ class TestMonitoring:
     async def test_metrics(self, mock_api: respx.MockRouter) -> None:
         mock_api.get("/metrics").respond(
             200,
-            text="# HELP commander_executions_total Total executions\n# TYPE commander_executions_total counter\ncommander_executions_total{status=\"success\"} 42\n",
+            text='# HELP commander_executions_total Total executions\n# TYPE commander_executions_total counter\ncommander_executions_total{status="success"} 42\n',
             headers={"Content-Type": "text/plain"},
         )
         async with CommanderClient(api_key="test") as client:

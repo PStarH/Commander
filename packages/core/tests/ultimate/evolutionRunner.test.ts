@@ -6,7 +6,10 @@ import { resetMessageBus, getMessageBus } from '../../src/runtime/messageBus';
 import { resetGlobalLogger } from '../../src/logging';
 import type { UltimateOrchestratorConfig } from '../../src/ultimate/types';
 import type { AgentRuntimeInterface, ExecutionExperience } from '../../src/runtime/types';
-import type { OptimizationSuggestion, EvolutionInsight } from '../../src/runtime/types/selfEvolution';
+import type {
+  OptimizationSuggestion,
+  EvolutionInsight,
+} from '../../src/runtime/types/selfEvolution';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -30,7 +33,13 @@ function makeConfig(overrides?: Partial<UltimateOrchestratorConfig>): UltimateOr
     enableCapabilityRouting: true,
     enableCircuitBreaker: true,
     qualityGates: [
-      { name: 'hallucination', type: 'HALLUCINATION_CHECK', enabled: true, threshold: 0.8, autoFix: true },
+      {
+        name: 'hallucination',
+        type: 'HALLUCINATION_CHECK',
+        enabled: true,
+        threshold: 0.8,
+        autoFix: true,
+      },
       { name: 'consistency', type: 'CONSISTENCY', enabled: true, threshold: 0.7, autoFix: true },
       { name: 'completeness', type: 'COMPLETENESS', enabled: true, threshold: 0.6, autoFix: false },
     ],
@@ -228,7 +237,9 @@ describe('EvolutionRunner', () => {
       };
       vi.spyOn(learner, 'getSuggestions').mockReturnValue([suggestion]);
 
-      const originalThreshold = config.qualityGates.find((g) => g.name === 'hallucination')!.threshold;
+      const originalThreshold = config.qualityGates.find(
+        (g) => g.name === 'hallucination',
+      )!.threshold;
       runner.applyOptimizationSuggestions();
 
       const gate = config.qualityGates.find((g) => g.name === 'hallucination')!;
@@ -253,7 +264,9 @@ describe('EvolutionRunner', () => {
       };
       vi.spyOn(learner, 'getSuggestions').mockReturnValue([suggestion]);
 
-      const originalThreshold = config.qualityGates.find((g) => g.name === 'hallucination')!.threshold;
+      const originalThreshold = config.qualityGates.find(
+        (g) => g.name === 'hallucination',
+      )!.threshold;
       runner.applyOptimizationSuggestions();
 
       const gate = config.qualityGates.find((g) => g.name === 'hallucination')!;

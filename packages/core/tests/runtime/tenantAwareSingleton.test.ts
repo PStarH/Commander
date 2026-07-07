@@ -12,6 +12,11 @@ import {
   assertSameTenant,
   TenantIsolationError,
 } from '../../src/runtime/tenantContext';
+import {
+  setGlobalTenantProvider,
+  resetGlobalTenantProvider,
+  SimpleTenantProvider,
+} from '../../src/runtime/tenantProvider';
 
 describe('tenantContext', () => {
   describe('validateTenantId', () => {
@@ -128,16 +133,36 @@ describe('tenantAwareSingleton', () => {
     expect(a).not.toBe(b);
   });
 
-  it('falls back to global instance outside tenant context by default', () => {
+  it('throws outside tenant context by default', () => {
     const singleton = createTenantAwareSingleton(factory);
+    expect(() => singleton.get()).toThrow(TenantIsolationError);
+  });
+
+  it('falls back to global instance outside tenant context when explicitly allowed', () => {
+    const singleton = createTenantAwareSingleton(factory, { allowGlobalFallback: true });
     const a = singleton.get();
     const b = singleton.get();
     expect(a).toBe(b);
   });
 
-  it('throws outside tenant context when global fallback disabled', () => {
-    const singleton = createTenantAwareSingleton(factory, { allowGlobalFallback: false });
-    expect(() => singleton.get()).toThrow(TenantIsolationError);
+  it('ignores explicit allowGlobalFallback when multi-tenant provider is active', () => {
+    setGlobalTenantProvider(
+      new SimpleTenantProvider([
+        {
+          tenantId: 'tenant-active',
+          tokenBudget: 0,
+          maxConcurrency: 0,
+          maxRunsPerMinute: 0,
+          enabled: true,
+        },
+      ]),
+    );
+    try {
+      const singleton = createTenantAwareSingleton(factory, { allowGlobalFallback: true });
+      expect(() => singleton.get()).toThrow(TenantIsolationError);
+    } finally {
+      resetGlobalTenantProvider();
+    }
   });
 
   it('disposes evicted tenants on TTL', () => {

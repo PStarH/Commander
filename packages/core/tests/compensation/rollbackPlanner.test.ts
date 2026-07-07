@@ -46,9 +46,7 @@ describe('RollbackPlanner', () => {
     });
 
     it('classifies file operations as low risk', () => {
-      const calls: PlannedToolCall[] = [
-        { toolName: 'file_write', args: { path: '/test' } },
-      ];
+      const calls: PlannedToolCall[] = [{ toolName: 'file_write', args: { path: '/test' } }];
       const plan = generateRollbackPlan({ plannedCalls: calls });
       assert.strictEqual(plan.risk, 'safe');
       assert.strictEqual(plan.requiresApproval, false);
@@ -88,9 +86,7 @@ describe('RollbackPlanner', () => {
         tags: ['destructive', 'requires_approval'],
         idempotent: false,
       });
-      const calls: PlannedToolCall[] = [
-        { toolName: 'db_delete_table', args: { table: 'users' } },
-      ];
+      const calls: PlannedToolCall[] = [{ toolName: 'db_delete_table', args: { table: 'users' } }];
       const plan = generateRollbackPlan({ plannedCalls: calls });
       assert.strictEqual(plan.requiresApproval, true);
       assert.strictEqual(plan.risk, 'destructive');
@@ -105,9 +101,13 @@ describe('RollbackPlanner', () => {
       const plan = generateRollbackPlan({ plannedCalls: calls });
       const prStep = plan.steps.find((s) => s.forwardAction.toolName === 'github_pr_create');
       assert.ok(prStep?.plan.includes('Close GitHub PR'));
-      const slackStep = plan.steps.find((s) => s.forwardAction.toolName === 'slack_chat_postMessage');
+      const slackStep = plan.steps.find(
+        (s) => s.forwardAction.toolName === 'slack_chat_postMessage',
+      );
       assert.ok(slackStep?.plan.includes('Delete Slack message'));
-      const stripeStep = plan.steps.find((s) => s.forwardAction.toolName === 'stripe_charge_create');
+      const stripeStep = plan.steps.find(
+        (s) => s.forwardAction.toolName === 'stripe_charge_create',
+      );
       assert.ok(stripeStep?.plan.includes('Refund Stripe charge'));
     });
 
@@ -139,9 +139,7 @@ describe('RollbackPlanner', () => {
     });
 
     it('respects custom risk thresholds for cost approval', () => {
-      const calls: PlannedToolCall[] = [
-        { toolName: 'stripe_charge_create', args: {} },
-      ];
+      const calls: PlannedToolCall[] = [{ toolName: 'stripe_charge_create', args: {} }];
       const plan = generateRollbackPlan({
         plannedCalls: calls,
         riskThresholds: { maxAgeMs: 1000, maxCostUsd: 0.01 },
@@ -174,10 +172,7 @@ describe('RollbackPlanner', () => {
         plannedCalls: [{ toolName: 'file_write', args: { path: '/x' } }],
       });
       // No handlers provided → should throw
-      await assert.rejects(
-        () => executeRollbackPlan(plan, {}),
-        /ROLLBACK BLOCKED/,
-      );
+      await assert.rejects(() => executeRollbackPlan(plan, {}), /ROLLBACK BLOCKED/);
     });
 
     it('executes all steps successfully when handlers are provided', async () => {

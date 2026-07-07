@@ -29,7 +29,8 @@ describe('SecurityPrimitives', () => {
     });
 
     it('scrubs PEM private keys', () => {
-      const pem = '-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0B\n-----END PRIVATE KEY-----';
+      const pem =
+        '-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0B\n-----END PRIVATE KEY-----';
       const result = sanitizer.sanitize(pem, 'output');
       expect(result.sanitized).toContain('[PEM_REDACTED]');
       expect(result.patterns).toContain('pem_key');
@@ -107,10 +108,7 @@ describe('SecurityPrimitives', () => {
 
   describe('ResourceGovernor', () => {
     it('withTimeout resolves normally when function completes in time', async () => {
-      const result = await ResourceGovernor.withTimeout(
-        async () => 42,
-        1000,
-      );
+      const result = await ResourceGovernor.withTimeout(async () => 42, 1000);
       expect(result).toBe(42);
     });
 
@@ -134,19 +132,16 @@ describe('SecurityPrimitives', () => {
     });
 
     it('withSizeCap rejects oversized output', async () => {
-      await expect(
-        ResourceGovernor.withSizeCap(
-          async () => 'a'.repeat(1000),
-          100,
-        ),
-      ).rejects.toThrow('PAYLOAD_TOO_LARGE');
+      await expect(ResourceGovernor.withSizeCap(async () => 'a'.repeat(1000), 100)).rejects.toThrow(
+        'PAYLOAD_TOO_LARGE',
+      );
     });
 
     it('govern returns structured result on success', async () => {
-      const result = await ResourceGovernor.govern(
-        async () => 'success',
-        { timeoutMs: 1000, maxPayloadBytes: 1000 },
-      );
+      const result = await ResourceGovernor.govern(async () => 'success', {
+        timeoutMs: 1000,
+        maxPayloadBytes: 1000,
+      });
       expect(result.result).toBe('success');
       expect(result.timedOut).toBe(false);
       expect(result.oversize).toBe(false);
@@ -164,10 +159,9 @@ describe('SecurityPrimitives', () => {
     });
 
     it('govern returns structured result on oversize', async () => {
-      const result = await ResourceGovernor.govern(
-        async () => 'a'.repeat(1000),
-        { maxPayloadBytes: 100 },
-      );
+      const result = await ResourceGovernor.govern(async () => 'a'.repeat(1000), {
+        maxPayloadBytes: 100,
+      });
       expect(result.result).toBeNull();
       expect(result.oversize).toBe(true);
     });
@@ -228,10 +222,16 @@ describe('SecurityPrimitives', () => {
       const result = await StateContract.useScope(
         () => ({
           state: { value: 0 },
-          commit: () => { committed = true; },
-          rollback: () => { rolledBack = true; },
+          commit: () => {
+            committed = true;
+          },
+          rollback: () => {
+            rolledBack = true;
+          },
         }),
-        async (state) => { state.value = 42; },
+        async (state) => {
+          state.value = 42;
+        },
       );
       expect(result.committed).toBe(true);
       expect(committed).toBe(true);
@@ -244,10 +244,16 @@ describe('SecurityPrimitives', () => {
       const result = await StateContract.useScope(
         () => ({
           state: { value: 0 },
-          commit: () => { committed = true; },
-          rollback: () => { rolledBack = true; },
+          commit: () => {
+            committed = true;
+          },
+          rollback: () => {
+            rolledBack = true;
+          },
         }),
-        async () => { throw new Error('fail'); },
+        async () => {
+          throw new Error('fail');
+        },
       );
       expect(result.committed).toBe(false);
       expect(committed).toBe(false);
@@ -260,9 +266,15 @@ describe('SecurityPrimitives', () => {
       let disarmed = false;
 
       const result = await StateContract.useDisarmScope(
-        () => { armed = true; },
-        () => { disarmed = true; },
-        async () => { /* success */ },
+        () => {
+          armed = true;
+        },
+        () => {
+          disarmed = true;
+        },
+        async () => {
+          /* success */
+        },
       );
       expect(armed).toBe(true);
       expect(disarmed).toBe(true);
@@ -274,8 +286,12 @@ describe('SecurityPrimitives', () => {
 
       const result = await StateContract.useDisarmScope(
         () => {},
-        () => { disarmed = true; },
-        async () => { throw new Error('fail'); },
+        () => {
+          disarmed = true;
+        },
+        async () => {
+          throw new Error('fail');
+        },
       );
       expect(disarmed).toBe(true);
       expect(result.error).toBe('fail');

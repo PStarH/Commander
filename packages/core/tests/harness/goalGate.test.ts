@@ -83,7 +83,11 @@ describe('GoalGate', () => {
     it('auto-approves when disabled', async () => {
       const gate = new GoalGate({ enabled: false });
       const services = { getProvider: () => null };
-      const decision = await gate.evaluate('test goal', [{ role: 'user', content: 'hi' }], services as any);
+      const decision = await gate.evaluate(
+        'test goal',
+        [{ role: 'user', content: 'hi' }],
+        services as any,
+      );
       assert.strictEqual(decision.satisfied, true);
       assert.ok(decision.reason.includes('disabled'));
     });
@@ -91,7 +95,11 @@ describe('GoalGate', () => {
     it('auto-approves when max reentries reached', async () => {
       const gate = new GoalGate({ enabled: true, maxReentries: 0 });
       const services = { getProvider: () => null };
-      const decision = await gate.evaluate('test goal', [{ role: 'user', content: 'hi' }], services as any);
+      const decision = await gate.evaluate(
+        'test goal',
+        [{ role: 'user', content: 'hi' }],
+        services as any,
+      );
       assert.strictEqual(decision.satisfied, true);
       assert.ok(decision.reason.includes('max reentries'));
     });
@@ -99,7 +107,11 @@ describe('GoalGate', () => {
     it('auto-approves when judge provider is not available', async () => {
       const gate = new GoalGate({ enabled: true, maxReentries: 3 });
       const services = { getProvider: () => null };
-      const decision = await gate.evaluate('test goal', [{ role: 'user', content: 'hi' }], services as any);
+      const decision = await gate.evaluate(
+        'test goal',
+        [{ role: 'user', content: 'hi' }],
+        services as any,
+      );
       assert.strictEqual(decision.satisfied, true);
       assert.ok(decision.reason.includes('not available'));
     });
@@ -113,7 +125,11 @@ describe('GoalGate', () => {
           }),
         }),
       };
-      const decision = await gate.evaluate('test goal', [{ role: 'assistant', content: 'Done' }], services as any);
+      const decision = await gate.evaluate(
+        'test goal',
+        [{ role: 'assistant', content: 'Done' }],
+        services as any,
+      );
       assert.strictEqual(decision.satisfied, true);
       assert.strictEqual(decision.reason, 'Goal achieved');
     });
@@ -131,7 +147,11 @@ describe('GoalGate', () => {
           }),
         }),
       };
-      const decision = await gate.evaluate('write tests', [{ role: 'assistant', content: 'done' }], services as any);
+      const decision = await gate.evaluate(
+        'write tests',
+        [{ role: 'assistant', content: 'done' }],
+        services as any,
+      );
       assert.strictEqual(decision.satisfied, false);
       assert.strictEqual(decision.reason, 'Missing tests');
       assert.ok(decision.missing?.includes('unit tests'));
@@ -144,7 +164,11 @@ describe('GoalGate', () => {
           call: async () => ({ content: '' }),
         }),
       };
-      const decision = await gate.evaluate('test goal', [{ role: 'user', content: 'hi' }], services as any);
+      const decision = await gate.evaluate(
+        'test goal',
+        [{ role: 'user', content: 'hi' }],
+        services as any,
+      );
       assert.strictEqual(decision.satisfied, true);
       assert.ok(decision.reason.includes('empty'));
     });
@@ -156,7 +180,11 @@ describe('GoalGate', () => {
           call: async () => ({ content: 'This is not JSON at all' }),
         }),
       };
-      const decision = await gate.evaluate('test goal', [{ role: 'user', content: 'hi' }], services as any);
+      const decision = await gate.evaluate(
+        'test goal',
+        [{ role: 'user', content: 'hi' }],
+        services as any,
+      );
       assert.strictEqual(decision.satisfied, true);
       assert.ok(decision.reason.includes('parse'));
     });
@@ -170,7 +198,11 @@ describe('GoalGate', () => {
           }),
         }),
       };
-      const decision = await gate.evaluate('test goal', [{ role: 'assistant', content: 'result' }], services as any);
+      const decision = await gate.evaluate(
+        'test goal',
+        [{ role: 'assistant', content: 'result' }],
+        services as any,
+      );
       assert.strictEqual(decision.satisfied, true);
       assert.strictEqual(decision.reason, 'looks good');
     });
@@ -184,7 +216,11 @@ describe('GoalGate', () => {
           },
         }),
       };
-      const decision = await gate.evaluate('test goal', [{ role: 'user', content: 'hi' }], services as any);
+      const decision = await gate.evaluate(
+        'test goal',
+        [{ role: 'user', content: 'hi' }],
+        services as any,
+      );
       assert.strictEqual(decision.satisfied, true);
       assert.ok(decision.reason.includes('failed'));
     });

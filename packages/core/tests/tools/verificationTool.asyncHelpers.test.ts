@@ -93,9 +93,7 @@ describe('VerificationTool hasTool / hasFile async helpers', () => {
   beforeEach(async () => {
     loggerWarnSpy.mockReset();
     vi.mocked(fsp.access).mockReset();
-    vi.mocked(fsp.access).mockImplementation(
-      realRefs.access as typeof fsp.access,
-    );
+    vi.mocked(fsp.access).mockImplementation(realRefs.access as typeof fsp.access);
     tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'verifyTool-'));
     tool = await makeTool();
   });
@@ -137,15 +135,13 @@ describe('VerificationTool hasTool / hasFile async helpers', () => {
 
   describe('real-error path (EACCES / EMFILE — MUST warn)', () => {
     it('hasTool: simulated EACCES → false AND warns via getGlobalLogger', async () => {
-      vi.mocked(fsp.access).mockImplementation(
-        ((p: unknown) => {
-          const err = new Error(
-            `EACCES: permission denied, access '${String(p)}'`,
-          ) as NodeJS.ErrnoException;
-          err.code = 'EACCES';
-          throw err;
-        }) as typeof fsp.access,
-      );
+      vi.mocked(fsp.access).mockImplementation(((p: unknown) => {
+        const err = new Error(
+          `EACCES: permission denied, access '${String(p)}'`,
+        ) as NodeJS.ErrnoException;
+        err.code = 'EACCES';
+        throw err;
+      }) as typeof fsp.access);
       await expect(invoke(tool, 'hasTool', tmp, 'whatever')).resolves.toBe(false);
       // Wrong-reason guard: access MUST have been called on the joined
       // path with F_OK. A regression that drops the access call entirely
@@ -165,15 +161,13 @@ describe('VerificationTool hasTool / hasFile async helpers', () => {
     });
 
     it('hasFile: simulated EMFILE → false AND warns via getGlobalLogger', async () => {
-      vi.mocked(fsp.access).mockImplementation(
-        ((p: unknown) => {
-          const err = new Error(
-            `EMFILE: too many open files, access '${String(p)}'`,
-          ) as NodeJS.ErrnoException;
-          err.code = 'EMFILE';
-          throw err;
-        }) as typeof fsp.access,
-      );
+      vi.mocked(fsp.access).mockImplementation(((p: unknown) => {
+        const err = new Error(
+          `EMFILE: too many open files, access '${String(p)}'`,
+        ) as NodeJS.ErrnoException;
+        err.code = 'EMFILE';
+        throw err;
+      }) as typeof fsp.access);
       await expect(invoke(tool, 'hasFile', tmp, 'package.json')).resolves.toBe(false);
       expect(vi.mocked(fsp.access)).toHaveBeenCalledWith(
         path.join(tmp, 'package.json'),

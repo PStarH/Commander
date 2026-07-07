@@ -40,7 +40,9 @@ class ToolCallGovernance:
                 args = tc.arguments if hasattr(tc, "arguments") else {}
                 should_block, reason = ReversibilityGate.should_block(name, args or {})
                 if should_block:
-                    self.blocked_calls.append({"name": name, "args": args, "reason": reason})
+                    self.blocked_calls.append(
+                        {"name": name, "args": args, "reason": reason}
+                    )
                     # Create a synthetic tool-error result. The caller expects a list
                     # of ToolMessage-like objects. We use the same object type as the
                     # original executor returns, but with error content.
@@ -55,6 +57,7 @@ class ToolCallGovernance:
 
     def _make_error_message(self, tool_call: Any, reason: str) -> Any:
         """Build a ToolMessage-like error object without importing tau2 types."""
+
         # Attempt to reuse the environment's response type by calling get_response
         # with a fake tool call, but most environments expect real tools.
         # Simpler: return a plain object with the attributes tau2 expects.

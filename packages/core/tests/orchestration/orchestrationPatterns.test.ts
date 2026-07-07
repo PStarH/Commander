@@ -49,7 +49,10 @@ function makeFailingExecutor(failStepIds: Set<string>): StepExecutor {
     if (failStepIds.has(step.id)) {
       throw new Error(`intentional failure for ${step.id}`);
     }
-    return { output: `output-${step.id}`, tokenUsage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 } };
+    return {
+      output: `output-${step.id}`,
+      tokenUsage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+    };
   };
 }
 
@@ -111,7 +114,11 @@ describe('ConcurrentWorkflow', () => {
 
   it('tokenBudget 软顶触发时剩余步骤 SKIP', async () => {
     // 每个 step 消耗 150 tokens；预算 200 只够 1 个
-    const executor = makeMockExecutor(() => 'out', { promptTokens: 100, completionTokens: 50, totalTokens: 150 });
+    const executor = makeMockExecutor(() => 'out', {
+      promptTokens: 100,
+      completionTokens: 50,
+      totalTokens: 150,
+    });
     const run = await runConcurrentWorkflow({
       projectId: 'p1',
       executor,
@@ -131,23 +138,27 @@ describe('ConcurrentWorkflow', () => {
 
 describe('GraphWorkflow', () => {
   it('validateGraph 检测重复 id', () => {
-    expect(() => validateGraph([
-      { ...step('a'), dependencies: [] },
-      { ...step('a'), dependencies: [] },
-    ])).toThrow(/Duplicate node id/);
+    expect(() =>
+      validateGraph([
+        { ...step('a'), dependencies: [] },
+        { ...step('a'), dependencies: [] },
+      ]),
+    ).toThrow(/Duplicate node id/);
   });
 
   it('validateGraph 检测未知依赖', () => {
-    expect(() => validateGraph([
-      { ...step('a'), dependencies: ['nonexistent'] },
-    ])).toThrow(/unknown node/);
+    expect(() => validateGraph([{ ...step('a'), dependencies: ['nonexistent'] }])).toThrow(
+      /unknown node/,
+    );
   });
 
   it('validateGraph 检测环', () => {
-    expect(() => validateGraph([
-      { ...step('a'), dependencies: ['b'] },
-      { ...step('b'), dependencies: ['a'] },
-    ])).toThrow(/Cycle/);
+    expect(() =>
+      validateGraph([
+        { ...step('a'), dependencies: ['b'] },
+        { ...step('b'), dependencies: ['a'] },
+      ]),
+    ).toThrow(/Cycle/);
   });
 
   it('topologicalLayers 把 diamond 拓扑分成 3 层', () => {
@@ -387,7 +398,12 @@ describe('SwarmRouter', () => {
     const run = await runSwarmRouter({
       projectId: 'p1',
       executor,
-      taskProfile: { dependencyType: 'none', stepCount: 3, qualityRequirement: 'standard', costSensitivity: 'standard' },
+      taskProfile: {
+        dependencyType: 'none',
+        stepCount: 3,
+        qualityRequirement: 'standard',
+        costSensitivity: 'standard',
+      },
       steps: { steps: [step('a'), step('b'), step('c')] },
       forcePattern: 'concurrent',
     });
@@ -397,7 +413,14 @@ describe('SwarmRouter', () => {
 
   it('DEFAULT_ROUTING_RULES 最后一条是兜底 always-true', () => {
     const last = DEFAULT_ROUTING_RULES[DEFAULT_ROUTING_RULES.length - 1];
-    expect(last.matches({ dependencyType: 'none', stepCount: 1, qualityRequirement: 'standard', costSensitivity: 'low' })).toBe(true);
+    expect(
+      last.matches({
+        dependencyType: 'none',
+        stepCount: 1,
+        qualityRequirement: 'standard',
+        costSensitivity: 'low',
+      }),
+    ).toBe(true);
   });
 });
 
@@ -458,7 +481,15 @@ describe('CrossPollinationEngine', () => {
   it('buildCrossPollinationReport 合并冲突与 insights', () => {
     const report = buildCrossPollinationReport(
       { round: 1, conflicts: [], resolvedCount: 0, summary: 'no conflicts' },
-      [{ id: 'i1', sourceStepId: 's1', kind: 'optimal_config', content: 'depth=12', confidence: 0.8 }],
+      [
+        {
+          id: 'i1',
+          sourceStepId: 's1',
+          kind: 'optimal_config',
+          content: 'depth=12',
+          confidence: 0.8,
+        },
+      ],
     );
     expect(report.insights).toHaveLength(1);
     expect(report.summary).toContain('1 insight');
@@ -471,10 +502,18 @@ describe('CrossPollinationEngine', () => {
 
 describe('AutoLoopRunner', () => {
   it('defaultCompletionDetector 识别 done=true', () => {
-    expect(defaultCompletionDetector({ done: true }, { loop: 1, consumedTokens: 0 }).done).toBe(true);
-    expect(defaultCompletionDetector({ status: 'complete' }, { loop: 1, consumedTokens: 0 }).done).toBe(true);
-    expect(defaultCompletionDetector('Task complete', { loop: 1, consumedTokens: 0 }).done).toBe(true);
-    expect(defaultCompletionDetector('still working', { loop: 1, consumedTokens: 0 }).done).toBe(false);
+    expect(defaultCompletionDetector({ done: true }, { loop: 1, consumedTokens: 0 }).done).toBe(
+      true,
+    );
+    expect(
+      defaultCompletionDetector({ status: 'complete' }, { loop: 1, consumedTokens: 0 }).done,
+    ).toBe(true);
+    expect(defaultCompletionDetector('Task complete', { loop: 1, consumedTokens: 0 }).done).toBe(
+      true,
+    );
+    expect(defaultCompletionDetector('still working', { loop: 1, consumedTokens: 0 }).done).toBe(
+      false,
+    );
   });
 
   it('createConvergenceDetector 在连续相同输出时返回 done', () => {
@@ -554,7 +593,10 @@ describe('DynamicReplanner', () => {
         if (ctx.replanRound === 0) {
           const best = ctx.completedResults
             .filter((r) => r.status === 'SUCCESS')
-            .sort((a, b) => (b.output as { score: number }).score - (a.output as { score: number }).score)[0];
+            .sort(
+              (a, b) =>
+                (b.output as { score: number }).score - (a.output as { score: number }).score,
+            )[0];
           return {
             action: 'spawn-new',
             newSteps: [step('refine-1')],

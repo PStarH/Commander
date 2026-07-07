@@ -1,0 +1,85 @@
+# =============================================================================
+# Commander — PostgreSQL StatefulSet (optional built-in database)
+# =============================================================================
+{{- if and .Values.database.enabled (eq .Values.database.backend "postgres") (not .Values.database.connectionString) }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "commander.fullname" . }}-postgres
+  labels:
+    {{- include "commander.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  serviceName: {{ include "commander.fullname" . }}-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "commander.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgres
+  template:
+    metadata:
+      labels:
+        {{- include "commander.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: postgres
+    spec:
+      securityContext: {{ toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: postgres
+          image: "{{ .Values.database.postgres.image.repository }}:{{ .Values.database.postgres.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: postgres
+              containerPort: {{ .Values.database.postgres.port }}
+              protocol: TCP
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.database.postgres.user | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.database.postgres.password | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.database.postgres.database | quote }}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          resources: {{ toYaml .Values.database.postgres.resources | nindent 12 }}
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.database.postgres.user | quote }}
+                - -d
+                - {{ .Values.database.postgres.database | quote }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.database.postgres.user | quote }}
+                - -d
+                - {{ .Values.database.postgres.database | quote }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+  {{- if .Values.database.postgres.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ .Values.database.postgres.persistence.size }}
+        {{- if .Values.database.postgres.persistence.storageClass }}
+        storageClassName: {{ .Values.database.postgres.persistence.storageClass }}
+        {{- end }}
+  {{- else }}
+      volumes:
+        - name: postgres-data
+          emptyDir: {}
+  {{- end }}
+{{- end }}

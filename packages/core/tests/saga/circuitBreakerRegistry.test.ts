@@ -12,7 +12,10 @@
  */
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
-import { CircuitBreakerRegistry, DEFAULT_BREAKER_POLICY } from '../../src/saga/circuitBreakerRegistry';
+import {
+  CircuitBreakerRegistry,
+  DEFAULT_BREAKER_POLICY,
+} from '../../src/saga/circuitBreakerRegistry';
 
 describe('CircuitBreakerRegistry', () => {
   beforeEach(() => {
@@ -36,9 +39,15 @@ describe('CircuitBreakerRegistry', () => {
 
   describe('resolveBreakerKey', () => {
     it('extracts service name from tool name', () => {
-      assert.strictEqual(CircuitBreakerRegistry.resolveBreakerKey('stripe_charge_create'), 'stripe');
+      assert.strictEqual(
+        CircuitBreakerRegistry.resolveBreakerKey('stripe_charge_create'),
+        'stripe',
+      );
       assert.strictEqual(CircuitBreakerRegistry.resolveBreakerKey('github_pr_merge'), 'github');
-      assert.strictEqual(CircuitBreakerRegistry.resolveBreakerKey('slack_chat_postMessage'), 'slack');
+      assert.strictEqual(
+        CircuitBreakerRegistry.resolveBreakerKey('slack_chat_postMessage'),
+        'slack',
+      );
     });
 
     it('returns full name when no underscore', () => {

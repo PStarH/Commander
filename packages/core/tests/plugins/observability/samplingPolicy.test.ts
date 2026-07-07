@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { SamplingPolicy, type SamplingPolicyConfig } from '../../../src/plugins/builtin/observability/samplingPolicy';
+import {
+  SamplingPolicy,
+  type SamplingPolicyConfig,
+} from '../../../src/plugins/builtin/observability/samplingPolicy';
 import type { TraceEvent } from '../../../src/runtime/types';
 
 function makeEvent(overrides: Partial<TraceEvent> = {}): TraceEvent {

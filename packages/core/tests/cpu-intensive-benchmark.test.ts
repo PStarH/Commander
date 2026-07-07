@@ -13,9 +13,11 @@
  * Run: npx tsx packages/core/tests/cpu-intensive-benchmark.test.ts
  * Or: node --test packages/core/tests/cpu-intensive-benchmark.test.ts
  */
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
 import { performance } from 'node:perf_hooks';
+import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { ContextCompactor } from '../src/runtime/contextCompactor';
 import { TokenGovernor } from '../src/runtime/tokenGovernor';
 import { ToolResultCache } from '../src/runtime/toolResultCache';
@@ -23,6 +25,20 @@ import { TopologyRouter } from '../src/ultimate/topologyRouter';
 import { ToolPlanner } from '../src/runtime/toolPlanner';
 import type { LLMMessage, ToolCall, Tool, TaskDAGNode, TaskDAGEdge } from '../src/runtime/types';
 import type { DeliberationPlan } from '../src/ultimate/types';
+
+// ============================================================================
+// Baseline collector — accumulates results for persistent baseline output
+// ============================================================================
+const baselineResults: Record<string, unknown> = {
+  benchmark: 'cpu-intensive',
+  runAt: new Date().toISOString(),
+  nodeVersion: process.version,
+  sections: {} as Record<string, unknown>,
+};
+
+function recordBaseline(section: string, data: unknown): void {
+  baselineResults.sections[section] = data;
+}
 
 // ============================================================================
 // Helpers
@@ -874,4 +890,21 @@ describe('7. Summary & worker_threads Decision Matrix', () => {
 `);
     assert.ok(true, 'Summary printed');
   });
+});
+
+// ============================================================================
+// Persist baseline JSON after all tests complete
+// ============================================================================
+after(() => {
+  const dir = resolve('.commander_benchmarks');
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  const path = resolve(dir, `cpu-baseline-${new Date().toISOString().slice(0, 10)}.json`);
+  try {
+    writeFileSync(path, JSON.stringify(baselineResults, null, 2), { mode: 0o644 });
+    console.log(`\n  📊 CPU benchmark baseline saved to ${path}`);
+  } catch (e) {
+    console.log(`\n  ⚠ Failed to save CPU baseline: ${(e as Error).message}`);
+  }
 });
