@@ -443,7 +443,9 @@ export class SACProtocol {
 
 import { createTenantAwareSingleton } from '../../../runtime/tenantAwareSingleton';
 
-const sacProtocolSingleton = createTenantAwareSingleton(() => new SACProtocol());
+const sacProtocolSingleton = createTenantAwareSingleton(() => new SACProtocol(), {
+  allowGlobalFallback: true,
+});
 
 export function getSACProtocol(): SACProtocol {
   return sacProtocolSingleton.get();

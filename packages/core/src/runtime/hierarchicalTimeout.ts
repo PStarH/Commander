@@ -349,6 +349,7 @@ import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
 const hierarchicalTimeoutSingleton = createTenantAwareSingleton(
   () => new HierarchicalTimeoutManager(),
+  { allowGlobalFallback: true },
 );
 
 export function getHierarchicalTimeoutManager(): HierarchicalTimeoutManager {

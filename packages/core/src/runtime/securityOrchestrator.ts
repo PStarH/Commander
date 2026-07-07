@@ -34,6 +34,7 @@ import {
   getDifferentialPrivacyLayer,
   type DPQueryOutcome,
 } from '../security/differentialPrivacyLayer';
+import { getTtsrEngine, scanStreamChunk, type TtsrInterceptResult } from '../security/ttsrEngine';
 import { getHallucinationDetector } from '../hallucinationDetector';
 import type { ApprovalResult } from './toolApproval';
 
@@ -410,6 +411,38 @@ export class SecurityOrchestrator {
     } catch (err) {
       reportSilentFailure(err, 'securityOrchestrator:394');
       /* best-effort */
+    }
+  }
+
+  // ── Configuration ──────────────────────────────────────────────────
+
+  /**
+   * Check an LLM output stream chunk for TTSR rule matches.
+   * Called by the LLM provider during streaming to detect rule violations
+   * mid-stream and inject corrective reminders.
+   *
+   * Returns null if no match, or a TtsrInterceptResult if a rule was triggered.
+   * The caller should abort the stream, inject the message, and retry.
+   */
+  checkTtsrStream(chunk: string, streamPosition: number): TtsrInterceptResult | null {
+    if (!this.config.enabled) return null;
+    try {
+      const engine = getTtsrEngine();
+      return scanStreamChunk(engine, chunk, streamPosition);
+    } catch (err) {
+      reportSilentFailure(err, 'securityOrchestrator:checkTtsrStream');
+      return null;
+    }
+  }
+
+  /**
+   * Get the TTSR session summary for logging/debugging.
+   */
+  getTtsrSummary(): string {
+    try {
+      return getTtsrEngine().formatSessionSummary();
+    } catch {
+      return 'TTSR: unavailable';
     }
   }
 

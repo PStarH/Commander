@@ -141,7 +141,9 @@ export class ExecutionRouter {
 
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
-const executionRouterSingleton = createTenantAwareSingleton(() => new ExecutionRouter());
+const executionRouterSingleton = createTenantAwareSingleton(() => new ExecutionRouter(), {
+  allowGlobalFallback: true,
+});
 
 export function getExecutionRouter(): ExecutionRouter {
   return executionRouterSingleton.get();

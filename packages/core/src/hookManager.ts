@@ -860,7 +860,9 @@ export class HookManager {
 // Tenant-aware singleton accessor
 // ============================================================================
 
-const hookManagerSingleton = createTenantAwareSingleton(() => new HookManager());
+const hookManagerSingleton = createTenantAwareSingleton(() => new HookManager(), {
+  allowGlobalFallback: true,
+});
 
 export function getHookManager(): HookManager {
   return hookManagerSingleton.get();
