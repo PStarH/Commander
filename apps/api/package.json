@@ -36,11 +36,15 @@
       "optional": true
     }
   },
+  "optionalDependencies": {
+    "pg": "^8.15.0"
+  },
   "devDependencies": {
     "@types/bcryptjs": "^3.0.0",
     "@types/better-sqlite3": "^7.6.0",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
+    "@types/pg": "^8.11.0",
     "ts-node-dev": "^2.0.0",
     "typescript": "^6.0.3"
   }

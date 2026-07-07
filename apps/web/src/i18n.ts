@@ -46,7 +46,12 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     'nav.audit': 'Audit Log',
     'nav.knowledge': 'Knowledge',
     'nav.cost': 'Cost',
+    'nav.settings': 'Settings',
+    'nav.alerts': 'Alerts',
     'nav.onboarding': 'Onboarding',
+    'nav.users': 'Users',
+    'nav.workflows': 'Workflows',
+    'nav.sso': 'SSO',
   },
   'zh-CN': {
     'nav.dashboard': '仪表盘',
@@ -61,7 +66,12 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     'nav.audit': '审计日志',
     'nav.knowledge': '知识库',
     'nav.cost': '成本',
+    'nav.settings': '设置',
+    'nav.alerts': '告警中心',
     'nav.onboarding': '上手引导',
+    'nav.users': '用户管理',
+    'nav.workflows': '工作流编排',
+    'nav.sso': 'SSO 登录',
   },
 };
 
