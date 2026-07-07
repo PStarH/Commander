@@ -1319,7 +1319,9 @@ export class AgentSoc {
 // Singleton
 // ============================================================================
 
-const agentSocSingleton = createTenantAwareSingleton(() => new AgentSoc());
+const agentSocSingleton = createTenantAwareSingleton(() => new AgentSoc(), {
+  allowGlobalFallback: true,
+});
 
 /** Get the global AgentSOC (single-tenant) or tenant-scoped (multi-tenant). */
 export function getAgentSoc(config?: Partial<AgentSocConfig>): AgentSoc {

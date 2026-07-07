@@ -573,7 +573,9 @@ export class AgentLineage {
 // Tenant-aware singleton
 // ============================================================================
 
-const agentLineageSingleton = createTenantAwareSingleton(() => new AgentLineage());
+const agentLineageSingleton = createTenantAwareSingleton(() => new AgentLineage(), {
+  allowGlobalFallback: true,
+});
 
 /** Resolve the active AgentLineage via the current tenant context. */
 export function getAgentLineage(): AgentLineage {
