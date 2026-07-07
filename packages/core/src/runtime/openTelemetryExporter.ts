@@ -500,6 +500,7 @@ let _otelConfig: OTelExporterConfig | undefined;
 
 const otelExporterSingleton = createTenantAwareSingleton(
   () => new OpenTelemetryExporter(_otelConfig),
+  { allowGlobalFallback: true },
 );
 
 export function getOTelExporter(config?: OTelExporterConfig): OpenTelemetryExporter {

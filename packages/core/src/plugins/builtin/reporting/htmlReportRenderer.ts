@@ -217,7 +217,9 @@ export class HTMLReportRenderer {
 
 import { createTenantAwareSingleton } from '../../../runtime/tenantAwareSingleton';
 
-const htmlReportRendererSingleton = createTenantAwareSingleton(() => new HTMLReportRenderer());
+const htmlReportRendererSingleton = createTenantAwareSingleton(() => new HTMLReportRenderer(), {
+  allowGlobalFallback: true,
+});
 
 export function getHTMLReportRenderer(): HTMLReportRenderer {
   return htmlReportRendererSingleton.get();

@@ -100,13 +100,7 @@ export function createTenantAwareSingleton<T>(
     ...options.quota,
   };
   const component = options.componentName ?? 'TenantAwareSingleton';
-  // In test / development: allowGlobalFallback defaults to true (backward
-  // compatible with the pre-D3.0 contract). In production: opt-in only —
-  // must be explicitly set to true AND multi-tenant must be disabled.
-  const allowGlobalFallback =
-    process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development'
-      ? options.allowGlobalFallback !== false
-      : options.allowGlobalFallback === true && !isMultiTenantEnabled();
+  const allowGlobalFallback = options.allowGlobalFallback === true && !isMultiTenantEnabled();
   const log = (
     level: 'warn' | 'error',
     message: string,

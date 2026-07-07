@@ -72,6 +72,22 @@ export class MetricsCollector {
   private histograms = new Map<string, HistogramMetric>();
   private readonly maxUniqueMetrics = 1000;
 
+  /**
+   * Resolve the effective tenant ID for a metrics call. Falls back to the
+   * current tenant context when the caller does not provide one, ensuring
+   * observability labels are never silently missing in multi-tenant mode.
+   */
+  private resolveTenant(tenantId?: string): string | undefined {
+    if (tenantId) return tenantId;
+    try {
+      // Lazy require to avoid circular import at module load time.
+      const { getCurrentTenantId } = require('./tenantContext');
+      return getCurrentTenantId() ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private enforceCap(map: Map<string, unknown>): void {
     if (map.size < this.maxUniqueMetrics) return;
     const firstKey = map.keys().next().value;
@@ -182,8 +198,9 @@ export class MetricsCollector {
   // ── Convenience: record tool execution metrics ──
 
   recordToolCall(toolName: string, durationMs: number, error?: string, tenantId?: string): void {
+    const effectiveTenant = this.resolveTenant(tenantId);
     const labels: MetricLabel[] = [{ name: 'tool', value: toolName }];
-    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    if (effectiveTenant) labels.push({ name: 'tenant', value: effectiveTenant });
     // Aggregate counter (success + error) so dashboards can compute success rate
     // via rate(tool_calls_total{status="success"}) / rate(tool_calls_total).
     const statusLabels = [...labels, { name: 'status', value: error ? 'error' : 'success' }];
@@ -1065,7 +1082,9 @@ export class MetricsCollector {
 import { getCostModel } from '../observability/costModel';
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
-const metricsSingleton = createTenantAwareSingleton(() => new MetricsCollector());
+const metricsSingleton = createTenantAwareSingleton(() => new MetricsCollector(), {
+  allowGlobalFallback: true,
+});
 
 /**
  * Map a 32-char hex cache key to a numeric gauge value. Hash bytes are

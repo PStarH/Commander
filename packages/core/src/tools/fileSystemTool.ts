@@ -14,9 +14,23 @@ import { formatAnchoredOutput } from '../edit/hashAnchoredEditor';
 import { getInternalUrlRouter, isInternalUrl } from '../runtime/internalUrls';
 import { atomicWriteFile } from './_utils/atomicWrite';
 import { pathExists } from './_utils/pathExists';
+import { getGlobalTenantProvider } from '../runtime/tenantProvider';
+import { getCurrentTenantId } from '../runtime/tenantContext';
 
 /** Get the safe root directory. Dynamic to support runtime COMMANDER_WORKSPACE changes. */
 export function getSafeRoot(): string {
+  // Multi-tenant isolation: when a tenant context is active and the tenant
+  // provider has a configured workspacePath, scope all file access to that
+  // tenant's workspace. This prevents tenant A from reading tenant B's files
+  // via relative or absolute path traversal.
+  const tenantId = getCurrentTenantId();
+  if (tenantId) {
+    const provider = getGlobalTenantProvider();
+    const tenantCfg = provider.getTenantConfig(tenantId);
+    if (tenantCfg?.workspacePath) {
+      return path.resolve(tenantCfg.workspacePath);
+    }
+  }
   return path.resolve(process.env.COMMANDER_WORKSPACE || process.cwd());
 }
 
@@ -105,7 +119,7 @@ export class FileReadTool implements Tool {
   definition: ToolDefinition = {
     name: 'file_read',
     description:
-      'Read a file. Returns content with line numbers in hashline format (¶path#HASH followed by LINE:content). Set includeHashes:true to get per-line content hashes (#XXXXXX) for drift-proof hash-anchored edits with file_hash_edit.',
+      'Read a file. Returns content with line numbers and per-line content hashes (#XXXXXX) for drift-proof hash-anchored edits. Use file_hash_edit with @HASH→replacement format to edit. Set includeHashes:false to omit hashes.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -120,8 +134,8 @@ export class FileReadTool implements Tool {
         includeHashes: {
           type: 'boolean',
           description:
-            'Include per-line content hashes (#XXXXXX) for hash-anchored edits (default: false)',
-          default: false,
+            'Include per-line content hashes (#XXXXXX) for hash-anchored edits (default: true)',
+          default: true,
         },
       },
       required: ['path'],
@@ -138,7 +152,7 @@ export class FileReadTool implements Tool {
     const maxChars = Math.min(Math.max(Number(args.maxChars) || 10000, 1), 100000);
     const offset = Math.max(Number(args.offset) || 1, 1);
     const limit = args.limit ? Math.max(Number(args.limit), 1) : undefined;
-    const includeHashes = args.includeHashes === true;
+    const includeHashes = args.includeHashes !== false; // Default true
 
     if (!filePath) return 'Error: path is required';
 
@@ -270,21 +284,20 @@ export class FileWriteTool implements Tool {
 export class FileEditTool implements Tool {
   definition: ToolDefinition = {
     name: 'file_edit',
-    description: `Edit a file. Supports two modes:
+    description: `Edit a file. PREFER file_hash_edit (@HASH→replacement) for drift-proof edits.
 
-HASHLINE MODE (preferred): Use the hashline format from file_read output.
+HASHLINE MODE (legacy): Use line-number based format.
 The input starts with ¶PATH#TAG (the tag from your read output), followed by operations:
   ¶src/foo.ts#A1B2
   replace 3..5:
   +new line 3
   +new line 4
-  +new line 5
 
 Operations: replace N..M:, delete N..M, insert before/after N:, insert head/tail:
 Body rows start with + (only +TEXT, no -old lines).
 The tag ensures the file hasn't changed since you read it.
 
-LEGACY MODE (backward-compatible): Use path + oldString + newString for simple string replacement.`,
+LEGACY MODE: Use path + oldString + newString for simple string replacement.`,
     inputSchema: {
       type: 'object',
       properties: {

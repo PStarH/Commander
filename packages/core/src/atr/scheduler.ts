@@ -434,7 +434,7 @@ function createSchedulerSingleton() {
       scheduler.registerDefaultCompensations();
       return scheduler;
     },
-    { dispose: () => {} },
+    { allowGlobalFallback: true, dispose: () => {} },
   );
 }
 

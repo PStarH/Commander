@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import * as path from 'node:path';
 import type { Tool, ToolDefinition } from '../runtime/types';
 
 // Git subcommands that do NOT mutate repository state in dangerous ways.
@@ -76,6 +77,21 @@ export class GitTool implements Tool {
 
     if (!command) return 'Error: command is required';
 
+    // Enforce tenant workspace boundary on the working directory.
+    let resolvedWorkdir: string;
+    try {
+      // safePath is async; gitTool uses execFileSync (sync). We resolve via
+      // the synchronous path resolution + isWithinRoot check to avoid mixing
+      // async/sync. getSafeRoot() is tenant-aware.
+      const { getSafeRoot, isWithinRoot } = await import('./fileSystemTool');
+      resolvedWorkdir = path.resolve(getSafeRoot(), workdir);
+      if (!isWithinRoot(resolvedWorkdir, getSafeRoot())) {
+        return `Error: Access denied: workdir "${workdir}" is outside workspace`;
+      }
+    } catch {
+      resolvedWorkdir = path.resolve(process.cwd(), workdir);
+    }
+
     // Strip shell pipes — agents sometimes write `git log | head -20` but we run
     // git directly via execFileSync (no shell). Convert common patterns to git flags.
     let cleanCommand = command;
@@ -129,7 +145,7 @@ export class GitTool implements Tool {
       const stdout = execFileSync('git', gitArgs, {
         timeout: 30000,
         encoding: 'utf-8',
-        cwd: workdir,
+        cwd: resolvedWorkdir,
         maxBuffer: 5 * 1024 * 1024,
       });
       const elapsed = Date.now() - start;
