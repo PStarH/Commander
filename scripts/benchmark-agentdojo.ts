@@ -12,7 +12,10 @@ import {
   createCommanderDefender,
   getCasesForBenchmark,
 } from '../packages/core/src/security/securityBenchmarkRunner';
-import type { BenchmarkRunReport, BenchmarkTestResult } from '../packages/core/src/security/securityBenchmarkRunner';
+import type {
+  BenchmarkRunReport,
+  BenchmarkTestResult,
+} from '../packages/core/src/security/securityBenchmarkRunner';
 
 const runner = new SecurityBenchmarkRunner({
   enabled: true,
@@ -73,7 +76,9 @@ async function main(): Promise<void> {
 
   console.log('Commander Security Benchmark — Real Defense Stack');
   console.log('Defender: createCommanderDefender()');
-  console.log(`Mode: ${runAll ? 'ALL benchmarks (agentdojo + agentsafetybench + agentharm)' : 'AgentDojo only'}`);
+  console.log(
+    `Mode: ${runAll ? 'ALL benchmarks (agentdojo + agentsafetybench + agentharm)' : 'AgentDojo only'}`,
+  );
   console.log('─'.repeat(78));
 
   // Print case count preview
@@ -93,7 +98,9 @@ async function main(): Promise<void> {
     console.log('═'.repeat(78));
     console.log('  COMBINED SUMMARY');
     console.log('═'.repeat(78));
-    console.log(`  Total: ${all.combined.totalTests}  Blocked: ${all.combined.blocked}  Missed: ${all.combined.missed}`);
+    console.log(
+      `  Total: ${all.combined.totalTests}  Blocked: ${all.combined.blocked}  Missed: ${all.combined.missed}`,
+    );
     console.log(`  Combined security score: ${all.combined.securityScore}/100`);
     const pass = all.combined.securityScore >= 100 && all.combined.missed === 0;
     console.log(`  VERDICT: ${pass ? '✅ PASS' : '❌ FAIL'}`);
