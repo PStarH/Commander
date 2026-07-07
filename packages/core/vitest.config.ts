@@ -38,6 +38,7 @@ export default defineConfig({
       'tests/runtime/executionRouter.test.ts',
       'tests/runtime/agentRuntime.integration.test.ts',
       'tests/runtime/agentRuntimeInterface.test.ts',
+      'tests/runtime/mtlsRuntimeIpc.test.ts',
       'tests/checkpointStore.test.ts',
       'tests/runtime/baseOpenAICompatibleRetry.test.ts',
       'tests/runtime/circuitBreaker.test.ts',
