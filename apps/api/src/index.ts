@@ -9,6 +9,7 @@ import {
   HealthCollector,
   buildHealthSources,
   getPluginLoader,
+  getWebhookDispatcher,
 } from '@commander/core';
 import express from 'express';
 import { createWarRoomStore } from './store';
@@ -55,6 +56,7 @@ import {
 import { authMiddleware } from './authMiddleware';
 import { jwtMiddleware } from './jwtMiddleware';
 import { createUserAuthRouter } from './userAuthEndpoints';
+import { createOIDCAuthRouter } from './oidcAuthEndpoints';
 import { createEvaluationRunnerRouter } from './evaluationRunnerEndpoints';
 import { createOrchestratorRouter } from './orchestratorEndpoints';
 import { createObservabilityRouter } from './observabilityEndpoints';
@@ -66,12 +68,16 @@ import { createHallucinationRouter } from './hallucinationEndpoints';
 import { createLineageRouter } from './lineageEndpoints';
 import { createSecurityPostureRouter } from './securityPostureEndpoints';
 import { createWebhookRouter } from './webhookEndpoints';
+import { createApiKeyRouter } from './apiKeyEndpoints';
+import { createSettingsRouter } from './settingsEndpoints';
+import { createOutgoingWebhookRouter } from './outgoingWebhookEndpoints';
 import { createCostDashboardRouter } from './costDashboardEndpoints';
 import { createKnowledgeBaseRouter } from './knowledgeBaseEndpoints';
 import { createEvalRouter } from './evalEndpoints';
 import { createReportingRouter } from './reportingEndpoints';
 import { createConsensusRouter } from './consensusEndpoints';
 import { createOnboardingRouter } from './onboardingEndpoints';
+import { createWorkflowRouter } from './workflowEndpoints';
 import { createAuditLogRouter } from './auditLogEndpoints';
 import { createAuditMiddleware } from './auditMiddleware';
 import { createSagaRouter } from './sagaEndpoints';
@@ -133,10 +139,15 @@ app.use((_req, res, next) => {
   next();
 });
 
-// 4. Rate limiting
+// 4. JWT parsing (non-blocking) — must run before rate limiting so
+// per-user / per-tenant buckets can be derived from the authenticated
+// identity. Public paths (health, login, register) are skipped.
+app.use(jwtMiddleware);
+
+// 5. Rate limiting — now aware of tenant → user → IP identity.
 app.use(rateLimitMiddleware);
 
-// 4. CORS whitelist (not wildcard)
+// 6. CORS whitelist (not wildcard)
 const API_PORT = parseInt(process.env.PORT ?? '4000', 10);
 const WEB_PORT = parseInt(process.env.WEB_PORT ?? '5173', 10);
 
@@ -169,7 +180,7 @@ app.use((req, res, next) => {
   res.header('Access-Control-Allow-Methods', 'GET,POST,PATCH,PUT,DELETE,OPTIONS');
   res.header(
     'Access-Control-Allow-Headers',
-    'Content-Type, Authorization, X-Request-ID, X-API-Key',
+    'Content-Type, Authorization, X-Request-ID, X-API-Key, X-Tenant-ID',
   );
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
@@ -177,21 +188,19 @@ app.use((req, res, next) => {
   next();
 });
 
-// 5. Authentication (skipped when AUTH_DISABLED=true or no API_KEYS configured)
-// JWT middleware runs first: it parses Bearer JWT tokens (non-blocking) and
-// populates req.user. The existing API-key authMiddleware runs second and
-// skips requests already authenticated via JWT (req.user set).
-app.use(jwtMiddleware);
+// 7. Authentication (skipped when AUTH_DISABLED=true or no API_KEYS configured)
+// JWT was already parsed in step 4 for rate-limit identity. API-key auth runs
+// here and skips requests already authenticated via JWT (req.user set).
 app.use(authMiddleware);
 
-// 6. Audit middleware — records all mutating (POST/PUT/PATCH/DELETE) requests
+// 8. Audit middleware — records all mutating (POST/PUT/PATCH/DELETE) requests
 // to the unified audit trail (.commander/audit/user-actions.ndjson). Mounted
 // after auth so req.user / req.apiKeyId are populated, and before routers so
 // the response `finish` listener is attached before handlers run. Sensitive
 // body fields are stripped by createAuditMiddleware before persistence.
 app.use(createAuditMiddleware(getUnifiedAuditLog()));
 
-// 7. DLP response middleware — scans all HTTP responses (JSON/text/HTML/XML)
+// 9. DLP response middleware — scans all HTTP responses (JSON/text/HTML/XML)
 // for sensitive data (API keys, private keys, JWTs, etc.) and redacts/masks
 // before sending to client. Excludes event-stream to avoid buffering SSE.
 // If DLP is disabled, the middleware passes through with zero overhead.
@@ -383,6 +392,7 @@ app.get('/system/status', (_req, res) => {
 // User authentication (register/login/me/refresh/users) is mounted first so the
 // auth endpoints are available before any feature routers.
 registerRouter({ name: 'user-auth', mountPath: '/', factory: () => createUserAuthRouter() });
+registerRouter({ name: 'oidc-auth', mountPath: '/', factory: () => createOIDCAuthRouter() });
 
 registerRouter({
   name: 'project',
@@ -439,6 +449,11 @@ registerRouter({
 });
 registerRouter({ name: 'pipeline', mountPath: '/', factory: () => createPipelineRouter() });
 registerRouter({
+  name: 'workflow',
+  mountPath: '/',
+  factory: () => createWorkflowRouter(),
+});
+registerRouter({
   name: 'namespaced-memory',
   mountPath: '/',
   factory: () => createNamespacedMemoryRouter(),
@@ -487,6 +502,19 @@ registerRouter({
   factory: () => createSecurityPostureRouter(),
 });
 registerRouter({ name: 'webhook', mountPath: '/', factory: () => createWebhookRouter() });
+
+// ── API Key management (admin only) ─────────────────────────────────────────
+registerRouter({ name: 'api-keys', mountPath: '/', factory: () => createApiKeyRouter() });
+
+// ── Global settings (model / feature flags / notifications) ─────────────────
+registerRouter({ name: 'settings', mountPath: '/', factory: () => createSettingsRouter() });
+
+// ── Outgoing webhook dispatcher (delivery tracking + retry) ─────────────────
+registerRouter({
+  name: 'outgoing-webhooks',
+  mountPath: '/',
+  factory: () => createOutgoingWebhookRouter(),
+});
 
 // ── Cost Dashboard (enterprise cost analytics) ─────────────────────────────
 registerRouter({
@@ -860,6 +888,9 @@ let httpServer: { close: (cb?: () => void) => void } | null = null;
 
 async function startServer(): Promise<void> {
   await initRateLimitStore();
+  // Start the outgoing webhook dispatcher so registered webhooks receive
+  // system events as soon as the server is ready.
+  getWebhookDispatcher().start();
   httpServer = app.listen(port, () => {
     process.stdout.write(`API listening on http://localhost:${port}\n`);
     process.stdout.write(`War room project ready at GET /projects/${PROJECT_ID}/war-room\n`);
@@ -881,6 +912,14 @@ function gracefulShutdown(signal: string) {
   // Stop accepting new connections.
   httpServer?.close(() => {
     process.stdout.write('[shutdown] HTTP server closed\n');
+
+    // Stop the outgoing webhook dispatcher to prevent in-flight retries
+    // from keeping the process alive after shutdown is requested.
+    try {
+      getWebhookDispatcher().stop();
+    } catch (dispatcherErr) {
+      process.stderr.write(`[shutdown] Failed to stop webhook dispatcher: ${dispatcherErr}\n`);
+    }
 
     // Flush any pending state
     try {
