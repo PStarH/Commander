@@ -147,6 +147,24 @@ export class ThreeLayerMemory {
    */
   private semanticStore: ReturnType<typeof getGlobalSemanticMemoryStore> | null = null;
   private episodicStore: ReturnType<typeof getGlobalEpisodicStore> | null = null;
+  /**
+   * Class-level tenant filter context (audit MED item 2). Set explicitly via
+   * `setTenantContext(tenantId)`; when null, reads default to the "no-tenant"
+   * view (which only returns entries WITHOUT a metadata.tenantId tag).
+   *
+   * This is the cross-tenant defense the bench-memory-poisoning attack surface
+   * relies on. With currentTenantId=null:
+   *   - Reads return only entries WITHOUT metadata.tenantId. Tenant-tagged
+   *     entries are hidden at the class level (no-tenant can't peek).
+   * With currentTenantId='X':
+   *   - Reads return only entries with metadata.tenantId==='X' (strict).
+   *
+   * Pairs with the singleton layer (createTenantAwareSingleton) which sets
+   * tenant context per AsyncLocalStorage scope; this class-level filter is
+   * defense-in-depth for cases where a single instance is shared across
+   * tenants or where the caller bypassed runWithTenant.
+   */
+  private currentTenantId: string | null = null;
 
   constructor(
     config?: Partial<Record<MemoryLayer, LayerConfig>> & {
@@ -281,6 +299,51 @@ export class ThreeLayerMemory {
 
   getEmbeddingStore(): InMemoryEmbeddingStore {
     return this.embedStore;
+  }
+
+  /**
+   * Set the tenant context for subsequent reads (and tenant-sensitive writes
+   * such as `promoteToLongTerm` / `archiveToEpisodic`) on this ThreeLayerMemory
+   * instance. Pass `null` to use the no-tenant context.
+   *
+   * Pairs with `add()`'s metadata.tenantId convention: when currentTenantId
+   * is set, callers can rely on `filterByTenant` hiding cross-tenant entries
+   * at the class level. Without setting context, the class only shows
+   * entries that have NO tenant tag — the safest default for unscoped
+   * callers and the exact behavior the bench-memory-poisoning attack
+   * surface relies on.
+   */
+  setTenantContext(tenantId: string | null): void {
+    this.currentTenantId = tenantId;
+  }
+
+  /** @see setTenantContext */
+  getTenantContext(): string | null {
+    return this.currentTenantId;
+  }
+
+  /**
+   * Class-level cross-tenant filter. Returns entries that the current tenant
+   * context is allowed to see.
+   *   - Tenant-scoped context (currentTenantId='X'): only entries with
+   *     metadata.tenantId === 'X'.
+   *   - No-tenant context (currentTenantId=null): only entries WITHOUT a
+   *     metadata.tenantId tag.
+   *
+   * Defense-in-depth: this filter runs at every read path so a buggy caller
+   * that forgets to set tenant context still cannot read tenant-scoped data,
+   * and a malicious reader using the no-tenant fallback only sees untagged
+   * (legacy/global) entries.
+   */
+  private filterByTenant(entries: MemoryEntry[]): MemoryEntry[] {
+    const ctx = this.currentTenantId;
+    if (ctx === null) {
+      return entries.filter((e) => {
+        const tid = e.metadata?.tenantId;
+        return typeof tid !== 'string' || tid.length === 0;
+      });
+    }
+    return entries.filter((e) => e.metadata?.tenantId === ctx);
   }
 
   /**
@@ -458,9 +521,14 @@ export class ThreeLayerMemory {
    */
   get(id: string): MemoryEntry | undefined {
     const entry = this.memories.get(id);
-    if (entry) {
-      this.updateAccess(entry);
-    }
+    if (!entry) return undefined;
+    // Cross-tenant defense (audit MED item 2): filter out entries that don't
+    // match the current tenant context BEFORE updateAccess so cross-tenant
+    // returns don't leak side-effects through memory.decayScore or access
+    // counters (those fields are attacker-observable on the next read in
+    // the same shared-instance scenario).
+    if (this.filterByTenant([entry]).length === 0) return undefined;
+    this.updateAccess(entry);
     return entry;
   }
 
@@ -538,6 +606,12 @@ export class ThreeLayerMemory {
         queryEmbedding = emb;
       }
     }
+
+    // Cross-tenant defense (audit MED item 2): filter to current tenant context
+    // BEFORE scoring and slicing. Without this filter, the bench-memory-poisoning
+    // vectors V1 (tenant_id_spoof_in_metadata) and V4 (importance_threshold_bypass)
+    // would leak cross-tenant entries.
+    results = this.filterByTenant(results);
 
     // Sort by embedding-aware three-factor score (Generative Agents formula)
     results.sort((a, b) => {
@@ -688,6 +762,19 @@ export class ThreeLayerMemory {
     const entry = this.memories.get(id);
     if (!entry || entry.layer === 'longterm') return false;
 
+    // Cross-tenant defense (audit MED item 2): bench-memory-poisoning vectors
+    // V2 (longterm_cross_tenant_promotion) and V6
+    // (promoteToLongTerm_layer_transition) rely on promoteToLongTerm admitting
+    // an entry whose tenantId mismatches the current context. When a tenant
+    // context is active, deny the promotion if entry.metadata.tenantId
+    // (if set) does not match currentTenantId. Untagged entries are also
+    // denied in a tenant context (no implicit cross-tenant trust).
+    const ctx = this.currentTenantId;
+    if (ctx !== null) {
+      const tid = entry.metadata?.tenantId;
+      if (tid !== ctx) return false;
+    }
+
     entry.layer = 'longterm';
     entry.decayScore = 0; // 长期记忆不衰减
     return true;
@@ -699,6 +786,15 @@ export class ThreeLayerMemory {
   archiveToEpisodic(id: string): boolean {
     const entry = this.memories.get(id);
     if (!entry || entry.layer !== 'working') return false;
+
+    // Cross-tenant defense (parity with promoteToLongTerm): deny cross-tenant
+    // archival when a tenant context is active and entry.metadata.tenantId
+    // (if set) does not match.
+    const ctx = this.currentTenantId;
+    if (ctx !== null) {
+      const tid = entry.metadata?.tenantId;
+      if (tid !== ctx) return false;
+    }
 
     entry.layer = 'episodic';
     entry.decayScore = 1.0; // 重置衰减
@@ -880,14 +976,21 @@ export class ThreeLayerMemory {
           if (score > 0) scored.push({ entry, score });
         }
         scored.sort((a, b) => b.score - a.score);
-        return scored.slice(0, limit).map((s) => {
-          this.updateAccess(s.entry);
-          return s.entry;
+        // Cross-tenant defense (audit MED item 2): the bench-memory-poisoning
+        // vector V3 (searchRelated_keyword_collision) relies on searchRelated
+        // returning cross-tenant entries. Apply filterByTenant BEFORE the
+        // slice so scored cross-tenant entries are dropped before reaching
+        // the limit (a partial leak at small `limit` values still counts).
+        const filtered = this.filterByTenant(scored.map((s) => s.entry));
+        return filtered.slice(0, limit).map((entry) => {
+          this.updateAccess(entry);
+          return entry;
         });
       }
     }
 
-    // Fallback: keyword-only search (use sync version — no Pillar IV augmentation)
+    // Fallback: keyword-only search (use sync version — no Pillar IV
+    // augmentation). The fallback path inherits the querySync tenant filter.
     return this.querySync({ keywords, limit });
   }
 
@@ -996,7 +1099,9 @@ import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
 
 const DEFAULT_PERSIST_PATH = '.commander/memory/three-layer.json';
 
-const memorySingleton = createTenantAwareSingleton(() => new ThreeLayerMemory());
+const memorySingleton = createTenantAwareSingleton(() => new ThreeLayerMemory(), {
+  allowGlobalFallback: true,
+});
 
 export function getGlobalThreeLayerMemory(): ThreeLayerMemory {
   return memorySingleton.get();
