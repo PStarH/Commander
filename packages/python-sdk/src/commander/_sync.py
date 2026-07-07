@@ -64,3 +64,9 @@ class CommanderClientSync:
     def close(self) -> None:
         if self._client is not None:
             asyncio.run(self._client.close())
+
+    def __getattr__(self, name: str) -> Any:
+        """Proxy synchronous attributes (e.g. agents, tasks, properties) to the async client."""
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self._get_client(), name)
