@@ -2002,7 +2002,9 @@ function isObjectWithProp(obj: unknown, prop: string): boolean {
 // 租户感知单例
 // ============================================================================
 
-const cveDatabaseSingleton = createTenantAwareSingleton(() => new CVEDatabase());
+const cveDatabaseSingleton = createTenantAwareSingleton(() => new CVEDatabase(), {
+  allowGlobalFallback: true,
+});
 
 /**
  * 获取 CVEDatabase 单例（租户感知）。

@@ -900,3 +900,23 @@ export type {
   CampaignPrediction,
   CampaignTrackerConfig,
 } from './attackCampaignTracker';
+
+// TTSR — Time Traveling Streamed Rules (零成本规则注入引擎)
+export {
+  TtsrEngine,
+  getTtsrEngine,
+  resetTtsrEngine,
+  scanStreamChunk,
+  BUILTIN_TTSR_RULE_SETS,
+  SECURITY_TTSR_RULES,
+  QUALITY_TTSR_RULES,
+  COMMANDER_TTSR_RULES,
+} from './ttsrEngine';
+export type {
+  TtsrRule,
+  TtsrRuleSet,
+  TtsrRuleMode,
+  TtsrMatchResult,
+  TtsrSessionState,
+  TtsrInterceptResult,
+} from './ttsrEngine';

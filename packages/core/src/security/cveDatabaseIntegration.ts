@@ -1221,7 +1221,9 @@ export class CVEDatabaseIntegration {
 // 单例
 // ============================================================================
 
-const cveSingleton = createTenantAwareSingleton(() => new CVEDatabaseIntegration());
+const cveSingleton = createTenantAwareSingleton(() => new CVEDatabaseIntegration(), {
+  allowGlobalFallback: true,
+});
 
 /**
  * 获取全局 CVEDatabaseIntegration 单例

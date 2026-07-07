@@ -708,7 +708,9 @@ export function zeroTrustMiddleware(options?: { skipPaths?: string[]; skipIfNoKe
 // 单例
 // ============================================================================
 
-const zeroTrustSingleton = createTenantAwareSingleton(() => new ZeroTrustValidator());
+const zeroTrustSingleton = createTenantAwareSingleton(() => new ZeroTrustValidator(), {
+  allowGlobalFallback: true,
+});
 
 /**
  * 获取全局 ZeroTrustValidator（单租户）或租户范围的实例
