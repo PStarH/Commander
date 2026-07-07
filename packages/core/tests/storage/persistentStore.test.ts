@@ -6,12 +6,15 @@ import {
   createDriver,
   createDriverSoft,
   probeSqlite,
+  probePostgres,
+  PostgresDriver,
   InMemoryDriver,
   SqliteDriver,
   JsonDriver,
   type PersistentDriver,
   type PersistentTable,
   type TableSchema,
+  type ColumnSpec,
 } from '../../src/storage';
 
 interface Probe {
@@ -149,4 +152,134 @@ describe('PersistentDriver — cross-driver equivalence', () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// Regression lock — PostgresDriver ColumnSpec typing in bindValue() loop.
+//
+// Background. PostgresTable.insert() and insertOrReplace() previously used:
+//
+//   const cols = this.colNames();           // cols: string[]
+//   const values = cols.map((c) =>          // c: string  ← the regression
+//     this.bindValue(row[c.name], c),       //   TS2339 c.name on string
+//   );                                      //   TS2345 c (string) ≠ ColumnSpec
+//
+// The fix iterates `this.schema.columns` directly so `c: ColumnSpec`.
+//
+// PRIMARY lock mechanism: this test file imports through the storage barrel
+// (`../../src/storage` → `postgresDriver.ts`). If the source file regresses,
+// package-level `tsc --noEmit` cascades the failure into this file and CI's
+// pretest tsc gate fails before this test can run. That cascade is what
+// actually catches a return of the internal `cols.map((c) => ...)` pattern.
+//
+// SECONDARY lock (below): a public-surface static guard locks four shape
+// invariants of `TableSchema<T>['columns']`. These guards do NOT catch the
+// source-internal regression — they catch accidental type relaxation on the
+// public ColumnSpec surface, which would also break callers like this test.
+// Together they form a defense-in-depth: package tsc (internal) + these
+// guards (public shape).
+// ---------------------------------------------------------------------------
+
+interface ProbePgRow {
+  id: string;
+  category: string;
+  value: number;
+  active: boolean;
+}
+
+// ≥3 columns — the user's minimum, +1 to also exercise a non-string column
+// (number + boolean) so bindValue's `col.type` narrowing is observed.
+const probePgSchema: TableSchema<ProbePgRow> = {
+  name: 'probe_pg_regression',
+  columns: [
+    { name: 'id', type: 'string' },
+    { name: 'category', type: 'string' },
+    { name: 'value', type: 'number' },
+    { name: 'active', type: 'boolean' },
+  ],
+};
+
+// Static length lock: if anyone drops/adds a column from the schema, this
+// line fails tsc with TS2322 ("Type 'N' is not assignable to type '4'").
+// Stabilises fixture expectations if a column count regression ever sneaks
+// in alongside the ColumnSpec typing regression.
+const _probePgSchemaColumnCount: 4 = probePgSchema.columns.length;
+
+function makeProbePgRow(i: number): ProbePgRow {
+  return {
+    id: `pg-${i}`,
+    category: i % 3 === 0 ? 'alpha' : i % 3 === 1 ? 'beta' : 'gamma',
+    value: i * 11,
+    active: i % 2 === 0,
+  };
+}
+
+const pgUsable = probePostgres().available;
+const pgConnectionString =
+  process.env.PG_TEST_URL ?? process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const itPgIfAvailable = pgUsable && pgConnectionString ? it : it.skip;
+
+describe('PostgresDriver — ColumnSpec typing regression lock', () => {
+  it('schema columns expose ColumnSpec shape (c.name + c.type are typed)', () => {
+    // Static guard #1: if `TableSchema<T>['columns']` regressioned to
+    // `string[]`, this closure fails tsc with TS2339 "Property 'name' does
+    // not exist on type 'string'" — the SAME error class as the original
+    // postgresDriver.ts bug.
+    const projections = probePgSchema.columns.map((c) => `${c.name}:${c.type}`);
+    expect(projections.length).toBeGreaterThanOrEqual(3);
+
+    // Static guard #2: explicit ColumnSpec[] annotation would fail tsc with
+    // TS2322 if the column element type ever relaxed away from ColumnSpec.
+    const asSpecs: ReadonlyArray<ColumnSpec> = probePgSchema.columns;
+
+    // Runtime mirror — catches any silent runtime-shape relaxation even if
+    // tsc is somehow bypassed.
+    expect(projections).toEqual(['id:string', 'category:string', 'value:number', 'active:boolean']);
+    for (const c of asSpecs) {
+      expect(typeof c.name).toBe('string');
+      expect(['string', 'number', 'boolean']).toContain(c.type);
+    }
+  });
+
+  itPgIfAvailable(
+    'insert + insertOrReplace exercise the ColumnSpec-typed bindValue loop end-to-end',
+    async () => {
+      const driver = createDriver({
+        backend: 'postgres',
+        path: pgConnectionString!,
+        namespace: 'probe_pg_regression',
+      }) as PostgresDriver;
+      try {
+        const table: PersistentTable<ProbePgRow> = driver.getTable(
+          'probe_pg_regression',
+          probePgSchema,
+        );
+
+        // PostgresTable methods are async at runtime even though the public
+        // PersistentTable<T> interface is synchronous; the source casts the
+        // returned table. The cast-through-any style matches sibling
+        // tests/storage/postgresDriver.test.ts.
+        await (driver as any).runQuery('DELETE FROM "probe_pg_regression"');
+
+        const inserted = await (table as any).insert(makeProbePgRow(1));
+        expect(inserted.id).toBe('pg-1');
+        expect(inserted.category).toBe('alpha');
+
+        const replaced = await (table as any).insertOrReplace({
+          ...makeProbePgRow(1),
+          category: 'gamma',
+          value: 999,
+        });
+        expect(replaced.value).toBe(999);
+        expect(replaced.category).toBe('gamma');
+
+        const fetched = await (table as any).get('pg-1');
+        expect(fetched).toBeTruthy();
+        expect(fetched.value).toBe(999);
+        expect(fetched.category).toBe('gamma');
+      } finally {
+        driver.close();
+      }
+    },
+  );
 });
