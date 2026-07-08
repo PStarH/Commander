@@ -53,9 +53,11 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     'nav.workflows': 'Workflows',
     'nav.sso': 'SSO',
     'nav.poc': 'POC Center',
+    'nav.slo': 'SLO',
     'poc.sectionLabel': 'Enterprise Pilots',
     'poc.title': 'Proof-of-Value Center',
-    'poc.desc': 'Anonymized outcomes from production-grade Commander pilots across finance, manufacturing, and healthcare.',
+    'poc.desc':
+      'Anonymized outcomes from production-grade Commander pilots across finance, manufacturing, and healthcare.',
     'poc.metric.completed': 'Completed / Live',
     'poc.metric.industries': 'Industries',
     'poc.metric.avgDuration': 'Avg. Pilot Duration',
@@ -66,10 +68,12 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     'poc.scopeTitle': 'Scope',
     'poc.expand': 'Read more',
     'poc.collapse': 'Show less',
-    'poc.footnote': 'All figures are customer-reported deltas vs. the prior baseline process, averaged over the pilot window.',
+    'poc.footnote':
+      'All figures are customer-reported deltas vs. the prior baseline process, averaged over the pilot window.',
     'poc.industry.finance': 'Financial Services',
     'poc.customer.finance': 'Tier-1 Investment Bank — Trade Surveillance',
-    'poc.useCase.finance': 'Autonomous alert triage and multi-hop evidence gathering across trade, chat, and market data.',
+    'poc.useCase.finance':
+      'Autonomous alert triage and multi-hop evidence gathering across trade, chat, and market data.',
     'poc.scope.finance.1': 'Ingested 2.4M daily alerts via streaming pipeline',
     'poc.scope.finance.2': 'Multi-agent topology: dispatcher → analyst → verifier',
     'poc.scope.finance.3': 'Mandatory mTLS + capability-token gating on tool calls',
@@ -79,10 +83,12 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     'poc.detail.review': 'automated evidence packs',
     'poc.metric.latency': 'p95 alert latency',
     'poc.detail.latency': 'end-to-end SLA',
-    'poc.quote.finance': 'The auditor could trace every decision to a signed capability token and an immutable event log.',
+    'poc.quote.finance':
+      'The auditor could trace every decision to a signed capability token and an immutable event log.',
     'poc.industry.manufacturing': 'Manufacturing',
     'poc.customer.manufacturing': 'Global Automotive OEM — Predictive Maintenance',
-    'poc.useCase.manufacturing': 'Root-cause analysis of line stoppages using telemetry, maintenance logs, and vendor manuals.',
+    'poc.useCase.manufacturing':
+      'Root-cause analysis of line stoppages using telemetry, maintenance logs, and vendor manuals.',
     'poc.scope.manufacturing.1': 'Connected 8 plant SCADA feeds through read-only adapters',
     'poc.scope.manufacturing.2': 'Compensation registry for reversible diagnostic actions',
     'poc.scope.manufacturing.3': 'Chaos benchmarks before go-live',
@@ -92,10 +98,12 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     'poc.detail.falsePositive': 'verified before alerting',
     'poc.metric.rca': 'Root-cause speed',
     'poc.detail.rca': 'evidence aggregation',
-    'poc.quote.manufacturing': 'For the first time, maintenance and operations speak the same language in under a minute.',
+    'poc.quote.manufacturing':
+      'For the first time, maintenance and operations speak the same language in under a minute.',
     'poc.industry.healthcare': 'Healthcare',
     'poc.customer.healthcare': 'Regional Health System — Clinical Documentation',
-    'poc.useCase.healthcare': 'Ambient note summarization with automatic PII redaction and provider verification loops.',
+    'poc.useCase.healthcare':
+      'Ambient note summarization with automatic PII redaction and provider verification loops.',
     'poc.scope.healthcare.1': 'On-prem deployment with encrypted secrets vault',
     'poc.scope.healthcare.2': 'Three-layer memory with tenant isolation per hospital',
     'poc.scope.healthcare.3': 'LLM-as-judge quality gate on every note',
@@ -105,7 +113,8 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     'poc.detail.document': 'clinician time recovered',
     'poc.metric.audit': 'Audit coverage',
     'poc.detail.audit': 'all generations logged',
-    'poc.quote.healthcare': 'We needed local-first control of patient data; Commander proved we could keep it.',
+    'poc.quote.healthcare':
+      'We needed local-first control of patient data; Commander proved we could keep it.',
   },
   'zh-CN': {
     'nav.dashboard': '仪表盘',
@@ -127,6 +136,7 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     'nav.workflows': '工作流编排',
     'nav.sso': 'SSO 登录',
     'nav.poc': 'POC 中心',
+    'nav.slo': 'SLO',
     'poc.sectionLabel': '企业试点',
     'poc.title': '价值验证中心',
     'poc.desc': '来自金融、制造和医疗三个行业生产级 Commander 试点的匿名化成果。',
