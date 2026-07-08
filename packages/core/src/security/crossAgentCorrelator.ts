@@ -625,9 +625,7 @@ export class CrossAgentCorrelator {
 // Singleton
 // ============================================================================
 
-const correlatorSingleton = createTenantAwareSingleton(() => new CrossAgentCorrelator(), {
-  allowGlobalFallback: true,
-});
+const correlatorSingleton = createTenantAwareSingleton(() => new CrossAgentCorrelator(), {});
 
 export function getCrossAgentCorrelator(_config?: Partial<CorrelatorConfig>): CrossAgentCorrelator {
   return correlatorSingleton.get();

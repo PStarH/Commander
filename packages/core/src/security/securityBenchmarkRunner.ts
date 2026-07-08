@@ -1606,9 +1606,7 @@ export function createCommanderDefender(options?: {
 // Singleton
 // ============================================================================
 
-const runnerSingleton = createTenantAwareSingleton(() => new SecurityBenchmarkRunner(), {
-  allowGlobalFallback: true,
-});
+const runnerSingleton = createTenantAwareSingleton(() => new SecurityBenchmarkRunner(), {});
 
 export function getSecurityBenchmarkRunner(
   _config?: Partial<BenchmarkRunnerConfig>,

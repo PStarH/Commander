@@ -659,7 +659,7 @@ describe('DeadLetterQueue', () => {
     assert.strictEqual(typeof dlq.getStats, 'function');
   });
 
-  it('record and readEntries round-trips', () => {
+  it('record and readEntries round-trips', async () => {
     const dlq = new DeadLetterQueue('/tmp/commander-test-dlq');
     const entry: DeadLetterEntry = {
       id: 'dlq-1',
@@ -677,13 +677,13 @@ describe('DeadLetterQueue', () => {
       tags: ['test'],
     };
     dlq.record(entry);
-    dlq.flush();
-    const entries = dlq.readEntries('execution', 10);
+    await dlq.flush();
+    const entries = await dlq.readEntries('execution', 10);
     assert.ok(entries.length >= 1);
     assert.ok(entries.some((e) => e.id === 'dlq-1'));
   });
 
-  it('getStats returns category counts', () => {
+  it('getStats returns category counts', async () => {
     const dlq = new DeadLetterQueue('/tmp/commander-test-dlq');
     const entry: DeadLetterEntry = {
       id: 'dlq-stats-1',
@@ -701,8 +701,8 @@ describe('DeadLetterQueue', () => {
       tags: [],
     };
     dlq.record(entry);
-    dlq.flush('llm');
-    const stats = dlq.getStats();
+    await dlq.flush('llm');
+    const stats = await dlq.getStats();
     assert.ok(stats.length >= 1);
     assert.ok(stats.some((s) => s.category === 'llm' && s.count > 0));
   });

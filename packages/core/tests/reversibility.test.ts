@@ -250,7 +250,7 @@ describe('M4: Process crashes → DLQ + lease released + exit 1', () => {
     }
   });
 
-  it('v2 fix: DeadLetterQueue writes to disk (flush) (Tier 1.1)', () => {
+  it('v2 fix: DeadLetterQueue writes to disk (flush) (Tier 1.1)', async () => {
     const tmp = freshTmpDir('m4-dlq2');
     const dlq = new DeadLetterQueue(tmp);
     dlq.record({
@@ -268,7 +268,7 @@ describe('M4: Process crashes → DLQ + lease released + exit 1', () => {
       recovered: false,
       tags: ['crash'],
     });
-    dlq.flush();
+    await dlq.flush();
     const files = fs.readdirSync(tmp);
     assert.ok(files.length >= 1, `Expected DLQ file in ${tmp}, got ${files.length}`);
     try {
@@ -594,7 +594,7 @@ describe('M11: All retries exhausted → DLQ retryable entry + circuit open', ()
     assert.strictEqual(cb.isAvailable(), false, 'Circuit should be open after 3 failures');
   });
 
-  it('regression: DeadLetterQueue records entries and exposes getRetryableEntries', () => {
+  it('regression: DeadLetterQueue records entries and exposes getRetryableEntries', async () => {
     const dir = freshTmpDir('m11-dlq');
     const dlq = new DeadLetterQueue(dir);
     dlq.record({
@@ -612,8 +612,8 @@ describe('M11: All retries exhausted → DLQ retryable entry + circuit open', ()
       recovered: false,
       tags: ['exhausted'],
     });
-    dlq.flush();
-    const retryable = dlq.getRetryableEntries('llm');
+    await dlq.flush();
+    const retryable = await dlq.getRetryableEntries('llm');
     assert.ok(
       retryable.length >= 1,
       `DLQ should expose retryable entries, got ${retryable.length}`,
@@ -820,7 +820,7 @@ describe('M18: Sub-agent forever → noProgressThreshold aborts, cycle detector 
 });
 
 describe('M19: Tier 4 observability → DLQ tags, latency histograms, cost-by-failure-mode, provider health', () => {
-  it('v2 fix: DLQ entries carry numeric failure-mode tags', () => {
+  it('v2 fix: DLQ entries carry numeric failure-mode tags', async () => {
     const tmp = freshTmpDir('m19-dlq');
     const dlq = new DeadLetterQueue(tmp);
     dlq.enqueue({
@@ -830,7 +830,7 @@ describe('M19: Tier 4 observability → DLQ tags, latency histograms, cost-by-fa
       failureMode: 'compensation_exhausted',
       failureModeNumber: 12,
     });
-    dlq.flush();
+    await dlq.flush();
 
     const files = fs.readdirSync(tmp);
     assert.ok(files.length >= 1, 'DLQ file should be written');

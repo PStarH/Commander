@@ -965,9 +965,7 @@ export class DifferentialPrivacyLayer {
 // Tenant-aware singleton
 // ============================================================================
 
-const dpSingleton = createTenantAwareSingleton(() => new DifferentialPrivacyLayer(), {
-  allowGlobalFallback: true,
-});
+const dpSingleton = createTenantAwareSingleton(() => new DifferentialPrivacyLayer(), {});
 
 /** Resolve the active DifferentialPrivacyLayer via the current tenant context. */
 export function getDifferentialPrivacyLayer(): DifferentialPrivacyLayer {

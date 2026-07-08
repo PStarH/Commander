@@ -22,6 +22,7 @@ import { describe, it, beforeEach, afterEach, expect } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { runWithTenant } from '../../src/runtime/tenantContext';
 
 // ============================================================================
 // (a) buildHealthSources — live bus + DLQ values
@@ -58,34 +59,36 @@ describe('async-migration / buildHealthSources returns live values', () => {
   });
 
   it('reflects dlq.enqueue activity in getDLQInfo()', async () => {
-    const { buildHealthSources } = await import('../../src/runtime/healthCheck');
-    const { getDeadLetterQueue } = await import('../../src/runtime/deadLetterQueueSingleton');
-    const sources = buildHealthSources();
-    const dlq = getDeadLetterQueue();
+    await runWithTenant('test-tenant', async () => {
+      const { buildHealthSources } = await import('../../src/runtime/healthCheck');
+      const { getDeadLetterQueue } = await import('../../src/runtime/deadLetterQueueSingleton');
+      const sources = buildHealthSources();
+      const dlq = getDeadLetterQueue();
 
-    // Use a unique category per test so other tests' enqueues don't pollute
-    // the count. Compensation category is fine — it accepts arbitrary ops.
-    const uniqueOp = `op-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      // Use a unique category per test so other tests' enqueues don't pollute
+      // the count. Compensation category is fine — it accepts arbitrary ops.
+      const uniqueOp = `op-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
-    const baseline = sources.getDLQInfo!();
-    const baselineCompensation =
-      baseline.byCategory.find((c) => c.category === 'compensation')?.count ?? 0;
+      const baseline = await sources.getDLQInfo!();
+      const baselineCompensation =
+        baseline.byCategory.find((c) => c.category === 'compensation')?.count ?? 0;
 
-    dlq.enqueue({
-      category: 'compensation',
-      operationName: uniqueOp,
-      errorMessage: 'async-migration test entry',
-      tags: ['async-migration'],
-      failureMode: 'unknown',
-      failureModeNumber: 0,
+      dlq.enqueue({
+        category: 'compensation',
+        operationName: uniqueOp,
+        errorMessage: 'async-migration test entry',
+        tags: ['async-migration'],
+        failureMode: 'unknown',
+        failureModeNumber: 0,
+      });
+
+      const after = await sources.getDLQInfo!();
+      const afterCompensation =
+        after.byCategory.find((c) => c.category === 'compensation')?.count ?? 0;
+
+      expect(afterCompensation).toBeGreaterThanOrEqual(baselineCompensation + 1);
+      expect(after.totalEntries).toBeGreaterThanOrEqual(baseline.totalEntries + 1);
     });
-
-    const after = sources.getDLQInfo!();
-    const afterCompensation =
-      after.byCategory.find((c) => c.category === 'compensation')?.count ?? 0;
-
-    expect(afterCompensation).toBeGreaterThanOrEqual(baselineCompensation + 1);
-    expect(after.totalEntries).toBeGreaterThanOrEqual(baseline.totalEntries + 1);
   });
 
   it('getters swallow errors and fall back to zero/empty', async () => {

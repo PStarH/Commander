@@ -71,13 +71,21 @@ export interface DeadLetterEntry {
 
 export class DeadLetterQueue {
   private baseDir: string;
+  private baseDirEnsured = false;
   private buffers: Map<string, string[]> = new Map();
   // Track line counts per file to avoid re-reading just for counting
   private lineCounts: Map<string, number> = new Map();
+  // Serialize per-category flush operations so async writes stay atomic.
+  private flushLocks: Map<string, Promise<void>> = new Map();
 
   constructor(baseDir?: string) {
     this.baseDir = baseDir ?? path.join(process.cwd(), '.commander_dlq');
-    fs.mkdirSync(this.baseDir, { recursive: true });
+  }
+
+  private async ensureBaseDir(): Promise<void> {
+    if (this.baseDirEnsured) return;
+    await fs.promises.mkdir(this.baseDir, { recursive: true });
+    this.baseDirEnsured = true;
   }
 
   record(entry: DeadLetterEntry): void {
@@ -87,7 +95,14 @@ export class DeadLetterQueue {
     this.buffers.set(key, buffer);
 
     if (buffer.length >= 100) {
-      this.flush(key);
+      // Auto-flush is fire-and-forget: record() must stay synchronous and
+      // only manipulate the in-memory buffer. Errors are logged best-effort.
+      this.flush(key).catch((err) => {
+        getGlobalLogger().warn('DeadLetterQueue', 'Auto-flush failed', {
+          error: (err as Error)?.message,
+          category: key,
+        });
+      });
     }
     // Publish DLQ depth gauge (in-memory pending entries as a lower bound;
     // full on-disk depth is published by getStats()).
@@ -149,50 +164,73 @@ export class DeadLetterQueue {
 
   private static readonly MAX_ENTRIES_PER_FILE = 1000;
 
-  flush(category?: DLQCategory): void {
+  async flush(category?: DLQCategory): Promise<void> {
     const cats = category ? [category] : (Array.from(this.buffers.keys()) as DLQCategory[]);
     for (const cat of cats) {
-      // Atomic swap: take the buffer out first so concurrent record() calls
-      // go into a fresh buffer instead of getting lost when we clear below.
-      const buffer = this.buffers.get(cat);
-      if (!buffer || buffer.length === 0) continue;
-      this.buffers.set(cat, []);
-      const filePath = path.join(this.baseDir, `${cat}.ndjson`);
-      try {
-        // Append-only: just append new entries to the file (no read-modify-write)
-        const content = buffer.join('\n') + '\n';
-        fs.appendFileSync(filePath, content, 'utf-8');
-
-        // Update tracked line count
-        const prevCount = this.lineCounts.get(cat) ?? 0;
-        this.lineCounts.set(cat, prevCount + buffer.length);
-
-        // If over cap, rewrite file with only the last MAX_ENTRIES_PER_FILE lines
-        if ((this.lineCounts.get(cat) ?? 0) > DeadLetterQueue.MAX_ENTRIES_PER_FILE) {
-          const raw = fs.readFileSync(filePath, 'utf-8').trim();
-          const lines = raw ? raw.split('\n') : [];
-          const trimmed = lines.slice(-DeadLetterQueue.MAX_ENTRIES_PER_FILE);
-          const tmpPath = path.join(this.baseDir, `${cat}.tmp`);
-          fs.writeFileSync(tmpPath, trimmed.join('\n') + '\n', 'utf-8');
-          fs.renameSync(tmpPath, filePath);
-          this.lineCounts.set(cat, trimmed.length);
-        }
-      } catch (e) {
-        getGlobalLogger().warn('DeadLetterQueue', 'Failed to flush dead-letter entries', {
-          error: (e as Error)?.message,
-          category: cat,
-        });
-      }
+      await this.flushCategory(cat);
     }
   }
 
-  readEntries(category: DLQCategory, limit = 50): DeadLetterEntry[] {
-    // Flush in-memory buffer to disk first so reads see all enqueued entries
-    this.flush(category);
-    const filePath = path.join(this.baseDir, `${category}.ndjson`);
-    if (!fs.existsSync(filePath)) return [];
+  private async flushCategory(cat: DLQCategory): Promise<void> {
+    // Serialize flushes for this category so concurrent writes don't corrupt
+    // the append-only file or the tmp+rename atomic rewrite.
+    const previous = this.flushLocks.get(cat) ?? Promise.resolve();
+    const current = previous.then(
+      () => this.flushCategoryUnlocked(cat),
+      () => this.flushCategoryUnlocked(cat),
+    );
+    this.flushLocks.set(cat, current);
+    await current;
+  }
+
+  private async flushCategoryUnlocked(cat: DLQCategory): Promise<void> {
+    await this.ensureBaseDir();
+
+    // Atomic swap: take the buffer out first so concurrent record() calls
+    // go into a fresh buffer instead of getting lost when we clear below.
+    const buffer = this.buffers.get(cat);
+    if (!buffer || buffer.length === 0) return;
+    this.buffers.set(cat, []);
+    const filePath = path.join(this.baseDir, `${cat}.ndjson`);
     try {
-      const raw = fs.readFileSync(filePath, 'utf-8').trim();
+      // Append-only: just append new entries to the file (no read-modify-write)
+      const content = buffer.join('\n') + '\n';
+      await fs.promises.appendFile(filePath, content, 'utf-8');
+
+      // Update tracked line count
+      const prevCount = this.lineCounts.get(cat) ?? 0;
+      this.lineCounts.set(cat, prevCount + buffer.length);
+
+      // If over cap, rewrite file with only the last MAX_ENTRIES_PER_FILE lines
+      if ((this.lineCounts.get(cat) ?? 0) > DeadLetterQueue.MAX_ENTRIES_PER_FILE) {
+        const raw = (await fs.promises.readFile(filePath, 'utf-8')).trim();
+        const lines = raw ? raw.split('\n') : [];
+        const trimmed = lines.slice(-DeadLetterQueue.MAX_ENTRIES_PER_FILE);
+        const tmpPath = path.join(this.baseDir, `${cat}.tmp`);
+        await fs.promises.writeFile(tmpPath, trimmed.join('\n') + '\n', 'utf-8');
+        await fs.promises.rename(tmpPath, filePath);
+        this.lineCounts.set(cat, trimmed.length);
+      }
+    } catch (e) {
+      getGlobalLogger().warn('DeadLetterQueue', 'Failed to flush dead-letter entries', {
+        error: (e as Error)?.message,
+        category: cat,
+      });
+    }
+  }
+
+  async readEntries(category: DLQCategory, limit = 50): Promise<DeadLetterEntry[]> {
+    // Flush in-memory buffer to disk first so reads see all enqueued entries
+    await this.flush(category);
+    await this.ensureBaseDir();
+    const filePath = path.join(this.baseDir, `${category}.ndjson`);
+    try {
+      await fs.promises.access(filePath, fs.constants.F_OK);
+    } catch {
+      return [];
+    }
+    try {
+      const raw = (await fs.promises.readFile(filePath, 'utf-8')).trim();
       if (!raw) return [];
       const entries: DeadLetterEntry[] = [];
       // Read lines from end (most recent first) without reversing the whole array
@@ -222,10 +260,9 @@ export class DeadLetterQueue {
    * Get retryable entries: transient failures that haven't been recovered.
    * Useful for automated retry scheduling.
    */
-  getRetryableEntries(category: DLQCategory, limit = 10): DeadLetterEntry[] {
-    return this.readEntries(category, 100)
-      .filter((e) => e.retryable && !e.recovered && !e.compensated)
-      .slice(0, limit);
+  async getRetryableEntries(category: DLQCategory, limit = 10): Promise<DeadLetterEntry[]> {
+    const entries = await this.readEntries(category, 100);
+    return entries.filter((e) => e.retryable && !e.recovered && !e.compensated).slice(0, limit);
   }
 
   /**
@@ -237,15 +274,20 @@ export class DeadLetterQueue {
    * Cross-category search: iterates .ndjson files in baseDir looking
    * for the matching id. Returns null if the entry is not found.
    */
-  replay(entryId: string): { category: DLQCategory; entry: DeadLetterEntry } | null {
+  async replay(entryId: string): Promise<{ category: DLQCategory; entry: DeadLetterEntry } | null> {
     // Flush all buffers to disk so replay can find entries not yet written
-    this.flush();
-    const files = fs.readdirSync(this.baseDir).filter((f) => f.endsWith('.ndjson'));
+    await this.flush();
+    await this.ensureBaseDir();
+    const files = (await fs.promises.readdir(this.baseDir)).filter((f) => f.endsWith('.ndjson'));
     for (const file of files) {
       const category = file.replace('.ndjson', '') as DLQCategory;
       const filePath = path.join(this.baseDir, file);
-      if (!fs.existsSync(filePath)) continue;
-      const raw = fs.readFileSync(filePath, 'utf-8').trim();
+      let raw: string;
+      try {
+        raw = (await fs.promises.readFile(filePath, 'utf-8')).trim();
+      } catch {
+        continue;
+      }
       if (!raw) continue;
       const lines = raw.split('\n');
       const idx = lines.findIndex((line) => {
@@ -264,8 +306,8 @@ export class DeadLetterQueue {
         entry.tags = [...(entry.tags ?? []), 'replayed'];
         lines[idx] = JSON.stringify(entry);
         const tmp = path.join(this.baseDir, `${category}.replay.tmp`);
-        fs.writeFileSync(tmp, lines.join('\n') + '\n', 'utf-8');
-        fs.renameSync(tmp, filePath);
+        await fs.promises.writeFile(tmp, lines.join('\n') + '\n', 'utf-8');
+        await fs.promises.rename(tmp, filePath);
         this.lineCounts.set(category, lines.length);
         return { category, entry };
       } catch (e) {
@@ -289,13 +331,18 @@ export class DeadLetterQueue {
    *   2. Consumer re-executes the operation
    *   3. Consumer calls markRecovered(entryId) on success
    */
-  markRecovered(entryId: string): boolean {
-    this.flush();
-    const files = fs.readdirSync(this.baseDir).filter((f) => f.endsWith('.ndjson'));
+  async markRecovered(entryId: string): Promise<boolean> {
+    await this.flush();
+    await this.ensureBaseDir();
+    const files = (await fs.promises.readdir(this.baseDir)).filter((f) => f.endsWith('.ndjson'));
     for (const file of files) {
       const filePath = path.join(this.baseDir, file);
-      if (!fs.existsSync(filePath)) continue;
-      const raw = fs.readFileSync(filePath, 'utf-8').trim();
+      let raw: string;
+      try {
+        raw = (await fs.promises.readFile(filePath, 'utf-8')).trim();
+      } catch {
+        continue;
+      }
       if (!raw) continue;
       const lines = raw.split('\n');
       const idx = lines.findIndex((line) => {
@@ -312,8 +359,8 @@ export class DeadLetterQueue {
         parsed.recovered = true;
         lines[idx] = JSON.stringify(parsed);
         const tmpPath = filePath + '.tmp';
-        fs.writeFileSync(tmpPath, lines.join('\n') + '\n');
-        fs.renameSync(tmpPath, filePath);
+        await fs.promises.writeFile(tmpPath, lines.join('\n') + '\n');
+        await fs.promises.rename(tmpPath, filePath);
         return true;
       } catch (err) {
         reportSilentFailure(err, `deadLetterQueue:markRecovered:${entryId}`);
@@ -328,14 +375,17 @@ export class DeadLetterQueue {
    * haven't been recovered yet. The caller decides what to do with
    * these (re-execute via saga, alert an operator, etc.).
    */
-  listUnrecoveredEntries(limit = 50): Array<{ category: DLQCategory; entry: DeadLetterEntry }> {
+  async listUnrecoveredEntries(
+    limit = 50,
+  ): Promise<Array<{ category: DLQCategory; entry: DeadLetterEntry }>> {
     // Flush all buffers to disk so the listing includes pending entries
-    this.flush();
+    await this.flush();
+    await this.ensureBaseDir();
     const result: Array<{ category: DLQCategory; entry: DeadLetterEntry }> = [];
-    const files = fs.readdirSync(this.baseDir).filter((f) => f.endsWith('.ndjson'));
+    const files = (await fs.promises.readdir(this.baseDir)).filter((f) => f.endsWith('.ndjson'));
     for (const file of files) {
       const category = file.replace('.ndjson', '') as DLQCategory;
-      const entries = this.readEntries(category, limit);
+      const entries = await this.readEntries(category, limit);
       for (const entry of entries) {
         if (!entry.recovered && entry.retryable) {
           result.push({ category, entry });
@@ -346,20 +396,21 @@ export class DeadLetterQueue {
     return result;
   }
 
-  getStats(): { category: string; count: number }[] {
+  async getStats(): Promise<{ category: string; count: number }[]> {
     // Flush all buffers so stats reflect pending entries
-    this.flush();
+    await this.flush();
+    await this.ensureBaseDir();
     const results: { category: string; count: number }[] = [];
     let totalDepth = 0;
     try {
-      const files = fs.readdirSync(this.baseDir);
+      const files = await fs.promises.readdir(this.baseDir);
       for (const f of files) {
         if (f.endsWith('.ndjson')) {
           const cat = f.replace('.ndjson', '');
           // Use tracked count if available, otherwise count by reading
           let count = this.lineCounts.get(cat);
           if (count === undefined) {
-            const raw = fs.readFileSync(path.join(this.baseDir, f), 'utf-8').trim();
+            const raw = (await fs.promises.readFile(path.join(this.baseDir, f), 'utf-8')).trim();
             count = raw ? raw.split('\n').length : 0;
             this.lineCounts.set(cat, count);
           }

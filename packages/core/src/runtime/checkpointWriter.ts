@@ -852,9 +852,7 @@ export class CheckpointWriter {
 // Singleton
 // ============================================================================
 
-const checkpointWriterSingleton = createTenantAwareSingleton(() => new CheckpointWriter(), {
-  allowGlobalFallback: true,
-});
+const checkpointWriterSingleton = createTenantAwareSingleton(() => new CheckpointWriter(), {});
 
 export function getCheckpointWriter(): CheckpointWriter {
   return checkpointWriterSingleton.get();

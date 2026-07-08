@@ -136,9 +136,7 @@ export class PatternTracker {
 
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
-const patternTrackerSingleton = createTenantAwareSingleton(() => new PatternTracker(), {
-  allowGlobalFallback: true,
-});
+const patternTrackerSingleton = createTenantAwareSingleton(() => new PatternTracker(), {});
 
 export function getPatternTracker(): PatternTracker {
   return patternTrackerSingleton.get();

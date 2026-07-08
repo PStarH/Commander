@@ -788,9 +788,7 @@ export function resetTokenBudgetManager(): void {
   budgetManagerSingleton.reset();
 }
 
-const budgetManagerSingleton = createTenantAwareSingleton(() => new TokenBudgetManager(), {
-  allowGlobalFallback: true,
-});
+const budgetManagerSingleton = createTenantAwareSingleton(() => new TokenBudgetManager(), {});
 
 // ============================================================================
 // Singleton
@@ -798,9 +796,7 @@ const budgetManagerSingleton = createTenantAwareSingleton(() => new TokenBudgetM
 
 let _governorConfig: Partial<GovernorConfig> | undefined;
 
-const governorSingleton = createTenantAwareSingleton(() => new TokenGovernor(_governorConfig), {
-  allowGlobalFallback: true,
-});
+const governorSingleton = createTenantAwareSingleton(() => new TokenGovernor(_governorConfig), {});
 
 /** Get the global TokenGovernor (single-tenant) or tenant-scoped (multi-tenant). */
 export function getTokenGovernor(config?: Partial<GovernorConfig>): TokenGovernor {

@@ -502,9 +502,7 @@ export class DataRetentionJanitor {
 
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
-const janitorSingleton = createTenantAwareSingleton(() => new DataRetentionJanitor(), {
-  allowGlobalFallback: true,
-});
+const janitorSingleton = createTenantAwareSingleton(() => new DataRetentionJanitor(), {});
 
 // Module-level dedup: ensures N concurrent HttpServer instances that all
 // call `.schedule()` on the same rootDir produce exactly ONE running

@@ -472,11 +472,6 @@ export class SagaCoordinator {
     return steps.reverse();
   }
 
-  /** @deprecated Use collectAllCompensable() — walk-based collection covers parallel branches. */
-  private collectCompensablePath(_failedNodeId: string): CompensableStep[] {
-    return this.collectAllCompensable();
-  }
-
   private makeResult(status: 'committed' | 'aborted', options: SagaRunOptions): SagaResult {
     const results: Record<string, unknown> = {};
     if (options.includeResults !== false) {

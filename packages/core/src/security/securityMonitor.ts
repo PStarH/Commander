@@ -427,9 +427,7 @@ export class SecurityMonitor {
 
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
-const securityMonitorSingleton = createTenantAwareSingleton(() => new SecurityMonitor(), {
-  allowGlobalFallback: true,
-});
+const securityMonitorSingleton = createTenantAwareSingleton(() => new SecurityMonitor(), {});
 
 export function getSecurityMonitor(): SecurityMonitor {
   return securityMonitorSingleton.get();

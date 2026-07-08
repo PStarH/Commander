@@ -54,7 +54,7 @@ describe('ProcessCrashSafety — reversibility tier 1.1', () => {
     assert.strictEqual(isShuttingDown(), false);
   });
 
-  it('records DLQ entry on uncaughtException', () => {
+  it('records DLQ entry on uncaughtException', async () => {
     const deps = {
       dlq,
       leaseManager: lm,
@@ -68,7 +68,7 @@ describe('ProcessCrashSafety — reversibility tier 1.1', () => {
 
     process.emit('uncaughtException', new Error('synthetic crash'));
 
-    const entries = dlq.readEntries('execution', 100);
+    const entries = await dlq.readEntries('execution', 100);
     const crashEntries = entries.filter(
       (e) =>
         e.tags.includes('crash') && e.tags.includes('uncaughtException') && e.runId === 'run-1',
@@ -77,14 +77,14 @@ describe('ProcessCrashSafety — reversibility tier 1.1', () => {
     assert.match(crashEntries[0].errorMessage, /synthetic crash/);
   });
 
-  it('records DLQ entry on unhandledRejection', () => {
+  it('records DLQ entry on unhandledRejection', async () => {
     const deps = { dlq, leaseManager: lm, activeRunIds: () => activeRuns };
     installProcessCrashHandlers(deps);
     activeRuns.add('run-2');
 
     process.emit('unhandledRejection', new Error('async failure'));
 
-    const entries = dlq.readEntries('execution', 100);
+    const entries = await dlq.readEntries('execution', 100);
     const crashEntries = entries.filter(
       (e) => e.runId === 'run-2' && e.tags.includes('unhandledRejection'),
     );

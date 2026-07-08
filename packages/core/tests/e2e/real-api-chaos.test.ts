@@ -41,7 +41,7 @@ import { resetCheckpointWriter } from '../../src/runtime/checkpointWriter';
 import { resetSLOManager } from '../../src/observability/sloManager';
 import { resetEnterpriseSecurityGateway } from '../../src/security/enterpriseSecurityGateway';
 import { resetBillExplosionGuard } from '../../src/security/billExplosionGuard';
-import { resetCostGuard } from '../../src/security/costGuard';
+import { resetUnifiedCostAuthority } from '../../src/security/unifiedCostAuthority';
 import { resetSecurityMonitor } from '../../src/security/securityMonitor';
 import { resetGuardianAgent } from '../../src/security/guardianAgent';
 import type { LLMRequest, LLMResponse } from '../../src/runtime/types';
@@ -111,7 +111,7 @@ function resetGlobals() {
   resetSLOManager();
   resetEnterpriseSecurityGateway();
   resetBillExplosionGuard();
-  resetCostGuard();
+  resetUnifiedCostAuthority();
   resetSecurityMonitor();
   resetGuardianAgent();
 }

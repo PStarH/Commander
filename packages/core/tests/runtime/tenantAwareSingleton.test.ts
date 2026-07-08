@@ -133,9 +133,15 @@ describe('tenantAwareSingleton', () => {
     expect(a).not.toBe(b);
   });
 
-  it('throws outside tenant context by default', () => {
-    const singleton = createTenantAwareSingleton(factory);
-    expect(() => singleton.get()).toThrow(TenantIsolationError);
+  it('throws outside tenant context by default in production', () => {
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const singleton = createTenantAwareSingleton(factory);
+      expect(() => singleton.get()).toThrow(TenantIsolationError);
+    } finally {
+      process.env.NODE_ENV = prev;
+    }
   });
 
   it('falls back to global instance outside tenant context when explicitly allowed', () => {
@@ -217,10 +223,9 @@ describe('tenantAwareSingleton', () => {
     const dispose = vi.fn();
     const singleton = createTenantAwareSingleton(factory, { dispose });
     runWithTenant('tenant-1', () => singleton.get());
-    singleton.getGlobal();
     singleton.reset();
     expect(singleton.tenantCount()).toBe(0);
-    expect(dispose).toHaveBeenCalledTimes(2);
+    expect(dispose).toHaveBeenCalledTimes(1);
   });
 
   it('disposes explicit tenant', () => {

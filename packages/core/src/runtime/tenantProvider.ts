@@ -204,9 +204,10 @@ export function resetGlobalTenantProvider(): void {
   setMultiTenantEnabled(false);
 }
 
-const memoryRegistrySingleton = createTenantAwareSingleton(() => new ThreeLayerMemoryRegistry(), {
-  allowGlobalFallback: true,
-});
+const memoryRegistrySingleton = createTenantAwareSingleton(
+  () => new ThreeLayerMemoryRegistry(),
+  {},
+);
 
 export function getGlobalMemoryRegistry(): ThreeLayerMemoryRegistry {
   return memoryRegistrySingleton.get();

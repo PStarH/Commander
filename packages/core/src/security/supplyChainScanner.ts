@@ -689,9 +689,7 @@ export class SupplyChainScanner {
 // Tenant-aware singleton
 // ============================================================================
 
-const supplyChainScannerSingleton = createTenantAwareSingleton(() => new SupplyChainScanner(), {
-  allowGlobalFallback: true,
-});
+const supplyChainScannerSingleton = createTenantAwareSingleton(() => new SupplyChainScanner(), {});
 
 export function getSupplyChainScanner(): SupplyChainScanner {
   return supplyChainScannerSingleton.get();

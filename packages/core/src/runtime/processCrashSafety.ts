@@ -59,7 +59,7 @@ export function installProcessCrashHandlers(deps: CrashSafetyDeps): void {
 
   const log = getGlobalLogger();
 
-  const gracefulShutdown = (source: CrashSource, err?: Error) => {
+  const gracefulShutdown = async (source: CrashSource, err?: Error) => {
     if (shuttingDown) return;
     shuttingDown = true;
 
@@ -165,7 +165,7 @@ export function installProcessCrashHandlers(deps: CrashSafetyDeps): void {
     }
 
     try {
-      deps.dlq.flush();
+      await deps.dlq.flush();
     } catch (e) {
       log.error('ProcessCrashSafety', 'DLQ flush failed during crash shutdown', undefined, {
         errorMessage: (e as Error).message,
@@ -173,13 +173,35 @@ export function installProcessCrashHandlers(deps: CrashSafetyDeps): void {
     }
   };
 
-  process.on('uncaughtException', (err) => gracefulShutdown('uncaughtException', err));
+  process.on('uncaughtException', (err) => {
+    gracefulShutdown('uncaughtException', err).catch((e) => {
+      log.error('ProcessCrashSafety', 'Graceful shutdown failed', undefined, {
+        errorMessage: (e as Error).message,
+      });
+    });
+  });
   process.on('unhandledRejection', (reason) => {
     const err = reason instanceof Error ? reason : new Error(String(reason));
-    gracefulShutdown('unhandledRejection', err);
+    gracefulShutdown('unhandledRejection', err).catch((e) => {
+      log.error('ProcessCrashSafety', 'Graceful shutdown failed', undefined, {
+        errorMessage: (e as Error).message,
+      });
+    });
   });
-  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  process.on('SIGTERM', () => {
+    gracefulShutdown('SIGTERM').catch((e) => {
+      log.error('ProcessCrashSafety', 'Graceful shutdown failed', undefined, {
+        errorMessage: (e as Error).message,
+      });
+    });
+  });
+  process.on('SIGINT', () => {
+    gracefulShutdown('SIGINT').catch((e) => {
+      log.error('ProcessCrashSafety', 'Graceful shutdown failed', undefined, {
+        errorMessage: (e as Error).message,
+      });
+    });
+  });
 }
 
 export function isShuttingDown(): boolean {

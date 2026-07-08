@@ -1097,11 +1097,7 @@ export class ThreeLayerMemory {
 
 import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
 
-const DEFAULT_PERSIST_PATH = '.commander/memory/three-layer.json';
-
-const memorySingleton = createTenantAwareSingleton(() => new ThreeLayerMemory(), {
-  allowGlobalFallback: true,
-});
+const memorySingleton = createTenantAwareSingleton(() => new ThreeLayerMemory(), {});
 
 export function getGlobalThreeLayerMemory(): ThreeLayerMemory {
   return memorySingleton.get();
@@ -1125,16 +1121,6 @@ export function createThreeLayerMemory(
  * Get a persisted three-layer memory instance.
  * Data is stored at `.commander/memory/three-layer.json` relative to the given base path.
  *
- * @deprecated (audit MED item 1 — Phase A additive) Use `createThreeLayerMemory`
- * with `memoryStore` set instead. The `.commander/memory/three-layer.json` file
- * persistence path will be retired in Phase C. This entry point is preserved
- * for backward compatibility only and should not be used in new code.
- */
-export function createPersistedThreeLayerMemory(basePath?: string): ThreeLayerMemory {
-  const persistPath = basePath ? `${basePath}/three-layer.json` : DEFAULT_PERSIST_PATH;
-  return new ThreeLayerMemory({ persistPath });
-}
-
 /**
  * Pure mapping from a Three-layer MemoryEntry to MemoryWriteOptions.
  *
