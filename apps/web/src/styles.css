@@ -51,11 +51,14 @@
   --radius-full: 999px;
 
   /* Colored shadows tinted with the green hue — feels intentional, not generic black */
-  --shadow-card: 0 0 0 1px rgba(2, 5, 10, 0.9), 0 18px 40px rgba(0, 0, 0, 0.55),
+  --shadow-card:
+    0 0 0 1px rgba(2, 5, 10, 0.9), 0 18px 40px rgba(0, 0, 0, 0.55),
     0 2px 8px rgba(77, 233, 140, 0.04);
-  --shadow-elevated: 0 0 0 1px rgba(2, 5, 10, 0.9), 0 24px 60px rgba(0, 0, 0, 0.7),
+  --shadow-elevated:
+    0 0 0 1px rgba(2, 5, 10, 0.9), 0 24px 60px rgba(0, 0, 0, 0.7),
     0 4px 12px rgba(77, 233, 140, 0.06);
-  --shadow-hover: 0 0 0 1px var(--accent-green-border), 0 20px 48px rgba(0, 0, 0, 0.6),
+  --shadow-hover:
+    0 0 0 1px var(--accent-green-border), 0 20px 48px rgba(0, 0, 0, 0.6),
     0 6px 16px rgba(77, 233, 140, 0.1);
 
   --sidebar-w: 220px;
@@ -283,8 +286,13 @@ p {
 }
 
 @keyframes statusPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 
 .sidebar-user {
@@ -467,7 +475,9 @@ p {
   background: var(--bg-card);
   box-shadow: var(--shadow-card);
   position: relative;
-  transition: border-color var(--transition), box-shadow var(--transition),
+  transition:
+    border-color var(--transition),
+    box-shadow var(--transition),
     transform var(--transition);
 }
 
@@ -645,7 +655,9 @@ p {
   color: var(--text-primary);
   padding: 0 10px;
   font-size: 0.82rem;
-  transition: border-color var(--transition), box-shadow var(--transition);
+  transition:
+    border-color var(--transition),
+    box-shadow var(--transition);
   font-family: var(--font-mono);
 }
 
@@ -838,7 +850,9 @@ p {
 .agent-card {
   padding: 0;
   overflow: hidden;
-  transition: transform var(--transition), border-color var(--transition),
+  transition:
+    transform var(--transition),
+    border-color var(--transition),
     box-shadow var(--transition);
 }
 
@@ -863,17 +877,23 @@ p {
 
 .agent-card.status-ready {
   border-top: 2px solid var(--accent-green);
-  box-shadow: 0 0 24px rgba(77, 233, 140, 0.06), var(--shadow-card);
+  box-shadow:
+    0 0 24px rgba(77, 233, 140, 0.06),
+    var(--shadow-card);
 }
 
 .agent-card.status-running {
   border-top: 2px solid var(--accent-blue);
-  box-shadow: 0 0 24px rgba(77, 158, 255, 0.06), var(--shadow-card);
+  box-shadow:
+    0 0 24px rgba(77, 158, 255, 0.06),
+    var(--shadow-card);
 }
 
 .agent-card.status-blocked {
   border-top: 2px solid var(--accent-amber);
-  box-shadow: 0 0 24px rgba(255, 204, 102, 0.06), var(--shadow-card);
+  box-shadow:
+    0 0 24px rgba(255, 204, 102, 0.06),
+    var(--shadow-card);
 }
 
 .agent-card.status-offline {
@@ -1148,7 +1168,9 @@ p {
   border-left: 2px solid transparent;
   padding-left: 12px;
   margin-left: 0;
-  transition: border-color var(--transition), background var(--transition);
+  transition:
+    border-color var(--transition),
+    background var(--transition);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
@@ -2468,4 +2490,39 @@ p {
   .agent-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* ==============================
+   SLO Dashboard
+   ============================== */
+
+.slo-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-family: var(--font-mono);
+}
+
+.slo-tag-passing {
+  border-color: var(--accent-green-border);
+  color: var(--accent-green);
+  background: var(--accent-green-bg);
+}
+
+.slo-tag-risk {
+  border-color: var(--accent-amber-border);
+  color: var(--accent-amber);
+  background: var(--accent-amber-bg);
+}
+
+.slo-tag-breached {
+  border-color: var(--accent-red-border);
+  color: var(--accent-red);
+  background: var(--accent-red-bg);
 }

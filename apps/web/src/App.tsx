@@ -8,6 +8,7 @@ import { ExecutionPage } from './pages/ExecutionPage';
 import { MemoryPage } from './pages/MemoryPage';
 import { GovernancePage } from './pages/GovernancePage';
 import { SecurityPosturePage } from './pages/SecurityPosturePage';
+import { SLOPage } from './pages/SLOPage';
 import { ChatPage } from './pages/ChatPage';
 import { DlqPage } from './pages/DlqPage';
 import { CostPage } from './pages/CostPage';
@@ -175,6 +176,7 @@ export default function App() {
         )}
         <Routes>
           <Route path="/security" element={<SecurityPosturePage />} />
+          <Route path="/slo" element={<SLOPage />} />
           <Route path="/chat" element={<ChatPage />} />
           <Route path="/dlq" element={<DlqPage />} />
           <Route path="/audit" element={<AuditLogPage />} />
