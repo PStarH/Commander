@@ -512,3 +512,24 @@ export interface LineageSummaryResponse {
   maxDepth: number;
   activeNodes: number;
 }
+
+// ============================================================================
+// Service Level Objectives — public SLO dashboard
+// ============================================================================
+
+export interface SLOMeasurement {
+  name: string;
+  target: string;
+  actual: string;
+  status: 'passing' | 'at_risk' | 'breached';
+  threshold?: string;
+  evidence?: string;
+}
+
+export interface SLOStatus {
+  updatedAt: string;
+  overall: 'passing' | 'at_risk' | 'breached';
+  apiSuccessRate: number;
+  p95PlanLatencyMs: number;
+  measurements: SLOMeasurement[];
+}
