@@ -23,6 +23,7 @@ import {
   Settings,
   Key,
   Briefcase,
+  Activity,
 } from 'lucide-react';
 import type { AuthUser } from '../api';
 import { t } from '../i18n';
@@ -39,6 +40,7 @@ const NAV_ITEMS = [
   { to: '/poc', icon: Briefcase, label: t('nav.poc') },
   { to: '/dlq', icon: AlertTriangle, label: t('nav.dlq') },
   { to: '/security', icon: Fingerprint, label: t('nav.security') },
+  { to: '/slo', icon: Activity, label: t('nav.slo') },
   { to: '/audit', icon: ClipboardList, label: t('nav.audit') },
   { to: '/knowledge', icon: Library, label: t('nav.knowledge') },
   { to: '/eval', icon: FlaskConical, label: 'Eval' },
