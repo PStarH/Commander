@@ -11,7 +11,7 @@ import type {
   TELOSConfig,
 } from './types';
 import { DEFAULT_TELOS_CONFIG } from './types';
-import { TokenSentinel, getTokenSentinel } from './tokenSentinel';
+import { TokenSentinel, getTokenSentinel, calculateCostBreakdown } from './tokenSentinel';
 import { ProviderPool, getProviderPool } from './providerPool';
 
 function generateId(): string {
@@ -281,11 +281,6 @@ export class TELOSOrchestrator {
       return { allowed: false, reason: sentinelCheck.reason };
     }
 
-    const costCheck = this.sentinel.checkCostBudget(planId);
-    if (costCheck) {
-      return { allowed: false, reason: costCheck.message };
-    }
-
     return { allowed: true };
   }
 
@@ -401,13 +396,14 @@ export class TELOSOrchestrator {
 
         // Track cost using per-record cost to avoid cross-plan misattribution
         if (execResult.status === 'success') {
-          const costRecord = this.sentinel.recordCostFromUsage(
-            planId,
-            assignment.agentId,
+          const costBreakdown = calculateCostBreakdown(
             routing.modelId,
-            execResult.totalTokenUsage,
+            execResult.totalTokenUsage.promptTokens,
+            execResult.totalTokenUsage.completionTokens,
+            execResult.totalTokenUsage.cacheReadTokens ?? 0,
+            execResult.totalTokenUsage.cacheWriteTokens ?? 0,
           );
-          totalCostUsd += costRecord.costUsd;
+          totalCostUsd += costBreakdown.totalUsd;
         }
 
         totalTokens += execResult.totalTokenUsage.totalTokens;

@@ -75,24 +75,21 @@ import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
 const LEGACY_SKILLS_DIR = path.join(process.cwd(), '.commander', 'skills');
 
-const skillSystemSingleton = createTenantAwareSingleton(
-  () => {
-    const store = new SkillStore();
-    const manager = new SkillManager(store);
-    store
-      .migrateFromJson()
-      .catch((e) =>
-        getGlobalLogger().warn('Skills', 'Migration failed', { error: (e as Error)?.message }),
-      );
-    return {
-      manager,
-      injector: new SkillInjector(manager),
-      curator: new SkillCurator(manager),
-      bridge: new MetaLearnerBridge(getMetaLearner(), manager),
-    };
-  },
-  { allowGlobalFallback: true },
-);
+const skillSystemSingleton = createTenantAwareSingleton(() => {
+  const store = new SkillStore();
+  const manager = new SkillManager(store);
+  store
+    .migrateFromJson()
+    .catch((e) =>
+      getGlobalLogger().warn('Skills', 'Migration failed', { error: (e as Error)?.message }),
+    );
+  return {
+    manager,
+    injector: new SkillInjector(manager),
+    curator: new SkillCurator(manager),
+    bridge: new MetaLearnerBridge(getMetaLearner(), manager),
+  };
+});
 
 function getManager(): SkillManager {
   return skillSystemSingleton.get().manager;

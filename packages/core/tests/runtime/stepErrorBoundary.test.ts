@@ -119,8 +119,8 @@ describe('StepErrorBoundary', () => {
     await boundary.execute('test-op', 'tool', async () => {
       throw Object.assign(new Error('unauthorized'), { statusCode: 401 });
     });
-    dlq.flush('tool');
-    const entries = dlq.readEntries('tool');
+    await dlq.flush('tool');
+    const entries = await dlq.readEntries('tool');
     expect(entries.length).toBe(1);
     expect(entries[0].errorMessage).toBe('Authentication failed: invalid API key');
   });
@@ -130,8 +130,8 @@ describe('StepErrorBoundary', () => {
     await boundary.execute('test-op', 'tool', async () => {
       throw new Error('timeout');
     });
-    dlq.flush('tool');
-    const entries = dlq.readEntries('tool');
+    await dlq.flush('tool');
+    const entries = await dlq.readEntries('tool');
     expect(entries.length).toBe(3);
     entries.forEach((e: any) => expect(e.retryable).toBe(true));
   });

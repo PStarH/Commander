@@ -313,12 +313,12 @@ export class ReliabilityEngine {
   }
 
   /** Read recent entries from a dead letter category. */
-  readDLQ(category: DLQCategory, limit?: number): DeadLetterEntry[] {
+  async readDLQ(category: DLQCategory, limit?: number): Promise<DeadLetterEntry[]> {
     return this._deadLetterQueue.readEntries(category, limit);
   }
 
   /** Get retryable DLQ entries that haven't been recovered. */
-  getRetryableEntries(category: DLQCategory, limit?: number): DeadLetterEntry[] {
+  async getRetryableEntries(category: DLQCategory, limit?: number): Promise<DeadLetterEntry[]> {
     return this._deadLetterQueue.getRetryableEntries(category, limit);
   }
 
@@ -434,10 +434,10 @@ export class ReliabilityEngine {
   }
 
   /** Get a unified stats snapshot. */
-  getStats(): ReliabilityStats {
+  async getStats(): Promise<ReliabilityStats> {
     return {
       circuit: this._circuitBreaker.getStats(),
-      dlq: this._deadLetterQueue.getStats(),
+      dlq: await this._deadLetterQueue.getStats(),
       compensation: {
         pending: this._compensationRegistry.getPendingCount(),
         compensated: this._compensationRegistry.getCompensatedCount(),
@@ -447,15 +447,15 @@ export class ReliabilityEngine {
   }
 
   /** Flush pending buffers and release any resources. */
-  flush(): void {
-    this._deadLetterQueue.flush();
+  async flush(): Promise<void> {
+    await this._deadLetterQueue.flush();
   }
 
   /** Shut down the reliability engine, flushing all pending data. */
-  shutdown(): void {
+  async shutdown(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
-    this.flush();
+    await this.flush();
     this._stateCheckpointer.dispose();
     this._compensationRegistry.clear();
     // Close the ATR checkpoint backend so tests do not leak open SQLite

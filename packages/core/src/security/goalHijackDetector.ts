@@ -1425,7 +1425,6 @@ const goalHijackDetectorSingleton = createTenantAwareSingleton<GoalHijackDetecto
   () => new GoalHijackDetector(),
   {
     componentName: 'GoalHijackDetector',
-    allowGlobalFallback: true,
   },
 );
 

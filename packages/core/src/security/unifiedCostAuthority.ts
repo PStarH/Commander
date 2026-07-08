@@ -750,5 +750,4 @@ export function resetUnifiedCostAuthority(): void {
 
 const singleton = createTenantAwareSingleton(() => new UnifiedCostAuthority(), {
   componentName: 'UnifiedCostAuthority',
-  allowGlobalFallback: true,
 });

@@ -344,7 +344,7 @@ describe('DeadLetterQueue integration', () => {
     } catch {}
   });
 
-  it('enqueues and retrieves a dead letter entry', () => {
+  it('enqueues and retrieves a dead letter entry', async () => {
     dlq.enqueue({
       category: 'execution',
       runId: 'dlq-test-run',
@@ -352,15 +352,15 @@ describe('DeadLetterQueue integration', () => {
       operationName: 'test-operation',
       errorMessage: 'critical failure',
     });
-    dlq.flush('execution');
+    await dlq.flush('execution');
 
-    const entries = dlq.readEntries('execution');
+    const entries = await dlq.readEntries('execution');
     expect(entries.length).toBe(1);
     expect(entries[0].runId).toBe('dlq-test-run');
     expect(entries[0].errorMessage).toContain('critical failure');
   });
 
-  it('returns multiple dead letter entries across categories', () => {
+  it('returns multiple dead letter entries across categories', async () => {
     dlq.enqueue({
       category: 'llm',
       runId: 'run-1',
@@ -375,18 +375,18 @@ describe('DeadLetterQueue integration', () => {
       operationName: 'execute',
       errorMessage: 'execution error',
     });
-    dlq.flush('llm');
-    dlq.flush('execution');
+    await dlq.flush('llm');
+    await dlq.flush('execution');
 
-    const llmEntries = dlq.readEntries('llm');
-    const execEntries = dlq.readEntries('execution');
+    const llmEntries = await dlq.readEntries('llm');
+    const execEntries = await dlq.readEntries('execution');
     expect(llmEntries.length).toBe(1);
     expect(execEntries.length).toBe(1);
     expect(llmEntries[0].runId).toBe('run-1');
     expect(execEntries[0].runId).toBe('run-2');
   });
 
-  it('collects per-category stats', () => {
+  it('collects per-category stats', async () => {
     dlq.enqueue({
       category: 'execution',
       runId: 'run-target',
@@ -401,10 +401,10 @@ describe('DeadLetterQueue integration', () => {
       operationName: 'verify',
       errorMessage: 'other error',
     });
-    dlq.flush('execution');
-    dlq.flush('verification');
+    await dlq.flush('execution');
+    await dlq.flush('verification');
 
-    const stats = dlq.getStats();
+    const stats = await dlq.getStats();
     const execStat = stats.find((s) => s.category === 'execution');
     const verStat = stats.find((s) => s.category === 'verification');
     expect(execStat).toBeDefined();

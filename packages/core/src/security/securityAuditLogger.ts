@@ -566,7 +566,7 @@ export class SecurityAuditLogger {
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
 const securityAuditSingleton = createTenantAwareSingleton(() => new SecurityAuditLogger(), {
-  allowGlobalFallback: true,
+  componentName: 'SecurityAuditLogger',
 });
 
 export function getSecurityAuditLogger(): SecurityAuditLogger {
