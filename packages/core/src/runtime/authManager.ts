@@ -327,9 +327,7 @@ export class AuthManager {
 
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
-const authManagerSingleton = createTenantAwareSingleton(() => new AuthManager(), {
-  allowGlobalFallback: true,
-});
+const authManagerSingleton = createTenantAwareSingleton(() => new AuthManager(), {});
 
 export function getAuthManager(): AuthManager {
   return authManagerSingleton.get();

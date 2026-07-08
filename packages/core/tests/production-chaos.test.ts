@@ -185,7 +185,7 @@ describe('Production Chaos — 4. Dead Letter Queue Persistence', () => {
     fs.rmSync(tmpPath, { recursive: true, force: true });
   });
 
-  it('persists 100 errors and retrieves them', () => {
+  it('persists 100 errors and retrieves them', async () => {
     for (let i = 0; i < 100; i++) {
       dlq.enqueue({
         category: 'llm',
@@ -196,13 +196,13 @@ describe('Production Chaos — 4. Dead Letter Queue Persistence', () => {
         retryable: true,
       });
     }
-    dlq.flush('llm');
-    const entries = dlq.readEntries('llm', 100);
+    await dlq.flush('llm');
+    const entries = await dlq.readEntries('llm', 100);
     assert.ok(entries.length > 0, `Should have entries, got ${entries.length}`);
     console.log(`  DLQ: persisted ${entries.length} entries`);
   });
 
-  it('handles concurrent enqueue operations', () => {
+  it('handles concurrent enqueue operations', async () => {
     for (let i = 0; i < 50; i++) {
       dlq.enqueue({
         category: 'tool',
@@ -213,8 +213,8 @@ describe('Production Chaos — 4. Dead Letter Queue Persistence', () => {
         retryable: false,
       });
     }
-    dlq.flush('tool');
-    const entries = dlq.readEntries('tool', 50);
+    await dlq.flush('tool');
+    const entries = await dlq.readEntries('tool', 50);
     assert.ok(entries.length > 0);
   });
 });

@@ -26,8 +26,8 @@ describe('DeadLetterQueue', async () => {
       recovered: false,
       tags: [],
     });
-    dlq.flush('tool');
-    const entries = dlq.readEntries('tool', 10);
+    await dlq.flush('tool');
+    const entries = await dlq.readEntries('tool', 10);
     assert.ok(entries.length >= 1);
     assert.equal(entries[0].errorMessage, 'timeout');
     assert.equal(entries[0].operationName, 'web_search');
@@ -51,8 +51,8 @@ describe('DeadLetterQueue', async () => {
       recovered: false,
       tags: [],
     });
-    dlq.flush('llm');
-    const stats = dlq.getStats();
+    await dlq.flush('llm');
+    const stats = await dlq.getStats();
     assert.ok(stats.some((s) => s.category === 'tool'));
     assert.ok(stats.some((s) => s.category === 'llm'));
   });

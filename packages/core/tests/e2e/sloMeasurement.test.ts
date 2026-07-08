@@ -161,8 +161,8 @@ describe('E2E: SLO measurements', () => {
       }
 
       const { durationMs } = await measureLatency(async () => {
-        dlq.flush('execution');
-        return dlq.readEntries('execution', entryCount);
+        await dlq.flush('execution');
+        return await dlq.readEntries('execution', entryCount);
       });
 
       measurements.push({

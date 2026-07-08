@@ -405,7 +405,6 @@ export class WebhookDispatcher {
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
 const dispatcherSingleton = createTenantAwareSingleton(() => new WebhookDispatcher(), {
-  allowGlobalFallback: true,
   dispose: (d) => d.stop(),
 });
 

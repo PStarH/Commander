@@ -282,9 +282,7 @@ export class EvalSuite {
 
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
-const evaluatorSingleton = createTenantAwareSingleton(() => new HeuristicEvaluator(), {
-  allowGlobalFallback: true,
-});
+const evaluatorSingleton = createTenantAwareSingleton(() => new HeuristicEvaluator(), {});
 
 export function getHeuristicEvaluator(): HeuristicEvaluator {
   return evaluatorSingleton.get();

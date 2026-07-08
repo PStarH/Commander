@@ -470,9 +470,7 @@ export class EvolverAgent {
 
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
-const evolverSingleton = createTenantAwareSingleton(() => new EvolverAgent(), {
-  allowGlobalFallback: true,
-});
+const evolverSingleton = createTenantAwareSingleton(() => new EvolverAgent(), {});
 
 export function getEvolverAgent(): EvolverAgent {
   return evolverSingleton.get();

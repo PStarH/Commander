@@ -905,7 +905,7 @@ export class EuAiActComplianceReporter {
 
 const complianceReporterSingleton = createTenantAwareSingleton(
   () => new EuAiActComplianceReporter(),
-  { allowGlobalFallback: true },
+  {},
 );
 
 /** Get the global EuAiActComplianceReporter. */

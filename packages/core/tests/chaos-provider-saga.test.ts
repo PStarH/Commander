@@ -380,7 +380,7 @@ describe('CM-T13: DeadLetterQueue persistence under crash', () => {
     }
   });
 
-  it('survives process-level crash (new instance reads old entries)', () => {
+  it('survives process-level crash (new instance reads old entries)', async () => {
     // Write with first instance
     const dlq1 = new DeadLetterQueue(dlqDir);
     for (let i = 0; i < 15; i++) {
@@ -400,11 +400,11 @@ describe('CM-T13: DeadLetterQueue persistence under crash', () => {
         tags: ['chaos', `entry-${i}`],
       });
     }
-    dlq1.flush('tool');
+    await dlq1.flush('tool');
 
     // Simulate crash: create new instance
     const dlq2 = new DeadLetterQueue(dlqDir);
-    const entries = dlq2.readEntries('tool', 20);
+    const entries = await dlq2.readEntries('tool', 20);
 
     assert.ok(entries.length >= 10, `Expected >=10 entries after crash, got ${entries.length}`);
     // All entries should be readable
@@ -416,7 +416,7 @@ describe('CM-T13: DeadLetterQueue persistence under crash', () => {
     }
   });
 
-  it('enqueue convenience method works for all categories', () => {
+  it('enqueue convenience method works for all categories', async () => {
     const dlq = new DeadLetterQueue(dlqDir);
 
     const categories: DLQCategory[] = [
@@ -439,9 +439,9 @@ describe('CM-T13: DeadLetterQueue persistence under crash', () => {
         payload: { test: true },
       });
     }
-    dlq.flush(); // Force flush buffer to disk before reading
+    await dlq.flush(); // Force flush buffer to disk before reading
 
-    const stats = dlq.getStats();
+    const stats = await dlq.getStats();
     for (const cat of categories) {
       const s = stats.find((s) => s.category === cat);
       assert.ok(s, `Category ${cat} should have stats`);
@@ -449,7 +449,7 @@ describe('CM-T13: DeadLetterQueue persistence under crash', () => {
     }
   });
 
-  it('handles corrupt entries gracefully without losing good ones', () => {
+  it('handles corrupt entries gracefully without losing good ones', async () => {
     const dlqDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'chaos-dlq-corrupt-'));
     try {
       const corruptPath = path.join(dlqDir2, 'tool.ndjson');
@@ -491,7 +491,7 @@ describe('CM-T13: DeadLetterQueue persistence under crash', () => {
       );
 
       const dlq = new DeadLetterQueue(dlqDir2);
-      const entries = dlq.readEntries('tool', 10);
+      const entries = await dlq.readEntries('tool', 10);
       assert.ok(entries.length >= 2, `Expected >=2 good entries, got ${entries.length}`);
     } finally {
       try {
@@ -502,7 +502,7 @@ describe('CM-T13: DeadLetterQueue persistence under crash', () => {
     }
   });
 
-  it('getRetryableEntries filters correctly', () => {
+  it('getRetryableEntries filters correctly', async () => {
     const dlq = new DeadLetterQueue(dlqDir);
 
     dlq.enqueue({
@@ -542,9 +542,9 @@ describe('CM-T13: DeadLetterQueue persistence under crash', () => {
       errorClass: 'transient',
     });
 
-    dlq.flush('tool'); // Force flush buffer to disk before reading
+    await dlq.flush('tool'); // Force flush buffer to disk before reading
 
-    const retryable = dlq.getRetryableEntries('tool', 10);
+    const retryable = await dlq.getRetryableEntries('tool', 10);
     // Only the first one should be retryable
     const found = retryable.filter((e) => e.operationName === 'retryable-op');
     assert.strictEqual(
@@ -788,7 +788,7 @@ describe('CM-T17: DLQ retry worker resilience', () => {
     }
   });
 
-  it('retryable entries can be replayed without data loss', () => {
+  it('retryable entries can be replayed without data loss', async () => {
     // Enqueue 50 entries with various states
     for (let i = 0; i < 50; i++) {
       dlq.enqueue({
@@ -813,7 +813,7 @@ describe('CM-T17: DLQ retry worker resilience', () => {
     }
 
     // Get retryable entries
-    const retryable = dlq.getRetryableEntries('tool', 20);
+    const retryable = await dlq.getRetryableEntries('tool', 20);
     // retryable=true, recovered=false, compensated=false
     const expected = 50 / 3; // ~17 entries
     const actualR = retryable.filter((e) => !e.recovered && !e.compensated && e.retryable).length;
@@ -836,7 +836,7 @@ describe('CM-T17: DLQ retry worker resilience', () => {
     }
 
     // After marking recovered, getRetryableEntries should return fewer
-    const afterRetry = dlq.getRetryableEntries('tool', 50);
+    const afterRetry = await dlq.getRetryableEntries('tool', 50);
     assert.ok(
       afterRetry.length <= retryable.length + 10,
       'Recovered entries should not appear as retryable',
@@ -1113,13 +1113,13 @@ describe('CM-T20: Full end-to-end — provider failure → saga abort → compen
         failureMode: 'execution',
         payload: { sagaStatus: sagaResult.status },
       });
-      dlq.flush('compensation'); // Force flush to disk
+      await dlq.flush('compensation'); // Force flush to disk
 
-      const dlqEntries = dlq.readEntries('compensation', 10);
+      const dlqEntries = await dlq.readEntries('compensation', 10);
       assert.ok(dlqEntries.length >= 1, 'DLQ should have the saga failure');
 
       // Step 4: Retry — mark as recovered
-      const retryable = dlq.getRetryableEntries('compensation', 10);
+      const retryable = await dlq.getRetryableEntries('compensation', 10);
       assert.ok(retryable.length >= 1, 'Should have retryable entries');
 
       dlq.enqueue({

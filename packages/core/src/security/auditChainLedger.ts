@@ -594,9 +594,7 @@ export function collectPersistedEntries(persistDir: string): AuditChainEntry[] {
 // Tenant-aware singleton
 // ============================================================================
 
-const auditChainSingleton = createTenantAwareSingleton(() => new AuditChainLedger(), {
-  allowGlobalFallback: true,
-});
+const auditChainSingleton = createTenantAwareSingleton(() => new AuditChainLedger(), {});
 
 /** Resolve the active ledger via the current tenant context. */
 export function getAuditChainLedger(): AuditChainLedger {

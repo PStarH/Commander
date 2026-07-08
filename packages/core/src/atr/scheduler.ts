@@ -110,12 +110,6 @@ export interface ExecutionSchedulerOptions {
   lease: LeaseManager;
   idempotency: IdempotencyStore;
   ledger: RunLedger;
-  /**
-   * @deprecated CompensationBridge is no longer used by the scheduler — new
-   * code uses RunLedger directly. Retained only for backward compatibility
-   * with tests that construct ExecutionScheduler explicitly.
-   */
-  bridge?: unknown;
   checkpointer?: StateCheckpointer;
 }
 
@@ -434,7 +428,7 @@ function createSchedulerSingleton() {
       scheduler.registerDefaultCompensations();
       return scheduler;
     },
-    { allowGlobalFallback: true, dispose: () => {} },
+    { dispose: () => {} },
   );
 }
 

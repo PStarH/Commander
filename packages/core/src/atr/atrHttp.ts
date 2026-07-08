@@ -29,7 +29,14 @@ import { getGlobalLogger } from '../logging';
 import { getSecurityAuditLogger } from '../security/securityAuditLogger';
 import type { SecurityEvent } from '../security/securityAuditLogger';
 
-const log = getGlobalLogger();
+// Deliberately NOT caching `getGlobalLogger()` at module scope — the Logger
+// singleton in `logging.ts:729` is created with no `allowGlobalFallback: true`
+// option, so a top-level call here throws `TenantIsolationError` whenever this
+// module is imported outside an active tenant context (e.g. by the chaos-runner
+// CLI which hasn't entered a tenant context yet at module-load time). The
+// single call site below resolves the logger lazily inside the function body,
+// which runs after `runWithTenant('benchmark-cli-default', main)` has wrapped
+// the CLI's main entrypoint.
 
 export interface AtrHttpDeps {
   scheduler: ExecutionScheduler;
@@ -303,7 +310,7 @@ export async function handleAtrHttpRequest(
       sendJson(res, 400, { error: msg });
       return { handled: true, status: 400 };
     }
-    log.error('AtrHttp', 'Handler error', err as Error);
+    getGlobalLogger().error('AtrHttp', 'Handler error', err as Error);
     sendJson(res, 500, { error: 'Internal server error' });
     return { handled: true, status: 500 };
   }

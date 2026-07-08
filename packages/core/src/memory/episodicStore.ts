@@ -321,7 +321,6 @@ export class EpisodicMemoryStore implements IEpisodicStore {
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
 const episodicStoreSingleton = createTenantAwareSingleton(() => new EpisodicMemoryStore(), {
-  allowGlobalFallback: true,
   componentName: 'EpisodicMemoryStore',
 });
 

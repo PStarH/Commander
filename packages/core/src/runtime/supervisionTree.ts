@@ -547,9 +547,10 @@ export class SupervisionTreeRegistry {
 
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
-const supervisionTreeSingleton = createTenantAwareSingleton(() => new SupervisionTreeRegistry(), {
-  allowGlobalFallback: true,
-});
+const supervisionTreeSingleton = createTenantAwareSingleton(
+  () => new SupervisionTreeRegistry(),
+  {},
+);
 
 export function getSupervisionTreeRegistry(): SupervisionTreeRegistry {
   return supervisionTreeSingleton.get();

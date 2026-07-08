@@ -72,35 +72,39 @@ export interface DlqReader {
   getRetryableEntries(
     category: string,
     limit: number,
-  ): Array<{
-    id: string;
-    category: string;
-    runId: string;
-    agentId: string;
-    operationName: string;
-    errorMessage: string;
-    inputSnapshot?: string;
-    attemptNumber: number;
-    retryable: boolean;
-    recovered: boolean;
-    tags: string[];
-  }>;
+  ): Promise<
+    Array<{
+      id: string;
+      category: string;
+      runId: string;
+      agentId: string;
+      operationName: string;
+      errorMessage: string;
+      inputSnapshot?: string;
+      attemptNumber: number;
+      retryable: boolean;
+      recovered: boolean;
+      tags: string[];
+    }>
+  >;
   readEntries(
     category: string,
     limit: number,
-  ): Array<{
-    id: string;
-    category: string;
-    runId: string;
-    agentId: string;
-    operationName: string;
-    errorMessage: string;
-    inputSnapshot?: string;
-    attemptNumber: number;
-    retryable: boolean;
-    recovered: boolean;
-    tags: string[];
-  }>;
+  ): Promise<
+    Array<{
+      id: string;
+      category: string;
+      runId: string;
+      agentId: string;
+      operationName: string;
+      errorMessage: string;
+      inputSnapshot?: string;
+      attemptNumber: number;
+      retryable: boolean;
+      recovered: boolean;
+      tags: string[];
+    }>
+  >;
 }
 
 /**
@@ -124,7 +128,7 @@ export interface DlqWriter {
     recovered: boolean;
     tags: string[];
   }): void;
-  flush(category?: string): void;
+  flush(category?: string): Promise<void>;
 }
 
 export class DlqRetryWorker {
@@ -189,7 +193,7 @@ export class DlqRetryWorker {
     try {
       const categories = ['llm', 'tool', 'execution', 'verification'] as const;
       for (const category of categories) {
-        const entries = this.dlq.getRetryableEntries(category, this.config.batchSize);
+        const entries = await this.dlq.getRetryableEntries(category, this.config.batchSize);
         for (const entry of entries) {
           if (processed >= this.config.batchSize) break;
 
@@ -198,7 +202,7 @@ export class DlqRetryWorker {
 
           // Skip entries that have been retried too many times
           if (entry.attemptNumber >= this.config.maxAutoRetries) {
-            this.escalate(entry);
+            await this.escalate(entry);
             escalated++;
             processed++;
             continue;
@@ -217,7 +221,7 @@ export class DlqRetryWorker {
             });
 
             if (result.recovered) {
-              this.markRecovered(entry);
+              await this.markRecovered(entry);
               recovered++;
               try {
                 getMetricsCollector().incrementCounter('dlq_retry_total', 'DLQ retry outcomes', 1, [
@@ -288,7 +292,7 @@ export class DlqRetryWorker {
       'compensation',
     ] as const;
     for (const category of categories) {
-      const entries = this.dlq.readEntries(category, 100);
+      const entries = await this.dlq.readEntries(category, 100);
       const entry = entries.find((e) => e.id === entryId);
       if (entry) {
         return this.retryHandler({
@@ -324,7 +328,7 @@ export class DlqRetryWorker {
     };
   }
 
-  private markRecovered(entry: { id: string; category: string }): void {
+  private async markRecovered(entry: { id: string; category: string }): Promise<void> {
     // Record a new entry with recovered=true to override the old one.
     // The DLQ is append-only; the reader picks up the most recent entry per id.
     try {
@@ -343,20 +347,20 @@ export class DlqRetryWorker {
         recovered: true,
         tags: ['dlq_retry', 'recovered'],
       });
-      this.dlq.flush(entry.category as string);
+      await this.dlq.flush(entry.category as string);
     } catch (err) {
       reportSilentFailure(err, 'dlqRetryWorker:347');
       /* best-effort */
     }
   }
 
-  private escalate(entry: {
+  private async escalate(entry: {
     id: string;
     category: string;
     operationName: string;
     runId: string;
     attemptNumber: number;
-  }): void {
+  }): Promise<void> {
     try {
       this.dlq.record({
         id: `${entry.id}_escalated`,
@@ -373,7 +377,7 @@ export class DlqRetryWorker {
         recovered: false,
         tags: ['dlq_retry', 'escalated', `operation:${entry.operationName}`],
       });
-      this.dlq.flush(entry.category as string);
+      await this.dlq.flush(entry.category as string);
       try {
         getMetricsCollector().incrementCounter('dlq_retry_total', 'DLQ retry outcomes', 1, [
           { name: 'category', value: entry.category },

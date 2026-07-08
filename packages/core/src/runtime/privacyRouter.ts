@@ -647,9 +647,7 @@ export class PrivacyRouter {
 
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
-const privacyRouterSingleton = createTenantAwareSingleton(() => new PrivacyRouter(), {
-  allowGlobalFallback: true,
-});
+const privacyRouterSingleton = createTenantAwareSingleton(() => new PrivacyRouter(), {});
 
 export function getPrivacyRouter(): PrivacyRouter {
   return privacyRouterSingleton.get();

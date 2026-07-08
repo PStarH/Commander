@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
 import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { runWithTenant } from '../../../packages/core/src/runtime/tenantContext.js';
 import { loadBenchmark, filterCases, collectStats, printStats } from './loader.js';
 import { scoreCase, type ExecutionSnapshot } from './scorer.js';
 import { buildReport, printReport, saveReport } from './reporter.js';
@@ -18,6 +19,16 @@ interface ExtendedOptions extends RunnerOptions {
   frameworkName?: string;
   mode?: 'dry-run' | 'simulated' | 'live';
   llmProvider?: 'e2e-record' | 'e2e-replay' | 'scripted';
+  /**
+   * LLM traffic mode (orthogonal to the tool execution `mode`):
+   * - `live`        — real StepFun API, zero cassette wrapping (raw StepFunProvider)
+   * - `cassette`    — default; rejected by `mode==='live'` (e2e-replay) or recorded (e2e-record)
+   *
+   * Set by `--llm-live` and only honored when `mode === 'live'`; otherwise the
+   * `mode==='live' && llmMode==='live'` gate in `handleRun` falls through to
+   * whatever `llmProvider` (cassette replay / record / scripted) the user picked.
+   */
+  llmMode?: 'live' | 'cassette';
   cassetteDir?: string;
   offset?: number;
   caseId?: string;
@@ -70,6 +81,13 @@ function parseArgs(): ExtendedOptions {
   } else if (args.includes('--scripted')) {
     options.llmProvider = 'scripted';
     options.mode = options.mode === 'dry-run' ? 'simulated' : options.mode;
+    options.dryRun = false;
+  } else if (args.includes('--llm-live')) {
+    // Real StepFun API, zero cassette wrapping. Honored only when
+    // `mode === 'live'` (gated in handleRun). Defensively force
+    // dryRun=false so `--llm-live --dry-run` doesn't accidentally
+    // degrade to a random-scoring mock.
+    options.llmMode = 'live';
     options.dryRun = false;
   }
 
@@ -341,15 +359,44 @@ async function handleRun(opts: ExtendedOptions): Promise<void> {
 
   if (opts.mode === 'live' || opts.mode === 'simulated') {
     const harnessMode = opts.mode === 'live' ? 'live' : 'simulated';
+
+    // --llm-live gate: only honored when both `--live` AND `--llm-live` are
+    // present AND STEPFUN_API_KEY is exported. Fail-fast with a clear exit
+    // code so a missing-key CI run never silently degrades to cassette.
+    let pureLive = false;
+    if (opts.mode === 'live' && opts.llmMode === 'live') {
+      if (!process.env.STEPFUN_API_KEY) {
+        console.error(
+          'STEPFUN_API_KEY is required for --llm-live (mode === "live" && llmMode === "live"). ' +
+            'Export it before running, or drop --llm-live to fall back to cassette-mode (--e2e-record / --e2e-replay / --scripted).',
+        );
+        process.exit(1);
+      }
+      pureLive = true;
+      // Surface the effective StepFun endpoint so a real call is verifiable
+      // in stdout even before any case prints its first response line.
+      const stepfunBase =
+        process.env.STEPFUN_BASE_URL ?? 'https://api.stepfun.com/v1';
+      console.log(`  StepFun endpoint: ${stepfunBase}`);
+      console.log(
+        `  StepFun model:    ${process.env.STEPFUN_MODEL ?? 'step-3.7-flash'}`,
+      );
+    }
+
     const llmProvider = opts.llmProvider ?? 'e2e-replay';
+    const llmLabel = pureLive ? 'live-pure-stepfun' : llmProvider;
     console.log(
-      `Initializing harness (tool mode: ${harnessMode}, llm: ${llmProvider})...`,
+      `Initializing harness (tool mode: ${harnessMode}, llm: ${llmLabel})...`,
     );
     const harness = new ExecutionHarness({
       mode: harnessMode,
       maxToolCalls: 150,
       llmProvider,
       cassetteDir: opts.cassetteDir,
+      // pureLive bypass: when set, executeCase registers the raw
+      // StepFunProvider directly (no E2EProvider/ScriptedProvider wrapping)
+      // and never reads or writes cassettes.
+      pureLive,
     });
     await handleRunLive(harness, filtered, framework, benchmark, opts.outputPath, opts.offset);
   } else {
@@ -408,4 +455,14 @@ async function main(): Promise<void> {
   }
 }
 
-main();
+// Run the CLI inside a fixed tenant context so the tenant-aware singletons
+// (Logger, MetricsCollector, UnifiedCostAuthority, etc.) can resolve their
+// `.get()` calls. The chaos-runner is a batch tool — it has no per-request
+// tenant — so a single `'benchmark-cli-default'` tenant is the correct
+// shape. Without this wrap, the stricter `allowGlobalFallback === true`
+// check (added in the 2026-Q3 security tightening) makes every global
+// singleton throw `TenantIsolationError` at first access. See
+// `packages/core/src/runtime/tenantAwareSingleton.ts:88` for the gating
+// rule. Future work: rotate to `runWithTenant(randomUUID(), main)` per
+// case if we ever run benchmarks in parallel inside one process.
+runWithTenant('benchmark-cli-default', main);

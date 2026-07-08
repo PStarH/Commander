@@ -242,9 +242,7 @@ export class ModelPerformanceStore {
 
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
-const storeSingleton = createTenantAwareSingleton(() => new ModelPerformanceStore(), {
-  allowGlobalFallback: true,
-});
+const storeSingleton = createTenantAwareSingleton(() => new ModelPerformanceStore(), {});
 
 /** Get the global ModelPerformanceStore (single-tenant) or tenant-scoped (multi-tenant). */
 export function getModelPerformanceStore(): ModelPerformanceStore {
