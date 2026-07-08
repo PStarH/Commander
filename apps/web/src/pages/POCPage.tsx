@@ -30,11 +30,7 @@ const POC_STUDIES: POCStudy[] = [
     icon: <Landmark size={18} />,
     customer: t('poc.customer.finance'),
     useCase: t('poc.useCase.finance'),
-    scope: [
-      t('poc.scope.finance.1'),
-      t('poc.scope.finance.2'),
-      t('poc.scope.finance.3'),
-    ],
+    scope: [t('poc.scope.finance.1'), t('poc.scope.finance.2'), t('poc.scope.finance.3')],
     outcomes: [
       { label: t('poc.metric.compliance'), value: '99.97%', detail: t('poc.detail.compliance') },
       { label: t('poc.metric.review'), value: '-78%', detail: t('poc.detail.review') },
@@ -56,7 +52,11 @@ const POC_STUDIES: POCStudy[] = [
     ],
     outcomes: [
       { label: t('poc.metric.downtime'), value: '-34%', detail: t('poc.detail.downtime') },
-      { label: t('poc.metric.falsePositive'), value: '-62%', detail: t('poc.detail.falsePositive') },
+      {
+        label: t('poc.metric.falsePositive'),
+        value: '-62%',
+        detail: t('poc.detail.falsePositive'),
+      },
       { label: t('poc.metric.rca'), value: '4.5x', detail: t('poc.detail.rca') },
     ],
     status: 'completed',
@@ -68,11 +68,7 @@ const POC_STUDIES: POCStudy[] = [
     icon: <Stethoscope size={18} />,
     customer: t('poc.customer.healthcare'),
     useCase: t('poc.useCase.healthcare'),
-    scope: [
-      t('poc.scope.healthcare.1'),
-      t('poc.scope.healthcare.2'),
-      t('poc.scope.healthcare.3'),
-    ],
+    scope: [t('poc.scope.healthcare.1'), t('poc.scope.healthcare.2'), t('poc.scope.healthcare.3')],
     outcomes: [
       { label: t('poc.metric.pii'), value: '0', detail: t('poc.detail.pii') },
       { label: t('poc.metric.document'), value: '+3x', detail: t('poc.detail.document') },
@@ -83,10 +79,7 @@ const POC_STUDIES: POCStudy[] = [
   },
 ];
 
-const STATUS_META: Record<
-  POCStudy['status'],
-  { label: string; className: string }
-> = {
+const STATUS_META: Record<POCStudy['status'], { label: string; className: string }> = {
   live: { label: t('poc.status.live'), className: 'status-live' },
   completed: { label: t('poc.status.completed'), className: 'status-completed' },
   pilot: { label: t('poc.status.pilot'), className: 'status-pilot' },
@@ -94,8 +87,9 @@ const STATUS_META: Record<
 
 export function POCPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const completedCount = POC_STUDIES.filter((s) => s.status === 'completed' || s.status === 'live')
-    .length;
+  const completedCount = POC_STUDIES.filter(
+    (s) => s.status === 'completed' || s.status === 'live',
+  ).length;
 
   return (
     <div className="page">
@@ -174,11 +168,7 @@ export function POCPage() {
                       <li key={idx}>{item}</li>
                     ))}
                   </ul>
-                  {study.quote && (
-                    <blockquote className="poc-quote">
-                      “{study.quote}”
-                    </blockquote>
-                  )}
+                  {study.quote && <blockquote className="poc-quote">“{study.quote}”</blockquote>}
                 </div>
               )}
 

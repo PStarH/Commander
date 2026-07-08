@@ -19,6 +19,7 @@ import type {
   HallucinationReportResponse,
   LineageSummaryResponse,
   ComplianceAuditReport,
+  SLOStatus,
 } from './types';
 
 export const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
@@ -2193,4 +2194,52 @@ export function generateOIDCState(): string {
   const array = new Uint8Array(16);
   crypto.getRandomValues(array);
   return Array.from(array, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// ============================================================================
+// Public SLO dashboard
+// ============================================================================
+
+export async function fetchSLOStatus(): Promise<SLOStatus> {
+  const baseline = await import('./data/slo-baseline');
+  const raw = baseline.default.measurements as Array<{
+    slo: string;
+    target: string;
+    actual: string;
+    status: 'pass' | 'fail' | 'breach';
+    threshold?: string;
+    evidence?: string;
+  }>;
+
+  const measurements: SLOStatus['measurements'] = raw.map((m) => {
+    const status: SLOStatus['measurements'][number]['status'] =
+      m.status === 'pass' ? 'passing' : m.status === 'breach' ? 'breached' : 'at_risk';
+    return {
+      name: m.slo,
+      target: m.target,
+      actual: m.actual,
+      status,
+      threshold: m.threshold,
+      evidence: m.evidence,
+    };
+  });
+
+  const overall: SLOStatus['overall'] = measurements.some((m) => m.status === 'breached')
+    ? 'breached'
+    : measurements.some((m) => m.status === 'at_risk')
+      ? 'at_risk'
+      : 'passing';
+
+  const apiMeasurement = measurements.find((m) => m.name === 'api-success-rate');
+  const latencyMeasurement = measurements.find((m) => m.name === 'p95-plan-latency');
+
+  return {
+    updatedAt: baseline.default.generatedAt,
+    overall,
+    apiSuccessRate: apiMeasurement ? parseFloat(apiMeasurement.actual.replace('%', '')) : 99.9,
+    p95PlanLatencyMs: latencyMeasurement
+      ? parseFloat(latencyMeasurement.actual.replace('ms', '').trim())
+      : 250,
+    measurements,
+  };
 }
