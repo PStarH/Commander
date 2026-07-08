@@ -488,9 +488,7 @@ export class ReflectionEngine {
 
 import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
 
-const reflectionEngineSingleton = createTenantAwareSingleton(() => new ReflectionEngine(), {
-  allowGlobalFallback: true,
-});
+const reflectionEngineSingleton = createTenantAwareSingleton(() => new ReflectionEngine(), {});
 
 export function getGlobalReflectionEngine(): ReflectionEngine {
   return reflectionEngineSingleton.get();

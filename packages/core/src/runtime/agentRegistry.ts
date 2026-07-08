@@ -244,9 +244,7 @@ export class AgentRegistry {
 
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
-const agentRegistrySingleton = createTenantAwareSingleton(() => new AgentRegistry(), {
-  allowGlobalFallback: true,
-});
+const agentRegistrySingleton = createTenantAwareSingleton(() => new AgentRegistry(), {});
 
 export function getAgentRegistry(): AgentRegistry {
   return agentRegistrySingleton.get();

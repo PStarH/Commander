@@ -502,7 +502,7 @@ const metaLearnerSingleton = createTenantAwareSingleton(
       5,
       _metaLearnerPath ?? nodePath.join(process.cwd(), '.commander_memory', 'meta-learner.json'),
     ),
-  { allowGlobalFallback: true },
+  {},
 );
 
 export function getMetaLearner(persistPath?: string): MetaLearner {

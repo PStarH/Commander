@@ -1,45 +1,97 @@
 import { Router } from 'express';
-import { getTokenSentinel } from '@commander/core';
-import type { CostSummary, CostRecord, BudgetAlert } from '@commander/core';
+import {
+  getUnifiedCostAuthority,
+} from '@commander/core';
+import type { CostSummary, CostRecord, BudgetAlert, CostLedgerEntry } from '@commander/core';
+
+function ledgerEntryToCostRecord(entry: CostLedgerEntry): CostRecord {
+  return {
+    runId: entry.runId,
+    modelId: entry.modelOrTool,
+    provider: 'unknown',
+    tier: 'standard',
+    inputTokens: entry.promptTokens ?? 0,
+    outputTokens: entry.completionTokens ?? 0,
+    totalTokens: (entry.promptTokens ?? 0) + (entry.completionTokens ?? 0),
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costUsd: Math.round(entry.actualCostUsd * 100000) / 100000,
+    cacheSavingsUsd: 0,
+    timestamp: entry.timestamp,
+    agentId: 'unknown',
+  };
+}
 
 export function createCostRouter(): Router {
   const router = Router();
 
   // ── Cost summary (total, per-model, per-agent) ─────────────────────────
   router.get('/api/cost/summary', (_req, res) => {
-    const sentinel = getTokenSentinel();
-    const summary: CostSummary = sentinel.getCostSummary();
+    const uca = getUnifiedCostAuthority();
+    const ledger = uca.readLedger();
+    const summary: CostSummary = {
+      totalCostUsd: 0,
+      totalTokens: 0,
+      totalCalls: ledger.length,
+      perModel: {},
+      perAgent: {},
+    };
+
+    for (const entry of ledger) {
+      summary.totalCostUsd += entry.actualCostUsd;
+      summary.totalTokens += (entry.promptTokens ?? 0) + (entry.completionTokens ?? 0);
+
+      if (!summary.perModel[entry.modelOrTool]) {
+        summary.perModel[entry.modelOrTool] = { calls: 0, tokens: 0, costUsd: 0 };
+      }
+      summary.perModel[entry.modelOrTool].calls++;
+      summary.perModel[entry.modelOrTool].tokens +=
+        (entry.promptTokens ?? 0) + (entry.completionTokens ?? 0);
+      summary.perModel[entry.modelOrTool].costUsd += entry.actualCostUsd;
+    }
+
+    summary.totalCostUsd = Math.round(summary.totalCostUsd * 100) / 100;
+    for (const key of Object.keys(summary.perModel)) {
+      summary.perModel[key].costUsd = Math.round(summary.perModel[key].costUsd * 100) / 100;
+    }
+
     res.json(summary);
   });
 
   // ── Cost records (recent LLM calls) ────────────────────────────────────
   router.get('/api/cost/records', (req, res) => {
-    const sentinel = getTokenSentinel();
+    const uca = getUnifiedCostAuthority();
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 500);
     const rawRunId = req.query.runId as string | undefined;
     const runId =
       rawRunId && /^[a-zA-Z0-9_-]+$/.test(rawRunId) && rawRunId.length < 128 ? rawRunId : undefined;
 
-    let records: CostRecord[] = sentinel.getCosts(runId);
-    // Sort newest first, apply limit
-    records = records.sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, limit);
+    let entries = uca.readLedger();
+    if (runId) {
+      entries = entries.filter((e) => e.runId === runId);
+    }
+    const records: CostRecord[] = entries
+      .map(ledgerEntryToCostRecord)
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+      .slice(0, limit);
 
     res.json({ records, total: records.length });
   });
 
   // ── Budget status (monthly usage + alerts) ─────────────────────────────
   router.get('/api/cost/budget', (_req, res) => {
-    const sentinel = getTokenSentinel();
-    const monthlyUsed = sentinel.getMonthlyCostUsd();
-    const monthlyLimit = sentinel.getMonthlyLimitUsd();
-    const alerts: BudgetAlert[] = sentinel.getAlerts();
+    const uca = getUnifiedCostAuthority();
+    const snapshot = uca.getSnapshot('global', 'default');
+    const monthlyUsed = snapshot.perTenantMonthly.used;
+    const monthlyLimit = snapshot.perTenantMonthly.cap;
+    const alerts: BudgetAlert[] = [];
 
     res.json({
       monthlyUsed,
       monthlyLimit,
       usagePercent: monthlyLimit > 0 ? Math.round((monthlyUsed / monthlyLimit) * 100) : 0,
       alertCount: alerts.length,
-      alerts: alerts.slice(-20), // Last 20 alerts
+      alerts,
     });
   });
 

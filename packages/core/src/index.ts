@@ -5,26 +5,18 @@
  */
 
 // ============================================================================
-// DEPRECATION INDEX (2026-07-02)
+// DEPRECATION INDEX (2026-07-07)
 //
-// All items below carry `@deprecated` JSDoc at their definition site. This
-// index is the single source of truth for what is deprecated, the migration
-// target, and the planned removal window. Search for `@deprecated` to find
-// the inline marker + full context.
+// Remaining deprecated items that still have active callers and are kept
+// for backward compatibility. Cleaned items have been removed from this
+// index. Search for `@deprecated` to find the inline marker + full context.
 //
-// | Item                                           | Migration target                          | Removal target  |
-// |------------------------------------------------|-------------------------------------------|-----------------|
-// | security/costGuard.ts (CostGuard, getCostGuard)| UnifiedCostAuthority (security/unifiedCostAuthority) | 2026-Q4 (0.x→1.0 major) |
-// | telos/tokenSentinel.ts recordCost/postCall*    | UnifiedCostAuthority.postCall/readLedger  | 2026-Q4 (0.x→1.0 major) |
-// | atr/compensationBridge.ts (file)               | atr/scheduler.ts (ExecutionScheduler)     | deleted in structural-debt cleanup |
-// | atr/runtimeIntegration.ts (file)               | atr/scheduler.ts (ExecutionScheduler)     | deleted in structural-debt cleanup |
-// | threeLayerMemory.ts:1023 (createThreeLayerMemory legacy path) | createThreeLayerMemory factory | 2026-Q4 |
-// | pluginTypes.ts:296 (permissions field)         | PluginLoader + sandbox context            | advisory only |
-// | runtime/tenantAwareSingleton.ts:50 (get() sig) | get({ allowGlobalFallback: true })        | 2026-Q4 |
-// | saga/sagaCoordinator.ts:475 (collect)          | collectAllCompensable()                   | 2026-Q4 |
-// | ultimate/types.ts:52,63 (topology aliases)     | D3.2 canonical topology names             | 2026-Q4 (2-minor-version window) |
-// | security/rotationSignoffVerifier.ts sync API   | verifyShaAsync / runVerifierAsync         | removed in structural-debt cleanup |
-// | logging.ts:421 (legacy adapter)                | Logger factory in @commander/core/logging | 2026-Q4 |
+// | Item                                         | Migration target                          | Status |
+// |----------------------------------------------|-------------------------------------------|--------|
+// | lsp/lspClient.ts:457 (sendNotification)      | sendRequest()                             | keep   |
+// | pluginTypes.ts:296 (hookManager field)       | PluginLoader + sandbox context            | keep   |
+// | logging.ts:421 (legacy adapter)              | Logger factory in @commander/core/logging | keep   |
+// | ultimate/types.ts:52,63 (topology aliases)   | D3.2 canonical topology names             | keep   |
 // ============================================================================
 export * from './models';
 export { reportSilentFailure } from './silentFailureReporter';
@@ -386,16 +378,21 @@ export type {
   OutputSanitizerConfig,
 } from './security/outputSanitizer';
 
-// CostGuard — enterprise economic attack detection & auto circuit-breaker
-export { CostGuard, getCostGuard, resetCostGuard } from './security/costGuard';
+// UnifiedCostAuthority — single source of truth for cost enforcement
+export {
+  UnifiedCostAuthority,
+  getUnifiedCostAuthority,
+  resetUnifiedCostAuthority,
+} from './security/unifiedCostAuthority';
 export type {
-  CostAttackType,
-  CostGuardAction,
-  CostTier,
-  CostGuardConfig,
-  CostGuardDecision,
-  CostGuardReport,
-} from './security/costGuard';
+  UCACallContext,
+  UCADecision,
+  UCAPostCallResult,
+  BudgetSnapshot,
+  BudgetCap,
+  CostLedgerEntry,
+  ToolCostProfile,
+} from './security/unifiedCostAuthority';
 
 // AgentSOC — P0-P4 incident classification, playbook engine, escalation paths, SOC dashboard
 export { AgentSoc, getAgentSoc, resetAgentSoc } from './security/agentSoc';

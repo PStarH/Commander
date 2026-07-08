@@ -526,9 +526,7 @@ export function isRebuilt(msg: LLMMessage): boolean {
 
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
-const rebuildPromptSingleton = createTenantAwareSingleton(() => new RebuildPrompt(), {
-  allowGlobalFallback: true,
-});
+const rebuildPromptSingleton = createTenantAwareSingleton(() => new RebuildPrompt(), {});
 
 export function getRebuildPrompt(): RebuildPrompt {
   return rebuildPromptSingleton.get();

@@ -848,9 +848,7 @@ export function createWebSearchToolHarness(): ToolHarness {
 // Singleton
 // ============================================================================
 
-const fuzzerSingleton = createTenantAwareSingleton(() => new FuzzTestFramework(), {
-  allowGlobalFallback: true,
-});
+const fuzzerSingleton = createTenantAwareSingleton(() => new FuzzTestFramework(), {});
 
 export function getFuzzTestFramework(_config?: Partial<FuzzerConfig>): FuzzTestFramework {
   return fuzzerSingleton.get();

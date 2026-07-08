@@ -771,9 +771,7 @@ export class AgentStandbyManager {
 // Singleton
 // ============================================================================
 
-const standbyManagerSingleton = createTenantAwareSingleton(() => new AgentStandbyManager(), {
-  allowGlobalFallback: true,
-});
+const standbyManagerSingleton = createTenantAwareSingleton(() => new AgentStandbyManager(), {});
 
 /** Get the global AgentStandbyManager. */
 export function getAgentStandbyManager(_config?: Partial<StandbyConfig>): AgentStandbyManager {

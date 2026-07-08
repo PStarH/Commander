@@ -1536,30 +1536,27 @@ export class ModelRouter {
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 import { getModelPerformanceStore } from './modelPerformanceStore';
 
-const routerSingleton = createTenantAwareSingleton(
-  () => {
-    const router = new ModelRouter();
-    // Seed with cross-session historical outcomes
-    try {
-      const store = getModelPerformanceStore();
-      const historical = store.getAll();
-      for (const outcome of historical) {
-        router.recordOutcome(
-          outcome.modelId,
-          outcome.taskType,
-          outcome.success,
-          outcome.durationMs,
-          outcome.tokensUsed,
-        );
-      }
-    } catch (err) {
-      reportSilentFailure(err, 'modelRouter:1504');
-      /* best-effort: don't crash if store unavailable */
+const routerSingleton = createTenantAwareSingleton(() => {
+  const router = new ModelRouter();
+  // Seed with cross-session historical outcomes
+  try {
+    const store = getModelPerformanceStore();
+    const historical = store.getAll();
+    for (const outcome of historical) {
+      router.recordOutcome(
+        outcome.modelId,
+        outcome.taskType,
+        outcome.success,
+        outcome.durationMs,
+        outcome.tokensUsed,
+      );
     }
-    return router;
-  },
-  { allowGlobalFallback: true },
-);
+  } catch (err) {
+    reportSilentFailure(err, 'modelRouter:1504');
+    /* best-effort: don't crash if store unavailable */
+  }
+  return router;
+});
 
 /** Get the global ModelRouter (single-tenant) or tenant-scoped (multi-tenant). */
 export function getModelRouter(): ModelRouter {

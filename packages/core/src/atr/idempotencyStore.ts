@@ -338,7 +338,9 @@ const idempotencyStoreSingleton = createTenantAwareSingleton(
           ? { filePath: process.env.COMMANDER_ATR_IDEMPOTENCY_PATH }
           : undefined,
     ),
-  { allowGlobalFallback: true, dispose: (store) => store.close() },
+  {
+    dispose: (store) => store.close(),
+  },
 );
 
 export function getIdempotencyStore(): IdempotencyStore {

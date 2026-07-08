@@ -1,7 +1,7 @@
-import type { TokenUsage } from '../runtime/types';
-import type { TELOSBudget, TokenCheckResult, CostRecord, CostSummary, BudgetAlert } from './types';
+import type { TELOSBudget, TokenCheckResult, BudgetAlert } from './types';
 import { getModelRouter } from '../runtime/modelRouter';
 import { getCostModel } from '../observability/costModel';
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 import type { TokenBreakdown as ObservabilityTokenBreakdown } from '../observability/types';
 
 // ============================================================================
@@ -225,50 +225,19 @@ function calculateCost(
 // ============================================================================
 
 /**
- * TokenSentinel — pre-flight token estimation + cost tracking.
+ * TokenSentinel — pre-flight token estimation and token-budget gate.
  *
- * The cost-tracking portion (recordCost, recordCostFromUsage, checkCostBudget,
- * getCostSummary, getMonthlyCostUsd) is @deprecated and superseded by
- * {@link UnifiedCostAuthority} (UCA). UCA is now the single source of truth
- * for per-request / per-run / per-tenant / global budget enforcement and
- * melt triggering.
- *
- * The token-estimation portion (estimatePromptTokens, estimateOutputTokens,
- * check) remains non-deprecated — it provides pre-flight token counting that
- * UCA does not replicate (UCA consumes estimatedTokens as input rather than
- * computing it from messages).
- *
- * Migration map (TokenSentinel cost → UCA):
- *   recordCostFromUsage()  → UCA.postCall({ model }, { costUsd, promptTokens, completionTokens })
- *   checkCostBudget()      → UCA.getSnapshot().perTenantMonthly (MELT auto-triggered in postCall)
- *   getCostSummary()       → UCA.readLedger() (aggregated by kind/modelOrTool)
- *   getMonthlyCostUsd()    → UCA.getSnapshot(runId, tenantId).perTenantMonthly.used
- *   monthlyCostLimitUsd    → UCA DEFAULT_UCA_CONFIG.perTenantMonthlyUsd
+ * Cost tracking and budget enforcement have moved to
+ * {@link UnifiedCostAuthority} (UCA). TokenSentinel now only provides
+ * pre-flight token counting that UCA does not replicate (UCA consumes
+ * estimatedTokens as input rather than computing it from messages).
  */
 export class TokenSentinel {
-  private costRecords: CostRecord[] = [];
   private budgetAlerts: BudgetAlert[] = [];
-  private maxRecords: number;
   private maxAlerts: number;
-  private monthlyCostLimitUsd: number;
-  private monthlyCostUsd: number = 0;
-  private monthlyResetDate: string;
 
-  constructor(maxRecords = 10000, maxAlerts = 1000, monthlyCostLimitUsd = 50.0) {
-    this.maxRecords = maxRecords;
+  constructor(maxAlerts = 1000) {
     this.maxAlerts = maxAlerts;
-    this.monthlyCostLimitUsd = monthlyCostLimitUsd;
-    this.monthlyResetDate = new Date().toISOString().slice(0, 7); // YYYY-MM
-    emitTokenSentinelDeprecationWarning();
-  }
-
-  /** Ensure monthly cost counter is current (auto-reset on month boundary). */
-  private ensureCurrentMonth(): void {
-    const currentMonth = new Date().toISOString().slice(0, 7);
-    if (currentMonth !== this.monthlyResetDate) {
-      this.monthlyCostUsd = 0;
-      this.monthlyResetDate = currentMonth;
-    }
   }
 
   private trimAlerts(): void {
@@ -297,7 +266,6 @@ export class TokenSentinel {
     modelId: string,
     budget: TELOSBudget,
   ): TokenCheckResult {
-    this.ensureCurrentMonth();
     const estimatedInput = estimateMessagesTokens(messages, modelId);
     const estimatedOutput = this.estimateOutputTokens(
       messages.find((m) => m.role === 'user')?.content ?? '',
@@ -315,21 +283,6 @@ export class TokenSentinel {
         budgetRemaining: 0,
         reason: `Estimated ${totalEstimated} tokens exceeds hard cap of ${budget.hardCapTokens}`,
       };
-    }
-
-    // Monthly cost check
-    if (this.monthlyCostLimitUsd > 0) {
-      const estimatedCost = calculateCost(modelId, estimatedInput, estimatedOutput);
-      if (this.monthlyCostUsd + estimatedCost > this.monthlyCostLimitUsd) {
-        return {
-          allowed: false,
-          estimatedInputTokens: estimatedInput,
-          estimatedOutputTokens: estimatedOutput,
-          totalEstimated,
-          budgetRemaining: budget.hardCapTokens - totalEstimated,
-          reason: `Estimated cost $${estimatedCost.toFixed(4)} would exceed monthly limit $${this.monthlyCostLimitUsd}`,
-        };
-      }
     }
 
     const remaining =
@@ -357,117 +310,6 @@ export class TokenSentinel {
   }
 
   // ========================================================================
-  // Cost Tracking (DEPRECATED — use UnifiedCostAuthority instead)
-  // ========================================================================
-
-  /** @deprecated Use UnifiedCostAuthority.postCall() for cost recording. */
-  recordCost(record: CostRecord): void {
-    this.ensureCurrentMonth();
-
-    this.costRecords.push(record);
-    if (this.costRecords.length > this.maxRecords) {
-      this.costRecords.shift();
-    }
-    this.monthlyCostUsd += record.costUsd;
-
-    // Check monthly limit
-    if (this.monthlyCostLimitUsd > 0 && this.monthlyCostUsd > this.monthlyCostLimitUsd) {
-      this.budgetAlerts.push({
-        type: 'cost_cap_reached',
-        runId: record.runId,
-        current: this.monthlyCostUsd,
-        limit: this.monthlyCostLimitUsd,
-        message: `Monthly cost $${this.monthlyCostUsd.toFixed(2)} exceeds limit $${this.monthlyCostLimitUsd}`,
-      });
-      this.trimAlerts();
-    }
-  }
-
-  /** @deprecated Use UnifiedCostAuthority.postCall() with actual token counts. */
-  recordCostFromUsage(
-    runId: string,
-    agentId: string,
-    modelId: string,
-    usage: TokenUsage,
-  ): CostRecord {
-    const router = getModelRouter();
-    const model = router.getModel(modelId);
-    const breakdown = calculateCostBreakdown(
-      modelId,
-      usage.promptTokens,
-      usage.completionTokens,
-      usage.cacheReadTokens ?? 0,
-      usage.cacheWriteTokens ?? 0,
-    );
-
-    const record: CostRecord = {
-      runId,
-      modelId,
-      provider: model?.provider ?? 'unknown',
-      tier: model?.tier ?? 'standard',
-      inputTokens: usage.promptTokens,
-      outputTokens: usage.completionTokens,
-      totalTokens: usage.totalTokens,
-      cacheReadTokens: usage.cacheReadTokens ?? 0,
-      cacheWriteTokens: usage.cacheWriteTokens ?? 0,
-      costUsd: Math.round(breakdown.totalUsd * 100000) / 100000,
-      cacheSavingsUsd: Math.round(breakdown.cacheSavingsUsd * 100000) / 100000,
-      timestamp: new Date().toISOString(),
-      agentId,
-    };
-
-    this.recordCost(record);
-    return record;
-  }
-
-  getCosts(runId?: string): CostRecord[] {
-    if (runId) {
-      return this.costRecords.filter((r) => r.runId === runId);
-    }
-    return [...this.costRecords];
-  }
-
-  /** @deprecated Use UnifiedCostAuthority.readLedger() for cost aggregation. */
-  getCostSummary(): CostSummary {
-    const summary: CostSummary = {
-      totalCostUsd: 0,
-      totalTokens: 0,
-      totalCalls: this.costRecords.length,
-      perModel: {},
-      perAgent: {},
-    };
-
-    for (const r of this.costRecords) {
-      summary.totalCostUsd += r.costUsd;
-      summary.totalTokens += r.totalTokens;
-
-      if (!summary.perModel[r.modelId]) {
-        summary.perModel[r.modelId] = { calls: 0, tokens: 0, costUsd: 0 };
-      }
-      summary.perModel[r.modelId].calls++;
-      summary.perModel[r.modelId].tokens += r.totalTokens;
-      summary.perModel[r.modelId].costUsd += r.costUsd;
-
-      if (!summary.perAgent[r.agentId]) {
-        summary.perAgent[r.agentId] = { calls: 0, tokens: 0, costUsd: 0 };
-      }
-      summary.perAgent[r.agentId].calls++;
-      summary.perAgent[r.agentId].tokens += r.totalTokens;
-      summary.perAgent[r.agentId].costUsd += r.costUsd;
-    }
-
-    summary.totalCostUsd = Math.round(summary.totalCostUsd * 100) / 100;
-    for (const key of Object.keys(summary.perModel)) {
-      summary.perModel[key].costUsd = Math.round(summary.perModel[key].costUsd * 100) / 100;
-    }
-    for (const key of Object.keys(summary.perAgent)) {
-      summary.perAgent[key].costUsd = Math.round(summary.perAgent[key].costUsd * 100) / 100;
-    }
-
-    return summary;
-  }
-
-  // ========================================================================
   // Budget Enforcement
   // ========================================================================
 
@@ -487,81 +329,14 @@ export class TokenSentinel {
     return null;
   }
 
-  /** @deprecated Use UnifiedCostAuthority.postCall() — MELT auto-triggers on budget breach. */
-  checkCostBudget(runId: string): BudgetAlert | null {
-    this.ensureCurrentMonth();
-    if (this.monthlyCostLimitUsd > 0 && this.monthlyCostUsd >= this.monthlyCostLimitUsd) {
-      const alert: BudgetAlert = {
-        type: 'budget_exhausted',
-        runId,
-        current: this.monthlyCostUsd,
-        limit: this.monthlyCostLimitUsd,
-        message: `Monthly budget exhausted: $${this.monthlyCostUsd.toFixed(2)} >= $${this.monthlyCostLimitUsd}`,
-      };
-      this.budgetAlerts.push(alert);
-      this.trimAlerts();
-      return alert;
-    }
-    return null;
-  }
-
   getAlerts(): BudgetAlert[] {
     return [...this.budgetAlerts];
   }
-
-  /** @deprecated Use UnifiedCostAuthority.getSnapshot().perTenantMonthly.used. */
-  getMonthlyCostUsd(): number {
-    this.ensureCurrentMonth();
-    return Math.round(this.monthlyCostUsd * 100000) / 100000;
-  }
-
-  getMonthlyLimitUsd(): number {
-    return this.monthlyCostLimitUsd;
-  }
-
-  resetMonthly(): void {
-    this.monthlyCostUsd = 0;
-    this.monthlyResetDate = new Date().toISOString().slice(0, 7);
-    this.costRecords = [];
-    this.budgetAlerts = [];
-  }
 }
 
-import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+const sentinelSingleton = createTenantAwareSingleton(() => new TokenSentinel(), {});
 
-/**
- * Emit a one-time deprecation warning when TokenSentinel is instantiated.
- * The cost-tracking portion is deprecated in favor of UnifiedCostAuthority;
- * token estimation remains supported.
- */
-let tokenSentinelDeprecationWarned = false;
-function emitTokenSentinelDeprecationWarning(): void {
-  if (tokenSentinelDeprecationWarned) return;
-  tokenSentinelDeprecationWarned = true;
-  try {
-    if (typeof process !== 'undefined' && typeof process.emitWarning === 'function') {
-      process.emitWarning(
-        'TokenSentinel cost-tracking is deprecated — use UnifiedCostAuthority ' +
-          '(getUnifiedCostAuthority) for budget enforcement. Token estimation ' +
-          '(estimatePromptTokens/estimateOutputTokens) remains supported.',
-        { type: 'DeprecationWarning', code: 'COMMANDER_TOKENSENTINEL_DEPRECATED' },
-      );
-    }
-  } catch {
-    /* emitWarning must never throw */
-  }
-}
-
-const sentinelSingleton = createTenantAwareSingleton(() => new TokenSentinel(), {
-  allowGlobalFallback: true,
-});
-
-/**
- * Get the global TokenSentinel singleton.
- *
- * Note: cost-tracking methods are @deprecated — see class JSDoc.
- * Token estimation methods remain supported.
- */
+/** Get the global TokenSentinel singleton (token estimation only). */
 export function getTokenSentinel(): TokenSentinel {
   return sentinelSingleton.get();
 }
