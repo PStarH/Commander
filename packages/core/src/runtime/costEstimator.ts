@@ -159,51 +159,264 @@ export interface PricingEntry {
  */
 export const DEFAULT_PRICING: Array<[string, PricingEntry]> = [
   // ── OpenAI ──────────────────────────────────────────────────────────────
-  ['gpt-4o', { inputPer1M: 2.5, outputPer1M: 10.0, cachedInputPer1M: 1.25, provider: 'openai', tier: 'standard' }],
-  ['gpt-4o-mini', { inputPer1M: 0.15, outputPer1M: 0.6, cachedInputPer1M: 0.075, provider: 'openai', tier: 'eco' }],
+  [
+    'gpt-4o',
+    {
+      inputPer1M: 2.5,
+      outputPer1M: 10.0,
+      cachedInputPer1M: 1.25,
+      provider: 'openai',
+      tier: 'standard',
+    },
+  ],
+  [
+    'gpt-4o-mini',
+    {
+      inputPer1M: 0.15,
+      outputPer1M: 0.6,
+      cachedInputPer1M: 0.075,
+      provider: 'openai',
+      tier: 'eco',
+    },
+  ],
   ['gpt-4-turbo', { inputPer1M: 10, outputPer1M: 30, provider: 'openai', tier: 'standard' }],
   ['gpt-3.5-turbo', { inputPer1M: 0.5, outputPer1M: 1.5, provider: 'openai', tier: 'eco' }],
   ['o1', { inputPer1M: 15, outputPer1M: 60, provider: 'openai', tier: 'power' }],
   ['o1-mini', { inputPer1M: 3, outputPer1M: 12, provider: 'openai', tier: 'standard' }],
   ['o3-mini', { inputPer1M: 1.1, outputPer1M: 4.4, provider: 'openai', tier: 'standard' }],
   // ── Anthropic ────────────────────────────────────────────────────────────
-  ['claude-3-5-sonnet', { inputPer1M: 3.0, outputPer1M: 15.0, cachedInputPer1M: 0.3, provider: 'anthropic', tier: 'standard' }],
-  ['claude-sonnet-4-6', { inputPer1M: 3, outputPer1M: 15, cachedInputPer1M: 0.3, provider: 'anthropic', tier: 'standard' }],
-  ['claude-3-5-haiku', { inputPer1M: 0.8, outputPer1M: 4.0, cachedInputPer1M: 0.08, provider: 'anthropic', tier: 'eco' }],
-  ['claude-haiku-4-5', { inputPer1M: 0.8, outputPer1M: 4, cachedInputPer1M: 0.08, provider: 'anthropic', tier: 'eco' }],
+  [
+    'claude-3-5-sonnet',
+    {
+      inputPer1M: 3.0,
+      outputPer1M: 15.0,
+      cachedInputPer1M: 0.3,
+      provider: 'anthropic',
+      tier: 'standard',
+    },
+  ],
+  [
+    'claude-sonnet-4-6',
+    {
+      inputPer1M: 3,
+      outputPer1M: 15,
+      cachedInputPer1M: 0.3,
+      provider: 'anthropic',
+      tier: 'standard',
+    },
+  ],
+  [
+    'claude-3-5-haiku',
+    {
+      inputPer1M: 0.8,
+      outputPer1M: 4.0,
+      cachedInputPer1M: 0.08,
+      provider: 'anthropic',
+      tier: 'eco',
+    },
+  ],
+  [
+    'claude-haiku-4-5',
+    { inputPer1M: 0.8, outputPer1M: 4, cachedInputPer1M: 0.08, provider: 'anthropic', tier: 'eco' },
+  ],
   ['claude-3-opus', { inputPer1M: 15, outputPer1M: 75, provider: 'anthropic', tier: 'power' }],
-  ['claude-opus-4-8', { inputPer1M: 15, outputPer1M: 75, cachedInputPer1M: 1.5, provider: 'anthropic', tier: 'power' }],
+  [
+    'claude-opus-4-8',
+    {
+      inputPer1M: 15,
+      outputPer1M: 75,
+      cachedInputPer1M: 1.5,
+      provider: 'anthropic',
+      tier: 'power',
+    },
+  ],
   // ── Google ───────────────────────────────────────────────────────────────
-  ['gemini-1.5-pro', { inputPer1M: 1.25, outputPer1M: 5.0, cachedInputPer1M: 0.31, provider: 'google', tier: 'standard' }],
-  ['gemini-2-pro', { inputPer1M: 1.5, outputPer1M: 7.5, cachedInputPer1M: 0.375, provider: 'google', tier: 'standard' }],
-  ['gemini-1.5-flash', { inputPer1M: 0.075, outputPer1M: 0.3, cachedInputPer1M: 0.01875, provider: 'google', tier: 'eco' }],
-  ['gemini-2-flash', { inputPer1M: 0.1, outputPer1M: 0.4, cachedInputPer1M: 0.025, provider: 'google', tier: 'eco' }],
-  ['gemini-2.0-flash', { inputPer1M: 0.1, outputPer1M: 0.4, cachedInputPer1M: 0.025, provider: 'google', tier: 'eco' }],
+  [
+    'gemini-1.5-pro',
+    {
+      inputPer1M: 1.25,
+      outputPer1M: 5.0,
+      cachedInputPer1M: 0.31,
+      provider: 'google',
+      tier: 'standard',
+    },
+  ],
+  [
+    'gemini-2-pro',
+    {
+      inputPer1M: 1.5,
+      outputPer1M: 7.5,
+      cachedInputPer1M: 0.375,
+      provider: 'google',
+      tier: 'standard',
+    },
+  ],
+  [
+    'gemini-1.5-flash',
+    {
+      inputPer1M: 0.075,
+      outputPer1M: 0.3,
+      cachedInputPer1M: 0.01875,
+      provider: 'google',
+      tier: 'eco',
+    },
+  ],
+  [
+    'gemini-2-flash',
+    { inputPer1M: 0.1, outputPer1M: 0.4, cachedInputPer1M: 0.025, provider: 'google', tier: 'eco' },
+  ],
+  [
+    'gemini-2.0-flash',
+    { inputPer1M: 0.1, outputPer1M: 0.4, cachedInputPer1M: 0.025, provider: 'google', tier: 'eco' },
+  ],
   // ── Deepseek ─────────────────────────────────────────────────────────────
-  ['deepseek-chat', { inputPer1M: 0.14, outputPer1M: 0.28, cachedInputPer1M: 0.014, provider: 'deepseek', tier: 'eco' }],
-  ['deepseek-reasoner', { inputPer1M: 0.14, outputPer1M: 2.19, cachedInputPer1M: 0.014, provider: 'deepseek', tier: 'standard' }],
-  ['deepseek-v4-pro', { inputPer1M: 2, outputPer1M: 8, cachedInputPer1M: 0.02, provider: 'deepseek', tier: 'power' }],
+  [
+    'deepseek-chat',
+    {
+      inputPer1M: 0.14,
+      outputPer1M: 0.28,
+      cachedInputPer1M: 0.014,
+      provider: 'deepseek',
+      tier: 'eco',
+    },
+  ],
+  [
+    'deepseek-reasoner',
+    {
+      inputPer1M: 0.14,
+      outputPer1M: 2.19,
+      cachedInputPer1M: 0.014,
+      provider: 'deepseek',
+      tier: 'standard',
+    },
+  ],
+  [
+    'deepseek-v4-pro',
+    { inputPer1M: 2, outputPer1M: 8, cachedInputPer1M: 0.02, provider: 'deepseek', tier: 'power' },
+  ],
   // ── xAI Grok ─────────────────────────────────────────────────────────────
-  ['grok-2-latest', { inputPer1M: 2.0, outputPer1M: 10.0, cachedInputPer1M: 1.0, provider: 'xai', tier: 'standard' }],
-  ['grok-3-latest', { inputPer1M: 3.0, outputPer1M: 15.0, cachedInputPer1M: 1.5, provider: 'xai', tier: 'standard' }],
+  [
+    'grok-2-latest',
+    {
+      inputPer1M: 2.0,
+      outputPer1M: 10.0,
+      cachedInputPer1M: 1.0,
+      provider: 'xai',
+      tier: 'standard',
+    },
+  ],
+  [
+    'grok-3-latest',
+    {
+      inputPer1M: 3.0,
+      outputPer1M: 15.0,
+      cachedInputPer1M: 1.5,
+      provider: 'xai',
+      tier: 'standard',
+    },
+  ],
   ['grok-3', { inputPer1M: 3, outputPer1M: 15, provider: 'xai', tier: 'standard' }],
   // ── Mistral ──────────────────────────────────────────────────────────────
-  ['mistral-large-latest', { inputPer1M: 2.0, outputPer1M: 6.0, cachedInputPer1M: 1.0, provider: 'mistral', tier: 'standard' }],
-  ['mistral-small-latest', { inputPer1M: 0.2, outputPer1M: 0.6, cachedInputPer1M: 0.1, provider: 'mistral', tier: 'eco' }],
+  [
+    'mistral-large-latest',
+    {
+      inputPer1M: 2.0,
+      outputPer1M: 6.0,
+      cachedInputPer1M: 1.0,
+      provider: 'mistral',
+      tier: 'standard',
+    },
+  ],
+  [
+    'mistral-small-latest',
+    { inputPer1M: 0.2, outputPer1M: 0.6, cachedInputPer1M: 0.1, provider: 'mistral', tier: 'eco' },
+  ],
   // ── Cohere ───────────────────────────────────────────────────────────────
-  ['command-a-plus', { inputPer1M: 2.5, outputPer1M: 10.0, cachedInputPer1M: 1.25, provider: 'cohere', tier: 'standard' }],
-  ['command-r-plus', { inputPer1M: 2.5, outputPer1M: 10.0, cachedInputPer1M: 1.25, provider: 'cohere', tier: 'standard' }],
+  [
+    'command-a-plus',
+    {
+      inputPer1M: 2.5,
+      outputPer1M: 10.0,
+      cachedInputPer1M: 1.25,
+      provider: 'cohere',
+      tier: 'standard',
+    },
+  ],
+  [
+    'command-r-plus',
+    {
+      inputPer1M: 2.5,
+      outputPer1M: 10.0,
+      cachedInputPer1M: 1.25,
+      provider: 'cohere',
+      tier: 'standard',
+    },
+  ],
   // ── MiniMax / GLM / Xiaomi / MiMo / StepFun ─────────────────────────────
-  ['minimax-m3', { inputPer1M: 1, outputPer1M: 4, cachedInputPer1M: 0.1, provider: 'minimax', tier: 'standard' }],
-  ['glm-4.7', { inputPer1M: 0.7, outputPer1M: 2.8, cachedInputPer1M: 0.07, provider: 'glm', tier: 'standard' }],
-  ['glm-4.6', { inputPer1M: 0.7, outputPer1M: 2.8, cachedInputPer1M: 0.07, provider: 'glm', tier: 'standard' }],
+  [
+    'minimax-m3',
+    { inputPer1M: 1, outputPer1M: 4, cachedInputPer1M: 0.1, provider: 'minimax', tier: 'standard' },
+  ],
+  [
+    'glm-4.7',
+    {
+      inputPer1M: 0.7,
+      outputPer1M: 2.8,
+      cachedInputPer1M: 0.07,
+      provider: 'glm',
+      tier: 'standard',
+    },
+  ],
+  [
+    'glm-4.6',
+    {
+      inputPer1M: 0.7,
+      outputPer1M: 2.8,
+      cachedInputPer1M: 0.07,
+      provider: 'glm',
+      tier: 'standard',
+    },
+  ],
   ['glm-5.1', { inputPer1M: 2, outputPer1M: 8, provider: 'glm', tier: 'power' }],
-  ['mimo-v2-flash', { inputPer1M: 0.18, outputPer1M: 0.18, cachedInputPer1M: 0.018, provider: 'xiaomi', tier: 'eco' }],
-  ['mimo-v2-pro', { inputPer1M: 0.7, outputPer1M: 2.8, cachedInputPer1M: 0.07, provider: 'xiaomi', tier: 'standard' }],
-  ['mimo-v2.5', { inputPer1M: 0.7, outputPer1M: 2.8, cachedInputPer1M: 0.07, provider: 'mimo', tier: 'standard' }],
+  [
+    'mimo-v2-flash',
+    {
+      inputPer1M: 0.18,
+      outputPer1M: 0.18,
+      cachedInputPer1M: 0.018,
+      provider: 'xiaomi',
+      tier: 'eco',
+    },
+  ],
+  [
+    'mimo-v2-pro',
+    {
+      inputPer1M: 0.7,
+      outputPer1M: 2.8,
+      cachedInputPer1M: 0.07,
+      provider: 'xiaomi',
+      tier: 'standard',
+    },
+  ],
+  [
+    'mimo-v2.5',
+    {
+      inputPer1M: 0.7,
+      outputPer1M: 2.8,
+      cachedInputPer1M: 0.07,
+      provider: 'mimo',
+      tier: 'standard',
+    },
+  ],
   ['mimo-v2.5-pro', { inputPer1M: 4, outputPer1M: 12, provider: 'mimo', tier: 'power' }],
-  ['step-3.7-flash', { inputPer1M: 0.3, outputPer1M: 0.9, cachedInputPer1M: 0.03, provider: 'stepfun', tier: 'eco' }],
-  ['step-3.5-flash', { inputPer1M: 0.5, outputPer1M: 2, cachedInputPer1M: 0.25, provider: 'stepfun', tier: 'eco' }],
+  [
+    'step-3.7-flash',
+    { inputPer1M: 0.3, outputPer1M: 0.9, cachedInputPer1M: 0.03, provider: 'stepfun', tier: 'eco' },
+  ],
+  [
+    'step-3.5-flash',
+    { inputPer1M: 0.5, outputPer1M: 2, cachedInputPer1M: 0.25, provider: 'stepfun', tier: 'eco' },
+  ],
 ];
 
 // Freeze the exported table so the docstring's "read-only" claim is enforced
@@ -337,9 +550,7 @@ export class CostEstimator {
     return {
       inputTokens,
       outputTokens,
-      costUsd:
-        (inputTokens / 1_000_000) * inputPer1M +
-        (outputTokens / 1_000_000) * outputPer1M,
+      costUsd: (inputTokens / 1_000_000) * inputPer1M + (outputTokens / 1_000_000) * outputPer1M,
     };
   }
 
@@ -468,7 +679,8 @@ export class CostEstimator {
       if (!tier && !tableRate) continue;
 
       const inputRate = tableRate?.inputPer1M ?? this.estimateCostPerM(tier ?? 'standard', 'input');
-      const outputRate = tableRate?.outputPer1M ?? this.estimateCostPerM(tier ?? 'standard', 'output');
+      const outputRate =
+        tableRate?.outputPer1M ?? this.estimateCostPerM(tier ?? 'standard', 'output');
       const tierKey = tableRate?.tier ?? tier ?? 'standard';
 
       this.recordActualCost(
@@ -532,7 +744,10 @@ export class CostEstimator {
     const goalLen = ctx.goal?.length ?? 0;
     const toolsLen = ctx.availableTools?.length ?? 0;
     const budget = ctx.tokenBudget ?? 0;
-    if (!CostEstimator.missingFieldsWarned && (ctx.availableTools === undefined || ctx.tokenBudget === undefined)) {
+    if (
+      !CostEstimator.missingFieldsWarned &&
+      (ctx.availableTools === undefined || ctx.tokenBudget === undefined)
+    ) {
       CostEstimator.missingFieldsWarned = true;
       getGlobalLogger().warn(
         'CostEstimator',
@@ -640,7 +855,10 @@ export class CostEstimator {
     // "openai/gpt-4o-mini" or a bare name — getPricingForModel normalizes all of these.
     const tableRate = this.getPricingForModel(model);
     if (tableRate) {
-      return (inputTokens / 1_000_000) * tableRate.inputPer1M + (outputTokens / 1_000_000) * tableRate.outputPer1M;
+      return (
+        (inputTokens / 1_000_000) * tableRate.inputPer1M +
+        (outputTokens / 1_000_000) * tableRate.outputPer1M
+      );
     }
     // Fall back to per-tier blended rates.
     const tier = this.inferModelTier(model);
@@ -707,10 +925,7 @@ export class CostEstimator {
     // with provider display names) or `modelId` (lives on `RoutingDecision`,
     // not `ModelConfig` — including it would make this function look like a
     // polymorphic RoutingDecision bridge that it isn't).
-    const candidates = [
-      (model as { id?: unknown }).id,
-      (model as { model?: unknown }).model,
-    ];
+    const candidates = [(model as { id?: unknown }).id, (model as { model?: unknown }).model];
     let tableRate: PricingEntry | null = null;
     for (const candidate of candidates) {
       if (typeof candidate === 'string' && candidate.length > 0) {
@@ -852,9 +1067,7 @@ export class CostEstimator {
 
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
-const estimatorSingleton = createTenantAwareSingleton(() => new CostEstimator(), {
-  allowGlobalFallback: true,
-});
+const estimatorSingleton = createTenantAwareSingleton(() => new CostEstimator(), {});
 
 /** Get the global CostEstimator (single-tenant) or tenant-scoped (multi-tenant). */
 export function getCostEstimator(): CostEstimator {

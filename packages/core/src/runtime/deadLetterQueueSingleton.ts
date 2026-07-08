@@ -6,9 +6,7 @@
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 import { DeadLetterQueue } from './deadLetterQueue';
 
-const dlqSingleton = createTenantAwareSingleton(() => new DeadLetterQueue(), {
-  allowGlobalFallback: true,
-});
+const dlqSingleton = createTenantAwareSingleton(() => new DeadLetterQueue(), {});
 
 export function getDeadLetterQueue(tenantId?: string): DeadLetterQueue {
   if (tenantId) return dlqSingleton.getForTenant(tenantId);

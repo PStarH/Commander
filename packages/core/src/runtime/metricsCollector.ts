@@ -1092,9 +1092,7 @@ export class MetricsCollector {
 import { getCostModel } from '../observability/costModel';
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
-const metricsSingleton = createTenantAwareSingleton(() => new MetricsCollector(), {
-  allowGlobalFallback: true,
-});
+const metricsSingleton = createTenantAwareSingleton(() => new MetricsCollector(), {});
 
 /**
  * Map a 32-char hex cache key to a numeric gauge value. Hash bytes are

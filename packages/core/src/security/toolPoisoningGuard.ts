@@ -1775,7 +1775,6 @@ export class ToolPoisoningGuard {
 // ============================================================================
 
 const toolPoisoningGuardSingleton = createTenantAwareSingleton(() => new ToolPoisoningGuard(), {
-  allowGlobalFallback: true,
   componentName: 'ToolPoisoningGuard',
 });
 

@@ -5,7 +5,7 @@ import { resetTraceRecorder } from '../src/runtime/executionTrace';
 import { resetMetricsCollector } from '../src/runtime/metricsCollector';
 import { resetEnterpriseSecurityGateway } from '../src/security/enterpriseSecurityGateway';
 import { resetBillExplosionGuard } from '../src/security/billExplosionGuard';
-import { resetCostGuard } from '../src/security/costGuard';
+import { resetUnifiedCostAuthority } from '../src/security/unifiedCostAuthority';
 import { resetSecurityMonitor } from '../src/security/securityMonitor';
 import { resetGuardianAgent } from '../src/security/guardianAgent';
 import { resetDataLossPrevention } from '../src/security/dataLossPrevention';
@@ -59,7 +59,7 @@ beforeEach(() => {
 
   resetEnterpriseSecurityGateway();
   resetBillExplosionGuard();
-  resetCostGuard();
+  resetUnifiedCostAuthority();
   resetSecurityMonitor();
   resetGuardianAgent();
   resetDataLossPrevention();

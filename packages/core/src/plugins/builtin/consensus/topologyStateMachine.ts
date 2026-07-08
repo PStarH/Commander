@@ -360,9 +360,10 @@ export class TopologyStateMachine {
 
 import { createTenantAwareSingleton } from '../../../runtime/tenantAwareSingleton';
 
-const topologyStateMachineSingleton = createTenantAwareSingleton(() => new TopologyStateMachine(), {
-  allowGlobalFallback: true,
-});
+const topologyStateMachineSingleton = createTenantAwareSingleton(
+  () => new TopologyStateMachine(),
+  {},
+);
 
 export function getTopologyStateMachine(): TopologyStateMachine {
   return topologyStateMachineSingleton.get();
