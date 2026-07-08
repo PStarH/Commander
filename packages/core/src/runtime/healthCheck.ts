@@ -55,7 +55,7 @@ export interface HealthSources {
   /** Return open circuit breaker names and total breaker count. */
   getCircuitBreakerInfo?: () => { open: string[]; total: number };
   /** Return aggregate dead-letter-queue size and per-category breakdown. */
-  getDLQInfo?: () => { totalEntries: number; byCategory: DLQCategoryCount[] };
+  getDLQInfo?: () => Promise<{ totalEntries: number; byCategory: DLQCategoryCount[] }>;
   /** Return pending and completed compensation counts. */
   getCompensationInfo?: () => { pending: number; compensated: number };
   /** Return active topic count and subscriber count on the event bus. */
@@ -101,10 +101,10 @@ export function buildHealthSources(): HealthSources {
         return { activeTopics: 0, subscriberCount: 0 };
       }
     },
-    getDLQInfo: () => {
+    getDLQInfo: async () => {
       try {
         const dlq = getDeadLetterQueue();
-        const byCategory = dlq.getStats();
+        const byCategory = await dlq.getStats();
         return {
           totalEntries: byCategory.reduce((s, c) => s + c.count, 0),
           byCategory,
@@ -239,7 +239,7 @@ export class HealthCollector {
       return { status: 'healthy', message: 'DLQ check not wired — no source provided' };
     }
     try {
-      const info = dlq();
+      const info = await dlq();
       if (info.totalEntries > DLQ_DEGRADED_THRESHOLD) {
         return {
           status: 'degraded',

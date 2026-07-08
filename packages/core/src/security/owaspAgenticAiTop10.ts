@@ -543,9 +543,7 @@ function fnv1aHex(s: string): string {
 // Singleton
 // ============================================================================
 
-const asiSingleton = createTenantAwareSingleton(() => new OwaspAgenticAiTop10(), {
-  allowGlobalFallback: true,
-});
+const asiSingleton = createTenantAwareSingleton(() => new OwaspAgenticAiTop10(), {});
 
 export function getOwaspAsiTop10(): OwaspAgenticAiTop10 {
   return asiSingleton.get();

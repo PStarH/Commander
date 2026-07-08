@@ -1653,9 +1653,7 @@ export class ComplianceAuditManager {
 // Singleton
 // ============================================================================
 
-const complianceSingleton = createTenantAwareSingleton(() => new ComplianceAuditManager(), {
-  allowGlobalFallback: true,
-});
+const complianceSingleton = createTenantAwareSingleton(() => new ComplianceAuditManager(), {});
 
 /** Get the global ComplianceAuditManager. */
 export function getComplianceAuditManager(

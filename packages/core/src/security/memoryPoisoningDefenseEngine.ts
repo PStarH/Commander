@@ -1845,7 +1845,6 @@ const defenseEngineSingleton = createTenantAwareSingleton<MemoryPoisoningDefense
   () => new MemoryPoisoningDefenseEngine(),
   {
     componentName: 'MemoryPoisoningDefenseEngine',
-    allowGlobalFallback: true,
     dispose: (instance) => {
       try {
         instance.clearQuarantine();

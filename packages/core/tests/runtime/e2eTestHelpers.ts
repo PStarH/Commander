@@ -13,7 +13,7 @@ import { resetTraceRecorder } from '../../src/runtime/executionTrace';
 import { resetPatternTracker } from '../../src/runtime/speculativeExecutor';
 import { resetGuardianAgent } from '../../src/security/guardianAgent';
 import { resetRuntimeGuardian } from '../../src/runtime/runtimeGuardianBridge';
-import { resetCostGuard } from '../../src/security/costGuard';
+import { resetUnifiedCostAuthority } from '../../src/security/unifiedCostAuthority';
 import { resetBillExplosionGuard } from '../../src/security/billExplosionGuard';
 import { MockLLMProvider } from '../../src/runtime/mockLLMProvider';
 import type { AgentExecutionContext, Tool, LLMRequest, LLMResponse } from '../../src/runtime/types';
@@ -183,7 +183,7 @@ export function resetGlobalState(): void {
   resetPatternTracker();
   resetGuardianAgent();
   resetRuntimeGuardian();
-  resetCostGuard();
+  resetUnifiedCostAuthority();
   resetBillExplosionGuard();
 }
 

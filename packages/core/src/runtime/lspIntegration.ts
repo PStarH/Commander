@@ -358,7 +358,6 @@ const lspClientSingleton = createTenantAwareSingleton(
     return new LSPClient(_lspConfig.command, _lspConfig.args, _lspConfig.workspaceRoot);
   },
   {
-    allowGlobalFallback: true,
     dispose: (client) => client.disconnect(),
   },
 );

@@ -481,9 +481,7 @@ export class ConsensusChecker {
 
 import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
 
-const consensusCheckerSingleton = createTenantAwareSingleton(() => new ConsensusChecker(), {
-  allowGlobalFallback: true,
-});
+const consensusCheckerSingleton = createTenantAwareSingleton(() => new ConsensusChecker(), {});
 
 export function getGlobalConsensusChecker(): ConsensusChecker {
   return consensusCheckerSingleton.get();

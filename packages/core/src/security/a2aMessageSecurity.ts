@@ -1355,7 +1355,6 @@ export class A2AMessageSecurity {
 // ============================================================================
 
 const a2aMessageSecuritySingleton = createTenantAwareSingleton(() => new A2AMessageSecurity(), {
-  allowGlobalFallback: true,
   componentName: 'A2AMessageSecurity',
   dispose: (instance) => {
     try {
