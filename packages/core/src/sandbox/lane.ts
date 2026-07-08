@@ -378,9 +378,7 @@ export class LaneManager {
 // ============================================================================
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
-const laneManagerSingleton = createTenantAwareSingleton(() => new LaneManager(), {
-  allowGlobalFallback: true,
-});
+const laneManagerSingleton = createTenantAwareSingleton(() => new LaneManager(), {});
 
 export function getLaneManager(): LaneManager {
   return laneManagerSingleton.get();

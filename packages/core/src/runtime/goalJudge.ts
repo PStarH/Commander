@@ -705,9 +705,7 @@ export class GoalJudge {
 // Singleton
 // ============================================================================
 
-const goalJudgeSingleton = createTenantAwareSingleton(() => new GoalJudge(), {
-  allowGlobalFallback: true,
-});
+const goalJudgeSingleton = createTenantAwareSingleton(() => new GoalJudge(), {});
 
 /** Get the global GoalJudge (single-tenant) or tenant-scoped (multi-tenant). */
 export function getGoalJudge(): GoalJudge {

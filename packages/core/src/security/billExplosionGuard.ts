@@ -39,7 +39,6 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
-import { getCostGuard } from './costGuard';
 import { getSecurityAuditLogger } from './securityAuditLogger';
 import { getAuditChainLedger } from './auditChainLedger';
 import { getGlobalLogger, getGlobalMetrics } from '../logging';
@@ -218,8 +217,6 @@ export interface BillGuardConfig {
   enableAutoMelt: boolean;
   /** 启用攻击模式检测 */
   enableAttackDetection: boolean;
-  /** 启用 CostGuard 二次检查 */
-  enableCostGuardIntegration: boolean;
 }
 
 /**
@@ -468,7 +465,6 @@ const DEFAULT_CONFIG: BillGuardConfig = {
   // 功能开关
   enableAutoMelt: true,
   enableAttackDetection: true,
-  enableCostGuardIntegration: true,
 };
 
 // ============================================================================
@@ -699,7 +695,7 @@ export class BillExplosionGuard {
     isRetry?: boolean;
     source?: string;
   }): CostCheckResult {
-    const { sessionId, model, estimatedTokens, input, cacheHitRatio, isRetry, source } = params;
+    const { sessionId, model, estimatedTokens, input, cacheHitRatio, isRetry } = params;
     const tenantId = this.resolveTenantId(params.tenantId);
     const now = Date.now();
     const timestamp = new Date(now).toISOString();
@@ -865,46 +861,6 @@ export class BillExplosionGuard {
         session,
         timestamp,
       );
-    }
-
-    // ── CostGuard 二次检查 ────────────────────────────────────
-    if (this.config.enableCostGuardIntegration) {
-      const cgAction = this.consultCostGuard(
-        tenantId,
-        model,
-        estimatedTokens,
-        source ?? tenantId,
-        input,
-      );
-      if (cgAction === 'MELT') {
-        this.applyMelt(state, tenantId, 'CostGuard 二次检查触发熔断', 'costguard');
-        return this.buildResult(
-          false,
-          'MELT',
-          'CostGuard 二次检查触发熔断',
-          estimatedCost,
-          this.computeRemainingBudget(state, session, estimatedCost),
-          undefined,
-          'costguard',
-          state,
-          session,
-          timestamp,
-        );
-      }
-      if (cgAction === 'THROTTLE') {
-        return this.buildResult(
-          false,
-          'THROTTLE',
-          'CostGuard 二次检查触发限流',
-          estimatedCost,
-          this.computeRemainingBudget(state, session, estimatedCost),
-          undefined,
-          'costguard',
-          state,
-          session,
-          timestamp,
-        );
-      }
     }
 
     // ── 检查限流状态 ──────────────────────────────────────────
@@ -2146,36 +2102,6 @@ export class BillExplosionGuard {
   }
 
   /**
-   * 咨询 CostGuard —— 二次经济攻击检测。
-   *
-   * @returns CostGuard 建议的动作（MELT/THROTTLE），无建议返回 null
-   */
-  private consultCostGuard(
-    tenantId: string,
-    model: string,
-    estimatedTokens: number,
-    source: string,
-    input?: string,
-  ): BillGuardAction | null {
-    try {
-      const costGuard = getCostGuard();
-      const decision = costGuard.evaluateRequest({
-        tokens: estimatedTokens,
-        model,
-        source,
-        input,
-      });
-      if (decision.action === 'MELT') return 'MELT';
-      if (decision.action === 'THROTTLE') return 'THROTTLE';
-      if (decision.action === 'QUARANTINE') return 'THROTTLE';
-      return null;
-    } catch (err) {
-      reportSilentFailure(err, 'billExplosionGuard:consultCostGuard');
-      return null;
-    }
-  }
-
-  /**
    * 构建成本检查结果。
    */
   private buildResult(
@@ -2274,7 +2200,6 @@ export class BillExplosionGuard {
 // ============================================================================
 
 const billExplosionGuardSingleton = createTenantAwareSingleton(() => new BillExplosionGuard(), {
-  allowGlobalFallback: true,
   componentName: 'BillExplosionGuard',
 });
 

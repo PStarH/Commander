@@ -622,9 +622,7 @@ export class FileChangeTracker {
 
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
-const fileChangeTrackerSingleton = createTenantAwareSingleton(() => new FileChangeTracker(), {
-  allowGlobalFallback: true,
-});
+const fileChangeTrackerSingleton = createTenantAwareSingleton(() => new FileChangeTracker(), {});
 
 export function getFileChangeTracker(): FileChangeTracker {
   return fileChangeTrackerSingleton.get();

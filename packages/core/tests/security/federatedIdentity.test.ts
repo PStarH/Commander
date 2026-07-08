@@ -491,17 +491,23 @@ describe('FederatedIdentity - Cross-Tenant Isolation', () => {
 
 describe('FederatedIdentity - Singleton API', () => {
   it('should return FederatedIdentity instance', () => {
-    expect(getFederatedIdentity()).toBeInstanceOf(FederatedIdentity);
+    expect(runWithTenant('fi-default', () => getFederatedIdentity())).toBeInstanceOf(
+      FederatedIdentity,
+    );
   });
 
   it('should return same instance on repeated calls', () => {
-    expect(getFederatedIdentity()).toBe(getFederatedIdentity());
+    expect(runWithTenant('fi-default', () => getFederatedIdentity())).toBe(
+      runWithTenant('fi-default', () => getFederatedIdentity()),
+    );
   });
 
   it('should reset all state', () => {
     const f = fi();
     issueTrust(f, { trustId: 'reset-test' });
     resetFederatedIdentity();
-    expect(getFederatedIdentity().getTrustEntry('reset-test')).toBeUndefined();
+    expect(
+      runWithTenant('fi-default', () => getFederatedIdentity().getTrustEntry('reset-test')),
+    ).toBeUndefined();
   });
 });
