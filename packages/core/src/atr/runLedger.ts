@@ -825,7 +825,6 @@ function createLedgerSingleton() {
       return { lease, idempotency, ledger };
     },
     {
-      allowGlobalFallback: true,
       dispose: ({ lease, ledger }) => {
         lease.close();
         ledger.close();

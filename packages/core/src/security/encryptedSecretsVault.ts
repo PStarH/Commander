@@ -883,7 +883,6 @@ export class EncryptedSecretsVault {
  *   - 租户间数据在内存层面完全隔离
  */
 const vaultSingleton = createTenantAwareSingleton(() => new EncryptedSecretsVault(), {
-  allowGlobalFallback: true,
   componentName: 'EncryptedSecretsVault',
   dispose: (instance) => {
     // 释放时清空保险库，减少密文在内存中的残留

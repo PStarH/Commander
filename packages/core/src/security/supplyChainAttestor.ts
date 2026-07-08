@@ -889,9 +889,7 @@ export function hashString(content: string): string {
 // Singleton
 // ============================================================================
 
-const attestorSingleton = createTenantAwareSingleton(() => new SupplyChainAttestor(), {
-  allowGlobalFallback: true,
-});
+const attestorSingleton = createTenantAwareSingleton(() => new SupplyChainAttestor(), {});
 
 export function getSupplyChainAttestor(_config?: Partial<AttestorConfig>): SupplyChainAttestor {
   return attestorSingleton.get();

@@ -98,7 +98,7 @@ async function drainCycle(): Promise<void> {
 
     for (const category of workerConfig.categories) {
       try {
-        const entries = dlqRef.getRetryableEntries(category, workerConfig.batchSize);
+        const entries = await dlqRef.getRetryableEntries(category, workerConfig.batchSize);
         if (entries.length === 0) continue;
 
         for (const entry of entries) {

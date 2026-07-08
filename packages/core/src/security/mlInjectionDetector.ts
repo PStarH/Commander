@@ -499,9 +499,7 @@ export class MLInjectionDetector {
 // Singleton
 // ============================================================================
 
-const detectorSingleton = createTenantAwareSingleton(() => new MLInjectionDetector(), {
-  allowGlobalFallback: true,
-});
+const detectorSingleton = createTenantAwareSingleton(() => new MLInjectionDetector(), {});
 
 export function getMLInjectionDetector(_config?: Partial<MLDetectorConfig>): MLInjectionDetector {
   return detectorSingleton.get();

@@ -765,9 +765,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
   }
 
   /** Flush any buffered dead-letter-queue entries to disk for observation. */
-  flushDeadLetterQueue(): void {
+  async flushDeadLetterQueue(): Promise<void> {
     try {
-      this.dlq.flush();
+      await this.dlq.flush();
     } catch (err) {
       reportSilentFailure(err, 'agentRuntime:1071');
       /* best-effort */

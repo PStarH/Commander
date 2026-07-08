@@ -544,9 +544,7 @@ export class ThreatIntelligenceFeed {
 // Singleton
 // ============================================================================
 
-const feedSingleton = createTenantAwareSingleton(() => new ThreatIntelligenceFeed(), {
-  allowGlobalFallback: true,
-});
+const feedSingleton = createTenantAwareSingleton(() => new ThreatIntelligenceFeed(), {});
 
 export function getThreatIntelligenceFeed(
   _config?: Partial<ThreatFeedConfig>,

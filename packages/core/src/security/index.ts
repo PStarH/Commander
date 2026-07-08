@@ -155,18 +155,21 @@ export type {
 // LiteLLMPricing — real-time model pricing from LiteLLM GitHub registry
 export { LiteLLMPricing, getLiteLLMPricing, resetLiteLLMPricing } from './litellmPricing';
 
-// CostGuard — enterprise economic attack detection & auto circuit-breaker
-export { CostGuard, getCostGuard, resetCostGuard } from './costGuard';
-
+// UnifiedCostAuthority — single source of truth for cost enforcement
+export {
+  UnifiedCostAuthority,
+  getUnifiedCostAuthority,
+  resetUnifiedCostAuthority,
+} from './unifiedCostAuthority';
 export type {
-  CostAttackType,
-  CostGuardAction,
-  CostTier,
-  CostGuardConfig,
-  CostGuardState,
-  CostGuardDecision,
-  CostGuardReport,
-} from './costGuard';
+  UCACallContext,
+  UCADecision,
+  UCAPostCallResult,
+  BudgetSnapshot,
+  BudgetCap,
+  CostLedgerEntry,
+  ToolCostProfile,
+} from './unifiedCostAuthority';
 
 // AgentSOC — P0-P4 event classification, playbook engine, escalation paths, health dashboard
 export { AgentSoc, getAgentSoc, resetAgentSoc } from './agentSoc';

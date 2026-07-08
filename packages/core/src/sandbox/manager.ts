@@ -145,9 +145,7 @@ export class SandboxManager {
 
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
-const sandboxManagerSingleton = createTenantAwareSingleton(() => new SandboxManager(), {
-  allowGlobalFallback: true,
-});
+const sandboxManagerSingleton = createTenantAwareSingleton(() => new SandboxManager());
 
 export function getSandboxManager(): SandboxManager {
   return sandboxManagerSingleton.get();

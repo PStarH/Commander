@@ -612,9 +612,7 @@ export class RedTeamBaselineManager {
 // Singleton
 // ============================================================================
 
-const baselineSingleton = createTenantAwareSingleton(() => new RedTeamBaselineManager(), {
-  allowGlobalFallback: true,
-});
+const baselineSingleton = createTenantAwareSingleton(() => new RedTeamBaselineManager(), {});
 
 /** Get the global RedTeamBaselineManager. */
 export function getRedTeamBaseline(_config?: Partial<BaselineConfig>): RedTeamBaselineManager {

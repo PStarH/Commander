@@ -240,9 +240,7 @@ export class AgentTeamManager {
 
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
-const teamManagerSingleton = createTenantAwareSingleton(() => new AgentTeamManager(), {
-  allowGlobalFallback: true,
-});
+const teamManagerSingleton = createTenantAwareSingleton(() => new AgentTeamManager(), {});
 
 export function getTeamManager(): AgentTeamManager {
   return teamManagerSingleton.get();

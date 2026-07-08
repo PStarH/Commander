@@ -818,9 +818,7 @@ export class EdgeSecurityProfile {
 // Singleton
 // ============================================================================
 
-const edgeSecuritySingleton = createTenantAwareSingleton(() => new EdgeSecurityProfile(), {
-  allowGlobalFallback: true,
-});
+const edgeSecuritySingleton = createTenantAwareSingleton(() => new EdgeSecurityProfile(), {});
 
 /** Get the global EdgeSecurityProfile. */
 export function getEdgeSecurityProfile(_config?: Partial<EdgeSecurityConfig>): EdgeSecurityProfile {

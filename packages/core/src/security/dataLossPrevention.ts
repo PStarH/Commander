@@ -1503,7 +1503,6 @@ export function sanitizeAgentOutput(output: string): string {
 // ============================================================================
 
 const dlpSingleton = createTenantAwareSingleton(() => new DataLossPrevention(), {
-  allowGlobalFallback: true,
   componentName: 'DataLossPrevention',
 });
 

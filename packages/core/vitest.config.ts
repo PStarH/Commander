@@ -39,6 +39,10 @@ export default defineConfig({
       'tests/runtime/agentRuntime.integration.test.ts',
       'tests/runtime/agentRuntimeInterface.test.ts',
       'tests/runtime/mtlsRuntimeIpc.test.ts',
+      // Cascade-fix regression — walks packages/core/src/**.ts and verifies
+      // every `const XSingleton = createTenantAwareSingleton(...)` factory
+      // call carries an `allowGlobalFallback` option within ±15 lines.
+      'tests/runtime/createTenantAwareSingleton.cascade.test.ts',
       'tests/checkpointStore.test.ts',
       'tests/runtime/baseOpenAICompatibleRetry.test.ts',
       'tests/runtime/circuitBreaker.test.ts',

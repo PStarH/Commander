@@ -2036,7 +2036,6 @@ export class RuntimeDependencyGuard {
 const runtimeDependencyGuardSingleton = createTenantAwareSingleton(
   () => new RuntimeDependencyGuard(),
   {
-    allowGlobalFallback: true,
     componentName: 'RuntimeDependencyGuard',
     dispose: (instance) => instance.dispose(),
   },

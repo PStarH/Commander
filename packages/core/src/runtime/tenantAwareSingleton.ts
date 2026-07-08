@@ -10,7 +10,7 @@
  * Improvements over the original implementation:
  *   - Tenant IDs are validated on every access.
  *   - Evictions are logged, not silent.
- *   - getGlobal() is gated: by default it throws in a tenant context.
+ *   - No global fallback in production; development/test use an implicit default tenant.
  *   - Optional per-tenant quota tracking and lifecycle hooks.
  *   - Configurable max tenants, TTL, and eviction policy.
  */
@@ -56,11 +56,6 @@ export interface TenantAwareSingleton<T> {
   get(): T;
   reset(): void;
   getForTenant(tenantId: string): T;
-  /**
-   * @deprecated Use `get()` with `allowGlobalFallback: true` or an explicit
-   * tenant context. Direct global access bypasses tenant isolation.
-   */
-  getGlobal(): T;
   disposeTenant(tenantId: string): boolean;
   /**
    * Current active tenant count.
@@ -75,8 +70,13 @@ export interface TenantAwareSingleton<T> {
 /**
  * Create a tenant-aware singleton wrapper.
  *
- * In single-tenant mode (no tenant context): returns the global instance only
- * when `allowGlobalFallback` is explicitly true, otherwise throws.
+ * In single-tenant mode (no tenant context):
+ *   - In production, returns the global instance only when `allowGlobalFallback`
+ *     is explicitly true; otherwise throws.
+ *   - In development/test, an implicit `__default__` tenant is used so callers
+ *     do not need to wrap every boot path in `runWithTenant`. This eliminates
+ *     the need for `allowGlobalFallback: true` boilerplate while keeping
+ *     instances tenant-scoped.
  *
  * In multi-tenant mode (tenant context active): returns a per-tenant instance.
  * When a multi-tenant provider is configured, global fallback is always
@@ -193,51 +193,61 @@ export function createTenantAwareSingleton<T>(
   }
 
   function get(): T {
-    const tenantId = getCurrentTenantId();
-    if (tenantId) {
-      validateTenantId(tenantId);
-      let inst = tenantInstances.get(tenantId);
-      if (!inst) {
-        maybeEvictForNewTenant();
-        checkLifetimeQuota();
-        inst = factory();
-        tenantInstances.set(tenantId, inst);
-        tenantCreatedAt.set(tenantId, Date.now());
-        lifetimeTenantCount++;
-        log('warn', 'Created tenant instance', {
-          tenantId,
-          activeTenants: tenantInstances.size,
-          lifetimeTenants: lifetimeTenantCount,
-        });
+    let tenantId = getCurrentTenantId();
+    if (!tenantId) {
+      if (!allowGlobalFallback) {
+        // Production / non-dev modes must never fall back to a global instance.
+        if (isMultiTenantEnabled() || process.env.NODE_ENV === 'production') {
+          const reason = isMultiTenantEnabled()
+            ? 'multi-tenant provider is active'
+            : 'allowGlobalFallback is false';
+          throw new TenantIsolationError(
+            `${component}.get() called outside tenant context and ${reason}`,
+          );
+        }
+        // Development and test modes get an implicit default tenant so that
+        // singletons are still tenant-scoped without forcing every boot path
+        // to wrap itself in runWithTenant(). This closes the "explicit
+        // allowGlobalFallback: true" gap while preserving local ergonomics.
+        tenantId = '__default__';
+      } else {
+        // Explicit allowGlobalFallback: true still creates a true global
+        // instance (used only in legacy callers / tests).
+        const isDev = process.env.NODE_ENV === 'development';
+        if (!warnedGlobalFallback) {
+          warnedGlobalFallback = true;
+          log(
+            'warn',
+            `Using global fallback instance outside tenant context — ${isDev ? 'acceptable in development' : 'data is NOT isolated by tenant'}`,
+            {
+              allowGlobalFallback,
+            },
+          );
+        }
+        if (!globalInstance) {
+          globalInstance = factory();
+        }
+        return globalInstance;
       }
-      tenantLastAccess.set(tenantId, Date.now());
-      return inst;
     }
 
-    if (!allowGlobalFallback) {
-      const reason = isMultiTenantEnabled()
-        ? 'multi-tenant provider is active'
-        : 'allowGlobalFallback is false';
-      throw new TenantIsolationError(
-        `${component}.get() called outside tenant context and ${reason}`,
-      );
+    validateTenantId(tenantId);
+    let inst = tenantInstances.get(tenantId);
+    if (!inst) {
+      maybeEvictForNewTenant();
+      checkLifetimeQuota();
+      inst = factory();
+      tenantInstances.set(tenantId, inst);
+      tenantCreatedAt.set(tenantId, Date.now());
+      lifetimeTenantCount++;
+      log('warn', 'Created tenant instance', {
+        tenantId,
+        activeTenants: tenantInstances.size,
+        lifetimeTenants: lifetimeTenantCount,
+      });
     }
-
-    const isDev = process.env.NODE_ENV === 'development';
-    if (!warnedGlobalFallback) {
-      warnedGlobalFallback = true;
-      log(
-        'warn',
-        `Using global fallback instance outside tenant context — ${isDev ? 'acceptable in development' : 'data is NOT isolated by tenant'}`,
-        {
-          allowGlobalFallback,
-        },
-      );
-    }
-    if (!globalInstance) {
-      globalInstance = factory();
-    }
-    return globalInstance;
+    tenantLastAccess.set(tenantId, Date.now());
+    return inst;
   }
 
   function reset(): void {
@@ -289,16 +299,6 @@ export function createTenantAwareSingleton<T>(
     return tenantInstances.size;
   }
 
-  function getGlobal(): T {
-    log('warn', 'getGlobal() bypasses tenant isolation and is deprecated', {
-      currentTenant: getCurrentTenantId(),
-    });
-    if (!globalInstance) {
-      globalInstance = factory();
-    }
-    return globalInstance;
-  }
-
   function lifetimeTenantCountFn(): number {
     return lifetimeTenantCount;
   }
@@ -307,7 +307,6 @@ export function createTenantAwareSingleton<T>(
     get,
     reset,
     getForTenant,
-    getGlobal,
     disposeTenant,
     tenantCount,
     lifetimeTenantCount: lifetimeTenantCountFn,

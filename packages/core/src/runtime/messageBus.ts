@@ -305,7 +305,6 @@ export class MessageBus {
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
 const messageBusSingleton = createTenantAwareSingleton(() => new MessageBus(), {
-  allowGlobalFallback: true,
   dispose: (bus) => bus.clearSubscribers(),
 });
 

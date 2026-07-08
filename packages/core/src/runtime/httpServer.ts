@@ -278,7 +278,8 @@ export class CommanderHttpServer {
     | ReturnType<typeof createNodeHttpServer>
     | ReturnType<typeof createHttpsServer>
     | null = null;
-  private runtimes: Map<string, { runtime: AgentRuntimeInterface; lastAccessedAt: number }> = new Map();
+  private runtimes: Map<string, { runtime: AgentRuntimeInterface; lastAccessedAt: number }> =
+    new Map();
   private bus = getMessageBus();
   private mcpServer: MCPServer | null = null;
   // Rate limiting: IP → { count, resetAt }
@@ -476,10 +477,10 @@ export class CommanderHttpServer {
     }
 
     // DLQ info — from the global dead-letter-queue singleton.
-    sources.getDLQInfo = () => {
+    sources.getDLQInfo = async () => {
       try {
         const dlq = getDeadLetterQueue();
-        const byCategory = dlq.getStats();
+        const byCategory = await dlq.getStats();
         const totalEntries = byCategory.reduce((sum, c) => sum + c.count, 0);
         return { totalEntries, byCategory };
       } catch {

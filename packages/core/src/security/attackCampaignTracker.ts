@@ -1613,9 +1613,7 @@ export class AttackCampaignTracker {
 // Singleton
 // ============================================================================
 
-const trackerSingleton = createTenantAwareSingleton(() => new AttackCampaignTracker(), {
-  allowGlobalFallback: true,
-});
+const trackerSingleton = createTenantAwareSingleton(() => new AttackCampaignTracker(), {});
 
 /**
  * 获取 AttackCampaignTracker 单例。可选配置仅在尚无战役时应用一次，

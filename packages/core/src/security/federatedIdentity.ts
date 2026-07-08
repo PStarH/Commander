@@ -928,9 +928,7 @@ export class FederatedIdentity {
 // Tenant-aware singleton
 // ============================================================================
 
-const federatedIdentitySingleton = createTenantAwareSingleton(() => new FederatedIdentity(), {
-  allowGlobalFallback: true,
-});
+const federatedIdentitySingleton = createTenantAwareSingleton(() => new FederatedIdentity(), {});
 
 /** Resolve the active FederatedIdentity via the current tenant context. */
 export function getFederatedIdentity(): FederatedIdentity {

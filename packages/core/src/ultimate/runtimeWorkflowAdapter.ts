@@ -480,9 +480,7 @@ export class RuntimeWorkflowAdapter {
 // ============================================================================
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
-const workflowAdapterSingleton = createTenantAwareSingleton(() => new RuntimeWorkflowAdapter(), {
-  allowGlobalFallback: true,
-});
+const workflowAdapterSingleton = createTenantAwareSingleton(() => new RuntimeWorkflowAdapter(), {});
 
 export function getRuntimeWorkflowAdapter(): RuntimeWorkflowAdapter {
   return workflowAdapterSingleton.get();
