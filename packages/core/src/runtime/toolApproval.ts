@@ -374,7 +374,7 @@ export class ToolApproval {
   private pendingApprovals: Map<string, ApprovalRequest> = new Map();
   private approvalCallback: ApprovalCallback;
   private autoApproveCallback?: ApprovalCallback;
-  private tokenVerifier?: CapabilityTokenVerifier;
+  private tokenVerifier?: CapabilityTokenVerifier | (() => CapabilityTokenVerifier);
   private tokenRejectedLogger?: TokenRejectedLogger;
   private decisionHistory: Array<{
     requestId: string;
@@ -387,7 +387,7 @@ export class ToolApproval {
   constructor(
     approvalCallback?: ApprovalCallback,
     autoApproveCallback?: ApprovalCallback,
-    tokenVerifier?: CapabilityTokenVerifier,
+    tokenVerifier?: CapabilityTokenVerifier | (() => CapabilityTokenVerifier),
   ) {
     // SECURITY: default to fail-closed. Without an explicit approval callback,
     // high-risk tool calls are rejected rather than silently approved.
@@ -423,8 +423,17 @@ export class ToolApproval {
    * resolution or hot-reload of the capability-token issuer). Removes any
    * previously-set verifier when called with `undefined`.
    */
-  setTokenVerifier(verifier: CapabilityTokenVerifier | undefined): void {
+  setTokenVerifier(
+    verifier: CapabilityTokenVerifier | (() => CapabilityTokenVerifier) | undefined,
+  ): void {
     this.tokenVerifier = verifier;
+  }
+
+  private resolveTokenVerifier(): CapabilityTokenVerifier | undefined {
+    if (!this.tokenVerifier) return undefined;
+    return typeof this.tokenVerifier === 'function'
+      ? (this.tokenVerifier as () => CapabilityTokenVerifier)()
+      : this.tokenVerifier;
   }
 
   /**
@@ -567,8 +576,9 @@ export class ToolApproval {
     // approval pathway so a stale or expired token cannot block legitimate
     // approvals; we also fire an opt-in observability event so tenants can
     // detect supply-with-bad-token hammering without flooding middleware.
-    if (context?.token && this.tokenVerifier) {
-      const v = this.tokenVerifier.verify(context.token, { tool: toolName, args });
+    const tokenVerifier = this.resolveTokenVerifier();
+    if (context?.token && tokenVerifier) {
+      const v = tokenVerifier.verify(context.token, { tool: toolName, args });
       if (v.ok) {
         this.recordDecision(toolName, true, 'auto');
         return {

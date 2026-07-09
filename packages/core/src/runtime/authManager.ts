@@ -14,12 +14,15 @@ import { getSecurityAuditLogger } from '../security/securityAuditLogger';
 
 // ── Types ──────────────────────────────────────────────────────────
 
-export type AuthRole = 'admin' | 'operator' | 'viewer';
+export type AuthRole = 'super_admin' | 'admin' | 'developer' | 'operator' | 'auditor' | 'viewer';
 
 export const ROLE_HIERARCHY: Record<AuthRole, number> = {
+  super_admin: 6,
+  admin: 5,
+  developer: 4,
+  operator: 3,
+  auditor: 2,
   viewer: 1,
-  operator: 2,
-  admin: 3,
 };
 
 export interface ApiKeyEntry {
@@ -313,7 +316,14 @@ export class AuthManager {
 
   /** Total user count */
   getStats(): { totalUsers: number; totalKeys: number; roles: Record<AuthRole, number> } {
-    const roles: Record<AuthRole, number> = { admin: 0, operator: 0, viewer: 0 };
+    const roles: Record<AuthRole, number> = {
+      super_admin: 0,
+      admin: 0,
+      developer: 0,
+      operator: 0,
+      auditor: 0,
+      viewer: 0,
+    };
     let totalKeys = 0;
     for (const user of this.users.values()) {
       roles[user.role]++;
