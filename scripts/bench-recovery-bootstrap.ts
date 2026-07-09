@@ -40,7 +40,8 @@ async function main() {
     await import('../packages/core/src/atr/scheduler');
   const { resetRunLedgerBundle, getRunLedgerBundle } =
     await import('../packages/core/src/atr/runLedger');
-  const { resetDeadLetterQueue } = await import('../packages/core/src/runtime/deadLetterQueueSingleton');
+  const { resetDeadLetterQueue } =
+    await import('../packages/core/src/runtime/deadLetterQueueSingleton');
   const { resetMessageBus } = await import('../packages/core/src/runtime/messageBus');
   const { resetIdempotencyStore } = await import('../packages/core/src/atr/idempotencyStore');
 
@@ -99,7 +100,11 @@ async function main() {
   } catch (err) {
     // Handle environment constraints (e.g., better-sqlite3 native module mismatch)
     const errMsg = err instanceof Error ? err.message : String(err);
-    if (errMsg.includes('NODE_MODULE_VERSION') || errMsg.includes('better_sqlite3') || errMsg.includes('better-sqlite3')) {
+    if (
+      errMsg.includes('NODE_MODULE_VERSION') ||
+      errMsg.includes('better_sqlite3') ||
+      errMsg.includes('better-sqlite3')
+    ) {
       console.log(`  ⚠ SKIP: better-sqlite3 native module unavailable in this environment`);
       console.log(`    (${errMsg.split('\n')[0]})`);
       console.log('  Baseline will be written with placeholder values.');
@@ -116,11 +121,14 @@ async function main() {
     runAt: new Date().toISOString(),
     nodeVersion: process.version,
     results,
-    summary: results.length > 0 ? {
-      scale10: results[0],
-      scale100: results[1],
-      scale1000: results[2],
-    } : { skipped: true, reason: 'better-sqlite3 native module unavailable' },
+    summary:
+      results.length > 0
+        ? {
+            scale10: results[0],
+            scale100: results[1],
+            scale1000: results[2],
+          }
+        : { skipped: true, reason: 'better-sqlite3 native module unavailable' },
   };
 
   const fullPath = resolve(outputPath);
