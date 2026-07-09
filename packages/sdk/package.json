@@ -27,7 +27,7 @@
     "@commander/core": "workspace:*",
     "@types/node": "^25.9.3",
     "tsx": "^4.8.1",
-    "typescript": "^5.0.0"
+    "typescript": "^7.0.2"
   },
   "author": "PStarH <sampan090611@gmail.com>",
   "license": "MIT",
