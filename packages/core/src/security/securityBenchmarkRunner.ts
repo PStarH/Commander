@@ -36,6 +36,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getAuditChainLedger } from './auditChainLedger';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+import { loadInjecAgentCases } from './benchmarkDatasets/injecAgentLoader';
 
 // ============================================================================
 // Benchmark Types
@@ -177,6 +178,8 @@ export interface BenchmarkRunnerConfig {
   failOnCriticalMissed: boolean;
   /** Defender function (injected for testability). */
   defender?: DefenderFn;
+  /** Directory containing cached InjecAgent JSON dataset. */
+  injecagentCacheDir?: string;
 }
 
 /** Defender function signature — tests a prompt against Commander's defenses. */
@@ -836,13 +839,29 @@ export class SecurityBenchmarkRunner {
   }
 
   /** Get all test cases (embedded + custom) for a benchmark. */
-  getTestCases(benchmark: BenchmarkId | 'all'): BenchmarkTestCase[] {
-    const embedded = benchmark === 'all' ? ALL_BENCHMARK_CASES : getCasesForBenchmark(benchmark);
+  async getTestCases(benchmark: BenchmarkId | 'all'): Promise<BenchmarkTestCase[]> {
+    const embedded =
+      benchmark === 'all'
+        ? ALL_BENCHMARK_CASES
+        : await this.getEmbeddedCasesForBenchmark(benchmark);
     const custom =
       benchmark === 'all'
         ? this.customTestCases
         : this.customTestCases.filter((c) => c.benchmark === benchmark);
     return [...embedded, ...custom];
+  }
+
+  private async getEmbeddedCasesForBenchmark(benchmark: BenchmarkId): Promise<BenchmarkTestCase[]> {
+    if (benchmark === 'injecagent') {
+      const cacheDir =
+        this.config.injecagentCacheDir ??
+        path.join(process.cwd(), 'packages/core/.cache/injecagent');
+      const cached = await loadInjecAgentCases({ cacheDir });
+      if (cached.length > 0) {
+        return cached;
+      }
+    }
+    return getCasesForBenchmark(benchmark);
   }
 
   /** Load test cases from a JSON file. */
@@ -888,8 +907,7 @@ export class SecurityBenchmarkRunner {
       injecagent: {
         name: 'InjecAgent',
         organization: 'UIUC',
-        description:
-          'Benchmarking indirect prompt injections in tool-integrated LLM agents',
+        description: 'Benchmarking indirect prompt injections in tool-integrated LLM agents',
       },
     };
     return {
@@ -917,7 +935,7 @@ export class SecurityBenchmarkRunner {
 
     const runId = `bm_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
     const startTime = Date.now();
-    const testCases = this.getTestCases(benchmark);
+    const testCases = await this.getTestCases(benchmark);
     const results: BenchmarkTestResult[] = [];
     const criticalFindings: string[] = [];
 
@@ -1115,7 +1133,7 @@ export class SecurityBenchmarkRunner {
     benchmark: BenchmarkId | 'all',
     defender?: DefenderFn,
   ): Promise<BenchmarkRunReport> {
-    const allCases = this.getTestCases(benchmark);
+    const allCases = await this.getTestCases(benchmark);
     const criticalCases = allCases.filter((c) => c.severity === 'critical');
 
     // Temporarily swap test cases to only critical ones
@@ -1232,7 +1250,11 @@ export class SecurityBenchmarkRunner {
             return 20;
           case 'low':
             return 30;
+          default:
+            return 0;
         }
+      default:
+        return 0;
     }
   }
 
