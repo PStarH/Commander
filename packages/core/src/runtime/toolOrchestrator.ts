@@ -122,7 +122,11 @@ export class ToolOrchestrator {
    * Build an execution plan: partition tools into concurrent/serial,
    * check approvals, check circuit breakers.
    */
-  async planExecution(toolCalls: ToolCall[], tools: Map<string, Tool>): Promise<ToolExecutionPlan> {
+  async planExecution(
+    toolCalls: ToolCall[],
+    tools: Map<string, Tool>,
+    context?: { capabilityToken?: string },
+  ): Promise<ToolExecutionPlan> {
     const concurrent: ToolCall[] = [];
     const serial: ToolCall[] = [];
     const skipped: ToolExecutionPlan['skipped'] = [];
@@ -147,9 +151,16 @@ export class ToolOrchestrator {
         continue;
       }
 
-      // Check tool-level approval
-      if (this.config.useApproval && this.approval) {
-        const approvalResult = await this.approval.requestApproval(tc.name, tc.arguments);
+      // Partition by concurrency safety. Unknown tools pass through to
+      // ToolExecutionService so it can return a structured TOOL_NOT_ALLOWED
+      // error rather than having them silently skipped by approval.
+      const tool = tools.get(tc.name);
+
+      // Check tool-level approval only for registered tools.
+      if (tool && this.config.useApproval && this.approval) {
+        const approvalResult = await this.approval.requestApproval(tc.name, tc.arguments, {
+          token: context?.capabilityToken,
+        });
         if (!approvalResult.approved) {
           skipped.push({
             toolCall: tc,
@@ -159,8 +170,6 @@ export class ToolOrchestrator {
         }
       }
 
-      // Partition by concurrency safety
-      const tool = tools.get(tc.name);
       if (tool?.isConcurrencySafe) {
         concurrent.push(tc);
       } else {

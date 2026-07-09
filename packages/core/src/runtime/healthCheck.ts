@@ -3,14 +3,15 @@
  * 8-component monitoring: memory, circuit breaker, DLQ, checkpoint, compensation, event bus, providers, disk space.
  *
  * Wiring: create a HealthCollector with optional factory functions that return
- * live data from the running system. Without wiring, checks return "healthy"
- * with "not wired" messages (backward compatible).
+ * live data from the running system. Without wiring, checks return "degraded"
+ * with "not wired" messages (fail-closed: unverified ≠ healthy).
  */
 import { reportSilentFailure } from '../silentFailureReporter';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getMessageBus } from './messageBus';
 import { getDeadLetterQueue } from './deadLetterQueueSingleton';
+import { getCompensationQueue } from '../atr/compensationQueue';
 
 // ============================================================================
 // Types
@@ -73,16 +74,12 @@ const DLQ_DEGRADED_THRESHOLD = 100;
 /**
  * Build HealthSources from the global runtime singletons that EXIST in
  * non-CLI surfaces (apps/api, scripts) where there is no live AgentRuntime
- * to query for circuit-breaker / compensation / provider info.
+ * to query for circuit-breaker / provider info.
  *
- * The two sources exposed here — message bus (subscribe count, active
- * topics) and DLQ (per-category entry counts) — are process-global
- * singletons that every surface already imports. Wiring them takes the
- * /health/detailed probe from a fake-friendly "not wired" stub to a
- * real status report; any caller can extend this with additional
- * sources (e.g., when apps/api grows session support, add the same
- * getCircuitBreakerInfo/getProviderInfo blocks that
- * CommanderHttpServer.buildHealthSources uses).
+ * Sources exposed here — message bus, DLQ, and compensation queue — are
+ * process-global singletons. Circuit-breaker and provider info require an
+ * active AgentRuntime (see CommanderHttpServer.buildHealthSources); when
+ * unavailable, those checks correctly report 'degraded' (not 'healthy').
  *
  * Each getter swallows its own errors and falls back to a zero/empty
  * report so a single broken singleton cannot crash the whole probe.
@@ -112,6 +109,19 @@ export function buildHealthSources(): HealthSources {
       } catch (err) {
         reportSilentFailure(err, 'healthCheck:buildHealthSources.dlq');
         return { totalEntries: 0, byCategory: [] };
+      }
+    },
+    getCompensationInfo: () => {
+      try {
+        const queue = getCompensationQueue();
+        const counts = queue.countByStatus();
+        return {
+          pending: counts.pending + counts.in_progress,
+          compensated: 0,
+        };
+      } catch (err) {
+        reportSilentFailure(err, 'healthCheck:buildHealthSources.compensation');
+        return { pending: 0, compensated: 0 };
       }
     },
   };
@@ -211,7 +221,10 @@ export class HealthCollector {
   private async checkCircuitBreaker(): Promise<ComponentCheck> {
     const cb = this.sources?.getCircuitBreakerInfo;
     if (!cb) {
-      return { status: 'healthy', message: 'Circuit breaker check not wired — no source provided' };
+      return {
+        status: 'degraded',
+        message: 'Circuit breaker check not wired — unable to verify breaker state',
+      };
     }
     try {
       const info = cb();
@@ -236,7 +249,7 @@ export class HealthCollector {
   private async checkDeadLetterQueue(): Promise<ComponentCheck> {
     const dlq = this.sources?.getDLQInfo;
     if (!dlq) {
-      return { status: 'healthy', message: 'DLQ check not wired — no source provided' };
+      return { status: 'degraded', message: 'DLQ check not wired — unable to verify queue depth' };
     }
     try {
       const info = await dlq();
@@ -315,7 +328,10 @@ export class HealthCollector {
   private async checkCompensation(): Promise<ComponentCheck> {
     const comp = this.sources?.getCompensationInfo;
     if (!comp) {
-      return { status: 'healthy', message: 'Compensation check not wired — no source provided' };
+      return {
+        status: 'degraded',
+        message: 'Compensation check not wired — unable to verify pending compensations',
+      };
     }
     try {
       const info = comp();
@@ -340,7 +356,10 @@ export class HealthCollector {
   private async checkEventBus(): Promise<ComponentCheck> {
     const bus = this.sources?.getEventBusInfo;
     if (!bus) {
-      return { status: 'healthy', message: 'Event bus check not wired — no source provided' };
+      return {
+        status: 'degraded',
+        message: 'Event bus check not wired — unable to verify bus status',
+      };
     }
     try {
       const info = bus();
@@ -358,7 +377,10 @@ export class HealthCollector {
   private async checkProviders(): Promise<ComponentCheck> {
     const prov = this.sources?.getProviderInfo;
     if (!prov) {
-      return { status: 'healthy', message: 'Provider check not wired — no source provided' };
+      return {
+        status: 'degraded',
+        message: 'Provider check not wired — unable to verify provider availability',
+      };
     }
     try {
       const info = prov();

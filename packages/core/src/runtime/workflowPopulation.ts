@@ -231,7 +231,7 @@ export class WorkflowPopulation {
         tools: [],
         modelTier: 'standard',
         parallelizable: true,
-        timeoutMs: 60000,
+        timeoutMs: 120000,
         maxRetries: 2,
       };
       nodes.push(wNode);
