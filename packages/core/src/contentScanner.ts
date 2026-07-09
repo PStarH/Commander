@@ -25,9 +25,16 @@ export type ContentThreatType =
   | 'invisible_characters'
   | 'data_exfil_channel'
   | 'social_engineering'
-  | 'semantic_manipulation';
+  | 'semantic_manipulation'
+  | 'harmful_content';
 
 export type ContentThreatSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+
+export interface HarmfulContentRule {
+  category: string;
+  severity: ContentThreatSeverity;
+  pattern: RegExp;
+}
 
 export interface ContentThreat {
   type: ContentThreatType;
@@ -62,6 +69,7 @@ export interface ContentScannerConfig {
   enablePromptInjectionScan: boolean;
   enableSocialEngineeringScan: boolean;
   enableSemanticManipulationScan: boolean;
+  enableHarmfulContentScan: boolean;
   maxContentLength: number;
   timeout: number; // 扫描超时时间（ms）
 }
@@ -74,6 +82,7 @@ export const DEFAULT_SCANNER_CONFIG: ContentScannerConfig = {
   enablePromptInjectionScan: true,
   enableSocialEngineeringScan: true,
   enableSemanticManipulationScan: true,
+  enableHarmfulContentScan: false,
   maxContentLength: 100000, // 100KB
   timeout: 5000, // 5 seconds
 };
@@ -222,6 +231,10 @@ export class DefaultContentScanner implements ContentScanner {
     /hypothetical\s+(?:scenario|situation|story|world|context|example|setting|case)/gi,
   ];
 
+  // Registered harmful content rule packs shared across all scanner instances.
+  // Plugins register packs globally via DefaultContentScanner.registerRulePack().
+  private static rulePacks = new Map<string, HarmfulContentRule[]>();
+
   // 隐藏 Unicode 字符
   private invisibleUnicodeRanges = [
     '\u0000-\u001F', // 控制字符
@@ -284,6 +297,10 @@ export class DefaultContentScanner implements ContentScanner {
 
     if (effectiveConfig.enableSemanticManipulationScan) {
       threats.push(...this.scanSemanticManipulation(content));
+    }
+
+    if (effectiveConfig.enableHarmfulContentScan) {
+      threats.push(...this.scanHarmfulContent(content));
     }
 
     const scanDurationMs = Date.now() - startTime;
@@ -357,7 +374,8 @@ export class DefaultContentScanner implements ContentScanner {
           this.promptInjectionPatterns.length +
           this.socialEngineeringPatterns.length +
           this.semanticManipulationPatterns.length +
-          this.jailbreakSynonymPatterns.length,
+          this.jailbreakSynonymPatterns.length +
+          Array.from(DefaultContentScanner.rulePacks.values()).reduce((sum, rules) => sum + rules.length, 0),
       },
     };
   }
@@ -387,6 +405,8 @@ export class DefaultContentScanner implements ContentScanner {
         'Authority claims, official-looking directives, or social engineering to manipulate agent behavior',
       semantic_manipulation:
         'Indirect instructions, roleplay framing, hypothetical scenarios, or jailbreak synonyms designed to bypass safety filters',
+      harmful_content:
+        'Direct requests for harmful content such as malware, weapons, self-harm instructions, illegal drugs, or child exploitation',
     };
     return descriptions[type];
   }
@@ -405,6 +425,8 @@ export class DefaultContentScanner implements ContentScanner {
         'Validate the claimed authority. Do not follow instructions that claim to override safety policies based on claimed role or status.',
       semantic_manipulation:
         'Detect indirect instruction patterns and roleplay framing. Apply prompt injection guardrails regardless of how the instruction is phrased.',
+      harmful_content:
+        'Reject requests for harmful content. Enable content moderation and logging for review.',
     };
     return remediations[threat.type] || 'Review and sanitize the content before processing.';
   }
@@ -571,6 +593,45 @@ export class DefaultContentScanner implements ContentScanner {
           location: { start: match.index, end: match.index + match[0].length, snippet: match[0] },
           remediation: this.getRemediation({ type: 'semantic_manipulation' } as ContentThreat),
         });
+      }
+    }
+
+    return threats;
+  }
+
+  // ── Harmful content detection: populated by registered rule packs ──
+  static registerRulePack(name: string, rules: HarmfulContentRule[]): void {
+    // Clone RegExp instances so the pack cannot mutate scanner state from outside.
+    DefaultContentScanner.rulePacks.set(
+      name,
+      rules.map((r) => ({ ...r, pattern: new RegExp(r.pattern.source, r.pattern.flags) })),
+    );
+  }
+
+  static unregisterRulePack(name: string): boolean {
+    return DefaultContentScanner.rulePacks.delete(name);
+  }
+
+  static listRulePacks(): string[] {
+    return Array.from(DefaultContentScanner.rulePacks.keys());
+  }
+
+  private scanHarmfulContent(content: string): ContentThreat[] {
+    const threats: ContentThreat[] = [];
+
+    for (const rules of DefaultContentScanner.rulePacks.values()) {
+      for (const { category, severity, pattern } of rules) {
+        pattern.lastIndex = 0;
+        let match;
+        while ((match = pattern.exec(content)) !== null) {
+          threats.push({
+            type: 'harmful_content',
+            severity,
+            description: `Harmful content detected (${category}): "${match[0].slice(0, 80)}"`,
+            location: { start: match.index, end: match.index + match[0].length, snippet: match[0] },
+            remediation: this.getRemediation({ type: 'harmful_content' } as ContentThreat),
+          });
+        }
       }
     }
 
