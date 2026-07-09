@@ -256,9 +256,13 @@ export class PluginLoader {
         const rules = await resolveContentScannerRules(manifest, resolvedDir);
         if (rules.length > 0) {
           DefaultContentScanner.registerRulePack(manifest.name, rules);
-          getGlobalLogger().info('PluginLoader', `Registered ${rules.length} content scanner rules`, {
-            plugin: manifest.name,
-          });
+          getGlobalLogger().info(
+            'PluginLoader',
+            `Registered ${rules.length} content scanner rules`,
+            {
+              plugin: manifest.name,
+            },
+          );
         }
       }
 
