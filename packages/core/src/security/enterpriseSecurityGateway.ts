@@ -48,6 +48,7 @@ import { getGuardianAgent } from './guardianAgent';
 import { getSecurityMonitor } from './securityMonitor';
 import { getSecurityProfileConfig } from './securityProfile';
 import { getUnifiedCostAuthority, type ToolCostTier } from './unifiedCostAuthority';
+import { UniversalSanitizer } from './securityPrimitives';
 import { getLiteLLMPricing } from './litellmPricing';
 
 // ============================================================================
@@ -230,6 +231,7 @@ export class EnterpriseSecurityGateway {
   private totalRejections = 0;
   private rejectionsByLayer: Map<string, number> = new Map();
   private totalCheckDurationMs = 0;
+  private sanitizer = new UniversalSanitizer();
 
   constructor(config?: Partial<EnterpriseGatewayConfig>) {
     // Apply security profile defaults first, then explicit config overrides.
@@ -310,7 +312,30 @@ export class EnterpriseSecurityGateway {
         }
       }
 
-      // 2. 输入内容扫描 —— 攻击模式检测
+      // 2. Universal input sanitization —— PII + XSS + path traversal.
+      //    This runs before the attack-pattern scan so scanners see a clean
+      //    surface and secrets never reach the LLM provider.
+      if (params.input) {
+        const sanitizeResult = this.sanitizer.sanitize(params.input, 'input');
+        params.input = sanitizeResult.sanitized;
+        if (sanitizeResult.modified) {
+          getSecurityAuditLogger().logEvent({
+            type: 'security_scan',
+            severity: 'medium',
+            source: 'enterpriseSecurityGateway',
+            message: `Input sanitized before LLM call (${sanitizeResult.patterns.join(', ')})`,
+            context: {
+              tenantId: params.tenantId,
+              runId: params.runId,
+            },
+            details: {
+              patterns: sanitizeResult.patterns,
+            },
+          });
+        }
+      }
+
+      // 3. 输入内容扫描 —— 攻击模式检测
       if (params.input) {
         const scanResult = this.scanInput(params.input);
         if (!scanResult.allowed) {
