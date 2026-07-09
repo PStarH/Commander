@@ -14,6 +14,7 @@ import type {
   AgentExecutionResult,
   Tool,
 } from './runtime';
+import type { ContentThreatSeverity } from './contentScanner';
 
 // ============================================================================
 // Hook Types
@@ -235,6 +236,28 @@ export interface PluginConfigSchema {
 }
 
 // ============================================================================
+// Content Scanner Rule Declarations
+// ============================================================================
+
+export interface PluginContentScannerRuleDeclaration {
+  category: string;
+  severity: ContentThreatSeverity;
+  /** RegExp source — serializable in JSON manifests. */
+  pattern: string;
+  flags?: string;
+}
+
+export interface PluginContentScannerRules {
+  /** Inline rules declared directly in the manifest. */
+  inline?: PluginContentScannerRuleDeclaration[];
+  /** Reference to a module export containing HarmfulContentRule[] instances. */
+  export?: {
+    module: string;
+    name: string;
+  };
+}
+
+// ============================================================================
 // Builtin Plugin Tool — declarative tool definition for built-in plugins
 // ============================================================================
 
@@ -319,6 +342,8 @@ export interface CommanderPlugin {
   dependsOn?: string[];
   /** Config schema for validation */
   configSchema?: PluginConfigSchema;
+  /** Content scanner rules contributed by this plugin. */
+  contentScannerRules?: PluginContentScannerRules;
 
   /** Called when the plugin is loaded (after registration). Can reject to fail registration. */
   onLoad?: (ctx: PluginLoadContext) => Promise<void> | void;
