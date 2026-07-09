@@ -9,6 +9,7 @@ import { effortScalerModule } from './modules/effortScaler';
 import { topologyRouterModule } from './modules/topologyRouter';
 import { tokenGovernorModule } from './modules/tokenGovernor';
 import { executionRouterModule } from './modules/executionRouter';
+import { llmRetryModule } from './modules/llmRetry';
 import { circuitBreakerModule } from './modules/circuitBreaker';
 
 const registry: Map<string, BenchmarkModule> = new Map();
