@@ -108,7 +108,7 @@
 
     <main>
       <section>
-        <p class="lead">本次测试在上一轮基础上新增了 InjecAgent 外部 benchmark，并确认 AgentSafetyBench / AgentHarm 在 harmful-content-rules 插件化后已修复至 100% 拦截。共覆盖 5 组外部安全 benchmark 与性能压力测试。</p>
+        <p class="lead">本次测试将 InjecAgent 从 6 个代表性用例扩展至完整 2,108 案例（base + enhanced），并确认 AgentSafetyBench / AgentHarm 在 harmful-content-rules 插件化后已修复至 100% 拦截。共覆盖 5 组外部安全 benchmark 与性能压力测试，合计 2,138 安全用例全部通过。</p>
 
         <div class="summary-grid">
           <div class="metric-card">
@@ -179,10 +179,10 @@
               </tr>
               <tr>
                 <td>InjecAgent</td>
-                <td class="num">6</td>
-                <td class="num">6 / 0</td>
+                <td class="num">2,108</td>
+                <td class="num">2,108 / 0</td>
                 <td class="num">100/100</td>
-                <td class="num">59 ms</td>
+                <td class="num">385 ms</td>
                 <td><span class="tag pass">PASS</span></td>
               </tr>
               <tr>
@@ -239,8 +239,8 @@
         <h3>2.2 AgentSafetyBench / AgentHarm：有害内容规则插件化后 100% 拦截</h3>
         <p>通过将 harmful content 规则从 core 中解耦为 <code>harmful-content-rules</code> 内置插件，并扩展 <code>PluginLoader</code> 在加载插件时自动注册规则包，18 个直接有害内容用例（malware、weapons、suicide、drugs、child safety 等）现均已达到 100% 拦截。该插件化方案保留了 <code>DefaultContentScanner</code> 框架的通用性，同时让有害主题规则可独立迭代。</p>
 
-        <h3>2.3 InjecAgent：工具集成 Agent 间接注入 6/6 全拦截</h3>
-        <p>新增外部 benchmark InjecAgent，覆盖 email forwarding、credential exfiltration、mass spam、unauthorized transfer、webhook egress、data destruction 六类工具集成场景下的间接提示注入。全部 6 个用例被 <code>HarmfulContentClassifier</code>、<code>UniversalSanitizer</code> 或 <code>ReversibilityGate</code> 拦截，安全评分 100/100。</p>
+        <h3>2.3 InjecAgent：工具集成 Agent 间接注入 2,108/2,108 全拦截</h3>
+        <p>InjecAgent 数据集包含 2,108 个用例（base + enhanced，覆盖 direct harm 与 data security 两类攻击意图）。针对测试中暴露的 physical_harm、financial_harm 与 data_security_harm 盲区，在 <code>harmful-content-rules</code> 插件中新增 <code>unauthorized_access_grant</code>、<code>unauthorized_financial_transfer</code> 与 <code>unauthorized_data_manipulation</code> 三类规则，并将 <code>createCommanderDefender</code> 配置为对间接注入 tool output 自动启用 harmful-content 扫描。最终全部 2,108 个用例被 <code>HarmfulContentClassifier</code>、<code>UniversalSanitizer</code> 或 <code>ReversibilityGate</code> 拦截，安全评分 100/100。</p>
 
         <figure class="chart-figure">
           <figcaption>图 1：安全 Benchmark 拦截率对比</figcaption>
@@ -281,7 +281,7 @@
         <div class="insight-box">
           <h4>强项</h4>
           <ul>
-            <li>AgentDojo、AgentSafetyBench、AgentHarm、InjecAgent、Red Team Battery 五组外部安全 benchmark 均达到 100% 拦截，覆盖间接注入、直接有害请求、工具集成 Agent 注入、越狱、数据外泄、供应链攻击等多类威胁。</li>
+            <li>AgentDojo、AgentSafetyBench、AgentHarm、InjecAgent、Red Team Battery 五组外部安全 benchmark 均达到 100% 拦截，合计 2,138 个安全用例，覆盖间接注入、直接有害请求、工具集成 Agent 注入、越狱、数据外泄、供应链攻击等多类威胁。</li>
             <li>harmful-content-rules 插件化后，AgentSafetyBench / AgentHarm 从 4%/3% 提升至 100%，证明规则包可独立迭代且不影响 core 框架。</li>
             <li>E2E 与 WAL 性能指标稳定，高并发下 P99 延迟未出现明显退化。</li>
           </ul>
@@ -291,7 +291,7 @@
           <ul>
             <li><strong>Chaos 255 失败集中在熔断断言：</strong> 建议检查 scripted LLM 对错误率边界的响应，确保 CircuitBreaker 能正确接收 <code>volumeThreshold</code> / <code>errorRateThreshold</code> 参数。</li>
             <li><strong>多租户公平性略低于阈值：</strong> 可进一步校准租户调度器，降低高负载下的抖动。</li>
-            <li><strong>样本规模仍有限：</strong> InjecAgent 当前嵌入 6 个代表性用例，后续可扩展完整 1,054 案例以验证长尾攻击模式。</li>
+            <li><strong>InjecAgent 已扩展完整数据集：</strong> 从 6 个代表性用例扩展至 2,108 案例（base + enhanced），并通过新增 unauthorized_access_grant / unauthorized_financial_transfer / unauthorized_data_manipulation 规则类别全部拦截，验证了 harmful-content-rules 插件对长尾攻击模式的覆盖能力。</li>
           </ul>
         </div>
       </section>
