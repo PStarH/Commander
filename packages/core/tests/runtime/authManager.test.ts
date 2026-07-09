@@ -235,13 +235,19 @@ describe('AuthManager', () => {
   describe('Role Hierarchy', () => {
     it('should have correct hierarchy values', () => {
       assert.equal(ROLE_HIERARCHY.viewer, 1);
-      assert.equal(ROLE_HIERARCHY.operator, 2);
-      assert.equal(ROLE_HIERARCHY.admin, 3);
+      assert.equal(ROLE_HIERARCHY.auditor, 2);
+      assert.equal(ROLE_HIERARCHY.operator, 3);
+      assert.equal(ROLE_HIERARCHY.developer, 4);
+      assert.equal(ROLE_HIERARCHY.admin, 5);
+      assert.equal(ROLE_HIERARCHY.super_admin, 6);
     });
 
-    it('admin > operator > viewer', () => {
-      assert.ok(ROLE_HIERARCHY.admin > ROLE_HIERARCHY.operator);
-      assert.ok(ROLE_HIERARCHY.operator > ROLE_HIERARCHY.viewer);
+    it('super_admin > admin > developer > operator > auditor > viewer', () => {
+      assert.ok(ROLE_HIERARCHY.super_admin > ROLE_HIERARCHY.admin);
+      assert.ok(ROLE_HIERARCHY.admin > ROLE_HIERARCHY.developer);
+      assert.ok(ROLE_HIERARCHY.developer > ROLE_HIERARCHY.operator);
+      assert.ok(ROLE_HIERARCHY.operator > ROLE_HIERARCHY.auditor);
+      assert.ok(ROLE_HIERARCHY.auditor > ROLE_HIERARCHY.viewer);
     });
   });
 });
