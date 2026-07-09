@@ -16,7 +16,11 @@ describe('liveLLM', () => {
       }),
     });
 
-    const llm = createLiveLLM({ provider: 'openai', model: 'gpt-4o-mini', fetch: mockFetch as unknown as typeof fetch });
+    const llm = createLiveLLM({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      fetch: mockFetch as unknown as typeof fetch,
+    });
     const res = await llm.complete('hi');
     expect(res.text).toBe('hello');
     expect(res.tokens.input).toBe(2);
