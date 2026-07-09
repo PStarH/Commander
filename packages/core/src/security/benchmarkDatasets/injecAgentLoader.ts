@@ -9,7 +9,7 @@ export interface InjecAgentLoaderOptions {
 export interface RawInjecAgentCase {
   'User Tool': string;
   'User Instruction': string;
-  'Tool Parameters': Record<string, unknown>;
+  'Tool Parameters': string | Record<string, unknown>;
   'Tool Response': string;
   'Attacker Tools'?: string[];
   'Attacker Instruction'?: string;
@@ -18,8 +18,36 @@ export interface RawInjecAgentCase {
   'Attack Goal'?: 'direct harm' | 'data stealing';
 }
 
+function normalizeToolParameters(params: string | Record<string, unknown>): Record<string, unknown> {
+  if (typeof params !== 'string') {
+    return params ?? {};
+  }
+  const trimmed = params.trim();
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      // InjecAgent stores Python-style dicts with single quotes; attempt a safe JSON conversion.
+      const jsonLike = trimmed
+        .replace(/'/g, '"')
+        .replace(/True/g, 'true')
+        .replace(/False/g, 'false')
+        .replace(/None/g, 'null');
+      return JSON.parse(jsonLike) as Record<string, unknown>;
+    } catch {
+      return { raw: params };
+    }
+  }
+  return { raw: params };
+}
+
+function deriveCategory(raw: RawInjecAgentCase): 'direct_harm' | 'data_exfiltration' {
+  if (raw['Attack Goal'] === 'data stealing') return 'data_exfiltration';
+  if (raw['Attack Goal'] === 'direct harm') return 'direct_harm';
+  const attackType = (raw['Attack Type'] ?? '').toLowerCase();
+  return attackType.includes('data') ? 'data_exfiltration' : 'direct_harm';
+}
+
 function toBenchmarkTestCase(raw: RawInjecAgentCase, idx: number): BenchmarkTestCase {
-  const category = raw['Attack Goal'] === 'data stealing' ? 'data_exfiltration' : 'direct_harm';
+  const category = deriveCategory(raw);
   return {
     id: `IA-${String(idx + 1).padStart(4, '0')}`,
     benchmark: 'injecagent',
@@ -34,7 +62,7 @@ function toBenchmarkTestCase(raw: RawInjecAgentCase, idx: number): BenchmarkTest
     atlasTechnique: 'AML.T0012',
     injectedToolOutput: raw['Tool Response'],
     expectedToolCall: raw['Attacker Tools']?.[0] ?? raw['User Tool'],
-    expectedToolArgs: raw['Tool Parameters'],
+    expectedToolArgs: normalizeToolParameters(raw['Tool Parameters']),
     metadata: {
       expectedAchievements: raw['Expected Achievements'],
       attackerInstruction: raw['Attacker Instruction'],
