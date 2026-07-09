@@ -3,6 +3,7 @@ import { thompsonMemoryModule } from './modules/thompsonMemory';
 import { strategySelectorModule } from './modules/strategySelector';
 import { modelRouterModule } from './modules/modelRouter';
 import { effortScalerModule } from './modules/effortScaler';
+import { topologyRouterModule } from './modules/topologyRouter';
 
 const registry: Map<string, BenchmarkModule> = new Map();
 
@@ -28,3 +29,4 @@ registerModule(thompsonMemoryModule);
 registerModule(strategySelectorModule);
 registerModule(modelRouterModule);
 registerModule(effortScalerModule);
+registerModule(topologyRouterModule);
