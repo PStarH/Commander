@@ -42,7 +42,9 @@ export function generateMarkdownReport(results: ComparisonResult[]): string {
       );
     }
 
-    lines.push(`\nErrors: baseline=${r.errors.filter((e) => e.side === 'baseline').length}, treatment=${r.errors.filter((e) => e.side === 'treatment').length}\n`);
+    lines.push(
+      `\nErrors: baseline=${r.errors.filter((e) => e.side === 'baseline').length}, treatment=${r.errors.filter((e) => e.side === 'treatment').length}\n`,
+    );
   }
 
   return lines.join('\n');
@@ -71,7 +73,8 @@ export function generateJsonReport(results: ComparisonResult[]): {
         if (r.pValues[m] < 0.05) {
           const baseline = r.baseline.mean;
           const treatment = r.treatment.mean;
-          const better = m === 'cost' || m === 'latency' ? treatment < baseline : treatment > baseline;
+          const better =
+            m === 'cost' || m === 'latency' ? treatment < baseline : treatment > baseline;
           if (better) significantMetrics.push(m);
           else degradedMetrics.push(m);
         }

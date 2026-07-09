@@ -1,4 +1,12 @@
-import type { ComparisonResult, Conclusion, LLMClient, MetricKey, MetricSummary, Task, TokenUsage } from './types';
+import type {
+  ComparisonResult,
+  Conclusion,
+  LLMClient,
+  MetricKey,
+  MetricSummary,
+  Task,
+  TokenUsage,
+} from './types';
 
 export async function evaluateTrialSuccess(
   output: string,
@@ -27,7 +35,8 @@ export function summarizeMetric(values: number[]): MetricSummary {
   const sorted = [...values].sort((a, b) => a - b);
   const n = sorted.length;
   const mean = n === 0 ? 0 : sorted.reduce((a, b) => a + b, 0) / n;
-  const median = n === 0 ? 0 : n % 2 === 1 ? sorted[Math.floor(n / 2)] : (sorted[n / 2 - 1] + sorted[n / 2]) / 2;
+  const median =
+    n === 0 ? 0 : n % 2 === 1 ? sorted[Math.floor(n / 2)] : (sorted[n / 2 - 1] + sorted[n / 2]) / 2;
   const p95 = n === 0 ? 0 : sorted[Math.min(n - 1, Math.ceil(n * 0.95) - 1)];
   const variance = n === 0 ? 0 : sorted.reduce((sum, v) => sum + (v - mean) ** 2, 0) / n;
   return { mean, median, p95, stdDev: Math.sqrt(variance), raw: values };
@@ -44,11 +53,14 @@ function normalCdf(x: number): number {
   const sign = x < 0 ? -1 : 1;
   const z = Math.abs(x) / Math.sqrt(2);
   const t = 1 / (1 + p * z);
-  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-z * z);
+  const y = 1 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-z * z);
   return 0.5 * (1 + sign * y);
 }
 
-export function wilcoxonSignedRankTest(baseline: number[], treatment: number[]): { pValue: number; zScore: number } {
+export function wilcoxonSignedRankTest(
+  baseline: number[],
+  treatment: number[],
+): { pValue: number; zScore: number } {
   const diffs = baseline.map((b, i) => treatment[i] - b).filter((d) => d !== 0);
   const n = diffs.length;
   if (n === 0) return { pValue: 1, zScore: 0 };
@@ -174,7 +186,8 @@ export function evaluateComparison(input: EvaluateComparisonInput): ComparisonRe
   }
 
   function getRaw(metric: MetricKey, side: 'baseline' | 'treatment'): number[] {
-    if (metric === 'successRate') return side === 'baseline' ? baselineSuccessRates : treatmentSuccessRates;
+    if (metric === 'successRate')
+      return side === 'baseline' ? baselineSuccessRates : treatmentSuccessRates;
     if (metric === 'cost') return side === 'baseline' ? baselineCosts : treatmentCosts;
     if (metric === 'latency') return side === 'baseline' ? baselineLatencies : treatmentLatencies;
     return side === 'baseline' ? baselineLlmScores : treatmentLlmScores;
