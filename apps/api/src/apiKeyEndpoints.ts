@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { getApiKeyStore } from './apiKeyStore';
+import { hasRole, type UserRole } from './userStore';
 
 /**
  * Admin API key management endpoints.
@@ -18,12 +19,20 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
-function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  if (!req.user || req.user.role !== 'admin') {
-    res.status(403).json({ error: 'Admin privileges required' });
-    return;
-  }
-  next();
+/**
+ * Returns middleware that requires the authenticated user to meet or exceed
+ * `requiredRole` in the role hierarchy (defaults to 'admin', so both
+ * 'super_admin' and 'admin' satisfy an unparameterised check). Must be
+ * mounted after requireAuth.
+ */
+function requireRole(requiredRole: UserRole = 'admin') {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user || !hasRole(req.user.role, requiredRole)) {
+      res.status(403).json({ error: 'Insufficient privileges' });
+      return;
+    }
+    next();
+  };
 }
 
 const createKeySchema = z.object({
@@ -36,7 +45,7 @@ export function createApiKeyRouter(): Router {
   const store = getApiKeyStore();
 
   // GET /api/admin/api-keys — list keys (no secrets)
-  router.get('/api/admin/api-keys', requireAuth, requireAdmin, (_req: Request, res: Response) => {
+  router.get('/api/admin/api-keys', requireAuth, requireRole(), (_req: Request, res: Response) => {
     try {
       res.json({ keys: store.list() });
     } catch (error) {
@@ -45,7 +54,7 @@ export function createApiKeyRouter(): Router {
   });
 
   // POST /api/admin/api-keys — create a new key
-  router.post('/api/admin/api-keys', requireAuth, requireAdmin, (req: Request, res: Response) => {
+  router.post('/api/admin/api-keys', requireAuth, requireRole(), (req: Request, res: Response) => {
     const parsed = createKeySchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -67,7 +76,7 @@ export function createApiKeyRouter(): Router {
   router.delete(
     '/api/admin/api-keys/:id',
     requireAuth,
-    requireAdmin,
+    requireRole(),
     (req: Request, res: Response) => {
       const id = String(req.params.id);
       const revoked = store.revoke(id);
