@@ -108,7 +108,7 @@ installAuthInterceptor();
 
 // ── Auth API types ──────────────────────────────────────────────────────────
 
-export type UserRole = 'admin' | 'operator' | 'viewer';
+export type UserRole = 'super_admin' | 'admin' | 'developer' | 'operator' | 'auditor' | 'viewer';
 
 export interface AuthUser {
   id: string;
