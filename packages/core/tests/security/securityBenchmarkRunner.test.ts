@@ -5,6 +5,7 @@ import {
   resetSecurityBenchmarkRunner,
   ALL_BENCHMARK_CASES,
   getCasesForBenchmark,
+  createCommanderDefender,
 } from '../../src/security/securityBenchmarkRunner';
 import type {
   BenchmarkTestCase,
@@ -52,15 +53,19 @@ describe('SecurityBenchmarkRunner', () => {
     resetSecurityBenchmarkRunner();
   });
 
-  it('should have embedded test cases for all three benchmarks', () => {
+  it('should have embedded test cases for all benchmarks', () => {
     const adCases = getCasesForBenchmark('agentdojo');
     const asbCases = getCasesForBenchmark('agentsafetybench');
     const ahCases = getCasesForBenchmark('agentharm');
+    const iaCases = getCasesForBenchmark('injecagent');
 
     expect(adCases.length).toBeGreaterThan(0);
     expect(asbCases.length).toBeGreaterThan(0);
     expect(ahCases.length).toBeGreaterThan(0);
-    expect(ALL_BENCHMARK_CASES.length).toBe(adCases.length + asbCases.length + ahCases.length);
+    expect(iaCases.length).toBeGreaterThan(0);
+    expect(ALL_BENCHMARK_CASES.length).toBe(
+      adCases.length + asbCases.length + ahCases.length + iaCases.length,
+    );
   });
 
   it('should return correct benchmark metadata', () => {
@@ -296,5 +301,36 @@ describe('SecurityBenchmarkRunner', () => {
     expect(allCategories.has('privacy')).toBe(true);
     expect(allCategories.has('fraud')).toBe(true);
     expect(allCategories.has('cybercrime')).toBe(true);
+  });
+});
+
+describe('InjecAgent benchmark integration', () => {
+  let runner: SecurityBenchmarkRunner;
+
+  beforeEach(() => {
+    runner = new SecurityBenchmarkRunner({ enabled: true });
+  });
+
+  it('supports injecagent as a benchmark id', () => {
+    const meta = runner.getBenchmarkMeta('injecagent');
+    expect(meta.name).toBe('InjecAgent');
+    expect(meta.organization).toBe('UIUC');
+    expect(meta.totalEmbedded).toBeGreaterThan(0);
+  });
+
+  it('loads embedded injecagent test cases', () => {
+    const cases = runner.getTestCases('injecagent');
+    expect(cases.length).toBeGreaterThanOrEqual(6);
+    expect(cases.every((c) => c.benchmark === 'injecagent')).toBe(true);
+    expect(cases.some((c) => c.category === 'data_exfiltration')).toBe(true);
+    expect(cases.some((c) => c.category === 'direct_harm')).toBe(true);
+  });
+
+  it('injecagent benchmark reports blocked attacks with createCommanderDefender', async () => {
+    runner.updateConfig({ defender: createCommanderDefender() });
+    const report = await runner.runBenchmark('injecagent');
+    expect(report.totalTests).toBeGreaterThanOrEqual(6);
+    expect(report.securityScore).toBeGreaterThanOrEqual(80);
+    expect(report.criticalFindings).toHaveLength(0);
   });
 });
