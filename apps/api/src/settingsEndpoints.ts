@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { loadSettings, updateSettings, type AppSettings } from './settingsStore';
 import { toErrorMessage } from './routeHelpers';
+import { hasRole, type UserRole } from './userStore';
 
 /**
  * Global settings management endpoints.
@@ -19,12 +20,20 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
-function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  if (!req.user || req.user.role !== 'admin') {
-    res.status(403).json({ error: 'Admin privileges required' });
-    return;
-  }
-  next();
+/**
+ * Returns middleware that requires the authenticated user to meet or exceed
+ * `requiredRole` in the role hierarchy (defaults to 'admin', so both
+ * 'super_admin' and 'admin' satisfy an unparameterised check). Must be
+ * mounted after requireAuth.
+ */
+function requireRole(requiredRole: UserRole = 'admin') {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user || !hasRole(req.user.role, requiredRole)) {
+      res.status(403).json({ error: 'Insufficient privileges' });
+      return;
+    }
+    next();
+  };
 }
 
 function isValidUrl(value: string): boolean {
@@ -129,7 +138,7 @@ export function createSettingsRouter(): Router {
   });
 
   // PUT /api/settings — update global settings (admin only)
-  router.put('/api/settings', requireAuth, requireAdmin, (req: Request, res: Response) => {
+  router.put('/api/settings', requireAuth, requireRole(), (req: Request, res: Response) => {
     const validation = validateSettings(req.body);
     if ('error' in validation) {
       res.status(400).json({ error: validation.error });
