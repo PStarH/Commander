@@ -317,6 +317,7 @@ export default defineConfig({
       'tests/e2e/sloMeasurement.test.ts',
       'tests/e2e/load.test.ts',
       'tests/e2e/chaos.test.ts',
+      'tests/e2e/mock-api.test.ts',
       // --- benchmark ---
       // 'tests/benchmark/performanceBenchmark.test.ts', // skipped: environment-dependent latency assertion
       // 'tests/benchmark/loadBenchmark.test.ts', // skipped: intermittent timeout in CI
@@ -327,6 +328,8 @@ export default defineConfig({
       // 'tests/benchmark/realWorldBenchmark.test.ts', // skipped: requires external StepFun API and times out in CI
       // 'tests/benchmark/multiAgentBenchmark.metrics.test.ts', // FIXED: src/benchmark/multiAgentBenchmark module now implemented
       'tests/benchmark/multiAgentBenchmark.metrics.test.ts',
+      // --- algorithmic effectiveness benchmarks ---
+      'tests/benchmarks/algorithmicEffectiveness/types.test.ts',
       // --- orchestration patterns (Concurrent/Graph/MoA/Router/CrossPollination/AutoLoop/DynamicReplanner) ---
       'tests/orchestration/orchestrationPatterns.test.ts',
     ],
@@ -337,10 +340,10 @@ export default defineConfig({
       include: ['src/**/*.ts'],
       exclude: ['src/**/*.test.ts', 'src/**/*.d.ts'],
       thresholds: {
-        statements: 60,
+        statements: 80,
         branches: 80,
-        functions: 70,
-        lines: 60,
+        functions: 80,
+        lines: 80,
       },
     },
   },
