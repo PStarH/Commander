@@ -69,15 +69,19 @@ describe('HealthCollector', () => {
     expect(report.degradedComponents).not.toContain('providers');
   });
 
-  it('falls back to "not wired" message when a source is absent', async () => {
+  it('returns degraded (fail-closed) when a source is absent', async () => {
     const collector = new HealthCollector({ sources: {} });
     const report = await collector.collect();
 
     expect(report.checks.circuitBreaker.message).toContain('not wired');
     expect(report.checks.providers.message).toContain('not wired');
-    // Unwired checks themselves are healthy; overall status depends on memory/disk.
-    expect(report.degradedComponents).toBeDefined();
-    expect(report.degradedComponents).not.toContain('circuitBreaker');
-    expect(report.degradedComponents).not.toContain('providers');
+    // Fail-closed: unwired checks should report degraded, not healthy.
+    expect(report.checks.circuitBreaker.status).toBe('degraded');
+    expect(report.checks.deadLetterQueue.status).toBe('degraded');
+    expect(report.checks.compensation.status).toBe('degraded');
+    expect(report.checks.eventBus.status).toBe('degraded');
+    expect(report.checks.providers.status).toBe('degraded');
+    expect(report.degradedComponents).toContain('circuitBreaker');
+    expect(report.degradedComponents).toContain('providers');
   });
 });

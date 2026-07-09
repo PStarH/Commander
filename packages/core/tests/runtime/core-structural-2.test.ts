@@ -267,8 +267,15 @@ describe('AuthManager', () => {
   });
 
   it('AuthRole type supports all roles', () => {
-    const roles: AuthRole[] = ['admin', 'operator', 'viewer'];
-    assert.strictEqual(roles.length, 3);
+    const roles: AuthRole[] = [
+      'super_admin',
+      'admin',
+      'developer',
+      'operator',
+      'auditor',
+      'viewer',
+    ];
+    assert.strictEqual(roles.length, 6);
   });
 
   it('ApiKeyEntry type is structural', () => {
