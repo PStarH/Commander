@@ -1,6 +1,13 @@
 import { getCostModel } from '../../observability/costModel';
 import { evaluateComparison, evaluateTrialSuccess } from './evaluator';
-import type { BenchmarkModule, ComparisonOptions, ComparisonResult, LLMClient, Task, TokenUsage } from './types';
+import type {
+  BenchmarkModule,
+  ComparisonOptions,
+  ComparisonResult,
+  LLMClient,
+  Task,
+  TokenUsage,
+} from './types';
 
 function estimateCost(tokens: TokenUsage): number {
   const costModel = getCostModel();

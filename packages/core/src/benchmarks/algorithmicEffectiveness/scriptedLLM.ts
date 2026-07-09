@@ -23,7 +23,10 @@ export function createScriptedLLM(options: ScriptedLLMOptions): LLMClient {
   const { responses = {}, defaultResponse = '', useRegex = false, model = 'scripted' } = options;
 
   return {
-    async complete(prompt: string, _opts?: SamplingOptions): Promise<{ text: string; tokens: TokenUsage }> {
+    async complete(
+      prompt: string,
+      _opts?: SamplingOptions,
+    ): Promise<{ text: string; tokens: TokenUsage }> {
       let text = defaultResponse;
 
       if (useRegex) {
