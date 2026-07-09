@@ -5,7 +5,28 @@ import { hashSync } from 'bcryptjs';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-export type UserRole = 'admin' | 'operator' | 'viewer';
+export type UserRole = 'super_admin' | 'admin' | 'developer' | 'operator' | 'auditor' | 'viewer';
+
+/**
+ * Numeric hierarchy for each role (higher = more privileged).
+ * Used for level-based permission checks so that, e.g., a `super_admin`
+ * satisfies an `admin` requirement. Mirrors the core AuthManager hierarchy.
+ */
+export const ROLE_HIERARCHY: Record<UserRole, number> = {
+  super_admin: 6,
+  admin: 5,
+  developer: 4,
+  operator: 3,
+  auditor: 2,
+  viewer: 1,
+};
+
+/**
+ * Returns true when `userRole` meets or exceeds the level of `requiredRole`.
+ */
+export function hasRole(userRole: UserRole, requiredRole: UserRole): boolean {
+  return (ROLE_HIERARCHY[userRole] ?? 0) >= (ROLE_HIERARCHY[requiredRole] ?? 0);
+}
 
 export interface User {
   id: string;
