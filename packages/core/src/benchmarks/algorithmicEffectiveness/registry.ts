@@ -1,6 +1,8 @@
 import type { BenchmarkModule } from './types';
 import { thompsonMemoryModule } from './modules/thompsonMemory';
 import { strategySelectorModule } from './modules/strategySelector';
+import { modelRouterModule } from './modules/modelRouter';
+import { effortScalerModule } from './modules/effortScaler';
 
 const registry: Map<string, BenchmarkModule> = new Map();
 
@@ -24,3 +26,5 @@ export function getAllModules(): BenchmarkModule[] {
 
 registerModule(thompsonMemoryModule);
 registerModule(strategySelectorModule);
+registerModule(modelRouterModule);
+registerModule(effortScalerModule);
