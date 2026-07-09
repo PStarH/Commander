@@ -7,6 +7,8 @@
  *   npx tsx scripts/benchmark-agentdojo.ts                           # AgentDojo only
  *   npx tsx scripts/benchmark-agentdojo.ts --all                     # all benchmarks
  *   npx tsx scripts/benchmark-agentdojo.ts --benchmark injecagent    # InjecAgent only
+ *   npx tsx scripts/benchmark-agentdojo.ts --benchmark agentsafetybench
+ *   npx tsx scripts/benchmark-agentdojo.ts --benchmark agentharm
  */
 import {
   SecurityBenchmarkRunner,
@@ -17,6 +19,9 @@ import type {
   BenchmarkRunReport,
   BenchmarkTestResult,
 } from '../packages/core/src/security/securityBenchmarkRunner';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { execSync } from 'node:child_process';
 
 const runner = new SecurityBenchmarkRunner({
   enabled: true,
@@ -24,10 +29,17 @@ const runner = new SecurityBenchmarkRunner({
   failOnCriticalMissed: true,
 });
 // Harmful content check is opt-in (default false in createCommanderDefender).
-// Pass --with-harmful to enable Layer 0 HarmfulContentClassifier for
-// AgentSafetyBench/AgentHarm cases.
+// For AgentSafetyBench / AgentHarm direct harmful-content benchmarks, and for
+// combined --all runs, we enable Layer 0 HarmfulContentClassifier by default so
+// the combined report reflects the full defense stack.
 const args = process.argv.slice(2);
-const enableHarmfulContentCheck = args.includes('--with-harmful');
+const runAll = args.includes('--all');
+const singleBenchmark = parseBenchmarkArg(args);
+const enableHarmfulContentCheck =
+  args.includes('--with-harmful') ||
+  runAll ||
+  singleBenchmark === 'agentsafetybench' ||
+  singleBenchmark === 'agentharm';
 const defender = createCommanderDefender({ enableHarmfulContentCheck });
 
 function pad(s: string, n: number): string {
@@ -71,11 +83,18 @@ function printReport(report: BenchmarkRunReport): void {
   console.log('═'.repeat(78) + '\n');
 }
 
-function parseBenchmarkArg(args: string[]): 'agentdojo' | 'injecagent' | undefined {
+function parseBenchmarkArg(
+  args: string[],
+): 'agentdojo' | 'agentsafetybench' | 'agentharm' | 'injecagent' | undefined {
   const idx = args.indexOf('--benchmark');
   if (idx !== -1 && args[idx + 1]) {
     const value = args[idx + 1];
-    if (value === 'agentdojo' || value === 'injecagent') {
+    if (
+      value === 'agentdojo' ||
+      value === 'agentsafetybench' ||
+      value === 'agentharm' ||
+      value === 'injecagent'
+    ) {
       return value;
     }
     console.error(`Unknown benchmark: ${value}`);
@@ -84,10 +103,27 @@ function parseBenchmarkArg(args: string[]): 'agentdojo' | 'injecagent' | undefin
   return undefined;
 }
 
+function ensureInjecAgentDataset(): void {
+  const cacheDir = 'packages/core/.cache/injecagent';
+  const required = [
+    'test_cases_dh_base.json',
+    'test_cases_dh_enhanced.json',
+    'test_cases_ds_base.json',
+    'test_cases_ds_enhanced.json',
+  ];
+  const missing = required.some((f) => !fs.existsSync(path.join(cacheDir, f)));
+  if (missing) {
+    console.log('InjecAgent dataset not cached; downloading...');
+    execSync('bash scripts/download-injecagent-dataset.sh', { stdio: 'inherit' });
+  }
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  const runAll = args.includes('--all');
-  const singleBenchmark = parseBenchmarkArg(args);
+
+  if (runAll || singleBenchmark === 'injecagent') {
+    ensureInjecAgentDataset();
+  }
 
   console.log('Commander Security Benchmark — Real Defense Stack');
   console.log('Defender: createCommanderDefender()');

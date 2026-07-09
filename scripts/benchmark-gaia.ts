@@ -620,9 +620,7 @@ async function main(): Promise<number> {
     console.error(`FAILED: ${failedReason}`);
     exitCode = 2;
   } else {
-    console.log(
-      'PASSED: spine healthy + scoring correct (UNGRADED preserved for empty expected).',
-    );
+    console.log('PASSED: spine healthy + scoring correct (UNGRADED preserved for empty expected).');
   }
 
   // Phase D — JSON result emit (optional, cron-gate contract).
