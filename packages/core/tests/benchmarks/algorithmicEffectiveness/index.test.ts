@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { getRegisteredModuleIds, getModule } from '../../../src/benchmarks/algorithmicEffectiveness';
+import {
+  getRegisteredModuleIds,
+  getModule,
+} from '../../../src/benchmarks/algorithmicEffectiveness';
 
 describe('algorithmicEffectiveness suite integration', () => {
   it('exports all registered modules', () => {
