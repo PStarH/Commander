@@ -2,12 +2,14 @@ import type { BenchmarkModule } from './types';
 import { thompsonMemoryModule } from './modules/thompsonMemory';
 import { parameterControllerModule } from './modules/parameterController';
 import { strategySelectorModule } from './modules/strategySelector';
+import { metaLearnerModule } from './modules/metaLearner';
 import { modelRouterModule } from './modules/modelRouter';
 import { smartModelRouterModule } from './modules/smartModelRouter';
 import { effortScalerModule } from './modules/effortScaler';
 import { topologyRouterModule } from './modules/topologyRouter';
 import { tokenGovernorModule } from './modules/tokenGovernor';
 import { executionRouterModule } from './modules/executionRouter';
+import { circuitBreakerModule } from './modules/circuitBreaker';
 
 const registry: Map<string, BenchmarkModule> = new Map();
 
@@ -32,9 +34,11 @@ export function getAllModules(): BenchmarkModule[] {
 registerModule(thompsonMemoryModule);
 registerModule(parameterControllerModule);
 registerModule(strategySelectorModule);
+registerModule(metaLearnerModule);
 registerModule(modelRouterModule);
 registerModule(smartModelRouterModule);
 registerModule(effortScalerModule);
 registerModule(topologyRouterModule);
 registerModule(tokenGovernorModule);
 registerModule(executionRouterModule);
+registerModule(circuitBreakerModule);
