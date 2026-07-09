@@ -79,12 +79,17 @@ function classifyDrift(
   targetOutput: number | null,
 ): { inputDriftPct: number; outputDriftPct: number; maxDriftPct: number; missing: boolean } {
   if (targetInput === null || targetOutput === null) {
-    return { inputDriftPct: Number.NaN, outputDriftPct: Number.NaN, maxDriftPct: 100, missing: true };
+    return {
+      inputDriftPct: Number.NaN,
+      outputDriftPct: Number.NaN,
+      maxDriftPct: 100,
+      missing: true,
+    };
   }
   const inputDriftPct =
-    sourceInput > 0 ? Math.abs(targetInput - sourceInput) / sourceInput * 100 : 0;
+    sourceInput > 0 ? (Math.abs(targetInput - sourceInput) / sourceInput) * 100 : 0;
   const outputDriftPct =
-    sourceOutput > 0 ? Math.abs(targetOutput - sourceOutput) / sourceOutput * 100 : 0;
+    sourceOutput > 0 ? (Math.abs(targetOutput - sourceOutput) / sourceOutput) * 100 : 0;
   return {
     inputDriftPct,
     outputDriftPct,
@@ -105,7 +110,9 @@ async function main() {
 
   console.log('Cost Model Drift Benchmark (bidirectional)');
   console.log('═'.repeat(70));
-  console.log(`  Threshold: ${thresholdSafe}% max drift (configurable via BENCH_DRIFT_THRESHOLD_PCT)`);
+  console.log(
+    `  Threshold: ${thresholdSafe}% max drift (configurable via BENCH_DRIFT_THRESHOLD_PCT)`,
+  );
   console.log(`  Direction A: costModel -> costEstimator (projected cost accuracy)`);
   console.log(`  Direction B: costEstimator -> costModel (recorded cost accuracy)`);
   console.log('─'.repeat(70));
@@ -155,8 +162,9 @@ async function main() {
   const costEstimatorEntries = getCostEstimatorTableEntries(estimator);
   for (const eEntry of costEstimatorEntries) {
     const cmMatch = COST_MODEL_PRICING.find(
-      (cm) => cm.provider.toLowerCase() === eEntry.provider.toLowerCase() &&
-              stripTierSuffix(cm.model).toLowerCase() === eEntry.model.toLowerCase(),
+      (cm) =>
+        cm.provider.toLowerCase() === eEntry.provider.toLowerCase() &&
+        stripTierSuffix(cm.model).toLowerCase() === eEntry.model.toLowerCase(),
     );
     const sourceInput = eEntry.inputPer1M;
     const sourceOutput = eEntry.outputPer1M;
@@ -214,11 +222,19 @@ async function main() {
   printBlock('Direction B: costEstimator -> costModel', dirB);
 
   console.log('─'.repeat(70));
-  console.log(`  Direction A — clean=${cleanA.length} drifted=${driftedA.length} missing=${missingA.length}`);
-  console.log(`  Direction B — clean=${cleanB.length} drifted=${driftedB.length} missing=${missingB.length}`);
+  console.log(
+    `  Direction A — clean=${cleanA.length} drifted=${driftedA.length} missing=${missingA.length}`,
+  );
+  console.log(
+    `  Direction B — clean=${cleanB.length} drifted=${driftedB.length} missing=${missingB.length}`,
+  );
   console.log('═'.repeat(70));
 
-  const passed = driftedA.length === 0 && missingA.length === 0 && driftedB.length === 0 && missingB.length === 0;
+  const passed =
+    driftedA.length === 0 &&
+    missingA.length === 0 &&
+    driftedB.length === 0 &&
+    missingB.length === 0;
   const maxObservedDriftPct = drifts.reduce(
     (m, d) => Math.max(m, isFinite(d.maxDriftPct) ? d.maxDriftPct : 0),
     0,
@@ -256,18 +272,18 @@ async function main() {
   console.log(`Baseline saved to ${fullPath}`);
 
   if (passed) {
-    console.log('\u2705 PASS: costModel and costEstimator pricing tables are in sync (bidirectional)');
+    console.log(
+      '\u2705 PASS: costModel and costEstimator pricing tables are in sync (bidirectional)',
+    );
   } else {
     const reasons: string[] = [];
     if (driftedA.length > 0 || missingA.length > 0) {
       reasons.push(
-        `Direction A: ${driftedA.length} drifted, ${missingA.length} missing (worst drift ${(dirA.reduce((m, d) => Math.max(m, isFinite(d.maxDriftPct) ? d.maxDriftPct : 0), 0)).toFixed(2)}%)`,
+        `Direction A: ${driftedA.length} drifted, ${missingA.length} missing (worst drift ${dirA.reduce((m, d) => Math.max(m, isFinite(d.maxDriftPct) ? d.maxDriftPct : 0), 0).toFixed(2)}%)`,
       );
     }
     if (driftedB.length > 0 || missingB.length > 0) {
-      reasons.push(
-        `Direction B: ${driftedB.length} drifted, ${missingB.length} missing`,
-      );
+      reasons.push(`Direction B: ${driftedB.length} drifted, ${missingB.length} missing`);
     }
     console.log(`\u274C FAIL: ${reasons.join('; ')}`);
     process.exitCode = 1;
@@ -291,7 +307,8 @@ async function main() {
 function getCostEstimatorTableEntries(
   estimator: CostEstimator,
 ): Array<{ provider: string; model: string; inputPer1M: number; outputPer1M: number }> {
-  const out: Array<{ provider: string; model: string; inputPer1M: number; outputPer1M: number }> = [];
+  const out: Array<{ provider: string; model: string; inputPer1M: number; outputPer1M: number }> =
+    [];
   for (const [model, entry] of COST_ESTIMATOR_PRICING) {
     // Defense in depth: probe the same key through the live instance, in case
     // the constructor ever drops it (it shouldn't, but the spec is one line).
