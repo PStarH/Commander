@@ -37,18 +37,18 @@ import * as os from 'os';
 let tmpDir: string;
 let walPath: string;
 
-beforeEach(() => {
+beforeEach(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'detcap-test-'));
   walPath = path.join(tmpDir, 'event-sourcing.wal');
   // Reset singletons for isolation
-  resetGlobalEventSourcingEngine();
+  await resetGlobalEventSourcingEngine();
   resetGlobalDeterminismCapture();
   // Initialize engine with a tmp WAL path
   getGlobalEventSourcingEngine({ walPath });
 });
 
-afterEach(() => {
-  resetGlobalEventSourcingEngine();
+afterEach(async () => {
+  await resetGlobalEventSourcingEngine();
   resetGlobalDeterminismCapture();
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
@@ -327,7 +327,7 @@ describe('eventSourcingHealth p95 latency', () => {
 
   it('reports walWriteLatencyP95Ms as null when no writes recorded', async () => {
     // Fresh engine with no writes — reset to get a clean state
-    resetGlobalEventSourcingEngine();
+    await resetGlobalEventSourcingEngine();
     const freshWalPath = path.join(tmpDir, 'fresh.wal');
     getGlobalEventSourcingEngine({ walPath: freshWalPath });
 
@@ -479,7 +479,7 @@ describe('Cross-process WAL recovery (e2e)', () => {
     const crossProcessWalPath = path.join(tmpDir, 'cross-process.wal');
 
     // ── Process A: write captures, then "crash" ───────────────────────
-    resetGlobalEventSourcingEngine();
+    await resetGlobalEventSourcingEngine();
     resetGlobalDeterminismCapture();
     getGlobalEventSourcingEngine({ walPath: crossProcessWalPath });
     const captureA = getGlobalDeterminismCapture();
@@ -499,7 +499,7 @@ describe('Cross-process WAL recovery (e2e)', () => {
 
     // ── Process B: fresh memory, same WAL file ────────────────────────
     // Resetting singletons simulates a new process — in-memory state is gone
-    resetGlobalEventSourcingEngine();
+    await resetGlobalEventSourcingEngine();
     resetGlobalDeterminismCapture();
 
     // Process B initializes the engine with the SAME walPath — init() must
@@ -537,7 +537,7 @@ describe('Cross-process WAL recovery (e2e)', () => {
     const crossProcessWalPath = path.join(tmpDir, 'cross-process-recovery.wal');
 
     // ── Process A: write captures and "crash" ─────────────────────────
-    resetGlobalEventSourcingEngine();
+    await resetGlobalEventSourcingEngine();
     resetGlobalDeterminismCapture();
     getGlobalEventSourcingEngine({ walPath: crossProcessWalPath });
     const captureA = getGlobalDeterminismCapture();
@@ -550,7 +550,7 @@ describe('Cross-process WAL recovery (e2e)', () => {
     await new Promise((r) => setTimeout(r, 80));
 
     // ── Process B: fresh process, same WAL ────────────────────────────
-    resetGlobalEventSourcingEngine();
+    await resetGlobalEventSourcingEngine();
     resetGlobalDeterminismCapture();
     getGlobalEventSourcingEngine({ walPath: crossProcessWalPath });
     const engineB = getGlobalEventSourcingEngine();
@@ -576,7 +576,7 @@ describe('Cross-process WAL recovery (e2e)', () => {
   it('multiple runs in the same WAL are independently restorable', async () => {
     const sharedWalPath = path.join(tmpDir, 'multi-run.wal');
 
-    resetGlobalEventSourcingEngine();
+    await resetGlobalEventSourcingEngine();
     resetGlobalDeterminismCapture();
     getGlobalEventSourcingEngine({ walPath: sharedWalPath });
     const captureA = getGlobalDeterminismCapture();
@@ -592,7 +592,7 @@ describe('Cross-process WAL recovery (e2e)', () => {
     await new Promise((r) => setTimeout(r, 80));
 
     // ── Process B ─────────────────────────────────────────────────────
-    resetGlobalEventSourcingEngine();
+    await resetGlobalEventSourcingEngine();
     resetGlobalDeterminismCapture();
     getGlobalEventSourcingEngine({ walPath: sharedWalPath });
     const engineB = getGlobalEventSourcingEngine();
@@ -624,7 +624,7 @@ describe('Cross-process WAL recovery (e2e)', () => {
     const integrityWalPath = path.join(tmpDir, 'integrity.wal');
 
     // Process A: write captures
-    resetGlobalEventSourcingEngine();
+    await resetGlobalEventSourcingEngine();
     getGlobalEventSourcingEngine({ walPath: integrityWalPath });
     const engineA = getGlobalEventSourcingEngine();
     await engineA.init();
@@ -640,7 +640,7 @@ describe('Cross-process WAL recovery (e2e)', () => {
     expect(await engineA.verifyIntegrity()).toBe(true);
 
     // Crash + Process B
-    resetGlobalEventSourcingEngine();
+    await resetGlobalEventSourcingEngine();
     resetGlobalDeterminismCapture();
     getGlobalEventSourcingEngine({ walPath: integrityWalPath });
     const engineB = getGlobalEventSourcingEngine();
