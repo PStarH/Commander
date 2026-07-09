@@ -638,8 +638,12 @@ export class UnifiedCostAuthority {
     this.appendLedger(entry);
 
     // AnomalyObserver 观察（advisory）
+    // Skip dynamic threshold tightening in benchmark mode so long-running
+    // benchmark suites don't get budget-capped mid-run. Set
+    // COMMANDER_BENCHMARK_MODE=1 to bypass anomaly-driven budget reduction.
+    const skipDynamicTightening = process.env['COMMANDER_BENCHMARK_MODE'] === '1';
     const anomaly = this.observer.observe(ctx.tenantId ?? '__global__', actual.costUsd);
-    if (anomaly.anomaly && anomaly.zscore) {
+    if (anomaly.anomaly && anomaly.zscore && !skipDynamicTightening) {
       try {
         getGlobalLogger().warn('UnifiedCostAuthority', 'Cost anomaly detected', {
           tenantId: ctx.tenantId,
