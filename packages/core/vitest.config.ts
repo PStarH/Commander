@@ -336,6 +336,8 @@ export default defineConfig({
       'tests/benchmarks/algorithmicEffectiveness/reporter.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/runner.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/registry.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/modules/thompsonMemory.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/modules/strategySelector.test.ts',
       // --- orchestration patterns (Concurrent/Graph/MoA/Router/CrossPollination/AutoLoop/DynamicReplanner) ---
       'tests/orchestration/orchestrationPatterns.test.ts',
     ],
