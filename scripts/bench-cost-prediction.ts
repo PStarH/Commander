@@ -114,8 +114,7 @@ async function main() {
   const results: CostPredictionResult[] = [];
   let totalActualCostUsd = 0;
   const maxCostEnv = process.env.BENCH_MAX_COST_USD;
-  const parsedMaxCost =
-    maxCostEnv !== undefined && maxCostEnv !== '' ? Number(maxCostEnv) : null;
+  const parsedMaxCost = maxCostEnv !== undefined && maxCostEnv !== '' ? Number(maxCostEnv) : null;
   const maxCostUsd =
     parsedMaxCost !== null && Number.isFinite(parsedMaxCost) && parsedMaxCost > 0
       ? parsedMaxCost
@@ -253,7 +252,8 @@ async function main() {
     console.log('✅ PASS: Cost prediction benchmark completed');
   } else {
     const reasons: string[] = [];
-    if (!accuracyOk) reasons.push(`P95 cost prediction error ${p95.toFixed(1)}% exceeds 50% threshold`);
+    if (!accuracyOk)
+      reasons.push(`P95 cost prediction error ${p95.toFixed(1)}% exceeds 50% threshold`);
     if (!costOk)
       reasons.push(
         `cost overrun $${costOverrunUsd.toFixed(4)} over $${maxCostUsd?.toFixed(4)} cap`,
