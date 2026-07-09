@@ -14,7 +14,10 @@ export interface SamplingOptions {
 }
 
 export interface LLMClient {
-  complete(prompt: string, options?: SamplingOptions): Promise<{ text: string; tokens: TokenUsage }>;
+  complete(
+    prompt: string,
+    options?: SamplingOptions,
+  ): Promise<{ text: string; tokens: TokenUsage }>;
 }
 
 export interface Task {
