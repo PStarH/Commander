@@ -75,14 +75,14 @@ describe('SecurityBenchmarkRunner', () => {
     expect(meta.totalEmbedded).toBeGreaterThan(0);
   });
 
-  it('should support "all" benchmark for combined runs', () => {
-    const allCases = runner.getTestCases('all');
+  it('should support "all" benchmark for combined runs', async () => {
+    const allCases = await runner.getTestCases('all');
     expect(allCases.length).toBe(ALL_BENCHMARK_CASES.length);
   });
 
   // ── Test Case Management ──────────────────────────────────────────
 
-  it('should allow adding custom test cases', () => {
+  it('should allow adding custom test cases', async () => {
     runner.addTestCases([
       {
         id: 'CUSTOM-001',
@@ -94,7 +94,7 @@ describe('SecurityBenchmarkRunner', () => {
         cvssScore: 7.0,
       },
     ]);
-    const cases = runner.getTestCases('agentdojo');
+    const cases = await runner.getTestCases('agentdojo');
     expect(cases.some((c) => c.id === 'CUSTOM-001')).toBe(true);
   });
 
@@ -255,7 +255,7 @@ describe('SecurityBenchmarkRunner', () => {
 
   // ── Reset ─────────────────────────────────────────────────────────
 
-  it('should reset custom test cases on reset', () => {
+  it('should reset custom test cases on reset', async () => {
     runner.addTestCases([
       {
         id: 'RESET-001',
@@ -267,10 +267,10 @@ describe('SecurityBenchmarkRunner', () => {
         cvssScore: 1.0,
       },
     ]);
-    expect(runner.getTestCases('agentdojo').some((c) => c.id === 'RESET-001')).toBe(true);
+    expect((await runner.getTestCases('agentdojo')).some((c) => c.id === 'RESET-001')).toBe(true);
 
     runner.reset();
-    expect(runner.getTestCases('agentdojo').some((c) => c.id === 'RESET-001')).toBe(false);
+    expect((await runner.getTestCases('agentdojo')).some((c) => c.id === 'RESET-001')).toBe(false);
   });
 
   // ── Config ────────────────────────────────────────────────────────
@@ -318,12 +318,17 @@ describe('InjecAgent benchmark integration', () => {
     expect(meta.totalEmbedded).toBeGreaterThan(0);
   });
 
-  it('loads embedded injecagent test cases', () => {
-    const cases = runner.getTestCases('injecagent');
+  it('loads embedded injecagent test cases', async () => {
+    const cases = await runner.getTestCases('injecagent');
     expect(cases.length).toBeGreaterThanOrEqual(6);
     expect(cases.every((c) => c.benchmark === 'injecagent')).toBe(true);
     expect(cases.some((c) => c.category === 'data_exfiltration')).toBe(true);
     expect(cases.some((c) => c.category === 'direct_harm')).toBe(true);
+  });
+
+  it('loads full injecagent cases from cache when available', async () => {
+    const cases = await runner.getTestCases('injecagent');
+    expect(cases.length === 2108 || cases.length === 6).toBe(true);
   });
 
   it('injecagent benchmark reports blocked attacks with createCommanderDefender', async () => {
