@@ -330,6 +330,7 @@ export default defineConfig({
       'tests/benchmark/multiAgentBenchmark.metrics.test.ts',
       // --- algorithmic effectiveness benchmarks ---
       'tests/benchmarks/algorithmicEffectiveness/types.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/scriptedLLM.test.ts',
       // --- orchestration patterns (Concurrent/Graph/MoA/Router/CrossPollination/AutoLoop/DynamicReplanner) ---
       'tests/orchestration/orchestrationPatterns.test.ts',
     ],
