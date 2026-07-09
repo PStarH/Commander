@@ -20,6 +20,26 @@
 
 import { $, section } from './_shared';
 import { createHttpServer } from '../../runtime/httpServer';
+import {
+  startSecurityAnomalyDetector,
+  resetSecurityAnomalyDetector,
+} from '../../security/securityAnomalyDetector';
+import {
+  installOutboundNetworkPolicy,
+  resetOutboundNetworkPolicy,
+} from '../../security/outboundNetworkPolicy';
+
+function tryStartComponent(label: string, start: () => void, reset: () => void): boolean {
+  try {
+    reset();
+    start();
+    return true;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.log(`  ${$.yellow}!${$.reset} ${label} failed to start: ${message}`);
+    return false;
+  }
+}
 
 export async function cmdServe(args: string[]): Promise<void> {
   const { flags } = parseServeFlags(args);
@@ -47,6 +67,17 @@ export async function cmdServe(args: string[]): Promise<void> {
 
     await server.start();
 
+    const anomalyDetectorStarted = tryStartComponent(
+      'SecurityAnomalyDetector',
+      () => startSecurityAnomalyDetector(),
+      () => resetSecurityAnomalyDetector(),
+    );
+    const outboundPolicyInstalled = tryStartComponent(
+      'OutboundNetworkPolicy',
+      () => installOutboundNetworkPolicy(),
+      () => resetOutboundNetworkPolicy(),
+    );
+
     console.log(
       `  ${$.green}✓${$.reset} Server listening on ${$.cyan}http://${host}:${port}${$.reset}`,
     );
@@ -61,8 +92,12 @@ export async function cmdServe(args: string[]): Promise<void> {
     console.log(`    ${$.dim}GET  /openapi.json     — OpenAPI 3.0 spec${$.reset}`);
     console.log();
     console.log(`  ${$.green}✓${$.reset} Security components activated:`);
-    console.log(`    ${$.dim}SecurityAnomalyDetector — 7 anomaly types monitored${$.reset}`);
-    console.log(`    ${$.dim}OutboundNetworkPolicy   — egress firewall + SSRF defense${$.reset}`);
+    console.log(
+      `    ${$.dim}SecurityAnomalyDetector — ${anomalyDetectorStarted ? '7 anomaly types monitored' : 'not started'}${$.reset}`,
+    );
+    console.log(
+      `    ${$.dim}OutboundNetworkPolicy   — ${outboundPolicyInstalled ? 'egress firewall + SSRF defense' : 'not installed'}${$.reset}`,
+    );
     console.log(`    ${$.dim}RecoveryBootstrapper    — zombie run recovery${$.reset}`);
     console.log();
     console.log(`  ${$.dim}Press Ctrl+C to stop${$.reset}`);
