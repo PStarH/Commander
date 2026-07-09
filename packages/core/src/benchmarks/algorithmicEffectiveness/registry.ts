@@ -11,6 +11,7 @@ import { tokenGovernorModule } from './modules/tokenGovernor';
 import { executionRouterModule } from './modules/executionRouter';
 import { llmRetryModule } from './modules/llmRetry';
 import { circuitBreakerModule } from './modules/circuitBreaker';
+import { costPredictorModule } from './modules/costPredictor';
 
 const registry: Map<string, BenchmarkModule> = new Map();
 
@@ -44,3 +45,4 @@ registerModule(tokenGovernorModule);
 registerModule(executionRouterModule);
 registerModule(llmRetryModule);
 registerModule(circuitBreakerModule);
+registerModule(costPredictorModule);
