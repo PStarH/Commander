@@ -32,7 +32,11 @@ import { resetDataLeakageVerifier } from '../src/security/dataLeakageVerifier';
 import { resetTokenMetrics } from '../src/edit/tokenMetrics';
 import { resetLspManager } from '../src/lsp/lspManager';
 import { resetTtsrEngine } from '../src/security/ttsrEngine';
+import { resetReversibilityGate } from '../src/security/reversibilityGate';
+import { resetGlobalFetchGovernor } from '../src/security/securityPrimitives';
+import { resetInvariants } from '../src/security/securityInvariantVerifier';
 import { resetWebhookDispatcher } from '../src/runtime/webhookDispatcher';
+import { resetEventSourcingSubscriber } from '../src/runtime/eventSourcingSubscriber';
 import { resetGlobalSemanticMemoryStore } from '../src/memory/semanticStore';
 import { resetGlobalEpisodicStore } from '../src/memory/episodicStore';
 
@@ -71,6 +75,10 @@ beforeEach(() => {
   resetSecurityAuditLogger();
   resetAuditChainLedger();
   resetZeroTrustValidator();
+  resetReversibilityGate();
+  resetEventSourcingSubscriber();
+  resetGlobalFetchGovernor();
+  resetInvariants();
   resetSLOManager();
   resetAlertRuleEngine();
   resetIncidentManager();
