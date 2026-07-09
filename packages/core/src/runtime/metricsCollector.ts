@@ -62,6 +62,14 @@ const LATENCY_BUCKETS_MS = [10, 50, 100, 500, 1000, 3000, 5000, 10000, 30000];
 
 const TOKEN_BUCKETS = [100, 500, 1000, 2000, 4000, 8000, 16000, 32000, 64000];
 
+const TOOL_COUNT_BUCKETS = [1, 5, 10, 20, 50, 100];
+
+const CONFIDENCE_BUCKETS = [0, 0.3, 0.5, 0.7, 0.9, 1.0];
+
+const EVENT_LOOP_LAG_ALERT_THRESHOLD_MS = 50;
+
+const EVENT_LOOP_LAG_BUCKETS = [50, 100, 200, 500];
+
 // ============================================================================
 // MetricsCollector
 // ============================================================================
@@ -319,13 +327,7 @@ export class MetricsCollector {
       LATENCY_BUCKETS_MS,
       labels,
     );
-    this.recordHistogram(
-      'run_tool_count',
-      'Tools per run',
-      toolCount,
-      [1, 5, 10, 20, 50, 100],
-      labels,
-    );
+    this.recordHistogram('run_tool_count', 'Tools per run', toolCount, TOOL_COUNT_BUCKETS, labels);
     // OTel GenAI workflow alias
     this.recordHistogram(
       'gen_ai.workflow.duration',
@@ -518,7 +520,7 @@ export class MetricsCollector {
       'verification_confidence',
       'Verification confidence score',
       confidence,
-      [0, 0.3, 0.5, 0.7, 0.9, 1.0],
+      CONFIDENCE_BUCKETS,
       labels,
     );
   }
@@ -1039,12 +1041,12 @@ export class MetricsCollector {
         const lag = Number(process.hrtime.bigint() - start) / 1e6;
         this.eventLoopLagMs = lag;
         this.setGauge('event_loop_lag_ms', 'Event loop lag in milliseconds', lag);
-        if (lag > 50) {
+        if (lag > EVENT_LOOP_LAG_ALERT_THRESHOLD_MS) {
           this.recordHistogram(
             'event_loop_lag_high_ms',
-            'Event loop lag spikes > 50ms',
+            `Event loop lag spikes > ${EVENT_LOOP_LAG_ALERT_THRESHOLD_MS}ms`,
             lag,
-            [50, 100, 200, 500],
+            EVENT_LOOP_LAG_BUCKETS,
           );
         }
       });

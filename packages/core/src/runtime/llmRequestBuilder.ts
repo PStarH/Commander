@@ -303,6 +303,7 @@ export class LLMRequestBuilder {
       maxTokens: routing.maxTokens,
       tools: toolDefs,
       cacheConfig,
+      reasoningConfig: ctx.reasoningConfig,
     };
 
     // Wire provider-native structured output when an output schema is supplied.

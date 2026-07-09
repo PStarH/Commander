@@ -17,7 +17,7 @@
 // - Zero invasion: subscribes to existing topics, no changes to publishers
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { MessageBus } from './messageBus';
+import { getMessageBus, type MessageBus } from './messageBus';
 import type { MessageBusTopic } from './types/messageBus';
 import { getGlobalEventSourcingEngine, type EventSourcingEngine } from './eventSourcingEngine';
 import { reportSilentFailure } from '../silentFailureReporter';
@@ -57,8 +57,16 @@ export class EventSourcingSubscriber {
   /**
    * Start subscribing to lifecycle topics and forwarding events to the
    * EventSourcingEngine WAL. Idempotent — safe to call multiple times.
+   *
+   * If the underlying MessageBus has been reset since the last start(), the
+   * subscriber transparently rebinds to the current bus.
    */
   start(): void {
+    const currentBus = getMessageBus();
+    if (this.bus !== currentBus) {
+      this.stop();
+      this.bus = currentBus;
+    }
     if (this.started) return;
     this.started = true;
 
@@ -119,11 +127,19 @@ let globalSubscriber: EventSourcingSubscriber | null = null;
  * Get or create the global EventSourcingSubscriber singleton.
  * The subscriber is not started automatically — call start() after
  * the MessageBus and EventSourcingEngine are both initialized.
+ *
+ * If the underlying MessageBus has been reset (e.g. by test isolation),
+ * the subscriber is recreated so it binds to the current bus.
  */
 export function getGlobalEventSourcingSubscriber(bus?: MessageBus): EventSourcingSubscriber {
   if (!globalSubscriber) {
-    const messageBus = bus ?? require('./messageBus').getMessageBus();
-    globalSubscriber = new EventSourcingSubscriber(messageBus);
+    globalSubscriber = new EventSourcingSubscriber(bus ?? getMessageBus());
   }
   return globalSubscriber;
+}
+
+/** Reset the global subscriber. Used by tests and isolation paths. */
+export function resetEventSourcingSubscriber(): void {
+  globalSubscriber?.stop();
+  globalSubscriber = null;
 }
