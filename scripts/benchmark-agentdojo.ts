@@ -1,11 +1,12 @@
 #!/usr/bin/env tsx
 /**
- * Run the full AgentDojo benchmark (and the full security benchmark suite)
- * through Commander's real defense stack via createCommanderDefender.
+ * Run security benchmarks through Commander's real defense stack via
+ * createCommanderDefender.
  *
  * Usage:
- *   npx tsx scripts/benchmark-agentdojo.ts            # AgentDojo only
- *   npx tsx scripts/benchmark-agentdojo.ts --all       # all 3 benchmarks
+ *   npx tsx scripts/benchmark-agentdojo.ts                           # AgentDojo only
+ *   npx tsx scripts/benchmark-agentdojo.ts --all                     # all benchmarks
+ *   npx tsx scripts/benchmark-agentdojo.ts --benchmark injecagent    # InjecAgent only
  */
 import {
   SecurityBenchmarkRunner,
@@ -70,21 +71,36 @@ function printReport(report: BenchmarkRunReport): void {
   console.log('═'.repeat(78) + '\n');
 }
 
+function parseBenchmarkArg(args: string[]): 'agentdojo' | 'injecagent' | undefined {
+  const idx = args.indexOf('--benchmark');
+  if (idx !== -1 && args[idx + 1]) {
+    const value = args[idx + 1];
+    if (value === 'agentdojo' || value === 'injecagent') {
+      return value;
+    }
+    console.error(`Unknown benchmark: ${value}`);
+    process.exit(2);
+  }
+  return undefined;
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const runAll = args.includes('--all');
+  const singleBenchmark = parseBenchmarkArg(args);
 
   console.log('Commander Security Benchmark — Real Defense Stack');
   console.log('Defender: createCommanderDefender()');
   console.log(
-    `Mode: ${runAll ? 'ALL benchmarks (agentdojo + agentsafetybench + agentharm)' : 'AgentDojo only'}`,
+    `Mode: ${runAll ? 'ALL benchmarks (agentdojo + agentsafetybench + agentharm + injecagent)' : singleBenchmark ? `SINGLE benchmark (${singleBenchmark})` : 'AgentDojo only'}`,
   );
   console.log('─'.repeat(78));
 
   // Print case count preview
-  const agentDojoCases = getCasesForBenchmark('agentdojo');
-  console.log(`AgentDojo cases loaded: ${agentDojoCases.length}`);
-  for (const tc of agentDojoCases) {
+  const previewBenchmark = singleBenchmark ?? 'agentdojo';
+  const previewCases = getCasesForBenchmark(previewBenchmark);
+  console.log(`${previewBenchmark} cases loaded: ${previewCases.length}`);
+  for (const tc of previewCases) {
     console.log(`  • ${tc.id}  ${tc.subCategory ?? tc.category}  severity=${tc.severity}`);
   }
   console.log('─'.repeat(78));
@@ -94,6 +110,7 @@ async function main(): Promise<void> {
     printReport(all.agentDojo);
     printReport(all.agentSafetyBench);
     printReport(all.agentHarm);
+    printReport(all.injecagent);
 
     console.log('═'.repeat(78));
     console.log('  COMBINED SUMMARY');
@@ -105,6 +122,11 @@ async function main(): Promise<void> {
     const pass = all.combined.securityScore >= 100 && all.combined.missed === 0;
     console.log(`  VERDICT: ${pass ? '✅ PASS' : '❌ FAIL'}`);
     console.log('═'.repeat(78));
+    process.exit(pass ? 0 : 1);
+  } else if (singleBenchmark) {
+    const report = await runner.runBenchmark(singleBenchmark, defender);
+    printReport(report);
+    const pass = report.securityScore >= 100 && report.missed === 0;
     process.exit(pass ? 0 : 1);
   } else {
     const report = await runner.runBenchmark('agentdojo', defender);
