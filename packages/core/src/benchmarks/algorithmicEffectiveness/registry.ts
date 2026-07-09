@@ -41,4 +41,5 @@ registerModule(effortScalerModule);
 registerModule(topologyRouterModule);
 registerModule(tokenGovernorModule);
 registerModule(executionRouterModule);
+registerModule(llmRetryModule);
 registerModule(circuitBreakerModule);
