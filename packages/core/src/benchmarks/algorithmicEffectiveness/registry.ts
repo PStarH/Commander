@@ -3,9 +3,11 @@ import { thompsonMemoryModule } from './modules/thompsonMemory';
 import { parameterControllerModule } from './modules/parameterController';
 import { strategySelectorModule } from './modules/strategySelector';
 import { modelRouterModule } from './modules/modelRouter';
+import { smartModelRouterModule } from './modules/smartModelRouter';
 import { effortScalerModule } from './modules/effortScaler';
 import { topologyRouterModule } from './modules/topologyRouter';
 import { tokenGovernorModule } from './modules/tokenGovernor';
+import { executionRouterModule } from './modules/executionRouter';
 
 const registry: Map<string, BenchmarkModule> = new Map();
 
@@ -31,6 +33,8 @@ registerModule(thompsonMemoryModule);
 registerModule(parameterControllerModule);
 registerModule(strategySelectorModule);
 registerModule(modelRouterModule);
+registerModule(smartModelRouterModule);
 registerModule(effortScalerModule);
 registerModule(topologyRouterModule);
 registerModule(tokenGovernorModule);
+registerModule(executionRouterModule);
