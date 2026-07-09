@@ -36,6 +36,80 @@ export class ShadowProxy {
     };
   }
 
+  /**
+   * Express/Connect compatible middleware. Captures request/response and
+   * mirrors a sampled subset of traffic to the configured shadow endpoint.
+   * Returns early when shadow is disabled so there is zero overhead.
+   */
+  expressMiddleware() {
+    return (req: unknown, res: unknown, next: (err?: unknown) => void): void => {
+      if (!this.config.enabled) {
+        return next();
+      }
+
+      const request = req as {
+        method: string;
+        url: string;
+        headers: Record<string, string>;
+        body?: unknown;
+      };
+      const response = res as {
+        statusCode: number;
+        status: (code: number) => unknown;
+        json: (body: unknown) => unknown;
+        send: (body: unknown) => unknown;
+        on: (event: string, listener: () => void) => unknown;
+        removeListener: (event: string, listener: () => void) => unknown;
+      };
+
+      const start = Date.now();
+      let capturedBody: unknown;
+      let bodyCaptured = false;
+
+      const originalJson = response.json.bind(response);
+      const originalSend = response.send.bind(response);
+
+      response.json = (body: unknown): unknown => {
+        if (!bodyCaptured) {
+          capturedBody = body;
+          bodyCaptured = true;
+        }
+        return originalJson(body);
+      };
+      response.send = (body: unknown): unknown => {
+        if (!bodyCaptured && typeof body !== 'string') {
+          capturedBody = body;
+          bodyCaptured = true;
+        }
+        return originalSend(body);
+      };
+
+      const onFinish = (): void => {
+        response.removeListener('finish', onFinish);
+        if (this.rng() > this.config.sampleRate) return;
+
+        const ctx: ProxyContext = {
+          request: {
+            method: request.method,
+            url: request.url,
+            headers: request.headers,
+            body: request.body,
+          },
+          response: {
+            status: response.statusCode,
+            body: capturedBody,
+          },
+          latencyMs: Date.now() - start,
+          costUsd: 0,
+        };
+        this.mirror(ctx).catch((err) => reportSilentFailure(err, 'shadow:proxy:mirror'));
+      };
+
+      response.on('finish', onFinish);
+      next();
+    };
+  }
+
   private async mirror(ctx: ProxyContext): Promise<void> {
     const scrubbed = scrubRequest(ctx.request, this.config.ignoreFields);
     const shadowUrl = this.config.endpoint + ctx.request.url;
