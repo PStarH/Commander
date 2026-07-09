@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import type { Task, LLMClient, BenchmarkModule, ComparisonResult } from '../../../src/benchmarks/algorithmicEffectiveness/types';
+import type {
+  Task,
+  LLMClient,
+  BenchmarkModule,
+  ComparisonResult,
+} from '../../../src/benchmarks/algorithmicEffectiveness/types';
 
 describe('types compile and shape is correct', () => {
   it('Task accepts expected function', () => {
@@ -13,7 +18,10 @@ describe('types compile and shape is correct', () => {
 
   it('LLMClient complete returns text and tokens', async () => {
     const client: LLMClient = {
-      complete: async () => ({ text: 'ok', tokens: { input: 1, output: 1, total: 2, cached: 0, reasoning: 0 } }),
+      complete: async () => ({
+        text: 'ok',
+        tokens: { input: 1, output: 1, total: 2, cached: 0, reasoning: 0 },
+      }),
     };
     const res = await client.complete('hi');
     expect(res.text).toBe('ok');
