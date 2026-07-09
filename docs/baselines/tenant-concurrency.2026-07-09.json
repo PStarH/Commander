@@ -1,0 +1,73 @@
+{
+  "benchmark": "tenant-concurrency",
+  "runAt": "2026-07-09T02:20:39.392Z",
+  "nodeVersion": "v26.0.0",
+  "config": {
+    "tenantCount": 5,
+    "requestsPerTenant": 100
+  },
+  "overall": {
+    "totalRequests": 500,
+    "totalDurationMs": 1238,
+    "overallRps": 404,
+    "tenantResults": [
+      {
+        "tenantId": "tenant-1",
+        "requestCount": 100,
+        "p50Ms": 12,
+        "p95Ms": 19,
+        "p99Ms": 19,
+        "avgMs": 12,
+        "errorCount": 1,
+        "totalCostUsd": 0.0339
+      },
+      {
+        "tenantId": "tenant-2",
+        "requestCount": 100,
+        "p50Ms": 11,
+        "p95Ms": 18,
+        "p99Ms": 20,
+        "avgMs": 12,
+        "errorCount": 0,
+        "totalCostUsd": 0.0348
+      },
+      {
+        "tenantId": "tenant-3",
+        "requestCount": 100,
+        "p50Ms": 12,
+        "p95Ms": 18,
+        "p99Ms": 19,
+        "avgMs": 12,
+        "errorCount": 0,
+        "totalCostUsd": 0.037
+      },
+      {
+        "tenantId": "tenant-4",
+        "requestCount": 100,
+        "p50Ms": 13,
+        "p95Ms": 19,
+        "p99Ms": 20,
+        "avgMs": 12,
+        "errorCount": 1,
+        "totalCostUsd": 0.0342
+      },
+      {
+        "tenantId": "tenant-5",
+        "requestCount": 100,
+        "p50Ms": 13,
+        "p95Ms": 19,
+        "p99Ms": 19,
+        "avgMs": 12,
+        "errorCount": 4,
+        "totalCostUsd": 0.0309
+      }
+    ],
+    "maxTenantP99Diff": 1,
+    "fairnessIndex": 0.8896335016976401
+  },
+  "summary": {
+    "passed": false,
+    "fairnessIndex": 0.8896335016976401,
+    "maxTenantP99Diff": 1
+  }
+}
