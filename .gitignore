@@ -166,6 +166,7 @@ apps/api/dist/
 /*.html
 
 # Benchmark files — entire directories (intermediate results, responses, configs)
+packages/core/.cache/injecagent/
 benchmarks/
 packages/core/benchmarks/
 packages/core/src/benchmark/
