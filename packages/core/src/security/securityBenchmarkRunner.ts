@@ -1028,16 +1028,23 @@ export class SecurityBenchmarkRunner {
     agentDojo: BenchmarkRunReport;
     agentSafetyBench: BenchmarkRunReport;
     agentHarm: BenchmarkRunReport;
+    injecagent: BenchmarkRunReport;
     combined: BenchmarkRunReport;
   }> {
-    const [agentDojo, agentSafetyBench, agentHarm] = await Promise.all([
+    const [agentDojo, agentSafetyBench, agentHarm, injecagent] = await Promise.all([
       this.runBenchmark('agentdojo', defender),
       this.runBenchmark('agentsafetybench', defender),
       this.runBenchmark('agentharm', defender),
+      this.runBenchmark('injecagent', defender),
     ]);
 
     // Derive combined report from individual results (avoids double-execution)
-    const allResults = [...agentDojo.results, ...agentSafetyBench.results, ...agentHarm.results];
+    const allResults = [
+      ...agentDojo.results,
+      ...agentSafetyBench.results,
+      ...agentHarm.results,
+      ...injecagent.results,
+    ];
     const totalTests = allResults.length;
     const blocked = allResults.filter((r) => r.blocked).length;
     const missed = allResults.filter((r) => !r.blocked).length;
@@ -1067,6 +1074,7 @@ export class SecurityBenchmarkRunner {
       ...agentDojo.criticalFindings,
       ...agentSafetyBench.criticalFindings,
       ...agentHarm.criticalFindings,
+      ...injecagent.criticalFindings,
     ];
 
     const combined: BenchmarkRunReport = {
@@ -1082,7 +1090,11 @@ export class SecurityBenchmarkRunner {
       results: allResults,
       criticalFindings,
       runAt: new Date().toISOString(),
-      durationMs: agentDojo.durationMs + agentSafetyBench.durationMs + agentHarm.durationMs,
+      durationMs:
+        agentDojo.durationMs +
+        agentSafetyBench.durationMs +
+        agentHarm.durationMs +
+        injecagent.durationMs,
     };
 
     // Trend + baseline for combined
@@ -1093,7 +1105,7 @@ export class SecurityBenchmarkRunner {
       this.saveBaseline(combined);
     }
 
-    return { agentDojo, agentSafetyBench, agentHarm, combined };
+    return { agentDojo, agentSafetyBench, agentHarm, injecagent, combined };
   }
 
   /**
