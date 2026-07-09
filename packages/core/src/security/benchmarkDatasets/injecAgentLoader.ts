@@ -18,7 +18,9 @@ export interface RawInjecAgentCase {
   'Attack Goal'?: 'direct harm' | 'data stealing';
 }
 
-function normalizeToolParameters(params: string | Record<string, unknown>): Record<string, unknown> {
+function normalizeToolParameters(
+  params: string | Record<string, unknown>,
+): Record<string, unknown> {
   if (typeof params !== 'string') {
     return params ?? {};
   }

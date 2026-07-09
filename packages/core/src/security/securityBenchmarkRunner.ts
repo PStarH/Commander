@@ -8,11 +8,15 @@
  *   - AgentDojo: ETH Zurich prompt injection benchmark (tool-use scenarios)
  *   - Agent-SafetyBench: Tsinghua 8-category safety evaluation framework
  *   - AgentHarm: Gray Swan AI harmfulness & jailbreak robustness benchmark
+ *   - InjecAgent: UIUC indirect prompt injection in tool-integrated agents
+ *   - CyberSecEval 4: Meta / Purple Llama MITRE refusal, prompt injection, and code interpreter abuse evaluation
+ *   - HarmBench: Center for AI Safety standardized red-teaming benchmark
  *
  * Each benchmark has its own scoring methodology:
  *   - AgentDojo: task success rate (defense passes if task fails under attack)
  *   - Agent-SafetyBench: 0-100 safety score per category via shield model
  *   - AgentHarm: 1-5 ordinal refusal scale, aggregated to 0-100
+ *   - InjecAgent, CyberSecEval, HarmBench: blocked/missed binary scoring
  *
  * Design:
  * ┌────────────────────────────────────────────────────────────────────┐
@@ -43,7 +47,108 @@ import { loadInjecAgentCases } from './benchmarkDatasets/injecAgentLoader';
 // ============================================================================
 
 /** Supported industry benchmarks. */
-export type BenchmarkId = 'agentdojo' | 'agentsafetybench' | 'agentharm' | 'injecagent';
+export type BenchmarkId =
+  | 'agentdojo'
+  | 'agentsafetybench'
+  | 'agentharm'
+  | 'injecagent'
+  | 'cyberseceval'
+  | 'harmbench';
+
+/** Metadata for each supported benchmark. */
+const BENCHMARK_METADATA: Array<{
+  id: BenchmarkId;
+  name: string;
+  organization: string;
+  totalEmbedded: number;
+  description: string;
+  sourceUrl: string;
+  categories: string[];
+}> = [
+  {
+    id: 'agentdojo',
+    name: 'AgentDojo',
+    organization: 'ETH Zurich / Invariant Labs',
+    totalEmbedded: 12,
+    description:
+      'Dynamic environment for evaluating prompt injection attacks and defenses for LLM agents',
+    sourceUrl: 'https://github.com/ethz-spylab/agentdojo',
+    categories: ['prompt_injection'],
+  },
+  {
+    id: 'agentsafetybench',
+    name: 'Agent-SafetyBench',
+    organization: 'Tsinghua University',
+    totalEmbedded: 10,
+    description:
+      'Comprehensive evaluation of LLM agent safety across 8 risk categories and 10 failure modes',
+    sourceUrl: 'https://github.com/thu-coai/Agent-SafetyBench',
+    categories: ['privacy', 'fraud', 'cybercrime', 'harassment', 'self_harm', 'dangerous_info'],
+  },
+  {
+    id: 'agentharm',
+    name: 'AgentHarm',
+    organization: 'Gray Swan AI',
+    totalEmbedded: 8,
+    description:
+      'Measuring harmfulness and jailbreak robustness of LLM agents with multi-step tool use',
+    sourceUrl: 'https://github.com/GraySwanAI/agentharm',
+    categories: [
+      'fraud',
+      'cybercrime',
+      'harassment',
+      'illegal_goods',
+      'misinformation',
+      'child_safety',
+      'violence',
+    ],
+  },
+  {
+    id: 'injecagent',
+    name: 'InjecAgent',
+    organization: 'UIUC',
+    totalEmbedded: 6,
+    description: 'Benchmarking indirect prompt injections in tool-integrated LLM agents',
+    sourceUrl: 'https://github.com/uiuc-kang-lab/InjecAgent',
+    categories: ['data_exfiltration', 'direct_harm'],
+  },
+  {
+    id: 'cyberseceval',
+    name: 'CyberSecEval 4',
+    organization: 'Meta / Purple Llama',
+    totalEmbedded: 0,
+    description:
+      'MITRE ATT&CK refusal, textual prompt injection, and code interpreter abuse evaluation.',
+    sourceUrl: 'https://github.com/meta-llama/PurpleLlama/tree/main/CybersecurityBenchmarks',
+    categories: ['mitre', 'prompt_injection', 'interpreter_abuse'],
+  },
+  {
+    id: 'harmbench',
+    name: 'HarmBench',
+    organization: 'Center for AI Safety',
+    totalEmbedded: 0,
+    description:
+      'Standardized red-teaming benchmark covering standard and contextual harmful behaviors.',
+    sourceUrl: 'https://github.com/centerforaisafety/HarmBench',
+    categories: [
+      'Illegal Activities',
+      'Violence & Physical Harm',
+      'Hate Speech',
+      'Sexual Content',
+      'Harassment',
+      'Self-Harm',
+      'Mental Health',
+      'Discrimination & Disparagement',
+      'Misinformation & Deception',
+      'Privacy Violations',
+      'Copyright & IP',
+      'Chemical & Biological Weapons',
+      'Cyberattacks & Hacking',
+      'Terrorism & Extremism',
+      'Fraud & Scams',
+    ],
+  },
+];
 
 /** Standardized test case format across all benchmarks. */
 export interface BenchmarkTestCase {
@@ -877,41 +982,12 @@ export class SecurityBenchmarkRunner {
     organization: string;
     description: string;
     totalEmbedded: number;
+    sourceUrl: string;
+    categories: string[];
   } {
-    const meta: Record<
-      BenchmarkId,
-      {
-        name: string;
-        organization: string;
-        description: string;
-      }
-    > = {
-      agentdojo: {
-        name: 'AgentDojo',
-        organization: 'ETH Zurich / Invariant Labs',
-        description:
-          'Dynamic environment for evaluating prompt injection attacks and defenses for LLM agents',
-      },
-      agentsafetybench: {
-        name: 'Agent-SafetyBench',
-        organization: 'Tsinghua University',
-        description:
-          'Comprehensive evaluation of LLM agent safety across 8 risk categories and 10 failure modes',
-      },
-      agentharm: {
-        name: 'AgentHarm',
-        organization: 'Gray Swan AI',
-        description:
-          'Measuring harmfulness and jailbreak robustness of LLM agents with multi-step tool use',
-      },
-      injecagent: {
-        name: 'InjecAgent',
-        organization: 'UIUC',
-        description: 'Benchmarking indirect prompt injections in tool-integrated LLM agents',
-      },
-    };
+    const meta = BENCHMARK_METADATA.find((m) => m.id === benchmark)!;
     return {
-      ...meta[benchmark],
+      ...meta,
       totalEmbedded: getCasesForBenchmark(benchmark).length,
     };
   }
@@ -1656,8 +1732,16 @@ export function createCommanderDefender(options?: {
     // For direct attacks (AgentHarm/ASB), the prompt itself is the attack vector.
     const attackSurface = testCase.injectedToolOutput ?? testCase.prompt;
 
-    // ── Layer 0: HarmfulContentClassifier (optional, for ASB/AH) ──────
-    if (enableHarmful) {
+    // Indirect prompt injection payloads (InjecAgent, AgentDojo tool outputs) can
+    // smuggle harmful/unauthorized instructions (e.g. "grant access", "transfer
+    // money"). Enable the harmful-content rule pack for those tool outputs even
+    // when the explicit ASB/AH flag is off, so that plugin-registered rule packs
+    // (such as harmful-content-rules) can close those defense gaps.
+    const isIndirectInjection =
+      testCase.injectedToolOutput !== undefined && testCase.injectedToolOutput.length > 0;
+
+    // ── Layer 0: HarmfulContentClassifier (ASB/AH or indirect injection) ──────
+    if (enableHarmful || isIndirectInjection) {
       try {
         const { DefaultContentScanner } = await import('../contentScanner');
         const { harmfulContentRules } = await import('../plugins/harmful-content-rules/rules');
