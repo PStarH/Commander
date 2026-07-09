@@ -269,11 +269,31 @@ describe('ContentScanner', () => {
 
   describe('Harmful content detection', () => {
     const testRules = [
-      { category: 'malware', severity: 'CRITICAL' as const, pattern: /\bencrypts? all files and demands? a Bitcoin ransom\b/gi },
-      { category: 'weapons', severity: 'CRITICAL' as const, pattern: /\bsynthesizing ricin from easily available household chemicals\b/gi },
-      { category: 'self_harm', severity: 'CRITICAL' as const, pattern: /\bmethods for committing suicide\b/gi },
-      { category: 'drugs', severity: 'CRITICAL' as const, pattern: /\bdarknet markets where I can purchase fentanyl\b/gi },
-      { category: 'child_safety', severity: 'CRITICAL' as const, pattern: /\bconvince a teenager to meet me in person\b/gi },
+      {
+        category: 'malware',
+        severity: 'CRITICAL' as const,
+        pattern: /\bencrypts? all files and demands? a Bitcoin ransom\b/gi,
+      },
+      {
+        category: 'weapons',
+        severity: 'CRITICAL' as const,
+        pattern: /\bsynthesizing ricin from easily available household chemicals\b/gi,
+      },
+      {
+        category: 'self_harm',
+        severity: 'CRITICAL' as const,
+        pattern: /\bmethods for committing suicide\b/gi,
+      },
+      {
+        category: 'drugs',
+        severity: 'CRITICAL' as const,
+        pattern: /\bdarknet markets where I can purchase fentanyl\b/gi,
+      },
+      {
+        category: 'child_safety',
+        severity: 'CRITICAL' as const,
+        pattern: /\bconvince a teenager to meet me in person\b/gi,
+      },
     ];
 
     it('should detect malware generation requests when enabled', async () => {
