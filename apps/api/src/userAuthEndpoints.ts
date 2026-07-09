@@ -14,6 +14,7 @@ import {
   resetUserPassword,
   deleteUser,
   countAdmins,
+  hasRole,
   type UserRole,
   type SafeUser,
 } from './userStore';
@@ -44,7 +45,7 @@ const refreshSchema = z.object({
 });
 
 const roleUpdateSchema = z.object({
-  role: z.enum(['admin', 'operator', 'viewer']),
+  role: z.enum(['super_admin', 'admin', 'developer', 'operator', 'auditor', 'viewer']),
 });
 
 const adminCreateUserSchema = z.object({
@@ -58,12 +59,14 @@ const adminCreateUserSchema = z.object({
     ),
   email: z.string().email('Invalid email address').max(255),
   password: z.string().min(6, 'Password must be at least 6 characters').max(128),
-  role: z.enum(['admin', 'operator', 'viewer']).default('viewer'),
+  role: z
+    .enum(['super_admin', 'admin', 'developer', 'operator', 'auditor', 'viewer'])
+    .default('viewer'),
 });
 
 const adminUpdateUserSchema = z.object({
   email: z.string().email('Invalid email address').max(255).optional(),
-  role: z.enum(['admin', 'operator', 'viewer']).optional(),
+  role: z.enum(['super_admin', 'admin', 'developer', 'operator', 'auditor', 'viewer']).optional(),
 });
 
 const resetPasswordSchema = z.object({
@@ -85,15 +88,19 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
 }
 
 /**
- * Requires the authenticated user to have the 'admin' role.
- * Must be mounted after requireAuth.
+ * Returns middleware that requires the authenticated user to meet or exceed
+ * `requiredRole` in the role hierarchy (defaults to 'admin', so both
+ * 'super_admin' and 'admin' satisfy an unparameterised check). Must be
+ * mounted after requireAuth.
  */
-function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  if (!req.user || req.user.role !== 'admin') {
-    res.status(403).json({ error: 'Admin privileges required' });
-    return;
-  }
-  next();
+function requireRole(requiredRole: UserRole = 'admin') {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user || !hasRole(req.user.role, requiredRole)) {
+      res.status(403).json({ error: 'Insufficient privileges' });
+      return;
+    }
+    next();
+  };
 }
 
 // ── Response helpers ────────────────────────────────────────────────────────
@@ -236,7 +243,7 @@ export function createUserAuthRouter(): Router {
   });
 
   // ── GET /api/auth/users  (admin only) ────────────────────────────────────
-  router.get('/api/auth/users', requireAuth, requireAdmin, (_req: Request, res: Response) => {
+  router.get('/api/auth/users', requireAuth, requireRole(), (_req: Request, res: Response) => {
     res.json({ users: listUsers() });
   });
 
@@ -244,7 +251,7 @@ export function createUserAuthRouter(): Router {
   router.put(
     '/api/auth/users/:id/role',
     requireAuth,
-    requireAdmin,
+    requireRole(),
     (req: Request, res: Response) => {
       const parsed = roleUpdateSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -265,8 +272,9 @@ export function createUserAuthRouter(): Router {
         return;
       }
 
-      // Prevent an admin from demoting themselves (would lock out the last admin).
-      if (req.user!.id === id && parsed.data.role !== 'admin') {
+      // Prevent a user from demoting themselves below admin level (would risk
+      // locking out the last admin-level account).
+      if (req.user!.id === id && !hasRole(parsed.data.role, 'admin')) {
         res.status(400).json({ error: 'You cannot demote your own admin account' });
         return;
       }
@@ -281,7 +289,7 @@ export function createUserAuthRouter(): Router {
   );
 
   // ── POST /api/auth/users  (admin only) ───────────────────────────────────
-  router.post('/api/auth/users', requireAuth, requireAdmin, (req: Request, res: Response) => {
+  router.post('/api/auth/users', requireAuth, requireRole(), (req: Request, res: Response) => {
     const parsed = adminCreateUserSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -303,7 +311,7 @@ export function createUserAuthRouter(): Router {
   });
 
   // ── PATCH /api/auth/users/:id  (admin only) ───────────────────────────────
-  router.patch('/api/auth/users/:id', requireAuth, requireAdmin, (req: Request, res: Response) => {
+  router.patch('/api/auth/users/:id', requireAuth, requireRole(), (req: Request, res: Response) => {
     const parsed = adminUpdateUserSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -326,7 +334,7 @@ export function createUserAuthRouter(): Router {
     // Prevent removing admin role from the last admin.
     if (
       parsed.data.role !== undefined &&
-      parsed.data.role !== 'admin' &&
+      !hasRole(parsed.data.role, 'admin') &&
       targetUser.role === 'admin' &&
       countAdmins() <= 1
     ) {
@@ -343,26 +351,31 @@ export function createUserAuthRouter(): Router {
   });
 
   // ── DELETE /api/auth/users/:id  (admin only) ──────────────────────────────
-  router.delete('/api/auth/users/:id', requireAuth, requireAdmin, (req: Request, res: Response) => {
-    const id = String(req.params.id);
-    if (req.user!.id === id) {
-      res.status(400).json({ error: 'You cannot delete your own account' });
-      return;
-    }
+  router.delete(
+    '/api/auth/users/:id',
+    requireAuth,
+    requireRole(),
+    (req: Request, res: Response) => {
+      const id = String(req.params.id);
+      if (req.user!.id === id) {
+        res.status(400).json({ error: 'You cannot delete your own account' });
+        return;
+      }
 
-    const result = deleteUser(id);
-    if (!result.success) {
-      res.status(result.error === 'User not found' ? 404 : 400).json({ error: result.error });
-      return;
-    }
-    res.json({ success: true });
-  });
+      const result = deleteUser(id);
+      if (!result.success) {
+        res.status(result.error === 'User not found' ? 404 : 400).json({ error: result.error });
+        return;
+      }
+      res.json({ success: true });
+    },
+  );
 
   // ── POST /api/auth/users/:id/reset-password  (admin only) ────────────────
   router.post(
     '/api/auth/users/:id/reset-password',
     requireAuth,
-    requireAdmin,
+    requireRole(),
     (req: Request, res: Response) => {
       const parsed = resetPasswordSchema.safeParse(req.body);
       if (!parsed.success) {
