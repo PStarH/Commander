@@ -60,6 +60,7 @@ import { getGlobalLogger } from '../../logging';
 import { getGlobalTenantProvider } from '../tenantProvider';
 import { SingleFlightRequestCache } from '../singleFlightRequestCache';
 import type { LLMProvider, LLMRequest, LLMResponse, RoutingDecision } from '../types';
+import { ResourceGovernor } from '../../security/securityPrimitives';
 import type { CacheManager } from '../cacheManager';
 import type { StepTimeoutManager } from '../stepTimeoutManager';
 import type { SamplesStore } from '../samplesStore';
@@ -326,10 +327,18 @@ export class LlmCaller {
       const result: LLMResponse = await this.deps.cacheManager.dedupeSingleFlight(
         flightKey,
         async () => {
-          return this.deps.stepTimeout.wrap(provider.call(request), {
-            timeoutMs: llmTimeoutMs,
-            stepId: `llm-${providerName}-${attemptNumber}-${taskId ?? 'main'}`,
-          });
+          const governed = await ResourceGovernor.govern(
+            () =>
+              this.deps.stepTimeout.wrap(provider.call(request), {
+                timeoutMs: llmTimeoutMs,
+                stepId: `llm-${providerName}-${attemptNumber}-${taskId ?? 'main'}`,
+              }),
+            { timeoutMs: llmTimeoutMs, maxPayloadBytes: 8 * 1024 * 1024 },
+          );
+          if (governed.error) {
+            throw new Error(`LLM call blocked by ResourceGovernor: ${governed.error}`);
+          }
+          return governed.result!;
         },
         tenantIdForFlight,
       );
