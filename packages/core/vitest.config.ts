@@ -344,9 +344,11 @@ export default defineConfig({
       'tests/benchmarks/algorithmicEffectiveness/modules/strategySelector.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/topologyRouter.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/modelRouter.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/modules/smartModelRouter.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/effortScaler.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/tokenGovernor.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/fusionEngine.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/modules/executionRouter.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/bm25ToolDiscovery.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/index.test.ts',
       // --- orchestration patterns (Concurrent/Graph/MoA/Router/CrossPollination/AutoLoop/DynamicReplanner) ---
