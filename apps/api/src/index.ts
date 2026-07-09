@@ -10,6 +10,10 @@ import {
   buildHealthSources,
   getPluginLoader,
   getWebhookDispatcher,
+  zeroTrustMiddleware,
+  ShadowProxy,
+  loadShadowConfig,
+  type ShadowConfig,
 } from '@commander/core';
 import express from 'express';
 import { createWarRoomStore, apiStore } from './store';
@@ -195,6 +199,17 @@ app.use((req, res, next) => {
 // here and skips requests already authenticated via JWT (req.user set).
 app.use(authMiddleware);
 
+// 7b. Zero-trust request-signature validation. When no keys are registered it
+// passes through (skipIfNoKeys), so existing deployments keep working. Once
+// keys are registered via the security endpoints, every mutating request must
+// carry a valid X-Signature header.
+app.use(
+  zeroTrustMiddleware({
+    skipPaths: ['/health', '/ready', '/metrics', '/openapi.json'],
+    skipIfNoKeys: true,
+  }),
+);
+
 // 8. Audit middleware — records all mutating (POST/PUT/PATCH/DELETE) requests
 // to the unified audit trail (.commander/audit/user-actions.ndjson). Mounted
 // after auth so req.user / req.apiKeyId are populated, and before routers so
@@ -213,6 +228,13 @@ app.use(
     blockOnCritical: true,
   }),
 );
+
+// 9b. Shadow traffic mirroring. Loads config from .commander/shadow-config.json;
+// disabled by default. When enabled, a sampled subset of requests is scrubbed
+// (PII/auth headers removed) and sent to the shadow endpoint for drift detection.
+const shadowConfig: ShadowConfig = loadShadowConfig();
+const shadowProxy = new ShadowProxy(shadowConfig);
+app.use(shadowProxy.expressMiddleware());
 
 // Initialize default memory domains on startup
 DEFAULT_DOMAINS.forEach(({ domain, description }) => {
@@ -280,10 +302,10 @@ app.get('/ready', (_req, res) => {
 // underlying component state. This made the probe unverifiable: a DLQ that
 // had crashed OR a toppled circuit breaker would still report green, and
 // k8s/PaaS readiness gates would keep forwarding traffic to a doomed node.
-// Wired via `buildHealthSources()` so the bus + DLQ getters reflect live
-// singletons; circuit-breaker / compensation / provider checks remain
-// "not wired" until apps/api gains AgentRuntime session support, at which
-// point the same getter-functions block can be extended here.
+// Fixed: all unwired checks now return 'degraded' (fail-closed). The
+// shared buildHealthSources() wires event bus, DLQ, and compensation queue
+// from global singletons. Circuit-breaker and provider checks require an
+// active AgentRuntime session (see CommanderHttpServer.buildHealthSources).
 app.get('/health/detailed', async (_req, res) => {
   const collector = new HealthCollector({ sources: buildHealthSources() });
   const result = await collector.collect();

@@ -1,7 +1,5 @@
 import { Router } from 'express';
-import {
-  getUnifiedCostAuthority,
-} from '@commander/core';
+import { getUnifiedCostAuthority } from '@commander/core';
 import type { CostSummary, CostRecord, BudgetAlert, CostLedgerEntry } from '@commander/core';
 
 function ledgerEntryToCostRecord(entry: CostLedgerEntry): CostRecord {
