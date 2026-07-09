@@ -509,6 +509,70 @@ export class ResourceGovernor {
   }
 }
 
+let originalFetch: typeof fetch | null = null;
+let fetchGovernorInstalled = false;
+
+/**
+ * Patch the global `fetch` so every outbound HTTP request is routed through
+ * ResourceGovernor timeout/size enforcement. Idempotent — calling twice is a
+ * no-op. Use `resetGlobalFetchGovernor()` to restore the original fetch.
+ */
+export function installGlobalFetchGovernor(options?: {
+  timeoutMs?: number;
+  maxPayloadBytes?: number;
+}): void {
+  if (fetchGovernorInstalled) return;
+  originalFetch = globalThis.fetch;
+  const timeoutMs = options?.timeoutMs ?? 30_000;
+  const maxPayloadBytes = options?.maxPayloadBytes ?? 10 * 1024 * 1024;
+
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url =
+      typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+
+    const governed = await ResourceGovernor.govern(
+      () =>
+        originalFetch!(input, {
+          ...init,
+          signal: combineSignals(init?.signal, timeoutMs),
+        }),
+      { timeoutMs },
+    );
+
+    if (governed.error) {
+      throw new Error(`fetch(${url}) blocked by ResourceGovernor: ${governed.error}`);
+    }
+    return governed.result!;
+  };
+
+  fetchGovernorInstalled = true;
+}
+
+/** Restore the original global fetch if it was patched. */
+export function resetGlobalFetchGovernor(): void {
+  if (originalFetch) {
+    globalThis.fetch = originalFetch;
+    originalFetch = null;
+  }
+  fetchGovernorInstalled = false;
+}
+
+function combineSignals(signal: AbortSignal | null | undefined, timeoutMs: number): AbortSignal {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  if (signal) {
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      controller.abort();
+    });
+  }
+
+  // Always clean up the timeout when the request completes or is aborted.
+  controller.signal.addEventListener('abort', () => clearTimeout(timer));
+  return controller.signal;
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // 3. IntegrityLayer
 // ══════════════════════════════════════════════════════════════════════════
