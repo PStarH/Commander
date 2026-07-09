@@ -1,9 +1,11 @@
 import type { BenchmarkModule } from './types';
 import { thompsonMemoryModule } from './modules/thompsonMemory';
+import { parameterControllerModule } from './modules/parameterController';
 import { strategySelectorModule } from './modules/strategySelector';
 import { modelRouterModule } from './modules/modelRouter';
 import { effortScalerModule } from './modules/effortScaler';
 import { topologyRouterModule } from './modules/topologyRouter';
+import { tokenGovernorModule } from './modules/tokenGovernor';
 
 const registry: Map<string, BenchmarkModule> = new Map();
 
@@ -26,6 +28,7 @@ export function getAllModules(): BenchmarkModule[] {
 }
 
 registerModule(thompsonMemoryModule);
+registerModule(parameterControllerModule);
 registerModule(strategySelectorModule);
 registerModule(modelRouterModule);
 registerModule(effortScalerModule);
