@@ -74,6 +74,8 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run --no-cache",
     "test:quick": "vitest run --no-cache --exclude 'tests/runtime/*' --exclude 'tests/*.test.ts' tests/ultimate/ tests/tools/ tests/security/ 2>/dev/null || vitest run --no-cache tests/ultimate/deliberation.test.ts tests/tools/pathSecurity.test.ts",
+    "test:algorithmic": "vitest run --no-cache tests/benchmarks/algorithmicEffectiveness",
+    "benchmark:algorithmic:live": "tsx src/benchmarks/algorithmicEffectiveness/cli.ts live",
     "test:inventory": "node scripts/test-inventory.mjs --verify",
     "test:node": "node scripts/run-node-tests.mjs",
     "test:slo": "vitest run --no-cache tests/e2e/sloMeasurement.test.ts",
@@ -105,10 +107,10 @@
   "dependencies": {
     "@commander/plugin-sdk": "workspace:*",
     "blessed": "^0.1.81",
+    "better-sqlite3": "^12.11.1",
     "safe-regex": "^2.1.1"
   },
   "optionalDependencies": {
-    "better-sqlite3": "^12.11.1",
     "isolated-vm": "^5.0.1",
     "pg": "^8.15.0",
     "playwright": "^1.61.0",
