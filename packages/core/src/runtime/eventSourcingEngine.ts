@@ -21,6 +21,7 @@ import { getGlobalLogger } from '../logging';
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getMetricsCollector } from './metricsCollector';
 import { getCurrentTenantId } from './tenantContext';
+import { StateContract, getSecurityPrimitives } from '../security/securityPrimitives';
 import type { IEventSourcingEngine, IEvent } from '../contracts/pillarI';
 
 // ============================================================================
@@ -32,6 +33,10 @@ interface StoredEvent extends IEvent {
   hash: string;
   /** Tenant ID captured at append time for replay-time filtering. */
   tenantId?: string;
+  /** Optional HMAC signature over the event payload. Added when an integrity
+   *  key is configured; absent for legacy/unprotected WAL files. */
+  _sig?: string;
+  _ts?: number;
 }
 
 interface Snapshot {
@@ -60,6 +65,7 @@ export class EventSourcingEngine implements IEventSourcingEngine {
   private walSizeBytes = 0;
   /** Ring buffer of recent WAL append durations (ms) for p95 reporting. */
   private writeLatencies: number[] = [];
+  private integrity = getSecurityPrimitives().integrity;
 
   constructor(options?: { walPath?: string }) {
     this.walPath = options?.walPath ?? null;
@@ -89,6 +95,38 @@ export class EventSourcingEngine implements IEventSourcingEngine {
           for (const line of lines) {
             try {
               const event: StoredEvent = JSON.parse(line);
+              if (event._sig) {
+                const payload = {
+                  id: event.id,
+                  type: event.type,
+                  timestamp: event.timestamp,
+                  previousHash: event.previousHash,
+                  hash: event.hash,
+                  tenantId: event.tenantId,
+                  payload: event.payload,
+                };
+                // Verify using constant-time comparison via IntegrityLayer.verify
+                const isValid = this.integrity.verify({
+                  data: { ...payload, _ts: event._ts },
+                  _sig: event._sig,
+                  _ts: event._ts ?? 0,
+                });
+                if (!isValid) {
+                  const integrityErr = new Error(
+                    `WAL integrity check failed for event ${event.id}`,
+                  );
+                  getGlobalLogger().error(
+                    'EventSourcingEngine',
+                    'WAL integrity check failed',
+                    integrityErr,
+                    {
+                      eventId: event.id,
+                    },
+                  );
+                  reportSilentFailure(integrityErr, 'eventSourcingEngine:init:integrity');
+                  continue;
+                }
+              }
               this.events.push(event);
               this.lastHash = event.hash;
             } catch (err) {
@@ -161,20 +199,56 @@ export class EventSourcingEngine implements IEventSourcingEngine {
 
       const storedEvent: StoredEvent = { ...fullEvent, hash, tenantId };
 
-      this.events.push(storedEvent);
-      this.lastHash = hash;
+      // IntegrityLayer: HMAC-sign the event payload when an integrity key is
+      // configured. Legacy WAL lines without _sig remain loadable.
+      if (process.env.COMMANDER_INTEGRITY_KEY || this.integrity) {
+        const { _sig, _ts } = this.integrity.sign({
+          id: storedEvent.id,
+          type: storedEvent.type,
+          timestamp: storedEvent.timestamp,
+          previousHash: storedEvent.previousHash,
+          hash: storedEvent.hash,
+          tenantId: storedEvent.tenantId,
+          payload: storedEvent.payload,
+        });
+        storedEvent._sig = _sig;
+        storedEvent._ts = _ts;
+      }
 
-      if (this.walPath) {
-        try {
-          const line = JSON.stringify(storedEvent) + '\n';
-          await fs.promises.appendFile(this.walPath, line, 'utf8');
-          this.walSizeBytes += Buffer.byteLength(line, 'utf8');
-        } catch (err) {
-          reportSilentFailure(err, 'eventSourcingEngine:append:write');
-          getGlobalLogger().error('EventSourcingEngine', 'WAL write failed', err as Error, {
-            eventId: id,
-          });
-        }
+      // StateContract scope: WAL write is the side effect; if it fails we
+      // roll back the in-memory event chain so memory and disk stay consistent.
+      const scopeResult = await StateContract.useScope(
+        () => {
+          const eventsBefore = this.events.length;
+          const lastHashBefore = this.lastHash;
+          this.events.push(storedEvent);
+          this.lastHash = hash;
+          return {
+            state: { eventsBefore, lastHashBefore },
+            commit: () => {
+              /* memory state is already updated */
+            },
+            rollback: () => {
+              this.events.length = eventsBefore;
+              this.lastHash = lastHashBefore;
+            },
+          };
+        },
+        async () => {
+          if (this.walPath) {
+            const line = JSON.stringify(storedEvent) + '\n';
+            await fs.promises.appendFile(this.walPath, line, 'utf8');
+            this.walSizeBytes += Buffer.byteLength(line, 'utf8');
+          }
+        },
+      );
+
+      if (!scopeResult.committed) {
+        const err = new Error(scopeResult.error ?? 'WAL append rejected by StateContract');
+        reportSilentFailure(err, 'eventSourcingEngine:append:stateContract');
+        getGlobalLogger().error('EventSourcingEngine', 'WAL append rolled back', err, {
+          eventId: id,
+        });
       }
 
       resultEvent = { ...fullEvent };
@@ -192,6 +266,14 @@ export class EventSourcingEngine implements IEventSourcingEngine {
     this.publishMetrics(latency);
 
     return resultEvent!;
+  }
+
+  /**
+   * Wait for any in-flight WAL append to complete.
+   * Used during test teardown and graceful shutdown.
+   */
+  async flush(): Promise<void> {
+    await this.writeLock;
   }
 
   /**
@@ -454,7 +536,12 @@ export function getGlobalEventSourcingEngine(options?: { walPath?: string }): Ev
   return globalEventSourcingEngine;
 }
 
-/** Reset the global singleton — for test isolation only. */
-export function resetGlobalEventSourcingEngine(): void {
+/** Reset the global singleton — for test isolation only.
+ *  Awaits any pending WAL writes so temp directories can be cleaned up. */
+export async function resetGlobalEventSourcingEngine(): Promise<void> {
+  const engine = globalEventSourcingEngine;
+  if (engine) {
+    await engine.flush();
+  }
   globalEventSourcingEngine = null;
 }

@@ -76,6 +76,7 @@ import { getExecutionScheduler, type RunHandle } from '../atr/scheduler';
 import { LeaseManager } from '../atr/leaseManager';
 import { createContentScanner, type ContentScanner } from '../contentScanner';
 import { getEnterpriseSecurityGateway } from '../security/enterpriseSecurityGateway';
+import { getCapabilityTokenIssuer } from '../security/capabilityToken';
 import { isAgentSuspended, isAgentQuarantined } from '../security/securityResponseEngine';
 import { assertInvariants } from '../security/securityInvariantVerifier';
 import type { TenantProvider, TenantConfig } from './tenantProvider';
@@ -826,6 +827,23 @@ export class AgentRuntime implements AgentRuntimeInterface {
     }
     const tenantOverrides = tenantResolution.overrides;
 
+    // Issue a capability token authorizing the agent's available tools unless
+    // the caller already supplied one. The token is scoped to this run and
+    // forwarded to the tool execution service for authorization checks.
+    if (!ctx.capabilityToken && ctx.availableTools.length > 0) {
+      try {
+        const issuer = getCapabilityTokenIssuer();
+        ctx.capabilityToken = issuer.issue({
+          sub: ctx.agentId,
+          aud: tenantId ?? '*',
+          tools: ctx.availableTools,
+          ttlSeconds: 300,
+        });
+      } catch (capErr) {
+        reportSilentFailure(capErr, 'agentRuntime:issueCapabilityToken');
+      }
+    }
+
     const init: InitResult = await this.runInitializer.initialize(ctx);
     tenantId = init.tenantId;
     tenantCfg = init.tenantCfg;
@@ -1009,6 +1027,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       allowedTools,
       agentCtx,
       this.executedMutations,
+      agentCtx?.capabilityToken,
     );
 
     // DeterminismCapture: record tool response for event replay recovery (Path A).

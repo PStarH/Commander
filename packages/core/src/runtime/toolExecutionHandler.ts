@@ -382,7 +382,9 @@ export class ToolExecutionHandler {
         // Check orchestration plan (circuit breakers, approvals)
         const planResult = await this.deps
           .getOrchestrator()
-          .planExecution(stageCalls, this.deps.getTools());
+          .planExecution(stageCalls, this.deps.getTools(), {
+            capabilityToken: ctx.capabilityToken,
+          });
         const approvedCalls = [...planResult.concurrent, ...planResult.serial];
 
         // Log skipped/circuit-broken tools
