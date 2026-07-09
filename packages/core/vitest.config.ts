@@ -338,6 +338,7 @@ export default defineConfig({
       'tests/benchmarks/algorithmicEffectiveness/runner.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/registry.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/thompsonMemory.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/modules/parameterController.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/strategySelector.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/topologyRouter.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/modelRouter.test.ts',
