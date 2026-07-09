@@ -15,12 +15,20 @@ export interface BreakerConfig {
   threshold: number;
   recoveryTimeMs: number;
   halfOpenMaxTests: number;
+  volumeThreshold?: number;
+  errorRateThreshold?: number;
+  semanticThreshold?: number;
+  securityThreshold?: number;
 }
 
 const DEFAULT_BREAKER_CONFIG: BreakerConfig = {
   threshold: 5,
   recoveryTimeMs: 60000,
   halfOpenMaxTests: 1,
+  volumeThreshold: 0,
+  errorRateThreshold: 0.5,
+  semanticThreshold: 3,
+  securityThreshold: 2,
 };
 
 export class CircuitBreakerRegistry {
@@ -73,6 +81,12 @@ export class CircuitBreakerRegistry {
         if (to === 'CLOSED') {
           getGlobalLogger().info('CircuitBreakerRegistry', `"${name}" closed (${from}→CLOSED)`);
         }
+      },
+      {
+        volumeThreshold: merged.volumeThreshold,
+        errorRateThreshold: merged.errorRateThreshold,
+        semanticThreshold: merged.semanticThreshold,
+        securityThreshold: merged.securityThreshold,
       },
     );
     this.breakers.set(name, breaker);

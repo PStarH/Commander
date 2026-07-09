@@ -1,3 +1,4 @@
+import * as crypto from 'node:crypto';
 import { reportSilentFailure } from '../silentFailureReporter';
 import {
   DEFAULT_CONTEXT_WINDOW_TOKENS,
@@ -63,6 +64,15 @@ import { installProcessCrashHandlers } from './processCrashSafety';
 import { RecoveryBootstrapper } from '../atr/recoveryBootstrapper';
 import { onCircuitBreakerOpen } from './dlqReplayWorker';
 import { getCapabilityTokenIssuer } from '../security/capabilityToken';
+import {
+  getReversibilityGate,
+  resetReversibilityGate,
+  type ReversibilityGate,
+} from '../security/reversibilityGate';
+import {
+  installGlobalFetchGovernor,
+  resetGlobalFetchGovernor,
+} from '../security/securityPrimitives';
 import { getOTelExporter } from './openTelemetryExporter';
 import { getGlobalEventSourcingEngine } from './eventSourcingEngine';
 import { getGlobalEventSourcingSubscriber } from './eventSourcingSubscriber';
@@ -136,6 +146,9 @@ export function initializeServices(
 ): InitializedServices {
   const { config, getRunHandle, getLedgerCtx, getActiveRuns, getPromotedTools, generateActionId } =
     svcConfig;
+
+  // Reset any prior global fetch governor from previous tests/benchmarks.
+  resetGlobalFetchGovernor();
 
   const compactor = new ContextCompactor({
     maxContextTokens: config.budgetHardCapTokens || DEFAULT_CONTEXT_WINDOW_TOKENS,
@@ -290,6 +303,30 @@ export function initializeServices(
     traceStore: resolvedTraceStore,
   });
 
+  // Reset any prior gate instance (tests/benchmarks may have left one behind)
+  // and create a fresh gate bound to the current approval callback.
+  resetReversibilityGate();
+  const reversibilityGateEnabled = config.reversibilityGate?.enabled !== false;
+  // Backward compatibility: only fail-closed (blockWithoutCallback=true) when an
+  // explicit approval callback is configured. Consumers that have not opted into
+  // human approval continue to receive alerts but are not blocked.
+  const hasExplicitApprovalCallback = Boolean(config.approval?.approvalCallback);
+  const reversibilityGate: ReversibilityGate | null = reversibilityGateEnabled
+    ? getReversibilityGate({
+        approvalCallback: async (toolName, args) => {
+          const decision = await approvalCallback({
+            id: crypto.randomUUID(),
+            toolName,
+            arguments: args,
+            reason: 'irreversible_tool',
+          });
+          return decision.approved;
+        },
+        blockWithoutCallback:
+          config.reversibilityGate?.blockWithoutCallback ?? hasExplicitApprovalCallback,
+      })
+    : null;
+
   const agentInbox = new AgentInbox();
   const teamRegistry = new TeamRegistry();
   const agentHandoff = new AgentHandoff(agentInbox, resolvedCheckpointer);
@@ -326,12 +363,14 @@ export function initializeServices(
   }
 
   let otelExporter: import('./openTelemetryExporter').OpenTelemetryExporter | null = null;
-  if (config.otelExporter?.enabled) {
+  const otelEnabled =
+    config.otelExporter?.enabled ?? process.env.COMMANDER_OTEL_ENABLED !== 'false';
+  if (otelEnabled) {
     try {
       const exporter = getOTelExporter({
-        endpoint: config.otelExporter.endpoint,
-        serviceName: config.otelExporter.serviceName,
-        headers: config.otelExporter.headers,
+        endpoint: config.otelExporter?.endpoint,
+        serviceName: config.otelExporter?.serviceName,
+        headers: config.otelExporter?.headers,
       });
       exporter.start().catch((e) =>
         getGlobalLogger().warn('AgentRuntime', 'Failed to start OTel exporter', {
@@ -396,14 +435,30 @@ export function initializeServices(
   const toolApproval = new ToolApproval(approvalCallback);
   // Wire the capability-token verifier so that ToolApproval's token fast-path
   // and runtime enforcement can actually validate HMAC-signed tokens.
+  // Use a factory so resets/reconfigurations of the issuer are picked up.
   try {
-    toolApproval.setTokenVerifier(getCapabilityTokenIssuer().createVerifier());
+    toolApproval.setTokenVerifier(() => getCapabilityTokenIssuer().createVerifier());
   } catch (err) {
     getGlobalLogger().warn(
       'ServiceInitializer',
       'Failed to wire capability token verifier; token enforcement unavailable',
       { error: (err as Error)?.message },
     );
+  }
+
+  // Install global fetch governor so all outbound HTTP calls are subject to
+  // timeout enforcement. Disabled via config.resourceGovernor.enabled = false.
+  const resourceGovernorEnabled = config.resourceGovernor?.enabled !== false;
+  if (resourceGovernorEnabled) {
+    try {
+      installGlobalFetchGovernor({
+        timeoutMs: config.resourceGovernor?.timeoutMs ?? 30_000,
+      });
+    } catch (err) {
+      getGlobalLogger().warn('ServiceInitializer', 'Failed to install global fetch governor', {
+        error: (err as Error)?.message,
+      });
+    }
   }
 
   // Security (G9): Register default security invariants for runtime verification.
@@ -424,12 +479,13 @@ export function initializeServices(
     );
   }
 
+  const toolApprovalEnabled = config.toolApproval?.enabled !== false;
   const orchestrator = new ToolOrchestrator(
     {
-      enabled: true,
+      enabled: toolApprovalEnabled,
       maxRetries: TOOL_ORCHESTRATOR_MAX_RETRIES,
       circuitBreakerThreshold: TOOL_ORCHESTRATOR_CIRCUIT_THRESHOLD,
-      useApproval: false,
+      useApproval: toolApprovalEnabled,
     },
     toolApproval,
     breakerRegistry,
@@ -447,6 +503,7 @@ export function initializeServices(
     getPromotedTools,
     generateActionId,
     getBreakerRegistry: () => breakerRegistry,
+    reversibilityGate,
   });
 
   const planner = new ToolPlanner();
