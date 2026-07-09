@@ -1511,8 +1511,11 @@ export function createCommanderDefender(options?: {
     // ── Layer 0: HarmfulContentClassifier (optional, for ASB/AH) ──────
     if (enableHarmful) {
       try {
-        const { scanContent } = await import('../contentScanner');
-        const scanResult = await scanContent(attackSurface);
+        const { DefaultContentScanner } = await import('../contentScanner');
+        const { harmfulContentRules } = await import('../plugins/harmful-content-rules/rules');
+        DefaultContentScanner.registerRulePack('harmful-content-rules', harmfulContentRules);
+        const scanner = new DefaultContentScanner({ enableHarmfulContentScan: true });
+        const scanResult = await scanner.scan(attackSurface);
         if (!scanResult.isSafe) {
           blocked = true;
           defense = 'HarmfulContentClassifier';

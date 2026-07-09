@@ -1,0 +1,16 @@
+{
+  "name": "harmful-content-rules",
+  "version": "1.0.0",
+  "description": "Built-in harmful content detection rule pack for AgentSafetyBench and AgentHarm.",
+  "main": "index.ts",
+  "category": "security",
+  "contentScannerRules": {
+    "export": {
+      "module": "./rules.ts",
+      "name": "harmfulContentRules"
+    }
+  },
+  "permissions": {
+    "contentScan": true
+  }
+}
