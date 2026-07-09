@@ -23,6 +23,19 @@
 import type { ExecutionTrace } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
 
+// ── SLO burn-rate constants (Google SRE multi-window strategy) ──────────────
+// Factor for estimating consumed budget fraction from burn rate within a
+// partial window (simplified linear approximation).
+const BURN_RATE_WINDOW_CONSUMPTION_FACTOR = 0.1;
+// Multi-window multi-burn-rate thresholds (Google SRE Workbook).
+// Page:     14.4x = 2% budget consumed in 1 hour
+// Critical:  6x   = 5% budget consumed in 6 hours
+// Warning:   3x   = 10% budget consumed in 3 days
+const SRE_BURN_RATE_PAGE_THRESHOLD = 14.4;
+const SRE_BURN_RATE_CRITICAL_THRESHOLD = 6;
+const SRE_BURN_RATE_WARNING_THRESHOLD = 3;
+const SRE_BURN_RATE_INFO_THRESHOLD = 1;
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -169,7 +182,7 @@ function calculateBurnRate(
 
   // Estimate remaining budget (simplified: linear consumption)
   // In production this would use the full SLO window's event history
-  const consumedFraction = Math.min(1, burnRate * 0.1); // scaled by window ratio
+  const consumedFraction = Math.min(1, burnRate * BURN_RATE_WINDOW_CONSUMPTION_FACTOR);
   const errorBudgetRemaining = Math.max(0, 1 - consumedFraction);
 
   return { burnRate, errorRate, errorBudgetRemaining };
@@ -185,10 +198,20 @@ function calculateBurnRate(
  *   - Warning: short > 1x AND long > 1x        (budget being consumed)
  */
 function deriveSeverity(shortBurnRate: number, longBurnRate: number): BurnRateSeverity {
-  if (shortBurnRate > 14.4 && longBurnRate > 14.4) return 'page';
-  if (shortBurnRate > 6 && longBurnRate > 6) return 'critical';
-  if (shortBurnRate > 3 && longBurnRate > 3) return 'warning';
-  if (shortBurnRate > 1 && longBurnRate > 1) return 'warning';
+  if (shortBurnRate > SRE_BURN_RATE_PAGE_THRESHOLD && longBurnRate > SRE_BURN_RATE_PAGE_THRESHOLD)
+    return 'page';
+  if (
+    shortBurnRate > SRE_BURN_RATE_CRITICAL_THRESHOLD &&
+    longBurnRate > SRE_BURN_RATE_CRITICAL_THRESHOLD
+  )
+    return 'critical';
+  if (
+    shortBurnRate > SRE_BURN_RATE_WARNING_THRESHOLD &&
+    longBurnRate > SRE_BURN_RATE_WARNING_THRESHOLD
+  )
+    return 'warning';
+  if (shortBurnRate > SRE_BURN_RATE_INFO_THRESHOLD && longBurnRate > SRE_BURN_RATE_INFO_THRESHOLD)
+    return 'warning';
   return 'none';
 }
 

@@ -1,6 +1,14 @@
 import type { CostBreakdown, ModelPricing, TokenBreakdown } from './types';
 import { getLiteLLMPricing } from '../security/litellmPricing';
 
+// ── Cost estimation constants ──────────────────────────────────────────────
+// When a model's per-token pricing is unknown, we estimate input vs output
+// split from a blended per-1K cost using these ratios.
+const UNKNOWN_MODEL_INPUT_RATIO = 0.4;
+const UNKNOWN_MODEL_OUTPUT_RATIO = 0.6;
+// Batch API typically offers a 50% discount over standard pricing.
+const BATCH_DISCOUNT_RATE = 0.5;
+
 export const DEFAULT_PRICING: ModelPricing[] = [
   {
     provider: 'openai',
@@ -307,8 +315,8 @@ export class CostModel {
           outputPer1k: newOutput,
           cachedInputPer1k:
             litellmCacheRead != null ? litellmCacheRead / 1000 : existing.cachedInputPer1k,
-          batchInputPer1k: newInput * 0.5,
-          batchOutputPer1k: newOutput * 0.5,
+          batchInputPer1k: newInput * BATCH_DISCOUNT_RATE,
+          batchOutputPer1k: newOutput * BATCH_DISCOUNT_RATE,
         });
       }
     }
@@ -334,11 +342,11 @@ export class CostModel {
         return {
           provider,
           model,
-          inputPer1k: per1k * 0.4, // estimate: 40% of blended is input
-          outputPer1k: per1k * 0.6, // estimate: 60% of blended is output
+          inputPer1k: per1k * UNKNOWN_MODEL_INPUT_RATIO,
+          outputPer1k: per1k * UNKNOWN_MODEL_OUTPUT_RATIO,
           cachedInputPer1k: cacheRead1M != null ? cacheRead1M / 1000 : undefined,
-          batchInputPer1k: per1k * 0.4 * 0.5,
-          batchOutputPer1k: per1k * 0.6 * 0.5,
+          batchInputPer1k: per1k * UNKNOWN_MODEL_INPUT_RATIO * BATCH_DISCOUNT_RATE,
+          batchOutputPer1k: per1k * UNKNOWN_MODEL_OUTPUT_RATIO * BATCH_DISCOUNT_RATE,
         };
       }
     }
@@ -374,8 +382,12 @@ export class CostModel {
     const cachedClamped = Math.min(tokens.cached, tokens.input);
     const billableInput = Math.max(0, tokens.input - cachedClamped);
 
-    const inputRate = isBatch ? (p.batchInputPer1k ?? p.inputPer1k * 0.5) : p.inputPer1k;
-    const outputRate = isBatch ? (p.batchOutputPer1k ?? p.outputPer1k * 0.5) : p.outputPer1k;
+    const inputRate = isBatch
+      ? (p.batchInputPer1k ?? p.inputPer1k * BATCH_DISCOUNT_RATE)
+      : p.inputPer1k;
+    const outputRate = isBatch
+      ? (p.batchOutputPer1k ?? p.outputPer1k * BATCH_DISCOUNT_RATE)
+      : p.outputPer1k;
 
     const inputCost = (billableInput / 1000) * inputRate;
     const outputCost = (tokens.output / 1000) * outputRate;
@@ -469,8 +481,8 @@ export class CostModel {
     outputTokens: number,
   ): { batchCostUsd: number; standardCostUsd: number; savingsUsd: number } {
     const p = this.getPricing(provider, this.stripTierSuffix(model));
-    const batchInputRate = p.batchInputPer1k ?? p.inputPer1k * 0.5;
-    const batchOutputRate = p.batchOutputPer1k ?? p.outputPer1k * 0.5;
+    const batchInputRate = p.batchInputPer1k ?? p.inputPer1k * BATCH_DISCOUNT_RATE;
+    const batchOutputRate = p.batchOutputPer1k ?? p.outputPer1k * BATCH_DISCOUNT_RATE;
     const standardCost =
       (inputTokens / 1000) * p.inputPer1k + (outputTokens / 1000) * p.outputPer1k;
     const batchCost =
