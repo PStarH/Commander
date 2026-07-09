@@ -69,7 +69,7 @@ const EVENT_OPTIONS = [
 
 export function SettingsPage() {
   const auth = useAuth();
-  const isAdmin = auth.currentUser?.role === 'admin';
+  const isAdmin = ['super_admin', 'admin'].includes(auth.currentUser?.role ?? '');
   const [activeTab, setActiveTab] = useState<TabId>('general');
   const [error, setError] = useState<string | null>(null);
 
