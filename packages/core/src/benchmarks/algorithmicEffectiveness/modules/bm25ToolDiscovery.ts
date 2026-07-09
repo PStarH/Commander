@@ -27,22 +27,19 @@ const tools: ToolDefinition[] = [
   },
   {
     name: 'shell/exec',
-    description:
-      'Execute a shell command on the local machine. Runs the provided command string.',
+    description: 'Execute a shell command on the local machine. Runs the provided command string.',
     inputSchema: {},
     category: 'system',
   },
   {
     name: 'web/search',
-    description:
-      'Search the web for relevant pages and return a summary of the top results.',
+    description: 'Search the web for relevant pages and return a summary of the top results.',
     inputSchema: {},
     category: 'web',
   },
   {
     name: 'calendar/list',
-    description:
-      'List upcoming calendar events and meetings for the configured account.',
+    description: 'List upcoming calendar events and meetings for the configured account.',
     inputSchema: {},
     category: 'productivity',
   },

@@ -21,7 +21,12 @@ async function main(): Promise<void> {
 
   for (const mod of modules) {
     console.error(`Running ${mod.id} in ${mode} mode...`);
-    const opts: ComparisonOptions = { moduleId: mod.id, mode, n: mode === 'live' ? 30 : 30, seed: 42 };
+    const opts: ComparisonOptions = {
+      moduleId: mod.id,
+      mode,
+      n: mode === 'live' ? 30 : 30,
+      seed: 42,
+    };
     const result = await runComparison(
       opts,
       mod,

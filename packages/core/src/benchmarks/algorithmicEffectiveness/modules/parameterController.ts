@@ -55,11 +55,7 @@ const taskSuite: Task[] = [
     prompt: 'Explain what machine learning is and list three real-world applications.',
     expected: (output: string) => {
       const p = parseParams(output);
-      return (
-        typeof p.temperature === 'number' &&
-        p.temperature >= 0.45 &&
-        p.temperature <= 0.65
-      );
+      return typeof p.temperature === 'number' && p.temperature >= 0.45 && p.temperature <= 0.65;
     },
   },
   {
@@ -75,11 +71,7 @@ const taskSuite: Task[] = [
     prompt: 'Fix the bug in this failing test (first retry).',
     expected: (output: string) => {
       const p = parseParams(output);
-      return (
-        typeof p.temperature === 'number' &&
-        p.temperature >= 0.25 &&
-        p.temperature <= 0.5
-      );
+      return typeof p.temperature === 'number' && p.temperature >= 0.25 && p.temperature <= 0.5;
     },
   },
 ];
