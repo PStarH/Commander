@@ -203,16 +203,19 @@ export function createWebhookRouter(): Router {
     try {
       const id = typeof req.params.id === 'string' ? req.params.id : undefined;
       const config = id ? findIMWebhook(id) : undefined;
-      const secret = config?.secret ?? '';
 
-      // Signature verification (only when a config with a secret exists)
-      if (config && config.secret) {
-        const timestamp = req.query.timestamp as string | undefined;
-        const sign = req.query.sign as string | undefined;
-        if (!timestamp || !sign || !verifyDingTalkSignature(timestamp, sign, secret)) {
-          res.status(401).json({ error: 'Invalid signature' });
-          return;
-        }
+      // A valid webhook config is required for all DingTalk callbacks.
+      if (!config) {
+        res.status(401).json({ error: 'Webhook config required' });
+        return;
+      }
+
+      // Signature verification is mandatory when a config exists.
+      const timestamp = req.query.timestamp as string | undefined;
+      const sign = req.query.sign as string | undefined;
+      if (!timestamp || !sign || !verifyDingTalkSignature(timestamp, sign, config.secret)) {
+        res.status(401).json({ error: 'Invalid signature' });
+        return;
       }
 
       // Parse DingTalk message body
@@ -235,8 +238,7 @@ export function createWebhookRouter(): Router {
         return;
       }
 
-      const agentId = config?.agentId ?? 'agent-commander';
-      const reply = await executeAgentMessage(agentId, messageText);
+      const reply = await executeAgentMessage(config.agentId, messageText);
 
       res.json({ msgtype: 'text', text: { content: reply } });
     } catch (error) {
@@ -261,19 +263,24 @@ export function createWebhookRouter(): Router {
             ? body.type
             : '';
 
-      // Optional token verification
-      if (config && config.secret) {
-        const token = typeof header.token === 'string' ? header.token : '';
-        if (token && token !== config.secret) {
-          res.status(401).json({ error: 'Invalid verification token' });
-          return;
-        }
-      }
-
-      // Handle url_verification challenge
+      // Handle url_verification challenge — allowed without config because the
+      // platform needs to confirm the callback URL during setup.
       if (eventType === 'url_verification' || body.challenge !== undefined) {
         const challenge = typeof body.challenge === 'string' ? body.challenge : '';
         res.json({ challenge });
+        return;
+      }
+
+      // A valid webhook config is required for all other Feishu callbacks.
+      if (!config) {
+        res.status(401).json({ error: 'Webhook config required' });
+        return;
+      }
+
+      // Token verification is mandatory when a config exists.
+      const token = typeof header.token === 'string' ? header.token : '';
+      if (!token || token !== config.secret) {
+        res.status(401).json({ error: 'Invalid verification token' });
         return;
       }
 
@@ -298,8 +305,7 @@ export function createWebhookRouter(): Router {
           return;
         }
 
-        const agentId = config?.agentId ?? 'agent-commander';
-        const reply = await executeAgentMessage(agentId, messageText);
+        const reply = await executeAgentMessage(config.agentId, messageText);
 
         // Feishu expects a 200 with code 0 for acknowledgment.
         // The reply is posted back via the Feishu API (if configured).
@@ -332,31 +338,38 @@ export function createWebhookRouter(): Router {
       // Extract encrypted content for signature verification
       const encrypt = extractXmlField(rawBody, 'Encrypt');
 
-      // Basic signature verification (skipping full AES decryption per task constraints)
-      if (config && config.secret && msgSignature && timestamp && nonce && encrypt) {
-        if (!verifyWeComSignature(config.secret, timestamp, nonce, encrypt, msgSignature)) {
-          res.status(401).json({ error: 'Invalid msg_signature' });
-          return;
-        }
-      }
-
       // Extract text content from XML
       const msgType = extractXmlField(rawBody, 'MsgType');
       const content = extractXmlField(rawBody, 'Content');
 
-      // Handle echostr verification (GET-style, but sometimes POSTed)
+      // Handle echostr verification (GET-style, but sometimes POSTed).
+      // This is allowed without config because it happens during app registration.
       const echostr = req.query.echostr as string | undefined;
       if (echostr) {
         res.send(echostr);
         return;
       }
 
+      // A valid webhook config is required for all other WeCom callbacks.
+      if (!config) {
+        res.status(401).json({ error: 'Webhook config required' });
+        return;
+      }
+
+      // Basic signature verification is mandatory when a config exists
+      // (skipping full AES decryption per task constraints).
+      if (msgSignature && timestamp && nonce && encrypt) {
+        if (!verifyWeComSignature(config.secret, timestamp, nonce, encrypt, msgSignature)) {
+          res.status(401).json({ error: 'Invalid msg_signature' });
+          return;
+        }
+      }
+
       if (msgType === 'text' && content) {
         // Strip @bot mention
         const messageText = content.replace(/^\s*@\S+\s*/, '').trim();
         if (messageText) {
-          const agentId = config?.agentId ?? 'agent-commander';
-          const reply = await executeAgentMessage(agentId, messageText);
+          const reply = await executeAgentMessage(config.agentId, messageText);
 
           // Return plain XML response (unencrypted for simplicity)
           res.type('application/xml');
