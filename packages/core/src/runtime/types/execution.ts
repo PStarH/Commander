@@ -8,6 +8,7 @@ import type {
   SemanticCacheRuntimeConfig,
   SingleFlightRuntimeConfig,
   GeminiCacheRuntimeConfig,
+  ReasoningConfig,
 } from './llm';
 
 /**
@@ -33,6 +34,8 @@ export interface AgentExecutionContext {
   lane?: string;
   /** Optional JSON schema for validating the final assistant output. */
   outputSchema?: Record<string, unknown>;
+  /** Optional reasoning configuration for providers that support reasoning_effort. */
+  reasoningConfig?: ReasoningConfig;
   contextData: {
     warRoomSnapshot?: unknown;
     memoryItems?: unknown[];
@@ -61,6 +64,9 @@ export interface AgentExecutionContext {
    * re-prompts the agent to continue rather than accepting the stop signal.
    */
   verificationTool?: string;
+  /** Optional capability token authorizing this agent's tool calls. When present,
+   *  it is forwarded to the tool execution service for authorization checks. */
+  capabilityToken?: string;
 }
 
 /**
@@ -251,7 +257,7 @@ export interface AgentRuntimeConfig {
   geminiCache?: GeminiCacheRuntimeConfig;
   /** OpenTelemetry exporter configuration. When enabled, execution traces are exported to an OTLP-compatible endpoint (Jaeger, Tempo, SigNoz, etc.). */
   otelExporter?: {
-    /** Enable OTLP trace export (default: false) */
+    /** Enable OTLP trace export (default: true) */
     enabled: boolean;
     /** OTLP HTTP endpoint (default: http://localhost:4318/v1/traces) */
     endpoint?: string;
@@ -290,6 +296,11 @@ export interface AgentRuntimeConfig {
     /** Open the breaker immediately when a tool permanently fails, rather than
      *  waiting for the LLM to retry the same tool N times. */
     openOnFailure?: boolean;
+    /** Also open the breaker on transient errors (timeouts, 5xx) when the
+     *  failure is clearly infrastructure-level and retry is unlikely to help.
+     *  Useful for benchmark/chaos scenarios where mock tools simulate downstream
+     *  outages. */
+    openOnTransientErrors?: boolean;
     /** Default failure threshold before opening the breaker. */
     threshold?: number;
   };
@@ -325,5 +336,26 @@ export interface AgentRuntimeConfig {
     enableSemanticManipulationScan?: boolean;
     maxContentLength?: number;
     timeout?: number;
+  };
+  /** Reversibility gate configuration. When enabled, irreversible tool calls
+   *  require explicit human approval before execution. Defaults to enabled. */
+  reversibilityGate?: {
+    enabled?: boolean;
+    /** When true and no approval callback is configured, irreversible tools
+     *  are blocked. Defaults to true. */
+    blockWithoutCallback?: boolean;
+  };
+  /** Tool approval configuration. When enabled, the tool orchestrator will
+   *  request approval for tool calls. Defaults to enabled. */
+  toolApproval?: {
+    enabled?: boolean;
+  };
+  /** Resource governor configuration. When enabled, all global fetch calls
+   *  and LLM provider calls are wrapped with timeout and payload-size limits.
+   *  Defaults to enabled. */
+  resourceGovernor?: {
+    enabled?: boolean;
+    timeoutMs?: number;
+    maxPayloadBytes?: number;
   };
 }
