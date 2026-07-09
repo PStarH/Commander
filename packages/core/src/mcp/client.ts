@@ -19,11 +19,48 @@ import {
   type MCPServerCapabilities,
 } from './types';
 import { ChildProcess } from 'node:child_process';
+import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
 import { getSupplyChainScanner } from '../security/supplyChainScanner';
 
 function uuid(): string {
   return `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/**
+ * Validate an MCP stdio command against the runtime allowlist.
+ * Returns an error message if the command is forbidden, otherwise undefined.
+ *
+ * Rules:
+ *  - `npx` is always forbidden at runtime (download-on-execute is a supply-chain risk).
+ *  - Only explicitly allowed base names or absolute paths may be spawned.
+ *  - Override via COMMANDER_MCP_ALLOWED_COMMANDS comma-separated env var.
+ */
+function validateMcpCommand(command: string): string | undefined {
+  const base = path.basename(command).toLowerCase();
+
+  if (base === 'npx' || command.toLowerCase().startsWith('npx ')) {
+    return 'npx is not allowed for MCP stdio transport (download-on-execute supply-chain risk)';
+  }
+
+  const defaultAllowed = ['node', 'nodejs', 'python', 'python3', 'uvx', 'bun', 'deno'];
+  const envAllowed =
+    process.env.COMMANDER_MCP_ALLOWED_COMMANDS?.split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean) ?? [];
+  const allowed = new Set([...defaultAllowed, ...envAllowed]);
+
+  // Absolute paths are allowed if their basename is in the allowlist.
+  if (path.isAbsolute(command) && allowed.has(base)) {
+    return undefined;
+  }
+
+  // Bare command names must be in the allowlist.
+  if (allowed.has(base)) {
+    return undefined;
+  }
+
+  return `MCP command "${command}" is not in the runtime allowlist. Allowed: ${[...allowed].join(', ')}`;
 }
 
 // ============================================================================
@@ -46,10 +83,19 @@ export class StdioClientTransport implements MCPTransport {
 
   async start(): Promise<void> {
     const { spawn } = await import('child_process');
+    const command = this.config.command;
+    if (!command) {
+      throw new Error('MCP stdio transport requires a command');
+    }
+    const validationError = validateMcpCommand(command);
+    if (validationError) {
+      throw new Error(`MCP command rejected: ${validationError}`);
+    }
+
     // GAP-16: Filter environment to avoid leaking secrets to MCP subprocess.
     // Only pass safe variables + explicitly configured env vars.
     const safeEnv = this.filterEnvironment();
-    this.process = spawn(this.config.command!, this.config.args ?? [], {
+    this.process = spawn(command, this.config.args ?? [], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...safeEnv, ...this.config.env },
     });

@@ -314,6 +314,19 @@ export {
   getSecurityAuditLogger,
   resetSecurityAuditLogger,
 } from './security/securityAuditLogger';
+export {
+  ZeroTrustValidator,
+  getZeroTrustValidator,
+  zeroTrustMiddleware,
+} from './security/zeroTrustValidator';
+export type {
+  ZeroTrustValidationResult,
+  ZeroTrustRejectReason,
+  SigningKeyEntry,
+  ZeroTrustConfig,
+  SignRequestParams,
+  GeneratedSignature,
+} from './security/zeroTrustValidator';
 
 // CapabilityToken — short-lived HMAC-signed authorization tokens
 export {
@@ -1529,3 +1542,14 @@ export type {
   RunVerifierOptions,
   RunVerifierAsyncOptions as RotationRunVerifierAsyncOptions,
 } from './security/rotationSignoffVerifier';
+
+// Shadow / drift detection
+export { ShadowProxy, scrubRequest, DriftReporter } from './shadow';
+export type { ProxyContext, Next as ShadowNext } from './shadow';
+export {
+  loadShadowConfig,
+  defaultShadowConfig,
+  validateShadowConfig,
+  DEFAULT_IGNORE_FIELDS,
+} from './shadow/types';
+export type { ShadowConfig, DriftEntry, DriftMetrics, ValidationResult } from './shadow/types';
