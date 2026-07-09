@@ -267,6 +267,8 @@ export default defineConfig({
       'tests/security/adaptiveHitl.test.ts',
       'tests/security/securityBenchmarkRunner.test.ts',
       'tests/security/injecAgentLoader.test.ts',
+      'tests/security/cyberSecEvalLoader.test.ts',
+      'tests/security/harmBenchLoader.test.ts',
       'tests/security/supplyChainAttestor.test.ts',
       'tests/security/differentialPrivacyLayer.test.ts',
       'tests/security/property/invariantPropertyTests.ts',
@@ -353,6 +355,7 @@ export default defineConfig({
       'tests/benchmarks/algorithmicEffectiveness/modules/llmRetry.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/bm25ToolDiscovery.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/circuitBreaker.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/modules/costPredictor.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/index.test.ts',
       // --- orchestration patterns (Concurrent/Graph/MoA/Router/CrossPollination/AutoLoop/DynamicReplanner) ---
       'tests/orchestration/orchestrationPatterns.test.ts',
