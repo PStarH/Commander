@@ -72,14 +72,12 @@ const VECTORS: AttackVector[] = [
   {
     id: 'V1_tenant_id_spoof_in_metadata',
     name: 'tenant_id_spoof_in_metadata',
-    description:
-      'Write entry tagged with metadata.tenantId; expect query to filter by tenant.',
+    description: 'Write entry tagged with metadata.tenantId; expect query to filter by tenant.',
   },
   {
     id: 'V2_longterm_cross_tenant_promotion',
     name: 'longterm_cross_tenant_promotion',
-    description:
-      'Promote working memory to longterm; expect longterm query to respect tenant.',
+    description: 'Promote working memory to longterm; expect longterm query to respect tenant.',
   },
   {
     id: 'V3_searchRelated_keyword_collision',
@@ -102,8 +100,7 @@ const VECTORS: AttackVector[] = [
   {
     id: 'V6_promoteToLongTerm_layer_transition',
     name: 'promoteToLongTerm_layer_transition',
-    description:
-      'Promote to longterm; expect subsequent longterm query to filter by tenant.',
+    description: 'Promote to longterm; expect subsequent longterm query to filter by tenant.',
   },
 ];
 
@@ -125,14 +122,9 @@ async function runV1_tenantIdSpoofInMetadata(
   const TENANT_B = 'tenant-b-clean-v1';
   const payload = 'CONFIDENTIAL-TENANT-A-ONLY-7f3a';
 
-  const entry = memory.add(
-    payload,
-    'longterm',
-    'project-x',
-    0.95,
-    ['secret'],
-    { tenantId: TENANT_A },
-  );
+  const entry = memory.add(payload, 'longterm', 'project-x', 0.95, ['secret'], {
+    tenantId: TENANT_A,
+  });
 
   // Tenant B's read with no tenant filter — this is the attack.
   const tenantBView = memory.querySync({
@@ -228,14 +220,9 @@ async function runV4_importanceThresholdBypass(
   // entries guarantee a positive hit on a broken filter).
   const added: string[] = [];
   for (let i = 0; i < 5; i++) {
-    const e = memory.add(
-      `${payload}-${i}`,
-      'longterm',
-      `project-${i}`,
-      0.99,
-      ['critical'],
-      { tenantId: TENANT_A },
-    );
+    const e = memory.add(`${payload}-${i}`, 'longterm', `project-${i}`, 0.99, ['critical'], {
+      tenantId: TENANT_A,
+    });
     added.push(e.id);
   }
 
@@ -408,7 +395,9 @@ async function main() {
     }
     results.push(result);
     const icon = result.passed ? '\u2705' : '\u274C';
-    console.log(`  ${icon} ${vector.id}: ${result.passed ? 'defended' : result.reason ?? 'leaked'}`);
+    console.log(
+      `  ${icon} ${vector.id}: ${result.passed ? 'defended' : (result.reason ?? 'leaked')}`,
+    );
   }
 
   const durationMs = Date.now() - start;
@@ -438,14 +427,16 @@ async function main() {
       targetName: 'three_layer_memory',
       totalCases,
       defended,
-      leaks: results.filter((r) => !r.passed).map((r) => ({
-        vector: r.vector,
-        victimTenant: r.victimTenant,
-        attackerTenant: r.attackerTenant,
-        leakedContent: r.leakedContent,
-        leakedEntryId: r.leakedEntryId,
-        reason: r.reason,
-      })),
+      leaks: results
+        .filter((r) => !r.passed)
+        .map((r) => ({
+          vector: r.vector,
+          victimTenant: r.victimTenant,
+          attackerTenant: r.attackerTenant,
+          leakedContent: r.leakedContent,
+          leakedEntryId: r.leakedEntryId,
+          reason: r.reason,
+        })),
       errors: 0,
       durationMs,
       vectorDetails: results,

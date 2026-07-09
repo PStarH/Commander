@@ -188,8 +188,7 @@ async function main() {
 
   // ── 4. DLQ SLO ──
   try {
-    const { DeadLetterQueue } =
-      await import('../packages/core/src/runtime/deadLetterQueue');
+    const { DeadLetterQueue } = await import('../packages/core/src/runtime/deadLetterQueue');
     const { resetDeadLetterQueue } =
       await import('../packages/core/src/runtime/deadLetterQueueSingleton');
     resetDeadLetterQueue();
@@ -272,7 +271,9 @@ async function main() {
   console.log(`Baseline saved to ${fullPath}`);
 
   if (failed.length > 0) {
-    const failedNames = failed.map((m) => `${m.name}${m.reason ? ` (${m.reason})` : ''}`).join(', ');
+    const failedNames = failed
+      .map((m) => `${m.name}${m.reason ? ` (${m.reason})` : ''}`)
+      .join(', ');
     console.log(`❌ FAIL: ${failed.length} SLO(s) exceeded threshold or threw: ${failedNames}`);
     process.exitCode = 1;
   } else {

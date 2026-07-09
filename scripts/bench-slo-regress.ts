@@ -45,7 +45,8 @@ async function main() {
 
   const baselinesDir = resolve('docs/baselines');
 
-  const todayPath = todayArg?.slice('--today='.length) ?? findLatestBaseline(baselinesDir, 'slo-baseline.');
+  const todayPath =
+    todayArg?.slice('--today='.length) ?? findLatestBaseline(baselinesDir, 'slo-baseline.');
   if (!todayPath) {
     console.error('ERROR: No SLO baseline found. Run bench-slo-baseline.ts first.');
     process.exit(2);
