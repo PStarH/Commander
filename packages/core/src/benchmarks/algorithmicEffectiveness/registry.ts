@@ -33,3 +33,4 @@ registerModule(strategySelectorModule);
 registerModule(modelRouterModule);
 registerModule(effortScalerModule);
 registerModule(topologyRouterModule);
+registerModule(tokenGovernorModule);
