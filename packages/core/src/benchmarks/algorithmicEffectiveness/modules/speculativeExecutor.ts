@@ -1,7 +1,4 @@
-import {
-  PatternTracker,
-  planSpeculativeExecution,
-} from '../../../runtime/speculativeExecutor';
+import { PatternTracker, planSpeculativeExecution } from '../../../runtime/speculativeExecutor';
 import type { BenchmarkModule, Task } from '../types';
 
 interface SpeculativeTask extends Task {
@@ -72,7 +69,9 @@ function expectedToolInOutput(expected: string | undefined, output: string): boo
   }
   try {
     const parsed = JSON.parse(output);
-    return Array.isArray(parsed.plan) && parsed.plan.some((p: { name?: string }) => p.name === expected);
+    return (
+      Array.isArray(parsed.plan) && parsed.plan.some((p: { name?: string }) => p.name === expected)
+    );
   } catch {
     return output.includes(expected);
   }
@@ -108,7 +107,11 @@ export const speculativeExecutorModule: BenchmarkModule = {
     };
   },
   runTrial: async ({ implementation, task }) => {
-    const impl = implementation as { plan: (task: SpeculativeTask) => Array<{ name: string; arguments: Record<string, unknown>; confidence: number }> };
+    const impl = implementation as {
+      plan: (
+        task: SpeculativeTask,
+      ) => Array<{ name: string; arguments: Record<string, unknown>; confidence: number }>;
+    };
     const specTask = task as unknown as SpeculativeTask;
     const plan = impl.plan(specTask);
     return {
