@@ -22,6 +22,16 @@
 import { getGlobalLogger } from '../logging';
 import { getMessageBus } from '../runtime/messageBus';
 
+// ── Default SLO alert rule thresholds (Google SRE multi-window strategy) ────
+const SRE_BURN_RATE_PAGE_THRESHOLD = 14.4;
+const SRE_BURN_RATE_CRITICAL_THRESHOLD = 6;
+const SRE_BURN_RATE_WARNING_THRESHOLD = 3;
+const ALERT_WINDOW_2M = 2 * 60 * 1000;
+const ALERT_WINDOW_5M = 5 * 60 * 1000;
+const ALERT_WINDOW_10M = 10 * 60 * 1000;
+const ALERT_WINDOW_15M = 15 * 60 * 1000;
+const ALERT_WINDOW_30M = 30 * 60 * 1000;
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -475,11 +485,11 @@ export function createDefaultSLORules(
     description: `Error budget burning 14.4x fast for SLO ${sloName}`,
     metric: `slo.${sloId}.burn_rate`,
     condition: 'gt',
-    threshold: 14.4,
+    threshold: SRE_BURN_RATE_PAGE_THRESHOLD,
     severity: 'page',
     channels: ['pagerduty', 'slack'],
-    forDurationMs: 2 * 60 * 1000, // 2 minutes
-    autoResolveAfterMs: 5 * 60 * 1000, // 5 minutes
+    forDurationMs: ALERT_WINDOW_2M,
+    autoResolveAfterMs: ALERT_WINDOW_5M,
     enabled: true,
     runbookUrl: `https://runbooks.commander.dev/slo/${sloId}`,
     sloId,
@@ -491,11 +501,11 @@ export function createDefaultSLORules(
     description: `Error budget burning 6x fast for SLO ${sloName}`,
     metric: `slo.${sloId}.burn_rate`,
     condition: 'gt',
-    threshold: 6,
+    threshold: SRE_BURN_RATE_CRITICAL_THRESHOLD,
     severity: 'critical',
     channels: ['slack', 'email'],
-    forDurationMs: 5 * 60 * 1000, // 5 minutes
-    autoResolveAfterMs: 10 * 60 * 1000,
+    forDurationMs: ALERT_WINDOW_5M,
+    autoResolveAfterMs: ALERT_WINDOW_10M,
     enabled: true,
     runbookUrl: `https://runbooks.commander.dev/slo/${sloId}`,
     sloId,
@@ -507,11 +517,11 @@ export function createDefaultSLORules(
     description: `Error budget burning 3x fast for SLO ${sloName}`,
     metric: `slo.${sloId}.burn_rate`,
     condition: 'gt',
-    threshold: 3,
+    threshold: SRE_BURN_RATE_WARNING_THRESHOLD,
     severity: 'warning',
     channels: ['slack'],
-    forDurationMs: 15 * 60 * 1000, // 15 minutes
-    autoResolveAfterMs: 30 * 60 * 1000,
+    forDurationMs: ALERT_WINDOW_15M,
+    autoResolveAfterMs: ALERT_WINDOW_30M,
     enabled: true,
     sloId,
   });

@@ -45,6 +45,14 @@ import {
 import { getGlobalLogger } from '../logging';
 import { getMessageBus } from '../runtime/messageBus';
 
+// ── SLO default thresholds ──────────────────────────────────────────────────
+const SLO_AVAILABILITY_TARGET = 0.99;
+const SLO_AVAILABILITY_TARGET_PERCENT = 99.0;
+const SLO_LATENCY_THRESHOLD_MS = 500;
+const SLO_LATENCY_TARGET_PERCENT = 99.0;
+const SLO_COST_THRESHOLD_USD = 0.01;
+const SLO_COST_TARGET_PERCENT = 95.0;
+
 // ============================================================================
 // Configuration
 // ============================================================================
@@ -71,23 +79,23 @@ export const DEFAULT_SLO_CONFIG: SLOOperationsConfig = {
     {
       id: 'topology-success-rate',
       name: 'Topology Success Rate',
-      targetPercent: 99.0, // 99% of tasks must succeed
+      targetPercent: SLO_AVAILABILITY_TARGET_PERCENT,
       metric: 'success_rate',
-      threshold: 0.99,
+      threshold: SLO_AVAILABILITY_TARGET,
     },
     {
       id: 'latency-p99',
-      name: 'Latency P99 < 500ms',
-      targetPercent: 99.0, // 99% of requests under threshold
+      name: `Latency P99 < ${SLO_LATENCY_THRESHOLD_MS}ms`,
+      targetPercent: SLO_LATENCY_TARGET_PERCENT,
       metric: 'latency_ms',
-      threshold: 500,
+      threshold: SLO_LATENCY_THRESHOLD_MS,
     },
     {
       id: 'cost-per-task',
-      name: 'Cost per Task < $0.01',
-      targetPercent: 95.0, // 95% of tasks under cost threshold
+      name: `Cost per Task < $${SLO_COST_THRESHOLD_USD}`,
+      targetPercent: SLO_COST_TARGET_PERCENT,
       metric: 'cost_usd',
-      threshold: 0.01,
+      threshold: SLO_COST_THRESHOLD_USD,
     },
   ],
   autoStart: true,
@@ -195,11 +203,11 @@ export class SLOOperationsManager {
             break;
           case 'latency_ms':
             value = latencyMs;
-            passed = latencyMs < 500;
+            passed = latencyMs < SLO_LATENCY_THRESHOLD_MS;
             break;
           case 'cost_usd':
             value = costUsd;
-            passed = costUsd < 0.01;
+            passed = costUsd < SLO_COST_THRESHOLD_USD;
             break;
           default:
             continue;
