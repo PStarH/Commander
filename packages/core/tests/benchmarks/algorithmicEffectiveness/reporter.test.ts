@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { generateMarkdownReport, generateJsonReport } from '../../../src/benchmarks/algorithmicEffectiveness/reporter';
+import {
+  generateMarkdownReport,
+  generateJsonReport,
+} from '../../../src/benchmarks/algorithmicEffectiveness/reporter';
 import type { ComparisonResult } from '../../../src/benchmarks/algorithmicEffectiveness/types';
 
 const mockResult: ComparisonResult = {

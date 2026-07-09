@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { getRegisteredModuleIds, getModule } from '../../../src/benchmarks/algorithmicEffectiveness/registry';
+import {
+  getRegisteredModuleIds,
+  getModule,
+} from '../../../src/benchmarks/algorithmicEffectiveness/registry';
 
 describe('registry', () => {
   it('lists registered module ids', () => {
