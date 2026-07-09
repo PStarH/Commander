@@ -1,5 +1,6 @@
 import type { BenchmarkModule } from './types';
 import { thompsonMemoryModule } from './modules/thompsonMemory';
+import { dynamicCostGuardianModule } from './modules/dynamicCostGuardian';
 import { parameterControllerModule } from './modules/parameterController';
 import { strategySelectorModule } from './modules/strategySelector';
 import { metaLearnerModule } from './modules/metaLearner';
@@ -35,6 +36,7 @@ export function getAllModules(): BenchmarkModule[] {
 }
 
 registerModule(thompsonMemoryModule);
+registerModule(dynamicCostGuardianModule);
 registerModule(parameterControllerModule);
 registerModule(strategySelectorModule);
 registerModule(metaLearnerModule);
