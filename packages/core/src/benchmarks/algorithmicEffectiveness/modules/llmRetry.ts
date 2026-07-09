@@ -6,21 +6,29 @@ interface Scenario {
   successOnAttempt: number;
 }
 
+function makeError(message: string, status?: number): Error {
+  const err = new Error(message);
+  if (status !== undefined) {
+    (err as unknown as { status: number }).status = status;
+  }
+  return err;
+}
+
 const SCENARIOS: Record<string, Scenario> = {
   'rate-limit': {
-    error: { status: 429, message: 'Rate limit exceeded' },
+    error: makeError('Rate limit exceeded', 429),
     successOnAttempt: 3,
   },
   'auth-error': {
-    error: { status: 401, message: 'Invalid API key' },
+    error: makeError('Invalid API key', 401),
     successOnAttempt: 0,
   },
   'timeout': {
-    error: { message: 'Request timeout' },
+    error: makeError('Request timeout'),
     successOnAttempt: 2,
   },
   'server-error': {
-    error: { status: 500, message: 'Internal server error' },
+    error: makeError('Internal server error', 500),
     successOnAttempt: 2,
   },
 };
