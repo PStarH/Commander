@@ -17,6 +17,12 @@ import {
   getGlobalPluginPermissionRegistry,
   type PluginPermissions,
 } from './security/pluginPermissions';
+import {
+  DefaultContentScanner,
+  type HarmfulContentRule,
+  type ContentThreatSeverity,
+} from './contentScanner';
+import type { PluginContentScannerRules } from './pluginTypes';
 
 interface PluginManifest {
   name: string;
@@ -34,6 +40,8 @@ interface PluginManifest {
    * have more permissions than the main system.
    */
   permissions?: PluginPermissions;
+  /** Content scanner rules contributed by this plugin. */
+  contentScannerRules?: PluginContentScannerRules;
 }
 
 interface PluginPackage {
@@ -243,6 +251,17 @@ export class PluginLoader {
         tools: declaredPerms.tools.length,
       });
 
+      // Register manifest-declared content scanner rules before plugin onLoad runs.
+      if (manifest.contentScannerRules) {
+        const rules = await resolveContentScannerRules(manifest, resolvedDir);
+        if (rules.length > 0) {
+          DefaultContentScanner.registerRulePack(manifest.name, rules);
+          getGlobalLogger().info('PluginLoader', `Registered ${rules.length} content scanner rules`, {
+            plugin: manifest.name,
+          });
+        }
+      }
+
       try {
         const mod = await import(mainPath);
         pluginInstance = mod.default ?? mod.plugin ?? mod;
@@ -371,6 +390,44 @@ export class PluginLoader {
   isLoaded(name: string): boolean {
     return this.loaded.has(name);
   }
+}
+
+/**
+ * Resolve content scanner rules declared in a plugin manifest.
+ * Supports inline JSON rules and module exports containing HarmfulContentRule[].
+ */
+async function resolveContentScannerRules(
+  manifest: PluginManifest,
+  pluginDir: string,
+): Promise<HarmfulContentRule[]> {
+  const declaration = manifest.contentScannerRules;
+  if (!declaration) return [];
+
+  if (declaration.inline) {
+    return declaration.inline.map((r) => ({
+      category: r.category,
+      severity: r.severity,
+      pattern: new RegExp(r.pattern, r.flags ?? 'gi'),
+    }));
+  }
+
+  if (declaration.export) {
+    const modulePath = path.resolve(pluginDir, declaration.export.module);
+    const mod = await import(modulePath);
+    const exported = mod[declaration.export.name];
+    if (!Array.isArray(exported)) {
+      throw new Error(
+        `Plugin "${manifest.name}" contentScannerRules export "${declaration.export.name}" is not an array`,
+      );
+    }
+    return exported.map((r: HarmfulContentRule) => ({
+      category: r.category,
+      severity: r.severity,
+      pattern: new RegExp(r.pattern.source, r.pattern.flags),
+    }));
+  }
+
+  return [];
 }
 
 import * as os from 'node:os';
