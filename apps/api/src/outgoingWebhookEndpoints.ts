@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { getWebhookDispatcher, type WebhookConfig } from '@commander/core';
 import { toErrorMessage } from './routeHelpers';
+import { hasRole, type UserRole } from './userStore';
 
 /**
  * Outgoing webhook management endpoints.
@@ -19,12 +20,20 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
-function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  if (!req.user || req.user.role !== 'admin') {
-    res.status(403).json({ error: 'Admin privileges required' });
-    return;
-  }
-  next();
+/**
+ * Returns middleware that requires the authenticated user to meet or exceed
+ * `requiredRole` in the role hierarchy (defaults to 'admin', so both
+ * 'super_admin' and 'admin' satisfy an unparameterised check). Must be
+ * mounted after requireAuth.
+ */
+function requireRole(requiredRole: UserRole = 'admin') {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user || !hasRole(req.user.role, requiredRole)) {
+      res.status(403).json({ error: 'Insufficient privileges' });
+      return;
+    }
+    next();
+  };
 }
 
 function redact(webhook: WebhookConfig): Omit<WebhookConfig, 'secret'> {
@@ -112,7 +121,7 @@ export function createOutgoingWebhookRouter(): Router {
   router.post(
     '/api/outgoing-webhooks',
     requireAuth,
-    requireAdmin,
+    requireRole(),
     (req: Request, res: Response) => {
       const validation = validateCreate(req.body);
       if ('error' in validation) {
@@ -157,7 +166,7 @@ export function createOutgoingWebhookRouter(): Router {
   router.delete(
     '/api/outgoing-webhooks/:id',
     requireAuth,
-    requireAdmin,
+    requireRole(),
     (req: Request, res: Response) => {
       try {
         const id = getStringParam(req.params.id);
