@@ -342,6 +342,7 @@ export default defineConfig({
       'tests/benchmarks/algorithmicEffectiveness/modules/speculativeExecutor.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/parameterController.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/strategySelector.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/modules/metaLearner.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/topologyRouter.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/modelRouter.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/smartModelRouter.test.ts',
@@ -349,7 +350,9 @@ export default defineConfig({
       'tests/benchmarks/algorithmicEffectiveness/modules/tokenGovernor.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/fusionEngine.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/executionRouter.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/modules/llmRetry.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/bm25ToolDiscovery.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/modules/circuitBreaker.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/index.test.ts',
       // --- orchestration patterns (Concurrent/Graph/MoA/Router/CrossPollination/AutoLoop/DynamicReplanner) ---
       'tests/orchestration/orchestrationPatterns.test.ts',
