@@ -170,6 +170,9 @@ benchmarks/
 packages/core/benchmarks/
 packages/core/src/benchmark/
 docs/benchmark-results/
+# Exception: algorithmic effectiveness benchmark source/tests are source code
+!packages/core/src/benchmarks/
+!packages/core/tests/benchmarks/
 
 # Commander runtime artifacts (auto-generated, not source)
 .commander/burn-in/
