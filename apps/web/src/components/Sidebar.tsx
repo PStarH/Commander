@@ -74,7 +74,9 @@ export function Sidebar({ currentUser, onLogout }: SidebarProps) {
 
       <nav className="sidebar-nav">
         {NAV_ITEMS.filter(
-          (item) => !ADMIN_ONLY_PATHS.has(item.to) || currentUser?.role === 'admin',
+          (item) =>
+            !ADMIN_ONLY_PATHS.has(item.to) ||
+            ['super_admin', 'admin'].includes(currentUser?.role ?? ''),
         ).map((item) => (
           <NavLink
             key={item.to}
