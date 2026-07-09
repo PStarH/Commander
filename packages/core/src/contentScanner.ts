@@ -375,7 +375,10 @@ export class DefaultContentScanner implements ContentScanner {
           this.socialEngineeringPatterns.length +
           this.semanticManipulationPatterns.length +
           this.jailbreakSynonymPatterns.length +
-          Array.from(DefaultContentScanner.rulePacks.values()).reduce((sum, rules) => sum + rules.length, 0),
+          Array.from(DefaultContentScanner.rulePacks.values()).reduce(
+            (sum, rules) => sum + rules.length,
+            0,
+          ),
       },
     };
   }
