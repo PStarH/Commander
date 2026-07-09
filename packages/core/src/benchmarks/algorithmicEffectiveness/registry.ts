@@ -12,6 +12,7 @@ import { executionRouterModule } from './modules/executionRouter';
 import { llmRetryModule } from './modules/llmRetry';
 import { circuitBreakerModule } from './modules/circuitBreaker';
 import { costPredictorModule } from './modules/costPredictor';
+import { modelCascadeControllerModule } from './modules/modelCascadeController';
 
 const registry: Map<string, BenchmarkModule> = new Map();
 
@@ -46,3 +47,4 @@ registerModule(executionRouterModule);
 registerModule(llmRetryModule);
 registerModule(circuitBreakerModule);
 registerModule(costPredictorModule);
+registerModule(modelCascadeControllerModule);
