@@ -1,20 +1,19 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@commander/core"><img src="https://img.shields.io/badge/npm-pending-CB3837?style=flat-square&label=npm" /></a>
   <a href="https://github.com/PStarH/Commander/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/PStarH/Commander/ci.yml?style=flat-square&label=CI&logo=github" /></a>
-<img src="https://img.shields.io/badge/providers-22-7C3AED?style=flat-square" />
-<img src="https://img.shields.io/badge/topologies-5-EF4444?style=flat-square" />
+  <img src="https://img.shields.io/badge/providers-24-7C3AED?style=flat-square" />
+  <img src="https://img.shields.io/badge/topologies-5-EF4444?style=flat-square" />
+  <img src="https://img.shields.io/badge/tools-38-10B981?style=flat-square" />
   <img src="https://img.shields.io/github/license/PStarH/Commander?style=flat-square&color=EAB308" />
   <a href="https://github.com/PStarH/Commander/releases"><img src="https://img.shields.io/github/v/release/PStarH/Commander?style=flat-square&label=release&color=22C55E" /></a>
 </p>
 
 <h1 align="center">Commander</h1>
-<p align="center"><strong>Multi-agent orchestration framework.</strong></p>
-
-> **v0.2.0 — Pre-production.** Checkpointing is SQLite-backed with WAL persistence. SLO targets are measured via `pnpm bench:slo` (baseline) and `pnpm bench:slo:regress` (regression gate). See [BENCHMARK.md](BENCHMARK.md) for the full benchmark matrix and [ARCHITECTURE.md](ARCHITECTURE.md) §6 for measurement status.
+<p align="center"><strong>Production-grade multi-agent orchestration.</strong></p>
 
 <p align="center">
   <code>npx tsx packages/core/src/cli.ts run "audit this repo" --stream</code><br>
-  <sub>Every agent thought streams to your terminal. Every output is verified. 22 providers. One command.</sub>
+  <sub>Every agent thought streams to your terminal. Every output is verified. 24 providers. One command.</sub>
 </p>
 
 <p align="center">
@@ -29,75 +28,122 @@
 
 ---
 
-AI agents are becoming production infrastructure. But most frameworks were built for demos, not deployments. They hide their reasoning, fail silently, and have no circuit breakers.
+## What is Commander
 
-**Commander is being built for production.** Every agent decision streams to you in real time. The deliberation engine automatically classifies your task and picks the optimal topology — 1 agent for a simple fix, up to 20 for deep research. No graph building. No YAML. No black boxes.
+Commander takes a task — any task — and automatically breaks it down, routes it to the right agents, and verifies every output.
 
----
+- **Simple tasks** get one agent, one pass.
+- **Research tasks** get parallel agents, then synthesis.
+- **Complex engineering tasks** get a full pipeline: analysis → implementation → review → merge.
 
-## Reliability Design Targets
+Every agent decision streams to you in real time. Every output passes through five quality gates before you see it. When a provider fails, the next one takes over. When an agent writes buggy code, the review agent catches it.
 
-These are architectural goals for the current v0.2.0 release. Measurement infrastructure is under development.
-
-| Target                  | Goal        | Notes                                |
-| ----------------------- | ----------- | ------------------------------------ |
-| **Checkpoint Recovery** | <5 seconds  | SQLite-backed with WAL persistence   |
-| **Failover**            | <10 seconds | Provider failure to next provider    |
-| **Compensation**        | <30 seconds | Failed mutation to rollback complete |
-| **DLQ Processing**      | <60 seconds | Error detection to persisted entry   |
+**No graph building. No YAML. No black boxes.**
 
 ---
 
-## Health Check API
+## Quick Start
 
 ```bash
-# Basic health check
-curl http://localhost:4000/health
+# Clone and install
+git clone https://github.com/PStarH/Commander.git
+cd Commander && pnpm install
 
-# Detailed health with all component statuses
-curl http://localhost:4000/health/detailed
+# Set any API key — Commander auto-detects the provider
+export OPENAI_API_KEY=sk-...
+# or: ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / GROQ_API_KEY / ...
 
-# Readiness probe (for k8s)
-curl http://localhost:4000/ready
+# One-click Web Console (API + Web + auto-open browser)
+pnpm gui
 
-# Prometheus metrics
-curl http://localhost:4000/metrics
+# Or run from the terminal
+npx tsx packages/core/src/cli.ts run "audit this repo for security vulnerabilities"
+npx tsx packages/core/src/cli.ts run "refactor the auth module" --dry-run
+npx tsx packages/core/src/cli.ts run "explain the architecture" --stream
 ```
 
-Health check monitors 8 components:
+For Docker:
 
-- Memory usage (heap)
-- Circuit breaker states
-- Dead letter queue size
-- Checkpoint staleness
-- Pending compensations
-- Event bus backlog
-- Provider availability
-- Disk space
+```bash
+export COMMANDER_API_KEY="your-secret-key"
+export OPENAI_API_KEY="sk-..."
+docker compose up -d
+```
+
+API on `:4000`, Web on `:3000`.
 
 ---
 
-## Technical moats
+## Key Features
 
-### Live SSE streaming
+### Deliberation Engine
 
-Every agent thought, tool call, and decision streams to your terminal in real time via Server-Sent Events. Not polling. Not logs after the fact. You watch your agents reason, step by step. The only multi-agent framework with built-in streaming.
+Task classification, complexity estimation, and topology selection — all automatic. Commander classifies your task (CODING / RESEARCH / ANALYSIS / FACTUAL), estimates complexity, and picks from 5 canonical topologies: SINGLE, CHAIN, DISPATCH, ORCHESTRATOR, REVIEW. A one-line task uses 1 agent. A cross-repository audit spins up 20.
 
-### Automatic topology selection
+### Live Streaming
 
-The deliberation engine classifies each task (CODING / RESEARCH / ANALYSIS / FACTUAL), estimates complexity, and picks from 5 canonical orchestration topologies — SINGLE, CHAIN, DISPATCH, ORCHESTRATOR, REVIEW. A one-line task uses 1 agent. A cross-repository audit spins up 20. Zero configuration.
+Every agent thought, every tool call, every quality gate decision — streamed to your terminal or SSE endpoint. Not polling. Not logs after the fact. You watch your agents reason, step by step.
 
-### 22 providers with automatic failover
+```
+┌─ Deliberation ──────────────────────────────────────────────┐
+│ Task: "audit this repo for security issues"                  │
+│ Classification: ANALYSIS · Complexity: 7/10                  │
+│ Topology: DISPATCH (3 agents)                                │
+├─ Agent α (security-scanner) ─────────────────────────────────┤
+│ [think] Scanning package.json for known CVEs...              │
+│ [tool] npm audit · 2 critical, 5 moderate                    │
+│ [gate] ACCURACY ✓ · COMPLETENESS ✓                           │
+├─ Agent β (code-reviewer) ────────────────────────────────────┤
+│ [think] Checking for hardcoded secrets...                    │
+│ [tool] grep · found 1 potential secret in config.ts          │
+│ [gate] SAFETY ⚠ · Potential secret detected                  │
+├─ Agent γ (dependency-checker) ───────────────────────────────┤
+│ [think] Analyzing license compliance...                      │
+│ [tool] license-check · No GPL/AGPL dependencies              │
+│ [gate] COMPLETENESS ✓ · ACCURACY ✓                           │
+├─ Synthesizer ────────────────────────────────────────────────┤
+│ Merging 3 agent outputs...                                   │
+│ Leader synthesis · 4 findings, 2 critical                    │
+└──────────────────────────────────────────────────────────────┘
+```
 
-Set any one API key. Commander detects your provider, and if it fails, falls through a configurable chain. OpenAI → Anthropic → DeepSeek → Groq → Ollama — you define the order, Commander handles the routing. No single-vendor lock-in.
+### 24 Providers with Auto-Failover
 
-### Quality gates on every output
+Set any one API key. Commander detects your provider, and if it fails, falls through a configurable chain. OpenAI → Anthropic → DeepSeek → Groq → Ollama — you define the order, Commander handles the routing.
 
-Before returning any result, Commander runs quality checks: regex-based hallucination signal detection, consistency verification, completeness scoring, accuracy estimation, and safety scanning. If the output fails any gate, the system retries or reports the failure with full context.
+OpenAI · Anthropic · Google · Azure · DeepSeek · GLM · MiMo · Xiaomi · Groq · Together · Perplexity · Fireworks · Replicate · Mistral · Cohere · OpenRouter · xAI · Anyscale · DeepInfra · Agnes · Ollama · vLLM · AWS Bedrock · StepFun
 
-### Self-optimizing runtime
+### Quality Gates on Every Output
 
-A meta-learner using Thompson Sampling and Reflexion tunes agent configurations across runs. It learns which topologies work best for which task types, which providers are fastest, and which parameter combinations produce the highest quality results. Note: the meta-learner needs 5+ recorded experiences before it begins to influence strategy selection; new users see sequential execution until that threshold is reached.
+Before returning any result, Commander runs 5-layer verification:
+
+| Gate | What it checks |
+|---|---|
+| Hallucination | LLM-as-Judge detection of fabricated facts |
+| Consistency | Cross-agent agreement, no contradictions |
+| Completeness | All required dimensions covered |
+| Accuracy | Factual correctness against source material |
+| Safety | Content scanning, injection detection |
+
+If the output fails any gate, the system retries or reports the failure with full context.
+
+### Resilience
+
+| Capability | Implementation |
+|---|---|
+| Circuit Breakers | 3-state (CLOSED/OPEN/HALF-OPEN), per-provider error rate tracking |
+| Dead Letter Queue | Append-only NDJSON, 7 categories, replay support |
+| Saga Compensation | Failed mutations → automatic rollback |
+| Checkpointing | SQLite + WAL, crash-safe recovery (<5s target) |
+| Semantic Caching | SHA-256 exact + cosine-similarity deduplication |
+
+### Security
+
+AES-256-GCM encrypted secrets vault. Tamper-proof audit chain. RBAC with capability tokens. ISO 42001 / NIST AI RMF compliance reporting. Red team framework (47 scenarios, 8 attack categories). Tenant isolation via AsyncLocalStorage.
+
+### Self-Optimization
+
+A meta-learner using Thompson Sampling and Reflexion tunes agent configurations across runs. It learns which topologies work best for which task types, which providers are fastest, and which parameter combinations produce the highest quality results. Activates after 5+ recorded runs.
 
 ---
 
@@ -112,9 +158,9 @@ A meta-learner using Thompson Sampling and Reflexion tunes agent configurations 
                         └──────────┬───────────────────┘
                                    │
                         ┌──────────▼───────────────────┐
-                         │      TOPOLOGY ROUTER          │
-                         │  SINGLE · CHAIN · DISPATCH     │
-                         │  ORCHESTRATOR · REVIEW          │
+                        │       TOPOLOGY ROUTER          │
+                        │  SINGLE · CHAIN · DISPATCH     │
+                        │  ORCHESTRATOR · REVIEW          │
                         └──────────┬───────────────────┘
                                    │
                ┌───────────────────┼───────────────────┐
@@ -127,8 +173,8 @@ A meta-learner using Thompson Sampling and Reflexion tunes agent configurations 
                └──────────────────┼──────────────────┘
                                   ▼
                         ┌──────────────────────────────┐
-                        │         SYNTHESIS             │
-                        │  Merge · Resolve conflicts   │
+                        │         SYNTHESIS              │
+                        │  Merge · Resolve conflicts    │
                         └──────────┬───────────────────┘
                                    ▼
                         ┌──────────────────────────────┐
@@ -143,90 +189,16 @@ A meta-learner using Thompson Sampling and Reflexion tunes agent configurations 
 
 ---
 
-## Current infrastructure
+## Web Console
 
-Commander includes these infrastructure components (see notes for development status):
-
-| Capability            | Implementation                                                                                                                                                            | Status                                                |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| **Circuit breakers**  | 3-state (CLOSED / OPEN / HALF-OPEN), error-rate windowing, per-provider (🛡 audit-verified 2026-06-23, d34 — `runtime/healthCheck.ts` + `saga/circuitBreakerRegistry.ts`) | ✅ Live                                               |
-| **Dead letter queue** | Append-only ndjson files with replay support                                                                                                                              | ✅ Live                                               |
-| **SSE streaming**     | Structured events via message bus pub/sub with Last-Event-ID replay                                                                                                       | ✅ Live                                               |
-| **Fallback chains**   | Auto-failover between providers, configurable order and timeouts                                                                                                          | ✅ Live                                               |
-| **Semantic caching**  | SHA-256 exact + cosine-similarity deduplication (via EmbeddingFunction)                                                                                                   | ✅ Live                                               |
-| **Checkpointing**     | SQLite-backed with WAL persistence; falls back to in-memory if SQLite is unavailable (no warning logged)                                                                  | ✅ Live                                               |
-| **Multi-tenancy**     | Tenant-aware singleton isolation via AsyncLocalStorage                                                                                                                    | ⚠️ Isolation only; per-tenant budgets/storage pending |
-| **Quality gates**     | Regex heuristics (hallucination signals, hedging, contradiction)                                                                                                          | ✅ Live                                               |
-| **Self-optimization** | Beta-distribution Thompson Sampling with Reflexion and cross-session persistence                                                                                          | ⚠️ Needs 5+ runs to activate                          |
-| **Metrics/Tracing**   | OpenMetrics counters + span-based execution traces                                                                                                                        | ⚠️ Partial; persistent store pending                  |
-| **Security**          | Auth manager, CORS, privacy router, content scanner                                                                                                                       | ⚠️ Partial; rate limiting pending                     |
-| **Plugin system**     | Hook points for LLM, tool, and agent lifecycle                                                                                                                            | ⚠️ Under development                                  |
-
----
-
-## How Commander compares
-
-|                       | Commander                                                                                                                           | LangGraph       | CrewAI           | AutoGen       |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------- | ---------------- | ------------- |
-| **SSE streaming**     | Built-in                                                                                                                            | ❌              | ❌               | ❌            |
-| **Auto topology**     | 5 canonical patterns, auto-chosen (matches `topologyRouter.test.ts` enumeration: SINGLE / CHAIN / DISPATCH / ORCHESTRATOR / REVIEW) | Manual DAG      | Fixed sequential | Manual        |
-| **Providers**         | 23, auto-failover                                                                                                                   | 1-3 (LangChain) | 3-5              | Mostly OpenAI |
-| **Self-optimization** | Thompson Sampling + Reflexion                                                                                                       | ❌              | ❌               | ❌            |
-| **Multi-tenant**      | Tenant-aware singleton context                                                                                                      | ❌              | ❌               | ❌            |
-| **Crash safety**      | SQLite-backed checkpoints with WAL; silent fallback to in-memory if SQLite unavailable                                              | ❌              | ❌               | ❌            |
-| **Quality gates**     | Regex heuristics (hallucination signals, hedging, contradiction)                                                                    | ❌              | ❌               | ❌            |
-| **Circuit breakers**  | Per-provider 3-state                                                                                                                | ❌              | ❌               | ❌            |
-| **Dead letter queue** | Append-only ndjson files with replay                                                                                                | ❌              | ❌               | ❌            |
-
----
-
-## Quick start
+Commander includes a web-based control console for visual monitoring, chat-based agent interaction, and governance:
 
 ```bash
-# Clone and install
-git clone https://github.com/PStarH/Commander.git
-cd Commander && pnpm install
-
-# Set any API key — Commander auto-detects
-export OPENAI_API_KEY=sk-...
-# or: ANTHROPIC / DEEPSEEK / GROQ / OLLAMA / 17 others
-
-# Fastest start: one-click Web Console (API + Web + auto-open browser)
-npx tsx packages/core/src/cli.ts gui
-# or use the pnpm shortcut: pnpm gui  (alias: pnpm start)
-
-# Run anything
-npx tsx packages/core/src/cli.ts run "audit this repo for security vulnerabilities"
-npx tsx packages/core/src/cli.ts run "refactor auth module" --dry-run
-npx tsx packages/core/src/cli.ts run "debug the failing test" --stream
-npx tsx packages/core/src/cli.ts run showcase        # 3-agent debate demo
-npx tsx packages/core/src/cli.ts company "build a REST API"   # Enterprise pipeline
-npx tsx packages/core/src/cli.ts review --commit     # AI code review
-npx tsx packages/core/src/cli.ts status              # System health
+# One-click start (API on :4000 + Web on :5173 + auto-open browser)
+pnpm gui
 ```
 
-No configuration files. No YAML pipelines. No graph builders. One command and you're running multi-agent orchestration.
-
-> **Dev vs installed usage:** After cloning (before building), invoke the CLI directly with `npx tsx packages/core/src/cli.ts <command>` (or the `pnpm <script>` shortcuts). Once Commander is installed globally (`npm install -g`), use the `commander <command>` shorthand instead. All help text references the installed `commander` form.
-
-### Web Console
-
-Commander includes a full web-based control console for visual monitoring, chat-based agent interaction, and governance:
-
-```bash
-# Recommended: one-click start (API on :4000 + Web on :5173 + auto-open browser)
-npx tsx packages/core/src/cli.ts gui
-# or: pnpm gui / pnpm start
-
-# Dev mode (two terminals, separate process logs):
-# Terminal 1: Start the API server (port 4000)
-pnpm --filter @commander/api dev
-
-# Terminal 2: Start the web frontend (port 5173)
-pnpm --filter @commander/web dev
-```
-
-Then open `http://localhost:5173` in your browser (the one-click `gui` command opens it for you). The web console provides:
+Open `http://localhost:5173`. The console provides:
 
 - **Dashboard** — Battle report, token trends, live topology, agent roster, mission board
 - **Chat** — Conversational interface with real-time agent streaming
@@ -236,40 +208,73 @@ Then open `http://localhost:5173` in your browser (the one-click `gui` command o
 - **Execution** — Real-time execution feed with hallucination risk panel
 - **Agents** — Agent roster with lineage tree visualization
 
-For production deployment with Docker:
+---
+
+## Reliability Targets
+
+| Target | Goal | Mechanism |
+|---|---|---|
+| Checkpoint Recovery | <5s | SQLite + WAL |
+| Provider Failover | <10s | Automatic fallback chain |
+| Saga Compensation | <30s | Compensation scheduler |
+| DLQ Processing | <60s | Append-only NDJSON, replay |
+
+---
+
+## Benchmarks
+
+| Suite | Coverage | Result |
+|---|---|---|
+| Chaos Engineering | 255 synthetic + 55 mutation | 55.7% pass rate |
+| Red Team | 47 scenarios, 8 attack categories | 100% defense |
+| AgentDojo | 12 security test cases | 100% defense |
+| RealWorld | 50 production-like cases | 96% pass rate |
+| GAIA Spine | Core capability benchmark | Running daily |
+| SLO | 99.5% API success, <2s p95 latency | Measured daily |
+
+Full matrix: [BENCHMARK.md](BENCHMARK.md)
+
+---
+
+## Health Check
 
 ```bash
-export COMMANDER_API_KEY="your-secret-key"
-export OPENAI_API_KEY="sk-..."
-docker compose up -d
+curl http://localhost:4000/health          # Basic
+curl http://localhost:4000/health/detailed # All components
+curl http://localhost:4000/readyz          # Kubernetes readiness
+curl http://localhost:4000/metrics          # Prometheus
 ```
 
-The API server listens on port 4000; the web frontend is served on port 3000.
+Monitors: memory, circuit breakers, DLQ size, checkpoint staleness, pending compensations, event bus backlog, provider availability, disk space.
 
 ---
 
-## Provider support
-
-Set any one environment variable. Commander auto-detects from 22 providers:
-
-OpenAI · Anthropic · Google · DeepSeek · GLM (Zhipu) · MIMO · Xiaomi · Groq · Together · Perplexity · Fireworks · Replicate · Mistral · Cohere · OpenRouter · xAI (Grok) · Anyscale · DeepInfra · Agnes · Ollama · vLLM · AWS Bedrock
-
-If your primary provider fails, Commander automatically falls through the chain. Note: not all providers support tool/function calling (Replicate and Perplexity currently throw errors for tool use). Switch with one env var change when using a compatible provider.
-
----
-
-## Philosophy
+## Why Commander
 
 Existing agent frameworks treat you like a passenger. You write configuration, you wait, and you hope the output is correct. When it's wrong, you have no idea why.
 
 Commander treats you like an **engineer**. You see every decision. You trust every result. You ship faster because you're not guessing what your AI is doing.
 
-The system is being built with the same discipline as any production distributed system: circuit breakers, dead letter queues, SSE streaming, semantic caching, and provider fallback chains. The only difference is that the workload is LLM calls instead of HTTP requests.
+The system is built with the same discipline as any production distributed system: circuit breakers, dead letter queues, SSE streaming, semantic caching, and provider fallback chains. The only difference is that the workload is LLM calls instead of HTTP requests.
 
 ---
 
-MIT — use it, ship it, build on it. [Star on GitHub](https://github.com/PStarH/Commander) · [Documentation](https://github.com/PStarH/commander-docs) · [Architecture](ARCHITECTURE.md)
+## Documentation
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — System design, module map, data flow
+- [ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md) — Production deployment checklist
+- [SECURITY.md](SECURITY.md) — Security model, threat model, compliance
+- [BENCHMARK.md](BENCHMARK.md) — Full benchmark matrix and methodology
+- [CHANGELOG.md](CHANGELOG.md) — Release history
+
+---
+
+## License
+
+MIT. See [LICENSE](LICENSE) and [COPYRIGHT.md](COPYRIGHT.md).
+
+---
 
 <p align="center">
-  <sub>5 canonical topologies · 22 providers · 38 built-in tools (🛡 verified 2026-06-23 via `tools/index.ts` export list, exclusive of 10 STRAP resource consolidations) · Built for engineers who want to see what their AI is actually doing.</sub>
+  <sub>5 canonical topologies · 24 providers · 38 built-in tools · Built for engineers who want to see what their AI is actually doing.</sub>
 </p>
