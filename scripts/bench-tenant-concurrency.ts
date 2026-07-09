@@ -55,7 +55,9 @@ async function main() {
   const outputArg = args.find((a) => a.startsWith('--output='));
 
   const tenantCount = tenantsArg ? parseInt(tenantsArg.slice(10), 10) : 5;
-  const requestsPerTenant = requestsArg ? parseInt(requestsArg.slice('--requests='.length), 10) : 100;
+  const requestsPerTenant = requestsArg
+    ? parseInt(requestsArg.slice('--requests='.length), 10)
+    : 100;
   const outputPath = outputArg
     ? outputArg.slice('--output='.length)
     : `docs/baselines/tenant-concurrency.${new Date().toISOString().slice(0, 10)}.json`;
