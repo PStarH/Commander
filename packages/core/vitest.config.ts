@@ -266,6 +266,7 @@ export default defineConfig({
       'tests/security/mitreAtlasMapper.test.ts',
       'tests/security/adaptiveHitl.test.ts',
       'tests/security/securityBenchmarkRunner.test.ts',
+      'tests/security/injecAgentLoader.test.ts',
       'tests/security/supplyChainAttestor.test.ts',
       'tests/security/differentialPrivacyLayer.test.ts',
       'tests/security/property/invariantPropertyTests.ts',
