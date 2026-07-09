@@ -8,6 +8,8 @@ import {
   Shield,
   Eye,
   Wrench,
+  Code2,
+  ScrollText,
   X,
   Check,
   AlertTriangle,
@@ -28,14 +30,20 @@ import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 
 const ROLES: { value: UserRole; label: string; icon: typeof Shield }[] = [
-  { value: 'admin', label: 'Admin', icon: Shield },
-  { value: 'operator', label: 'Operator', icon: Wrench },
-  { value: 'viewer', label: 'Viewer', icon: Eye },
+  { value: 'super_admin', label: 'Super Admin / 超级管理员', icon: Shield },
+  { value: 'admin', label: 'Admin / 管理员', icon: Shield },
+  { value: 'developer', label: 'Developer / 开发者', icon: Code2 },
+  { value: 'operator', label: 'Operator / 运维', icon: Wrench },
+  { value: 'auditor', label: 'Auditor / 审计员', icon: ScrollText },
+  { value: 'viewer', label: 'Viewer / 只读', icon: Eye },
 ];
 
-const ROLE_VARIANTS: Record<UserRole, 'success' | 'info' | 'default'> = {
+const ROLE_VARIANTS: Record<UserRole, 'default' | 'success' | 'warning' | 'error' | 'info'> = {
+  super_admin: 'error',
   admin: 'success',
+  developer: 'info',
   operator: 'info',
+  auditor: 'warning',
   viewer: 'default',
 };
 
