@@ -82,7 +82,9 @@ async function main() {
   const concurrencyLevels = concurrencyArg
     ? [parseInt(concurrencyArg.slice(14), 10)]
     : [1, 5, 10, 20, 50];
-  const totalIterations = iterationsArg ? parseInt(iterationsArg.slice('--iterations='.length), 10) : 200;
+  const totalIterations = iterationsArg
+    ? parseInt(iterationsArg.slice('--iterations='.length), 10)
+    : 200;
   const outputPath = outputArg
     ? outputArg.slice('--output='.length)
     : `docs/baselines/e2e-latency.${new Date().toISOString().slice(0, 10)}.json`;
