@@ -46,9 +46,15 @@ export function createLiveLLM(options: LiveLLMOptions): LLMClient {
     (provider === 'openai' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com/v1');
 
   return {
-    async complete(prompt: string, opts: SamplingOptions = {}): Promise<{ text: string; tokens: TokenUsage }> {
+    async complete(
+      prompt: string,
+      opts: SamplingOptions = {},
+    ): Promise<{ text: string; tokens: TokenUsage }> {
       const mergedModel = opts.model ?? model;
-      const body = provider === 'openai' ? buildOpenAIRequest(prompt, { ...opts, model: mergedModel }) : buildAnthropicRequest(prompt, { ...opts, model: mergedModel });
+      const body =
+        provider === 'openai'
+          ? buildOpenAIRequest(prompt, { ...opts, model: mergedModel })
+          : buildAnthropicRequest(prompt, { ...opts, model: mergedModel });
 
       const url = provider === 'openai' ? `${baseUrl}/chat/completions` : `${baseUrl}/messages`;
       const headers: Record<string, string> = {
@@ -92,7 +98,9 @@ export function createLiveLLM(options: LiveLLMOptions): LLMClient {
       }
 
       // Anthropic
-      const content = (data.content as Array<{ type: string; text: string }>).find((c) => c.type === 'text');
+      const content = (data.content as Array<{ type: string; text: string }>).find(
+        (c) => c.type === 'text',
+      );
       const usage = data.usage as { input_tokens: number; output_tokens: number };
       return {
         text: content?.text ?? '',

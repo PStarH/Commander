@@ -12,9 +12,21 @@ const trueSuccessRates: Record<string, number> = {
 };
 
 const taskSuite: Task[] = [
-  { id: 'routing-1', prompt: 'Choose execution strategy for task 1', expected: (output: string) => output === 'HANDOFF' },
-  { id: 'routing-2', prompt: 'Choose execution strategy for task 2', expected: (output: string) => output === 'HANDOFF' },
-  { id: 'routing-3', prompt: 'Choose execution strategy for task 3', expected: (output: string) => output === 'HANDOFF' },
+  {
+    id: 'routing-1',
+    prompt: 'Choose execution strategy for task 1',
+    expected: (output: string) => output === 'HANDOFF',
+  },
+  {
+    id: 'routing-2',
+    prompt: 'Choose execution strategy for task 2',
+    expected: (output: string) => output === 'HANDOFF',
+  },
+  {
+    id: 'routing-3',
+    prompt: 'Choose execution strategy for task 3',
+    expected: (output: string) => output === 'HANDOFF',
+  },
 ];
 
 function makeExperience(taskId: string, strategy: string, success: boolean): ExecutionExperience {
@@ -36,7 +48,8 @@ function makeExperience(taskId: string, strategy: string, success: boolean): Exe
 export const strategySelectorModule: BenchmarkModule = {
   id: 'strategySelector',
   name: 'Strategy Selector',
-  description: 'Validates that StrategySelector converges to the highest-success strategy via Thompson Sampling.',
+  description:
+    'Validates that StrategySelector converges to the highest-success strategy via Thompson Sampling.',
   path: 'selfEvolution/strategySelector.ts',
   baselineFactory: () => ({
     select: (_taskId: string) => STRATEGY_NAMES[0], // Always SEQUENTIAL (worst)
