@@ -345,6 +345,7 @@ export default defineConfig({
       'tests/benchmarks/algorithmicEffectiveness/modules/thompsonMemory.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/qualityGates.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/outputSanitizer.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/modules/backpressureController.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/contextCompactor.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/cacheManager.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/predictionLoop.test.ts',
