@@ -90,8 +90,13 @@ function makeExperience(
   };
 }
 
+interface TrackerLike {
+  recordExperience(exp: ExecutionExperience): void;
+  recommendBestStrategy(): string;
+}
+
 function preTrainTracker(
-  tracker: { recordExperience(exp: ExecutionExperience): void },
+  tracker: TrackerLike,
   strategies: Record<string, StrategyProfile>,
   taskId: string,
 ): void {
@@ -121,10 +126,13 @@ class SuccessRateOnlyTracker {
   }
 }
 
-function createTrackers<T>(
-  factory: () => T,
-): Map<string, T> {
-  const trackers = new Map<string, T>();
+interface Implementation {
+  trackers: Map<string, TrackerLike>;
+  recommend(taskId: string): string;
+}
+
+function createTrackers(factory: () => TrackerLike): Map<string, TrackerLike> {
+  const trackers = new Map<string, TrackerLike>();
   for (const scenario of scenarios) {
     const tracker = factory();
     preTrainTracker(tracker, scenario.strategies, scenario.taskId);
@@ -139,13 +147,13 @@ export const strategyPerformanceTrackerModule: BenchmarkModule = {
   description:
     'Validates that composite ranking (success 70% + speed 15% + cost 15%) recommends better strategies than success-rate-only ranking when speed and cost break ties.',
   path: 'selfEvolution/strategyPerformanceTracker.ts',
-  baselineFactory: () => ({
+  baselineFactory: (): Implementation => ({
     trackers: createTrackers(() => new SuccessRateOnlyTracker()),
     recommend(taskId: string) {
       return this.trackers.get(taskId)?.recommendBestStrategy() ?? 'SEQUENTIAL';
     },
   }),
-  treatmentFactory: () => ({
+  treatmentFactory: (): Implementation => ({
     trackers: createTrackers(() => new StrategyPerformanceTracker()),
     recommend(taskId: string) {
       return this.trackers.get(taskId)?.recommendBestStrategy() ?? 'SEQUENTIAL';
