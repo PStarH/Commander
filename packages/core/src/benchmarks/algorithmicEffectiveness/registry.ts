@@ -33,6 +33,7 @@ import { backpressureControllerModule } from './modules/backpressureController';
 import { capabilityMatcherModule } from './modules/capabilityMatcher';
 import { subAgentExecutorModule } from './modules/subAgentExecutor';
 import { anomalyDetectorModule } from './modules/anomalyDetector';
+import { samplingPolicyModule } from './modules/samplingPolicy';
 
 const registry: Map<string, BenchmarkModule> = new Map();
 
@@ -88,3 +89,4 @@ registerModule(backpressureControllerModule);
 registerModule(capabilityMatcherModule);
 registerModule(subAgentExecutorModule);
 registerModule(anomalyDetectorModule);
+registerModule(samplingPolicyModule);
