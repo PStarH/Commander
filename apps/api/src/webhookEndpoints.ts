@@ -3,8 +3,8 @@
  *
  * This router is provider-driven: each supported IM platform is implemented as
  * an `IMProvider` plugin. The host only handles routing, config management,
- * authentication/authorization, secret encryption, and delegating platform
- * specifics to the registered provider.
+ * authentication/authorization, secret encryption, conversation context, and
+ * delegating platform specifics to the registered provider.
  *
  * Endpoints:
  *   POST /api/webhook/:platform/:id?  — Generic IM platform callback
@@ -19,8 +19,12 @@ import {
   reportSilentFailure,
   UniversalSanitizer,
   getIMProviderRegistry,
+  getIMContextStore,
+  getIMOutboundDispatcher,
+  resetIMOutboundDispatcher,
   type IMProvider,
   type IMIncomingRequest,
+  type IMReply,
 } from '@commander/core';
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
@@ -47,6 +51,8 @@ export interface IMWebhookConfig {
   agentId: string;
   enabled: boolean;
   createdAt: string;
+  /** Optional credentials for proactive outbound messages. */
+  outbound?: Record<string, unknown>;
 }
 
 // ── Persistence ───────────────────────────────────────────────────────────
@@ -114,6 +120,10 @@ function writeIMWebhooks(imConfigs: IMWebhookConfig[]): void {
     secret: cfg.secret ? encryptSecret(cfg.secret) : cfg.secret,
   }));
   writeAllWebhooks([...nonIM, ...encrypted]);
+}
+
+function findIMWebhook(id: string): IMWebhookConfig | undefined {
+  return readIMWebhooks().find((w) => w.id === id);
 }
 
 function findActiveIMWebhook(id: string): IMWebhookConfig | undefined {
@@ -204,21 +214,74 @@ function decryptSecret(stored: string): string {
 
 // ── Agent execution helper ────────────────────────────────────────────────
 
-async function executeAgentMessage(agentId: string, message: string): Promise<string> {
+async function executeAgentMessage(
+  configId: string,
+  agentId: string,
+  message: string,
+  platform: string,
+  conversationId: string,
+  senderId: string,
+): Promise<string> {
   const runtime = getSharedRuntime();
-  const result = await runtime.execute({
-    agentId,
-    projectId: 'project-war-room',
-    goal: message,
-    contextData: {},
-    availableTools: [],
-    tokenBudget: 50000,
-    maxSteps: 20,
-  });
+  const store = getIMContextStore();
+  const dispatcher = getIMOutboundDispatcher();
 
-  const raw =
-    result.summary || (result.status === 'success' ? 'Task completed.' : `Task ${result.status}.`);
-  return sanitizer.sanitize(raw, 'output').sanitized;
+  await store.appendUserMessage(platform, conversationId, senderId, message);
+  const ctx = await store.getContext(platform, conversationId, senderId);
+
+  const runId = `im-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  await store.setPendingRunId(platform, conversationId, senderId, runId);
+
+  runtime
+    .execute({
+      agentId,
+      projectId: 'project-war-room',
+      goal: message,
+      contextData: {
+        agentState: {
+          imContext: ctx?.messages ?? [],
+        },
+      },
+      availableTools: [],
+      tokenBudget: 50000,
+      maxSteps: 20,
+    })
+    .then(async (result) => {
+      const raw =
+        result.summary ||
+        (result.status === 'success' ? 'Task completed.' : `Task ${result.status}.`);
+      const replyText = sanitizer.sanitize(raw, 'output').sanitized;
+      await store.appendAssistantMessage(platform, conversationId, senderId, replyText);
+      await store.clearPendingRunId(platform, conversationId, senderId);
+      await dispatcher.send(configId, { text: replyText, conversationId });
+    })
+    .catch(async (err: unknown) => {
+      reportSilentFailure(err, 'webhookEndpoints:executeAgentMessage');
+      await store.clearPendingRunId(platform, conversationId, senderId);
+    });
+
+  // Return an immediate acknowledgment; the final reply is pushed proactively.
+  return 'Received, processing...';
+}
+
+// ── Command router ────────────────────────────────────────────────────────
+
+async function handleCommand(
+  text: string,
+  platform: string,
+  conversationId: string,
+  senderId: string,
+): Promise<{ handled: boolean; ack?: string }> {
+  const store = getIMContextStore();
+  if (text === '/reset') {
+    await store.resetContext(platform, conversationId, senderId);
+    return { handled: true, ack: '上下文已重置' };
+  }
+  if (text === '/status') {
+    const ctx = await store.getContext(platform, conversationId, senderId);
+    return { handled: true, ack: ctx?.pendingRunId ? '任务进行中...' : '就绪' };
+  }
+  return { handled: false };
 }
 
 // ── Request adapter ───────────────────────────────────────────────────────
@@ -250,12 +313,16 @@ const createWebhookSchema = z.object({
   secret: z.string().max(256).optional(),
   agentId: z.string().min(1).max(128),
   enabled: z.boolean().optional(),
+  outbound: z.record(z.unknown()).optional(),
 });
 
 // ── Router ────────────────────────────────────────────────────────────────
 
 export function createWebhookRouter(): Router {
   const router = Router();
+
+  // Initialize the outbound dispatcher with access to the webhook config store.
+  resetIMOutboundDispatcher({ findById: findIMWebhook });
 
   // ── POST /api/webhook/:platform/:id? — Generic IM platform callback ─────
   async function imCallbackHandler(req: Request, res: Response): Promise<void> {
@@ -316,7 +383,32 @@ export function createWebhookRouter(): Router {
         return;
       }
 
-      const replyText = await executeAgentMessage(config.agentId, messageText);
+      const command = await handleCommand(
+        messageText,
+        platform,
+        incoming.conversationId,
+        incoming.senderId,
+      );
+      if (command.handled && command.ack) {
+        const reply = provider.formatReply({ text: command.ack });
+        res.status(reply.status ?? 200);
+        if (reply.headers) {
+          for (const [key, value] of Object.entries(reply.headers)) {
+            res.set(key, value);
+          }
+        }
+        res.send(reply.body);
+        return;
+      }
+
+      const replyText = await executeAgentMessage(
+        config.id,
+        config.agentId,
+        messageText,
+        platform,
+        incoming.conversationId,
+        incoming.senderId,
+      );
       const reply = provider.formatReply({ text: replyText });
 
       res.status(reply.status ?? 200);
@@ -349,7 +441,7 @@ export function createWebhookRouter(): Router {
     validateBody(createWebhookSchema),
     (req: Request, res: Response) => {
       try {
-        const { platform, name, agentId, enabled } = req.body as z.infer<
+        const { platform, name, agentId, enabled, outbound } = req.body as z.infer<
           typeof createWebhookSchema
         >;
 
@@ -361,6 +453,7 @@ export function createWebhookRouter(): Router {
           secret: (req.body as { secret?: string }).secret?.trim() || generateSecret(),
           agentId,
           enabled: enabled ?? true,
+          outbound,
           createdAt: new Date().toISOString(),
         };
 

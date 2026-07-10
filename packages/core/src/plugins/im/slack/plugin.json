@@ -1,0 +1,12 @@
+{
+  "name": "im-slack",
+  "version": "1.0.0",
+  "description": "Slack IM provider for Commander",
+  "main": "index.ts",
+  "category": "integration",
+  "permissions": {
+    "network": { "allowedDomains": ["slack.com"] },
+    "filesystem": { "read": [], "write": [] }
+  },
+  "provides": [{ "service": "im.provider", "description": "Slack webhook integration" }]
+}
