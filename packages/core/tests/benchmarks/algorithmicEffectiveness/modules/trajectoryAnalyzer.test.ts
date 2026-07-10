@@ -17,4 +17,17 @@ describe('trajectoryAnalyzer module', () => {
     );
     expect(result.conclusion).toBe('SIGNIFICANTLY_BETTER');
   });
+
+  it('treatment runTrial returns runtime-shaped token usage', async () => {
+    const treatment = trajectoryAnalyzerModule.treatmentFactory({
+      llm: createScriptedLLM({ responses: {} }),
+    });
+    const task = trajectoryAnalyzerModule.taskSuite[0];
+    const result = await trajectoryAnalyzerModule.runTrial({
+      implementation: treatment,
+      task,
+      llm: createScriptedLLM({ responses: {} }),
+    });
+    expect(result.tokenUsage.total).toBeGreaterThanOrEqual(0);
+  });
 });
