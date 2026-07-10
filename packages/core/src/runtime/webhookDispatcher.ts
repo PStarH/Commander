@@ -12,6 +12,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
 import { getMessageBus } from './messageBus';
+import { ResourceGovernor } from '../security/securityPrimitives';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -229,7 +230,7 @@ export class WebhookDispatcher {
 
   // ── Internal ─────────────────────────────────────────────────────
 
-  private sendWithRetry(wh: WebhookConfig, event: WebhookEvent, attempt: number): void {
+  private async sendWithRetry(wh: WebhookConfig, event: WebhookEvent, attempt: number): Promise<void> {
     // Security: SSRF prevention — re-validate URL at send time to catch any
     // stored webhook configs that predate the registration-time check.
     if (!isSafeWebhookUrl(wh.url)) {
@@ -261,77 +262,74 @@ export class WebhookDispatcher {
       path: url.pathname + url.search,
       method: 'POST',
       headers,
-      timeout: 10000,
     };
 
-    const req = client.request(options, (res) => {
-      res.on('data', () => {});
-      res.on('end', () => {
-        const statusCode = res.statusCode ?? 0;
-        const success = statusCode >= 200 && statusCode < 300;
-        this.logDelivery(
-          wh.id,
-          event.event,
-          success ? 'success' : 'failed',
-          statusCode,
-          attempt + 1,
-        );
-
-        if (!success && attempt < (wh.retryMax ?? DEFAULT_RETRY_MAX)) {
-          const delay = RETRY_DELAYS_MS[attempt] ?? 15000;
-          getGlobalLogger().warn('WebhookDispatcher', 'Retrying webhook', {
-            id: wh.id,
-            statusCode,
-            attempt: attempt + 1,
-            nextDelay: delay,
+    const sendResult = await ResourceGovernor.govern(
+      () =>
+        new Promise<{ statusCode: number; success: boolean }>((resolve, reject) => {
+          const req = client.request(options, (res) => {
+            res.on('data', () => {});
+            res.on('end', () => {
+              const statusCode = res.statusCode ?? 0;
+              const success = statusCode >= 200 && statusCode < 300;
+              resolve({ statusCode, success });
+            });
           });
-          const retryTimer = setTimeout(() => this.sendWithRetry(wh, event, attempt + 1), delay);
-          if (typeof retryTimer.unref === 'function') retryTimer.unref();
-        }
-      });
-    });
 
-    // Prevent double-retry when timeout fires then req.destroy() triggers error event
-    let timedOut = false;
+          let timedOut = false;
+          req.on('error', (err: Error) => {
+            if (timedOut) return;
+            reject(err);
+          });
+          req.on('timeout', () => {
+            timedOut = true;
+            req.destroy();
+            reject(new Error('timeout'));
+          });
+          req.write(body);
+          req.end();
+        }),
+      { timeoutMs: 30000, maxPayloadBytes: 8 * 1024 * 1024 },
+    );
 
-    req.on('error', (err: Error) => {
-      if (timedOut) return; // already handled by timeout handler
-      this.logDelivery(wh.id, event.event, 'failed', undefined, attempt + 1, err.message);
+    if (sendResult.error || sendResult.result === null) {
+      const errMsg = sendResult.error ?? 'unknown error';
+      this.logDelivery(wh.id, event.event, 'failed', undefined, attempt + 1, errMsg);
       if (attempt < (wh.retryMax ?? DEFAULT_RETRY_MAX)) {
         const delay = RETRY_DELAYS_MS[attempt] ?? 15000;
         getGlobalLogger().warn('WebhookDispatcher', 'Retrying webhook after error', {
           id: wh.id,
-          error: err.message,
+          error: errMsg,
           attempt: attempt + 1,
           nextDelay: delay,
         });
         const retryTimer = setTimeout(() => this.sendWithRetry(wh, event, attempt + 1), delay);
         if (typeof retryTimer.unref === 'function') retryTimer.unref();
       } else {
-        getGlobalLogger().error('WebhookDispatcher', 'Webhook max retries exceeded', err, {
+        getGlobalLogger().error('WebhookDispatcher', 'Webhook max retries exceeded', new Error(errMsg), {
           id: wh.id,
           url: wh.url,
           event: event.event,
           attempts: attempt + 1,
         });
       }
-    });
+      return;
+    }
 
-    req.on('timeout', () => {
-      timedOut = true;
-      req.destroy();
-      this.logDelivery(wh.id, event.event, 'failed', undefined, attempt + 1, 'timeout');
-      if (attempt < (wh.retryMax ?? DEFAULT_RETRY_MAX)) {
-        const retryTimer = setTimeout(
-          () => this.sendWithRetry(wh, event, attempt + 1),
-          RETRY_DELAYS_MS[attempt] ?? 15000,
-        );
-        if (typeof retryTimer.unref === 'function') retryTimer.unref();
-      }
-    });
+    const { statusCode, success } = sendResult.result;
+    this.logDelivery(wh.id, event.event, success ? 'success' : 'failed', statusCode, attempt + 1);
 
-    req.write(body);
-    req.end();
+    if (!success && attempt < (wh.retryMax ?? DEFAULT_RETRY_MAX)) {
+      const delay = RETRY_DELAYS_MS[attempt] ?? 15000;
+      getGlobalLogger().warn('WebhookDispatcher', 'Retrying webhook', {
+        id: wh.id,
+        statusCode,
+        attempt: attempt + 1,
+        nextDelay: delay,
+      });
+      const retryTimer = setTimeout(() => this.sendWithRetry(wh, event, attempt + 1), delay);
+      if (typeof retryTimer.unref === 'function') retryTimer.unref();
+    }
   }
 
   private logDelivery(
