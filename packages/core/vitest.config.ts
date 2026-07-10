@@ -342,6 +342,7 @@ export default defineConfig({
       'tests/benchmarks/algorithmicEffectiveness/registry.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/thompsonMemory.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/predictionLoop.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/modules/trajectoryAnalyzer.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/adaptiveStopping.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/swarmOrchestrator.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/dynamicCostGuardian.test.ts',
