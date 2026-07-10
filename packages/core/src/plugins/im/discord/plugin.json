@@ -1,0 +1,12 @@
+{
+  "name": "im-discord",
+  "version": "1.0.0",
+  "description": "Discord IM provider for Commander",
+  "main": "index.ts",
+  "category": "integration",
+  "permissions": {
+    "network": { "allowedDomains": ["discord.com"] },
+    "filesystem": { "read": [], "write": [] }
+  },
+  "provides": [{ "service": "im.provider", "description": "Discord webhook integration" }]
+}

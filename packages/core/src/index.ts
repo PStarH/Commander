@@ -198,11 +198,26 @@ export {
 } from './security';
 
 // IM Provider SPI
-export type { IMProvider, IMMessage, IMReply, IMIncomingRequest } from './im';
+export type {
+  IMProvider,
+  IMMessage,
+  IMReply,
+  IMIncomingRequest,
+  IMOutboundCredentials,
+  IMThreadContext,
+} from './im';
 export {
   IMProviderRegistry,
   getIMProviderRegistry,
   resetIMProviderRegistry,
+  IMContextStore,
+  InMemoryIMContextStore,
+  getIMContextStore,
+  resetIMContextStore,
+  IMOutboundDispatcher,
+  DefaultIMOutboundDispatcher,
+  getIMOutboundDispatcher,
+  resetIMOutboundDispatcher,
 } from './im';
 
 // Configuration Validation

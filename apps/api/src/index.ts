@@ -80,6 +80,9 @@ import { createWebhookRouter } from './webhookEndpoints';
 import dingtalkPlugin from '@commander/core/plugins/im/dingtalk';
 import feishuPlugin from '@commander/core/plugins/im/feishu';
 import wecomPlugin from '@commander/core/plugins/im/wecom';
+import slackPlugin from '@commander/core/plugins/im/slack';
+import teamsPlugin from '@commander/core/plugins/im/teams';
+import discordPlugin from '@commander/core/plugins/im/discord';
 import { createApiKeyRouter } from './apiKeyEndpoints';
 import { createSettingsRouter } from './settingsEndpoints';
 import { createOutgoingWebhookRouter } from './outgoingWebhookEndpoints';
@@ -565,6 +568,9 @@ getHookManager()
   .register(dingtalkPlugin)
   .then(() => getHookManager().register(feishuPlugin))
   .then(() => getHookManager().register(wecomPlugin))
+  .then(() => getHookManager().register(slackPlugin))
+  .then(() => getHookManager().register(teamsPlugin))
+  .then(() => getHookManager().register(discordPlugin))
   .catch((err: unknown) => console.error('Built-in IM provider registration failed:', err));
 
 // Register the built-in RAG CommanderPlugin (default disabled). Enabling it
