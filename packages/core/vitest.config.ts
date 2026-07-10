@@ -206,6 +206,8 @@ export default defineConfig({
       'tests/ultimate/artifactSystem.test.ts',
       'tests/ultimate/taskPool.test.ts',
       // --- memory (cross-tenant leak fix) ---
+      'tests/memoryCurator.test.ts',
+      'tests/memoryBenchmark.test.ts',
 
       // --- GDPR compliance + AdaptiveHITL weight learning ---
       'tests/architecture/gdprCompliance.test.ts',
@@ -341,6 +343,7 @@ export default defineConfig({
       'tests/benchmarks/algorithmicEffectiveness/runner.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/registry.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/thompsonMemory.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/modules/cacheManager.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/predictionLoop.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/trajectoryAnalyzer.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/adaptiveStopping.test.ts',

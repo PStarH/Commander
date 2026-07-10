@@ -21,6 +21,7 @@ import { speculativeExecutorModule } from './modules/speculativeExecutor';
 import { fusionEngineModule } from './modules/fusionEngine';
 import { costPredictorModule } from './modules/costPredictor';
 import { modelCascadeControllerModule } from './modules/modelCascadeController';
+import { cacheManagerModule } from './modules/cacheManager';
 
 const registry: Map<string, BenchmarkModule> = new Map();
 
@@ -64,3 +65,4 @@ registerModule(speculativeExecutorModule);
 registerModule(fusionEngineModule);
 registerModule(costPredictorModule);
 registerModule(modelCascadeControllerModule);
+registerModule(cacheManagerModule);
