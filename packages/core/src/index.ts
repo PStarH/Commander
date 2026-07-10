@@ -53,6 +53,11 @@ export {
   fromProjectMemoryItem,
   toProjectMemoryItem,
 } from './memory';
+export type {
+  ProjectMemoryItem,
+  ProjectMemoryOverview,
+  ProjectMemorySearchOptions,
+} from './memory/apiTypes';
 
 // Ultimate Framework exports (legacy)
 export {
@@ -185,6 +190,12 @@ export {
   scanContent,
   scanToolOutputForInjection,
 } from './contentScanner';
+
+// UniversalSanitizer & ResourceGovernor — unified sanitization and outbound-call governance
+export {
+  UniversalSanitizer,
+  ResourceGovernor,
+} from './security';
 
 // Configuration Validation
 export {

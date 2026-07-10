@@ -464,6 +464,16 @@ export type {
   DefenderFn,
 } from './securityBenchmarkRunner';
 
+// CommanderDefender — reusable multi-layer defense stack for live runtime and benchmarks
+export {
+  createCommanderDefender,
+} from './commanderDefender';
+export type {
+  DefenderOptions,
+  DefenseResult,
+  DefenderFn as CommanderDefenderFn,
+} from './commanderDefender';
+
 // SupplyChainAttestor — SPDX 2.3 SBOM generation + Sigstore keyless attestation + verification
 export {
   SupplyChainAttestor,
@@ -815,7 +825,7 @@ export type {
   PoisoningSeverity,
   SourceCredibility,
   MemoryWriteContext,
-  DefenseResult,
+  DefenseResult as MemoryPoisoningDefenseResult,
   RetrievedMemoryEntry,
   RetrievalValidationResult,
   TaintEntry,
@@ -923,3 +933,9 @@ export type {
   TtsrSessionState,
   TtsrInterceptResult,
 } from './ttsrEngine';
+
+// UniversalSanitizer & ResourceGovernor — unified sanitization and outbound-call governance
+export {
+  UniversalSanitizer,
+  ResourceGovernor,
+} from './securityPrimitives';
