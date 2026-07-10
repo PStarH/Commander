@@ -1,0 +1,12 @@
+{
+  "name": "im-dingtalk",
+  "version": "1.0.0",
+  "description": "DingTalk IM provider for Commander",
+  "main": "index.ts",
+  "category": "integration",
+  "permissions": {
+    "network": { "allowedDomains": ["oapi.dingtalk.com"] },
+    "filesystem": { "read": [], "write": [] }
+  },
+  "provides": [{ "service": "im.provider", "description": "DingTalk webhook integration" }]
+}
