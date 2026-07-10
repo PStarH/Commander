@@ -849,7 +849,7 @@ export interface CreateWebhookPayload {
 }
 
 export async function fetchWebhooks(): Promise<WebhookListResponse> {
-  return apiFetch<WebhookListResponse>(`/api/webhook/config`);
+  return apiFetch<WebhookListResponse>(`/api/webhook/config`, { credentials: 'include' });
 }
 
 export async function createWebhook(
@@ -858,6 +858,7 @@ export async function createWebhook(
   return apiFetch<{ webhook: IMWebhookConfig }>(`/api/webhook/config`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify(payload),
   });
 }
@@ -865,6 +866,7 @@ export async function createWebhook(
 export async function deleteWebhook(id: string): Promise<{ status: string; id: string }> {
   return apiFetch<{ status: string; id: string }>(`/api/webhook/config/${encodeURIComponent(id)}`, {
     method: 'DELETE',
+    credentials: 'include',
   });
 }
 

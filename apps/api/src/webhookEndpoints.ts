@@ -19,8 +19,8 @@
  * Config persistence: `.commander/webhooks.json` (IM configs carry a `platform`
  * field so they coexist with any pre-existing outgoing-webhook entries).
  */
-import { reportSilentFailure } from '@commander/core';
-import { Router, type Request, type Response } from 'express';
+import { reportSilentFailure, UniversalSanitizer } from '@commander/core';
+import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
@@ -28,6 +28,9 @@ import * as path from 'path';
 import { getSharedRuntime } from './sharedRuntime';
 import { toErrorMessage } from './routeHelpers';
 import { validateBody } from './validationMiddleware';
+import { hasRole, type UserRole } from './userStore';
+
+const sanitizer = new UniversalSanitizer();
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -47,11 +50,16 @@ export interface IMWebhookConfig {
 
 // ── Persistence ───────────────────────────────────────────────────────────
 
-const WEBHOOK_FILE = path.join(process.cwd(), '.commander', 'webhooks.json');
+function getWebhookFile(): string {
+  return process.env.COMMANDER_WEBHOOKS_FILE
+    ? path.resolve(process.env.COMMANDER_WEBHOOKS_FILE)
+    : path.join(process.cwd(), '.commander', 'webhooks.json');
+}
 
 function readAllWebhooks(): unknown[] {
+  const file = getWebhookFile();
   try {
-    const raw = fs.readFileSync(WEBHOOK_FILE, 'utf-8');
+    const raw = fs.readFileSync(file, 'utf-8');
     const data = JSON.parse(raw);
     return Array.isArray(data) ? data : [];
   } catch (err) {
@@ -61,12 +69,13 @@ function readAllWebhooks(): unknown[] {
 }
 
 function writeAllWebhooks(entries: unknown[]): void {
-  const dir = path.dirname(WEBHOOK_FILE);
+  const file = getWebhookFile();
+  const dir = path.dirname(file);
   try {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    fs.writeFileSync(WEBHOOK_FILE, JSON.stringify(entries, null, 2), 'utf-8');
+    fs.writeFileSync(file, JSON.stringify(entries, null, 2));
   } catch (err) {
     reportSilentFailure(err, 'webhookEndpoints:writeAllWebhooks');
   }
@@ -82,7 +91,11 @@ function readIMWebhooks(): IMWebhookConfig[] {
       'platform' in entry &&
       typeof (entry as Record<string, unknown>).platform === 'string'
     ) {
-      result.push(entry as IMWebhookConfig);
+      const cfg = entry as IMWebhookConfig;
+      if (cfg.secret) {
+        cfg.secret = decryptSecret(cfg.secret);
+      }
+      result.push(cfg);
     }
   }
   return result;
@@ -95,11 +108,15 @@ function writeIMWebhooks(imConfigs: IMWebhookConfig[]): void {
     (e) =>
       !e || typeof e !== 'object' || typeof (e as Record<string, unknown>).platform !== 'string',
   );
-  writeAllWebhooks([...nonIM, ...imConfigs]);
+  const encrypted = imConfigs.map((cfg) => ({
+    ...cfg,
+    secret: cfg.secret ? encryptSecret(cfg.secret) : cfg.secret,
+  }));
+  writeAllWebhooks([...nonIM, ...encrypted]);
 }
 
-function findIMWebhook(id: string): IMWebhookConfig | undefined {
-  return readIMWebhooks().find((w) => w.id === id);
+function findActiveIMWebhook(id: string): IMWebhookConfig | undefined {
+  return readIMWebhooks().find((w) => w.id === id && w.enabled);
 }
 
 function generateId(): string {
@@ -108,6 +125,80 @@ function generateId(): string {
 
 function generateSecret(): string {
   return crypto.randomBytes(32).toString('hex');
+}
+
+// ── Authentication / authorization for management endpoints ───────────────
+
+function requireAuth(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  next();
+}
+
+function requireRole(requiredRole: UserRole = 'admin') {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user || !hasRole(req.user.role, requiredRole)) {
+      res.status(403).json({ error: 'Insufficient privileges' });
+      return;
+    }
+    next();
+  };
+}
+
+// ── At-rest encryption for IM webhook secrets ─────────────────────────────
+// Reuses the same AES-256-GCM scheme as WebhookManager so secrets are not
+// stored in plaintext. When no COMMANDER_MASTER_KEY is set, falls back to
+// plaintext with a warning (development mode only).
+
+const WEBHOOK_ENC_PREFIX = 'enc:v1:';
+
+function getMasterKey(): Buffer | null {
+  const envKey = process.env.COMMANDER_MASTER_KEY;
+  if (!envKey || envKey.length < 32) return null;
+  return crypto.createHash('sha256').update(envKey).digest();
+}
+
+function encryptSecret(plaintext: string): string {
+  const key = getMasterKey();
+  if (!key) return plaintext;
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return (
+    WEBHOOK_ENC_PREFIX +
+    iv.toString('hex') +
+    ':' +
+    tag.toString('hex') +
+    ':' +
+    encrypted.toString('hex')
+  );
+}
+
+function decryptSecret(stored: string): string {
+  if (!stored.startsWith(WEBHOOK_ENC_PREFIX)) return stored;
+  const key = getMasterKey();
+  if (!key) {
+    reportSilentFailure(
+      new Error('Encrypted IM webhook secret found but COMMANDER_MASTER_KEY not set'),
+      'webhookEndpoints:decryptSecret',
+    );
+    return '';
+  }
+  try {
+    const parts = stored.slice(WEBHOOK_ENC_PREFIX.length).split(':');
+    const iv = Buffer.from(parts[0], 'hex');
+    const tag = Buffer.from(parts[1], 'hex');
+    const encrypted = Buffer.from(parts[2], 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(tag);
+    return decipher.update(encrypted) + decipher.final('utf8');
+  } catch (err) {
+    reportSilentFailure(err, 'webhookEndpoints:decryptSecret');
+    return '';
+  }
 }
 
 // ── DingTalk signature verification ───────────────────────────────────────
@@ -176,9 +267,9 @@ async function executeAgentMessage(agentId: string, message: string): Promise<st
     maxSteps: 20,
   });
 
-  return (
-    result.summary || (result.status === 'success' ? 'Task completed.' : `Task ${result.status}.`)
-  );
+  const raw =
+    result.summary || (result.status === 'success' ? 'Task completed.' : `Task ${result.status}.`);
+  return sanitizer.sanitize(raw, 'output').sanitized;
 }
 
 // ── Validation schemas ────────────────────────────────────────────────────
@@ -202,7 +293,7 @@ export function createWebhookRouter(): Router {
   async function dingtalkHandler(req: Request, res: Response): Promise<void> {
     try {
       const id = typeof req.params.id === 'string' ? req.params.id : undefined;
-      const config = id ? findIMWebhook(id) : undefined;
+      const config = id ? findActiveIMWebhook(id) : undefined;
 
       // A valid webhook config is required for all DingTalk callbacks.
       if (!config) {
@@ -231,8 +322,8 @@ export function createWebhookRouter(): Router {
         messageText = typeof mdObj?.text === 'string' ? mdObj.text : '';
       }
 
-      // Strip @bot prefix (DingTalk sends "@botName message")
-      messageText = messageText.replace(/^\s*@\S+\s*/, '').trim();
+      // Strip @bot prefix (DingTalk sends "@botName message") and sanitize input
+      messageText = sanitizer.sanitize(messageText.replace(/^\s*@\S+\s*/, '').trim(), 'input').sanitized;
       if (!messageText) {
         res.json({ msgtype: 'text', text: { content: 'Please send a message.' } });
         return;
@@ -252,7 +343,7 @@ export function createWebhookRouter(): Router {
   async function feishuHandler(req: Request, res: Response): Promise<void> {
     try {
       const id = typeof req.params.id === 'string' ? req.params.id : undefined;
-      const config = id ? findIMWebhook(id) : undefined;
+      const config = id ? findActiveIMWebhook(id) : undefined;
 
       const body = req.body as Record<string, unknown>;
       const header = (body.header ?? {}) as Record<string, unknown>;
@@ -298,8 +389,8 @@ export function createWebhookRouter(): Router {
           messageText = content;
         }
 
-        // Strip @bot mention
-        messageText = messageText.replace(/@_user_\d+/g, '').trim();
+        // Strip @bot mention and sanitize input
+        messageText = sanitizer.sanitize(messageText.replace(/@_user_\d+/g, '').trim(), 'input').sanitized;
         if (!messageText) {
           res.json({ code: 0, msg: 'success' });
           return;
@@ -325,7 +416,7 @@ export function createWebhookRouter(): Router {
   async function wecomHandler(req: Request, res: Response): Promise<void> {
     try {
       const id = typeof req.params.id === 'string' ? req.params.id : undefined;
-      const config = id ? findIMWebhook(id) : undefined;
+      const config = id ? findActiveIMWebhook(id) : undefined;
 
       const msgSignature = req.query.msg_signature as string | undefined;
       const timestamp = req.query.timestamp as string | undefined;
@@ -366,8 +457,8 @@ export function createWebhookRouter(): Router {
       }
 
       if (msgType === 'text' && content) {
-        // Strip @bot mention
-        const messageText = content.replace(/^\s*@\S+\s*/, '').trim();
+        // Strip @bot mention and sanitize input
+        const messageText = sanitizer.sanitize(content.replace(/^\s*@\S+\s*/, '').trim(), 'input').sanitized;
         if (messageText) {
           const reply = await executeAgentMessage(config.agentId, messageText);
 
@@ -391,7 +482,7 @@ export function createWebhookRouter(): Router {
   router.post('/api/webhook/wecom/:id', wecomHandler);
 
   // ── GET /api/webhook/config — list IM webhooks ────────────────────────
-  router.get('/api/webhook/config', (_req: Request, res: Response) => {
+  router.get('/api/webhook/config', requireAuth, (_req: Request, res: Response) => {
     try {
       const configs = readIMWebhooks();
       res.json({ webhooks: configs, total: configs.length });
@@ -403,6 +494,8 @@ export function createWebhookRouter(): Router {
   // ── POST /api/webhook/config — create IM webhook config ───────────────
   router.post(
     '/api/webhook/config',
+    requireAuth,
+    requireRole(),
     validateBody(createWebhookSchema),
     (req: Request, res: Response) => {
       try {
@@ -414,7 +507,7 @@ export function createWebhookRouter(): Router {
         const newConfig: IMWebhookConfig = {
           id: generateId(),
           platform,
-          name,
+          name: sanitizer.sanitize(name, 'description').sanitized,
           secret: (req.body as { secret?: string }).secret?.trim() || generateSecret(),
           agentId,
           enabled: enabled ?? true,
@@ -432,7 +525,7 @@ export function createWebhookRouter(): Router {
   );
 
   // ── DELETE /api/webhook/config/:id — delete IM webhook config ─────────
-  router.delete('/api/webhook/config/:id', (req: Request, res: Response) => {
+  router.delete('/api/webhook/config/:id', requireAuth, requireRole(), (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const configs = readIMWebhooks();
