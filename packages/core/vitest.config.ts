@@ -43,6 +43,11 @@ export default defineConfig({
       // every `const XSingleton = createTenantAwareSingleton(...)` factory
       // call carries an `allowGlobalFallback` option within ±15 lines.
       'tests/runtime/createTenantAwareSingleton.cascade.test.ts',
+      // --- im providers ---
+      'tests/im/imProviderRegistry.test.ts',
+      'tests/im/providers/dingtalk.test.ts',
+      'tests/im/providers/feishu.test.ts',
+      'tests/im/providers/wecom.test.ts',
       'tests/checkpointStore.test.ts',
       'tests/runtime/baseOpenAICompatibleRetry.test.ts',
       'tests/runtime/bm25ToolDiscovery.test.ts',

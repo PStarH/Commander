@@ -1,0 +1,12 @@
+{
+  "name": "im-feishu",
+  "version": "1.0.0",
+  "description": "Feishu IM provider for Commander",
+  "main": "index.ts",
+  "category": "integration",
+  "permissions": {
+    "network": { "allowedDomains": ["open.feishu.cn"] },
+    "filesystem": { "read": [], "write": [] }
+  },
+  "provides": [{ "service": "im.provider", "description": "Feishu webhook integration" }]
+}

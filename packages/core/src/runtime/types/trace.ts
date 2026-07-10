@@ -46,6 +46,10 @@ export interface TraceEvent {
     evaluationScore?: number;
     /** Verification pipeline: whether the verification passed */
     evaluationPassed?: boolean;
+    /** Whether this error event represents a retry attempt */
+    retrying?: boolean;
+    /** Whether the error is considered retryable */
+    retryable?: boolean;
     /** Task category from deliberation (coding, research, reasoning, etc.) */
     taskCategory?: string;
     /** Model tier (budget, standard, premium) */

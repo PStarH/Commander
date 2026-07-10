@@ -197,6 +197,14 @@ export {
   ResourceGovernor,
 } from './security';
 
+// IM Provider SPI
+export type { IMProvider, IMMessage, IMReply, IMIncomingRequest } from './im';
+export {
+  IMProviderRegistry,
+  getIMProviderRegistry,
+  resetIMProviderRegistry,
+} from './im';
+
 // Configuration Validation
 export {
   createSchema,

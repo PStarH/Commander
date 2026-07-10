@@ -10,6 +10,7 @@ import {
   buildHealthSources,
   getPluginLoader,
   getWebhookDispatcher,
+  getIMProviderRegistry,
   zeroTrustMiddleware,
   ShadowProxy,
   loadShadowConfig,
@@ -61,6 +62,7 @@ import {
 } from './securityMiddleware';
 import { authMiddleware } from './authMiddleware';
 import { tenantContextMiddleware } from './tenantContextMiddleware';
+import { loadTenantProvider } from './tenantProviderLoader';
 import { jwtMiddleware } from './jwtMiddleware';
 import { createUserAuthRouter } from './userAuthEndpoints';
 import { createOIDCAuthRouter } from './oidcAuthEndpoints';
@@ -75,6 +77,9 @@ import { createHallucinationRouter } from './hallucinationEndpoints';
 import { createLineageRouter } from './lineageEndpoints';
 import { createSecurityPostureRouter } from './securityPostureEndpoints';
 import { createWebhookRouter } from './webhookEndpoints';
+import dingtalkPlugin from '@commander/core/plugins/im/dingtalk';
+import feishuPlugin from '@commander/core/plugins/im/feishu';
+import wecomPlugin from '@commander/core/plugins/im/wecom';
 import { createApiKeyRouter } from './apiKeyEndpoints';
 import { createSettingsRouter } from './settingsEndpoints';
 import { createOutgoingWebhookRouter } from './outgoingWebhookEndpoints';
@@ -90,6 +95,7 @@ import { createAuditMiddleware } from './auditMiddleware';
 import { createSagaRouter } from './sagaEndpoints';
 import { createHubCorrelationsRouter } from './hubCorrelationsEndpoints';
 import { getUnifiedAuditLog, dlpResponseMiddleware } from '@commander/core/security';
+import { getGlobalTenantProvider, SimpleTenantProvider } from '@commander/core/runtime';
 import { registerRouter, mountRegisteredRouters } from './routerRegistry';
 
 const PROJECT_ID = process.env.COMMANDER_PROJECT_ID ?? 'project-war-room';
@@ -552,6 +558,15 @@ registerRouter({
 });
 
 // ── Knowledge Base / RAG (enterprise document retrieval) ───────────────────
+// Register built-in IM providers. These are loaded early so that the
+// generic /api/webhook/:platform route can resolve DingTalk / Feishu / WeCom.
+getIMProviderRegistry().reset();
+getHookManager()
+  .register(dingtalkPlugin)
+  .then(() => getHookManager().register(feishuPlugin))
+  .then(() => getHookManager().register(wecomPlugin))
+  .catch((err: unknown) => console.error('Built-in IM provider registration failed:', err));
+
 // Register the built-in RAG CommanderPlugin (default disabled). Enabling it
 // activates the beforeLLMCall auto-inject hook + the `knowledge_search` tool.
 // The data plane (upload/list/delete/search) works regardless of enable state
@@ -914,6 +929,10 @@ const port = Number(process.env.PORT || 4000);
 let httpServer: { close: (cb?: () => void) => void } | null = null;
 
 async function startServer(): Promise<void> {
+  // Load tenant configuration before any routers or shared singletons are
+  // created. Missing config falls back to single-tenant mode (NullTenantProvider).
+  loadTenantProvider();
+
   await initRateLimitStore();
 
   // Initialize optional ProjectMemoryStoreAdapter for the memory-index router.
@@ -1008,6 +1027,20 @@ function gracefulShutdown(signal: string) {
     // Close the rate-limit persistent store (audit MED item 3 follow-up).
     // Idempotent — safe even if init failed.
     closeRateLimitStore();
+
+    // Close the optional memory-index adapter store (sqlite/json backend).
+    try {
+      await projectMemoryAdapter?.close();
+    } catch (closeErr) {
+      process.stderr.write(`[shutdown] Failed to close memory-index adapter: ${closeErr}\n`);
+    }
+
+    // Log loaded tenant count for multi-tenant deployments.
+    const tenantProvider = getGlobalTenantProvider();
+    if (tenantProvider instanceof SimpleTenantProvider) {
+      const tenantCount = tenantProvider.getKnownTenants().length;
+      process.stdout.write(`[shutdown] Loaded ${tenantCount} tenant(s)\n`);
+    }
 
     process.stdout.write('[shutdown] Complete\n');
     process.exit(0);
