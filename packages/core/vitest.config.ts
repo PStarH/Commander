@@ -225,6 +225,7 @@ export default defineConfig({
       'tests/memoryCurator.test.ts',
       'tests/memoryBenchmark.test.ts',
       'tests/memory/thompsonMemoryScorer.test.ts',
+      'src/memory/__tests__/tenantIsolation.test.ts',
       // --- P1 memory management agent prototype ---
       'tests/memory/temporalGraph.test.ts',
       'tests/memory/memoryManagerAgent.test.ts',
@@ -401,6 +402,9 @@ export default defineConfig({
       'tests/benchmarks/algorithmicEffectiveness/modules/bm25ToolDiscovery.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/circuitBreaker.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/costPredictor.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/modules/securityPrimitives.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/modules/reversibilityGate.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/modules/outboundNetworkPolicy.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/index.test.ts',
       // --- orchestration patterns (Concurrent/Graph/MoA/Router/CrossPollination/AutoLoop/DynamicReplanner) ---
       'tests/orchestration/orchestrationPatterns.test.ts',
