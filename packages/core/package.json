@@ -44,6 +44,18 @@
       "types": "./dist/observability/*.d.ts",
       "default": "./dist/observability/*.js"
     },
+    "./plugins/im/dingtalk": {
+      "types": "./dist/plugins/im/dingtalk/index.d.ts",
+      "default": "./dist/plugins/im/dingtalk/index.js"
+    },
+    "./plugins/im/feishu": {
+      "types": "./dist/plugins/im/feishu/index.d.ts",
+      "default": "./dist/plugins/im/feishu/index.js"
+    },
+    "./plugins/im/wecom": {
+      "types": "./dist/plugins/im/wecom/index.d.ts",
+      "default": "./dist/plugins/im/wecom/index.js"
+    },
     "./package.json": "./package.json"
   },
   "keywords": [

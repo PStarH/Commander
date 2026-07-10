@@ -6,6 +6,8 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
 import { createWebhookRouter, type IMWebhookConfig } from '../src/webhookEndpoints';
+import { getIMProviderRegistry } from '@commander/core';
+import { dingtalkProvider } from '@commander/core/plugins/im/dingtalk';
 
 describe('IM Webhook Endpoints', () => {
   let app: express.Express;
@@ -18,6 +20,9 @@ describe('IM Webhook Endpoints', () => {
     tmpDir = path.join(os.tmpdir(), `commander-im-webhook-test-${crypto.randomBytes(8).toString('hex')}`);
     fs.mkdirSync(path.join(tmpDir, '.commander'), { recursive: true });
     process.env.COMMANDER_WEBHOOKS_FILE = path.join(tmpDir, '.commander', 'webhooks.json');
+
+    getIMProviderRegistry().reset();
+    getIMProviderRegistry().register(dingtalkProvider);
 
     app = express();
     app.use(express.json());
@@ -128,6 +133,15 @@ describe('IM Webhook Endpoints', () => {
 
     // cleanup
     await request(`/api/webhook/config/${encodeURIComponent(webhook.id)}`, { method: 'DELETE' });
+  });
+
+  it('rejects unknown IM provider with 404', async () => {
+    const res = await request('/api/webhook/unknown/config-id', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(res.status, 404);
   });
 
   it('rejects DingTalk callback with invalid signature', async () => {
