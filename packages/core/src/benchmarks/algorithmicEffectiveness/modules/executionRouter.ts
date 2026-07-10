@@ -40,19 +40,37 @@ export class ExecutionRouter {
       };
     }
 
-    // Consult a scripted LLM for a recommendation. The final decision still
-    // respects the structured hints so the benchmark stays deterministic.
-    const prompt = `Execution routing decision:
-Task: "${task.prompt}"
-Complexity (0-1): ${task.complexity}
-Parallelism (0-1): ${task.parallelism}
-Should this run as SINGLE or MULTI? Respond with one word.`;
-
-    const { text } = await this.deps.llm.complete(prompt);
-    const recommendation = text.trim().toUpperCase();
-
+    // Privacy and structured hints are hard signals that should not be
+    // overridden by the LLM recommendation.
     const hintsSuggestMulti = task.parallelism >= 0.6 && task.complexity >= 0.5;
-    const llmSuggestsMulti = recommendation.includes('MULTI');
+    const hintsSuggestLocal = task.privacySensitive;
+
+    if (hintsSuggestLocal) {
+      return {
+        mode: 'local',
+        reasoning: 'Privacy-sensitive content detected; route to local model.',
+      };
+    }
+
+    // Consult the LLM for a recommendation. Use a constrained prompt and
+    // robust parsing so the benchmark remains stable with real API providers.
+    let llmSuggestsMulti = false;
+    try {
+      const prompt = `You are an execution router. Choose the execution mode for the task below.
+
+Task: "${task.prompt}"
+Complexity (0=very simple, 1=very complex): ${task.complexity}
+Parallelism (0=sequential, 1=highly parallel): ${task.parallelism}
+
+Reply with EXACTLY ONE word: SINGLE or MULTI.
+Answer:`;
+      const { text } = await this.deps.llm.complete(prompt, { maxTokens: 10, temperature: 0 });
+      const recommendation = text.trim().toUpperCase();
+      // Accept the exact word even if the model adds punctuation or whitespace.
+      llmSuggestsMulti = /\bMULTI\b/.test(recommendation);
+    } catch {
+      // If the LLM call fails, fall back to the structured hints.
+    }
 
     if (hintsSuggestMulti || llmSuggestsMulti) {
       return {
