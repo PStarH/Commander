@@ -331,6 +331,7 @@ export default defineConfig({
       // 'tests/benchmark/realWorldBenchmark.test.ts', // skipped: requires external StepFun API and times out in CI
       // 'tests/benchmark/multiAgentBenchmark.metrics.test.ts', // FIXED: src/benchmark/multiAgentBenchmark module now implemented
       'tests/benchmark/multiAgentBenchmark.metrics.test.ts',
+      'tests/benchmark/webarena-agentbench.test.ts',
       // --- algorithmic effectiveness benchmarks ---
       'tests/benchmarks/algorithmicEffectiveness/types.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/scriptedLLM.test.ts',
@@ -340,6 +341,7 @@ export default defineConfig({
       'tests/benchmarks/algorithmicEffectiveness/runner.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/registry.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/thompsonMemory.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/modules/predictionLoop.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/adaptiveStopping.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/swarmOrchestrator.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/dynamicCostGuardian.test.ts',
