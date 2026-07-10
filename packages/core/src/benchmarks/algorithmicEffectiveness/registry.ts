@@ -30,6 +30,7 @@ import { deliberationModule } from './modules/deliberation';
 import { qualityGatesModule } from './modules/qualityGates';
 import { outputSanitizerModule } from './modules/outputSanitizer';
 import { backpressureControllerModule } from './modules/backpressureController';
+import { capabilityMatcherModule } from './modules/capabilityMatcher';
 
 const registry: Map<string, BenchmarkModule> = new Map();
 
@@ -82,3 +83,4 @@ registerModule(deliberationModule);
 registerModule(qualityGatesModule);
 registerModule(outputSanitizerModule);
 registerModule(backpressureControllerModule);
+registerModule(capabilityMatcherModule);
