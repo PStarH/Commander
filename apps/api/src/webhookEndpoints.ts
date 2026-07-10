@@ -1,25 +1,27 @@
 /**
- * webhookEndpoints — IM (DingTalk / Feishu / WeCom) webhook integration router.
+ * webhookEndpoints — IM webhook integration router.
  *
- * Chinese enterprises overwhelmingly use DingTalk, Feishu, and WeCom for daily
- * communication. This router lets an Agent be embedded directly into those IM
- * workflows: users @mention the bot in a group chat, the IM platform forwards
- * the message to Commander via a webhook URL, Commander dispatches it to the
- * target Agent via the shared AgentRuntime, and the Agent's reply is returned
- * in the platform-specific response format.
+ * This router is provider-driven: each supported IM platform is implemented as
+ * an `IMProvider` plugin. The host only handles routing, config management,
+ * authentication/authorization, secret encryption, and delegating platform
+ * specifics to the registered provider.
  *
  * Endpoints:
- *   POST /api/webhook/dingtalk/:id?  — DingTalk robot callback
- *   POST /api/webhook/feishu/:id?    — Feishu bot callback
- *   POST /api/webhook/wecom/:id?     — WeCom app callback
- *   GET  /api/webhook/config         — list configured IM webhooks
- *   POST /api/webhook/config         — create a new IM webhook config
- *   DELETE /api/webhook/config/:id   — delete an IM webhook config
+ *   POST /api/webhook/:platform/:id?  — Generic IM platform callback
+ *   GET  /api/webhook/config          — list configured IM webhooks
+ *   POST /api/webhook/config          — create a new IM webhook config
+ *   DELETE /api/webhook/config/:id    — delete an IM webhook config
  *
  * Config persistence: `.commander/webhooks.json` (IM configs carry a `platform`
  * field so they coexist with any pre-existing outgoing-webhook entries).
  */
-import { reportSilentFailure, UniversalSanitizer } from '@commander/core';
+import {
+  reportSilentFailure,
+  UniversalSanitizer,
+  getIMProviderRegistry,
+  type IMProvider,
+  type IMIncomingRequest,
+} from '@commander/core';
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import * as crypto from 'crypto';
@@ -34,11 +36,10 @@ const sanitizer = new UniversalSanitizer();
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
-export type WebhookPlatform = 'dingtalk' | 'feishu' | 'wecom';
-
 export interface IMWebhookConfig {
   id: string;
-  platform: WebhookPlatform;
+  /** Provider ID, must match a registered IMProvider. */
+  platform: string;
   name: string;
   /** Shared secret used for signature verification. */
   secret: string;
@@ -201,58 +202,6 @@ function decryptSecret(stored: string): string {
   }
 }
 
-// ── DingTalk signature verification ───────────────────────────────────────
-
-/**
- * DingTalk robot signature verification.
- * Algorithm: HmacSHA256(timestamp + "\n" + secret), base64-encoded.
- */
-function verifyDingTalkSignature(timestamp: string, sign: string, secret: string): boolean {
-  try {
-    const expected = crypto
-      .createHmac('sha256', secret)
-      .update(timestamp + '\n' + secret)
-      .digest('base64');
-    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sign));
-  } catch (err) {
-    reportSilentFailure(err, 'webhookEndpoints:verifyDingTalkSignature');
-    return false;
-  }
-}
-
-// ── WeCom signature verification (basic) ──────────────────────────────────
-
-/**
- * WeCom msg_signature = sha1(sort([token, timestamp, nonce, encrypt]))
- * For simplicity (and because full AES decryption is complex), we perform
- * the signature verification but skip AES decryption of the message body.
- * The raw XML is parsed for the text content.
- */
-function verifyWeComSignature(
-  token: string,
-  timestamp: string,
-  nonce: string,
-  encrypt: string,
-  msgSignature: string,
-): boolean {
-  try {
-    const parts = [token, timestamp, nonce, encrypt].sort();
-    const sha1 = crypto.createHash('sha1').update(parts.join('')).digest('hex');
-    return crypto.timingSafeEqual(Buffer.from(sha1), Buffer.from(msgSignature));
-  } catch (err) {
-    reportSilentFailure(err, 'webhookEndpoints:verifyWeComSignature');
-    return false;
-  }
-}
-
-/** Extract <Tag>content</Tag> from a WeCom XML payload. */
-function extractXmlField(xml: string, tag: string): string | null {
-  const match = xml.match(new RegExp(`<${tag}><!\\[CDATA\\[([\\s\\S]*?)\\]\\]></${tag}>`));
-  if (match) return match[1] ?? null;
-  const plain = xml.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
-  return plain ? (plain[1] ?? null) : null;
-}
-
 // ── Agent execution helper ────────────────────────────────────────────────
 
 async function executeAgentMessage(agentId: string, message: string): Promise<string> {
@@ -272,10 +221,31 @@ async function executeAgentMessage(agentId: string, message: string): Promise<st
   return sanitizer.sanitize(raw, 'output').sanitized;
 }
 
+// ── Request adapter ───────────────────────────────────────────────────────
+
+function adaptExpressRequest(req: Request): IMIncomingRequest {
+  const query: Record<string, string | string[] | undefined> = {};
+  for (const [key, value] of Object.entries(req.query)) {
+    query[key] = value as string | string[] | undefined;
+  }
+
+  const headers: Record<string, string | string[] | undefined> = {};
+  for (const [key, value] of Object.entries(req.headers)) {
+    headers[key] = value;
+  }
+
+  return {
+    method: req.method,
+    query,
+    body: req.body,
+    headers,
+  };
+}
+
 // ── Validation schemas ────────────────────────────────────────────────────
 
 const createWebhookSchema = z.object({
-  platform: z.enum(['dingtalk', 'feishu', 'wecom']),
+  platform: z.string().min(1),
   name: z.string().min(1).max(128),
   secret: z.string().max(256).optional(),
   agentId: z.string().min(1).max(128),
@@ -287,199 +257,79 @@ const createWebhookSchema = z.object({
 export function createWebhookRouter(): Router {
   const router = Router();
 
-  // ── POST /api/webhook/dingtalk/:id? — DingTalk robot callback ─────────
-  // Express 5 / path-to-regexp v8 drops :param? optional syntax. Register
-  // both paths explicitly so either /dingtalk and /dingtalk/:id match.
-  async function dingtalkHandler(req: Request, res: Response): Promise<void> {
+  // ── POST /api/webhook/:platform/:id? — Generic IM platform callback ─────
+  async function imCallbackHandler(req: Request, res: Response): Promise<void> {
     try {
+      const platform = typeof req.params.platform === 'string' ? req.params.platform : '';
       const id = typeof req.params.id === 'string' ? req.params.id : undefined;
-      const config = id ? findActiveIMWebhook(id) : undefined;
+      const provider = platform ? getIMProviderRegistry().resolve(platform) : undefined;
 
-      // A valid webhook config is required for all DingTalk callbacks.
-      if (!config) {
-        res.status(401).json({ error: 'Webhook config required' });
+      if (!provider) {
+        res.status(404).json({ error: 'IM provider not found' });
         return;
       }
 
-      // Signature verification is mandatory when a config exists.
-      const timestamp = req.query.timestamp as string | undefined;
-      const sign = req.query.sign as string | undefined;
-      if (!timestamp || !sign || !verifyDingTalkSignature(timestamp, sign, config.secret)) {
-        res.status(401).json({ error: 'Invalid signature' });
-        return;
-      }
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const incomingReq = adaptExpressRequest(req);
 
-      // Parse DingTalk message body
-      const body = req.body as Record<string, unknown>;
-      const msgtype = typeof body.msgtype === 'string' ? body.msgtype : 'text';
-
-      let messageText = '';
-      if (msgtype === 'text') {
-        const textObj = body.text as Record<string, unknown> | undefined;
-        messageText = typeof textObj?.content === 'string' ? textObj.content : '';
-      } else if (msgtype === 'markdown') {
-        const mdObj = body.markdown as Record<string, unknown> | undefined;
-        messageText = typeof mdObj?.text === 'string' ? mdObj.text : '';
-      }
-
-      // Strip @bot prefix (DingTalk sends "@botName message") and sanitize input
-      messageText = sanitizer.sanitize(messageText.replace(/^\s*@\S+\s*/, '').trim(), 'input').sanitized;
-      if (!messageText) {
-        res.json({ msgtype: 'text', text: { content: 'Please send a message.' } });
-        return;
-      }
-
-      const reply = await executeAgentMessage(config.agentId, messageText);
-
-      res.json({ msgtype: 'text', text: { content: reply } });
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  }
-  router.post('/api/webhook/dingtalk', dingtalkHandler);
-  router.post('/api/webhook/dingtalk/:id', dingtalkHandler);
-
-  // ── POST /api/webhook/feishu/:id? — Feishu bot callback ───────────────
-  async function feishuHandler(req: Request, res: Response): Promise<void> {
-    try {
-      const id = typeof req.params.id === 'string' ? req.params.id : undefined;
-      const config = id ? findActiveIMWebhook(id) : undefined;
-
-      const body = req.body as Record<string, unknown>;
-      const header = (body.header ?? {}) as Record<string, unknown>;
-      const eventType =
-        typeof header.event_type === 'string'
-          ? header.event_type
-          : typeof body.type === 'string'
-            ? body.type
-            : '';
-
-      // Handle url_verification challenge — allowed without config because the
+      // Feishu url_verification challenge — allowed without config because the
       // platform needs to confirm the callback URL during setup.
-      if (eventType === 'url_verification' || body.challenge !== undefined) {
-        const challenge = typeof body.challenge === 'string' ? body.challenge : '';
+      const challenge = typeof body.challenge === 'string' ? body.challenge : undefined;
+      if (challenge !== undefined) {
         res.json({ challenge });
         return;
       }
 
-      // A valid webhook config is required for all other Feishu callbacks.
-      if (!config) {
-        res.status(401).json({ error: 'Webhook config required' });
-        return;
-      }
-
-      // Token verification is mandatory when a config exists.
-      const token = typeof header.token === 'string' ? header.token : '';
-      if (!token || token !== config.secret) {
-        res.status(401).json({ error: 'Invalid verification token' });
-        return;
-      }
-
-      // Handle message.receive_v1 event
-      if (eventType === 'im.message.receive_v1' || eventType === 'message.receive_v1') {
-        const event = (body.event ?? {}) as Record<string, unknown>;
-        const message = (event.message ?? {}) as Record<string, unknown>;
-        const content = typeof message.content === 'string' ? message.content : '{}';
-
-        let messageText = '';
-        try {
-          const parsed = JSON.parse(content) as Record<string, unknown>;
-          messageText = typeof parsed.text === 'string' ? parsed.text : '';
-        } catch {
-          messageText = content;
-        }
-
-        // Strip @bot mention and sanitize input
-        messageText = sanitizer.sanitize(messageText.replace(/@_user_\d+/g, '').trim(), 'input').sanitized;
-        if (!messageText) {
-          res.json({ code: 0, msg: 'success' });
-          return;
-        }
-
-        const reply = await executeAgentMessage(config.agentId, messageText);
-
-        // Feishu expects a 200 with code 0 for acknowledgment.
-        // The reply is posted back via the Feishu API (if configured).
-        res.json({ code: 0, msg: 'success', reply });
-      } else {
-        // Unknown event — acknowledge
-        res.json({ code: 0, msg: 'success' });
-      }
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  }
-  router.post('/api/webhook/feishu', feishuHandler);
-  router.post('/api/webhook/feishu/:id', feishuHandler);
-
-  // ── POST /api/webhook/wecom/:id? — WeCom app callback ─────────────────
-  async function wecomHandler(req: Request, res: Response): Promise<void> {
-    try {
-      const id = typeof req.params.id === 'string' ? req.params.id : undefined;
-      const config = id ? findActiveIMWebhook(id) : undefined;
-
-      const msgSignature = req.query.msg_signature as string | undefined;
-      const timestamp = req.query.timestamp as string | undefined;
-      const nonce = req.query.nonce as string | undefined;
-
-      // WeCom sends XML in the body; express.json() may have already parsed it
-      // if Content-Type was JSON, but for XML we need the raw body.
-      const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
-
-      // Extract encrypted content for signature verification
-      const encrypt = extractXmlField(rawBody, 'Encrypt');
-
-      // Extract text content from XML
-      const msgType = extractXmlField(rawBody, 'MsgType');
-      const content = extractXmlField(rawBody, 'Content');
-
-      // Handle echostr verification (GET-style, but sometimes POSTed).
-      // This is allowed without config because it happens during app registration.
+      // WeCom echostr verification — also allowed without config.
       const echostr = req.query.echostr as string | undefined;
       if (echostr) {
         res.send(echostr);
         return;
       }
 
-      // A valid webhook config is required for all other WeCom callbacks.
+      const config = id ? findActiveIMWebhook(id) : undefined;
       if (!config) {
         res.status(401).json({ error: 'Webhook config required' });
         return;
       }
 
-      // Basic signature verification is mandatory when a config exists
-      // (skipping full AES decryption per task constraints).
-      if (msgSignature && timestamp && nonce && encrypt) {
-        if (!verifyWeComSignature(config.secret, timestamp, nonce, encrypt, msgSignature)) {
-          res.status(401).json({ error: 'Invalid msg_signature' });
-          return;
-        }
+      const verified = await provider.verify(incomingReq, config.secret);
+      if (!verified) {
+        res.status(401).json({ error: 'Invalid signature/token' });
+        return;
       }
 
-      if (msgType === 'text' && content) {
-        // Strip @bot mention and sanitize input
-        const messageText = sanitizer.sanitize(content.replace(/^\s*@\S+\s*/, '').trim(), 'input').sanitized;
-        if (messageText) {
-          const reply = await executeAgentMessage(config.agentId, messageText);
-
-          // Return plain XML response (unencrypted for simplicity)
-          res.type('application/xml');
-          res.send(
-            `<xml><MsgType><![CDATA[text]]></MsgType><Content><![CDATA[${reply}]]></Content></xml>`,
-          );
-          return;
+      const incoming = await provider.parseMessage(incomingReq);
+      const messageText = sanitizer.sanitize(
+        provider.stripMention(incoming.text),
+        'input',
+      ).sanitized;
+      if (!messageText) {
+        const emptyReply = provider.formatReply({ text: 'Please send a message.' });
+        res.status(emptyReply.status ?? 200);
+        if (emptyReply.headers) {
+          for (const [key, value] of Object.entries(emptyReply.headers)) {
+            res.set(key, value);
+          }
         }
+        res.send(emptyReply.body);
+        return;
       }
 
-      // Default acknowledgment
-      res.type('application/xml');
-      res.send('<xml><MsgType><![CDATA[text]]></MsgType><Content><![CDATA[OK]]></Content></xml>');
+      const replyText = await executeAgentMessage(config.agentId, messageText);
+      const reply = provider.formatReply({ text: replyText });
+
+      res.status(reply.status ?? 200);
+      if (reply.headers) {
+        for (const [key, value] of Object.entries(reply.headers)) {
+          res.set(key, value);
+        }
+      }
+      res.send(reply.body);
     } catch (error) {
       res.status(500).json({ error: toErrorMessage(error) });
     }
   }
-  router.post('/api/webhook/wecom', wecomHandler);
-  router.post('/api/webhook/wecom/:id', wecomHandler);
 
   // ── GET /api/webhook/config — list IM webhooks ────────────────────────
   router.get('/api/webhook/config', requireAuth, (_req: Request, res: Response) => {
@@ -542,6 +392,12 @@ export function createWebhookRouter(): Router {
       res.status(500).json({ error: toErrorMessage(error) });
     }
   });
+
+  // ── POST /api/webhook/:platform/:id? — Generic IM platform callback ─────
+  // Registered after config routes so that /api/webhook/config is not shadowed
+  // by the `:platform` parameter.
+  router.post('/api/webhook/:platform', imCallbackHandler);
+  router.post('/api/webhook/:platform/:id', imCallbackHandler);
 
   return router;
 }

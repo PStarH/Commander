@@ -12,6 +12,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getHookManager, type CommanderPlugin } from './pluginManager';
 import { getGlobalLogger } from './logging';
+import { getIMProviderRegistry } from './im';
+import type { IMProvider } from './im';
 import { getSupplyChainScanner } from './security/supplyChainScanner';
 import {
   getGlobalPluginPermissionRegistry,
@@ -291,6 +293,19 @@ export class PluginLoader {
     this.loaded.set(manifest.name, pkg);
     await getHookManager().register(pluginInstance);
 
+    // Register any IM providers declared by the plugin.
+    if (pluginInstance.provides) {
+      for (const decl of pluginInstance.provides) {
+        if (decl.service === 'im.provider' && decl.implementation) {
+          getIMProviderRegistry().register(decl.implementation as IMProvider);
+          getGlobalLogger().info('PluginLoader', 'Registered IM provider', {
+            plugin: manifest.name,
+            providerId: (decl.implementation as IMProvider).id,
+          });
+        }
+      }
+    }
+
     getGlobalLogger().debug('PluginLoader', `Loaded: ${manifest.name}@${manifest.version}`);
     return pkg;
   }
@@ -382,6 +397,16 @@ export class PluginLoader {
   async unloadPlugin(name: string): Promise<boolean> {
     const pkg = this.loaded.get(name);
     if (!pkg) return false;
+
+    // Unregister any IM providers provided by this plugin.
+    if (pkg.instance.provides) {
+      for (const decl of pkg.instance.provides) {
+        if (decl.service === 'im.provider' && decl.implementation) {
+          getIMProviderRegistry().unregister((decl.implementation as IMProvider).id);
+        }
+      }
+    }
+
     await getHookManager().unregister(name);
     this.loaded.delete(name);
     return true;

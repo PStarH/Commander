@@ -1,0 +1,12 @@
+{
+  "name": "im-wecom",
+  "version": "1.0.0",
+  "description": "WeCom IM provider for Commander",
+  "main": "index.ts",
+  "category": "integration",
+  "permissions": {
+    "network": { "allowedDomains": ["qyapi.weixin.qq.com"] },
+    "filesystem": { "read": [], "write": [] }
+  },
+  "provides": [{ "service": "im.provider", "description": "WeCom webhook integration" }]
+}
