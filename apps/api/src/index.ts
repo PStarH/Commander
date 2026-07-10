@@ -14,12 +14,14 @@ import {
   ShadowProxy,
   loadShadowConfig,
   type ShadowConfig,
+  createMemoryStore,
 } from '@commander/core';
 import express from 'express';
 import { createWarRoomStore, apiStore } from './store';
 import { ProjectMemoryStore } from './memoryStore';
 import { AgentStateStore } from './agentStateStore';
 import { MemoryIndexManager, DEFAULT_DOMAINS } from './memoryIndexManager';
+import { ProjectMemoryStoreAdapter } from './memoryStoreAdapter';
 import { EpisodicMemoryStore } from './episodicMemoryStore';
 import { ActionRationaleStore } from './actionRationale';
 import { ConfidenceReporter } from './confidenceReporter';
@@ -58,6 +60,7 @@ import {
   closeRateLimitStore,
 } from './securityMiddleware';
 import { authMiddleware } from './authMiddleware';
+import { tenantContextMiddleware } from './tenantContextMiddleware';
 import { jwtMiddleware } from './jwtMiddleware';
 import { createUserAuthRouter } from './userAuthEndpoints';
 import { createOIDCAuthRouter } from './oidcAuthEndpoints';
@@ -106,7 +109,8 @@ const store = createWarRoomStore();
 const apiStoreInstance = apiStore;
 const memoryStore = new ProjectMemoryStore();
 const agentStateStore = new AgentStateStore();
-const memoryIndexManager = new MemoryIndexManager(PROJECT_ID);
+let memoryIndexManager: MemoryIndexManager | null = null;
+let projectMemoryAdapter: ProjectMemoryStoreAdapter | undefined;
 const episodicMemoryStore = new EpisodicMemoryStore();
 const actionRationaleStore = new ActionRationaleStore();
 const confidenceReporter = new ConfidenceReporter(actionRationaleStore);
@@ -199,6 +203,12 @@ app.use((req, res, next) => {
 // here and skips requests already authenticated via JWT (req.user set).
 app.use(authMiddleware);
 
+// 7a. Tenant context propagation. After auth has resolved the tenant identity
+// (API key / JWT mapping), bind the async tenant context so that all downstream
+// core singletons return tenant-scoped instances. Requests without a tenant
+// continue in single-tenant mode.
+app.use(tenantContextMiddleware);
+
 // 7b. Zero-trust request-signature validation. When no keys are registered it
 // passes through (skipIfNoKeys), so existing deployments keep working. Once
 // keys are registered via the security endpoints, every mutating request must
@@ -235,15 +245,6 @@ app.use(
 const shadowConfig: ShadowConfig = loadShadowConfig();
 const shadowProxy = new ShadowProxy(shadowConfig);
 app.use(shadowProxy.expressMiddleware());
-
-// Initialize default memory domains on startup
-DEFAULT_DOMAINS.forEach(({ domain, description }) => {
-  try {
-    memoryIndexManager.addDomain(domain, description);
-  } catch (e) {
-    process.stderr.write(`[MemoryIndex] Domain already exists: ${domain}\n`);
-  }
-});
 
 // ── System ──────────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
@@ -429,7 +430,7 @@ registerRouter({
 registerRouter({
   name: 'memory-index',
   mountPath: '/',
-  factory: () => createMemoryIndexRouter(memoryIndexManager),
+  factory: () => createMemoryIndexRouter(memoryIndexManager!),
 });
 registerRouter({ name: 'conflict', mountPath: '/', factory: () => createConflictRouter(store) });
 registerRouter({ name: 'security', mountPath: '/', factory: () => createSecurityRouter() });
@@ -668,7 +669,6 @@ registerRouter({
   mountPath: '/api/v1/observability',
   factory: () => createObservabilityRouter(),
 });
-mountRegisteredRouters(app);
 
 // ── OpenAPI ─────────────────────────────────────────────────────────────────
 app.get('/api/openapi.json', (_req, res) => {
@@ -915,6 +915,42 @@ let httpServer: { close: (cb?: () => void) => void } | null = null;
 
 async function startServer(): Promise<void> {
   await initRateLimitStore();
+
+  // Initialize optional ProjectMemoryStoreAdapter for the memory-index router.
+  // When enabled, memory-index domain entries are mirrored into the canonical
+  // MemoryStore (in-memory/sqlite/json) so they can be discovered through the
+  // project memory APIs. Defaults to 'none' to preserve existing JSON-only
+  // behavior unless explicitly opted in.
+  const adapterType = process.env.COMMANDER_MEMORY_INDEX_ADAPTER_TYPE ?? 'none';
+  if (adapterType !== 'none') {
+    try {
+      const store = await createMemoryStore(adapterType as 'in-memory' | 'sqlite' | 'json');
+      projectMemoryAdapter = new ProjectMemoryStoreAdapter(store);
+      process.stdout.write(
+        `[MemoryIndex] Adapter enabled (${adapterType}) for project ${PROJECT_ID}\n`,
+      );
+    } catch (err) {
+      reportSilentFailure(err, 'index:startServer:adapter');
+      process.stderr.write(
+        `[MemoryIndex] Failed to initialize adapter (${adapterType}): ${(err as Error)?.message ?? String(err)}. Continuing without adapter.\n`,
+      );
+    }
+  }
+
+  memoryIndexManager = new MemoryIndexManager(PROJECT_ID, projectMemoryAdapter);
+
+  // Initialize default memory domains on startup
+  DEFAULT_DOMAINS.forEach(({ domain, description }) => {
+    try {
+      memoryIndexManager!.addDomain(domain, description);
+    } catch (e) {
+      process.stderr.write(`[MemoryIndex] Domain already exists: ${domain}\n`);
+    }
+  });
+
+  // Mount routers after shared state (including memoryIndexManager) is initialized.
+  mountRegisteredRouters(app);
+
   // Start the outgoing webhook dispatcher so registered webhooks receive
   // system events as soon as the server is ready.
   getWebhookDispatcher().start();
