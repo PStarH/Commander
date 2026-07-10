@@ -1,5 +1,6 @@
 import type { BenchmarkModule } from './types';
 import { thompsonMemoryModule } from './modules/thompsonMemory';
+import { semanticFirewallModule } from './modules/semanticFirewall';
 import { adaptiveStoppingModule } from './modules/adaptiveStopping';
 import { swarmOrchestratorModule } from './modules/swarmOrchestrator';
 import { dynamicCostGuardianModule } from './modules/dynamicCostGuardian';
@@ -34,6 +35,7 @@ import { capabilityMatcherModule } from './modules/capabilityMatcher';
 import { subAgentExecutorModule } from './modules/subAgentExecutor';
 import { anomalyDetectorModule } from './modules/anomalyDetector';
 import { samplingPolicyModule } from './modules/samplingPolicy';
+import { sacProtocolModule } from './modules/sacProtocol';
 
 const registry: Map<string, BenchmarkModule> = new Map();
 
@@ -56,6 +58,7 @@ export function getAllModules(): BenchmarkModule[] {
 }
 
 registerModule(thompsonMemoryModule);
+registerModule(semanticFirewallModule);
 registerModule(adaptiveStoppingModule);
 registerModule(swarmOrchestratorModule);
 registerModule(dynamicCostGuardianModule);
@@ -90,3 +93,4 @@ registerModule(capabilityMatcherModule);
 registerModule(subAgentExecutorModule);
 registerModule(anomalyDetectorModule);
 registerModule(samplingPolicyModule);
+registerModule(sacProtocolModule);
