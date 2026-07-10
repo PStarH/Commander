@@ -31,6 +31,7 @@ import { qualityGatesModule } from './modules/qualityGates';
 import { outputSanitizerModule } from './modules/outputSanitizer';
 import { backpressureControllerModule } from './modules/backpressureController';
 import { capabilityMatcherModule } from './modules/capabilityMatcher';
+import { subAgentExecutorModule } from './modules/subAgentExecutor';
 
 const registry: Map<string, BenchmarkModule> = new Map();
 
@@ -84,3 +85,4 @@ registerModule(qualityGatesModule);
 registerModule(outputSanitizerModule);
 registerModule(backpressureControllerModule);
 registerModule(capabilityMatcherModule);
+registerModule(subAgentExecutorModule);
