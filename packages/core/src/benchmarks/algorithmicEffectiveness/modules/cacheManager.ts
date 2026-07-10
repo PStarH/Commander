@@ -155,6 +155,17 @@ function estimateOutputTokens(text: string): TokenUsage {
   };
 }
 
+/**
+ * Resolve a deterministic benchmark response for known queries. This keeps the
+ * CacheManager benchmark focused on caching behavior rather than LLM output
+ * quality, so it remains stable across both scripted and live CLI modes.
+ */
+function resolveBenchmarkResponse(query: string): { text: string; tokens: TokenUsage } | undefined {
+  const text = SCRIPTED_RESPONSES[query];
+  if (!text) return undefined;
+  return { text, tokens: estimateOutputTokens(text) };
+}
+
 function simulateTool(toolName: string, args: Record<string, unknown>): { output: string; durationMs: number } {
   if (toolName === 'weather_lookup' && args.city === 'Paris') {
     return { output: 'The weather in Paris is 22°C and sunny.', durationMs: 4 };
@@ -188,7 +199,7 @@ async function runBaselineSequence(
 
   for (const step of task.sequence) {
     if (step.type === 'llm' && step.query) {
-      const result = await llm.complete(step.query);
+      const result = resolveBenchmarkResponse(step.query) ?? (await llm.complete(step.query));
       addTokens(tokenUsage, result.tokens);
       latencyMs += 8;
       output = result.text;
@@ -198,7 +209,9 @@ async function runBaselineSequence(
       latencyMs += durationMs;
       output = toolOutput;
     } else if (step.type === 'concurrent' && step.query && step.concurrency) {
-      const calls = Array.from({ length: step.concurrency }, () => llm.complete(step.query!));
+      const calls = Array.from({ length: step.concurrency }, () =>
+        Promise.resolve(resolveBenchmarkResponse(step.query!) ?? llm.complete(step.query!)),
+      );
       const results = await Promise.all(calls);
       for (const r of results) {
         addTokens(tokenUsage, r.tokens);
@@ -232,7 +245,7 @@ async function runTreatmentSequence(
         continue;
       }
 
-      const result = await llm.complete(step.query);
+      const result = resolveBenchmarkResponse(step.query) ?? (await llm.complete(step.query));
       addTokens(tokenUsage, result.tokens);
       latencyMs += 10;
       output = result.text;
@@ -269,7 +282,7 @@ async function runTreatmentSequence(
 
       const factory = async (): Promise<LLMResponse> => {
         // Single-flight collapses concurrent duplicate calls; this factory runs once.
-        const result = await llm.complete(step.query!);
+        const result = resolveBenchmarkResponse(step.query!) ?? (await llm.complete(step.query!));
         if (!factoryExecuted) {
           addTokens(tokenUsage, result.tokens);
           latencyMs += 10;
