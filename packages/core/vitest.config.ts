@@ -343,6 +343,7 @@ export default defineConfig({
       'tests/benchmarks/algorithmicEffectiveness/runner.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/registry.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/thompsonMemory.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/modules/qualityGates.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/outputSanitizer.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/contextCompactor.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/cacheManager.test.ts',
