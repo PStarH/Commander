@@ -359,6 +359,7 @@ export default defineConfig({
       'tests/benchmarks/algorithmicEffectiveness/reporter.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/runner.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/registry.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/modules/anomalyDetector.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/thompsonMemory.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/samplingPolicy.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/qualityGates.test.ts',
