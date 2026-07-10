@@ -56,6 +56,18 @@
       "types": "./dist/plugins/im/wecom/index.d.ts",
       "default": "./dist/plugins/im/wecom/index.js"
     },
+    "./plugins/im/slack": {
+      "types": "./dist/plugins/im/slack/index.d.ts",
+      "default": "./dist/plugins/im/slack/index.js"
+    },
+    "./plugins/im/teams": {
+      "types": "./dist/plugins/im/teams/index.d.ts",
+      "default": "./dist/plugins/im/teams/index.js"
+    },
+    "./plugins/im/discord": {
+      "types": "./dist/plugins/im/discord/index.d.ts",
+      "default": "./dist/plugins/im/discord/index.js"
+    },
     "./package.json": "./package.json"
   },
   "keywords": [
@@ -87,6 +99,7 @@
     "test": "vitest run --no-cache",
     "test:quick": "vitest run --no-cache --exclude 'tests/runtime/*' --exclude 'tests/*.test.ts' tests/ultimate/ tests/tools/ tests/security/ 2>/dev/null || vitest run --no-cache tests/ultimate/deliberation.test.ts tests/tools/pathSecurity.test.ts",
     "test:algorithmic": "vitest run --no-cache tests/benchmarks/algorithmicEffectiveness",
+    "test:coverage:core": "vitest run --no-cache --config vitest.config.core.ts --coverage",
     "benchmark:algorithmic:live": "tsx src/benchmarks/algorithmicEffectiveness/cli.ts live",
     "test:inventory": "node scripts/test-inventory.mjs --verify",
     "test:node": "node scripts/run-node-tests.mjs",

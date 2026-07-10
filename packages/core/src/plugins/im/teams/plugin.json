@@ -1,0 +1,12 @@
+{
+  "name": "im-teams",
+  "version": "1.0.0",
+  "description": "Microsoft Teams IM provider for Commander",
+  "main": "index.ts",
+  "category": "integration",
+  "permissions": {
+    "network": { "allowedDomains": ["*.botframework.com"] },
+    "filesystem": { "read": [], "write": [] }
+  },
+  "provides": [{ "service": "im.provider", "description": "Microsoft Teams webhook integration" }]
+}

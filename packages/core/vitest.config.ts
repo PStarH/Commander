@@ -24,6 +24,8 @@ export default defineConfig({
       'tests/atr/recoveryBootstrapper.test.ts',
       'tests/atr/taskQueue.test.ts',
       'tests/atr/gitSnapshot.test.ts',
+      'tests/atr/executionScheduler.test.ts',
+      'src/atr/__tests__/schedulerTenantPriority.test.ts',
       // --- recovery ---
       'tests/recovery/kill9.test.ts',
       // --- runtime ---
@@ -45,9 +47,14 @@ export default defineConfig({
       'tests/runtime/createTenantAwareSingleton.cascade.test.ts',
       // --- im providers ---
       'tests/im/imProviderRegistry.test.ts',
+      'tests/im/imContextStore.test.ts',
+      'tests/im/imOutboundDispatcher.test.ts',
       'tests/im/providers/dingtalk.test.ts',
       'tests/im/providers/feishu.test.ts',
       'tests/im/providers/wecom.test.ts',
+      'tests/im/providers/slack.test.ts',
+      'tests/im/providers/teams.test.ts',
+      'tests/im/providers/discord.test.ts',
       'tests/checkpointStore.test.ts',
       'tests/runtime/baseOpenAICompatibleRetry.test.ts',
       'tests/runtime/bm25ToolDiscovery.test.ts',
@@ -144,6 +151,7 @@ export default defineConfig({
       'tests/intelligence/costPredictor.test.ts',
       // --- sandbox ---
       'tests/sandbox/lane.test.ts',
+      'src/sandbox/__tests__/laneFairness.test.ts',
       'tests/sandbox/appContainer.test.ts',
       'tests/sandbox/teeEnclave.test.ts',
       'tests/runtime/observationPurifier.test.ts',
@@ -192,6 +200,7 @@ export default defineConfig({
       'tests/plugins/gap/storage.test.ts',
       'tests/plugins/gap/types.test.ts',
       'tests/plugins/builtin/consensus/adaptiveStopping.test.ts',
+      'tests/plugins/builtin/consensus/sacProtocol.test.ts',
       // --- security (3-layer defense regression — reversible gate, anomaly
       // detector, universal sanitizer, tenancy boundary, plugin supply) ---
       'tests/security/adversarial.test.ts',
@@ -226,10 +235,11 @@ export default defineConfig({
       'tests/memoryBenchmark.test.ts',
       'tests/memory/thompsonMemoryScorer.test.ts',
       'src/memory/__tests__/tenantIsolation.test.ts',
+      'src/runtime/__tests__/tenantFairnessMonitor.test.ts',
       // --- P1 memory management agent prototype ---
       'tests/memory/temporalGraph.test.ts',
       'tests/memory/memoryManagerAgent.test.ts',
-
+      'tests/memory/threeLayerMemoryManagerIntegration.test.ts',
 
       // --- GDPR compliance + AdaptiveHITL weight learning ---
       'tests/architecture/gdprCompliance.test.ts',
@@ -328,6 +338,7 @@ export default defineConfig({
       'tests/ultimate/topologyOptimizer.test.ts',
       'tests/ultimate/atomizer.test.ts',
       'tests/ultimate/subAgentExecutor.test.ts',
+      'tests/ultimate/deliberation.test.ts',
       'tests/ultimate/orchestrator.test.ts',
       'tests/ultimate/workCoordinator.test.ts',
       'tests/ultimate/workQueueStore.test.ts',
@@ -406,6 +417,12 @@ export default defineConfig({
       'tests/benchmarks/algorithmicEffectiveness/modules/reversibilityGate.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/outboundNetworkPolicy.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/index.test.ts',
+      // --- low-coverage module target tests ---
+      'tests/observability/anomalyDetector.test.ts',
+      'tests/runtime/backpressureController.test.ts',
+      'tests/runtime/capabilityMatcher.test.ts',
+      'tests/security/semanticFirewall.test.ts',
+      'tests/selfEvolution/metaLearner.test.ts',
       // --- orchestration patterns (Concurrent/Graph/MoA/Router/CrossPollination/AutoLoop/DynamicReplanner) ---
       'tests/orchestration/orchestrationPatterns.test.ts',
     ],
