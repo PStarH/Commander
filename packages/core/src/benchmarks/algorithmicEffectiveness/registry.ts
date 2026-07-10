@@ -23,6 +23,10 @@ import { fusionEngineModule } from './modules/fusionEngine';
 import { costPredictorModule } from './modules/costPredictor';
 import { modelCascadeControllerModule } from './modules/modelCascadeController';
 import { cacheManagerModule } from './modules/cacheManager';
+import { predictionLoopModule } from './modules/predictionLoop';
+import { trajectoryAnalyzerModule } from './modules/trajectoryAnalyzer';
+import { contextCompactorModule } from './modules/contextCompactor';
+import { deliberationModule } from './modules/deliberation';
 
 const registry: Map<string, BenchmarkModule> = new Map();
 
@@ -68,3 +72,7 @@ registerModule(fusionEngineModule);
 registerModule(costPredictorModule);
 registerModule(modelCascadeControllerModule);
 registerModule(cacheManagerModule);
+registerModule(predictionLoopModule);
+registerModule(trajectoryAnalyzerModule);
+registerModule(contextCompactorModule);
+registerModule(deliberationModule);
