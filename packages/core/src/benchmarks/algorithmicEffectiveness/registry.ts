@@ -36,6 +36,9 @@ import { subAgentExecutorModule } from './modules/subAgentExecutor';
 import { anomalyDetectorModule } from './modules/anomalyDetector';
 import { samplingPolicyModule } from './modules/samplingPolicy';
 import { sacProtocolModule } from './modules/sacProtocol';
+import { securityPrimitivesModule } from './modules/securityPrimitives';
+import { reversibilityGateModule } from './modules/reversibilityGate';
+import { outboundNetworkPolicyModule } from './modules/outboundNetworkPolicy';
 
 const registry: Map<string, BenchmarkModule> = new Map();
 
@@ -94,3 +97,6 @@ registerModule(subAgentExecutorModule);
 registerModule(anomalyDetectorModule);
 registerModule(samplingPolicyModule);
 registerModule(sacProtocolModule);
+registerModule(securityPrimitivesModule);
+registerModule(reversibilityGateModule);
+registerModule(outboundNetworkPolicyModule);
