@@ -27,6 +27,9 @@ import { predictionLoopModule } from './modules/predictionLoop';
 import { trajectoryAnalyzerModule } from './modules/trajectoryAnalyzer';
 import { contextCompactorModule } from './modules/contextCompactor';
 import { deliberationModule } from './modules/deliberation';
+import { qualityGatesModule } from './modules/qualityGates';
+import { outputSanitizerModule } from './modules/outputSanitizer';
+import { backpressureControllerModule } from './modules/backpressureController';
 
 const registry: Map<string, BenchmarkModule> = new Map();
 
@@ -76,3 +79,6 @@ registerModule(predictionLoopModule);
 registerModule(trajectoryAnalyzerModule);
 registerModule(contextCompactorModule);
 registerModule(deliberationModule);
+registerModule(qualityGatesModule);
+registerModule(outputSanitizerModule);
+registerModule(backpressureControllerModule);
