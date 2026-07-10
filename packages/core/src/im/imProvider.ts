@@ -33,6 +33,18 @@ export interface IMReply {
   metadata?: Record<string, unknown>;
 }
 
+/** Credentials used by a provider to send proactive outbound messages. */
+export interface IMOutboundCredentials {
+  /** Platform-specific API token / bot token. */
+  token?: string;
+  /** App ID / Client ID (Teams, Discord). */
+  appId?: string;
+  /** For Discord: webhook URL; for Teams: service URL. */
+  endpoint?: string;
+  /** Provider-specific extras, encrypted at rest. */
+  extra?: Record<string, unknown>;
+}
+
 export interface IMProvider {
   /** Unique provider ID, matches the `platform` field in IMWebhookConfig. */
   id: string;
@@ -50,5 +62,9 @@ export interface IMProvider {
    * Optional: Send a proactive message via platform API.
    * When absent, the host falls back to HTTP response formatReply.
    */
-  sendMessage?(conversationId: string, reply: IMReply, config: unknown): Promise<void>;
+  sendMessage?(
+    conversationId: string,
+    reply: IMReply,
+    config: IMOutboundCredentials,
+  ): Promise<void>;
 }
