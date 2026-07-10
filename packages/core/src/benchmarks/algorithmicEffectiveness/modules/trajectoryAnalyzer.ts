@@ -5,6 +5,7 @@ import type {
   Task,
   TokenUsage,
 } from '../types';
+import type { TokenUsage as RuntimeTokenUsage } from '../../../runtime/types';
 import type {
   ExecutionExperience,
   EvolutionInsight,
@@ -168,6 +169,16 @@ function estimateTokens(text: string): TokenUsage {
   };
 }
 
+function toRuntimeTokenUsage(tokens: TokenUsage): RuntimeTokenUsage {
+  return {
+    promptTokens: tokens.input,
+    completionTokens: tokens.output,
+    totalTokens: tokens.total,
+    cacheReadTokens: tokens.cached,
+    cacheWriteTokens: 0,
+  };
+}
+
 function classifyByPrompt(prompt: string): FailureCategory {
   if (prompt.includes('OAuth authentication request timed out')) {
     return 'authentication';
@@ -213,7 +224,7 @@ function createProvider(llm: LLMClient): LLMProvider {
       return {
         content: text,
         model: req.model ?? 'scripted',
-        usage: tokens,
+        usage: toRuntimeTokenUsage(tokens),
         finishReason: 'stop' as const,
       };
     },
