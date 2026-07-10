@@ -45,6 +45,7 @@ export default defineConfig({
       'tests/runtime/createTenantAwareSingleton.cascade.test.ts',
       'tests/checkpointStore.test.ts',
       'tests/runtime/baseOpenAICompatibleRetry.test.ts',
+      'tests/runtime/bm25ToolDiscovery.test.ts',
       'tests/runtime/circuitBreaker.test.ts',
       'tests/runtime/concurrentToolExecution.test.ts',
       'tests/runtime/stateIsolation.test.ts',
@@ -78,9 +79,12 @@ export default defineConfig({
       'tests/runtime/messageBus.test.ts',
       'tests/runtime/metaLearner.test.ts',
       'tests/runtime/metaTool.test.ts',
+      'tests/selfEvolution/strategySelector.test.ts',
       'tests/runtime/metricsCollector.test.ts',
       'tests/runtime/modelPerformanceStore.test.ts',
       'tests/runtime/modelRouter.test.ts',
+      'tests/runtime/smartModelRouter.test.ts',
+      'tests/runtime/contextCompactor.test.ts',
       'tests/runtime/openTelemetryExporter.test.ts',
       'tests/runtime/promptCacheSavings.test.ts',
       'tests/runtime/providerFallbackChain.test.ts',
@@ -93,6 +97,7 @@ export default defineConfig({
       'tests/runtime/supervisionTree.integration.test.ts',
       'tests/runtime/samplesStore.test.ts',
       'tests/runtime/semanticCache.test.ts',
+      'tests/runtime/cacheManager.test.ts',
       'tests/runtime/speculativeExecutor.test.ts',
       'tests/runtime/stepErrorBoundary.test.ts',
       'tests/runtime/stepTimeoutManager.test.ts',
@@ -115,6 +120,9 @@ export default defineConfig({
       'tests/runtime/runtimeGuardianBridge.test.ts',
       'tests/runtime/workflowPopulation.test.ts',
       'tests/runtime/sopDashboard.test.ts',
+      'tests/runtime/observationPurifier.test.ts',
+      'tests/runtime/parameterController.test.ts',
+      'tests/runtime/tokenGovernor.test.ts',
       // async-I/O migration regression suite — guards the no-event-loop-blocking,
       // no-TOCTOU-probes, no-missed-visibility contract of the 5 hotspot files
       // (healthCheck/checkpoint, compensationService/mkdir, freezeDry/round-trip,
@@ -127,6 +135,7 @@ export default defineConfig({
       'tests/telos/modelCascadeController.test.ts',
       // --- intelligence ---
       'tests/intelligence/costAggregator.test.ts',
+      'tests/intelligence/costPredictor.test.ts',
       // --- sandbox ---
       'tests/sandbox/lane.test.ts',
       'tests/sandbox/appContainer.test.ts',
@@ -176,6 +185,7 @@ export default defineConfig({
       'tests/plugins/gap/slaEnforcer.test.ts',
       'tests/plugins/gap/storage.test.ts',
       'tests/plugins/gap/types.test.ts',
+      'tests/plugins/builtin/consensus/adaptiveStopping.test.ts',
       // --- security (3-layer defense regression — reversible gate, anomaly
       // detector, universal sanitizer, tenancy boundary, plugin supply) ---
       'tests/security/adversarial.test.ts',
@@ -208,6 +218,11 @@ export default defineConfig({
       // --- memory (cross-tenant leak fix) ---
       'tests/memoryCurator.test.ts',
       'tests/memoryBenchmark.test.ts',
+      'tests/memory/thompsonMemoryScorer.test.ts',
+      // --- P1 memory management agent prototype ---
+      'tests/memory/temporalGraph.test.ts',
+      'tests/memory/memoryManagerAgent.test.ts',
+
 
       // --- GDPR compliance + AdaptiveHITL weight learning ---
       'tests/architecture/gdprCompliance.test.ts',
@@ -278,6 +293,7 @@ export default defineConfig({
       'tests/security/a2aAuth.test.ts',
       'tests/security/memoryIsolation.test.ts',
       'tests/security/taintTrackingPlugin.test.ts',
+      'tests/security/dynamicCostGuardian.test.ts',
       // --- harness ---
       'tests/harness/tier1AgentLoop.test.ts',
       'tests/harness/tier1Harness.test.ts',
@@ -301,7 +317,7 @@ export default defineConfig({
       'tests/ultimate/routingDashboard.test.ts',
       'tests/ultimate/subAgentGuard.test.ts',
       'tests/ultimate/tenantWorkCoordinatorRegistry.test.ts',
-      // 'tests/ultimate/topologyRouter.test.ts', // skipped: legacy topology alias names incompatible with D3.2 canonical types
+      'tests/ultimate/topologyRouter.test.ts',
       'tests/ultimate/topologyOptimizer.test.ts',
       'tests/ultimate/atomizer.test.ts',
       'tests/ultimate/subAgentExecutor.test.ts',
@@ -346,6 +362,7 @@ export default defineConfig({
       'tests/benchmarks/algorithmicEffectiveness/modules/qualityGates.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/outputSanitizer.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/backpressureController.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/modules/capabilityMatcher.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/contextCompactor.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/cacheManager.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/predictionLoop.test.ts',
@@ -369,6 +386,7 @@ export default defineConfig({
       'tests/benchmarks/algorithmicEffectiveness/modules/tokenGovernor.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/fusionEngine.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/executionRouter.test.ts',
+      'tests/benchmarks/algorithmicEffectiveness/modules/subAgentExecutor.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/llmRetry.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/bm25ToolDiscovery.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/circuitBreaker.test.ts',
