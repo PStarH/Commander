@@ -32,6 +32,7 @@ import { outputSanitizerModule } from './modules/outputSanitizer';
 import { backpressureControllerModule } from './modules/backpressureController';
 import { capabilityMatcherModule } from './modules/capabilityMatcher';
 import { subAgentExecutorModule } from './modules/subAgentExecutor';
+import { anomalyDetectorModule } from './modules/anomalyDetector';
 
 const registry: Map<string, BenchmarkModule> = new Map();
 
@@ -86,3 +87,4 @@ registerModule(outputSanitizerModule);
 registerModule(backpressureControllerModule);
 registerModule(capabilityMatcherModule);
 registerModule(subAgentExecutorModule);
+registerModule(anomalyDetectorModule);
