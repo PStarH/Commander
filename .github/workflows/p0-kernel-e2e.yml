@@ -36,6 +36,10 @@ jobs:
       DATABASE_URL: postgres://commander:commander@localhost:5432/commander
       COMMANDER_KERNEL_DATABASE_URL: postgres://commander:commander@localhost:5432/commander
       P0_TIMEOUT_MS: '120000'
+      GIT_TERMINAL_PROMPT: '0'
+      # AgentRuntime side-effects must not require a durable path in CI workers
+      COMMANDER_INTERACTION_DB: ':memory:'
+      # full-loop uses deterministic worker executor (not full AgentRuntime)
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
