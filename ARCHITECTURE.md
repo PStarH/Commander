@@ -106,21 +106,28 @@ Token budget enforcement, provider pooling, and cost-aware routing.
 ## CLI Usage
 
 ```bash
-commander run "task"          # Full execution with streaming progress
-commander plan "task"         # Show deliberation plan (alias: run --dry-run)
-commander watch "task"        # Execute with real-time SSE stream (alias: run --stream)
+commander run "task"          # Full execution (--dry-run for plan, --stream for live SSE, --tui for dashboard)
+commander fix                 # Auto-fix lint, formatting & type errors
+commander init                # Zero-config environment setup
 commander company "task"      # Enterprise: quality gating + memory
 commander swarm "task"        # Recursive decomposition + parallel
 commander drive "task"        # Autonomous step-by-step execution
 commander goal "task"         # Multi-round convergence loop
-commander review --commit     # Code review with P0-P3 findings
+commander review              # Code review with P0-P3 findings
 commander status              # Show system status
 commander config              # View or change settings
 commander doctor              # Run diagnostics
 commander history             # Session management
 commander gui                 # Web dashboard (Agent War Room)
-commander tui                 # Terminal dashboard
 commander skill               # Learnable skill management
+commander plugin              # Install/list/uninstall plugins
+commander mode                # Show/set approval mode
+commander intelligence        # MetaLearner stats & insights
+commander feedback            # Submit feedback
+commander budget              # View token budget status
+commander checkpoint          # View checkpoint documents
+commander saga                # Saga transaction management
+commander cost                # Token usage & cost reports
 commander help                # Show this help
 ```
 

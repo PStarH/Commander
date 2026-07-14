@@ -103,9 +103,7 @@ function preTrainTracker(
   for (const [strategy, profile] of Object.entries(strategies)) {
     const successCount = Math.round(EXPERIENCES_PER_STRATEGY * profile.successRate);
     for (let i = 0; i < EXPERIENCES_PER_STRATEGY; i++) {
-      tracker.recordExperience(
-        makeExperience(taskId, strategy, i < successCount, profile, i),
-      );
+      tracker.recordExperience(makeExperience(taskId, strategy, i < successCount, profile, i));
     }
   }
 }

@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 2,
+  "benchmark": "failover-rto-live",
+  "evidenceLevel": "simulated",
+  "baseline": {
+    "gitSha": "6e4a50817201bc338afa0e5c40f3d33f542e71c5",
+    "nodeVersion": "v26.3.1",
+    "pnpmVersion": "9.15.4",
+    "topology": {
+      "gateways": 1,
+      "workers": 1,
+      "operations": 0,
+      "model": "single"
+    }
+  },
+  "measurements": [
+    {
+      "name": "failover_rto_simulated",
+      "actualMs": 143,
+      "thresholdMs": 10000,
+      "passed": true
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "errors": 0,
+    "failed": 0,
+    "skipped": 0
+  },
+  "env": {
+    "evidence": "simulated",
+    "gitSha": "6e4a50817201bc338afa0e5c40f3d33f542e71c5",
+    "gitBranch": "master",
+    "gitDirty": true,
+    "nodeVersion": "v26.3.1",
+    "pnpmVersion": "9.15.4",
+    "topology": {
+      "gateways": 1,
+      "workers": 1,
+      "operations": 0,
+      "model": "single"
+    }
+  },
+  "runAt": "2026-07-13T07:21:20.133Z"
+}

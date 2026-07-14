@@ -21,6 +21,44 @@ export function getOpenApiSpec(version: string) {
       { name: 'System', description: 'Health and status' },
     ],
     paths: {
+      '/v1/runs': {
+        post: {
+          tags: ['Runs'],
+          summary: 'Submit a durable agent run',
+          description:
+            'Asynchronously submits work to the shared execution kernel. Requires Idempotency-Key and a tenant-bound identity.',
+          parameters: [
+            {
+              name: 'Idempotency-Key',
+              in: 'header',
+              required: true,
+              schema: { type: 'string', minLength: 8, maxLength: 256 },
+            },
+          ],
+          responses: {
+            '202': { description: 'Run accepted for scheduling' },
+            '200': { description: 'Idempotent replay of an existing run' },
+            '409': { description: 'Idempotency key reused with a different request' },
+            '503': { description: 'Shared kernel or policy snapshot unavailable' },
+          },
+        },
+      },
+      '/v1/runs/{runId}': {
+        get: {
+          tags: ['Runs'],
+          summary: 'Get a durable run',
+          parameters: [{ name: 'runId', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: { '200': { description: 'Run' }, '404': { description: 'Not found' } },
+        },
+      },
+      '/v1/runs/{runId}/events': {
+        get: {
+          tags: ['Runs'],
+          summary: 'List durable run events',
+          parameters: [{ name: 'runId', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: { '200': { description: 'Ordered event timeline' } },
+        },
+      },
       '/health': {
         get: {
           tags: ['System'],

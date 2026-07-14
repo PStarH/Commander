@@ -1,0 +1,65 @@
+{
+  "name": "@commander/worker-plane",
+  "version": "0.2.0",
+  "description": "Commander distributed worker plane — workload identity, registration, capability-aware leasing, and execution loops",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "commander-worker": "./dist/main.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
+    "typecheck": "tsc --noEmit",
+    "test": "pnpm --workspace-root exec tsx --test packages/worker-plane/src/workerService.test.ts",
+    "test:e2e": "pnpm --workspace-root exec tsx --test packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts",
+    "prepublishOnly": "tsc -p tsconfig.json"
+  },
+  "keywords": [
+    "commander",
+    "worker",
+    "distributed",
+    "leasing",
+    "multi-agent",
+    "ai"
+  ],
+  "author": "PStarH <sampan090611@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PStarH/Commander",
+    "directory": "packages/worker-plane"
+  },
+  "bugs": {
+    "url": "https://github.com/PStarH/Commander/issues"
+  },
+  "homepage": "https://github.com/PStarH/Commander#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@commander/core": "workspace:*",
+    "@commander/kernel": "workspace:*",
+    "@commander/effect-broker": "workspace:*",
+    "pg": "^8.15.0"
+  },
+  "optionalDependencies": {},
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "@types/pg": "^8.11.0",
+    "typescript": "^5.0.0"
+  }
+}

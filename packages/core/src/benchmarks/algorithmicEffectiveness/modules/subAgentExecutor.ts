@@ -3,7 +3,7 @@ import { ArtifactSystem } from '../../../ultimate/artifactSystem';
 import type { BenchmarkModule, LLMClient, Task, TokenUsage } from '../types';
 import type { TaskTreeNode, ExecutionError } from '../../../ultimate/types';
 import type { AgentRuntimeInterface } from '../../../runtime';
-import type { AgentExecutionResult } from '../../../runtime/types';
+import type { AgentExecutionContext, AgentExecutionResult } from '../../../runtime/types';
 
 interface BenchmarkTask extends Task {
   keywords: string[];
@@ -28,11 +28,13 @@ const taskSuite: BenchmarkTask[] = [
     prompt:
       'Research vector databases, service meshes, deployment strategies, consistency patterns, and observability for a cloud platform.',
     keywords: ['HNSW', 'sidecar', 'blue-green', 'saga', 'OpenTelemetry'],
-    expected: (output: string) => checkKeywords(output, ['HNSW', 'sidecar', 'blue-green', 'saga', 'OpenTelemetry']),
+    expected: (output: string) =>
+      checkKeywords(output, ['HNSW', 'sidecar', 'blue-green', 'saga', 'OpenTelemetry']),
   },
   {
     id: 'compliance-report',
-    prompt: 'Build a compliance report covering privacy, security, availability, and cost controls.',
+    prompt:
+      'Build a compliance report covering privacy, security, availability, and cost controls.',
     keywords: ['GDPR', 'OWASP', 'SLA', 'budget'],
     expected: (output: string) => checkKeywords(output, ['GDPR', 'OWASP', 'SLA', 'budget']),
   },
@@ -40,14 +42,16 @@ const taskSuite: BenchmarkTask[] = [
     id: 'codebase-audit',
     prompt: 'Audit a codebase for type safety, error handling, dead code, and test coverage.',
     keywords: ['TypeScript', 'try-catch', 'unused', 'coverage'],
-    expected: (output: string) => checkKeywords(output, ['TypeScript', 'try-catch', 'unused', 'coverage']),
+    expected: (output: string) =>
+      checkKeywords(output, ['TypeScript', 'try-catch', 'unused', 'coverage']),
   },
   {
     id: 'resilient-ecommerce-design',
     prompt:
       'Design a resilient e-commerce system with caching, queueing, rate limiting, and database sharding.',
     keywords: ['Redis', 'SQS', 'token bucket', 'sharding'],
-    expected: (output: string) => checkKeywords(output, ['Redis', 'SQS', 'token bucket', 'sharding']),
+    expected: (output: string) =>
+      checkKeywords(output, ['Redis', 'SQS', 'token bucket', 'sharding']),
   },
   {
     id: 'microservices-architecture-review',
@@ -114,7 +118,7 @@ function createSubAgentLLM(tasks: BenchmarkTask[]): LLMClient {
  */
 function createDeterministicRuntime(llm: LLMClient): AgentRuntimeInterface {
   return {
-    execute: async (ctx): Promise<AgentExecutionResult> => {
+    execute: async (ctx: AgentExecutionContext): Promise<AgentExecutionResult> => {
       const { text } = await llm.complete(ctx.goal);
       return {
         runId: ctx.agentId,

@@ -35,3 +35,15 @@ export {
 // tests in evalScorer.test.ts both import. See score.ts for the cross-file
 // contract and the asymmetric parameter types invariant.
 export { score, type Verdict, type ScoreResult } from './score';
+// PagerDuty alerting — SLO violation → PagerDuty Events API v2 bridge
+export {
+  PagerDutyAlerter,
+  SLOAlertBridge,
+  getPagerDutyAlerter,
+  setPagerDutyAlerter,
+  resetPagerDutyAlerter,
+  type PagerDutyAlert,
+  type PagerDutySeverity,
+  type SLOViolationEvent,
+  type SLOViolationCallback,
+} from './pagerDutyAlerting';

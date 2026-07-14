@@ -18,7 +18,10 @@ interface LoadPatternTask extends Task {
 
 interface BaselineImpl {
   kind: 'baseline';
-  state: Map<string, { processed: number; failed: number; backlog: number; failureStreak: number; crashed: boolean }>;
+  state: Map<
+    string,
+    { processed: number; failed: number; backlog: number; failureStreak: number; crashed: boolean }
+  >;
 }
 
 interface TreatmentImpl {
@@ -211,7 +214,16 @@ export const backpressureControllerModule: BenchmarkModule = {
   path: 'runtime/backpressureController.ts',
   baselineFactory: () => ({
     kind: 'baseline',
-    state: new Map<string, { processed: number; failed: number; backlog: number; failureStreak: number; crashed: boolean }>(),
+    state: new Map<
+      string,
+      {
+        processed: number;
+        failed: number;
+        backlog: number;
+        failureStreak: number;
+        crashed: boolean;
+      }
+    >(),
   }),
   treatmentFactory: () => ({
     kind: 'treatment',

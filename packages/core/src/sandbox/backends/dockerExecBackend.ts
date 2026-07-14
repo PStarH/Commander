@@ -43,36 +43,19 @@ export class DockerExecBackend implements ExecutionBackend {
     const start = Date.now();
     const args: string[] = ['exec', '-i'];
 
-    // Attach env from current process (filtered — exclude secrets)
-    const SECRET_PATTERNS = [
-      'KEY',
-      'SECRET',
-      'TOKEN',
-      'PASSWORD',
-      'CREDENTIAL',
-      'AUTH',
-      'PRIVATE',
-      'SIGNATURE',
-    ];
-    const BLOCKED_PREFIXES = [
-      'DOCKER_',
-      'SSH_',
-      'AWS_',
-      'GCP_',
-      'AZURE_',
-      'GCLOUD_',
-      'KUBE_',
-      'NPM_',
-      'NODE_',
-    ];
+    // Security (SBX-8): forward host env by ALLOWLIST, never a denylist. A
+    // denylist silently leaks anything it forgot (DATABASE_URL, REDIS_URL,
+    // GITHUB_PAT, *_CONNECTION_STRING, …). Only explicitly named variables are
+    // passed, and values are sanitized against Docker env injection.
+    const DEFAULT_ENV_ALLOWLIST = ['PATH', 'HOME', 'USER', 'SHELL', 'TERM', 'LANG', 'TZ'];
+    const allow = new Set(
+      (this.config.envAllowList ?? DEFAULT_ENV_ALLOWLIST).map((k) => k),
+    );
     for (const [k, v] of Object.entries(process.env)) {
-      if (!v) continue;
-      const upper = k.toUpperCase();
-      // Block known sensitive prefixes
-      if (BLOCKED_PREFIXES.some((p) => upper.startsWith(p))) continue;
-      // Block any key containing secret patterns
-      if (SECRET_PATTERNS.some((p) => upper.includes(p))) continue;
-      args.push('-e', `${k}=${v}`);
+      if (v === undefined || !allow.has(k)) continue;
+      // Strip newlines/null bytes so a value cannot inject additional -e pairs.
+      const safeValue = v.replace(/[\n\r\x00]/g, '');
+      args.push('-e', `${k}=${safeValue}`);
     }
 
     if (this.config.user) {

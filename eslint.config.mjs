@@ -66,7 +66,7 @@ export default tseslint.config(
     files: ['packages/sdk/**/*.ts', 'apps/**/*.ts'],
     rules: { 'no-console': 'off' },
   },
-  // Legacy files with known `any` usage — TODO: refactor to remove `any`
+  // Legacy files with known `any` usage — NOTE: refactor to remove `any`
   {
     files: [
       'packages/core/src/benchmark/benchmarkRunner.ts',

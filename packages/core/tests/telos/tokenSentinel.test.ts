@@ -4,6 +4,8 @@ import {
   resetTokenSentinel,
   estimateTokenCount,
   estimateMessagesTokens,
+  calculateCostBreakdown,
+  CACHE_MULTIPLIERS,
 } from '../../src/telos/tokenSentinel';
 
 describe('TokenSentinel', () => {
@@ -95,6 +97,55 @@ describe('TokenSentinel', () => {
         costCapUsd: 2.0,
       });
       expect(alert).toBeNull();
+    });
+
+    it('returns null when hard cap is not configured', () => {
+      const alert = sentinel.checkBudget('run-1', 1000000, {
+        hardCapTokens: 0,
+        softCapTokens: 0,
+        costCapUsd: 1.0,
+      });
+      expect(alert).toBeNull();
+    });
+  });
+
+  describe('soft cap warning', () => {
+    it('records a soft-cap alert when estimate exceeds soft cap', () => {
+      const result = sentinel.check([{ role: 'user', content: 'short' }], 'gpt-4', {
+        hardCapTokens: 100,
+        softCapTokens: 1,
+        costCapUsd: 1.0,
+      });
+      expect(result.allowed).toBe(true);
+      expect(sentinel.getAlerts().some((a) => a.type === 'soft_cap_warning')).toBe(true);
+    });
+  });
+
+  describe('cost breakdown', () => {
+    it('exports cache multipliers with read/write ratios', () => {
+      expect(CACHE_MULTIPLIERS.anthropic.read).toBe(0.1);
+      expect(CACHE_MULTIPLIERS.openai.write).toBe(1.0);
+      expect(CACHE_MULTIPLIERS.default.read).toBe(1.0);
+    });
+
+    it('falls back to conservative pricing for unknown models', () => {
+      const result = calculateCostBreakdown('unknown-model-xyz', 1000, 500);
+      expect(result.totalUsd).toBeGreaterThan(0);
+      expect(result.cacheSavingsUsd).toBe(0);
+    });
+
+    it('computes cache read/write costs and savings for known models', () => {
+      const result = calculateCostBreakdown('gpt-4o', 1000, 500, 100, 50);
+      expect(result.cacheReadCostUsd).toBeGreaterThan(0);
+      expect(result.cacheWriteCostUsd).toBeGreaterThan(0);
+      expect(result.cacheSavingsUsd).toBeGreaterThan(0);
+      expect(result.totalUsd).toBeGreaterThan(0);
+    });
+
+    it('applies batch discount when isBatch is true', () => {
+      const batch = calculateCostBreakdown('gpt-4o', 10000, 5000, 0, 0, true);
+      const standard = calculateCostBreakdown('gpt-4o', 10000, 5000, 0, 0, false);
+      expect(batch.totalUsd).toBeLessThan(standard.totalUsd);
     });
   });
 });

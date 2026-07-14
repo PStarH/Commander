@@ -38,6 +38,8 @@ export { MessageBus, getMessageBus, resetMessageBus } from './messageBus';
 export { ExecutionTraceRecorder, getTraceRecorder, resetTraceRecorder } from './executionTrace';
 export { AgentRuntime } from './agentRuntime';
 export type { AgentRuntimeInterface } from './agentRuntimeInterface';
+export { createAgentRuntimeFactory } from './runtimeFactory';
+export type { AgentRuntimeFactory, AgentRuntimeFactoryOptions } from './runtimeFactory';
 export type { EmbeddingFunction } from './embedding';
 export {
   MockEmbeddingFunction,
@@ -213,6 +215,34 @@ export {
 } from './sopDashboard';
 
 export { CommanderHttpServer, createHttpServer } from './httpServer';
+export { HttpRequestError, parseBody, sendJson } from './httpUtils';
+export {
+  requireTenant,
+  assertTenantAccess,
+  assertBodyTenant,
+  resolveTenantFromAuth,
+} from './httpTenantGate';
+export { handleExecuteRoute } from './httpExecuteRoute';
+export { handleSecurityRoutes } from './httpSecurityRoutes';
+export { handleHealthRoutes } from './httpHealthRoutes';
+export { streamWalLines, countWalLines } from './walStream';
+export {
+  createStateCheckpointBackend,
+  resolveStateCheckpointBackendType,
+  FilesystemStateCheckpointBackend,
+  SqliteStateCheckpointBackend,
+} from './stateCheckpointBackend';
+export type { StateCheckpointBackend, StateCheckpointBackendType } from './stateCheckpointBackend';
+export {
+  bootstrapRuntimeAdmission,
+  acquireRuntimeAdmission,
+  releaseRuntimeAdmission,
+  canAdmitSchedulerWork,
+  isAdmissionControlEnabled,
+  setAdmissionControlEnabled,
+} from './runtimeAdmission';
+export { resolveHttpAuthContext, requireMinRole, isRbacEnabled } from './httpRbacGate';
+export type { HttpAuthContext } from './httpRbacGate';
 export { MtlsRuntimeServer } from './mtlsRuntimeServer';
 export type { MtlsRuntimeServerConfig } from './mtlsRuntimeServer';
 export { MtlsRuntimeProxy } from './mtlsRuntimeProxy';
@@ -262,6 +292,15 @@ export {
 } from './tenantProvider';
 export type { TenantConfig } from './tenantProvider';
 
+export { TenantManager, getTenantManager, resetTenantManager } from './tenantManager';
+export type { TenantOverrides, TenantResolutionResult } from './tenantManager';
+
+export {
+  TenantFairnessMonitor,
+  getTenantFairnessMonitor,
+  resetTenantFairnessMonitor,
+} from './tenantFairnessMonitor';
+
 // Extracted runtime modules (structural-debt cleanup baseline 2026-07-05)
 export { LlmCaller, type LLMCallerDeps, type LLMCallerCallInput } from './llm/llmCaller';
 export { normalizeToolCall } from './tool/toolCallNormalizer';
@@ -275,3 +314,4 @@ export {
   TenantContextResolver,
   type TenantContextResolverDeps,
 } from './tenant/tenantContextResolver';
+export { runWithTenant } from './tenantContext';

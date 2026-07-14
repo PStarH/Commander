@@ -17,4 +17,16 @@ describe('strategyPerformanceTracker module', () => {
     );
     expect(result.conclusion).toBe('SIGNIFICANTLY_BETTER');
   });
+
+  it('factory implementations recommend a strategy using their trackers', () => {
+    const baseline = strategyPerformanceTrackerModule.baselineFactory({
+      llm: createScriptedLLM({ responses: {} }),
+    }) as { recommend: (taskId: string) => string };
+    const treatment = strategyPerformanceTrackerModule.treatmentFactory({
+      llm: createScriptedLLM({ responses: {} }),
+    }) as { recommend: (taskId: string) => string };
+    const taskId = strategyPerformanceTrackerModule.taskSuite[0].id;
+    expect(typeof baseline.recommend(taskId)).toBe('string');
+    expect(typeof treatment.recommend(taskId)).toBe('string');
+  });
 });

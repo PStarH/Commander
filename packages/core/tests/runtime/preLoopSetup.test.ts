@@ -191,6 +191,8 @@ describe('PreLoopSetup', () => {
     expect(deps.getLLMRequestBuilder().build).toHaveBeenCalled();
     expect(deps.getCheckpointingPhase().checkpointStart).toHaveBeenCalled();
     expect(deps.getContextInjector().inject).toHaveBeenCalled();
-    expect(deps.setSlidingWindow).toHaveBeenCalled();
+    // Per-run governor/sliding window are created by ExecutionContext.enter() in AgentRuntime.
+    expect(deps.setGovernor).not.toHaveBeenCalled();
+    expect(deps.setSlidingWindow).not.toHaveBeenCalled();
   });
 });

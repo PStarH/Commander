@@ -23,6 +23,17 @@ function allowNoSandboxFallback(): boolean {
   return v === '1' || v === 'true' || v === 'yes';
 }
 
+/**
+ * The pre-execution escape detector is a security control. If it cannot load or
+ * throws, we FAIL CLOSED (refuse execution) rather than running an unchecked
+ * command. This explicit opt-out restores the legacy fail-open behaviour for
+ * local development only.
+ */
+function allowUncheckedExecution(): boolean {
+  const v = process.env.COMMANDER_ALLOW_UNCHECKED_EXEC?.toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
+
 export interface SandboxManagerDeps {
   /** Override sandbox discovery for testing. */
   sandboxes?: PlatformSandbox[];
@@ -107,39 +118,87 @@ export class SandboxManager {
     const p =
       typeof profile === 'string' ? this.getProfile(profile) : (profile ?? this.getProfile());
 
-    // Security (G6): Pre-execution sandbox escape detection.
-    // Analyze command for known escape patterns before executing in the sandbox.
-    // If a critical indicator is detected, refuse execution entirely.
+    // Security (G6, SBX-7): Pre-execution sandbox escape detection.
+    // The detector is an enforcement control, so a load or evaluation failure
+    // must FAIL CLOSED — we refuse the command instead of running it unchecked.
+    // COMMANDER_ALLOW_UNCHECKED_EXEC restores the legacy fail-open path for dev.
+    let detector: typeof import('../security/sandboxEscapeDetector') | undefined;
     try {
-      const {
-        preCheckSandboxEscape,
-        postCheckSandboxEscape,
-      } = require('../security/sandboxEscapeDetector');
-      const preCheck = preCheckSandboxEscape(command, p);
-      if (preCheck.blocked) {
+      detector = require('../security/sandboxEscapeDetector');
+    } catch (err) {
+      if (!allowUncheckedExecution()) {
+        return this.blockedByDetector(
+          `sandbox escape detector failed to load: ${(err as Error).message}`,
+        );
+      }
+      getGlobalLogger().warn(
+        'SandboxManager',
+        'escape detector unavailable and COMMANDER_ALLOW_UNCHECKED_EXEC is set — running command UNCHECKED',
+      );
+    }
+
+    if (detector) {
+      let preCheck: ReturnType<typeof detector.preCheckSandboxEscape>;
+      try {
+        preCheck = detector.preCheckSandboxEscape(command, p);
+      } catch (err) {
+        if (!allowUncheckedExecution()) {
+          return this.blockedByDetector(
+            `sandbox escape pre-check threw: ${(err as Error).message}`,
+          );
+        }
+        getGlobalLogger().warn(
+          'SandboxManager',
+          `escape pre-check threw and COMMANDER_ALLOW_UNCHECKED_EXEC is set — running UNCHECKED: ${(err as Error).message}`,
+        );
+        preCheck = undefined as never;
+      }
+      if (preCheck?.blocked) {
         return {
           stdout: '',
-          stderr: `Command blocked by sandbox escape detector: ${preCheck.indicators.map((i: { pattern: string }) => i.pattern).join(', ')}`,
+          stderr: `Command blocked by sandbox escape detector: ${preCheck.indicators
+            .map((i) => i.pattern)
+            .join(', ')}`,
           exitCode: 126,
           durationMs: 0,
           sandboxMechanism: 'none',
-          violated: preCheck.indicators.map((i: { pattern: string }) => i.pattern),
+          violated: preCheck.indicators.map((i) => i.pattern),
         };
       }
-
-      const sb = this.getSandbox(mechanism);
-      const result = await sb.execute(command, p, workdir);
-
-      // Security (G6): Post-execution sandbox escape detection.
-      // Analyze output for escape evidence and trigger RASP response if detected.
-      postCheckSandboxEscape(command, result, workdir ?? process.cwd());
-
-      return result;
-    } catch {
-      // If the escape detector fails to load, fall through to normal execution.
-      const sb = this.getSandbox(mechanism);
-      return sb.execute(command, p, workdir);
     }
+
+    // Execute OUTSIDE the detector try/catch: a genuine execution error must
+    // propagate, never be swallowed into a silent unchecked re-execution.
+    const sb = this.getSandbox(mechanism);
+    const result = await sb.execute(command, p, workdir);
+
+    // Security (G6): Post-execution escape detection is advisory (RASP); a
+    // failure here must not mask or re-run the command.
+    if (detector) {
+      try {
+        detector.postCheckSandboxEscape(command, result, workdir ?? process.cwd());
+      } catch (err) {
+        getGlobalLogger().warn(
+          'SandboxManager',
+          `post-execution escape check failed: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    return result;
+  }
+
+  /** Fail-closed result returned when the escape detector cannot be evaluated. */
+  private blockedByDetector(reason: string): SandboxExecutionResult {
+    getGlobalLogger().error('SandboxManager', `Refusing execution (fail-closed): ${reason}`);
+    return {
+      stdout: '',
+      stderr: `Command refused: ${reason}. Set COMMANDER_ALLOW_UNCHECKED_EXEC=1 to override (dev only).`,
+      exitCode: 126,
+      durationMs: 0,
+      sandboxMechanism: 'none',
+      violated: ['escape-detector-unavailable'],
+    };
   }
 }
 

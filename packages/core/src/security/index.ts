@@ -43,6 +43,7 @@ export {
   decode,
   sign,
   getCapabilityTokenIssuer,
+  getCapabilityTokenVerifier,
   resetCapabilityTokenState,
   resetRevocationLedger,
   resolveMasterKey,
@@ -465,9 +466,7 @@ export type {
 } from './securityBenchmarkRunner';
 
 // CommanderDefender — reusable multi-layer defense stack for live runtime and benchmarks
-export {
-  createCommanderDefender,
-} from './commanderDefender';
+export { createCommanderDefender } from './commanderDefender';
 export type {
   DefenderOptions,
   DefenseResult,
@@ -902,6 +901,13 @@ export type {
   AuditExportFormat,
   UnifiedAuditLogOptions,
 } from './unifiedAuditLog';
+export { checkToolGuardian, checkRemoteAgentGuardian } from './securityGuardianFacade';
+export type {
+  ToolGuardianCheckParams,
+  ToolGuardianCheckResult,
+  ToolGuardianBlockKind,
+} from './securityGuardianFacade';
+export { startAuditAggregatorBridge, stopAuditAggregatorBridge } from './auditAggregatorBridge';
 export type {
   CampaignPhase,
   CampaignSeverity,
@@ -935,7 +941,4 @@ export type {
 } from './ttsrEngine';
 
 // UniversalSanitizer & ResourceGovernor — unified sanitization and outbound-call governance
-export {
-  UniversalSanitizer,
-  ResourceGovernor,
-} from './securityPrimitives';
+export { UniversalSanitizer, ResourceGovernor } from './securityPrimitives';

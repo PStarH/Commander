@@ -49,4 +49,59 @@ describe('WeCom provider', () => {
     assert.ok(String(reply.body).includes('<![CDATA[reply text]]>'));
     assert.equal(reply.headers?.['Content-Type'], 'application/xml');
   });
+
+  it('rejects request with missing query params', () => {
+    const req = {
+      method: 'POST',
+      query: {},
+      body: '<xml><Encrypt>e</Encrypt></xml>',
+      headers: {},
+    };
+    assert.equal(wecomProvider.verify(req, 'token'), false);
+  });
+
+  it('rejects request with missing Encrypt in body', () => {
+    const req = {
+      method: 'POST',
+      query: { msg_signature: 'sig', timestamp: '1', nonce: 'n' },
+      body: '<xml><NoEncrypt>data</NoEncrypt></xml>',
+      headers: {},
+    };
+    assert.equal(wecomProvider.verify(req, 'token'), false);
+  });
+
+  it('parses non-CDATA XML fields', () => {
+    const req = {
+      method: 'POST',
+      query: {},
+      body: '<xml><Content>plain text</Content><FromUserName>user-2</FromUserName><ToUserName>bot-2</ToUserName><MsgType>text</MsgType></xml>',
+      headers: {},
+    };
+    const msg = wecomProvider.parseMessage(req);
+    assert.equal(msg.text, 'plain text');
+    assert.equal(msg.senderId, 'user-2');
+  });
+
+  it('parses message with object body by stringifying', () => {
+    const req = {
+      method: 'POST',
+      query: {},
+      body: '<xml><Content><![CDATA[hello]]></Content><FromUserName><![CDATA[u1]]></FromUserName></xml>',
+      headers: {},
+    };
+    const msg = wecomProvider.parseMessage(req);
+    assert.equal(msg.text, 'hello');
+  });
+
+  it('parses message with missing XML fields', () => {
+    const req = {
+      method: 'POST',
+      query: {},
+      body: '<xml></xml>',
+      headers: {},
+    };
+    const msg = wecomProvider.parseMessage(req);
+    assert.equal(msg.text, '');
+    assert.equal(msg.senderId, 'unknown');
+  });
 });

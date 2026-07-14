@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { getUnifiedCostAuthority } from '@commander/core';
+import { getCurrentTenantId } from '@commander/core/runtime/tenantContext';
 import type { CostSummary, CostRecord, BudgetAlert, CostLedgerEntry } from '@commander/core';
 
 function ledgerEntryToCostRecord(entry: CostLedgerEntry): CostRecord {
@@ -20,13 +21,27 @@ function ledgerEntryToCostRecord(entry: CostLedgerEntry): CostRecord {
   };
 }
 
+/**
+ * Match a ledger entry to the requesting tenant.
+ *
+ * Entries without an explicit tenantId are treated as belonging to the
+ * current tenant context. This preserves backward compatibility with
+ * single-tenant deployments while also supporting tenant-scoped singletons
+ * where the ledger itself is already isolated.
+ */
+function entryMatchesTenant(entry: CostLedgerEntry, tenantId: string): boolean {
+  if (!entry.tenantId) return true;
+  return entry.tenantId === tenantId;
+}
+
 export function createCostRouter(): Router {
   const router = Router();
 
   // ── Cost summary (total, per-model, per-agent) ─────────────────────────
   router.get('/api/cost/summary', (_req, res) => {
+    const tenantId = getCurrentTenantId() ?? 'default';
     const uca = getUnifiedCostAuthority();
-    const ledger = uca.readLedger();
+    const ledger = uca.readLedger().filter((e) => entryMatchesTenant(e, tenantId));
     const summary: CostSummary = {
       totalCostUsd: 0,
       totalTokens: 0,
@@ -58,13 +73,14 @@ export function createCostRouter(): Router {
 
   // ── Cost records (recent LLM calls) ────────────────────────────────────
   router.get('/api/cost/records', (req, res) => {
+    const tenantId = getCurrentTenantId() ?? 'default';
     const uca = getUnifiedCostAuthority();
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 500);
     const rawRunId = req.query.runId as string | undefined;
     const runId =
       rawRunId && /^[a-zA-Z0-9_-]+$/.test(rawRunId) && rawRunId.length < 128 ? rawRunId : undefined;
 
-    let entries = uca.readLedger();
+    let entries = uca.readLedger().filter((e) => entryMatchesTenant(e, tenantId));
     if (runId) {
       entries = entries.filter((e) => e.runId === runId);
     }
@@ -78,8 +94,9 @@ export function createCostRouter(): Router {
 
   // ── Budget status (monthly usage + alerts) ─────────────────────────────
   router.get('/api/cost/budget', (_req, res) => {
+    const tenantId = getCurrentTenantId() ?? 'default';
     const uca = getUnifiedCostAuthority();
-    const snapshot = uca.getSnapshot('global', 'default');
+    const snapshot = uca.getSnapshot('cost-api', tenantId);
     const monthlyUsed = snapshot.perTenantMonthly.used;
     const monthlyLimit = snapshot.perTenantMonthly.cap;
     const alerts: BudgetAlert[] = [];

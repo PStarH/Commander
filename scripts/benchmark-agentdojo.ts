@@ -9,12 +9,15 @@
  *   npx tsx scripts/benchmark-agentdojo.ts --benchmark injecagent    # InjecAgent only
  *   npx tsx scripts/benchmark-agentdojo.ts --benchmark agentsafetybench
  *   npx tsx scripts/benchmark-agentdojo.ts --benchmark agentharm
+ *   npx tsx scripts/benchmark-agentdojo.ts --benchmark cyberseceval
+ *   npx tsx scripts/benchmark-agentdojo.ts --benchmark harmbench
+ *   npx tsx scripts/benchmark-agentdojo.ts --benchmark assebench
  */
 import {
   SecurityBenchmarkRunner,
-  createCommanderDefender,
   getCasesForBenchmark,
 } from '../packages/core/src/security/securityBenchmarkRunner';
+import { createCommanderDefender } from '../packages/core/src/security/commanderDefender';
 import type {
   BenchmarkRunReport,
   BenchmarkTestResult,
@@ -39,7 +42,10 @@ const enableHarmfulContentCheck =
   args.includes('--with-harmful') ||
   runAll ||
   singleBenchmark === 'agentsafetybench' ||
-  singleBenchmark === 'agentharm';
+  singleBenchmark === 'agentharm' ||
+  singleBenchmark === 'cyberseceval' ||
+  singleBenchmark === 'harmbench' ||
+  singleBenchmark === 'assebench';
 const defender = createCommanderDefender({ enableHarmfulContentCheck });
 
 function pad(s: string, n: number): string {
@@ -83,9 +89,51 @@ function printReport(report: BenchmarkRunReport): void {
   console.log('═'.repeat(78) + '\n');
 }
 
+function spawnAndExit(command: string): void {
+  try {
+    const child = execSync(command, { stdio: 'inherit' });
+    process.exit(0);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.status ?? 2;
+    process.exit(code);
+  }
+}
+
+function getSubcommandArgs(args: string[], subcommand: string): string {
+  const idx = args.indexOf(subcommand);
+  if (idx !== -1 && idx + 1 < args.length) {
+    return args.slice(idx + 1).join(' ');
+  }
+  return '';
+}
+
+function getArgsAfterBenchmarkName(args: string[], benchmarkName: string): string {
+  const idx = args.indexOf('--benchmark');
+  if (idx !== -1 && idx + 1 < args.length && args[idx + 1] === benchmarkName) {
+    return args.slice(idx + 2).join(' ');
+  }
+  return '';
+}
+
 function parseBenchmarkArg(
   args: string[],
-): 'agentdojo' | 'agentsafetybench' | 'agentharm' | 'injecagent' | undefined {
+):
+  | 'agentdojo'
+  | 'agentsafetybench'
+  | 'agentharm'
+  | 'injecagent'
+  | 'cyberseceval'
+  | 'harmbench'
+  | 'assebench'
+  | 'webarena'
+  | 'agentbench'
+  | 'gaia'
+  | 'osworld'
+  | 'crab'
+  | 'swebench'
+  | 'mlcommons:ailuminate'
+  | 'caict:ai-safety'
+  | undefined {
   const idx = args.indexOf('--benchmark');
   if (idx !== -1 && args[idx + 1]) {
     const value = args[idx + 1];
@@ -93,7 +141,18 @@ function parseBenchmarkArg(
       value === 'agentdojo' ||
       value === 'agentsafetybench' ||
       value === 'agentharm' ||
-      value === 'injecagent'
+      value === 'injecagent' ||
+      value === 'cyberseceval' ||
+      value === 'harmbench' ||
+      value === 'assebench' ||
+      value === 'webarena' ||
+      value === 'agentbench' ||
+      value === 'gaia' ||
+      value === 'osworld' ||
+      value === 'crab' ||
+      value === 'swebench' ||
+      value === 'mlcommons:ailuminate' ||
+      value === 'caict:ai-safety'
     ) {
       return value;
     }
@@ -118,17 +177,59 @@ function ensureInjecAgentDataset(): void {
   }
 }
 
+function ensureCyberSecEvalDataset(): void {
+  const cacheDir = 'packages/core/.cache/cyberseceval';
+  const required = [
+    'mitre_benchmark_100_per_category_with_augmentation.json',
+    'prompt_injection.json',
+    'interpreter.json',
+  ];
+  const missing = required.some((f) => !fs.existsSync(path.join(cacheDir, f)));
+  if (missing) {
+    console.log('CyberSecEval dataset not cached; downloading...');
+    execSync('bash scripts/download-cyberseceval-dataset.sh', { stdio: 'inherit' });
+  }
+}
+
+function ensureHarmBenchDataset(): void {
+  const cacheDir = 'packages/core/.cache/harmbench';
+  const file = 'harmbench_behaviors_text_all.csv';
+  if (!fs.existsSync(path.join(cacheDir, file))) {
+    console.log('HarmBench dataset not cached; downloading...');
+    execSync('bash scripts/download-harmbench-dataset.sh', { stdio: 'inherit' });
+  }
+}
+
+function ensureAssEBenchDataset(): void {
+  const cacheDir = 'packages/core/.cache/assebench';
+  const required = ['assebench_records.json'];
+  const missing = required.some((f) => !fs.existsSync(path.join(cacheDir, f)));
+  if (missing) {
+    console.log('ASSEBench dataset not cached; download will be required for full run.');
+    console.log(`  Expected: ${required.map((f) => path.join(cacheDir, f)).join(', ')}`);
+  }
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
-  if (runAll || singleBenchmark === 'injecagent') {
+  if (
+    runAll ||
+    singleBenchmark === 'injecagent' ||
+    singleBenchmark === 'cyberseceval' ||
+    singleBenchmark === 'harmbench' ||
+    singleBenchmark === 'assebench'
+  ) {
     ensureInjecAgentDataset();
+    ensureCyberSecEvalDataset();
+    ensureHarmBenchDataset();
+    ensureAssEBenchDataset();
   }
 
   console.log('Commander Security Benchmark — Real Defense Stack');
   console.log('Defender: createCommanderDefender()');
   console.log(
-    `Mode: ${runAll ? 'ALL benchmarks (agentdojo + agentsafetybench + agentharm + injecagent)' : singleBenchmark ? `SINGLE benchmark (${singleBenchmark})` : 'AgentDojo only'}`,
+    `Mode: ${runAll ? 'ALL benchmarks (agentdojo + agentsafetybench + agentharm + injecagent + cyberseceval + harmbench + assebench)' : singleBenchmark ? `SINGLE benchmark (${singleBenchmark})` : 'AgentDojo only'}`,
   );
   console.log('─'.repeat(78));
 
@@ -147,6 +248,9 @@ async function main(): Promise<void> {
     printReport(all.agentSafetyBench);
     printReport(all.agentHarm);
     printReport(all.injecagent);
+    printReport(all.cyberSecEval);
+    printReport(all.harmBench);
+    printReport(all.asseBench);
 
     console.log('═'.repeat(78));
     console.log('  COMBINED SUMMARY');
@@ -159,7 +263,41 @@ async function main(): Promise<void> {
     console.log(`  VERDICT: ${pass ? '✅ PASS' : '❌ FAIL'}`);
     console.log('═'.repeat(78));
     process.exit(pass ? 0 : 1);
-  } else if (singleBenchmark) {
+  }
+
+  if (singleBenchmark === 'webarena' || singleBenchmark === 'agentbench') {
+    const target =
+      singleBenchmark === 'webarena'
+        ? path.join('scripts', 'benchmark-webarena.ts')
+        : path.join('scripts', 'benchmark-agentbench.ts');
+    const extraArgs = getArgsAfterBenchmarkName(args, singleBenchmark);
+    const command = extraArgs ? `npx tsx ${target} ${extraArgs}` : `npx tsx ${target}`;
+    console.log(`Spawning capability scaffold: ${command}`);
+    spawnAndExit(command);
+  }
+
+  if (singleBenchmark === 'gaia') {
+    const target = path.join('scripts', 'benchmark-gaia.ts');
+    const extraArgs = getArgsAfterBenchmarkName(args, 'gaia');
+    const command = extraArgs ? `npx tsx ${target} ${extraArgs}` : `npx tsx ${target}`;
+    console.log(`Spawning GAIA benchmark: ${command}`);
+    spawnAndExit(command);
+  }
+
+  const capabilityScaffolds: Record<string, string> = {
+    osworld: 'benchmark-osworld.ts',
+    crab: 'benchmark-crab.ts',
+    swebench: 'benchmark-swebench.ts',
+    'mlcommons:ailuminate': 'benchmark-mlcommons-ailuminate.ts',
+    'caict:ai-safety': 'benchmark-caict-ai-safety.ts',
+  };
+  if (capabilityScaffolds[singleBenchmark]) {
+    const target = path.join('scripts', capabilityScaffolds[singleBenchmark]);
+    console.log(`Spawning capability scaffold: ${target}`);
+    spawnAndExit(`npx tsx ${target}`);
+  }
+
+  if (singleBenchmark) {
     const report = await runner.runBenchmark(singleBenchmark, defender);
     printReport(report);
     const pass = report.securityScore >= 100 && report.missed === 0;

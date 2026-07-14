@@ -17,4 +17,17 @@ describe('contextCompactor module', () => {
     );
     expect(result.conclusion).toBe('SIGNIFICANTLY_BETTER');
   });
+
+  it('returns runtime-shaped token usage from the scripted provider', async () => {
+    const treatment = contextCompactorModule.treatmentFactory({
+      llm: createScriptedLLM({ responses: {} }),
+    }) as { compact: (messages: unknown[]) => unknown };
+    const task = contextCompactorModule.taskSuite[0];
+    const result = (await contextCompactorModule.runTrial({
+      implementation: treatment,
+      task,
+      llm: createScriptedLLM({ responses: {} }),
+    })) as { tokenUsage: { promptTokens?: number; input?: number } };
+    expect(result.tokenUsage.promptTokens ?? result.tokenUsage.input).toBeGreaterThanOrEqual(0);
+  });
 });

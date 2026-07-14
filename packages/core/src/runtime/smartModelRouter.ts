@@ -7,7 +7,7 @@
  */
 import type { ModelTier, RoutingDecision, AgentExecutionContext } from './types';
 import type { ModelConfig } from './types';
-import { ModelRouter } from './modelRouter';
+import { ModelRouter, resolveMinSensitiveTier } from './modelRouter';
 import { getGlobalLogger } from '../logging';
 
 // ============================================================================
@@ -287,6 +287,14 @@ export class SmartModelRouter {
       (estimatedInputTokens / 1_000_000) * model.costPer1MInput +
       (estimatedOutputTokens / 1_000_000) * model.costPer1MOutput;
 
+    // AI-8: explicit selections (user_selected / manual_mode_default) are trusted
+    // operator config and are honored, but surface it in the decision when the
+    // pinned model sits below the sensitive-tier floor so audits can flag it.
+    const tierRank: Record<ModelTier, number> = { eco: 0, standard: 1, power: 2, consensus: 3 };
+    const minSensitiveTier = resolveMinSensitiveTier(ctx);
+    const belowFloor =
+      minSensitiveTier !== undefined && tierRank[model.tier] < tierRank[minSensitiveTier];
+
     return {
       modelId: model.id,
       tier: model.tier,
@@ -294,6 +302,9 @@ export class SmartModelRouter {
       reasoning: [
         `routing_mode: ${this.config.mode}`,
         `reason: ${reason}`,
+        ...(belowFloor
+          ? [`warning: explicit model tier '${model.tier}' below sensitive floor '${minSensitiveTier}'`]
+          : []),
         `model_capabilities: ${model.capabilities.join(', ')}`,
         `cost_estimate: $${estimatedCost.toFixed(6)}`,
       ],

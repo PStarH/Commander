@@ -1,4 +1,4 @@
-export interface WorkerPoolOptions {
+export interface SagaWorkerPoolOptions {
   maxConcurrency: number;
 }
 
@@ -14,7 +14,7 @@ export class WorkerPool {
   private readonly queue: PoolTask<unknown>[] = [];
   private closed = false;
 
-  constructor(private readonly options: WorkerPoolOptions) {
+  constructor(private readonly options: SagaWorkerPoolOptions) {
     if (options.maxConcurrency < 1) {
       throw new WorkerPoolError('maxConcurrency must be >= 1');
     }

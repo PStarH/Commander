@@ -1,5 +1,25 @@
 import { reportSilentFailure } from '../../silentFailureReporter';
 import type { Tool, ToolDefinition } from '../../runtime/types';
+import { isUrlSafe } from '../_utils/urlSafety';
+import { promises as dnsPromises } from 'node:dns';
+
+/**
+ * SBX-4: SSRF defense. Returns true if an IP literal is loopback, private, or
+ * link-local (incl. the cloud metadata range) — used to re-check DNS-resolved
+ * addresses so a public hostname that resolves to an internal IP is still blocked.
+ */
+function isPrivateAddress(ip: string): boolean {
+  const v = ip.replace(/^::ffff:/i, ''); // unwrap IPv4-mapped IPv6
+  if (v === '0.0.0.0' || /^127\./.test(v)) return true;
+  if (/^10\./.test(v)) return true;
+  if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(v)) return true;
+  if (/^192\.168\./.test(v)) return true;
+  if (/^169\.254\./.test(v)) return true; // link-local / cloud metadata
+  const lower = ip.toLowerCase();
+  if (lower === '::1' || lower.startsWith('fe80:')) return true;
+  if (lower.startsWith('fc') || lower.startsWith('fd')) return true; // IPv6 ULA
+  return false;
+}
 
 const DEFINITION: ToolDefinition = {
   name: 'screenshot_capture',
@@ -96,9 +116,28 @@ export class ScreenshotCaptureTool implements Tool {
     outputPath: string,
     opts: { width: number; height: number; fullPage: boolean; selector: string },
   ): Promise<string> {
+    // SBX-4: SSRF guard. Reject non-http(s), localhost/private/link-local hosts,
+    // and (against DNS rebinding) re-check every resolved IP before navigating.
+    const safety = isUrlSafe(url);
+    if (!safety.safe) {
+      return `Error: refusing to capture unsafe URL (${safety.reason ?? 'blocked'}).`;
+    }
+    try {
+      const resolved = await dnsPromises.lookup(new URL(url).hostname, { all: true });
+      const blocked = resolved.find((r) => isPrivateAddress(r.address));
+      if (blocked) {
+        return `Error: refusing to capture URL that resolves to a private/link-local address (${blocked.address}).`;
+      }
+    } catch (err) {
+      return `Error: could not resolve URL host for safety check: ${err instanceof Error ? err.message : String(err)}`;
+    }
     try {
       const { chromium } = await import('playwright');
-      const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+      // Chromium's own sandbox is a defense-in-depth layer; only disable it when an
+      // operator explicitly opts in (e.g. running as root in a container).
+      const launchArgs =
+        process.env.COMMANDER_CHROMIUM_NO_SANDBOX === '1' ? ['--no-sandbox'] : [];
+      const browser = await chromium.launch({ headless: true, args: launchArgs });
       const page = await browser.newPage({ viewport: { width: opts.width, height: opts.height } });
       await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
       if (opts.selector) {

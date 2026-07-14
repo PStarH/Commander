@@ -167,6 +167,8 @@ apps/api/dist/
 
 # Benchmark files — entire directories (intermediate results, responses, configs)
 packages/core/.cache/injecagent/
+packages/core/.cache/cyberseceval/
+packages/core/.cache/harmbench/
 benchmarks/
 packages/core/benchmarks/
 packages/core/src/benchmark/
@@ -272,7 +274,9 @@ packages/core/.commander/queues/
 .commander/scheduler/
 .commander/memory/
 
-# Vite/React generated type declarations and bundles (apps/web)
+# Vite/React generated type declarations and bundles (apps/web) — recursive (ARCH-4)
+apps/web/src/**/*.d.ts
+apps/web/src/**/*.js
 apps/web/src/*.d.ts
 apps/web/src/*.js
 packages/core/.commander/memory/
@@ -287,5 +291,16 @@ report.json
 # Auto-generated AI-tool share-export directory (binary zip, not source)
 .trae-html-share-packages/
 
-# Auto-generated AI-tool share-export directory (binary zip, not source)
-.trae-html-share-packages/
+# === ARCH-4/5: runtime-state dirs & debug scratch that leaked into tracking ===
+# (already-committed copies still need `git rm --cached`; these rules stop recurrence)
+.commander/audit/
+.commander/otel_queue/
+.commander/tenant_*/
+# Stray AI-tool runtime directory
+.omo/
+# Debug / scratch files that must not live in source
+/test-cyberseceval-debug.ts
+/test-harmful.ts
+/test-scanner-debug.ts
+/spawn-debug.test.cjs
+/agent-runtime-suspension-audit.md

@@ -17,6 +17,7 @@ import { reportSilentFailure } from '../../silentFailureReporter';
 import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage } from '../types';
 import { FormatBridge } from '../formatBridge';
 import { getGlobalLogger } from '../../logging';
+import { assertSafeProviderBaseUrl } from './providerUrlPolicy';
 
 // ============================================================================
 // Shared Types
@@ -373,6 +374,10 @@ export async function callOpenAICompatibleAPI(
   extraBody?: Record<string, unknown>,
 ): Promise<LLMResponse> {
   const body = buildOpenAIBody(request, model, config.name, extraBody);
+
+  // MCP-11: fail closed before any secret/prompt leaves the process if the
+  // resolved base URL is plaintext or off the configured host allowlist.
+  assertSafeProviderBaseUrl(config.baseUrl, { providerName: config.name, isLocal: config.isLocal });
 
   const useStreaming = request.cacheConfig?.useCacheControl ?? true;
   const logger = getGlobalLogger();

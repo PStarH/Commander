@@ -1,15 +1,10 @@
 /**
  * Agent Runtime — Core execution engine for the Commander agent loop.
  *
- * WARNING: This file is a God object (~3,000-line execute(), 4,571 LOC total).
- * It cannot be tested, reasoned about, or modified safely. Every change risks
- * breaking one of the many intertwined execution paths.
- *
- * Known issues:
- * - Mutable instance fields (slidingWindow, governor, tools) are reassigned
- *   per-run, creating data races under concurrent execute() calls.
- * - 76 getGlobal*() singleton calls make isolation impossible.
- * - 110 catch blocks, 61 marked "best-effort", swallow errors silently.
+ * `execute()` is a thin facade: RunInitializer → PreLoopSetup →
+ * AgentLoopOrchestrator → FinallyCleanupHandler. Per-run mutable state lives in
+ * `ExecutionContext` (M2); construction-time services are initialized via
+ * `serviceInitializer`.
  *
  * The central orchestrator that drives the LLM → Tools → Verification → Retry
  * cycle. Each call to execute() runs one full agent turn:
@@ -66,6 +61,7 @@ import { ExecutionRouter } from './executionRouter';
 import { TeamRegistry } from './teamRegistry';
 import { AgentHandoff } from './agentHandoff';
 import { getGlobalThreeLayerMemory } from '../threeLayerMemory';
+import { MemoryManagerAgent } from '../memory/memoryManagerAgent';
 import { runWithTenant } from './tenantContext';
 import { getHookManager } from '../pluginManager';
 import { ToolOutputManager } from './toolOutputManager';
@@ -83,7 +79,7 @@ import type { TenantProvider, TenantConfig } from './tenantProvider';
 import type { PlannedToolCall } from '../compensation/rollbackPlanner';
 import { getGlobalTenantProvider } from './tenantProvider';
 import { getLaneManager } from '../sandbox/lane';
-import type { MemoryStore } from '../memory';
+import type { MemoryStore } from '../episodicMemory';
 import { getConversationStore } from '../memory/conversationStore';
 import { CacheManager } from './cacheManager';
 import { ConcurrencyController } from './concurrencyController';
@@ -115,6 +111,8 @@ import { ReflexionGenerator } from './reflexionGenerator';
 import { getGlobalLogger } from '../logging';
 import { getDataRetentionJanitor } from '../storage/dataRetention';
 import { getCostEstimator } from './costEstimator';
+import { ExecutionContext, taskTypeToCategory } from './executionContext';
+import { detectTaskType } from './taskAnalyzer';
 // TokenSentinel and CostGuard imports removed — both superseded by
 // UnifiedCostAuthority (UCA). The legacy classes remain as @deprecated
 // thin shells for backward compatibility but are no longer invoked
@@ -140,6 +138,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
   private verificationPipeline: UnifiedVerificationPipeline;
   private reflexionInjector: ReflexionInjector;
   private governor: TokenGovernor;
+  /** Per-run mutable scratch state — isolates concurrent execute() calls. */
+  private runContext = new ExecutionContext();
   private samplesStore: SamplesStore;
   private memory: import('../threeLayerMemory').ThreeLayerMemory | null = null;
   private traceStore: PersistentTraceStore;
@@ -262,10 +262,10 @@ export class AgentRuntime implements AgentRuntimeInterface {
     const services = initializeServices(
       {
         config: this.config,
-        getRunHandle: () => this.runHandle,
-        getLedgerCtx: () => this.ledgerCtx,
+        getRunHandle: () => this.runContext.runHandle,
+        getLedgerCtx: () => this.runContext.ledgerCtx,
         getActiveRuns: () => new Set(this.runLifecycle?.getActiveRuns() ?? []),
-        getPromotedTools: () => this.promotedTools,
+        getPromotedTools: () => this.runContext.promotedTools as Set<string>,
         generateActionId: () => this.generateActionId(),
       },
       this.tools,
@@ -311,11 +311,18 @@ export class AgentRuntime implements AgentRuntimeInterface {
     this.conversationStore = services.conversationStore;
     this.otelExporter = services.otelExporter;
 
+    // Auto-wire an active memory manager agent when the runtime owns a memory
+    // instance and no manager is present. This turns passive memory.add() into
+    // autonomous store/retrieve/update/summarize/discard decisions.
+    if (this.memory && !this.memory.hasMemoryManagerAgent()) {
+      this.memory.setMemoryManagerAgent(new MemoryManagerAgent());
+    }
+
     this.executionRouter = new ExecutionRouter({
       getSmartRouter: () => this.smartRouter,
       isSmartRouterActive: () => this.smartRouterActive,
       getRouter: () => this.router,
-      getGovernor: () => this.governor,
+      getGovernor: () => this.runContext.governor,
       getProviders: () => this.providers,
     });
 
@@ -323,6 +330,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       checkpointer: this.checkpointer,
       runLifecycle: this.runLifecycle,
       leaseManager: this.leaseManager,
+      getRunHandle: () => this.runContext.runHandle,
     });
 
     // RunTelemetryRecorder owns the success/failure telemetry tails that were
@@ -333,7 +341,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       getMemory: () => this.memory,
       getRouter: () => this.router,
       getCircuitBreaker: () => this.circuitBreaker,
-      getRunHandle: () => this.runHandle,
+      getRunHandle: () => this.runContext.runHandle,
       getCheckpointingPhase: () => this.checkpointingPhase,
       getMaxRetries: () => this.config.maxRetries,
     });
@@ -361,18 +369,18 @@ export class AgentRuntime implements AgentRuntimeInterface {
     // than values captured at construction time.
     this.llmRequestBuilder = new LLMRequestBuilder({
       getConfig: () => this.config,
-      getGovernor: () => this.governor,
+      getGovernor: () => this.runContext.governor,
       getRouter: () => this.router,
       getTools: () => this.tools,
       setPromotedTools: (tools: Set<string>) => {
-        this.promotedTools = tools;
+        this.runContext.setPromotedTools(tools);
       },
       setTool: (name: string, tool: Tool) => {
         this.tools.set(name, tool);
       },
-      getLastPrefixCacheKey: () => this.lastPrefixCacheKey,
+      getLastPrefixCacheKey: () => this.runContext.lastPrefixCacheKey,
       setLastPrefixCacheKey: (key: string) => {
-        this.lastPrefixCacheKey = key;
+        this.runContext.setLastPrefixCacheKey(key);
       },
     });
 
@@ -393,14 +401,14 @@ export class AgentRuntime implements AgentRuntimeInterface {
     this.toolExecutionHandler = new ToolExecutionHandler({
       getConfig: () => this.config,
       getTools: () => this.tools,
-      getGovernor: () => this.governor,
+      getGovernor: () => this.runContext.governor,
       getCacheManager: () => this.cacheManager,
       getPlanner: () => this.planner,
       getOrchestrator: () => this.orchestrator,
       getOutputManager: () => this.outputManager,
       getCycleDetector: () => this.cycleDetector,
       getSecurityOrch: () => this.securityOrch,
-      getSlidingWindow: () => this.slidingWindow,
+      getSlidingWindow: () => this.runContext.slidingWindow,
       getMemory: () => this.memory,
       getCompactor: () => this.compactor,
       normalizeToolCall: (tc) => normalizeToolCall(tc),
@@ -430,7 +438,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       callWithTimeout: (request, routing, attemptNumber, taskId) =>
         this.llmCaller.callWithTimeout(request, routing, attemptNumber, taskId),
       setExecutedMutations: (mutations) => {
-        this.executedMutations = mutations;
+        this.runContext.replaceExecutedMutations(mutations);
       },
       setLastHallucinationDetected: (value) => {
         this.lastHallucinationDetected = value;
@@ -464,7 +472,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       getContextInjector: () => this.contextInjector,
       getCheckpointingPhase: () => this.checkpointingPhase,
       getSamplesStore: () => this.samplesStore,
-      getGovernor: () => this.governor,
+      getGovernor: () => this.runContext.governor,
       getCircuitBreaker: () => this.circuitBreaker,
       getProviders: () => this.providers,
       getTools: () => this.tools,
@@ -474,10 +482,10 @@ export class AgentRuntime implements AgentRuntimeInterface {
         this.smartRouterActive = enabled;
       },
       setGovernor: (governor) => {
-        this.governor = governor;
+        this.runContext.setGovernor(governor);
       },
       setSlidingWindow: (sw) => {
-        this.slidingWindow = sw;
+        this.runContext.setSlidingWindow(sw);
       },
       setVerificationPipelineEvaluator: (provider) => {
         this.verificationPipeline.setEvaluatorProvider(provider);
@@ -507,7 +515,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       getProviders: () => this.providers,
       getRouter: () => this.router,
       getSmartRouter: () => this.smartRouter,
-      getGovernor: () => this.governor,
+      getGovernor: () => this.runContext.governor,
       getCircuitBreaker: () => this.circuitBreaker,
       getToolExecutionHandler: () => this.toolExecutionHandler,
       getToolExecutionService: () => this.toolExecutionService,
@@ -563,7 +571,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
         origTraceStore: this.traceStore,
         origCheckpointer: this.checkpointer,
         origMemory: this.memory,
-        origGovernor: this.governor,
+        origGovernor: this.runContext.isActive ? this.runContext.governor : this.governor,
       }),
       setTenantStores: (stores) => {
         this.samplesStore = stores.origSamplesStore;
@@ -571,6 +579,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
         this.checkpointer = stores.origCheckpointer;
         this.memory = stores.origMemory;
         this.governor = stores.origGovernor;
+        if (this.runContext.isActive) {
+          this.runContext.setGovernor(stores.origGovernor);
+        }
       },
     });
 
@@ -649,7 +660,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       toolName,
       args,
       error,
-      this.executedMutations,
+      this.runContext.mutableExecutedMutations,
     );
   }
 
@@ -743,6 +754,16 @@ export class AgentRuntime implements AgentRuntimeInterface {
   /** Number of pending run acquisitions waiting on the concurrency semaphore. */
   getQueueDepth(): number {
     return this.concurrencyController.getQueueDepth();
+  }
+
+  /** Active ExecutionScheduler handle for the in-flight run (ToolExecutionRuntime). */
+  getRunHandle(): RunHandle | null {
+    return this.runContext.runHandle;
+  }
+
+  /** Promoted tools for the active run's hallucination rejection gate. */
+  getPromotedTools(): Set<string> {
+    return this.runContext.promotedTools as Set<string>;
   }
 
   /** Access the state checkpointer for crash recovery and run inspection. */
@@ -844,68 +865,94 @@ export class AgentRuntime implements AgentRuntimeInterface {
       }
     }
 
-    const init: InitResult = await this.runInitializer.initialize(ctx);
-    tenantId = init.tenantId;
-    tenantCfg = init.tenantCfg;
-    this.runHandle = init.runHandle;
-
-    let execResult: AgentExecutionResult | undefined;
+    let init: InitResult;
     try {
-      execResult = await runWithTenant(
-        getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
-        async () => {
-          const setup = await this.preLoopSetup.prepare(ctx, init);
-          if ('status' in setup) {
-            return setup;
-          }
-          return await this.agentLoopOrchestrator.run(ctx, init, setup);
-        },
+      this.runContext.enter(
+        ctx.tokenBudget || this.config.budgetHardCapTokens || 200_000,
+        taskTypeToCategory(detectTaskType(ctx.goal)),
       );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        runId: generateId(),
+        agentId: ctx.agentId,
+        missionId: ctx.missionId,
+        status: 'failed',
+        summary: message,
+        steps: [],
+        totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        totalDurationMs: 0,
+        error: message,
+      };
+    }
 
-      // GAP-08: Call scheduler abortRun for failed runs — triggers compensation
-      // for any recorded compensable actions and releases the scheduler-level lease.
-      // On success, commitRun is called inside the runWithTenant callback.
-      if (execResult && execResult.status === 'failed' && this.runHandle) {
-        const handle = this.runHandle as RunHandle;
-        try {
-          await getExecutionScheduler().abortRun({
-            runId: init.runId,
-            leaseToken: handle.leaseToken,
-            fencingEpoch: handle.fencingEpoch,
-            tenantId: getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
-            reason: execResult.error ?? 'execution failed',
-          });
-        } catch (e) {
-          getGlobalLogger().debug('AgentRuntime', 'Scheduler abortRun failed', {
-            runId: init.runId,
-            error: (e as Error).message,
-          });
-        }
-      }
+    try {
+      init = await this.runInitializer.initialize(ctx);
+      tenantId = init.tenantId;
+      tenantCfg = init.tenantCfg;
+      this.runContext.setRunHandle(init.runHandle);
 
-      return execResult;
-    } finally {
-      // DeterminismCapture: clear in-memory captures for this run to prevent
-      // memory leak. WAL data persists for crash recovery via restoreFromWAL().
+      let execResult: AgentExecutionResult | undefined;
       try {
-        getGlobalDeterminismCapture().clearRun(init.runId);
-      } catch (capErr) {
-        reportSilentFailure(capErr, 'agentRuntime:clearDeterminismCapture');
+        execResult = await runWithTenant(
+          getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
+          async () => {
+            const setup = await this.preLoopSetup.prepare(ctx, init);
+            if ('status' in setup) {
+              return setup;
+            }
+            return await this.agentLoopOrchestrator.run(ctx, init, setup);
+          },
+        );
+
+        // GAP-08: Call scheduler abortRun for failed runs — triggers compensation
+        // for any recorded compensable actions and releases the scheduler-level lease.
+        // On success, commitRun is called inside the runWithTenant callback.
+        const runHandle = this.runContext.runHandle;
+        if (execResult && execResult.status === 'failed' && runHandle) {
+          const handle = runHandle as RunHandle;
+          try {
+            await getExecutionScheduler().abortRun({
+              runId: init.runId,
+              leaseToken: handle.leaseToken,
+              fencingEpoch: handle.fencingEpoch,
+              tenantId: getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
+              reason: execResult.error ?? 'execution failed',
+            });
+          } catch (e) {
+            getGlobalLogger().debug('AgentRuntime', 'Scheduler abortRun failed', {
+              runId: init.runId,
+              error: (e as Error).message,
+            });
+          }
+        }
+
+        return execResult;
+      } finally {
+        // DeterminismCapture: clear in-memory captures for this run to prevent
+        // memory leak. WAL data persists for crash recovery via restoreFromWAL().
+        try {
+          getGlobalDeterminismCapture().clearRun(init.runId);
+        } catch (capErr) {
+          reportSilentFailure(capErr, 'agentRuntime:clearDeterminismCapture');
+        }
+        // Cleanup is delegated to FinallyCleanupHandler (circuit breaker release,
+        // run lifecycle, tenant/lane/concurrency slot release, tracer completion,
+        // SLO check, OTel export, SOP auto-export, store flush, tenant restore).
+        await this.finallyCleanupHandler.cleanup({
+          runId: init.runId,
+          ctx,
+          circuitReleased: init.circuitReleased,
+          tenantCfg,
+          tenantId,
+          currentLane: init.currentLane,
+          startTime: init.startTime,
+          execResult,
+          tenantOverrides,
+        });
       }
-      // Cleanup is delegated to FinallyCleanupHandler (circuit breaker release,
-      // run lifecycle, tenant/lane/concurrency slot release, tracer completion,
-      // SLO check, OTel export, SOP auto-export, store flush, tenant restore).
-      await this.finallyCleanupHandler.cleanup({
-        runId: init.runId,
-        ctx,
-        circuitReleased: init.circuitReleased,
-        tenantCfg,
-        tenantId,
-        currentLane: init.currentLane,
-        startTime: init.startTime,
-        execResult,
-        tenantOverrides,
-      });
+    } finally {
+      this.runContext.exit();
     }
   }
 
@@ -968,6 +1015,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
     // Security (G9): Verify security invariants before tool execution.
     // Checks all registered invariants (AUTH, AUTHZ, SANDBOX, FLOW, AUDIT, etc.)
     // and blocks execution if any invariant is violated.
+    const requireCapabilityToken =
+      (agentCtx?.availableTools?.length ?? allowedTools?.length ?? 0) > 0;
     try {
       const invariantResult = assertInvariants(
         {
@@ -975,7 +1024,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
           runId,
           toolName: toolCall.name,
           toolArgs: toolCall.arguments,
-          capabilityTokenPresent: !!agentCtx,
+          capabilityTokenPresent: !!agentCtx?.capabilityToken,
+          requireCapabilityToken,
           agentSuspended: isAgentSuspended(agentId),
           agentQuarantined: isAgentQuarantined(agentId),
         },
@@ -991,8 +1041,15 @@ export class AgentRuntime implements AgentRuntimeInterface {
           durationMs: 0,
         };
       }
-    } catch {
-      // best-effort — if invariant verifier fails, proceed (don't block on verifier errors)
+    } catch (err) {
+      reportSilentFailure(err, 'agentRuntime:assertInvariants');
+      return {
+        toolCallId: toolCall.id,
+        name: toolCall.name,
+        output: '',
+        error: 'BLOCKED: Security invariant verifier failed. Tool execution denied.',
+        durationMs: 0,
+      };
     }
 
     const gateway = getEnterpriseSecurityGateway();
@@ -1026,7 +1083,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       tenantId,
       allowedTools,
       agentCtx,
-      this.executedMutations,
+      this.runContext.mutableExecutedMutations,
       agentCtx?.capabilityToken,
     );
 

@@ -115,7 +115,8 @@ export type CapabilityRejectReason =
   | 'ttl_overshoot'
   | 'delegation_depth_exceeded'
   | 'parent_exp_sooner_than_child'
-  | 'duplicate_jti';
+  | 'duplicate_jti'
+  | 'replay_detected';
 
 export class CapabilityTokenError extends Error {
   constructor(
@@ -449,17 +450,6 @@ export class CapabilityTokenIssuer {
     return encoded;
   }
 
-  /**
-   * Create a verifier bound to this issuer's master key and default audience.
-   * This is the intended wiring point for runtime token enforcement.
-   */
-  createVerifier(expectedAud?: string): CapabilityTokenVerifier {
-    return new CapabilityTokenVerifier({
-      masterKey: this.masterKey,
-      expectedAud,
-    });
-  }
-
   /** Revoke a jti by adding it to the revocation ledger. Returns true if added. */
   revoke(jti: string, reason: string = 'manual_revoke'): boolean {
     const added = RevocationSet.shared.add(jti, reason);
@@ -479,6 +469,15 @@ export class CapabilityTokenIssuer {
     }
     return added;
   }
+
+  /** Create a verifier bound to this issuer's master key. */
+  createVerifier(expectedAud?: string): CapabilityTokenVerifier {
+    return new CapabilityTokenVerifier({
+      masterKey: this.masterKey,
+      expectedAud,
+      auditLogger: this.auditLogger,
+    });
+  }
 }
 
 // ============================================================================
@@ -486,7 +485,7 @@ export class CapabilityTokenIssuer {
 // ============================================================================
 
 export interface VerifierOptions {
-  masterKey: Buffer;
+  masterKey: Buffer | string;
   /** Audience string the verifier expects (token aud must equal this unless '*'). */
   expectedAud?: string;
   auditLogger?: CapabilityAuditLogger;
@@ -498,7 +497,8 @@ export class CapabilityTokenVerifier {
   private readonly auditLogger?: CapabilityAuditLogger;
 
   constructor(opts: VerifierOptions) {
-    this.masterKey = opts.masterKey;
+    this.masterKey =
+      typeof opts.masterKey === 'string' ? Buffer.from(opts.masterKey, 'utf-8') : opts.masterKey;
     this.expectedAud = opts.expectedAud;
     this.auditLogger = opts.auditLogger;
   }
@@ -602,6 +602,19 @@ export class CapabilityTokenVerifier {
       }
     }
 
+    // Replay protection (Phase 2.2): a fully-validated token's (jti, nonce)
+    // pair may only be consumed once. This is the FINAL gate before success,
+    // so a token that fails any earlier check (signature, expiry, revocation,
+    // scope, arg-shape) never records a replay entry — only tokens that would
+    // otherwise be accepted consume their nonce. A captured token presented
+    // again within its TTL is rejected here. See {@link ReplayCache}.
+    if (ReplayCache.shared.checkAndRecord(payload.jti, payload.nonce, payload.exp)) {
+      return reject(
+        'replay_detected',
+        `jti=${payload.jti.slice(0, 12)}… nonce=${payload.nonce} was already consumed`,
+      );
+    }
+
     return ok(payload);
   }
 
@@ -642,6 +655,65 @@ class RevocationSet {
 /** Reset the revocation ledger. Test isolation only. */
 export function resetRevocationLedger(): void {
   RevocationSet.shared.reset();
+}
+
+// ============================================================================
+// Replay cache (process-local; prevents token reuse within TTL window)
+// ============================================================================
+
+/**
+ * Process-local replay cache that tracks consumed `(jti, nonce)` pairs. Once a
+ * fully-validated token is accepted by {@link CapabilityTokenVerifier.verify},
+ * its pair is recorded here; any subsequent presentation of the same pair
+ * within the token's validity window is rejected as a replay.
+ *
+ * The cache value is the token's `exp` claim (unix seconds). Entries are
+ * lazily swept on every access once `exp + CLOCK_SKEW_SECONDS` has passed —
+ * i.e. once the token can no longer pass the verifier's own expiry check, the
+ * replay entry is also stale. This keeps the cache bounded to the set of
+ * distinct valid tokens presented in the current TTL window and ensures the
+ * replay window exactly matches the accept window (no gap where a token is
+ * still verifiable but its replay entry has already evaporated).
+ *
+ * Like {@link RevocationSet}, this is a process-local singleton. Phase 2.2
+ * may swap it for a shared store to span processes.
+ */
+class ReplayCache {
+  /** key = `${jti}:${nonce}`, value = token exp (unix seconds). */
+  private readonly cache: Map<string, number> = new Map();
+
+  /**
+   * Returns `true` if the `(jti, nonce)` pair has already been consumed and is
+   * still within its validity window (replay detected). Otherwise records the
+   * pair against the given expiry and returns `false`. Lazily sweeps expired
+   * entries on every call so the cache cannot grow unboundedly.
+   */
+  checkAndRecord(jti: string, nonce: string, exp: number): boolean {
+    this.sweepExpired();
+    const key = `${jti}:${nonce}`;
+    if (this.cache.has(key)) return true;
+    this.cache.set(key, exp);
+    return false;
+  }
+
+  /** Remove entries whose token can no longer pass the verifier expiry check. */
+  private sweepExpired(): void {
+    const now = Math.floor(Date.now() / 1000);
+    for (const [key, exp] of this.cache) {
+      if (exp + CLOCK_SKEW_SECONDS <= now) this.cache.delete(key);
+    }
+  }
+
+  reset(): void {
+    this.cache.clear();
+  }
+
+  static shared: ReplayCache = new ReplayCache();
+}
+
+/** Reset the replay cache. Test isolation only. */
+export function resetReplayCache(): void {
+  ReplayCache.shared.reset();
 }
 
 // ============================================================================
@@ -743,6 +815,7 @@ function ok(payload: CapabilityPayload): VerifyResultOk {
 // ============================================================================
 
 let _sharedIssuer: CapabilityTokenIssuer | null = null;
+let _sharedVerifier: CapabilityTokenVerifier | null = null;
 
 /**
  * Get the active issuer (lazily constructed process singleton).
@@ -777,8 +850,26 @@ export function getCapabilityTokenIssuer(): CapabilityTokenIssuer {
   return _sharedIssuer;
 }
 
-/** Reset all issuers + revocation state. Test isolation only. */
+/**
+ * Get the active verifier (lazily constructed process singleton).
+ *
+ * Runtime/worker code should import ONLY this function and never the issuer,
+ * so the private signing key is not exposed to execution paths that only need
+ * to verify tokens.
+ */
+export function getCapabilityTokenVerifier(): CapabilityTokenVerifier {
+  if (!_sharedVerifier) {
+    _sharedVerifier = new CapabilityTokenVerifier({
+      masterKey: resolveMasterKey(),
+    });
+  }
+  return _sharedVerifier;
+}
+
+/** Reset all issuers + verifiers + revocation state. Test isolation only. */
 export function resetCapabilityTokenState(): void {
   _sharedIssuer = null;
+  _sharedVerifier = null;
   resetRevocationLedger();
+  resetReplayCache();
 }

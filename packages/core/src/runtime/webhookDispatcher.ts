@@ -230,7 +230,11 @@ export class WebhookDispatcher {
 
   // ── Internal ─────────────────────────────────────────────────────
 
-  private async sendWithRetry(wh: WebhookConfig, event: WebhookEvent, attempt: number): Promise<void> {
+  private async sendWithRetry(
+    wh: WebhookConfig,
+    event: WebhookEvent,
+    attempt: number,
+  ): Promise<void> {
     // Security: SSRF prevention — re-validate URL at send time to catch any
     // stored webhook configs that predate the registration-time check.
     if (!isSafeWebhookUrl(wh.url)) {
@@ -306,12 +310,17 @@ export class WebhookDispatcher {
         const retryTimer = setTimeout(() => this.sendWithRetry(wh, event, attempt + 1), delay);
         if (typeof retryTimer.unref === 'function') retryTimer.unref();
       } else {
-        getGlobalLogger().error('WebhookDispatcher', 'Webhook max retries exceeded', new Error(errMsg), {
-          id: wh.id,
-          url: wh.url,
-          event: event.event,
-          attempts: attempt + 1,
-        });
+        getGlobalLogger().error(
+          'WebhookDispatcher',
+          'Webhook max retries exceeded',
+          new Error(errMsg),
+          {
+            id: wh.id,
+            url: wh.url,
+            event: event.event,
+            attempts: attempt + 1,
+          },
+        );
       }
       return;
     }

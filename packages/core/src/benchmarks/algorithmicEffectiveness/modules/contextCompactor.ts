@@ -55,11 +55,11 @@ function createScriptedProvider(summary: string): LLMProvider {
         content: summary,
         model: 'scripted',
         usage: {
-          input: 0,
-          output: tokens,
-          total: tokens,
-          cached: 0,
-          reasoning: 0,
+          promptTokens: 0,
+          completionTokens: tokens,
+          totalTokens: tokens,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
         },
         finishReason: 'stop',
       };

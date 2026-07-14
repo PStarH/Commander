@@ -44,13 +44,67 @@ export class TenantIsolationError extends Error {
 }
 
 let _multiTenantEnabled = false;
+let _multiTenantConfigured = false;
+
+function getCallerFile(): string | undefined {
+  const stack = new Error().stack?.split('\n') ?? [];
+  // Walk the stack until we leave this module (tenantContext.ts). The first
+  // external frame is the real caller of setMultiTenantEnabled: either
+  // tenantProvider.ts (legitimate lifecycle helper) or a direct caller.
+  for (let i = 3; i < stack.length; i++) {
+    const match = stack[i].match(/\(?(.+?):\d+:\d+\)?$/);
+    if (!match) continue;
+    const file = match[1];
+    if (/[\\/]tenantContext\.(ts|js|mjs|cjs)$/.test(file)) continue;
+    return file;
+  }
+  return undefined;
+}
+
+function isPrivilegedTenantModeCaller(callerFile: string | undefined): boolean {
+  if (!callerFile) return false;
+  // Only tenantProvider lifecycle helpers may change the multi-tenant flag in
+  // production. In test/dev, test files are allowed to set it for fixtures.
+  const isTenantProvider = /[\\/]tenantProvider\.(ts|js|mjs|cjs)$/.test(callerFile);
+  if (isTenantProvider) return true;
+  if (process.env.NODE_ENV !== 'production') {
+    return (
+      /[\\/](__tests__|tests)[\\/]/.test(callerFile) ||
+      /\.test\.(ts|js|mjs|cjs)$/.test(callerFile)
+    );
+  }
+  return false;
+}
 
 /**
  * Mark whether a multi-tenant provider is active. Called by tenant provider
  * lifecycle helpers; consumers should use isMultiTenantEnabled().
+ *
+ * SECURITY: this is a trust-boundary switch. In production it can only be
+ * called from tenantProvider.ts and, once enabled, cannot be disabled again.
  */
 export function setMultiTenantEnabled(enabled: boolean): void {
+  const callerFile = getCallerFile();
+  if (!isPrivilegedTenantModeCaller(callerFile)) {
+    throw new TenantIsolationError(
+      `setMultiTenantEnabled may only be invoked by tenant provider lifecycle helpers (caller: ${callerFile ?? 'unknown'})`,
+    );
+  }
+  // In production, multi-tenant mode is a one-way door: once enabled it must
+  // not be disabled, otherwise a compromised component could flatten tenant
+  // isolation. Tests may reset the flag during cleanup in non-production modes.
+  if (
+    process.env.NODE_ENV === 'production' &&
+    _multiTenantConfigured &&
+    _multiTenantEnabled &&
+    !enabled
+  ) {
+    throw new TenantIsolationError(
+      'Multi-tenant mode cannot be disabled once it has been enabled.',
+    );
+  }
   _multiTenantEnabled = enabled;
+  _multiTenantConfigured = true;
 }
 
 /**
@@ -78,6 +132,13 @@ export function validateTenantId(tenantId: string): void {
  */
 export function runWithTenant<T>(tenantId: string | undefined, fn: () => T): T {
   if (tenantId !== undefined) {
+    // __default__ is reserved for the internal placeholder used when no tenant
+    // context is active in single-tenant mode. External callers must not be
+    // able to request it, otherwise they could share system-level singleton
+    // instances.
+    if (tenantId === '__default__') {
+      throw new TenantIsolationError('Tenant id "__default__" is reserved');
+    }
     validateTenantId(tenantId);
   }
   return storage.run({ tenantId }, fn);

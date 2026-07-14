@@ -1,0 +1,50 @@
+# =============================================================================
+# Silo deployment for a single tenant.
+#
+# Usage (from repo root):
+#   export TENANT_ID=acme-corp
+#   envsubst < deploy/docker/silo.docker-compose.yml > /tmp/silo-${TENANT_ID}.yml
+#   docker compose -f /tmp/silo-${TENANT_ID}.yml up -d
+#
+# Each silo tenant runs an isolated API container with its own PVC/volume.
+# =============================================================================
+
+services:
+  commander-silo-${TENANT_ID}:
+    build:
+      context: ../..
+      target: api
+      args:
+        - NODE_ENV=production
+    image: ${COMMANDER_IMAGE:-commander-api:latest}
+    container_name: commander-silo-${TENANT_ID}
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      - TENANT_ID=${TENANT_ID}
+      - DEPLOYMENT_MODEL=silo
+      - TENANT_CONFIG_PATH=/app/config/tenants.json
+      - COMMANDER_DATA_ROOT=/data
+      - COMMANDER_API_KEY=${COMMANDER_API_KEY:?COMMANDER_API_KEY is required}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    volumes:
+      # Shared tenant registry (read-only at runtime)
+      - ../../config/tenants.json:/app/config/tenants.json:ro
+      # Tenant API keys (read-only at runtime)
+      - ../../.commander/tenant-api-keys.json:/app/.commander/tenant-api-keys.json:ro
+      # Dedicated tenant data volume
+      - silo-data-${TENANT_ID}:/data/tenants/${TENANT_ID}
+    ports:
+      - "${API_PORT:-4000}:4000"
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:4000/health']
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  silo-data-${TENANT_ID}:
+    driver: local

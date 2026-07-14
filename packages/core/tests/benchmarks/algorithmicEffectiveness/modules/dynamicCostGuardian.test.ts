@@ -17,4 +17,17 @@ describe('dynamicCostGuardian module', () => {
     );
     expect(result.conclusion).toBe('SIGNIFICANTLY_BETTER');
   });
+
+  it('runTrial narrows treatment implementation to a valid guardian', async () => {
+    const treatment = dynamicCostGuardianModule.treatmentFactory({
+      llm: createScriptedLLM({ responses: {} }),
+    });
+    const task = dynamicCostGuardianModule.taskSuite[0];
+    const result = await dynamicCostGuardianModule.runTrial({
+      implementation: treatment,
+      task,
+      llm: createScriptedLLM({ responses: {} }),
+    });
+    expect(result.output.startsWith('ALLOW') || result.output.startsWith('BLOCK')).toBe(true);
+  });
 });

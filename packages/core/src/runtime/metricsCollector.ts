@@ -575,7 +575,7 @@ export class MetricsCollector {
 
   recordSubAgentOutcome(
     agentId: string,
-    status: 'success' | 'failed' | 'partial' | 'interrupted',
+    status: 'success' | 'failed' | 'partial' | 'interrupted' | 'waiting_for_human',
     depth: number,
     tenantId?: string,
   ): void {

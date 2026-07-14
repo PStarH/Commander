@@ -8,12 +8,13 @@
  * 满足 ENTERPRISE_READINESS.md SOC2-6 / TEN-3 的自动化验证需求。
  *
  * Usage:
- *   npx tsx scripts/bench-tenant-isolation.ts
- *   npx tsx scripts/bench-tenant-isolation.ts --mutations=2000
- *   npx tsx scripts/bench-tenant-isolation.ts --output=docs/baselines/tenant-isolation.json
+ *   pnpm exec tsx scripts/bench-tenant-isolation.ts
+ *   pnpm exec tsx scripts/bench-tenant-isolation.ts --mutations=2000
+ *   pnpm exec tsx scripts/bench-tenant-isolation.ts --output=docs/baselines/tenant-isolation.json
  */
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
+import { withBenchmarkEnv } from './benchmarkEnv';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -42,8 +43,8 @@ async function main() {
 
   const fuzz = new CrossTenantFuzzTest({
     maxMutations,
-    victims: ['tenant-a', 'tenant-b', 'tenant-c'],
-    attackers: ['attacker-1', 'attacker-2', ''],
+    victimTenants: ['tenant-a', 'tenant-b', 'tenant-c'],
+    attackerTenants: ['attacker-1', 'attacker-2', ''],
   });
 
   fuzz.registerTarget(target);
@@ -75,25 +76,32 @@ async function main() {
 
   console.log('═'.repeat(70));
 
-  const baseline = {
-    benchmark: 'tenant-isolation',
-    runAt: new Date().toISOString(),
-    nodeVersion: process.version,
-    config: { maxMutations },
-    report: {
-      targetName: report.targetName,
-      totalCases: report.totalCases,
-      defended: report.defended,
-      leaks: report.leaks.length,
-      errors: report.errors,
-      durationMs,
-      leakDetails: report.leaks,
+  const isolationOk = report.leaks.length === 0 && report.errors === 0;
+
+  const baseline = withBenchmarkEnv(
+    {
+      benchmark: 'tenant-isolation',
+      config: { maxMutations },
+      report: {
+        targetName: report.targetName,
+        totalCases: report.totalCases,
+        defended: report.defended,
+        leaks: report.leaks.length,
+        errors: report.errors,
+        durationMs,
+        leakDetails: report.leaks,
+      },
+      summary: {
+        passed: isolationOk,
+        errors: report.errors,
+        failed: report.leaks.length,
+        skipped: 0,
+        leakCount: report.leaks.length,
+        errorCount: report.errors,
+      },
     },
-    summary: {
-      passed: report.leaks.length === 0,
-      leakCount: report.leaks.length,
-    },
-  };
+    { evidence: 'simulated' },
+  );
 
   const fullPath = resolve(outputPath);
   const dir = dirname(fullPath);
@@ -103,11 +111,14 @@ async function main() {
   writeFileSync(fullPath, JSON.stringify(baseline, null, 2), { mode: 0o644 });
   console.log(`Baseline saved to ${fullPath}`);
 
-  if (report.leaks.length > 0) {
-    console.log(`❌ FAIL: ${report.leaks.length} tenant isolation leak(s) detected`);
+  if (!isolationOk) {
+    const reasons: string[] = [];
+    if (report.leaks.length > 0) reasons.push(`${report.leaks.length} tenant isolation leak(s)`);
+    if (report.errors > 0) reasons.push(`${report.errors} fuzz error(s)`);
+    console.log(`❌ FAIL: ${reasons.join('; ')}`);
     process.exit(1);
   }
-  console.log('✅ PASS: No tenant isolation leaks detected');
+  console.log('✅ PASS: No tenant isolation leaks or errors detected');
 }
 
 main().catch((e) => {

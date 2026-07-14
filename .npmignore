@@ -1,0 +1,53 @@
+# Source and tests (published packages already ship compiled dist/)
+src/**/*.test.ts
+src/**/*.spec.ts
+tests/
+*.test.ts
+*.spec.ts
+
+# TypeScript configuration
+tsconfig.json
+tsconfig.*.json
+
+# Build metadata
+*.tsbuildinfo
+
+# Runtime data directories
+.commander/
+.commander_dlq/
+.commander_exec/
+.commander_traces/
+.attacker-reports/
+
+# Logs
+*.log
+logs/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+coverage-core/
+
+# CI / Git metadata
+.github/
+.git/
+.gitignore
+
+# Documentation drafts and plans (keep README.md / LICENSE / CHANGELOG.md)
+docs/superpowers/
+
+# Misc
+node_modules/
+*.tgz

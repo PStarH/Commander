@@ -8,19 +8,18 @@ import type {
 } from '../../src/pluginManager';
 import type { LLMRequest, LLMMessage, LLMResponse } from '../../src/runtime/types';
 import type { Tool, ToolResult } from '../../src/runtime/types/tool';
+import * as securityResponseEngine from '../../src/security/securityResponseEngine';
 
-// Mock processSecurityAlert to track calls without triggering the real RASP
+// Spy on processSecurityAlert to track calls without triggering the real RASP
 // response engine (which would suspend/throttle agents globally and pollute
 // shared singleton state across tests).
-vi.mock('../../src/security/securityResponseEngine', () => ({
-  processSecurityAlert: vi.fn(() => ({ actions: ['log'], success: true })),
-}));
+const processSecurityAlert = vi
+  .spyOn(securityResponseEngine, 'processSecurityAlert')
+  .mockImplementation(() => ({ actions: ['log'], success: true }));
 
 // safe-regex is NOT mocked — all regexes must pass validation in onLoad.
 // The ignore_instructions regex uses bounded wildcards (.{0,20}) instead
 // of nested optional alternations to pass safe-regex.
-
-import { processSecurityAlert } from '../../src/security/securityResponseEngine';
 
 // ── Fixtures ────────────────────────────────────────────────────────────
 
@@ -89,7 +88,7 @@ describe('builtin-rasp-extensions plugin', () => {
 
   afterEach(async () => {
     if (plugin && plugin.onUnload) await plugin.onUnload();
-    vi.mocked(processSecurityAlert).mockClear();
+    processSecurityAlert.mockClear();
   });
 
   it('has the correct metadata', () => {
@@ -137,7 +136,7 @@ describe('builtin-rasp-extensions plugin', () => {
     // 300 chars — below the 512-char threshold; the regex matches but the
     // minLength guard drops the finding.
     await plugin.beforeLLMCall!(makeBeforeLLMCtx('B'.repeat(300)));
-    const calls = vi.mocked(processSecurityAlert).mock.calls;
+    const calls = processSecurityAlert.mock.calls;
     const base64Calls = calls.filter(
       (c) => (c[0].details as { patternId?: string })?.patternId === 'base64_payload',
     );

@@ -16,6 +16,11 @@ import type { LLMMessage, TokenUsage } from './types';
 import type { LeaseManager } from '../atr/leaseManager';
 import { getMetricsCollector } from './metricsCollector';
 import { CheckpointStore, type CheckpointSnapshot } from './checkpointStore';
+import {
+  createStateCheckpointBackend,
+  type StateCheckpointBackend,
+  resolveStateCheckpointBackendType,
+} from './stateCheckpointBackend';
 
 export type CheckpointPhase =
   | 'started'
@@ -26,6 +31,7 @@ export type CheckpointPhase =
   | 'completed_early_exit'
   | 'failed'
   | 'interrupted'
+  | 'waiting_for_human'
   | 'sequential-step'
   | 'task-pool-batch'
   | 'goal-round'
@@ -66,18 +72,30 @@ export class StateCheckpointer {
   private tenantId?: string;
   private leaseManager?: LeaseManager;
   private store?: CheckpointStore;
+  private readonly backend: StateCheckpointBackend;
   private pruneCounter = 0;
 
   constructor(
     baseDir?: string,
     tenantId?: string,
-    options?: { leaseManager?: LeaseManager; store?: CheckpointStore },
+    options?: {
+      leaseManager?: LeaseManager;
+      store?: CheckpointStore;
+      backend?: StateCheckpointBackend;
+      backendType?: ReturnType<typeof resolveStateCheckpointBackendType>;
+    },
   ) {
     this.tenantId = tenantId;
     this.leaseManager = options?.leaseManager;
     this.store = options?.store;
     const base = baseDir ?? path.join(process.cwd(), '.commander_state');
     this.baseDir = tenantId ? path.join(base, `tenant_${tenantId}`) : base;
+    this.backend =
+      options?.backend ??
+      createStateCheckpointBackend(
+        this.baseDir,
+        options?.backendType ?? resolveStateCheckpointBackendType(),
+      );
     fs.mkdirSync(this.baseDir, { recursive: true, mode: 0o700 });
     try {
       fs.chmodSync(this.baseDir, 0o700);
@@ -124,30 +142,17 @@ export class StateCheckpointer {
       });
       return false;
     }
-    const prior = this._readFile(path.join(this.baseDir, `${state.runId}.checkpoint`));
+    const prior =
+      this.backend.readActive(state.runId) ??
+      this._readFile(path.join(this.baseDir, `${state.runId}.checkpoint`));
     state.version = (prior?.version ?? 0) + 1;
     return true;
   }
 
   checkpoint(state: CheckpointState): void {
     if (!this.authorize(state)) return;
-    const tmpPath = path.join(this.baseDir, `${state.runId}.tmp`);
-    const chkPath = path.join(this.baseDir, `${state.runId}.checkpoint`);
     try {
-      fs.writeFileSync(tmpPath, JSON.stringify(state), { encoding: 'utf-8', mode: 0o600 });
-      try {
-        fs.chmodSync(tmpPath, 0o600);
-      } catch (err) {
-        reportSilentFailure(err, 'stateCheckpointer:140');
-        /* best-effort */
-      }
-      fs.renameSync(tmpPath, chkPath);
-      try {
-        fs.chmodSync(chkPath, 0o600);
-      } catch (err) {
-        reportSilentFailure(err, 'stateCheckpointer:147');
-        /* best-effort */
-      }
+      this.backend.writeActive(state.runId, state);
       this.writeStoreCheckpoint(state);
       try {
         getMetricsCollector().recordCheckpointFlush(state.phase ?? 'unknown');
@@ -165,26 +170,9 @@ export class StateCheckpointer {
 
   terminalCheckpoint(state: CheckpointState): void {
     if (!this.authorize(state)) return;
-    const chkPath = path.join(this.baseDir, `${state.runId}.checkpoint`);
-    const donePath = path.join(this.baseDir, 'completed', `${state.runId}.json`);
-    const tmpPath = path.join(this.baseDir, `${state.runId}.tmp`);
 
-    const writeTmp = path.join(this.baseDir, `${state.runId}.terminal.tmp`);
     try {
-      fs.writeFileSync(writeTmp, JSON.stringify(state), { encoding: 'utf-8', mode: 0o600 });
-      try {
-        fs.chmodSync(writeTmp, 0o600);
-      } catch (err) {
-        reportSilentFailure(err, 'stateCheckpointer:177');
-        /* best-effort */
-      }
-      fs.renameSync(writeTmp, donePath);
-      try {
-        fs.chmodSync(donePath, 0o600);
-      } catch (err) {
-        reportSilentFailure(err, 'stateCheckpointer:184');
-        /* best-effort */
-      }
+      this.backend.writeTerminal(state.runId, state);
       try {
         getMetricsCollector().recordCheckpointFlush('terminal');
       } catch (err) {
@@ -199,27 +187,6 @@ export class StateCheckpointer {
       });
     }
 
-    if (fs.existsSync(chkPath)) {
-      try {
-        fs.unlinkSync(chkPath);
-      } catch (e) {
-        getGlobalLogger().warn('StateCheckpointer', 'Failed to remove checkpoint file', {
-          error: (e as Error)?.message,
-          runId: state.runId,
-        });
-      }
-    }
-    if (fs.existsSync(tmpPath)) {
-      try {
-        fs.unlinkSync(tmpPath);
-      } catch (e) {
-        getGlobalLogger().warn('StateCheckpointer', 'Failed to remove temp file', {
-          error: (e as Error)?.message,
-          runId: state.runId,
-        });
-      }
-    }
-
     // Auto-prune completed checkpoints periodically (not every completion)
     this.pruneCounter++;
     if (this.pruneCounter >= 10) {
@@ -229,43 +196,9 @@ export class StateCheckpointer {
   }
 
   resume(runId: string): CheckpointState | null {
-    const chkPath = path.join(this.baseDir, `${runId}.checkpoint`);
-    if (fs.existsSync(chkPath)) {
-      try {
-        const raw = fs.readFileSync(chkPath, 'utf-8');
-        return JSON.parse(raw) as CheckpointState;
-      } catch (e) {
-        getGlobalLogger().warn('StateCheckpointer', 'Failed to resume from checkpoint', {
-          error: (e as Error)?.message,
-          runId,
-        });
-        try {
-          fs.unlinkSync(chkPath);
-        } catch (unlinkError) {
-          getGlobalLogger().warn('StateCheckpointer', 'Failed to remove corrupt checkpoint', {
-            error: (unlinkError as Error)?.message,
-            runId,
-          });
-        }
-        return null;
-      }
-    }
-
-    const donePath = path.join(this.baseDir, 'completed', `${runId}.json`);
-    if (fs.existsSync(donePath)) {
-      try {
-        const raw = fs.readFileSync(donePath, 'utf-8');
-        return JSON.parse(raw) as CheckpointState;
-      } catch (e) {
-        getGlobalLogger().warn('StateCheckpointer', 'Failed to read completed checkpoint', {
-          error: (e as Error)?.message,
-          runId,
-        });
-        return null;
-      }
-    }
-
-    return null;
+    const active = this.backend.readActive(runId);
+    if (active) return active;
+    return this.backend.readTerminal(runId);
   }
 
   /**
@@ -274,48 +207,9 @@ export class StateCheckpointer {
    * not serialize behind a synchronous fs.readFileSync per resume.
    */
   async resumeAsync(runId: string): Promise<CheckpointState | null> {
-    const chkPath = path.join(this.baseDir, `${runId}.checkpoint`);
-    try {
-      await fs.promises.access(chkPath);
-      const raw = await fs.promises.readFile(chkPath, 'utf-8');
-      return JSON.parse(raw) as CheckpointState;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        // Fall through to completed-dir lookup.
-      } else {
-        getGlobalLogger().warn('StateCheckpointer', 'Failed to resume from checkpoint (async)', {
-          error: (err as Error)?.message,
-          runId,
-        });
-        try {
-          await fs.promises.unlink(chkPath);
-        } catch (unlinkError) {
-          if ((unlinkError as NodeJS.ErrnoException).code !== 'ENOENT') {
-            getGlobalLogger().warn(
-              'StateCheckpointer',
-              'Failed to remove corrupt checkpoint (async)',
-              {
-                error: (unlinkError as Error)?.message,
-                runId,
-              },
-            );
-          }
-        }
-        return null;
-      }
-    }
-    const donePath = path.join(this.baseDir, 'completed', `${runId}.json`);
-    try {
-      const raw = await fs.promises.readFile(donePath, 'utf-8');
-      return JSON.parse(raw) as CheckpointState;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-      getGlobalLogger().warn('StateCheckpointer', 'Failed to read completed checkpoint (async)', {
-        error: (err as Error)?.message,
-        runId,
-      });
-      return null;
-    }
+    const active = await this.backend.readActiveAsync(runId);
+    if (active) return active;
+    return this.backend.readTerminal(runId);
   }
 
   listCheckpoints(): { runId: string; phase: string; timestamp: string }[] {
@@ -469,8 +363,7 @@ export class StateCheckpointer {
    * If a LeaseManager is bound, validates the lease before returning.
    */
   loadCheckpoint(runId: string): CheckpointState | null {
-    const chkPath = path.join(this.baseDir, `${runId}.checkpoint`);
-    const state = this._readFile(chkPath);
+    const state = this.backend.readActive(runId);
     if (!state) return null;
     if (this.leaseManager && state.leaseToken && typeof state.fencingEpoch === 'number') {
       const live = this.leaseManager.validate(runId, state.leaseToken, state.fencingEpoch, {
@@ -495,8 +388,7 @@ export class StateCheckpointer {
    * readFileSync would otherwise block the event loop during recovery.
    */
   async loadCheckpointAsync(runId: string): Promise<CheckpointState | null> {
-    const chkPath = path.join(this.baseDir, `${runId}.checkpoint`);
-    const state = await this._readFileAsync(chkPath);
+    const state = await this.backend.readActiveAsync(runId);
     if (!state) return null;
     if (this.leaseManager && state.leaseToken && typeof state.fencingEpoch === 'number') {
       const live = this.leaseManager.validate(runId, state.leaseToken, state.fencingEpoch, {

@@ -99,12 +99,17 @@ const taskSuite: SamplingTask[] = [
     events: [createEvent('trace-normal-001', 'llm_call', {})],
     // Accept either a head-sample keep or a drop; the volume constraint is
     // enforced by the benchmark's overall keep-rate comparison, not this task.
-    expected: (output: string) => output.includes('"reason":"base"') || output.includes('"reason":"drop"'),
+    expected: (output: string) =>
+      output.includes('"reason":"base"') || output.includes('"reason":"drop"'),
   },
 ];
 
 interface Sampler {
-  decide(events: TraceEvent[], traceId: string, durationMs: number): { keep: boolean; reason: string; probability: number };
+  decide(
+    events: TraceEvent[],
+    traceId: string,
+    durationMs: number,
+  ): { keep: boolean; reason: string; probability: number };
 }
 
 /**
@@ -118,7 +123,11 @@ class FixedProbabilitySampler implements Sampler {
     this.baseRate = baseRate;
   }
 
-  decide(_events: TraceEvent[], _traceId: string, _durationMs: number): {
+  decide(
+    _events: TraceEvent[],
+    _traceId: string,
+    _durationMs: number,
+  ): {
     keep: boolean;
     reason: string;
     probability: number;

@@ -126,6 +126,8 @@ export interface SemanticQuery {
   limit?: number;
   /** Minimum similarity threshold */
   minSimilarity?: number;
+  /** Tenant scope for the query */
+  tenantId?: string;
 }
 
 // ============================================================================

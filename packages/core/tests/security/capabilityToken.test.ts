@@ -23,6 +23,8 @@
  *  - tokenRejected observability (opt-in via ToolApproval.setTokenRejectedLogger)
  *  - opt-out: no tokenRejectedLogger wired stays silent on rejection
  *  - singleton reset isolation
+ *  - replay protection: nonce consumption, REPLAY_DETECTED on reuse,
+ *    distinct-nonce independence, post-expiry cache sweep, resetReplayCache
  */
 import { it, beforeAll, afterEach, describe } from 'vitest';
 import assert from 'node:assert/strict';
@@ -50,8 +52,10 @@ import {
   decode,
   sign,
   getCapabilityTokenIssuer,
+  getCapabilityTokenVerifier,
   resetCapabilityTokenState,
   resetRevocationLedger,
+  resetReplayCache,
   resolveMasterKey,
   CAPABILITY_TOKEN_KEY_ENV,
   DEFAULT_MAX_TTL_SECONDS,
@@ -82,6 +86,7 @@ beforeAll(() => {
 
 afterEach(() => {
   resetRevocationLedger();
+  resetReplayCache();
   resetAuditChainLedger();
   resetMetricsCollector();
   restoreKey();
@@ -238,10 +243,13 @@ it('Phase 2.1 — audience mismatch is rejected', () => {
 it('Phase 2.1 — wildcard tool scope matches', () => {
   const issuer = makeIssuer();
   const verifier = makeVerifier(issuer.masterKey);
-  const tok = issuer.issue({ sub: 'a', aud: '*', tools: ['memory_*'], ttlSeconds: 10 });
-  const r1 = verifier.verify(tok, { tool: 'memory_read', args: {} });
-  const r2 = verifier.verify(tok, { tool: 'memory_write', args: { content: 'x' } });
-  const r3 = verifier.verify(tok, { tool: 'shell_execute', args: {} });
+  // Issue a fresh token per verification: replay protection (Phase 2.2)
+  // consumes the (jti, nonce) pair on success, so a second successful
+  // verify of the *same* token would otherwise be flagged as a replay.
+  const issue = () => issuer.issue({ sub: 'a', aud: '*', tools: ['memory_*'], ttlSeconds: 10 });
+  const r1 = verifier.verify(issue(), { tool: 'memory_read', args: {} });
+  const r2 = verifier.verify(issue(), { tool: 'memory_write', args: { content: 'x' } });
+  const r3 = verifier.verify(issue(), { tool: 'shell_execute', args: {} });
   assert.equal(r1.ok, true);
   assert.equal(r2.ok, true);
   assert.equal(r3.ok, false);
@@ -978,4 +986,135 @@ it('Phase 2.3 — audit_sink_failures_total is unaffected when both sinks succee
   ]);
   assert.equal(afterLogger, beforeLogger, 'auditLogger counter unchanged when sink succeeds');
   assert.equal(afterChain, beforeChain, 'auditChain counter unchanged when sink succeeds');
+});
+
+it('Phase 2.1 — verifier cannot issue tokens', () => {
+  const verifier = new CapabilityTokenVerifier({ masterKey: 'a'.repeat(64) });
+  assert.throws(
+    () => (verifier as any).issue({ sub: 'x', aud: 't', tools: ['file_read'] }),
+    /issue is not a function|Cannot read properties|is not a function/,
+  );
+});
+
+it('Phase 2.1 — getCapabilityTokenVerifier returns only verifier (no issue method)', () => {
+  resetCapabilityTokenState();
+  process.env.COMMANDER_CAPABILITY_TOKEN_KEY = 'a'.repeat(64);
+  const v = getCapabilityTokenVerifier();
+  assert.ok(v instanceof CapabilityTokenVerifier);
+  assert.equal(typeof (v as any).issue, 'undefined');
+  resetCapabilityTokenState();
+});
+
+it('Phase 2.1 — worker code path uses verifier singleton instead of issuer.createVerifier', () => {
+  resetCapabilityTokenState();
+  process.env.COMMANDER_CAPABILITY_TOKEN_KEY = 'a'.repeat(64);
+  const issuer = getCapabilityTokenIssuer();
+  const verifier = getCapabilityTokenVerifier();
+  const tok = issuer.issue({ sub: 'agent-1', aud: '*', tools: ['file_read'], ttlSeconds: 30 });
+  const r = verifier.verify(tok, { tool: 'file_read', args: {} });
+  assert.equal(r.ok, true);
+  assert.equal(typeof (verifier as any).issue, 'undefined');
+  resetCapabilityTokenState();
+});
+
+// ============================================================================
+// Phase 2.2 — Replay protection (nonce consumption)
+// ============================================================================
+
+it('Phase 2.2 — replay detection: verifying the same token twice fails with replay_detected', () => {
+  const issuer = makeIssuer();
+  const verifier = makeVerifier(issuer.masterKey);
+  const tok = issuer.issue({ sub: 'a', aud: '*', tools: ['web_search'], ttlSeconds: 30 });
+  // First presentation: token is valid → succeeds and consumes the (jti, nonce).
+  const r1 = verifier.verify(tok, { tool: 'web_search', args: {} });
+  assert.equal(r1.ok, true, 'first verify succeeds');
+  // Second presentation of the identical token within its TTL → replay.
+  const r2 = verifier.verify(tok, { tool: 'web_search', args: {} });
+  assert.equal(r2.ok, false, 'second verify of same token is rejected');
+  if (!r2.ok) assert.equal(r2.reason, 'replay_detected');
+});
+
+it('Phase 2.2 — different nonce: two distinct tokens with same scope both verify', () => {
+  const issuer = makeIssuer();
+  const verifier = makeVerifier(issuer.masterKey);
+  const tok1 = issuer.issue({ sub: 'a', aud: '*', tools: ['web_search'], ttlSeconds: 30 });
+  const tok2 = issuer.issue({ sub: 'a', aud: '*', tools: ['web_search'], ttlSeconds: 30 });
+  // Distinct issuances yield distinct (jti, nonce) pairs, so neither is a replay.
+  assert.notEqual(decode(tok1).payload.jti, decode(tok2).payload.jti);
+  assert.notEqual(decode(tok1).payload.nonce, decode(tok2).payload.nonce);
+  const r1 = verifier.verify(tok1, { tool: 'web_search', args: {} });
+  const r2 = verifier.verify(tok2, { tool: 'web_search', args: {} });
+  assert.equal(r1.ok, true, 'first token verifies');
+  assert.equal(r2.ok, true, 'second token (different nonce) also verifies');
+});
+
+it('Phase 2.2 — cache cleanup: after token expiry, same jti+nonce verifies again', () => {
+  const key = Buffer.alloc(32, 7);
+  const verifier = makeVerifier(key);
+  const jti = 'e'.repeat(32);
+  const nonce = 'deadbeef';
+  // First token: valid now, expires in 1 second.
+  const now1 = Math.floor(Date.now() / 1000);
+  const tok1 = sign(
+    {
+      v: 1,
+      jti,
+      sub: 'a',
+      iss: 'commander',
+      iat: now1,
+      exp: now1 + 1,
+      aud: '*',
+      scope: { tools: ['web_search'] },
+      risk: 'low',
+      parent_jti: null,
+      depth: 0,
+      nonce,
+    },
+    key,
+  );
+  const r1 = verifier.verify(tok1, { tool: 'web_search', args: {} });
+  assert.equal(r1.ok, true, 'first verify succeeds and records the replay entry');
+  // Wait past expiry + clock skew so the replay-cache entry is sweepable.
+  // Sweep threshold is exp + CLOCK_SKEW_SECONDS; sleep beyond it.
+  const deadline = Date.now() + (CLOCK_SKEW_SECONDS + 3) * 1000 + 500;
+  while (Date.now() < deadline) {
+    /* spin briefly past the sweep threshold */
+  }
+  // Second token: SAME (jti, nonce) but a fresh, still-valid expiry window.
+  // The stale cache entry must have been swept, so this is NOT a replay.
+  const now2 = Math.floor(Date.now() / 1000);
+  const tok2 = sign(
+    {
+      v: 1,
+      jti,
+      sub: 'a',
+      iss: 'commander',
+      iat: now2,
+      exp: now2 + 60,
+      aud: '*',
+      scope: { tools: ['web_search'] },
+      risk: 'low',
+      parent_jti: null,
+      depth: 0,
+      nonce,
+    },
+    key,
+  );
+  const r2 = verifier.verify(tok2, { tool: 'web_search', args: {} });
+  assert.equal(r2.ok, true, 'after the old entry expired, the same jti+nonce verifies again');
+}, 20000);
+
+it('Phase 2.2 — resetReplayCache: cleared cache lets a replayed token verify again', () => {
+  const issuer = makeIssuer();
+  const verifier = makeVerifier(issuer.masterKey);
+  const tok = issuer.issue({ sub: 'a', aud: '*', tools: ['web_search'], ttlSeconds: 30 });
+  const r1 = verifier.verify(tok, { tool: 'web_search', args: {} });
+  assert.equal(r1.ok, true, 'first verify succeeds');
+  const r2 = verifier.verify(tok, { tool: 'web_search', args: {} });
+  assert.equal(r2.ok, false, 'second verify is a replay');
+  if (!r2.ok) assert.equal(r2.reason, 'replay_detected');
+  // Reset the replay cache — the consumed pair is forgotten.
+  resetReplayCache();
+  const r3 = verifier.verify(tok, { tool: 'web_search', args: {} });
+  assert.equal(r3.ok, true, 'after resetReplayCache, the token verifies again');
 });

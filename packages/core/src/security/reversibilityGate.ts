@@ -72,6 +72,8 @@ const HARDCODED_IRREVERSIBLE: readonly string[] = [
   'bank_transfer', // alternate naming
   'schedule_meeting', // calendar side effects leak to external participants
   'create_event', // calendar event creation is externally visible
+  'publish_wiki', // wiki publish is externally visible and can cause reputational/legal harm
+  'publish_page', // generic page publish
 ];
 
 /**
@@ -124,6 +126,20 @@ const IRREVERSIBLE_ARG_PATTERNS: ReadonlyArray<{ tool: string; pattern: RegExp; 
       tool: 'file_edit',
       pattern: /(^|\/)(etc|usr|var|sys|proc|root|private|\.ssh|\.env)\b/i,
       reason: 'edit of system/sensitive path',
+    },
+    // file_write/edit to artifact/release/supply-chain paths — tampering with these
+    // enables supply-chain attacks even if the file itself is later overwritten.
+    {
+      tool: 'file_write',
+      pattern:
+        /(^|\/)(release|artifact|artifacts|dist|build|out|target|\.github|\.git|checksum|sha256|sha512|sig|manifest|lock|vendor|bundle|package|node_modules)\b/i,
+      reason: 'write to release/supply-chain path',
+    },
+    {
+      tool: 'file_edit',
+      pattern:
+        /(^|\/)(release|artifact|artifacts|dist|build|out|target|\.github|\.git|checksum|sha256|sha512|sig|manifest|lock|vendor|bundle|package|node_modules)\b/i,
+      reason: 'edit of release/supply-chain path',
     },
     // git push to remote
     {

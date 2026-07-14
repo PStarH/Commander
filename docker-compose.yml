@@ -18,7 +18,7 @@ services:
   api:
     build:
       context: .
-      target: api
+      dockerfile: apps/api/Dockerfile
       args:
         - NODE_ENV=production
     ports:
@@ -27,7 +27,7 @@ services:
       - NODE_ENV=production
       - PORT=4000
       # Security: Require API key to be set. Fail fast if missing.
-      - COMMANDER_API_KEY=${COMMANDER_API_KEY:?COMMANDER_API_KEY is required. Generate one with: openssl rand -hex 32}
+      - 'COMMANDER_API_KEY=${COMMANDER_API_KEY:?COMMANDER_API_KEY is required. Generate one with: openssl rand -hex 32}'
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
@@ -45,6 +45,19 @@ services:
       # DATABASE_URL must point at a running PostgreSQL instance (see `database` profile).
       - API_STORE_BACKEND=${API_STORE_BACKEND:-sqlite}
       - DATABASE_URL=${DATABASE_URL:-}
+      # Architecture V2 shared execution kernel (Postgres-backed)
+      - COMMANDER_KERNEL_ENABLED=${COMMANDER_KERNEL_ENABLED:-0}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-}}
+      # -------------------------------------------------------------------------
+      # SECURITY: The values below are DEV-ONLY defaults. They let you run
+      # `docker compose up` locally without creating a .env file first. They are
+      # NOT safe for production and will be rejected by validateEnvironment() if
+      # you forget to override them via .env or docker-compose.prod.yml.
+      # -------------------------------------------------------------------------
+      - COMMANDER_MASTER_KEY=${COMMANDER_MASTER_KEY:-dev-master-key-change-me-in-production}
+      - JWT_SECRET=${JWT_SECRET:-dev-jwt-secret-change-me-in-production}
+      # CORS origins — comma-separated. NEVER use '*' in production.
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
     volumes:
       - commander_state:/app/.commander_state
       - commander_traces:/app/.commander_traces
@@ -57,6 +70,73 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  # ── Worker — executes durable kernel steps ───────────────────────────────
+  # Started only with: docker compose --profile worker up
+  # Requires COMMANDER_KERNEL_ENABLED=1 and a Postgres kernel database.
+  worker:
+    build:
+      context: .
+      dockerfile: packages/worker-plane/Dockerfile
+      args:
+        - NODE_ENV=production
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL:-}
+      - COMMANDER_WORKER_BOOTSTRAP=/app/packages/worker-plane/dist/bootstrap.js
+      - COMMANDER_WORKER_AUTH_TOKEN=${COMMANDER_WORKER_AUTH_TOKEN:-worker-token}
+      - COMMANDER_WORKER_AUTH_SUBJECT=${COMMANDER_WORKER_AUTH_SUBJECT:-worker}
+      - COMMANDER_WORKER_CAPABILITIES=${COMMANDER_WORKER_CAPABILITIES:-agent,tool,connector}
+      - COMMANDER_WORKER_MAX_CONCURRENCY=${COMMANDER_WORKER_MAX_CONCURRENCY:-10}
+      - COMMANDER_WORKER_TENANTS=${COMMANDER_WORKER_TENANTS:-*}
+      - COMMANDER_WORKER_LEASE_TTL_MS=${COMMANDER_WORKER_LEASE_TTL_MS:-30000}
+      - COMMANDER_WORKER_HEARTBEAT_MS=${COMMANDER_WORKER_HEARTBEAT_MS:-10000}
+      - COMMANDER_WORKER_POLL_MS=${COMMANDER_WORKER_POLL_MS:-250}
+      - COMMANDER_EFFECT_BROKER_SEED=${COMMANDER_EFFECT_BROKER_SEED:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - worker
+
+  # ── Timer Wakeup Worker — drives retry/deadline state transitions ────────
+  # Started only with: docker compose --profile worker up
+  timer:
+    build:
+      context: .
+      dockerfile: packages/operations/Dockerfile
+      args:
+        - NODE_ENV=production
+        - OPERATIONS_MODE=timer
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - worker
+
+  # ── Outbox Publisher — at-least-once event delivery ────────────────────────
+  # Started only with: docker compose --profile worker up
+  outbox:
+    build:
+      context: .
+      dockerfile: packages/operations/Dockerfile
+      args:
+        - NODE_ENV=production
+        - OPERATIONS_MODE=outbox
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - worker
 
   # Web GUI — Agent War Room dashboard
   web:

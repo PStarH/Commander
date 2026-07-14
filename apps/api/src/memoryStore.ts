@@ -1,6 +1,34 @@
 import fs from 'fs';
 import path from 'path';
-import { ProjectMemoryItem, ProjectMemoryKind, ProjectMemoryOverview } from '@commander/core';
+import { ProjectMemoryKind } from '@commander/core';
+
+import { getDirname, getRequire } from './esmCompat';
+const __dirname = getDirname(import.meta.url);
+const require = getRequire(import.meta.url);
+
+// Local DTOs while the core build is being restored to a green state.
+// These mirror packages/core/src/memory/apiTypes.ts so that apps/api can be
+// type-checked independently of the stale @commander/core dist artifacts.
+export interface ProjectMemoryItem {
+  id: string;
+  projectId: string;
+  missionId?: string;
+  agentId?: string;
+  kind: ProjectMemoryKind;
+  title: string;
+  content: string;
+  tags: string[];
+  createdAt: string;
+}
+
+export interface ProjectMemoryOverview {
+  totalItems: number;
+  kindCounts: Record<ProjectMemoryKind, number>;
+  topTags: Array<{ tag: string; count: number }>;
+  missionLinkedCount: number;
+  agentLinkedCount: number;
+  latestCreatedAt?: string;
+}
 
 /** Override `COMMANDER_MEMORY_FILE` to relocate the project-memory JSON file. Default keeps the original `__dirname/../data/project-memory.json` path so production runs are untouched. Env var MUST be set before this module is required (module-load capture). */
 const MEMORY_FILE =

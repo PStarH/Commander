@@ -231,6 +231,10 @@ export function createRaspExtensionsPlugin(): CommanderPlugin {
     beforeLLMCall: (ctx: BeforeLLMCallContext): LLMRequest => {
       const messages = ctx.request.messages ?? [];
       for (const msg of messages) {
+        // The trusted system prompt is part of the runtime's own defensive
+        // instructions; scanning it causes false positives (it legitimately
+        // mentions injection patterns as examples). Only scan untrusted roles.
+        if ((msg as { role?: string }).role === 'system') continue;
         const content = msg.content ?? '';
         if (!content) continue;
         for (const p of INJECTION_PATTERNS) {

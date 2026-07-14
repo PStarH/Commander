@@ -2,15 +2,15 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "..",
+    "rootDir": "src",
     "lib": ["ES2022", "dom"],
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
     "baseUrl": ".",
     "paths": {
-      "@commander/core": ["../core/src"],
-      "@commander/core/src/*": ["../core/src/*"]
+      "@commander/core": ["../core/dist"],
+      "@commander/core/src/*": ["../core/dist/*"]
     }
   },
   "include": ["src"],

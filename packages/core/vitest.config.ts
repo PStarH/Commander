@@ -20,11 +20,14 @@ export default defineConfig({
     setupFiles: ['tests/setup.ts'],
     include: [
       'tests/cli/envLoader.test.ts',
+      'tests/planner/workGraphPlanner.test.ts',
       // --- atr ---
       'tests/atr/recoveryBootstrapper.test.ts',
       'tests/atr/taskQueue.test.ts',
       'tests/atr/gitSnapshot.test.ts',
       'tests/atr/executionScheduler.test.ts',
+      'tests/atr/durableInteractionStore.test.ts',
+      'tests/atr/effectReconciliationWorker.test.ts',
       'src/atr/__tests__/schedulerTenantPriority.test.ts',
       // --- recovery ---
       'tests/recovery/kill9.test.ts',
@@ -33,6 +36,7 @@ export default defineConfig({
       'tests/runtime/incrementalSCC.integration.test.ts',
       'tests/runtime/agentInbox.test.ts',
       'tests/runtime/agentRuntime.test.ts',
+      'tests/runtime/runTelemetryRecorder.test.ts',
       'tests/runtime/runInitializer.test.ts',
       'tests/runtime/preLoopSetup.test.ts',
       'tests/runtime/agentLoopOrchestrator.test.ts',
@@ -40,6 +44,8 @@ export default defineConfig({
       'tests/runtime/executionRouter.test.ts',
       'tests/runtime/agentRuntime.integration.test.ts',
       'tests/runtime/agentRuntimeInterface.test.ts',
+      'tests/runtime/runtimeFactory.test.ts',
+      'tests/runtime/kernelStepExecutor.test.ts',
       'tests/runtime/mtlsRuntimeIpc.test.ts',
       // Cascade-fix regression — walks packages/core/src/**.ts and verifies
       // every `const XSingleton = createTenantAwareSingleton(...)` factory
@@ -59,8 +65,11 @@ export default defineConfig({
       'tests/runtime/baseOpenAICompatibleRetry.test.ts',
       'tests/runtime/bm25ToolDiscovery.test.ts',
       'tests/runtime/circuitBreaker.test.ts',
+      'tests/runtime/concurrencyController.test.ts',
       'tests/runtime/concurrentToolExecution.test.ts',
       'tests/runtime/stateIsolation.test.ts',
+      'tests/runtime/executionContext.test.ts',
+      'tests/runtime/concurrentExecute.test.ts',
       'tests/runtime/deployRollbackIntegration.test.ts',
       'tests/runtime/compensation-integration.test.ts',
       'tests/runtime/compensationRegistry.test.ts',
@@ -86,12 +95,19 @@ export default defineConfig({
       'tests/runtime/oidcAuthPlugin.test.ts',
       'tests/runtime/samlAuthPlugin.test.ts',
       'tests/runtime/owaspAsiHttpRoute.test.ts',
+      'tests/runtime/httpTenantGate.test.ts',
+      'tests/runtime/walSegmented.test.ts',
+      'tests/runtime/stateCheckpointBackend.test.ts',
+      'tests/runtime/runtimeAdmission.test.ts',
+      'tests/runtime/httpRbacGate.test.ts',
+      'tests/runtime/builtinSecurityPluginRegistration.test.ts',
       'tests/runtime/siemForwarder.test.ts',
       'tests/runtime/localEmbedding.test.ts',
       'tests/runtime/messageBus.test.ts',
       'tests/runtime/metaLearner.test.ts',
       'tests/runtime/metaTool.test.ts',
       'tests/selfEvolution/strategySelector.test.ts',
+      'tests/selfEvolution/strategyPerformanceTracker.test.ts',
       'tests/runtime/metricsCollector.test.ts',
       'tests/runtime/modelPerformanceStore.test.ts',
       'tests/runtime/modelRouter.test.ts',
@@ -136,6 +152,10 @@ export default defineConfig({
       'tests/runtime/observationPurifier.test.ts',
       'tests/runtime/parameterController.test.ts',
       'tests/runtime/tokenGovernor.test.ts',
+      // V2 SideEffectGate PEP — fail-closed invariants for every external effect
+      'tests/runtime/sideEffectGate.test.ts',
+      // V2 InMemoryCompensationQueue — test-friendly compensation queue core
+      'src/atr/__tests__/inMemoryCompensationQueue.test.ts',
       // async-I/O migration regression suite — guards the no-event-loop-blocking,
       // no-TOCTOU-probes, no-missed-visibility contract of the 5 hotspot files
       // (healthCheck/checkpoint, compensationService/mkdir, freezeDry/round-trip,
@@ -209,6 +229,8 @@ export default defineConfig({
       'tests/security/outboundNetworkPolicy.test.ts',
       'tests/security/pluginSupply.test.ts',
       'tests/security/raspExtensionsPlugin.test.ts',
+      'tests/security/securityResponseEngine.integration.test.ts',
+      'tests/security/securityInvariantVerifier.test.ts',
       'tests/security/reversibilityGate.test.ts',
       'tests/security/securityAnomalyDetector.test.ts',
       'tests/security/securityPrimitives.test.ts',
@@ -229,6 +251,7 @@ export default defineConfig({
       // 'tests/ultimate/checkpoint.roundTrip.test.ts', // skipped: orchestrator checkpoint emission for Goal+Swarm not wired into ReliabilityEngine persistence — see test failures
       'tests/ultimate/checkpointAdapters.test.ts',
       'tests/ultimate/artifactSystem.test.ts',
+      'tests/ultimate/subAgentNarrowContext.test.ts',
       'tests/ultimate/taskPool.test.ts',
       // --- memory (cross-tenant leak fix) ---
       'tests/memoryCurator.test.ts',
@@ -240,11 +263,14 @@ export default defineConfig({
       'tests/memory/temporalGraph.test.ts',
       'tests/memory/memoryManagerAgent.test.ts',
       'tests/memory/threeLayerMemoryManagerIntegration.test.ts',
+      'tests/memory/memoryBootstrap.integration.test.ts',
 
       // --- GDPR compliance + AdaptiveHITL weight learning ---
       'tests/architecture/gdprCompliance.test.ts',
       // --- 4 architecture gap fixes (HNSW, TEE workers, Distributed bus, Petri scheduler) ---
       'tests/architecture/gapFixes.test.ts',
+      // --- V2 architecture integrity tests ---
+      'tests/architecture/v2-event-sourcing-integrity.test.ts',
 
       // --- memory (audit MED item 1 — Phase A route-out) ---
       'tests/threeLayerRouting.test.ts',
@@ -271,6 +297,8 @@ export default defineConfig({
       'tests/security/guardianAgent.test.ts',
       'tests/security/guardianDangerousToolCall.test.ts',
       'tests/security/capabilityToken.test.ts',
+      'tests/security/effectBroker.test.ts',
+      'tests/security/keyProvider.test.ts',
       'tests/security/auditChainLedger.test.ts',
       'tests/security/agentLineage.test.ts',
       'tests/security/federatedIdentity.test.ts',
@@ -309,8 +337,12 @@ export default defineConfig({
       'tests/security/a2aMtls.test.ts',
       'tests/security/a2aAuth.test.ts',
       'tests/security/memoryIsolation.test.ts',
+      'tests/security/postgresRLS.test.ts',
       'tests/security/taintTrackingPlugin.test.ts',
       'tests/security/dynamicCostGuardian.test.ts',
+      'tests/security/m4-security-closure.test.ts',
+      'tests/security/policyBundleRollback.test.ts',
+      'tests/observability/m5-slo-persistence.test.ts',
       // --- harness ---
       'tests/harness/tier1AgentLoop.test.ts',
       'tests/harness/tier1Harness.test.ts',
@@ -335,6 +367,7 @@ export default defineConfig({
       'tests/ultimate/subAgentGuard.test.ts',
       'tests/ultimate/tenantWorkCoordinatorRegistry.test.ts',
       'tests/ultimate/topologyRouter.test.ts',
+      'tests/ultimate/taskTreeDag.test.ts',
       'tests/ultimate/topologyOptimizer.test.ts',
       'tests/ultimate/atomizer.test.ts',
       'tests/ultimate/subAgentExecutor.test.ts',
@@ -417,6 +450,10 @@ export default defineConfig({
       'tests/benchmarks/algorithmicEffectiveness/modules/reversibilityGate.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/modules/outboundNetworkPolicy.test.ts',
       'tests/benchmarks/algorithmicEffectiveness/index.test.ts',
+      'tests/benchmarks/baselineSchema.test.ts',
+      'tests/scripts/check-readiness.test.ts',
+      'tests/scripts/bench-v2-live.test.ts',
+      'tests/scripts/bench-failover-rto-live.test.ts',
       // --- low-coverage module target tests ---
       'tests/observability/anomalyDetector.test.ts',
       'tests/runtime/backpressureController.test.ts',

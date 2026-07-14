@@ -22,12 +22,28 @@ import { ToolRegistry } from './toolRegistry';
 import { getGlobalLogger } from '../logging';
 import { sanitizeIfNeeded } from '../security/outputSanitizer';
 import { scanToolOutputForInjection } from '../contentScanner';
+import { getMCPToolPoisoningGuard } from '../security/mcpToolPoisoningGuard';
 
 // ============================================================================
 // Security helpers for MCP content
 // ============================================================================
 
 const MAX_MCP_DESCRIPTION_LENGTH = 2000;
+
+/**
+ * MCP tool-poisoning enforcement mode.
+ *
+ * A remote MCP server is OUTSIDE Commander's trust boundary: its tool
+ * descriptions flow directly into the agent's LLM context (indirect prompt
+ * injection / Tool Poisoning Attack, Invariant Labs 2025). The default is
+ * **fail-closed** — a BLOCK/QUARANTINE verdict prevents the tool from being
+ * auto-invoked. Operators may downgrade to `log` for staged rollout, but the
+ * secure default is enforcement.
+ */
+type TpaMode = 'enforce' | 'log';
+function tpaMode(): TpaMode {
+  return process.env.COMMANDER_MCP_TPA_ENFORCE === 'false' ? 'log' : 'enforce';
+}
 
 function sanitizeMcpDescription(description: string, serverLabel: string): string {
   const safe = description.replace(/[<>]/g, '').slice(0, MAX_MCP_DESCRIPTION_LENGTH);
@@ -69,6 +85,8 @@ export class MCPToolAdapter implements Tool {
   private client: MCPClient;
   private mcpToolName: string;
   private serverLabel: string;
+  /** Fail-closed gate: set when the poisoning guard blocked/quarantined this tool. */
+  private poisonBlockReason: string | null = null;
 
   constructor(client: MCPClient, mcpTool: MCPTool, serverLabel: string) {
     this.client = client;
@@ -76,9 +94,50 @@ export class MCPToolAdapter implements Tool {
     this.serverLabel = serverLabel;
 
     const name = `mcp_${serverLabel}_${mcpTool.name}`;
+    const rawDescription = mcpTool.description ?? '';
+
+    // ── MCP Tool-Poisoning Attack (TPA) gate ──────────────────────────────
+    // The description comes from an untrusted MCP server and would otherwise
+    // flow verbatim (minus `<>`) into the agent's prompt. Run the poisoning
+    // guard and enforce its verdict fail-closed.
+    let description = sanitizeMcpDescription(rawDescription, serverLabel);
+    try {
+      const guard = getMCPToolPoisoningGuard();
+      const analysis = guard.analyzeToolDescription(
+        name,
+        rawDescription,
+        mcpTool.inputSchema as unknown as Record<string, unknown> | undefined,
+      );
+      if (analysis.action === 'BLOCK' || analysis.action === 'QUARANTINE') {
+        const reason = `${analysis.severity}/${analysis.action}: ${analysis.patterns
+          .slice(0, 3)
+          .map((p) => p.category)
+          .join(', ')}`;
+        if (tpaMode() === 'enforce') {
+          this.poisonBlockReason = reason;
+          // Do not surface the poisoned text to the model at all.
+          description = `[MCP:${serverLabel}] (tool quarantined by poisoning guard — ${analysis.action.toLowerCase()}; requires admin approval)`;
+        } else {
+          getGlobalLogger().warn(
+            'MCPToolAdapter',
+            `TPA guard flagged ${name} (${reason}) — log-only mode, tool NOT blocked`,
+          );
+        }
+      } else if (analysis.action === 'SANITIZE' && analysis.sanitizedDescription) {
+        description = sanitizeMcpDescription(analysis.sanitizedDescription, serverLabel);
+      }
+    } catch (err) {
+      // Fail-closed on guard error: a description we cannot vet is quarantined.
+      reportSilentFailure(err, 'mcpToolAdapter:tpaGuard');
+      if (tpaMode() === 'enforce') {
+        this.poisonBlockReason = 'poisoning-guard-error';
+        description = `[MCP:${serverLabel}] (tool quarantined — description could not be vetted)`;
+      }
+    }
+
     this.definition = {
       name,
-      description: sanitizeMcpDescription(mcpTool.description ?? '', serverLabel),
+      description,
       inputSchema: mcpTool.inputSchema as unknown as Record<string, unknown>,
       category: 'mcp',
     };
@@ -86,6 +145,21 @@ export class MCPToolAdapter implements Tool {
 
   async execute(args: Record<string, unknown>): Promise<string> {
     const logger = getGlobalLogger();
+
+    // Fail-closed: a blocked/quarantined tool is never auto-invoked.
+    const guard = getMCPToolPoisoningGuard();
+    if (
+      this.poisonBlockReason ||
+      guard.isToolBlocked(this.definition.name) ||
+      guard.isToolQuarantined(this.definition.name)
+    ) {
+      logger.error(
+        'MCPToolAdapter',
+        `Refusing to call quarantined MCP tool ${this.definition.name} (${this.poisonBlockReason ?? 'guard verdict'})`,
+      );
+      return `error: MCP tool "${this.serverLabel}/${this.mcpToolName}" is quarantined by the tool-poisoning guard and requires admin approval before it can be used.`;
+    }
+
     logger.info('MCPToolAdapter', `Calling MCP tool ${this.serverLabel}/${this.mcpToolName}`);
 
     try {
@@ -111,6 +185,21 @@ export class MCPToolAdapter implements Tool {
           return '';
         })
         .join('\n');
+
+      // Behavior-consistency check: a compromised MCP server can smuggle a
+      // second-stage injection or exfiltration payload through the RESULT.
+      try {
+        const behavior = guard.checkToolBehavior(this.definition.name, rawOutput);
+        if (behavior.anomalous) {
+          logger.warn(
+            'MCPToolAdapter',
+            `MCP tool ${this.definition.name} output flagged: ${behavior.anomalies.slice(0, 3).join('; ')}`,
+          );
+        }
+      } catch (err) {
+        reportSilentFailure(err, 'mcpToolAdapter:checkToolBehavior');
+      }
+
       return sanitizeMcpOutput(rawOutput, `mcp:${this.serverLabel}/${this.mcpToolName}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

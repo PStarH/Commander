@@ -21,6 +21,21 @@ pnpm benchmark:redteam       # Red Team Battery (47 scenarios, 8 attack categori
 pnpm benchmark:chaos         # Chaos Engineering 255 (simulated mode, default)
 pnpm benchmark:chaos:full    # Chaos Engineering 255 (all 255 cases)
 
+# Capability benchmarks
+pnpm benchmark:webarena      # WebArena capability baseline (offline fixture)
+pnpm benchmark:agentbench    # AgentBench capability baseline (offline fixture)
+pnpm benchmark:gaia          # GAIA benchmark (full, requires Phase 2 fixture)
+pnpm benchmark:gaia:quick    # GAIA 10-task offline dry-run + scoring self-test
+pnpm benchmark:gaia:all      # GAIA full run alias
+pnpm benchmark:osworld       # OSWorld capability scaffold
+pnpm benchmark:crab          # CRAB capability scaffold
+pnpm benchmark:swebench      # SWE-bench capability scaffold
+pnpm benchmark:mlcommons:ailuminate # MLCommons AILuminate scaffold
+pnpm benchmark:caict:ai-safety       # 信通院 AI Safety Benchmark scaffold
+pnpm benchmark:gaia          # GAIA benchmark (full, requires Phase 2 fixture)
+pnpm benchmark:gaia:quick    # GAIA 10-task offline dry-run + scoring self-test
+pnpm benchmark:gaia:all      # GAIA full run alias
+
 # Performance benchmarks
 pnpm bench:wal               # WAL throughput baseline
 pnpm bench:wal:regress       # WAL p99 regression check vs yesterday
@@ -63,6 +78,14 @@ pnpm benchmark:topology      # 10 topology types, end-to-end wall-clock + token 
 | Tenant Concurrency | Performance | `scripts/bench-tenant-concurrency.ts` | `docs/baselines/tenant-concurrency.*.json` | Manual |
 | Cost Prediction | Cost | `scripts/bench-cost-prediction.ts` | `docs/baselines/cost-prediction.*.json` | Manual |
 | Topology (live) | Performance | `scripts/benchmark-topology.ts` | `docs/results-*.json` | Manual |
+| WebArena (fixture) | Capability | `scripts/benchmark-webarena.ts` | `packages/core/.cache/webarena/baseline.json` | Manual |
+| AgentBench (fixture) | Capability | `scripts/benchmark-agentbench.ts` | `packages/core/.cache/agentbench/baseline.json` | Manual |
+| GAIA (quick/full) | Capability | `scripts/benchmark-gaia.ts` | `/tmp/gaia-report.json` via `--output` | ✅ gaia-bench.yml |
+| OSWorld (scaffold) | Capability | `scripts/benchmark-osworld.ts` | `packages/core/.cache/osworld/baseline.json` | Manual |
+| CRAB (scaffold) | Capability | `scripts/benchmark-crab.ts` | `packages/core/.cache/crab/baseline.json` | Manual |
+| SWE-bench (scaffold) | Capability | `scripts/benchmark-swebench.ts` | `packages/core/.cache/swebench/baseline.json` | Manual |
+| MLCommons AILuminate (scaffold) | Safety | `scripts/benchmark-mlcommons-ailuminate.ts` | `packages/core/.cache/mlcommons-ailuminate/baseline.json` | Manual |
+| 信通院 AI Safety Benchmark (scaffold) | Safety | `scripts/benchmark-caict-ai-safety.ts` | `packages/core/.cache/caict-ai-safety/baseline.json` | Manual |
 
 ## AgentDojo (prompt-injection robustness)
 

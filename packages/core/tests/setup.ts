@@ -35,10 +35,15 @@ import { resetTtsrEngine } from '../src/security/ttsrEngine';
 import { resetReversibilityGate } from '../src/security/reversibilityGate';
 import { resetGlobalFetchGovernor } from '../src/security/securityPrimitives';
 import { resetInvariants } from '../src/security/securityInvariantVerifier';
+import { resetSecurityResponseState } from '../src/security/securityResponseEngine';
 import { resetWebhookDispatcher } from '../src/runtime/webhookDispatcher';
 import { resetEventSourcingSubscriber } from '../src/runtime/eventSourcingSubscriber';
 import { resetGlobalSemanticMemoryStore } from '../src/memory/semanticStore';
 import { resetGlobalEpisodicStore } from '../src/memory/episodicStore';
+import { resetConversationStore } from '../src/memory/conversationStore';
+import { resetUserModelManager } from '../src/memory/userModel';
+import { resetUnifiedMemory } from '../src/memory/unifiedMemory';
+import { resetGlobalThreeLayerMemory, wireGlobalThreeLayerMemory } from '../src/threeLayerMemory';
 
 /**
  * Global test isolation reset.
@@ -79,6 +84,7 @@ beforeEach(() => {
   resetEventSourcingSubscriber();
   resetGlobalFetchGovernor();
   resetInvariants();
+  resetSecurityResponseState();
   resetSLOManager();
   resetAlertRuleEngine();
   resetIncidentManager();
@@ -90,4 +96,9 @@ beforeEach(() => {
   resetWebhookDispatcher();
   resetGlobalSemanticMemoryStore();
   resetGlobalEpisodicStore();
+  resetConversationStore();
+  resetUserModelManager();
+  resetGlobalThreeLayerMemory();
+  resetUnifiedMemory();
+  wireGlobalThreeLayerMemory(null);
 });

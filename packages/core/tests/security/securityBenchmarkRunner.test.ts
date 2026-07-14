@@ -5,8 +5,8 @@ import {
   resetSecurityBenchmarkRunner,
   ALL_BENCHMARK_CASES,
   getCasesForBenchmark,
-  createCommanderDefender,
 } from '../../src/security/securityBenchmarkRunner';
+import { createCommanderDefender } from '../../src/security/commanderDefender';
 import type {
   BenchmarkTestCase,
   BenchmarkRunReport,
@@ -58,13 +58,15 @@ describe('SecurityBenchmarkRunner', () => {
     const asbCases = getCasesForBenchmark('agentsafetybench');
     const ahCases = getCasesForBenchmark('agentharm');
     const iaCases = getCasesForBenchmark('injecagent');
+    const aaCases = getCasesForBenchmark('assebench');
 
     expect(adCases.length).toBeGreaterThan(0);
     expect(asbCases.length).toBeGreaterThan(0);
     expect(ahCases.length).toBeGreaterThan(0);
     expect(iaCases.length).toBeGreaterThan(0);
+    expect(aaCases.length).toBeGreaterThan(0);
     expect(ALL_BENCHMARK_CASES.length).toBe(
-      adCases.length + asbCases.length + ahCases.length + iaCases.length,
+      adCases.length + asbCases.length + ahCases.length + iaCases.length + aaCases.length,
     );
   });
 
@@ -81,6 +83,13 @@ describe('SecurityBenchmarkRunner', () => {
 
     const hbMeta = runner.getBenchmarkMeta('harmbench');
     expect(hbMeta.name).toBe('HarmBench');
+  });
+
+  it('should support assebench metadata', () => {
+    const aaMeta = runner.getBenchmarkMeta('assebench');
+    expect(aaMeta.name).toBe('AgentAuditor / ASSEBench');
+    expect(aaMeta.organization).toBe('NeurIPS 2025');
+    expect(aaMeta.totalEmbedded).toBeGreaterThan(0);
   });
 
   it('should support "all" benchmark for combined runs', async () => {

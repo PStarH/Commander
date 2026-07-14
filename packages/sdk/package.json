@@ -1,8 +1,9 @@
 {
   "name": "@commander/sdk",
-  "version": "1.0.0-alpha.1",
+  "version": "0.2.0",
   "description": "Commander Agent SDK — embed multi-agent orchestration in your own applications",
   "main": "dist/index.js",
+  "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
@@ -12,23 +13,24 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
     "prepublishOnly": "tsc -p tsconfig.json"
   },
-  "peerDependencies": {
-    "@commander/core": "^0.2.0"
-  },
-  "devDependencies": {
-    "@commander/core": "workspace:*",
-    "@types/node": "^25.9.3",
-    "tsx": "^4.8.1",
-    "typescript": "^5.0.0"
-  },
+  "keywords": [
+    "commander",
+    "sdk",
+    "multi-agent",
+    "ai",
+    "orchestration",
+    "typescript"
+  ],
   "author": "PStarH <sampan090611@gmail.com>",
   "license": "MIT",
   "repository": {
@@ -42,5 +44,22 @@
   "homepage": "https://github.com/PStarH/Commander#readme",
   "engines": {
     "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@commander/contracts": "workspace:*"
+  },
+  "peerDependencies": {
+    "@commander/core": "^0.2.0"
+  },
+  "devDependencies": {
+    "@commander/contracts": "workspace:*",
+    "@commander/core": "workspace:*",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.9.3",
+    "tsx": "^4.8.1",
+    "typescript": "^5.0.0"
   }
 }

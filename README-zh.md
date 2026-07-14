@@ -2,8 +2,8 @@
   <img src="https://img.shields.io/badge/GAIA-TBD-lightgrey?style=flat-square" />
   <img src="https://img.shields.io/badge/PinchBench-97.7%25-green?style=flat-square" />
   <img src="https://img.shields.io/badge/HumanEval+-91.5%25-orange?style=flat-square" />
-  <img src="https://img.shields.io/badge/providers-22-purple?style=flat-square" />
-  <img src="https://img.shields.io/badge/topologies-8-red?style=flat-square" />
+  <img src="https://img.shields.io/badge/providers-25-purple?style=flat-square" />
+  <img src="https://img.shields.io/badge/topologies-5-red?style=flat-square" />
   <img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" />
 </p>
 
@@ -11,7 +11,7 @@
 <p align="center"><strong>看清 AI 在做什么。信任结果。花费更少。</strong></p>
 
 <p align="center">
-  <code>npx tsx cli.ts watch "investigate this bug"</code><br>
+  <code>npx tsx packages/core/src/cli.ts watch "investigate this bug"</code><br>
   <sub>无需安装。一条命令。实时查看多智能体推理过程流式传输到你的终端。</sub>
 </p>
 
@@ -25,11 +25,11 @@
 
 **透明——一切尽在眼前。** 每个智能体的思考过程、工具调用和决策都通过 SSE 实时流式传输。没有黑箱。你可以一步步观察智能体的工作过程。
 
-**可靠——经过验证的输出。** 质量门控在返回结果前会检查每一项输出。包括幻觉检测、准确性验证和代码编译检查。你得到的是可以信赖的结果。
+**可靠——经过验证的输出。** 质量门控在返回结果前会检查每一项输出。包括幻觉检测、一致性、完整性、准确性与安全性校验。你得到的是可以信赖的结果。
 
 **经济高效——智能花费。** 推理引擎在消耗 token 之前会分析你的任务。自动选择合适的拓扑结构——简单任务使用 1 个智能体，复杂任务使用并行智能体。实际成本：每任务约 $0.10，包含质量验证。
 
-**22 个 LLM 提供商。** OpenAI、Anthropic、Google、DeepSeek、Groq、Ollama、Bedrock——设置一个环境变量，Commander 会处理其余一切。包含回退链。
+**25 个 LLM 提供商。** OpenAI、Anthropic、Google、Azure、DeepSeek、GLM、MiMo、Xiaomi、Groq、Together、Perplexity、Fireworks、Replicate、Mistral、Cohere、OpenRouter、xAI、Anyscale、DeepInfra、Agnes、Ollama、vLLM、AWS Bedrock、StepFun、MiniMax——设置一个环境变量，Commander 会处理其余一切。包含回退链。
 
 **自我改进。** Meta-learner 使用 Thompson Sampling + Reflexion 跨运行调优智能体配置。使用越多，效果越好。
 
@@ -39,7 +39,7 @@
 
 ```bash
 # 如果已有 tsx，无需安装（或使用 pnpm/npx）
-npx tsx cli.ts watch "find the bug in src/server.ts and fix it"
+npx tsx packages/core/src/cli.ts watch "find the bug in src/server.ts and fix it"
 ```
 
 这不是模拟——这是来自实际智能体执行的实时 SSE 流的真实录像。每一次工具调用、每一个决策、每一次验证都实时流式传输到你的终端。你可以**观看**智能体思考。
@@ -52,13 +52,13 @@ npx tsx cli.ts watch "find the bug in src/server.ts and fix it"
 # 1. 安装
 pnpm install
 
-# 2. 设置任意 API 密钥（自动检测 21 个提供商）
+# 2. 设置任意 API 密钥（自动检测 25 个提供商）
 export OPENAI_API_KEY=sk-...
 
 # 3. 运行任何任务
-npx tsx cli.ts run "analyze this repository"
-npx tsx cli.ts plan "implement authentication"    # 执行前查看计划
-npx tsx cli.ts watch "debug the failing test"     # 实时查看智能体推理
+npx tsx packages/core/src/cli.ts run "analyze this repository"
+npx tsx packages/core/src/cli.ts plan "implement authentication"    # 执行前查看计划
+npx tsx packages/core/src/cli.ts watch "debug the failing test"     # 实时查看智能体推理
 ```
 
 ---
@@ -68,13 +68,13 @@ npx tsx cli.ts watch "debug the failing test"     # 实时查看智能体推理
 |                       | Commander         | LangGraph     | CrewAI          | AutoGen     |
 | --------------------- | ----------------- | ------------- | --------------- | ----------- |
 | **实时 SSE 流式传输** | ✅ 内置           | ❌            | ❌              | ❌          |
-| **自动拓扑选择**      | ✅ 8 种拓扑       | ❌ 手动构建图 | ❌ 固定顺序执行 | ❌ 手动编排 |
+| **自动拓扑选择**      | ✅ 5 种标准拓扑    | ❌ 手动构建图 | ❌ 固定顺序执行 | ❌ 手动编排 |
 | **质量门控**          | ✅ 多层验证       | ❌            | ❌              | ❌          |
 | **幻觉检测**          | ✅ 内置           | ❌            | ❌              | ❌          |
 | **推理引擎**          | ✅ 智能任务分析   | ❌            | ❌              | ❌          |
 | **Meta-learner**      | ✅ 自动调优       | ❌            | ❌              | ❌          |
-| **提供商数量**        | ✅ 21 个          | ❌ 1-2 个     | ❌ 1-2 个       | ❌ 1-2 个   |
-| **CLI 体验**          | ✅ 14 个命令      | ❌ 仅 API     | ❌ 仅 API       | ❌ 仅 API   |
+| **提供商数量**        | ✅ 25 个          | ❌ 1-2 个     | ❌ 1-2 个       | ❌ 1-2 个   |
+| **CLI 体验**          | ✅ 36 个命令      | ❌ 仅 API     | ❌ 仅 API       | ❌ 仅 API   |
 | **Web GUI**           | ✅ Agent War Room | ❌            | ❌              | ❌          |
 | **TUI 仪表盘**        | ✅ 终端 UI        | ❌            | ❌              | ❌          |
 
@@ -82,47 +82,32 @@ npx tsx cli.ts watch "debug the failing test"     # 实时查看智能体推理
 
 ## 拓扑结构
 
-Commander 自动从 8 种拓扑中选择最佳方案：
+Commander 自动从 5 种标准拓扑中选择最佳方案：
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Deliberation Engine                  │
-│              分析任务 → 选择最优拓扑                     │
-├─────────┬─────────┬─────────┬─────────┬─────────────────┤
-│ Single  │ Parallel│ Pipeline│ Tree    │ DAG             │
-│ Agent   │ Agents  │ Chain   │ Hierarchy│ Workflow        │
-├─────────┼─────────┼─────────┼─────────┼─────────────────┤
-│ Debate  │ Voting  │ Mixture │         │                 │
-│ Council │ Ensemble│ of Exp. │         │                 │
-└─────────┴─────────┴─────────┴─────────┴─────────────────┘
-```
+- **SINGLE** — 单一智能体，简单查询、快速回答
+- **CHAIN** — 顺序管线，逐步精炼
+- **DISPATCH** — 并行分派多个独立子任务
+- **ORCHESTRATOR** — 编排器协调多个子智能体（含递归拆解）
+- **REVIEW** — 生成后交由审查智能体校验
 
-- **Single Agent** — 简单查询、快速回答
-- **Parallel Agents** — 多个独立子任务
-- **Pipeline Chain** — 顺序处理，逐步精炼
-- **Tree Hierarchy** — 分层委派
-- **DAG Workflow** — 有依赖关系的复杂工作流
-- **Debate Council** — 多视角辩论以获得更佳结果
-- **Voting Ensemble** — 多智能体投票达成共识
-- **Mixture of Experts** — 专业智能体各司其职
+（另保留 9 个历史别名以兼容旧配置。）
 
 ---
 
 ## 架构
 
 ```
-src/
-├── core/              # 核心引擎
-│   ├── agent.ts       # 智能体生命周期管理
-│   ├── orchestrator.ts# 拓扑编排器
-│   ├── deliberation.ts# 推理引擎
-│   └── quality-gates.ts# 多层验证
-├── providers/         # 21 个 LLM 提供商适配器
-├── streaming/         # SSE 流式传输引擎
-├── meta-learner/      # 自动调优（Thompson Sampling + Reflexion）
-├── cli/               # 14 个 CLI 命令
-├── web/               # Agent War Room 仪表盘
-└── benchmarks/        # BFCL、PinchBench、HumanEval+（GAIA 待重跑）
+packages/core/src/
+├── ultimate/          # 编排引擎（deliberation / topologyRouter / atomizer / synthesizer / qualityGates）
+├── runtime/           # 执行引擎（agentRuntime / modelRouter / providers / messageBus / saga 集成）
+├── security/          # 安全子系统（零信任 / 审计链 / 红队 / 合规）
+├── tools/             # 内置工具（createAllTools，默认注册 18 个）
+├── memory/            # 三层记忆（working / episodic / long-term）
+├── mcp/               # Model Context Protocol + A2A
+├── saga/              # 持久化补偿事务
+├── selfEvolution/     # Meta-learning（Thompson Sampling + Reflexion）
+├── sandbox/           # 沙箱（TEE / seccomp / 网络代理）
+└── ... 其他核心模块
 ```
 
 ---
@@ -134,11 +119,11 @@ src/
 ```
 任务输入 → 智能体执行 → [质量门控] → 验证输出
                             │
-                            ├─ 幻觉检测
-                            ├─ 准确性验证
-                            ├─ 代码编译检查
-                            ├─ 输出格式验证
-                            └─ 置信度评分
+                            ├─ 幻觉检测（hallucination）
+                            ├─ 一致性（consistency）
+                            ├─ 完整性（completeness）
+                            ├─ 准确性（accuracy）
+                            └─ 安全性（safety）
 ```
 
 ---
@@ -154,8 +139,8 @@ src/
 ### 安装
 
 ```bash
-git clone https://github.com/your-org/commander.git
-cd commander
+git clone https://github.com/PStarH/Commander.git
+cd Commander
 pnpm install
 ```
 
@@ -175,7 +160,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 ```bash
 # 使用 CLI
-npx tsx cli.ts run "your task here"
+npx tsx packages/core/src/cli.ts run "your task here"
 
 # 使用 API
 npx tsx examples/api-usage.ts
@@ -189,7 +174,7 @@ docker compose up -d
 ## 基准测试
 
 ```bash
-npx commander benchmark    # A/B 测试：优化版 vs 基线版
+pnpm benchmark:gaia        # 运行 GAIA 基准测试（完整脚本见 package.json scripts）
 ```
 
 ---
@@ -208,50 +193,56 @@ BFCL 在本仓库中使用了多个非官方子集：35 场景通用子集（`be
 # 复现任意基准测试
 pnpm --filter @commander/core benchmark:verify  # 重新计算已提交的 BFCL 分数声明
 pnpm test:core                   # 完整核心套件：node:test + vitest
-pnpm benchmark:multiagent        # 多智能体编排基准测试
+pnpm benchmark:chaos:full        # 混沌工程基准测试（255 场景）
 ```
 
 ---
 
 ## 命令
 
-| 命令                         | 功能说明                                    |
-| ---------------------------- | ------------------------------------------- |
-| `commander run <task>`       | 完整多智能体执行                            |
-| `commander plan <task>`      | 执行前查看拓扑、智能体数量、预算            |
-| `commander watch <task>`     | **核心功能**——实时 SSE 智能体思考流         |
-| `commander company <task>`   | 多智能体公司模式：计划 → 构建 → 审查 → 改进 |
-| `commander review`           | 结构化代码审查，P0-P3 级别发现              |
-| `commander gui`              | Web 仪表盘（Agent War Room）                |
-| `commander tui`              | 终端仪表盘                                  |
-| `commander workers <topics>` | 并行研究工作者                              |
-| `commander mode <mode>`      | 计划 / 只读 / 自动编辑 / 全自动 / 建议      |
-| `commander status`           | 系统状态、提供商健康状况、MetaLearner 统计  |
-| `commander history`          | 会话管理                                    |
-| `commander skill`            | 可学习技能管理                              |
-| `commander config`           | 查看或修改设置                              |
-| `commander doctor`           | 运行诊断                                    |
+| 命令                           | 功能说明                                          |
+| ------------------------------ | ------------------------------------------------- |
+| `commander run <task>`         | 完整多智能体执行（`--dry-run` 显示计划，`--stream` 实时 SSE 流，`--tui` 终端仪表盘） |
+| `commander fix`                | 自动修复 lint、格式和类型错误                     |
+| `commander init`               | 零配置环境扫描 + 提供商连接测试                   |
+| `commander company <task>`     | 企业模式：质量门控 + 记忆                         |
+| `commander swarm <task>`       | 递归拆解 + 并行执行                               |
+| `commander drive <task>`       | 自主逐步执行                                      |
+| `commander goal <task>`        | 多轮收敛循环                                      |
+| `commander review`             | 结构化代码审查，P0-P3 级别发现                    |
+| `commander status`             | 系统状态、提供商健康状况、MetaLearner 统计         |
+| `commander config`             | 查看或修改设置                                    |
+| `commander doctor`             | 运行诊断                                          |
+| `commander history`            | 会话管理                                          |
+| `commander gui`                | Web 仪表盘（Agent War Room）                      |
+| `commander skill`              | 可学习技能管理                                    |
+| `commander plugin`             | 安装/列出/卸载插件                                |
+| `commander mode`               | 显示或设置审批模式                               |
+| `commander feedback`           | 提交反馈                                          |
+| `commander budget`             | 查看令牌预算状态                                  |
+| `commander checkpoint`         | 查看检查点文档                                    |
+| `commander saga`               | Saga 事务管理                                     |
+| `commander cost`               | 令牌用量和成本报告                                |
 
 ---
 
 ## API 使用
 
-```typescript
-import { CommanderClient } from '@commander/core';
+通过 CLI 或 `@commander/core` 的 `Commander` 入口使用：
 
-const client = new CommanderClient({ provider: 'openai' });
-await client.connect();
-const result = await client.run('analyze this repository');
-await client.disconnect();
+```bash
+npx tsx packages/core/src/cli.ts run "analyze this repository"
 ```
+
+或通过 HTTP API（`apps/api`，默认 `:4000`）与 Web 控制台（`pnpm gui`）集成。
 
 ---
 
 ## 提供商
 
-设置任意一个环境变量。Commander 会自动检测 **21 个提供商**：
+设置任意一个环境变量。Commander 会自动检测 **25 个提供商**：
 
-`OPENAI_API_KEY` · `ANTHROPIC_API_KEY` · `GOOGLE_API_KEY` · `DEEPSEEK_API_KEY` · `ZHIPU_API_KEY` · `MIMO_API_KEY` · `XIAOMI_API_KEY` · `GROQ_API_KEY` · `TOGETHER_API_KEY` · `PERPLEXITY_API_KEY` · `FIREWORKS_API_KEY` · `REPLICATE_API_TOKEN` · `MISTRAL_API_KEY` · `CO_API_KEY` · `OPENROUTER_API_KEY` · `OLLAMA_HOST` · `VLLM_BASE_URL` · `AWS_ACCESS_KEY_ID` (Bedrock) · `XAI_API_KEY` · `ANYSCALE_API_KEY` · `DEEPINFRA_API_KEY`
+`OPENAI_API_KEY` · `AZURE_OPENAI_API_KEY` · `ANTHROPIC_API_KEY` · `GOOGLE_API_KEY` · `DEEPSEEK_API_KEY` · `ZHIPU_API_KEY` (GLM) · `MIMO_API_KEY` · `XIAOMI_API_KEY` · `GROQ_API_KEY` · `TOGETHER_API_KEY` · `PERPLEXITY_API_KEY` · `FIREWORKS_API_KEY` · `REPLICATE_API_TOKEN` · `MISTRAL_API_KEY` · `CO_API_KEY` · `OPENROUTER_API_KEY` · `OLLAMA_HOST` · `VLLM_BASE_URL` · `AWS_ACCESS_KEY_ID` (Bedrock) · `XAI_API_KEY` · `ANYSCALE_API_KEY` · `DEEPINFRA_API_KEY` · `AGNES_API_KEY` · `STEPFUN_API_KEY` · `MINIMAX_API_KEY`
 
 ---
 

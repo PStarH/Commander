@@ -197,7 +197,8 @@ function runSequence(detector: AnomalyDetectorLike, records: UsageRecord[]): Det
       record.stepNumber,
       record.tokenUsage,
     );
-    const detected = alert !== null && (alert.severity === 'warning' || alert.severity === 'critical');
+    const detected =
+      alert !== null && (alert.severity === 'warning' || alert.severity === 'critical');
 
     if (detected && record.isAnomaly) {
       tp += 1;

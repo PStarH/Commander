@@ -6,6 +6,9 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
+import { getCurrentTenantId, TenantIsolationError } from '@commander/core/runtime/tenantContext';
+
+export const DEFAULT_A2A_TENANT_ID = '__default__';
 
 export type TaskStatus =
   | 'pending' // Task created, waiting to start
@@ -19,6 +22,8 @@ export type TaskPriority = 'low' | 'medium' | 'high';
 
 export interface Task {
   id: string;
+  /** Tenant that owns the task */
+  tenantId?: string;
   /** Client that submitted the task */
   clientId: string;
   /** Remote agent processing the task */
@@ -59,6 +64,8 @@ export interface TaskMessage {
 export interface Artifact {
   id: string;
   taskId: string;
+  /** Tenant that owns the artifact */
+  tenantId?: string;
   /** MIME type */
   contentType: string;
   /** Content (text or base64 for binary) */
@@ -74,6 +81,20 @@ export interface ArtifactMetadata {
   encoding?: 'utf-8' | 'base64';
   filename?: string;
   createdAt: string;
+}
+
+function resolveCurrentTenantId(): string {
+  return getCurrentTenantId() ?? DEFAULT_A2A_TENANT_ID;
+}
+
+function assertTenantMatch(resourceTenantId: string | undefined): void {
+  const current = resolveCurrentTenantId();
+  const owner = resourceTenantId ?? DEFAULT_A2A_TENANT_ID;
+  if (owner !== current) {
+    throw new TenantIsolationError(
+      `Cross-tenant access blocked: resource tenant=${owner}, current=${current}`,
+    );
+  }
 }
 
 /**
@@ -145,6 +166,7 @@ export class TaskManager {
   ): Task {
     const task: Task = {
       id: uuidv4(),
+      tenantId: resolveCurrentTenantId(),
       clientId,
       description,
       priority,
@@ -164,15 +186,33 @@ export class TaskManager {
    * Get task by ID
    */
   get(taskId: string): Task | undefined {
-    return this.tasks.get(taskId);
+    const task = this.tasks.get(taskId);
+    if (!task) return undefined;
+
+    assertTenantMatch(task.tenantId);
+    return task;
+  }
+
+  private getTask(taskId: string): Task {
+    const task = this.tasks.get(taskId);
+    if (!task) throw new Error(`Task not found: ${taskId}`);
+
+    assertTenantMatch(task.tenantId);
+    return task;
+  }
+
+  private tasksForCurrentTenant(): Task[] {
+    const current = resolveCurrentTenantId();
+    return Array.from(this.tasks.values()).filter(
+      (t) => (t.tenantId ?? DEFAULT_A2A_TENANT_ID) === current,
+    );
   }
 
   /**
    * Start a task
    */
   start(taskId: string, agentId: string): Task {
-    const task = this.tasks.get(taskId);
-    if (!task) throw new Error(`Task not found: ${taskId}`);
+    const task = this.getTask(taskId);
 
     task.agentId = agentId;
     return this.stateMachine.transition(task, 'running');
@@ -182,8 +222,7 @@ export class TaskManager {
    * Pause a task
    */
   pause(taskId: string): Task {
-    const task = this.tasks.get(taskId);
-    if (!task) throw new Error(`Task not found: ${taskId}`);
+    const task = this.getTask(taskId);
 
     return this.stateMachine.transition(task, 'paused');
   }
@@ -192,8 +231,7 @@ export class TaskManager {
    * Resume a paused task
    */
   resume(taskId: string): Task {
-    const task = this.tasks.get(taskId);
-    if (!task) throw new Error(`Task not found: ${taskId}`);
+    const task = this.getTask(taskId);
 
     return this.stateMachine.transition(task, 'running');
   }
@@ -202,8 +240,7 @@ export class TaskManager {
    * Complete a task
    */
   complete(taskId: string, artifact: Artifact): Task {
-    const task = this.tasks.get(taskId);
-    if (!task) throw new Error(`Task not found: ${taskId}`);
+    const task = this.getTask(taskId);
 
     task.artifact = artifact;
     task.progress = 100;
@@ -214,8 +251,7 @@ export class TaskManager {
    * Fail a task
    */
   fail(taskId: string, error: string): Task {
-    const task = this.tasks.get(taskId);
-    if (!task) throw new Error(`Task not found: ${taskId}`);
+    const task = this.getTask(taskId);
 
     task.error = error;
     return this.stateMachine.transition(task, 'failed');
@@ -225,8 +261,7 @@ export class TaskManager {
    * Cancel a task
    */
   cancel(taskId: string): Task {
-    const task = this.tasks.get(taskId);
-    if (!task) throw new Error(`Task not found: ${taskId}`);
+    const task = this.getTask(taskId);
 
     return this.stateMachine.transition(task, 'cancelled');
   }
@@ -235,8 +270,7 @@ export class TaskManager {
    * Update task progress
    */
   updateProgress(taskId: string, progress: number): Task {
-    const task = this.tasks.get(taskId);
-    if (!task) throw new Error(`Task not found: ${taskId}`);
+    const task = this.getTask(taskId);
 
     task.progress = Math.max(0, Math.min(100, progress));
     task.updatedAt = new Date().toISOString();
@@ -254,8 +288,7 @@ export class TaskManager {
     content: string,
     metadata?: Record<string, unknown>,
   ): TaskMessage {
-    const task = this.tasks.get(taskId);
-    if (!task) throw new Error(`Task not found: ${taskId}`);
+    const task = this.getTask(taskId);
 
     const message: TaskMessage = {
       id: uuidv4(),
@@ -276,28 +309,28 @@ export class TaskManager {
    * List tasks by status
    */
   listByStatus(status: TaskStatus): Task[] {
-    return Array.from(this.tasks.values()).filter((t) => t.status === status);
+    return this.tasksForCurrentTenant().filter((t) => t.status === status);
   }
 
   /**
    * List tasks by client
    */
   listByClient(clientId: string): Task[] {
-    return Array.from(this.tasks.values()).filter((t) => t.clientId === clientId);
+    return this.tasksForCurrentTenant().filter((t) => t.clientId === clientId);
   }
 
   /**
    * List tasks by agent
    */
   listByAgent(agentId: string): Task[] {
-    return Array.from(this.tasks.values()).filter((t) => t.agentId === agentId);
+    return this.tasksForCurrentTenant().filter((t) => t.agentId === agentId);
   }
 
   /**
    * List all tasks
    */
   listAll(): Task[] {
-    return Array.from(this.tasks.values());
+    return this.tasksForCurrentTenant();
   }
 }
 
@@ -319,6 +352,7 @@ export class ArtifactManager {
     const artifact: Artifact = {
       id: uuidv4(),
       taskId,
+      tenantId: resolveCurrentTenantId(),
       contentType,
       content,
       metadata: {
@@ -335,13 +369,20 @@ export class ArtifactManager {
    * Get artifact by ID
    */
   get(artifactId: string): Artifact | undefined {
-    return this.artifacts.get(artifactId);
+    const artifact = this.artifacts.get(artifactId);
+    if (!artifact) return undefined;
+
+    assertTenantMatch(artifact.tenantId);
+    return artifact;
   }
 
   /**
    * Get artifacts by task
    */
   getByTask(taskId: string): Artifact[] {
-    return Array.from(this.artifacts.values()).filter((a) => a.taskId === taskId);
+    const current = resolveCurrentTenantId();
+    return Array.from(this.artifacts.values()).filter(
+      (a) => a.taskId === taskId && (a.tenantId ?? DEFAULT_A2A_TENANT_ID) === current,
+    );
   }
 }

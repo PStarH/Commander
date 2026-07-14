@@ -2,6 +2,10 @@ import { reportSilentFailure } from '@commander/core';
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { getDirname, getRequire } from '../esmCompat';
+const __dirname = getDirname(import.meta.url);
+const require = getRequire(import.meta.url);
+
 const DEFAULT_DB_PATH = path.resolve(process.cwd(), '.commander', 'api_state.db');
 
 export type ApiStoreBackend = 'sqlite' | 'memory' | 'postgres';
@@ -1156,7 +1160,15 @@ export function createApiStore(options?: {
     return createPostgresApiStore(connectionString);
   }
 
-  return createSqliteApiStore(dbPath);
+  try {
+    return createSqliteApiStore(dbPath);
+  } catch (err) {
+    reportSilentFailure(err, 'apiStore:sqlite-fallback');
+    console.warn(
+      '[apiStore] SQLite backend failed (likely missing better-sqlite3 native bindings). Falling back to in-memory store. Set API_STORE_BACKEND=memory to silence this warning.',
+    );
+    return createMemoryApiStore(dbPath);
+  }
 }
 
 function checkpointsForMission(missionId: string): MissionCheckpoints {

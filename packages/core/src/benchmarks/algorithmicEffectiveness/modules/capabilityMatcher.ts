@@ -97,38 +97,28 @@ const expectedAgentByTask: Record<string, string> = {
 const taskSuite: Task[] = [
   {
     id: 'container-security-audit',
-    prompt:
-      'Audit a Dockerfile for known CVEs and recommend a hardened base image.',
-    expected: (output: string) =>
-      output === expectedAgentByTask['container-security-audit'],
+    prompt: 'Audit a Dockerfile for known CVEs and recommend a hardened base image.',
+    expected: (output: string) => output === expectedAgentByTask['container-security-audit'],
   },
   {
     id: 'database-schema-design',
-    prompt:
-      'Design a normalized schema and write migration scripts for a PostgreSQL database.',
-    expected: (output: string) =>
-      output === expectedAgentByTask['database-schema-design'],
+    prompt: 'Design a normalized schema and write migration scripts for a PostgreSQL database.',
+    expected: (output: string) => output === expectedAgentByTask['database-schema-design'],
   },
   {
     id: 'accessible-react-component',
-    prompt:
-      'Build an accessible React component with keyboard navigation and ARIA roles.',
-    expected: (output: string) =>
-      output === expectedAgentByTask['accessible-react-component'],
+    prompt: 'Build an accessible React component with keyboard navigation and ARIA roles.',
+    expected: (output: string) => output === expectedAgentByTask['accessible-react-component'],
   },
   {
     id: 'pytorch-classifier',
-    prompt:
-      'Train a small PyTorch classifier and evaluate its precision and recall.',
-    expected: (output: string) =>
-      output === expectedAgentByTask['pytorch-classifier'],
+    prompt: 'Train a small PyTorch classifier and evaluate its precision and recall.',
+    expected: (output: string) => output === expectedAgentByTask['pytorch-classifier'],
   },
   {
     id: 'oauth2-api-gateway',
-    prompt:
-      'Investigate an OAuth2 misconfiguration in an API gateway deployment.',
-    expected: (output: string) =>
-      output === expectedAgentByTask['oauth2-api-gateway'],
+    prompt: 'Investigate an OAuth2 misconfiguration in an API gateway deployment.',
+    expected: (output: string) => output === expectedAgentByTask['oauth2-api-gateway'],
   },
 ];
 
@@ -182,11 +172,23 @@ export const capabilityMatcherModule: BenchmarkModule = {
           const lower = task.prompt.toLowerCase();
           if (lower.includes('security') || lower.includes('cve') || lower.includes('oauth')) {
             requiredCapabilities = ['security', 'vulnerability_analysis'];
-          } else if (lower.includes('database') || lower.includes('sql') || lower.includes('schema')) {
+          } else if (
+            lower.includes('database') ||
+            lower.includes('sql') ||
+            lower.includes('schema')
+          ) {
             requiredCapabilities = ['sql', 'database', 'data_modeling'];
-          } else if (lower.includes('react') || lower.includes('accessible') || lower.includes('aria')) {
+          } else if (
+            lower.includes('react') ||
+            lower.includes('accessible') ||
+            lower.includes('aria')
+          ) {
             requiredCapabilities = ['react', 'css', 'accessibility'];
-          } else if (lower.includes('pytorch') || lower.includes('classifier') || lower.includes('machine_learning')) {
+          } else if (
+            lower.includes('pytorch') ||
+            lower.includes('classifier') ||
+            lower.includes('machine_learning')
+          ) {
             requiredCapabilities = ['machine_learning', 'pytorch', 'python'];
           }
         }

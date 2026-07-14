@@ -325,21 +325,35 @@ export class BackpressureController implements IBackpressureController {
   }
 
   /**
-   * Acquire a token for admission.
-   *
-   * Flow:
-   * 1. Check circuit breaker — if OPEN, return false (drop)
-   * 2. Try token bucket — if token available, return true
-   * 3. Spill to waiter queue — if space (bounded by bufferSize), wait
-   * 4. If waiter queue full, return false (drop)
-   *
-   * Race condition fix: each waiter has a unique ID. drainBuffer atomically
-   * removes a waiter and resolves it. The timeout callback checks if the
-   * waiter is still in the queue before resolving false, preventing the
-   * double-resolve race.
-   *
-   * @returns true if admission granted, false if dropped
+   * Check whether admission would succeed without consuming a token.
+   * Used by sync schedulers that delegate actual load to HTTP/runtime paths.
    */
+  canAdmitSync(): boolean {
+    if (this.config.maxTokens <= 0 || this.config.refillRatePerSecond <= 0) return false;
+    if (!this.breaker.canPass()) return false;
+    return this.bucket.availableTokens >= 1;
+  }
+
+  /**
+   * Non-blocking admission for sync callers that own the full request lifecycle.
+   */
+  tryAcquireSync(): boolean {
+    if (this.config.maxTokens <= 0 || this.config.refillRatePerSecond <= 0) {
+      this.totalRejected++;
+      return false;
+    }
+    if (!this.breaker.canPass()) {
+      this.totalRejected++;
+      return false;
+    }
+    if (this.bucket.tryConsume()) {
+      this.totalProcessed++;
+      return true;
+    }
+    this.totalRejected++;
+    return false;
+  }
+
   async acquire(): Promise<boolean> {
     // Validate config
     if (this.config.maxTokens <= 0 || this.config.refillRatePerSecond <= 0) {

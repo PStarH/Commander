@@ -7,14 +7,20 @@ import {
   A2A_ERROR,
   A2A_METHODS,
 } from '@commander/core';
+import { getCurrentTenantId, TenantIsolationError } from '@commander/core/runtime/tenantContext';
 import type {
   A2AAgentCard,
   A2AJsonRpcRequest,
   A2AJsonRpcResponse,
   A2ATask,
   A2ATaskState,
-  A2AMessage,
 } from '@commander/core';
+
+const DEFAULT_A2A_V2_TENANT_ID = '__default__';
+
+function resolveCurrentTenantId(): string {
+  return getCurrentTenantId() ?? DEFAULT_A2A_V2_TENANT_ID;
+}
 
 function v1AgentCard(): A2AAgentCard {
   return {
@@ -45,7 +51,9 @@ function v1AgentCard(): A2AAgentCard {
   };
 }
 
-const tasks = new Map<string, A2ATask>();
+type TenantA2ATask = A2ATask & { tenantId?: string };
+
+const tasks = new Map<string, TenantA2ATask>();
 let taskIdCounter = 0;
 
 export function createA2AV2Router(): Router {
@@ -68,8 +76,12 @@ export function createA2AV2Router(): Router {
       const response = await handleMethod(rpcReq);
       res.json(response);
     } catch (err) {
+      const code =
+        err instanceof TenantIsolationError || (err as Error).name === 'TenantIsolationError'
+          ? -32603
+          : -32603;
       res.json(
-        errorResponse(rpcReq.id, -32603, err instanceof Error ? err.message : 'Internal error'),
+        errorResponse(rpcReq.id, code, err instanceof Error ? err.message : 'Internal error'),
       );
     }
   });
@@ -111,7 +123,6 @@ export function createA2AV2Router(): Router {
 async function handleMethod(req: A2AJsonRpcRequest): Promise<A2AJsonRpcResponse> {
   switch (req.method) {
     case A2A_METHODS.SEND_MESSAGE: {
-      const params = req.params as Record<string, unknown>;
       const task = createTask('WORKING');
       tasks.set(task.id, task);
       setTimeout(() => {
@@ -121,24 +132,30 @@ async function handleMethod(req: A2AJsonRpcRequest): Promise<A2AJsonRpcResponse>
     }
 
     case A2A_METHODS.GET_TASK: {
-      const params = req.params as Record<string, unknown>;
-      const task = tasks.get((params as { id: string }).id);
+      const params = req.params as { id: string };
+      const task = tasks.get(params.id);
       if (!task) return errorResponse(req.id, A2A_ERROR.TASK_NOT_FOUND, 'Task not found');
+      assertTaskTenant(task);
       return { jsonrpc: '2.0', id: req.id, result: { task } };
     }
 
     case A2A_METHODS.LIST_TASKS: {
+      const current = resolveCurrentTenantId();
+      const tenantTasks = Array.from(tasks.values()).filter(
+        (t) => (t.tenantId ?? DEFAULT_A2A_V2_TENANT_ID) === current,
+      );
       return {
         jsonrpc: '2.0',
         id: req.id,
-        result: { tasks: Array.from(tasks.values()), pageSize: 50, totalSize: tasks.size },
+        result: { tasks: tenantTasks, pageSize: 50, totalSize: tenantTasks.length },
       };
     }
 
     case A2A_METHODS.CANCEL_TASK: {
-      const params = req.params as Record<string, unknown>;
-      const task = tasks.get((params as { id: string }).id);
+      const params = req.params as { id: string };
+      const task = tasks.get(params.id);
       if (!task) return errorResponse(req.id, A2A_ERROR.TASK_NOT_FOUND, 'Task not found');
+      assertTaskTenant(task);
       if (!canTransition(task.status.state, 'CANCELED')) {
         return errorResponse(req.id, A2A_ERROR.TASK_NOT_CANCELABLE, 'Task cannot be canceled');
       }
@@ -154,13 +171,24 @@ async function handleMethod(req: A2AJsonRpcRequest): Promise<A2AJsonRpcResponse>
   }
 }
 
-function createTask(initialState: A2ATaskState): A2ATask {
+function createTask(initialState: A2ATaskState): TenantA2ATask {
   const id = `task-${++taskIdCounter}-${Date.now()}`;
   return {
     id,
     contextId: 'default',
+    tenantId: resolveCurrentTenantId(),
     status: { state: initialState, timestamp: new Date().toISOString() },
   };
+}
+
+function assertTaskTenant(task: TenantA2ATask): void {
+  const current = resolveCurrentTenantId();
+  const owner = task.tenantId ?? DEFAULT_A2A_V2_TENANT_ID;
+  if (owner !== current) {
+    throw new TenantIsolationError(
+      `Cross-tenant access blocked: task tenant=${owner}, current=${current}`,
+    );
+  }
 }
 
 function ssr(

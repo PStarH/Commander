@@ -157,8 +157,16 @@ export class DefaultContentScanner implements ContentScanner {
     /override\s+(default\s+)?(rules|behavior)/gi,
     /jailbreak/gi,
     /DAN\s*:/gi, // "Do Anything Now" 攻击
+    /DAN\s+which\s+stands\s+for\s+do\s+anything\s+now/gi,
+    /\bdo\s+anything\s+now\b/gi,
     /developer\s+mode/gi,
     /sudo\s+mode/gi,
+    /ignore\s+(?:everythin[gq]|everythign|everthing)\s+you\s+(have\s+been\s+told|were\s+told)/gi,
+    /disregard\s+(prior\s+directives|all\s+prior\s+directives)/gi,
+    /overlook\s+all\s+that\s+you['’]ve\s+been\s+instructed/gi,
+    /forget\s+(about\s+)?all\s+(those|the)\s+(rules|instructions)/gi,
+    /regardless\s+of\s+(previous|prior)\s+(tasks|instructions|rules)/gi,
+    /(rules?|instructions?)\s+that\s+tell\s+you\s+what\s+you\s+can\s+and\s+can['’]?t\s+say/gi,
     // GAP-14: Multi-language prompt injection patterns
     /忽略(之前|上面|所有)(的)?(指令|提示|规则|命令)/gi, // Chinese: ignore previous instructions
     /无视(之前|上面|所有)(的)?(指令|提示|规则|命令)/gi, // Chinese: disregard instructions
@@ -174,6 +182,14 @@ export class DefaultContentScanner implements ContentScanner {
     /以前の(指示|命令|ルール)を(無視|忘れて)/gi, // Japanese: ignore previous
     /あなたは今/gi, // Japanese: you are now
     /이전\s+(지시|명령|규칙)\s+(무시|잊어)/gi, // Korean: ignore previous
+    /forget\s+(your\s+)?(rules|instructions)/gi,
+    /forget\s+about\s+(that|this)/gi,
+    /i'm\s+(your\s+)?(developer|admin|owner|creator)/gi,
+    /disregard\s+everything\s+you\s+(have\s+been\s+told|were\s+told)/gi,
+    /override\s+your\s+(programming|rules|behavior|directives)/gi,
+    /you\s+are\s+now\s+(a|an)\s+\w+/gi,
+    /ignore\s+all\s+previous\s+commands/gi,
+    /disregard\s+all\s+previous\s+commands/gi,
   ];
 
   // Social engineering — authority claims, official-looking overrides
@@ -698,15 +714,31 @@ export async function scanContent(
 // is used for final output; this is for in-line filtering of tool results.
 const TOOL_OUTPUT_INJECTION_PATTERNS = [
   /ignore\s+(all\s+)?previous\s+instructions?/gi,
+  /ignore\s+(?:everythin[gq]|everythign|everthing)\s+you\s+(have\s+been\s+told|were\s+told)/gi,
   /disregard\s+(all\s+)?(previous\s+)?instructions?/gi,
+  /disregard\s+(prior\s+directives|all\s+prior\s+directives)/gi,
+  /overlook\s+all\s+that\s+you['’]ve\s+been\s+instructed/gi,
+  /forget\s+(about\s+)?all\s+(those|the)\s+(rules|instructions)/gi,
+  /regardless\s+of\s+(previous|prior)\s+(tasks|instructions|rules)/gi,
+  /(rules?|instructions?)\s+that\s+tell\s+you\s+what\s+you\s+can\s+and\s+can['’]?t\s+say/gi,
   /system\s*:\s*you\s+are\s+now/gi,
   /you\s+are\s+now\s+a\s+/gi,
   /forget\s+(all\s+)?(previous\s+)?(rules|instructions)/gi,
   /new\s+instruction\s*:/gi,
   /override\s+(default\s+)?(rules|behavior)/gi,
+  /DAN\s+which\s+stands\s+for\s+do\s+anything\s+now/gi,
+  /\bdo\s+anything\s+now\b/gi,
   /忽略(之前|上面|所有)(的)?(指令|提示|规则|命令)/gi,
   /无视(之前|上面|所有)(的)?(指令|提示|规则|命令)/gi,
   /你现在(是|变成|扮演)/gi,
+  /forget\s+(your\s+)?(rules|instructions)/gi,
+  /forget\s+about\s+(that|this)/gi,
+  /i'm\s+(your\s+)?(developer|admin|owner|creator)/gi,
+  /disregard\s+everything\s+you\s+(have\s+been\s+told|were\s+told)/gi,
+  /override\s+your\s+(programming|rules|behavior|directives)/gi,
+  /you\s+are\s+now\s+(a|an)\s+\w+/gi,
+  /ignore\s+all\s+previous\s+commands/gi,
+  /disregard\s+all\s+previous\s+commands/gi,
   // AgentDojo-style system-impersonation tags used to frame injected instructions inside tool output
   /<\/?(INFORMATION|IMPORTANT|SYSTEM|INSTRUCTION|SYSTEM_OVERRIDE|SYSTEM_INSTRUCTION|ADMIN|SYSTEM_MESSAGE|ASSISTANT_INSTRUCTION)\b[^>]*>/gi,
   /<\/?(重要|系统|指令|系统指令)(?=[\s>])/gi,

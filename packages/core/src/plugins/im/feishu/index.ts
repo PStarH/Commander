@@ -15,7 +15,10 @@ const feishuProvider: IMProvider = {
     const event = (body.event ?? {}) as Record<string, unknown>;
     const message = (event.message ?? {}) as Record<string, unknown>;
     const sender = (event.sender ?? {}) as Record<string, unknown>;
-    const senderId = (sender.sender_id as Record<string, unknown> | undefined ?? {}) as Record<string, unknown>;
+    const senderId = ((sender.sender_id as Record<string, unknown> | undefined) ?? {}) as Record<
+      string,
+      unknown
+    >;
     const content = typeof message.content === 'string' ? message.content : '{}';
 
     let text = '';

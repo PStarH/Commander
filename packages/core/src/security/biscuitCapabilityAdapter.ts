@@ -61,7 +61,7 @@ export const BISCUIT_TOKEN_PREFIX = 'bsc_';
 
 /**
  * Adapter that wraps BiscuitTokenIssuer to expose the same API as
- * CapabilityTokenIssuer (issue/createVerifier/verify).
+ * CapabilityTokenIssuer (issue/verify via separate Verifier).
  *
  * The adapter translates HMAC-style claims (sub, aud, tools, ttl) into
  * Biscuit Datalog facts (allow("tool_name") for each tool).

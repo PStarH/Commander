@@ -35,7 +35,7 @@ import { getDifferentialPrivacyLayer } from '../security/differentialPrivacyLaye
 import type { DPQueryOutcome } from '../security/differentialPrivacyLayer';
 import { getGlobalSemanticMemoryStore, SemanticMemoryStore } from './semanticStore';
 import type { ISemanticEntity } from '../contracts/pillarIV';
-import type { EpisodicMemoryItem, MemoryMeta } from '../memory';
+import type { EpisodicMemoryItem, MemoryMeta } from '../episodicMemory';
 import type { ProceduralEntry } from './proceduralStore';
 
 // ============================================================================

@@ -206,7 +206,7 @@ export function createSeedWarRoomData(now = new Date()): WarRoomData {
       id: 'mission-release-gate',
       projectId: project.id,
       title: 'Verify build and expose remaining release blockers',
-      objective: 'Catch missing tooling and surface TODOs before demo time.',
+      objective: 'Catch missing tooling and surface release blockers before demo time.',
       status: 'BLOCKED',
       priority: 'MEDIUM',
       riskLevel: 'HIGH',

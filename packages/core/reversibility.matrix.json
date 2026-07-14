@@ -272,7 +272,7 @@
       "status": "red",
       "tier": "2.1",
       "currentBehavior": "Provider SDK timeout (10min OpenAI, configurable Anthropic, none Ollama); stepTimeoutManager exists but not wired",
-      "v2Fix": "Pass AbortSignal to provider.call() with llmTimeoutMs (default 120s); update all 22 providers",
+      "v2Fix": "Pass AbortSignal to provider.call() with llmTimeoutMs (default 120s); update all 25 providers",
       "testPath": "packages/core/tests/reversibility.test.ts#M17 + tests/chaos-monkey.test.ts#CM-T12",
       "expectedWiredModules": [
         {

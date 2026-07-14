@@ -9,7 +9,7 @@
  */
 
 // Unified memory layer (single API over all backends)
-export { UnifiedMemory, getUnifiedMemory } from './unifiedMemory';
+export { UnifiedMemory, getUnifiedMemory, resetUnifiedMemory } from './unifiedMemory';
 export type {
   UnifiedMemoryConfig,
   RememberOptions,
@@ -47,9 +47,14 @@ export type {
 } from './userModel';
 
 // Existing utilities
-export { createMemoryStore } from './utils';
+export { createMemoryStore, bootstrapMemoryPersistence, resolveMemoryStoreType } from './utils';
+export type { MemoryBootstrapOptions, MemoryStoreType } from './utils';
 export { JsonMemoryStore } from './jsonStore';
 export { tokenize } from './tokenizer';
+
+// Episodic memory store interface and in-memory implementation
+export { InMemoryMemoryStore } from '../episodicMemory';
+export type { MemoryStore, MemoryMeta } from '../episodicMemory';
 
 // BM25 full-text search scorer (FTS5-quality without SQLite)
 export { BM25Scorer, tokenizeForBM25 } from './ftsScorer';
@@ -73,3 +78,20 @@ export type { ReflexionInjectorConfig, ReflectionEntry } from './reflexionInject
 // Reflection Pipeline - Synthesis of episodic memories into long-term insights (~40 tokens/experience)
 export { ReflectionPipeline } from './reflectionPipeline';
 export type { ReflectionPipelineConfig, ReflectionInsight } from './reflectionPipeline';
+
+// P1 Memory Management Agent prototype
+export { MemoryManagerAgent } from './memoryManagerAgent';
+export type {
+  MemoryAction,
+  MemoryObservation,
+  MemoryItem,
+  MemoryQuery,
+  MemoryManagerStats,
+  MemoryManagerConfig,
+  LLMPolicy,
+  LLMPolicyInput,
+} from './memoryManagerAgent';
+
+// Temporal relation chain for semantic memory
+export { TemporalGraph } from './temporalGraph';
+export type { TemporalEvent, TemporalRelation } from './temporalGraph';

@@ -22,6 +22,9 @@
  */
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
+import { fork } from 'node:child_process';
+import * as net from 'node:net';
+import { withBenchmarkEnv } from './benchmarkEnv';
 
 const SLO_THRESHOLDS = {
   recovery: 5000,
@@ -34,6 +37,67 @@ async function measureLatency<T>(fn: () => Promise<T>): Promise<{ result: T; dur
   const start = Date.now();
   const result = await fn();
   return { result, durationMs: Date.now() - start };
+}
+
+/**
+ * Measure real failover RTO by forking a primary worker that binds a TCP port,
+ * SIGKILL-ing it, and timing how long until a secondary server can reclaim that
+ * same port. This exercises OS-level socket teardown / process reclaim rather
+ * than just measuring a message round-trip.
+ */
+function reserveEphemeralPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const tmp = net.createServer();
+    tmp.listen(0, '127.0.0.1', () => {
+      const addr = tmp.address() as net.AddressInfo;
+      tmp.close((err) => (err ? reject(err) : resolve(addr.port)));
+    });
+    tmp.on('error', reject);
+  });
+}
+
+function measureFailoverRTO(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    reserveEphemeralPort()
+      .then((port) => {
+        const worker = fork('./scripts/bench-failover-worker.js', [String(port)]);
+        let killedAt = 0;
+
+        worker.on('message', (msg: any) => {
+          if (msg?.type === 'ready' && msg.port === port) {
+            killedAt = Date.now();
+            worker.kill('SIGKILL');
+          }
+        });
+
+        worker.on('error', reject);
+
+        worker.on('exit', () => {
+          if (killedAt === 0) {
+            reject(new Error('Primary worker exited before sending ready message'));
+            return;
+          }
+
+          // Attempt to reclaim the port as the secondary server.
+          const tryReclaim = () => {
+            const secondary = net.createServer();
+            secondary.once('error', (err: any) => {
+              if (err.code === 'EADDRINUSE') {
+                setImmediate(tryReclaim);
+                return;
+              }
+              reject(err);
+            });
+            secondary.listen(port, '127.0.0.1', () => {
+              const rto = Date.now() - killedAt;
+              secondary.close(() => resolve(rto));
+            });
+          };
+          tryReclaim();
+        });
+      })
+      .catch(reject);
+  });
 }
 
 interface SloMeasurement {
@@ -108,36 +172,23 @@ async function main() {
     });
   }
 
-  // ── 2. Failover SLO ──
+  // ── 2. Failover SLO (simulated kill / reclaim RTO) ──
   try {
-    const { ProviderFallbackChain } =
-      await import('../packages/core/src/runtime/providerFallbackChain');
-    const chain = new ProviderFallbackChain();
-    const { durationMs } = await measureLatency(() =>
-      chain.tryProviders([
-        {
-          name: 'primary',
-          attempt: async () => {
-            throw new Error('Service unavailable');
-          },
-        },
-        { name: 'secondary', attempt: async () => 'ok' },
-      ]),
-    );
+    const durationMs = await measureFailoverRTO();
     measurements.push({
-      name: 'failover',
+      name: 'failover_rto_simulated',
       actualMs: durationMs,
       thresholdMs: SLO_THRESHOLDS.failover,
       passed: durationMs < SLO_THRESHOLDS.failover,
     });
     console.log(
-      `  failover:       ${durationMs}ms  ${durationMs < SLO_THRESHOLDS.failover ? '✅' : '❌'}`,
+      `  failover_rto_simulated: ${durationMs}ms  ${durationMs < SLO_THRESHOLDS.failover ? '✅' : '❌'}`,
     );
   } catch (err) {
     const reason = (err as Error).message;
-    console.log(`  failover:       FAIL — ${reason}`);
+    console.log(`  failover_rto_simulated: FAIL — ${reason}`);
     measurements.push({
-      name: 'failover',
+      name: 'failover_rto_simulated',
       actualMs: Number.NaN,
       thresholdMs: SLO_THRESHOLDS.failover,
       passed: false,
@@ -249,18 +300,21 @@ async function main() {
   }
 
   const failed = measurements.filter((m) => !m.passed);
-  const baseline = {
-    benchmark: 'slo',
-    runAt: new Date().toISOString(),
-    nodeVersion: process.version,
-    thresholds: SLO_THRESHOLDS,
-    measurements,
-    summary: {
-      total: measurements.length,
-      passed: measurements.length - failed.length,
-      failed: failed.length,
+
+  const baseline = withBenchmarkEnv(
+    {
+      benchmark: 'slo',
+      thresholds: SLO_THRESHOLDS,
+      measurements,
+      summary: {
+        passed: failed.length === 0,
+        total: measurements.length,
+        passedCount: measurements.length - failed.length,
+        failed: failed.length,
+      },
     },
-  };
+    { evidence: 'simulated', datasetVersion: 'slo-v1' },
+  );
 
   const fullPath = resolve(outputPath);
   const dir = dirname(fullPath);

@@ -8,6 +8,20 @@ import {
   TELOSOrchestrator,
   UltimateOrchestrator,
 } from '@commander/core';
+import { legacyExecutionDisabledReason, isLegacyExecutionAllowed } from './legacyExecutionGuard';
+
+/**
+ * @deprecated Architecture V2 — use POST /v1/runs with a WorkGraph instead.
+ *
+ * This router instantiates AgentRuntime in-process within the Gateway and
+ * executes orchestration synchronously, violating the V2 invariant "Gateway
+ * must not execute agent directly." The V1 Kernel Gateway (POST /v1/runs)
+ * accepts a WorkGraph definition and submits it as durable steps to the
+ * shared execution kernel.
+ *
+ * Migration: replace `POST /orchestrator/execute` with `POST /v1/runs`
+ * using a multi-step WorkGraph. This router will be removed in v0.3.0.
+ */
 
 let orchInstance: UltimateOrchestrator | null = null;
 
@@ -38,6 +52,20 @@ function getOrchestrator(): UltimateOrchestrator | null {
 
 export function createOrchestratorRouter(): Router {
   const router = Router();
+
+  router.use((_req, res, next) => {
+    if (!isLegacyExecutionAllowed()) {
+      res.status(410).json({
+        error: {
+          code: 'LEGACY_EXECUTION_DISABLED',
+          message: legacyExecutionDisabledReason(),
+          replacement: 'POST /v1/runs',
+        },
+      });
+      return;
+    }
+    next();
+  });
 
   router.post('/orchestrator/execute', async (req, res) => {
     const { goal, effortLevel, tools } = req.body ?? {};

@@ -22,6 +22,8 @@ export interface ApiKeyRecord {
   /** SHA-256 hex hash of the full key. */
   hash: string;
   scopes: string[];
+  /** Optional tenant this key belongs to. */
+  tenantId?: string;
   enabled: boolean;
   createdAt: string;
   revokedAt?: string;
@@ -99,7 +101,11 @@ export class ApiKeyStore {
     return this.records.find((r) => r.enabled && r.hash === hash);
   }
 
-  create(name: string, scopes: string[] = ['read', 'write']): ApiKeyCreationResult {
+  create(
+    name: string,
+    scopes: string[] = ['read', 'write'],
+    tenantId?: string,
+  ): ApiKeyCreationResult {
     const key = generateKey();
     const record: ApiKeyRecord = {
       id: generateId(),
@@ -107,6 +113,7 @@ export class ApiKeyStore {
       prefix: key.slice(0, 8),
       hash: sha256(key),
       scopes: scopes.length > 0 ? scopes : ['read', 'write'],
+      tenantId,
       enabled: true,
       createdAt: new Date().toISOString(),
     };
