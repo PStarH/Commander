@@ -59,6 +59,8 @@ export class JsonMemoryStore implements MemoryStore {
     if (filePathOrDataDir.endsWith('.json') || filePathOrDataDir.endsWith('.jsonl')) {
       this.legacyFilePath = filePathOrDataDir;
     }
+    // Rebuild inverted index after loading
+    this.rebuildIndex();
   }
 
   async init(): Promise<void> {
