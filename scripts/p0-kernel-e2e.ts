@@ -1,15 +1,16 @@
 #!/usr/bin/env tsx
 /**
- * P0 kernel e2e scaffold — Architecture V2 closure probe.
+ * P0 kernel e2e soft probe — optional live-stack smoke against a running API.
  *
- * What this script proves TODAY (wiring):
+ * Scope of THIS script only:
  *   - Optional: API /health is reachable
  *   - Optional: POST /v1/runs is accepted when kernel is configured
+ *   - Optional: poll until terminal when P0_REQUIRE_TERMINAL=1
  *
- * What this script does NOT yet prove (owned by Claude C1/C2):
- *   - workerGeneration fencing on claim/complete/fail
- *   - kill worker → reclaim without double execution
- *   - run reaches a terminal state via real worker execution
+ * What actually ENFORCES the P0 north star (do not confuse with this probe):
+ *   - packages/kernel postgres.integration.test.ts — workerGeneration fencing
+ *   - packages/worker-plane e2e/gateway-kernel-worker.e2e.test.ts — reclaim + zombie complete rejected
+ *   - pnpm p0:full-loop + .github/workflows/p0-kernel-e2e.yml — Gateway dist → worker → SUCCEEDED
  *
  * Usage:
  *   pnpm p0:kernel-e2e
@@ -18,8 +19,8 @@
  *
  * Exit codes:
  *   0 — probes that were requested and available passed
- *   2 — configuration missing (API down / kernel 503) — expected pre-C1
- *   3 — submission succeeded but terminal state not observed (C1/C2 gap)
+ *   2 — configuration missing (API down / kernel 503)
+ *   3 — submission succeeded but terminal state not observed
  *   1 — unexpected error
  */
 
@@ -30,7 +31,8 @@ const API_KEY =
   process.env.API_KEYS?.split(',')[0]?.trim() ??
   process.env.COMMANDER_API_KEY ??
   '';
-const TENANT = process.env.P0_TENANT_ID ?? process.env.COMMANDER_DEFAULT_TENANT_ID ?? 'tenant-local';
+const TENANT =
+  process.env.P0_TENANT_ID ?? process.env.COMMANDER_DEFAULT_TENANT_ID ?? 'tenant-local';
 const REQUIRE_TERMINAL = process.env.P0_REQUIRE_TERMINAL === '1';
 const POLL_MS = Number(process.env.P0_POLL_MS ?? 1000);
 const TIMEOUT_MS = Number(process.env.P0_TIMEOUT_MS ?? 60_000);
@@ -65,7 +67,8 @@ async function http(
 }
 
 function log(step: string, detail?: unknown): void {
-  const suffix = detail === undefined ? '' : ` ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`;
+  const suffix =
+    detail === undefined ? '' : ` ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`;
   console.log(`[p0-kernel-e2e] ${step}${suffix}`);
 }
 
@@ -78,7 +81,9 @@ async function main(): Promise<void> {
     health = await http('GET', '/health');
   } catch (err) {
     log('FAIL health unreachable', String(err));
-    log('HINT start stack: docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up -d --build');
+    log(
+      'HINT start stack: docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up -d --build',
+    );
     process.exit(2);
   }
   log('health', { status: health.status, body: health.json ?? health.text.slice(0, 200) });
@@ -106,7 +111,9 @@ async function main(): Promise<void> {
   log('submit', { status: submit.status, body: submit.json ?? submit.text.slice(0, 400) });
 
   if (submit.status === 503) {
-    log('KERNEL_UNAVAILABLE — Gateway is up but shared kernel is not configured (expected on default compose)');
+    log(
+      'KERNEL_UNAVAILABLE — Gateway is up but shared kernel is not configured (expected on default compose)',
+    );
     log('HINT use docker-compose.v2.yml and COMMANDER_KERNEL_ENABLED=1');
     process.exit(2);
   }
@@ -123,7 +130,8 @@ async function main(): Promise<void> {
   }
   log('run accepted', run);
 
-  // 3) Poll for terminal (may hang until Claude C1/C2 lands)
+  // 3) Poll for terminal. Package e2e + p0:full-loop prove fencing/reclaim;
+  // this probe only observes the live stack when one is running.
   const terminal = new Set(['succeeded', 'failed', 'cancelled', 'completed', 'error', 'aborted']);
   const started = Date.now();
   let lastState = run.state ?? 'unknown';
@@ -141,7 +149,9 @@ async function main(): Promise<void> {
   }
 
   log('TIMEOUT waiting for terminal state', { lastState, timeoutMs: TIMEOUT_MS });
-  log('NOT YET PROVEN: worker execution + fencing + reclaim (Claude C1/C2)');
+  log(
+    'NOT OBSERVED HERE: terminal state (see packages/kernel + worker-plane e2e and pnpm p0:full-loop for fencing/reclaim proof)',
+  );
   if (REQUIRE_TERMINAL) {
     process.exit(3);
   }

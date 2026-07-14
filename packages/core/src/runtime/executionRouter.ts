@@ -33,6 +33,10 @@ export interface ExecutionRouterDeps {
   getRouter: () => ModelRouter;
   getGovernor: () => TokenGovernor;
   getProviders: () => Map<string, unknown>;
+  /** Optional: inject for unit tests (Vitest 4 ESM mocks do not reliably intercept named imports). */
+  getPrivacyRouter?: () => ReturnType<typeof getPrivacyRouter>;
+  /** Optional: inject for unit tests (same ESM mock isolation reason). */
+  getCostEstimator?: () => ReturnType<typeof getCostEstimator>;
 }
 
 export interface RouteParams {
@@ -184,7 +188,7 @@ export class ExecutionRouter {
 
     // ── Privacy Routing ──
     try {
-      const privacy = getPrivacyRouter();
+      const privacy = (this.deps.getPrivacyRouter ?? getPrivacyRouter)();
       const decision = await privacy.checkContent(ctx.goal, {
         agentId: ctx.agentId,
         runId,
@@ -235,7 +239,7 @@ export class ExecutionRouter {
     }
 
     // Pre-run cost estimation
-    const costEstimator = getCostEstimator();
+    const costEstimator = (this.deps.getCostEstimator ?? getCostEstimator)();
     const costEstimate: CostEstimate = costEstimator.estimateBeforeRun(
       ctx,
       routing,

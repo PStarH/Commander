@@ -627,8 +627,21 @@ function isSensitiveContext(ctx: AgentExecutionContext): boolean {
   // Effect-authorizing steps carry a capability token — treat them as sensitive.
   if (ctx.capabilityToken) return true;
   return (ctx.availableTools ?? []).some((t) => {
-    const name = t.toLowerCase();
-    return SENSITIVE_TOOL_HINTS.some((h) => name.includes(h));
+    // availableTools is usually string[], but some integration tests pass Tool objects.
+    const name =
+      typeof t === 'string'
+        ? t
+        : typeof t === 'object' && t !== null && 'name' in t
+          ? String((t as { name?: unknown }).name ?? '')
+          : typeof t === 'object' && t !== null && 'definition' in t
+            ? String(
+                ((t as { definition?: { name?: unknown } }).definition?.name as string | undefined) ??
+                  '',
+              )
+            : '';
+    if (!name) return false;
+    const lower = name.toLowerCase();
+    return SENSITIVE_TOOL_HINTS.some((h) => lower.includes(h));
   });
 }
 

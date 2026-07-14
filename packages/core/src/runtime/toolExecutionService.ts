@@ -118,10 +118,13 @@ export class ToolExecutionService {
           } else {
             // HMAC verification (legacy). Worker/runtime only holds the verifier,
             // never the issuer/signing key.
+            // Run-scoped tokens are reused across N tools in one execute(); do not
+            // consume (jti,nonce) or concurrent tool batches get replay_detected.
             const verifier = getCapabilityTokenVerifier();
             verdict = verifier.verify(capabilityToken, {
               tool: toolCall.name,
               args: toolCall.arguments as Record<string, unknown>,
+              consumeReplay: false,
             });
           }
           if (!verdict.ok) {
@@ -387,7 +390,7 @@ export class ToolExecutionService {
       }
 
       // Architecture V2: SideEffectGate — mandatory policy PDP + ATR scheduleAction.
-      // Soft bypass only when COMMANDER_ATR_SOFT_BYPASS=1 and not production.
+      // Soft bypass only when COMMANDER_EFFECT_BROKER_COMPAT=1 and not production/V2.
       let schedulerActionId: string | null = null;
       const runHandle = this.runtime.getRunHandle();
       try {

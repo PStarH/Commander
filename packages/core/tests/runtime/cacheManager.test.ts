@@ -1,72 +1,56 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { CacheManager, type CacheManagerConfig } from '../../src/runtime/cacheManager';
 import * as tenantContext from '../../src/runtime/tenantContext';
+import { SemanticCache } from '../../src/runtime/semanticCache';
+import { SingleFlightRequestCache } from '../../src/runtime/singleFlightRequestCache';
+import { GeminiCacheManager } from '../../src/runtime/geminiCacheManager';
+import { ToolResultCache } from '../../src/runtime/toolResultCache';
 import type { LLMRequest, LLMResponse, ToolDefinition } from '../../src/runtime/types';
 
-const mockLookup = vi.fn();
-const mockStore = vi.fn();
-const mockSemanticStats = vi.fn().mockReturnValue({ hits: 0, misses: 0 });
-const mockDedupe = vi.fn();
-const mockSingleFlightStats = vi.fn().mockReturnValue({ hits: 0, deduped: 0 });
-const mockInflightCount = vi.fn().mockReturnValue(0);
-const mockGetOrCreate = vi.fn();
-const mockGeminiStats = vi.fn().mockReturnValue({ hits: 0, misses: 0 });
-const mockToolDispose = vi.fn();
-
-vi.mock('../../src/runtime/semanticCache', () => ({
-  SemanticCache: vi.fn().mockImplementation(function () {
-    return {
-      lookup: mockLookup,
-      store: mockStore,
-      getStats: mockSemanticStats,
-    };
-  }),
-}));
-
-vi.mock('../../src/runtime/singleFlightRequestCache', () => ({
-  SingleFlightRequestCache: vi.fn().mockImplementation(function () {
-    return {
-      dedupe: mockDedupe,
-      getStats: mockSingleFlightStats,
-      inflightCount: mockInflightCount,
-    };
-  }),
-}));
-
-vi.mock('../../src/runtime/geminiCacheManager', () => ({
-  GeminiCacheManager: vi.fn().mockImplementation(function () {
-    return {
-      getOrCreate: mockGetOrCreate,
-      getStats: mockGeminiStats,
-    };
-  }),
-}));
-
-vi.mock('../../src/runtime/toolResultCache', () => ({
-  ToolResultCache: vi.fn().mockImplementation(function () {
-    return {
-      dispose: mockToolDispose,
-    };
-  }),
-}));
-
-vi.mock('../../src/runtime/embedding', () => ({
-  MockEmbeddingFunction: vi.fn(),
-  OpenAIEmbeddingFunction: vi.fn(),
-  LocalEmbeddingFunction: vi.fn(),
-}));
-
-vi.mock('../../src/runtime/tenantContext', () => ({
-  getCurrentTenantId: vi.fn(),
-  isMultiTenantEnabled: vi.fn(),
-  TenantIsolationError: class TenantIsolationError extends Error {},
-}));
+// Prototype spies (not vi.mock constructor factories). Vitest 4 + setupFiles
+// left constructor mocks unbound so CacheManager wired real managers and
+// assertions on mock stats/shapes failed across CI.
 
 describe('cacheManager', () => {
+  let mockLookup: ReturnType<typeof vi.spyOn>;
+  let mockStore: ReturnType<typeof vi.spyOn>;
+  let mockSemanticStats: ReturnType<typeof vi.spyOn>;
+  let mockDedupe: ReturnType<typeof vi.spyOn>;
+  let mockSingleFlightStats: ReturnType<typeof vi.spyOn>;
+  let mockInflightCount: ReturnType<typeof vi.spyOn>;
+  let mockGetOrCreate: ReturnType<typeof vi.spyOn>;
+  let mockGeminiStats: ReturnType<typeof vi.spyOn>;
+  let mockToolDispose: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
-    vi.clearAllMocks();
-    vi.mocked(tenantContext.getCurrentTenantId).mockReturnValue(undefined);
-    vi.mocked(tenantContext.isMultiTenantEnabled).mockReturnValue(false);
+    vi.spyOn(tenantContext, 'getCurrentTenantId').mockReturnValue(undefined);
+    vi.spyOn(tenantContext, 'isMultiTenantEnabled').mockReturnValue(false);
+
+    mockLookup = vi.spyOn(SemanticCache.prototype, 'lookup').mockResolvedValue(null as never);
+    mockStore = vi.spyOn(SemanticCache.prototype, 'store').mockReturnValue(undefined as never);
+    mockSemanticStats = vi
+      .spyOn(SemanticCache.prototype, 'getStats')
+      .mockReturnValue({ hits: 0, misses: 0 } as never);
+    mockDedupe = vi
+      .spyOn(SingleFlightRequestCache.prototype, 'dedupe')
+      .mockImplementation(async (_k: string, fn: () => Promise<unknown>) => fn() as never);
+    mockSingleFlightStats = vi
+      .spyOn(SingleFlightRequestCache.prototype, 'getStats')
+      .mockReturnValue({ hits: 0, deduped: 0 } as never);
+    mockInflightCount = vi
+      .spyOn(SingleFlightRequestCache.prototype, 'inflightCount')
+      .mockReturnValue(0);
+    mockGetOrCreate = vi
+      .spyOn(GeminiCacheManager.prototype, 'getOrCreate')
+      .mockResolvedValue({ cachedContentName: 'name-1', createdNow: true } as never);
+    mockGeminiStats = vi
+      .spyOn(GeminiCacheManager.prototype, 'getStats')
+      .mockReturnValue({ hits: 0, misses: 0 } as never);
+    mockToolDispose = vi.spyOn(ToolResultCache.prototype, 'dispose').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe('construction', () => {
@@ -84,7 +68,7 @@ describe('cacheManager', () => {
         singleFlight: { enabled: true, maxInFlight: 500 },
         geminiCache: { enabled: true, maxEntries: 50 },
         enableToolCaching: false,
-      });
+      } as CacheManagerConfig);
       expect(manager.getToolCache()).toBeDefined();
       expect(manager.getSingleFlightInflightCount()).toBe(0);
     });
@@ -100,7 +84,7 @@ describe('cacheManager', () => {
       const manager = new CacheManager();
       const request = { model: 'gpt-4o', messages: [] } as unknown as LLMRequest;
       const response = { content: 'cached' } as unknown as LLMResponse;
-      mockLookup.mockResolvedValue(response);
+      mockLookup.mockResolvedValue(response as never);
       const result = await manager.lookupSemantic(request);
       expect(result).toBe(response);
       expect(mockLookup).toHaveBeenCalledWith(request, undefined);
@@ -115,16 +99,16 @@ describe('cacheManager', () => {
     });
 
     it('throws when lookup is called outside tenant context in multi-tenant mode', async () => {
-      vi.mocked(tenantContext.isMultiTenantEnabled).mockReturnValue(true);
-      vi.mocked(tenantContext.getCurrentTenantId).mockReturnValue(undefined);
+      vi.spyOn(tenantContext, 'isMultiTenantEnabled').mockReturnValue(true);
+      vi.spyOn(tenantContext, 'getCurrentTenantId').mockReturnValue(undefined);
       const manager = new CacheManager();
       const request = { model: 'gpt-4o', messages: [] } as unknown as LLMRequest;
       await expect(manager.lookupSemantic(request)).rejects.toThrow('outside tenant context');
     });
 
     it('throws when store is called outside tenant context in multi-tenant mode', () => {
-      vi.mocked(tenantContext.isMultiTenantEnabled).mockReturnValue(true);
-      vi.mocked(tenantContext.getCurrentTenantId).mockReturnValue(undefined);
+      vi.spyOn(tenantContext, 'isMultiTenantEnabled').mockReturnValue(true);
+      vi.spyOn(tenantContext, 'getCurrentTenantId').mockReturnValue(undefined);
       const manager = new CacheManager();
       const request = { model: 'gpt-4o', messages: [] } as unknown as LLMRequest;
       const response = { content: 'cached' } as unknown as LLMResponse;
@@ -132,8 +116,8 @@ describe('cacheManager', () => {
     });
 
     it('passes tenant id to semantic cache when available', async () => {
-      vi.mocked(tenantContext.isMultiTenantEnabled).mockReturnValue(true);
-      vi.mocked(tenantContext.getCurrentTenantId).mockReturnValue('tenant-1');
+      vi.spyOn(tenantContext, 'isMultiTenantEnabled').mockReturnValue(true);
+      vi.spyOn(tenantContext, 'getCurrentTenantId').mockReturnValue('tenant-1');
       const manager = new CacheManager();
       const request = { model: 'gpt-4o', messages: [] } as unknown as LLMRequest;
       await manager.lookupSemantic(request);
@@ -145,7 +129,7 @@ describe('cacheManager', () => {
     it('deduplicates concurrent requests', async () => {
       const manager = new CacheManager();
       const response = { content: 'result' } as unknown as LLMResponse;
-      mockDedupe.mockResolvedValue(response);
+      mockDedupe.mockResolvedValue(response as never);
       const factory = vi.fn().mockResolvedValue(response);
       const result = await manager.dedupeSingleFlight('key-1', factory, 'tenant-1');
       expect(result).toBe(response);
@@ -154,7 +138,7 @@ describe('cacheManager', () => {
 
     it('exposes single flight stats', () => {
       const manager = new CacheManager();
-      mockSingleFlightStats.mockReturnValue({ hits: 5, deduped: 3 });
+      mockSingleFlightStats.mockReturnValue({ hits: 5, deduped: 3 } as never);
       expect(manager.getSingleFlightStats()).toEqual({ hits: 5, deduped: 3 });
     });
 
@@ -168,7 +152,7 @@ describe('cacheManager', () => {
   describe('gemini cache', () => {
     it('gets or creates cached content', async () => {
       const manager = new CacheManager();
-      mockGetOrCreate.mockResolvedValue({ cachedContentName: 'name-1', createdNow: true });
+      mockGetOrCreate.mockResolvedValue({ cachedContentName: 'name-1', createdNow: true } as never);
       const params = {
         systemInstruction: 'sys',
         tools: [] as ToolDefinition[],
@@ -183,7 +167,7 @@ describe('cacheManager', () => {
 
     it('exposes gemini cache stats', () => {
       const manager = new CacheManager();
-      mockGeminiStats.mockReturnValue({ hits: 2, misses: 1 });
+      mockGeminiStats.mockReturnValue({ hits: 2, misses: 1 } as never);
       expect(manager.getGeminiCacheStats()).toEqual({ hits: 2, misses: 1 });
     });
   });
