@@ -47,6 +47,7 @@ jobs:
       - name: Build packages
         run: |
           pnpm --filter @commander/contracts build
+          pnpm --filter @commander/plugin-sdk build
           pnpm --filter @commander/kernel build
           pnpm --filter @commander/effect-broker build
           pnpm --filter @commander/core build
