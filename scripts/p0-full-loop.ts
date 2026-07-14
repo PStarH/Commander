@@ -34,7 +34,8 @@ const TIMEOUT_MS = Number(process.env.P0_TIMEOUT_MS ?? 90_000);
 const children: ChildProcess[] = [];
 
 function log(msg: string, detail?: unknown): void {
-  const extra = detail === undefined ? '' : ` ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`;
+  const extra =
+    detail === undefined ? '' : ` ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`;
   console.log(`[p0-full-loop] ${msg}${extra}`);
 }
 
@@ -78,7 +79,8 @@ async function main(): Promise<void> {
     API_KEYS: API_KEY,
     TENANT_API_KEYS: `${TENANT}:${API_KEY}`,
     COMMANDER_API_KEY: API_KEY,
-    COMMANDER_MASTER_KEY: process.env.COMMANDER_MASTER_KEY ?? 'dev-master-key-change-me-in-production',
+    COMMANDER_MASTER_KEY:
+      process.env.COMMANDER_MASTER_KEY ?? 'dev-master-key-change-me-in-production',
     JWT_SECRET: process.env.JWT_SECRET ?? 'dev-jwt-secret-change-me-in-production',
     COMMANDER_CAPABILITY_TOKEN_KEY:
       process.env.COMMANDER_CAPABILITY_TOKEN_KEY ?? 'dev-capability-token-key-32bytes-min',
@@ -113,11 +115,7 @@ async function main(): Promise<void> {
   let workerExitedEarly: number | null = null;
   const worker = spawn(
     process.execPath,
-    [
-      '--import',
-      'tsx',
-      resolve(ROOT, 'packages/worker-plane/src/main.ts'),
-    ],
+    ['--import', 'tsx', resolve(ROOT, 'packages/worker-plane/src/main.ts')],
     {
       cwd: ROOT,
       env: {
@@ -130,6 +128,10 @@ async function main(): Promise<void> {
         COMMANDER_WORKER_CAPABILITIES: 'agent',
         COMMANDER_WORKER_POLL_MS: '100',
         COMMANDER_DEFAULT_PROVIDER: 'mock',
+        // Avoid interactive/git side-effects in CI sandboxes
+        GIT_TERMINAL_PROMPT: '0',
+        COMMANDER_INTERACTION_DB: ':memory:',
+        NODE_ENV: 'development',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
@@ -185,7 +187,14 @@ async function main(): Promise<void> {
   const runId = submitBody.run?.id;
   if (!runId) throw new Error('missing run id');
 
-  const terminal = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED', 'succeeded', 'failed', 'cancelled']);
+  const terminal = new Set([
+    'SUCCEEDED',
+    'FAILED',
+    'CANCELLED',
+    'succeeded',
+    'failed',
+    'cancelled',
+  ]);
   const start = Date.now();
   let last = submitBody.run?.state ?? 'unknown';
   while (Date.now() - start < TIMEOUT_MS) {
@@ -208,7 +217,11 @@ async function main(): Promise<void> {
     await sleep(500);
   }
 
-  log('TIMEOUT', { runId, last, hash: createHash('sha256').update(runId).digest('hex').slice(0, 8) });
+  log('TIMEOUT', {
+    runId,
+    last,
+    hash: createHash('sha256').update(runId).digest('hex').slice(0, 8),
+  });
   killAll();
   process.exit(3);
 }

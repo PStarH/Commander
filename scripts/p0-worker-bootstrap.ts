@@ -68,12 +68,26 @@ export async function createWorkerService(): Promise<WorkerService> {
     defaultCapabilities: capabilities,
   });
 
-  const executor = createAgentStepExecutor({
-    providers: { mock: new MockProvider() },
-    config: {
-      defaultProvider: 'mock',
-    },
-  });
+  // Default deterministic executor: proves gateway↔kernel↔worker without AgentRuntime
+  // side-effects (git stash, OTel, provider routing). Set COMMANDER_P0_USE_MOCK_LLM=1
+  // to exercise createAgentStepExecutor + MockProvider instead.
+  const useMockLlm = process.env.COMMANDER_P0_USE_MOCK_LLM === '1';
+  const executor = useMockLlm
+    ? createAgentStepExecutor({
+        providers: { mock: new MockProvider() },
+        config: {
+          defaultProvider: 'mock',
+        },
+      })
+    : {
+        async execute(step: { runId: string; input: Record<string, unknown> }) {
+          return {
+            status: 'completed',
+            summary: `p0-deterministic:${String(step.input?.['goal'] ?? '')}`,
+            runId: step.runId,
+          };
+        },
+      };
 
   const definition: WorkerDefinition = {
     id: workerId,
