@@ -42,7 +42,7 @@ export type { CommanderOptions, DeploymentTier, ResolvedConfig } from './command
  * Result of running a task through Commander.
  */
 export interface CommanderResult {
-  status: 'success' | 'failed' | 'partial' | 'cancelled' | 'interrupted';
+  status: 'success' | 'failed' | 'partial' | 'cancelled' | 'interrupted' | 'waiting_for_human';
   summary: string;
   steps: Array<{
     stepNumber: number;
