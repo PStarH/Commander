@@ -193,22 +193,3 @@ export interface BackpressureMetrics {
   /** Circuit breaker state */
   circuitBreakerState: 'CLOSED' | 'OPEN' | 'HALF_OPEN';
 }
-
-// ============================================================================
-// Lock-Free State Evolution
-// ============================================================================
-
-/**
- * Lock-free state store using CAS (Compare-And-Swap) semantics.
- *
- * Per constraint NFR-PERF-05, concurrent reads must not block writes.
- * CAS provides linearizable updates without locks.
- */
-export interface ILockFreeStateStore<T> {
-  /** Read current value (never blocks) */
-  read(): T;
-  /** Atomic compare-and-set — returns true if updated */
-  compareAndSet(expected: T, newValue: T): boolean;
-  /** Update with a transform function (retry loop on conflict) */
-  update(transform: (current: T) => T): T;
-}

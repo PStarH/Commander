@@ -14,7 +14,7 @@
  *  - dataset_not_found error for unknown dataset
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { DatasetStore } from '../../../src/plugins/builtin/observability/dataset';
+import { DatasetStore } from '../../../src/observability/dataset';
 import {
   EvalScorer,
   type JudgeProvider,

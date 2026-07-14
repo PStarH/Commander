@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { DatasetStore, type Dataset } from '../../../src/plugins/builtin/observability/dataset';
+import { DatasetStore, type Dataset } from '../../../src/observability/dataset';
 
 describe('DatasetStore — in-memory CRUD', () => {
   let store: DatasetStore;
