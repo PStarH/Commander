@@ -163,8 +163,7 @@ export class SignedPolicyBundleManager {
     this.algorithm =
       config.algorithm ??
       (config.ed25519PrivateKeyPem || config.ed25519PublicKeyPem ? 'ed25519' : 'hmac-sha256');
-    this.keyId =
-      config.keyId ?? (this.algorithm === 'ed25519' ? 'spk_ed25519' : 'spk_default');
+    this.keyId = config.keyId ?? (this.algorithm === 'ed25519' ? 'spk_ed25519' : 'spk_default');
     this.decisionLog = config.decisionLog ?? new InMemoryDecisionLog();
 
     if (this.algorithm === 'ed25519') {

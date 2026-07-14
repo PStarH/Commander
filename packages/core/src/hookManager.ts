@@ -709,10 +709,7 @@ export class HookManager {
    * Register is idempotent when the same id is already present (PluginLoader
    * may also attempt registration after HookManager.register).
    */
-  private syncIMProvidersForPlugin(
-    plugin: CommanderPlugin,
-    mode: 'register' | 'unregister',
-  ): void {
+  private syncIMProvidersForPlugin(plugin: CommanderPlugin, mode: 'register' | 'unregister'): void {
     const decls = plugin.provides;
     if (!decls || decls.length === 0) return;
     const registry = getIMProviderRegistry();

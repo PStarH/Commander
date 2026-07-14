@@ -660,7 +660,9 @@ async function readFeedbackBody(
 ): Promise<{ rating?: 'positive' | 'negative' | 'neutral'; comment?: string; tags?: string[] }> {
   const body = (req as IncomingMessage & { body?: unknown }).body;
   if (body !== undefined) {
-    return typeof body === 'string' ? (JSON.parse(body) as ReturnType<typeof readFeedbackBody>) : (body as ReturnType<typeof readFeedbackBody>);
+    return typeof body === 'string'
+      ? (JSON.parse(body) as ReturnType<typeof readFeedbackBody>)
+      : (body as ReturnType<typeof readFeedbackBody>);
   }
   return new Promise((resolve, reject) => {
     let data = '';
@@ -716,7 +718,9 @@ async function readBody(req: IncomingMessage): Promise<{
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | undefined> {
   const body = (req as IncomingMessage & { body?: unknown }).body;
   if (body !== undefined) {
-    return typeof body === 'string' ? (JSON.parse(body) as Record<string, unknown>) : (body as Record<string, unknown>);
+    return typeof body === 'string'
+      ? (JSON.parse(body) as Record<string, unknown>)
+      : (body as Record<string, unknown>);
   }
   return new Promise((resolve, reject) => {
     let data = '';

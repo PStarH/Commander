@@ -248,21 +248,22 @@ describe('InMemoryCompensationQueue — V2 contract', () => {
 
   describe('tenant isolation', () => {
     it('outside tenant context, all items are visible', () => {
-      setGlobalTenantProvider(
-        new SimpleTenantProvider([{ id: 'tenant-A' }, { id: 'tenant-B' }]),
-      );
+      setGlobalTenantProvider(new SimpleTenantProvider([{ id: 'tenant-A' }, { id: 'tenant-B' }]));
       // Without runWithTenant: getCurrentTenantId is undefined →
       // the SQL clause `? IS NULL` is true → all rows visible.
       const q = new InMemoryCompensationQueue();
       q.enqueue(baseItem('a', { tenantId: 'tenant-A' }));
       q.enqueue(baseItem('b', { tenantId: 'tenant-B' }));
-      expect(q.list().map((i) => i.id).sort()).toEqual(['a', 'b']);
+      expect(
+        q
+          .list()
+          .map((i) => i.id)
+          .sort(),
+      ).toEqual(['a', 'b']);
     });
 
     it('inside tenant context, only that tenant items are visible', () => {
-      setGlobalTenantProvider(
-        new SimpleTenantProvider([{ id: 'tenant-A' }, { id: 'tenant-B' }]),
-      );
+      setGlobalTenantProvider(new SimpleTenantProvider([{ id: 'tenant-A' }, { id: 'tenant-B' }]));
       const q = new InMemoryCompensationQueue();
       q.enqueue(baseItem('a', { tenantId: 'tenant-A' }));
       q.enqueue(baseItem('b', { tenantId: 'tenant-B' }));
@@ -275,9 +276,7 @@ describe('InMemoryCompensationQueue — V2 contract', () => {
     });
 
     it('countByStatus respects the tenant filter', () => {
-      setGlobalTenantProvider(
-        new SimpleTenantProvider([{ id: 'tenant-A' }, { id: 'tenant-B' }]),
-      );
+      setGlobalTenantProvider(new SimpleTenantProvider([{ id: 'tenant-A' }, { id: 'tenant-B' }]));
       const q = new InMemoryCompensationQueue();
       q.enqueue(baseItem('a1', { tenantId: 'tenant-A' }));
       q.enqueue(baseItem('a2', { tenantId: 'tenant-A' }));

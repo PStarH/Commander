@@ -846,7 +846,10 @@ export class ToolExecutionHandler {
             const SCAN_TIMEOUT_MS = 1000;
             const timeoutPromise: Promise<{ blocked: boolean; blockedAt?: string }> = new Promise(
               (resolve) =>
-                setTimeout(() => resolve({ blocked: true, blockedAt: 'scan-timeout' }), SCAN_TIMEOUT_MS),
+                setTimeout(
+                  () => resolve({ blocked: true, blockedAt: 'scan-timeout' }),
+                  SCAN_TIMEOUT_MS,
+                ),
             );
             const deepScan = await Promise.race([deepScanPromise, timeoutPromise]);
             if (deepScan.blocked && !injectionBlocked) {
