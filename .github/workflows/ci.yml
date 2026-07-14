@@ -274,7 +274,11 @@ jobs:
         run: cd packages/core && npx -p tsx tsx src/cli.ts status
 
       - name: Build core package
-        run: pnpm --filter @commander/core build
+        run: |
+          # core tsc imports @commander/plugin-sdk; clean CI has no local dist cache
+          pnpm --filter @commander/contracts build
+          pnpm --filter @commander/plugin-sdk build
+          pnpm --filter @commander/core build
 
       - name: Red Team Smoke Test (security gate)
         run: |

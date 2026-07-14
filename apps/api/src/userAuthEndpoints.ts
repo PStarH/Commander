@@ -323,9 +323,7 @@ export function createUserAuthRouter(): Router {
 
     // AUTH-5: an actor may only create a user with a role at or below their own level.
     if (parsed.data.role !== undefined && !hasRole(req.user!.role, parsed.data.role as UserRole)) {
-      res
-        .status(403)
-        .json({ error: 'You cannot create a user with a role above your own level' });
+      res.status(403).json({ error: 'You cannot create a user with a role above your own level' });
       return;
     }
 

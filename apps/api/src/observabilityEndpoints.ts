@@ -48,7 +48,12 @@ export function createObservabilityRouter(): Router {
     }
 
     try {
-      const result = await handleObservabilityRequest(req, deps, segments, req.url.split('?')[1] ?? '');
+      const result = await handleObservabilityRequest(
+        req,
+        deps,
+        segments,
+        req.url.split('?')[1] ?? '',
+      );
       if (result.handled) {
         if (result.body !== undefined) {
           res.status(result.status).json(result.body);

@@ -1,7 +1,12 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import { wireGlobalThreeLayerMemory } from '../threeLayerMemory';
-import type { MemoryStore, EpisodicMemoryItem, MemoryKind, MemoryDuration } from '../episodicMemory';
+import type {
+  MemoryStore,
+  EpisodicMemoryItem,
+  MemoryKind,
+  MemoryDuration,
+} from '../episodicMemory';
 import { JsonMemoryStore } from './jsonStore';
 import { getUnifiedMemory } from './unifiedMemory';
 

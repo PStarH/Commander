@@ -870,8 +870,7 @@ export class ModelRouter {
         // cost reasons — pick the cheapest candidate that still meets the floor.
         const floorRank = minSensitiveTier ? TIER_RANK[minSensitiveTier] : 0;
         const ecoCandidate = candidates.find(
-          (m) =>
-            (m.tier === 'eco' || m.tier === 'standard') && TIER_RANK[m.tier] >= floorRank,
+          (m) => (m.tier === 'eco' || m.tier === 'standard') && TIER_RANK[m.tier] >= floorRank,
         );
         if (ecoCandidate) model = ecoCandidate;
       }

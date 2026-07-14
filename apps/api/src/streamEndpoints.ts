@@ -40,8 +40,10 @@ const DEFAULT_TOPICS: MessageBusTopic[] = [
 //  - MAX_BUFFERED_BYTES caps the per-connection outbound buffer. A slow
 //    consumer that lets Node's socket buffer grow past this is disconnected
 //    rather than allowed to accumulate unbounded heap (OOM).
-const MAX_SSE_CONNECTIONS = Number.parseInt(process.env.COMMANDER_SSE_MAX_CONNECTIONS ?? '', 10) || 1000;
-const MAX_BUFFERED_BYTES = Number.parseInt(process.env.COMMANDER_SSE_MAX_BUFFER_BYTES ?? '', 10) || 1024 * 1024;
+const MAX_SSE_CONNECTIONS =
+  Number.parseInt(process.env.COMMANDER_SSE_MAX_CONNECTIONS ?? '', 10) || 1000;
+const MAX_BUFFERED_BYTES =
+  Number.parseInt(process.env.COMMANDER_SSE_MAX_BUFFER_BYTES ?? '', 10) || 1024 * 1024;
 
 let activeConnections = 0;
 

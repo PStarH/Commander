@@ -7,11 +7,7 @@ import type { CommanderPlugin } from '../../../pluginTypes';
 import { getGlobalLogger } from '../../../logging';
 import { loadGapConfig } from './config';
 import { GapRegistry } from './registry';
-import {
-  runQuarterlyAudit,
-  saveAuditReport,
-  renderAuditMarkdown,
-} from './quarterlyAudit';
+import { runQuarterlyAudit, saveAuditReport, renderAuditMarkdown } from './quarterlyAudit';
 
 export { GapRegistry, type RecordGapInput, type ListFilter } from './registry';
 export { IssueAutoCreate, type IssueDraft, type CreateResult } from './issueAutoCreate';
@@ -133,9 +129,7 @@ export function createGapPlugin(): CommanderPlugin {
           if (args.source) filter.source = args.source;
           if (args.severity) filter.severity = args.severity;
           if (args.status) filter.status = args.status;
-          const entries = reg.list(
-            Object.keys(filter).length > 0 ? (filter as never) : undefined,
-          );
+          const entries = reg.list(Object.keys(filter).length > 0 ? (filter as never) : undefined);
           return JSON.stringify({ count: entries.length, gaps: entries });
         },
       },
