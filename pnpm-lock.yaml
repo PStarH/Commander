@@ -291,15 +291,6 @@ importers:
         specifier: 5.8.2
         version: 5.8.2
 
-  packages/orchestration:
-    devDependencies:
-      '@commander/core':
-        specifier: workspace:*
-        version: link:../core
-      typescript:
-        specifier: 5.8.2
-        version: 5.8.2
-
   packages/plugin-sdk:
     devDependencies:
       typescript:

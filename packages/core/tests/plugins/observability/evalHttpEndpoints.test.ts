@@ -18,7 +18,7 @@ import {
   handleObservabilityRequest,
   type ObservabilityDeps,
 } from '../../../src/plugins/builtin/observability/httpApi';
-import { DatasetStore } from '../../../src/plugins/builtin/observability/dataset';
+import { DatasetStore } from '../../../src/observability/dataset';
 import { ExperimentRunner } from '../../../src/plugins/builtin/observability/experimentRunner';
 import { AutoScorer } from '../../../src/plugins/builtin/observability/autoScorer';
 import {
