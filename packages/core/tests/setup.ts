@@ -44,6 +44,50 @@ import { resetConversationStore } from '../src/memory/conversationStore';
 import { resetUserModelManager } from '../src/memory/userModel';
 import { resetUnifiedMemory } from '../src/memory/unifiedMemory';
 import { resetGlobalThreeLayerMemory, wireGlobalThreeLayerMemory } from '../src/threeLayerMemory';
+import {
+  resetSideEffectGate,
+  setSideEffectGate,
+  type SideEffectGate,
+} from '../src/runtime/sideEffectGate';
+
+/**
+ * Always-admit SideEffectGate for unit/integration tests that exercise
+ * AgentRuntime tool loops without a full ATR run handle.
+ *
+ * Production still requires admit() via getSideEffectGate(); tests inject a
+ * soft gate so tool handlers run. Individual SideEffectGate unit tests call
+ * resetSideEffectGate() and construct real gates themselves.
+ *
+ * Soft bypass via COMMANDER_EFFECT_BROKER_COMPAT is intentionally NOT enabled
+ * globally here — that flag is production-gated and would hide fail-closed bugs.
+ */
+function createAlwaysAdmitGate(): SideEffectGate {
+  return {
+    admit: async (req: { stepId: string; toolName?: string }) => ({
+      replayed: false,
+      actionId: `test-admit:${req.stepId}`,
+      decision: {
+        decisionId: 'test_always_admit',
+        allow: true,
+        effect: 'allow',
+      },
+      decisionId: 'test_always_admit',
+    }),
+  } as unknown as SideEffectGate;
+}
+
+// CI Quality Gates sets NODE_ENV=production. Capability token issuance
+// refuses the default key in production unless COMMANDER_CAPABILITY_TOKEN_KEY
+// is set (>=32 chars). Provide a deterministic test key for the suite only.
+if (!process.env.COMMANDER_CAPABILITY_TOKEN_KEY || process.env.COMMANDER_CAPABILITY_TOKEN_KEY.length < 32) {
+  process.env.COMMANDER_CAPABILITY_TOKEN_KEY = 'test-capability-token-key-32chars-min!!';
+}
+// Keep V2 gate soft for unit/integration tool loops; sideEffectGate unit tests
+// construct real gates themselves after resetSideEffectGate().
+if (process.env.NODE_ENV === 'production' && process.env.COMMANDER_TEST_FORCE_PROD !== '1') {
+  // Vitest under CI still needs tool loops; do not flip NODE_ENV (sideEffectGate
+  // production cases set it per-test). Capability key above is enough for issue().
+}
 
 /**
  * Global test isolation reset.
@@ -101,4 +145,9 @@ beforeEach(() => {
   resetGlobalThreeLayerMemory();
   resetUnifiedMemory();
   wireGlobalThreeLayerMemory(null);
+
+  // V2 gate: reinstall always-admit stub after reset so AgentRuntime tool
+  // integration tests can execute tool bodies without a full ATR handle.
+  resetSideEffectGate();
+  setSideEffectGate(createAlwaysAdmitGate());
 });

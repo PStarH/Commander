@@ -17,7 +17,7 @@ import type { LiveReplayContext } from '../../src/observability/replay';
 class MockRes extends Writable {
   statusCode = 200;
   headers: Record<string, string> = {};
-  body = '';
+  body: unknown = '';
   _write(chunk: Buffer, _enc: string, cb: () => void): void {
     this.body += chunk.toString('utf-8');
     cb();
@@ -66,7 +66,14 @@ async function dispatch(
   segments: string[],
   queryStr = '',
 ): Promise<MockRes> {
-  await handleObservabilityRequest(req, res as unknown as ServerResponse, deps, segments, queryStr);
+  const r = await handleObservabilityRequest(req, deps, segments, queryStr);
+  if (r.handled) {
+    res.statusCode = r.status;
+    res.body = r.body;
+  } else {
+    res.statusCode = 404;
+    res.body = { error: 'Not found' };
+  }
   return res;
 }
 

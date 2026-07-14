@@ -52,13 +52,21 @@ function startServer(
         .split('/')
         .filter(Boolean);
       try {
-        await handleObservabilityRequest(
+        // Production signature: (req, deps, segments, query) → ObservabilityResult
+        // (no ServerResponse). Mirror httpServer.ts write path.
+        const r = await handleObservabilityRequest(
           req,
-          res,
           deps as ObservabilityDeps,
           segments,
           url.search.slice(1),
         );
+        if (!r.handled) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not found' }));
+          return;
+        }
+        res.writeHead(r.status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(r.body));
       } catch (err) {
         if (!res.headersSent) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
