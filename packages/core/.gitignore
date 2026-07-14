@@ -4,6 +4,8 @@
 .commander/*.db-wal
 .commander/thompson-scorer.json
 .commander/scheduler/
+.commander/plugins/
+.commander/knowledge-base/
 coverage/
 coverage-core/
 .cache/
