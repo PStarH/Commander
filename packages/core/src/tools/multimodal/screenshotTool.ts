@@ -135,8 +135,7 @@ export class ScreenshotCaptureTool implements Tool {
       const { chromium } = await import('playwright');
       // Chromium's own sandbox is a defense-in-depth layer; only disable it when an
       // operator explicitly opts in (e.g. running as root in a container).
-      const launchArgs =
-        process.env.COMMANDER_CHROMIUM_NO_SANDBOX === '1' ? ['--no-sandbox'] : [];
+      const launchArgs = process.env.COMMANDER_CHROMIUM_NO_SANDBOX === '1' ? ['--no-sandbox'] : [];
       const browser = await chromium.launch({ headless: true, args: launchArgs });
       const page = await browser.newPage({ viewport: { width: opts.width, height: opts.height } });
       await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });

@@ -42,7 +42,10 @@ export interface ValidateBaselineCurrent {
   pnpmVersion?: string;
 }
 
-function normalizeEvidence(doc: BaselineDocument): { evidence?: EvidenceLevel; binding: BaselineBinding } {
+function normalizeEvidence(doc: BaselineDocument): {
+  evidence?: EvidenceLevel;
+  binding: BaselineBinding;
+} {
   const legacyEvidence = doc.evidenceLevel;
   const legacyBinding = doc.baseline ?? {};
 
@@ -56,7 +59,8 @@ function normalizeEvidence(doc: BaselineDocument): { evidence?: EvidenceLevel; b
         nodeVersion: doc.env.nodeVersion ?? legacyBinding.nodeVersion,
         pnpmVersion: doc.env.pnpmVersion ?? legacyBinding.pnpmVersion,
         pgVersion: doc.env.pgVersion ?? doc.env.postgresVersion ?? legacyBinding.pgVersion,
-        postgresVersion: doc.env.postgresVersion ?? doc.env.pgVersion ?? legacyBinding.postgresVersion,
+        postgresVersion:
+          doc.env.postgresVersion ?? doc.env.pgVersion ?? legacyBinding.postgresVersion,
         topology: doc.env.topology ?? legacyBinding.topology,
         datasetVersion: doc.env.datasetVersion ?? legacyBinding.datasetVersion,
       },
@@ -112,11 +116,15 @@ export function validateBaseline(
   }
 
   if (current.nodeVersion && binding.nodeVersion && binding.nodeVersion !== current.nodeVersion) {
-    reasons.push(`nodeVersion mismatch: baseline=${binding.nodeVersion} current=${current.nodeVersion}`);
+    reasons.push(
+      `nodeVersion mismatch: baseline=${binding.nodeVersion} current=${current.nodeVersion}`,
+    );
   }
 
   if (current.pnpmVersion && binding.pnpmVersion && binding.pnpmVersion !== current.pnpmVersion) {
-    reasons.push(`pnpmVersion mismatch: baseline=${binding.pnpmVersion} current=${current.pnpmVersion}`);
+    reasons.push(
+      `pnpmVersion mismatch: baseline=${binding.pnpmVersion} current=${current.pnpmVersion}`,
+    );
   }
 
   return { ok: reasons.length === 0, reasons };
