@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { Pool } from 'pg';
 import { PostgresKernelRepository } from './postgres.js';
 import { runKernelMigrations } from './migrations.js';
 
@@ -8,7 +9,6 @@ const databaseUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DAT
 describe('PostgresKernelRepository integration', () => {
   it('runs checksummed migrations, enforces worker generation fencing, and preserves tenant isolation', { skip: !databaseUrl }, async () => {
     if (!databaseUrl) return;
-    const { Pool } = require('pg') as { Pool: new (options: { connectionString: string; max?: number }) => any };
     const pool = new Pool({ connectionString: databaseUrl, max: 8 });
     const tenantA = `integration-a-${Date.now()}`;
     const tenantB = `integration-b-${Date.now()}`;
