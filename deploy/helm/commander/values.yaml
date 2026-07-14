@@ -12,6 +12,8 @@ image:
   tag: latest
   pullPolicy: IfNotPresent
 
+imagePullSecrets: []
+
 # API Server
 api:
   replicas: 2
@@ -37,6 +39,14 @@ api:
     maxReplicas: 10
     targetCPUUtilizationPercentage: 70
     targetMemoryUtilizationPercentage: 80
+  # PodDisruptionBudget
+  pdb:
+    enabled: false
+    minAvailable: 1
+  # Secrets referenced by the API deployment
+  secrets:
+    masterKeySecret: ''
+    jwtSecretSecret: ''
 
 # Web GUI
 web:
@@ -50,6 +60,43 @@ web:
     limits:
       cpu: 500m
       memory: 256Mi
+
+# Worker plane
+worker:
+  enabled: false
+  replicas: 2
+  image:
+    repository: ''
+    tag: ''
+    pullPolicy: ''
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  bootstrap: /app/packages/worker-plane/dist/bootstrap.js
+  authSubject: worker
+  authTokenSecret: ''
+  authTokenSecretKey: token
+  kind: agent
+  capabilities: 'agent,tool,connector'
+  maxConcurrency: 10
+  tenants: '*'
+  pollMs: 250
+  leaseTtlMs: 30000
+  heartbeatMs: 10000
+
+# Database migration job (runs as a Helm post-install/post-upgrade hook)
+migration:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
 
 # LLM Provider configuration
 llm:
@@ -94,8 +141,16 @@ database:
       tag: '16-alpine'
     port: 5432
     user: commander
+    # SECURITY: do not commit real passwords to values. Either reference an
+    # existing Secret via existingSecret/existingSecretKey, or let the chart
+    # create a Secret from this value. The password is never injected into Pod
+    # env vars directly.
     password: commander
     database: commander
+    # Name of an existing Secret containing the full DATABASE_URL under the key
+    # specified by existingSecretKey. When unset, the chart creates a Secret.
+    existingSecret: ''
+    existingSecretKey: url
     resources:
       requests:
         cpu: 100m
@@ -167,6 +222,15 @@ ingress:
 serviceAccount:
   create: true
   name: ''
+  annotations: {}
+  # SECURITY: keep automount disabled by default. Only enable it for Pods that
+  # genuinely need to call the Kubernetes API.
+  automount: false
+
+# Network policy
+networkPolicy:
+  enabled: false
+  ingressControllerNamespace: ''
 
 # Pod security context
 podSecurityContext:

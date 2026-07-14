@@ -196,19 +196,17 @@ export function createTenantAwareSingleton<T>(
     let tenantId = getCurrentTenantId();
     if (!tenantId) {
       if (!allowGlobalFallback) {
-        // Production / non-dev modes must never fall back to a global instance.
-        if (isMultiTenantEnabled() || process.env.NODE_ENV === 'production') {
-          const reason = isMultiTenantEnabled()
-            ? 'multi-tenant provider is active'
-            : 'allowGlobalFallback is false';
+        // When a multi-tenant provider is active, global/default fallback is
+        // forbidden to prevent cross-tenant data leakage.
+        if (isMultiTenantEnabled()) {
           throw new TenantIsolationError(
-            `${component}.get() called outside tenant context and ${reason}`,
+            `${component}.get() called outside tenant context and multi-tenant provider is active`,
           );
         }
-        // Development and test modes get an implicit default tenant so that
-        // singletons are still tenant-scoped without forcing every boot path
-        // to wrap itself in runWithTenant(). This closes the "explicit
-        // allowGlobalFallback: true" gap while preserving local ergonomics.
+        // In single-tenant mode (the default) use an implicit default tenant
+        // so singletons are still tenant-scoped without forcing every boot
+        // path to wrap itself in runWithTenant(). This works in production
+        // too, because there is only one tenant.
         tenantId = '__default__';
       } else {
         // Explicit allowGlobalFallback: true still creates a true global

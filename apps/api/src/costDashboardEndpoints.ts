@@ -15,6 +15,7 @@
  * is found in traces, an empty structure is returned.
  */
 import { reportSilentFailure } from '@commander/core';
+import { getCurrentTenantId } from '@commander/core/runtime/tenantContext';
 import { Router, type Request, type Response } from 'express';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
@@ -165,6 +166,7 @@ interface TraceEvent {
   spanId: string;
   traceId: string;
   runId: string;
+  tenantId?: string;
   agentId: string;
   type: string;
   timestamp: string;
@@ -203,6 +205,19 @@ async function readNdjsonFile(filePath: string): Promise<TraceEvent[]> {
 function toNumber(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   return 0;
+}
+
+/**
+ * Returns true when a trace event belongs to the requesting tenant.
+ *
+ * Events without an explicit tenantId are treated as belonging to the current
+ * tenant context, matching the behavior of the cost ledger fallback.
+ */
+function eventMatchesTenant(event: TraceEvent, tenantId: string | undefined): boolean {
+  // Single-tenant mode: events without an explicit tenantId belong to everyone.
+  if (!tenantId) return true;
+  if (!event.tenantId) return true;
+  return event.tenantId === tenantId;
 }
 
 function toString(value: unknown, fallback = 'unknown'): string {
@@ -499,6 +514,7 @@ export function createCostDashboardRouter(): Router {
   // ── GET /api/cost/dashboard — comprehensive cost analytics ────────────
   router.get('/api/cost/dashboard', async (req: Request, res: Response) => {
     try {
+      const tenantId = getCurrentTenantId();
       const rawRange = typeof req.query.timeRange === 'string' ? req.query.timeRange : '7d';
       const timeRange: CostTimeRange =
         rawRange === 'today' || rawRange === '7d' || rawRange === '30d' || rawRange === 'all'
@@ -530,6 +546,9 @@ export function createCostDashboardRouter(): Router {
         );
         for (const events of results) {
           for (const event of events) {
+            // Filter by tenant (fall back to 'default' in single-tenant mode)
+            if (!eventMatchesTenant(event, tenantId)) continue;
+
             // Filter by time range
             if (rangeStart !== null) {
               const ts = new Date(event.timestamp).getTime();

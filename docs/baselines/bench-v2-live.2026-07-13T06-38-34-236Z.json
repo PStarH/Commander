@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 2,
+  "evidenceLevel": "simulated",
+  "baseline": {
+    "gitSha": "6e4a50817201bc338afa0e5c40f3d33f542e71c5",
+    "nodeVersion": "v26.3.1",
+    "pnpmVersion": "9.15.4",
+    "topology": {
+      "gateways": 2,
+      "workers": 10,
+      "operations": 2,
+      "model": "v2"
+    },
+    "datasetVersion": "unknown"
+  },
+  "summary": {
+    "passed": true,
+    "errors": 0,
+    "failed": 0,
+    "skipped": 0
+  },
+  "env": {
+    "evidence": "simulated",
+    "gitSha": "6e4a50817201bc338afa0e5c40f3d33f542e71c5",
+    "gitBranch": "master",
+    "gitDirty": true,
+    "nodeVersion": "v26.3.1",
+    "pnpmVersion": "9.15.4",
+    "postgresVersion": "16.x",
+    "topology": {
+      "gateways": 2,
+      "workers": 10,
+      "operations": 2,
+      "model": "v2"
+    }
+  },
+  "measurements": {
+    "live": false,
+    "seeded": false,
+    "drained": false,
+    "auditAvailable": false,
+    "runs": 10,
+    "tenants": 5,
+    "rate": 5,
+    "anomalyCounts": {
+      "duplicateClaims": 0,
+      "staleCompletions": 0,
+      "tenantLeaks": 0,
+      "unknownEffects": 0,
+      "reconciledEffects": 0
+    },
+    "latencyMs": {
+      "total": 1656
+    },
+    "failures": [
+      "topology not reachable"
+    ]
+  },
+  "runAt": "2026-07-13T06:38:34.203Z"
+}

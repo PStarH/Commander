@@ -82,6 +82,8 @@ export interface SAMLValidationOptions {
 }
 
 interface ParsedAssertion {
+  /** The Assertion's own ID attribute — the signature must reference exactly this. */
+  id: string;
   nameId: string;
   attributes: Record<string, string | string[]>;
   issuer: string;
@@ -249,6 +251,35 @@ export class SAMLAuthPlugin implements AuthPlugin {
       return null;
     }
 
+    // XSW (signature-wrapping) defense: a legitimate SAML Response carries exactly
+    // one Assertion. An attacker forges a second (unsigned) Assertion and relies on
+    // the verifier signing element A while reading attributes from element B. Reject
+    // any response that does not contain exactly one Assertion, and require the
+    // consumed Assertion to carry a document-unique ID that the signature can bind to.
+    const assertionCount = (xml.match(/<(?:saml:)?Assertion\b/g) ?? []).length;
+    if (assertionCount !== 1) {
+      audit.logAuthFailure('SAMLAuthPlugin', 'SAML response must contain exactly one Assertion', {
+        responseId,
+        assertionCount,
+      });
+      return null;
+    }
+    if (!assertion.id) {
+      audit.logAuthFailure('SAMLAuthPlugin', 'SAML Assertion is missing an ID', { responseId });
+      return null;
+    }
+    const idOccurrences = (
+      xml.match(new RegExp(`\\bID=(?:"|')${escapeRegex(assertion.id)}(?:"|')`, 'g')) ?? []
+    ).length;
+    if (idOccurrences !== 1) {
+      audit.logAuthFailure('SAMLAuthPlugin', 'SAML Assertion ID is not unique (possible XSW)', {
+        responseId,
+        assertionId: assertion.id,
+        idOccurrences,
+      });
+      return null;
+    }
+
     if (assertion.issuer !== this.config.idpEntityId) {
       audit.logAuthFailure('SAMLAuthPlugin', 'SAML Assertion issuer mismatch', {
         expected: this.config.idpEntityId,
@@ -339,6 +370,11 @@ export class SAMLAuthPlugin implements AuthPlugin {
     const assertionXml = assertionMatch[0];
     const inner = assertionMatch[2];
 
+    // The Assertion's own ID — the XML signature must reference exactly this
+    // element (XSW defense). Read only from the opening tag.
+    const openTag = assertionXml.slice(0, assertionXml.indexOf('>') + 1);
+    const assertionId = extractAttributeFromOpenTag(openTag, 'ID') ?? '';
+
     const issuer = extractText(inner, 'Issuer') ?? '';
     const nameId = extractText(inner, 'NameID') ?? extractText(inner, 'NameIdentifier') ?? '';
 
@@ -390,6 +426,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
     const signatureXml = extractSignatureElement(assertionXml);
 
     return {
+      id: assertionId.trim(),
       nameId: unescapeXml(nameId.trim()),
       attributes,
       issuer: unescapeXml(issuer.trim()),
@@ -457,14 +494,23 @@ export class SAMLAuthPlugin implements AuthPlugin {
 
       if (!sigAlg || !digestAlg) return false;
 
-      // 1. Verify the reference digest over the signed object.
-      let signedObject: string;
-      if (referenceUri && referenceUri.startsWith('#')) {
-        const targetId = referenceUri.slice(1);
-        signedObject = extractById(assertion.assertionXml, targetId) ?? assertion.assertionXml;
-      } else {
-        signedObject = assertion.assertionXml;
+      // XSW defense: the signature MUST reference the consumed Assertion by its
+      // own unique ID. Reject an empty, mismatched, or non-fragment reference —
+      // there is deliberately no whole-document fallback, which is the classic
+      // signature-wrapping bypass.
+      if (!assertion.id) return false;
+      if (!referenceUri || referenceUri !== `#${assertion.id}`) {
+        getGlobalLogger().warn(
+          'SAMLAuthPlugin',
+          'SAML signature Reference does not bind to the consumed Assertion (possible XSW)',
+          { referenceUri, assertionId: assertion.id },
+        );
+        return false;
       }
+
+      // 1. Verify the reference digest over the signed object (the Assertion itself).
+      const signedObject = extractById(assertion.assertionXml, assertion.id);
+      if (!signedObject) return false;
 
       // Strip the signature from the signed object and approximate C14N.
       const objectWithoutSignature = removeSignatureElement(signedObject);

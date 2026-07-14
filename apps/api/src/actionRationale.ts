@@ -14,6 +14,10 @@
 import fs from 'fs';
 import path from 'path';
 
+import { getDirname, getRequire } from './esmCompat';
+const __dirname = getDirname(import.meta.url);
+const require = getRequire(import.meta.url);
+
 /** Override `COMMANDER_ACTION_RATIONALE_FILE` to relocate the rationale audit trail. Default keeps the original `__dirname/../data/action-rationales.json` path so production runs are untouched. Env var MUST be set before this module is required (module-load capture). */
 const ACTION_RATIONALE_FILE =
   process.env['COMMANDER_ACTION_RATIONALE_FILE'] ??

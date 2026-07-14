@@ -1,10 +1,5 @@
 import { TrajectoryAnalyzer } from '../../../selfEvolution/trajectoryAnalyzer';
-import type {
-  BenchmarkModule,
-  LLMClient,
-  Task,
-  TokenUsage,
-} from '../types';
+import type { BenchmarkModule, LLMClient, Task, TokenUsage } from '../types';
 import type { TokenUsage as RuntimeTokenUsage } from '../../../runtime/types';
 import type {
   ExecutionExperience,
@@ -48,8 +43,7 @@ const taskSpecs: TrajectoryTaskSpec[] = [
       success: false,
       durationMs: 5000,
       tokenCost: 120,
-      errorPattern:
-        'OAuth authentication request timed out before the token could be refreshed',
+      errorPattern: 'OAuth authentication request timed out before the token could be refreshed',
       lessons: ['verify token lifecycle'],
       toolsUsed: ['http'],
       timestamp: '2024-01-01T00:00:00Z',
@@ -69,8 +63,7 @@ const taskSpecs: TrajectoryTaskSpec[] = [
       success: false,
       durationMs: 3000,
       tokenCost: 200,
-      errorPattern:
-        "Model invented a 'command not found' tool error to explain its failure",
+      errorPattern: "Model invented a 'command not found' tool error to explain its failure",
       lessons: ['verify tool existence before calling'],
       toolsUsed: ['search'],
       timestamp: '2024-01-01T00:00:00Z',
@@ -110,8 +103,7 @@ const taskSpecs: TrajectoryTaskSpec[] = [
       success: false,
       durationMs: 1500,
       tokenCost: 90,
-      errorPattern:
-        "Required tool is not installed and command returned 'permission denied'",
+      errorPattern: "Required tool is not installed and command returned 'permission denied'",
       lessons: ['install dependencies'],
       toolsUsed: ['bash'],
       timestamp: '2024-01-01T00:00:00Z',
@@ -217,9 +209,7 @@ function createProvider(llm: LLMClient): LLMProvider {
   return {
     name: 'scripted-llm-adapter',
     async call(req: LLMRequest): Promise<LLMResponse> {
-      const prompt = req.messages
-        .map((m) => `${m.role}: ${m.content}`)
-        .join('\n\n');
+      const prompt = req.messages.map((m) => `${m.role}: ${m.content}`).join('\n\n');
       const { text, tokens } = await llm.complete(prompt, { model: req.model });
       return {
         content: text,

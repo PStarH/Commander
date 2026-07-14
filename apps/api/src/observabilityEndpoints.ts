@@ -48,14 +48,14 @@ export function createObservabilityRouter(): Router {
     }
 
     try {
-      const result = await handleObservabilityRequest(
-        req,
-        res,
-        deps,
-        segments,
-        req.url.split('?')[1] ?? '',
-      );
-      if (!result.handled && !res.headersSent) {
+      const result = await handleObservabilityRequest(req, deps, segments, req.url.split('?')[1] ?? '');
+      if (result.handled) {
+        if (result.body !== undefined) {
+          res.status(result.status).json(result.body);
+        } else {
+          res.sendStatus(result.status);
+        }
+      } else if (!res.headersSent) {
         res.status(404).json({ error: 'Not found' });
       }
     } catch (err) {

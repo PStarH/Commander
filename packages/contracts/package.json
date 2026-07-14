@@ -1,0 +1,52 @@
+{
+  "name": "@commander/contracts",
+  "version": "0.2.0",
+  "description": "Commander Architecture V2 — versioned shared contracts (types, error codes, state machine, event envelope).",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/*.test.ts",
+    "prepublishOnly": "tsc -p tsconfig.json"
+  },
+  "keywords": [
+    "commander",
+    "contracts",
+    "multi-agent",
+    "ai",
+    "orchestration",
+    "typescript"
+  ],
+  "author": "PStarH <sampan090611@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PStarH/Commander",
+    "directory": "packages/contracts"
+  },
+  "bugs": {
+    "url": "https://github.com/PStarH/Commander/issues"
+  },
+  "homepage": "https://github.com/PStarH/Commander#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "tsx": "^4.8.1",
+    "typescript": "^5.0.0"
+  }
+}

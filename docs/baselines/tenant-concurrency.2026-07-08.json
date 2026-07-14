@@ -69,5 +69,20 @@
     "passed": false,
     "fairnessIndex": 0.8892915950568786,
     "maxTenantP99Diff": 1
+  },
+  "schemaVersion": 2,
+  "env": {
+    "evidence": "simulated",
+    "gitSha": "6e4a50817201bc338afa0e5c40f3d33f542e71c5",
+    "gitDirty": true,
+    "nodeVersion": "v26.3.1",
+    "pnpmVersion": "9.15.3",
+    "topology": {
+      "gateways": 1,
+      "workers": 1,
+      "operations": 1,
+      "model": "single"
+    },
+    "datasetVersion": "tenant-concurrency-synthetic-v1"
   }
 }

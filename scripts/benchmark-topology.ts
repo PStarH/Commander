@@ -36,6 +36,7 @@
 import { reportSilentFailure } from '../packages/core/src/silentFailureReporter';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
+import { withBenchmarkEnv } from './benchmarkEnv';
 import { getGlobalLearnedWeights } from '../packages/core/src/ultimate/topologyStores';
 import type { OrchestrationTopology } from '../packages/core/src/ultimate/types';
 
@@ -849,7 +850,11 @@ async function main(): Promise<number> {
     const p = resolve(outputPath);
     const d = p.slice(0, p.lastIndexOf('/'));
     if (d && !existsSync(d)) mkdirSync(d, { recursive: true });
-    writeFileSync(p, JSON.stringify(rpt, null, 2));
+    const baseline = withBenchmarkEnv(rpt, {
+      evidence: 'live',
+      datasetVersion: 'topology-live-v1',
+    });
+    writeFileSync(p, JSON.stringify(baseline, null, 2));
     log(`Report saved to ${p}`);
   }
 

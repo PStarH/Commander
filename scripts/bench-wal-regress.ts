@@ -182,12 +182,21 @@ function loadBaseline(filePath: string): Result<BenchBaseline, string> {
     return { ok: false, error: `cannot parse JSON in ${filePath}: ${(err as Error)?.message}` };
   }
 
-  const candidate = parsed as Partial<BenchBaseline>;
-  if (candidate.schemaVersion !== 1) {
+  const candidate = parsed as Partial<BenchBaseline> & {
+    env?: { runAt?: string };
+    schemaVersion?: number;
+  };
+  // Schema v2 wraps the original payload in an evidence envelope; the raw
+  // metrics still live at top level, so we accept both v1 and v2.
+  if (candidate.schemaVersion !== 1 && candidate.schemaVersion !== 2) {
     return {
       ok: false,
-      error: `unsupported schemaVersion=${candidate.schemaVersion} in ${filePath} (expected 1)`,
+      error: `unsupported schemaVersion=${candidate.schemaVersion} in ${filePath} (expected 1 or 2)`,
     };
+  }
+  // Prefer the canonical timestamp from the env envelope when present.
+  if (candidate.env?.runAt && candidate.timestamp) {
+    candidate.timestamp = candidate.env.runAt;
   }
   if (
     typeof candidate.rowsPerSec !== 'number' ||

@@ -21,8 +21,8 @@
  * retained only as a @deprecated transitional adapter for legacy callers.
  */
 
-import type { CheckpointState } from '../runtime/stateCheckpointer';
-import { StateCheckpointer } from '../runtime/stateCheckpointer';
+import { canAdmitSchedulerWork } from '../runtime/runtimeAdmission';
+import { StateCheckpointer, type CheckpointState } from '../runtime/stateCheckpointer';
 import type {
   CompensableAction,
   CompensableAction as _CompensableAction,
@@ -39,6 +39,8 @@ import { createGitSnapshot, restoreGitSnapshot, clearGitSnapshot } from './gitSn
 import { getMessageBus } from '../runtime/messageBus';
 import { getGlobalLogger } from '../logging';
 import { reportSilentFailure } from '../silentFailureReporter';
+import { getGlobalTenantProvider } from '../runtime/tenantProvider';
+import type { TenantConfig } from '../runtime/tenantProvider';
 
 export interface BeginRunInput {
   runId?: string;
@@ -162,6 +164,87 @@ export class ExecutionScheduler {
       resumed: result.lease.acquired === false && result.lease.reclaimed !== true,
       acquired: result.lease.acquired,
     };
+  }
+
+  /**
+   * Claim the next PENDING run to execute.
+   *
+   * Runs are ordered by tenant tier (`premium` > `standard` > `starter`,
+   * defaulting to `standard`) and, within the same tier, by creation time
+   * (FIFO). The caller receives a fresh EXECUTING handle with valid lease
+   * credentials. Returns `null` when no PENDING runs are available or all
+   * candidates fail to transition.
+   */
+  claimNextRun(options?: { tenantId?: string }): RunHandle | null {
+    if (!canAdmitSchedulerWork()) {
+      return null;
+    }
+    const tenantFilter = options?.tenantId;
+    const pending = this.ledger.listByState('PENDING', { tenantId: tenantFilter });
+    if (pending.length === 0) return null;
+
+    const provider = getGlobalTenantProvider();
+    const tierRank: Record<string, number> = {
+      premium: 0,
+      standard: 1,
+      starter: 2,
+    };
+
+    const getTierRank = (tx: RunTransaction): number => {
+      if (!tx.tenantId) return tierRank.standard;
+      const cfg: TenantConfig | undefined = provider.getTenantConfig(tx.tenantId);
+      const tier = cfg?.metadata?.tier;
+      if (typeof tier === 'string' && tier in tierRank) {
+        return tierRank[tier];
+      }
+      return tierRank.standard;
+    };
+
+    const sorted = pending.slice().sort((a, b) => {
+      const tierDelta = getTierRank(a) - getTierRank(b);
+      if (tierDelta !== 0) return tierDelta;
+      return a.createdAt.localeCompare(b.createdAt);
+    });
+
+    for (const tx of sorted) {
+      let leaseToken = tx.leaseToken;
+      let fencingEpoch = tx.fencingEpoch;
+
+      const currentLease = this.lease.get(tx.runId, { tenantId: tx.tenantId });
+      if (!currentLease || new Date(currentLease.expiresAt).getTime() <= Date.now()) {
+        const leaseResult = this.lease.acquire(tx.runId, { tenantId: tx.tenantId });
+        if (!leaseResult.acquired) continue;
+        leaseToken = leaseResult.lease.token;
+        fencingEpoch = leaseResult.lease.fencingEpoch;
+        // SAGA-5: persist the rotated lease credentials to the run row before
+        // beginExecuting, whose guarded UPDATE matches WHERE lease_token/fencing_epoch.
+        // Without this the row keeps the stale credentials, beginExecuting matches
+        // zero rows, and the run becomes permanently unclaimable.
+        this.ledger.syncLeaseCredentials(tx.runId, leaseToken, fencingEpoch, {
+          tenantId: tx.tenantId,
+        });
+      }
+
+      const ok = this.ledger.beginExecuting(tx.runId, leaseToken, fencingEpoch, {
+        tenantId: tx.tenantId,
+      });
+      if (!ok) continue;
+
+      return {
+        runId: tx.runId,
+        state: 'EXECUTING',
+        leaseToken,
+        fencingEpoch,
+        intentHash: tx.intentHash,
+        tenantId: tx.tenantId,
+        metadata: tx.metadata,
+        createdAt: tx.createdAt,
+        resumed: false,
+        acquired: true,
+      };
+    }
+
+    return null;
   }
 
   scheduleAction(input: ScheduleActionInput): ScheduleActionResult | null {
@@ -336,6 +419,93 @@ export class ExecutionScheduler {
       resumed: true,
       acquired: false,
     };
+  }
+
+  /**
+   * Persist PAUSED in the RunLedger (source of truth for HITL / budget / timer).
+   * Must be called with valid lease credentials.
+   */
+  pauseRun(input: {
+    runId: string;
+    leaseToken: string;
+    fencingEpoch: number;
+    tenantId?: string;
+    resumeAt?: string | null;
+    reason?: string;
+  }): { paused: boolean; reason?: 'fenced' | 'not_found' } {
+    const tx = this.ledger.getTransaction(input.runId, { tenantId: input.tenantId });
+    if (!tx) return { paused: false, reason: 'not_found' };
+    if (tx.leaseToken !== input.leaseToken || tx.fencingEpoch !== input.fencingEpoch) {
+      return { paused: false, reason: 'fenced' };
+    }
+    const ok = this.ledger.pause(input.runId, input.leaseToken, input.fencingEpoch, {
+      tenantId: input.tenantId,
+      resumeAt: input.resumeAt,
+      reason: input.reason,
+    });
+    return ok ? { paused: true } : { paused: false, reason: 'fenced' };
+  }
+
+  /**
+   * Schedule a delayed wake: PAUSED with resume_at. Equivalent to pauseRun with resumeAt.
+   */
+  scheduleResume(input: {
+    runId: string;
+    leaseToken: string;
+    fencingEpoch: number;
+    resumeAt: string;
+    tenantId?: string;
+    reason?: string;
+  }): { scheduled: boolean; reason?: 'fenced' | 'not_found' } {
+    const result = this.pauseRun({
+      ...input,
+      reason: input.reason ?? 'scheduled_resume',
+    });
+    return { scheduled: result.paused, reason: result.reason };
+  }
+
+  /**
+   * Claim the next PAUSED run whose resume_at <= now, transitioning it to EXECUTING.
+   */
+  claimRunnableRun(options?: { tenantId?: string }): RunHandle | null {
+    if (!canAdmitSchedulerWork()) {
+      return null;
+    }
+    const candidates = this.ledger.listRunnablePaused({ tenantId: options?.tenantId });
+    for (const tx of candidates) {
+      let leaseToken = tx.leaseToken;
+      let fencingEpoch = tx.fencingEpoch;
+
+      const currentLease = this.lease.get(tx.runId, { tenantId: tx.tenantId });
+      if (!currentLease || new Date(currentLease.expiresAt).getTime() <= Date.now()) {
+        const leaseResult = this.lease.acquire(tx.runId, { tenantId: tx.tenantId });
+        if (!leaseResult.acquired) continue;
+        leaseToken = leaseResult.lease.token;
+        fencingEpoch = leaseResult.lease.fencingEpoch;
+        this.ledger.syncLeaseCredentials(tx.runId, leaseToken, fencingEpoch, {
+          tenantId: tx.tenantId,
+        });
+      }
+
+      const ok = this.ledger.beginExecuting(tx.runId, leaseToken, fencingEpoch, {
+        tenantId: tx.tenantId,
+      });
+      if (!ok) continue;
+
+      return {
+        runId: tx.runId,
+        state: 'EXECUTING',
+        leaseToken,
+        fencingEpoch,
+        intentHash: tx.intentHash,
+        tenantId: tx.tenantId,
+        metadata: tx.metadata,
+        createdAt: tx.createdAt,
+        resumed: true,
+        acquired: true,
+      };
+    }
+    return null;
   }
 
   getRun(input: { runId: string; tenantId?: string }): RunTransaction | null {

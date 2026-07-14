@@ -932,7 +932,7 @@ const translations: Record<Locale, Record<string, string>> = {
 
     // ── Help banner (cmdHelp) ────────────────────────────────────────
     'help.banner.title': 'Commander',
-    'help.banner.tagline': 'one command · 10 topologies · 22 providers',
+    'help.banner.tagline': 'one command · 5 topologies · 25 providers',
     'help.section.getting_started': 'GETTING STARTED',
     'help.cmd.init': 'commander init',
     'help.cmd.init_desc': 'Zero-config setup + provider scan',

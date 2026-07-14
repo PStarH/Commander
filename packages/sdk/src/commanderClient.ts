@@ -529,7 +529,7 @@ export class CommanderClient {
    * Covers circuit breaker state, dead-letter queue, compensations, and checkpoints.
    * Best-effort — returns zeros when not connected or on failure.
    */
-  getReliabilityStats(): SDKReliabilityStats {
+  async getReliabilityStats(): Promise<SDKReliabilityStats> {
     try {
       if (!this.commander) {
         return {
@@ -541,7 +541,7 @@ export class CommanderClient {
         };
       }
       const engine = this.commander.getRuntime().getReliabilityEngine();
-      const stats = engine.getStats();
+      const stats = await engine.getStats();
       return {
         circuitState: stats.circuit.state,
         circuitFailures: stats.circuit.failureCount,

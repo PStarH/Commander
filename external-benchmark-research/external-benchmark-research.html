@@ -396,12 +396,20 @@
             <tr><td><span class="tag high">P0</span></td><td>CyberSecEval 4</td><td>Meta 官方套件，覆盖 MITRE、提示注入、代码解释器滥用等</td><td>3-5 天</td></tr>
             <tr><td><span class="tag high">P0</span></td><td>HarmBench</td><td>自动化红队标准框架，可补充有害内容规则并验证拒绝鲁棒性</td><td>2-3 天</td></tr>
             <tr><td><span class="tag">P1</span></td><td>AgentAuditor / ASSEBench</td><td>校验内部 Judge 的评估准确率，提升评估可信度</td><td>3-5 天</td></tr>
-            <tr><td><span class="tag">P1</span></td><td>WebArena</td><td>真实 Web 环境，验证 IPI 防御与可用性平衡</td><td>5-7 天</td></tr>
-            <tr><td><span class="tag">P1</span></td><td>AgentBench</td><td>多环境 Agent 能力基线，识别过度防御</td><td>5-7 天</td></tr>
+          <tr><td><span class="tag">P1</span></td><td>WebArena</td><td>真实 Web 环境，验证 IPI 防御与可用性平衡</td><td>5-7 天</td></tr>
+          <tr><td><span class="tag">P1</span></td><td>AgentBench</td><td>多环境 Agent 能力基线，识别过度防御</td><td>5-7 天</td></tr>
+          <tr><td class="missing"><span class="tag">缺口</span></td><td>WebArena 代码接入</td><td>研究文档已覆盖；已补 fixture + scaffold runner；缺 live browser/env 集成</td><td>补齐中</td></tr>
+          <tr><td class="missing"><span class="tag">缺口</span></td><td>AgentBench 代码接入</td><td>研究文档已覆盖；已补 fixture + scaffold runner；缺多环境 provision 集成</td><td>补齐中</td></tr>
             <tr><td><span class="tag medium">P2</span></td><td>GAIA</td><td>通用 AI 助手稳健性评估，适合长期跟踪</td><td>3-5 天</td></tr>
             <tr><td><span class="tag medium">P2</span></td><td>MLCommons AILuminate</td><td>行业标准安全基准，待 Agent 子集成熟后接入</td><td>持续跟踪</td></tr>
             <tr><td><span class="tag medium">P2</span></td><td>信通院 AI Safety Benchmark</td><td>中文场景与政策对齐，适合国内市场背书</td><td>持续跟踪</td></tr>
             <tr><td><span class="tag medium">P3</span></td><td>OSWorld / CRAB / SWE-bench</td><td>需要多模态/GUI/真实系统环境，集成成本高</td><td>2-4 周</td></tr>
+          <tr><td class="missing"><span class="tag">缺口</span></td><td>GAIA runner 主链路</td><td>已有独立脚本 + CI 工作流；已接入 `benchmark-agentdojo.ts --benchmark gaia` 统一入口</td><td>已接入</td></tr>
+          <tr><td class="missing"><span class="tag">缺口</span></td><td>OSWorld 代码接入</td><td>研究文档已覆盖；已补 scaffold runner；缺 VM/GUI 集成</td><td>补齐中</td></tr>
+          <tr><td class="missing"><span class="tag">缺口</span></td><td>CRAB 代码接入</td><td>研究文档已覆盖；已补 scaffold runner；缺多环境/多模态集成</td><td>补齐中</td></tr>
+          <tr><td class="missing"><span class="tag">缺口</span></td><td>SWE-bench 代码接入</td><td>研究文档已覆盖；已补 scaffold runner；缺 repo/test env 集成</td><td>补齐中</td></tr>
+          <tr><td class="missing"><span class="tag">缺口</span></td><td>MLCommons AILuminate 接入</td><td>研究文档已覆盖；已补 scaffold；benchmark 仍在快速迭代</td><td>P2 跟踪</td></tr>
+          <tr><td class="missing"><span class="tag">缺口</span></td><td>信通院 AI Safety Benchmark 接入</td><td>研究文档已覆盖；已补 scaffold；等待公开数据集</td><td>P2 跟踪</td></tr>
           </tbody>
         </table>
       </section>

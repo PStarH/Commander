@@ -355,7 +355,7 @@ export class SecurityMonitor {
       const { getMessageBus } = require('../runtime/messageBus');
       const bus = getMessageBus();
       bus.publish('security.alert', 'SecurityMonitor', fullAlert, {
-        priority: alert.level === 'critical' ? 0 : 2,
+        priority: alert.level === 'critical' ? 'critical' : 'high',
       });
     } catch (err) {
       reportSilentFailure(err, 'securityMonitor:366');

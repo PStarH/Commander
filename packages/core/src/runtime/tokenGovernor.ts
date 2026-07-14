@@ -26,6 +26,8 @@ import { getMetricsCollector } from './metricsCollector';
 import { getMessageBus } from './messageBus';
 import { getGlobalLogger } from '../logging';
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
+import { getCurrentTenantId } from './tenantContext';
+import { getGlobalTenantProvider } from './tenantProvider';
 
 // ============================================================================
 // Types
@@ -80,6 +82,19 @@ const DEFAULT_CONFIG: GovernorConfig = {
   },
   enableLearning: true,
 };
+
+/**
+ * Thrown when a tenant-level token hard cap is reached.
+ *
+ * The message includes the tenant ID and usage totals but no sensitive data
+ * such as prompt content or internal run identifiers.
+ */
+export class TenantBudgetExhaustedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TenantBudgetExhaustedError';
+  }
+}
 
 // ============================================================================
 // Strategy definitions per phase
@@ -239,6 +254,8 @@ const STRATEGY_DEFS: Record<string, StrategyDef[]> = {
 export class TokenGovernor {
   private config: GovernorConfig;
   private usedTokens = 0;
+  /** Total tenant-scoped token consumption across all tracking paths. */
+  private tenantUsedTokens = 0;
   private taskCategory: TaskCategory = 'general';
   // Ring buffer for history — O(1) insert, no allocation on overflow
   private history: Array<{ strategy: string; effective: boolean; timestamp: number }>;
@@ -272,7 +289,9 @@ export class TokenGovernor {
 
   reportUsage(tokens: number): void {
     this.usedTokens += tokens;
+    this.tenantUsedTokens += tokens;
     this.cachedPhase = null; // Invalidate cache
+    this.enforceTenantHardCap();
   }
 
   getState(): BudgetState {
@@ -297,6 +316,7 @@ export class TokenGovernor {
 
   reset(budget?: number): void {
     this.usedTokens = 0;
+    this.tenantUsedTokens = 0;
     if (budget !== undefined) this.config.totalBudget = budget;
     this.cachedPhase = null;
     this.cachedRecommendations = null;
@@ -310,6 +330,66 @@ export class TokenGovernor {
   setTaskCategory(cat: TaskCategory): void {
     this.taskCategory = cat;
     this.cachedPhase = null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tenant-level hard cap enforcement (opt-in)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Resolve the active tenant token budget from the global TenantProvider.
+   * Falls back to a synthetic 'default' tenant so single-tenant deployments
+   * can still configure a budget via the provider if desired.
+   */
+  private resolveTenantBudget(): {
+    tenantId: string;
+    tokenBudget: number;
+    hardCap: boolean;
+  } | null {
+    try {
+      const provider = getGlobalTenantProvider();
+      const tenantId = getCurrentTenantId() ?? 'default';
+      const config = provider.getTenantConfig(tenantId);
+      if (!config) return null;
+      return {
+        tenantId,
+        tokenBudget: config.tokenBudget ?? 0,
+        hardCap: config.hardCap === true,
+      };
+    } catch {
+      // Best-effort: if the tenant provider is not yet initialized, behave
+      // as if no tenant budget is configured.
+      return null;
+    }
+  }
+
+  /** Returns true when the tenant token budget should be enforced as a hard cap. */
+  private isTenantHardCapEnabled(): boolean {
+    if (process.env['TOKEN_BUDGET_HARD_CAP'] === 'true') return true;
+    const resolved = this.resolveTenantBudget();
+    return resolved ? resolved.hardCap : false;
+  }
+
+  /**
+   * Enforce the tenant-level token hard cap.
+   *
+   * Default behavior remains advisory (soft cap). When either the global
+   * `TOKEN_BUDGET_HARD_CAP=true` environment variable is set or the current
+   * tenant config has `hardCap: true`, exceeding the configured `tokenBudget`
+   * throws {@link TenantBudgetExhaustedError}.
+   */
+  private enforceTenantHardCap(additionalTokens = 0): void {
+    const resolved = this.resolveTenantBudget();
+    if (!resolved) return;
+    const budget = resolved.tokenBudget;
+    if (budget <= 0) return;
+    if (!this.isTenantHardCapEnabled()) return;
+
+    if (this.tenantUsedTokens + additionalTokens >= budget) {
+      throw new TenantBudgetExhaustedError(
+        `Tenant token budget exhausted: tenant=${resolved.tenantId}, used=${this.tenantUsedTokens + additionalTokens}, cap=${budget}`,
+      );
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -485,6 +565,8 @@ export class TokenGovernor {
    * Start tracking a new run's budget.
    */
   startRun(runId: string, config: TokenBudgetConfig): RunBudgetStatus {
+    this.enforceTenantHardCap();
+
     const softCap = config.softCap ?? Math.round(config.hardCap * RUN_BUDGET_SOFT_CAP_RATIO);
     const status: RunBudgetStatus = {
       runId,
@@ -528,6 +610,7 @@ export class TokenGovernor {
     const totalEstimated = subAgentEstimates.reduce((s, e) => s + e.estimatedTokens, 0);
     if (totalEstimated === 0) {
       const equalShare = Math.floor(status.remainingTokens / subAgentEstimates.length);
+      this.enforceTenantHardCap(equalShare * subAgentEstimates.length);
       return new Map(subAgentEstimates.map((e) => [e.nodeId, equalShare]));
     }
 
@@ -557,6 +640,8 @@ export class TokenGovernor {
         hardCapExceeded: false,
       });
     }
+
+    this.enforceTenantHardCap(allocatedSum);
 
     status.subAgents = allocations;
     status.updatedAt = new Date().toISOString();
@@ -603,6 +688,10 @@ export class TokenGovernor {
     }
 
     this.runBudgets.set(runId, status);
+
+    // Accumulate tenant-scoped consumption and enforce opt-in hard cap.
+    this.tenantUsedTokens += tokens;
+    this.enforceTenantHardCap();
 
     const warning = status.phase === 'tight' || status.phase === 'critical';
     const exceeded = status.phase === 'exceeded';

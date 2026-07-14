@@ -22,6 +22,7 @@
  */
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
+import { withBenchmarkEnv } from './benchmarkEnv';
 
 interface CostPredictionResult {
   model: string;
@@ -113,6 +114,7 @@ async function main() {
 
   const results: CostPredictionResult[] = [];
   let totalActualCostUsd = 0;
+  let skippedCount = 0;
   const maxCostEnv = process.env.BENCH_MAX_COST_USD;
   const parsedMaxCost = maxCostEnv !== undefined && maxCostEnv !== '' ? Number(maxCostEnv) : null;
   const maxCostUsd =
@@ -137,6 +139,7 @@ async function main() {
           { model: modelConfig.model, tier: modelConfig.tier } as any,
         );
       } catch (err) {
+        skippedCount++;
         console.error(
           `  [skip] estimateForModel threw for ${modelConfig.model}/${category}: ${(err as Error).message}`,
         );
@@ -223,22 +226,26 @@ async function main() {
   }
   console.log('═'.repeat(70));
 
-  const baseline = {
-    benchmark: 'cost-prediction',
-    runAt: new Date().toISOString(),
-    nodeVersion: process.version,
-    results,
-    statistics: { mae, p50, p95, maxError, totalTasks: results.length },
-    perModel,
-    summary: {
-      passed,
-      mae,
-      p95,
-      totalActualCostUsd,
-      maxCostUsd,
-      costOverrunUsd,
+  const baseline = withBenchmarkEnv(
+    {
+      benchmark: 'cost-prediction',
+      results,
+      statistics: { mae, p50, p95, maxError, totalTasks: results.length },
+      perModel,
+      summary: {
+        passed,
+        errors: 0,
+        failed: 0,
+        skipped: skippedCount,
+        mae,
+        p95,
+        totalActualCostUsd,
+        maxCostUsd,
+        costOverrunUsd,
+      },
     },
-  };
+    { evidence: 'simulated', datasetVersion: 'cost-prediction-v1' },
+  );
 
   const fullPath = resolve(outputPath);
   const dir = dirname(fullPath);

@@ -20,6 +20,8 @@ import { getGlobalLogger } from '../logging';
 // Types
 // ──────────────────────────────────────────────────────────────────────────
 
+export type DataClassification = 'public' | 'internal' | 'pii' | 'phi' | 'confidential';
+
 export interface OutboundNetworkPolicyConfig {
   /** Master switch. When false, all requests are allowed (passthrough). */
   enabled: boolean;
@@ -31,6 +33,10 @@ export interface OutboundNetworkPolicyConfig {
   auditLog: boolean;
   /** Whether to block private/internal IPs (SSRF defense). Default: true. */
   blockPrivateIPs: boolean;
+  /** Per-classification destination allowlists. If a classification is present,
+   * requests carrying that classification must target domains in the corresponding
+   * list. The global allowlist is still checked first. */
+  classificationAllowlist?: Partial<Record<DataClassification, string[]>>;
 }
 
 export interface OutboundRequestLog {
@@ -93,6 +99,7 @@ export class OutboundNetworkPolicy {
       blocklist: config.blocklist ?? [],
       auditLog: config.auditLog ?? true,
       blockPrivateIPs: config.blockPrivateIPs ?? true,
+      classificationAllowlist: config.classificationAllowlist,
     };
   }
 
@@ -100,6 +107,19 @@ export class OutboundNetworkPolicy {
    * Check if a URL is allowed under the current policy.
    */
   check(url: string): { allowed: boolean; reason?: string; domain: string } {
+    return this.checkWithClassification(url, undefined);
+  }
+
+  /**
+   * Check if a URL is allowed under the current policy, with an optional
+   * data classification. When classification is provided, the URL must
+   * pass BOTH the global allowlist AND the per-classification allowlist
+   * (if one is configured for that classification).
+   */
+  checkWithClassification(
+    url: string,
+    classification?: DataClassification,
+  ): { allowed: boolean; reason?: string; domain: string } {
     let parsed: URL;
     try {
       parsed = new URL(url);
@@ -109,7 +129,7 @@ export class OutboundNetworkPolicy {
 
     const domain = parsed.hostname;
 
-    // Check blocklist first
+    // Check blocklist first (always takes precedence)
     for (const blocked of this.config.blocklist) {
       if (domain === blocked || domain.endsWith('.' + blocked)) {
         return { allowed: false, reason: `domain in blocklist: ${domain}`, domain };
@@ -125,14 +145,39 @@ export class OutboundNetworkPolicy {
       }
     }
 
-    // Check allowlist
+    // Check global allowlist
+    let globallyAllowed = false;
     for (const allowed of this.config.allowlist) {
       if (domain === allowed || domain.endsWith('.' + allowed)) {
-        return { allowed: true, domain };
+        globallyAllowed = true;
+        break;
       }
     }
 
-    return { allowed: false, reason: `domain not in allowlist: ${domain}`, domain };
+    if (!globallyAllowed) {
+      return { allowed: false, reason: `domain not in allowlist: ${domain}`, domain };
+    }
+
+    // If classification is provided, check per-classification allowlist
+    if (classification && this.config.classificationAllowlist?.[classification]) {
+      const classAllowlist = this.config.classificationAllowlist[classification]!;
+      let classAllowed = false;
+      for (const allowed of classAllowlist) {
+        if (domain === allowed || domain.endsWith('.' + allowed)) {
+          classAllowed = true;
+          break;
+        }
+      }
+      if (!classAllowed) {
+        return {
+          allowed: false,
+          reason: `domain '${domain}' not in classification '${classification}' allowlist`,
+          domain,
+        };
+      }
+    }
+
+    return { allowed: true, domain };
   }
 
   /**

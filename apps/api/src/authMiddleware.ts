@@ -8,6 +8,8 @@ declare global {
     interface Request {
       apiKeyId?: string;
       apiScopes?: string[];
+      /** Tenant associated with the authenticated API key or static key mapping. */
+      tenantId?: string;
     }
   }
 }
@@ -42,6 +44,7 @@ interface StoredKey {
   hash: Buffer; // SHA-256 hash of the raw key
   name: string;
   scopes: string[];
+  tenantId?: string;
 }
 
 const MAX_AUTH_FAILURES = parseInt(process.env.AUTH_MAX_FAILURES ?? '5', 10);
@@ -83,6 +86,34 @@ function parseApiKeys(raw: string | undefined): Map<string, StoredKey> {
   return keys;
 }
 
+// Tenant-scoped static API keys: TENANT_API_KEYS=tenantId:key1,key2;tenantId2:key3
+const TENANT_ID_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
+
+function parseTenantApiKeys(raw: string | undefined): Map<string, StoredKey> {
+  const keys = new Map<string, StoredKey>();
+  if (!raw) return keys;
+  for (const entry of raw.split(';')) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split(':');
+    if (parts.length < 2 || !parts[0] || !parts[1]) continue;
+    const tenantId = parts[0];
+    if (!TENANT_ID_RE.test(tenantId)) continue;
+    const rawKeys = parts[1].split(',');
+    for (const rawKey of rawKeys) {
+      const key = rawKey.trim();
+      if (!key) continue;
+      keys.set(sha256(key).toString('hex'), {
+        hash: sha256(key),
+        name: `${tenantId}:${key.slice(0, 8)}`,
+        scopes: ['read', 'write'],
+        tenantId,
+      });
+    }
+  }
+  return keys;
+}
+
 // ── API key parse cache ──────────────────────────────────────────────────────
 //
 // PERFORMANCE FIX: parseApiKeys() performs two SHA-256 hashes per configured
@@ -92,12 +123,18 @@ function parseApiKeys(raw: string | undefined): Map<string, StoredKey> {
 // happens at most once per distinct configuration.
 let cachedApiKeys: Map<string, StoredKey> | null = null;
 let cachedApiKeysRaw: string | undefined = undefined;
+let cachedTenantApiKeysRaw: string | undefined = undefined;
 
 function getCachedKeys(): Map<string, StoredKey> {
   const raw = process.env.API_KEYS;
-  if (cachedApiKeys === null || raw !== cachedApiKeysRaw) {
+  const tenantRaw = process.env.TENANT_API_KEYS;
+  if (cachedApiKeys === null || raw !== cachedApiKeysRaw || tenantRaw !== cachedTenantApiKeysRaw) {
     cachedApiKeysRaw = raw;
+    cachedTenantApiKeysRaw = tenantRaw;
     cachedApiKeys = parseApiKeys(raw);
+    for (const [hash, stored] of parseTenantApiKeys(tenantRaw)) {
+      cachedApiKeys.set(hash, stored);
+    }
   }
   return cachedApiKeys;
 }
@@ -132,6 +169,7 @@ function findKey(token: string, storedKeys: Map<string, StoredKey>): StoredKey |
         hash: Buffer.from(storeRecord.hash, 'hex'),
         name: storeRecord.name,
         scopes: storeRecord.scopes,
+        tenantId: storeRecord.tenantId,
       };
     }
   }
@@ -232,6 +270,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
 
   let keyId: string | null = null;
   let matchedScopes: string[] = [];
+  let matchedKey: StoredKey | null = null;
 
   if (apiKeyHeader) {
     const matched = findKey(apiKeyHeader, apiKeys);
@@ -243,6 +282,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
     }
     keyId = matched.name;
     matchedScopes = matched.scopes;
+    matchedKey = matched;
   } else if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice(7);
     const matched = findKey(token, apiKeys);
@@ -254,7 +294,13 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
     }
     keyId = matched.name;
     matchedScopes = matched.scopes;
-  } else if (apiKeys.size > 0) {
+    matchedKey = matched;
+  } else if (apiKeys.size > 0 || isProductionEnv() || getApiKeyStore().list().length > 0) {
+    // Default-deny: require authentication whenever any API key is configured —
+    // in the env cache OR the persistent store — or whenever we are in
+    // production. Previously auth fell open when keys existed only in the
+    // persistent store, or when none were configured in production, letting
+    // unauthenticated callers through to protected routes (AUTH-3 / GOV-6 / B3).
     res.status(401).json({
       error: 'Authentication required',
       hint: 'Provide X-API-Key header or Authorization: Bearer <token>',
@@ -265,6 +311,9 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
   if (keyId) {
     req.apiKeyId = keyId;
     req.apiScopes = matchedScopes;
+    if (matchedKey?.tenantId) {
+      req.tenantId = matchedKey.tenantId;
+    }
   }
 
   next();

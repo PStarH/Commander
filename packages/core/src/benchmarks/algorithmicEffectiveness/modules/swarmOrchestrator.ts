@@ -36,7 +36,8 @@ const taskSuite: BenchmarkTask[] = [
   },
   {
     id: 'monolith-migration',
-    prompt: 'Plan a zero-downtime migration from a monolithic application to container orchestration.',
+    prompt:
+      'Plan a zero-downtime migration from a monolithic application to container orchestration.',
     keywords: ['blue-green'],
     expected: (output: string) => checkOutput(output, ['blue-green']),
   },

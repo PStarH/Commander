@@ -422,6 +422,37 @@ export class PluginLoader {
 }
 
 /**
+ * MCP-12: compile a plugin-supplied regex with ReDoS guards. Plugin content is
+ * untrusted, and a catastrophic-backtracking pattern would hang the scanner that
+ * runs it against arbitrary content. We cap the source length and reject the
+ * classic catastrophic shapes (a quantified group whose body is itself
+ * unbounded-quantified, or an enormous repetition bound) before compiling.
+ */
+const MAX_USER_REGEX_LENGTH = 1000;
+// A group whose body contains an unbounded quantifier and is then quantified
+// again — (a+)+, (a*)*, (.*)+, (?:x+)* — plus a class quantified twice.
+const NESTED_QUANTIFIER_RE = /\((?:\?[:=!<]*)?[^()]*[+*][^()]*\)\s*[+*]|\[[^\]]*\][+*]\s*[+*]/;
+// Repetition bound with a very large lower/upper limit, e.g. {5000} / {1000,}.
+const HUGE_BOUND_RE = /\{\s*\d{4,}\s*,?\s*\d*\s*\}/;
+
+function compileBoundedUserRegex(source: string, flags: string, context: string): RegExp {
+  if (typeof source !== 'string') {
+    throw new Error(`${context}: regex pattern must be a string`);
+  }
+  if (source.length > MAX_USER_REGEX_LENGTH) {
+    throw new Error(
+      `${context}: regex pattern exceeds ${MAX_USER_REGEX_LENGTH} chars (ReDoS guard)`,
+    );
+  }
+  if (NESTED_QUANTIFIER_RE.test(source) || HUGE_BOUND_RE.test(source)) {
+    throw new Error(
+      `${context}: regex pattern rejected as potentially catastrophic (nested or oversized quantifier)`,
+    );
+  }
+  return new RegExp(source, flags);
+}
+
+/**
  * Resolve content scanner rules declared in a plugin manifest.
  * Supports inline JSON rules and module exports containing HarmfulContentRule[].
  */
@@ -436,7 +467,11 @@ async function resolveContentScannerRules(
     return declaration.inline.map((r) => ({
       category: r.category,
       severity: r.severity,
-      pattern: new RegExp(r.pattern, r.flags ?? 'gi'),
+      pattern: compileBoundedUserRegex(
+        r.pattern,
+        r.flags ?? 'gi',
+        `Plugin "${manifest.name}" contentScannerRules.inline`,
+      ),
     }));
   }
 
@@ -452,7 +487,11 @@ async function resolveContentScannerRules(
     return exported.map((r: HarmfulContentRule) => ({
       category: r.category,
       severity: r.severity,
-      pattern: new RegExp(r.pattern.source, r.pattern.flags),
+      pattern: compileBoundedUserRegex(
+        r.pattern.source,
+        r.pattern.flags,
+        `Plugin "${manifest.name}" contentScannerRules.export`,
+      ),
     }));
   }
 

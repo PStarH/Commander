@@ -15,6 +15,25 @@
  */
 
 import { getGlobalLogger } from '../logging';
+import { getCurrentTenantId } from '../runtime/tenantContext';
+import { TenantFairnessMonitor } from '../runtime/tenantFairnessMonitor';
+
+export const LANE_REJECTED_FAIRNESS = 'LANE_REJECTED_FAIRNESS';
+
+/** Thrown when a high-share tenant is temporarily rejected to preserve Jain fairness. */
+export class LaneFairnessRejectionError extends Error {
+  readonly code = LANE_REJECTED_FAIRNESS;
+  readonly statusCode = 429;
+
+  constructor(
+    message: string,
+    readonly tenantId: string,
+    readonly jainIndex: number,
+  ) {
+    super(message);
+    this.name = 'LaneFairnessRejectionError';
+  }
+}
 
 // ============================================================================
 // Types
@@ -125,15 +144,22 @@ export class LaneManager {
   private lanes: Map<string, ExecutionLane> = new Map();
   private customSelectors: LaneSelector[] = [];
   private defaultMaxConcurrency: number;
+  private fairnessMonitor?: TenantFairnessMonitor;
 
   /**
    * @param defaultMaxConcurrency Max concurrent executions in the default lane.
    *   Set high (100+) when lane isolation is only for explicitly registered lanes;
    *   set low (5-10) when the default lane itself should cap global concurrency.
    *   Default: 100 (effectively unlimited for most use cases).
+   * @param options Optional settings, including a fairness monitor for Jain
+   *   fairness-aware admission control.
    */
-  constructor(defaultMaxConcurrency: number = 100) {
+  constructor(
+    defaultMaxConcurrency: number = 100,
+    options?: { fairnessMonitor?: TenantFairnessMonitor },
+  ) {
     this.defaultMaxConcurrency = defaultMaxConcurrency;
+    this.fairnessMonitor = options?.fairnessMonitor;
     this.registerLane({
       name: 'default',
       description: 'Default lane for all executions not matched by other lanes',
@@ -256,9 +282,39 @@ export class LaneManager {
   /**
    * Acquire a slot in a lane. Waits if the lane is at max concurrency.
    * Returns the lane name.
+   *
+   * When a fairness monitor is configured and the Jain index drops below the
+   * threshold, the highest-share tenant's new runs are rejected with a 429-style
+   * LANE_REJECTED_FAIRNESS error.
    */
   async acquireSlot(ctx: LaneContext, timeoutMs?: number): Promise<string> {
     const lane = this.selectLane(ctx);
+    const tenantId = ctx.tenantId ?? getCurrentTenantId() ?? '__global__';
+
+    if (this.fairnessMonitor) {
+      const jainIndex = this.fairnessMonitor.getJainIndex();
+      const activeTenants = this.fairnessMonitor.getActiveTenantIds();
+      if (jainIndex < 0.85 && activeTenants.length > 1) {
+        let highestTenant = activeTenants[0];
+        let highestShare = this.fairnessMonitor.getTenantShare(highestTenant);
+        for (const t of activeTenants.slice(1)) {
+          const share = this.fairnessMonitor.getTenantShare(t);
+          if (share > highestShare) {
+            highestShare = share;
+            highestTenant = t;
+          }
+        }
+        if (tenantId === highestTenant) {
+          lane.totalRejected++;
+          throw new LaneFairnessRejectionError(
+            `Lane admission rejected for tenant "${tenantId}" due to fairness throttling (Jain index ${jainIndex.toFixed(4)})`,
+            tenantId,
+            jainIndex,
+          );
+        }
+      }
+    }
+
     lane.totalEnqueued++;
 
     if (lane.runningCount < lane.config.maxConcurrency) {
@@ -327,6 +383,11 @@ export class LaneManager {
     }
 
     lane.totalCompleted++;
+
+    if (this.fairnessMonitor) {
+      const tenantId = getCurrentTenantId() ?? '__global__';
+      this.fairnessMonitor.recordCompletion(tenantId);
+    }
 
     const next = lane.waitingQueue.shift();
     if (next) {

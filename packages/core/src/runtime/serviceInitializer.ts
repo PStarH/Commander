@@ -41,7 +41,8 @@ import { ToolApproval } from './toolApproval';
 import { ToolOrchestrator } from './toolOrchestrator';
 import { ToolPlanner } from './toolPlanner';
 import { CycleDetector } from './cycleDetector';
-import { createContentScanner } from '../contentScanner';
+import { createContentScanner, DefaultContentScanner } from '../contentScanner';
+import { harmfulContentRules } from '../plugins/harmful-content-rules/rules';
 import { ExecutionContextInjector } from './executionContextInjector';
 import { SecurityOrchestrator, getSecurityOrchestrator } from './securityOrchestrator';
 import { ReflexionGenerator } from './reflexionGenerator';
@@ -60,10 +61,17 @@ import { getTraceRecorder } from './executionTrace';
 import { getConversationStore } from '../memory/conversationStore';
 import { getHookManager } from '../pluginManager';
 import { createParameterControllerPlugin } from './parameterController';
+import { createRaspExtensionsPlugin } from '../plugins/builtin/raspExtensionsPlugin';
+import {
+  registerResponseCallbacks,
+  startSecurityResponseEngine,
+} from '../security/securityResponseEngine';
+import { bootstrapRuntimeAdmission } from './runtimeAdmission';
+import { startAuditAggregatorBridge } from '../security/auditAggregatorBridge';
 import { installProcessCrashHandlers } from './processCrashSafety';
 import { RecoveryBootstrapper } from '../atr/recoveryBootstrapper';
 import { onCircuitBreakerOpen } from './dlqReplayWorker';
-import { getCapabilityTokenIssuer } from '../security/capabilityToken';
+import { getCapabilityTokenIssuer, getCapabilityTokenVerifier } from '../security/capabilityToken';
 import {
   getReversibilityGate,
   resetReversibilityGate,
@@ -76,7 +84,7 @@ import {
 import { getOTelExporter } from './openTelemetryExporter';
 import { getGlobalEventSourcingEngine } from './eventSourcingEngine';
 import { getGlobalEventSourcingSubscriber } from './eventSourcingSubscriber';
-import { createMemoryStore } from '../memory';
+import { bootstrapMemoryPersistence, resolveMemoryStoreType } from '../memory/utils';
 
 import type { StateCheckpointer } from './stateCheckpointer';
 import type { DeadLetterQueue } from './deadLetterQueue';
@@ -349,18 +357,17 @@ export function initializeServices(
   }
 
   let memoryStore: import('../memory').MemoryStore | null = null;
-  if (config.memoryStoreType) {
-    createMemoryStore(config.memoryStoreType)
-      .then((store) => {
-        memoryStore = store;
-      })
-      .catch((e) => {
-        getGlobalLogger().warn('AgentRuntime', 'Failed to initialize memory store', {
-          type: config.memoryStoreType,
-          error: (e as Error)?.message,
-        });
+  const memoryStoreType = resolveMemoryStoreType(config);
+  bootstrapMemoryPersistence(memoryStoreType)
+    .then((store) => {
+      memoryStore = store;
+    })
+    .catch((e) => {
+      getGlobalLogger().warn('AgentRuntime', 'Failed to bootstrap persistent memory', {
+        type: memoryStoreType,
+        error: (e as Error)?.message,
       });
-  }
+    });
 
   let otelExporter: import('./openTelemetryExporter').OpenTelemetryExporter | null = null;
   const otelEnabled =
@@ -435,9 +442,10 @@ export function initializeServices(
   const toolApproval = new ToolApproval(approvalCallback);
   // Wire the capability-token verifier so that ToolApproval's token fast-path
   // and runtime enforcement can actually validate HMAC-signed tokens.
-  // Use a factory so resets/reconfigurations of the issuer are picked up.
+  // Use a factory so resets/reconfigurations are picked up; worker/runtime only
+  // imports the verifier singleton, never the issuer/signing key.
   try {
-    toolApproval.setTokenVerifier(() => getCapabilityTokenIssuer().createVerifier());
+    toolApproval.setTokenVerifier(() => getCapabilityTokenVerifier());
   } catch (err) {
     getGlobalLogger().warn(
       'ServiceInitializer',
@@ -511,6 +519,7 @@ export function initializeServices(
     enabled: config.cycleDetection?.enabled !== false,
   });
   const contentScanner = createContentScanner(config.contentScanner);
+  DefaultContentScanner.registerRulePack('harmful-content-rules', harmfulContentRules);
   const securityOrch = getSecurityOrchestrator();
   const contextInjector = new ExecutionContextInjector({
     agentInbox,
@@ -590,6 +599,57 @@ export function initializeServices(
         error: (e as Error)?.message,
       }),
     );
+
+  getHookManager()
+    .register(createRaspExtensionsPlugin())
+    .catch((e) =>
+      getGlobalLogger().debug('AgentRuntime', 'RASP plugin registration', {
+        error: (e as Error)?.message,
+      }),
+    );
+
+  // Wire security.alert → SecurityResponseEngine so monitor/RASP detections
+  // trigger automated suspend/quarantine/throttle actions.
+  try {
+    registerResponseCallbacks({
+      terminateSession: (agentId, reason) => {
+        getGlobalLogger().warn('SecurityResponseEngine', 'Terminate session requested', {
+          agentId,
+          reason,
+        });
+      },
+      revokeTokens: () => {
+        try {
+          getCapabilityTokenIssuer();
+        } catch {
+          // best-effort — issuer may be unavailable in stripped-down runtimes
+        }
+      },
+    });
+    startSecurityResponseEngine();
+  } catch (err) {
+    getGlobalLogger().warn(
+      'ServiceInitializer',
+      'Failed to start SecurityResponseEngine; automated alert response disabled',
+      { error: (err as Error)?.message },
+    );
+  }
+
+  try {
+    bootstrapRuntimeAdmission();
+  } catch (err) {
+    getGlobalLogger().warn('ServiceInitializer', 'Failed to bootstrap admission control', {
+      error: (err as Error)?.message,
+    });
+  }
+
+  try {
+    startAuditAggregatorBridge();
+  } catch (err) {
+    getGlobalLogger().warn('ServiceInitializer', 'Failed to start audit aggregator bridge', {
+      error: (err as Error)?.message,
+    });
+  }
 
   resolvedCheckpointer.setLeaseManager(leaseManager);
 

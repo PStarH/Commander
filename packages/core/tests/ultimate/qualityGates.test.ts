@@ -140,4 +140,124 @@ describe('EmbeddingEvaluator', () => {
     const result = await evaluator.evaluate('ACCURACY', 'hello');
     expect(result.score).toBe(0.5);
   });
+
+  it('returns neutral score when embedding function throws', async () => {
+    const embed = vi.fn().mockRejectedValue(new Error('embed boom'));
+    const evaluator = new EmbeddingEvaluator(embed, 0.8);
+    const result = await evaluator.evaluate('ACCURACY', 'hello', { reference: 'world' });
+    expect(result.score).toBe(0.5);
+    expect(result.reason).toContain('Embedding evaluation failed');
+  });
+
+  it('does not support SAFETY or COMPLETENESS gates', () => {
+    const evaluator = new EmbeddingEvaluator(vi.fn(), 0.8);
+    expect(evaluator.supports('SAFETY')).toBe(false);
+    expect(evaluator.supports('COMPLETENESS')).toBe(false);
+  });
+});
+
+describe('LLMJudgeEvaluator edge cases', () => {
+  it('supports all standard gate types except SAFETY', () => {
+    const provider = { call: vi.fn() } as unknown as LLMProvider;
+    const evaluator = new LLMJudgeEvaluator(provider, 'gpt-4');
+    expect(evaluator.supports('HALLUCINATION_CHECK')).toBe(true);
+    expect(evaluator.supports('CONSISTENCY')).toBe(true);
+    expect(evaluator.supports('COMPLETENESS')).toBe(true);
+    expect(evaluator.supports('ACCURACY')).toBe(true);
+    expect(evaluator.supports('SAFETY')).toBe(false);
+  });
+
+  it('falls back to neutral score when the provider throws', async () => {
+    const provider = {
+      call: vi.fn().mockRejectedValue(new Error('llm down')),
+    } as unknown as LLMProvider;
+    const evaluator = new LLMJudgeEvaluator(provider, 'gpt-4');
+    const result = await evaluator.evaluate('ACCURACY', 'out');
+    expect(result.score).toBe(0.5);
+    expect(result.reason).toContain('unavailable');
+  });
+
+  it('falls back to neutral score when response has no JSON', async () => {
+    const provider = {
+      call: vi.fn().mockResolvedValue({ content: 'just text' }),
+    } as unknown as LLMProvider;
+    const evaluator = new LLMJudgeEvaluator(provider, 'gpt-4');
+    const result = await evaluator.evaluate('ACCURACY', 'out');
+    expect(result.score).toBe(0.5);
+    expect(result.reason).toContain('parseable JSON');
+  });
+
+  it('falls back to neutral score when JSON is malformed', async () => {
+    const provider = {
+      call: vi.fn().mockResolvedValue({ content: '{ score: 0.5 }' }),
+    } as unknown as LLMProvider;
+    const evaluator = new LLMJudgeEvaluator(provider, 'gpt-4');
+    const result = await evaluator.evaluate('ACCURACY', 'out');
+    expect(result.score).toBe(0.5);
+    expect(result.reason).toContain('Failed to parse');
+  });
+
+  it('builds a default prompt for unknown gate types', async () => {
+    const provider = {
+      call: vi.fn().mockResolvedValue({ content: '{"score":0.7}' }),
+    } as unknown as LLMProvider;
+    const evaluator = new LLMJudgeEvaluator(provider, 'gpt-4');
+    const result = await evaluator.evaluate('SAFETY' as any, 'out');
+    expect(result.score).toBe(0.7);
+    expect(provider.call).toHaveBeenCalledOnce();
+    const request = (provider.call as ReturnType<typeof vi.fn>).mock.calls[0][0] as LLMRequest;
+    expect(request.messages[1].content).toContain('Return score 0-1.');
+  });
+
+  it('includes reference text in the prompt when provided', async () => {
+    const provider = {
+      call: vi.fn().mockResolvedValue({ content: '{"score":0.8}' }),
+    } as unknown as LLMProvider;
+    const evaluator = new LLMJudgeEvaluator(provider, 'gpt-4');
+    await evaluator.evaluate('ACCURACY', 'synthesis', { reference: 'the reference' });
+    const request = (provider.call as ReturnType<typeof vi.fn>).mock.calls[0][0] as LLMRequest;
+    expect(request.messages[1].content).toContain('the reference');
+  });
+});
+
+describe('QualityGateEngine evaluator selection', () => {
+  it('prefers the LLM evaluator when fast path is disabled', async () => {
+    const llm = new LLMJudgeEvaluator(
+      vi.fn().mockResolvedValue({ content: '{"score":1}' }),
+      'gpt-4',
+    );
+    const embed = new EmbeddingEvaluator(vi.fn().mockResolvedValue([1, 0, 0]), 0.8);
+    const engine = new QualityGateEngine({ llmEvaluator: llm, embeddingEvaluator: embed });
+    const results = await engine.run(
+      [{ name: 'acc', type: 'ACCURACY', enabled: true, threshold: 0.8 }],
+      'out',
+    );
+    expect(results[0].score).toBe(1);
+  });
+
+  it('uses the embedding evaluator when fast path is enabled and type is supported', async () => {
+    const llm = new LLMJudgeEvaluator(vi.fn().mockRejectedValue(new Error('llm down')), 'gpt-4');
+    const embed = new EmbeddingEvaluator(vi.fn().mockResolvedValue([1, 0, 0]), 0.8);
+    const engine = new QualityGateEngine({
+      llmEvaluator: llm,
+      embeddingEvaluator: embed,
+      preferFastPath: true,
+    });
+    const results = await engine.run(
+      [{ name: 'acc', type: 'ACCURACY', enabled: true, threshold: 0.8 }],
+      'hello world',
+      { reference: 'hello world' },
+    );
+    expect(results[0].score).toBe(1);
+  });
+
+  it('falls back to rule-based evaluator when fast path is enabled and no embedding evaluator exists', async () => {
+    const llm = new LLMJudgeEvaluator(vi.fn().mockRejectedValue(new Error('llm down')), 'gpt-4');
+    const engine = new QualityGateEngine({ llmEvaluator: llm, preferFastPath: true });
+    const results = await engine.run(
+      [{ name: 'safe', type: 'SAFETY', enabled: true, threshold: 0.8 }],
+      'This is safe output.',
+    );
+    expect(results[0].score).toBeGreaterThan(0.5);
+  });
 });

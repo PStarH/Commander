@@ -1,9 +1,6 @@
 import { describe, it, beforeEach } from 'vitest';
 import assert from 'node:assert/strict';
-import {
-  IMProviderRegistry,
-  resetIMProviderRegistry,
-} from '../../src/im/imProviderRegistry';
+import { IMProviderRegistry, resetIMProviderRegistry } from '../../src/im/imProviderRegistry';
 import type { IMProvider } from '../../src/im';
 
 const fakeProvider: IMProvider = {
@@ -50,5 +47,15 @@ describe('IMProviderRegistry', () => {
     r1.register(fakeProvider);
     const r2 = resetIMProviderRegistry();
     assert.equal(r2.resolve('fake'), undefined);
+  });
+
+  it('resolve returns undefined for unknown provider', () => {
+    const registry = new IMProviderRegistry();
+    assert.equal(registry.resolve('nonexistent'), undefined);
+  });
+
+  it('unregister returns false for non-existent provider', () => {
+    const registry = new IMProviderRegistry();
+    assert.equal(registry.unregister('nonexistent'), false);
   });
 });

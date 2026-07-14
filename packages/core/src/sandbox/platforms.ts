@@ -384,11 +384,26 @@ function buildSeatbeltProfile(p: SandboxProfile): string {
         lines.push(`(allow network-outbound (literal "${d}"))`);
       }
     }
-  }
-  // 'full' or 'proxy': no denial (still constrained by closed-by-default base —
-  // but network is implicitly allowed since we didn't explicitly deny it after
-  // the (deny default). We add an explicit allow for clarity.
-  if (p.network === 'full' || p.network === 'proxy') {
+  } else if (p.network === 'proxy') {
+    // SBX-5: Seatbelt cannot run the HTTP CONNECT proxy that Docker/gVisor use
+    // to gate egress in 'proxy' mode. Previously this silently fell through to
+    // `(allow network*)`, so a profile that asked for *controlled* egress got
+    // *unrestricted* egress. Fail closed instead: deny all network and allow
+    // only the intended destinations (explicit allowedDomains plus the derived
+    // LLM-provider API domains). With no derivable allowlist, this is a full
+    // network block — never an open network.
+    lines.push('(deny network* (with no-log) (apply to process))');
+    const proxyDomains = new Set<string>([...(p.allowedDomains ?? [])]);
+    try {
+      for (const d of getLLMAPIDomains()) proxyDomains.add(d);
+    } catch {
+      /* best-effort: fall back to allowedDomains only */
+    }
+    for (const d of proxyDomains) {
+      lines.push(`(allow network-outbound (literal "${d}"))`);
+    }
+  } else if (p.network === 'full') {
+    // Only true 'full' network is granted unrestricted egress under Seatbelt.
     lines.push('(allow network*)');
   }
 
@@ -530,8 +545,12 @@ class BwrapSB implements PlatformSandbox {
       if (fs.existsSync(a)) args.push('--ro-bind', a, a);
     }
 
-    // Network isolation: block for non-full profiles
-    if (p.network === 'blocked' || p.network === 'allowlisted') args.push('--unshare-net');
+    // Network isolation: block for non-full profiles. bwrap has no HTTP CONNECT
+    // proxy (that is Docker/gVisor-only), so 'proxy' cannot gate egress per
+    // domain here. SBX-5: fail closed — unshare the network namespace for
+    // 'proxy' too rather than silently granting full host network.
+    if (p.network === 'blocked' || p.network === 'allowlisted' || p.network === 'proxy')
+      args.push('--unshare-net');
 
     // Seccomp-BPF: syscall-level filtering (from Codex CLI research)
     // Generates a whitelist BPF program and passes it to bwrap via --seccomp FD
@@ -1147,11 +1166,11 @@ class NoopSB implements PlatformSandbox {
  * HybridSandboxScheduler for JS-only code execution. This prevents
  * shell commands from silently falling back to NoopSB (no sandbox).
  */
-class V8IsolateSB implements PlatformSandbox {
+export class V8IsolateSB implements PlatformSandbox {
   readonly name = 'v8-isolate' as SandboxMechanism;
   readonly available = isV8IsolateAvailable();
 
-  async execute(cmd: string, p: SandboxProfile, wd?: string): Promise<SandboxExecutionResult> {
+  async execute(cmd: string, p: SandboxProfile, _wd?: string): Promise<SandboxExecutionResult> {
     // V8 Isolate is ONLY for JavaScript code execution.
     // Non-JS commands must use OS-level sandboxes, NOT fall back to NoopSB.
     if (!this.looksLikeJavaScript(cmd)) {

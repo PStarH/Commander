@@ -19,13 +19,12 @@ import { getTraceRecorder } from './executionTrace';
 import { getGlobalLogger } from '../logging';
 import { getMetricsCollector } from './metricsCollector';
 import { getHookManager } from '../pluginManager';
-import { getGuardianAgent } from '../security/guardianAgent';
+import { checkToolGuardian } from '../security/securityGuardianFacade';
 import {
   reviewToolCall as guardianReviewToolCall,
   isRuntimeGuardianAvailable,
 } from './runtimeGuardianBridge';
 import { getExecutionScheduler, type RunHandle } from '../atr/scheduler';
-import { generateIdempotencyKey } from '../atr/canonicalJson';
 import { StepErrorBoundary } from './stepErrorBoundary';
 import { ToolRegistry } from '../tools/toolRegistry';
 import { repairToolCallArguments, suggestRepairsForValidationErrors } from './toolCallRepair';
@@ -35,7 +34,8 @@ import {
   formatValidationErrorsJson,
 } from './toolCallValidator';
 import { isMutationTool } from './runtimeHelpers';
-import { getCapabilityTokenIssuer } from '../security/capabilityToken';
+import { getSideEffectGate, SideEffectGateError } from './sideEffectGate';
+import { getCapabilityTokenVerifier } from '../security/capabilityToken';
 import {
   getGlobalBiscuitCapabilityAdapter,
   BiscuitCapabilityAdapter,
@@ -116,8 +116,9 @@ export class ToolExecutionService {
               args: toolCall.arguments as Record<string, unknown>,
             });
           } else {
-            // HMAC verification (legacy)
-            const verifier = getCapabilityTokenIssuer().createVerifier(tenantId ?? '*');
+            // HMAC verification (legacy). Worker/runtime only holds the verifier,
+            // never the issuer/signing key.
+            const verifier = getCapabilityTokenVerifier();
             verdict = verifier.verify(capabilityToken, {
               tool: toolCall.name,
               args: toolCall.arguments as Record<string, unknown>,
@@ -385,96 +386,100 @@ export class ToolExecutionService {
         validatedArgs = validation.repairedArgs ?? repairedArgs;
       }
 
-      // C2/Phase 3: Schedule tool call through ExecutionScheduler for idempotency + replay
+      // Architecture V2: SideEffectGate — mandatory policy PDP + ATR scheduleAction.
+      // Soft bypass only when COMMANDER_ATR_SOFT_BYPASS=1 and not production.
       let schedulerActionId: string | null = null;
       const runHandle = this.runtime.getRunHandle();
-      if (runHandle) {
-        try {
-          const idempotencyKey = generateIdempotencyKey({
-            externalSystem: tool.externalSystem ?? toolCall.name,
-            toolName: toolCall.name,
-            args: validatedArgs as Record<string, unknown>,
-            intentHash: runHandle.intentHash,
-            runId,
-            stepId: toolCall.id ?? actionId,
-          });
-          const scheduleResult = getExecutionScheduler().scheduleAction({
-            runId,
-            leaseToken: runHandle.leaseToken,
-            fencingEpoch: runHandle.fencingEpoch,
-            toolName: toolCall.name,
-            externalSystem: tool.externalSystem ?? toolCall.name,
-            args: validatedArgs as Record<string, unknown>,
-            idempotencyKey,
-            compensable: isMutation,
-            tags: ['tool_execution', toolCall.name],
-            description: `${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 200)})`,
-            tenantId,
-          });
-          if (scheduleResult) {
-            schedulerActionId = scheduleResult.actionId;
-            if (scheduleResult.replayed) {
-              const durationMs = Date.now() - startTime;
-              const cachedOutput = scheduleResult.cachedResult;
-              if (cachedOutput !== undefined) {
-                tracer.recordToolExecution(
-                  runId,
-                  toolCall.name,
-                  toolCall.arguments,
-                  cachedOutput,
-                  durationMs,
-                );
-                getMetricsCollector().recordToolCall(
-                  toolCall.name,
-                  durationMs,
-                  undefined,
-                  tenantId,
-                );
-                bus.publish('tool.completed', agentId, {
-                  runId,
-                  toolName: toolCall.name,
-                  durationMs,
-                });
-                return {
-                  toolCallId: toolCall.id,
-                  name: toolCall.name,
-                  output: cachedOutput,
-                  durationMs,
-                };
-              }
-              const cachedError = scheduleResult.cachedError;
-              if (cachedError) {
-                tracer.recordToolExecution(
-                  runId,
-                  toolCall.name,
-                  toolCall.arguments,
-                  '',
-                  durationMs,
-                  cachedError,
-                );
-                getMetricsCollector().recordToolCall(
-                  toolCall.name,
-                  durationMs,
-                  cachedError,
-                  tenantId,
-                );
-                return {
-                  toolCallId: toolCall.id,
-                  name: toolCall.name,
-                  output: '',
-                  error: cachedError,
-                  durationMs,
-                };
-              }
-            }
+      try {
+        const admission = await getSideEffectGate().admit({
+          runHandle,
+          toolName: toolCall.name,
+          externalSystem: tool.externalSystem ?? toolCall.name,
+          args: validatedArgs as Record<string, unknown>,
+          stepId: toolCall.id ?? actionId,
+          compensable: isMutation,
+          tags: ['tool_execution', toolCall.name],
+          description: `${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 200)})`,
+          tenantId,
+        });
+        schedulerActionId = admission.actionId;
+        if (admission.replayed) {
+          const durationMs = Date.now() - startTime;
+          const cachedOutput = admission.cachedResult;
+          if (cachedOutput !== undefined) {
+            tracer.recordToolExecution(
+              runId,
+              toolCall.name,
+              toolCall.arguments,
+              cachedOutput,
+              durationMs,
+            );
+            getMetricsCollector().recordToolCall(toolCall.name, durationMs, undefined, tenantId);
+            bus.publish('tool.completed', agentId, {
+              runId,
+              toolName: toolCall.name,
+              durationMs,
+            });
+            return {
+              toolCallId: toolCall.id,
+              name: toolCall.name,
+              output: cachedOutput,
+              durationMs,
+            };
           }
-        } catch (e) {
-          getGlobalLogger().debug(
-            'ToolExecutionService',
-            'Scheduler scheduleAction failed; running without ATR ledger',
-            { runId, toolName: toolCall.name, error: (e as Error).message },
-          );
+          const cachedError = admission.cachedError;
+          if (cachedError) {
+            tracer.recordToolExecution(
+              runId,
+              toolCall.name,
+              toolCall.arguments,
+              '',
+              durationMs,
+              cachedError,
+            );
+            getMetricsCollector().recordToolCall(toolCall.name, durationMs, cachedError, tenantId);
+            return {
+              toolCallId: toolCall.id,
+              name: toolCall.name,
+              output: '',
+              error: cachedError,
+              durationMs,
+            };
+          }
         }
+      } catch (e) {
+        if (e instanceof SideEffectGateError) {
+          const durationMs = Date.now() - startTime;
+          const errorMsg = `SIDE_EFFECT_GATE: ${e.code}: ${e.message}`;
+          bus.publish('tool.blocked', agentId, {
+            runId,
+            toolName: toolCall.name,
+            reason: e.code,
+            detail: errorMsg,
+          });
+          tracer.recordToolExecution(
+            runId,
+            toolCall.name,
+            toolCall.arguments,
+            '',
+            durationMs,
+            errorMsg,
+          );
+          getMetricsCollector().recordToolCall(toolCall.name, durationMs, errorMsg, tenantId);
+          return {
+            toolCallId: toolCall.id,
+            name: toolCall.name,
+            output: '',
+            error: errorMsg,
+            durationMs,
+          };
+        }
+        getGlobalLogger().debug('ToolExecutionService', 'SideEffectGate unexpected error', {
+          runId,
+          toolName: toolCall.name,
+          error: (e as Error).message,
+        });
+        throw e;
       }
 
       // ExecPolicy gate: evaluate shell/Python commands before execution
@@ -563,41 +568,33 @@ export class ToolExecutionService {
         this.runtime.reflexionGenerator,
       );
 
-      // Guardian security check
+      // Guardian security check (unified facade — gateway + GuardianAgent)
       if (this.runtime.config.securityMonitor?.enabled !== false) {
-        try {
-          const intervention = getGuardianAgent().monitor({
-            agentId,
-            runId,
-            timestamp: Date.now(),
-            type: 'tool_call',
-            content: `${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 200)})`,
-            metadata: { args: toolCall.arguments },
-          });
-          if (intervention) {
-            const errorMsg = `GUARDIAN_BLOCKED: ${intervention} by security guardian for ${toolCall.name}`;
-            const durationMs = Date.now() - startTime;
-            bus.publish('tool.blocked', agentId, {
-              runId,
-              toolName: toolCall.name,
-              reason: 'guardian_blocked',
-              detail: errorMsg,
-            });
-            return {
-              toolCallId: toolCall.id,
-              name: toolCall.name,
-              output: errorMsg,
-              error: errorMsg,
-              durationMs,
-            };
-          }
-        } catch (err) {
-          // Fail closed: if the guardian cannot evaluate the tool, block it.
-          const errorMsg = `GUARDIAN_ERROR: Security guardian unavailable for ${toolCall.name}: ${err instanceof Error ? err.message : String(err)}`;
+        const guardianResult = checkToolGuardian({
+          agentId,
+          runId,
+          toolName: toolCall.name,
+          arguments: toolCall.arguments,
+          sessionId: runId,
+          tenantId,
+        });
+        if (!guardianResult.allowed) {
+          const errorMsg =
+            guardianResult.kind === 'guardian_blocked'
+              ? `GUARDIAN_BLOCKED: ${guardianResult.reason}`
+              : guardianResult.kind === 'guardian_error'
+                ? `GUARDIAN_ERROR: ${guardianResult.reason}`
+                : `SECURITY_GATEWAY_BLOCKED: ${guardianResult.reason}`;
+          const durationMs = Date.now() - startTime;
           bus.publish('tool.blocked', agentId, {
             runId,
             toolName: toolCall.name,
-            reason: 'guardian_error',
+            reason:
+              guardianResult.kind === 'guardian_blocked'
+                ? 'guardian_blocked'
+                : guardianResult.kind === 'guardian_error'
+                  ? 'guardian_error'
+                  : 'exec_policy_forbidden',
             detail: errorMsg,
           });
           return {
@@ -605,7 +602,7 @@ export class ToolExecutionService {
             name: toolCall.name,
             output: errorMsg,
             error: errorMsg,
-            durationMs: Date.now() - startTime,
+            durationMs,
           };
         }
       }

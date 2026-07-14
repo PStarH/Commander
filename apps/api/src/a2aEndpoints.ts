@@ -5,12 +5,21 @@
  */
 
 import express, { Request, Response, Router } from 'express';
+import { TenantIsolationError } from '@commander/core/runtime/tenantContext';
 import { AgentCardGenerator, AgentCardRegistry } from './agentCard';
 import { TaskManager, ArtifactManager, Task, TaskStatus } from './a2aTask';
 
 export interface A2AServerConfig {
   port: number;
   baseUrl: string;
+}
+
+function handleTaskError(res: Response, error: unknown): void {
+  if (error instanceof TenantIsolationError || (error as Error).name === 'TenantIsolationError') {
+    res.status(403).json({ error: 'Forbidden', message: (error as Error).message });
+    return;
+  }
+  res.status(400).json({ error: (error as Error).message });
 }
 
 export function createA2ARouter(
@@ -55,11 +64,15 @@ export function createA2ARouter(
    * Get a specific agent card
    */
   router.get('/agent-cards/:id', (req: Request, res: Response) => {
-    const card = cardRegistry.get(String(req.params.id));
-    if (!card) {
-      return res.status(404).json({ error: 'Agent not found' });
+    try {
+      const card = cardRegistry.get(String(req.params.id));
+      if (!card) {
+        return res.status(404).json({ error: 'Agent not found' });
+      }
+      res.json(card);
+    } catch (error) {
+      handleTaskError(res, error);
     }
-    res.json(card);
   });
 
   /**
@@ -85,11 +98,15 @@ export function createA2ARouter(
    * Get task status
    */
   router.get('/tasks/:id', (req: Request, res: Response) => {
-    const task = taskManager.get(String(req.params.id));
-    if (!task) {
-      return res.status(404).json({ error: 'Task not found' });
+    try {
+      const task = taskManager.get(String(req.params.id));
+      if (!task) {
+        return res.status(404).json({ error: 'Task not found' });
+      }
+      res.json(task);
+    } catch (error) {
+      handleTaskError(res, error);
     }
-    res.json(task);
   });
 
   /**
@@ -107,7 +124,7 @@ export function createA2ARouter(
       const task = taskManager.start(String(req.params.id), agentId);
       res.json(task);
     } catch (error) {
-      res.status(400).json({ error: (error as Error).message });
+      handleTaskError(res, error);
     }
   });
 
@@ -120,7 +137,7 @@ export function createA2ARouter(
       const task = taskManager.pause(String(req.params.id));
       res.json(task);
     } catch (error) {
-      res.status(400).json({ error: (error as Error).message });
+      handleTaskError(res, error);
     }
   });
 
@@ -133,7 +150,7 @@ export function createA2ARouter(
       const task = taskManager.resume(String(req.params.id));
       res.json(task);
     } catch (error) {
-      res.status(400).json({ error: (error as Error).message });
+      handleTaskError(res, error);
     }
   });
 
@@ -146,7 +163,7 @@ export function createA2ARouter(
       const task = taskManager.cancel(String(req.params.id));
       res.json(task);
     } catch (error) {
-      res.status(400).json({ error: (error as Error).message });
+      handleTaskError(res, error);
     }
   });
 
@@ -174,7 +191,7 @@ export function createA2ARouter(
       const task = taskManager.complete(String(req.params.id), artifact);
       res.json(task);
     } catch (error) {
-      res.status(400).json({ error: (error as Error).message });
+      handleTaskError(res, error);
     }
   });
 
@@ -193,7 +210,7 @@ export function createA2ARouter(
       const task = taskManager.fail(String(req.params.id), error);
       res.json(task);
     } catch (err) {
-      res.status(400).json({ error: (err as Error).message });
+      handleTaskError(res, err);
     }
   });
 
@@ -212,7 +229,7 @@ export function createA2ARouter(
       const task = taskManager.updateProgress(String(req.params.id), progress);
       res.json(task);
     } catch (error) {
-      res.status(400).json({ error: (error as Error).message });
+      handleTaskError(res, error);
     }
   });
 
@@ -239,7 +256,7 @@ export function createA2ARouter(
       );
       res.status(201).json(message);
     } catch (error) {
-      res.status(400).json({ error: (error as Error).message });
+      handleTaskError(res, error);
     }
   });
 
@@ -270,13 +287,17 @@ export function createA2ARouter(
    * Get an artifact by ID
    */
   router.get('/artifacts/:id', (req: Request, res: Response) => {
-    const artifact = artifactManager.get(String(req.params.id));
+    try {
+      const artifact = artifactManager.get(String(req.params.id));
 
-    if (!artifact) {
-      return res.status(404).json({ error: 'Artifact not found' });
+      if (!artifact) {
+        return res.status(404).json({ error: 'Artifact not found' });
+      }
+
+      res.json(artifact);
+    } catch (error) {
+      handleTaskError(res, error);
     }
-
-    res.json(artifact);
   });
 
   /**
@@ -284,8 +305,12 @@ export function createA2ARouter(
    * Get artifacts for a task
    */
   router.get('/artifacts/task/:taskId', (req: Request, res: Response) => {
-    const artifacts = artifactManager.getByTask(String(req.params.taskId));
-    res.json({ artifacts, count: artifacts.length });
+    try {
+      const artifacts = artifactManager.getByTask(String(req.params.taskId));
+      res.json({ artifacts, count: artifacts.length });
+    } catch (error) {
+      handleTaskError(res, error);
+    }
   });
 
   return router;

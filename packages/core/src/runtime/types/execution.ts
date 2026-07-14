@@ -115,7 +115,14 @@ export interface AgentExecutionResult {
   runId: string;
   agentId: string;
   missionId?: string;
-  status: 'success' | 'failed' | 'partial' | 'cancelled' | 'interrupted';
+  status:
+    | 'success'
+    | 'failed'
+    | 'partial'
+    | 'cancelled'
+    | 'interrupted'
+    /** Durable HITL wait — run is PAUSED in ATR and may be resumed with resumeWith. */
+    | 'waiting_for_human';
   summary: string;
   steps: AgentExecutionStep[];
   totalTokenUsage: TokenUsage;
@@ -124,7 +131,7 @@ export interface AgentExecutionResult {
   outputData?: Record<string, unknown>;
   /** Content written to files by file_write tool calls during this execution */
   artifactContent?: string;
-  /** Present when status is 'interrupted' — contains the interrupt payload */
+  /** Present when status is 'interrupted' or 'waiting_for_human' */
   interrupt?: { reason: string; value: unknown };
 }
 

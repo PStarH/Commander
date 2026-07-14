@@ -19,9 +19,10 @@ import { SamplesStore } from './samplesStore';
 import { PersistentTraceStore } from './traceStore';
 import { StateCheckpointer } from './stateCheckpointer';
 import { TokenGovernor } from './tokenGovernor';
-import { getGlobalMemoryRegistry } from './tenantProvider';
+import { getGlobalMemoryRegistry, getGlobalTenantProvider } from './tenantProvider';
 import type { ThreeLayerMemory } from '../threeLayerMemory';
 import { getGlobalLogger } from '../logging';
+import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
 // ============================================================================
 // Types
@@ -315,4 +316,34 @@ export class TenantManager {
       }
     }
   }
+
+  /**
+   * Compute the on-disk storage bytes for a tenant.
+   * Uses the supplied config or looks it up from the global TenantProvider.
+   */
+  getTenantStorageBytes(tenantId: string, cfg?: TenantConfig): number {
+    const tenantCfg =
+      cfg ??
+      (() => {
+        try {
+          return getGlobalTenantProvider().getTenantConfig(tenantId);
+        } catch {
+          return undefined;
+        }
+      })();
+    if (!tenantCfg) return 0;
+    return this.computeTenantStorageBytes(tenantId, tenantCfg);
+  }
+}
+
+const tenantManagerSingleton = createTenantAwareSingleton(() => new TenantManager(), {});
+
+/** Get the global TenantManager (single-tenant) or tenant-scoped (multi-tenant). */
+export function getTenantManager(): TenantManager {
+  return tenantManagerSingleton.get();
+}
+
+/** Reset the TenantManager singleton (for test isolation). */
+export function resetTenantManager(): void {
+  tenantManagerSingleton.reset();
 }

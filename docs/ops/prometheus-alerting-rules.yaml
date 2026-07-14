@@ -1,0 +1,243 @@
+# Prometheus Alerting Rules for Commander
+#
+# These rules cover the WP6 SLO targets and operational health indicators.
+# Deploy with: kubectl apply -f prometheus-alerting-rules.yaml
+# Or mount into a Prometheus instance and set rule_files in prometheus.yml.
+
+groups:
+  # ── SLO Burn Rate Alerts ──────────────────────────────────────────────
+  # Uses Google SRE multi-window multi-burn-rate strategy.
+  - name: commander-slo
+    interval: 30s
+    rules:
+      # API availability burn rate (99.95% target → 0.05% error budget)
+      - alert: CommanderAPIAvailabilityBurnRateCritical
+        expr: |
+          (
+            sum(rate(commander_runs_total{status="failed"}[5m]))
+            /
+            sum(rate(commander_runs_total[5m]))
+          ) > 0.006
+        for: 5m
+        labels:
+          severity: critical
+          slo: api-availability
+        annotations:
+          summary: "API availability SLO burn rate critical"
+          description: "Error rate for 5m window exceeds 0.6% (budget for 99.95% SLO)."
+
+      - alert: CommanderAPIAvailabilityBurnRateWarning
+        expr: |
+          (
+            sum(rate(commander_runs_total{status="failed"}[30m]))
+            /
+            sum(rate(commander_runs_total[30m]))
+          ) > 0.002
+        for: 15m
+        labels:
+          severity: warning
+          slo: api-availability
+        annotations:
+          summary: "API availability SLO burn rate elevated"
+          description: "Error rate for 30m window exceeds 0.2%."
+
+      # Schedule latency SLO (P95 < 5s)
+      - alert: CommanderScheduleLatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(commander_step_latency_ms_bucket[5m])) by (le)
+          ) > 5000
+        for: 5m
+        labels:
+          severity: warning
+          slo: schedule-latency
+        annotations:
+          summary: "Schedule latency P95 exceeds 5s"
+          description: "P95 step claim latency is {{ $value }}ms, exceeding the 5s target."
+
+      # Step recovery SLO (< 60s)
+      - alert: CommanderStepRecoverySlow
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(commander_step_recovery_ms_bucket[10m])) by (le)
+          ) > 60000
+        for: 10m
+        labels:
+          severity: warning
+          slo: step-recovery
+        annotations:
+          summary: "Step recovery time exceeds 60s"
+          description: "P95 step recovery after worker failure is {{ $value }}ms."
+
+  # ── DLQ Health ────────────────────────────────────────────────────────
+  - name: commander-dlq
+    interval: 30s
+    rules:
+      - alert: CommanderDLQDepthHigh
+        expr: commander_dlq_depth > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Dead-letter queue depth is high"
+          description: "DLQ has {{ $value }} entries. Investigate and replay or discard."
+
+      - alert: CommanderDLQRecoveryFailure
+        expr: |
+          (
+            sum(rate(commander_dlq_entries_total{result="replay_failed"}[1h]))
+            /
+            sum(rate(commander_dlq_entries_total[1h]))
+          ) > 0.005
+        for: 15m
+        labels:
+          severity: critical
+          slo: dlq-recovery
+        annotations:
+          summary: "DLQ recovery success rate below 99.5%"
+          description: "DLQ replay failure rate is {{ $value }} for the last hour."
+
+      - alert: CommanderDLQOldEntries
+        expr: |
+          max(time() - commander_dlq_oldest_timestamp_seconds) > 3600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DLQ has entries older than 1 hour"
+          description: "Oldest DLQ entry is {{ $value }}s old. Manual intervention may be needed."
+
+  # ── Lease & Scheduling Health ────────────────────────────────────────
+  - name: commander-scheduling
+    interval: 15s
+    rules:
+      - alert: CommanderLeaseContentionHigh
+        expr: |
+          sum(rate(commander_fencing_rejects_total[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High lease fencing contention"
+          description: "{{ $value }} fencing rejects per second. Workers may be contending or using stale tokens."
+
+      - alert: CommanderOutboxLagHigh
+        expr: |
+          commander_outbox_unpublished_count > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Outbox has high unpublished message count"
+          description: "{{ $value }} unpublished messages in outbox. Publisher may be down."
+
+      - alert: CommanderQueueAgeHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(commander_step_queue_age_ms_bucket[5m])) by (le)
+          ) > 30000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Step queue age is high"
+          description: "P95 step queue age is {{ $value }}ms. Workers may be underscaled."
+
+      - alert: CommanderNoActiveWorkers
+        expr: commander_workers_active == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No active workers registered"
+          description: "All workers are offline. Steps cannot be claimed."
+
+      - alert: CommanderTenantSaturation
+        expr: |
+          (
+            commander_tenant_running_steps / commander_tenant_max_concurrent_steps
+          ) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tenant at capacity saturation"
+          description: "Tenant {{ $labels.tenant }} is using >90% of concurrency limit."
+
+  # ── Security & Policy ─────────────────────────────────────────────────
+  - name: commander-security
+    interval: 30s
+    rules:
+      - alert: CommanderPolicyDeniesHigh
+        expr: |
+          sum(rate(commander_policy_denies_total[5m])) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High policy denial rate"
+          description: "{{ $value }} policy denies per second. Possible misconfiguration or attack."
+
+      - alert: CommanderApprovalFailClosedViolation
+        expr: |
+          sum(rate(commander_approval_bypass_total[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+          slo: approval-failclosed
+        annotations:
+          summary: "Approval fail-closed violation detected"
+          description: "A tool approval was bypassed. This violates the 100% fail-closed SLO."
+
+      - alert: CommanderHashChainBroken
+        expr: commander_hash_chain_valid == 0
+        for: 1m
+        labels:
+          severity: critical
+          slo: hash-chain-integrity
+        annotations:
+          summary: "Event log hash chain integrity failure"
+          description: "The event sourcing hash chain verification failed. Possible data tampering."
+
+  # ── Infrastructure ───────────────────────────────────────────────────
+  - name: commander-infrastructure
+    interval: 30s
+    rules:
+      - alert: CommanderDBConnectionPoolExhausted
+        expr: |
+          pg_stat_database_numbackends / pg_settings_max_connections > 0.8
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database connection pool near exhaustion"
+          description: "PostgreSQL is using >80% of max connections."
+
+      - alert: CommanderObjectStorageFailures
+        expr: |
+          sum(rate(commander_object_storage_errors_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Object storage errors detected"
+          description: "{{ $value }} object storage errors per second."
+
+      - alert: CommanderEventLoopLagHigh
+        expr: node_eventloop_lag_p99 > 100
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Node.js event loop lag is high"
+          description: "Event loop P99 lag is {{ $value }}ms. The process may be overloaded."
+
+      - alert: CommanderMemoryUsageHigh
+        expr: |
+          process_resident_memory_bytes / node_memory_MemTotal_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Process memory usage is high"
+          description: "Process is using >85% of total system memory."

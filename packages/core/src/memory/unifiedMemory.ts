@@ -21,9 +21,11 @@
  */
 
 import { getGlobalLogger } from '../logging';
-import { getGlobalThreeLayerMemory } from '../threeLayerMemory';
+import { reportSilentFailure } from '../silentFailureReporter';
+import { getGlobalThreeLayerMemory, wireGlobalThreeLayerMemory } from '../threeLayerMemory';
+import { getCurrentTenantId } from '../runtime/tenantContext';
 import type { ThreeLayerMemory, MemoryEntry } from '../threeLayerMemory';
-import type { MemoryStore, EpisodicMemoryItem, MemoryWriteOptions } from '../memory';
+import type { MemoryStore, EpisodicMemoryItem, MemoryWriteOptions } from '../episodicMemory';
 import { ConversationStore, getConversationStore } from './conversationStore';
 import type {
   ConversationSearchResult,
@@ -200,9 +202,14 @@ export class UnifiedMemory {
 
     this.initPromise = (async () => {
       this.memoryStore = store;
+      wireGlobalThreeLayerMemory(store);
 
       if (this.config.enableConversationStore) {
-        await this.conversationStore.init();
+        try {
+          await this.conversationStore.init();
+        } catch (err) {
+          reportSilentFailure(err, 'unifiedMemory:conversationStoreInit');
+        }
       }
 
       this.initialized = true;
@@ -371,6 +378,7 @@ export class UnifiedMemory {
           text: options.query,
           limit,
           minSimilarity: options.minRelevance ?? 0.1,
+          tenantId: getCurrentTenantId() ?? '__default__',
         });
       } catch (e) {
         getGlobalLogger().debug('UnifiedMemory', 'Semantic search failed', {
@@ -986,4 +994,9 @@ export function getUnifiedMemory(config?: Partial<UnifiedMemoryConfig>): Unified
     globalUnifiedMemory = new UnifiedMemory(config);
   }
   return globalUnifiedMemory;
+}
+
+/** Reset the global UnifiedMemory singleton — for test isolation only. */
+export function resetUnifiedMemory(): void {
+  globalUnifiedMemory = null;
 }

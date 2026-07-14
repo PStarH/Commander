@@ -52,7 +52,7 @@ export {
   createMemoryStore,
   fromProjectMemoryItem,
   toProjectMemoryItem,
-} from './memory';
+} from './episodicMemory';
 export type {
   ProjectMemoryItem,
   ProjectMemoryOverview,
@@ -60,17 +60,16 @@ export type {
 } from './memory/apiTypes';
 
 // Ultimate Framework exports (legacy)
-export {
+export type {
   OrchestrationMode,
   OrchestrationDecision,
   TokenBudgetAllocation,
   ModelTierConfig,
-  DEFAULT_MODEL_CONFIG,
   AllocatedBudget,
   QualityGate,
-  QualityGateExecutor,
   QualityGateResult,
-} from './ultimate';
+} from './ultimateFramework';
+export { DEFAULT_MODEL_CONFIG, QualityGateExecutor } from './ultimateFramework';
 export {
   CompensationQueue,
   CompensationQueueItem,
@@ -192,10 +191,7 @@ export {
 } from './contentScanner';
 
 // UniversalSanitizer & ResourceGovernor — unified sanitization and outbound-call governance
-export {
-  UniversalSanitizer,
-  ResourceGovernor,
-} from './security';
+export { UniversalSanitizer, ResourceGovernor } from './security';
 
 // IM Provider SPI
 export type {
@@ -830,6 +826,7 @@ export {
   getTraceRecorder,
   resetTraceRecorder,
   AgentRuntime,
+  createAgentRuntimeFactory,
   OpenAIProvider,
   AnthropicProvider,
   GoogleProvider,
@@ -924,7 +921,12 @@ export {
   getPrivacyRouter,
   resetPrivacyRouter,
 } from './runtime';
-export type { AgentRuntimeInterface } from './runtime';
+export type {
+  AgentRuntimeInterface,
+  AgentRuntimeFactory,
+  AgentRuntimeFactoryOptions,
+} from './runtime';
+export { KernelStepExecutor } from './runtime/kernelStepExecutor';
 export type {
   EmbeddingFunction,
   ToolRetrievalConfig,
@@ -1198,7 +1200,8 @@ export {
   OptimizationProposal,
   OptimizationAction,
 } from './ultimate/topologyOptimizer';
-export { RuntimeWorkflowAdapter, AdaptiveExecutionResult } from './ultimate/runtimeWorkflowAdapter';
+export { RuntimeWorkflowAdapter } from './ultimate/runtimeWorkflowAdapter';
+export type { AdaptiveExecutionResult } from './ultimate/runtimeWorkflowAdapter';
 
 // Plugin System — Hooks & Extensions
 export {
@@ -1351,8 +1354,8 @@ export type {
 } from './runtime/securityOrchestrator';
 
 // Commander Core — tiered auto-configuration control center (recommended entry)
-export { Commander } from './commander';
-export type { CommanderResult, CommanderStatus } from './commander';
+export { Commander } from './commanderCore';
+export type { CommanderResult, CommanderStatus } from './commanderCore';
 
 // ============================================================================
 // Orchestration Patterns — Concurrent / Graph(DAG) / MixtureOfAgents / Router
@@ -1523,7 +1526,7 @@ export type {
   ApprovalManagerOptions,
   ApprovalWaitOptions,
   FileApprovalStoreOptions,
-  WorkerPoolOptions,
+  SagaWorkerPoolOptions,
   CompensableStep,
   CompensationAttempt,
   CompensationResult,
@@ -1587,3 +1590,54 @@ export {
   DEFAULT_IGNORE_FIELDS,
 } from './shadow/types';
 export type { ShadowConfig, DriftEntry, DriftMetrics, ValidationResult } from './shadow/types';
+
+// ============================================================================
+// Architecture V2 surfaces
+// ============================================================================
+export {
+  planWorkGraph,
+  executeWorkGraph,
+  profileFromCliVerb,
+  OrchestrationPlanner,
+  getOrchestrationPlanner,
+} from './planner';
+export type {
+  PlannerProfile,
+  WorkNodeKind,
+  WorkNode,
+  WorkGraph,
+  PlanInput,
+  WorkGraphExecutor,
+} from './planner';
+
+export {
+  SideEffectGate,
+  SideEffectGateError,
+  getSideEffectGate,
+  resetSideEffectGate,
+  setSideEffectGate,
+} from './runtime/sideEffectGate';
+export type {
+  SideEffectRequest,
+  SideEffectAdmission,
+  SideEffectGateOptions,
+} from './runtime/sideEffectGate';
+
+export { KernelWorkerPool } from './atr/workerPool';
+export type { WorkerExecutor, WorkerPoolOptions, WorkerPoolStats } from './atr/workerPool';
+
+export { ControlPlane, getControlPlane, resetControlPlane } from './controlPlane';
+export type { WorkloadIdentity, ControlPlaneConfig } from './controlPlane';
+
+export { InterruptError, HumanInteractionRequired } from './runtime/interruptError';
+
+export {
+  executePluginToolSandboxed,
+  getPluginSandboxMode,
+  PluginSandboxError,
+} from './plugins/pluginSandbox';
+export type {
+  PluginSandboxMode,
+  SandboxedToolRequest,
+  SandboxedToolResult,
+} from './plugins/pluginSandbox';

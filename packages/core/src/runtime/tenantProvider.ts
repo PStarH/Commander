@@ -46,6 +46,10 @@ export interface TenantConfig {
   maxRunsPerMinute: number;
   /** Enables quota enforcement for this tenant. */
   enabled: boolean;
+  /** When true, the tenant token budget is enforced as a hard cap. */
+  hardCap?: boolean;
+  /** Isolation model: pool (shared), bridge (dedicated db/workspace), silo (dedicated infra). */
+  isolation?: 'pool' | 'bridge' | 'silo';
   /** Optional workspace root for file operations (chroot-like). */
   workspacePath?: string;
   /** Optional override for storage base directory. */

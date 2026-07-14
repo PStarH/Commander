@@ -11,6 +11,12 @@
 import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import { ProjectMemoryKind } from '@commander/core';
+import { ProjectMemoryStoreAdapter } from './memoryStoreAdapter';
+
+import { getDirname, getRequire } from './esmCompat';
+const __dirname = getDirname(import.meta.url);
+const require = getRequire(import.meta.url);
 
 export interface MemoryPointer {
   domain: string;
@@ -58,7 +64,10 @@ const INDEX_FILE = path.join(MEMORY_DIR, 'index.json');
 export class MemoryIndexManager {
   private index: MemoryIndex | null = null;
 
-  constructor(private readonly projectId: string) {
+  constructor(
+    private readonly projectId: string,
+    private readonly projectMemoryAdapter?: ProjectMemoryStoreAdapter,
+  ) {
     this.loadIndex();
   }
 
@@ -164,9 +173,17 @@ export class MemoryIndexManager {
   }
 
   /**
-   * Write entry to domain memory (self-healing: append, don't overwrite)
+   * Write entry to domain memory (self-healing: append, don't overwrite).
+   *
+   * When a ProjectMemoryStoreAdapter is wired, the entry is also mirrored into
+   * the adapter-backed store as a supplemental persistence path. This keeps the
+   * existing JSON file contract intact while letting memory-index entries be
+   * discovered through the canonical MemoryStore search APIs.
    */
-  writeEntry(domain: string, entry: Omit<MemoryEntry, 'id' | 'timestamp'>): MemoryEntry | null {
+  async writeEntry(
+    domain: string,
+    entry: Omit<MemoryEntry, 'id' | 'timestamp'>,
+  ): Promise<MemoryEntry | null> {
     const pointer = this.getPointer(domain);
     if (!pointer) return null;
 
@@ -220,7 +237,41 @@ export class MemoryIndexManager {
     pointer.lastUpdated = new Date().toISOString();
     this.persistIndex();
 
+    // Mirror into the canonical project memory store when available.
+    if (this.projectMemoryAdapter) {
+      try {
+        await this.projectMemoryAdapter.append({
+          projectId: this.projectId,
+          kind: this.mapEntryTypeToMemoryKind(entry.type),
+          title: entry.title,
+          content: entry.content,
+          tags: entry.tags ?? [],
+          duration: 'LONG_TERM',
+        });
+      } catch (err) {
+        process.stderr.write(
+          `[MemoryIndexManager] Adapter mirror failed: ${(err as Error)?.message ?? String(err)}\n`,
+        );
+      }
+    }
+
     return newEntry;
+  }
+
+  private mapEntryTypeToMemoryKind(type: MemoryEntry['type']): ProjectMemoryKind {
+    switch (type) {
+      case 'decision':
+        return 'DECISION';
+      case 'issue':
+        return 'ISSUE';
+      case 'lesson':
+        return 'LESSON';
+      case 'context':
+      case 'pattern':
+      case 'preference':
+      default:
+        return 'SUMMARY';
+    }
   }
 
   /**

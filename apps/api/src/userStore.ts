@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { hashSync } from 'bcryptjs';
+import { isProductionEnv } from './envSignal';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -99,7 +100,16 @@ function ensureDefaultAdmin(users: User[]): User[] {
   if (users.length > 0) {
     return users;
   }
-  const adminPassword = process.env.ADMIN_PASSWORD ?? 'commander-admin';
+  const configuredPassword = process.env.ADMIN_PASSWORD;
+  if (!configuredPassword && isProductionEnv()) {
+    // AUTH-4: never seed a default admin with a well-known password in
+    // production. Fail hard so the operator must provide ADMIN_PASSWORD.
+    throw new Error(
+      '[userStore] ADMIN_PASSWORD must be set in production before the default admin account ' +
+        'can be created. Refusing to seed the well-known admin/commander-admin credential.',
+    );
+  }
+  const adminPassword = configuredPassword ?? 'commander-admin';
   const now = new Date().toISOString();
   const admin: User = {
     id: randomUUID(),

@@ -26,3 +26,11 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{ .Values.serviceAccount.name | default "default" }}
 {{- end -}}
 {{- end -}}
+
+{{- define "commander.databaseUrlSecretName" -}}
+{{- .Values.database.postgres.existingSecret | default (printf "%s-database" (include "commander.fullname" .)) -}}
+{{- end -}}
+
+{{- define "commander.databaseUrlSecretKey" -}}
+{{- .Values.database.postgres.existingSecretKey | default "url" -}}
+{{- end -}}

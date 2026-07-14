@@ -21,6 +21,8 @@ import { getGlobalLogger } from '../logging';
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getMetricsCollector } from './metricsCollector';
 import { getCurrentTenantId } from './tenantContext';
+import { streamWalLines } from './walStream';
+import { atomicWriteFile } from './atomicWrite';
 import { StateContract, getSecurityPrimitives } from '../security/securityPrimitives';
 import type { IEventSourcingEngine, IEvent } from '../contracts/pillarI';
 
@@ -54,8 +56,29 @@ interface Snapshot {
 // Number of recent write latencies to retain for p95 calculation.
 const WRITE_LATENCY_WINDOW = 200;
 
+/** Default in-memory hot window; older WAL events are streamed from disk on replay. */
+const DEFAULT_WAL_HOT_WINDOW = 2000;
+
+function resolveWalHotWindow(explicit?: number): number {
+  if (explicit !== undefined) return explicit;
+  const env = process.env.COMMANDER_WAL_HOT_WINDOW;
+  if (env !== undefined && env !== '') {
+    const parsed = Number(env);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return DEFAULT_WAL_HOT_WINDOW;
+}
+
+export interface EventSourcingEngineOptions {
+  walPath?: string;
+  /** Max events retained in RAM; 0 = unlimited (legacy load-all). */
+  hotWindowSize?: number;
+}
 export class EventSourcingEngine implements IEventSourcingEngine {
   private events: StoredEvent[] = [];
+  /** Total events in the WAL (hot window + cold segments on disk). */
+  private totalEventCount = 0;
+  private readonly hotWindowSize: number;
   private snapshots: Map<string, Snapshot> = new Map();
   private walPath: string | null;
   private lastHash: string = '';
@@ -67,8 +90,77 @@ export class EventSourcingEngine implements IEventSourcingEngine {
   private writeLatencies: number[] = [];
   private integrity = getSecurityPrimitives().integrity;
 
-  constructor(options?: { walPath?: string }) {
+  constructor(options?: EventSourcingEngineOptions) {
     this.walPath = options?.walPath ?? null;
+    this.hotWindowSize = resolveWalHotWindow(options?.hotWindowSize);
+  }
+
+  /** Push into the hot window and trim cold events from RAM. */
+  private pushHot(event: StoredEvent): void {
+    this.events.push(event);
+    if (this.hotWindowSize > 0 && this.events.length > this.hotWindowSize) {
+      this.events.shift();
+    }
+  }
+
+  private parseStoredLine(line: string): StoredEvent | null {
+    try {
+      const event: StoredEvent = JSON.parse(line);
+      if (event._sig) {
+        const payload = {
+          id: event.id,
+          type: event.type,
+          timestamp: event.timestamp,
+          previousHash: event.previousHash,
+          hash: event.hash,
+          tenantId: event.tenantId,
+          payload: event.payload,
+        };
+        const isValid = this.integrity.verify({
+          data: { ...payload, _ts: event._ts },
+          _sig: event._sig,
+          _ts: event._ts ?? 0,
+        });
+        if (!isValid) {
+          const integrityErr = new Error(`WAL integrity check failed for event ${event.id}`);
+          getGlobalLogger().error(
+            'EventSourcingEngine',
+            'WAL integrity check failed',
+            integrityErr,
+            { eventId: event.id },
+          );
+          reportSilentFailure(integrityErr, 'eventSourcingEngine:parse:integrity');
+          return null;
+        }
+      }
+      return event;
+    } catch (err) {
+      reportSilentFailure(err, 'eventSourcingEngine:parse');
+      return null;
+    }
+  }
+
+  private stripStoredEvent(stored: StoredEvent): IEvent {
+    const { hash: _h, tenantId: _t, _sig: _s, _ts: _ts, ...event } = stored;
+    return { ...event };
+  }
+
+  private hotWindowOffset(): number {
+    return Math.max(0, this.totalEventCount - this.events.length);
+  }
+
+  private async findEventIndex(eventId: string): Promise<number> {
+    const hotIdx = this.events.findIndex((e) => e.id === eventId);
+    if (hotIdx !== -1) return this.hotWindowOffset() + hotIdx;
+    if (!this.walPath) return -1;
+    let index = 0;
+    for await (const { line } of streamWalLines(this.walPath)) {
+      const event = this.parseStoredLine(line);
+      if (!event) continue;
+      if (event.id === eventId) return index;
+      index++;
+    }
+    return -1;
   }
 
   /**
@@ -87,57 +179,25 @@ export class EventSourcingEngine implements IEventSourcingEngine {
         // Directory may already exist
       }
 
-      // Load existing events from WAL
+      // Segmented WAL load: track total count + last hash; retain only hot window in RAM.
       try {
-        const data = await fs.promises.readFile(this.walPath, 'utf8');
-        if (data.trim()) {
-          const lines = data.trim().split('\n');
-          for (const line of lines) {
-            try {
-              const event: StoredEvent = JSON.parse(line);
-              if (event._sig) {
-                const payload = {
-                  id: event.id,
-                  type: event.type,
-                  timestamp: event.timestamp,
-                  previousHash: event.previousHash,
-                  hash: event.hash,
-                  tenantId: event.tenantId,
-                  payload: event.payload,
-                };
-                // Verify using constant-time comparison via IntegrityLayer.verify
-                const isValid = this.integrity.verify({
-                  data: { ...payload, _ts: event._ts },
-                  _sig: event._sig,
-                  _ts: event._ts ?? 0,
-                });
-                if (!isValid) {
-                  const integrityErr = new Error(
-                    `WAL integrity check failed for event ${event.id}`,
-                  );
-                  getGlobalLogger().error(
-                    'EventSourcingEngine',
-                    'WAL integrity check failed',
-                    integrityErr,
-                    {
-                      eventId: event.id,
-                    },
-                  );
-                  reportSilentFailure(integrityErr, 'eventSourcingEngine:init:integrity');
-                  continue;
-                }
-              }
-              this.events.push(event);
-              this.lastHash = event.hash;
-            } catch (err) {
-              reportSilentFailure(err, 'eventSourcingEngine:init:parse');
-            }
+        for await (const { line } of streamWalLines(this.walPath)) {
+          const event = this.parseStoredLine(line);
+          if (!event) continue;
+          this.totalEventCount++;
+          this.lastHash = event.hash;
+          if (this.hotWindowSize === 0) {
+            this.events.push(event);
+          } else {
+            this.pushHot(event);
           }
-          getGlobalLogger().info('EventSourcingEngine', 'Loaded WAL events', {
-            count: this.events.length,
+        }
+        if (this.totalEventCount > 0) {
+          getGlobalLogger().info('EventSourcingEngine', 'Loaded WAL events (segmented)', {
+            total: this.totalEventCount,
+            hotWindow: this.events.length,
           });
         }
-        // Initialize incremental WAL size tracker from the on-disk file
         const stat = await fs.promises.stat(this.walPath);
         this.walSizeBytes = stat.size;
       } catch {
@@ -152,7 +212,7 @@ export class EventSourcingEngine implements IEventSourcingEngine {
   private publishMetrics(latencyMs?: number): void {
     const mc = getMetricsCollector();
     mc.setEventSourcingWalSize(this.walSizeBytes);
-    mc.setEventSourcingTotals(this.events.length, this.snapshots.size);
+    mc.setEventSourcingTotals(this.totalEventCount, this.snapshots.size);
     if (latencyMs !== undefined) mc.recordEventSourcingWrite(latencyMs);
   }
 
@@ -220,16 +280,19 @@ export class EventSourcingEngine implements IEventSourcingEngine {
       const scopeResult = await StateContract.useScope(
         () => {
           const eventsBefore = this.events.length;
+          const totalBefore = this.totalEventCount;
           const lastHashBefore = this.lastHash;
-          this.events.push(storedEvent);
+          this.pushHot(storedEvent);
+          this.totalEventCount++;
           this.lastHash = hash;
           return {
-            state: { eventsBefore, lastHashBefore },
+            state: { eventsBefore, totalBefore, lastHashBefore },
             commit: () => {
               /* memory state is already updated */
             },
             rollback: () => {
               this.events.length = eventsBefore;
+              this.totalEventCount = totalBefore;
               this.lastHash = lastHashBefore;
             },
           };
@@ -283,11 +346,11 @@ export class EventSourcingEngine implements IEventSourcingEngine {
    * are yielded — preventing cross-tenant data exposure during replay.
    */
   async *readFrom(eventId?: string): AsyncIterable<IEvent> {
-    let startIndex = 0;
     const currentTenant = getCurrentTenantId() ?? undefined;
+    let startIndex = 0;
 
     if (eventId) {
-      const idx = this.events.findIndex((e) => e.id === eventId);
+      const idx = await this.findEventIndex(eventId);
       if (idx === -1) {
         getGlobalLogger().warn('EventSourcingEngine', 'Event not found for replay', { eventId });
         return;
@@ -295,16 +358,41 @@ export class EventSourcingEngine implements IEventSourcingEngine {
       startIndex = idx;
     }
 
-    for (let i = startIndex; i < this.events.length; i++) {
+    const hotOffset = this.hotWindowOffset();
+    let streamed = 0;
+
+    if (this.walPath && startIndex < hotOffset) {
+      let index = 0;
+      for await (const { line } of streamWalLines(this.walPath)) {
+        if (index < startIndex) {
+          index++;
+          continue;
+        }
+        if (index >= hotOffset) break;
+        const stored = this.parseStoredLine(line);
+        if (!stored) {
+          index++;
+          continue;
+        }
+        if (currentTenant && stored.tenantId && stored.tenantId !== currentTenant) {
+          index++;
+          continue;
+        }
+        yield this.stripStoredEvent(stored);
+        streamed++;
+        index++;
+      }
+    }
+
+    const hotStart = Math.max(0, startIndex - hotOffset);
+    for (let i = hotStart; i < this.events.length; i++) {
       const stored = this.events[i];
-      // Tenant filter: skip events from other tenants. Events without a
-      // recorded tenantId (legacy or single-tenant mode) are always yielded.
       if (currentTenant && stored.tenantId && stored.tenantId !== currentTenant) {
         continue;
       }
-      const { hash, tenantId: _t, ...event } = stored;
-      yield { ...event };
+      yield this.stripStoredEvent(stored);
     }
+    void streamed;
   }
 
   /**
@@ -313,20 +401,25 @@ export class EventSourcingEngine implements IEventSourcingEngine {
    */
   async snapshot(): Promise<string> {
     const id = crypto.randomUUID();
-    const lastEvent = this.events[this.events.length - 1];
-    const lastHash = lastEvent?.hash ?? '';
-    const lastTimestamp = lastEvent?.timestamp ?? Date.now();
+    const lastHash = this.lastHash;
+    const lastTimestamp = this.events[this.events.length - 1]?.timestamp ?? Date.now();
 
-    // State summary: event count, last hash, types histogram
     const typeCounts: Record<string, number> = {};
-    for (const e of this.events) {
-      typeCounts[e.type] = (typeCounts[e.type] ?? 0) + 1;
+    if (this.walPath) {
+      for await (const { line } of streamWalLines(this.walPath)) {
+        const e = this.parseStoredLine(line);
+        if (e) typeCounts[e.type] = (typeCounts[e.type] ?? 0) + 1;
+      }
+    } else {
+      for (const e of this.events) {
+        typeCounts[e.type] = (typeCounts[e.type] ?? 0) + 1;
+      }
     }
 
     const snapshot: Snapshot = {
       id,
       timestamp: lastTimestamp,
-      eventCount: this.events.length,
+      eventCount: this.totalEventCount,
       lastEventHash: lastHash,
       stateSummary: JSON.stringify(typeCounts),
     };
@@ -334,7 +427,7 @@ export class EventSourcingEngine implements IEventSourcingEngine {
     this.snapshots.set(id, snapshot);
     getGlobalLogger().info('EventSourcingEngine', 'Snapshot created', {
       snapshotId: id,
-      eventCount: this.events.length,
+      eventCount: this.totalEventCount,
     });
     // Refresh totals gauge so the new snapshot count is observable
     this.publishMetrics();
@@ -347,15 +440,24 @@ export class EventSourcingEngine implements IEventSourcingEngine {
    * Recomputes all hashes and checks they match.
    */
   async verifyIntegrity(): Promise<boolean> {
-    if (this.events.length === 0) return true;
+    const chain: StoredEvent[] = [];
+    if (this.walPath) {
+      for await (const { line } of streamWalLines(this.walPath)) {
+        const event = this.parseStoredLine(line);
+        if (event) chain.push(event);
+      }
+    } else {
+      chain.push(...this.events);
+    }
+
+    if (chain.length === 0) return true;
 
     let prevHash = '';
 
-    for (let i = 0; i < this.events.length; i++) {
-      const event = this.events[i];
+    for (let i = 0; i < chain.length; i++) {
+      const event = chain[i];
 
-      // Verify previousHash linkage
-      const expectedPrevHash = i === 0 ? '' : this.events[i - 1].hash;
+      const expectedPrevHash = i === 0 ? '' : chain[i - 1].hash;
       if (event.previousHash !== expectedPrevHash && event.previousHash !== undefined) {
         if (event.previousHash !== (prevHash || undefined)) {
           getGlobalLogger().warn('EventSourcingEngine', 'Hash chain broken', {
@@ -366,8 +468,6 @@ export class EventSourcingEngine implements IEventSourcingEngine {
         }
       }
 
-      // Recompute hash — must mirror append() exactly, including tenantId,
-      // otherwise tamper-evidence checks fail on tenant-attributed events.
       const stored = event as StoredEvent;
       const hashInput = `${prevHash}|${event.type}|${event.id}|${event.timestamp}|${stored.tenantId ?? ''}|${JSON.stringify(event.payload)}`;
       const computedHash = crypto.createHash('sha256').update(hashInput).digest('hex');
@@ -398,8 +498,28 @@ export class EventSourcingEngine implements IEventSourcingEngine {
       throw new Error(`Snapshot '${snapshotId}' not found`);
     }
 
-    // Find the index of the last event in the snapshot
-    const snapshotEventIndex = this.events.findIndex((e) => e.hash === snapshot.lastEventHash);
+    const remaining: StoredEvent[] = [];
+    let snapshotEventIndex = -1;
+    let index = 0;
+
+    if (this.walPath) {
+      for await (const { line } of streamWalLines(this.walPath)) {
+        const event = this.parseStoredLine(line);
+        if (!event) continue;
+        if (event.hash === snapshot.lastEventHash) {
+          snapshotEventIndex = index;
+        } else if (snapshotEventIndex !== -1) {
+          remaining.push(event);
+        }
+        index++;
+      }
+    } else {
+      snapshotEventIndex = this.events.findIndex((e) => e.hash === snapshot.lastEventHash);
+      if (snapshotEventIndex !== -1) {
+        remaining.push(...this.events.slice(snapshotEventIndex + 1));
+      }
+    }
+
     if (snapshotEventIndex === -1) {
       getGlobalLogger().warn('EventSourcingEngine', 'Snapshot event not found in log', {
         snapshotId,
@@ -409,15 +529,52 @@ export class EventSourcingEngine implements IEventSourcingEngine {
 
     const removedCount = snapshotEventIndex + 1;
 
-    // Keep only events after the snapshot
-    this.events = this.events.slice(snapshotEventIndex + 1);
+    // After compaction, the remaining events form a new chain starting from ''.
+    // Re-hash the entire chain so verifyIntegrity() accepts the compacted log.
+    let prevHash = '';
+    for (let i = 0; i < remaining.length; i++) {
+      const e = remaining[i];
+      const hashInput = `${prevHash}|${e.type}|${e.id}|${e.timestamp}|${e.tenantId ?? ''}|${JSON.stringify(e.payload)}`;
+      const newHash = crypto.createHash('sha256').update(hashInput).digest('hex');
+      remaining[i] = {
+        ...e,
+        previousHash: prevHash || undefined,
+        hash: newHash,
+      };
+      // Re-sign with HMAC if integrity key is configured
+      if (process.env.COMMANDER_INTEGRITY_KEY || this.integrity) {
+        const { _sig, _ts } = this.integrity.sign({
+          id: remaining[i].id,
+          type: remaining[i].type,
+          timestamp: remaining[i].timestamp,
+          previousHash: remaining[i].previousHash,
+          hash: remaining[i].hash,
+          tenantId: remaining[i].tenantId,
+          payload: remaining[i].payload,
+        });
+        remaining[i]._sig = _sig;
+        remaining[i]._ts = _ts;
+      } else {
+        delete remaining[i]._sig;
+        delete remaining[i]._ts;
+      }
+      prevHash = newHash;
+    }
 
-    // Rewrite WAL if configured
+    this.totalEventCount = remaining.length;
+    this.events =
+      this.hotWindowSize === 0
+        ? remaining
+        : remaining.slice(Math.max(0, remaining.length - this.hotWindowSize));
+    this.lastHash = remaining[remaining.length - 1]?.hash ?? '';
+
     if (this.walPath) {
       try {
-        const lines = this.events.map((e) => JSON.stringify(e)).join('\n') + '\n';
-        await fs.promises.writeFile(this.walPath, lines, 'utf8');
-        // Re-sync WAL size tracker after rewrite (line-based estimate drifted)
+        const lines =
+          remaining.map((e) => JSON.stringify(e)).join('\n') + (remaining.length ? '\n' : '');
+        // REL-4: atomic WAL rewrite — an in-place writeFile that crashes mid-way
+        // truncates the entire log and loses all events. Write → fsync → rename.
+        await atomicWriteFile(this.walPath, lines);
         this.walSizeBytes = Buffer.byteLength(lines, 'utf8');
       } catch (err) {
         reportSilentFailure(err, 'eventSourcingEngine:compact:write');
@@ -433,9 +590,8 @@ export class EventSourcingEngine implements IEventSourcingEngine {
     getGlobalLogger().info('EventSourcingEngine', 'Log compacted', {
       snapshotId,
       removedCount,
-      remainingCount: this.events.length,
+      remainingCount: this.totalEventCount,
     });
-    // Refresh gauges so post-compaction dimensions are observable
     this.publishMetrics();
 
     return removedCount;
@@ -445,17 +601,30 @@ export class EventSourcingEngine implements IEventSourcingEngine {
    * Get the total number of events in the log.
    */
   getEventCount(): number {
-    return this.events.length;
+    return this.totalEventCount;
   }
 
   /**
    * Get a specific event by ID.
    */
   getEvent(eventId: string): IEvent | undefined {
-    const event = this.events.find((e) => e.id === eventId);
-    if (!event) return undefined;
-    const { hash, ...rest } = event;
-    return { ...rest };
+    const hot = this.events.find((e) => e.id === eventId);
+    if (hot) return this.stripStoredEvent(hot);
+    return undefined;
+  }
+
+  /**
+   * Async lookup that scans cold WAL segments when the event is not in the hot window.
+   */
+  async getEventAsync(eventId: string): Promise<IEvent | undefined> {
+    const hot = this.getEvent(eventId);
+    if (hot) return hot;
+    if (!this.walPath) return undefined;
+    for await (const { line } of streamWalLines(this.walPath)) {
+      const stored = this.parseStoredLine(line);
+      if (stored?.id === eventId) return this.stripStoredEvent(stored);
+    }
+    return undefined;
   }
 
   /**
@@ -488,11 +657,50 @@ export class EventSourcingEngine implements IEventSourcingEngine {
    */
   getEventsByCorrelationId(correlationId: string): IEvent[] {
     const result: IEvent[] = [];
-    for (const e of this.events) {
-      if (e.correlationId === correlationId) {
-        const { hash, ...rest } = e;
-        result.push({ ...rest });
+    const seen = new Set<string>();
+
+    const collect = (e: StoredEvent) => {
+      if (e.correlationId !== correlationId || seen.has(e.id)) return;
+      seen.add(e.id);
+      result.push(this.stripStoredEvent(e));
+    };
+
+    if (this.walPath) {
+      try {
+        const data = fs.readFileSync(this.walPath, 'utf8');
+        for (const line of data.split('\n')) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          const e = this.parseStoredLine(trimmed);
+          if (e) collect(e);
+        }
+      } catch {
+        for (const e of this.events) collect(e);
       }
+    } else {
+      for (const e of this.events) collect(e);
+    }
+    return result;
+  }
+
+  /** Async variant — streams cold segments without a full-file read. */
+  async getEventsByCorrelationIdAsync(correlationId: string): Promise<IEvent[]> {
+    const result: IEvent[] = [];
+    const seen = new Set<string>();
+
+    const collect = (e: StoredEvent) => {
+      if (e.correlationId !== correlationId || seen.has(e.id)) return;
+      seen.add(e.id);
+      result.push(this.stripStoredEvent(e));
+    };
+
+    if (this.walPath) {
+      for await (const { line } of streamWalLines(this.walPath)) {
+        const e = this.parseStoredLine(line);
+        if (e) collect(e);
+      }
+    } else {
+      for (const e of this.events) collect(e);
     }
     return result;
   }

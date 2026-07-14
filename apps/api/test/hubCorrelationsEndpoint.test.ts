@@ -32,7 +32,7 @@ import {
 import {
   createHubCorrelationsRouter,
   _resetHubCorrelationsForTests,
-} from '../src/_unmounted/hubCorrelationsEndpoints';
+} from '../src/hubCorrelationsEndpoints';
 // Side-effect import: pulls in the global Express Request augmentation
 // (`apiKeyId?: string`, `apiScopes?: string[]`) declared in authMiddleware
 // so we can type req.auth-scoped fields without per-call casts.

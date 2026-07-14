@@ -1,0 +1,35 @@
+{{- if .Values.outbox.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "commander.fullname" . }}-outbox
+  labels:
+    app.kubernetes.io/component: outbox
+    {{- include "commander.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.outbox.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: outbox
+      {{- include "commander.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: outbox
+        {{- include "commander.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "commander.fullname" . }}
+      containers:
+        - name: outbox
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}-outbox"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: DATABASE_URL
+              value: "postgres://{{ .Values.database.user }}:{{ .Values.database.password }}@{{ include "commander.fullname" . }}-postgres:5432/{{ .Values.database.name }}"
+            {{- range $key, $value := .Values.outbox.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.outbox.resources | nindent 12 }}
+{{- end }}

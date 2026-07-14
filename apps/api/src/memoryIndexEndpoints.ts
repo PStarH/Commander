@@ -25,7 +25,7 @@ export function createMemoryIndexRouter(memoryIndexManager: MemoryIndexManager):
     res.json(domainMemory);
   });
 
-  router.post('/projects/:projectId/memory-index/domains/:domain/entries', (req, res) => {
+  router.post('/projects/:projectId/memory-index/domains/:domain/entries', async (req, res) => {
     const { type, title, content, tags } = req.body as {
       type?: string;
       title?: string;
@@ -35,7 +35,7 @@ export function createMemoryIndexRouter(memoryIndexManager: MemoryIndexManager):
     if (!type || !title?.trim() || !content?.trim()) {
       return res.status(400).json({ error: 'type, title, and content are required' });
     }
-    const entry = memoryIndexManager.writeEntry(req.params.domain, {
+    const entry = await memoryIndexManager.writeEntry(req.params.domain, {
       type: type as 'decision' | 'context' | 'pattern' | 'preference' | 'issue' | 'lesson',
       title: title.trim(),
       content: content.trim(),

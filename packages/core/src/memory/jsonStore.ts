@@ -3,7 +3,10 @@
  * Persists EpisodicMemoryItems to a JSON file on disk.
  */
 import { readFile, writeFile, mkdir } from 'fs/promises';
+import { dirname } from 'node:path';
+import { atomicWriteFile } from '../runtime/atomicWrite';
 import { getGlobalLogger } from '../logging';
+import { getCurrentTenantId } from '../runtime/tenantContext';
 import type {
   EpisodicMemoryItem,
   MemoryWriteOptions,
@@ -12,9 +15,25 @@ import type {
   MemoryManageOptions,
   MemoryStats,
   MemoryStore,
-} from '../memory';
-import type { MemoryKind, MemoryDuration } from '../memory';
+} from '../episodicMemory';
+import type { MemoryKind, MemoryDuration } from '../episodicMemory';
 import { BM25Scorer } from './ftsScorer';
+
+/**
+ * Per-project in-memory cache. In multi-tenant mode each (tenant, project)
+ * pair gets its own file; in legacy single-file mode all projects share one
+ * cache backed by the constructor-provided file path.
+ */
+interface ProjectCache {
+  items: Map<string, EpisodicMemoryItem>;
+  filePath: string;
+  nextId: number;
+  bm25: BM25Scorer;
+  tokenCache: Map<string, string[]>;
+  indexDirty: boolean;
+  dirty: boolean;
+  loaded: boolean;
+}
 
 /**
  * JSON-file backed MemoryStore for simple persistence.
@@ -22,37 +41,94 @@ import { BM25Scorer } from './ftsScorer';
  *
  * Uses BM25 scoring (Okapi BM25) for high-quality full-text search,
  * matching the search quality of SQLite FTS5.
+ *
+ * Tenant isolation:
+ *   - When constructed with a directory path, files are stored under
+ *     <baseDir>/tenant_<tenantId>/projects/<projectId>/memories.jsonl
+ *   - When constructed with a .json/.jsonl file path, the store operates in
+ *     legacy single-file mode for backward compatibility with existing tests.
  */
 export class JsonMemoryStore implements MemoryStore {
-  private items: Map<string, EpisodicMemoryItem> = new Map();
-  private filePath: string;
-  private nextId = 1;
-  private dirty = false;
+  private baseDataPath: string;
+  private legacyFilePath: string | null = null;
+  private caches: Map<string, ProjectCache> = new Map();
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
-  // BM25 scorer for full-text search (replaces basic inverted index)
-  private bm25: BM25Scorer = new BM25Scorer();
-  // Per-item token cache to avoid re-tokenizing on every search
-  private tokenCache: Map<string, string[]> = new Map();
-  private indexDirty = true;
 
-  constructor(filePath: string) {
-    this.filePath = filePath;
+  constructor(filePathOrDataDir: string) {
+    this.baseDataPath = filePathOrDataDir;
+    if (filePathOrDataDir.endsWith('.json') || filePathOrDataDir.endsWith('.jsonl')) {
+      this.legacyFilePath = filePathOrDataDir;
+    }
   }
 
   async init(): Promise<void> {
+    if (this.legacyFilePath) {
+      const cache = this.getProjectCache('__legacy__', this.legacyFilePath);
+      await this.loadProjectCache(cache);
+      return;
+    }
+    // In tenant mode directories are created lazily per project.
+  }
+
+  private getTenantId(): string {
+    return getCurrentTenantId() ?? '__default__';
+  }
+
+  private cacheKey(projectId: string): string {
+    return `${this.getTenantId()}|${projectId}`;
+  }
+
+  private getProjectFilePath(projectId: string): string {
+    if (this.legacyFilePath) return this.legacyFilePath;
+    const safeTenantId = this.getTenantId().replace(/[^a-zA-Z0-9_.-]/g, '_');
+    const safeProjectId = projectId.replace(/[^a-zA-Z0-9_.-]/g, '_');
+    return `${this.baseDataPath}/tenant_${safeTenantId}/projects/${safeProjectId}/memories.jsonl`;
+  }
+
+  private getProjectCache(projectId: string, explicitFilePath?: string): ProjectCache {
+    const key = this.legacyFilePath ? '__legacy__' : this.cacheKey(projectId);
+    let cache = this.caches.get(key);
+    if (!cache) {
+      cache = {
+        items: new Map(),
+        filePath: explicitFilePath ?? this.getProjectFilePath(projectId),
+        nextId: 1,
+        bm25: new BM25Scorer(),
+        tokenCache: new Map(),
+        indexDirty: true,
+        dirty: false,
+        loaded: false,
+      };
+      this.caches.set(key, cache);
+    }
+    return cache;
+  }
+
+  private async ensureProjectCache(projectId: string): Promise<ProjectCache> {
+    const cache = this.getProjectCache(projectId);
+    if (!cache.loaded) {
+      await this.loadProjectCache(cache);
+    }
+    return cache;
+  }
+
+  private async loadProjectCache(cache: ProjectCache): Promise<void> {
+    if (cache.loaded) return;
     try {
-      const data = await readFile(this.filePath, 'utf-8');
+      const data = await readFile(cache.filePath, 'utf-8');
       const parsed = JSON.parse(data);
       if (Array.isArray(parsed)) {
         for (const item of parsed) {
-          this.items.set(item.id, item);
+          cache.items.set(item.id, item);
           const num = parseInt(item.id.replace('memory-', ''), 10);
-          if (!isNaN(num) && num >= this.nextId) this.nextId = num + 1;
+          if (!isNaN(num) && num >= cache.nextId) cache.nextId = num + 1;
         }
       }
     } catch (err) {
       if (err instanceof Error && 'code' in err && err.code === 'ENOENT') {
-        getGlobalLogger().debug('JsonMemoryStore', 'No existing memory file — starting empty');
+        getGlobalLogger().debug('JsonMemoryStore', 'No existing memory file — starting empty', {
+          path: cache.filePath,
+        });
       } else {
         const errorObj = err instanceof Error ? err : new Error(String(err));
         getGlobalLogger().error(
@@ -63,27 +139,39 @@ export class JsonMemoryStore implements MemoryStore {
         throw err;
       }
     }
-    // Rebuild inverted index after loading
-    this.rebuildIndex();
+    this.rebuildIndex(cache);
+    cache.loaded = true;
+  }
+
+  private async persistCache(cache: ProjectCache): Promise<void> {
+    if (!cache.dirty) return;
+    const dir = dirname(cache.filePath);
+    if (dir && dir !== '.') await mkdir(dir, { recursive: true });
+    // REL-4: atomic write — an in-place rewrite that crashes mid-way corrupts the
+    // whole memory file (and load() then throws). Write → fsync → rename.
+    await atomicWriteFile(
+      cache.filePath,
+      JSON.stringify(Array.from(cache.items.values()), null, 2),
+    );
+    cache.dirty = false;
   }
 
   private async persist(): Promise<void> {
-    if (!this.dirty) return;
-    const path = await import('path');
-    const dir = path.dirname(this.filePath);
-    if (dir && dir !== '.') await mkdir(dir, { recursive: true });
-    await writeFile(this.filePath, JSON.stringify(Array.from(this.items.values()), null, 2));
-    this.dirty = false;
+    for (const cache of this.caches.values()) {
+      await this.persistCache(cache);
+    }
   }
 
   async write(options: MemoryWriteOptions): Promise<EpisodicMemoryItem> {
+    const cache = await this.ensureProjectCache(options.projectId);
+
     // Auto-cleanup expired items periodically to prevent unbounded growth
-    if (this.items.size > 0 && this.items.size % 100 === 0) {
-      await this.deleteExpired(options.projectId || 'default');
+    if (cache.items.size > 0 && cache.items.size % 100 === 0) {
+      await this.deleteExpiredForCache(cache);
     }
 
     const now = new Date().toISOString();
-    const id = `memory-${this.nextId++}`;
+    const id = `memory-${cache.nextId++}`;
 
     const kindPriority: Record<MemoryKind, number> = {
       DECISION: 80,
@@ -118,71 +206,83 @@ export class JsonMemoryStore implements MemoryStore {
       confidence: options.confidence ?? 0.8,
     };
 
-    this.items.set(id, item);
-    this.indexItem(item);
-    this.dirty = true;
-    await this.persist();
+    cache.items.set(id, item);
+    this.indexItem(cache, item);
+    cache.dirty = true;
+    await this.persistCache(cache);
     return item;
   }
 
   async batchWrite(items: MemoryWriteOptions[]): Promise<EpisodicMemoryItem[]> {
     const results: EpisodicMemoryItem[] = [];
+    // Group by project so each cache is loaded/persisted once.
+    const byProject = new Map<string, MemoryWriteOptions[]>();
     for (const item of items) {
-      const now = new Date().toISOString();
-      const id = `memory-${this.nextId++}`;
-      const kindPriority: Record<MemoryKind, number> = {
-        DECISION: 80,
-        ISSUE: 70,
-        LESSON: 90,
-        SUMMARY: 50,
-      };
-      let priority = item.priority ?? kindPriority[item.kind] ?? 50;
-      if (item.missionId) priority += 5;
-      if (item.agentId) priority += 5;
-      if (item.evidenceRefs?.length) priority += Math.min(item.evidenceRefs.length * 5, 15);
-      priority = Math.min(priority, 100);
-
-      const entry: EpisodicMemoryItem = {
-        id,
-        projectId: item.projectId,
-        missionId: item.missionId,
-        agentId: item.agentId,
-        kind: item.kind,
-        duration: item.duration ?? 'EPISODIC',
-        title: item.title,
-        content: item.content,
-        tags: item.tags ?? [],
-        priority,
-        createdAt: now,
-        lastAccessedAt: now,
-        expiresAt:
-          (item.duration ?? 'EPISODIC') === 'EPISODIC'
-            ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
-            : undefined,
-        evidenceRefs: item.evidenceRefs,
-        confidence: item.confidence ?? 0.8,
-      };
-      this.items.set(id, entry);
-      this.indexItem(entry);
-      results.push(entry);
+      const list = byProject.get(item.projectId) ?? [];
+      list.push(item);
+      byProject.set(item.projectId, list);
     }
-    this.dirty = true;
-    await this.persist();
+
+    for (const [projectId, projectItems] of byProject) {
+      const cache = await this.ensureProjectCache(projectId);
+      for (const options of projectItems) {
+        const now = new Date().toISOString();
+        const id = `memory-${cache.nextId++}`;
+        const kindPriority: Record<MemoryKind, number> = {
+          DECISION: 80,
+          ISSUE: 70,
+          LESSON: 90,
+          SUMMARY: 50,
+        };
+        let priority = options.priority ?? kindPriority[options.kind] ?? 50;
+        if (options.missionId) priority += 5;
+        if (options.agentId) priority += 5;
+        if (options.evidenceRefs?.length) priority += Math.min(options.evidenceRefs.length * 5, 15);
+        priority = Math.min(priority, 100);
+
+        const entry: EpisodicMemoryItem = {
+          id,
+          projectId: options.projectId,
+          missionId: options.missionId,
+          agentId: options.agentId,
+          kind: options.kind,
+          duration: options.duration ?? 'EPISODIC',
+          title: options.title,
+          content: options.content,
+          tags: options.tags ?? [],
+          priority,
+          createdAt: now,
+          lastAccessedAt: now,
+          expiresAt:
+            (options.duration ?? 'EPISODIC') === 'EPISODIC'
+              ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+              : undefined,
+          evidenceRefs: options.evidenceRefs,
+          confidence: options.confidence ?? 0.8,
+        };
+        cache.items.set(id, entry);
+        this.indexItem(cache, entry);
+        results.push(entry);
+      }
+      cache.dirty = true;
+      await this.persistCache(cache);
+    }
     return results;
   }
 
   async update(options: MemoryManageOptions): Promise<EpisodicMemoryItem | null> {
-    const item = this.items.get(options.id);
+    const cache = await this.ensureProjectCache(options.projectId);
+    const item = cache.items.get(options.id);
     if (!item || item.projectId !== options.projectId) return null;
     if (options.delete) {
-      this.deindexItem(options.id);
-      this.items.delete(options.id);
-      this.dirty = true;
-      await this.persist();
+      this.deindexItem(cache, options.id);
+      cache.items.delete(options.id);
+      cache.dirty = true;
+      await this.persistCache(cache);
       return null;
     }
     if (options.updates) {
-      this.deindexItem(options.id);
+      this.deindexItem(cache, options.id);
       // Security: Prevent prototype pollution by filtering dangerous keys.
       const safeUpdates = { ...options.updates };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -193,61 +293,73 @@ export class JsonMemoryStore implements MemoryStore {
       delete (safeUpdates as any).prototype;
       Object.assign(item, safeUpdates);
       item.lastAccessedAt = new Date().toISOString();
-      this.indexItem(item);
-      this.dirty = true;
-      await this.persist();
+      this.indexItem(cache, item);
+      cache.dirty = true;
+      await this.persistCache(cache);
     }
     return item;
   }
 
   async delete(id: string, projectId: string): Promise<boolean> {
-    const item = this.items.get(id);
+    const cache = await this.ensureProjectCache(projectId);
+    const item = cache.items.get(id);
     if (!item || item.projectId !== projectId) return false;
-    this.deindexItem(id);
-    this.items.delete(id);
-    this.dirty = true;
-    await this.persist();
+    this.deindexItem(cache, id);
+    cache.items.delete(id);
+    cache.dirty = true;
+    await this.persistCache(cache);
     return true;
   }
 
   async deleteByMission(missionId: string, projectId: string): Promise<number> {
+    const cache = await this.ensureProjectCache(projectId);
     let count = 0;
-    for (const [id, item] of this.items) {
+    for (const [id, item] of cache.items) {
       if (item.projectId === projectId && item.missionId === missionId) {
-        this.deindexItem(id);
-        this.items.delete(id);
+        this.deindexItem(cache, id);
+        cache.items.delete(id);
         count++;
       }
     }
     if (count > 0) {
-      this.dirty = true;
-      await this.persist();
+      cache.dirty = true;
+      await this.persistCache(cache);
     }
     return count;
   }
 
   async deleteExpired(projectId: string): Promise<number> {
+    const cache = await this.ensureProjectCache(projectId);
+    return this.deleteExpiredForCache(cache);
+  }
+
+  private deleteExpiredForCache(cache: ProjectCache): number {
     const now = new Date();
     let count = 0;
-    for (const [id, item] of this.items) {
-      if (item.projectId === projectId && item.expiresAt && new Date(item.expiresAt) < now) {
-        this.deindexItem(id);
-        this.items.delete(id);
+    for (const [id, item] of cache.items) {
+      if (item.expiresAt && new Date(item.expiresAt) < now) {
+        this.deindexItem(cache, id);
+        cache.items.delete(id);
         count++;
       }
     }
     if (count > 0) {
-      this.dirty = true;
-      await this.persist();
+      cache.dirty = true;
+      this.persistCache(cache).catch((err) => {
+        getGlobalLogger().warn('JsonMemoryStore', 'Deferred expire persist failed', {
+          error: (err as Error)?.message,
+        });
+      });
     }
     return count;
   }
 
   async read(id: string, projectId: string): Promise<EpisodicMemoryItem | null> {
-    const item = this.items.get(id);
+    const cache = await this.ensureProjectCache(projectId);
+    const item = cache.items.get(id);
     if (!item || item.projectId !== projectId) return null;
     item.lastAccessedAt = new Date().toISOString();
-    this.dirty = true;
+    cache.dirty = true;
     this.schedulePersist();
     return item;
   }
@@ -266,11 +378,13 @@ export class JsonMemoryStore implements MemoryStore {
   }
 
   async search(query: MemorySearchQuery): Promise<MemorySearchResult> {
+    const cache = await this.ensureProjectCache(query.projectId);
+
     // Use BM25 scorer to narrow candidates for text query
     let candidateIds: Set<string> | null = null;
     if (query.query) {
-      if (this.indexDirty) this.rebuildIndex();
-      const bm25Results = this.bm25.score(query.query, this.items.size);
+      if (cache.indexDirty) this.rebuildIndex(cache);
+      const bm25Results = cache.bm25.score(query.query, cache.items.size);
       candidateIds = new Set(bm25Results.map((r) => r.id));
     }
 
@@ -279,7 +393,7 @@ export class JsonMemoryStore implements MemoryStore {
     const hasTags = query.tags && query.tags.length > 0;
     const results: EpisodicMemoryItem[] = [];
 
-    for (const item of this.items.values()) {
+    for (const item of cache.items.values()) {
       if (item.projectId !== query.projectId) continue;
       if (candidateIds && !candidateIds.has(item.id)) continue;
       if (query.kind && item.kind !== query.kind) continue;
@@ -310,32 +424,32 @@ export class JsonMemoryStore implements MemoryStore {
   }
 
   /** Rebuild BM25 index from all items. Called lazily on first search. */
-  private rebuildIndex(): void {
-    this.bm25 = new BM25Scorer();
-    this.tokenCache.clear();
-    for (const [id, item] of this.items) {
+  private rebuildIndex(cache: ProjectCache): void {
+    cache.bm25 = new BM25Scorer();
+    cache.tokenCache.clear();
+    for (const [id, item] of cache.items) {
       const fullText = `${item.title} ${item.content} ${item.tags.join(' ')}`;
       const fieldTexts = new Map<string, string>();
       fieldTexts.set('title', item.title);
-      this.bm25.addDocument(id, fullText, fieldTexts);
-      this.tokenCache.set(id, tokenize(item.title + ' ' + item.content));
+      cache.bm25.addDocument(id, fullText, fieldTexts);
+      cache.tokenCache.set(id, tokenize(item.title + ' ' + item.content));
     }
-    this.indexDirty = false;
+    cache.indexDirty = false;
   }
 
   /** Add a single item to the BM25 index. */
-  private indexItem(item: EpisodicMemoryItem): void {
+  private indexItem(cache: ProjectCache, item: EpisodicMemoryItem): void {
     const fullText = `${item.title} ${item.content} ${item.tags.join(' ')}`;
     const fieldTexts = new Map<string, string>();
     fieldTexts.set('title', item.title);
-    this.bm25.addDocument(item.id, fullText, fieldTexts);
-    this.tokenCache.set(item.id, tokenize(item.title + ' ' + item.content));
+    cache.bm25.addDocument(item.id, fullText, fieldTexts);
+    cache.tokenCache.set(item.id, tokenize(item.title + ' ' + item.content));
   }
 
   /** Remove a single item from the BM25 index. */
-  private deindexItem(id: string): void {
-    this.bm25.removeDocument(id);
-    this.tokenCache.delete(id);
+  private deindexItem(cache: ProjectCache, id: string): void {
+    cache.bm25.removeDocument(id);
+    cache.tokenCache.delete(id);
   }
 
   async searchSemantic(
@@ -343,16 +457,18 @@ export class JsonMemoryStore implements MemoryStore {
     projectId: string,
     limit = 10,
   ): Promise<EpisodicMemoryItem[]> {
-    // Lazy rebuild index if dirty
-    if (this.indexDirty) this.rebuildIndex();
+    const cache = await this.ensureProjectCache(projectId);
 
-    const projectItems = Array.from(this.items.values()).filter(
+    // Lazy rebuild index if dirty
+    if (cache.indexDirty) this.rebuildIndex(cache);
+
+    const projectItems = Array.from(cache.items.values()).filter(
       (item) => item.projectId === projectId,
     );
     if (projectItems.length === 0) return [];
 
     // Use BM25 for high-quality full-text search
-    const bm25Results = this.bm25.score(query, projectItems.length);
+    const bm25Results = cache.bm25.score(query, projectItems.length);
     const bm25ScoreMap = new Map(bm25Results.map((r) => [r.id, r.score]));
 
     // Score project items with BM25 + priority + confidence boost
@@ -380,7 +496,8 @@ export class JsonMemoryStore implements MemoryStore {
   }
 
   async getStats(projectId: string): Promise<MemoryStats> {
-    const projectItems = Array.from(this.items.values()).filter(
+    const cache = await this.ensureProjectCache(projectId);
+    const projectItems = Array.from(cache.items.values()).filter(
       (item) => item.projectId === projectId,
     );
     const byKind: Record<MemoryKind, number> = { DECISION: 0, ISSUE: 0, LESSON: 0, SUMMARY: 0 };

@@ -36,6 +36,77 @@ import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GOV-15: GDPR Art.17 read-time masking.
+//
+// gdprCompliance records a durable, fsync'd tombstone (SHA-256 of the userId) in
+// the erasure registry. This aggregator masks the PII of erased subjects at read
+// time — entries are retained (Art.17(3)(e)) but rendered non-personal. We read
+// the registry directly (fs + crypto only) rather than importing gdprCompliance,
+// keeping this module dependency-light per its design contract.
+// ─────────────────────────────────────────────────────────────────────────────
+function erasureRegistryFilePath(): string {
+  const dir = process.env.COMMANDER_AUDIT_DIR
+    ? path.resolve(process.env.COMMANDER_AUDIT_DIR)
+    : path.resolve(process.cwd(), path.join('.commander', 'audit'));
+  return path.join(dir, 'gdpr-erasures.ndjson');
+}
+
+function loadErasedSubjectHashes(): Set<string> {
+  const set = new Set<string>();
+  try {
+    const file = erasureRegistryFilePath();
+    if (!fs.existsSync(file)) return set;
+    for (const line of fs.readFileSync(file, 'utf-8').split('\n')) {
+      if (!line) continue;
+      try {
+        const h = (JSON.parse(line) as { subjectHash?: string }).subjectHash;
+        if (h) set.add(h);
+      } catch {
+        /* skip a torn record */
+      }
+    }
+  } catch {
+    /* best-effort: absence of the registry means nothing is erased */
+  }
+  return set;
+}
+
+function hashAuditSubjectId(userId: string): string {
+  return crypto.createHash('sha256').update(userId).digest('hex');
+}
+
+/**
+ * GOV-15: mask the PII of GDPR Art.17-erased subjects. The direct identifier and
+ * free-text/details (which may embed PII) are redacted; event metadata
+ * (category, type, severity, timestamps, run/agent/tool) is preserved so the
+ * trail stays auditable. Returns the input unchanged when nothing is erased.
+ */
+function maskErasedSubjects(entries: UnifiedAuditEntry[]): UnifiedAuditEntry[] {
+  const erased = loadErasedSubjectHashes();
+  if (erased.size === 0) return entries;
+  const cache = new Map<string, boolean>();
+  const isErased = (userId?: string): boolean => {
+    if (!userId) return false;
+    let v = cache.get(userId);
+    if (v === undefined) {
+      v = erased.has(hashAuditSubjectId(userId));
+      cache.set(userId, v);
+    }
+    return v;
+  };
+  return entries.map((e) => {
+    const ctxUserId = (e.details?.context as { userId?: string } | undefined)?.userId;
+    if (!isErased(e.userId) && !isErased(ctxUserId)) return e;
+    return {
+      ...e,
+      userId: e.userId ? '[erased]' : e.userId,
+      message: '[erased per GDPR Art.17]',
+      details: { erased: true },
+    };
+  });
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -312,7 +383,10 @@ export class UnifiedAuditLog {
     const filtered = this.applyFilters(all, filters);
     const limit = this.clampLimit(filters.limit);
     const offset = Math.max(0, filters.offset ?? 0);
-    return filtered.slice(offset, offset + limit);
+    const page = filtered.slice(offset, offset + limit);
+    // GOV-15: mask erased subjects' PII at read time (post-cache, so newly
+    // recorded erasures take effect immediately).
+    return maskErasedSubjects(page);
   }
 
   /**
@@ -372,9 +446,13 @@ export class UnifiedAuditLog {
    */
   async getStats(timeRange?: { start?: string; end?: string }): Promise<AuditStats> {
     const all = await this.loadAll();
-    const entries = this.applyFilters(all, {
-      timeRange,
-    });
+    // GOV-15: mask erased subjects before aggregation so topUsers cannot leak an
+    // erased user's identifier.
+    const entries = maskErasedSubjects(
+      this.applyFilters(all, {
+        timeRange,
+      }),
+    );
 
     const byCategory: Record<string, number> = {};
     const bySeverity: Record<string, number> = {};

@@ -2,6 +2,7 @@ import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage } from '../types'
 import { FormatBridge } from '../formatBridge';
 import { getGlobalLogger } from '../../logging';
 import { executeViaBatchAPI, supportsNativeBatchAPI, type BatchAPIConfig } from '../batchApiClient';
+import { assertSafeProviderBaseUrl } from './providerUrlPolicy';
 
 interface AnthropicContent {
   type: string;
@@ -36,6 +37,9 @@ export class AnthropicProvider implements LLMProvider {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? 'https://api.anthropic.com/v1';
     this.defaultModel = config.defaultModel ?? 'claude-3-5-sonnet-20241022';
+    // MCP-11: fail closed on a plaintext/off-allowlist base URL before any
+    // request carrying the API key and prompt is sent.
+    assertSafeProviderBaseUrl(this.baseUrl, { providerName: this.name });
   }
 
   async call(request: LLMRequest): Promise<LLMResponse> {

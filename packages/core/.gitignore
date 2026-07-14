@@ -4,3 +4,6 @@
 .commander/*.db-wal
 .commander/thompson-scorer.json
 .commander/scheduler/
+coverage/
+coverage-core/
+.cache/

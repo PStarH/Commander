@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
-import { compareSync } from 'bcryptjs';
+import { compareSync, hashSync } from 'bcryptjs';
 import { z } from 'zod';
 import {
   findUserById,
@@ -19,6 +19,14 @@ import {
   type SafeUser,
 } from './userStore';
 import { signAccessToken, signRefreshToken, verifyToken, type AuthUser } from './jwtMiddleware';
+
+/**
+ * AUTH-6: a real bcrypt hash used only to spend comparable CPU on the
+ * user-not-found login path, defeating timing-based username enumeration.
+ * Computed once at module load (of a value no user can hold) so its work factor
+ * matches the real comparison; it is never a valid credential.
+ */
+const DUMMY_PASSWORD_HASH = hashSync(`invalid:${process.pid}:no-such-user`, 10);
 
 // ── Validation schemas ──────────────────────────────────────────────────────
 
@@ -182,7 +190,12 @@ export function createUserAuthRouter(): Router {
 
     const { username, password } = parsed.data;
     const user = findUserByUsername(username);
-    if (!user || !compareSync(password, user.passwordHash)) {
+    // AUTH-6: always perform a bcrypt comparison, even when the user does not
+    // exist, so the response time does not reveal whether a username is
+    // registered (timing-based user enumeration). The dummy hash is a real
+    // bcrypt hash so the work factor matches the real path.
+    const passwordOk = compareSync(password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
+    if (!user || !passwordOk) {
       // Use the same message for both cases to avoid user enumeration.
       res.status(401).json({ error: 'Invalid username or password' });
       return;
@@ -279,6 +292,12 @@ export function createUserAuthRouter(): Router {
         return;
       }
 
+      // AUTH-5: an actor may only grant a role at or below their own level.
+      if (!hasRole(req.user!.role, parsed.data.role as UserRole)) {
+        res.status(403).json({ error: 'You cannot assign a role above your own level' });
+        return;
+      }
+
       const updated = updateUserRole(id, parsed.data.role as UserRole);
       if (!updated) {
         res.status(404).json({ error: 'User not found' });
@@ -299,6 +318,14 @@ export function createUserAuthRouter(): Router {
           message: i.message,
         })),
       });
+      return;
+    }
+
+    // AUTH-5: an actor may only create a user with a role at or below their own level.
+    if (parsed.data.role !== undefined && !hasRole(req.user!.role, parsed.data.role as UserRole)) {
+      res
+        .status(403)
+        .json({ error: 'You cannot create a user with a role above your own level' });
       return;
     }
 
@@ -339,6 +366,12 @@ export function createUserAuthRouter(): Router {
       countAdmins() <= 1
     ) {
       res.status(400).json({ error: 'Cannot demote the last admin account' });
+      return;
+    }
+
+    // AUTH-5: an actor may only assign a role at or below their own level.
+    if (parsed.data.role !== undefined && !hasRole(req.user!.role, parsed.data.role as UserRole)) {
+      res.status(403).json({ error: 'You cannot assign a role above your own level' });
       return;
     }
 

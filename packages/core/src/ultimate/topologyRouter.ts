@@ -2,9 +2,8 @@
  * Dynamic Topology Router - hardcoded topology selection.
  *
  * Scores topologies using fixed heuristic tables and selects the highest-scoring
- * candidate. No learned weights are applied (epsilon defaults to 0, pheromone
- * biasing is a no-op). The "DAG analysis" is derived from deliberation estimates,
- * not actual task dependencies.
+ * candidate. DAG metrics should come from `buildTaskDAGFromTree()` after task
+ * decomposition — not synthetic deliberation estimates.
  */
 import type {
   OrchestrationTopology,

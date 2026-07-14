@@ -133,14 +133,35 @@ describe('tenantAwareSingleton', () => {
     expect(a).not.toBe(b);
   });
 
-  it('throws outside tenant context by default in production', () => {
+  it('uses an implicit default tenant outside tenant context in production', () => {
     const prev = process.env.NODE_ENV;
     process.env.NODE_ENV = 'production';
     try {
       const singleton = createTenantAwareSingleton(factory);
-      expect(() => singleton.get()).toThrow(TenantIsolationError);
+      // Single-tenant deployments must boot without an explicit tenant context.
+      // The singleton gets a tenant-scoped __default__ instance, not a shared
+      // global instance, so data remains isolated from other tenants.
+      const instance = singleton.get();
+      expect(instance).toBeDefined();
+      const other = singleton.get();
+      expect(other).toBe(instance);
     } finally {
       process.env.NODE_ENV = prev;
+    }
+  });
+
+  it('still throws outside tenant context in production when multi-tenant provider is active', () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    setGlobalTenantProvider(
+      new SimpleTenantProvider([{ tenantId: 'tenant-active', tokenBudget: 0 }]),
+    );
+    try {
+      const singleton = createTenantAwareSingleton(factory);
+      expect(() => singleton.get()).toThrow(TenantIsolationError);
+    } finally {
+      process.env.NODE_ENV = prevNodeEnv;
+      resetGlobalTenantProvider();
     }
   });
 

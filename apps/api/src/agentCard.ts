@@ -6,9 +6,15 @@
  * to advertise their capabilities, protocols, and request types.
  */
 
+import { getCurrentTenantId, TenantIsolationError } from '@commander/core/runtime/tenantContext';
+
+export const DEFAULT_AGENT_CARD_TENANT_ID = '__default__';
+
 export interface AgentCard {
   /** Unique identifier for the agent */
   id: string;
+  /** Tenant that owns this agent card */
+  tenantId?: string;
   /** Human-readable name */
   name: string;
   /** Description of what this agent does */
@@ -280,6 +286,28 @@ export class AgentCardGenerator {
   }
 }
 
+function resolveCurrentTenantId(): string {
+  return getCurrentTenantId() ?? DEFAULT_AGENT_CARD_TENANT_ID;
+}
+
+function isVisibleToCurrentTenant(card: AgentCard): boolean {
+  const current = resolveCurrentTenantId();
+  const owner = card.tenantId ?? DEFAULT_AGENT_CARD_TENANT_ID;
+  // Default/public cards are visible to all tenants; tenant-scoped cards
+  // are only visible within their owning tenant.
+  return owner === DEFAULT_AGENT_CARD_TENANT_ID || owner === current;
+}
+
+function assertCardTenant(card: AgentCard): void {
+  const current = resolveCurrentTenantId();
+  const owner = card.tenantId ?? DEFAULT_AGENT_CARD_TENANT_ID;
+  if (owner !== DEFAULT_AGENT_CARD_TENANT_ID && owner !== current) {
+    throw new TenantIsolationError(
+      `Cross-tenant access blocked: card tenant=${owner}, current=${current}`,
+    );
+  }
+}
+
 /**
  * Agent Card Registry
  * Manages known agent cards for discovery
@@ -295,6 +323,9 @@ export class AgentCardRegistry {
     if (!validation.valid) {
       throw new Error(`Invalid Agent Card: ${validation.errors.join(', ')}`);
     }
+    if (!card.tenantId) {
+      card.tenantId = resolveCurrentTenantId();
+    }
     this.cards.set(card.id, card);
   }
 
@@ -302,15 +333,20 @@ export class AgentCardRegistry {
    * Get an agent card by ID
    */
   get(id: string): AgentCard | undefined {
-    return this.cards.get(id);
+    const card = this.cards.get(id);
+    if (!card) return undefined;
+
+    assertCardTenant(card);
+    return card;
   }
 
   /**
    * Find agents by capability
    */
   findByCapability(capabilityId: string): AgentCard[] {
-    return Array.from(this.cards.values()).filter((card) =>
-      card.capabilities.some((cap) => cap.id === capabilityId),
+    return Array.from(this.cards.values()).filter(
+      (card) =>
+        isVisibleToCurrentTenant(card) && card.capabilities.some((cap) => cap.id === capabilityId),
     );
   }
 
@@ -318,8 +354,9 @@ export class AgentCardRegistry {
    * Find agents by tags
    */
   findByTags(tags: string[]): AgentCard[] {
-    return Array.from(this.cards.values()).filter((card) =>
-      card.metadata.tags.some((tag) => tags.includes(tag)),
+    return Array.from(this.cards.values()).filter(
+      (card) =>
+        isVisibleToCurrentTenant(card) && card.metadata.tags.some((tag) => tags.includes(tag)),
     );
   }
 
@@ -327,6 +364,6 @@ export class AgentCardRegistry {
    * List all registered agents
    */
   listAll(): AgentCard[] {
-    return Array.from(this.cards.values());
+    return Array.from(this.cards.values()).filter(isVisibleToCurrentTenant);
   }
 }

@@ -225,6 +225,15 @@ jobs:
       - name: Audit reversibility wiring
         run: pnpm audit:wiring
 
+      - name: Architecture V2 invariant gates
+        run: pnpm test:arch
+
+      - name: Architecture V2 package boundary gate
+        run: pnpm arch:gate
+
+      - name: Readiness gate (strict)
+        run: pnpm check:readiness
+
       - name: Run core tests
         env:
           COMMANDER_ALLOW_NO_SANDBOX: true
@@ -284,6 +293,36 @@ jobs:
           fi
           echo "✅ Red team smoke test PASSED"
         if: runner.os == 'Linux'
+
+  kernel-postgres-integration:
+    name: Kernel PostgreSQL Integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: commander
+          POSTGRES_PASSWORD: commander
+          POSTGRES_DB: commander
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U commander -d commander"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - run: pnpm install
+      - name: Run kernel PostgreSQL integration test
+        run: pnpm --filter @commander/kernel test:integration
+        env:
+          DATABASE_URL: postgres://commander:commander@localhost:5432/commander
 
   web-gui:
     name: Web GUI Build

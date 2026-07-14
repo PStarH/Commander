@@ -18,7 +18,12 @@ const THRESHOLD_PCT = parseInt(process.env.REGRESSION_THRESHOLD_PCT ?? '25', 10)
 interface SLOBaseline {
   benchmark: string;
   runAt: string;
+  env?: { runAt?: string };
   measurements: Array<{ name: string; actualMs: number; thresholdMs: number; passed: boolean }>;
+}
+
+function baselineRunAt(b: SLOBaseline): string {
+  return b.env?.runAt ?? b.runAt ?? 'unknown';
 }
 
 function findLatestBaseline(dir: string, prefix: string): string | null {
@@ -74,7 +79,7 @@ async function main() {
 
   console.log('SLO Regression Check');
   console.log('═'.repeat(70));
-  console.log(`  Today:     ${todayPath} (${today.runAt})`);
+  console.log(`  Today:     ${todayPath} (${baselineRunAt(today)})`);
 
   if (!yesterdayPath) {
     console.log('  Yesterday: (no previous baseline — skipping regression check)');
@@ -88,7 +93,7 @@ async function main() {
     process.exit(0);
   }
 
-  console.log(`  Yesterday: ${yesterdayPath} (${yesterday.runAt})`);
+  console.log(`  Yesterday: ${yesterdayPath} (${baselineRunAt(yesterday)})`);
   console.log(`  Threshold: ${THRESHOLD_PCT}% regression`);
   console.log('─'.repeat(70));
 

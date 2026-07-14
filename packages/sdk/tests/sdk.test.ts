@@ -122,3 +122,25 @@ void describe('@commander/sdk — CommanderClient', () => {
     });
   });
 });
+
+void describe('@commander/sdk — Gateway V1 client', () => {
+  void it('submits a durable run with idempotency and preserves 202 semantics', async () => {
+    const { CommanderGatewayClient } = require('../src/v1/client');
+    let captured: RequestInit | undefined;
+    const client = new CommanderGatewayClient({
+      baseUrl: 'https://commander.example/',
+      apiKey: 'key',
+      fetch: async (_url: string, init?: RequestInit) => {
+        captured = init;
+        return new Response(JSON.stringify({
+          run: { id: 'run-1', status: 'pending', tenantId: 'tenant-a', createdAt: 'now', updatedAt: 'now', intentHash: 'i', workGraphHash: 'g', workGraphVersion: 'v1', policySnapshotId: 'p1' },
+          idempotentReplay: false,
+        }), { status: 202, headers: { 'content-type': 'application/json' } });
+      },
+    });
+    const result = await client.submitRun({ goal: 'reconcile invoices', policySnapshotId: 'p1', idempotencyKey: 'idem-key-0001' });
+    assert.equal(result.accepted, true);
+    assert.equal(result.run.id, 'run-1');
+    assert.equal(new Headers(captured?.headers).get('idempotency-key'), 'idem-key-0001');
+  });
+});

@@ -7,5 +7,6 @@
     "declarationMap": false,
     "lib": ["ES2022", "dom"]
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["**/__tests__", "**/*.test.ts"]
 }

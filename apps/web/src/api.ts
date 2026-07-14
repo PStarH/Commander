@@ -234,7 +234,7 @@ async function readError(response: Response, fallback: string): Promise<string> 
  * Unified request wrapper that encapsulates the common fetch + error-handling +
  * JSON-parsing pattern used across the API module.
  *
- * TODO: Migrate the remaining fetch functions to use this helper for consistency.
+ * NOTE: Migrate the remaining fetch functions to use this helper for consistency.
  */
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, options);

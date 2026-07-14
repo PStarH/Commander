@@ -6,6 +6,13 @@ export { RecursiveAtomizer } from './atomizer';
 
 export { TopologyRouter } from './topologyRouter';
 
+export {
+  buildTaskDAGFromTree,
+  scheduleSubtaskLevels,
+  collectRoutingSubtasks,
+  taskSubtasksToGraphNodes,
+} from './taskTreeDag';
+
 export { SubAgentExecutor } from './subAgentExecutor';
 
 export { WorkCoordinator, getWorkCoordinator, resetWorkCoordinator } from './workCoordinator';

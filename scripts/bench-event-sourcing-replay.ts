@@ -12,6 +12,7 @@
 import { writeFileSync, mkdirSync, existsSync, unlinkSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import * as os from 'node:os';
+import { withBenchmarkEnv } from './benchmarkEnv';
 
 interface ReplayBenchResult {
   eventCount: number;
@@ -141,28 +142,32 @@ async function main() {
 
   console.log('═'.repeat(70));
 
-  const baseline = {
-    benchmark: 'event-sourcing-replay',
-    runAt: new Date().toISOString(),
-    nodeVersion: process.version,
-    results,
-    summary: {
+  const midScale = results.find((r) => r.eventCount === 10000);
+  const passed = midScale ? midScale.replayTotalMs <= 5000 : false;
+
+  const summary = { passed, errors: 0, failed: 0, skipped: 0 };
+
+  const baselineDoc = withBenchmarkEnv(
+    {
+      benchmark: 'event-sourcing-replay',
+      results,
+      summary,
       scale1k: results[0],
       scale10k: results[1],
       scale100k: results[2],
     },
-  };
+    { evidence: 'simulated', datasetVersion: 'event-sourcing-replay-v1' },
+  );
 
   const fullPath = resolve(outputPath);
   const dir = dirname(fullPath);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-  writeFileSync(fullPath, JSON.stringify(baseline, null, 2), { mode: 0o644 });
+  writeFileSync(fullPath, JSON.stringify(baselineDoc, null, 2), { mode: 0o644 });
   console.log(`Baseline saved to ${fullPath}`);
 
   // Regression: 10k events should replay in < 5s
-  const midScale = results.find((r) => r.eventCount === 10000);
   if (midScale && midScale.replayTotalMs > 5000) {
     console.log(
       `⚠ WARNING: 10k event replay took ${midScale.replayTotalMs}ms (> 5000ms threshold)`,

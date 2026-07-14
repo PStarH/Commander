@@ -16,6 +16,7 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import { walCheckpoint } from '../storage/walCheckpoint';
+import { getCurrentTenantId } from '../runtime/tenantContext';
 import type {
   EpisodicMemoryItem,
   MemoryWriteOptions,
@@ -25,8 +26,8 @@ import type {
   MemoryStats,
   MemoryStore,
   MemoryMeta,
-} from '../memory';
-import type { MemoryKind, MemoryDuration } from '../memory';
+} from '../episodicMemory';
+import type { MemoryKind, MemoryDuration } from '../episodicMemory';
 
 // ============================================================================
 // SQLite Types
@@ -123,6 +124,7 @@ export class SqliteMemoryStore implements MemoryStore {
       -- Main memory items table
       CREATE TABLE IF NOT EXISTS memory_items (
         id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL DEFAULT '__default__',
         project_id TEXT NOT NULL,
         mission_id TEXT,
         agent_id TEXT,
@@ -140,15 +142,15 @@ export class SqliteMemoryStore implements MemoryStore {
         meta TEXT
       );
 
-      -- Indexes for common queries
+      -- Indexes for common queries (tenant-scoped)
       CREATE INDEX IF NOT EXISTS idx_memory_project
-        ON memory_items(project_id, created_at DESC);
+        ON memory_items(tenant_id, project_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_memory_kind
-        ON memory_items(project_id, kind);
+        ON memory_items(tenant_id, project_id, kind);
       CREATE INDEX IF NOT EXISTS idx_memory_expires
         ON memory_items(expires_at) WHERE expires_at IS NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_memory_priority
-        ON memory_items(project_id, priority DESC);
+        ON memory_items(tenant_id, project_id, priority DESC);
 
       -- FTS5 full-text search index
       CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
@@ -178,32 +180,62 @@ export class SqliteMemoryStore implements MemoryStore {
       END;
     `);
 
-    // Phase D: add meta column if it doesn't exist (migration for existing DBs)
-    try {
-      this.ensureInitialized().exec('ALTER TABLE memory_items ADD COLUMN meta TEXT');
-    } catch {
-      // Column already exists — expected for new databases
+    this.migrateSchema();
+  }
+
+  /**
+   * Idempotent migrations for existing databases.
+   * Adds tenant_id with a safe default and backfills any legacy rows.
+   */
+  private migrateSchema(): void {
+    const db = this.ensureInitialized();
+    const cols = (
+      db.prepare('PRAGMA table_info(memory_items)').all() as Array<{ name: string }>
+    ).map((c) => c.name);
+
+    if (!cols.includes('tenant_id')) {
+      db.exec("ALTER TABLE memory_items ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '__default__'");
+    } else {
+      // Backfill any rows that predate the NOT NULL constraint.
+      db.exec("UPDATE memory_items SET tenant_id = '__default__' WHERE tenant_id IS NULL");
     }
+
+    // Phase D: add meta column if it doesn't exist (migration for existing DBs)
+    if (!cols.includes('meta')) {
+      try {
+        db.exec('ALTER TABLE memory_items ADD COLUMN meta TEXT');
+      } catch {
+        /* ignore race / schema mismatch */
+      }
+    }
+  }
+
+  private getTenantId(): string {
+    return getCurrentTenantId() ?? '__default__';
   }
 
   private prepareStatements(): void {
     const d = this.ensureInitialized();
 
     this.stmtInsert = d.prepare(`
-      INSERT INTO memory_items (id, project_id, mission_id, agent_id, kind, duration, title, content, tags, priority, created_at, last_accessed_at, expires_at, evidence_refs, confidence, meta)
-      VALUES (@id, @projectId, @missionId, @agentId, @kind, @duration, @title, @content, @tags, @priority, @createdAt, @lastAccessedAt, @expiresAt, @evidenceRefs, @confidence, @meta)
+      INSERT INTO memory_items (id, tenant_id, project_id, mission_id, agent_id, kind, duration, title, content, tags, priority, created_at, last_accessed_at, expires_at, evidence_refs, confidence, meta)
+      VALUES (@id, @tenantId, @projectId, @missionId, @agentId, @kind, @duration, @title, @content, @tags, @priority, @createdAt, @lastAccessedAt, @expiresAt, @evidenceRefs, @confidence, @meta)
     `);
 
-    this.stmtGet = d.prepare('SELECT * FROM memory_items WHERE id = ? AND project_id = ?');
+    this.stmtGet = d.prepare(
+      'SELECT * FROM memory_items WHERE id = ? AND project_id = ? AND tenant_id = ?',
+    );
 
-    this.stmtDelete = d.prepare('DELETE FROM memory_items WHERE id = ? AND project_id = ?');
+    this.stmtDelete = d.prepare(
+      'DELETE FROM memory_items WHERE id = ? AND project_id = ? AND tenant_id = ?',
+    );
 
     this.stmtDeleteByMission = d.prepare(
-      'DELETE FROM memory_items WHERE mission_id = ? AND project_id = ?',
+      'DELETE FROM memory_items WHERE mission_id = ? AND project_id = ? AND tenant_id = ?',
     );
 
     this.stmtDeleteExpired = d.prepare(
-      'DELETE FROM memory_items WHERE project_id = ? AND expires_at IS NOT NULL AND expires_at < ?',
+      'DELETE FROM memory_items WHERE project_id = ? AND tenant_id = ? AND expires_at IS NOT NULL AND expires_at < ?',
     );
 
     this.stmtUpdate = d.prepare(`
@@ -212,12 +244,13 @@ export class SqliteMemoryStore implements MemoryStore {
           tags = COALESCE(@tags, tags),
           confidence = COALESCE(@confidence, confidence),
           last_accessed_at = @lastAccessedAt
-      WHERE id = @id AND project_id = @projectId
+      WHERE id = @id AND project_id = @projectId AND tenant_id = @tenantId
     `);
 
     this.stmtSearch = d.prepare(`
       SELECT * FROM memory_items
-      WHERE project_id = @projectId
+      WHERE tenant_id = @tenantId
+        AND project_id = @projectId
         AND (@kind IS NULL OR kind = @kind)
         AND (@missionId IS NULL OR mission_id = @missionId)
         AND (@agentId IS NULL OR agent_id = @agentId)
@@ -233,6 +266,7 @@ export class SqliteMemoryStore implements MemoryStore {
       FROM memory_fts
       INNER JOIN memory_items m ON m.rowid = memory_fts.rowid
       WHERE memory_fts MATCH ?
+        AND m.tenant_id = ?
         AND m.project_id = ?
         AND (m.expires_at IS NULL OR m.expires_at > ?)
       ORDER BY rank
@@ -253,7 +287,7 @@ export class SqliteMemoryStore implements MemoryStore {
         MIN(created_at) as oldest_item,
         MAX(created_at) as newest_item
       FROM memory_items
-      WHERE project_id = ?
+      WHERE tenant_id = ? AND project_id = ?
     `);
   }
 
@@ -304,8 +338,10 @@ export class SqliteMemoryStore implements MemoryStore {
       meta: options.meta,
     };
 
+    const tenantId = this.getTenantId();
     this.stmtInsert.run({
       id: item.id,
+      tenantId,
       projectId: item.projectId,
       missionId: item.missionId ?? null,
       agentId: item.agentId ?? null,
@@ -375,8 +411,10 @@ export class SqliteMemoryStore implements MemoryStore {
           meta: options.meta,
         };
 
+        const tenantId = this.getTenantId();
         this.stmtInsert.run({
           id: item.id,
+          tenantId,
           projectId: item.projectId,
           missionId: item.missionId ?? null,
           agentId: item.agentId ?? null,
@@ -404,23 +442,25 @@ export class SqliteMemoryStore implements MemoryStore {
 
   async read(id: string, projectId: string): Promise<EpisodicMemoryItem | null> {
     await this.init();
-    const row = this.stmtGet.get<SqliteRow>(id, projectId);
+    const tenantId = this.getTenantId();
+    const row = this.stmtGet.get<SqliteRow>(id, projectId, tenantId);
     if (!row) return null;
 
     // Update last accessed time
     const now = new Date().toISOString();
     this.ensureInitialized()
-      .prepare('UPDATE memory_items SET last_accessed_at = ? WHERE id = ?')
-      .run(now, id);
+      .prepare('UPDATE memory_items SET last_accessed_at = ? WHERE id = ? AND tenant_id = ?')
+      .run(now, id, tenantId);
 
     return this.rowToItem(row);
   }
 
   async update(options: MemoryManageOptions): Promise<EpisodicMemoryItem | null> {
     await this.init();
+    const tenantId = this.getTenantId();
 
     if (options.delete) {
-      this.stmtDelete.run(options.id, options.projectId);
+      this.stmtDelete.run(options.id, options.projectId, tenantId);
       return null;
     }
 
@@ -428,6 +468,7 @@ export class SqliteMemoryStore implements MemoryStore {
       this.stmtUpdate.run({
         id: options.id,
         projectId: options.projectId,
+        tenantId,
         priority: options.updates.priority ?? null,
         tags: options.updates.tags ? JSON.stringify(options.updates.tags) : null,
         confidence: options.updates.confidence ?? null,
@@ -435,25 +476,29 @@ export class SqliteMemoryStore implements MemoryStore {
       });
     }
 
-    const row = this.stmtGet.get<SqliteRow>(options.id, options.projectId);
+    const row = this.stmtGet.get<SqliteRow>(options.id, options.projectId, tenantId);
     return row ? this.rowToItem(row) : null;
   }
 
   async delete(id: string, projectId: string): Promise<boolean> {
     await this.init();
-    const result = this.stmtDelete.run(id, projectId);
+    const result = this.stmtDelete.run(id, projectId, this.getTenantId());
     return result.changes > 0;
   }
 
   async deleteByMission(missionId: string, projectId: string): Promise<number> {
     await this.init();
-    const result = this.stmtDeleteByMission.run(missionId, projectId);
+    const result = this.stmtDeleteByMission.run(missionId, projectId, this.getTenantId());
     return result.changes;
   }
 
   async deleteExpired(projectId: string): Promise<number> {
     await this.init();
-    const result = this.stmtDeleteExpired.run(projectId, new Date().toISOString());
+    const result = this.stmtDeleteExpired.run(
+      projectId,
+      this.getTenantId(),
+      new Date().toISOString(),
+    );
     return result.changes;
   }
 
@@ -469,6 +514,7 @@ export class SqliteMemoryStore implements MemoryStore {
 
     const rows = this.stmtSearch.all<SqliteRow>(
       {
+        tenantId: this.getTenantId(),
         projectId: query.projectId,
         kind: query.kind ?? null,
         missionId: query.missionId ?? null,
@@ -507,12 +553,14 @@ export class SqliteMemoryStore implements MemoryStore {
     limit = 10,
   ): Promise<EpisodicMemoryItem[]> {
     await this.init();
+    const tenantId = this.getTenantId();
 
     try {
       // Use FTS5 for full-text search
       const ftsQuery = this.buildFtsQuery(query);
       const rows = this.stmtFtsSearch.all<SqliteRow>(
         ftsQuery,
+        tenantId,
         projectId,
         new Date().toISOString(),
         limit,
@@ -528,12 +576,12 @@ export class SqliteMemoryStore implements MemoryStore {
         .prepare(
           `
         SELECT * FROM memory_items
-        WHERE project_id = ? AND (title LIKE ? OR content LIKE ?)
+        WHERE tenant_id = ? AND project_id = ? AND (title LIKE ? OR content LIKE ?)
         ORDER BY priority DESC, created_at DESC
         LIMIT ?
       `,
         )
-        .all<SqliteRow>(projectId, `%${lowerQuery}%`, `%${lowerQuery}%`, limit);
+        .all<SqliteRow>(tenantId, projectId, `%${lowerQuery}%`, `%${lowerQuery}%`, limit);
       return rows.map((r: SqliteRow) => this.rowToItem(r));
     }
   }
@@ -544,8 +592,9 @@ export class SqliteMemoryStore implements MemoryStore {
 
   async getStats(projectId: string): Promise<MemoryStats> {
     await this.init();
+    const tenantId = this.getTenantId();
 
-    const row = this.stmtGetStats.get<SqliteRow>(projectId);
+    const row = this.stmtGetStats.get<SqliteRow>(tenantId, projectId);
     if (!row) {
       return {
         totalItems: 0,
@@ -563,10 +612,10 @@ export class SqliteMemoryStore implements MemoryStore {
     const tagRows = this.ensureInitialized()
       .prepare(
         `
-      SELECT tags FROM memory_items WHERE project_id = ?
+      SELECT tags FROM memory_items WHERE tenant_id = ? AND project_id = ?
     `,
       )
-      .all<SqliteRow>(projectId);
+      .all<SqliteRow>(tenantId, projectId);
 
     const tagCounts = new Map<string, number>();
     for (const tagRow of tagRows) {

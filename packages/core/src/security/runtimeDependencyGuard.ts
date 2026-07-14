@@ -585,6 +585,19 @@ interface MinimalPackageJson {
 }
 
 /** 默认配置。 */
+// MCP-10: dependency-guard defaults are environment-aware so the plugin/tenant
+// boundary is actually enforced in production rather than detect-only.
+//  - Dependency-confusion registry lookup defaults ON in production (detect-only,
+//    safe to enable) and can be toggled with COMMANDER_DEP_GUARD_REGISTRY_LOOKUP.
+//  - Module-whitelist enforcement requires an operator-provided allowlist, so it
+//    is an explicit opt-in via COMMANDER_DEP_GUARD_ENFORCE_WHITELIST=1 (enabling
+//    it with no allowlist would block all loads).
+function envFlag(name: string, fallback: boolean): boolean {
+  const v = process.env[name]?.toLowerCase();
+  if (v === undefined || v === '') return fallback;
+  return v === '1' || v === 'true' || v === 'yes';
+}
+
 const DEFAULT_CONFIG: RuntimeDependencyGuardConfig = {
   nodeModulesPath: path.join(process.cwd(), 'node_modules'),
   verificationIntervalMs: 5 * 60 * 1000,
@@ -593,10 +606,13 @@ const DEFAULT_CONFIG: RuntimeDependencyGuardConfig = {
   maxViolations: 10000,
   typosquattingEditDistanceThreshold: 2,
   typosquattingMinConfidence: 0.6,
-  enableRegistryLookup: false,
+  enableRegistryLookup: envFlag(
+    'COMMANDER_DEP_GUARD_REGISTRY_LOOKUP',
+    process.env.NODE_ENV === 'production',
+  ),
   registryLookupTimeoutMs: 5000,
   privateScopes: [],
-  enforceModuleWhitelist: false,
+  enforceModuleWhitelist: envFlag('COMMANDER_DEP_GUARD_ENFORCE_WHITELIST', false),
   logModuleLoads: true,
   maxModuleLoadLogEntries: 5000,
   moduleVerificationTtlMs: 60_000,

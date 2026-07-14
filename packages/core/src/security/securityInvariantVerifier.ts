@@ -12,6 +12,8 @@ export interface InvariantContext {
   toolName?: string;
   toolArgs?: Record<string, unknown>;
   capabilityTokenPresent?: boolean;
+  /** When true, executeTool requires a capability token on the run context. */
+  requireCapabilityToken?: boolean;
   agentSuspended?: boolean;
   agentQuarantined?: boolean;
 }
@@ -66,10 +68,9 @@ export function registerDefaultInvariants(): void {
     id: 'CAPABILITY_TOKEN_FOR_TOOL',
     description: 'Tool execution requires a valid capability context.',
     evaluate: (ctx, phase) => {
-      if (phase === 'executeTool') {
-        return ctx.capabilityTokenPresent === true;
-      }
-      return true;
+      if (phase !== 'executeTool') return true;
+      if (!ctx.requireCapabilityToken) return true;
+      return ctx.capabilityTokenPresent === true;
     },
   });
 }
@@ -78,6 +79,10 @@ export function registerDefaultInvariants(): void {
  * Evaluate all registered invariants for the given context and phase.
  */
 export function assertInvariants(ctx: InvariantContext, phase: InvariantPhase): InvariantResult {
+  if (invariants.length === 0) {
+    registerDefaultInvariants();
+  }
+
   const violations: InvariantViolation[] = [];
 
   for (const invariant of invariants) {

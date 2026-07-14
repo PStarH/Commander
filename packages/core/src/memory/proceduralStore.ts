@@ -10,7 +10,7 @@
  * Ordered by specificity + utility (success_count / invocation_count).
  */
 
-import type { MemoryStore, EpisodicMemoryItem, MemoryWriteOptions } from '../memory';
+import type { MemoryStore, EpisodicMemoryItem, MemoryWriteOptions } from '../episodicMemory';
 import { getGlobalLogger } from '../logging';
 
 // ============================================================================

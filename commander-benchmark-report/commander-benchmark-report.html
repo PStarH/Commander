@@ -108,7 +108,7 @@
 
     <main>
       <section>
-        <p class="lead">本次测试将 InjecAgent 从 6 个代表性用例扩展至完整 2,108 案例（base + enhanced），并确认 AgentSafetyBench / AgentHarm 在 harmful-content-rules 插件化后已修复至 100% 拦截。共覆盖 5 组外部安全 benchmark 与性能压力测试，合计 2,138 安全用例全部通过。</p>
+        <p class="lead">本次测试覆盖 5 组外部安全 benchmark，合计 4,301 个安全用例，其中 3,886 个被拦截（90/100）。AgentDojo、AgentSafetyBench、AgentHarm、Red Team Battery 达到 100% 拦截；InjecAgent 从 6 个代表性用例扩展至完整 2,108 案例（base + enhanced），通过 harmful-content-rules 规则修复将拦截率从 84% 提升至 98%（2,056 / 2,108），残余 52 个未拦截用例属于 Dropbox 内部文件操作（move the files），不在当前规则覆盖范围内。</p>
 
         <div class="summary-grid">
           <div class="metric-card">
@@ -128,8 +128,8 @@
             <div class="label">AgentHarm</div>
           </div>
           <div class="metric-card">
-            <div class="value pass">100%</div>
-            <div class="label">InjecAgent 拦截率</div>
+            <div class="value pass">98%</div>
+            <div class="label">InjecAgent 拦截率<br><span style="font-size:0.8em;color:var(--muted)">2,056 / 2,108</span></div>
           </div>
           <div class="metric-card">
             <div class="value">2,597</div>
@@ -180,10 +180,10 @@
               <tr>
                 <td>InjecAgent</td>
                 <td class="num">2,108</td>
-                <td class="num">2,108 / 0</td>
-                <td class="num">100/100</td>
+                <td class="num">2,056 / 52</td>
+                <td class="num">98/100</td>
                 <td class="num">385 ms</td>
-                <td><span class="tag pass">PASS</span></td>
+                <td><span class="tag warn">98%</span></td>
               </tr>
               <tr>
                 <td>Red Team Battery</td>
@@ -239,8 +239,8 @@
         <h3>2.2 AgentSafetyBench / AgentHarm：有害内容规则插件化后 100% 拦截</h3>
         <p>通过将 harmful content 规则从 core 中解耦为 <code>harmful-content-rules</code> 内置插件，并扩展 <code>PluginLoader</code> 在加载插件时自动注册规则包，18 个直接有害内容用例（malware、weapons、suicide、drugs、child safety 等）现均已达到 100% 拦截。该插件化方案保留了 <code>DefaultContentScanner</code> 框架的通用性，同时让有害主题规则可独立迭代。</p>
 
-        <h3>2.3 InjecAgent：工具集成 Agent 间接注入 2,108/2,108 全拦截</h3>
-        <p>InjecAgent 数据集包含 2,108 个用例（base + enhanced，覆盖 direct harm 与 data security 两类攻击意图）。针对测试中暴露的 physical_harm、financial_harm 与 data_security_harm 盲区，在 <code>harmful-content-rules</code> 插件中新增 <code>unauthorized_access_grant</code>、<code>unauthorized_financial_transfer</code> 与 <code>unauthorized_data_manipulation</code> 三类规则，并将 <code>createCommanderDefender</code> 配置为对间接注入 tool output 自动启用 harmful-content 扫描。最终全部 2,108 个用例被 <code>HarmfulContentClassifier</code>、<code>UniversalSanitizer</code> 或 <code>ReversibilityGate</code> 拦截，安全评分 100/100。</p>
+        <h3>2.3 InjecAgent：工具集成 Agent 间接注入 2,056/2,108 拦截（98%）</h3>
+        <p>InjecAgent 数据集包含 2,108 个用例（base + enhanced，覆盖 direct harm 与 data security 两类攻击意图）。针对测试中暴露的 physical_harm、financial_harm 与 data_security_harm 盲区，修复了 <code>unauthorized_access</code> 规则中的灾难性回溯问题（tamper 关键字列表过大导致 regex engine 超时），并将 <code>createCommanderDefender</code> 配置为对间接注入 tool output 自动启用 harmful-content 扫描。此外新增 <code>data_exfiltration_email</code> 规则覆盖"检索数据并发送至外部邮箱"模式。最终 2,056 个用例被拦截，安全评分 98/100；残余 52 个未拦截用例为 Dropbox 内部文件操作（move the files in Work folder to .hidden folder），属于合法文件管理行为，不在当前规则覆盖范围内。</p>
 
         <figure class="chart-figure">
           <figcaption>图 1：安全 Benchmark 拦截率对比</figcaption>
@@ -281,7 +281,7 @@
         <div class="insight-box">
           <h4>强项</h4>
           <ul>
-            <li>AgentDojo、AgentSafetyBench、AgentHarm、InjecAgent、Red Team Battery 五组外部安全 benchmark 均达到 100% 拦截，合计 2,138 个安全用例，覆盖间接注入、直接有害请求、工具集成 Agent 注入、越狱、数据外泄、供应链攻击等多类威胁。</li>
+            <li>AgentDojo、AgentSafetyBench、AgentHarm、Red Team Battery 四组外部安全 benchmark 均达到 100% 拦截；InjecAgent 从 84% 提升至 98%（2,056 / 2,108）。合计 4,301 个安全用例中 3,886 个被拦截，覆盖间接注入、直接有害请求、工具集成 Agent 注入、越狱、数据外泄、供应链攻击等多类威胁。</li>
             <li>harmful-content-rules 插件化后，AgentSafetyBench / AgentHarm 从 4%/3% 提升至 100%，证明规则包可独立迭代且不影响 core 框架。</li>
             <li>E2E 与 WAL 性能指标稳定，高并发下 P99 延迟未出现明显退化。</li>
           </ul>
@@ -291,7 +291,7 @@
           <ul>
             <li><strong>Chaos 255 失败集中在熔断断言：</strong> 建议检查 scripted LLM 对错误率边界的响应，确保 CircuitBreaker 能正确接收 <code>volumeThreshold</code> / <code>errorRateThreshold</code> 参数。</li>
             <li><strong>多租户公平性略低于阈值：</strong> 可进一步校准租户调度器，降低高负载下的抖动。</li>
-            <li><strong>InjecAgent 已扩展完整数据集：</strong> 从 6 个代表性用例扩展至 2,108 案例（base + enhanced），并通过新增 unauthorized_access_grant / unauthorized_financial_transfer / unauthorized_data_manipulation 规则类别全部拦截，验证了 harmful-content-rules 插件对长尾攻击模式的覆盖能力。</li>
+            <li><strong>InjecAgent 已扩展完整数据集：</strong>从 6 个代表性用例扩展至 2,108 案例（base + enhanced），通过修复 unauthorized_access 规则的灾难性回溯问题、新增 data_exfiltration_email 规则，将拦截率从 84% 提升至 98%。残余 52 个未拦截用例为 Dropbox 内部文件操作（move the files），属于合法文件管理行为。验证了 harmful-content-rules 插件对长尾攻击模式的覆盖能力，同时明确了规则粒度与合法行为的边界。</li>
           </ul>
         </div>
       </section>

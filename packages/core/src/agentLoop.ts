@@ -431,7 +431,7 @@ export class CommanderAgentLoop {
                 id: 'orchestration',
                 name: 'Multi-Agent Orchestration',
                 description:
-                  'Execute tasks using 8 topologies: single, sequential, parallel, hierarchical, hybrid, debate, ensemble, evaluator-opt',
+                  'Execute tasks using 5 canonical topologies (SINGLE, CHAIN, DISPATCH, ORCHESTRATOR, REVIEW) with 9 legacy alias names',
                 tags: ['execution', 'multi-agent'],
               },
               {

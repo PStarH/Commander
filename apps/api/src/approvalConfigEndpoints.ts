@@ -242,6 +242,52 @@ const updatePolicySchema = z.object({
 export function createApprovalConfigRouter(): Router {
   const router = Router();
 
+  // GOV-5: mutating the approval mode/policy (e.g. flipping to `full-auto`, which
+  // disables every gate) must require an administrator and must be audited. This
+  // guard fails closed.
+  function requireApprovalAdmin(req: Request, res: Response, next: () => void): void {
+    const role = req.user?.role;
+    const scopes = req.apiScopes ?? [];
+    const isAdmin =
+      role === 'admin' ||
+      role === 'super_admin' ||
+      scopes.includes('admin') ||
+      scopes.includes('approve') ||
+      scopes.includes('*');
+    if (!isAdmin) {
+      res
+        .status(403)
+        .json({ error: 'Administrator privileges are required to change approval configuration.' });
+      return;
+    }
+    next();
+  }
+
+  // Emit a durable `config_change` audit record. Returns false if the write
+  // fails so callers can fail closed (apply the change only once it is audited).
+  function auditConfigChange(
+    req: Request,
+    action: string,
+    detail: Record<string, unknown>,
+  ): boolean {
+    try {
+      const actor = req.user?.id ?? req.apiKeyId ?? 'unknown';
+      const entry = {
+        timestamp: new Date().toISOString(),
+        type: 'config_change',
+        action,
+        actor,
+        ip: req.ip,
+        detail,
+      };
+      fs.mkdirSync(path.dirname(AUDIT_LOG_FILE), { recursive: true });
+      fs.appendFileSync(AUDIT_LOG_FILE, JSON.stringify(entry) + '\n');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // GET /api/approval/config — unified config
   router.get('/api/approval/config', (_req: Request, res: Response) => {
     try {
@@ -261,10 +307,17 @@ export function createApprovalConfigRouter(): Router {
   // PUT /api/approval/sandbox-mode — update sandbox mode
   router.put(
     '/api/approval/sandbox-mode',
+    requireApprovalAdmin,
     validateBody(sandboxModeSchema),
     (req: Request, res: Response) => {
       try {
         const mode = req.body.mode as ApprovalMode;
+        // Audit before applying; fail closed if the audit write fails.
+        if (!auditConfigChange(req, 'set-sandbox-mode', { mode })) {
+          return res
+            .status(500)
+            .json({ error: 'Failed to record config-change audit; change not applied.' });
+        }
         writeSandboxMode(mode);
         res.json({
           status: 'updated',
@@ -280,10 +333,16 @@ export function createApprovalConfigRouter(): Router {
   // POST /api/approval/policy — add custom policy
   router.post(
     '/api/approval/policy',
+    requireApprovalAdmin,
     validateBody(addPolicySchema),
     (req: Request, res: Response) => {
       try {
         const newPolicy = req.body as ToolPolicy;
+        if (!auditConfigChange(req, 'add-policy', { policy: newPolicy })) {
+          return res
+            .status(500)
+            .json({ error: 'Failed to record config-change audit; change not applied.' });
+        }
         const store = loadCustomPolicies();
 
         // Check if pattern already exists
@@ -306,11 +365,17 @@ export function createApprovalConfigRouter(): Router {
   // PUT /api/approval/policy/:pattern — update existing policy
   router.put(
     '/api/approval/policy/:pattern',
+    requireApprovalAdmin,
     validateBody(updatePolicySchema),
     (req: Request, res: Response) => {
       try {
         const pattern = decodeURIComponent(String(req.params.pattern));
         const updates = req.body as Partial<ToolPolicy>;
+        if (!auditConfigChange(req, 'update-policy', { pattern, updates })) {
+          return res
+            .status(500)
+            .json({ error: 'Failed to record config-change audit; change not applied.' });
+        }
         const store = loadCustomPolicies();
 
         // Find in custom policies
@@ -342,24 +407,33 @@ export function createApprovalConfigRouter(): Router {
   );
 
   // DELETE /api/approval/policy/:pattern — remove custom policy
-  router.delete('/api/approval/policy/:pattern', (req: Request, res: Response) => {
-    try {
-      const pattern = decodeURIComponent(String(req.params.pattern));
-      const store = loadCustomPolicies();
-      const before = store.policies.length;
-      store.policies = store.policies.filter((p) => p.pattern !== pattern);
+  router.delete(
+    '/api/approval/policy/:pattern',
+    requireApprovalAdmin,
+    (req: Request, res: Response) => {
+      try {
+        const pattern = decodeURIComponent(String(req.params.pattern));
+        if (!auditConfigChange(req, 'delete-policy', { pattern })) {
+          return res
+            .status(500)
+            .json({ error: 'Failed to record config-change audit; change not applied.' });
+        }
+        const store = loadCustomPolicies();
+        const before = store.policies.length;
+        store.policies = store.policies.filter((p) => p.pattern !== pattern);
 
-      if (store.policies.length === before) {
-        return res.status(404).json({ error: 'Custom policy not found' });
+        if (store.policies.length === before) {
+          return res.status(404).json({ error: 'Custom policy not found' });
+        }
+
+        store.lastUpdated = new Date().toISOString();
+        saveCustomPolicies(store);
+        res.json({ status: 'removed', pattern });
+      } catch (error) {
+        res.status(500).json({ error: toErrorMessage(error) });
       }
-
-      store.lastUpdated = new Date().toISOString();
-      saveCustomPolicies(store);
-      res.json({ status: 'removed', pattern });
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  });
+    },
+  );
 
   // GET /api/approval/audit-log — recent approval decisions
   router.get('/api/approval/audit-log', (req: Request, res: Response) => {

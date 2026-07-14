@@ -1,192 +1,277 @@
-import { describe, it } from 'node:test';
-import assert from 'node:assert/strict';
-import { deliberate, classifyTaskNature } from '../../src/ultimate/deliberation';
+import { describe, it, expect, vi } from 'vitest';
+import { deliberate, deliberateWithLLM, classifyTaskNature } from '../../src/ultimate/deliberation';
+import type { LLMProvider, LLMResponse } from '../../src/runtime/types';
 
 describe('deliberate', () => {
-  describe('task type classification', () => {
-    it('classifies coding tasks', () => {
-      const plan = deliberate('implement a REST API endpoint for user authentication');
-      assert.equal(plan.taskType, 'CODING');
-    });
-
-    it('classifies research tasks', () => {
-      const plan = deliberate('research the best database for high-throughput applications');
-      assert.equal(plan.taskType, 'RESEARCH');
-    });
-
-    it('classifies reasoning tasks', () => {
-      const plan = deliberate(
-        'explain why microservices are better than monoliths for this use case',
-      );
-      assert.equal(plan.taskType, 'REASONING');
-    });
-
-    it('classifies creative tasks', () => {
-      const plan = deliberate('design a new architecture for the payment system');
-      assert.equal(plan.taskType, 'CREATIVE');
-    });
-
-    it('classifies analysis tasks', () => {
-      const plan = deliberate('review the security audit report and summarize findings');
-      assert.equal(plan.taskType, 'ANALYSIS');
-    });
-
-    it('classifies factual tasks', () => {
-      const plan = deliberate('what is the current version of Node.js LTS');
-      assert.equal(plan.taskType, 'FACTUAL');
-    });
-
-    it('defaults to FACTUAL when no keywords match', () => {
-      const plan = deliberate('xyzzy plugh');
-      assert.equal(plan.taskType, 'FACTUAL');
-    });
+  it('classifies coding tasks', () => {
+    const plan = deliberate('Implement a function to sort an array');
+    expect(plan.taskType).toBe('CODING');
+    expect(plan.capabilitiesNeeded).toContain('code_understanding');
   });
 
-  describe('effort level', () => {
-    it('assigns effort level based on goal complexity', () => {
-      const simple = deliberate('list files');
-      const complex = deliberate(
-        'implement a distributed consensus algorithm with fault tolerance, replication, and leader election',
-      );
-      assert.ok(['SIMPLE', 'MEDIUM', 'COMPLEX', 'DEEP_RESEARCH'].includes(simple.effortLevel));
-      assert.ok(['SIMPLE', 'MEDIUM', 'COMPLEX', 'DEEP_RESEARCH'].includes(complex.effortLevel));
+  it('selects DISPATCH and STEP for complex coding tasks', () => {
+    const plan = deliberate('Implement and deploy a microservice with tests', {
+      availableTools: Array(10).fill('tool'),
     });
+    expect(plan.taskType).toBe('CODING');
+    expect(plan.recommendedTopology).toBe('DISPATCH');
+    expect(plan.decompositionStrategy).toBe('STEP');
   });
 
-  describe('external info detection', () => {
-    it('detects research tasks as requiring external info', () => {
-      const plan = deliberate('research quantum computing');
-      assert.equal(plan.requiresExternalInfo, true);
-    });
-
-    it('detects temporal queries', () => {
-      const plan = deliberate('what is the latest news in AI 2026');
-      assert.equal(plan.requiresExternalInfo, true);
-    });
-
-    it('detects current/recent keywords', () => {
-      const plan = deliberate('what is the current stock price');
-      assert.equal(plan.requiresExternalInfo, true);
-    });
+  it('classifies research tasks and flags external info', () => {
+    const plan = deliberate('Research the latest AI news from 2026');
+    expect(plan.taskType).toBe('RESEARCH');
+    expect(plan.requiresExternalInfo).toBe(true);
+    expect(plan.taskNature).toBe('IO_BOUND');
   });
 
-  describe('topology selection', () => {
-    it('selects a valid topology', () => {
-      const validTopologies = [
-        'SINGLE',
-        'SEQUENTIAL',
-        'PARALLEL',
-        'HIERARCHICAL',
-        'HYBRID',
-        'DEBATE',
-        'ENSEMBLE',
-        'EVALUATOR_OPTIMIZER',
-      ];
-      const plan = deliberate('implement a new feature');
-      assert.ok(validTopologies.includes(plan.recommendedTopology));
-    });
+  it('classifies reasoning tasks', () => {
+    const plan = deliberate('Explain why the sky is blue and evaluate the physics');
+    expect(plan.taskType).toBe('REASONING');
   });
 
-  describe('decomposition strategy', () => {
-    it('returns a valid decomposition strategy', () => {
-      const plan = deliberate('build a full-stack application');
-      assert.ok(['ASPECT', 'STEP', 'RECURSIVE', 'NONE'].includes(plan.decompositionStrategy));
-    });
-
-    it('returns ASPECT for research tasks', () => {
-      const plan = deliberate('research quantum computing approaches');
-      assert.equal(plan.decompositionStrategy, 'ASPECT');
-    });
+  it('selects CHAIN for moderate reasoning tasks', () => {
+    const clause =
+      'Explain and evaluate why and how neural networks generalize. ' +
+      'Reason about the theoretical foundations and assess the empirical evidence. ';
+    const goal = clause.repeat(3);
+    expect(goal.length).toBeGreaterThan(400);
+    expect(goal.length).toBeLessThan(1500);
+    const plan = deliberate(goal);
+    expect(plan.taskType).toBe('REASONING');
+    expect(plan.recommendedTopology).toBe('CHAIN');
   });
 
-  describe('capabilities inference', () => {
-    it('infers capabilities for coding tasks', () => {
-      const plan = deliberate('implement a REST API');
-      assert.ok(Array.isArray(plan.capabilitiesNeeded));
-    });
+  it('selects DEBATE for complex reasoning tasks', () => {
+    const clause =
+      'Explain why and reason about how and evaluate whether complex systems exhibit emergent behavior. ' +
+      'Assess the arguments and determine the implications. ';
+    const goal = clause.repeat(12);
+    expect(goal.length).toBeGreaterThan(1500);
+    expect(goal.length).toBeLessThan(3000);
+    const plan = deliberate(goal);
+    expect(plan.taskType).toBe('REASONING');
+    expect(plan.recommendedTopology).toBe('DEBATE');
   });
 
-  describe('token and agent estimation', () => {
-    it('estimates agent count > 0', () => {
-      const plan = deliberate('build a web application');
-      assert.ok(plan.estimatedAgentCount >= 1);
-    });
-
-    it('estimates steps > 0', () => {
-      const plan = deliberate('build a web application');
-      assert.ok(plan.estimatedSteps >= 1);
-    });
-
-    it('estimates tokens > 0', () => {
-      const plan = deliberate('build a web application');
-      assert.ok(plan.estimatedTokens >= 1);
-    });
-
-    it('estimates duration > 0', () => {
-      const plan = deliberate('build a web application');
-      assert.ok(plan.estimatedDurationMs >= 1);
-    });
+  it('classifies creative tasks', () => {
+    const plan = deliberate('Write a short story about a robot');
+    expect(plan.taskType).toBe('CREATIVE');
   });
 
-  describe('token budget', () => {
-    it('allocates thinking budget with thinking, execution, synthesis', () => {
-      const plan = deliberate('implement a feature');
-      assert.ok(plan.tokenBudget.thinking >= 0);
-      assert.ok(plan.tokenBudget.execution >= 0);
-      assert.ok(plan.tokenBudget.synthesis >= 0);
-    });
+  it('selects ENSEMBLE for complex creative tasks', () => {
+    const clause =
+      'Write a creative story that imagines a future world. Design characters, craft an original plot, ' +
+      'and produce an engaging narrative with vivid descriptions. ';
+    const goal = clause.repeat(11);
+    expect(goal.length).toBeGreaterThan(1500);
+    expect(goal.length).toBeLessThan(3000);
+    const plan = deliberate(goal);
+    expect(plan.taskType).toBe('CREATIVE');
+    expect(plan.recommendedTopology).toBe('ENSEMBLE');
   });
 
-  describe('confidence', () => {
-    it('returns confidence between 0 and 1', () => {
-      const plan = deliberate('implement a simple function');
-      assert.ok(plan.confidence >= 0 && plan.confidence <= 1);
-    });
+  it('classifies analysis tasks', () => {
+    const plan = deliberate('Review and audit this codebase for bugs');
+    expect(plan.taskType).toBe('ANALYSIS');
   });
 
-  describe('reasoning', () => {
-    it('returns non-empty reasoning array', () => {
-      const plan = deliberate('implement a REST API');
-      assert.ok(Array.isArray(plan.reasoning));
-      assert.ok(plan.reasoning.length > 0);
-    });
+  it('selects ASPECT decomposition and DISPATCH topology for moderate analysis', () => {
+    const plan = deliberate(
+      (
+        'Review and audit this large codebase for bugs, performance issues, and security vulnerabilities. ' +
+        'Analyze the architecture, identify code smells, and evaluate test coverage. '
+      ).repeat(8),
+    );
+    expect(plan.taskType).toBe('ANALYSIS');
+    expect(plan.recommendedTopology).toBe('DISPATCH');
+    expect(plan.decompositionStrategy).toBe('ASPECT');
   });
 
-  describe('speculation suitability', () => {
-    it('returns boolean for suitableForSpeculation', () => {
-      const plan = deliberate('research and analyze the codebase');
-      assert.equal(typeof plan.suitableForSpeculation, 'boolean');
-    });
+  it('defaults to FACTUAL when no keywords match', () => {
+    const plan = deliberate('xyzabc');
+    expect(plan.taskType).toBe('FACTUAL');
   });
 
-  describe('time budget per agent', () => {
-    it('allocates positive time budget per agent', () => {
-      const plan = deliberate('implement a feature');
-      assert.ok(plan.timeBudgetPerAgentMs >= 0);
+  it('uses context to adjust confidence and effort', () => {
+    const plan = deliberate('What is the capital of France?', {
+      availableTools: ['web_search'],
+      governanceProfile: { riskLevel: 'LOW' },
     });
+    expect(plan.confidence).toBeGreaterThan(0.5);
+    expect(plan.effortLevel).toBe('SIMPLE');
+  });
+
+  it('detects temporal queries', () => {
+    const plan = deliberate('What is the weather today?');
+    expect(plan.requiresExternalInfo).toBe(true);
+    expect(plan.reasoning.some((r) => r.includes('Temporal'))).toBe(true);
+  });
+
+  it('flags suitable tasks for speculation', () => {
+    const plan = deliberate(
+      (
+        'Research and compare multiple open source licenses across dimensions like licensing, compatibility, and community adoption. ' +
+        'Investigate use cases, evaluate restrictions, and summarize recommendations. '
+      ).repeat(6),
+    );
+    expect(plan.suitableForSpeculation).toBe(true);
+  });
+
+  it('flags deep research tasks as HYBRID and RECURSIVE', () => {
+    const plan = deliberate('a'.repeat(3500));
+    expect(plan.effortLevel).toBe('DEEP_RESEARCH');
+    expect(plan.recommendedTopology).toBe('HYBRID');
+    expect(plan.decompositionStrategy).toBe('RECURSIVE');
+  });
+
+  it('infers vision capability when goal mentions images', () => {
+    const plan = deliberate('Analyze this UI image and describe the components');
+    expect(plan.capabilitiesNeeded).toContain('vision');
+  });
+
+  it('infers math capability for calculation tasks', () => {
+    const plan = deliberate('Calculate the orbital velocity of Mars');
+    expect(plan.capabilitiesNeeded).toContain('math');
+  });
+
+  it('infers security capability for audit tasks', () => {
+    const plan = deliberate('Audit the authentication flow for vulnerabilities');
+    expect(plan.capabilitiesNeeded).toContain('security_analysis');
+  });
+
+  it('applies confidence penalty for critical risk', () => {
+    const plan = deliberate('Some task', { governanceProfile: { riskLevel: 'CRITICAL' } });
+    expect(plan.confidence).toBeLessThan(0.5);
   });
 });
 
 describe('classifyTaskNature', () => {
-  it('returns IO_BOUND for RESEARCH tasks', () => {
-    assert.equal(classifyTaskNature('RESEARCH', true), 'IO_BOUND');
+  it('marks factual tasks without external info as MIXED', () => {
+    expect(classifyTaskNature('FACTUAL', false)).toBe('MIXED');
   });
 
-  it('returns COMPUTE_BOUND for non-RESEARCH without external info', () => {
-    assert.equal(classifyTaskNature('CODING', false), 'COMPUTE_BOUND');
+  it('marks factual tasks with external info as IO_BOUND', () => {
+    expect(classifyTaskNature('FACTUAL', true)).toBe('IO_BOUND');
   });
 
-  it('returns COMPUTE_BOUND for CODING regardless of external info', () => {
-    assert.equal(classifyTaskNature('CODING', true), 'COMPUTE_BOUND');
-    assert.equal(classifyTaskNature('CODING', false), 'COMPUTE_BOUND');
+  it('marks coding tasks as COMPUTE_BOUND', () => {
+    expect(classifyTaskNature('CODING', false)).toBe('COMPUTE_BOUND');
+  });
+});
+
+describe('deliberateWithLLM', () => {
+  it('falls back to keyword deliberation when no provider is given', async () => {
+    const plan = await deliberateWithLLM('Implement a sort function');
+    expect(plan.taskType).toBe('CODING');
   });
 
-  it('returns MIXED for CREATIVE tasks', () => {
-    assert.equal(classifyTaskNature('CREATIVE', false), 'MIXED');
+  it('uses LLM response when valid JSON is returned', async () => {
+    const provider = {
+      name: 'openai',
+      defaultModel: 'gpt-4',
+      call: vi.fn().mockResolvedValue({
+        content: JSON.stringify({
+          taskType: 'RESEARCH',
+          requiresExternalInfo: true,
+          recommendedTopology: 'ORCHESTRATOR',
+          decompositionStrategy: 'ASPECT',
+          capabilitiesNeeded: ['web_search'],
+          estimatedAgentCount: 5,
+          estimatedSteps: 20,
+          estimatedTokens: 100000,
+          estimatedDurationMs: 30000,
+          confidence: 0.9,
+          suitableForSpeculation: true,
+          taskNature: 'IO_BOUND',
+          reasoning: ['LLM reasoned'],
+        }),
+      }),
+    } as unknown as LLMProvider;
+
+    const plan = await deliberateWithLLM('Research quantum computing', provider);
+    expect(plan.taskType).toBe('RESEARCH');
+    expect(plan.recommendedTopology).toBe('ORCHESTRATOR');
+    expect(plan.reasoning[0]).toBe('=== LLM deliberation ===');
   });
 
-  it('returns IO_BOUND for RESEARCH regardless of external info', () => {
-    assert.equal(classifyTaskNature('RESEARCH', false), 'IO_BOUND');
-    assert.equal(classifyTaskNature('RESEARCH', true), 'IO_BOUND');
+  it('parses JSON wrapped in markdown fences', async () => {
+    const provider = {
+      name: 'openai',
+      defaultModel: 'gpt-4',
+      call: vi.fn().mockResolvedValue({
+        content:
+          '```json\n' +
+          JSON.stringify({
+            taskType: 'CODING',
+            requiresExternalInfo: false,
+            recommendedTopology: 'SINGLE',
+            decompositionStrategy: 'NONE',
+            capabilitiesNeeded: ['reasoning'],
+            estimatedAgentCount: 1,
+            estimatedSteps: 5,
+            estimatedTokens: 10000,
+            estimatedDurationMs: 11000,
+            confidence: 0.6,
+            suitableForSpeculation: false,
+            taskNature: 'MIXED',
+            reasoning: ['ok'],
+          }) +
+          '\n```',
+      }),
+    } as unknown as LLMProvider;
+
+    const plan = await deliberateWithLLM('Fix a bug', provider);
+    expect(plan.taskType).toBe('CODING');
+  });
+
+  it('reads reasoning_content for reasoning models', async () => {
+    const provider = {
+      name: 'mimo',
+      defaultModel: 'mimo-reasoner',
+      call: vi.fn().mockResolvedValue({
+        content: '',
+        reasoning_content: JSON.stringify({
+          taskType: 'REASONING',
+          requiresExternalInfo: false,
+          recommendedTopology: 'DEBATE',
+          decompositionStrategy: 'ASPECT',
+          capabilitiesNeeded: ['reasoning'],
+          estimatedAgentCount: 3,
+          estimatedSteps: 10,
+          estimatedTokens: 50000,
+          estimatedDurationMs: 20000,
+          confidence: 0.8,
+          suitableForSpeculation: false,
+          taskNature: 'COMPUTE_BOUND',
+          reasoning: ['chain'],
+        }),
+      }),
+    } as unknown as LLMProvider;
+
+    const plan = await deliberateWithLLM('Solve a logic puzzle', provider);
+    expect(plan.taskType).toBe('REASONING');
+  });
+
+  it('falls back to keyword plan when LLM returns invalid JSON', async () => {
+    const provider = {
+      name: 'openai',
+      defaultModel: 'gpt-4',
+      call: vi.fn().mockResolvedValue({ content: 'not json' }),
+    } as unknown as LLMProvider;
+
+    const plan = await deliberateWithLLM('Implement a function', provider);
+    expect(plan.taskType).toBe('CODING');
+  });
+
+  it('falls back to keyword plan when LLM call throws', async () => {
+    const provider = {
+      name: 'openai',
+      defaultModel: 'gpt-4',
+      call: vi.fn().mockRejectedValue(new Error('llm error')),
+    } as unknown as LLMProvider;
+
+    const plan = await deliberateWithLLM('Implement a function', provider);
+    expect(plan.taskType).toBe('CODING');
   });
 });

@@ -15,7 +15,7 @@ import type {
   AgentRuntimeConfig,
 } from './types/execution';
 import type { LLMProvider, Tool } from './types';
-import type { MemoryStore } from '../memory';
+import type { MemoryStore } from '../episodicMemory';
 import type { StateCheckpointer } from './stateCheckpointer';
 import type { AgentInbox } from './agentInbox';
 import type { TeamRegistry } from './teamRegistry';
@@ -243,7 +243,7 @@ export class MtlsRuntimeProxy implements AgentRuntimeInterface {
     // declares several sync getters; we block the event loop briefly to
     // honour the contract. Long-term callers should prefer async equivalents.
     //
-    // TODO(rpcSync): replace the busy-wait with an explicit async-only surface.
+    // NOTE(rpcSync): replace the busy-wait with an explicit async-only surface.
     // Today this blocks the event loop up to timeoutMs, which means TLS handshake
     // errors aren't surfaced until the deadline — see
     // packages/core/tests/runtime/mtlsRuntimeIpc.test.ts scenario 2 for the

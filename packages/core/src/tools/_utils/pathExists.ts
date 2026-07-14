@@ -1,5 +1,5 @@
 import { reportSilentFailure } from '../../silentFailureReporter';
-import * as fs from 'node:fs';
+import { access, constants } from 'node:fs/promises';
 
 /**
  * Async equivalent of `fs.existsSync`.
@@ -15,7 +15,7 @@ import * as fs from 'node:fs';
  */
 export async function pathExists(p: string): Promise<boolean> {
   try {
-    await fs.promises.access(p, fs.constants.F_OK);
+    await access(p, constants.F_OK);
     return true;
   } catch (err) {
     reportSilentFailure(err, 'pathExists');

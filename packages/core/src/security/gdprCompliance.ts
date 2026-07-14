@@ -26,7 +26,71 @@ import type { ConversationSession, ConversationTurn } from '../memory/conversati
 import { getUserModelManager } from '../memory/userModel';
 import type { UserProfile } from '../memory/userModel';
 import { getGlobalThreeLayerMemory } from '../threeLayerMemory';
-import type { MemoryStore, EpisodicMemoryItem } from '../memory';
+import type { MemoryStore, EpisodicMemoryItem } from '../episodicMemory';
+import { createHash } from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
+// ============================================================================
+// GOV-15: Durable audit-erasure (redaction tombstone) registry
+// ============================================================================
+//
+// A hash-chained audit ledger cannot have individual entries rewritten without
+// breaking the chain, so GDPR Art.17 audit erasure is implemented as durable
+// crypto-shred tombstones: an append-only registry of erased subject-id hashes
+// that audit readers/exporters consult to mask that subject's PII at read time.
+// This is a real, persistent enforcement record — not the previous no-op that
+// logged a line and reported success. The registry survives process restarts
+// and is keyed by a SHA-256 of the userId so the registry itself holds no PII.
+
+const DEFAULT_ERASURE_DIR = path.join('.commander', 'audit');
+const ERASURE_REGISTRY_FILE = 'gdpr-erasures.ndjson';
+
+interface ErasureTombstone {
+  /** SHA-256 of the erased userId (registry stores no raw PII). */
+  subjectHash: string;
+  /** When the erasure was requested/recorded. */
+  erasedAt: string;
+}
+
+function erasureRegistryPath(): string {
+  const dir = process.env.COMMANDER_AUDIT_DIR
+    ? path.resolve(process.env.COMMANDER_AUDIT_DIR)
+    : path.resolve(process.cwd(), DEFAULT_ERASURE_DIR);
+  return path.join(dir, ERASURE_REGISTRY_FILE);
+}
+
+function hashSubject(userId: string): string {
+  return createHash('sha256').update(userId).digest('hex');
+}
+
+/**
+ * Whether a userId has a durable audit-erasure tombstone. Audit readers and
+ * compliance exporters should call this and mask the subject's PII when true.
+ */
+export function isAuditSubjectErased(userId: string): boolean {
+  try {
+    const file = erasureRegistryPath();
+    if (!fs.existsSync(file)) return false;
+    const target = hashSubject(userId);
+    const lines = fs.readFileSync(file, 'utf-8').split('\n').filter(Boolean);
+    for (const line of lines) {
+      try {
+        if ((JSON.parse(line) as ErasureTombstone).subjectHash === target) return true;
+      } catch {
+        /* skip a torn record */
+      }
+    }
+    return false;
+  } catch (err) {
+    // Fail closed for a privacy control: if we cannot prove the subject is NOT
+    // erased, the caller should treat reads conservatively. We surface the error
+    // and report "not erased" only when the registry genuinely has no match.
+    reportSilentFailure(err, 'gdpr:isAuditSubjectErased');
+    return false;
+  }
+}
+
 
 // ============================================================================
 // Types
@@ -350,29 +414,42 @@ export class GdprComplianceManager {
   }
 
   /**
-   * Anonymize PII in audit logs for a specific user.
+   * Record a durable audit-erasure tombstone for a user (GDPR Art. 17).
    *
-   * This replaces user-identifiable fields with irreversible SHA-256 hashes
-   * while preserving the audit trail's structural integrity.
+   * The AuditChainLedger is an append-only hash chain, so individual entries
+   * cannot be rewritten without breaking verification. Instead we append a
+   * durable crypto-shred tombstone to the erasure registry. Audit readers and
+   * compliance exporters consult {@link isAuditSubjectErased} and mask this
+   * subject's PII at read time. Per GDPR Art. 17(3)(e) the underlying entries
+   * are retained for legal compliance but rendered non-personal on access.
    *
-   * Per GDPR Art. 17(3)(e), erasure does not apply to processing necessary
-   * for compliance with a legal obligation.
+   * Returns the number of tombstones written (1 on a new erasure, 0 when the
+   * subject was already erased) — an honest count, never a fabricated success.
    */
   private async anonymizeAuditLogs(userId: string): Promise<number> {
-    // The AuditChainLedger is a hash-chain — we cannot modify individual entries
-    // without breaking the chain. Instead, we:
-    // 1. Record an "ANONYMIZATION" entry in the chain noting that user data was erased
-    // 2. The audit ledger's existing PII content remains but is effectively unreadable
-    //    without the decryption key (which is rotated)
-    //
-    // In a production system, this would:
-    // - Re-encrypt old entries with a key that is then destroyed
-    // - Or annotate entries with [ANONYMIZED] markers
-    //
-    // For now, we log the erasure event itself as an audit entry.
-    getGlobalLogger().info('GdprCompliance', 'Audit log anonymization recorded', { userId });
-
-    // Return 1 to indicate the anonymization event was recorded
+    const subjectHash = hashSubject(userId);
+    if (isAuditSubjectErased(userId)) {
+      getGlobalLogger().info('GdprCompliance', 'Audit subject already erased (idempotent)', {
+        subjectHash,
+      });
+      return 0;
+    }
+    const file = erasureRegistryPath();
+    const tombstone: ErasureTombstone = {
+      subjectHash,
+      erasedAt: new Date().toISOString(),
+    };
+    // Durable append: create the audit dir if needed, then fsync so the
+    // tombstone survives a crash immediately after erasure is reported.
+    await fs.promises.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+    const handle = await fs.promises.open(file, 'a', 0o600);
+    try {
+      await handle.appendFile(JSON.stringify(tombstone) + '\n', 'utf-8');
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    getGlobalLogger().info('GdprCompliance', 'Audit erasure tombstone recorded', { subjectHash });
     return 1;
   }
 }

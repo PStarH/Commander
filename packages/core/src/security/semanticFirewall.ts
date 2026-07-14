@@ -199,6 +199,13 @@ export interface SemanticFirewallConfig {
   maxQuarantineSize: number;
   /** 语义分析器抛错 / 返回非法时是否拒绝（fail-closed）。 */
   failClosedOnAnalyzerError: boolean;
+  /**
+   * AI-6: 未注入语义分析器时，对不可信来源（untrusted/low）的内容 fail-closed，
+   * 而不是静默退化为“仅正则”。可信内部写入仍退化放行，避免在没有分析器的部署里
+   * 全量拦截。When no analyzer is injected, block untrusted-provenance content
+   * instead of silently allowing it through the regex-only degrade path.
+   */
+  failClosedOnUntrustedWithoutAnalyzer: boolean;
   /** 语义风险阈值（0-1），超过即拦截。 */
   semanticRiskThreshold: number;
   /** 正则风险阈值（0-1），超过即拦截。 */
@@ -233,6 +240,7 @@ const DEFAULT_CONFIG: SemanticFirewallConfig = {
   auditLogEnabled: true,
   maxAuditLogEntries: 10_000,
   strictMode: false,
+  failClosedOnUntrustedWithoutAnalyzer: true,
 };
 
 /** 来源 → 信任等级映射。verified_tool 最可信，web_content / unknown 最不可信。 */
@@ -804,6 +812,19 @@ export class SemanticFirewall {
           reportSilentFailure(err, 'semanticFirewall.runSemantic:warn');
         }
         this.analyzerAbsentWarned = true;
+      }
+      // AI-6: without a semantic analyzer, fail closed for untrusted-provenance
+      // content rather than silently passing it on the regex-only path — this is
+      // exactly the channel indirect prompt-injection rides in on. Trusted
+      // internal writes still degrade to regex-only so an analyzer-less
+      // deployment is not fully blocked.
+      const trust =
+        context.provenance?.trustLevel ?? ORIGIN_TRUST[this.inferOrigin(context.source)];
+      if (
+        this.config.failClosedOnUntrustedWithoutAnalyzer &&
+        (trust === 'untrusted' || trust === 'low')
+      ) {
+        return { passed: false, riskScore: 1, failClosed: true };
       }
       // 退化为增强正则：语义门视为通过（由正则门单独把关），风险分 0。
       return { passed: true, riskScore: 0, failClosed: false };

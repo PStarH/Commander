@@ -14,6 +14,7 @@
  */
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
+import { withBenchmarkEnv } from './benchmarkEnv';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -72,28 +73,37 @@ async function main() {
 
   console.log('═'.repeat(70));
 
-  const baseline = {
-    benchmark: 'redteam',
-    runAt: report.runAt,
-    nodeVersion: process.version,
-    mode,
-    totalTests: report.totalTests,
-    summary: report.summary,
-    securityScore: report.securityScore,
-    criticalFindings: report.criticalFindings,
-    durationMs: report.durationMs,
-    results: report.results.map((r) => ({
-      scenarioId: r.scenario.id,
-      scenarioName: r.scenario.name,
-      category: r.scenario.category,
-      severity: r.scenario.severity,
-      cvssScore: r.scenario.cvssScore,
-      blocked: r.blocked,
-      detected: r.detected,
-      defense: r.defense,
-      details: r.details,
-    })),
-  };
+  const passed = report.criticalFindings.length === 0;
+
+  const baseline = withBenchmarkEnv(
+    {
+      benchmark: 'redteam',
+      mode,
+      totalTests: report.totalTests,
+      summary: {
+        ...report.summary,
+        passed,
+        errors: report.summary.error,
+        failed: report.summary.missed,
+        skipped: 0,
+      },
+      securityScore: report.securityScore,
+      criticalFindings: report.criticalFindings,
+      durationMs: report.durationMs,
+      results: report.results.map((r) => ({
+        scenarioId: r.scenario.id,
+        scenarioName: r.scenario.name,
+        category: r.scenario.category,
+        severity: r.scenario.severity,
+        cvssScore: r.scenario.cvssScore,
+        blocked: r.blocked,
+        detected: r.detected,
+        defense: r.defense,
+        details: r.details,
+      })),
+    },
+    { evidence: 'synthetic', datasetVersion: 'redteam-v1' },
+  );
 
   const fullPath = resolve(outputPath);
   const dir = dirname(fullPath);

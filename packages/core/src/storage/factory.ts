@@ -51,8 +51,28 @@ export function createDriver(config: DriverConfig): PersistentDriver {
  * Create a driver, falling back to in-memory if the requested backend cannot
  * be opened or its native binding is unavailable. The chosen backend is
  * reported in the description so callers can subscribe to degradation.
+ *
+ * Architecture V2: production is fail-closed. Soft fallback to in-memory is
+ * refused when NODE_ENV=production unless COMMANDER_ALLOW_SOFT_STORAGE=1 is
+ * explicitly set by an operator (emergency only).
  */
 export function createDriverSoft(config: DriverConfig): CreateDriverResult {
+  const failClosed =
+    process.env.NODE_ENV === 'production' && process.env.COMMANDER_ALLOW_SOFT_STORAGE !== '1';
+
+  // Architecture V2: In production, only PostgreSQL is allowed as a durable
+  // storage backend. SQLite and JSON are dev/test only — they are pod-local
+  // and violate the shared-state invariant.
+  if (
+    failClosed &&
+    (config.backend === 'sqlite' || config.backend === 'json' || config.backend === 'memory')
+  ) {
+    throw new Error(
+      `createDriverSoft: fail-closed in production — backend '${config.backend}' is not allowed in production. ` +
+        `Only 'postgres' is permitted. Set COMMANDER_ALLOW_SOFT_STORAGE=1 only for emergency degraded mode.`,
+    );
+  }
+
   try {
     const driver = createDriver(config);
     return {
@@ -61,6 +81,13 @@ export function createDriverSoft(config: DriverConfig): CreateDriverResult {
       fellBack: false,
     };
   } catch (err) {
+    if (failClosed) {
+      throw new Error(
+        `createDriverSoft: fail-closed in production — refused in-memory fallback for backend=${config.backend}. ` +
+          `Set COMMANDER_ALLOW_SOFT_STORAGE=1 only for emergency degraded mode. Cause: ${(err as Error).message}`,
+        { cause: err },
+      );
+    }
     // Fall back to in-memory only when the requested backend's native
     // dependency is unavailable. Connection/config errors still throw so
     // callers are not silently degraded.

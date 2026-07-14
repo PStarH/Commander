@@ -1,6 +1,6 @@
 import type { AgentExecutionContext, AgentExecutionStep, AgentExecutionResult } from './types';
 import { getMessageBus } from './messageBus';
-import { getGuardianAgent } from '../security/guardianAgent';
+import { checkRemoteAgentGuardian } from '../security/securityGuardianFacade';
 import { reportSilentFailure } from '../silentFailureReporter';
 
 export interface MCPRemoteRuntimeConfig {
@@ -55,30 +55,14 @@ export class MCPRemoteRuntime {
       const timeoutMs = this.config.timeoutMs ?? 300_000;
 
       // Security gate: check goal and context for dangerous content before remote execution
-      try {
-        const guardian = getGuardianAgent();
-        const intervention = guardian.monitor({
-          type: 'tool_call',
-          agentId: ctx.agentId,
-          runId,
-          timestamp: Date.now(),
-          content: `run_agent: ${ctx.goal}`.slice(0, 500),
-          metadata: {
-            args: {
-              goal: ctx.goal,
-              availableTools: ctx.availableTools,
-            },
-          },
-        });
-        if (intervention) {
-          throw new Error(`GUARDIAN_BLOCKED: ${intervention}`);
-        }
-      } catch (err) {
-        if (err instanceof Error && err.message.startsWith('GUARDIAN_BLOCKED')) {
-          throw err; // Re-throw guardian blocks
-        }
-        reportSilentFailure(err, 'mcpRemoteRuntime:guardian');
-        // Fail-open on guardian errors — the remote server should have its own security
+      const guardianResult = checkRemoteAgentGuardian({
+        agentId: ctx.agentId,
+        runId,
+        goal: ctx.goal,
+        availableTools: ctx.availableTools,
+      });
+      if (!guardianResult.allowed) {
+        throw new Error(`GUARDIAN_BLOCKED: ${guardianResult.reason}`);
       }
 
       const result = await Promise.race([

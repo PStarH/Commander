@@ -45,13 +45,20 @@ import {
 import { getGlobalLogger } from '../logging';
 import { getMessageBus } from '../runtime/messageBus';
 
-// ── SLO default thresholds ──────────────────────────────────────────────────
-const SLO_AVAILABILITY_TARGET = 0.99;
-const SLO_AVAILABILITY_TARGET_PERCENT = 99.0;
-const SLO_LATENCY_THRESHOLD_MS = 500;
-const SLO_LATENCY_TARGET_PERCENT = 99.0;
-const SLO_COST_THRESHOLD_USD = 0.01;
-const SLO_COST_TARGET_PERCENT = 95.0;
+// ── SLO default thresholds — aligned with docs/slo.md and WP6 plan ──────────
+// These 6 SLOs match the public documentation and the WP6 minimum targets.
+const SLO_API_AVAILABILITY_TARGET = 0.9995; // 99.95% (WP6 plan: 99.95%/month)
+const SLO_API_AVAILABILITY_TARGET_PCT = 99.95;
+const SLO_SCHEDULE_LATENCY_MS = 5000; // 5s (WP6 plan: P95 < 5s)
+const SLO_SCHEDULE_LATENCY_PCT = 95.0;
+const SLO_STEP_RECOVERY_MS = 60_000; // 60s (WP6 plan: < 60s)
+const SLO_STEP_RECOVERY_PCT = 95.0;
+const SLO_DLQ_RECOVERY_TARGET = 0.995; // 99.5% (docs/slo.md)
+const SLO_DLQ_RECOVERY_PCT = 99.5;
+const SLO_HASH_CHAIN_TARGET = 1.0; // 100% (docs/slo.md + WP6 plan)
+const SLO_HASH_CHAIN_PCT = 100.0;
+const SLO_APPROVAL_FAILCLOSED_TARGET = 1.0; // 100% (docs/slo.md)
+const SLO_APPROVAL_FAILCLOSED_PCT = 100.0;
 
 // ============================================================================
 // Configuration
@@ -77,25 +84,46 @@ export interface SLOOperationsConfig {
 export const DEFAULT_SLO_CONFIG: SLOOperationsConfig = {
   slos: [
     {
-      id: 'topology-success-rate',
-      name: 'Topology Success Rate',
-      targetPercent: SLO_AVAILABILITY_TARGET_PERCENT,
-      metric: 'success_rate',
-      threshold: SLO_AVAILABILITY_TARGET,
+      id: 'api-availability',
+      name: 'Run Submission API Availability',
+      targetPercent: SLO_API_AVAILABILITY_TARGET_PCT,
+      metric: 'api_success_rate',
+      threshold: SLO_API_AVAILABILITY_TARGET,
     },
     {
-      id: 'latency-p99',
-      name: `Latency P99 < ${SLO_LATENCY_THRESHOLD_MS}ms`,
-      targetPercent: SLO_LATENCY_TARGET_PERCENT,
-      metric: 'latency_ms',
-      threshold: SLO_LATENCY_THRESHOLD_MS,
+      id: 'schedule-latency',
+      name: `P95 Schedule Latency < ${SLO_SCHEDULE_LATENCY_MS}ms`,
+      targetPercent: SLO_SCHEDULE_LATENCY_PCT,
+      metric: 'schedule_latency_ms',
+      threshold: SLO_SCHEDULE_LATENCY_MS,
     },
     {
-      id: 'cost-per-task',
-      name: `Cost per Task < $${SLO_COST_THRESHOLD_USD}`,
-      targetPercent: SLO_COST_TARGET_PERCENT,
-      metric: 'cost_usd',
-      threshold: SLO_COST_THRESHOLD_USD,
+      id: 'step-recovery',
+      name: `Worker Failure Step Recovery < ${SLO_STEP_RECOVERY_MS / 1000}s`,
+      targetPercent: SLO_STEP_RECOVERY_PCT,
+      metric: 'step_recovery_ms',
+      threshold: SLO_STEP_RECOVERY_MS,
+    },
+    {
+      id: 'dlq-recovery',
+      name: 'DLQ Recovery Success Rate',
+      targetPercent: SLO_DLQ_RECOVERY_PCT,
+      metric: 'dlq_recovery_rate',
+      threshold: SLO_DLQ_RECOVERY_TARGET,
+    },
+    {
+      id: 'hash-chain-integrity',
+      name: 'Event-Log Hash-Chain Integrity',
+      targetPercent: SLO_HASH_CHAIN_PCT,
+      metric: 'hash_chain_integrity',
+      threshold: SLO_HASH_CHAIN_TARGET,
+    },
+    {
+      id: 'approval-failclosed',
+      name: 'Tool Approval Fail-Closed Rate',
+      targetPercent: SLO_APPROVAL_FAILCLOSED_PCT,
+      metric: 'approval_failclosed_rate',
+      threshold: SLO_APPROVAL_FAILCLOSED_TARGET,
     },
   ],
   autoStart: true,
@@ -185,11 +213,13 @@ export class SLOOperationsManager {
       const status = data.status as string;
       const latencyMs = data.totalDurationMs as number;
       const costUsd = data.totalCostUsd as number;
+      const scheduleLatencyMs = (data.scheduleLatencyMs as number) ?? latencyMs;
+      const stepRecoveryMs = data.stepRecoveryMs as number;
+      const dlqRecovered = data.dlqRecovered as boolean;
+      const hashChainValid = data.hashChainValid as boolean;
+      const approvalDenied = data.approvalDenied as boolean;
+      const approvalRequested = data.approvalRequested as boolean;
 
-      // Evaluate against the registered SLOs directly.
-      // Always use registeredSLOs (from config) rather than the dashboard's
-      // burnRates, because burnRates may have metric='unknown' before any
-      // events have been recorded.
       const sloIds = this.registeredSLOs;
 
       for (const { sloId, metric } of sloIds) {
@@ -197,17 +227,38 @@ export class SLOOperationsManager {
         let passed = true;
 
         switch (metric) {
-          case 'success_rate':
+          case 'api_success_rate':
             value = status === 'success' ? 1 : 0;
             passed = status === 'success';
             break;
-          case 'latency_ms':
-            value = latencyMs;
-            passed = latencyMs < SLO_LATENCY_THRESHOLD_MS;
+          case 'schedule_latency_ms':
+            value = scheduleLatencyMs;
+            passed = scheduleLatencyMs < SLO_SCHEDULE_LATENCY_MS;
             break;
-          case 'cost_usd':
-            value = costUsd;
-            passed = costUsd < SLO_COST_THRESHOLD_USD;
+          case 'step_recovery_ms':
+            if (stepRecoveryMs !== undefined) {
+              value = stepRecoveryMs;
+              passed = stepRecoveryMs < SLO_STEP_RECOVERY_MS;
+            }
+            break;
+          case 'dlq_recovery_rate':
+            if (dlqRecovered !== undefined) {
+              value = dlqRecovered ? 1 : 0;
+              passed = dlqRecovered;
+            }
+            break;
+          case 'hash_chain_integrity':
+            if (hashChainValid !== undefined) {
+              value = hashChainValid ? 1 : 0;
+              passed = hashChainValid;
+            }
+            break;
+          case 'approval_failclosed_rate':
+            // Only evaluate when an approval was requested
+            if (approvalRequested !== undefined && approvalRequested) {
+              value = approvalDenied ? 1 : 0;
+              passed = approvalDenied;
+            }
             break;
           default:
             continue;

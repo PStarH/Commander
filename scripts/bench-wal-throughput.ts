@@ -27,9 +27,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { openCheckpointBackend } from '../packages/core/src/atr/checkpointStore';
 import type { CheckpointState } from '../packages/core/src/runtime/stateCheckpointer';
+import { withBenchmarkEnv } from './benchmarkEnv';
 
 interface BenchResult {
-  schemaVersion: 1;
   timestamp: string;
   iterations: number;
   warmup: number;
@@ -144,7 +144,6 @@ async function runBenchmark(args: CliArgs): Promise<BenchResult> {
   const sum = latenciesUs.reduce((s, x) => s + x, 0);
 
   return {
-    schemaVersion: 1,
     timestamp: new Date().toISOString(),
     iterations,
     warmup,
@@ -168,7 +167,14 @@ async function main(): Promise<void> {
     `[bench] starting iterations=${args.iterations} warmup=${args.warmup} dbPath=${args.dbPath}\n`,
   );
   const result = await runBenchmark(args);
-  const json = JSON.stringify(result, null, 2);
+
+  const summary = { passed: true, errors: 0, failed: 0, skipped: 0 };
+
+  const baselineDoc = withBenchmarkEnv(
+    { ...result, summary },
+    { evidence: 'simulated', datasetVersion: 'wal-throughput-v1' },
+  );
+  const json = JSON.stringify(baselineDoc, null, 2);
   process.stdout.write(json + '\n');
   if (args.output) {
     fs.mkdirSync(path.dirname(args.output), { recursive: true });

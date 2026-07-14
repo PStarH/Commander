@@ -306,8 +306,14 @@ function getClientIp(req: Request): string {
 }
 
 function extractTenantId(req: Request): string | undefined {
-  const raw = req.headers['x-tenant-id'];
-  const value = Array.isArray(raw) ? raw[0] : raw;
+  // Prefer the tenant resolved by tenantContextMiddleware from the authenticated
+  // principal. Fall back to the raw header only for pre-auth rate-limit bucketing
+  // (this value never authorizes data access — see tenantContextMiddleware).
+  const resolved = (req as Request & { tenantId?: string }).tenantId;
+  const rawHeader = Array.isArray(req.headers['x-tenant-id'])
+    ? req.headers['x-tenant-id'][0]
+    : req.headers['x-tenant-id'];
+  const value = resolved ?? rawHeader;
   if (typeof value !== 'string') return undefined;
   if (!TENANT_ID_RE.test(value)) return undefined;
   return value;

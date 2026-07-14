@@ -524,7 +524,7 @@ export const RECOMMENDED_TIERS: Record<ProviderTier, ProviderTierConfig> = {
     minModels: 2,
   },
   full: {
-    description: 'Maximum resilience with all 22 providers',
+    description: 'Maximum resilience with all 25 providers',
     providers: ['*'],
     minModels: 8,
   },
@@ -601,11 +601,52 @@ const DOMAIN_KEYWORDS: Record<string, string[]> = {
   scientific: ['hypothesis', 'experiment', 'methodology', 'peer_review', 'replication'],
 };
 
+// AI-8: pin a minimum model tier for security-sensitive / effect-authorizing
+// steps so keyword-derived complexity scoring (from the untrusted goal) or a
+// cheap user-tier preference cannot silently route such a step to a weak model.
+const TIER_RANK: Record<ModelTier, number> = { eco: 0, standard: 1, power: 2, consensus: 3 };
+
+// Substrings that mark a tool as capable of a sensitive/irreversible effect.
+const SENSITIVE_TOOL_HINTS = [
+  'approve',
+  'payment',
+  'transfer',
+  'delete',
+  'deploy',
+  'exec',
+  'shell',
+  'ssh',
+  'secret',
+  'credential',
+  'effect',
+  'wire',
+  'refund',
+];
+
+function isSensitiveContext(ctx: AgentExecutionContext): boolean {
+  // Effect-authorizing steps carry a capability token — treat them as sensitive.
+  if (ctx.capabilityToken) return true;
+  return (ctx.availableTools ?? []).some((t) => {
+    const name = t.toLowerCase();
+    return SENSITIVE_TOOL_HINTS.some((h) => name.includes(h));
+  });
+}
+
+/** Resolve the minimum tier a sensitive step may be routed to (undefined = no floor).
+ *  AI-8: exported so orchestrators can pin the same floor on fallback/escalation
+ *  paths that bypass route(). Override the default ('standard') with
+ *  COMMANDER_MIN_SENSITIVE_MODEL_TIER (eco|standard|power|consensus). */
+export function resolveMinSensitiveTier(ctx: AgentExecutionContext): ModelTier | undefined {
+  if (!isSensitiveContext(ctx)) return undefined;
+  const envTier = process.env.COMMANDER_MIN_SENSITIVE_MODEL_TIER as ModelTier | undefined;
+  if (envTier && envTier in TIER_RANK) return envTier;
+  return 'standard';
+}
+
 function scoreComplexity(ctx: AgentExecutionContext): ComplexityScore {
   const factors: { name: string; contribution: number }[] = [];
   let score = 0;
   const goalLower = ctx.goal.toLowerCase();
-
   const keywordHigh = HIGH_COMPLEXITY_KEYWORDS.filter((k) => goalLower.includes(k)).length;
   const keywordMedium = MEDIUM_COMPLEXITY_KEYWORDS.filter((k) => goalLower.includes(k)).length;
   if (keywordHigh >= 3) {
@@ -796,7 +837,22 @@ export class ModelRouter {
       tier = this.bumpTierForCapabilities(tier, requiredCaps);
     }
 
-    const candidates = this.rankCandidates(tier, requiredCaps, taskType, ctx, registeredProviders);
+    // AI-8: enforce a minimum tier for sensitive/effect-authorizing steps BEFORE
+    // ranking, so a low complexity score (derived from the untrusted goal) or a
+    // cheap preferred tier cannot route such a step to a weak model.
+    const minSensitiveTier = resolveMinSensitiveTier(ctx);
+    if (minSensitiveTier && TIER_RANK[tier] < TIER_RANK[minSensitiveTier]) {
+      tier = minSensitiveTier;
+    }
+
+    const candidates = this.rankCandidates(
+      tier,
+      requiredCaps,
+      taskType,
+      ctx,
+      registeredProviders,
+      minSensitiveTier,
+    );
     let model = candidates[0];
 
     this.routingCount++;
@@ -810,7 +866,13 @@ export class ModelRouter {
     if (userId) {
       const userTier = this.getUserTier(userId);
       if (userTier === 'free' && model.tier === 'power') {
-        const ecoCandidate = candidates.find((m) => m.tier === 'eco' || m.tier === 'standard');
+        // AI-8: never downgrade a sensitive step below its pinned floor for
+        // cost reasons — pick the cheapest candidate that still meets the floor.
+        const floorRank = minSensitiveTier ? TIER_RANK[minSensitiveTier] : 0;
+        const ecoCandidate = candidates.find(
+          (m) =>
+            (m.tier === 'eco' || m.tier === 'standard') && TIER_RANK[m.tier] >= floorRank,
+        );
         if (ecoCandidate) model = ecoCandidate;
       }
     }
@@ -820,6 +882,7 @@ export class ModelRouter {
       `task_type: ${taskType}`,
       `required_capabilities: ${requiredCaps.join(', ') || 'none'}`,
       `selected_tier: ${tier}`,
+      ...(minSensitiveTier ? [`min_sensitive_tier: ${minSensitiveTier}`] : []),
       `governor_phase: ${governor}`,
       `candidates_ranked: ${candidates.length}`,
       `selected_model: ${model?.id ?? 'none'}`,
@@ -903,8 +966,14 @@ export class ModelRouter {
   /**
    * Get the next fallback model for a given model (for retry-with-fallback).
    * Returns the next model in the same tier by priority, or steps down a tier.
+   * @param minTier - AI-8: optional pinned floor; fallback never steps below it
+   *   (pass `resolveMinSensitiveTier(ctx)` for sensitive/effect-authorizing steps).
    */
-  getFallbackModel(failedModelId: string, taskType?: string): ModelConfig | undefined {
+  getFallbackModel(
+    failedModelId: string,
+    taskType?: string,
+    minTier?: ModelTier,
+  ): ModelConfig | undefined {
     const failed = this.models.get(failedModelId);
     if (!failed) return undefined;
 
@@ -916,13 +985,27 @@ export class ModelRouter {
       if (this.hasCapabilities(candidate, requiredCaps)) return candidate;
     }
 
-    // Step down tier (pre-sorted by priority)
+    // Step down tier (pre-sorted by priority), never below the pinned floor
     const tierOrder: ModelTier[] = ['power', 'standard', 'eco'];
     const currentIdx = tierOrder.indexOf(failed.tier);
     for (let i = currentIdx + 1; i < tierOrder.length; i++) {
+      if (minTier && TIER_RANK[tierOrder[i]] < TIER_RANK[minTier]) break;
       const lowerTier = this.tierIndex.get(tierOrder[i]) ?? [];
       for (const candidate of lowerTier) {
         if (this.hasCapabilities(candidate, requiredCaps)) return candidate;
+      }
+    }
+
+    // AI-8: floored fallback exhausted same-and-lower tiers — try stepping UP
+    // so a sensitive step still gets a working model instead of none.
+    if (minTier) {
+      for (let i = currentIdx - 1; i >= 0; i--) {
+        const higherTier = this.tierIndex.get(tierOrder[i]) ?? [];
+        for (const candidate of higherTier) {
+          if (candidate.id !== failedModelId && this.hasCapabilities(candidate, requiredCaps)) {
+            return candidate;
+          }
+        }
       }
     }
 
@@ -936,12 +1019,15 @@ export class ModelRouter {
    *
    * @param taskType - The task type for capability filtering
    * @param maxModels - Maximum models in the cascade (default: 3)
+   * @param minTier - AI-8: optional pinned floor; tiers below it are excluded
+   *   so a sensitive step's cascade cannot start (or escalate through) a weak model
    * @returns Ordered array of models: cheapest first, most capable last
    */
   getCascadeChain(
     taskType?: string,
     maxModels: number = 3,
     registeredProviders?: Set<string>,
+    minTier?: ModelTier,
   ): ModelConfig[] {
     const requiredCaps = TASK_CAPABILITY_MAP[taskType ?? 'general'] ?? [];
     const tierOrder: ModelTier[] = ['eco', 'standard', 'power', 'consensus'];
@@ -949,6 +1035,7 @@ export class ModelRouter {
 
     for (const tier of tierOrder) {
       if (chain.length >= maxModels) break;
+      if (minTier && TIER_RANK[tier] < TIER_RANK[minTier]) continue;
       let tierModels = this.tierIndex.get(tier) ?? [];
       if (registeredProviders && registeredProviders.size > 0) {
         tierModels = tierModels.filter((m) => registeredProviders.has(m.provider));
@@ -987,16 +1074,22 @@ export class ModelRouter {
   ): { initial: RoutingDecision; escalationChain: ModelConfig[] } {
     const governor = governorPhase ?? 'relaxed';
     const taskType = detectTaskTypeLazy(ctx.goal);
+    // AI-8: sensitive/effect-authorizing steps carry a pinned tier floor. The
+    // floor also applies to the escalation chain — getNextEscalation falls back
+    // to chain[0] when the current model is not in the chain, so an unfloored
+    // chain would let a verification failure demote a sensitive step to eco.
+    const minSensitiveTier = resolveMinSensitiveTier(ctx);
 
     // In relaxed/moderate mode, use standard routing (start optimal)
     if (governor === 'relaxed' || governor === 'moderate') {
       const initial = this.route(ctx, governor, preferredTier, registeredProviders);
-      const chain = this.getCascadeChain(taskType, 3, registeredProviders);
+      const chain = this.getCascadeChain(taskType, 3, registeredProviders, minSensitiveTier);
       return { initial, escalationChain: chain };
     }
 
-    // In tight/critical mode, start with cheapest capable model (FrugalGPT pattern)
-    const chain = this.getCascadeChain(taskType, 3, registeredProviders);
+    // In tight/critical mode, start with cheapest capable model (FrugalGPT
+    // pattern) that still satisfies the sensitive-tier floor.
+    const chain = this.getCascadeChain(taskType, 3, registeredProviders, minSensitiveTier);
 
     if (chain.length === 0) {
       // Fallback to standard routing
@@ -1024,6 +1117,7 @@ export class ModelRouter {
         `complexity: ${complexity.score}/10`,
         `task_type: ${taskType}`,
         `governor_phase: ${governor}`,
+        ...(minSensitiveTier ? [`min_sensitive_tier: ${minSensitiveTier}`] : []),
         `escalation_chain: ${chain.map((m) => m.id).join(' → ')}`,
       ],
       estimatedCost:
@@ -1338,6 +1432,7 @@ export class ModelRouter {
     taskType: string,
     ctx: AgentExecutionContext,
     registeredProviders?: Set<string>,
+    minTier?: ModelTier,
   ): ModelConfig[] {
     let candidates = [...(this.tierIndex.get(tier) ?? [])];
 
@@ -1349,8 +1444,23 @@ export class ModelRouter {
     if (candidates.length === 0) {
       const tierOrder: ModelTier[] = ['consensus', 'power', 'standard', 'eco'];
       const startIdx = tierOrder.indexOf(tier);
-      for (let i = startIdx + 1; i < tierOrder.length; i++) {
-        candidates = [...(this.tierIndex.get(tierOrder[i]) ?? [])];
+      const walkDown = tierOrder.slice(startIdx + 1);
+      // AI-8: with a pinned floor, prefer tiers that still satisfy it (walking
+      // up when everything cheaper is below the floor) and only drop below the
+      // floor as a last resort, so an empty or provider-filtered tier cannot
+      // silently demote a sensitive step.
+      const order = minTier
+        ? [
+            ...walkDown.filter((t) => TIER_RANK[t] >= TIER_RANK[minTier]),
+            ...tierOrder
+              .slice(0, startIdx)
+              .reverse()
+              .filter((t) => TIER_RANK[t] >= TIER_RANK[minTier]),
+            ...walkDown.filter((t) => TIER_RANK[t] < TIER_RANK[minTier]),
+          ]
+        : walkDown;
+      for (const t of order) {
+        candidates = [...(this.tierIndex.get(t) ?? [])];
         if (candidates.length > 0) break;
       }
     }

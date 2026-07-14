@@ -166,7 +166,10 @@ function resolveBenchmarkResponse(query: string): { text: string; tokens: TokenU
   return { text, tokens: estimateOutputTokens(text) };
 }
 
-function simulateTool(toolName: string, args: Record<string, unknown>): { output: string; durationMs: number } {
+function simulateTool(
+  toolName: string,
+  args: Record<string, unknown>,
+): { output: string; durationMs: number } {
   if (toolName === 'weather_lookup' && args.city === 'Paris') {
     return { output: 'The weather in Paris is 22°C and sunny.', durationMs: 4 };
   }
@@ -329,7 +332,8 @@ export const cacheManagerModule: BenchmarkModule = {
     });
     return {
       cacheManager,
-      runSequence: (task: CacheManagerTask) => runTreatmentSequence({ cacheManager } as TreatmentImpl, task, llm),
+      runSequence: (task: CacheManagerTask) =>
+        runTreatmentSequence({ cacheManager } as TreatmentImpl, task, llm),
     };
   },
   runTrial: async ({ implementation, task, llm }) => {

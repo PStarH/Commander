@@ -92,6 +92,13 @@ export interface DockerExecConfig {
   workdir?: string;
   /** User to run as inside the container */
   user?: string;
+  /**
+   * Exact names of host environment variables to forward into the container.
+   * Default-deny: only listed names are passed. When omitted, a conservative
+   * built-in allowlist (PATH/HOME/USER/SHELL/TERM/LANG/TZ) is used. This is an
+   * allowlist by design — never fall back to forwarding all of process.env.
+   */
+  envAllowList?: string[];
 }
 
 /**

@@ -6,15 +6,11 @@ interface SanitizerImplementation {
 }
 
 const rawOutputs: Record<string, string> = {
-  'ssn':
-    'User record: John Doe, SSN 123-45-6789, lives in NY.',
-  'api-key':
-    'API key is sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abc, call endpoint.',
-  'email':
-    'Contact alice.smith@example.com for details.',
-  'phone':
-    'Reach me at 555-123-4567 anytime.',
-  'mixed':
+  ssn: 'User record: John Doe, SSN 123-45-6789, lives in NY.',
+  'api-key': 'API key is sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abc, call endpoint.',
+  email: 'Contact alice.smith@example.com for details.',
+  phone: 'Reach me at 555-123-4567 anytime.',
+  mixed:
     'Profile: bob@example.com, SSN 987-65-4321, token sk-ant-api03-abcdefghijklmnopqrstuvwxyz12, complete.',
 };
 

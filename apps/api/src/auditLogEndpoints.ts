@@ -26,6 +26,10 @@ import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { z } from 'zod';
 import { toErrorMessage } from './routeHelpers';
+import { getDirname, getRequire } from './esmCompat';
+const __dirname = getDirname(import.meta.url);
+const require = getRequire(import.meta.url);
+
 import {
   getUnifiedAuditLog,
   type UnifiedAuditCategory,

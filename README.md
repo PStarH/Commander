@@ -1,9 +1,9 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@commander/core"><img src="https://img.shields.io/badge/npm-pending-CB3837?style=flat-square&label=npm" /></a>
   <a href="https://github.com/PStarH/Commander/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/PStarH/Commander/ci.yml?style=flat-square&label=CI&logo=github" /></a>
-  <img src="https://img.shields.io/badge/providers-24-7C3AED?style=flat-square" />
+  <img src="https://img.shields.io/badge/providers-25-7C3AED?style=flat-square" />
   <img src="https://img.shields.io/badge/topologies-5-EF4444?style=flat-square" />
-  <img src="https://img.shields.io/badge/tools-38-10B981?style=flat-square" />
+  <img src="https://img.shields.io/badge/tools-18-10B981?style=flat-square" />
   <img src="https://img.shields.io/github/license/PStarH/Commander?style=flat-square&color=EAB308" />
   <a href="https://github.com/PStarH/Commander/releases"><img src="https://img.shields.io/github/v/release/PStarH/Commander?style=flat-square&label=release&color=22C55E" /></a>
 </p>
@@ -13,7 +13,7 @@
 
 <p align="center">
   <code>npx tsx packages/core/src/cli.ts run "audit this repo" --stream</code><br>
-  <sub>Every agent thought streams to your terminal. Every output is verified. 24 providers. One command.</sub>
+  <sub>Every agent thought streams to your terminal. Every output is verified. 25 providers. One command.</sub>
 </p>
 
 <p align="center">
@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/commander-watch-demo.gif" alt="Commander demo — CLI help, deliberation planning, and system status" width="100%">
+  <img src="docs/assets/commander-watch-demo.svg" alt="Commander demo — CLI help, deliberation planning, and system status" width="100%">
 </p>
 
 ---
@@ -107,11 +107,11 @@ Every agent thought, every tool call, every quality gate decision — streamed t
 └──────────────────────────────────────────────────────────────┘
 ```
 
-### 24 Providers with Auto-Failover
+### 25 Providers with Auto-Failover
 
 Set any one API key. Commander detects your provider, and if it fails, falls through a configurable chain. OpenAI → Anthropic → DeepSeek → Groq → Ollama — you define the order, Commander handles the routing.
 
-OpenAI · Anthropic · Google · Azure · DeepSeek · GLM · MiMo · Xiaomi · Groq · Together · Perplexity · Fireworks · Replicate · Mistral · Cohere · OpenRouter · xAI · Anyscale · DeepInfra · Agnes · Ollama · vLLM · AWS Bedrock · StepFun
+OpenAI · Anthropic · Google · Azure · DeepSeek · GLM · MiMo · Xiaomi · Groq · Together · Perplexity · Fireworks · Replicate · Mistral · Cohere · OpenRouter · xAI · Anyscale · DeepInfra · Agnes · Ollama · vLLM · AWS Bedrock · StepFun · MiniMax
 
 ### Quality Gates on Every Output
 
@@ -276,5 +276,5 @@ MIT. See [LICENSE](LICENSE) and [COPYRIGHT.md](COPYRIGHT.md).
 ---
 
 <p align="center">
-  <sub>5 canonical topologies · 24 providers · 38 built-in tools · Built for engineers who want to see what their AI is actually doing.</sub>
+  <sub>5 canonical topologies · 25 providers · 18 built-in tools · Built for engineers who want to see what their AI is actually doing.</sub>
 </p>

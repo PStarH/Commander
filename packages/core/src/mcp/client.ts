@@ -36,11 +36,30 @@ function uuid(): string {
  *  - Only explicitly allowed base names or absolute paths may be spawned.
  *  - Override via COMMANDER_MCP_ALLOWED_COMMANDS comma-separated env var.
  */
-function validateMcpCommand(command: string): string | undefined {
+function validateMcpCommand(command: string, args: readonly string[] = []): string | undefined {
   const base = path.basename(command).toLowerCase();
 
   if (base === 'npx' || command.toLowerCase().startsWith('npx ')) {
     return 'npx is not allowed for MCP stdio transport (download-on-execute supply-chain risk)';
+  }
+
+  // MCP-5: an allowlisted interpreter still becomes arbitrary code execution when
+  // handed an inline-eval flag (node -e, python -c, deno eval, ...). Treat args as
+  // part of the allowlist decision and reject eval/inline-code flags.
+  const EVAL_FLAGS = new Set(['-e', '--eval', '-c', '--command', '-p', '--print', 'eval', '-E']);
+  for (const arg of args) {
+    const a = arg.trim().toLowerCase();
+    if (
+      EVAL_FLAGS.has(a) ||
+      a.startsWith('-e=') ||
+      a.startsWith('--eval=') ||
+      a.startsWith('-c=') ||
+      a.startsWith('--command=') ||
+      a.startsWith('-p=') ||
+      a.startsWith('--print=')
+    ) {
+      return `MCP command arguments may not contain an inline-eval flag ("${arg}") — it permits arbitrary code execution.`;
+    }
   }
 
   const defaultAllowed = ['node', 'nodejs', 'python', 'python3', 'uvx', 'bun', 'deno'];
@@ -87,7 +106,7 @@ export class StdioClientTransport implements MCPTransport {
     if (!command) {
       throw new Error('MCP stdio transport requires a command');
     }
-    const validationError = validateMcpCommand(command);
+    const validationError = validateMcpCommand(command, this.config.args ?? []);
     if (validationError) {
       throw new Error(`MCP command rejected: ${validationError}`);
     }

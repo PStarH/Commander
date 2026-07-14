@@ -62,6 +62,8 @@ export type CheckpointPhaseLabel =
   | 'tool_execution'
   | 'verification'
   | 'interrupted'
+  /** Durable human-in-the-loop wait; maps to ATR RunState PAUSED. */
+  | 'waiting_for_human'
   | 'completed_early_exit'
   | 'completed'
   | 'failed';
@@ -117,7 +119,7 @@ export interface AgentExecutionState {
   retryLoopDetected: boolean;
   retryLoopCount: number;
   recentToolPatterns: string[];
-  interruptData: { reason: string; value: unknown } | null;
+  interruptData: { reason: string; value: unknown; humanInputRequired?: boolean } | null;
   cumulativeEvidence: number;
   largestFileWriteContent: string;
   largestFileWritePath: string;

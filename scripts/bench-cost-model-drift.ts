@@ -42,6 +42,7 @@
  */
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
+import { withBenchmarkEnv } from './benchmarkEnv';
 
 import { DEFAULT_PRICING as COST_MODEL_PRICING } from '../packages/core/src/observability/costModel';
 import {
@@ -239,29 +240,30 @@ async function main() {
     (m, d) => Math.max(m, isFinite(d.maxDriftPct) ? d.maxDriftPct : 0),
     0,
   );
-  const baseline = {
-    benchmark: 'cost-model-drift',
-    runAt: new Date().toISOString(),
-    nodeVersion: process.version,
-    thresholdPct: thresholdSafe,
-    drifts,
-    summary: {
-      passed,
-      directionA: {
-        total: dirA.length,
-        clean: cleanA.length,
-        drifted: driftedA.length,
-        missing: missingA.length,
+  const baseline = withBenchmarkEnv(
+    {
+      benchmark: 'cost-model-drift',
+      thresholdPct: thresholdSafe,
+      drifts,
+      summary: {
+        passed,
+        directionA: {
+          total: dirA.length,
+          clean: cleanA.length,
+          drifted: driftedA.length,
+          missing: missingA.length,
+        },
+        directionB: {
+          total: dirB.length,
+          clean: cleanB.length,
+          drifted: driftedB.length,
+          missing: missingB.length,
+        },
+        maxObservedDriftPct,
       },
-      directionB: {
-        total: dirB.length,
-        clean: cleanB.length,
-        drifted: driftedB.length,
-        missing: missingB.length,
-      },
-      maxObservedDriftPct,
     },
-  };
+    { evidence: 'source', datasetVersion: 'cost-pricing-table-v1' },
+  );
 
   const fullPath = resolve(outputPath);
   const dir = dirname(fullPath);
