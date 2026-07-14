@@ -24,11 +24,7 @@ import { getGlobalLogger } from '../logging';
 import { getGlobalDeterminismCapture, type ReplayContext } from './determinismCapture';
 
 export type RecoveryStatus =
-  | 'recovered'
-  | 'recovered_via_replay'
-  | 'fenced'
-  | 'not_found'
-  | 'lease_lost';
+  'recovered' | 'recovered_via_replay' | 'fenced' | 'not_found' | 'lease_lost';
 
 export interface RunRecoveryResult {
   status: RecoveryStatus;

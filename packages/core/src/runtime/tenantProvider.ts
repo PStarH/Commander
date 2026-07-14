@@ -15,8 +15,7 @@ import { getCurrentTenantId as readCurrentTenantId, setMultiTenantEnabled } from
 
 let _ThreeLayerMemory: typeof import('../threeLayerMemory').ThreeLayerMemory | null = null;
 let _getGlobalThreeLayerMemory:
-  | typeof import('../threeLayerMemory').getGlobalThreeLayerMemory
-  | null = null;
+  typeof import('../threeLayerMemory').getGlobalThreeLayerMemory | null = null;
 function lazyThreeLayerMemoryClass(): typeof import('../threeLayerMemory').ThreeLayerMemory {
   if (!_ThreeLayerMemory) {
     const mod = require('../threeLayerMemory');

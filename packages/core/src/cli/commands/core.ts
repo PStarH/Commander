@@ -32,7 +32,8 @@ import { getMetaLearner } from '../../selfEvolution/metaLearner';
 interface RoutingFlags {
   model?: string;
   tier?: 'speed' | 'balanced' | 'power';
-  topology?: // Canonical (Anthropic-aligned 5) — preferred.
+  topology?:
+    // Canonical (Anthropic-aligned 5) — preferred.
     | 'SINGLE'
     | 'CHAIN'
     | 'DISPATCH'

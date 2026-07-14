@@ -79,12 +79,7 @@ export interface RoundLedger {
 }
 
 export type RoundDecision =
-  | 'continue'
-  | 'stop_achieved'
-  | 'stop_plateau'
-  | 'stop_budget'
-  | 'stop_max_rounds'
-  | 'ask_user';
+  'continue' | 'stop_achieved' | 'stop_plateau' | 'stop_budget' | 'stop_max_rounds' | 'ask_user';
 
 // ============================================================================
 // Config & Result

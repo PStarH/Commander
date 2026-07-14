@@ -20,11 +20,7 @@ import { reportSilentFailure } from '../../../silentFailureReporter';
 // ============================================================================
 
 export type JudgeDimension =
-  | 'correctness'
-  | 'completeness'
-  | 'safety'
-  | 'helpfulness'
-  | 'costEfficiency';
+  'correctness' | 'completeness' | 'safety' | 'helpfulness' | 'costEfficiency';
 
 export const JUDGE_DIMENSIONS: JudgeDimension[] = [
   'correctness',

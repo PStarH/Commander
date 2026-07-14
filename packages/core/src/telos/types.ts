@@ -93,11 +93,7 @@ export interface TELOSAgentAssignment {
 }
 
 export type TELOSOrchestrationMode =
-  | 'SEQUENTIAL'
-  | 'PARALLEL'
-  | 'HANDOFF'
-  | 'MAGENTIC'
-  | 'CONSENSUS';
+  'SEQUENTIAL' | 'PARALLEL' | 'HANDOFF' | 'MAGENTIC' | 'CONSENSUS';
 
 // ============================================================================
 // TELOS Provider Pool Types

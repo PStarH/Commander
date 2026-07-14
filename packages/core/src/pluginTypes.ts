@@ -42,11 +42,7 @@ export type HookPoint =
   | 'afterBackendSelect';
 
 export type PluginCategory =
-  | 'monitoring'
-  | 'security'
-  | 'optimization'
-  | 'integration'
-  | 'analytics';
+  'monitoring' | 'security' | 'optimization' | 'integration' | 'analytics';
 
 /** Context passed to beforeToolCall hooks */
 export interface BeforeToolCallContext {

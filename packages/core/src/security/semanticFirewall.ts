@@ -50,12 +50,7 @@ import { getSecurityAuditLogger } from './securityAuditLogger';
 
 /** 技能 / 程序性记忆的来源类型。 */
 export type ProvenanceOrigin =
-  | 'verified_tool'
-  | 'agent_generated'
-  | 'user_input'
-  | 'web_content'
-  | 'tool_output'
-  | 'unknown';
+  'verified_tool' | 'agent_generated' | 'user_input' | 'web_content' | 'tool_output' | 'unknown';
 
 /** 信任等级，由来源推导，低信任来源触发更严格的校验。 */
 export type TrustLevel = 'high' | 'medium' | 'low' | 'untrusted';

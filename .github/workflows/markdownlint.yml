@@ -41,10 +41,11 @@ jobs:
 
       - uses: pnpm/action-setup@v6
 
+      # No pnpm install / no pnpm-store cache: this job only runs node scripts/lint-docs.js.
+      # setup-node cache:pnpm fails post-job when the store path was never created.
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
-          cache: 'pnpm'
 
       - name: Lint README*.md per AGENTS.md Documentation Policy
         id: lint

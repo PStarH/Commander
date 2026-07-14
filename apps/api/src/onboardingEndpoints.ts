@@ -674,15 +674,13 @@ export function createOnboardingRouter(): Router {
                   : '';
               } else if (resolved.apiType === 'google') {
                 const candidates = data.candidates as
-                  | Array<{ content?: { parts?: Array<{ text?: string }> } }>
-                  | undefined;
+                  Array<{ content?: { parts?: Array<{ text?: string }> } }> | undefined;
                 text = Array.isArray(candidates)
                   ? (candidates[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('')
                   : '';
               } else {
                 const choices = data.choices as
-                  | Array<{ message?: { content?: string } }>
-                  | undefined;
+                  Array<{ message?: { content?: string } }> | undefined;
                 text =
                   Array.isArray(choices) && choices[0]?.message?.content
                     ? (choices[0].message.content as string)
