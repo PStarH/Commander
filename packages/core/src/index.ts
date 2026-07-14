@@ -921,6 +921,7 @@ export {
   getPrivacyRouter,
   resetPrivacyRouter,
 } from './runtime';
+export type { AgentRuntimeInterface } from './runtime';
 export type {
   AgentRuntimeInterface,
   AgentRuntimeFactory,

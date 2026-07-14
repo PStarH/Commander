@@ -44,6 +44,17 @@
   "optionalDependencies": {
     "pg": "^8.15.0"
   },
+  "peerDependencies": {
+    "better-sqlite3": ">=9.0.0"
+  },
+  "peerDependenciesMeta": {
+    "better-sqlite3": {
+      "optional": true
+    }
+  },
+  "optionalDependencies": {
+    "pg": "^8.15.0"
+  },
   "devDependencies": {
     "@types/bcryptjs": "^3.0.0",
     "@types/better-sqlite3": "^7.6.0",
