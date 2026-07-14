@@ -61,7 +61,7 @@ import { getTraceRecorder } from './executionTrace';
 import { getConversationStore } from '../memory/conversationStore';
 import { getHookManager } from '../pluginManager';
 import { createParameterControllerPlugin } from './parameterController';
-import { createRaspExtensionsPlugin } from '../plugins/builtin/raspExtensionsPlugin';
+import { registerBuiltinPlugins } from '../plugins/builtin/registerBuiltinPlugins';
 import {
   registerResponseCallbacks,
   startSecurityResponseEngine,
@@ -600,13 +600,19 @@ export function initializeServices(
       }),
     );
 
-  getHookManager()
-    .register(createRaspExtensionsPlugin())
-    .catch((e) =>
-      getGlobalLogger().debug('AgentRuntime', 'RASP plugin registration', {
-        error: (e as Error)?.message,
-      }),
-    );
+  // no-excuse-ok: catch — boot boundary; never block agent runtime startup.
+  registerBuiltinPlugins({
+    rasp: true,
+    taint: true,
+    rag: true,
+    ragDisabled: true,
+    gap: true,
+    observability: true,
+  }).catch((e) =>
+    getGlobalLogger().warn('AgentRuntime', 'Built-in plugin registration failed', {
+      error: (e as Error)?.message,
+    }),
+  );
 
   // Wire security.alert → SecurityResponseEngine so monitor/RASP detections
   // trigger automated suspend/quarantine/throttle actions.

@@ -219,8 +219,10 @@ export default defineConfig({
       'tests/plugins/gap/slaEnforcer.test.ts',
       'tests/plugins/gap/storage.test.ts',
       'tests/plugins/gap/types.test.ts',
+      'tests/plugins/builtin/registerBuiltinPlugins.test.ts',
       'tests/plugins/builtin/consensus/adaptiveStopping.test.ts',
       'tests/plugins/builtin/consensus/sacProtocol.test.ts',
+      'tests/plugins/builtin/registerBuiltinPlugins.test.ts',
       // --- security (3-layer defense regression — reversible gate, anomaly
       // detector, universal sanitizer, tenancy boundary, plugin supply) ---
       'tests/security/adversarial.test.ts',
