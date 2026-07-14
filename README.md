@@ -117,25 +117,25 @@ OpenAI · Anthropic · Google · Azure · DeepSeek · GLM · MiMo · Xiaomi · G
 
 Before returning any result, Commander runs 5-layer verification:
 
-| Gate | What it checks |
-|---|---|
-| Hallucination | LLM-as-Judge detection of fabricated facts |
-| Consistency | Cross-agent agreement, no contradictions |
-| Completeness | All required dimensions covered |
-| Accuracy | Factual correctness against source material |
-| Safety | Content scanning, injection detection |
+| Gate          | What it checks                              |
+| ------------- | ------------------------------------------- |
+| Hallucination | LLM-as-Judge detection of fabricated facts  |
+| Consistency   | Cross-agent agreement, no contradictions    |
+| Completeness  | All required dimensions covered             |
+| Accuracy      | Factual correctness against source material |
+| Safety        | Content scanning, injection detection       |
 
 If the output fails any gate, the system retries or reports the failure with full context.
 
 ### Resilience
 
-| Capability | Implementation |
-|---|---|
-| Circuit Breakers | 3-state (CLOSED/OPEN/HALF-OPEN), per-provider error rate tracking |
-| Dead Letter Queue | Append-only NDJSON, 7 categories, replay support |
-| Saga Compensation | Failed mutations → automatic rollback |
-| Checkpointing | SQLite + WAL, crash-safe recovery (<5s target) |
-| Semantic Caching | SHA-256 exact + cosine-similarity deduplication |
+| Capability        | Implementation                                                    |
+| ----------------- | ----------------------------------------------------------------- |
+| Circuit Breakers  | 3-state (CLOSED/OPEN/HALF-OPEN), per-provider error rate tracking |
+| Dead Letter Queue | Append-only NDJSON, 7 categories, replay support                  |
+| Saga Compensation | Failed mutations → automatic rollback                             |
+| Checkpointing     | SQLite + WAL, crash-safe recovery (<5s target)                    |
+| Semantic Caching  | SHA-256 exact + cosine-similarity deduplication                   |
 
 ### Security
 
@@ -212,25 +212,25 @@ Open `http://localhost:5173`. The console provides:
 
 ## Reliability Targets
 
-| Target | Goal | Mechanism |
-|---|---|---|
-| Checkpoint Recovery | <5s | SQLite + WAL |
-| Provider Failover | <10s | Automatic fallback chain |
-| Saga Compensation | <30s | Compensation scheduler |
-| DLQ Processing | <60s | Append-only NDJSON, replay |
+| Target              | Goal | Mechanism                  |
+| ------------------- | ---- | -------------------------- |
+| Checkpoint Recovery | <5s  | SQLite + WAL               |
+| Provider Failover   | <10s | Automatic fallback chain   |
+| Saga Compensation   | <30s | Compensation scheduler     |
+| DLQ Processing      | <60s | Append-only NDJSON, replay |
 
 ---
 
 ## Benchmarks
 
-| Suite | Coverage | Result |
-|---|---|---|
-| Chaos Engineering | 255 synthetic + 55 mutation | 55.7% pass rate |
-| Red Team | 47 scenarios, 8 attack categories | 100% defense |
-| AgentDojo | 12 security test cases | 100% defense |
-| RealWorld | 50 production-like cases | 96% pass rate |
-| GAIA Spine | Core capability benchmark | Running daily |
-| SLO | 99.5% API success, <2s p95 latency | Measured daily |
+| Suite             | Coverage                           | Result          |
+| ----------------- | ---------------------------------- | --------------- |
+| Chaos Engineering | 255 synthetic + 55 mutation        | 55.7% pass rate |
+| Red Team          | 47 scenarios, 8 attack categories  | 100% defense    |
+| AgentDojo         | 12 security test cases             | 100% defense    |
+| RealWorld         | 50 production-like cases           | 96% pass rate   |
+| GAIA Spine        | Core capability benchmark          | Running daily   |
+| SLO               | 99.5% API success, <2s p95 latency | Measured daily  |
 
 Full matrix: [BENCHMARK.md](BENCHMARK.md)
 
