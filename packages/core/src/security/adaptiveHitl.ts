@@ -50,12 +50,7 @@ import type { CorrelationRuleType } from './crossAgentCorrelator';
  * The numeric order is used for max() operations — escalate wins over auto.
  */
 export type HITLStrategy =
-  | 'auto'
-  | 'suggest'
-  | 'confirm'
-  | 'pause_and_review'
-  | 'escalate'
-  | 'deny';
+  'auto' | 'suggest' | 'confirm' | 'pause_and_review' | 'escalate' | 'deny';
 
 /** Numeric severity for max() comparison. Higher = more restrictive. */
 const STRATEGY_SEVERITY: Record<HITLStrategy, number> = {
@@ -161,12 +156,7 @@ export interface MissionSignal {
   environment: 'production' | 'staging' | 'development';
   /** Task type for context-aware adjustments. */
   taskType:
-    | 'code_generation'
-    | 'code_review'
-    | 'data_analysis'
-    | 'deployment'
-    | 'research'
-    | 'unknown';
+    'code_generation' | 'code_review' | 'data_analysis' | 'deployment' | 'research' | 'unknown';
   /** Number of steps already executed in this run. */
   stepsExecuted: number;
 }

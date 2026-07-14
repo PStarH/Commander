@@ -22,10 +22,7 @@ export interface ToolGuardianCheckParams {
 }
 
 export type ToolGuardianBlockKind =
-  | 'gateway_blocked'
-  | 'guardian_blocked'
-  | 'guardian_error'
-  | 'runtime_guardian_blocked';
+  'gateway_blocked' | 'guardian_blocked' | 'guardian_error' | 'runtime_guardian_blocked';
 
 export interface ToolGuardianCheckResult {
   allowed: boolean;

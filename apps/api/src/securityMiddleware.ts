@@ -411,8 +411,7 @@ export function rateLimitMiddleware(req: Request, res: Response, next: NextFunct
   }
 
   let blockingScope:
-    | { prefix: 'tenant' | 'user' | 'ip'; entry: RateLimitEntry; max: number }
-    | undefined;
+    { prefix: 'tenant' | 'user' | 'ip'; entry: RateLimitEntry; max: number } | undefined;
   let primaryScope: RateLimitScope | undefined;
 
   for (const scope of scopes) {

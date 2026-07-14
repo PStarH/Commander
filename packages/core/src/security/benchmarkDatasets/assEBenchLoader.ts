@@ -113,8 +113,7 @@ export async function loadAssEBenchCases(
   }
 
   const raw = JSON.parse(fs.readFileSync(path.join(options.cacheDir, existing), 'utf-8')) as
-    | RawAssEBenchRecord[]
-    | { records?: RawAssEBenchRecord[] };
+    RawAssEBenchRecord[] | { records?: RawAssEBenchRecord[] };
 
   const records = Array.isArray(raw) ? raw : (raw.records ?? []);
   for (let i = 0; i < records.length; i++) {

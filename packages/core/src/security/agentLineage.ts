@@ -70,10 +70,7 @@ export interface LineageNode {
 
 /** Event written to the audit chain on lineage changes. */
 export type LineageEventType =
-  | 'agent_spawned'
-  | 'agent_terminated'
-  | 'agent_revoked'
-  | 'agent_handoff';
+  'agent_spawned' | 'agent_terminated' | 'agent_revoked' | 'agent_handoff';
 
 /** Summary of a lineage tree for API responses. */
 export interface LineageSummary {

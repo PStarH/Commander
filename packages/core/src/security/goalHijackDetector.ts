@@ -26,10 +26,7 @@ import { getSecurityAuditLogger } from './securityAuditLogger';
 
 /** 劫持类型 */
 export type HijackType =
-  | 'direct_override'
-  | 'indirect_injection'
-  | 'goal_drift'
-  | 'recursive_modification';
+  'direct_override' | 'indirect_injection' | 'goal_drift' | 'recursive_modification';
 
 /** 劫持严重程度 */
 export type HijackSeverity = 'critical' | 'high' | 'medium' | 'low';

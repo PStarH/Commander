@@ -112,11 +112,7 @@ function maskErasedSubjects(entries: UnifiedAuditEntry[]): UnifiedAuditEntry[] {
 // ============================================================================
 
 export type UnifiedAuditCategory =
-  | 'security'
-  | 'approval'
-  | 'execution'
-  | 'configuration'
-  | 'user_action';
+  'security' | 'approval' | 'execution' | 'configuration' | 'user_action';
 
 export type UnifiedAuditSeverity = 'info' | 'warn' | 'error' | 'critical';
 

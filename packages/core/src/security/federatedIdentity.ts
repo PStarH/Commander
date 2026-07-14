@@ -83,10 +83,7 @@ const REVOKED_TRUST_IDS = new Set<string>();
 
 /** Resource scope granularity for federation trust. */
 export type ResourceScope =
-  | `read:${string}`
-  | `call:${string}`
-  | `manage:${string}`
-  | `admin:${string}`;
+  `read:${string}` | `call:${string}` | `manage:${string}` | `admin:${string}`;
 
 /** A single federation trust relationship. */
 export interface FederationTrust {

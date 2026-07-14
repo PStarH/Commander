@@ -101,13 +101,7 @@ export interface RecallOptions {
 }
 
 export type MemorySource =
-  | 'working'
-  | 'episodic'
-  | 'longterm'
-  | 'conversations'
-  | 'user_model'
-  | 'semantic'
-  | 'federated';
+  'working' | 'episodic' | 'longterm' | 'conversations' | 'user_model' | 'semantic' | 'federated';
 
 export interface UnifiedRecallResult {
   /** Working memory matches */

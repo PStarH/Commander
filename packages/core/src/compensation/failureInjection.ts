@@ -10,13 +10,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import type { HttpRequest, HttpResponse, HttpSendFn } from './types';
 
 export type FailureCategory =
-  | 'compute'
-  | 'storage'
-  | 'network'
-  | 'state'
-  | 'dependency'
-  | 'time'
-  | 'security';
+  'compute' | 'storage' | 'network' | 'state' | 'dependency' | 'time' | 'security';
 
 export type FailureMode =
   | 'timeout'

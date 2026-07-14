@@ -15,11 +15,7 @@ import type { LLMProvider, LLMRequest, LLMResponse } from '../runtime/types';
 import { cosineSimilarity } from '../runtime/embedding';
 
 export type QualityGateType =
-  | 'HALLUCINATION_CHECK'
-  | 'CONSISTENCY'
-  | 'COMPLETENESS'
-  | 'ACCURACY'
-  | 'SAFETY';
+  'HALLUCINATION_CHECK' | 'CONSISTENCY' | 'COMPLETENESS' | 'ACCURACY' | 'SAFETY';
 
 export interface QualityGateResult {
   gate: string;

@@ -392,9 +392,7 @@ export function getGlobalContractEventBus(): ContractEventBus {
       }) => ContractEventBus;
     };
     const backend = (process.env.COMMANDER_EVENT_BUS_BACKEND ?? 'memory') as
-      | 'memory'
-      | 'redis'
-      | 'nats';
+      'memory' | 'redis' | 'nats';
     globalEventBus = createDistributedEventBus({
       backend,
       redisUrl: process.env.COMMANDER_EVENT_BUS_REDIS_URL,

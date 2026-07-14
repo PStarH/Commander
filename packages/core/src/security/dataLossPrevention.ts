@@ -93,11 +93,7 @@ export type RedactionStrategy = 'REDACT' | 'MASK' | 'HASH' | 'ALLOW';
 
 /** DLP 出口点类型 */
 export type DLPExitPoint =
-  | 'api_response'
-  | 'log_output'
-  | 'tool_result'
-  | 'agent_output'
-  | 'sse_event';
+  'api_response' | 'log_output' | 'tool_result' | 'agent_output' | 'sse_event';
 
 /**
  * 敏感数据匹配结果

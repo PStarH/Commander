@@ -59,10 +59,7 @@ export class GraphValidationError extends Error {
   constructor(
     message: string,
     public readonly code:
-      | 'DUPLICATE_NODE_ID'
-      | 'UNKNOWN_DEPENDENCY'
-      | 'CYCLE_DETECTED'
-      | 'NO_NODES',
+      'DUPLICATE_NODE_ID' | 'UNKNOWN_DEPENDENCY' | 'CYCLE_DETECTED' | 'NO_NODES',
   ) {
     super(message);
     this.name = 'GraphValidationError';

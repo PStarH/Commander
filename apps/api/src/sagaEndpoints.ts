@@ -221,11 +221,13 @@ export function createSagaRouter(): Router {
       Connection: 'keep-alive',
     });
 
-    const stream = new (SSEStream as unknown as new () => {
-      pipe: (r: NodeJS.WritableStream) => void;
-      emitStructured: (event: string, payload: unknown) => void;
-      close: () => void;
-    })();
+    const stream = new (
+      SSEStream as unknown as new () => {
+        pipe: (r: NodeJS.WritableStream) => void;
+        emitStructured: (event: string, payload: unknown) => void;
+        close: () => void;
+      }
+    )();
     stream.pipe(res);
 
     const bus = getMessageBus();

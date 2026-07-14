@@ -49,11 +49,7 @@ export type CampaignPhase =
 export type CampaignSeverity = 'critical' | 'high' | 'medium' | 'low';
 
 export type PredictionType =
-  | 'next_target'
-  | 'next_technique'
-  | 'next_phase'
-  | 'adaptation_strategy'
-  | 'escalation_level';
+  'next_target' | 'next_technique' | 'next_phase' | 'adaptation_strategy' | 'escalation_level';
 
 export interface AttackEvent {
   eventId: string;
