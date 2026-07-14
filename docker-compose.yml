@@ -6,11 +6,19 @@
 #   docker compose --profile distributed up      # Redis for distributed EventBus
 #   docker compose --profile observability up    # Prometheus + Grafana
 #   docker compose --profile tracing up          # Jaeger (OTLP traces)
-#   docker compose --profile distributed --profile observability up
+#   docker compose --profile database up         # PostgreSQL only
+#   docker compose --profile worker up           # worker + timer + outbox (needs DB)
+#   docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up
+#     # P0 Architecture V2: api kernel-on + postgres + worker plane
 # =============================================================================
 # Local-first design: the default `docker compose up` runs ONLY api + web with
 # in-memory EventBus. Distributed/observability services are opt-in so single-box
 # deployments stay lightweight (no Redis/Prometheus overhead unless requested).
+#
+# Production note: NODE_ENV=production refuses to start unless
+# COMMANDER_KERNEL_ENABLED=1 (see apps/api). Default compose keeps KERNEL=0 for
+# lightweight local UI work; use docker-compose.v2.yml or docker-compose.prod.yml
+# for a kernel-backed path.
 # =============================================================================
 
 services:
@@ -72,7 +80,8 @@ services:
       start_period: 10s
 
   # ── Worker — executes durable kernel steps ───────────────────────────────
-  # Started only with: docker compose --profile worker up
+  # Started with: docker compose --profile worker up
+  #            or docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up
   # Requires COMMANDER_KERNEL_ENABLED=1 and a Postgres kernel database.
   worker:
     build:
@@ -82,7 +91,8 @@ services:
         - NODE_ENV=production
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=${DATABASE_URL:-}
+      - DATABASE_URL=${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}}
       - COMMANDER_WORKER_BOOTSTRAP=/app/packages/worker-plane/dist/bootstrap.js
       - COMMANDER_WORKER_AUTH_TOKEN=${COMMANDER_WORKER_AUTH_TOKEN:-worker-token}
       - COMMANDER_WORKER_AUTH_SUBJECT=${COMMANDER_WORKER_AUTH_SUBJECT:-worker}
@@ -99,9 +109,10 @@ services:
     restart: unless-stopped
     profiles:
       - worker
+      - v2
 
   # ── Timer Wakeup Worker — drives retry/deadline state transitions ────────
-  # Started only with: docker compose --profile worker up
+  # Started with: docker compose --profile worker|v2 up
   timer:
     build:
       context: .
@@ -111,16 +122,18 @@ services:
         - OPERATIONS_MODE=timer
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=${DATABASE_URL:-}
+      - DATABASE_URL=${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}}
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
     profiles:
       - worker
+      - v2
 
   # ── Outbox Publisher — at-least-once event delivery ────────────────────────
-  # Started only with: docker compose --profile worker up
+  # Started with: docker compose --profile worker|v2 up
   outbox:
     build:
       context: .
@@ -130,13 +143,15 @@ services:
         - OPERATIONS_MODE=outbox
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=${DATABASE_URL:-}
+      - DATABASE_URL=${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}}
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
     profiles:
       - worker
+      - v2
 
   # Web GUI — Agent War Room dashboard
   web:
@@ -174,6 +189,7 @@ services:
     restart: unless-stopped
     profiles:
       - database
+      - v2
 
   # ── Redis — distributed EventBus backend (opt-in) ──────────────────────
   # Started only with: docker compose --profile distributed up
