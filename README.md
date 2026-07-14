@@ -262,7 +262,10 @@ The system is built with the same discipline as any production distributed syste
 ## Documentation
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — System design, module map, data flow
-- [ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md) — Production deployment checklist
+- [docs/getting-started.md](docs/getting-started.md) — Quick start
+- [docs/deploy.md](docs/deploy.md) — Deployment
+- [docs/v2-migration-guide.md](docs/v2-migration-guide.md) — Architecture V2 migration
+- [docs/slo.md](docs/slo.md) — SLO definitions
 - [SECURITY.md](SECURITY.md) — Security model, threat model, compliance
 - [BENCHMARK.md](BENCHMARK.md) — Full benchmark matrix and methodology
 - [CHANGELOG.md](CHANGELOG.md) — Release history
