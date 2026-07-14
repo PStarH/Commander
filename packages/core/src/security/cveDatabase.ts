@@ -45,14 +45,7 @@ import * as path from 'node:path';
 
 /** 包生态系统（包管理器）类型 */
 export type PackageEcosystem =
-  | 'npm'
-  | 'pypi'
-  | 'maven'
-  | 'go'
-  | 'composer'
-  | 'gem'
-  | 'nuget'
-  | 'generic';
+  'npm' | 'pypi' | 'maven' | 'go' | 'composer' | 'gem' | 'nuget' | 'generic';
 
 /** CVE 严重级别（基于 CVSS 评分区间） */
 export type CVESeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';

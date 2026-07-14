@@ -6,13 +6,7 @@ import { getSecurityAuditLogger } from '../security/securityAuditLogger';
 
 export type ApprovalMode = 'suggest' | 'auto-edit' | 'full-auto' | 'read-only' | 'plan';
 export type ApprovalCategory =
-  | 'sandbox_escape'
-  | 'network'
-  | 'file_write'
-  | 'file_read'
-  | 'shell_exec'
-  | 'destructive'
-  | 'mcp';
+  'sandbox_escape' | 'network' | 'file_write' | 'file_read' | 'shell_exec' | 'destructive' | 'mcp';
 
 export interface ApprovalGate {
   category: ApprovalCategory;
@@ -32,11 +26,7 @@ export interface ApprovalRequest {
 }
 
 export type ApprovalDecision =
-  | 'approved'
-  | 'denied'
-  | 'approved_once'
-  | 'approved_session'
-  | 'denied_forever';
+  'approved' | 'denied' | 'approved_once' | 'approved_session' | 'denied_forever';
 
 export interface ApprovalCallback {
   (request: ApprovalRequest): Promise<ApprovalDecision>;

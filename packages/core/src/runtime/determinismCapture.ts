@@ -24,11 +24,7 @@ import { getGlobalLogger } from '../logging';
 // ============================================================================
 
 export type NonDeterministicInput =
-  | 'timestamp'
-  | 'random'
-  | 'llmResponse'
-  | 'toolResponse'
-  | 'externalApiCall';
+  'timestamp' | 'random' | 'llmResponse' | 'toolResponse' | 'externalApiCall';
 
 export interface CapturedInput {
   runId: string;
@@ -201,8 +197,7 @@ export class DeterminismCapture {
           continue;
         }
         const payload = event.payload as
-          | { step?: number; value?: unknown; capturedAt?: string }
-          | undefined;
+          { step?: number; value?: unknown; capturedAt?: string } | undefined;
         if (!payload || typeof payload.step !== 'number') continue;
 
         const input: CapturedInput = {

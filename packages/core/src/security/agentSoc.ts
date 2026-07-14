@@ -29,13 +29,7 @@ import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 export type IncidentPriority = 'P0' | 'P1' | 'P2' | 'P3' | 'P4';
 
 export type IncidentStatus =
-  | 'detected'
-  | 'triaging'
-  | 'containing'
-  | 'eradicating'
-  | 'recovering'
-  | 'resolved'
-  | 'closed';
+  'detected' | 'triaging' | 'containing' | 'eradicating' | 'recovering' | 'resolved' | 'closed';
 
 export type EscalationLevel = 'L1' | 'L2' | 'L3' | 'management';
 

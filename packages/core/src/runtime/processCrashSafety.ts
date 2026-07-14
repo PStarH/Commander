@@ -25,11 +25,7 @@ import { getExecutionScheduler } from '../atr/scheduler';
 import { getFreezeDryManager } from './freezeDry';
 
 export type CrashSource =
-  | 'uncaughtException'
-  | 'unhandledRejection'
-  | 'SIGTERM'
-  | 'SIGINT'
-  | 'exit_timeout';
+  'uncaughtException' | 'unhandledRejection' | 'SIGTERM' | 'SIGINT' | 'exit_timeout';
 
 export interface CrashSafetyDeps {
   dlq: DeadLetterQueue;

@@ -1780,8 +1780,7 @@ export class MCPToolPoisoningGuard {
 
       // 检查 properties
       const properties = schema['properties'] as
-        | Record<string, Record<string, unknown>>
-        | undefined;
+        Record<string, Record<string, unknown>> | undefined;
       if (properties && typeof value === 'object' && value !== null) {
         const obj = value as Record<string, unknown>;
         for (const [key, propSchema] of Object.entries(properties)) {

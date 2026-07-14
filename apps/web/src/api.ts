@@ -1040,11 +1040,7 @@ export async function exportAuditLogs(query: AuditLogQuery = {}): Promise<Blob> 
 // `source` field); these use `category` + `severity: info|warn|error|critical`.
 
 export type UnifiedAuditCategory =
-  | 'security'
-  | 'approval'
-  | 'execution'
-  | 'configuration'
-  | 'user_action';
+  'security' | 'approval' | 'execution' | 'configuration' | 'user_action';
 
 export type UnifiedAuditSeverity = 'info' | 'warn' | 'error' | 'critical';
 
@@ -1173,10 +1169,7 @@ export async function exportUnifiedAuditLogs(
 // Backed by `.commander/knowledge-base/` on the API server.
 
 export type KnowledgeContentType =
-  | 'text/plain'
-  | 'application/json'
-  | 'text/markdown'
-  | 'text/html';
+  'text/plain' | 'application/json' | 'text/markdown' | 'text/html';
 
 export type KnowledgeDocumentStatus = 'ready' | 'indexing' | 'failed';
 
@@ -1447,12 +1440,7 @@ export async function disableRagPlugin(): Promise<{ enabled: boolean }> {
 // 多步骤向导（provider 配置 → 首个任务 → 完成）。
 
 export type OnboardingProvider =
-  | 'openai'
-  | 'anthropic'
-  | 'google'
-  | 'deepseek'
-  | 'ollama'
-  | 'openrouter';
+  'openai' | 'anthropic' | 'google' | 'deepseek' | 'ollama' | 'openrouter';
 
 export interface OnboardingStatus {
   hasProvider: boolean;

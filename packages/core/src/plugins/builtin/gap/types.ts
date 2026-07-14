@@ -12,12 +12,7 @@ export type GapSource =
 export type GapSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 
 export type GapStatus =
-  | 'open'
-  | 'investigating'
-  | 'fix-scheduled'
-  | 'fix-in-progress'
-  | 'fixed'
-  | 'wontfix';
+  'open' | 'investigating' | 'fix-scheduled' | 'fix-in-progress' | 'fixed' | 'wontfix';
 
 export interface GapRegressionCheck {
   lastVerified: string;

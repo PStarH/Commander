@@ -245,8 +245,7 @@ export class HybridSandboxScheduler implements ISandboxScheduler {
    */
   preempt(isolateId: string): void {
     const v8Backend = this.backends.get('v8-isolate') as
-      | { terminate?: (id: string) => void }
-      | undefined;
+      { terminate?: (id: string) => void } | undefined;
     if (v8Backend && typeof v8Backend.terminate === 'function') {
       v8Backend.terminate(isolateId);
       getGlobalLogger().info('SandboxScheduler', 'Preempted sandbox', { isolateId });

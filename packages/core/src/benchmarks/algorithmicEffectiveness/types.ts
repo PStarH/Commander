@@ -55,10 +55,7 @@ export interface MetricSummary {
 }
 
 export type Conclusion =
-  | 'SIGNIFICANTLY_BETTER'
-  | 'NO_SIGNIFICANT_DIFFERENCE'
-  | 'WORSE_THAN_BASELINE'
-  | 'TEST_UNSTABLE';
+  'SIGNIFICANTLY_BETTER' | 'NO_SIGNIFICANT_DIFFERENCE' | 'WORSE_THAN_BASELINE' | 'TEST_UNSTABLE';
 
 export interface ComparisonResult {
   moduleId: string;

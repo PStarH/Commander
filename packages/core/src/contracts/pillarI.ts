@@ -152,12 +152,7 @@ export interface ISagaCoordinator {
 }
 
 export type SagaStatus =
-  | 'PENDING'
-  | 'EXECUTING'
-  | 'COMPENSATING'
-  | 'COMPLETED'
-  | 'FAILED'
-  | 'ABORTED';
+  'PENDING' | 'EXECUTING' | 'COMPENSATING' | 'COMPLETED' | 'FAILED' | 'ABORTED';
 
 // ============================================================================
 // Backpressure Controller

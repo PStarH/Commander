@@ -78,12 +78,7 @@ export interface CompensationMetadata {
 // ============================================================================
 
 export type PlanStepStatus =
-  | 'pending'
-  | 'running'
-  | 'succeeded'
-  | 'failed'
-  | 'skipped'
-  | 'requires_approval';
+  'pending' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'requires_approval';
 
 export interface PlanStep {
   /** Stable id (e.g. "step_1_compensate_github_create_pr"). */

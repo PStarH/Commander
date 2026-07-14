@@ -27,13 +27,7 @@
  * PAUSED is orthogonal (HITL approval, budget halt) — can resume back to EXECUTING.
  */
 export type RunState =
-  | 'PENDING'
-  | 'EXECUTING'
-  | 'VERIFYING'
-  | 'COMMITTED'
-  | 'ABORTED'
-  | 'COMPENSATED'
-  | 'PAUSED';
+  'PENDING' | 'EXECUTING' | 'VERIFYING' | 'COMMITTED' | 'ABORTED' | 'COMPENSATED' | 'PAUSED';
 
 /**
  * State of a single idempotency slot.

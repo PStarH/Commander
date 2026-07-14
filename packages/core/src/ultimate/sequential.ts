@@ -125,12 +125,7 @@ export interface SequentialContext {
  * Status of a sequential pipeline execution.
  */
 export type SequentialPipelineStatus =
-  | 'PENDING'
-  | 'RUNNING'
-  | 'COMPLETED'
-  | 'FAILED'
-  | 'CANCELLED'
-  | 'PAUSED';
+  'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'PAUSED';
 
 /**
  * Complete pipeline definition.

@@ -58,12 +58,7 @@ export type PolicyExpr =
 export type PolicyBinOp = '==' | '!=' | '>' | '<' | '>=' | '<=' | 'in' | 'and' | 'or';
 
 export type LiteralValue =
-  | string
-  | number
-  | boolean
-  | null
-  | LiteralValue[]
-  | { [k: string]: LiteralValue };
+  string | number | boolean | null | LiteralValue[] | { [k: string]: LiteralValue };
 
 export interface CompensableActionSummary {
   actionId: string;

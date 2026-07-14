@@ -50,12 +50,7 @@ export type DeceptionResponse = 'SLOW' | 'FEED' | 'TRAP' | 'BLOCK';
 
 /** 攻击者技能水平 */
 export type AttackerSkillLevel =
-  | 'unknown'
-  | 'novice'
-  | 'script_kiddie'
-  | 'intermediate'
-  | 'advanced'
-  | 'expert';
+  'unknown' | 'novice' | 'script_kiddie' | 'intermediate' | 'advanced' | 'expert';
 
 /** 蜜罐端点接口 */
 export interface HoneypotEndpoint {

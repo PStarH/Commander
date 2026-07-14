@@ -180,8 +180,7 @@ export class CapabilityMatcher {
   private pool: Map<string, CapabilityProfile> = new Map();
   private config: AgentPoolConfig;
   private createAgent:
-    | ((profile: Partial<CapabilityProfile>) => Promise<CapabilityProfile>)
-    | null = null;
+    ((profile: Partial<CapabilityProfile>) => Promise<CapabilityProfile>) | null = null;
 
   constructor(
     config?: Partial<AgentPoolConfig>,

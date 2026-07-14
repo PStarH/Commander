@@ -1,11 +1,7 @@
 import type { AgentExecutionResult } from '../runtime/types';
 
 export type EvaluationDimension =
-  | 'correctness'
-  | 'grounding'
-  | 'completeness'
-  | 'clarity'
-  | 'safety';
+  'correctness' | 'grounding' | 'completeness' | 'clarity' | 'safety';
 
 export const EVALUATION_DIMENSIONS: EvaluationDimension[] = [
   'correctness',
