@@ -1028,6 +1028,9 @@ function nextId(prefix: string): string {
  * Create a WarRoomStore backed by JSON files or SQLite depending on the
  * `WARROOM_STORAGE` environment variable.
  *
+ * WarRoomStore is the missions/UI store only — not the /v1 durable run authority
+ * (that is the shared kernel via POST/GET /v1/runs*).
+ *
  * - `WARROOM_STORAGE=sqlite` -- uses SqliteWarRoomStore (requires better-sqlite3)
  * - anything else (default)  -- uses the original JSON file-based WarRoomStore
  */

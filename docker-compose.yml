@@ -15,10 +15,11 @@
 # in-memory EventBus. Distributed/observability services are opt-in so single-box
 # deployments stay lightweight (no Redis/Prometheus overhead unless requested).
 #
-# Production note: NODE_ENV=production refuses to start unless
-# COMMANDER_KERNEL_ENABLED=1 (see apps/api). Default compose keeps KERNEL=0 for
-# lightweight local UI work; use docker-compose.v2.yml or docker-compose.prod.yml
-# for a kernel-backed path.
+# Production note: api image sets NODE_ENV=production. Kernel enablement is
+# decided by isCommanderKernelEnabled() (apps/api): production / V2 mode / DSN
+# default ON; explicit COMMANDER_KERNEL_ENABLED=0 opts out. Leave the flag unset
+# for auto; set 0 only for intentional non-kernel local probes. Prefer
+# docker-compose.v2.yml or docker-compose.prod.yml for a full kernel-backed path.
 # =============================================================================
 
 services:
@@ -54,7 +55,8 @@ services:
       - API_STORE_BACKEND=${API_STORE_BACKEND:-sqlite}
       - DATABASE_URL=${DATABASE_URL:-}
       # Architecture V2 shared execution kernel (Postgres-backed)
-      - COMMANDER_KERNEL_ENABLED=${COMMANDER_KERNEL_ENABLED:-0}
+      # Empty = auto (ON in production / when DATABASE_URL set). Set 0 to force off.
+      - COMMANDER_KERNEL_ENABLED=${COMMANDER_KERNEL_ENABLED:-}
       - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-}}
       # -------------------------------------------------------------------------
       # SECURITY: The values below are DEV-ONLY defaults. They let you run
@@ -82,7 +84,7 @@ services:
   # ── Worker — executes durable kernel steps ───────────────────────────────
   # Started with: docker compose --profile worker up
   #            or docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up
-  # Requires COMMANDER_KERNEL_ENABLED=1 and a Postgres kernel database.
+  # Requires durable kernel ON (auto when DSN set / production) and Postgres.
   worker:
     build:
       context: .

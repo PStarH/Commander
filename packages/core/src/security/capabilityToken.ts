@@ -182,6 +182,16 @@ export interface VerifyRequest {
   args: Record<string, unknown>;
   /** Optional caller-supplied audience; if absent, token's aud must equal '*'. */
   aud?: string;
+  /**
+   * When true (default), a successful verify records (jti, nonce) so a second
+   * presentation is rejected as replay_detected.
+   *
+   * AgentRuntime issues ONE run-scoped token for all available tools and reuses
+   * it across approval + N tool executions. Those call sites MUST pass
+   * `consumeReplay: false` so concurrent multi-tool steps are not false-positive
+   * replays. One-shot presentation checks keep the default.
+   */
+  consumeReplay?: boolean;
 }
 
 export interface VerifyResultOk {
@@ -602,17 +612,17 @@ export class CapabilityTokenVerifier {
       }
     }
 
-    // Replay protection (Phase 2.2): a fully-validated token's (jti, nonce)
-    // pair may only be consumed once. This is the FINAL gate before success,
-    // so a token that fails any earlier check (signature, expiry, revocation,
-    // scope, arg-shape) never records a replay entry — only tokens that would
-    // otherwise be accepted consume their nonce. A captured token presented
-    // again within its TTL is rejected here. See {@link ReplayCache}.
-    if (ReplayCache.shared.checkAndRecord(payload.jti, payload.nonce, payload.exp)) {
-      return reject(
-        'replay_detected',
-        `jti=${payload.jti.slice(0, 12)}… nonce=${payload.nonce} was already consumed`,
-      );
+    // Replay protection (Phase 2.2): optionally consume (jti, nonce) so a
+    // second presentation is rejected. Default ON for one-shot checks.
+    // Run-scoped multi-tool reuse passes consumeReplay: false (see VerifyRequest).
+    // Tokens that fail earlier checks never reach this gate.
+    if (req.consumeReplay !== false) {
+      if (ReplayCache.shared.checkAndRecord(payload.jti, payload.nonce, payload.exp)) {
+        return reject(
+          'replay_detected',
+          `jti=${payload.jti.slice(0, 12)}… nonce=${payload.nonce} was already consumed`,
+        );
+      }
     }
 
     return ok(payload);

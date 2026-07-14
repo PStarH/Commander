@@ -8,8 +8,9 @@
 # This override forces the Gateway onto the shared execution kernel and starts
 # postgres + worker plane via the `v2` profile declared in docker-compose.yml.
 #
-# P0 status: wiring only. Full run completion + kill/reclaim still depends on
-# Claude's C1/C2 fencing + executable-step work. See docs/p0-parallel-status.md.
+# P0 status: kernel-on override for local/staging. Fencing + terminal proof is
+# ENFORCED by package e2e + pnpm p0:full-loop (see docs/p0-parallel-status.md).
+# This compose file is wiring for operators, not the CI proof harness.
 # =============================================================================
 
 services:

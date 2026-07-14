@@ -64,11 +64,13 @@ class ToolCallMockProvider extends MockLLMProvider {
       model: request.model,
       usage: { promptTokens, completionTokens, totalTokens: promptTokens + completionTokens },
       finishReason,
-      toolCalls: toolCalls as Array<{
-        id: string;
-        type: string;
-        function: { name: string; arguments: string };
-      }>,
+      // Flat internal format (name + arguments object) — same as ScriptedLLMProvider.
+      // Do not cast to OpenAI nested function shape; runtime tool path expects flat calls.
+      toolCalls: toolCalls?.map((tc) => ({
+        id: tc.id,
+        name: tc.name,
+        arguments: tc.arguments ?? {},
+      })),
     };
   }
 

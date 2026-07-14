@@ -1,6 +1,5 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'node:fs';
-import { readdir } from 'node:fs/promises';
 import * as path from 'node:path';
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
@@ -502,7 +501,7 @@ export class FileSearchTool implements Tool {
     // directory visited.
     let entries: import('node:fs').Dirent[];
     try {
-      entries = await readdir(dir, { withFileTypes: true });
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
     } catch (e) {
       const code = (e as NodeJS.ErrnoException)?.code;
       if (code === 'ENOENT' || code === 'ENOTDIR') return;
@@ -532,7 +531,7 @@ export class FileSearchTool implements Tool {
   ): Promise<void> {
     let entries: import('node:fs').Dirent[];
     try {
-      entries = await readdir(dir, { withFileTypes: true });
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
     } catch (e) {
       const code = (e as NodeJS.ErrnoException)?.code;
       if (code === 'ENOENT' || code === 'ENOTDIR') return;
@@ -593,7 +592,7 @@ export class FileListTool implements Tool {
       const resolved = await safePath(dirPath);
       if (!(await pathExists(resolved))) return `Error: directory not found: ${dirPath}`;
 
-      const entries = await readdir(resolved, { withFileTypes: true });
+      const entries = await fs.promises.readdir(resolved, { withFileTypes: true });
       return entries
         .map((e) => `${e.isDirectory() ? '📁' : '📄'} ${e.name}${e.isDirectory() ? '/' : ''}`)
         .join('\n');
@@ -687,7 +686,7 @@ export class GlobTool implements Tool {
   ): Promise<void> {
     if (results.length >= limit) return;
     try {
-      const entries = await readdir(dir, { withFileTypes: true });
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (results.length >= limit) return;
         const fullPath = path.join(dir, entry.name);

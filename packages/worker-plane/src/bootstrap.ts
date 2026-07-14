@@ -130,23 +130,51 @@ export async function createWorkerService(): Promise<WorkerService> {
   return service;
 }
 
-function createEffectBroker(kernel: EffectKernelPort): EffectBroker {
-  const seed = process.env.COMMANDER_EFFECT_BROKER_SEED ?? randomUUID().replace(/-/g, '');
-  const tokens = new CapabilityTokenService(seed);
-
-  // Default permissive policy: production deployments should replace this with
-  // a real policy service that evaluates tenant/risk/context rules.
-  const policy: PolicyEvaluator = {
-    evaluate: async () => ({
-      effect: 'allow' as const,
-      decisionId: 'permit-default',
-      reason: 'Default worker policy allows all effects',
+/**
+ * Worker-plane effect policy selection (Architecture V2 admission force).
+ *
+ * Default is **fail-closed** (deny). Opt into the old allow-all bootstrap only
+ * with explicit `COMMANDER_WORKER_EFFECT_POLICY=permit` (dev/demo only).
+ *
+ * Env:
+ * - `COMMANDER_WORKER_EFFECT_POLICY=permit|allow` → permit-default (legacy)
+ * - `COMMANDER_WORKER_EFFECT_POLICY=deny|fail-closed` → deny-all
+ * - unset → deny-all (production-safe default)
+ */
+export function createWorkerPolicyEvaluator(
+  env: NodeJS.ProcessEnv = process.env,
+): PolicyEvaluator {
+  const raw = (env.COMMANDER_WORKER_EFFECT_POLICY ?? '').trim().toLowerCase();
+  if (raw === 'permit' || raw === 'allow' || raw === 'permit-default' || raw === '1') {
+    return {
+      evaluate: async () => ({
+        effect: 'allow' as const,
+        decisionId: 'permit-default',
+        reason: 'COMMANDER_WORKER_EFFECT_POLICY=permit (explicit allow-all bootstrap)',
+        policySnapshotId: 'worker-default',
+      }),
+    };
+  }
+  return {
+    evaluate: async (input) => ({
+      effect: 'deny' as const,
+      decisionId: 'deny-default',
+      reason:
+        `Default worker policy denies external effects (type=${input.type}). ` +
+        'Configure a real PolicyEvaluator or set COMMANDER_WORKER_EFFECT_POLICY=permit for local demos only.',
       policySnapshotId: 'worker-default',
     }),
   };
+}
+
+function createEffectBroker(kernel: EffectKernelPort): EffectBroker {
+  const seed = process.env.COMMANDER_EFFECT_BROKER_SEED ?? randomUUID().replace(/-/g, '');
+  const tokens = new CapabilityTokenService(seed);
+  const policy = createWorkerPolicyEvaluator();
 
   // Minimal executor: logs the effect and returns a marker. Operators can
   // replace this with a real connector (HTTP, DB, queue, etc.) dispatcher.
+  // Policy must allow first — default policy is deny-all.
   const executor: EffectExecutor = {
     execute: async (input: { type: string; request: Record<string, unknown>; signal: AbortSignal }) => {
       // eslint-disable-next-line no-console
