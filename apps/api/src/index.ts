@@ -1,9 +1,5 @@
 import {
   reportSilentFailure,
-  createEvalPlugin,
-  createReportingPlugin,
-  createConsensusPlugin,
-  getHookManager,
   getMetricsCollector,
   HealthCollector,
   buildHealthSources,
