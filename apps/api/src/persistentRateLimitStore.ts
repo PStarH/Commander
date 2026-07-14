@@ -9,6 +9,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import Database from 'better-sqlite3';
 
+import { getDirname, getRequire } from './esmCompat';
+const __dirname = getDirname(import.meta.url);
+const require = getRequire(import.meta.url);
+
 const DEFAULT_DB_PATH = path.resolve(__dirname, '../data/rate-limit.sqlite');
 
 export interface RateLimitEntryRow {

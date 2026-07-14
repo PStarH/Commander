@@ -118,29 +118,9 @@ export class PreLoopSetup {
       timestamp: new Date().toISOString(),
     });
 
-    // Per-run governor to prevent concurrent run corruption (was shared instance)
-    this.deps.setGovernor(
-      new TokenGovernor({
-        totalBudget: ctx.tokenBudget || this.deps.getConfig().budgetHardCapTokens || 200000,
-      }),
-    );
-    // Detect task type for strategy selection
+    // Per-run governor and sliding window are owned by ExecutionContext.enter()
+    // in AgentRuntime.execute() — do not reassign shared instance fields here.
     const taskType = detectTaskType(ctx.goal);
-    this.deps
-      .getGovernor()
-      .setTaskCategory(
-        taskType === 'code'
-          ? 'code'
-          : taskType === 'search'
-            ? 'search'
-            : taskType === 'analysis'
-              ? 'analysis'
-              : taskType === 'structured'
-                ? 'structured'
-                : 'general',
-      );
-
-    // 0. Pre-execution budget check (hard enforcement, not advisory)
     if (
       this.deps.getConfig().budgetHardCapTokens > 0 &&
       ctx.tokenBudget > this.deps.getConfig().budgetHardCapTokens
@@ -269,8 +249,7 @@ export class PreLoopSetup {
     // pollution. The model's reasoning quality will not recover.
     let consecutiveDegenerationCount = 0;
 
-    // Per-run sliding window instance to prevent concurrent run corruption
-    this.deps.setSlidingWindow(new SlidingWindowOrchestrator());
+    // Per-run sliding window is created in ExecutionContext.enter().
 
     // Resolve evaluator provider for verification pipeline (echo chamber breaker)
     const evaluatorProviderName = this.deps.getConfig().evaluatorProviderName;

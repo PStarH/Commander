@@ -1,5 +1,5 @@
 import { reportSilentFailure } from '../silentFailureReporter';
-import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { IncomingMessage } from 'node:http';
 import type { ExecutionTrace, TraceEvent } from '../runtime/types';
 import { PersistentTraceStore, type TraceStore } from '../runtime/traceStore';
 import type { ExecutionTraceRecorder } from '../runtime/executionTrace';
@@ -38,11 +38,11 @@ export interface ObservabilityDeps {
 export interface ObservabilityResult {
   handled: boolean;
   status: number;
+  body?: unknown;
 }
 
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(body));
+function makeResult(status: number, body: unknown): ObservabilityResult {
+  return { handled: true, status, body };
 }
 
 function loadTrace(
@@ -244,7 +244,6 @@ function listAllTraces(
 
 export async function handleObservabilityRequest(
   req: IncomingMessage,
-  res: ServerResponse,
   deps: ObservabilityDeps,
   segments: string[],
   queryStr: string,
@@ -253,8 +252,7 @@ export async function handleObservabilityRequest(
   // Allow GET, POST, PUT, DELETE for CRUD routes. Individual handlers
   // reject methods they don't support.
   if (method !== 'GET' && method !== 'POST' && method !== 'PUT' && method !== 'DELETE') {
-    sendJson(res, 405, { error: 'Method not allowed' });
-    return { handled: true, status: 405 };
+    return makeResult(405, { error: 'Method not allowed' });
   }
 
   const tenantId = deps.resolveTenant(req);
@@ -263,12 +261,10 @@ export async function handleObservabilityRequest(
   try {
     if (segments[0] === 'runs' && segments.length === 1) {
       if (method !== 'GET') {
-        sendJson(res, 405, { error: 'Method not allowed' });
-        return { handled: true, status: 405 };
+        return makeResult(405, { error: 'Method not allowed' });
       }
       const runs = listAllTraces(deps.recorder, tenantId);
-      sendJson(res, 200, { count: runs.length, runs });
-      return { handled: true, status: 200 };
+      return makeResult(200, { count: runs.length, runs });
     }
 
     if (segments[0] === 'runs' && segments.length >= 2) {
@@ -278,70 +274,57 @@ export async function handleObservabilityRequest(
       if (method === 'GET' && !action) {
         const trace = loadTrace(deps.recorder, runId, deps.traceStore);
         if (!trace) {
-          sendJson(res, 404, { error: 'Run not found' });
-          return { handled: true, status: 404 };
+          return makeResult(404, { error: 'Run not found' });
         }
-        sendJson(res, 200, trace);
-        return { handled: true, status: 200 };
+        return makeResult(200, trace);
       }
 
       if (method === 'GET' && action === 'timeline') {
         const trace = loadTrace(deps.recorder, runId, deps.traceStore);
         if (!trace) {
-          sendJson(res, 404, { error: 'Run not found' });
-          return { handled: true, status: 404 };
+          return makeResult(404, { error: 'Run not found' });
         }
-        sendJson(res, 200, buildTimeline(trace));
-        return { handled: true, status: 200 };
+        return makeResult(200, buildTimeline(trace));
       }
 
       if (method === 'GET' && action === 'tree') {
         const trace = loadTrace(deps.recorder, runId, deps.traceStore);
         if (!trace) {
-          sendJson(res, 404, { error: 'Run not found' });
-          return { handled: true, status: 404 };
+          return makeResult(404, { error: 'Run not found' });
         }
-        sendJson(res, 200, buildSpanTree(trace));
-        return { handled: true, status: 200 };
+        return makeResult(200, buildSpanTree(trace));
       }
 
       if (method === 'GET' && action === 'cost') {
         const trace = loadTrace(deps.recorder, runId, deps.traceStore);
         if (!trace) {
-          sendJson(res, 404, { error: 'Run not found' });
-          return { handled: true, status: 404 };
+          return makeResult(404, { error: 'Run not found' });
         }
-        sendJson(res, 200, buildCostReport(trace));
-        return { handled: true, status: 200 };
+        return makeResult(200, buildCostReport(trace));
       }
 
       if (method === 'GET' && action === 'decisions') {
         const trace = loadTrace(deps.recorder, runId, deps.traceStore);
         if (!trace) {
-          sendJson(res, 404, { error: 'Run not found' });
-          return { handled: true, status: 404 };
+          return makeResult(404, { error: 'Run not found' });
         }
         const decisions = buildDecisions(trace);
-        sendJson(res, 200, { runId, decisions, summary: decisionsSummary(decisions) });
-        return { handled: true, status: 200 };
+        return makeResult(200, { runId, decisions, summary: decisionsSummary(decisions) });
       }
 
       if (method === 'GET' && action === 'summary') {
         const trace = loadTrace(deps.recorder, runId, deps.traceStore);
         if (!trace) {
-          sendJson(res, 404, { error: 'Run not found' });
-          return { handled: true, status: 404 };
+          return makeResult(404, { error: 'Run not found' });
         }
-        sendJson(res, 200, buildExecutiveSummary(trace));
-        return { handled: true, status: 200 };
+        return makeResult(200, buildExecutiveSummary(trace));
       }
 
       if (method === 'POST' && action === 'replay') {
         const body = await readBody(req);
         const trace = loadTrace(deps.recorder, runId, deps.traceStore);
         if (!trace) {
-          sendJson(res, 404, { error: 'Run not found' });
-          return { handled: true, status: 404 };
+          return makeResult(404, { error: 'Run not found' });
         }
         const liveCtx = deps.liveReplayContext;
         const useLive = !!body?.reExecuteLlm && !!liveCtx;
@@ -352,8 +335,7 @@ export async function handleObservabilityRequest(
                 ...(body?.onlySpanIds?.length ? { onlySpanIds: body.onlySpanIds } : {}),
               })
             : dryReplay(trace, body);
-        sendJson(res, 200, result);
-        return { handled: true, status: 200 };
+        return makeResult(200, result);
       }
     }
 
@@ -361,7 +343,7 @@ export async function handleObservabilityRequest(
       const agentId = segments[1]!;
       const all = deps.recorder.listTraces(agentId, 200);
       const filtered = all.filter((t) => !tenantId || t.tenantId === tenantId);
-      sendJson(res, 200, {
+      return makeResult(200, {
         agentId,
         count: filtered.length,
         runs: filtered.map((t) => ({
@@ -374,7 +356,6 @@ export async function handleObservabilityRequest(
           errors: t.summary.errors,
         })),
       });
-      return { handled: true, status: 200 };
     }
 
     if (segments[0] === 'conversations' && segments.length >= 2 && method === 'GET') {
@@ -422,14 +403,13 @@ export async function handleObservabilityRequest(
         };
       });
 
-      sendJson(res, 200, {
+      return makeResult(200, {
         conversationId,
         count: runs.length,
         runs,
         totalCost,
         totalTokens,
       });
-      return { handled: true, status: 200 };
     }
 
     if (segments[0] === 'search' && method === 'GET') {
@@ -440,7 +420,7 @@ export async function handleObservabilityRequest(
         .filter((t) => !tenantId || t.tenantId === tenantId)
         .filter((t) => !since || new Date(t.startedAt).getTime() >= since)
         .slice(0, limit);
-      sendJson(res, 200, {
+      return makeResult(200, {
         count: all.length,
         runs: all.map((t) => ({
           runId: t.runId,
@@ -449,7 +429,6 @@ export async function handleObservabilityRequest(
           startedAt: t.startedAt,
         })),
       });
-      return { handled: true, status: 200 };
     }
 
     if (
@@ -462,8 +441,7 @@ export async function handleObservabilityRequest(
       const body = await readFeedbackBody(req);
       const trace = deps.recorder.getTrace(runId);
       if (!trace) {
-        sendJson(res, 404, { error: 'Run not found' });
-        return { handled: true, status: 404 };
+        return makeResult(404, { error: 'Run not found' });
       }
       deps.recorder.recordEvent(runId, {
         type: 'state_change',
@@ -479,8 +457,7 @@ export async function handleObservabilityRequest(
           },
         },
       });
-      sendJson(res, 200, { ok: true, runId, feedback: body });
-      return { handled: true, status: 200 };
+      return makeResult(200, { ok: true, runId, feedback: body });
     }
 
     if (segments[0] === 'tools' && segments.length === 1 && method === 'GET') {
@@ -489,8 +466,7 @@ export async function handleObservabilityRequest(
         .filter((t) => !tenantId || t.tenantId === tenantId);
       const collector = new ToolMetricsCollector();
       for (const trace of all) collector.recordFromTrace(trace.events);
-      sendJson(res, 200, collector.getSummary());
-      return { handled: true, status: 200 };
+      return makeResult(200, collector.getSummary());
     }
 
     if (segments[0] === 'compare' && segments.length === 3 && method === 'GET') {
@@ -499,15 +475,12 @@ export async function handleObservabilityRequest(
       const traceA = loadTrace(deps.recorder, runIdA, deps.traceStore);
       const traceB = loadTrace(deps.recorder, runIdB, deps.traceStore);
       if (!traceA) {
-        sendJson(res, 404, { error: `Run ${runIdA} not found` });
-        return { handled: true, status: 404 };
+        return makeResult(404, { error: `Run ${runIdA} not found` });
       }
       if (!traceB) {
-        sendJson(res, 404, { error: `Run ${runIdB} not found` });
-        return { handled: true, status: 404 };
+        return makeResult(404, { error: `Run ${runIdB} not found` });
       }
-      sendJson(res, 200, compareTraces(traceA, traceB));
-      return { handled: true, status: 200 };
+      return makeResult(200, compareTraces(traceA, traceB));
     }
 
     if (segments[0] === 'prompts' && segments.length === 1 && method === 'GET') {
@@ -516,14 +489,12 @@ export async function handleObservabilityRequest(
         .filter((t) => !tenantId || t.tenantId === tenantId);
       const tracker = new PromptVersionTracker();
       for (const trace of all) tracker.recordFromTrace(trace);
-      sendJson(res, 200, tracker.getSummary());
-      return { handled: true, status: 200 };
+      return makeResult(200, tracker.getSummary());
     }
 
     if (segments[0] === 'slos' && segments.length === 1 && method === 'GET') {
       const manager = getSLOManager();
-      sendJson(res, 200, { slos: manager.listSLOs(), status: manager.getStatus() });
-      return { handled: true, status: 200 };
+      return makeResult(200, { slos: manager.listSLOs(), status: manager.getStatus() });
     }
 
     // ────────── P-obs-3: Dataset eval routes ──────────
@@ -532,21 +503,18 @@ export async function handleObservabilityRequest(
       const ds = deps.datasetStore;
       const runner = deps.experimentRunner;
       if (!ds) {
-        sendJson(res, 501, { error: 'DatasetStore not configured' });
-        return { handled: true, status: 501 };
+        return makeResult(501, { error: 'DatasetStore not configured' });
       }
 
       if (segments.length === 1 && method === 'GET') {
         const datasets = ds.list();
-        sendJson(res, 200, { count: datasets.length, datasets });
-        return { handled: true, status: 200 };
+        return makeResult(200, { count: datasets.length, datasets });
       }
 
       if (segments.length === 1 && method === 'POST') {
         const body = await readJsonBody(req);
         if (!body || typeof body.name !== 'string' || typeof body.rubricId !== 'string') {
-          sendJson(res, 400, { error: 'Missing required fields: name, rubricId' });
-          return { handled: true, status: 400 };
+          return makeResult(400, { error: 'Missing required fields: name, rubricId' });
         }
         const dataset = ds.create({
           name: body.name as string,
@@ -555,8 +523,7 @@ export async function handleObservabilityRequest(
           cases: (body.cases ?? []) as Array<{ id: string; input: { goal: string } }>,
           id: body.id as string | undefined,
         });
-        sendJson(res, 201, { id: dataset.id, name: dataset.name, rubricId: dataset.rubricId });
-        return { handled: true, status: 201 };
+        return makeResult(201, { id: dataset.id, name: dataset.name, rubricId: dataset.rubricId });
       }
 
       if (segments.length === 2) {
@@ -564,30 +531,24 @@ export async function handleObservabilityRequest(
         if (method === 'GET') {
           const dataset = ds.get(datasetId);
           if (!dataset) {
-            sendJson(res, 404, { error: 'Dataset not found' });
-            return { handled: true, status: 404 };
+            return makeResult(404, { error: 'Dataset not found' });
           }
-          sendJson(res, 200, dataset);
-          return { handled: true, status: 200 };
+          return makeResult(200, dataset);
         }
         if (method === 'PUT') {
           const body = await readJsonBody(req);
           const updated = ds.update(datasetId, body ?? {});
           if (!updated) {
-            sendJson(res, 404, { error: 'Dataset not found' });
-            return { handled: true, status: 404 };
+            return makeResult(404, { error: 'Dataset not found' });
           }
-          sendJson(res, 200, updated);
-          return { handled: true, status: 200 };
+          return makeResult(200, updated);
         }
         if (method === 'DELETE') {
           const ok = ds.delete(datasetId);
           if (!ok) {
-            sendJson(res, 404, { error: 'Dataset not found' });
-            return { handled: true, status: 404 };
+            return makeResult(404, { error: 'Dataset not found' });
           }
-          sendJson(res, 200, { ok: true });
-          return { handled: true, status: 200 };
+          return makeResult(200, { ok: true });
         }
       }
 
@@ -595,12 +556,10 @@ export async function handleObservabilityRequest(
         const datasetId = segments[1]!;
         const body = await readJsonBody(req);
         if (!ds.get(datasetId)) {
-          sendJson(res, 404, { error: 'Dataset not found' });
-          return { handled: true, status: 404 };
+          return makeResult(404, { error: 'Dataset not found' });
         }
         if (!runner) {
-          sendJson(res, 501, { error: 'ExperimentRunner not configured' });
-          return { handled: true, status: 501 };
+          return makeResult(501, { error: 'ExperimentRunner not configured' });
         }
 
         const runId = runner.allocateRunId();
@@ -617,104 +576,92 @@ export async function handleObservabilityRequest(
           },
         );
 
-        sendJson(res, 202, { runId, datasetId, status: 'running' });
-        return { handled: true, status: 202 };
+        return makeResult(202, { runId, datasetId, status: 'running' });
       }
     }
 
     if (segments[0] === 'experiments') {
       const runner = deps.experimentRunner;
       if (!runner) {
-        sendJson(res, 501, { error: 'ExperimentRunner not configured' });
-        return { handled: true, status: 501 };
+        return makeResult(501, { error: 'ExperimentRunner not configured' });
       }
 
       if (segments.length === 1 && method === 'GET') {
         const runs = runner.listRuns(50);
-        sendJson(res, 200, { count: runs.length, runs });
-        return { handled: true, status: 200 };
+        return makeResult(200, { count: runs.length, runs });
       }
 
       if (segments.length === 2 && method === 'GET') {
         const run = runner.getRun(segments[1]!);
         if (!run) {
-          sendJson(res, 404, { error: 'Experiment not found' });
-          return { handled: true, status: 404 };
+          return makeResult(404, { error: 'Experiment not found' });
         }
-        sendJson(res, 200, run);
-        return { handled: true, status: 200 };
+        return makeResult(200, run);
       }
     }
 
     if (segments[0] === 'auto-score') {
       const as = deps.autoScorer;
       if (!as) {
-        sendJson(res, 501, { error: 'AutoScorer not configured' });
-        return { handled: true, status: 501 };
+        return makeResult(501, { error: 'AutoScorer not configured' });
       }
 
       if (segments[1] === 'config' && method === 'GET') {
-        sendJson(res, 200, as.getConfig());
-        return { handled: true, status: 200 };
+        return makeResult(200, as.getConfig());
       }
 
       if (segments[1] === 'config' && method === 'POST') {
         const body = await readJsonBody(req);
         const applied = as.configure(body ?? {});
-        sendJson(res, 200, { applied });
-        return { handled: true, status: 200 };
+        return makeResult(200, { applied });
       }
 
       if (segments[1] === 'results' && method === 'GET') {
         const results = as.getResults(100);
-        sendJson(res, 200, { count: results.length, results });
-        return { handled: true, status: 200 };
+        return makeResult(200, { count: results.length, results });
       }
 
       if (segments[1] === 'results' && method === 'DELETE') {
         as.clearResults();
-        sendJson(res, 200, { ok: true });
-        return { handled: true, status: 200 };
+        return makeResult(200, { ok: true });
       }
     }
 
     if (segments[0] === 'rubrics') {
       const es = deps.evalScorer;
       if (!es) {
-        sendJson(res, 501, { error: 'EvalScorer not configured' });
-        return { handled: true, status: 501 };
+        return makeResult(501, { error: 'EvalScorer not configured' });
       }
 
       if (segments.length === 1 && method === 'GET') {
         const rubrics = es.listRubrics();
-        sendJson(res, 200, { rubrics });
-        return { handled: true, status: 200 };
+        return makeResult(200, { rubrics });
       }
 
       if (segments.length === 1 && method === 'POST') {
         const body = await readJsonBody(req);
         if (!body || typeof body.id !== 'string' || typeof body.promptTemplate !== 'string') {
-          sendJson(res, 400, { error: 'Missing required fields: id, promptTemplate' });
-          return { handled: true, status: 400 };
+          return makeResult(400, { error: 'Missing required fields: id, promptTemplate' });
         }
         es.registerRubric(body as unknown as EvalRubric);
-        sendJson(res, 201, { id: body.id, status: 'registered' });
-        return { handled: true, status: 201 };
+        return makeResult(201, { id: body.id, status: 'registered' });
       }
     }
 
-    sendJson(res, 404, { error: 'Not found' });
-    return { handled: true, status: 404 };
+    return makeResult(404, { error: 'Not found' });
   } catch (err) {
     log.error('ObservabilityHttp', 'Handler error', err as Error);
-    sendJson(res, 500, { error: 'Internal server error' });
-    return { handled: true, status: 500 };
+    return makeResult(500, { error: 'Internal server error' });
   }
 }
 
 async function readFeedbackBody(
   req: IncomingMessage,
 ): Promise<{ rating?: 'positive' | 'negative' | 'neutral'; comment?: string; tags?: string[] }> {
+  const body = (req as IncomingMessage & { body?: unknown }).body;
+  if (body !== undefined) {
+    return typeof body === 'string' ? (JSON.parse(body) as ReturnType<typeof readFeedbackBody>) : (body as ReturnType<typeof readFeedbackBody>);
+  }
   return new Promise((resolve, reject) => {
     let data = '';
     req.on('data', (chunk: Buffer) => {
@@ -744,6 +691,10 @@ async function readBody(req: IncomingMessage): Promise<{
   modelOverride?: string;
   onlySpanIds?: string[];
 }> {
+  const body = (req as IncomingMessage & { body?: unknown }).body;
+  if (body !== undefined) {
+    return typeof body === 'string' ? JSON.parse(body) : (body as ReturnType<typeof readBody>);
+  }
   return new Promise((resolve, reject) => {
     let data = '';
     req.on('data', (chunk: Buffer) => {
@@ -763,6 +714,10 @@ async function readBody(req: IncomingMessage): Promise<{
 
 /** Generic JSON body parser for non-feedback routes. */
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | undefined> {
+  const body = (req as IncomingMessage & { body?: unknown }).body;
+  if (body !== undefined) {
+    return typeof body === 'string' ? (JSON.parse(body) as Record<string, unknown>) : (body as Record<string, unknown>);
+  }
   return new Promise((resolve, reject) => {
     let data = '';
     req.on('data', (chunk: Buffer) => {

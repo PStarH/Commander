@@ -13,14 +13,14 @@
       "items": [
         {
           "id": "providers.count",
-          "claim": "22+ providers supported",
+          "claim": "25 providers supported",
           "status": "verified",
-          "evidence": "packages/core/src/runtime/providers/providerRegistry.ts:42-188 - registers 24 providers (OpenAI, Anthropic, Google, Azure, Bedrock, OpenRouter, DeepSeek, GLM, MiMo, Xiaomi, Cohere, Mistral, Groq, Together, Perplexity, Fireworks, Replicate, XAI, Anyscale, DeepInfra, Agnes, Ollama, VLLM, StepFun)",
-          "verifiedCount": 24
+          "evidence": "packages/core/src/runtime/providers/providerRegistry.ts:42-188 - registers 25 providers (OpenAI, Anthropic, Google, Azure, Bedrock, OpenRouter, DeepSeek, GLM, MiMo, Xiaomi, Cohere, Mistral, Groq, Together, Perplexity, Fireworks, Replicate, XAI, Anyscale, DeepInfra, Agnes, Ollama, VLLM, StepFun, MiniMax)",
+          "verifiedCount": 25
         },
         {
           "id": "providers.keyResolution",
-          "claim": "All 24 providers resolve via EncryptedSecretsVault when available, plain env-var fallback otherwise",
+          "claim": "All 25 providers resolve via EncryptedSecretsVault when available, plain env-var fallback otherwise",
           "status": "verified",
           "evidence": "packages/core/src/security/secureApiKeyResolver.ts - resolveSecureApiKey covers all providers in the registry; G5 vault initialized in CommanderHttpServer.start() before any provider call (packages/core/src/runtime/httpServer.ts:790-810)",
           "notes": "Zero remaining direct process.env.<PROVIDER>_API_KEY reads in production code paths verified 2026-07-02."
@@ -184,7 +184,7 @@
           "id": "security.g5.migration",
           "claim": "Zero remaining direct process.env._API_KEY reads for any provider",
           "status": "verified",
-          "evidence": "grep -rn 'process\\.env\\.[A-Z_]+_KEY' packages/core/src/runtime/providers (2026-07-02) returns no matches; all 24 providers in registry use resolveSecureApiKey"
+          "evidence": "grep -rn 'process\\.env\\.[A-Z_]+_KEY' packages/core/src/runtime/providers (2026-07-02) returns no matches; all 25 providers in registry use resolveSecureApiKey"
         },
         {
           "id": "security.redTeam",

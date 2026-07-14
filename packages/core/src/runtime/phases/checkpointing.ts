@@ -36,6 +36,7 @@ import type {
   CheckpointStepPayload,
   CheckpointTerminalPayload,
 } from './AgentExecutionState';
+import { getExecutionScheduler, type RunHandle } from '../../atr/scheduler';
 
 // ── Public service-construction interface ────────────────────────────────────
 
@@ -49,6 +50,8 @@ export interface CheckpointingPhaseServices {
    * tests can inject a stub without leaking constructor side-effects.
    */
   makeRunRecovery?: (checkpointer: StateCheckpointer, leaseManager: LeaseManager) => RunRecovery;
+  /** Optional resolver for the active ATR run handle (lease credentials). */
+  getRunHandle?: () => RunHandle | null | undefined;
 }
 
 // ── Public method types (preserve AgentRuntimeInterface contract) ─────────────
@@ -81,12 +84,14 @@ export class CheckpointingPhase {
     checkpointer: StateCheckpointer,
     leaseManager: LeaseManager,
   ) => RunRecovery;
+  private readonly getRunHandle: () => RunHandle | null | undefined;
 
   constructor(services: CheckpointingPhaseServices) {
     this.checkpointer = services.checkpointer;
     this.runLifecycle = services.runLifecycle;
     this.leaseManager = services.leaseManager;
     this.makeRunRecovery = services.makeRunRecovery ?? ((cp, lm) => new RunRecovery(cp, lm));
+    this.getRunHandle = services.getRunHandle ?? (() => null);
 
     // Bind lease manager for run recovery validation (was line 654 of agentRuntime).
     // Done in the constructor so callers don't accidentally forget it.
@@ -139,7 +144,7 @@ export class CheckpointingPhase {
   async checkpointTerminal(
     ctx: AgentExecutionContext,
     state: AgentExecutionState,
-    label: 'interrupted' | 'completed_early_exit' | 'completed' | 'failed',
+    label: 'interrupted' | 'waiting_for_human' | 'completed_early_exit' | 'completed' | 'failed',
     payload: CheckpointTerminalPayload,
   ): Promise<void> {
     this.checkpointer.terminalCheckpoint(
@@ -206,9 +211,78 @@ export class CheckpointingPhase {
 
   // ── Pause + active-run lifecycle ──────────────────────────────────────
 
-  /** Signal a running execution to pause at the next checkpoint boundary. */
-  pauseRun(runId: string): boolean {
-    return this.runLifecycle.pauseRun(runId);
+  /**
+   * Signal a running execution to pause at the next checkpoint boundary.
+   * Dual-writes: in-memory RunLifecycleManager AND ATR RunLedger (PAUSED).
+   * Returns true if the in-memory pause was signaled.
+   */
+  pauseRun(
+    runId: string,
+    options?: { tenantId?: string; resumeAt?: string | null; reason?: string },
+  ): boolean {
+    const signaled = this.runLifecycle.pauseRun(runId);
+    // Always attempt ATR dual-write when we have lease credentials so crash
+    // recovery sees PAUSED instead of treating the run as a zombie EXECUTING.
+    try {
+      const handle = this.getRunHandle();
+      if (handle && handle.runId === runId) {
+        getExecutionScheduler().pauseRun({
+          runId,
+          leaseToken: handle.leaseToken,
+          fencingEpoch: handle.fencingEpoch,
+          tenantId: options?.tenantId ?? handle.tenantId,
+          resumeAt: options?.resumeAt,
+          reason: options?.reason ?? 'operator_pause',
+        });
+      } else {
+        // Best-effort: resume handle from ledger and pause if lease still valid.
+        const resumed = getExecutionScheduler().resumeRun({
+          runId,
+          tenantId: options?.tenantId,
+        });
+        if (resumed && (resumed.state === 'EXECUTING' || resumed.state === 'VERIFYING')) {
+          getExecutionScheduler().pauseRun({
+            runId,
+            leaseToken: resumed.leaseToken,
+            fencingEpoch: resumed.fencingEpoch,
+            tenantId: options?.tenantId ?? resumed.tenantId,
+            resumeAt: options?.resumeAt,
+            reason: options?.reason ?? 'operator_pause',
+          });
+        }
+      }
+    } catch (err) {
+      reportSilentFailure(err, 'checkpointing:pauseRun:atr');
+    }
+    return signaled;
+  }
+
+  /**
+   * Persist waiting_for_human: ATR PAUSED + in-memory pause + terminal checkpoint label.
+   */
+  async pauseForHuman(
+    ctx: AgentExecutionContext,
+    state: AgentExecutionState,
+    payload: CheckpointTerminalPayload & { reason: string },
+  ): Promise<void> {
+    state.pauseRequested = true;
+    this.runLifecycle.pauseRun(state.runId);
+    try {
+      const handle = this.getRunHandle();
+      if (handle && handle.runId === state.runId) {
+        getExecutionScheduler().pauseRun({
+          runId: state.runId,
+          leaseToken: handle.leaseToken,
+          fencingEpoch: handle.fencingEpoch,
+          tenantId: ctx.tenantId ?? handle.tenantId,
+          resumeAt: null,
+          reason: payload.reason || 'human_input_required',
+        });
+      }
+    } catch (err) {
+      reportSilentFailure(err, 'checkpointing:pauseForHuman:atr');
+    }
+    await this.checkpointTerminal(ctx, state, 'waiting_for_human', payload);
   }
 
   /** Clear the pause flag for a run. */
@@ -216,9 +290,15 @@ export class CheckpointingPhase {
     this.runLifecycle.unpauseRun(runId);
   }
 
-  /** Check whether a run is currently paused. */
+  /** Check whether a run is currently paused (in-memory OR ATR PAUSED). */
   isPaused(runId: string): boolean {
-    return this.runLifecycle.isPaused(runId);
+    if (this.runLifecycle.isPaused(runId)) return true;
+    try {
+      const tx = getExecutionScheduler().getRun({ runId });
+      return tx?.state === 'PAUSED';
+    } catch {
+      return false;
+    }
   }
 
   /**

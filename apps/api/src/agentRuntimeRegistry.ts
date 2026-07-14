@@ -20,6 +20,7 @@ import type {
   LLMRequest,
   LLMResponse,
 } from '@commander/core';
+import { assertLegacyExecutionAllowed, isLegacyExecutionAllowed } from './legacyExecutionGuard';
 
 const MAX_RUNTIME_INSTANCES = 50;
 const RUNTIME_TTL_MS = 30 * 60 * 1000; // 30 minutes
@@ -34,6 +35,8 @@ export interface RuntimeRegistryEntry {
   queuedRuns: number;
   cumulativeCostUsd: number;
   runTimestamps: number[];
+  /** Completed run durations (ms) with timestamps, kept for tenant latency histograms. */
+  runDurations: Array<{ timestamp: number; durationMs: number }>;
 }
 
 export interface RuntimeStats {
@@ -44,6 +47,7 @@ export interface RuntimeStats {
   totalRunsLastMinute: number;
   cumulativeCostUsd: number;
   instanceAgeMs: number;
+  lastUsedAt: number;
 }
 
 const tenantRuntimes = new Map<string, RuntimeRegistryEntry>();
@@ -113,6 +117,7 @@ function freshEntry(): RuntimeRegistryEntry {
     queuedRuns: 0,
     cumulativeCostUsd: 0,
     runTimestamps: [],
+    runDurations: [],
   };
 }
 
@@ -122,6 +127,20 @@ function pruneTimestamps(entry: RuntimeRegistryEntry): void {
   while (entry.runTimestamps.length > 0 && entry.runTimestamps[0] < cutoff) {
     entry.runTimestamps.shift();
   }
+}
+
+/** Latency histogram window: keep 24 hours of run durations. */
+const DURATION_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function pruneDurations(entry: RuntimeRegistryEntry): void {
+  const cutoff = Date.now() - DURATION_WINDOW_MS;
+  let writeIndex = 0;
+  for (const d of entry.runDurations) {
+    if (d.timestamp >= cutoff) {
+      entry.runDurations[writeIndex++] = d;
+    }
+  }
+  entry.runDurations.length = writeIndex;
 }
 
 function estimateRunCost(tokens: {
@@ -185,6 +204,10 @@ function wrapRuntimeExecute(entry: RuntimeRegistryEntry): void {
     try {
       const result = await original(ctx);
       entry.cumulativeCostUsd += estimateRunCost(result.totalTokenUsage);
+      if (result.totalDurationMs > 0) {
+        entry.runDurations.push({ timestamp: Date.now(), durationMs: result.totalDurationMs });
+        pruneDurations(entry);
+      }
       return result;
     } finally {
       entry.activeRuns = Math.max(0, entry.activeRuns - 1);
@@ -224,6 +247,7 @@ function getEntry(explicitTenantId?: string): RuntimeRegistryEntry {
 
 /** Get the runtime for the current tenant context (or the global fallback). */
 export function getTenantRuntime(explicitTenantId?: string): AgentRuntime {
+  assertLegacyExecutionAllowed('AgentRuntimeRegistry');
   return getEntry(explicitTenantId).runtime;
 }
 
@@ -232,13 +256,12 @@ export async function executeTenantRun(
   ctx: AgentExecutionContext,
   explicitTenantId?: string,
 ): Promise<AgentExecutionResult> {
+  assertLegacyExecutionAllowed('AgentRuntimeRegistry.executeTenantRun');
   const tenantId = resolveTenantId(explicitTenantId);
   const entry = getEntry(tenantId);
+  // The runtime.execute wrapper already updates totalRuns/activeRuns/durations,
+  // so this helper only needs to drive execution and keep cost in sync.
   entry.queuedRuns = Math.max(0, entry.queuedRuns);
-  entry.totalRuns++;
-  entry.runTimestamps.push(Date.now());
-  pruneTimestamps(entry);
-  entry.activeRuns++;
   entry.queuedRuns = entry.runtime.getQueueDepth();
 
   try {
@@ -246,17 +269,19 @@ export async function executeTenantRun(
     entry.cumulativeCostUsd += estimateRunCost(result.totalTokenUsage);
     return result;
   } finally {
-    entry.activeRuns = Math.max(0, entry.activeRuns - 1);
     entry.queuedRuns = entry.runtime.getQueueDepth();
-    pruneTimestamps(entry);
   }
 }
 
 /** Aggregate capacity stats across all tenant runtimes. */
 export function getRuntimeStats(): RuntimeStats[] {
+  // Metrics collection is still mounted in the API during migration. In V2
+  // mode it must not materialize a legacy runtime merely to report zeroes.
+  if (!isLegacyExecutionAllowed()) return [];
   const stats: RuntimeStats[] = [];
   if (globalEntry) {
     pruneTimestamps(globalEntry);
+    pruneDurations(globalEntry);
     stats.push({
       tenantId: 'global',
       activeRuns: globalEntry.activeRuns,
@@ -265,10 +290,12 @@ export function getRuntimeStats(): RuntimeStats[] {
       totalRunsLastMinute: globalEntry.runTimestamps.length,
       cumulativeCostUsd: globalEntry.cumulativeCostUsd,
       instanceAgeMs: Date.now() - globalEntry.createdAt,
+      lastUsedAt: globalEntry.lastUsedAt,
     });
   }
   for (const [tenantId, entry] of tenantRuntimes) {
     pruneTimestamps(entry);
+    pruneDurations(entry);
     stats.push({
       tenantId,
       activeRuns: entry.activeRuns,
@@ -277,13 +304,71 @@ export function getRuntimeStats(): RuntimeStats[] {
       totalRunsLastMinute: entry.runTimestamps.length,
       cumulativeCostUsd: entry.cumulativeCostUsd,
       instanceAgeMs: Date.now() - entry.createdAt,
+      lastUsedAt: entry.lastUsedAt,
     });
   }
   return stats;
+}
+
+/** Return recorded run durations (ms) for a tenant, pruned to the retention window. */
+export function getTenantRunDurations(tenantId?: string): number[] {
+  const entry = tenantId ? tenantRuntimes.get(tenantId) : globalEntry;
+  if (!entry) return [];
+  pruneDurations(entry);
+  return entry.runDurations.map((d) => d.durationMs);
+}
+
+/**
+ * Seed registry stats for a tenant without executing a full run.
+ * Useful for metrics tests and synthetic capacity reporting.
+ */
+export function recordRuntimeUsage(
+  tenantId: string | undefined,
+  usage: { totalRuns?: number; durationMs?: number },
+): void {
+  if (!isLegacyExecutionAllowed()) return;
+  const entry = getEntry(tenantId);
+  if (usage.totalRuns && usage.totalRuns > 0) {
+    entry.totalRuns += usage.totalRuns;
+  }
+  if (usage.durationMs && usage.durationMs > 0) {
+    entry.runDurations.push({ timestamp: Date.now(), durationMs: usage.durationMs });
+    pruneDurations(entry);
+  }
 }
 
 /** Reset the registry (useful for tests). */
 export function resetRuntimeRegistry(): void {
   tenantRuntimes.clear();
   globalEntry = null;
+}
+
+/**
+ * AgentRuntimeRegistry — class wrapper around the module-level tenant runtime
+ * registry. Each instance delegates to the shared registry so that runtime
+ * instances (and their providers) are reused across the API server.
+ */
+export class AgentRuntimeRegistry {
+  /** Get the runtime for the current tenant context (or the global fallback). */
+  getTenantRuntime(explicitTenantId?: string): AgentRuntime {
+    return getTenantRuntime(explicitTenantId);
+  }
+
+  /** Execute a run through the tenant-scoped runtime and update capacity stats. */
+  executeTenantRun(
+    ctx: AgentExecutionContext,
+    explicitTenantId?: string,
+  ): Promise<AgentExecutionResult> {
+    return executeTenantRun(ctx, explicitTenantId);
+  }
+
+  /** Aggregate capacity stats across all tenant runtimes. */
+  getRuntimeStats(): RuntimeStats[] {
+    return getRuntimeStats();
+  }
+
+  /** Reset the registry. */
+  reset(): void {
+    resetRuntimeRegistry();
+  }
 }

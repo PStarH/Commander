@@ -2,6 +2,12 @@
  * State Machine Architecture for Commander
  * Inspired by LangGraph's state machine model
  *
+ * @legacy This is a legacy state machine implementation with its own state
+ * model. The V2 canonical state machine is defined in `@commander/contracts`
+ * (`RUN_STATES` / `STEP_STATES` / `RUN_TRANSITIONS` / `STEP_TRANSITIONS`).
+ * New code must use the V2 contracts. This module will be deleted during WP7
+ * migration. Do NOT add new features here.
+ *
  * Key features:
  * 1. Explicit state management with transitions
  * 2. Checkpoint mechanism for recovery
@@ -12,6 +18,10 @@
 import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+
+import { getDirname, getRequire } from './esmCompat';
+const __dirname = getDirname(import.meta.url);
+const require = getRequire(import.meta.url);
 
 // ============================================================================
 // Type Definitions

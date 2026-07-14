@@ -20,6 +20,33 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
   const router = express.Router();
   // Security: express.json() with limit is applied globally in index.ts.
 
+  // GOV-3: the approver/rejecter identity must be the authenticated principal
+  // (never a client-supplied reviewerId), and the principal must hold explicit
+  // approve authority (admin role or an 'approve'/'admin'/'*' API-key scope).
+  // Returns the principal id, or null after sending a 401/403.
+  function resolveApprover(req: Request, res: Response): string | null {
+    const principalId = req.user?.id ?? req.apiKeyId;
+    if (!principalId) {
+      res.status(401).json({ error: 'Authentication required to approve or reject.' });
+      return null;
+    }
+    const scopes = req.apiScopes ?? [];
+    const role = req.user?.role;
+    const canApprove =
+      role === 'admin' ||
+      role === 'super_admin' ||
+      scopes.includes('approve') ||
+      scopes.includes('admin') ||
+      scopes.includes('*');
+    if (!canApprove) {
+      res
+        .status(403)
+        .json({ error: 'Approve authority (admin role or approve scope) is required.' });
+      return null;
+    }
+    return principalId;
+  }
+
   /**
    * POST /checkpoints
    * Create a new checkpoint
@@ -45,6 +72,25 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
       });
     }
 
+    // GOV-4: never let client-supplied inputs drive auto-approval. Reject unknown
+    // governance modes, default a missing mode to the safest (MANUAL, which always
+    // requires human approval), and default a missing/invalid risk score to HIGH so
+    // the fail-safe direction is "require approval" rather than "auto-approve".
+    const VALID_MODES: MissionGovernanceMode[] = ['MANUAL', 'GUARDED', 'AUTO'];
+    if (governanceMode !== undefined && !VALID_MODES.includes(governanceMode)) {
+      return res.status(400).json({
+        error: `Invalid governanceMode: ${String(governanceMode)}. Must be one of ${VALID_MODES.join(', ')}.`,
+      });
+    }
+    const mode: MissionGovernanceMode = VALID_MODES.includes(governanceMode)
+      ? governanceMode
+      : 'MANUAL';
+    const safeRiskScore =
+      typeof riskScore === 'number' && Number.isFinite(riskScore) && riskScore >= 0
+        ? riskScore
+        : 100;
+    const safeRiskLevel: MissionRiskLevel = riskLevel || 'HIGH';
+
     try {
       const checkpoint = checkpointManager.create(
         missionId,
@@ -52,9 +98,9 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
         agentId,
         agentRole || 'agent',
         taskDescription,
-        governanceMode || 'SINGLE',
-        riskScore || 0,
-        riskLevel || 'LOW',
+        mode,
+        safeRiskScore,
+        safeRiskLevel,
         riskFactors || [],
         approvers || [],
         timeout,
@@ -107,16 +153,19 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
    * Approve a checkpoint
    */
   router.post('/checkpoints/:id/approve', (req: Request, res: Response) => {
-    const { reviewerId, reason, conditions } = req.body;
-
-    if (!reviewerId) {
-      return res.status(400).json({ error: 'Missing reviewerId' });
-    }
+    // GOV-3: approver is the authenticated principal, never a body reviewerId.
+    const approver = resolveApprover(req, res);
+    if (!approver) return;
+    const { reason, conditions } = req.body;
 
     try {
+      const existing = checkpointManager.get(String(req.params.id));
+      if (existing && existing.context.agentId === approver) {
+        return res.status(403).json({ error: 'You cannot approve your own checkpoint.' });
+      }
       const checkpoint = checkpointManager.approve(
         String(req.params.id),
-        reviewerId,
+        approver,
         reason,
         conditions,
       );
@@ -131,14 +180,17 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
    * Reject a checkpoint
    */
   router.post('/checkpoints/:id/reject', (req: Request, res: Response) => {
-    const { reviewerId, reason } = req.body;
+    // GOV-3: rejecter is the authenticated principal, never a body reviewerId.
+    const approver = resolveApprover(req, res);
+    if (!approver) return;
+    const { reason } = req.body;
 
-    if (!reviewerId || !reason) {
-      return res.status(400).json({ error: 'Missing reviewerId or reason' });
+    if (!reason) {
+      return res.status(400).json({ error: 'Missing reason' });
     }
 
     try {
-      const checkpoint = checkpointManager.reject(String(req.params.id), reviewerId, reason);
+      const checkpoint = checkpointManager.reject(String(req.params.id), approver, reason);
       res.json(checkpoint);
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });

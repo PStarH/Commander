@@ -1,11 +1,7 @@
 import { ModelCascadeController } from '../../../telos/modelCascadeController';
 import { HeuristicEvaluator } from '../../../telos/evaluator';
 import { ModelRouter } from '../../../runtime/modelRouter';
-import type {
-  BenchmarkModule,
-  Task,
-  TokenUsage,
-} from '../types';
+import type { BenchmarkModule, Task, TokenUsage } from '../types';
 import type { LLMRequest, LLMResponse, ModelConfig, RoutingDecision } from '../../../runtime/types';
 
 /**

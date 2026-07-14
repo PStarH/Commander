@@ -3,6 +3,11 @@ import fs from 'fs';
 import path from 'path';
 import { createApiStore } from './stores';
 import type { ApiStore } from './stores/apiStore';
+import { atomicWriteFileSync, readJsonFileSafe } from './atomicWrite';
+import { getDirname, getRequire } from './esmCompat';
+const __dirname = getDirname(import.meta.url);
+const require = getRequire(import.meta.url);
+
 import {
   Agent,
   ExecutionLog,
@@ -330,8 +335,10 @@ export class WarRoomStore implements IWarRoomStore {
       return normalizedSeed;
     }
 
-    const raw = fs.readFileSync(this.filePath, 'utf8');
-    const parsed = JSON.parse(raw) as WarRoomData;
+    // REL-3: a corrupt war-room file must not throw from load() — that crash-loops
+    // the boot path. readJsonFileSafe quarantines the corrupt file and returns the
+    // seed so we reseed instead of dying.
+    const parsed = readJsonFileSafe<WarRoomData>(this.filePath, createSeedWarRoomData());
     const normalized = normalizeWarRoomData(parsed);
 
     if (JSON.stringify(parsed) !== JSON.stringify(normalized)) {
@@ -346,8 +353,9 @@ export class WarRoomStore implements IWarRoomStore {
   }
 
   private write(data: WarRoomData) {
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    fs.writeFileSync(this.filePath, JSON.stringify(data, null, 2));
+    // REL-3: atomic write so a crash mid-write cannot truncate the war-room file
+    // (a truncated file makes the next load() throw and crash-loops boot).
+    atomicWriteFileSync(this.filePath, JSON.stringify(data, null, 2));
   }
 
   private nextId(prefix: string) {

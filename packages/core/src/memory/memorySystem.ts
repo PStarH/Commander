@@ -1,6 +1,9 @@
 /**
  * MemorySystem — unified facade over Commander's layered memory backends.
  *
+ * @deprecated Use `UnifiedMemory` via `getUnifiedMemory()` instead. This facade
+ * has no production callers and will be removed in a future release.
+ *
  * This module exposes a single, coherent API for the three memory layers
  * required by a production agent:
  *   - Working memory: ephemeral, session-scoped context.
@@ -14,7 +17,7 @@
  * scattered `selfEvolution/` memory pieces should migrate behind this facade.
  */
 import type { UnifiedMemory } from './unifiedMemory';
-import type { EpisodicMemoryItem, MemorySearchQuery } from '../memory';
+import type { EpisodicMemoryItem, MemorySearchQuery } from '../episodicMemory';
 import type { ConversationStore } from './conversationStore';
 import type { UserModelManager, UserProfile } from './userModel';
 

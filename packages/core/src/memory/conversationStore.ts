@@ -22,6 +22,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import { walCheckpoint } from '../storage/walCheckpoint';
 import { getCurrentTenantId } from '../runtime/tenantContext';
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
 // ============================================================================
 // Types
@@ -205,15 +206,15 @@ export class ConversationStore {
         ended_at TEXT,
         tags TEXT NOT NULL DEFAULT '[]',
         metadata TEXT NOT NULL DEFAULT '{}',
-        tenant_id TEXT
+        tenant_id TEXT NOT NULL DEFAULT '__default__'
       );
 
       CREATE INDEX IF NOT EXISTS idx_conv_sessions_project
-        ON conversation_sessions(project_id, started_at DESC);
+        ON conversation_sessions(tenant_id, project_id, started_at DESC);
       CREATE INDEX IF NOT EXISTS idx_conv_sessions_user
-        ON conversation_sessions(user_id, started_at DESC) WHERE user_id IS NOT NULL;
+        ON conversation_sessions(tenant_id, user_id, started_at DESC) WHERE user_id IS NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_conv_sessions_tenant
-        ON conversation_sessions(tenant_id, project_id) WHERE tenant_id IS NOT NULL;
+        ON conversation_sessions(tenant_id, project_id);
 
       -- Conversation turns (individual messages)
       CREATE TABLE IF NOT EXISTS conversation_turns (
@@ -277,8 +278,19 @@ export class ConversationStore {
     ).map((c) => c.name);
     // Add tenant_id column if it doesn't exist (migration for existing DBs)
     if (!cols.includes('tenant_id')) {
-      this.db.exec('ALTER TABLE conversation_sessions ADD COLUMN tenant_id TEXT');
+      this.db.exec(
+        "ALTER TABLE conversation_sessions ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '__default__'",
+      );
+    } else {
+      // Backfill any rows that predate the NOT NULL constraint.
+      this.db.exec(
+        "UPDATE conversation_sessions SET tenant_id = '__default__' WHERE tenant_id IS NULL",
+      );
     }
+  }
+
+  private getTenantId(): string {
+    return getCurrentTenantId() ?? '__default__';
   }
 
   private prepareStatements(): void {
@@ -295,19 +307,19 @@ export class ConversationStore {
     `);
 
     this.stmtGetSession = d.prepare(
-      'SELECT * FROM conversation_sessions WHERE id = ? AND (tenant_id IS ? OR ? IS NULL)',
+      'SELECT * FROM conversation_sessions WHERE id = ? AND tenant_id = ?',
     );
 
     this.stmtGetTurns = d.prepare(
-      'SELECT t.* FROM conversation_turns t INNER JOIN conversation_sessions s ON t.session_id = s.id WHERE t.session_id = ? AND (s.tenant_id IS ? OR ? IS NULL) ORDER BY t.created_at ASC',
+      'SELECT t.* FROM conversation_turns t INNER JOIN conversation_sessions s ON t.session_id = s.id WHERE t.session_id = ? AND s.tenant_id = ? ORDER BY t.created_at ASC',
     );
 
     this.stmtUpdateSummary = d.prepare(
-      'UPDATE conversation_sessions SET summary = ? WHERE id = ? AND (tenant_id IS ? OR ? IS NULL)',
+      'UPDATE conversation_sessions SET summary = ? WHERE id = ? AND tenant_id = ?',
     );
 
     this.stmtEndSession = d.prepare(
-      'UPDATE conversation_sessions SET ended_at = ?, turn_count = ?, total_tokens = ? WHERE id = ? AND (tenant_id IS ? OR ? IS NULL)',
+      'UPDATE conversation_sessions SET ended_at = ?, turn_count = ?, total_tokens = ? WHERE id = ? AND tenant_id = ?',
     );
 
     this.stmtFtsSearch = d.prepare(`
@@ -319,13 +331,13 @@ export class ConversationStore {
         ORDER BY rank
       )
       AND s.project_id = ?
-      AND (s.tenant_id IS ? OR ? IS NULL)
+      AND s.tenant_id = ?
       LIMIT ?
     `);
 
     this.stmtRecentSessions = d.prepare(`
       SELECT * FROM conversation_sessions
-      WHERE project_id = ? AND (tenant_id IS ? OR ? IS NULL)
+      WHERE tenant_id = ? AND project_id = ?
       ORDER BY started_at DESC
       LIMIT ?
     `);
@@ -334,21 +346,21 @@ export class ConversationStore {
       DELETE FROM conversation_sessions
       WHERE id IN (
         SELECT id FROM conversation_sessions
-        WHERE project_id = ? AND (tenant_id IS ? OR ? IS NULL)
+        WHERE tenant_id = ? AND project_id = ?
         ORDER BY started_at DESC
         LIMIT -1 OFFSET ?
       )
     `);
 
-    // GDPR: Delete all sessions for a specific user
-    this.stmtDeleteByUser = d.prepare(`
-      DELETE FROM conversation_sessions WHERE user_id = ?
-    `);
+    // GDPR: Delete all sessions for a specific user within the current tenant
+    this.stmtDeleteByUser = d.prepare(
+      'DELETE FROM conversation_sessions WHERE tenant_id = ? AND user_id = ?',
+    );
 
-    // GDPR: Get all sessions for a specific user (for DSAR export)
-    this.stmtGetSessionsByUser = d.prepare(`
-      SELECT * FROM conversation_sessions WHERE user_id = ? ORDER BY started_at DESC
-    `);
+    // GDPR: Get all sessions for a specific user within the current tenant (for DSAR export)
+    this.stmtGetSessionsByUser = d.prepare(
+      'SELECT * FROM conversation_sessions WHERE tenant_id = ? AND user_id = ? ORDER BY started_at DESC',
+    );
   }
 
   // --------------------------------------------------------------------------
@@ -390,7 +402,7 @@ export class ConversationStore {
       startedAt: session.startedAt,
       tags: JSON.stringify(session.tags),
       metadata: JSON.stringify(session.metadata),
-      tenantId: getCurrentTenantId() ?? null,
+      tenantId: this.getTenantId(),
     });
 
     return session;
@@ -401,8 +413,8 @@ export class ConversationStore {
    */
   async endSession(sessionId: string): Promise<void> {
     await this.init();
-    const tenantId = getCurrentTenantId() ?? null;
-    const turns = this.stmtGetTurns.all<SqliteRow>(sessionId, tenantId, tenantId);
+    const tenantId = this.getTenantId();
+    const turns = this.stmtGetTurns.all<SqliteRow>(sessionId, tenantId);
     const totalTokens = turns.reduce(
       (sum: number, t: SqliteRow) => sum + ((t.token_count as number) ?? 0),
       0,
@@ -413,7 +425,6 @@ export class ConversationStore {
       totalTokens,
       sessionId,
       tenantId,
-      tenantId,
     );
   }
 
@@ -422,8 +433,8 @@ export class ConversationStore {
    */
   async getSession(sessionId: string): Promise<ConversationSession | null> {
     await this.init();
-    const tenantId = getCurrentTenantId() ?? null;
-    const row = this.stmtGetSession.get<SqliteRow>(sessionId, tenantId, tenantId);
+    const tenantId = this.getTenantId();
+    const row = this.stmtGetSession.get<SqliteRow>(sessionId, tenantId);
     return row ? this.rowToSession(row) : null;
   }
 
@@ -432,8 +443,8 @@ export class ConversationStore {
    */
   async getRecentSessions(projectId: string, limit = 20): Promise<ConversationSession[]> {
     await this.init();
-    const tenantId = getCurrentTenantId() ?? null;
-    const rows = this.stmtRecentSessions.all<SqliteRow>(projectId, tenantId, tenantId, limit);
+    const tenantId = this.getTenantId();
+    const rows = this.stmtRecentSessions.all<SqliteRow>(tenantId, projectId, limit);
     return rows.map((r) => this.rowToSession(r));
   }
 
@@ -486,8 +497,8 @@ export class ConversationStore {
    */
   async getTurns(sessionId: string): Promise<ConversationTurn[]> {
     await this.init();
-    const tenantId = getCurrentTenantId() ?? null;
-    const rows = this.stmtGetTurns.all<SqliteRow>(sessionId, tenantId, tenantId);
+    const tenantId = this.getTenantId();
+    const rows = this.stmtGetTurns.all<SqliteRow>(sessionId, tenantId);
     return rows.map((r) => this.rowToTurn(r));
   }
 
@@ -506,7 +517,7 @@ export class ConversationStore {
 
     const ftsQuery = this.buildFtsQuery(options.query);
     const limit = options.limit ?? 20;
-    const tenantId = getCurrentTenantId() ?? null;
+    const tenantId = this.getTenantId();
 
     try {
       const rows = this.stmtFtsSearch.all<
@@ -516,7 +527,7 @@ export class ConversationStore {
           summary: string | null;
           user_id: string | null;
         }
-      >(ftsQuery, options.projectId, tenantId, tenantId, limit * 3); // Fetch more to group by session
+      >(ftsQuery, options.projectId, tenantId, limit * 3); // Fetch more to group by session
 
       // Group by session
       const sessionMap = new Map<
@@ -531,7 +542,7 @@ export class ConversationStore {
         const sessionId = row.session_id as string;
         if (!sessionMap.has(sessionId)) {
           // Fetch full session
-          const sessionRow = this.stmtGetSession.get<SqliteRow>(sessionId, tenantId, tenantId);
+          const sessionRow = this.stmtGetSession.get<SqliteRow>(sessionId, tenantId);
           if (sessionRow) {
             sessionMap.set(sessionId, {
               session: this.rowToSession(sessionRow),
@@ -610,8 +621,8 @@ export class ConversationStore {
    */
   async setSummary(sessionId: string, summary: string): Promise<void> {
     await this.init();
-    const tenantId = getCurrentTenantId() ?? null;
-    this.stmtUpdateSummary.run(summary, sessionId, tenantId, tenantId);
+    const tenantId = this.getTenantId();
+    this.stmtUpdateSummary.run(summary, sessionId, tenantId);
   }
 
   /**
@@ -619,19 +630,19 @@ export class ConversationStore {
    */
   async prune(projectId: string): Promise<number> {
     await this.init();
-    const tenantId = getCurrentTenantId() ?? null;
+    const tenantId = this.getTenantId();
     const before = this.db!.prepare(
-      'SELECT COUNT(*) as cnt FROM conversation_sessions WHERE project_id = ? AND (tenant_id IS ? OR ? IS NULL)',
-    ).get<{ cnt: number }>(projectId, tenantId, tenantId);
+      'SELECT COUNT(*) as cnt FROM conversation_sessions WHERE tenant_id = ? AND project_id = ?',
+    ).get<{ cnt: number }>(tenantId, projectId);
     const currentCount = before?.cnt ?? 0;
 
     if (currentCount <= this.config.maxSessions!) return 0;
 
-    this.stmtDeleteOldSessions.run(projectId, tenantId, tenantId, this.config.maxSessions!);
+    this.stmtDeleteOldSessions.run(tenantId, projectId, this.config.maxSessions!);
 
     const after = this.db!.prepare(
-      'SELECT COUNT(*) as cnt FROM conversation_sessions WHERE project_id = ? AND (tenant_id IS ? OR ? IS NULL)',
-    ).get<{ cnt: number }>(projectId, tenantId, tenantId);
+      'SELECT COUNT(*) as cnt FROM conversation_sessions WHERE tenant_id = ? AND project_id = ?',
+    ).get<{ cnt: number }>(tenantId, projectId);
     return currentCount - (after?.cnt ?? 0);
   }
 
@@ -642,18 +653,18 @@ export class ConversationStore {
    */
   async deleteByUser(userId: string): Promise<number> {
     await this.init();
-    const result = this.stmtDeleteByUser.run(userId);
+    const result = this.stmtDeleteByUser.run(this.getTenantId(), userId);
     return result.changes;
   }
 
   /**
    * GDPR Article 15 (DSAR): Get all sessions for a specific user.
-   * Used for data subject access requests.
+   * Used for data subject access requests. Scope is limited to the current tenant.
    */
   async getSessionsByUser(userId: string): Promise<ConversationSession[]> {
     await this.init();
-    const rows = this.stmtGetSessionsByUser.all(userId) as ConversationSession[];
-    return rows;
+    const rows = this.stmtGetSessionsByUser.all<SqliteRow>(this.getTenantId(), userId);
+    return rows.map((r) => this.rowToSession(r));
   }
 
   // --------------------------------------------------------------------------
@@ -789,14 +800,21 @@ export class ConversationStore {
 }
 
 // ============================================================================
-// Singleton
+// Tenant-aware singleton
 // ============================================================================
 
-let globalConversationStore: ConversationStore | null = null;
+let pendingConversationConfig: Partial<ConversationStoreConfig> | undefined;
+
+const conversationStoreSingleton = createTenantAwareSingleton(
+  () => new ConversationStore(pendingConversationConfig),
+  { dispose: (store) => store.close() },
+);
 
 export function getConversationStore(config?: Partial<ConversationStoreConfig>): ConversationStore {
-  if (!globalConversationStore) {
-    globalConversationStore = new ConversationStore(config);
-  }
-  return globalConversationStore;
+  pendingConversationConfig = config;
+  return conversationStoreSingleton.get();
+}
+
+export function resetConversationStore(): void {
+  conversationStoreSingleton.reset();
 }

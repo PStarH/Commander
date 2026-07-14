@@ -33,6 +33,8 @@ import { SubAgentGuard, SubAgentLimitError } from './subAgentGuard';
 import { getEffortRules } from './effortScaler';
 import { DEFAULT_ULTIMATE_CONFIG } from './types';
 import { getAgentLineage } from '../security/agentLineage';
+import { getUnifiedMemory } from '../memory/unifiedMemory';
+import { scheduleSubtaskLevels } from './taskTreeDag';
 
 /** Critical path token budget multiplier (LAMaS: give critical tasks more resources) */
 const CRITICAL_PATH_TOKEN_MULTIPLIER = 1.5;
@@ -233,7 +235,7 @@ export class SubAgentExecutor {
   ): Promise<void> {
     const dependencyMap = this.buildDependencyMap(node.subtasks);
     this.computeCriticalPath(node.subtasks, dependencyMap);
-    const orderedLevels = this.topologicalLevels(dependencyMap, node.subtasks);
+    const orderedLevels = scheduleSubtaskLevels(node.subtasks);
 
     for (const level of orderedLevels) {
       // LAMaS: sort critical path tasks first within each level
@@ -516,7 +518,7 @@ export class SubAgentExecutor {
         return;
       }
 
-      const narrowContext = this.buildNarrowContext(baseContext);
+      const narrowContext = await this.buildNarrowContext(baseContext, projectId, taskBrief);
       const { specialist } = this.getModelTiers();
 
       // Record agent lineage (parent→child relationship tracking - Phase 2.2)
@@ -932,7 +934,7 @@ export class SubAgentExecutor {
     const fullTools = baseContext?.availableTools as string[] | undefined;
     const tools = fullTools?.length ? fullTools : node.context.availableTools;
 
-    const narrowContext = this.buildNarrowContext(baseContext);
+    const narrowContext = await this.buildNarrowContext(baseContext, projectId, synthesisGoal);
     const { lead } = this.getModelTiers();
     const ctx: AgentExecutionContext = {
       agentId: `synthesizer-${node.id}`,
@@ -1078,57 +1080,43 @@ export class SubAgentExecutor {
     return map;
   }
 
-  private topologicalLevels(
-    dependencyMap: Map<string, string[]>,
-    allNodes: TaskTreeNode[],
-  ): TaskTreeNode[][] {
-    const levels: TaskTreeNode[][] = [];
-    const nodeMap = new Map(allNodes.map((n) => [n.id, n]));
-    const remaining = new Set(allNodes.map((n) => n.id));
-    const completed = new Set<string>();
-
-    while (remaining.size > 0) {
-      const currentLevel: TaskTreeNode[] = [];
-      for (const nodeId of remaining) {
-        const deps = dependencyMap.get(nodeId) ?? [];
-        const allDepsMet = deps.every((d) => completed.has(d));
-        if (allDepsMet) {
-          const node = nodeMap.get(nodeId);
-          if (node) currentLevel.push(node);
-        }
-      }
-
-      if (currentLevel.length === 0) {
-        const remainingList = Array.from(remaining);
-        for (const id of remainingList) {
-          const node = nodeMap.get(id);
-          if (node) currentLevel.push(node);
-        }
-      }
-
-      for (const node of currentLevel) {
-        remaining.delete(node.id);
-        completed.add(node.id);
-      }
-
-      levels.push(currentLevel);
-    }
-
-    return levels;
-  }
-
   /**
    * Build a narrow context for sub-agents (Anthropic fresh-context pattern).
-   * Only includes governanceProfile and warRoomSnapshot — drops memoryItems,
-   * agentState, and full orchestrator history that bloats sub-agent prompts.
+   * Includes governanceProfile and warRoomSnapshot, plus recalled memory when
+   * UnifiedMemory is initialized — drops bloated orchestrator history fields.
    */
-  private buildNarrowContext(baseContext: Record<string, unknown>): Record<string, unknown> {
+  private async buildNarrowContext(
+    baseContext: Record<string, unknown>,
+    projectId: string,
+    goal?: string,
+  ): Promise<Record<string, unknown>> {
     const narrow: Record<string, unknown> = {};
     for (const field of FRESH_CONTEXT_FIELDS) {
       if (field in baseContext) {
         narrow[field] = baseContext[field];
       }
     }
+
+    const recallGoal =
+      goal ??
+      (typeof baseContext.goal === 'string' ? baseContext.goal : undefined) ??
+      (typeof baseContext.currentGoal === 'string' ? baseContext.currentGoal : undefined);
+
+    if (recallGoal) {
+      try {
+        const recall = await getUnifiedMemory().recall({
+          projectId,
+          query: recallGoal,
+          limit: 5,
+        });
+        if (recall.contextString) {
+          narrow.recalledMemory = recall.contextString;
+        }
+      } catch (err) {
+        reportSilentFailure(err, 'subAgentExecutor:buildNarrowContext:recall');
+      }
+    }
+
     return narrow;
   }
 

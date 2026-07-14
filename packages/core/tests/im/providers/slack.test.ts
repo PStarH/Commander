@@ -43,4 +43,53 @@ describe('Slack provider', () => {
   it('strips @mention', () => {
     assert.equal(slackProvider.stripMention('<@U123> hello'), 'hello');
   });
+
+  it('rejects request with missing signature headers', () => {
+    const req = { method: 'POST', query: {}, body: '{}', headers: {} };
+    assert.equal(slackProvider.verify(req, 'secret'), false);
+  });
+
+  it('rejects request with missing timestamp only', () => {
+    const req = {
+      method: 'POST',
+      query: {},
+      body: '{}',
+      headers: { 'x-slack-signature': 'v0=some' },
+    };
+    assert.equal(slackProvider.verify(req, 'secret'), false);
+  });
+
+  it('parses message with missing event fields', () => {
+    const req = {
+      method: 'POST',
+      query: {},
+      body: { event: {} },
+      headers: {},
+    };
+    const msg = slackProvider.parseMessage(req);
+    assert.equal(msg.text, '');
+    assert.equal(msg.senderId, 'unknown');
+    assert.equal(msg.conversationId, 'unknown');
+  });
+
+  it('parses message with empty body', () => {
+    const req = { method: 'POST', query: {}, body: null, headers: {} };
+    const msg = slackProvider.parseMessage(req);
+    assert.equal(msg.text, '');
+  });
+
+  it('verify handles object body by stringifying', () => {
+    const secret = 'signing-secret';
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const bodyObj = { event: { type: 'message', text: 'test' } };
+    const rawBody = JSON.stringify(bodyObj);
+    const expected = `v0=${crypto.createHmac('sha256', secret).update(`v0:${timestamp}:${rawBody}`).digest('hex')}`;
+    const req = {
+      method: 'POST',
+      query: {},
+      body: bodyObj,
+      headers: { 'x-slack-request-timestamp': timestamp, 'x-slack-signature': expected },
+    };
+    assert.equal(slackProvider.verify(req, secret), true);
+  });
 });

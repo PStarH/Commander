@@ -52,6 +52,16 @@ export class CircuitBreaker {
   private securityEventCount = 0;
   private semanticThreshold: number;
   private securityThreshold: number;
+  /**
+   * REL-8: time-based recovery for semantic/security trips. When a scanner spike
+   * pushes these counters over threshold, isAvailable() returns false before the
+   * conventional OPEN→HALF_OPEN timer, so no request ever passes and the
+   * success-based decay path can never run — a transient spike would brick the
+   * provider until a manual reset(). We therefore decay these counters purely by
+   * elapsed quiet time: one unit per `securityDecayMs` with no traffic.
+   */
+  private securityDecayMs: number;
+  private lastSecurityDecayAnchor = 0;
 
   constructor(
     threshold = 5,
@@ -63,6 +73,7 @@ export class CircuitBreaker {
       errorRateThreshold?: number;
       semanticThreshold?: number;
       securityThreshold?: number;
+      securityDecayMs?: number;
     },
   ) {
     this.threshold = threshold;
@@ -73,6 +84,7 @@ export class CircuitBreaker {
     this.errorRateThreshold = options?.errorRateThreshold ?? 0.5;
     this.semanticThreshold = options?.semanticThreshold ?? 3;
     this.securityThreshold = options?.securityThreshold ?? 2;
+    this.securityDecayMs = options?.securityDecayMs ?? recoveryTimeMs;
   }
 
   setProviderName(name: string): void {
@@ -104,6 +116,9 @@ export class CircuitBreaker {
   }
 
   isAvailable(): boolean {
+    // REL-8: decay semantic/security counters by elapsed quiet time first, so a
+    // transient spike cannot lock the provider open forever with no way back.
+    this.applySecurityTimeDecay(Date.now());
     // Trip the circuit if semantic failures or security events exceed their thresholds,
     // even when conventional operational failures have not reached the volume/error rate gate.
     if (
@@ -274,6 +289,8 @@ export class CircuitBreaker {
     if (score > 0) {
       this.semanticFailureCount++;
       this.lastSemanticFailureTime = Date.now();
+      // Restart the quiet-time decay window from this event (REL-8).
+      this.lastSecurityDecayAnchor = this.lastSemanticFailureTime;
     }
   }
 
@@ -287,7 +304,34 @@ export class CircuitBreaker {
     if (weight > 0) {
       this.securityEventCount += weight;
       this.lastSemanticFailureTime = Date.now();
+      // Restart the quiet-time decay window from this event (REL-8).
+      this.lastSecurityDecayAnchor = this.lastSemanticFailureTime;
     }
+  }
+
+  /**
+   * REL-8: decay the aggregated semantic/security counters by one unit per
+   * `securityDecayMs` of elapsed time with no new event. This gives the breaker
+   * a purely time-based recovery path from semantic/security trips — without it,
+   * a tripped breaker rejects all traffic, the success-based decay never runs,
+   * and the provider stays open permanently. Sustained events keep resetting the
+   * anchor (via onSemanticDrift/onSecurityEvent), so a real attack stays tripped.
+   */
+  private applySecurityTimeDecay(now: number): void {
+    if (this.semanticFailureCount === 0 && this.securityEventCount === 0) {
+      this.lastSecurityDecayAnchor = now;
+      return;
+    }
+    if (this.securityDecayMs <= 0) return;
+    if (this.lastSecurityDecayAnchor === 0) {
+      this.lastSecurityDecayAnchor = this.lastSemanticFailureTime || now;
+    }
+    const elapsed = now - this.lastSecurityDecayAnchor;
+    if (elapsed < this.securityDecayMs) return;
+    const steps = Math.floor(elapsed / this.securityDecayMs);
+    this.semanticFailureCount = Math.max(0, this.semanticFailureCount - steps);
+    this.securityEventCount = Math.max(0, this.securityEventCount - steps);
+    this.lastSecurityDecayAnchor += steps * this.securityDecayMs;
   }
 
   reset(): void {
@@ -302,6 +346,7 @@ export class CircuitBreaker {
     this.consecutiveSemanticFailures = 0;
     this.semanticFailureCount = 0;
     this.securityEventCount = 0;
+    this.lastSecurityDecayAnchor = 0;
     this.lastSemanticFailureContext = null;
     if (was !== 'CLOSED') this.onStateChange?.(was, 'CLOSED');
   }
@@ -314,6 +359,7 @@ export class CircuitBreaker {
     errorRateThreshold?: number;
     semanticThreshold?: number;
     securityThreshold?: number;
+    securityDecayMs?: number;
   }): void {
     if (options.threshold !== undefined) this.threshold = options.threshold;
     if (options.recoveryTimeMs !== undefined) this.recoveryTimeMs = options.recoveryTimeMs;
@@ -323,6 +369,7 @@ export class CircuitBreaker {
       this.errorRateThreshold = options.errorRateThreshold;
     if (options.semanticThreshold !== undefined) this.semanticThreshold = options.semanticThreshold;
     if (options.securityThreshold !== undefined) this.securityThreshold = options.securityThreshold;
+    if (options.securityDecayMs !== undefined) this.securityDecayMs = options.securityDecayMs;
   }
 
   getConfig(): {
@@ -333,6 +380,7 @@ export class CircuitBreaker {
     errorRateThreshold: number;
     semanticThreshold: number;
     securityThreshold: number;
+    securityDecayMs: number;
   } {
     return {
       threshold: this.threshold,
@@ -342,6 +390,7 @@ export class CircuitBreaker {
       errorRateThreshold: this.errorRateThreshold,
       semanticThreshold: this.semanticThreshold,
       securityThreshold: this.securityThreshold,
+      securityDecayMs: this.securityDecayMs,
     };
   }
 

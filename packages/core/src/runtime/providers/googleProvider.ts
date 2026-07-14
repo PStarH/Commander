@@ -1,6 +1,7 @@
 import { reportSilentFailure } from '../../silentFailureReporter';
 import type { LLMProvider, LLMRequest, LLMResponse, ToolCall } from '../types';
 import { FormatBridge } from '../formatBridge';
+import { assertSafeProviderBaseUrl } from './providerUrlPolicy';
 
 /**
  * Optional Google Gemini cachedContent wiring.
@@ -50,6 +51,9 @@ export class GoogleProvider implements LLMProvider {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? 'https://generativelanguage.googleapis.com/v1beta';
     this.defaultModel = config.defaultModel ?? 'gemini-2.0-flash';
+    // MCP-11: the API key is sent as a query param, so a plaintext/off-allowlist
+    // base URL leaks it. Fail closed at construction.
+    assertSafeProviderBaseUrl(this.baseUrl, { providerName: this.name });
   }
 
   async call(request: LLMRequest): Promise<LLMResponse> {

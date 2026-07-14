@@ -11,6 +11,7 @@
  */
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
+import { withBenchmarkEnv } from './benchmarkEnv';
 
 interface BenchResult {
   scale: number;
@@ -116,34 +117,50 @@ async function main() {
   console.log('═'.repeat(70));
 
   // Save baseline
-  const baseline = {
-    benchmark: 'recovery-bootstrap',
-    runAt: new Date().toISOString(),
-    nodeVersion: process.version,
-    results,
-    summary:
-      results.length > 0
-        ? {
-            scale10: results[0],
-            scale100: results[1],
-            scale1000: results[2],
-          }
-        : { skipped: true, reason: 'better-sqlite3 native module unavailable' },
-  };
+  const passed = results.length > 0 && (results.find((r) => r.scale === 1000)?.scanMs ?? 0) <= 5000;
+  const summary =
+    results.length > 0
+      ? { passed, errors: 0, failed: 0, skipped: 0 }
+      : { passed: false, errors: 0, failed: 0, skipped: 1 };
+  const baselinePayload =
+    results.length > 0
+      ? {
+          benchmark: 'recovery-bootstrap',
+          results,
+          summary,
+          scale10: results[0],
+          scale100: results[1],
+          scale1000: results[2],
+        }
+      : {
+          benchmark: 'recovery-bootstrap',
+          results,
+          summary,
+          reason: 'better-sqlite3 native module unavailable',
+        };
+  const baselineDoc = withBenchmarkEnv(baselinePayload, {
+    evidence: 'simulated',
+    datasetVersion: 'recovery-bootstrap-v1',
+  });
 
   const fullPath = resolve(outputPath);
   const dir = dirname(fullPath);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-  writeFileSync(fullPath, JSON.stringify(baseline, null, 2), { mode: 0o644 });
+  writeFileSync(fullPath, JSON.stringify(baselineDoc, null, 2), { mode: 0o644 });
   console.log(`Baseline saved to ${fullPath}`);
+
+  if (results.length === 0) {
+    console.log('❌ FAIL: No recovery measurements available (better-sqlite3 unavailable?)');
+    process.exit(1);
+  }
 
   // Regression check: 1000 zombies should complete in < 5s
   const largeScaleResult = results.find((r) => r.scale === 1000);
   if (largeScaleResult && largeScaleResult.scanMs > 5000) {
     console.log(
-      `⚠ WARNING: 1000-zombie recovery took ${largeScaleResult.scanMs}ms (> 5000ms threshold)`,
+      `❌ FAIL: 1000-zombie recovery took ${largeScaleResult.scanMs}ms (> 5000ms threshold)`,
     );
     process.exit(1);
   }

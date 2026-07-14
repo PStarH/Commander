@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import jwt, { type JwtPayload } from 'jsonwebtoken';
 import type { UserRole } from './userStore';
+import { isProductionEnv } from './envSignal';
 
 // ── Express type augmentation ───────────────────────────────────────────────
 //
@@ -46,9 +47,19 @@ const DEV_SECRET = 'commander-dev-secret-change-in-production';
 export const JWT_SECRET: string = process.env.JWT_SECRET ?? DEV_SECRET;
 
 if (!process.env.JWT_SECRET) {
+  if (isProductionEnv()) {
+    // Fail closed. With no secret, JWTs are signed/verified with a public source
+    // constant, so anyone can forge a signed { role: 'super_admin' } access token
+    // and, combined with header-based tenant selection, act as super_admin in any
+    // tenant (KC-1). Mirror capabilityToken's boot refusal.
+    throw new Error(
+      '[jwtMiddleware] JWT_SECRET must be set in production. Refusing to start with the ' +
+        'insecure dev default (an unset secret permits forged super_admin tokens).',
+    );
+  }
   process.stderr.write(
     '[jwtMiddleware] WARNING: JWT_SECRET is not set — using insecure dev default. ' +
-      'Set JWT_SECRET in production.\n',
+      'Set JWT_SECRET before deploying to production.\n',
   );
 }
 

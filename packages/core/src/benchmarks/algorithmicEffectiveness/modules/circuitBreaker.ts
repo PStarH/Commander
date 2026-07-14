@@ -1,5 +1,5 @@
 import { CircuitBreaker } from '../../../runtime/circuitBreaker';
-import type { BenchmarkModule, Task } from '../types';
+import type { BenchmarkModule, Task, LLMClient } from '../types';
 
 interface ProviderSequenceTask extends Task {
   sequence: boolean[];
@@ -116,16 +116,17 @@ export const circuitBreakerModule: BenchmarkModule = {
     breakers: new Map<string, CircuitBreaker>(),
   }),
   runTrial: async ({ implementation, task }) => {
+    const implOrBaseline = implementation as BaselineImpl | TreatmentImpl;
     const t = task as unknown as ProviderSequenceTask;
-    const providerSucceeds = getProviderOutcome(t, implementation as BaselineImpl & TreatmentImpl);
+    const providerSucceeds = getProviderOutcome(t, implOrBaseline);
 
     // Baseline: always attempt the call, no circuit breaker protection.
-    if (!('breakers' in implementation)) {
+    if (!('breakers' in implOrBaseline)) {
       return providerSucceeds ? successOutput() : failureOutput();
     }
 
     // Treatment: use a circuit breaker per task.
-    const impl = implementation as TreatmentImpl;
+    const impl = implOrBaseline as TreatmentImpl;
     if (!impl.breakers.has(t.id)) {
       impl.breakers.set(t.id, new CircuitBreaker(THRESHOLD, RECOVERY_TIME_MS, 1));
     }

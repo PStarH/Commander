@@ -140,9 +140,40 @@ export class GitTool implements Tool {
     }
 
     const gitArgs = [subcommand, ...tokens.slice(1)];
+
+    // SBX-1: block remote-helper RCE and config/exec injection. `git fetch
+    // "ext::sh -c id"` (and fext::) invoke an arbitrary command through git's
+    // remote-helper protocol; `-c`/`--config` can set core.sshCommand or
+    // alias.*=!cmd; `--upload-pack`/`--receive-pack`/`--exec` run commands.
+    for (const tok of gitArgs.slice(1)) {
+      const lower = tok.toLowerCase();
+      if (/^(ext|fext):/i.test(tok)) {
+        return `Error: git remote helpers (ext::/fext::) are not allowed — they execute arbitrary commands.`;
+      }
+      if (lower === '-c' || lower === '--config' || lower.startsWith('--config=')) {
+        return `Error: git -c/--config overrides are not allowed.`;
+      }
+      if (
+        lower.startsWith('--upload-pack') ||
+        lower.startsWith('--receive-pack') ||
+        lower.startsWith('--exec')
+      ) {
+        return `Error: git --upload-pack/--receive-pack/--exec are not allowed (arbitrary command execution).`;
+      }
+    }
+    // Harden transports regardless of subcommand: disable the ext helper entirely
+    // and restrict file:// to user config. These tool-supplied flags precede the
+    // subcommand and cannot be overridden by later user args.
+    const hardenedArgs = [
+      '-c',
+      'protocol.ext.allow=never',
+      '-c',
+      'protocol.file.allow=user',
+      ...gitArgs,
+    ];
     try {
       const start = Date.now();
-      const stdout = execFileSync('git', gitArgs, {
+      const stdout = execFileSync('git', hardenedArgs, {
         timeout: 30000,
         encoding: 'utf-8',
         cwd: resolvedWorkdir,

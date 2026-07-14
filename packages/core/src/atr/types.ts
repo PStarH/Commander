@@ -150,6 +150,13 @@ export interface RunTransaction {
   error?: string;
   tenantId?: string;
   metadata?: Record<string, unknown>;
+  /**
+   * ISO timestamp when a PAUSED run becomes eligible to wake.
+   * Null/undefined means wake only on explicit resume (e.g. human input).
+   */
+  resumeAt?: string;
+  /** Why the run entered PAUSED (hitl, budget, operator, timer). */
+  pauseReason?: string;
 }
 
 // ============================================================================

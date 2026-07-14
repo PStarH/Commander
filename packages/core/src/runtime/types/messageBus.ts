@@ -20,6 +20,7 @@ export type MessageBusTopic =
   | 'memory.written'
   | 'skills.created'
   | 'system.alert'
+  | 'security.alert'
   | 'tool.executed'
   | 'trace.recorded'
   | 'workflow.replan'
@@ -36,6 +37,7 @@ export type MessageBusTopic =
   | 'tool.compensation_planned'
   | 'tool.compensation_step'
   | 'agent.interrupted'
+  | 'agent.waiting_for_human'
   | 'human.approval_required'
   | 'human.approval_received'
   | 'human.approval_rejected'
@@ -503,7 +505,13 @@ export interface BusPayloadMap {
     status: 'started' | 'completed' | 'failed';
     error?: string;
   };
-  'agent.interrupted': { runId: string; reason: string; value?: unknown };
+  'agent.interrupted': {
+    runId: string;
+    reason: string;
+    value?: unknown;
+    humanInputRequired?: boolean;
+  };
+  'agent.waiting_for_human': { runId: string; reason: string; value?: unknown };
   'human.approval_required': {
     approvalId: string;
     runId: string;

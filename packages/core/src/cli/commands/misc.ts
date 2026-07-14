@@ -256,7 +256,7 @@ export function cmdHelp(showAll = false) {
   console.log(`
   ${$.bold}${$.blue}╭──────────────────────────────────────────────────╮${$.reset}
   ${$.bold}${$.blue}│${$.reset}  ${$.bold}Commander${$.reset} — multi-agent orchestration          ${$.bold}${$.blue}│${$.reset}
-  ${$.bold}${$.blue}│${$.reset}  ${$.dim}one command · 10 topologies · 22 providers${$.reset}       ${$.bold}${$.blue}│${$.reset}
+  ${$.bold}${$.blue}│${$.reset}  ${$.dim}one command · 5 topologies · 25 providers${$.reset}       ${$.bold}${$.blue}│${$.reset}
   ${$.bold}${$.blue}╰──────────────────────────────────────────────────╯${$.reset}
 
   ${$.bold}GETTING STARTED${$.reset}
@@ -301,6 +301,7 @@ export function cmdHelp(showAll = false) {
     ${$.cyan}resume [runId]${$.reset}          Resume a crashed run from checkpoint
     ${$.cyan}compensation [sub]${$.reset}      Durable retry queue
     ${$.cyan}cost [--since]${$.reset}          Token usage & cost reports
+    ${$.cyan}diagnose [--json]${$.reset}       V2 distributed stack health diagnostics
 
   ${$.bold}MISC${$.reset}
     ${$.cyan}completion [shell]${$.reset}      Shell autocompletion (bash, zsh, fish)

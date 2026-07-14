@@ -13,7 +13,7 @@ import type {
   LLMProvider,
   Tool,
 } from './types';
-import type { MemoryStore } from '../memory';
+import type { MemoryStore } from '../episodicMemory';
 import type { StateCheckpointer } from './stateCheckpointer';
 import type { AgentInbox } from './agentInbox';
 import type { TeamRegistry } from './teamRegistry';

@@ -18,7 +18,7 @@
  */
 
 import { getGlobalLogger } from '../logging';
-import type { MemoryStore, EpisodicMemoryItem } from '../memory';
+import type { MemoryStore, EpisodicMemoryItem } from '../episodicMemory';
 
 // ============================================================================
 // Types

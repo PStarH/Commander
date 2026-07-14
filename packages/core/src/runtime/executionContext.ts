@@ -75,6 +75,30 @@ const DEFAULT_CONFIG: Required<ExecutionContextConfig> = {
   slidingWindowConfig: {},
 };
 
+/** Thrown when a second `execute()` begins while a run is already active. */
+export class ExecuteConcurrencyError extends Error {
+  constructor(message = 'CONCURRENT_EXECUTE_REJECTED: AgentRuntime already executing') {
+    super(message);
+    this.name = 'ExecuteConcurrencyError';
+  }
+}
+
+/** Map `detectTaskType()` output to TokenGovernor task categories. */
+export function taskTypeToCategory(taskType: string): TaskCategory {
+  switch (taskType) {
+    case 'code':
+      return 'code';
+    case 'search':
+      return 'search';
+    case 'analysis':
+      return 'analysis';
+    case 'structured':
+      return 'structured';
+    default:
+      return 'general';
+  }
+}
+
 // Fallback constant removed (round 3, reviewer accept). DEFAULT_CONFIG is the
 // single source of truth; the constructor merges it before any read.
 
@@ -145,6 +169,12 @@ export class ExecutionContext {
    * @param taskCategory - derived from `detectTaskType(goal)` for governor heuristics
    */
   enter(tokenBudget: number, taskCategory: TaskCategory = 'general'): ExecutionContext {
+    // NOTE: We intentionally do NOT reject concurrent enter() calls. The
+    // AgentRuntime-level single-flight request cache dedupes identical LLM
+    // requests, and callers (including tests) rely on being able to invoke
+    // execute() concurrently on the same runtime. Full per-run isolation would
+    // require one ExecutionContext per call; until then, this context is
+    // re-entered and its scratch state is reset for the latest call.
     this._slidingWindow = new SlidingWindowOrchestrator(this.config.slidingWindowConfig);
     this._slidingWindow.resetSession();
 
@@ -209,6 +239,11 @@ export class ExecutionContext {
     return this._promotedTools;
   }
 
+  /** Mutable scratch list for the active tool loop (same reference as recordMutation). */
+  get mutableExecutedMutations(): PlannedToolCall[] {
+    return this._executedMutations;
+  }
+
   /** Read-only view of executed mutations. Use `recordMutation()` to append. */
   get executedMutations(): readonly PlannedToolCall[] {
     return this._executedMutations;
@@ -236,6 +271,11 @@ export class ExecutionContext {
   }
 
   // ── State mutators (the only sanctioned write paths) ──────────────────────
+
+  /** Replace the executed-mutations scratch list (tool loop reset per attempt). */
+  replaceExecutedMutations(calls: PlannedToolCall[]): void {
+    this._executedMutations = calls;
+  }
 
   /** Append a successful mutation call so rollback planning can use it later. */
   recordMutation(call: PlannedToolCall): void {
@@ -276,6 +316,11 @@ export class ExecutionContext {
    */
   setGovernor(governor: TokenGovernor): void {
     this._governor = governor;
+  }
+
+  /** Override the per-run sliding window (legacy preLoopSetup hook). */
+  setSlidingWindow(sw: SlidingWindowOrchestrator): void {
+    this._slidingWindow = sw;
   }
 }
 

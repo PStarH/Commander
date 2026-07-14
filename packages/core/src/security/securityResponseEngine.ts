@@ -18,8 +18,12 @@
  * other security detectors are "open loop" (detect but don't respond).
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
+import { getMessageBus } from '../runtime/messageBus';
+import type { BusMessage } from '../runtime/types/messageBus';
 import { getSecurityAuditLogger } from './securityAuditLogger';
+import type { SecurityAlert as MonitorSecurityAlert } from './securityMonitor';
 import { getCapabilityTokenIssuer } from './capabilityToken';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -89,6 +93,96 @@ export function registerResponseCallbacks(callbacks: {
 }): void {
   terminateCallback = callbacks.terminateSession ?? null;
   revokeTokensCallback = callbacks.revokeTokens ?? null;
+}
+
+let busUnsubscribe: (() => void) | null = null;
+
+function isResponseEngineAlert(payload: unknown): payload is SecurityAlert {
+  if (!payload || typeof payload !== 'object') return false;
+  const p = payload as Record<string, unknown>;
+  return (
+    typeof p.agentId === 'string' &&
+    typeof p.severity === 'string' &&
+    typeof p.type === 'string' &&
+    typeof p.message === 'string'
+  );
+}
+
+function normalizeBusAlert(message: BusMessage): SecurityAlert | null {
+  const payload = message.payload;
+  if (isResponseEngineAlert(payload)) {
+    return {
+      ...payload,
+      timestamp:
+        payload.timestamp instanceof Date ? payload.timestamp : new Date(String(payload.timestamp)),
+    };
+  }
+
+  if (!payload || typeof payload !== 'object' || !('level' in payload) || !('title' in payload)) {
+    return null;
+  }
+
+  const monitorAlert = payload as MonitorSecurityAlert;
+  const firstEvent = monitorAlert.events[0];
+  const details = firstEvent?.details as Record<string, unknown> | undefined;
+  const context = details?.context as Record<string, unknown> | undefined;
+  const agentId =
+    (typeof context?.agentId === 'string' && context.agentId) ||
+    (typeof details?.agentId === 'string' && details.agentId) ||
+    undefined;
+
+  if (!agentId) {
+    return null;
+  }
+
+  return {
+    type: 'unknown_threat',
+    severity: monitorAlert.level === 'critical' ? 'critical' : 'medium',
+    agentId,
+    runId: typeof context?.runId === 'string' ? context.runId : undefined,
+    message: monitorAlert.description,
+    details: {
+      monitorAlertId: monitorAlert.id,
+      title: monitorAlert.title,
+      source: message.source,
+    },
+    timestamp: new Date(monitorAlert.timestamp),
+  };
+}
+
+/**
+ * Subscribe to `security.alert` on the MessageBus and route alerts into
+ * `processSecurityAlert`. Idempotent — safe to call on every runtime boot.
+ */
+export function startSecurityResponseEngine(bus = getMessageBus()): void {
+  if (busUnsubscribe) return;
+  busUnsubscribe = bus.subscribe('security.alert', (message) => {
+    try {
+      const alert = normalizeBusAlert(message);
+      if (!alert) return;
+      processSecurityAlert(alert);
+    } catch (err) {
+      reportSilentFailure(err, 'securityResponseEngine:busHandler');
+    }
+  });
+}
+
+/** Tear down the bus subscription — for tests and graceful shutdown. */
+export function stopSecurityResponseEngine(): void {
+  if (busUnsubscribe) {
+    busUnsubscribe();
+    busUnsubscribe = null;
+  }
+}
+
+/** Reset module-level response state — for test isolation only. */
+export function resetSecurityResponseState(): void {
+  suspendedAgents.clear();
+  throttledAgents.clear();
+  quarantinedAgents.clear();
+  terminateCallback = null;
+  revokeTokensCallback = null;
+  stopSecurityResponseEngine();
 }
 
 /**

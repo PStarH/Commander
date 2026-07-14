@@ -20,9 +20,16 @@ import { ThompsonMemoryScorer } from './memory/thompsonMemoryScorer.js';
 // Audit MED item 1 — Phase A additive route-out. Type-only imports keep the
 // bundle clean. The value-side MemoryStore dependency is injected via
 // constructor or setMemoryStore(); see mapMemoryEntryToWriteOptions.
-import type { MemoryStore, MemoryWriteOptions, MemoryKind } from './memory';
+import type { MemoryStore, MemoryWriteOptions, MemoryKind } from './episodicMemory';
+import { MemoryCurator } from './memory/memoryCurator';
+import type { MemoryManagerAgent, MemoryObservation } from './memory/memoryManagerAgent';
 import { getGlobalSemanticMemoryStore } from './memory/semanticStore';
 import { getGlobalEpisodicStore } from './memory/episodicStore';
+
+export interface ObserveResult {
+  action: 'store' | 'retrieve' | 'update' | 'summarize' | 'discard';
+  result: unknown;
+}
 
 function generateUUID(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -124,6 +131,7 @@ const DEFAULT_CONFIG: Record<MemoryLayer, LayerConfig> = {
 import { calculateMemoryScore, InMemoryEmbeddingStore } from './runtime';
 import type { EmbeddingFunction } from './runtime';
 import { getGlobalLogger } from './logging';
+import { getCurrentTenantId } from './runtime/tenantContext';
 
 export class ThreeLayerMemory {
   private memories: Map<string, MemoryEntry> = new Map();
@@ -138,6 +146,10 @@ export class ThreeLayerMemory {
   private thompsonScorer: ThompsonMemoryScorer;
   /** Optional persistent sink for non-working layers (audit MED item 1 Phase A) */
   private memoryStore: MemoryStore | null = null;
+  /** TTL / decay curator for wired memoryStore (audit MED item 1 Phase D) */
+  private memoryCurator: MemoryCurator | null = null;
+  /** Optional active memory manager agent for autonomous store/retrieve/update/summarize/discard (P1). */
+  private memoryManagerAgent: MemoryManagerAgent | null = null;
   /**
    * Pillar IV contract stores — optional delegates for enhanced retrieval.
    * When available, episodic memories are also recorded in EpisodicMemoryStore
@@ -267,6 +279,30 @@ export class ThreeLayerMemory {
    */
   setMemoryStore(store: MemoryStore | null): void {
     this.memoryStore = store;
+
+    // Lifecycle management for the TTL curator (audit MED item 1 Phase D).
+    // When a store is wired we start a curator instance; when the store is
+    // removed we clean up the interval to avoid leaking timers.
+    if (store && !this.memoryCurator) {
+      this.memoryCurator = new MemoryCurator(store);
+      this.memoryCurator.start();
+    } else if (!store && this.memoryCurator) {
+      this.memoryCurator.close();
+      this.memoryCurator = null;
+    }
+  }
+
+  /**
+   * Wire an active memory manager agent. When set, `observe()` delegates to the
+   * agent for autonomous store/retrieve/update/summarize/discard decisions.
+   */
+  setMemoryManagerAgent(agent: MemoryManagerAgent | null): void {
+    this.memoryManagerAgent = agent;
+  }
+
+  /** Return true if a memory manager agent is currently wired. */
+  hasMemoryManagerAgent(): boolean {
+    return this.memoryManagerAgent !== null;
   }
 
   setEmbeddingFunction(fn: EmbeddingFunction): void {
@@ -323,12 +359,21 @@ export class ThreeLayerMemory {
   }
 
   /**
+   * AI-7: the authoritative tenant for reads and writes. Prefers an explicitly
+   * set context, then the ambient runtime tenant context. This is the single
+   * source of truth so writes stamp the same tenant that reads filter on — the
+   * per-tenant singleton alone is not relied upon for isolation.
+   */
+  private effectiveTenantId(): string | null {
+    return this.currentTenantId ?? getCurrentTenantId() ?? null;
+  }
+
+  /**
    * Class-level cross-tenant filter. Returns entries that the current tenant
    * context is allowed to see.
-   *   - Tenant-scoped context (currentTenantId='X'): only entries with
+   *   - Tenant-scoped context (tenant='X'): only entries with
    *     metadata.tenantId === 'X'.
-   *   - No-tenant context (currentTenantId=null): only entries WITHOUT a
-   *     metadata.tenantId tag.
+   *   - No-tenant context (null): only entries WITHOUT a metadata.tenantId tag.
    *
    * Defense-in-depth: this filter runs at every read path so a buggy caller
    * that forgets to set tenant context still cannot read tenant-scoped data,
@@ -336,7 +381,7 @@ export class ThreeLayerMemory {
    * (legacy/global) entries.
    */
   private filterByTenant(entries: MemoryEntry[]): MemoryEntry[] {
-    const ctx = this.currentTenantId;
+    const ctx = this.effectiveTenantId();
     if (ctx === null) {
       return entries.filter((e) => {
         const tid = e.metadata?.tenantId;
@@ -414,7 +459,17 @@ export class ThreeLayerMemory {
     }
 
     const entryMetadata: Record<string, unknown> =
-      contradictionIds.length > 0 ? { ...metadata, contradictions: contradictionIds } : metadata;
+      contradictionIds.length > 0 ? { ...metadata, contradictions: contradictionIds } : { ...metadata };
+
+    // AI-7: stamp the authoritative tenant so this entry is only retrievable
+    // within its tenant (filterByTenant depends on it). When a tenant context
+    // is active it overrides any caller-supplied tenantId to prevent
+    // cross-tenant write spoofing; with no context the entry stays untagged
+    // (single-tenant "no-tenant" view).
+    const writeTenantId = this.effectiveTenantId();
+    if (writeTenantId) {
+      entryMetadata.tenantId = writeTenantId;
+    }
 
     const entry: MemoryEntry = {
       id: generateUUID(),
@@ -514,6 +569,71 @@ export class ThreeLayerMemory {
     this.evictIfNeeded(layer);
 
     return entry;
+  }
+
+  /**
+   * Active memory management entry point.
+   *
+   * Delegates the observation to the wired `MemoryManagerAgent` if one exists.
+   * The agent decides whether to store, retrieve, update, summarize, or discard.
+   * Store/summarize results are projected into the ThreeLayerMemory layers so
+   * they remain discoverable by the existing search and retrieval paths.
+   *
+   * Without a manager agent, the observation falls back to a simple
+   * importance-based store (longterm for importance > 0.7, otherwise episodic).
+   */
+  async observe(observation: MemoryObservation): Promise<ObserveResult> {
+    if (!this.memoryManagerAgent) {
+      const layer: MemoryLayer = (observation.importance ?? 0.5) > 0.7 ? 'longterm' : 'episodic';
+      const entry = this.add(
+        observation.content,
+        layer,
+        observation.context ?? '',
+        observation.importance ?? 0.5,
+        observation.tags ?? [],
+        { source: 'observe-fallback' },
+      );
+      return { action: 'store', result: entry };
+    }
+
+    const agentResult = await this.memoryManagerAgent.observe(observation);
+
+    switch (agentResult.action) {
+      case 'store': {
+        const item = agentResult.result as {
+          content: string;
+          context: string;
+          importance: number;
+          tags: string[];
+        };
+        const layer: MemoryLayer = item.importance > 0.7 ? 'longterm' : 'episodic';
+        this.add(item.content, layer, item.context, item.importance, item.tags, {
+          source: 'memory-manager-agent',
+        });
+        break;
+      }
+      case 'summarize': {
+        const summary = agentResult.result as {
+          content: string;
+          context: string;
+          importance: number;
+          tags: string[];
+        };
+        this.add(summary.content, 'longterm', summary.context, summary.importance, summary.tags, {
+          source: 'memory-manager-agent',
+          summary: true,
+        });
+        break;
+      }
+      case 'update':
+      case 'discard':
+      case 'retrieve':
+        // update/discard are managed inside the agent's own working store.
+        // retrieve returns the agent's results directly.
+        break;
+    }
+
+    return { action: agentResult.action, result: agentResult.result };
   }
 
   /**

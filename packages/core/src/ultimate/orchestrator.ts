@@ -10,8 +10,6 @@ import type {
   TaskTreeNode,
   ArtifactReference,
   TaskDAG,
-  TaskDAGNode,
-  TaskDAGEdge,
   QualityGateConfig,
 } from './types';
 import { DEFAULT_ULTIMATE_CONFIG } from './types';
@@ -43,6 +41,7 @@ import {
   countFailed,
   flattenTree,
 } from './taskTreeUtils';
+import { buildTaskDAGFromTree } from './taskTreeDag';
 import { MultiAgentSynthesizer } from './synthesizer';
 import { ArtifactSystem, getArtifactSystem } from './artifactSystem';
 import { WorkCoordinator, getWorkCoordinator } from './workCoordinator';
@@ -243,47 +242,10 @@ export class UltimateOrchestrator {
         `Effort level: ${effortLevel} (${scalingRules.minSubAgents}-${scalingRules.maxSubAgents} agents)`,
       );
 
-      // Phase 3: Topology Routing — use DAG-aware router when available
-      emit('TOPOLOGY_ROUTING', `Selecting orchestration topology...`);
-      // Build DAG from deliberation for topology-aware routing
-      const taskDAG = this.buildDAGFromDeliberation(deliberation);
-      const topologyResult = this.topologyRouter.route(deliberation, taskDAG);
-      const topology =
-        params.topology ??
-        (useLLM && deliberation.recommendedTopology
-          ? deliberation.recommendedTopology
-          : topologyResult.topology);
-      ctx.topology = topology;
-      ctx.taskDAG = taskDAG;
-      reasoning.push(...topologyResult.reasoning);
-      reasoning.push(
-        `Topology: ${topology}${useLLM && deliberation.recommendedTopology ? ' (from LLM deliberation)' : ` (from router, expected cost: $${topologyResult.expectedCost.toFixed(4)})`}`,
-      );
-      try {
-        getIntentLog(undefined).write({
-          schemaVersion: 1,
-          runId: execId,
-          capturedAt: new Date().toISOString(),
-          stage: 'ultimate.routing',
-          decision: 'topology_selected',
-          reason: 'topology chosen',
-          payload: {
-            topology,
-            taskType: deliberation.taskType,
-            expectedCost: topologyResult.expectedCost,
-            expectedLatency: topologyResult.expectedLatency,
-          },
-        });
-      } catch (err) {
-        reportSilentFailure(err, 'orchestrator:253');
-        /* best-effort */
-      }
-      try {
-        getMetricsCollector().recordTopoChoice(topology, deliberation.taskType);
-      } catch (err) {
-        reportSilentFailure(err, 'orchestrator:259');
-        /* best-effort */
-      }
+      // Phase 3: Preliminary topology hint for decomposition (refined after real DAG)
+      const decompositionTopology: OrchestrationTopology =
+        params.topology ?? deliberation.recommendedTopology;
+      reasoning.push(`Preliminary topology for decomposition: ${decompositionTopology}`);
 
       // Phase 4: Recursive Task Decomposition
       emit('DECOMPOSITION', `Decomposing task into subtasks...`);
@@ -293,7 +255,7 @@ export class UltimateOrchestrator {
         null,
         0,
         (params.contextData?.availableTools as string[] | undefined) ?? [],
-        topology,
+        decompositionTopology,
       );
       ctx.taskTree = taskTree;
 
@@ -327,7 +289,7 @@ export class UltimateOrchestrator {
             subAgentsSpawned: 0,
             artifactsCreated: 0,
             qualityScore: 0,
-            topologyUsed: topology,
+            topologyUsed: decompositionTopology,
             effortLevelUsed: effortLevel,
           },
           errors: [
@@ -344,6 +306,53 @@ export class UltimateOrchestrator {
       }
 
       reasoning.push(`Task tree: ${countNodes(taskTree)} nodes, depth ${measureDepth(taskTree)}`);
+
+      // Phase 3b: Real DAG routing from decomposed task tree (M3)
+      emit('TOPOLOGY_ROUTING', 'Selecting orchestration topology from task DAG...');
+      const taskDAG = buildTaskDAGFromTree(taskTree, (nodes, edges) =>
+        this.topologyRouter.buildDAG(nodes, edges),
+      );
+      const topologyResult = this.topologyRouter.route(deliberation, taskDAG);
+      const topology =
+        params.topology ??
+        (useLLM && deliberation.recommendedTopology
+          ? deliberation.recommendedTopology
+          : topologyResult.topology);
+      ctx.topology = topology;
+      ctx.taskDAG = taskDAG;
+      reasoning.push(...topologyResult.reasoning);
+      reasoning.push(
+        `Topology: ${topology}${useLLM && deliberation.recommendedTopology ? ' (from LLM deliberation)' : ` (from router, expected cost: $${topologyResult.expectedCost.toFixed(4)})`} ` +
+          `[DAG nodes=${taskDAG.nodes.length}, width=${taskDAG.metadata?.parallelismWidth ?? 1}, depth=${taskDAG.metadata?.criticalPathDepth ?? 1}]`,
+      );
+      try {
+        getIntentLog(undefined).write({
+          schemaVersion: 1,
+          runId: execId,
+          capturedAt: new Date().toISOString(),
+          stage: 'ultimate.routing',
+          decision: 'topology_selected',
+          reason: 'topology chosen from task DAG',
+          payload: {
+            topology,
+            taskType: deliberation.taskType,
+            expectedCost: topologyResult.expectedCost,
+            expectedLatency: topologyResult.expectedLatency,
+            dagNodeCount: taskDAG.nodes.length,
+            parallelismWidth: taskDAG.metadata?.parallelismWidth,
+            criticalPathDepth: taskDAG.metadata?.criticalPathDepth,
+          },
+        });
+      } catch (err) {
+        reportSilentFailure(err, 'orchestrator:253');
+        /* best-effort */
+      }
+      try {
+        getMetricsCollector().recordTopoChoice(topology, deliberation.taskType);
+      } catch (err) {
+        reportSilentFailure(err, 'orchestrator:259');
+        /* best-effort */
+      }
 
       // ── Token Budget Allocation ───────────────────────────────────────────
       // Split the total budget proportionally across sub-agents based on
@@ -836,55 +845,6 @@ export class UltimateOrchestrator {
    */
   applyOptimizationSuggestions(exp?: ExecutionExperience): void {
     this.evolutionRunner.applyOptimizationSuggestions(exp);
-  }
-
-  /**
-   * Build a TaskDAG from the deliberation plan for topology-aware routing.
-   * Creates nodes based on estimated agent count and edges from decomposition strategy.
-   */
-  private buildDAGFromDeliberation(deliberation: DeliberationPlan): TaskDAG {
-    const nodeCount = Math.max(1, deliberation.estimatedAgentCount);
-    const nodes: TaskDAGNode[] = [];
-    const edges: TaskDAGEdge[] = [];
-
-    for (let i = 0; i < nodeCount; i++) {
-      nodes.push({
-        id: `dag_node_${i}`,
-        label: `Subtask ${i + 1}`,
-        estimatedComplexity: Math.ceil(deliberation.estimatedSteps / nodeCount),
-        estimatedTokens: Math.ceil(deliberation.estimatedTokens / nodeCount),
-        requiredCapabilities: deliberation.capabilitiesNeeded,
-        atomic: deliberation.decompositionStrategy === 'NONE',
-      });
-    }
-
-    // Build edges based on decomposition strategy
-    if (deliberation.decompositionStrategy === 'STEP') {
-      // Sequential chain
-      for (let i = 0; i < nodes.length - 1; i++) {
-        edges.push({
-          from: nodes[i].id,
-          to: nodes[i + 1].id,
-          type: 'SEQUENTIAL',
-          dataDependency: true,
-        });
-      }
-    } else if (deliberation.decompositionStrategy === 'ASPECT') {
-      // All independent (parallel)
-      // No edges needed — all nodes can run in parallel
-    } else if (deliberation.decompositionStrategy === 'RECURSIVE') {
-      // Tree structure: first node fans out to the rest
-      for (let i = 1; i < nodes.length; i++) {
-        edges.push({
-          from: nodes[0].id,
-          to: nodes[i].id,
-          type: 'PARALLEL',
-          dataDependency: false,
-        });
-      }
-    }
-
-    return this.topologyRouter.buildDAG(nodes, edges);
   }
 
   dispose(): void {

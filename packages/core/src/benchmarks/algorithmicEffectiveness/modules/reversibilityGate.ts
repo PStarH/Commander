@@ -77,13 +77,14 @@ export const reversibilityGateModule: BenchmarkModule = {
   treatmentFactory: () => {
     const gate = new ReversibilityGate();
     return {
-      evaluate: async (task: ReversibilityTask) =>
-        gate.evaluate(task.toolName, task.args ?? {}),
+      evaluate: async (task: ReversibilityTask) => gate.evaluate(task.toolName, task.args ?? {}),
     };
   },
   runTrial: async ({ implementation, task }) => {
     const impl = implementation as {
-      evaluate: (t: ReversibilityTask) => Promise<{ allowed: boolean; requiresHumanApproval: boolean }>;
+      evaluate: (
+        t: ReversibilityTask,
+      ) => Promise<{ allowed: boolean; requiresHumanApproval: boolean }>;
     };
     const decision = await impl.evaluate(task as ReversibilityTask);
     const output = decision.allowed ? 'allowed' : 'requires_approval';

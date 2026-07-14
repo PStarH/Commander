@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { TopologyRouter } from '../../src/ultimate/topologyRouter';
+import { LearnedWeights } from '../../src/ultimate/learnedWeights';
 import type { DeliberationPlan, TaskDAG, TaskDAGNode, TaskDAGEdge } from '../../src/ultimate/types';
 import { COST_PER_TOKEN } from '../../src/config/constants';
 
@@ -114,8 +115,8 @@ describe('TopologyRouter', () => {
   // 2. PARALLEL for independent subtasks
   // =====================================================================
 
-  describe('PARALLEL for independent subtasks', () => {
-    it('selects PARALLEL for research tasks with many agents', () => {
+  describe('PARALLEL/DISPATCH for independent subtasks', () => {
+    it('selects DISPATCH for research tasks with many agents', () => {
       const result = router.route(
         makeDeliberation({
           taskType: 'RESEARCH',
@@ -124,10 +125,10 @@ describe('TopologyRouter', () => {
           taskNature: 'IO_BOUND',
         }),
       );
-      expect(result.topology).toBe('PARALLEL');
+      expect(result.topology).toBe('DISPATCH');
     });
 
-    it('selects PARALLEL for analysis tasks with IO-bound nature', () => {
+    it('selects DISPATCH for analysis tasks with IO-bound nature', () => {
       const result = router.route(
         makeDeliberation({
           taskType: 'ANALYSIS',
@@ -135,10 +136,10 @@ describe('TopologyRouter', () => {
           taskNature: 'IO_BOUND',
         }),
       );
-      expect(result.topology).toBe('PARALLEL');
+      expect(result.topology).toBe('DISPATCH');
     });
 
-    it('selects PARALLEL for creative tasks with speculation', () => {
+    it('selects DISPATCH for creative tasks with speculation', () => {
       const result = router.route(
         makeDeliberation({
           taskType: 'CREATIVE',
@@ -147,7 +148,7 @@ describe('TopologyRouter', () => {
           taskNature: 'IO_BOUND',
         }),
       );
-      expect(result.topology).toBe('PARALLEL');
+      expect(result.topology).toBe('DISPATCH');
     });
 
     it('returns latency 15-45s for PARALLEL topology', () => {
@@ -167,7 +168,7 @@ describe('TopologyRouter', () => {
   // =====================================================================
 
   describe('HIERARCHICAL for complex multi-level tasks', () => {
-    it('selects HIERARCHICAL for complex reasoning tasks with deep critical path and low coupling', () => {
+    it('selects ORCHESTRATOR for complex reasoning tasks with deep critical path and low coupling', () => {
       // Use conditional edges (no data dependency) to avoid HIGH_COUPLING bonus favoring SEQUENTIAL
       const nodes = [makeNode('a'), makeNode('b'), makeNode('c'), makeNode('d'), makeNode('e')];
       const edges: TaskDAGEdge[] = [
@@ -187,7 +188,7 @@ describe('TopologyRouter', () => {
         }),
         dag,
       );
-      expect(result.topology).toBe('HIERARCHICAL');
+      expect(result.topology).toBe('ORCHESTRATOR');
     });
 
     it('returns latency 30-120s for HIERARCHICAL topology', () => {
@@ -298,7 +299,7 @@ describe('TopologyRouter', () => {
       ]).toContain(result.topology);
     });
 
-    it('score reflects task type: RESEARCH favors HYBRID or PARALLEL', () => {
+    it('score reflects task type: RESEARCH favors DISPATCH or HYBRID', () => {
       const result = router.route(
         makeDeliberation({
           taskType: 'RESEARCH',
@@ -306,7 +307,7 @@ describe('TopologyRouter', () => {
           estimatedTokens: 10000,
         }),
       );
-      expect(['HYBRID', 'PARALLEL']).toContain(result.topology);
+      expect(['DISPATCH', 'HYBRID']).toContain(result.topology);
     });
 
     it('expected cost is positive and reasonable', () => {
@@ -661,11 +662,11 @@ describe('TopologyRouter', () => {
         }),
         dag,
       );
-      // SEQUENTIAL should get a coupling bonus
-      expect(['SEQUENTIAL', 'SINGLE']).toContain(result.topology);
+      // CHAIN gets a coupling bonus for highly coupled linear workflows
+      expect(result.topology).toBe('CHAIN');
     });
 
-    it('deep critical path boosts HIERARCHICAL score when coupling is low', () => {
+    it('deep critical path boosts ORCHESTRATOR score when coupling is low', () => {
       // 5-node chain with non-data-dependent edges -> critical path = 5, coupling = 0
       const nodes = Array.from({ length: 5 }, (_, i) => makeNode(`n${i}`));
       const edges: TaskDAGEdge[] = Array.from({ length: 4 }, (_, i) => ({
@@ -686,8 +687,8 @@ describe('TopologyRouter', () => {
         }),
         dag,
       );
-      // HIERARCHICAL gets +2 from DEEP_CRITICAL_PATH, plus high complex score for REASONING
-      expect(result.topology).toBe('HIERARCHICAL');
+      // ORCHESTRATOR gets the highest score for deep critical path reasoning tasks
+      expect(result.topology).toBe('ORCHESTRATOR');
     });
   });
 
@@ -706,7 +707,7 @@ describe('TopologyRouter', () => {
       expect(result.topology).toBe('SINGLE');
     });
 
-    it('DEEP_RESEARCH effort (11+ agents) gives HYBRID a bonus', () => {
+    it('DEEP_RESEARCH effort (11+ agents) gives ORCHESTRATOR a bonus', () => {
       const result = router.route(
         makeDeliberation({
           taskType: 'RESEARCH',
@@ -714,7 +715,7 @@ describe('TopologyRouter', () => {
           estimatedTokens: 50000,
         }),
       );
-      expect(result.topology).toBe('HYBRID');
+      expect(result.topology).toBe('ORCHESTRATOR');
     });
 
     it('MODERATE effort (2-4 agents) does not apply SIMPLE or DEEP_RESEARCH bonus', () => {
@@ -777,7 +778,7 @@ describe('TopologyRouter', () => {
   // =====================================================================
 
   describe('speculation bonuses', () => {
-    it('suitableForSpeculation boosts PARALLEL and ENSEMBLE', () => {
+    it('suitableForSpeculation boosts DISPATCH for research tasks', () => {
       const withSpec = router.route(
         makeDeliberation({
           taskType: 'RESEARCH',
@@ -786,8 +787,8 @@ describe('TopologyRouter', () => {
           taskNature: 'IO_BOUND',
         }),
       );
-      // PARALLEL should be boosted by speculation + IO_BOUND
-      expect(withSpec.topology).toBe('PARALLEL');
+      // DISPATCH is selected for research + IO-bound + speculation
+      expect(withSpec.topology).toBe('DISPATCH');
     });
 
     it('speculation has no effect when false', () => {
@@ -877,6 +878,44 @@ describe('TopologyRouter', () => {
       expect(dag.metadata.parallelismWidth).toBe(1);
       expect(dag.metadata.criticalPathDepth).toBe(1);
       expect(dag.metadata.interSubtaskCoupling).toBe(0);
+    });
+
+    it('triggers ε-greedy Boltzmann exploration with deterministic rng', () => {
+      let call = 0;
+      const deterministicRng = () => {
+        call++;
+        // First call: decide to explore (must be < epsilon=1)
+        // Second call: Boltzmann draw target near the end to pick a non-argmax topology
+        return call === 1 ? 0 : 0.99;
+      };
+      const explorer = new TopologyRouter(undefined, { epsilon: 1, rng: deterministicRng });
+      const result = explorer.route(
+        makeDeliberation({ taskType: 'RESEARCH', estimatedAgentCount: 6 }),
+      );
+      expect(result.explorationTriggered).toBe(true);
+      expect(ALL_TOPOLOGIES).toContain(result.topology);
+    });
+
+    it('formats observed latency bands above 5 minutes', () => {
+      const learned = new LearnedWeights();
+      learned.recordCoordinationWeight('latency_band_ms_SINGLE', 'ANALYSIS', 400_000);
+      const customRouter = new TopologyRouter(learned);
+      const result = customRouter.route(
+        makeDeliberation({ taskType: 'ANALYSIS', estimatedAgentCount: 0 }),
+      );
+      expect(result.topology).toBe('SINGLE');
+      expect(result.expectedLatency).toBe('> 5min');
+    });
+
+    it('formats observed latency bands between 1 and 5 minutes', () => {
+      const learned = new LearnedWeights();
+      learned.recordCoordinationWeight('latency_band_ms_SINGLE', 'ANALYSIS', 180_000);
+      const customRouter = new TopologyRouter(learned);
+      const result = customRouter.route(
+        makeDeliberation({ taskType: 'ANALYSIS', estimatedAgentCount: 0 }),
+      );
+      expect(result.topology).toBe('SINGLE');
+      expect(result.expectedLatency).toBe('1-5min');
     });
   });
 

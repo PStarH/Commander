@@ -12,6 +12,7 @@
  */
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
+import { withBenchmarkEnv } from './benchmarkEnv';
 
 interface LatencyResult {
   concurrency: number;
@@ -129,28 +130,36 @@ async function main() {
 
   console.log('═'.repeat(70));
 
-  const baseline = {
-    benchmark: 'e2e-latency',
-    runAt: new Date().toISOString(),
-    nodeVersion: process.version,
-    config: { mockLatencyMs: '5-20', errorRate: 0.02, iterations: totalIterations },
-    results: results.map((r) => ({
-      concurrency: r.concurrency,
-      iterations: r.iterations,
-      p50Ms: r.p50Ms,
-      p95Ms: r.p95Ms,
-      p99Ms: r.p99Ms,
-      avgMs: r.avgMs,
-      minMs: r.minMs,
-      maxMs: r.maxMs,
-      rps: r.rps,
-      errorCount: r.errorCount,
-    })),
-    summary: {
-      p99AtMaxConcurrency: results[results.length - 1]?.p99Ms ?? 0,
-      rpsAtMaxConcurrency: results[results.length - 1]?.rps ?? 0,
+  const maxConcResult = results[results.length - 1];
+  const passed = maxConcResult ? maxConcResult.p99Ms <= 500 : false;
+
+  const baseline = withBenchmarkEnv(
+    {
+      benchmark: 'e2e-latency',
+      config: { mockLatencyMs: '5-20', errorRate: 0.02, iterations: totalIterations },
+      results: results.map((r) => ({
+        concurrency: r.concurrency,
+        iterations: r.iterations,
+        p50Ms: r.p50Ms,
+        p95Ms: r.p95Ms,
+        p99Ms: r.p99Ms,
+        avgMs: r.avgMs,
+        minMs: r.minMs,
+        maxMs: r.maxMs,
+        rps: r.rps,
+        errorCount: r.errorCount,
+      })),
+      summary: {
+        passed,
+        errors: 0,
+        failed: 0,
+        skipped: 0,
+        p99AtMaxConcurrency: maxConcResult?.p99Ms ?? 0,
+        rpsAtMaxConcurrency: maxConcResult?.rps ?? 0,
+      },
     },
-  };
+    { evidence: 'simulated', datasetVersion: 'e2e-latency-v1' },
+  );
 
   const fullPath = resolve(outputPath);
   const dir = dirname(fullPath);
@@ -160,10 +169,9 @@ async function main() {
   writeFileSync(fullPath, JSON.stringify(baseline, null, 2), { mode: 0o644 });
   console.log(`Baseline saved to ${fullPath}`);
 
-  // SLO check: P99 at concurrency 50 should be < 500ms
-  const maxConcResult = results[results.length - 1];
-  if (maxConcResult && maxConcResult.p99Ms > 500) {
-    console.log(`⚠ WARNING: P99 at max concurrency (${maxConcResult.p99Ms}ms) exceeds 500ms SLO`);
+  if (!passed) {
+    console.log(`❌ FAIL: P99 at max concurrency (${maxConcResult?.p99Ms}ms) exceeds 500ms SLO`);
+    process.exit(1);
   }
   console.log('✅ PASS: E2E latency benchmark completed');
 }

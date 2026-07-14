@@ -102,6 +102,8 @@ interface TxRow {
   aborted_at: string | null;
   error: string | null;
   metadata_json: string | null;
+  resume_at: string | null;
+  pause_reason: string | null;
 }
 
 export interface StartRunInput {
@@ -154,6 +156,8 @@ export class RunLedger {
   private stmtListUncompensated: BetterSqlite3Stmt | null = null;
   private stmtListByState: BetterSqlite3Stmt | null = null;
   private stmtSyncLeaseCredentials: BetterSqlite3Stmt | null = null;
+  private stmtPauseTx: BetterSqlite3Stmt | null = null;
+  private stmtListRunnablePaused: BetterSqlite3Stmt | null = null;
 
   constructor(config?: Partial<RunLedgerConfig>);
   constructor(
@@ -231,6 +235,25 @@ export class RunLedger {
       );
       CREATE INDEX IF NOT EXISTS idx_actions_run ON run_actions(run_id, executed_at);
     `);
+    // V2 additive columns for durable wake / HITL. IF NOT EXISTS via try/catch
+    // because SQLite lacks ADD COLUMN IF NOT EXISTS on older builds.
+    for (const ddl of [
+      `ALTER TABLE run_transactions ADD COLUMN resume_at TEXT`,
+      `ALTER TABLE run_transactions ADD COLUMN pause_reason TEXT`,
+    ]) {
+      try {
+        this.db.exec(ddl);
+      } catch {
+        /* column already exists */
+      }
+    }
+    try {
+      this.db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_tx_resume ON run_transactions(state, resume_at)`,
+      );
+    } catch {
+      /* best-effort */
+    }
   }
 
   private prepareStatements(): void {
@@ -238,6 +261,7 @@ export class RunLedger {
     this.stmtGetTx = this.db.prepare(`
       SELECT run_id, tenant_id, state, intent_hash, lease_token, fencing_epoch,
              created_at, committed_at, aborted_at, error, metadata_json,
+             resume_at, pause_reason,
              '[]' AS actions_json
       FROM run_transactions WHERE run_id = ? AND tenant_id IS ? LIMIT 1
     `);
@@ -291,8 +315,26 @@ export class RunLedger {
     `);
     this.stmtListByState = this.db.prepare(`
       SELECT run_id, tenant_id, state, intent_hash, lease_token, fencing_epoch,
-             created_at, committed_at, aborted_at, error, metadata_json
+             created_at, committed_at, aborted_at, error, metadata_json,
+             resume_at, pause_reason
       FROM run_transactions WHERE state = ? AND (tenant_id IS ? OR ? IS NULL)
+    `);
+    this.stmtPauseTx = this.db.prepare(`
+      UPDATE run_transactions
+      SET state = 'PAUSED', resume_at = ?, pause_reason = ?, error = COALESCE(?, error)
+      WHERE run_id = ? AND tenant_id IS ? AND lease_token = ? AND fencing_epoch = ?
+        AND state IN ('PENDING', 'EXECUTING', 'VERIFYING', 'PAUSED')
+    `);
+    this.stmtListRunnablePaused = this.db.prepare(`
+      SELECT run_id, tenant_id, state, intent_hash, lease_token, fencing_epoch,
+             created_at, committed_at, aborted_at, error, metadata_json,
+             resume_at, pause_reason
+      FROM run_transactions
+      WHERE state = 'PAUSED'
+        AND resume_at IS NOT NULL
+        AND resume_at <= ?
+        AND (tenant_id IS ? OR ? IS NULL)
+      ORDER BY resume_at ASC
     `);
     this.stmtSyncLeaseCredentials = this.db.prepare(`
       UPDATE run_transactions SET lease_token = ?, fencing_epoch = ?
@@ -339,21 +381,7 @@ export class RunLedger {
 
     const existing = this.stmtGetTx.get(runId, tenantId) as TxRow | undefined;
     if (existing) {
-      const actions = this.loadActions(runId, tenantId);
-      const tx: RunTransaction = {
-        runId,
-        state: existing.state,
-        intentHash: existing.intent_hash,
-        leaseToken: existing.lease_token,
-        fencingEpoch: existing.fencing_epoch,
-        actions,
-        createdAt: existing.created_at,
-        committedAt: existing.committed_at ?? undefined,
-        abortedAt: existing.aborted_at ?? undefined,
-        error: existing.error ?? undefined,
-        tenantId: input.tenantId,
-        metadata: existing.metadata_json ? JSON.parse(existing.metadata_json) : undefined,
-      };
+      const tx = this.rowToTx({ ...existing, tenant_id: tenantId }, true);
       return {
         lease: {
           acquired: false,
@@ -696,26 +724,80 @@ export class RunLedger {
     return { aborted: true, outcome };
   }
 
+  /**
+   * Transition EXECUTING/VERIFYING/PENDING → PAUSED (HITL, budget, timer).
+   * Optionally set resumeAt for delayed wake. Returns false if fenced.
+   */
+  pause(
+    runId: string,
+    leaseToken: string,
+    fencingEpoch: number,
+    options?: {
+      tenantId?: string;
+      resumeAt?: string | null;
+      reason?: string;
+      error?: string;
+    },
+  ): boolean {
+    if (!this.db || !this.stmtPauseTx) return false;
+    const tenantId = options?.tenantId ?? null;
+    const result = this.stmtPauseTx.run(
+      options?.resumeAt ?? null,
+      options?.reason ?? 'paused',
+      options?.error ?? null,
+      runId,
+      tenantId,
+      leaseToken,
+      fencingEpoch,
+    );
+    if (result.changes === 1) {
+      this.emitSourcingEvent('run.paused', {
+        runId,
+        tenantId,
+        resumeAt: options?.resumeAt ?? null,
+        reason: options?.reason ?? 'paused',
+      });
+    }
+    return result.changes === 1;
+  }
+
+  /**
+   * List PAUSED runs whose resume_at <= now (eligible for wake).
+   */
+  listRunnablePaused(options?: { tenantId?: string; nowIso?: string }): RunTransaction[] {
+    if (!this.db || !this.stmtListRunnablePaused) return [];
+    const tenantId = options?.tenantId ?? null;
+    const nowIso = options?.nowIso ?? new Date().toISOString();
+    const rows = this.stmtListRunnablePaused.all(nowIso, tenantId, tenantId) as TxRow[];
+    return rows.map((row) => this.rowToTx(row, /* loadActions */ false));
+  }
+
+  private rowToTx(row: TxRow, loadActions: boolean): RunTransaction {
+    return {
+      runId: row.run_id,
+      state: row.state,
+      intentHash: row.intent_hash,
+      leaseToken: row.lease_token,
+      fencingEpoch: row.fencing_epoch,
+      actions: loadActions ? this.loadActions(row.run_id, row.tenant_id) : [],
+      createdAt: row.created_at,
+      committedAt: row.committed_at ?? undefined,
+      abortedAt: row.aborted_at ?? undefined,
+      error: row.error ?? undefined,
+      tenantId: row.tenant_id ?? undefined,
+      metadata: row.metadata_json ? JSON.parse(row.metadata_json) : undefined,
+      resumeAt: row.resume_at ?? undefined,
+      pauseReason: row.pause_reason ?? undefined,
+    };
+  }
+
   /** Load a run transaction by id. */
   getTransaction(runId: string, options?: { tenantId?: string }): RunTransaction | null {
     if (!this.db || !this.stmtGetTx) return null;
     const tenantId = options?.tenantId ?? null;
     const row = this.stmtGetTx.get(runId, tenantId) as TxRow | undefined;
     if (!row) return null;
-    return {
-      runId,
-      state: row.state,
-      intentHash: row.intent_hash,
-      leaseToken: row.lease_token,
-      fencingEpoch: row.fencing_epoch,
-      actions: this.loadActions(runId, tenantId),
-      createdAt: row.created_at,
-      committedAt: row.committed_at ?? undefined,
-      abortedAt: row.aborted_at ?? undefined,
-      error: row.error ?? undefined,
-      tenantId: options?.tenantId,
-      metadata: row.metadata_json ? JSON.parse(row.metadata_json) : undefined,
-    };
+    return this.rowToTx({ ...row, tenant_id: tenantId }, true);
   }
 
   /** List all runs in a given state (e.g. 'ABORTED' for ops triage). */
@@ -723,20 +805,7 @@ export class RunLedger {
     if (!this.db || !this.stmtListByState) return [];
     const tenantId = options?.tenantId ?? null;
     const rows = this.stmtListByState.all(state, tenantId, tenantId) as TxRow[];
-    return rows.map((row) => ({
-      runId: row.run_id,
-      state: row.state,
-      intentHash: row.intent_hash,
-      leaseToken: row.lease_token,
-      fencingEpoch: row.fencing_epoch,
-      actions: [],
-      createdAt: row.created_at,
-      committedAt: row.committed_at ?? undefined,
-      abortedAt: row.aborted_at ?? undefined,
-      error: row.error ?? undefined,
-      tenantId: row.tenant_id ?? undefined,
-      metadata: row.metadata_json ? JSON.parse(row.metadata_json) : undefined,
-    }));
+    return rows.map((row) => this.rowToTx(row, false));
   }
 
   private loadActions(runId: string, tenantId: string | null): CompensableAction[] {

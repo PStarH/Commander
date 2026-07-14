@@ -446,9 +446,9 @@ export class EuAiActComplianceReporter {
         options.systemDescription ??
         'Commander is a multi-agent AI orchestration system that dynamically selects execution topology based on task complexity. It routes tasks through a deliberation → scaling → topology → decomposition → execution → synthesis → quality gate pipeline with built-in security controls, data exfiltration prevention, and comprehensive audit logging.',
       capabilities: [
-        'Multi-agent orchestration with 8 dynamic topologies (SINGLE, SEQUENTIAL, PARALLEL, HIERARCHICAL, HYBRID, DEBATE, ENSEMBLE, EVALUATOR-OPTIMIZER)',
+        'Multi-agent orchestration with 5 canonical topologies (SINGLE, CHAIN, DISPATCH, ORCHESTRATOR, REVIEW) + 9 legacy aliases',
         'Automated task decomposition and sub-agent coordination',
-        '22 LLM provider integrations with automatic fallback chains',
+        '25 LLM provider integrations with automatic fallback chains',
         'Built-in security scanning: ContentScanner (injection detection), OutputSanitizer (data exfiltration prevention), SupplyChainScanner (skill/tool verification)',
         'Comprehensive audit trail: SecurityAuditLogger, AuditChainLedger (tamper-evident), AgentLineage (relationship tracking)',
         'Multi-tenant isolation with per-tenant rate limiting, storage, and memory',

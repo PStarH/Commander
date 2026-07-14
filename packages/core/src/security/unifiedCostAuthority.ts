@@ -44,6 +44,7 @@ import { getLiteLLMPricing } from './litellmPricing';
 import { getSecurityAuditLogger } from './securityAuditLogger';
 import { getGlobalLogger, getGlobalMetrics } from '../logging';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+import { getGlobalTenantProvider } from '../runtime/tenantProvider';
 
 // ============================================================================
 // Per-Tool 成本元数据
@@ -294,8 +295,6 @@ class BudgetEnforcer {
     // 分层预算检查
     const caps = this.effectiveCaps(tenantState);
     const projectedRun = runState.usedUsd + estimatedCostUsd;
-    const projectedTenantDaily = tenantState.dailyUsedUsd + estimatedCostUsd;
-    const projectedTenantMonthly = tenantState.monthlyUsedUsd + estimatedCostUsd;
     const projectedGlobalDaily = this.globalDailyUsedUsd + estimatedCostUsd;
 
     // per-request 硬上限
@@ -316,21 +315,19 @@ class BudgetEnforcer {
       };
     }
 
-    // per-tenant daily 硬上限
-    if (projectedTenantDaily > caps.perTenantDailyUsd) {
+    // per-tenant 硬上限（按租户 billingCycle，默认 daily）
+    const tenantIdForConfig = ctx.tenantId ?? 'default';
+    const billingCycle = this.getTenantBillingCycle(tenantIdForConfig);
+    const perTenantCap =
+      billingCycle === 'monthly' ? caps.perTenantMonthlyUsd : caps.perTenantDailyUsd;
+    const perTenantUsed =
+      billingCycle === 'monthly' ? tenantState.monthlyUsedUsd : tenantState.dailyUsedUsd;
+    const projectedTenant = perTenantUsed + estimatedCostUsd;
+    if (projectedTenant > perTenantCap) {
       return {
         allowed: false,
         action: 'THROTTLE',
-        reason: `Per-tenant daily budget exceeded: $${projectedTenantDaily.toFixed(4)} > $${caps.perTenantDailyUsd}`,
-      };
-    }
-
-    // per-tenant monthly 硬上限
-    if (projectedTenantMonthly > caps.perTenantMonthlyUsd) {
-      return {
-        allowed: false,
-        action: 'THROTTLE',
-        reason: `Per-tenant monthly budget exceeded: $${projectedTenantMonthly.toFixed(4)} > $${caps.perTenantMonthlyUsd}`,
+        reason: `Per-tenant ${billingCycle} budget exceeded for tenant '${tenantIdForConfig}': $${projectedTenant.toFixed(4)} > $${perTenantCap}`,
       };
     }
 
@@ -396,10 +393,18 @@ class BudgetEnforcer {
         reason: `Per-run budget MELT: $${runState.usedUsd.toFixed(4)} >= $${caps.perRunUsd}`,
       };
     }
-    if (tenantState.dailyUsedUsd >= caps.perTenantDailyUsd) {
+
+    // per-tenant MELT（按租户 billingCycle，默认 daily）
+    const tenantIdForConfig = ctx.tenantId ?? 'default';
+    const billingCycle = this.getTenantBillingCycle(tenantIdForConfig);
+    const perTenantCap =
+      billingCycle === 'monthly' ? caps.perTenantMonthlyUsd : caps.perTenantDailyUsd;
+    const perTenantUsed =
+      billingCycle === 'monthly' ? tenantState.monthlyUsedUsd : tenantState.dailyUsedUsd;
+    if (perTenantUsed >= perTenantCap) {
       return {
         melted: true,
-        reason: `Per-tenant daily MELT: $${tenantState.dailyUsedUsd.toFixed(4)} >= $${caps.perTenantDailyUsd}`,
+        reason: `Per-tenant ${billingCycle} MELT for tenant '${tenantIdForConfig}': $${perTenantUsed.toFixed(4)} >= $${perTenantCap}`,
       };
     }
     if (this.globalDailyUsedUsd >= caps.globalDailyUsd) {
@@ -475,6 +480,22 @@ class BudgetEnforcer {
   private effectiveCaps(tenantState: TenantBudgetState): BudgetCap {
     if (!tenantState.dynamicCapOverride) return this.config;
     return { ...this.config, ...tenantState.dynamicCapOverride };
+  }
+
+  /**
+   * Resolve the tenant's configured billing cycle.
+   *
+   * Default is 'daily'. A tenant may opt into 'monthly' budgeting via
+   * `metadata.billingCycle: 'monthly'` in its TenantConfig.
+   */
+  private getTenantBillingCycle(tenantId: string): 'daily' | 'monthly' {
+    try {
+      const cycle = getGlobalTenantProvider().getTenantConfig(tenantId)?.metadata?.billingCycle;
+      if (cycle === 'monthly') return 'monthly';
+    } catch {
+      // Best-effort: if the provider is not initialized, fall back to daily.
+    }
+    return 'daily';
   }
 
   private maybeResetDailyMonthly(state: TenantBudgetState): void {
