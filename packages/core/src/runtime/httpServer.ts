@@ -1870,64 +1870,6 @@ export class CommanderHttpServer {
     );
   }
 
-  /**
-   * Tenant gate shared by all multi-tenant-aware handlers
-   * (/api/v1/memory, /api/v1/plan, /api/v1/security/owasp-agentic-ai-top10).
-   *
-   * Behavior:
-   *  - Single-tenant mode (no `tenantApiKeyHashes` configured): pass-through.
-   *    Returns whatever the auth header maps to (typically `undefined`), letting
-   *    the downstream `runWithTenant(undefined, …)` fall back to the singleton
-   *    globalInstance. No 401 — preserves legacy single-tenant deployments.
-   *  - Multi-tenant mode (map configured, auth header unmapped or absent):
-   *    sends a 401 JSON response via `sendJson` and returns `undefined`.
-   *    Caller MUST check `res.writableEnded` after the call to short-circuit
-   *    the rest of the handler.
-   *  - Multi-tenant mode with a mapped key: returns the resolved tenantId,
-   *    caller proceeds into `runWithTenant(tenantId, …)`.
-   */
-  private requireTenant(req: IncomingMessage, res: ServerResponse): string | undefined {
-    if (this.tenantApiKeyHashes.size === 0) {
-      return this.resolveTenantFromAuth(req);
-    }
-    const tenantId = this.resolveTenantFromAuth(req);
-    if (!tenantId) {
-      sendJson(res, 401, {
-        error: `Tenant required for ${req.url}. Configure tenantApiKeyHashes and send a mapped API key.`,
-      });
-    }
-    return tenantId;
-  }
-
-  /**
-   * Cross-tenant authorization gate. Call this when a handler receives a
-   * target tenant ID from the request path/query/body. It verifies that the
-   * authenticated tenant matches the requested target — preventing tenant A
-   * from accessing tenant B's resources even if the target is explicitly
-   * passed in the URL.
-   *
-   * Returns true if access is allowed (or multi-tenant mode is disabled).
-   * Returns false and sends a 403 response if the tenants mismatch.
-   */
-  private assertTenantAccess(
-    res: ServerResponse,
-    authenticatedTenant: string | undefined,
-    targetTenant: string | undefined,
-    url: string,
-  ): boolean {
-    // Single-tenant mode: no enforcement.
-    if (this.tenantApiKeyHashes.size === 0) return true;
-    // No target specified — allowed (handler will use authenticated tenant).
-    if (!targetTenant) return true;
-    // Match — allowed.
-    if (authenticatedTenant === targetTenant) return true;
-    // Mismatch — deny.
-    sendJson(res, 403, {
-      error: `Cross-tenant access denied: authenticated tenant "${authenticatedTenant ?? 'unknown'}" cannot access resources for tenant "${targetTenant}" on ${url}.`,
-    });
-    return false;
-  }
-
   private checkRateLimit(ip: string): boolean {
     const now = Date.now();
     const entry = this.rateLimitMap.get(ip);
