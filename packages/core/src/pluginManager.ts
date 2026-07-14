@@ -107,3 +107,12 @@ export { createTaintTrackingPlugin } from './plugins/builtin/taintTrackingPlugin
 export { createEvalPlugin } from './plugins/builtin/evalPlugin';
 export { createReportingPlugin } from './plugins/builtin/reportingPlugin';
 export { createConsensusPlugin } from './plugins/builtin/consensusPlugin';
+export { createGapPlugin } from './plugins/builtin/gap/gapPlugin';
+export { createObservabilityPlugin } from './plugins/builtin/observabilityPlugin';
+export { createRaspExtensionsPlugin } from './plugins/builtin/raspExtensionsPlugin';
+export {
+  registerBuiltinPlugins,
+  type RegisterBuiltinPluginsOptions,
+  type RegisterBuiltinPluginsResult,
+  type BuiltinPluginId,
+} from './plugins/builtin/registerBuiltinPlugins';

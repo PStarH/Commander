@@ -1227,6 +1227,15 @@ export type {
 // Built-in Plugins — RAG Knowledge Base
 export { createRagPlugin } from './plugins/builtin/ragPlugin';
 export { createTaintTrackingPlugin } from './plugins/builtin/taintTrackingPlugin';
+export { createGapPlugin } from './plugins/builtin/gap/gapPlugin';
+export { createObservabilityPlugin } from './plugins/builtin/observabilityPlugin';
+export { createRaspExtensionsPlugin } from './plugins/builtin/raspExtensionsPlugin';
+export {
+  registerBuiltinPlugins,
+  type RegisterBuiltinPluginsOptions,
+  type RegisterBuiltinPluginsResult,
+  type BuiltinPluginId,
+} from './plugins/builtin/registerBuiltinPlugins';
 export {
   KnowledgeBaseStore,
   createKbEmbeddingFunction,
