@@ -94,10 +94,12 @@ export function checkBaselineFile(
     };
   }
 
+  // Prefer filename order (newest date first). Git checkout mtimes are equal
+  // and can otherwise surface stale 07-06 fixtures ahead of current 07-13 ones.
   const allFiles = readdirSync(resolvedDir)
     .filter((f) => f.startsWith(prefix) && f.endsWith('.json'))
     .map((f) => resolve(resolvedDir, f))
-    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+    .sort((a, b) => basename(b).localeCompare(basename(a)));
 
   // Source/synthetic evidence files are not counted as regular baselines.
   const regularFiles = allFiles.filter((f) => !f.endsWith('.source.json'));
