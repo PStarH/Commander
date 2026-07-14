@@ -267,6 +267,21 @@ docker compose up -d
 
 ---
 
+
+## 文档
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — 系统设计、模块图、数据流
+- [docs/getting-started.md](docs/getting-started.md) — 快速开始
+- [docs/deploy.md](docs/deploy.md) — 部署
+- [docs/v2-migration-guide.md](docs/v2-migration-guide.md) — Architecture V2 迁移
+- [docs/slo.md](docs/slo.md) — SLO 定义
+- [SECURITY.md](SECURITY.md) — 安全模型、威胁模型、合规
+- [BENCHMARK.md](BENCHMARK.md) — 基准测试矩阵与方法
+- [CHANGELOG.md](CHANGELOG.md) — 发布历史
+- [docs/README.md](docs/README.md) — 公开文档索引
+
+内部审计、AI 工作计划与尽调笔记**不在本仓库**；仅存在于开发者本机的 `.internal/`（已被 gitignore）。
+
 ## 许可证
 
 MIT
