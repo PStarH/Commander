@@ -655,27 +655,8 @@ registerRouter({
   factory: () => createScimRouter(scimStore),
 });
 
-// ── Knowledge Base / RAG (enterprise document retrieval) ───────────────────
-getIMProviderRegistry().reset();
-// no-excuse-ok: catch — API boot boundary
-registerBuiltinPlugins({
-  rasp: true,
-  taint: true,
-  rag: true,
-  ragDisabled: true,
-  gap: true,
-  observability: true,
-  extraPlugins: [
-    dingtalkPlugin,
-    feishuPlugin,
-    wecomPlugin,
-    slackPlugin,
-    teamsPlugin,
-    discordPlugin,
-  ],
-}).catch((err: unknown) => {
-  console.error('Built-in plugin registration failed:', err);
-});
+// Built-in plugins (RAG/RASP/gap/observability + IM SPI) are registered in
+// startServer() before listen so webhook routes never race an empty registry.
 
 // ── External plugin discovery ──────────────────────────────────────────────
 // Discover and load externally-installed plugins from .commander/plugins/
@@ -1126,6 +1107,30 @@ async function startServer(): Promise<void> {
       process.stderr.write(`[MemoryIndex] Domain already exists: ${domain}\n`);
     }
   });
+
+  // Built-in plugins before listen: IM providers must be resolvable for webhooks.
+  getIMProviderRegistry().reset();
+  const builtinResult = await registerBuiltinPlugins({
+    rasp: true,
+    taint: true,
+    rag: true,
+    ragDisabled: true,
+    gap: true,
+    observability: true,
+    extraPlugins: [
+      dingtalkPlugin,
+      feishuPlugin,
+      wecomPlugin,
+      slackPlugin,
+      teamsPlugin,
+      discordPlugin,
+    ],
+  });
+  if (builtinResult.errors.length > 0) {
+    process.stderr.write(
+      `[startup] Built-in plugin registration errors: ${JSON.stringify(builtinResult.errors)}\n`,
+    );
+  }
 
   // Mount routers after shared state (including memoryIndexManager) is initialized.
   console.log('[mount] registered routers:', listRegisteredRouters().map((r) => `${r.name}@${r.mountPath}`));

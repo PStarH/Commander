@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { after, describe, it } from 'node:test';
+import { describe, it } from 'node:test';
 import { Pool } from 'pg';
 import { PostgresKernelRepository, runKernelMigrations, type NewKernelStep } from '@commander/kernel';
 import {
@@ -10,12 +10,6 @@ import {
 } from '@commander/worker-plane';
 
 const databaseUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
-
-// AgentRuntime pulls OTel + other process-level timers; force exit after suite so CI/local
-// does not hang after assertions pass.
-after(() => {
-  setTimeout(() => process.exit(0), 50).unref();
-});
 
 class MockProvider {
   readonly name = 'mock';
