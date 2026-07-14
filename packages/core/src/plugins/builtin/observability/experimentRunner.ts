@@ -20,7 +20,7 @@
  */
 
 import type { TokenUsage } from '../../../runtime/types';
-import { type Dataset, type DatasetCase, type DatasetStore } from './dataset';
+import { type Dataset, type DatasetCase, type DatasetStore } from '../../../observability/dataset';
 import { type EvalScorer, type EvalTarget } from './evalScorer';
 
 export interface ExperimentRunConfig {
