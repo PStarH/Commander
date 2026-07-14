@@ -267,6 +267,21 @@ docker compose up -d
 
 ---
 
+
+## ドキュメント
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — システム設計・モジュール図・データフロー
+- [docs/getting-started.md](docs/getting-started.md) — クイックスタート
+- [docs/deploy.md](docs/deploy.md) — デプロイ
+- [docs/v2-migration-guide.md](docs/v2-migration-guide.md) — Architecture V2 移行
+- [docs/slo.md](docs/slo.md) — SLO 定義
+- [SECURITY.md](SECURITY.md) — セキュリティモデル・脅威モデル・コンプライアンス
+- [BENCHMARK.md](BENCHMARK.md) — ベンチマーク行列と手法
+- [CHANGELOG.md](CHANGELOG.md) — リリース履歴
+- [docs/README.md](docs/README.md) — 公開ドキュメント索引
+
+内部監査・AI 作業計画・デューデリジェンスメモは**本リポジトリに含まれません**。開発者ローカルの `.internal/`（gitignore）のみです。
+
 ## ライセンス
 
 MIT
