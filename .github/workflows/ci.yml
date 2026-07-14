@@ -212,7 +212,10 @@ jobs:
           pnpm --filter @commander/core exec tsc --noEmit
 
       - name: TypeScript check (SDK)
-        run: pnpm --filter @commander/sdk typecheck
+        run: |
+          # SDK imports @commander/core types from dist; build core after plugin-sdk above
+          pnpm --filter @commander/core build
+          pnpm --filter @commander/sdk typecheck
 
       - name: Generate dependency SBOM
         run: pnpm list --recursive --depth=Infinity --json > sbom.json
