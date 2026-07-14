@@ -29,6 +29,10 @@ describe('httpRbacGate', () => {
 
   beforeEach(() => {
     auth = new AuthManager();
+    // AuthManager persists to .commander/auth.json — clear leftover users between tests.
+    if (auth.getUser('dev1')) {
+      auth.deleteUser('dev1');
+    }
     auth.createUser('dev1', 'viewer');
     ended = false;
     statusCode = 200;
