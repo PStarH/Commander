@@ -26,6 +26,7 @@
     "typecheck": "tsc --noEmit",
     "test": "pnpm --workspace-root exec tsx --test packages/worker-plane/src/workerService.test.ts",
     "test:e2e": "pnpm --workspace-root exec tsx --test packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts",
+    "test:e2e:pg": "pnpm --workspace-root exec tsx --test packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts",
     "prepublishOnly": "tsc -p tsconfig.json"
   },
   "keywords": [
