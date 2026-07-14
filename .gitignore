@@ -261,6 +261,8 @@ demos/
 
 # .commander runtime data (DB files and queue artifacts are NOT tracked)
 packages/core/.commander/queues/
+packages/core/.commander/plugins/
+packages/core/.commander/knowledge-base/
 .commander/atr_idempotency.db*
 .commander/atr_leases.db*
 .commander/atr_ledger.db*
