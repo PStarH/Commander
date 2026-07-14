@@ -17,7 +17,7 @@ describe('runtimeAdmission', () => {
       new BackpressureController({
         maxTokens: 1,
         refillRatePerSecond: 0.01,
-        bufferSize: 0,
+        bufferSize: 1,
         maxWaitMs: 1,
       }),
     );
