@@ -45,6 +45,11 @@ services:
       # Production database: PostgreSQL is the default for multi-replica deployments
       - API_STORE_BACKEND=${API_STORE_BACKEND:-postgres}
       - DATABASE_URL=${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?err}@postgres:5432/commander}
+      # Architecture V2: production API refuses to start without kernel (apps/api).
+      - COMMANDER_KERNEL_ENABLED=${COMMANDER_KERNEL_ENABLED:-1}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?err}@postgres:5432/commander}}
+      - COMMANDER_DEFAULT_POLICY_SNAPSHOT_ID=${COMMANDER_DEFAULT_POLICY_SNAPSHOT_ID:-policy-default-v1}
+      - COMMANDER_DEFAULT_TENANT_ID=${COMMANDER_DEFAULT_TENANT_ID:-}
     depends_on:
       postgres:
         condition: service_healthy
