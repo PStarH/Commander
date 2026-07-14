@@ -1,28 +1,30 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { Pool } from 'pg';
-import { PostgresKernelRepository, runKernelMigrations, type NewKernelStep } from '@commander/kernel';
+import {
+  PostgresKernelRepository,
+  runKernelMigrations,
+  type NewKernelStep,
+} from '@commander/kernel';
 import {
   WorkerService,
   PostgresWorkerRegistry,
   ApiKeyWorkerAuthenticator,
-  createAgentStepExecutor,
+  type StepExecutor,
 } from '@commander/worker-plane';
 
 const databaseUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
 
-class MockProvider {
-  readonly name = 'mock';
-  async call(_request: unknown): Promise<Record<string, unknown>> {
+/** Deterministic executor — proves worker↔kernel claim/complete without AgentRuntime/LLM. */
+const deterministicExecutor: StepExecutor = {
+  async execute(step) {
     return {
-      id: 'mock-1',
-      model: 'mock-model',
-      content: 'completed by mock provider',
-      finishReason: 'stop',
-      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      status: 'completed',
+      summary: `deterministic:${String((step.input as { goal?: string })?.goal ?? '')}`,
+      runId: step.runId,
     };
-  }
-}
+  },
+};
 
 function agentInput(goal: string): Record<string, unknown> {
   return {
@@ -44,11 +46,6 @@ describe('Gateway → Kernel → Worker real execution loop', { skip: !databaseU
 
     const kernel = new PostgresKernelRepository(pool);
     await kernel.initialize();
-
-    const executor = createAgentStepExecutor({
-      providers: { mock: new MockProvider() },
-      config: { defaultProvider: 'mock' },
-    });
 
     const registry = new PostgresWorkerRegistry(pool);
     await registry.initialize();
@@ -75,7 +72,7 @@ describe('Gateway → Kernel → Worker real execution loop', { skip: !databaseU
       authenticator,
       registry,
       kernel,
-      executor,
+      deterministicExecutor,
       { leaseTtlMs: 5000, workerHeartbeatMs: 1000, pollIntervalMs: 50 },
     );
 
@@ -114,10 +111,18 @@ describe('Gateway → Kernel → Worker real execution loop', { skip: !databaseU
       await worker.waitForIdle();
 
       const finalRun = await kernel.getRun(run.id, tenantId);
+      const finalStep = await kernel.getStep(step.id, tenantId);
       const events = await kernel.listEvents(run.id, tenantId);
-      assert.equal(finalRun?.state, 'SUCCEEDED', `run ended in state ${finalRun?.state}`);
+      assert.equal(
+        finalRun?.state,
+        'SUCCEEDED',
+        `run ended in state ${finalRun?.state}; step=${JSON.stringify(finalStep?.error ?? finalStep?.state)}`,
+      );
 
-      assert.ok(events.some((e) => e.type === 'run.succeeded'), 'run.succeeded event present');
+      assert.ok(
+        events.some((e) => e.type === 'run.succeeded'),
+        'run.succeeded event present',
+      );
 
       const outbox = await pool.query(
         "SELECT * FROM commander_outbox WHERE tenant_id=$1 AND payload->>'runId'=$2",
@@ -191,7 +196,10 @@ describe('Gateway → Kernel → Worker real execution loop', { skip: !databaseU
 
       await new Promise((r) => setTimeout(r, 120));
       const reclaimed = await kernel.reclaimExpiredLeases(new Date(), 10);
-      assert.ok(reclaimed.some((s) => s.id === stepId), 'expired lease reclaimed');
+      assert.ok(
+        reclaimed.some((s) => s.id === stepId),
+        'expired lease reclaimed',
+      );
 
       const second = await kernel.claimNextStep({
         workerId: workerB,
@@ -202,7 +210,11 @@ describe('Gateway → Kernel → Worker real execution loop', { skip: !databaseU
       });
       assert.ok(second, 'worker B claims after reclaim');
       assert.notEqual(second!.lease!.token, staleLease.token, 'new lease token');
-      assert.notEqual(second!.lease!.fencingEpoch, staleLease.fencingEpoch, 'fencing epoch advanced');
+      assert.notEqual(
+        second!.lease!.fencingEpoch,
+        staleLease.fencingEpoch,
+        'fencing epoch advanced',
+      );
 
       const zombie = await kernel.completeStep({
         stepId,
@@ -232,7 +244,9 @@ describe('Gateway → Kernel → Worker real execution loop', { skip: !databaseU
       await pool.query('DELETE FROM commander_runs WHERE tenant_id=$1', [tenantId]);
       await pool.query('DELETE FROM commander_events WHERE tenant_id=$1', [tenantId]);
       await pool.query('DELETE FROM commander_outbox WHERE tenant_id=$1', [tenantId]);
-      await pool.query('DELETE FROM commander_workers WHERE id = ANY($1::text[])', [[workerA, workerB]]);
+      await pool.query('DELETE FROM commander_workers WHERE id = ANY($1::text[])', [
+        [workerA, workerB],
+      ]);
       await pool.end();
     }
   });
