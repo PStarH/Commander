@@ -92,4 +92,23 @@ describe('Slack provider', () => {
     };
     assert.equal(slackProvider.verify(req, secret), true);
   });
+
+  it('formatReply returns Slack-compatible body', () => {
+    const result = slackProvider.formatReply({ text: 'hello world' });
+    assert.deepEqual(result.body, { text: 'hello world' });
+  });
+
+  it('sendMessage throws when token is missing', async () => {
+    await assert.rejects(
+      () => slackProvider.sendMessage('C1', { text: 'hello' }, {}),
+      /token missing/,
+    );
+  });
+
+  it('sendMessage throws when token is undefined', async () => {
+    await assert.rejects(
+      () => slackProvider.sendMessage('C1', { text: 'hello' }, { token: undefined }),
+      /token missing/,
+    );
+  });
 });

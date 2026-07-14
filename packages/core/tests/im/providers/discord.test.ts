@@ -115,4 +115,18 @@ describe('Discord provider', () => {
   it('stripMention with no mention returns original text', () => {
     assert.equal(discordProvider.stripMention('just text'), 'just text');
   });
+
+  it('sendMessage throws when token is missing', async () => {
+    await assert.rejects(
+      () => discordProvider.sendMessage('ch-1', { text: 'hello' }, {}),
+      /bot token missing/,
+    );
+  });
+
+  it('sendMessage throws when token is undefined', async () => {
+    await assert.rejects(
+      () => discordProvider.sendMessage('ch-1', { text: 'hello' }, { token: undefined }),
+      /bot token missing/,
+    );
+  });
 });
