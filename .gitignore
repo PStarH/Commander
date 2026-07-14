@@ -306,3 +306,9 @@ report.json
 /test-scanner-debug.ts
 /spawn-debug.test.cjs
 /agent-runtime-suspension-audit.md
+
+# ---------------------------------------------------------------------------
+# Internal / agent-only notes (NEVER publish)
+# Local audits, AI plans, diligence, fix-lists. See .internal/README.md
+# ---------------------------------------------------------------------------
+.internal/
