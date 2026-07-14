@@ -297,6 +297,7 @@ export default defineConfig({
       'tests/security/guardianAgent.test.ts',
       'tests/security/guardianDangerousToolCall.test.ts',
       'tests/security/capabilityToken.test.ts',
+      'tests/security/biscuitCapabilityAdapter.test.ts',
       'tests/security/effectBroker.test.ts',
       'tests/security/keyProvider.test.ts',
       'tests/security/auditChainLedger.test.ts',
