@@ -1,0 +1,52 @@
+# =============================================================================
+# Commander — Architecture V2 (kernel-on) local/staging stack
+# =============================================================================
+# Usage:
+#   export COMMANDER_API_KEY="$(openssl rand -hex 32)"
+#   docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up -d --build
+#
+# This override forces the Gateway onto the shared execution kernel and starts
+# postgres + worker plane via the `v2` profile declared in docker-compose.yml.
+#
+# P0 status: wiring only. Full run completion + kill/reclaim still depends on
+# Claude's C1/C2 fencing + executable-step work. See docs/p0-parallel-status.md.
+# =============================================================================
+
+services:
+  api:
+    environment:
+      - NODE_ENV=production
+      - COMMANDER_KERNEL_ENABLED=1
+      - API_STORE_BACKEND=postgres
+      - DATABASE_URL=${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
+      - COMMANDER_DEFAULT_POLICY_SNAPSHOT_ID=${COMMANDER_DEFAULT_POLICY_SNAPSHOT_ID:-policy-default-v1}
+      - COMMANDER_DEFAULT_TENANT_ID=${COMMANDER_DEFAULT_TENANT_ID:-tenant-local}
+      - COMMANDER_DEFAULT_AGENT_DEFINITION_VERSION=${COMMANDER_DEFAULT_AGENT_DEFINITION_VERSION:-v1}
+      - COMMANDER_DEFAULT_PROVIDER=${COMMANDER_DEFAULT_PROVIDER:-openai}
+      - COMMANDER_DEFAULT_MODEL=${COMMANDER_DEFAULT_MODEL:-gpt-4o}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
+
+  timer:
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
+
+  outbox:
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
+
+  postgres:
+    # Ensure the v2 profile path always has a predictable local DSN.
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-commander}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-commander}
+      - POSTGRES_DB=${POSTGRES_DB:-commander}
