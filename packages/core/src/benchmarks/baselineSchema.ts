@@ -106,25 +106,30 @@ export function validateBaseline(
     reasons.push('skipped > 0');
   }
 
-  // Runtime consistency checks
-  if (binding.gitSha && binding.gitSha !== current.gitSha) {
-    reasons.push('gitSha mismatch');
-  }
+  // Runtime consistency checks apply to live evidence only.
+  // Simulated fixtures are regression anchors, not a claim that this exact
+  // commit/runtime produced the numbers — requiring git/node/pnpm equality
+  // makes every CI matrix Node version fail after a successful local run.
+  if (evidence === 'live') {
+    if (binding.gitSha && binding.gitSha !== current.gitSha) {
+      reasons.push('gitSha mismatch');
+    }
 
-  if (current.imageDigest && binding.imageDigest && binding.imageDigest !== current.imageDigest) {
-    reasons.push('imageDigest mismatch');
-  }
+    if (current.imageDigest && binding.imageDigest && binding.imageDigest !== current.imageDigest) {
+      reasons.push('imageDigest mismatch');
+    }
 
-  if (current.nodeVersion && binding.nodeVersion && binding.nodeVersion !== current.nodeVersion) {
-    reasons.push(
-      `nodeVersion mismatch: baseline=${binding.nodeVersion} current=${current.nodeVersion}`,
-    );
-  }
+    if (current.nodeVersion && binding.nodeVersion && binding.nodeVersion !== current.nodeVersion) {
+      reasons.push(
+        `nodeVersion mismatch: baseline=${binding.nodeVersion} current=${current.nodeVersion}`,
+      );
+    }
 
-  if (current.pnpmVersion && binding.pnpmVersion && binding.pnpmVersion !== current.pnpmVersion) {
-    reasons.push(
-      `pnpmVersion mismatch: baseline=${binding.pnpmVersion} current=${current.pnpmVersion}`,
-    );
+    if (current.pnpmVersion && binding.pnpmVersion && binding.pnpmVersion !== current.pnpmVersion) {
+      reasons.push(
+        `pnpmVersion mismatch: baseline=${binding.pnpmVersion} current=${current.pnpmVersion}`,
+      );
+    }
   }
 
   return { ok: reasons.length === 0, reasons };
