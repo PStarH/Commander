@@ -198,8 +198,10 @@ export class BiscuitCapabilityVerifier {
       };
     }
 
-    // Verify signatures
-    if (!token.verify()) {
+    // Verify signatures against the TRUSTED issuer public key (via the
+    // configured verifier). Never call token.verify() with no key — that would
+    // trust the token's own embedded key and accept any self-signed forgery.
+    if (!this.biscuitVerifier.verify(token)) {
       return {
         ok: false,
         reason: 'signature_mismatch',

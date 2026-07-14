@@ -68,9 +68,9 @@ const PRIVATE_IP_PATTERNS = [
   /^192\.168\./, // RFC 1918
   /^169\.254\./, // Link-local / cloud metadata (AWS/GCP)
   /^0\./, // Current network
-  /^::1$/, // IPv6 loopback
-  /^fc00:/, // IPv6 ULA
-  /^fe80:/, // IPv6 link-local
+  /^\[::1\]$/, // IPv6 loopback (Node URL keeps brackets in hostname)
+  /^\[fc00:/, // IPv6 ULA
+  /^\[fe80:/, // IPv6 link-local
 ];
 
 /**

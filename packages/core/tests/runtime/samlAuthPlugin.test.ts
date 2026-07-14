@@ -330,6 +330,35 @@ describe('SAMLAuthPlugin', () => {
       expect(result).toBeNull();
     });
 
+    it('rejects a signature-wrapping (XSW) payload with an injected second assertion', async () => {
+      // Start from a valid, signed response, then inject a forged UNSIGNED
+      // assertion (attacker-controlled admin role) ahead of the legit one.
+      const valid = createSignedSamlResponse(config, keys, { roles: 'guest' });
+      const xml = Buffer.from(valid, 'base64').toString('utf-8');
+      const forged =
+        `<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_forged" Version="2.0">` +
+        `<saml:Issuer>https://idp.example.com/saml/metadata</saml:Issuer>` +
+        `<saml:Subject><saml:NameID>attacker@evil.com</saml:NameID></saml:Subject>` +
+        `<saml:AttributeStatement>` +
+        `<saml:Attribute Name="roles"><saml:AttributeValue>admin</saml:AttributeValue></saml:Attribute>` +
+        `</saml:AttributeStatement>` +
+        `</saml:Assertion>`;
+      // Place the forged assertion first, before the genuine signed one.
+      const wrapped = xml.replace('<saml:Assertion', `${forged}<saml:Assertion`);
+      const result = await plugin.authenticate(Buffer.from(wrapped).toString('base64'));
+      expect(result).toBeNull();
+    });
+
+    it('rejects a duplicated-ID wrapped assertion', async () => {
+      const valid = createSignedSamlResponse(config, keys);
+      const xml = Buffer.from(valid, 'base64').toString('utf-8');
+      // Duplicate the whole assertion element (same ID) — non-unique ID must fail.
+      const m = xml.match(/<saml:Assertion[\s\S]*?<\/saml:Assertion>/);
+      const wrapped = m ? xml.replace(m[0], m[0] + m[0]) : xml;
+      const result = await plugin.authenticate(Buffer.from(wrapped).toString('base64'));
+      expect(result).toBeNull();
+    });
+
     it('rejects wrong InResponseTo when expected', async () => {
       const response = createSignedSamlResponse(config, keys, { inResponseTo: 'expected-id' });
       const result = await plugin.validateSamlResponse(response, {

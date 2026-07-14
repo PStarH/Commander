@@ -73,4 +73,24 @@ describe('Teams provider', () => {
     const req = { method: 'POST', query: {}, body: bodyObj, headers: { authorization: signature } };
     assert.equal(teamsProvider.verify(req, secret), true);
   });
+
+  it('formatReply returns Teams activity body', () => {
+    const result = teamsProvider.formatReply({ text: 'reply', conversationId: 'conv-1' });
+    assert.equal((result.body as Record<string, unknown>).type, 'message');
+    assert.equal((result.body as Record<string, unknown>).text, 'reply');
+  });
+
+  it('sendMessage throws when endpoint is missing', async () => {
+    await assert.rejects(
+      () => teamsProvider.sendMessage('conv-1', { text: 'hello' }, {}),
+      /service URL missing/,
+    );
+  });
+
+  it('sendMessage throws when endpoint is undefined', async () => {
+    await assert.rejects(
+      () => teamsProvider.sendMessage('conv-1', { text: 'hello' }, { endpoint: undefined }),
+      /service URL missing/,
+    );
+  });
 });
