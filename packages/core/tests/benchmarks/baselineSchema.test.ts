@@ -83,18 +83,32 @@ describe('validateBaseline strict', () => {
     expect(result.reasons).toContain('summary.passed is not true');
   });
 
-  it('fails when gitSha mismatches', () => {
+  it('fails when gitSha mismatches for live evidence', () => {
     const result = validateBaseline(
-      doc({ baseline: { gitSha: 'old', imageDigest: CURRENT.imageDigest } }),
+      doc({
+        evidenceLevel: 'live',
+        baseline: { gitSha: 'old', imageDigest: CURRENT.imageDigest },
+      }),
       CURRENT,
     );
     expect(result.ok).toBe(false);
     expect(result.reasons).toContain('gitSha mismatch');
   });
 
-  it('fails when imageDigest mismatches (both provided)', () => {
+  it('ignores gitSha mismatches for simulated evidence', () => {
     const result = validateBaseline(
-      doc({ baseline: { gitSha: CURRENT.gitSha, imageDigest: 'sha256:old' } }),
+      doc({ baseline: { gitSha: 'old', imageDigest: CURRENT.imageDigest } }),
+      CURRENT,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('fails when imageDigest mismatches for live evidence', () => {
+    const result = validateBaseline(
+      doc({
+        evidenceLevel: 'live',
+        baseline: { gitSha: CURRENT.gitSha, imageDigest: 'sha256:old' },
+      }),
       CURRENT,
     );
     expect(result.ok).toBe(false);
@@ -103,7 +117,10 @@ describe('validateBaseline strict', () => {
 
   it('does not fail imageDigest when current has no digest', () => {
     const result = validateBaseline(
-      doc({ baseline: { gitSha: CURRENT.gitSha, imageDigest: 'sha256:any' } }),
+      doc({
+        evidenceLevel: 'live',
+        baseline: { gitSha: CURRENT.gitSha, imageDigest: 'sha256:any' },
+      }),
       { gitSha: CURRENT.gitSha },
     );
     expect(result.ok).toBe(true);
@@ -120,7 +137,13 @@ describe('validateBaseline strict', () => {
     );
     expect(result.ok).toBe(false);
     expect(result.reasons.sort()).toEqual(
-      ['errors > 0', 'failed > 0', 'skipped > 0', 'summary.passed is not true', 'gitSha mismatch'].sort(),
+      [
+        'errors > 0',
+        'failed > 0',
+        'skipped > 0',
+        'summary.passed is not true',
+        'gitSha mismatch',
+      ].sort(),
     );
   });
 });
