@@ -48,9 +48,7 @@ export class DockerExecBackend implements ExecutionBackend {
     // GITHUB_PAT, *_CONNECTION_STRING, …). Only explicitly named variables are
     // passed, and values are sanitized against Docker env injection.
     const DEFAULT_ENV_ALLOWLIST = ['PATH', 'HOME', 'USER', 'SHELL', 'TERM', 'LANG', 'TZ'];
-    const allow = new Set(
-      (this.config.envAllowList ?? DEFAULT_ENV_ALLOWLIST).map((k) => k),
-    );
+    const allow = new Set((this.config.envAllowList ?? DEFAULT_ENV_ALLOWLIST).map((k) => k));
     for (const [k, v] of Object.entries(process.env)) {
       if (v === undefined || !allow.has(k)) continue;
       // Strip newlines/null bytes so a value cannot inject additional -e pairs.

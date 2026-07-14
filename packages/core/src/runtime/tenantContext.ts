@@ -69,8 +69,7 @@ function isPrivilegedTenantModeCaller(callerFile: string | undefined): boolean {
   if (isTenantProvider) return true;
   if (process.env.NODE_ENV !== 'production') {
     return (
-      /[\\/](__tests__|tests)[\\/]/.test(callerFile) ||
-      /\.test\.(ts|js|mjs|cjs)$/.test(callerFile)
+      /[\\/](__tests__|tests)[\\/]/.test(callerFile) || /\.test\.(ts|js|mjs|cjs)$/.test(callerFile)
     );
   }
   return false;

@@ -303,7 +303,9 @@ export class SmartModelRouter {
         `routing_mode: ${this.config.mode}`,
         `reason: ${reason}`,
         ...(belowFloor
-          ? [`warning: explicit model tier '${model.tier}' below sensitive floor '${minSensitiveTier}'`]
+          ? [
+              `warning: explicit model tier '${model.tier}' below sensitive floor '${minSensitiveTier}'`,
+            ]
           : []),
         `model_capabilities: ${model.capabilities.join(', ')}`,
         `cost_estimate: $${estimatedCost.toFixed(6)}`,

@@ -140,7 +140,9 @@ function validateEnvironment(): void {
         console.error(message);
         missingCritical.push(name);
       } else {
-        console.warn(`${message} Using development fallback. Set ${name} before deploying to production.`);
+        console.warn(
+          `${message} Using development fallback. Set ${name} before deploying to production.`,
+        );
       }
     }
   }
@@ -743,7 +745,6 @@ registerRouter({
   factory: () => createEvaluationRunnerRouter(),
 });
 
-
 // ── OpenAPI ─────────────────────────────────────────────────────────────────
 app.get('/api/openapi.json', (_req, res) => {
   res.json({
@@ -1133,7 +1134,10 @@ async function startServer(): Promise<void> {
   }
 
   // Mount routers after shared state (including memoryIndexManager) is initialized.
-  console.log('[mount] registered routers:', listRegisteredRouters().map((r) => `${r.name}@${r.mountPath}`));
+  console.log(
+    '[mount] registered routers:',
+    listRegisteredRouters().map((r) => `${r.name}@${r.mountPath}`),
+  );
   mountRegisteredRouters(app);
 
   // Start the outgoing webhook dispatcher so registered webhooks receive

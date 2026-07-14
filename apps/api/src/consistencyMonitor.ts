@@ -116,7 +116,11 @@ export function loadConsistencySnapshots(
     const filePath = path.resolve(process.cwd(), PERSISTENCE_DIR, SNAPSHOT_FILE);
     if (!fs.existsSync(filePath)) return [];
     const lines = readTailLines(filePath, TAIL_READ_BYTES);
-    const records: Array<{ timestamp: string; missionId?: string; report: Partial<ConsistencyReport> }> = [];
+    const records: Array<{
+      timestamp: string;
+      missionId?: string;
+      report: Partial<ConsistencyReport>;
+    }> = [];
     for (const line of lines.slice(-limit)) {
       try {
         records.push(JSON.parse(line));

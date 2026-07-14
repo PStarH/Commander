@@ -120,9 +120,8 @@ export function createObservabilityPlugin(): CommanderPlugin {
       }
 
       if (enableSLO) {
-        const { getSLOOperations, DEFAULT_SLO_CONFIG } = await import(
-          './observability/sloOperations'
-        );
+        const { getSLOOperations, DEFAULT_SLO_CONFIG } =
+          await import('./observability/sloOperations');
         getSLOOperations().initialize({
           ...DEFAULT_SLO_CONFIG,
           autoStart: true,

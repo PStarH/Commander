@@ -459,7 +459,9 @@ export class ThreeLayerMemory {
     }
 
     const entryMetadata: Record<string, unknown> =
-      contradictionIds.length > 0 ? { ...metadata, contradictions: contradictionIds } : { ...metadata };
+      contradictionIds.length > 0
+        ? { ...metadata, contradictions: contradictionIds }
+        : { ...metadata };
 
     // AI-7: stamp the authoritative tenant so this entry is only retrievable
     // within its tenant (filterByTenant depends on it). When a tenant context
