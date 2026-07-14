@@ -3,25 +3,9 @@ import { ExecutionRouter } from '../../src/runtime/executionRouter';
 import type { AgentExecutionContext, RoutingDecision } from '../../src/runtime/types';
 import type { ModelConfig } from '../../src/runtime/modelConfig';
 
-// Mock external dependencies
-vi.mock('../../src/runtime/privacyRouter', () => ({
-  getPrivacyRouter: vi.fn(),
-}));
-vi.mock('../../src/runtime/costEstimator', () => ({
-  getCostEstimator: vi.fn(() => ({
-    estimateBeforeRun: vi.fn(() => ({
-      predictedCostUsd: 0.05,
-      predictedTotalTokens: 5000,
-      confidence: 0.8,
-      sampleCount: 10,
-      taskCategory: 'general',
-      modelTier: 'standard',
-    })),
-  })),
-}));
-
-import { getPrivacyRouter } from '../../src/runtime/privacyRouter';
-import { getCostEstimator } from '../../src/runtime/costEstimator';
+// Vitest 4 + package type:module: vi.mock of named ESM imports is unreliable for
+// production modules that already bind getX at import time. Prefer deps injection
+// on ExecutionRouter (getPrivacyRouter / getCostEstimator) instead of module mocks.
 import { ModelRouter } from '../../src/runtime/modelRouter';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -93,6 +77,19 @@ function makeBus() {
   } as any;
 }
 
+function makeCostEstimator() {
+  return {
+    estimateBeforeRun: vi.fn(() => ({
+      predictedCostUsd: 0.05,
+      predictedTotalTokens: 5000,
+      confidence: 0.8,
+      sampleCount: 10,
+      taskCategory: 'general',
+      modelTier: 'standard',
+    })),
+  };
+}
+
 function makeDeps(overrides?: Partial<any>) {
   return {
     getSmartRouter: () => null,
@@ -100,18 +97,28 @@ function makeDeps(overrides?: Partial<any>) {
     getRouter: () => makeRouter(),
     getGovernor: () => makeGovernor(),
     getProviders: () => new Map([['openai', {}]]),
+    getPrivacyRouter: () => ({
+      checkContent: vi.fn(async () => ({
+        blocked: false,
+        route: 'cloud',
+        reason: '',
+        matches: [],
+      })),
+      applyRouting: vi.fn((r: RoutingDecision) => r),
+    }),
+    getCostEstimator: () => makeCostEstimator(),
     ...overrides,
   };
 }
 
-function setupPrivacyMock(options: {
+function makePrivacyMock(options: {
   blocked?: boolean;
   route?: string;
   reason?: string;
   matches?: string[];
   throw?: boolean;
 }) {
-  const mock = {
+  return {
     checkContent: options.throw
       ? vi.fn(async () => {
           throw new Error('privacy service unavailable');
@@ -126,8 +133,6 @@ function setupPrivacyMock(options: {
       makeRouting({ modelId: 'ollama/llama3', provider: 'ollama' }),
     ),
   };
-  vi.mocked(getPrivacyRouter).mockReturnValue(mock as any);
-  return mock;
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -138,18 +143,6 @@ describe('ExecutionRouter', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getCostEstimator).mockReturnValue({
-      estimateBeforeRun: vi.fn(() => ({
-        predictedCostUsd: 0.05,
-        predictedTotalTokens: 5000,
-        confidence: 0.8,
-        sampleCount: 10,
-        taskCategory: 'general',
-        modelTier: 'standard',
-      })),
-    } as any);
-    // Default: privacy allows everything
-    setupPrivacyMock({});
     // Default: not batch eligible
     vi.spyOn(ModelRouter, 'isBatchEligible').mockReturnValue(false);
 
@@ -228,12 +221,14 @@ describe('ExecutionRouter', () => {
   });
 
   it('returns cancelled when privacy check blocks', async () => {
-    setupPrivacyMock({
+    const privacy = makePrivacyMock({
       blocked: true,
       route: 'block',
       reason: 'API key detected in goal',
       matches: ['sk-xxxx'],
     });
+    deps = makeDeps({ getPrivacyRouter: () => privacy });
+    router = new ExecutionRouter(deps);
 
     const result = await router.route({
       ctx: makeCtx({ goal: 'Analyze this API key: sk-xxxx' }),
@@ -250,12 +245,14 @@ describe('ExecutionRouter', () => {
   });
 
   it('overrides routing to local model when privacy detects sensitive content', async () => {
-    setupPrivacyMock({
+    const privacy = makePrivacyMock({
       blocked: false,
       route: 'local',
       reason: 'Internal IP detected',
       matches: ['10.0.0.1'],
     });
+    deps = makeDeps({ getPrivacyRouter: () => privacy });
+    router = new ExecutionRouter(deps);
 
     const result = await router.route({
       ctx: makeCtx({ goal: 'Check server at 10.0.0.1' }),
@@ -271,7 +268,9 @@ describe('ExecutionRouter', () => {
   });
 
   it('proceeds with cloud routing when privacy check fails', async () => {
-    setupPrivacyMock({ throw: true });
+    const privacy = makePrivacyMock({ throw: true });
+    deps = makeDeps({ getPrivacyRouter: () => privacy });
+    router = new ExecutionRouter(deps);
 
     const result = await router.route({
       ctx: makeCtx(),

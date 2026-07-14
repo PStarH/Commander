@@ -160,16 +160,53 @@ let gateway: V1KernelGateway | null = null;
 let initializePromise: Promise<void> | null = null;
 
 /**
- * Initializes only when explicitly enabled. Gateway production has no local
- * fallback; missing shared persistence is surfaced as 503 by V1 routes.
+ * Kernel Postgres DSN: COMMANDER_KERNEL_DATABASE_URL, else DATABASE_URL.
+ * Empty string when neither is set.
  */
+export function getKernelDatabaseUrl(env: NodeJS.ProcessEnv = process.env): string {
+  return (env.COMMANDER_KERNEL_DATABASE_URL ?? env.DATABASE_URL ?? '').trim();
+}
+
+/**
+ * Whether the shared durable execution kernel should be initialized.
+ *
+ * Default policy (Architecture V2 strangler — PRINCIPLES §2.3 / §4):
+ * - Explicit `COMMANDER_KERNEL_ENABLED=0|false|off|no` → OFF
+ *   (non-prod escape hatch for local UI without durable /v1; production refuse rejects this).
+ * - Explicit `COMMANDER_KERNEL_ENABLED=1|true|on|yes` → ON.
+ * - Otherwise ON when any of:
+ *     - NODE_ENV=production (production never boots without durable /v1)
+ *     - COMMANDER_V2_MODE=1
+ *     - COMMANDER_KERNEL_DATABASE_URL or DATABASE_URL is non-empty
+ * - Otherwise OFF (dev without a Postgres DSN keeps /v1 as KERNEL_UNAVAILABLE
+ *   rather than crashing boot on a missing database).
+ *
+ * WarRoomStore remains a non-/v1 mission/log store; it is not the /v1 run authority.
+ * Initializes when this returns true. Gateway has no local /v1 fallback;
+ * missing shared persistence fails closed at init or as 503.
+ */
+export function isCommanderKernelEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = (env.COMMANDER_KERNEL_ENABLED ?? '').trim().toLowerCase();
+  if (raw === '0' || raw === 'false' || raw === 'off' || raw === 'no') return false;
+  if (raw === '1' || raw === 'true' || raw === 'on' || raw === 'yes') return true;
+  if (env.NODE_ENV === 'production') return true;
+  if (env.COMMANDER_V2_MODE === '1') return true;
+  return getKernelDatabaseUrl(env).length > 0;
+}
+
+/** True when COMMANDER_KERNEL_ENABLED is an explicit off value. */
+export function isCommanderKernelExplicitlyDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = (env.COMMANDER_KERNEL_ENABLED ?? '').trim().toLowerCase();
+  return raw === '0' || raw === 'false' || raw === 'off' || raw === 'no';
+}
+
 export async function initializeV1KernelGateway(): Promise<void> {
-  if (process.env.COMMANDER_KERNEL_ENABLED !== '1') return;
+  if (!isCommanderKernelEnabled()) return;
   if (initializePromise) return initializePromise;
-  const connectionString = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
+  const connectionString = getKernelDatabaseUrl();
   if (!connectionString)
     throw new Error(
-      'COMMANDER_KERNEL_ENABLED=1 requires COMMANDER_KERNEL_DATABASE_URL or DATABASE_URL',
+      'Kernel enabled (COMMANDER_KERNEL_ENABLED default-on or =1) requires COMMANDER_KERNEL_DATABASE_URL or DATABASE_URL',
     );
   initializePromise = (async () => {
     const pg = require('pg') as {

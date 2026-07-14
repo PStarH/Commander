@@ -91,9 +91,9 @@ describe('AgentRuntime — handleMutationToolFailure', () => {
   it('records compensation actions via recordAction and publishes bus event', async () => {
     // Simulate some executed mutations so the rollback plan has steps
     const rt = runtime as any;
-    rt.executedMutations = [
+    rt.runContext.mutableExecutedMutations.splice(0, rt.runContext.mutableExecutedMutations.length, ...[
       { toolName: 'file_write', args: { path: '/tmp/a.txt', content: 'hello' } },
-    ];
+    ]);
 
     const recordSpy = vi.spyOn(runtime.getCompensationRegistry(), 'recordAction');
     const bus = getMessageBus();
@@ -121,10 +121,10 @@ describe('AgentRuntime — handleMutationToolFailure', () => {
 
   it('generates a rollback plan that includes steps for prior mutations', async () => {
     const rt = runtime as any;
-    rt.executedMutations = [
+    rt.runContext.mutableExecutedMutations.splice(0, rt.runContext.mutableExecutedMutations.length, ...[
       { toolName: 'file_write', args: { path: '/tmp/a.txt', content: 'v1' } },
       { toolName: 'file_write', args: { path: '/tmp/b.txt', content: 'v2' } },
-    ];
+    ]);
 
     const recordSpy = vi.spyOn(runtime.getCompensationRegistry(), 'recordAction');
 
@@ -136,7 +136,7 @@ describe('AgentRuntime — handleMutationToolFailure', () => {
 
   it('handles empty executedMutations gracefully (no prior mutations)', async () => {
     const rt = runtime as any;
-    rt.executedMutations = [];
+    rt.runContext.mutableExecutedMutations.splice(0, rt.runContext.mutableExecutedMutations.length, ...[]);
 
     const recordSpy = vi.spyOn(runtime.getCompensationRegistry(), 'recordAction');
 
@@ -259,8 +259,8 @@ describe('AgentRuntime — integration via tool execution', () => {
     expect(reg.getPendingCount()).toBe(0);
 
     const rt = runtime as any;
-    expect(Array.isArray(rt.executedMutations)).toBe(true);
-    expect(rt.executedMutations.length).toBe(0);
+    expect(Array.isArray(rt.runContext.mutableExecutedMutations)).toBe(true);
+    expect(rt.runContext.mutableExecutedMutations.length).toBe(0);
   });
 
   it('exposes ledgerCtx as null when RunLedger unavailable', () => {

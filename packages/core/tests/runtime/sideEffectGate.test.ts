@@ -143,7 +143,17 @@ describe('SideEffectGate — V2 mandatory PEP', () => {
       // In production, the gate defaults failClosed=true; we *also*
       // force it explicitly to catch a future refactor that might
       // accidentally narrow the constructor default.
-      const gate = new SideEffectGate({ failClosed: true });
+      // Inject a stub interaction store: production refuses SqliteInteractionStore(':memory:'),
+      // and this test only asserts admit() fail-closed on missing runHandle.
+      const gate = new SideEffectGate({
+        failClosed: true,
+        interactionStore: {
+          create: vi.fn(),
+          get: vi.fn(),
+          answer: vi.fn(),
+          listPending: vi.fn(),
+        } as never,
+      });
       await expect(gate.admit(baseRequest({ runHandle: null }))).rejects.toMatchObject({
         code: 'NO_RUN_HANDLE',
       });

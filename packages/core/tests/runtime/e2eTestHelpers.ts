@@ -120,11 +120,16 @@ export function makeTool(
     definition: {
       name,
       description: `Tool: ${name}`,
+      // Map unknown test tools onto the auto-approve web_search policy class
+      // via explicit low-risk metadata when available; isReadOnly helps gates.
       inputSchema: { type: 'object', properties: {} },
+      category: 'test',
     },
     execute,
     isConcurrencySafe: opts?.isConcurrencySafe ?? true,
-    isReadOnly: opts?.isReadOnly ?? false,
+    // Default read-only so fail-closed ToolApproval does not treat custom
+    // e2e tools as high-risk mutations when capability-token fast-path misses.
+    isReadOnly: opts?.isReadOnly ?? true,
   };
 }
 

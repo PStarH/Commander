@@ -30,8 +30,16 @@ asynchronous: `POST /v1/runs` requires a tenant-bound identity and an
 `Idempotency-Key`, then returns `202 Accepted` with a durable run identifier.
 `GET /v1/runs/{runId}` and `/events` query kernel-owned state and evidence.
 
-Set `COMMANDER_KERNEL_ENABLED=1` and provide
-`COMMANDER_KERNEL_DATABASE_URL` (or `DATABASE_URL`) before enabling V1 traffic.
-The gateway initializes the shared PostgreSQL kernel at startup; V1 routes fail
-closed with `KERNEL_UNAVAILABLE` when it is absent. They must never fall back
-to `/api/runtime/execute`, `AgentRuntimeRegistry`, or a pod-local store.
+Kernel enablement (`COMMANDER_KERNEL_ENABLED`):
+
+- **unset (auto):** ON when `NODE_ENV=production`, `COMMANDER_V2_MODE=1`, or
+  `COMMANDER_KERNEL_DATABASE_URL` / `DATABASE_URL` is set.
+- **`1` / `true` / `on`:** force ON (still requires a DSN).
+- **`0` / `false` / `off`:** force OFF — non-prod escape hatch for local UI
+  without durable `/v1`. Production rejects explicit `=0` at startup.
+
+Provide `COMMANDER_KERNEL_DATABASE_URL` (or `DATABASE_URL`) whenever the kernel
+is enabled. The gateway initializes the shared PostgreSQL kernel at startup;
+V1 routes fail closed with `KERNEL_UNAVAILABLE` when it is absent. They must
+never fall back to `/api/runtime/execute`, `AgentRuntimeRegistry`, WarRoomStore,
+or a pod-local store.

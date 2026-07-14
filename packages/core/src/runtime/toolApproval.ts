@@ -578,7 +578,13 @@ export class ToolApproval {
     // detect supply-with-bad-token hammering without flooding middleware.
     const tokenVerifier = this.resolveTokenVerifier();
     if (context?.token && tokenVerifier) {
-      const v = tokenVerifier.verify(context.token, { tool: toolName, args });
+      // Non-consuming: approval is a pre-check; ToolExecutionService also verifies.
+      // Consuming here would make concurrent multi-tool runs fail with replay_detected.
+      const v = tokenVerifier.verify(context.token, {
+        tool: toolName,
+        args,
+        consumeReplay: false,
+      });
       if (v.ok) {
         this.recordDecision(toolName, true, 'auto');
         return {

@@ -97,7 +97,13 @@ import { getUnifiedAuditLog, dlpResponseMiddleware } from '@commander/core/secur
 import { getGlobalTenantProvider, SimpleTenantProvider } from '@commander/core/runtime';
 import { registerRouter, mountRegisteredRouters, listRegisteredRouters } from './routerRegistry';
 import { createV1GatewayRouter } from './v1GatewayEndpoints';
-import { getV1KernelGateway, initializeV1KernelGateway } from './v1GatewayKernel';
+import {
+  getKernelDatabaseUrl,
+  getV1KernelGateway,
+  initializeV1KernelGateway,
+  isCommanderKernelEnabled,
+  isCommanderKernelExplicitlyDisabled,
+} from './v1GatewayKernel';
 import { isLegacyExecutionAllowed } from './legacyExecutionGuard';
 
 import { getDirname, getRequire } from './esmCompat';
@@ -173,6 +179,7 @@ function validateEnvironment(): void {
 validateEnvironment();
 
 // ── Shared state ────────────────────────────────────────────────────────────
+// Missions/UI store — not the /v1 run authority (kernel owns durable runs).
 const store = createWarRoomStore();
 // Wired when API_STORE_BACKEND=postgres (or sqlite/memory fallback)
 const apiStoreInstance = apiStore;
@@ -1058,21 +1065,31 @@ async function startServer(): Promise<void> {
   // created. Missing config falls back to single-tenant mode (NullTenantProvider).
   loadTenantProvider();
 
-  // Explicitly initialize the shared execution kernel before mounting V1
-  // resource routes. Disabled environments keep legacy routes available, but
-  // V1 requests fail closed with KERNEL_UNAVAILABLE rather than using local state.
+  // Initialize the shared execution kernel before V1 resource routes are used.
+  // Auto-on when production / V2 mode / DSN present (see isCommanderKernelEnabled).
+  // /v1 never falls back to WarRoomStore; missing kernel → KERNEL_UNAVAILABLE.
   await initializeV1KernelGateway();
 
-  if (process.env.NODE_ENV === 'production' && process.env.COMMANDER_KERNEL_ENABLED !== '1') {
+  if (process.env.NODE_ENV === 'production') {
     // Fail closed at startup rather than booting a production replica that would
     // 503 every /v1/runs request and has no durable, single-writer execution
     // substrate. Multi-replica production without the shared kernel is unsafe
     // (split-brain, per-replica in-memory state). See audit REL-5.
-    throw new Error(
-      '[kernel] Refusing to start: NODE_ENV=production requires COMMANDER_KERNEL_ENABLED=1. ' +
-        'Set COMMANDER_KERNEL_ENABLED=1 (with COMMANDER_KERNEL_DATABASE_URL or DATABASE_URL) so ' +
-        'V1 resource routes run on the shared durable kernel instead of failing closed.',
-    );
+    // COMMANDER_KERNEL_ENABLED=0 is a non-prod escape hatch only.
+    if (isCommanderKernelExplicitlyDisabled()) {
+      throw new Error(
+        '[kernel] Refusing to start: NODE_ENV=production rejects COMMANDER_KERNEL_ENABLED=0. ' +
+          'Production requires the durable shared kernel. Unset COMMANDER_KERNEL_ENABLED ' +
+          '(or set =1) and provide COMMANDER_KERNEL_DATABASE_URL or DATABASE_URL.',
+      );
+    }
+    if (!isCommanderKernelEnabled() || !getKernelDatabaseUrl() || getV1KernelGateway() === null) {
+      throw new Error(
+        '[kernel] Refusing to start: NODE_ENV=production requires an initialized durable kernel. ' +
+          'Provide COMMANDER_KERNEL_DATABASE_URL or DATABASE_URL so V1 resource routes run on ' +
+          'the shared durable kernel instead of failing closed.',
+      );
+    }
   }
 
   await initRateLimitStore();
