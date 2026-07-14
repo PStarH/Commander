@@ -24,7 +24,12 @@
  */
 
 const API_BASE = (process.env.P0_API_BASE ?? 'http://localhost:4000').replace(/\/$/, '');
-const API_KEY = process.env.P0_API_KEY ?? process.env.COMMANDER_API_KEY ?? '';
+// Prefer API_KEYS / TENANT_API_KEYS tokens; COMMANDER_API_KEY alone is not enough for authMiddleware.
+const API_KEY =
+  process.env.P0_API_KEY ??
+  process.env.API_KEYS?.split(',')[0]?.trim() ??
+  process.env.COMMANDER_API_KEY ??
+  '';
 const TENANT = process.env.P0_TENANT_ID ?? process.env.COMMANDER_DEFAULT_TENANT_ID ?? 'tenant-local';
 const REQUIRE_TERMINAL = process.env.P0_REQUIRE_TERMINAL === '1';
 const POLL_MS = Number(process.env.P0_POLL_MS ?? 1000);
@@ -43,6 +48,7 @@ async function http(
     headers: {
       'content-type': 'application/json',
       ...(API_KEY ? { authorization: `Bearer ${API_KEY}`, 'x-api-key': API_KEY } : {}),
+      // Production rejects bare X-Tenant-ID; keep for dev/test when tenant is key-bound.
       'x-tenant-id': TENANT,
       ...headers,
     },
