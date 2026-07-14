@@ -97,11 +97,12 @@ export class RunTelemetryRecorder {
    * thrown metric/bus call leaves the circuit unreleased, matching the prior
    * inlined behaviour.
    */
-  recordSuccess(params: RecordSuccessParams): void {
+  recordSuccess(params: RecordSuccessParams): void | Promise<void> {
     const { ctx, runId, routing, taskType, result, totalTokens, steps, startTime, tenantId } =
       params;
     const totalDurationMs = Date.now() - startTime;
     const bus = getMessageBus();
+    const memory = this.deps.getMemory();
 
     // Fire plugin onAgentComplete hooks
     getHookManager()
@@ -133,6 +134,40 @@ export class RunTelemetryRecorder {
     });
 
     this.deps.getCircuitBreaker().onSuccess();
+
+    // Record success memory via active memory manager when available.
+    // Fire-and-forget: AgentRuntime serializes execute() on a single active-run
+    // flag, so we must not block the return path on async telemetry. We still
+    // return the observe promise so tests can await it.
+    let memoryPromise: Promise<void> | undefined;
+    if (memory) {
+      const _memContent = `[SUCCESS] ${ctx.goal.slice(0, GOAL_TELEMETRY_MAX_CHARS)}`;
+      // Security (OWASP ASI07): Memory poisoning detection gate.
+      const _poisoningCheck = checkMemoryPoisoning(
+        _memContent,
+        `agent:${ctx.agentId}`,
+        ctx.agentId,
+      );
+      if (!_poisoningCheck.allowed) {
+        getGlobalLogger().warn('AgentRuntime', 'Memory write blocked by poisoning gate', {
+          reason: _poisoningCheck.reason,
+        });
+      } else {
+        memoryPromise = memory
+          .observe({
+            content: _memContent,
+            context: `run:${runId}|tokens:${totalTokens.totalTokens}|dur:${totalDurationMs}ms|steps:${steps.length}`,
+            importance: 0.7,
+            tags: ['execution', 'success', ...ctx.availableTools.slice(0, 3)],
+          })
+          .then(() => undefined)
+          .catch((e) => {
+            getGlobalLogger().warn('AgentRuntime', 'Failed to record success memory', {
+              error: (e as Error)?.message,
+            });
+          });
+      }
+    }
 
     // Record intelligence: postTask, metaLearner, failure patterns
     try {
@@ -193,6 +228,8 @@ export class RunTelemetryRecorder {
         });
       }
     }
+
+    return memoryPromise;
   }
 
   /**
@@ -306,14 +343,12 @@ export class RunTelemetryRecorder {
             reason: _poisoningCheck3.reason,
           });
         } else {
-          memory.add(
-            _memContent3,
-            'episodic',
-            `run:${runId}|error:${(lastError ?? 'unknown').slice(0, 100)}|dur:${Date.now() - startTime}ms`,
-            0.5 + (lastErrorIsPermanent ? 0.3 : 0),
-            ['execution', 'failure', ...ctx.availableTools.slice(0, 3)],
-            { runId, goal: ctx.goal.slice(0, GOAL_RESULT_MAX_CHARS), error: lastError },
-          );
+          await memory.observe({
+            content: _memContent3,
+            context: `run:${runId}|error:${(lastError ?? 'unknown').slice(0, 100)}|dur:${Date.now() - startTime}ms`,
+            importance: 0.5 + (lastErrorIsPermanent ? 0.3 : 0),
+            tags: ['execution', 'failure', ...ctx.availableTools.slice(0, 3)],
+          });
         } // end poisoning gate else
       } catch (e) {
         getGlobalLogger().warn('AgentRuntime', 'Failed to record failure memory', {

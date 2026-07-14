@@ -21,6 +21,47 @@ import * as path from 'path';
 const PERSISTENCE_DIR = '.commander_consistency';
 const SNAPSHOT_FILE = 'consistency-snapshots.ndjson';
 
+// REL-6: bound the snapshot log so it never becomes a disk-fill outage, and so
+// reads never load the whole file. Once the file exceeds MAX_SNAPSHOT_BYTES it
+// is rewritten to keep only the newest ROTATE_KEEP_LINES entries; reads scan
+// only the last TAIL_READ_BYTES rather than the entire history.
+const MAX_SNAPSHOT_BYTES = 5 * 1024 * 1024;
+const ROTATE_KEEP_LINES = 1000;
+const TAIL_READ_BYTES = 512 * 1024;
+
+/**
+ * Read the last `maxBytes` of a file and return its complete lines, oldest
+ * first. If the read starts mid-file the leading partial line is discarded so
+ * callers never parse a torn record. Bounded memory regardless of file size.
+ */
+function readTailLines(filePath: string, maxBytes: number): string[] {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const size = fs.fstatSync(fd).size;
+    const start = size > maxBytes ? size - maxBytes : 0;
+    const length = size - start;
+    if (length <= 0) return [];
+    const buf = Buffer.allocUnsafe(length);
+    fs.readSync(fd, buf, 0, length, start);
+    let text = buf.toString('utf-8');
+    if (start > 0) {
+      const nl = text.indexOf('\n');
+      text = nl >= 0 ? text.slice(nl + 1) : '';
+    }
+    return text.split('\n').filter(Boolean);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** Rewrite the snapshot file in place, retaining only the newest lines. */
+function rotateSnapshotFile(filePath: string): void {
+  const kept = readTailLines(filePath, MAX_SNAPSHOT_BYTES).slice(-ROTATE_KEEP_LINES);
+  const tmp = `${filePath}.tmp`;
+  fs.writeFileSync(tmp, kept.length ? kept.join('\n') + '\n' : '', 'utf-8');
+  fs.renameSync(tmp, filePath);
+}
+
 /**
  * Append a consistency snapshot to disk (NDJSON format).
  * Non-blocking — failures are silently caught.
@@ -50,6 +91,14 @@ export function persistConsistencySnapshot(report: ConsistencyReport, missionId?
     };
     const filePath = path.join(dir, SNAPSHOT_FILE);
     fs.appendFileSync(filePath, JSON.stringify(record) + '\n', 'utf-8');
+    // Bound file growth: rotate once it exceeds the cap.
+    try {
+      if (fs.statSync(filePath).size > MAX_SNAPSHOT_BYTES) {
+        rotateSnapshotFile(filePath);
+      }
+    } catch (rotateErr) {
+      reportSilentFailure(rotateErr, 'consistencyMonitor:rotate');
+    }
   } catch (err) {
     reportSilentFailure(err, 'consistencyMonitor:53');
     /* best-effort persistence */
@@ -57,7 +106,8 @@ export function persistConsistencySnapshot(report: ConsistencyReport, missionId?
 }
 
 /**
- * Load persisted consistency snapshots from disk.
+ * Load persisted consistency snapshots from disk. Reads only the tail of the
+ * file (bounded memory) and tolerates torn/corrupt lines instead of failing.
  */
 export function loadConsistencySnapshots(
   limit = 100,
@@ -65,9 +115,16 @@ export function loadConsistencySnapshots(
   try {
     const filePath = path.resolve(process.cwd(), PERSISTENCE_DIR, SNAPSHOT_FILE);
     if (!fs.existsSync(filePath)) return [];
-    const lines = fs.readFileSync(filePath, 'utf-8').trim().split('\n').filter(Boolean);
-    const records = lines.map((line) => JSON.parse(line));
-    return records.slice(-limit).reverse();
+    const lines = readTailLines(filePath, TAIL_READ_BYTES);
+    const records: Array<{ timestamp: string; missionId?: string; report: Partial<ConsistencyReport> }> = [];
+    for (const line of lines.slice(-limit)) {
+      try {
+        records.push(JSON.parse(line));
+      } catch {
+        /* skip a torn/corrupt trailing record */
+      }
+    }
+    return records.reverse();
   } catch (err) {
     reportSilentFailure(err, 'consistencyMonitor:71');
     return [];
@@ -513,7 +570,7 @@ export class ConsistencyMonitor {
     if (input && outputs && outputs.size > 0) {
       // Check completeness for each agent's output
       const completenessReports: CompletenessReport[] = [];
-      outputs.forEach((output, agentId) => {
+      outputs.forEach((output) => {
         const cr = this.checkCompleteness(input, output);
         completenessReports.push(cr);
       });
@@ -594,7 +651,6 @@ export class ConsistencyMonitor {
     f2: { contentWords: string[]; bigrams: string[]; keyPhrases: string[]; rawLower: string },
   ): number {
     // 1. Content word Jaccard
-    const words1 = new Set(f1.contentWords);
     const words2 = new Set(f2.contentWords);
     const wordIntersection = f1.contentWords.filter((x) => words2.has(x));
     const wordUnion = new Set(f1.contentWords.concat(f2.contentWords));
@@ -681,9 +737,6 @@ export class ConsistencyMonitor {
     output1: AgentOutput,
     output2: AgentOutput,
   ): 'semantic' | 'logical' | 'factual' {
-    const words1 = extractContentWords(output1.content);
-    const words2 = extractContentWords(output2.content);
-
     // Check for numerical contradictions (factual)
     const nums1: string[] = output1.content.match(/\b\d+(?:\.\d+)?\b/g) || [];
     const nums2: string[] = output2.content.match(/\b\d+(?:\.\d+)?\b/g) || [];

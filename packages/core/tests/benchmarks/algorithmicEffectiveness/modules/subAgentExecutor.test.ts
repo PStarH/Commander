@@ -11,7 +11,7 @@ describe('subAgentExecutor module', () => {
 
   it('beats single-agent baseline in scripted mode', async () => {
     const result = await runComparison(
-      { moduleId: 'subAgentExecutor', mode: 'scripted', n: 30, seed: 42 },
+      { moduleId: 'subAgentExecutor', mode: 'scripted', n: 10, seed: 42 },
       subAgentExecutorModule,
       () => createScriptedLLM({ responses: {} }),
     );

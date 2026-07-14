@@ -1,0 +1,172 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Commander V2 — SLO, scheduling, and security overview",
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "panels": [
+    {
+      "title": "SLO Status Overview",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "commander_slo_status", "legendFormat": "{{slo_id}}", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "text": "VIOLATED", "color": "red" }, "1": { "text": "OK", "color": "green" } }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      },
+      "options": { "colorMode": "background", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "title": "Run Submission Rate (5m)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        { "expr": "sum(rate(commander_runs_total[5m]))", "legendFormat": "total", "refId": "A" },
+        { "expr": "sum(rate(commander_runs_total{status=\"failed\"}[5m]))", "legendFormat": "failed", "refId": "B" },
+        { "expr": "sum(rate(commander_runs_total{status=\"succeeded\"}[5m]))", "legendFormat": "succeeded", "refId": "C" }
+      ]
+    },
+    {
+      "title": "P95 Schedule Latency",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum(rate(commander_step_latency_ms_bucket[5m])) by (le))", "legendFormat": "P95", "refId": "A" },
+        { "expr": "histogram_quantile(0.50, sum(rate(commander_step_latency_ms_bucket[5m])) by (le))", "legendFormat": "P50", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 3000 }, { "color": "red", "value": 5000 }] } } }
+    },
+    {
+      "title": "Active Workers & Steps",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 12 },
+      "targets": [
+        { "expr": "commander_workers_active", "legendFormat": "Active Workers", "refId": "A" },
+        { "expr": "count(commander_steps{state=\"RUNNING\"})", "legendFormat": "Running Steps", "refId": "B" }
+      ]
+    },
+    {
+      "title": "DLQ Depth",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 12 },
+      "targets": [{ "expr": "commander_dlq_depth", "legendFormat": "DLQ Depth", "refId": "A" }],
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 10 }, { "color": "red", "value": 100 }] } } }
+    },
+    {
+      "title": "Outbox Lag",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 12 },
+      "targets": [{ "expr": "commander_outbox_unpublished_count", "legendFormat": "Unpublished", "refId": "A" }],
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 100 }, { "color": "red", "value": 1000 }] } } }
+    },
+    {
+      "title": "Fencing Rejects (5m rate)",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 12 },
+      "targets": [{ "expr": "sum(rate(commander_fencing_rejects_total[5m]))", "legendFormat": "Rejects/s", "refId": "A" }],
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 10 }] } } }
+    },
+    {
+      "title": "Tenant Concurrency Usage",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        { "expr": "commander_tenant_running_steps", "legendFormat": "{{tenant}} running", "refId": "A" },
+        { "expr": "commander_tenant_max_concurrent_steps", "legendFormat": "{{tenant}} limit", "refId": "B" }
+      ]
+    },
+    {
+      "title": "Policy Denies & Approval Bypasses",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        { "expr": "sum(rate(commander_policy_denies_total[5m]))", "legendFormat": "Policy denies/s", "refId": "A" },
+        { "expr": "sum(rate(commander_approval_bypass_total[5m]))", "legendFormat": "Approval bypasses/s", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 0.001 }] } } }
+    },
+    {
+      "title": "SLO Burn Rate by SLO",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "targets": [
+        { "expr": "commander_slo_burn_rate", "legendFormat": "{{slo_id}} burn rate", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 3 }, { "color": "red", "value": 6 }] } } }
+    },
+    {
+      "title": "Event Sourcing Hash-Chain Integrity",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 32 },
+      "targets": [{ "expr": "commander_hash_chain_valid", "legendFormat": "Hash Chain", "refId": "A" }],
+      "fieldConfig": { "defaults": { "mappings": [{ "options": { "0": { "text": "BROKEN", "color": "red" }, "1": { "text": "OK", "color": "green" } }, "type": "value" }], "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] } } }
+    },
+    {
+      "title": "Object Storage Errors",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 32 },
+      "targets": [{ "expr": "sum(rate(commander_object_storage_errors_total[5m]))", "legendFormat": "Errors/s", "refId": "A" }]
+    },
+    {
+      "title": "Event Loop Lag",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 32 },
+      "targets": [
+        { "expr": "node_eventloop_lag_p99", "legendFormat": "P99", "refId": "A" },
+        { "expr": "node_eventloop_lag_p50", "legendFormat": "P50", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" } }
+    }
+  ],
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["commander", "v2", "slo"],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "text": "Prometheus", "value": "Prometheus" }
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Commander V2 — Operations Overview",
+  "uid": "commander-v2-overview",
+  "version": 1,
+  "weekStart": ""
+}

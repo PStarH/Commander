@@ -2,9 +2,27 @@ import { Router } from 'express';
 import { SequentialPipeline } from '@commander/core';
 import { PatternStateMachineFactory, PatternStateMachine } from './patternStateMachine';
 import { SequentialExecutor, createRealAgentExecutor } from './sequentialExecutor';
+import { legacyExecutionDisabledReason, isLegacyExecutionAllowed } from './legacyExecutionGuard';
 
 export function createPipelineRouter(): Router {
   const router = Router();
+
+  // The old pipeline and in-memory state-machine routes are not a second
+  // execution authority. They remain available only in explicit local
+  // compatibility mode; V2/production callers must use /v1/runs.
+  router.use((_req, res, next) => {
+    if (!isLegacyExecutionAllowed()) {
+      res.status(410).json({
+        error: {
+          code: 'LEGACY_EXECUTION_DISABLED',
+          message: legacyExecutionDisabledReason(),
+          replacement: 'POST /v1/runs',
+        },
+      });
+      return;
+    }
+    next();
+  });
 
   // Pattern State Machine
   const activeMachines = new Map<string, PatternStateMachine>();

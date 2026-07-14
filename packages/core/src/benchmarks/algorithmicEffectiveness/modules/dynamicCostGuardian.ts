@@ -1,7 +1,4 @@
-import {
-  DynamicCostGuardian,
-  type CostRecord,
-} from '../../../security/dynamicCostGuardian';
+import { DynamicCostGuardian, type CostRecord } from '../../../security/dynamicCostGuardian';
 import type { BenchmarkModule, Task } from '../types';
 
 interface CostTask extends Task {
@@ -153,8 +150,7 @@ const taskSuite: CostTask[] = [
   },
   {
     id: 'recursive-amplification-attack',
-    prompt:
-      'A request that triggers recursive tool calls while keeping cost under the cap.',
+    prompt: 'A request that triggers recursive tool calls while keeping cost under the cap.',
     expectedDecision: 'BLOCK',
     expected: (output: string) => output.startsWith('BLOCK'),
     record: {
@@ -195,15 +191,10 @@ function seedTrainingData(guardian: DynamicCostGuardian): void {
 }
 
 function runBaseline(impl: { cap: number }, record: CostRecord): string {
-  return record.cost > impl.cap
-    ? 'BLOCK: exceeds static cap'
-    : 'ALLOW: within static cap';
+  return record.cost > impl.cap ? 'BLOCK: exceeds static cap' : 'ALLOW: within static cap';
 }
 
-function runTreatment(
-  impl: { guardian: DynamicCostGuardian },
-  record: CostRecord,
-): string {
+function runTreatment(impl: { guardian: DynamicCostGuardian }, record: CostRecord): string {
   const detection = impl.guardian.detectNovelEconomicAttack(record);
   if (detection.detected) {
     return `BLOCK: ${detection.attackType ?? 'anomaly'} (${detection.description})`;
@@ -238,7 +229,8 @@ export const dynamicCostGuardianModule: BenchmarkModule = {
 
     let output: string;
     if (impl.guardian) {
-      output = runTreatment(impl, t.record);
+      const treatmentImpl = { guardian: impl.guardian };
+      output = runTreatment(treatmentImpl, t.record);
       // Only ingest legitimate traffic; attack records are blocked by the
       // detector above and should not pollute the rare-model cost stats.
       if (output.startsWith('ALLOW')) {

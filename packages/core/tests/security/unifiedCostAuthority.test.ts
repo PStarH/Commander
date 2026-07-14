@@ -11,7 +11,7 @@
  *  - Ledger recording + disposeRun cleanup
  *  - Multi-tenant isolation
  */
-import { it, describe, beforeAll, afterEach } from 'vitest';
+import { it, describe, beforeAll, afterEach, beforeEach } from 'vitest';
 import assert from 'node:assert/strict';
 
 import {
@@ -20,6 +20,12 @@ import {
   DEFAULT_UCA_CONFIG,
   type ToolCostTier,
 } from '../../src/security/unifiedCostAuthority';
+import {
+  setGlobalTenantProvider,
+  resetGlobalTenantProvider,
+  SimpleTenantProvider,
+} from '../../src/runtime/tenantProvider';
+import { runWithTenant } from '../../src/runtime/tenantContext';
 
 describe('UnifiedCostAuthority', () => {
   let uca: UnifiedCostAuthority;
@@ -344,6 +350,124 @@ describe('UnifiedCostAuthority', () => {
       assert.ok(snap1.perRun.used >= 5.0);
       assert.ok(snap1.perTenantDaily.used >= 5.0);
       assert.ok(snap1.globalDaily.used >= 5.0);
+    });
+  });
+
+  describe('tenant billing cycle configuration', () => {
+    beforeEach(() => {
+      resetGlobalTenantProvider();
+    });
+
+    afterEach(() => {
+      resetGlobalTenantProvider();
+    });
+
+    it('uses daily tenant budget by default and rejects when daily cap projected', () => {
+      const tenantId = 'tenant-daily-default';
+      const provider = new SimpleTenantProvider([
+        {
+          tenantId,
+          tokenBudget: 0,
+          maxConcurrency: 1,
+          maxRunsPerMinute: 0,
+          enabled: true,
+        },
+      ]);
+      setGlobalTenantProvider(provider);
+
+      const localUca = new UnifiedCostAuthority();
+      runWithTenant(tenantId, () => {
+        // Daily cap is $500 by default; monthly is $10,000. Stay well under monthly.
+        localUca.postCall({ runId: 'run-1', tenantId, model: 'gpt-4o' }, { costUsd: 499.0 });
+        const decision = localUca.preCall({
+          runId: 'run-2',
+          tenantId,
+          model: 'gpt-4o',
+          estimatedTokens: 400_000, // ~$2
+        });
+        assert.equal(decision.allowed, false);
+        assert.ok(decision.reason?.includes('daily'));
+        assert.ok(decision.reason?.includes(tenantId));
+      });
+    });
+
+    it('uses monthly tenant budget when metadata.billingCycle is monthly', () => {
+      const tenantId = 'tenant-monthly';
+      const provider = new SimpleTenantProvider([
+        {
+          tenantId,
+          tokenBudget: 0,
+          maxConcurrency: 1,
+          maxRunsPerMinute: 0,
+          enabled: true,
+          metadata: { billingCycle: 'monthly' },
+        },
+      ]);
+      setGlobalTenantProvider(provider);
+
+      const localUca = new UnifiedCostAuthority();
+      // Lift per-run/request/global caps so the monthly tenant cap is the limiter.
+      localUca.updateConfig({
+        perRunUsd: 20_000,
+        perRequestUsd: 20_000,
+        globalDailyUsd: 20_000,
+      });
+
+      runWithTenant(tenantId, () => {
+        // Spend more than the daily cap but less than the monthly cap.
+        localUca.postCall({ runId: 'run-1', tenantId, model: 'gpt-4o' }, { costUsd: 600.0 });
+        let decision = localUca.preCall({
+          runId: 'run-2',
+          tenantId,
+          model: 'gpt-4o',
+          estimatedTokens: 200_000, // ~$1
+        });
+        assert.equal(decision.allowed, true, `expected ALLOW but got: ${decision.reason}`);
+
+        // Now spend up to the monthly cap.
+        localUca.postCall({ runId: 'run-3', tenantId, model: 'gpt-4o' }, { costUsd: 9_399.0 });
+        decision = localUca.preCall({
+          runId: 'run-4',
+          tenantId,
+          model: 'gpt-4o',
+          estimatedTokens: 400_000, // ~$2 to push projected usage over the cap
+        });
+        assert.equal(decision.allowed, false);
+        assert.ok(decision.reason?.includes('monthly'));
+        assert.ok(decision.reason?.includes(tenantId));
+      });
+    });
+
+    it('triggers MELT on monthly cycle when monthly cap is reached', () => {
+      const tenantId = 'tenant-monthly-melt';
+      const provider = new SimpleTenantProvider([
+        {
+          tenantId,
+          tokenBudget: 0,
+          maxConcurrency: 1,
+          maxRunsPerMinute: 0,
+          enabled: true,
+          metadata: { billingCycle: 'monthly' },
+        },
+      ]);
+      setGlobalTenantProvider(provider);
+
+      const localUca = new UnifiedCostAuthority();
+      localUca.updateConfig({
+        perRunUsd: 20_000,
+        perRequestUsd: 20_000,
+        globalDailyUsd: 20_000,
+      });
+
+      runWithTenant(tenantId, () => {
+        const result = localUca.postCall(
+          { runId: 'run-1', tenantId, model: 'gpt-4o' },
+          { costUsd: DEFAULT_UCA_CONFIG.perTenantMonthlyUsd + 1.0 },
+        );
+        assert.equal(result.melted, true);
+        assert.ok(result.reason?.includes('monthly'));
+        assert.ok(result.reason?.includes(tenantId));
+      });
     });
   });
 });

@@ -1,0 +1,107 @@
+# =============================================================================
+# Kubernetes templates for tenant isolation.
+#
+# Silo tenant (one namespace per tenant):
+#   export TENANT_ID=acme-corp
+#   export TENANT_API_KEY=$(openssl rand -hex 32)
+#   envsubst < deploy/k8s/tenant-namespace.yaml | kubectl apply -f -
+#
+# Bridge group (one namespace shared by several tenants):
+#   export BRIDGE_GROUP=team-alpha
+#   export TENANT_IDS="tenant-a,tenant-b"
+#   export COMMANDER_API_KEY=$(openssl rand -hex 32)
+#   envsubst < deploy/k8s/tenant-namespace.yaml | kubectl apply -f -
+#
+# Note: the Deployment/StatefulSet that consumes these resources is expected
+# to be layered on top (see deploy/helm/commander for the base chart).
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Silo tenant: dedicated namespace + configmap + secret + PVC
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: commander-silo-${TENANT_ID}
+  labels:
+    app: commander
+    tenant: ${TENANT_ID}
+    deployment.model: silo
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: commander-tenant-config
+  namespace: commander-silo-${TENANT_ID}
+data:
+  TENANT_ID: "${TENANT_ID}"
+  DEPLOYMENT_MODEL: "silo"
+  TENANT_CONFIG_PATH: "/app/config/tenants.json"
+  COMMANDER_DATA_ROOT: "/data"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: commander-tenant-apikey
+  namespace: commander-silo-${TENANT_ID}
+type: Opaque
+stringData:
+  api-key: "${TENANT_API_KEY}"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: commander-silo-data
+  namespace: commander-silo-${TENANT_ID}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: ${TENANT_STORAGE:-10Gi}
+
+---
+# -----------------------------------------------------------------------------
+# Bridge group: shared namespace + multi-tenant configmap + secret + PVC
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: commander-bridge-${BRIDGE_GROUP}
+  labels:
+    app: commander
+    bridge.group: ${BRIDGE_GROUP}
+    deployment.model: bridge
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: commander-bridge-config
+  namespace: commander-bridge-${BRIDGE_GROUP}
+data:
+  DEPLOYMENT_MODEL: "bridge"
+  BRIDGE_GROUP: "${BRIDGE_GROUP}"
+  TENANT_IDS: "${TENANT_IDS}"
+  TENANT_CONFIG_PATH: "/app/config/tenants.json"
+  COMMANDER_DATA_ROOT: "/data"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: commander-bridge-apikey
+  namespace: commander-bridge-${BRIDGE_GROUP}
+type: Opaque
+stringData:
+  api-key: "${COMMANDER_API_KEY}"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: commander-bridge-data
+  namespace: commander-bridge-${BRIDGE_GROUP}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: ${BRIDGE_STORAGE:-50Gi}

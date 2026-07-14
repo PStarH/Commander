@@ -81,8 +81,7 @@ const taskSuite: TokenSentinelTask[] = [
       { role: 'system', content: '你是助手。' },
       {
         role: 'user',
-        content:
-          '请总结这段中文文本：人工智能正在改变世界，机器学习模型变得越来越强大。',
+        content: '请总结这段中文文本：人工智能正在改变世界，机器学习模型变得越来越强大。',
       },
     ],
     modelId: 'gpt-4',
@@ -235,8 +234,7 @@ function runTreatment(task: TokenSentinelTask): TrialResult {
     estimate: estimatedInput,
     actual: task.actualTokens,
     allowed: checkResult.allowed,
-    estimateAccurate:
-      Math.abs(estimatedInput - task.actualTokens) / task.actualTokens <= 0.1,
+    estimateAccurate: Math.abs(estimatedInput - task.actualTokens) / task.actualTokens <= 0.1,
     alerts,
   } as TrialResult;
 }

@@ -1,6 +1,17 @@
-import { describe, it, beforeEach } from 'node:test';
-import assert from 'node:assert/strict';
-import { CapabilityMatcher, DEFAULT_NUCLEUS } from '../../src/runtime/capabilityMatcher';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import {
+  CapabilityMatcher,
+  DEFAULT_NUCLEUS,
+  getCapabilityMatcher,
+} from '../../src/runtime/capabilityMatcher';
+
+vi.mock('../../src/logging', () => ({
+  getGlobalLogger: vi.fn(() => ({
+    info: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn(),
+  })),
+}));
 
 describe('CapabilityMatcher', () => {
   let matcher: CapabilityMatcher;
@@ -12,16 +23,16 @@ describe('CapabilityMatcher', () => {
   describe('initialization', () => {
     it('initializes with default nucleus agents', () => {
       const pool = matcher.getPool();
-      assert.ok(pool.length >= DEFAULT_NUCLEUS.length);
-      assert.ok(pool.some((a) => a.agentId === 'nucleus-coder'));
-      assert.ok(pool.some((a) => a.agentId === 'nucleus-reviewer'));
-      assert.ok(pool.some((a) => a.agentId === 'nucleus-researcher'));
-      assert.ok(pool.some((a) => a.agentId === 'nucleus-orchestrator'));
+      expect(pool.length).toBeGreaterThanOrEqual(DEFAULT_NUCLEUS.length);
+      expect(pool.some((a) => a.agentId === 'nucleus-coder')).toBe(true);
+      expect(pool.some((a) => a.agentId === 'nucleus-reviewer')).toBe(true);
+      expect(pool.some((a) => a.agentId === 'nucleus-researcher')).toBe(true);
+      expect(pool.some((a) => a.agentId === 'nucleus-orchestrator')).toBe(true);
     });
 
     it('all nucleus agents are available', () => {
       const available = matcher.getAvailableAgents();
-      assert.ok(available.length >= DEFAULT_NUCLEUS.length);
+      expect(available.length).toBeGreaterThanOrEqual(DEFAULT_NUCLEUS.length);
     });
   });
 
@@ -32,9 +43,9 @@ describe('CapabilityMatcher', () => {
         complexity: 2,
         priority: 5,
       });
-      assert.ok(result.agents.length > 0);
-      assert.ok(result.agents.some((a) => a.capabilities.includes('typescript')));
-      assert.ok(result.confidence > 0);
+      expect(result.agents.length).toBeGreaterThan(0);
+      expect(result.agents.some((a) => a.capabilities.includes('typescript'))).toBe(true);
+      expect(result.confidence).toBeGreaterThan(0);
     });
 
     it('matches review task to nucleus-reviewer', async () => {
@@ -43,7 +54,7 @@ describe('CapabilityMatcher', () => {
         complexity: 5,
         priority: 7,
       });
-      assert.ok(result.agents.some((a) => a.agentId === 'nucleus-reviewer'));
+      expect(result.agents.some((a) => a.agentId === 'nucleus-reviewer')).toBe(true);
     });
 
     it('matches research task to nucleus-researcher', async () => {
@@ -52,7 +63,7 @@ describe('CapabilityMatcher', () => {
         complexity: 3,
         priority: 5,
       });
-      assert.ok(result.agents.some((a) => a.agentId === 'nucleus-researcher'));
+      expect(result.agents.some((a) => a.agentId === 'nucleus-researcher')).toBe(true);
     });
 
     it('reports fullyCovered when all capabilities are matched', async () => {
@@ -61,7 +72,7 @@ describe('CapabilityMatcher', () => {
         complexity: 3,
         priority: 5,
       });
-      assert.ok(result.fullyCovered);
+      expect(result.fullyCovered).toBe(true);
     });
 
     it('reports missingCapabilities when not fully covered', async () => {
@@ -70,7 +81,7 @@ describe('CapabilityMatcher', () => {
         complexity: 3,
         priority: 5,
       });
-      assert.ok(result.missingCapabilities.includes('quantum_computing'));
+      expect(result.missingCapabilities.includes('quantum_computing')).toBe(true);
     });
 
     it('estimates token cost', async () => {
@@ -79,7 +90,7 @@ describe('CapabilityMatcher', () => {
         complexity: 5,
         priority: 5,
       });
-      assert.ok(result.estimatedTokenCost > 0);
+      expect(result.estimatedTokenCost).toBeGreaterThan(0);
     });
 
     it('returns reuse strategy when existing agents suffice', async () => {
@@ -88,7 +99,7 @@ describe('CapabilityMatcher', () => {
         complexity: 2,
         priority: 5,
       });
-      assert.equal(result.strategy, 'reuse');
+      expect(result.strategy).toBe('reuse');
     });
 
     it('limits agents based on complexity', async () => {
@@ -102,8 +113,7 @@ describe('CapabilityMatcher', () => {
         complexity: 9,
         priority: 5,
       });
-      // Simple tasks should get fewer agents
-      assert.ok(simple.agents.length <= complex.agents.length);
+      expect(simple.agents.length).toBeLessThanOrEqual(complex.agents.length);
     });
 
     it('respects maxAgents parameter', async () => {
@@ -113,11 +123,10 @@ describe('CapabilityMatcher', () => {
         priority: 5,
         maxAgents: 2,
       });
-      assert.ok(result.agents.length <= 2);
+      expect(result.agents.length).toBeLessThanOrEqual(2);
     });
 
     it('skips unavailable agents', async () => {
-      // Mark nucleus-coder as unavailable
       const coder = matcher.getPool().find((a) => a.agentId === 'nucleus-coder')!;
       coder.available = false;
       const result = await matcher.match({
@@ -125,7 +134,7 @@ describe('CapabilityMatcher', () => {
         complexity: 2,
         priority: 5,
       });
-      assert.ok(!result.agents.some((a) => a.agentId === 'nucleus-coder'));
+      expect(result.agents.some((a) => a.agentId === 'nucleus-coder')).toBe(false);
     });
 
     it('skips agents at max concurrency', async () => {
@@ -136,7 +145,71 @@ describe('CapabilityMatcher', () => {
         complexity: 2,
         priority: 5,
       });
-      assert.ok(!result.agents.some((a) => a.agentId === 'nucleus-coder'));
+      expect(result.agents.some((a) => a.agentId === 'nucleus-coder')).toBe(false);
+    });
+
+    it('uses preferred capabilities as a tie-breaker', async () => {
+      const result = await matcher.match({
+        requiredCapabilities: ['typescript'],
+        preferredCapabilities: ['testing', 'security'],
+        complexity: 3,
+        priority: 5,
+      });
+      expect(result.agents.length).toBeGreaterThan(0);
+      expect(result.confidence).toBeGreaterThan(0);
+    });
+
+    it('scores required tools', async () => {
+      const result = await matcher.match({
+        requiredCapabilities: ['typescript'],
+        requiredTools: ['shell_execute', 'code_search'],
+        complexity: 3,
+        priority: 5,
+      });
+      expect(result.agents.length).toBeGreaterThan(0);
+    });
+
+    it('favors specialized agents for complex tasks', async () => {
+      matcher.registerAgent({
+        agentId: 'specialist',
+        capabilities: ['security'],
+        tools: ['code_search'],
+        modelTier: 'power',
+        costPerToken: 0.002,
+        qualityScore: 0.9,
+        speedScore: 0.6,
+        role: 'electron',
+        specialization: 0.9,
+        available: true,
+        activeTasks: 0,
+        maxConcurrent: 1,
+      });
+      const result = await matcher.match({
+        requiredCapabilities: ['security'],
+        complexity: 9,
+        priority: 5,
+      });
+      expect(result.agents.some((a) => a.agentId === 'specialist')).toBe(true);
+    });
+
+    it('favors generalist agents for simple tasks', async () => {
+      const result = await matcher.match({
+        requiredCapabilities: ['planning'],
+        complexity: 1,
+        priority: 5,
+      });
+      expect(result.agents.length).toBeGreaterThan(0);
+    });
+
+    it('penalizes busy agents', async () => {
+      const coder = matcher.getPool().find((a) => a.agentId === 'nucleus-coder')!;
+      coder.activeTasks = 1;
+      const result = await matcher.match({
+        requiredCapabilities: ['typescript'],
+        complexity: 2,
+        priority: 5,
+      });
+      expect(result.agents.length).toBeGreaterThan(0);
     });
   });
 
@@ -145,19 +218,25 @@ describe('CapabilityMatcher', () => {
       const before = matcher.getPool().find((a) => a.agentId === 'nucleus-coder')!.qualityScore;
       matcher.updateAgentScore('nucleus-coder', { success: true, quality: 1.0 });
       const after = matcher.getPool().find((a) => a.agentId === 'nucleus-coder')!.qualityScore;
-      assert.ok(after > before);
+      expect(after).toBeGreaterThan(before);
+    });
+
+    it('updates speed score when provided', () => {
+      const before = matcher.getPool().find((a) => a.agentId === 'nucleus-coder')!.speedScore;
+      matcher.updateAgentScore('nucleus-coder', { success: true, speed: 1.0 });
+      const after = matcher.getPool().find((a) => a.agentId === 'nucleus-coder')!.speedScore;
+      expect(after).toBeGreaterThan(before);
     });
 
     it('decreases quality score on failure', () => {
       const before = matcher.getPool().find((a) => a.agentId === 'nucleus-coder')!.qualityScore;
       matcher.updateAgentScore('nucleus-coder', { success: false });
       const after = matcher.getPool().find((a) => a.agentId === 'nucleus-coder')!.qualityScore;
-      assert.ok(after < before);
+      expect(after).toBeLessThan(before);
     });
 
     it('ignores non-existent agent', () => {
-      // Should not throw
-      matcher.updateAgentScore('nonexistent', { success: true });
+      expect(() => matcher.updateAgentScore('nonexistent', { success: true })).not.toThrow();
     });
   });
 
@@ -177,12 +256,12 @@ describe('CapabilityMatcher', () => {
         activeTasks: 0,
         maxConcurrent: 1,
       });
-      assert.ok(matcher.getPool().some((a) => a.agentId === 'custom-agent'));
+      expect(matcher.getPool().some((a) => a.agentId === 'custom-agent')).toBe(true);
     });
 
     it('removes an agent', () => {
       matcher.removeAgent('nucleus-coder');
-      assert.ok(!matcher.getPool().some((a) => a.agentId === 'nucleus-coder'));
+      expect(matcher.getPool().some((a) => a.agentId === 'nucleus-coder')).toBe(false);
     });
   });
 
@@ -198,7 +277,21 @@ describe('CapabilityMatcher', () => {
         complexity: 3,
         priority: 5,
       });
-      assert.ok(goodMatch.confidence > poorMatch.confidence);
+      expect(goodMatch.confidence).toBeGreaterThan(poorMatch.confidence);
+    });
+
+    it('returns zero confidence for empty selection', async () => {
+      const emptyMatcher = new CapabilityMatcher();
+      emptyMatcher.removeAgent('nucleus-coder');
+      emptyMatcher.removeAgent('nucleus-reviewer');
+      emptyMatcher.removeAgent('nucleus-researcher');
+      emptyMatcher.removeAgent('nucleus-orchestrator');
+      const result = await emptyMatcher.match({
+        requiredCapabilities: ['typescript'],
+        complexity: 3,
+        priority: 5,
+      });
+      expect(result.confidence).toBe(0);
     });
   });
 
@@ -212,32 +305,118 @@ describe('CapabilityMatcher', () => {
             agentId: `electron-${profile.capabilities![0]}`,
           }) as any,
       );
+      // Disable nucleus agents so the only match is the created electron
+      for (const agent of electronMatcher.getPool()) {
+        agent.available = false;
+      }
       const result = await electronMatcher.match({
         requiredCapabilities: ['quantum_computing'],
         complexity: 8,
         priority: 5,
       });
-      // Should have created an electron for the missing capability
-      assert.ok(result.agents.some((a) => a.agentId === 'electron-quantum_computing'));
+      expect(result.agents.some((a) => a.agentId === 'electron-quantum_computing')).toBe(true);
+      expect(result.strategy).toBe('create');
+    });
+
+    it('falls back to reuse when complexity is below threshold', async () => {
+      const electronMatcher = new CapabilityMatcher(
+        { complexityThreshold: 5 },
+        async (profile) => profile as any,
+      );
+      const result = await electronMatcher.match({
+        requiredCapabilities: ['quantum_computing'],
+        complexity: 2,
+        priority: 5,
+      });
+      expect(result.strategy).toBe('reuse');
+      expect(result.fullyCovered).toBe(false);
+    });
+
+    it('caps electron creation by maxElectrons', async () => {
+      let created = 0;
+      const electronMatcher = new CapabilityMatcher(
+        { maxElectrons: 1, complexityThreshold: 1 },
+        async (profile) => {
+          created++;
+          return {
+            ...profile,
+            agentId: `electron-${created}`,
+          } as any;
+        },
+      );
+      const result = await electronMatcher.match({
+        requiredCapabilities: ['quantum_computing', 'design', 'api'],
+        complexity: 9,
+        priority: 5,
+      });
+      expect(result.agents.filter((a) => a.role === 'electron').length).toBe(1);
+    });
+
+    it('uses hybrid strategy when both nucleus and electrons are selected', async () => {
+      const electronMatcher = new CapabilityMatcher(
+        { complexityThreshold: 1 },
+        async (profile) => ({ ...profile, agentId: `electron-${profile.capabilities![0]}` }) as any,
+      );
+      const result = await electronMatcher.match({
+        requiredCapabilities: ['typescript', 'quantum_computing'],
+        complexity: 9,
+        priority: 5,
+      });
+      expect(result.strategy).toBe('hybrid');
+    });
+
+    it('handles electron creation failures gracefully', async () => {
+      const electronMatcher = new CapabilityMatcher({ complexityThreshold: 1 }, async () => {
+        throw new Error('creation failed');
+      });
+      const result = await electronMatcher.match({
+        requiredCapabilities: ['quantum_computing'],
+        complexity: 9,
+        priority: 5,
+      });
+      expect(result.fullyCovered).toBe(false);
+    });
+
+    it('infers default tools for unknown capabilities', async () => {
+      const electronMatcher = new CapabilityMatcher(
+        { complexityThreshold: 1 },
+        async (profile) => ({ ...profile, agentId: 'electron-unknown' }) as any,
+      );
+      const result = await electronMatcher.match({
+        requiredCapabilities: ['unknown_capability'],
+        complexity: 9,
+        priority: 5,
+      });
+      const electron = result.agents.find((a) => a.role === 'electron');
+      expect(electron).toBeDefined();
+      expect(electron!.tools).toEqual(['file_read', 'shell_execute']);
+    });
+  });
+
+  describe('singleton', () => {
+    it('returns the same global matcher', () => {
+      const a = getCapabilityMatcher();
+      const b = getCapabilityMatcher();
+      expect(a).toBe(b);
     });
   });
 });
 
 describe('DEFAULT_NUCLEUS', () => {
   it('has 4 nucleus agents', () => {
-    assert.equal(DEFAULT_NUCLEUS.length, 4);
+    expect(DEFAULT_NUCLEUS.length).toBe(4);
   });
 
   it('all nucleus agents have role=nucleus', () => {
-    assert.ok(DEFAULT_NUCLEUS.every((a) => a.role === 'nucleus'));
+    expect(DEFAULT_NUCLEUS.every((a) => a.role === 'nucleus')).toBe(true);
   });
 
   it('all nucleus agents are available', () => {
-    assert.ok(DEFAULT_NUCLEUS.every((a) => a.available));
+    expect(DEFAULT_NUCLEUS.every((a) => a.available)).toBe(true);
   });
 
   it('nucleus agents have unique IDs', () => {
     const ids = DEFAULT_NUCLEUS.map((a) => a.agentId);
-    assert.equal(new Set(ids).size, ids.length);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });

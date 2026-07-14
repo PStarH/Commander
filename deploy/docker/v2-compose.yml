@@ -1,0 +1,210 @@
+# V2 live benchmark topology.
+# Usage:
+#   docker compose -f deploy/docker/v2-compose.yml up -d
+#   docker compose -f deploy/docker/v2-compose.yml up -d --scale worker=10 --scale timer=2 --scale outbox=2
+#   pnpm bench:v2:live --image=commander-api:$GIT_SHA --base-url=http://127.0.0.1:8080
+#
+# Required environment variables (must be exported or present in a .env file):
+#   COMMANDER_MASTER_KEY
+#   JWT_SECRET
+#
+# Services:
+#   postgres   : single-node Postgres 16 (benchmark harness; production would use HA)
+#   api-*      : 2 gateway instances behind an nginx load balancer
+#   worker     : worker instance; scale with --scale worker=N
+#   timer      : timer-wakeup instance; scale with --scale timer=N
+#   outbox     : outbox-publisher instance; scale with --scale outbox=N
+#   nginx      : layer-4 round-robin load balancer across api replicas
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: commander
+      POSTGRES_PASSWORD: commander
+      POSTGRES_DB: commander
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-init.sql:/docker-entrypoint-initdb.d/01-commander-roles.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U commander -d commander"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - commander-v2
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: timer
+    image: ${COMMANDER_TIMER_IMAGE:-commander-timer:latest}
+    entrypoint: ["node", "packages/kernel/dist/migrate.js"]
+    environment:
+      DATABASE_URL: postgres://commander_owner:commander_owner@postgres:5432/commander
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      restart_policy:
+        condition: none
+    networks:
+      - commander-v2
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./nginx-v2.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      api-1:
+        condition: service_started
+      api-2:
+        condition: service_started
+    networks:
+      - commander-v2
+
+  api-1:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: api
+    image: ${COMMANDER_API_IMAGE:-commander-api:latest}
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      DATABASE_URL: postgres://commander_app:commander_app@postgres:5432/commander
+      COMMANDER_KERNEL_ENABLED: "1"
+      COMMANDER_LOG_LEVEL: info
+      COMMANDER_PROJECT_ID: commander-v2-bench
+      COMMANDER_MASTER_KEY: ${COMMANDER_MASTER_KEY:?COMMANDER_MASTER_KEY is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - commander-v2
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  api-2:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: api
+    image: ${COMMANDER_API_IMAGE:-commander-api:latest}
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      DATABASE_URL: postgres://commander_app:commander_app@postgres:5432/commander
+      COMMANDER_KERNEL_ENABLED: "1"
+      COMMANDER_LOG_LEVEL: info
+      COMMANDER_PROJECT_ID: commander-v2-bench
+      COMMANDER_MASTER_KEY: ${COMMANDER_MASTER_KEY:?COMMANDER_MASTER_KEY is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - commander-v2
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: worker
+    image: ${COMMANDER_WORKER_IMAGE:-commander-worker:latest}
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://commander_app:commander_app@postgres:5432/commander
+      COMMANDER_WORKER_BOOTSTRAP: /app/packages/worker-plane/dist/bootstrap.js
+      COMMANDER_WORKER_AUTH_TOKEN: ${COMMANDER_WORKER_AUTH_TOKEN:-bench-token-not-for-production}
+      COMMANDER_WORKER_AUTH_SUBJECT: worker:bench
+      COMMANDER_WORKER_KIND: agent
+      COMMANDER_WORKER_CAPABILITIES: agent
+      COMMANDER_WORKER_MAX_CONCURRENCY: "10"
+      COMMANDER_WORKER_TENANTS: "*"
+      COMMANDER_WORKER_POLL_MS: "250"
+      COMMANDER_WORKER_LEASE_TTL_MS: "30000"
+      COMMANDER_WORKER_HEARTBEAT_MS: "10000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      restart_policy:
+        condition: on-failure
+    networks:
+      - commander-v2
+
+  timer:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: timer
+    image: ${COMMANDER_TIMER_IMAGE:-commander-timer:latest}
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://commander_scheduler:commander_scheduler@postgres:5432/commander
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      restart_policy:
+        condition: on-failure
+    networks:
+      - commander-v2
+
+  outbox:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: outbox
+    image: ${COMMANDER_OUTBOX_IMAGE:-commander-outbox:latest}
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://commander_scheduler:commander_scheduler@postgres:5432/commander
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      restart_policy:
+        condition: on-failure
+    networks:
+      - commander-v2
+
+volumes:
+  pgdata:
+
+networks:
+  commander-v2:
+    driver: bridge

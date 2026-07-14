@@ -247,7 +247,12 @@ export class ExecPolicyEngine {
       if (content.rules) {
         for (const rule of content.rules) {
           rule.id = `user-${rule.pattern.join('-')}-${Date.now()}`;
-          rule.priority = rule.priority ?? 50;
+          // SBX-3: repo/home-supplied rules must never outrank the built-in
+          // `prompt`/`forbidden` rules, or an attacker-controlled
+          // .commander/execpolicy.json could `allow` a command the built-ins
+          // forbid. Clamp user-rule priority strictly below the built-ins.
+          const requested = typeof rule.priority === 'number' ? rule.priority : 0;
+          rule.priority = Math.min(requested, ExecPolicyEngine.MAX_USER_RULE_PRIORITY);
           this.rules.push(rule);
         }
         this.loadedFiles.add(filepath);
@@ -258,6 +263,11 @@ export class ExecPolicyEngine {
       });
     }
   }
+
+  // SBX-3: the highest priority a repo/home-supplied user rule may take. Kept
+  // strictly below the built-in `prompt` (50) and `forbidden` (100) rules so a
+  // caller-supplied policy can never override a built-in denial.
+  private static readonly MAX_USER_RULE_PRIORITY = 49;
 
   // Process wrapper prefixes to strip before matching (from Claude Code's permission system)
   // e.g., "timeout 30 npm test" should match the "npm" rule

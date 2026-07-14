@@ -38,11 +38,7 @@ export interface IMContextStore {
     senderId: string,
     runId: string,
   ): Promise<void>;
-  clearPendingRunId(
-    platform: string,
-    conversationId: string,
-    senderId: string,
-  ): Promise<void>;
+  clearPendingRunId(platform: string, conversationId: string, senderId: string): Promise<void>;
   resetContext(platform: string, conversationId: string, senderId: string): Promise<void>;
 }
 
@@ -73,7 +69,9 @@ export class InMemoryIMContextStore implements IMContextStore {
     const updated: IMThreadContext = ctx
       ? {
           ...ctx,
-          messages: [...ctx.messages, { role: 'user' as const, text, ts: now }].slice(-this.maxMessages),
+          messages: [...ctx.messages, { role: 'user' as const, text, ts: now }].slice(
+            -this.maxMessages,
+          ),
           updatedAt: now,
         }
       : {
@@ -98,7 +96,9 @@ export class InMemoryIMContextStore implements IMContextStore {
     const now = new Date().toISOString();
     const ctx = await this.getContext(platform, conversationId, senderId);
     if (!ctx) return;
-    ctx.messages = [...ctx.messages, { role: 'assistant' as const, text, ts: now }].slice(-this.maxMessages);
+    ctx.messages = [...ctx.messages, { role: 'assistant' as const, text, ts: now }].slice(
+      -this.maxMessages,
+    );
     ctx.updatedAt = now;
   }
 
@@ -125,11 +125,7 @@ export class InMemoryIMContextStore implements IMContextStore {
     ctx.updatedAt = new Date().toISOString();
   }
 
-  async resetContext(
-    platform: string,
-    conversationId: string,
-    senderId: string,
-  ): Promise<void> {
+  async resetContext(platform: string, conversationId: string, senderId: string): Promise<void> {
     this.contexts.delete(this.key(platform, conversationId, senderId));
   }
 }

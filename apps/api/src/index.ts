@@ -44,9 +44,8 @@ import { createA2ARouter } from './a2aEndpoints';
 import { TaskManager, ArtifactManager } from './a2aTask';
 import { createA2AV2Router } from './a2aV2Endpoints';
 import { createMCPRouter, createMCPClientRouter } from './mcpEndpoints';
-import { createRuntimeRouter } from './runtimeEndpoints';
+import { createV2BenchRouter } from './v2/v2BenchEndpoints';
 import { createCostRouter } from './costEndpoints';
-import { createPauseRouter } from './pauseEndpoints';
 import { createReplayRouter } from './replayEndpoints';
 import { createTeamRouter } from './teamEndpoints';
 import { createSelfAssessmentRouter } from './selfAssessmentEndpoints';
@@ -70,13 +69,11 @@ import { createEvaluationRunnerRouter } from './evaluationRunnerEndpoints';
 import { createOrchestratorRouter } from './orchestratorEndpoints';
 import { createObservabilityRouter } from './observabilityEndpoints';
 import { createStreamRouter } from './streamEndpoints';
-import { createChatRouter } from './chatEndpoints';
 import { createDlqRouter } from './dlqEndpoints';
 import { createApprovalConfigRouter } from './approvalConfigEndpoints';
 import { createHallucinationRouter } from './hallucinationEndpoints';
 import { createLineageRouter } from './lineageEndpoints';
 import { createSecurityPostureRouter } from './securityPostureEndpoints';
-import { createWebhookRouter } from './webhookEndpoints';
 import dingtalkPlugin from '@commander/core/plugins/im/dingtalk';
 import feishuPlugin from '@commander/core/plugins/im/feishu';
 import wecomPlugin from '@commander/core/plugins/im/wecom';
@@ -87,6 +84,9 @@ import { createApiKeyRouter } from './apiKeyEndpoints';
 import { createSettingsRouter } from './settingsEndpoints';
 import { createOutgoingWebhookRouter } from './outgoingWebhookEndpoints';
 import { createCostDashboardRouter } from './costDashboardEndpoints';
+import { exportTenantMetrics } from './tenantMetricsExporter';
+import { createScimRouter } from './scimEndpoints';
+import { getDefaultScimStore } from './scimStore';
 import { createKnowledgeBaseRouter } from './knowledgeBaseEndpoints';
 import { createEvalRouter } from './evalEndpoints';
 import { createReportingRouter } from './reportingEndpoints';
@@ -99,7 +99,14 @@ import { createSagaRouter } from './sagaEndpoints';
 import { createHubCorrelationsRouter } from './hubCorrelationsEndpoints';
 import { getUnifiedAuditLog, dlpResponseMiddleware } from '@commander/core/security';
 import { getGlobalTenantProvider, SimpleTenantProvider } from '@commander/core/runtime';
-import { registerRouter, mountRegisteredRouters } from './routerRegistry';
+import { registerRouter, mountRegisteredRouters, listRegisteredRouters } from './routerRegistry';
+import { createV1GatewayRouter } from './v1GatewayEndpoints';
+import { getV1KernelGateway, initializeV1KernelGateway } from './v1GatewayKernel';
+import { isLegacyExecutionAllowed } from './legacyExecutionGuard';
+
+import { getDirname, getRequire } from './esmCompat';
+const __dirname = getDirname(import.meta.url);
+const require = getRequire(import.meta.url);
 
 const PROJECT_ID = process.env.COMMANDER_PROJECT_ID ?? 'project-war-room';
 const app = express();
@@ -111,6 +118,61 @@ try {
   reportSilentFailure(err, 'index:56');
   /* use default */
 }
+
+// ── Environment validation ──────────────────────────────────────────────────
+/**
+ * Validate required/recommended environment variables. In production mode,
+ * missing critical secrets cause a fast failure with an actionable message.
+ * In development/test mode, warnings are emitted and sensible defaults are used.
+ */
+function validateEnvironment(): void {
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  const criticalSecrets = [
+    { name: 'COMMANDER_MASTER_KEY', purpose: 'encryption of sensitive tenant data' },
+    { name: 'JWT_SECRET', purpose: 'JWT signing for user/auth tokens' },
+    { name: 'COMMANDER_API_KEY', purpose: 'authentication for API requests' },
+    { name: 'COMMANDER_CAPABILITY_TOKEN_KEY', purpose: 'signing capability tokens' },
+    { name: 'COMMANDER_INTEGRITY_KEY', purpose: 'HMAC integrity verification for persisted data' },
+  ];
+
+  const missingCritical: string[] = [];
+  for (const { name, purpose } of criticalSecrets) {
+    if (!process.env[name]) {
+      const message = `[env] ${name} is not set; it is required for ${purpose}.`;
+      if (isProduction) {
+        console.error(message);
+        missingCritical.push(name);
+      } else {
+        console.warn(`${message} Using development fallback. Set ${name} before deploying to production.`);
+      }
+    }
+  }
+
+  if (missingCritical.length > 0) {
+    console.error(
+      `[env] Aborting startup: the following required environment variables are missing: ${missingCritical.join(', ')}`,
+    );
+    process.exit(1);
+  }
+
+  if (!process.env.CORS_ORIGINS) {
+    console.warn(
+      `[env] CORS_ORIGINS not set — only localhost origins are allowed. ` +
+        `For production/browser access from other hosts, set CORS_ORIGINS=https://your-ui-host.example.com`,
+    );
+  }
+
+  const storeBackend = process.env.API_STORE_BACKEND;
+  if (!storeBackend && !process.env.DATABASE_URL) {
+    console.warn(
+      `[env] Neither API_STORE_BACKEND nor DATABASE_URL is set. The API will fall back to an in-memory store, ` +
+        `which is ephemeral and only suitable for single-node development/testing. Set DATABASE_URL for production persistence.`,
+    );
+  }
+}
+
+validateEnvironment();
 
 // ── Shared state ────────────────────────────────────────────────────────────
 const store = createWarRoomStore();
@@ -135,6 +197,7 @@ const governanceRouter = createGovernanceRouter(checkpointManager);
 const a2aTaskManager = new TaskManager();
 const a2aArtifactManager = new ArtifactManager();
 const a2aRouter = createA2ARouter(a2aTaskManager, a2aArtifactManager, agentCardRegistry);
+const scimStore = getDefaultScimStore();
 
 // ── Security middleware stack ────────────────────────────────────────────────
 // Security: Disable X-Powered-By header to reduce fingerprinting.
@@ -367,6 +430,7 @@ app.get('/metrics', (_req, res) => {
   const uptime = process.uptime();
 
   const businessMetrics = getMetricsCollector().exportOpenMetrics();
+  const tenantMetrics = exportTenantMetrics(process.env.METRICS_TENANT_LABELS === 'true');
 
   const processMetrics = [
     '# HELP commander_heap_used_bytes Heap memory used in bytes',
@@ -391,7 +455,7 @@ app.get('/metrics', (_req, res) => {
     '',
   ].join('\n');
 
-  res.type('text/plain; version=0.0.4').send(businessMetrics + processMetrics);
+  res.type('text/plain; version=0.0.4').send(businessMetrics + tenantMetrics + processMetrics);
 });
 
 app.get('/system/status', (_req, res) => {
@@ -430,6 +494,32 @@ app.get('/system/status', (_req, res) => {
 // auth endpoints are available before any feature routers.
 registerRouter({ name: 'user-auth', mountPath: '/', factory: () => createUserAuthRouter() });
 registerRouter({ name: 'oidc-auth', mountPath: '/', factory: () => createOIDCAuthRouter() });
+
+// Architecture V2 public control-plane resources. Unlike legacy /api/runtime
+// endpoints, these routes submit/query durable kernel state and never execute
+// an AgentRuntime in the Gateway process.
+registerRouter({
+  name: 'v1-runs',
+  mountPath: '/v1',
+  factory: () => createV1GatewayRouter(getV1KernelGateway),
+});
+
+// V2 live benchmark harness routes (in-memory ledger for Layer B topology tests)
+registerRouter({
+  name: 'v2-bench',
+  mountPath: '/v2',
+  factory: () => createV2BenchRouter(),
+});
+
+// Observability routes must be mounted before the legacy execution routers
+// (pipeline/orchestrator) because those routers' compatibility middleware
+// returns 410 for every path when legacy execution is disabled, which would
+// otherwise shadow /api/v1/observability.
+registerRouter({
+  name: 'v1-observability',
+  mountPath: '/api/v1/observability',
+  factory: () => createObservabilityRouter(),
+});
 
 registerRouter({
   name: 'project',
@@ -504,23 +594,26 @@ registerRouter({
   factory: () => createMCPClientRouter(),
 });
 registerRouter({ name: 'stream', mountPath: '/', factory: () => createStreamRouter() });
-registerRouter({
-  name: 'runtime',
-  mountPath: '/api/runtime',
-  factory: () => createRuntimeRouter(),
-});
+// ── Legacy execution routes ─────────────────────────────────────────────────
+// These routes create AgentRuntime directly in the Gateway process, which
+// violates the V2 execution separation principle (WP3). They are disabled
+// in V2 mode (COMMANDER_V2_MODE=1 or NODE_ENV=production).
+if (isLegacyExecutionAllowed()) {
+  registerRouter({
+    name: 'orchestrator',
+    mountPath: '/api',
+    factory: () => createOrchestratorRouter(),
+  });
+  registerRouter({
+    name: 'v1-orchestrator',
+    mountPath: '/api/v1',
+    factory: () => createOrchestratorRouter(),
+  });
+}
 registerRouter({ name: 'cost', mountPath: '/', factory: () => createCostRouter() });
-registerRouter({ name: 'pause', mountPath: '/', factory: () => createPauseRouter() });
 registerRouter({ name: 'replay', mountPath: '/', factory: () => createReplayRouter() });
-registerRouter({
-  name: 'orchestrator',
-  mountPath: '/api',
-  factory: () => createOrchestratorRouter(),
-});
 registerRouter({ name: 'team', mountPath: '/api', factory: () => createTeamRouter() });
 
-// ── UX gap-fix routers ─────────────────────────────────────────────────────
-registerRouter({ name: 'chat', mountPath: '/', factory: () => createChatRouter() });
 registerRouter({ name: 'dlq', mountPath: '/', factory: () => createDlqRouter() });
 registerRouter({
   name: 'approval-config',
@@ -538,7 +631,6 @@ registerRouter({
   mountPath: '/',
   factory: () => createSecurityPostureRouter(),
 });
-registerRouter({ name: 'webhook', mountPath: '/', factory: () => createWebhookRouter() });
 
 // ── API Key management (admin only) ─────────────────────────────────────────
 registerRouter({ name: 'api-keys', mountPath: '/', factory: () => createApiKeyRouter() });
@@ -558,6 +650,13 @@ registerRouter({
   name: 'cost-dashboard',
   mountPath: '/',
   factory: () => createCostDashboardRouter(),
+});
+
+// ── SCIM 2.0 provisioning (enterprise SSO / IdP integration skeleton) ──────
+registerRouter({
+  name: 'scim',
+  mountPath: '/scim/v2',
+  factory: () => createScimRouter(scimStore),
 });
 
 // ── Knowledge Base / RAG (enterprise document retrieval) ───────────────────
@@ -671,25 +770,7 @@ registerRouter({
   mountPath: '/api/v1',
   factory: () => createEvaluationRunnerRouter(),
 });
-registerRouter({
-  name: 'v1-runtime',
-  mountPath: '/api/v1/runtime',
-  factory: () => createRuntimeRouter(),
-});
-registerRouter({
-  name: 'v1-orchestrator',
-  mountPath: '/api/v1',
-  factory: () => createOrchestratorRouter(),
-});
 
-// ── Mount all registered routers in registration order ─────────────────────
-// A single call replaces ~40 scattered app.use() statements. Order is preserved
-// (auth routers first, then features, then v1 aliases).
-registerRouter({
-  name: 'v1-observability',
-  mountPath: '/api/v1/observability',
-  factory: () => createObservabilityRouter(),
-});
 
 // ── OpenAPI ─────────────────────────────────────────────────────────────────
 app.get('/api/openapi.json', (_req, res) => {
@@ -703,6 +784,7 @@ app.get('/api/openapi.json', (_req, res) => {
     },
     servers: [{ url: `http://localhost:${API_PORT}`, description: 'Local development' }],
     tags: [
+      { name: 'Runs', description: 'Durable execution kernel runs' },
       { name: 'Projects', description: 'Project and agent management' },
       { name: 'Missions', description: 'Mission lifecycle' },
       { name: 'Memory', description: 'Memory stores (standard, namespaced, RBAC)' },
@@ -713,6 +795,70 @@ app.get('/api/openapi.json', (_req, res) => {
       { name: 'System', description: 'Health and status' },
     ],
     paths: {
+      '/v1/runs': {
+        post: {
+          tags: ['Runs'],
+          summary: 'Submit a durable agent run',
+          parameters: [{ name: 'Idempotency-Key', in: 'header', required: true }],
+          responses: {
+            '202': { description: 'Accepted' },
+            '200': { description: 'Idempotent replay' },
+            '503': { description: 'Kernel unavailable' },
+          },
+        },
+      },
+      '/v1/runs/{runId}': {
+        get: {
+          tags: ['Runs'],
+          summary: 'Get a durable run',
+          parameters: [{ name: 'runId', in: 'path', required: true }],
+          responses: { '200': { description: 'Run' }, '404': { description: 'Not found' } },
+        },
+      },
+      '/v1/runs/{runId}/events': {
+        get: {
+          tags: ['Runs'],
+          summary: 'List durable run events',
+          parameters: [{ name: 'runId', in: 'path', required: true }],
+          responses: { '200': { description: 'Ordered event timeline' } },
+        },
+      },
+      '/v1/runs/{runId}/pause': {
+        post: {
+          tags: ['Runs'],
+          summary: 'Pause a durable run',
+          parameters: [{ name: 'runId', in: 'path', required: true }],
+          responses: {
+            '200': { description: 'Run paused' },
+            '404': { description: 'Run not found' },
+            '409': { description: 'Run is not in a pausable state' },
+          },
+        },
+      },
+      '/v1/runs/{runId}/resume': {
+        post: {
+          tags: ['Runs'],
+          summary: 'Resume a paused durable run',
+          parameters: [{ name: 'runId', in: 'path', required: true }],
+          responses: {
+            '200': { description: 'Run resumed' },
+            '404': { description: 'Run not found' },
+            '409': { description: 'Run is not paused' },
+          },
+        },
+      },
+      '/v1/runs/{runId}/cancel': {
+        post: {
+          tags: ['Runs'],
+          summary: 'Cancel a durable run',
+          parameters: [{ name: 'runId', in: 'path', required: true }],
+          responses: {
+            '200': { description: 'Run cancelled' },
+            '404': { description: 'Run not found' },
+            '409': { description: 'Run has already reached a terminal state' },
+          },
+        },
+      },
       '/health': {
         get: {
           tags: ['System'],
@@ -939,6 +1085,23 @@ async function startServer(): Promise<void> {
   // created. Missing config falls back to single-tenant mode (NullTenantProvider).
   loadTenantProvider();
 
+  // Explicitly initialize the shared execution kernel before mounting V1
+  // resource routes. Disabled environments keep legacy routes available, but
+  // V1 requests fail closed with KERNEL_UNAVAILABLE rather than using local state.
+  await initializeV1KernelGateway();
+
+  if (process.env.NODE_ENV === 'production' && process.env.COMMANDER_KERNEL_ENABLED !== '1') {
+    // Fail closed at startup rather than booting a production replica that would
+    // 503 every /v1/runs request and has no durable, single-writer execution
+    // substrate. Multi-replica production without the shared kernel is unsafe
+    // (split-brain, per-replica in-memory state). See audit REL-5.
+    throw new Error(
+      '[kernel] Refusing to start: NODE_ENV=production requires COMMANDER_KERNEL_ENABLED=1. ' +
+        'Set COMMANDER_KERNEL_ENABLED=1 (with COMMANDER_KERNEL_DATABASE_URL or DATABASE_URL) so ' +
+        'V1 resource routes run on the shared durable kernel instead of failing closed.',
+    );
+  }
+
   await initRateLimitStore();
 
   // Initialize optional ProjectMemoryStoreAdapter for the memory-index router.
@@ -974,6 +1137,7 @@ async function startServer(): Promise<void> {
   });
 
   // Mount routers after shared state (including memoryIndexManager) is initialized.
+  console.log('[mount] registered routers:', listRegisteredRouters().map((r) => `${r.name}@${r.mountPath}`));
   mountRegisteredRouters(app);
 
   // Start the outgoing webhook dispatcher so registered webhooks receive
@@ -981,6 +1145,9 @@ async function startServer(): Promise<void> {
   getWebhookDispatcher().start();
   httpServer = app.listen(port, () => {
     process.stdout.write(`API listening on http://localhost:${port}\n`);
+    process.stdout.write(
+      `[Architecture V2] apps/api is the sole Gateway — do not expose core CommanderHttpServer in production\n`,
+    );
     process.stdout.write(`War room project ready at GET /projects/${PROJECT_ID}/war-room\n`);
   });
 }

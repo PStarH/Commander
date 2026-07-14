@@ -3,6 +3,12 @@
  *
  * Phase 1 of the drive/swarm roadmap:
  * manager agent decomposes → worker agents execute → critic agent reviews → loop
+ *
+ * @legacy `GoalStatus` uses lowercase state names that are NOT compatible with
+ * the V2 canonical state machine (`RunState` / `StepState` in
+ * `@commander/contracts`). New code must use `RunState` / `StepState` instead.
+ * This type will be migrated or deleted during WP7. Do NOT add new features
+ * that depend on `GoalStatus`.
  */
 
 // ============================================================================

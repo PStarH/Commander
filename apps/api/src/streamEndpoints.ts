@@ -16,7 +16,7 @@
  *   - Cleans up the MessageBus subscription + heartbeat when the client disconnects
  */
 import { reportSilentFailure } from '@commander/core';
-import express, { Router, Request, Response } from 'express';
+import { Router, Request, Response } from 'express';
 import { getMessageBus } from '@commander/core';
 import type { MessageBusTopic, BusMessage } from '@commander/core';
 
@@ -34,10 +34,31 @@ const DEFAULT_TOPICS: MessageBusTopic[] = [
   'tool.completed',
 ];
 
+// REL-7: bound SSE resource usage.
+//  - MAX_SSE_CONNECTIONS caps concurrent streams per process so a flood of
+//    clients cannot exhaust file descriptors / memory.
+//  - MAX_BUFFERED_BYTES caps the per-connection outbound buffer. A slow
+//    consumer that lets Node's socket buffer grow past this is disconnected
+//    rather than allowed to accumulate unbounded heap (OOM).
+const MAX_SSE_CONNECTIONS = Number.parseInt(process.env.COMMANDER_SSE_MAX_CONNECTIONS ?? '', 10) || 1000;
+const MAX_BUFFERED_BYTES = Number.parseInt(process.env.COMMANDER_SSE_MAX_BUFFER_BYTES ?? '', 10) || 1024 * 1024;
+
+let activeConnections = 0;
+
 export function createStreamRouter(): Router {
   const router = Router();
 
   const handleStream = (req: Request, res: Response): void => {
+    // Connection cap — refuse new streams once the process is at capacity so a
+    // client flood cannot exhaust sockets/memory. 503 tells clients to back off.
+    if (activeConnections >= MAX_SSE_CONNECTIONS) {
+      res.status(503).json({
+        error: { code: 'SSE_CAPACITY', message: 'Too many active event streams; retry shortly.' },
+      });
+      return;
+    }
+    activeConnections += 1;
+
     // SSE requires specific headers and disables proxy buffering / compression.
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -52,6 +73,7 @@ export function createStreamRouter(): Router {
 
     const bus = getMessageBus();
     let seq = 0;
+    let droppedFrames = 0;
 
     // 2. Honor the optional ?topics= filter, otherwise subscribe to the
     //    default war-room feed.
@@ -66,7 +88,21 @@ export function createStreamRouter(): Router {
     }
 
     // 3. Map each MessageBus event to a structured SSE frame: id+event+data.
+    //    Backpressure (REL-7): if the outbound socket buffer is already past the
+    //    cap the consumer is too slow — drop this frame instead of growing the
+    //    heap, and disconnect once the buffer stays saturated. Silence is safe
+    //    for an SSE feed; unbounded buffering is not.
     const handleBusMessage = (message: BusMessage): void => {
+      const buffered = (res as unknown as { writableLength?: number }).writableLength ?? 0;
+      if (buffered > MAX_BUFFERED_BYTES) {
+        droppedFrames += 1;
+        // Terminate a persistently-saturated consumer so it can reconnect fresh
+        // rather than pinning MAX_BUFFERED_BYTES of memory indefinitely.
+        if (buffered > MAX_BUFFERED_BYTES * 4) {
+          cleanup();
+        }
+        return;
+      }
       seq += 1;
       const frame =
         `id: ${seq}\n` + `event: ${message.topic}\n` + `data: ${JSON.stringify(message)}\n\n`;
@@ -101,8 +137,13 @@ export function createStreamRouter(): Router {
     }, heartbeatMs);
     if (typeof heartbeat.unref === 'function') heartbeat.unref();
 
-    // 5. Lifecycle — ensure no leaks when the client disconnects.
-    const cleanup = (): void => {
+    // 5. Lifecycle — ensure no leaks when the client disconnects. Idempotent so
+    //    a backpressure-triggered close and the socket 'close' event are safe.
+    let cleanedUp = false;
+    function cleanup(): void {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      activeConnections = Math.max(0, activeConnections - 1);
       clearInterval(heartbeat);
       try {
         unsubscribe();
@@ -110,13 +151,19 @@ export function createStreamRouter(): Router {
         reportSilentFailure(err, 'streamEndpoints:109');
         /* best-effort */
       }
+      if (droppedFrames > 0) {
+        reportSilentFailure(
+          new Error(`SSE dropped ${droppedFrames} frames to a slow consumer`),
+          'streamEndpoints:backpressure',
+        );
+      }
       try {
         res.end();
       } catch (err) {
         reportSilentFailure(err, 'streamEndpoints:115');
         /* already closed */
       }
-    };
+    }
     req.on('close', cleanup);
     req.on('error', cleanup);
     res.on('error', cleanup);

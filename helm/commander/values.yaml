@@ -1,0 +1,126 @@
+# Default values for commander.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/pstarh/commander
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+api:
+  enabled: true
+  replicas: 1
+  port: 4000
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  env:
+    NODE_ENV: production
+    PORT: "4000"
+    API_STORE_BACKEND: postgres
+    COMMANDER_KERNEL_ENABLED: "1"
+  secrets:
+    COMMANDER_API_KEY: ""
+
+worker:
+  enabled: true
+  replicas: 2
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  env:
+    NODE_ENV: production
+    COMMANDER_WORKER_BOOTSTRAP: /app/packages/worker-plane/dist/bootstrap.js
+    COMMANDER_WORKER_AUTH_SUBJECT: worker
+    COMMANDER_WORKER_CAPABILITIES: "agent,tool,connector"
+    COMMANDER_WORKER_MAX_CONCURRENCY: "10"
+    COMMANDER_WORKER_TENANTS: "*"
+    COMMANDER_WORKER_LEASE_TTL_MS: "30000"
+    COMMANDER_WORKER_HEARTBEAT_MS: "10000"
+    COMMANDER_WORKER_POLL_MS: "250"
+  secrets:
+    COMMANDER_WORKER_AUTH_TOKEN: worker-token
+
+timer:
+  enabled: true
+  replicas: 1
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  env:
+    NODE_ENV: production
+    COMMANDER_TIMER_POLL_MS: "5000"
+    COMMANDER_TIMER_BATCH_SIZE: "100"
+
+outbox:
+  enabled: true
+  replicas: 1
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  env:
+    NODE_ENV: production
+    COMMANDER_OUTBOX_INTERVAL_MS: "5000"
+    COMMANDER_OUTBOX_LIMIT: "100"
+
+database:
+  # Set to false if you provide your own Postgres instance via externalDatabase.
+  enabled: true
+  image:
+    repository: postgres
+    tag: "16-alpine"
+  user: commander
+  password: commander
+  name: commander
+  storage:
+    size: 10Gi
+
+externalDatabase:
+  host: ""
+  port: 5432
+  user: ""
+  password: ""
+  name: ""
+
+service:
+  type: ClusterIP
+  port: 4000
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []
+  tls: []
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podSecurityContext: {}
+securityContext: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

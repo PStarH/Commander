@@ -128,12 +128,32 @@ function runWarmup(protocol: SACProtocol): void {
   for (let round = 0; round < 5; round++) {
     const evals: EvalLike[] = [];
     for (const id of HONEST_IDS) {
-      evals.push({ evaluatorId: id, evaluatedAgentId: correct.agentId, scores: allDimensions(0.9), overall: 0.9 });
-      evals.push({ evaluatorId: id, evaluatedAgentId: wrong.agentId, scores: allDimensions(0.2), overall: 0.2 });
+      evals.push({
+        evaluatorId: id,
+        evaluatedAgentId: correct.agentId,
+        scores: allDimensions(0.9),
+        overall: 0.9,
+      });
+      evals.push({
+        evaluatorId: id,
+        evaluatedAgentId: wrong.agentId,
+        scores: allDimensions(0.2),
+        overall: 0.2,
+      });
     }
     for (const id of BYZANTINE_IDS) {
-      evals.push({ evaluatorId: id, evaluatedAgentId: correct.agentId, scores: allDimensions(0.2), overall: 0.2 });
-      evals.push({ evaluatorId: id, evaluatedAgentId: wrong.agentId, scores: allDimensions(0.9), overall: 0.9 });
+      evals.push({
+        evaluatorId: id,
+        evaluatedAgentId: correct.agentId,
+        scores: allDimensions(0.2),
+        overall: 0.2,
+      });
+      evals.push({
+        evaluatorId: id,
+        evaluatedAgentId: wrong.agentId,
+        scores: allDimensions(0.9),
+        overall: 0.9,
+      });
     }
 
     const submitted = evals.map((e) =>

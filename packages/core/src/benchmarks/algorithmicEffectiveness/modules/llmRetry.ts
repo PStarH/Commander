@@ -23,7 +23,7 @@ const SCENARIOS: Record<string, Scenario> = {
     error: makeError('Invalid API key', 401),
     successOnAttempt: 0,
   },
-  'timeout': {
+  timeout: {
     error: makeError('Request timeout'),
     successOnAttempt: 2,
   },

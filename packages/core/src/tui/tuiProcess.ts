@@ -4,5 +4,5 @@
  * Runs the blessed terminal dashboard in a separate process.
  * Subscribes to the message bus via the shared checkpoint store.
  */
-import { startTUI } from '../tui';
+import { startTUI } from '../tuiDashboard';
 startTUI({ stateDir: process.env.COMMANDER_TUI_STATE_DIR });

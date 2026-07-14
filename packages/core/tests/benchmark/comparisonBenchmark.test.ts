@@ -166,7 +166,7 @@ describe('Comparison Benchmarks', () => {
 
   it('feature coverage comparison', () => {
     const commanderFeatures = [
-      'Dynamic topology selection (8 topologies)',
+      'Dynamic topology selection (5 canonical topologies)',
       'Token budget enforcement (4 phases, 9 strategies)',
       'Circuit breaker (Hystrix-pattern)',
       'Crash recovery (atomic checkpoints)',

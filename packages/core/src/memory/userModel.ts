@@ -22,7 +22,9 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import { mkdir, readFile, writeFile, access, unlink } from 'fs/promises';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { getCurrentTenantId } from '../runtime/tenantContext';
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
 // ============================================================================
 // Types
@@ -208,10 +210,9 @@ export class UserModelManager {
     const profile = this.models.get(userId);
     if (!profile) return;
 
-    const dir = this.config.modelPath;
-    await mkdir(dir, { recursive: true });
-
     const filePath = this.getModelPath(userId);
+    await mkdir(dirname(filePath), { recursive: true });
+
     const data = this.serializeProfile(profile);
     await writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
   }
@@ -615,9 +616,14 @@ export class UserModelManager {
     return current + (newValue - current) / Math.min(n, 100); // Bounded running average
   }
 
+  private getTenantId(): string {
+    return getCurrentTenantId() ?? '__default__';
+  }
+
   private getModelPath(userId: string): string {
     const safeId = userId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    return join(this.config.modelPath, `${safeId}.json`);
+    const safeTenantId = this.getTenantId().replace(/[^a-zA-Z0-9_.-]/g, '_');
+    return join(this.config.modelPath, `tenant_${safeTenantId}`, `${safeId}.json`);
   }
 
   private serializeProfile(profile: UserProfile): Record<string, unknown> {
@@ -700,14 +706,21 @@ export class UserModelManager {
 }
 
 // ============================================================================
-// Singleton
+// Tenant-aware singleton
 // ============================================================================
 
-let globalUserModelManager: UserModelManager | null = null;
+let pendingUserModelConfig: Partial<UserModelConfig> | undefined;
+
+const userModelSingleton = createTenantAwareSingleton(
+  () => new UserModelManager(pendingUserModelConfig),
+  { dispose: (manager) => manager.close() },
+);
 
 export function getUserModelManager(config?: Partial<UserModelConfig>): UserModelManager {
-  if (!globalUserModelManager) {
-    globalUserModelManager = new UserModelManager(config);
-  }
-  return globalUserModelManager;
+  pendingUserModelConfig = config;
+  return userModelSingleton.get();
+}
+
+export function resetUserModelManager(): void {
+  userModelSingleton.reset();
 }

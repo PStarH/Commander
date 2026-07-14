@@ -71,7 +71,7 @@ describe('P4: ε-greedy exploration in TopologyRouter', () => {
         // happened to land on the argmax, but the gate fired.
         expect(r.epsilonUsed).toBe(1);
       }
-      // With 10 topologies and N=200, we should see at least 2-3 distinct
+      // With 5 topologies and N=200, we should see at least 2-3 distinct
       // topologies even though the argmax dominates.
       expect(choices.size).toBeGreaterThan(1);
     });

@@ -291,6 +291,7 @@ describe('/api/v1 multi-tenant gate (apiKey present, tenant map not matching)', 
     ],
     ['POST', '/api/v1/memory', { action: 'stats' }],
     ['POST', '/api/v1/plan', { task: 'Investigate a small bug' }],
+    ['POST', '/api/v1/execute', { prompt: 'hello' }],
   ];
 
   for (const [method, path, body] of cases) {
@@ -392,5 +393,17 @@ describe('/api/v1 multi-tenant isolation (apiKey === tenant key)', () => {
       totalEntries: expect.any(Number),
       byLayer: expect.any(Object),
     });
+  });
+
+  it('POST /api/v1/execute rejects cross-tenant body tenantId with 403', async () => {
+    const res = await jsonReq(
+      port,
+      'POST',
+      '/api/v1/execute',
+      { prompt: 'hello', tenantId: 'tenant-b' },
+      { authorization: 'Bearer unit-test-key' },
+    );
+    expect(res.status).toBe(403);
+    expect((res.body as { error?: string }).error).toMatch(/Cross-tenant access denied/);
   });
 });

@@ -1,4 +1,11 @@
 /**
+ * @deprecated Architecture V2 — The createRealAgentExecutor() function executes
+ * agents in-process via a process-level AgentRuntime singleton. Migrate to
+ * WorkerService + KernelStepExecutor for durable, isolated execution.
+ * The SequentialExecutor class itself is still used by the V2 evaluation
+ * pipeline but should be backed by the kernel, not a process-level runtime.
+ * Will be removed in v0.3.0.
+ *
  * Sequential Pipeline Executor
  *
  * Implements the Sequential Orchestration Pattern from Microsoft's AI Agent Design Patterns.
@@ -6,6 +13,7 @@
  */
 
 import {
+  AgentRuntime,
   SequentialPipeline,
   SequentialPipelineRun,
   SequentialPipelineStatus,
@@ -17,6 +25,7 @@ import {
   TokenUsage,
   CommanderRunContextV2,
 } from '@commander/core';
+import { assertLegacyExecutionAllowed } from './legacyExecutionGuard';
 
 /**
  * Agent executor function type.
@@ -437,12 +446,24 @@ export class SequentialExecutor {
 
 /**
  * Create a real agent executor by delegating to the shared Commander AgentRuntime.
+ *
+ * NOTE: This previously relied on the deleted `sharedRuntime.ts` singleton. The
+ * process-level runtime is now constructed inline here so the evaluation
+ * pipeline keeps working. This remains deprecated under Architecture V2 —
+ * migrate to WorkerService + KernelStepExecutor for durable, isolated execution.
  */
-import { getSharedRuntime } from './sharedRuntime';
+let sharedAgentRuntime: AgentRuntime | null = null;
+function getSharedAgentRuntime(): AgentRuntime {
+  assertLegacyExecutionAllowed('in-process AgentRuntime execution');
+  if (!sharedAgentRuntime) {
+    sharedAgentRuntime = new AgentRuntime({ maxRetries: 1, timeoutMs: 30000 });
+  }
+  return sharedAgentRuntime;
+}
 
 export function createRealAgentExecutor(): AgentExecutor {
   return async ({ agentId, input, context }) => {
-    const runtime = getSharedRuntime();
+    const runtime = getSharedAgentRuntime();
     const result = await runtime.execute({
       agentId,
       projectId: context.projectId,

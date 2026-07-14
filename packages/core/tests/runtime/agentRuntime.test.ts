@@ -4,7 +4,7 @@ import { MockLLMProvider } from '../../src/runtime/mockLLMProvider';
 import { ModelRouter, resetModelRouter } from '../../src/runtime/modelRouter';
 import { resetMessageBus } from '../../src/runtime/messageBus';
 import { resetTraceRecorder } from '../../src/runtime/executionTrace';
-import { resetGlobalThreeLayerMemory } from '../../src/threeLayerMemory';
+import { getGlobalThreeLayerMemory, resetGlobalThreeLayerMemory } from '../../src/threeLayerMemory';
 import { SingleFlightRequestCache } from '../../src/runtime/singleFlightRequestCache';
 import type { AgentExecutionContext, Tool, ToolDefinition } from '../../src/runtime/types';
 
@@ -311,6 +311,23 @@ describe('AgentRuntime', () => {
       expect(keyA).not.toBe(keyB);
       expect(keyA).not.toBe(keyNull);
       expect(keyB).not.toBe(keyNull);
+    });
+  });
+
+  describe('memory manager agent wiring', () => {
+    beforeEach(() => {
+      resetGlobalThreeLayerMemory();
+      resetModelRouter();
+      resetMessageBus();
+      resetTraceRecorder();
+      router = new ModelRouter();
+    });
+
+    it('injects a MemoryManagerAgent into ThreeLayerMemory on construction', () => {
+      const memory = getGlobalThreeLayerMemory();
+      expect(memory.hasMemoryManagerAgent()).toBe(false);
+      new AgentRuntime({ maxRetries: 1, timeoutMs: 5000 }, router);
+      expect(memory.hasMemoryManagerAgent()).toBe(true);
     });
   });
 

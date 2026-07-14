@@ -19,12 +19,12 @@ import {
   ERROR_MAX_CHARS,
 } from './runtimeConstants';
 import type { ModelRouter } from './modelRouter';
+import { resolveMinSensitiveTier } from './modelRouter';
 import { getMessageBus } from './messageBus';
 import { getTraceRecorder } from './executionTrace';
 import { getGlobalDeterminismCapture } from './determinismCapture';
 import { getMetricsCollector } from './metricsCollector';
 import { getCostEstimator } from './costEstimator';
-import { getHookManager } from '../pluginManager';
 import { getHallucinationDetector, type HallucinationReport } from '../hallucinationDetector';
 import { getGlobalLogger } from '../logging';
 import { getFreezeDryManager } from './freezeDry';
@@ -456,14 +456,26 @@ export class AgentLoopOrchestrator {
 
         // Interrupt check: if a tool requested human input, pause execution
         if (interruptData) {
-          const id = interruptData as { reason: string; value: unknown };
+          const id = interruptData as {
+            reason: string;
+            value: unknown;
+            humanInputRequired?: boolean;
+          };
+          const waitingForHuman =
+            id.humanInputRequired === true ||
+            id.reason === 'human_input_required' ||
+            (typeof id.value === 'object' &&
+              id.value !== null &&
+              (id.value as { reason?: string }).reason === 'human_input_required');
           const totalDurationMs = Date.now() - startTime;
           const result: AgentExecutionResult = {
             runId,
             agentId: ctx.agentId,
             missionId: ctx.missionId,
-            status: 'interrupted',
-            summary: `Interrupted: ${id.reason}`,
+            status: waitingForHuman ? 'waiting_for_human' : 'interrupted',
+            summary: waitingForHuman
+              ? `Waiting for human: ${id.reason}`
+              : `Interrupted: ${id.reason}`,
             steps,
             totalTokenUsage: totalTokens,
             totalDurationMs,
@@ -471,18 +483,40 @@ export class AgentLoopOrchestrator {
           };
           state.totalTokenUsage = totalTokens;
           state.steps = steps;
-          await this.deps.getCheckpointingPhase().checkpointTerminal(ctx, state, 'interrupted', {
-            request,
-            attempt,
-            stepNumber: steps.length,
-            exitSummary: result.summary,
-          });
-          tracer.recordDecision(runId, `Interrupted: ${id.reason}`, steps.length);
-          bus.publish('agent.interrupted', ctx.agentId, { runId, reason: id.reason });
+          state.pauseRequested = waitingForHuman;
+          if (waitingForHuman) {
+            await this.deps.getCheckpointingPhase().pauseForHuman(ctx, state, {
+              request,
+              attempt,
+              stepNumber: steps.length,
+              exitSummary: result.summary,
+              reason: id.reason,
+            });
+          } else {
+            await this.deps.getCheckpointingPhase().checkpointTerminal(ctx, state, 'interrupted', {
+              request,
+              attempt,
+              stepNumber: steps.length,
+              exitSummary: result.summary,
+            });
+          }
+          tracer.recordDecision(
+            runId,
+            waitingForHuman ? `Waiting for human: ${id.reason}` : `Interrupted: ${id.reason}`,
+            steps.length,
+          );
+          bus.publish(
+            waitingForHuman ? 'agent.waiting_for_human' : 'agent.interrupted',
+            ctx.agentId,
+            {
+              runId,
+              reason: id.reason,
+            },
+          );
           try {
             getMetricsCollector().recordSubAgentOutcome(
               ctx.agentId,
-              'interrupted',
+              waitingForHuman ? 'waiting_for_human' : 'interrupted',
               ctx.subAgentDepth ?? 0,
               ctx.tenantId,
             );
@@ -626,7 +660,12 @@ export class AgentLoopOrchestrator {
                     source: `agent:${ctx.agentId}`,
                     agentId: ctx.agentId,
                     memoryType: 'episodic',
-                    sourceCredibility: 'agent_generated',
+                    // AI-2: this run summary echoes tool/web output whose provenance
+                    // is not verified-clean. Do NOT tag it 'agent_generated' (high
+                    // credibility), which multiplies the risk score down below the
+                    // block threshold and defeats the poisoning gate. Treat it as
+                    // 'unknown' so the defense engine applies full scrutiny.
+                    sourceCredibility: 'unknown',
                     sessionId: runId,
                     metadata: { phase: 'early_exit' },
                   });
@@ -1055,7 +1094,11 @@ export class AgentLoopOrchestrator {
               fallbackModel =
                 currentEscalationChain.length > 0
                   ? this.deps.getRouter().getNextEscalation(routing.modelId, currentEscalationChain)
-                  : this.deps.getRouter().getFallbackModel(routing.modelId, tt);
+                  : // AI-8: pin the sensitive-tier floor so a failed sensitive step
+                    // cannot fall back to a below-floor model.
+                    this.deps
+                      .getRouter()
+                      .getFallbackModel(routing.modelId, tt, resolveMinSensitiveTier(ctx));
             }
             if (fallbackModel && fallbackModel.tier !== routing.tier) {
               const newRouting: RoutingDecision = {
@@ -1297,72 +1340,13 @@ export class AgentLoopOrchestrator {
           exitSummary: result.summary,
         });
 
-        if (this.deps.getMemory()) {
-          try {
-            const _memContent2 = `[SUCCESS] ${ctx.goal.slice(0, GOAL_TELEMETRY_MAX_CHARS)}`;
-            // Security (OWASP ASI07): Memory poisoning detection gate.
-            const _poisoningCheck2 = checkMemoryPoisoning(
-              _memContent2,
-              `agent:${ctx.agentId}`,
-              ctx.agentId,
-            );
-            if (!_poisoningCheck2.allowed) {
-              getGlobalLogger().warn('AgentRuntime', 'Memory write blocked by poisoning gate', {
-                reason: _poisoningCheck2.reason,
-              });
-            } else {
-              // Security (G4): Advanced defense engine — entropy, Unicode, Base64, rate limit, taint tracking
-              let _defenseBlocked2 = false;
-              try {
-                const _defenseResult2 = getMemoryPoisoningDefenseEngine().validateMemoryWrite({
-                  content: _memContent2,
-                  source: `agent:${ctx.agentId}`,
-                  agentId: ctx.agentId,
-                  memoryType: 'episodic',
-                  sourceCredibility: 'agent_generated',
-                  sessionId: runId,
-                  metadata: { phase: 'success' },
-                });
-                if (!_defenseResult2.allowed) {
-                  _defenseBlocked2 = true;
-                  getGlobalLogger().warn('AgentRuntime', 'Memory write blocked by defense engine', {
-                    reason: _defenseResult2.reason,
-                    riskScore: _defenseResult2.riskScore,
-                    severity: _defenseResult2.severity,
-                  });
-                }
-              } catch (err) {
-                reportSilentFailure(err, 'agentRuntime:defenseEngine:success');
-              }
-              if (!_defenseBlocked2) {
-                this.deps
-                  .getMemory()!
-                  .add(
-                    _memContent2,
-                    'episodic',
-                    `run:${runId}|tokens:${totalTokens.totalTokens}|dur:${totalDurationMs}ms|steps:${steps.length}`,
-                    0.7,
-                    ['execution', 'success', ...ctx.availableTools.slice(0, 3)],
-                    {
-                      runId,
-                      goal: ctx.goal.slice(0, 500),
-                      tokenUsage: totalTokens,
-                      durationMs: totalDurationMs,
-                    },
-                  );
-              } // end defense engine check
-            } // end poisoning gate else
-          } catch (e) {
-            getGlobalLogger().warn('AgentRuntime', 'Failed to record success memory', {
-              error: (e as Error)?.message,
-            });
-          }
-        }
-
         // Record success telemetry (plugin hooks, run-complete metrics,
-        // agent.completed bus event, circuit-breaker success, agent
-        // intelligence, meta-learner experience, scheduler commitRun) -
-        // extracted to RunTelemetryRecorder.recordSuccess().
+        // agent.completed bus event, circuit-breaker success, memory via
+        // observe(), agent intelligence, meta-learner experience, scheduler
+        // commitRun) - extracted to RunTelemetryRecorder.recordSuccess().
+        // Fire-and-forget: AgentRuntime serializes execute() calls on a single
+        // active-run flag; awaiting telemetry here would block concurrent
+        // single-flight deduped runs from entering.
         this.deps.getRunTelemetryRecorder().recordSuccess({
           ctx,
           runId,

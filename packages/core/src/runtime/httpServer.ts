@@ -65,12 +65,17 @@ import type { SIEMForwarder } from './siemForwarder';
 import type { SecurityEvent } from '../security/securityAuditLogger';
 import { type DataRetentionJanitor, getDataRetentionJanitor } from '../storage/dataRetention';
 import {
-  DETECTOR_TO_ASI_OVERRIDE,
-  SECURITY_EVENT_TYPE_TO_ASI,
-  getOwaspAsiTop10,
-} from '../security/owaspAgenticAiTop10';
-import { getComplianceAuditManager } from '../security/complianceAuditReport';
-import { getEuAiActComplianceReporter } from '../security/euAiActCompliance';
+  assertBodyTenant,
+  assertTenantAccess as assertTenantAccessGate,
+  extractAuthKey,
+  hashSecret,
+  requireTenant as requireTenantGate,
+  resolveTenantFromAuth as resolveTenantFromAuthGate,
+} from './httpTenantGate';
+import { handleHealthRoutes } from './httpHealthRoutes';
+import { handleExecuteRoute } from './httpExecuteRoute';
+import { handleSecurityRoutes } from './httpSecurityRoutes';
+import { HttpRequestError, parseBody, sendJson } from './httpUtils';
 
 export interface HttpServerConfig {
   port: number;
@@ -175,73 +180,14 @@ const DEFAULT_CONFIG: HttpServerConfig = {
   protectHealthEndpoints: process.env.COMMANDER_AUTH_PROTECT_HEALTH === 'true',
 };
 
-class HttpRequestError extends Error {
-  constructor(
-    readonly statusCode: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
-function parseBody(req: IncomingMessage, maxBytes: number): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    let size = 0;
-    let rejected = false;
-    let bodyError: HttpRequestError | null = null;
-    req.setEncoding('utf8');
-    req.on('data', (chunk: string) => {
-      if (rejected) return;
-      size += Buffer.byteLength(chunk);
-      if (size > maxBytes) {
-        rejected = true;
-        body = '';
-        bodyError = new HttpRequestError(
-          413,
-          `Request body too large. Limit is ${maxBytes} bytes.`,
-        );
-        return;
-      }
-      body += chunk;
-    });
-    req.on('end', () => {
-      if (bodyError) {
-        reject(bodyError);
-        return;
-      }
-      try {
-        resolve(body ? JSON.parse(body) : {});
-      } catch (err) {
-        reportSilentFailure(err, 'httpServer:211');
-        getGlobalLogger().warn('HttpServer', 'Invalid JSON');
-        reject(new HttpRequestError(400, 'Invalid JSON'));
-      }
-    });
-    req.on('error', reject);
-  });
-}
-
-function sendJson(res: ServerResponse, status: number, data: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(data));
-}
-
-function hashSecret(secret: string): string {
-  return crypto.createHash('sha256').update(secret).digest('hex');
-}
+/** @deprecated Use HttpRequestError from ./httpUtils */
+export { HttpRequestError } from './httpUtils';
 
 function timingSafeHexEqual(a: string, b: string): boolean {
   if (!/^[a-f0-9]{64}$/i.test(a) || !/^[a-f0-9]{64}$/i.test(b)) return false;
   const left = Buffer.from(a, 'hex');
   const right = Buffer.from(b, 'hex');
   return left.length === right.length && crypto.timingSafeEqual(left, right);
-}
-
-function extractAuthKey(req: IncomingMessage): string | undefined {
-  const auth = req.headers.authorization;
-  if (!auth) return undefined;
-  return auth.startsWith('Bearer ') ? auth.slice(7) : auth;
 }
 
 /** Extended authenticate that also tries registered auth plugins (OIDC). */
@@ -272,6 +218,14 @@ function authenticate(
   return { success: false };
 }
 
+/**
+ * @deprecated Architecture V2: `apps/api` is the single Gateway.
+ * `CommanderHttpServer` remains for embedded/CLI local use and ATR HTTP
+ * helpers during the strangler period. New enterprise deployments MUST
+ * use `apps/api` (port 4000). Do not add new product routes here.
+ *
+ * See docs/runbooks/architecture-v2-gateway.md
+ */
 export class CommanderHttpServer {
   private config: HttpServerConfig;
   private server:
@@ -837,69 +791,22 @@ export class CommanderHttpServer {
     // had crashed). Now reports the same HealthCollector probe as /health/detailed
     // and reflects real degradedComponents[].
     const protectHealth = this.config.protectHealthEndpoints ?? false;
-    if (segments[0] === 'health' && (req.method ?? 'GET') === 'GET') {
-      if (protectHealth && !(await this.authenticateRequest(req, res))) return;
-      const { HealthCollector } = await import('./healthCheck');
-      const collector = new HealthCollector({ sources: this.buildHealthSources() });
-      const report = await collector.collect();
-      const status = report.status === 'healthy' ? 'healthy' : 'degraded';
-      sendJson(res, status === 'healthy' ? 200 : 503, {
-        status,
-        uptime: process.uptime(),
-        activeSessions: this.runtimes.size,
-        busTopics: this.bus.getActiveTopics().length,
-        degradedComponents: report.degradedComponents ?? [],
-        timestamp: new Date().toISOString(),
-      });
+    if (
+      await handleHealthRoutes(req, res, segments, {
+        protectHealthEndpoints: protectHealth,
+        authenticate: (r, s) => this.authenticateRequest(r, s),
+        buildHealthSources: () => this.buildHealthSources(),
+        activeSessions: () => this.runtimes.size,
+        busTopicCount: () => this.bus.getActiveTopics().length,
+        busTopics: () => this.bus.getActiveTopics(),
+        subscriberCounts: () => this.bus.getAllSubscriberCounts(),
+        rateLimitEntries: () => this.rateLimitMap.size,
+      })
+    ) {
       return;
     }
 
-    // Detailed health check with component statuses
-    if (segments[0] === 'health' && segments[1] === 'detailed' && (req.method ?? 'GET') === 'GET') {
-      if (protectHealth && !(await this.authenticateRequest(req, res))) return;
-      const { HealthCollector } = await import('./healthCheck');
-      const collector = new HealthCollector({ sources: this.buildHealthSources() });
-      const report = await collector.collect();
-      sendJson(res, report.status === 'healthy' ? 200 : 503, {
-        ...report,
-        uptime: process.uptime(),
-        activeSessions: this.runtimes.size,
-        pid: process.pid,
-        nodeVersion: process.version,
-      });
-      return;
-    }
-
-    // GAP-33: Metrics endpoint for monitoring (JSON + OpenMetrics text)
-    if (segments[0] === 'metrics' && (req.method ?? 'GET') === 'GET') {
-      if (protectHealth && !(await this.authenticateRequest(req, res))) return;
-      const accept = req.headers.accept ?? '';
-      if (accept.includes('text/plain') || accept.includes('openmetrics')) {
-        res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4' });
-        res.end(getMetricsCollector().exportOpenMetrics());
-      } else {
-        const mem = process.memoryUsage();
-        sendJson(res, 200, {
-          uptime: process.uptime(),
-          activeSessions: this.runtimes.size,
-          busTopics: this.bus.getActiveTopics(),
-          subscriberCounts: this.bus.getAllSubscriberCounts(),
-          rateLimitEntries: this.rateLimitMap.size,
-          memory: {
-            rss: mem.rss,
-            heapUsed: mem.heapUsed,
-            heapTotal: mem.heapTotal,
-            external: mem.external,
-          },
-          pid: process.pid,
-          nodeVersion: process.version,
-          timestamp: new Date().toISOString(),
-        });
-      }
-      return;
-    }
-
-    // SLO Operations endpoints: /api/v1/slo, /api/v1/alerts, /api/v1/incidents
+    // SLO Operations endpoints: /slo, /alerts, /incidents
     if (
       (segments[0] === 'slo' || segments[0] === 'alerts' || segments[0] === 'incidents') &&
       segments.length >= 1
@@ -956,34 +863,6 @@ export class CommanderHttpServer {
         res.writeHead(500, { 'Content-Type': 'text/plain' });
         res.end('Failed to render SOP dashboard');
       }
-      return;
-    }
-
-    // Readiness probe (separate from health — checks deps).
-    //
-    // Audit-fix: previously hardcoded `const healthy = true` and reported
-    // status: 'ready' regardless of bus reachability or store availability.
-    // Kubernetes-style readiness gates relied on this signal — a process
-    // whose executor/evaluator/runtime registry had crashed would still pass
-    // readiness, silently forwarding 5xx-ing traffic. Now reflects real
-    // HealthCollector.status and degrades to 503 when any component is
-    // unhealthy.
-    if (segments[0] === 'ready' && (req.method ?? 'GET') === 'GET') {
-      if (protectHealth && !(await this.authenticateRequest(req, res))) return;
-      const mem = process.memoryUsage();
-      const { HealthCollector } = await import('./healthCheck');
-      const collector = new HealthCollector({ sources: this.buildHealthSources() });
-      const report = await collector.collect();
-      const ready = report.status === 'healthy';
-      sendJson(res, ready ? 200 : 503, {
-        status: ready ? 'ready' : 'not_ready',
-        uptime: process.uptime(),
-        activeSessions: this.runtimes.size,
-        busTopics: this.bus.getActiveTopics().length,
-        memory: { rss: mem.rss, heapUsed: mem.heapUsed },
-        degradedComponents: report.degradedComponents ?? [],
-        timestamp: new Date().toISOString(),
-      });
       return;
     }
 
@@ -1220,6 +1099,15 @@ export class CommanderHttpServer {
   ): Promise<void> {
     const method = req.method ?? 'GET';
     if (segments[0] === 'v1') {
+      const securityDeps = {
+        maxBodyBytes: this.config.maxBodyBytes,
+        tenantApiKeyHashes: this.tenantApiKeyHashes,
+        requireTenant: (r: IncomingMessage, s: ServerResponse) => this.requireTenant(r, s),
+      };
+      if (await handleSecurityRoutes(req, res, segments, securityDeps)) {
+        return;
+      }
+
       const [, resource] = segments;
       const id = segments[3];
       if (resource === 'runtime') {
@@ -1262,73 +1150,16 @@ export class CommanderHttpServer {
         }
       }
       if (resource === 'execute') {
-        if (method === 'POST') {
-          const rawBody = await parseBody(req, this.config.maxBodyBytes);
-          // Schema validation — standardized error response
-          const body = validateOrThrow<{
-            prompt: string;
-            sessionId?: string;
-            provider?: string;
-            model?: string;
-            outputSchema?: Record<string, unknown>;
-            maxTokens?: number;
-            temperature?: number;
-            runtimeId?: string;
-            tools?: string[];
-          }>(rawBody, Schemas.execute);
-          const sessionId = body.sessionId ?? `session_${Date.now()}`;
-          // Derive tenantId from API key (never trust request body for tenant)
-          const tenantId = this.resolveTenantFromAuth(req);
-          let entry = this.runtimes.get(sessionId);
-          if (!entry) {
-            // Enforce max sessions cap
-            if (this.runtimes.size >= CommanderHttpServer.MAX_SESSIONS) this.evictStaleSessions();
-            if (this.runtimes.size >= CommanderHttpServer.MAX_SESSIONS) {
-              sendJson(res, 429, {
-                error: 'Maximum sessions reached. Please reuse an existing session.',
-              });
-              return;
-            }
-            const runtime = this.createRuntime(body.provider ?? 'openai');
-            entry = { runtime, lastAccessedAt: Date.now() };
-            this.runtimes.set(sessionId, entry);
-          }
-          entry.lastAccessedAt = Date.now();
-          const result = await entry.runtime.execute({
-            agentId: `http-${sessionId}`,
-            projectId: 'http-api',
-            goal: body.prompt,
-            availableTools: [
-              'web_search',
-              'web_fetch',
-              'file_read',
-              'file_write',
-              'file_edit',
-              'file_search',
-              'file_list',
-              'python_execute',
-              'shell_execute',
-              'memory_store',
-              'memory_recall',
-              'memory_list',
-              'git',
-              'browser_search',
-              'browser_fetch',
-            ],
-            maxSteps: 50,
-            tokenBudget: 100000,
-            outputSchema: body.outputSchema,
-            contextData: {},
-            tenantId,
-          });
-          sendJson(res, 200, {
-            sessionId,
-            status: result.status,
-            summary: result.summary,
-            steps: result.steps?.length,
-          });
-          return;
-        }
+        const handled = await handleExecuteRoute(req, res, {
+          maxBodyBytes: this.config.maxBodyBytes,
+          maxSessions: CommanderHttpServer.MAX_SESSIONS,
+          runtimes: this.runtimes,
+          tenantApiKeyHashes: this.tenantApiKeyHashes,
+          createRuntime: (provider) => this.createRuntime(provider),
+          evictStaleSessions: () => this.evictStaleSessions(),
+          requireTenant: (r: IncomingMessage, s: ServerResponse) => this.requireTenant(r, s),
+        });
+        if (handled) return;
       }
       // /api/v1/memory — POST { action: 'write' | 'query' | 'stats', ... }
       // Single endpoint keeps auth + rate-limit + tenant resolution in one place
@@ -1349,6 +1180,7 @@ export class CommanderHttpServer {
           importanceThreshold?: number;
           limit?: number;
           since?: string;
+          tenantId?: string;
         };
         try {
           body = (await parseBody(req, this.config.maxBodyBytes)) as typeof body;
@@ -1361,6 +1193,9 @@ export class CommanderHttpServer {
         const action = body.action;
         const tenantId = this.requireTenant(req, res);
         if (res.writableEnded) return;
+        if (!assertBodyTenant(req, res, tenantId, body, this.tenantApiKeyHashes)) {
+          return;
+        }
         try {
           await runWithTenant(tenantId, async () => {
             const memory = getGlobalThreeLayerMemory();
@@ -1639,103 +1474,6 @@ export class CommanderHttpServer {
           return;
         }
       }
-      // /api/v1/security/owasp-agentic-ai-top10
-      // GET  → OwaspAsiTop10.report() JSON (windowMs/renderedAt/overallScore/totalsByAsi[])
-      // POST → ingest a SecurityEvent through the classifier. Mirrors the
-      //        security.event bus subscription so SIEM forwarders and manual
-      //        replays can hit the aggregator without coupling to the bus.
-      //        Tenant-scoped via runWithTenant when multi-tenant mode
-      //        is configured (matches /api/v1/memory gating); otherwise the
-      //        singleton's global fallback is used so single-tenant mode is
-      //        preserved.
-      if (resource === 'security' && segments[2] === 'owasp-agentic-ai-top10') {
-        if (method === 'GET') {
-          // Tenant scope MUST be set before getOwaspAsiTop10() resolves;
-          // otherwise the createTenantAwareSingleton lambda falls back to
-          // the singleton's globalInstance and we leak other tenants'
-          // security posture to the caller. Same 401-on-multi-tenant-mode
-          // logic as the /api/v1/memory and /api/v1/plan handlers — if
-          // a tenant map is configured, an unmapped key is rejected.
-          const tenantId = this.requireTenant(req, res);
-          if (res.writableEnded) return;
-          const report = await runWithTenant(tenantId, async () => getOwaspAsiTop10().report());
-          sendJson(res, 200, report);
-          return;
-        }
-        if (method === 'POST') {
-          const body = (await parseBody(req, this.config.maxBodyBytes)) as SecurityEvent;
-          if (!body || typeof body !== 'object' || !body.type) {
-            sendJson(res, 400, {
-              error:
-                'POST /api/v1/security/owasp-agentic-ai-top10 requires a SecurityEvent-shaped body { type, severity, ... }.',
-            });
-            return;
-          }
-          const tenantId = this.requireTenant(req, res);
-          if (res.writableEnded) return;
-          // Derive routing the same way classifyFromSecurityEvent does so the
-          // 202 response can tell SIEM tracers which ASI(s) the ingest landed
-          // on, without recomputing on the client.
-          const detector =
-            (body.details?.detector as string | undefined) ?? body.source ?? undefined;
-          const routingAsis = SECURITY_EVENT_TYPE_TO_ASI[body.type as SecurityEvent['type']] ?? [];
-          const overrideAsi = detector ? (DETECTOR_TO_ASI_OVERRIDE[detector] ?? null) : null;
-          const categories = Array.isArray(body.details?.category)
-            ? (body.details!.category as string[])
-            : body.details?.category
-              ? [body.details.category as string]
-              : [];
-          const isOutputTamper =
-            detector === 'outputSanitizer' &&
-            categories.some((c) =>
-              ['jwt_token', 'connection_string', 'base64_blob', 'password_secret'].includes(c),
-            );
-          const routedAsis: string[] = Array.from(
-            new Set<string>([
-              ...routingAsis,
-              ...(overrideAsi ? [overrideAsi] : []),
-              ...(isOutputTamper ? ['ASI09'] : []),
-            ]),
-          );
-          await runWithTenant(tenantId, async () => {
-            getOwaspAsiTop10().classifyFromSecurityEvent(body);
-          });
-          sendJson(res, 202, {
-            accepted: true,
-            routedAsis,
-            detector: detector ?? null,
-            eventType: body.type,
-            windowMs: getOwaspAsiTop10().report().windowMs,
-          });
-          return;
-        }
-      }
-      // /api/v1/security/compliance-audit
-      // GET → ComplianceAuditManager.generateFullReport() (ISO 42001 + NIST AI RMF)
-      // /api/v1/security/eu-ai-act
-      // GET → EuAiActComplianceReporter.generateReport() (Articles 12/13/14)
-      // Both reporters are zero-config singletons that read existing security
-      // state (audit chain, security monitor, posture snapshots). Exposing them
-      // as read-only GET endpoints fills a gap: the report generators were
-      // fully implemented but had no runtime caller.
-      if (resource === 'security' && segments[2] === 'compliance-audit' && method === 'GET') {
-        const tenantId = this.requireTenant(req, res);
-        if (res.writableEnded) return;
-        const report = await runWithTenant(tenantId, async () =>
-          getComplianceAuditManager().generateFullReport(),
-        );
-        sendJson(res, 200, report);
-        return;
-      }
-      if (resource === 'security' && segments[2] === 'eu-ai-act' && method === 'GET') {
-        const tenantId = this.requireTenant(req, res);
-        if (res.writableEnded) return;
-        const report = await runWithTenant(tenantId, async () =>
-          getEuAiActComplianceReporter().generateReport(),
-        );
-        sendJson(res, 200, report);
-        return;
-      }
       if (resource === 'topology') {
         const eventLog = getGlobalExplorationEventLog(
           1000,
@@ -1764,8 +1502,11 @@ export class CommanderHttpServer {
           resolveTenant: (r) => this.resolveTenantFromAuth(r),
         };
         const obsSegments = segments.slice(1);
-        const r = await handleObservabilityRequest(req, res, obsDeps, obsSegments, queryStr);
-        if (r.handled) return;
+        const r = await handleObservabilityRequest(req, obsDeps, obsSegments, queryStr);
+        if (r.handled) {
+          sendJson(res, r.status, r.body);
+          return;
+        }
       }
     }
     sendJson(res, 404, { error: 'Unknown endpoint' });
@@ -2086,69 +1827,27 @@ export class CommanderHttpServer {
     getGlobalLogger().info('HttpServer', `SIEM forwarder registered: ${forwarder['config']?.type}`);
   }
 
-  /** Resolve tenant ID from the Authorization header using configured API key mapping. */
   private resolveTenantFromAuth(req: IncomingMessage): string | undefined {
-    const key = extractAuthKey(req);
-    if (!key) return undefined;
-    return this.tenantApiKeyHashes.get(hashSecret(key));
+    return resolveTenantFromAuthGate(req, this.tenantApiKeyHashes);
   }
 
-  /**
-   * Tenant gate shared by all multi-tenant-aware handlers
-   * (/api/v1/memory, /api/v1/plan, /api/v1/security/owasp-agentic-ai-top10).
-   *
-   * Behavior:
-   *  - Single-tenant mode (no `tenantApiKeyHashes` configured): pass-through.
-   *    Returns whatever the auth header maps to (typically `undefined`), letting
-   *    the downstream `runWithTenant(undefined, …)` fall back to the singleton
-   *    globalInstance. No 401 — preserves legacy single-tenant deployments.
-   *  - Multi-tenant mode (map configured, auth header unmapped or absent):
-   *    sends a 401 JSON response via `sendJson` and returns `undefined`.
-   *    Caller MUST check `res.writableEnded` after the call to short-circuit
-   *    the rest of the handler.
-   *  - Multi-tenant mode with a mapped key: returns the resolved tenantId,
-   *    caller proceeds into `runWithTenant(tenantId, …)`.
-   */
   private requireTenant(req: IncomingMessage, res: ServerResponse): string | undefined {
-    if (this.tenantApiKeyHashes.size === 0) {
-      return this.resolveTenantFromAuth(req);
-    }
-    const tenantId = this.resolveTenantFromAuth(req);
-    if (!tenantId) {
-      sendJson(res, 401, {
-        error: `Tenant required for ${req.url}. Configure tenantApiKeyHashes and send a mapped API key.`,
-      });
-    }
-    return tenantId;
+    return requireTenantGate(req, res, this.tenantApiKeyHashes);
   }
 
-  /**
-   * Cross-tenant authorization gate. Call this when a handler receives a
-   * target tenant ID from the request path/query/body. It verifies that the
-   * authenticated tenant matches the requested target — preventing tenant A
-   * from accessing tenant B's resources even if the target is explicitly
-   * passed in the URL.
-   *
-   * Returns true if access is allowed (or multi-tenant mode is disabled).
-   * Returns false and sends a 403 response if the tenants mismatch.
-   */
   private assertTenantAccess(
     res: ServerResponse,
     authenticatedTenant: string | undefined,
     targetTenant: string | undefined,
     url: string,
   ): boolean {
-    // Single-tenant mode: no enforcement.
-    if (this.tenantApiKeyHashes.size === 0) return true;
-    // No target specified — allowed (handler will use authenticated tenant).
-    if (!targetTenant) return true;
-    // Match — allowed.
-    if (authenticatedTenant === targetTenant) return true;
-    // Mismatch — deny.
-    sendJson(res, 403, {
-      error: `Cross-tenant access denied: authenticated tenant "${authenticatedTenant ?? 'unknown'}" cannot access resources for tenant "${targetTenant}" on ${url}.`,
-    });
-    return false;
+    return assertTenantAccessGate(
+      res,
+      authenticatedTenant,
+      targetTenant,
+      url,
+      this.tenantApiKeyHashes,
+    );
   }
 
   private checkRateLimit(ip: string): boolean {

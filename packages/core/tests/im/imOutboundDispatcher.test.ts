@@ -87,4 +87,60 @@ describe('DefaultIMOutboundDispatcher', () => {
     const dispatcher = resetIMOutboundDispatcher({ findById: () => cfg });
     await dispatcher.send('id-1', { text: 'hello' });
   });
+
+  it('catches sendMessage errors without propagating', async () => {
+    const provider: IMProvider = {
+      ...fakeProvider,
+      sendMessage: async () => {
+        throw new Error('Network failure');
+      },
+    };
+    const registry = resetIMProviderRegistry();
+    registry.register(provider);
+    const cfg: IMWebhookConfig = {
+      id: 'id-1',
+      platform: 'fake',
+      name: 'test',
+      secret: 's',
+      agentId: 'a',
+      enabled: true,
+      createdAt: new Date().toISOString(),
+    };
+    const dispatcher = resetIMOutboundDispatcher({ findById: () => cfg });
+    // Should not throw — error is caught and logged internally
+    await dispatcher.send('id-1', { text: 'hello', conversationId: 'c1' });
+  });
+
+  it('skips when config is not found by source', async () => {
+    const registry = resetIMProviderRegistry();
+    registry.register(fakeProvider);
+    const dispatcher = resetIMOutboundDispatcher({ findById: () => undefined });
+    // Should not throw — silently skips
+    await dispatcher.send('id-missing', { text: 'hello' });
+  });
+
+  it('falls back to config id when reply has no conversationId', async () => {
+    let capturedConvId = '';
+    const provider: IMProvider = {
+      ...fakeProvider,
+      sendMessage: async (conversationId) => {
+        capturedConvId = conversationId;
+      },
+    };
+    const registry = resetIMProviderRegistry();
+    registry.register(provider);
+    const cfg: IMWebhookConfig = {
+      id: 'cfg-fallback-id',
+      platform: 'fake',
+      name: 'test',
+      secret: 's',
+      agentId: 'a',
+      enabled: true,
+      createdAt: new Date().toISOString(),
+    };
+    const dispatcher = resetIMOutboundDispatcher({ findById: () => cfg });
+    // Reply without conversationId — should use cfg.id as fallback
+    await dispatcher.send('cfg-fallback-id', { text: 'hello' });
+    assert.equal(capturedConvId, 'cfg-fallback-id');
+  });
 });

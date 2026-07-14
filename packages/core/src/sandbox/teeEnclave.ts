@@ -357,7 +357,7 @@ export class TEESandbox implements PlatformSandbox {
       );
 
       // Step 3: Launch enclave with vsock
-      // TODO(v2): CID pool or serialization for concurrent Nitro execution.
+      // NOTE(v2): CID pool or serialization for concurrent Nitro execution.
       // Hardcoded CID=4 means only one enclave at a time.
       const vsockCid = 4;
       const memoryMB = profile.memoryLimitMB ?? 256;

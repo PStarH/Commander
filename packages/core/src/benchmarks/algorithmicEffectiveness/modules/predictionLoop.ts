@@ -31,7 +31,8 @@ const taskSuite: StrategyChangeTask[] = [
   },
   {
     id: 'predicted-regression-observed',
-    prompt: 'Apply a strategy change that is predicted to cause a timeout regression and actually fails.',
+    prompt:
+      'Apply a strategy change that is predicted to cause a timeout regression and actually fails.',
     editId: 'regress-timeout',
     description: 'Use a cheaper but slower reasoning strategy.',
     sourceStrategy: 'fast-reasoning',
@@ -45,7 +46,8 @@ const taskSuite: StrategyChangeTask[] = [
   },
   {
     id: 'predicted-fix-confirmed-with-watched-regression',
-    prompt: 'Apply a strategy change predicted to fix missing capability; it succeeds so no regression is observed.',
+    prompt:
+      'Apply a strategy change predicted to fix missing capability; it succeeds so no regression is observed.',
     editId: 'fix-missing-capability',
     description: 'Add a retrieval step to compensate for missing knowledge.',
     sourceStrategy: 'plain-generation',
@@ -59,7 +61,8 @@ const taskSuite: StrategyChangeTask[] = [
   },
   {
     id: 'predicted-regression-avoided',
-    prompt: 'Apply a strategy change predicted to risk planning regression but it actually succeeds.',
+    prompt:
+      'Apply a strategy change predicted to risk planning regression but it actually succeeds.',
     editId: 'avoid-planning-regression',
     description: 'Switch to a parallel planning strategy.',
     sourceStrategy: 'sequential-planning',
@@ -153,12 +156,11 @@ export const predictionLoopModule: BenchmarkModule = {
 
         loop.recordExperience(createExperience(task));
 
-        const verdict =
-          loop.getVerdicts().find((v) => v.predictionId === prediction.id) ?? {
-            fixesConfirmed: [],
-            regressionsObserved: [],
-            netImpact: task.actualSuccess ? 'positive' : 'negative',
-          };
+        const verdict = loop.getVerdicts().find((v) => v.predictionId === prediction.id) ?? {
+          fixesConfirmed: [],
+          regressionsObserved: [],
+          netImpact: task.actualSuccess ? 'positive' : 'negative',
+        };
 
         return renderVerdictOutput(task, verdict);
       },

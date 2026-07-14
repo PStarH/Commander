@@ -48,6 +48,7 @@
  */
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
+import { withBenchmarkEnv } from './benchmarkEnv';
 
 import { createThreeLayerMemory } from '../packages/core/src/threeLayerMemory';
 
@@ -418,34 +419,35 @@ async function main() {
     }
   }
 
-  const baseline = {
-    benchmark: 'memory-poisoning',
-    runAt: new Date().toISOString(),
-    nodeVersion: process.version,
-    config: { vectors: VECTORS.length },
-    report: {
-      targetName: 'three_layer_memory',
-      totalCases,
-      defended,
-      leaks: results
-        .filter((r) => !r.passed)
-        .map((r) => ({
-          vector: r.vector,
-          victimTenant: r.victimTenant,
-          attackerTenant: r.attackerTenant,
-          leakedContent: r.leakedContent,
-          leakedEntryId: r.leakedEntryId,
-          reason: r.reason,
-        })),
-      errors: 0,
-      durationMs,
-      vectorDetails: results,
+  const baseline = withBenchmarkEnv(
+    {
+      benchmark: 'memory-poisoning',
+      config: { vectors: VECTORS.length },
+      report: {
+        targetName: 'three_layer_memory',
+        totalCases,
+        defended,
+        leaks: results
+          .filter((r) => !r.passed)
+          .map((r) => ({
+            vector: r.vector,
+            victimTenant: r.victimTenant,
+            attackerTenant: r.attackerTenant,
+            leakedContent: r.leakedContent,
+            leakedEntryId: r.leakedEntryId,
+            reason: r.reason,
+          })),
+        errors: 0,
+        durationMs,
+        vectorDetails: results,
+      },
+      summary: {
+        passed: leaked === 0,
+        leakCount: leaked,
+      },
     },
-    summary: {
-      passed: leaked === 0,
-      leakCount: leaked,
-    },
-  };
+    { evidence: 'simulated' },
+  );
 
   const fullPath = resolve(outputPath);
   const dir = dirname(fullPath);

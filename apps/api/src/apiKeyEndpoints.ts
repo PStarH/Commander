@@ -38,6 +38,10 @@ function requireRole(requiredRole: UserRole = 'admin') {
 const createKeySchema = z.object({
   name: z.string().min(1).max(128),
   scopes: z.array(z.enum(['read', 'write', 'admin'])).optional(),
+  tenantId: z
+    .string()
+    .regex(/^[a-zA-Z0-9._:-]{1,128}$/)
+    .optional(),
 });
 
 export function createApiKeyRouter(): Router {
@@ -65,7 +69,11 @@ export function createApiKeyRouter(): Router {
     }
 
     try {
-      const { record, key } = store.create(parsed.data.name, parsed.data.scopes);
+      const { record, key } = store.create(
+        parsed.data.name,
+        parsed.data.scopes,
+        parsed.data.tenantId,
+      );
       res.status(201).json({ key, record });
     } catch (error) {
       res.status(500).json({ error: String(error) });

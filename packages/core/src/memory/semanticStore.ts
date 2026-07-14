@@ -25,6 +25,7 @@ import { getGlobalLogger } from '../logging';
 import { type EmbeddingFunction, cosineSimilarity } from '../runtime/embedding';
 import { LocalEmbeddingFunction } from '../runtime/embedding';
 import { HNSWIndex } from './hnswIndex';
+import { getCurrentTenantId, assertSameTenant } from '../runtime/tenantContext';
 import type {
   ISemanticStore,
   ISemanticEntity,
@@ -143,6 +144,10 @@ export class SemanticMemoryStore implements ISemanticStore {
    * 4. Merge, deduplicate, and rank by combined score
    */
   async query(query: SemanticQuery): Promise<ISemanticEntity[]> {
+    const currentTenant = getCurrentTenantId() ?? '__default__';
+    const requestedTenant = query.tenantId ?? currentTenant;
+    assertSameTenant(requestedTenant);
+
     if (this.entities.size === 0) return [];
 
     const limit = query.limit ?? 10;

@@ -2,7 +2,7 @@
  * State Machine API Endpoints
  * REST API for managing agent state machines
  *
- * PERSISTENCE TODO (audit MED item 2): the module-level Map<taskId, StateMachine>
+ * PERSISTENCE NOTE (audit MED item 2): the module-level Map<taskId, StateMachine>
  * below loses every in-flight task on API process restart. The migration to a
  * PersistentDriver-backed table (ess-001 Phase-1 storage) was attempted but
  * blocked by the workspace package-build boundary: apps/api resolves

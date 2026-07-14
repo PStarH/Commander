@@ -1,29 +1,68 @@
-node_modules
-.git
-.gitignore
+# Dependencies
+**/node_modules
+
+# Version control
+**/.git
+**/.gitignore
+**/.gitattributes
+
+# Editor / IDE
+**/.DS_Store
+**/.idea
+**/.vscode
+
+# Secrets
+**/.env
+**/.env.*
+
+# Build outputs
+**/dist
+**/build
+**/.next
+**/.cache
+**/.turbo
+
+# Test / coverage
+**/*.test.ts
+**/*.test.js
+**/*.test.tsx
+**/*.test.jsx
+**/coverage*
+
+# Runtime state directories
+**/.commander*
+**/.commander_*
+
+# Local virtual environments
+**/.venv
+
+# AI / tool artifacts
+**/.claude
+**/.codex
+**/.omo
+**/.sisyphus
+**/.githooks
+**/.trae-*
+
+# Documentation (not needed in images)
 *.md
-dist
-.next
-.cache
-.env
-.env.local
-.commander_state
-.commander_traces
-.commander_results
-.commander_memory
-.commander_samples
-.commander_benchmarks
-.commander_dlq
-.commander_exec
-.commander_inboxes
-.commander_teams
-.claude
-.codex
-.DS_Store
-*.test.ts
-*.test.js
+docs/
+
+# Top-level directories not used by images
 benchmarks/
 demos/
 talktome/
 memory/
 scripts/
+!scripts/fix-esm-imports.mjs
+helm/
+examples/
+
+# Misc project artifacts
+benchmark-report-*/
+acquisition-readiness-eval/
+enterprise-agent-ux-audit/
+commander-*/
+external-benchmark-research/
+memory-mechanism-research/
+observability-reversibility-benchmark/
