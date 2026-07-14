@@ -205,7 +205,11 @@ jobs:
         run: pnpm exec prettier --check "packages/core/src/**/*.ts" "apps/api/src/**/*.ts" "apps/web/src/**/*.{ts,tsx}"
 
       - name: TypeScript check (core)
-        run: pnpm --filter @commander/core exec tsc --noEmit
+        run: |
+          # tsc --noEmit resolves @commander/plugin-sdk types from dist; clean CI has none
+          pnpm --filter @commander/contracts build
+          pnpm --filter @commander/plugin-sdk build
+          pnpm --filter @commander/core exec tsc --noEmit
 
       - name: TypeScript check (SDK)
         run: pnpm --filter @commander/sdk typecheck
