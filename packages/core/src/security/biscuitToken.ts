@@ -244,12 +244,19 @@ export class BiscuitCapabilityToken implements ICapabilityToken {
 
       try {
         if (i === 0) {
-          // Root block: verify against issuer's public key
-          const issuerPubKey = externalIssuerPublicKey ?? block.issuerPublicKey;
-          if (!issuerPubKey) {
-            getGlobalLogger().warn('BiscuitToken', 'Root block has no issuer public key');
+          // Root block: trust MUST be anchored in an externally-supplied issuer
+          // public key. Falling back to the token's own embedded issuerPublicKey
+          // would accept ANY self-signed forgery (an attacker generates their own
+          // keypair, signs a token, and embeds their public key). Fail closed when
+          // no trusted key is provided.
+          if (!externalIssuerPublicKey) {
+            getGlobalLogger().warn(
+              'BiscuitToken',
+              'Root verification requires a trusted issuer public key; refusing to trust the embedded key (fail-closed)',
+            );
             return false;
           }
+          const issuerPubKey = externalIssuerPublicKey;
 
           const content = BiscuitCapabilityToken.serializeBlock(block);
           const isValid = crypto.verify(

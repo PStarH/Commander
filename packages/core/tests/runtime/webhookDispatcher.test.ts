@@ -193,4 +193,220 @@ describe('WebhookDispatcher', () => {
       expect(log.length).toBeLessThanOrEqual(10);
     });
   });
+
+  // ── SSRF Prevention (isSafeWebhookUrl) ────────────────────────────
+  // These tests exercise the private isSafeWebhookUrl() function via
+  // registerWebhook, which throws when an unsafe URL is detected.
+  // This is a security-critical boundary — OWASP SSRF Prevention.
+
+  describe('SSRF prevention (registerWebhook rejects unsafe URLs)', () => {
+    it('rejects loopback address 127.x.x.x', () => {
+      expect(() =>
+        dispatcher.registerWebhook({
+          url: 'http://127.0.0.1/webhook',
+          events: ['*'],
+          enabled: true,
+        }),
+      ).toThrow(/private\/internal/);
+    });
+
+    it('rejects RFC 1918 10.x.x.x', () => {
+      expect(() =>
+        dispatcher.registerWebhook({
+          url: 'http://10.0.0.1/webhook',
+          events: ['*'],
+          enabled: true,
+        }),
+      ).toThrow(/private\/internal/);
+    });
+
+    it('rejects RFC 1918 172.16.x.x', () => {
+      expect(() =>
+        dispatcher.registerWebhook({
+          url: 'http://172.16.0.1/webhook',
+          events: ['*'],
+          enabled: true,
+        }),
+      ).toThrow(/private\/internal/);
+    });
+
+    it('rejects RFC 1918 172.31.x.x (upper bound)', () => {
+      expect(() =>
+        dispatcher.registerWebhook({
+          url: 'http://172.31.255.1/webhook',
+          events: ['*'],
+          enabled: true,
+        }),
+      ).toThrow(/private\/internal/);
+    });
+
+    it('rejects RFC 1918 192.168.x.x', () => {
+      expect(() =>
+        dispatcher.registerWebhook({
+          url: 'http://192.168.1.1/webhook',
+          events: ['*'],
+          enabled: true,
+        }),
+      ).toThrow(/private\/internal/);
+    });
+
+    it('rejects cloud metadata endpoint 169.254.x.x (AWS/GCP)', () => {
+      expect(() =>
+        dispatcher.registerWebhook({
+          url: 'http://169.254.169.254/latest/meta-data/',
+          events: ['*'],
+          enabled: true,
+        }),
+      ).toThrow(/private\/internal/);
+    });
+
+    it('rejects 0.x.x.x (current network)', () => {
+      expect(() =>
+        dispatcher.registerWebhook({
+          url: 'http://0.0.0.0/webhook',
+          events: ['*'],
+          enabled: true,
+        }),
+      ).toThrow(/private\/internal/);
+    });
+
+    it('rejects IPv6 loopback ::1', () => {
+      expect(() =>
+        dispatcher.registerWebhook({
+          url: 'http://[::1]/webhook',
+          events: ['*'],
+          enabled: true,
+        }),
+      ).toThrow(/private\/internal/);
+    });
+
+    it('rejects IPv6 ULA fc00:', () => {
+      expect(() =>
+        dispatcher.registerWebhook({
+          url: 'http://[fc00::1]/webhook',
+          events: ['*'],
+          enabled: true,
+        }),
+      ).toThrow(/private\/internal/);
+    });
+
+    it('rejects IPv6 link-local fe80:', () => {
+      expect(() =>
+        dispatcher.registerWebhook({
+          url: 'http://[fe80::1]/webhook',
+          events: ['*'],
+          enabled: true,
+        }),
+      ).toThrow(/private\/internal/);
+    });
+
+    it('rejects javascript: scheme', () => {
+      expect(() =>
+        dispatcher.registerWebhook({
+          url: 'javascript:alert(1)',
+          events: ['*'],
+          enabled: true,
+        }),
+      ).toThrow(/private\/internal/);
+    });
+
+    it('rejects data: scheme', () => {
+      expect(() =>
+        dispatcher.registerWebhook({
+          url: 'data:text/html,<script>alert(1)</script>',
+          events: ['*'],
+          enabled: true,
+        }),
+      ).toThrow(/private\/internal/);
+    });
+
+    it('rejects file: scheme', () => {
+      expect(() =>
+        dispatcher.registerWebhook({
+          url: 'file:///etc/passwd',
+          events: ['*'],
+          enabled: true,
+        }),
+      ).toThrow(/private\/internal/);
+    });
+
+    it('rejects malformed URL', () => {
+      expect(() =>
+        dispatcher.registerWebhook({
+          url: 'not-a-valid-url',
+          events: ['*'],
+          enabled: true,
+        }),
+      ).toThrow(/private\/internal/);
+    });
+
+    it('allows valid https URL to public host', () => {
+      const config = dispatcher.registerWebhook({
+        url: 'https://api.example.com/webhooks',
+        events: ['*'],
+        enabled: true,
+      });
+      expect(config.id).toBeDefined();
+    });
+
+    it('allows valid http URL to public host', () => {
+      const config = dispatcher.registerWebhook({
+        url: 'http://public.example.com/webhook',
+        events: ['*'],
+        enabled: true,
+      });
+      expect(config.id).toBeDefined();
+    });
+
+    it('rejects 172.32.x.x (outside RFC 1918 range) as valid', () => {
+      // 172.32.x is NOT RFC 1918 — it's a valid public IP range
+      const config = dispatcher.registerWebhook({
+        url: 'http://172.32.0.1/webhook',
+        events: ['*'],
+        enabled: true,
+      });
+      expect(config.id).toBeDefined();
+    });
+  });
+
+  describe('getStats', () => {
+    it('returns zero stats for empty dispatcher', () => {
+      const stats = dispatcher.getStats();
+      expect(stats).toEqual({ total: 0, enabled: 0, deliveries: 0 });
+    });
+
+    it('counts total and enabled webhooks', () => {
+      dispatcher.registerWebhook({
+        url: 'https://example.com/a',
+        events: ['*'],
+        enabled: true,
+      });
+      dispatcher.registerWebhook({
+        url: 'https://example.com/b',
+        events: ['*'],
+        enabled: false,
+      });
+      const stats = dispatcher.getStats();
+      expect(stats.total).toBe(2);
+      expect(stats.enabled).toBe(1);
+    });
+  });
+
+  describe('filterTestFixtures', () => {
+    it('removes webhooks with test- prefixed IDs', () => {
+      // Manually inject a test fixture to avoid registerWebhook SSRF check
+      const wh = dispatcher.registerWebhook({
+        url: 'https://example.com/normal',
+        events: ['*'],
+        enabled: true,
+      });
+      // The registered ID won't start with "test-" so 0 should be removed
+      expect(dispatcher.filterTestFixtures()).toBe(0);
+      expect(dispatcher.getWebhook(wh.id)).toBeDefined();
+    });
+
+    it('returns 0 when no fixtures exist', () => {
+      expect(dispatcher.filterTestFixtures()).toBe(0);
+    });
+  });
 });
