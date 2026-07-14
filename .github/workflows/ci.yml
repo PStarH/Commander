@@ -226,6 +226,15 @@ jobs:
           name: sbom-${{ matrix.os }}-node${{ matrix.node-version }}
           path: sbom.json
 
+      - name: Generate dependency SBOM
+        run: pnpm list --recursive --depth=Infinity --json > sbom.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.os }}-node${{ matrix.node-version }}
+          path: sbom.json
+
       - name: Verify core test inventory
         run: pnpm --filter @commander/core test:inventory
 
