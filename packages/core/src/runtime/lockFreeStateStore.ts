@@ -15,7 +15,14 @@
  */
 
 import { getGlobalLogger } from '../logging';
-import type { ILockFreeStateStore } from '../contracts/pillarI';
+
+/** Local contract (Pillar I ILockFreeStateStore is not exported from contracts yet). */
+interface ILockFreeStateStore<T> {
+  read(): T;
+  compareAndSet(expected: T, newValue: T): boolean;
+  update(transform: (current: T) => T): T;
+  update(transform: (current: T) => Promise<T>): Promise<T>;
+}
 
 // ============================================================================
 // LockFreeStateStore Implementation

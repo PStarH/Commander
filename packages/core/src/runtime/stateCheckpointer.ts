@@ -201,65 +201,10 @@ export class StateCheckpointer {
     return this.backend.readTerminal(runId);
   }
 
-  /**
-   * Async variant of resume(). RecoveryBootstrapper calls resume() in a
-   * loop on startup; using the async variant lets concurrent zombie-scans
-   * not serialize behind a synchronous fs.readFileSync per resume.
-   */
   async resumeAsync(runId: string): Promise<CheckpointState | null> {
     const active = await this.backend.readActiveAsync(runId);
     if (active) return active;
     return this.backend.readTerminal(runId);
-  }
-
-  /**
-   * Async variant of resume(). RecoveryBootstrapper calls resume() in a
-   * loop on startup; using the async variant lets concurrent zombie-scans
-   * not serialize behind a synchronous fs.readFileSync per resume.
-   */
-  async resumeAsync(runId: string): Promise<CheckpointState | null> {
-    const chkPath = path.join(this.baseDir, `${runId}.checkpoint`);
-    try {
-      await fs.promises.access(chkPath);
-      const raw = await fs.promises.readFile(chkPath, 'utf-8');
-      return JSON.parse(raw) as CheckpointState;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        // Fall through to completed-dir lookup.
-      } else {
-        getGlobalLogger().warn('StateCheckpointer', 'Failed to resume from checkpoint (async)', {
-          error: (err as Error)?.message,
-          runId,
-        });
-        try {
-          await fs.promises.unlink(chkPath);
-        } catch (unlinkError) {
-          if ((unlinkError as NodeJS.ErrnoException).code !== 'ENOENT') {
-            getGlobalLogger().warn(
-              'StateCheckpointer',
-              'Failed to remove corrupt checkpoint (async)',
-              {
-                error: (unlinkError as Error)?.message,
-                runId,
-              },
-            );
-          }
-        }
-        return null;
-      }
-    }
-    const donePath = path.join(this.baseDir, 'completed', `${runId}.json`);
-    try {
-      const raw = await fs.promises.readFile(donePath, 'utf-8');
-      return JSON.parse(raw) as CheckpointState;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-      getGlobalLogger().warn('StateCheckpointer', 'Failed to read completed checkpoint (async)', {
-        error: (err as Error)?.message,
-        runId,
-      });
-      return null;
-    }
   }
 
   listCheckpoints(): { runId: string; phase: string; timestamp: string }[] {
