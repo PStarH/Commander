@@ -118,7 +118,12 @@
       "validationMiddleware.ts",
       "v1GatewayEndpoints.ts",
       "v1GatewayKernel.ts",
-      "workflowEndpoints.ts"
+      "webhookEndpoints.ts",
+      "workflowEndpoints.ts",
+      "chatEndpoints.ts",
+      "sharedRuntime.ts",
+      "pauseEndpoints.ts",
+      "atomicWrite.ts"
     ],
     "unversionedRouteExceptions": [
       "actionRationale.ts",
@@ -217,7 +222,12 @@
       "validationMiddleware.ts",
       "workflowEndpoints.ts",
       "agentBenchmarkRunner.ts",
-      "esmCompat.ts"
+      "esmCompat.ts",
+      "webhookEndpoints.ts",
+      "chatEndpoints.ts",
+      "sharedRuntime.ts",
+      "pauseEndpoints.ts",
+      "atomicWrite.ts"
     ]
   },
   "authorityExceptions": [
@@ -249,6 +259,11 @@
     "apps/api/src/stores/apiStore.ts",
     "apps/api/src/teamEndpoints.ts",
     "apps/api/src/tenantMetricsExporter.ts",
-    "apps/api/src/workflowEndpoints.ts"
+    "apps/api/src/workflowEndpoints.ts",
+    "apps/api/src/chatEndpoints.ts",
+    "apps/api/src/sharedRuntime.ts",
+    "apps/api/src/webhookEndpoints.ts",
+    "apps/api/src/pauseEndpoints.ts",
+    "apps/api/src/atomicWrite.ts"
   ]
 }
