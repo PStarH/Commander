@@ -1,23 +1,12 @@
 /**
- * observabilityPlugin - Built-in CommanderPlugin for peripheral observability:
- * HTTP API, MCP tools, offline trace analysis, eval scoring, SLO operations,
- * alert/incident management, and experiment runner.
+ * Peripheral observability CommanderPlugin (HTTP/MCP/offline analysis live in
+ * ./observability/*). Hot-path primitives remain in packages/core/src/observability/.
  *
- * Registers as 'builtin-observability' (category: 'monitoring').
- * Hot-path observability primitives (costModel, anomalyDetector, sloManager,
- * otelSemConv, traceContextBridge, sinkFailureCounter) remain in core at
- * packages/core/src/observability/ — this plugin only contains the peripheral
- * analysis and API layer.
- *
- * Integration:
- *   - HTTP API: httpServer.ts imports handleObservabilityRequest etc. directly
- *   - MCP tools: commanderMcpServer.ts calls registerObservabilityTools
- *   - Offline: scripts/tests import buildTimeline, dryReplay, score, etc.
+ * Config flags actually initialize SLO / alert / incident singletons on load.
  */
 import type { CommanderPlugin } from '../../pluginManager';
 import { getGlobalLogger } from '../../logging';
 
-// Re-export the peripheral observability API for consumers.
 export { buildTimeline, buildSpanTree } from './observability/timelineBuilder';
 export { buildDecisions, decisionsSummary } from './observability/decisionProvenance';
 export { dryReplay } from './observability/replay';
@@ -71,7 +60,16 @@ export type { Verdict, ScoreResult } from './observability/score';
 export { handleRoutingDashboardRequest } from './observability/routingDashboard';
 export type { RoutingDashboardDeps } from './observability/routingDashboard';
 
+function asBool(value: unknown, defaultValue: boolean): boolean {
+  if (typeof value === 'boolean') return value;
+  return defaultValue;
+}
+
 export function createObservabilityPlugin(): CommanderPlugin {
+  let sloInitialized = false;
+  let alertsReady = false;
+  let incidentsReady = false;
+
   return {
     name: 'builtin-observability',
     version: '0.1.0',
@@ -100,26 +98,73 @@ export function createObservabilityPlugin(): CommanderPlugin {
     },
 
     onLoad: async (ctx) => {
+      const enableSLO = asBool(ctx.config.enableSLOMonitoring, true);
+      const enableAlerts = asBool(ctx.config.enableAlertRules, true);
+      const enableIncidents = asBool(ctx.config.enableIncidentManagement, true);
+
+      // Incidents are a dependency of the unified SLO ops pipeline; force on
+      // when SLO monitoring is on so burn-rate → incident wiring is complete.
+      const wantIncidents = enableIncidents || enableSLO;
+      const wantAlerts = enableAlerts || enableSLO;
+
+      if (wantIncidents) {
+        const { getIncidentManager } = await import('./observability/incidentManager');
+        getIncidentManager();
+        incidentsReady = true;
+      }
+
+      if (wantAlerts) {
+        const { getAlertRuleEngine } = await import('./observability/alertRuleEngine');
+        getAlertRuleEngine();
+        alertsReady = true;
+      }
+
+      if (enableSLO) {
+        const { getSLOOperations, DEFAULT_SLO_CONFIG } = await import(
+          './observability/sloOperations'
+        );
+        getSLOOperations().initialize({
+          ...DEFAULT_SLO_CONFIG,
+          autoStart: true,
+        });
+        sloInitialized = true;
+      } else if (enableSLO === false) {
+        // Explicit off: ensure no leftover monitoring loop from a prior load.
+        const { resetSLOOperations } = await import('./observability/sloOperations');
+        resetSLOOperations();
+        sloInitialized = false;
+      }
+
       getGlobalLogger().info(
         'ObservabilityPlugin',
-        'Peripheral observability loaded (slo=' +
-          (ctx.config.enableSLOMonitoring ?? true) +
-          ', alerts=' +
-          (ctx.config.enableAlertRules ?? true) +
-          ', incidents=' +
-          (ctx.config.enableIncidentManagement ?? true) +
-          ')',
+        `Peripheral observability loaded (slo=${enableSLO}, alerts=${wantAlerts}, incidents=${wantIncidents})`,
       );
     },
 
     onUnload: async () => {
-      // Reset all singleton state to allow clean reload
       try {
-        const { resetSLOOperations } = await import('./observability/sloOperations');
-        resetSLOOperations();
-      } catch {
-        // Already reset or not initialized
+        if (sloInitialized) {
+          const { resetSLOOperations } = await import('./observability/sloOperations');
+          resetSLOOperations();
+        } else {
+          if (alertsReady) {
+            const { resetAlertRuleEngine } = await import('./observability/alertRuleEngine');
+            resetAlertRuleEngine();
+          }
+          if (incidentsReady) {
+            const { resetIncidentManager } = await import('./observability/incidentManager');
+            resetIncidentManager();
+          }
+        }
+      } catch (err) {
+        getGlobalLogger().warn(
+          'ObservabilityPlugin',
+          `Unload cleanup failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
+      sloInitialized = false;
+      alertsReady = false;
+      incidentsReady = false;
       getGlobalLogger().info('ObservabilityPlugin', 'Peripheral observability unloaded');
     },
   };

@@ -1,6 +1,5 @@
 import {
   reportSilentFailure,
-  createRagPlugin,
   createEvalPlugin,
   createReportingPlugin,
   createConsensusPlugin,
@@ -11,6 +10,7 @@ import {
   getPluginLoader,
   getWebhookDispatcher,
   getIMProviderRegistry,
+  registerBuiltinPlugins,
   zeroTrustMiddleware,
   ShadowProxy,
   loadShadowConfig,
@@ -660,31 +660,26 @@ registerRouter({
 });
 
 // ── Knowledge Base / RAG (enterprise document retrieval) ───────────────────
-// Register built-in IM providers. These are loaded early so that the
-// generic /api/webhook/:platform route can resolve DingTalk / Feishu / WeCom.
 getIMProviderRegistry().reset();
-getHookManager()
-  .register(dingtalkPlugin)
-  .then(() => getHookManager().register(feishuPlugin))
-  .then(() => getHookManager().register(wecomPlugin))
-  .then(() => getHookManager().register(slackPlugin))
-  .then(() => getHookManager().register(teamsPlugin))
-  .then(() => getHookManager().register(discordPlugin))
-  .catch((err: unknown) => console.error('Built-in IM provider registration failed:', err));
-
-// Register the built-in RAG CommanderPlugin (default disabled). Enabling it
-// activates the beforeLLMCall auto-inject hook + the `knowledge_search` tool.
-// The data plane (upload/list/delete/search) works regardless of enable state
-// via the shared KnowledgeBaseStore.
-const ragPlugin = createRagPlugin();
-getHookManager()
-  .register(ragPlugin)
-  .then(() => {
-    // Default to disabled so RAG is opt-in (enterprise deployments enable it
-    // explicitly via POST /api/knowledge-base/enable).
-    getHookManager().disable('builtin-rag');
-  })
-  .catch((err: unknown) => console.error('RAG plugin registration failed:', err));
+// no-excuse-ok: catch — API boot boundary
+registerBuiltinPlugins({
+  rasp: true,
+  taint: true,
+  rag: true,
+  ragDisabled: true,
+  gap: true,
+  observability: true,
+  extraPlugins: [
+    dingtalkPlugin,
+    feishuPlugin,
+    wecomPlugin,
+    slackPlugin,
+    teamsPlugin,
+    discordPlugin,
+  ],
+}).catch((err: unknown) => {
+  console.error('Built-in plugin registration failed:', err);
+});
 
 // ── External plugin discovery ──────────────────────────────────────────────
 // Discover and load externally-installed plugins from .commander/plugins/

@@ -15,6 +15,8 @@ import { getMetricsCollector } from './runtime/metricsCollector';
 import { getGlobalPluginPermissionRegistry } from './security/pluginPermissions';
 import { createPluginSandboxContext } from './runtime/pluginSandboxContext';
 import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
+import { getIMProviderRegistry } from './im/imProviderRegistry';
+import type { IMProvider } from './im/imProvider';
 
 import type {
   CommanderPlugin,
@@ -41,6 +43,23 @@ import type {
   AfterBackendSelectContext,
 } from './pluginTypes';
 import { adaptBuiltinPluginTool } from './pluginTypes';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+/** Narrow SPI `im.provider` implementations without type assertions. */
+function isIMProvider(value: unknown): value is IMProvider {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value['id'] === 'string' &&
+    typeof value['name'] === 'string' &&
+    typeof value['verify'] === 'function' &&
+    typeof value['parseMessage'] === 'function' &&
+    typeof value['formatReply'] === 'function' &&
+    typeof value['stripMention'] === 'function'
+  );
+}
 
 export class HookManager {
   private plugins: Map<string, PluginEntry> = new Map();
@@ -108,6 +127,10 @@ export class HookManager {
     // invoke them. Previously the `tools` field was a dead declaration with
     // no host integration. Idempotent — see syncPluginToolsToRegistry().
     this.syncPluginToolsToRegistry();
+    // SPI: mirror im.provider provides into IMProviderRegistry (built-in IM
+    // plugins used to register only via HookManager and never became resolvable
+    // for webhooks / outbound dispatch).
+    this.syncIMProvidersForPlugin(plugin, 'register');
   }
 
   /**
@@ -118,6 +141,8 @@ export class HookManager {
   async unregister(name: string): Promise<boolean> {
     const entry = this.plugins.get(name);
     if (!entry) return false;
+    // Drop IM SPI before unload so outbound/webhook cannot race a dying plugin.
+    this.syncIMProvidersForPlugin(entry.plugin, 'unregister');
     if (entry.plugin.onUnload) {
       try {
         await entry.plugin.onUnload();
@@ -188,6 +213,7 @@ export class HookManager {
     entry.enabled = true;
     // Tools become reachable again when the plugin is re-enabled.
     this.syncPluginToolsToRegistry();
+    this.syncIMProvidersForPlugin(entry.plugin, 'register');
     return true;
   }
 
@@ -197,6 +223,8 @@ export class HookManager {
     entry.enabled = false;
     // Tools from a disabled plugin must not be invocable by the LLM.
     this.syncPluginToolsToRegistry();
+    // Disabled IM providers must not serve webhooks / outbound.
+    this.syncIMProvidersForPlugin(entry.plugin, 'unregister');
     return true;
   }
 
@@ -675,6 +703,51 @@ export class HookManager {
   }
 
   // ── SPI: Service Provider Interface ────────────────────────────────────
+
+  /**
+   * Keep IMProviderRegistry aligned with plugin `provides: im.provider`.
+   * Register is idempotent when the same id is already present (PluginLoader
+   * may also attempt registration after HookManager.register).
+   */
+  private syncIMProvidersForPlugin(
+    plugin: CommanderPlugin,
+    mode: 'register' | 'unregister',
+  ): void {
+    const decls = plugin.provides;
+    if (!decls || decls.length === 0) return;
+    const registry = getIMProviderRegistry();
+    for (const decl of decls) {
+      if (decl.service !== 'im.provider') continue;
+      if (!isIMProvider(decl.implementation)) {
+        getGlobalLogger().warn(
+          'PluginManager',
+          `Plugin "${plugin.name}" provides im.provider with an invalid implementation; skipped`,
+        );
+        continue;
+      }
+      if (mode === 'register') {
+        if (registry.resolve(decl.implementation.id)) {
+          // Already present (e.g. PluginLoader path or re-enable after partial wire).
+          continue;
+        }
+        try {
+          registry.register(decl.implementation);
+          getGlobalLogger().info('PluginManager', 'Registered IM provider from plugin SPI', {
+            plugin: plugin.name,
+            providerId: decl.implementation.id,
+          });
+        } catch (err) {
+          reportSilentFailure(err, 'pluginManager:imProviderRegister');
+          getGlobalLogger().warn(
+            'PluginManager',
+            `Failed to register IM provider from plugin "${plugin.name}"`,
+          );
+        }
+      } else {
+        registry.unregister(decl.implementation.id);
+      }
+    }
+  }
 
   /**
    * Resolve a service implementation declared by an enabled plugin.

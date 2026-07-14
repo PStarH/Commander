@@ -1,14 +1,14 @@
-// packages/core/src/plugins/builtin/gap/index.ts
 export * from './types';
-export { GapRegistry, RecordGapInput, ListFilter } from './registry';
-export { IssueAutoCreate, IssueDraft, CreateResult } from './issueAutoCreate';
-export { SlaEnforcer, SlaEnforcerDeps } from './slaEnforcer';
-export { computeMetrics, GapMetrics } from './metrics';
-export { loadGapConfig, GapConfig } from './config';
+export { GapRegistry, type RecordGapInput, type ListFilter } from './registry';
+export { IssueAutoCreate, type IssueDraft, type CreateResult } from './issueAutoCreate';
+export { SlaEnforcer, type SlaEnforcerDeps } from './slaEnforcer';
+export { computeMetrics, type GapMetrics } from './metrics';
+export { loadGapConfig, type GapConfig } from './config';
 export { appendNdjson, readNdjson, ensureDir } from './storage';
 export {
   runQuarterlyAudit,
   saveAuditReport,
   renderAuditMarkdown,
-  AuditReport,
+  type AuditReport,
 } from './quarterlyAudit';
+export { createGapPlugin } from './gapPlugin';
