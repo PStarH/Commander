@@ -313,7 +313,8 @@ export class BackpressureController implements IBackpressureController {
     this.config = {
       maxTokens: config.maxTokens ?? 100,
       refillRatePerSecond: config.refillRatePerSecond ?? 50,
-      bufferSize: config.bufferSize ?? 200,
+      // RingBuffer requires capacity >= 1; treat 0/negative as minimal buffer.
+      bufferSize: Math.max(1, config.bufferSize ?? 200),
       failureThreshold: config.failureThreshold ?? 10,
       cooldownMs: config.cooldownMs ?? 5000,
       maxWaitMs: config.maxWaitMs ?? 10000,
