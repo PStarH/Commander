@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { after, describe, it } from 'node:test';
 import { Pool } from 'pg';
 import { PostgresKernelRepository, runKernelMigrations, type NewKernelStep } from '@commander/kernel';
 import {
@@ -10,6 +10,12 @@ import {
 } from '@commander/worker-plane';
 
 const databaseUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
+
+// AgentRuntime pulls OTel + other process-level timers; force exit after suite so CI/local
+// does not hang after assertions pass.
+after(() => {
+  setTimeout(() => process.exit(0), 50).unref();
+});
 
 class MockProvider {
   readonly name = 'mock';
@@ -24,6 +30,15 @@ class MockProvider {
   }
 }
 
+function agentInput(goal: string): Record<string, unknown> {
+  return {
+    goal,
+    agentId: 'agent-default',
+    definitionVersion: 'v1',
+    providerSnapshot: { provider: 'mock', model: 'mock-model' },
+  };
+}
+
 describe('Gateway → Kernel → Worker real execution loop', { skip: !databaseUrl }, () => {
   it('executes a default V1 agent run end-to-end in PostgreSQL', async () => {
     if (!databaseUrl) return;
@@ -31,7 +46,6 @@ describe('Gateway → Kernel → Worker real execution loop', { skip: !databaseU
     const tenantId = `e2e-tenant-${Date.now()}`;
     const workerId = `e2e-worker-${Date.now()}`;
 
-    // Ensure schema exists before the test starts.
     await runKernelMigrations(pool);
 
     const kernel = new PostgresKernelRepository(pool);
@@ -76,12 +90,7 @@ describe('Gateway → Kernel → Worker real execution loop', { skip: !databaseU
     const step: NewKernelStep = {
       id: `step-${tenantId}`,
       kind: 'agent',
-      input: {
-        goal: 'say hello',
-        agentId: 'agent-default',
-        definitionVersion: 'v1',
-        providerSnapshot: { provider: 'mock', model: 'mock-model' },
-      } as Record<string, unknown>,
+      input: agentInput('say hello'),
       maxAttempts: 1,
     };
 
@@ -128,6 +137,108 @@ describe('Gateway → Kernel → Worker real execution loop', { skip: !databaseU
       await pool.query('DELETE FROM commander_events WHERE tenant_id=$1', [tenantId]);
       await pool.query('DELETE FROM commander_outbox WHERE tenant_id=$1', [tenantId]);
       await pool.query('DELETE FROM commander_workers WHERE id=$1', [workerId]);
+      await pool.end();
+    }
+  });
+
+  it('reclaims an expired lease so a second worker completes without dual success', async () => {
+    if (!databaseUrl) return;
+    const pool = new Pool({ connectionString: databaseUrl, max: 8 });
+    const tenantId = `e2e-reclaim-${Date.now()}`;
+    const workerA = `e2e-wA-${Date.now()}`;
+    const workerB = `e2e-wB-${Date.now()}`;
+
+    await runKernelMigrations(pool);
+    // Recovery/reclaim is a scheduler-plane write (cross-tenant). Worker claims use
+    // the same repo with an explicit tenantIds scope on claimNextStep.
+    const kernel = new PostgresKernelRepository(pool, { schedulerMode: true });
+    await kernel.initialize();
+
+    await pool.query(
+      `INSERT INTO commander_workers (id,kind,version,capabilities,max_concurrency,status,generation,identity_subject,tenant_ids)
+       VALUES ($1,'agent','e2e','["agent"]',2,'ACTIVE',1,$2,$3::jsonb),
+              ($4,'agent','e2e','["agent"]',2,'ACTIVE',1,$5,$6::jsonb)`,
+      [workerA, workerA, JSON.stringify([tenantId]), workerB, workerB, JSON.stringify([tenantId])],
+    );
+
+    const runId = `run-${tenantId}`;
+    const stepId = `step-${tenantId}`;
+    await kernel.createRun(
+      {
+        id: runId,
+        tenantId,
+        intentHash: 'intent-reclaim',
+        workGraphHash: 'hash-reclaim',
+        workGraphVersion: 'v1',
+        policySnapshotId: 'policy-e2e',
+        steps: [
+          {
+            id: stepId,
+            kind: 'agent',
+            input: agentInput('reclaim path'),
+            maxAttempts: 3,
+          },
+        ],
+      },
+      'e2e-reclaim',
+    );
+
+    try {
+      const claimed = await kernel.claimNextStep({
+        workerId: workerA,
+        workerGeneration: 1,
+        tenantIds: [tenantId],
+        capabilities: ['agent'],
+        leaseTtlMs: 80,
+      });
+      assert.ok(claimed, 'worker A claims first');
+      const staleLease = claimed!.lease!;
+      const staleVersion = claimed!.version;
+
+      await new Promise((r) => setTimeout(r, 120));
+      const reclaimed = await kernel.reclaimExpiredLeases(new Date(), 10);
+      assert.ok(reclaimed.some((s) => s.id === stepId), 'expired lease reclaimed');
+
+      const second = await kernel.claimNextStep({
+        workerId: workerB,
+        workerGeneration: 1,
+        tenantIds: [tenantId],
+        capabilities: ['agent'],
+        leaseTtlMs: 30_000,
+      });
+      assert.ok(second, 'worker B claims after reclaim');
+      assert.notEqual(second!.lease!.token, staleLease.token, 'new lease token');
+      assert.notEqual(second!.lease!.fencingEpoch, staleLease.fencingEpoch, 'fencing epoch advanced');
+
+      const zombie = await kernel.completeStep({
+        stepId,
+        tenantId,
+        lease: staleLease,
+        expectedVersion: staleVersion,
+        output: { status: 'zombie' },
+        actor: workerA,
+      });
+      assert.equal(zombie, null, 'zombie worker A cannot complete after reclaim');
+
+      const done = await kernel.completeStep({
+        stepId,
+        tenantId,
+        lease: second!.lease!,
+        expectedVersion: second!.version,
+        output: { status: 'ok' },
+        actor: workerB,
+      });
+      assert.ok(done);
+      assert.equal(done!.state, 'SUCCEEDED');
+
+      const finalRun = await kernel.getRun(runId, tenantId);
+      assert.equal(finalRun?.state, 'SUCCEEDED');
+    } finally {
+      await pool.query('DELETE FROM commander_steps WHERE tenant_id=$1', [tenantId]);
+      await pool.query('DELETE FROM commander_runs WHERE tenant_id=$1', [tenantId]);
+      await pool.query('DELETE FROM commander_events WHERE tenant_id=$1', [tenantId]);
+      await pool.query('DELETE FROM commander_outbox WHERE tenant_id=$1', [tenantId]);
+      await pool.query('DELETE FROM commander_workers WHERE id = ANY($1::text[])', [[workerA, workerB]]);
       await pool.end();
     }
   });
