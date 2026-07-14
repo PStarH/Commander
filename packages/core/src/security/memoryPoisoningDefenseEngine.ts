@@ -41,11 +41,7 @@ export type PoisoningSeverity = 'critical' | 'high' | 'medium' | 'low';
 
 /** 数据源可信度分级。 */
 export type SourceCredibility =
-  | 'verified_tool'
-  | 'agent_generated'
-  | 'user_input'
-  | 'web_content'
-  | 'unknown';
+  'verified_tool' | 'agent_generated' | 'user_input' | 'web_content' | 'unknown';
 
 /** 记忆写入上下文 — 在任何记忆写入前传给引擎。 */
 export interface MemoryWriteContext {

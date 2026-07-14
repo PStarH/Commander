@@ -277,10 +277,7 @@ export type CommanderRunIntent = 'PLAN' | 'PROPOSE' | 'EXECUTE' | 'REVIEW' | 'MO
 
 /** The resulting disposition of an invocation request. */
 export type CommanderInvocationDisposition =
-  | 'ALLOW_EXECUTION'
-  | 'REQUIRE_APPROVAL'
-  | 'PROPOSE_ONLY'
-  | 'DENY';
+  'ALLOW_EXECUTION' | 'REQUIRE_APPROVAL' | 'PROPOSE_ONLY' | 'DENY';
 
 /** Atomic operations that an agent can perform within the system. */
 export type CommanderOperation =
@@ -501,11 +498,7 @@ export interface AgentInvocationProfile {
 
 /** Available strategies for multi-agent coordination. */
 export type MultiAgentStrategyKind =
-  | 'SINGLE_AGENT'
-  | 'GUARDED_EXECUTION'
-  | 'SENATE_REVIEW'
-  | 'MANUAL_APPROVAL_GATE'
-  | 'FANOUT_PLAN';
+  'SINGLE_AGENT' | 'GUARDED_EXECUTION' | 'SENATE_REVIEW' | 'MANUAL_APPROVAL_GATE' | 'FANOUT_PLAN';
 
 /** Defines how agents collaborate to achieve a mission's goal. */
 export interface MultiAgentStrategy {

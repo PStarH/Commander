@@ -122,12 +122,7 @@ export interface ExecutionContext {
  * 编排运行状态。
  */
 export type OrchestrationRunStatus =
-  | 'PENDING'
-  | 'RUNNING'
-  | 'COMPLETED'
-  | 'PARTIAL'
-  | 'FAILED'
-  | 'CANCELLED';
+  'PENDING' | 'RUNNING' | 'COMPLETED' | 'PARTIAL' | 'FAILED' | 'CANCELLED';
 
 /**
  * 编排运行结果（所有模式共用）。
@@ -152,11 +147,7 @@ export interface OrchestrationRun<TOutput = unknown> {
  * 所有支持的编排模式标识。
  */
 export type OrchestrationPattern =
-  | 'sequential'
-  | 'concurrent'
-  | 'graph'
-  | 'mixture-of-agents'
-  | 'router';
+  'sequential' | 'concurrent' | 'graph' | 'mixture-of-agents' | 'router';
 
 // ============================================================================
 // 编排事件（与 SequentialEvent 风格一致，供 EventBus 接入）

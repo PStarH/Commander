@@ -49,11 +49,7 @@ import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 export type AgentTier = 'active' | 'hot-standby' | 'cold-standby';
 
 export type SwitchTrigger =
-  | 'CONFIDENCE_DROP'
-  | 'ATTACK_DETECTED'
-  | 'COST_ANOMALY'
-  | 'HEALTH_FAILURE'
-  | 'MANUAL';
+  'CONFIDENCE_DROP' | 'ATTACK_DETECTED' | 'COST_ANOMALY' | 'HEALTH_FAILURE' | 'MANUAL';
 
 export type StandbyStatus = 'healthy' | 'degraded' | 'unhealthy' | 'offline';
 

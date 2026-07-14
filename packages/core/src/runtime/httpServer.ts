@@ -229,9 +229,7 @@ function authenticate(
 export class CommanderHttpServer {
   private config: HttpServerConfig;
   private server:
-    | ReturnType<typeof createNodeHttpServer>
-    | ReturnType<typeof createHttpsServer>
-    | null = null;
+    ReturnType<typeof createNodeHttpServer> | ReturnType<typeof createHttpsServer> | null = null;
   private runtimes: Map<string, { runtime: AgentRuntimeInterface; lastAccessedAt: number }> =
     new Map();
   private bus = getMessageBus();
@@ -1065,8 +1063,7 @@ export class CommanderHttpServer {
     const method = req.method ?? 'GET';
     const action = segments[4];
     const samlPlugin = this.authPlugins.find((p) => p.name === 'saml') as
-      | SAMLAuthPlugin
-      | undefined;
+      SAMLAuthPlugin | undefined;
     if (!samlPlugin) {
       sendJson(res, 501, { error: 'SAML authentication is not configured' });
       return;

@@ -169,13 +169,7 @@ export interface SecurityCheckResult {
 
 /** 安全层标识 */
 export type SecurityLayer =
-  | 'zero_trust'
-  | 'authentication'
-  | 'rate_limit'
-  | 'input_scan'
-  | 'bill_guard'
-  | 'dlp'
-  | 'guardian';
+  'zero_trust' | 'authentication' | 'rate_limit' | 'input_scan' | 'bill_guard' | 'dlp' | 'guardian';
 
 /** 安全网关状态报告 */
 export interface GatewayStatus {

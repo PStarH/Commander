@@ -33,10 +33,7 @@ import { v4 as uuidv4 } from 'uuid';
 export type KnowledgeDocumentStatus = 'ready' | 'indexing' | 'failed';
 
 export type SupportedContentType =
-  | 'text/plain'
-  | 'application/json'
-  | 'text/markdown'
-  | 'text/html';
+  'text/plain' | 'application/json' | 'text/markdown' | 'text/html';
 
 export const SUPPORTED_CONTENT_TYPES: SupportedContentType[] = [
   'text/plain',

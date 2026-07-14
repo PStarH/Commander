@@ -64,8 +64,7 @@ export interface PluginManifestWithPermissions {
 }
 
 export type PermissionCheckResult =
-  | { allowed: true }
-  | { allowed: false; reason: string; missingPermission: string };
+  { allowed: true } | { allowed: false; reason: string; missingPermission: string };
 
 // ============================================================================
 // Default permissions (most restrictive)

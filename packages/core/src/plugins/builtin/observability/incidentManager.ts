@@ -30,12 +30,7 @@ import { getMessageBus } from '../../../runtime/messageBus';
 
 export type IncidentSeverity = 'SEV1' | 'SEV2' | 'SEV3' | 'SEV4';
 export type IncidentStatus =
-  | 'detected'
-  | 'investigating'
-  | 'mitigated'
-  | 'resolved'
-  | 'postmortem_pending'
-  | 'closed';
+  'detected' | 'investigating' | 'mitigated' | 'resolved' | 'postmortem_pending' | 'closed';
 
 export type IncidentSource = 'slo_burn_rate' | 'alert_escalation' | 'manual' | 'health_check';
 
