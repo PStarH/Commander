@@ -5,7 +5,10 @@
       "importPattern": "installProcessCrashHandlers",
       "callSitePattern": "installProcessCrashHandlers",
       "minCallSites": 1,
-      "srcPaths": ["packages/core/src/runtime/agentRuntime.ts"]
+      "srcPaths": [
+        "packages/core/src/runtime/serviceInitializer.ts",
+        "packages/core/src/runtime/httpServer.ts"
+      ]
     },
     {
       "name": "runRecovery",
@@ -19,14 +22,20 @@
       "importPattern": "StepTimeoutManager",
       "callSitePattern": "stepTimeout\\.wrap",
       "minCallSites": 1,
-      "srcPaths": ["packages/core/src/runtime/agentRuntime.ts"]
+      "srcPaths": [
+        "packages/core/src/runtime/agentRuntime.ts",
+        "packages/core/src/runtime/llm/llmCaller.ts"
+      ]
     },
     {
       "name": "providerFallbackChain",
       "importPattern": "ProviderFallbackChain",
       "callSitePattern": "fallbackChain\\.|tryProviders",
       "minCallSites": 1,
-      "srcPaths": ["packages/core/src/runtime/agentRuntime.ts"]
+      "srcPaths": [
+        "packages/core/src/runtime/agentRuntime.ts",
+        "packages/core/src/runtime/llm/llmCaller.ts"
+      ]
     },
     {
       "name": "subAgentGuard",
@@ -38,16 +47,22 @@
     {
       "name": "reflexionInjector",
       "importPattern": "ReflexionInjector",
-      "callSitePattern": "reflexionInjector\\.",
+      "callSitePattern": "getReflexionInjector\\(\\)\\.|reflexionInjector\\.",
       "minCallSites": 1,
-      "srcPaths": ["packages/core/src/runtime/agentRuntime.ts"]
+      "srcPaths": [
+        "packages/core/src/runtime/agentRuntime.ts",
+        "packages/core/src/runtime/agentLoopOrchestrator.ts"
+      ]
     },
     {
       "name": "compensationQueue",
       "importPattern": "CompensationQueue|getCompensationQueue",
       "callSitePattern": "getCompensationQueue|setCompensationQueue",
       "minCallSites": 1,
-      "srcPaths": ["packages/core/src/runtime/agentRuntime.ts", "packages/core/src/atr/compensationQueue.ts"]
+      "srcPaths": [
+        "packages/core/src/runtime/agentRuntime.ts",
+        "packages/core/src/atr/compensationQueue.ts"
+      ]
     },
     {
       "name": "hubGlue",
@@ -61,14 +76,14 @@
       "importPattern": "getComplianceAuditManager",
       "callSitePattern": "getComplianceAuditManager\\(\\)\\.generateFullReport",
       "minCallSites": 1,
-      "srcPaths": ["packages/core/src/runtime/httpServer.ts"]
+      "srcPaths": ["packages/core/src/runtime/httpSecurityRoutes.ts"]
     },
     {
       "name": "euAiActCompliance",
       "importPattern": "getEuAiActComplianceReporter",
       "callSitePattern": "getEuAiActComplianceReporter\\(\\)\\.generateReport",
       "minCallSites": 1,
-      "srcPaths": ["packages/core/src/runtime/httpServer.ts"]
+      "srcPaths": ["packages/core/src/runtime/httpSecurityRoutes.ts"]
     },
     {
       "name": "mcpObservability",
@@ -96,7 +111,10 @@
       "importPattern": "planSpeculativeExecution|getPatternTracker",
       "callSitePattern": "triggerSpeculativeExecution|getPatternTracker\\(\\)\\.recordSequence",
       "minCallSites": 2,
-      "srcPaths": ["packages/core/src/runtime/toolExecutionService.ts", "packages/core/src/runtime/agentRuntime.ts"]
+      "srcPaths": [
+        "packages/core/src/runtime/toolExecutionService.ts",
+        "packages/core/src/runtime/agentRuntime.ts"
+      ]
     }
   ]
 }
