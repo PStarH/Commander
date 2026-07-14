@@ -29,7 +29,7 @@ export interface DurableInteractionStore {
 }
 
 export class SqliteInteractionStore implements DurableInteractionStore {
-  private db: Database;
+  private db: InstanceType<typeof Database>;
 
   constructor(path: string = process.env.COMMANDER_INTERACTION_DB ?? ':memory:') {
     // GOV-13: HITL approvals must survive a restart and be visible across
