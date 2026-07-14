@@ -127,6 +127,7 @@
     "docs:serve": "typedoc --watch"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/blessed": "^0.1.27",
     "@types/node": "^25.9.3",
     "@vitest/coverage-v8": "^4.1.9",
