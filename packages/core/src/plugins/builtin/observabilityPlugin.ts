@@ -143,18 +143,19 @@ export function createObservabilityPlugin(): CommanderPlugin {
 
     onUnload: async () => {
       try {
+        // Always tear down what we started. SLO ops owns nested engines when
+        // initialized; still reset alert/incident singletons for clean reload.
         if (sloInitialized) {
           const { resetSLOOperations } = await import('./observability/sloOperations');
           resetSLOOperations();
-        } else {
-          if (alertsReady) {
-            const { resetAlertRuleEngine } = await import('./observability/alertRuleEngine');
-            resetAlertRuleEngine();
-          }
-          if (incidentsReady) {
-            const { resetIncidentManager } = await import('./observability/incidentManager');
-            resetIncidentManager();
-          }
+        }
+        if (alertsReady) {
+          const { resetAlertRuleEngine } = await import('./observability/alertRuleEngine');
+          resetAlertRuleEngine();
+        }
+        if (incidentsReady) {
+          const { resetIncidentManager } = await import('./observability/incidentManager');
+          resetIncidentManager();
         }
       } catch (err) {
         getGlobalLogger().warn(

@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { Pool } from 'pg';
 import { PostgresKernelRepository } from '@commander/kernel';
+import type { LLMProvider, LLMRequest, LLMResponse } from '@commander/core';
 import {
   WorkerService,
   PostgresWorkerRegistry,
@@ -23,11 +24,10 @@ import {
   type WorkerIdentity,
 } from '@commander/worker-plane';
 
-class MockProvider {
+class MockProvider implements LLMProvider {
   readonly name = 'mock';
-  async call(): Promise<Record<string, unknown>> {
+  async call(_request: LLMRequest): Promise<LLMResponse> {
     return {
-      id: `mock-${randomUUID().slice(0, 8)}`,
       model: 'mock-model',
       content: 'p0 mock completion',
       finishReason: 'stop',
@@ -69,7 +69,7 @@ export async function createWorkerService(): Promise<WorkerService> {
   });
 
   const executor = createAgentStepExecutor({
-    providers: { mock: new MockProvider() as never },
+    providers: { mock: new MockProvider() },
     config: {
       defaultProvider: 'mock',
     },
