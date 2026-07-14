@@ -82,8 +82,11 @@ describe('Architecture V2 invariants', () => {
     assert.match(src, /profileFromCliVerb/);
   });
 
-  it('V2 packages exist (kernel, orchestration, control-plane)', () => {
-    for (const pkg of ['kernel', 'orchestration', 'control-plane']) {
+  it('V2 packages exist (kernel, control-plane)', () => {
+    // packages/orchestration was deleted 2026-07-14: it was a dead divergent
+    // fork of core/src/planner/workGraphPlanner.ts with zero importers
+    // (enterprise-trust audit ARCH-1; PRINCIPLES.md §3).
+    for (const pkg of ['kernel', 'control-plane']) {
       assert.ok(existsSync(join(ROOT, `packages/${pkg}/package.json`)), `missing packages/${pkg}`);
     }
   });
