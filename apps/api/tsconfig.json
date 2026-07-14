@@ -2,7 +2,11 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "rootDir": "src",
-    "outDir": "dist"
+    "outDir": "dist",
+    "paths": {
+      "@commander/core": ["../../packages/core/dist/index.d.ts"],
+      "@commander/core/*": ["../../packages/core/dist/*"]
+    }
   },
   "include": ["src"]
 }

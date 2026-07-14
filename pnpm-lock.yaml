@@ -5370,6 +5370,10 @@ snapshots:
 
   uc.micro@2.1.0: {}
 
+  typescript@6.0.3: {}
+
+  uc.micro@2.1.0: {}
+
   undici-types@7.19.2: {}
 
   undici-types@7.24.6: {}

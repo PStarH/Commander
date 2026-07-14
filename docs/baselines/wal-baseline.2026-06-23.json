@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "timestamp": "2026-06-23T07:06:53.229Z",
+  "iterations": 2000,
+  "warmup": 50,
+  "backend": "wal",
+  "rowsPerSec": 4431.950038627215,
+  "latency": {
+    "p50Us": 78.792,
+    "p99Us": 3371.375,
+    "p999Us": 14704.041,
+    "avgUs": 224.50563450000004,
+    "minUs": 43.834,
+    "maxUs": 15327.959
+  },
+  "hint": "lower latency and higher rowsPerSec are better; this is the steady-state single-writer baseline."
+}
