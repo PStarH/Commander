@@ -327,13 +327,14 @@ jobs:
         run: |
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/kernel build
+          pnpm --filter @commander/effect-broker build
           pnpm --filter @commander/core build
           pnpm --filter @commander/worker-plane build
           pnpm --filter @commander/api build
       - name: Kernel PostgreSQL integration (fencing + tenant isolation)
         run: pnpm exec tsx --test packages/kernel/src/postgres.integration.test.ts
       - name: Worker plane e2e (execute + lease reclaim)
-        run: pnpm exec tsx --test packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts
+        run: pnpm exec tsx --test --test-force-exit packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts
       - name: Full Gateway → Worker terminal loop
         run: pnpm p0:full-loop
         env:

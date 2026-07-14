@@ -110,6 +110,7 @@ async function main(): Promise<void> {
   log('API healthy');
 
   log('start mock worker');
+  let workerExitedEarly: number | null = null;
   const worker = spawn(
     process.execPath,
     [
@@ -136,9 +137,18 @@ async function main(): Promise<void> {
   children.push(worker);
   worker.stdout?.on('data', (b) => process.stdout.write(`[worker] ${b}`));
   worker.stderr?.on('data', (b) => process.stderr.write(`[worker] ${b}`));
-  worker.on('exit', (code) => log('worker exited', { code }));
+  worker.on('exit', (code) => {
+    workerExitedEarly = code ?? 1;
+    log('worker exited', { code });
+  });
 
-  await sleep(1500);
+  // Give bootstrap time to register + first poll; fail fast if process dies.
+  for (let i = 0; i < 20; i++) {
+    if (workerExitedEarly !== null) {
+      throw new Error(`worker exited before ready (code=${workerExitedEarly})`);
+    }
+    await sleep(250);
+  }
 
   const idem = `p0-full-${Date.now()}-${randomUUID().slice(0, 8)}`;
   log('submit run', { idem });
