@@ -243,6 +243,7 @@ jobs:
         run: pnpm check:readiness
 
       - name: Run core tests
+        shell: bash
         env:
           COMMANDER_ALLOW_NO_SANDBOX: true
         run: |
@@ -254,6 +255,7 @@ jobs:
           fi
 
       - name: Run SLO measurements
+        shell: bash
         env:
           COMMANDER_ALLOW_NO_SANDBOX: true
         run: pnpm --filter @commander/core test:slo
@@ -279,9 +281,11 @@ jobs:
         run: pnpm --filter @commander/core test:node:pathsec
 
       - name: CLI check
+        shell: bash
         run: cd packages/core && npx -p tsx tsx src/cli.ts status
 
       - name: Build core package
+        shell: bash
         run: |
           # core tsc imports @commander/plugin-sdk; clean CI has no local dist cache
           pnpm --filter @commander/contracts build
@@ -289,6 +293,8 @@ jobs:
           pnpm --filter @commander/core build
 
       - name: Red Team Smoke Test (security gate)
+        if: runner.os == 'Linux'
+        shell: bash
         run: |
           echo "🔴 Running red team smoke test (5 critical scenarios)..."
           cd packages/core
@@ -304,7 +310,6 @@ jobs:
             exit 1
           fi
           echo "✅ Red team smoke test PASSED"
-        if: runner.os == 'Linux'
 
   kernel-postgres-integration:
     name: Kernel PostgreSQL Integration
