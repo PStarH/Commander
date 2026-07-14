@@ -297,6 +297,7 @@ jobs:
   kernel-postgres-integration:
     name: Kernel PostgreSQL Integration
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:16
@@ -311,6 +312,9 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+    env:
+      DATABASE_URL: postgres://commander:commander@localhost:5432/commander
+      COMMANDER_KERNEL_DATABASE_URL: postgres://commander:commander@localhost:5432/commander
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
@@ -319,10 +323,21 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
       - run: pnpm install
-      - name: Run kernel PostgreSQL integration test
-        run: pnpm --filter @commander/kernel test:integration
+      - name: Build kernel / worker-plane / core / api
+        run: |
+          pnpm --filter @commander/contracts build
+          pnpm --filter @commander/kernel build
+          pnpm --filter @commander/core build
+          pnpm --filter @commander/worker-plane build
+          pnpm --filter @commander/api build
+      - name: Kernel PostgreSQL integration (fencing + tenant isolation)
+        run: pnpm exec tsx --test packages/kernel/src/postgres.integration.test.ts
+      - name: Worker plane e2e (execute + lease reclaim)
+        run: pnpm exec tsx --test packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts
+      - name: Full Gateway → Worker terminal loop
+        run: pnpm p0:full-loop
         env:
-          DATABASE_URL: postgres://commander:commander@localhost:5432/commander
+          P0_TIMEOUT_MS: '120000'
 
   web-gui:
     name: Web GUI Build
