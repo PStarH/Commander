@@ -198,6 +198,9 @@ The real ENFORCED layer today is `packages/core/tests/architecture/` (run via `p
 
 ## Change log
 
+- **2026-07-15 (iteration: alert/incident observability DRY)** — Collapsed
+  alertRuleEngine + incidentManager plugin copies to re-exports (ratio ≥0.977).
+
 - **2026-07-15 (iteration: more observability DRY)** — Collapsed additional near-verbatim
   plugin observability modules to re-exports: decisionProvenance, executiveSummary,
   experimentRunner, replay, timelineBuilder (ratio ≥0.998).
