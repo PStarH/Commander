@@ -1,17 +1,22 @@
 /**
- * Event Sourcing Engine — WAL persistence with hash-chain integrity
+ * Event Sourcing Engine — optional file WAL + hash-chain integrity
  *
  * Implements the IEventSourcingEngine contract from Pillar I.
  *
- * Features:
- * - Write-Ahead Log (WAL) with atomic appends
- * - Hash-chain tamper-evidence (each event links to previous via SHA-256)
- * - Snapshot creation for fast recovery
+ * Durability (honest):
+ * - Constructor default: `walPath = null` → **in-memory only** (not durable).
+ * - When `walPath` is set (or via `getGlobalEventSourcingEngine()`, which defaults
+ *   to `.commander_state/event-sourcing.wal` or COMMANDER_EVENT_SOURCING_WAL):
+ *   append-only NDJSON WAL with hash-chain + optional HMAC.
+ * - Do not market "always durable WAL" without a configured path.
+ *
+ * Features when WAL-backed:
+ * - Append-only log with hash-chain tamper-evidence (SHA-256)
+ * - Snapshot creation for faster recovery
  * - Streaming replay via AsyncIterable
  * - Log compaction (trim events before a snapshot)
  *
- * Per constraint IF-05, provides deterministic event replay.
- * Per constraint NFR-CON-02, provides strong consistency.
+ * Per constraint IF-05, provides deterministic event replay when WAL is configured.
  */
 
 import * as crypto from 'node:crypto';
@@ -93,6 +98,16 @@ export class EventSourcingEngine implements IEventSourcingEngine {
   constructor(options?: EventSourcingEngineOptions) {
     this.walPath = options?.walPath ?? null;
     this.hotWindowSize = resolveWalHotWindow(options?.hotWindowSize);
+  }
+
+  /** True only when a WAL path is configured (file-backed). In-memory is not durable. */
+  isDurable(): boolean {
+    return typeof this.walPath === 'string' && this.walPath.length > 0;
+  }
+
+  /** Resolved WAL path, or null when running in-memory. */
+  getWalPath(): string | null {
+    return this.walPath;
   }
 
   /** Push into the hot window and trim cold events from RAM. */
