@@ -198,6 +198,12 @@ The real ENFORCED layer today is `packages/core/tests/architecture/` (run via `p
 
 ## Change log
 
+- **2026-07-15 (plan: EpisodicMemoryStore routing)** — Direction Audit + strangler plan at
+  `docs/direction-audits/2026-07-15-episodic-memory-routing.md`. Finding: apps/api
+  `EpisodicMemoryStore` is health/shutdown-only (no feature routes); core ACT-R store remains
+  canonical. Phase A health decouple → Phase B delete (+ rewrite store-path-overrides tests).
+  Phase C Gateway ACT-R routes deferred.
+
 - **2026-07-15 (iteration: sloMonitoringEngine DRY)** — Collapsed plugin
   `sloMonitoringEngine.ts` to re-export of core (near-verbatim; core keeps named
   SRE constants). Left `sloOperations.ts` alone (real semantic drift: topology vs
