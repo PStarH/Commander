@@ -198,6 +198,11 @@ The real ENFORCED layer today is `packages/core/tests/architecture/` (run via `p
 
 ## Change log
 
+- **2026-07-15 (iteration: sloMonitoringEngine DRY)** — Collapsed plugin
+  `sloMonitoringEngine.ts` to re-export of core (near-verbatim; core keeps named
+  SRE constants). Left `sloOperations.ts` alone (real semantic drift: topology vs
+  API availability SLOs).
+
 - **2026-07-15 (iteration: alert/incident observability DRY)** — Collapsed
   alertRuleEngine + incidentManager plugin copies to re-exports (ratio ≥0.977).
 
