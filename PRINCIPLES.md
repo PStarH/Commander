@@ -100,22 +100,24 @@ over the one implementation, not a new class. Count before/after on any change t
 
 **Current counts** (source-only; excludes tests/dist/re-exports; grep commands in run `wf_db80bc0a-04f`):
 
-| Concept               | Real impls              | Canonical (intended)                                                                                                                                                | Notable duplication / dead code                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| --------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Orchestrator          | **10** (was 13)         | V1 `UltimateOrchestrator` (`core/src/ultimate/orchestrator.ts:64`); V2 `planWorkGraph` (`core/src/planner/workGraphPlanner.ts:112`) → kernel → worker StepExecutors | DELETED 2026-07-14: `apps/api` dead `Orchestrator` class (file slimmed to the live, tested `runAgentStep`), `AdaptiveOrchestrator`, the whole `@commander/orchestration` package (dead divergent fork). Remaining: 6 wired V1 orchestrators (Ultimate/TELOS/Swarm/Drive/Goal/AgentLoop) + 3 coordinators overlap the V2 planner path. DELETED 2026-07-15: orphan `apps/api/src/deterministicTaskAllocator.ts` (484 LOC; zero importers; was not an Orchestrator count). |
-| Store / Repository    | **51** classes (was 51 baseline; methodology-locked) | per-concept: kernel `KernelRepository`, core `MemoryStore`, `apiStore`, `WarRoomStore` (≈4 parallel roots, not 1)                                                   | `EpisodicMemoryStore` defined in **both** `core/src/memory/episodicStore.ts:41` and `apps/api/src/episodicMemoryStore.ts:398`. DELETED 2026-07-14: `DatasetStore` verbatim copy (consumers repointed to `observability/dataset.ts`), `LockFreeStateStore` (+ its orphaned `ILockFreeStateStore` contract in `pillarI.ts`)                                                                                                                                               |
-| Memory system         | **21** (methodology-locked, was census 19) | `UnifiedMemory` (`core/src/memory/unifiedMemory.ts:167`) over `ThreeLayerMemory`                                                                                    | `apps/api` runs a **parallel** memory system that bypasses `UnifiedMemory` (`memoryStore.ts:54`, `memoryIndexManager.ts:64`, `namespacedMemoryStore.ts:151`); `MemoryCurator` (UnifiedMemory autonomous curation, `memory/curator.ts`) and `TtlMemoryCurator` (TTL expiry, `memory/memoryCurator.ts`, renamed 2026-07-15; was also named MemoryCurator) are **two different classes, both wired**; `MemorySystem` is `@deprecated` with no callers                                                                                                                                         |
-| State machine         | **4** `*StateMachine` classes (was census 6 incl. type aliases) | `contracts/src/states.ts:49` (RUN/STEP lifecycle)                                                                                                                   | the canonical transition tables have **zero call sites** — the kernel enforces transitions in SQL (`kernel/src/postgres.ts:342`) instead; `apps/api/src/stateMachine.ts:245` and `patternStateMachine.ts:214` are two legacy engines with byte-identical interface names                                                                                                                                                                                                |
-| Policy decision point | multiple                | `@commander/effect-broker` PEP for external effects (`effect-broker/src/index.ts:294`, fail-closed)                                                                 | `apps/api` middleware chain (`authMiddleware`/`jwtMiddleware`/`tenantContextMiddleware`/`securityMiddleware`); worker-plane default `PolicyEvaluator` is **deny-all** (`createWorkerPolicyEvaluator`; permit only via `COMMANDER_WORKER_EFFECT_POLICY=permit`); core hosts many guards (`GuardianAgent`, `OutboundNetworkPolicy`, `ToolPoisoningGuard`…). No single authz choke point. _(census pending; enumerated from package maps)_                                 |
+| Concept               | Real impls                                                                 | Canonical (intended)                                                                                                                                                | Notable duplication / dead code                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| --------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Orchestrator          | **10** (was 13)                                                            | V1 `UltimateOrchestrator` (`core/src/ultimate/orchestrator.ts:64`); V2 `planWorkGraph` (`core/src/planner/workGraphPlanner.ts:112`) → kernel → worker StepExecutors | DELETED 2026-07-14: `apps/api` dead `Orchestrator` class (file slimmed to the live, tested `runAgentStep`), `AdaptiveOrchestrator`, the whole `@commander/orchestration` package (dead divergent fork). Remaining: 6 wired V1 orchestrators (Ultimate/TELOS/Swarm/Drive/Goal/AgentLoop) + 3 coordinators overlap the V2 planner path. DELETED 2026-07-15: orphan `apps/api/src/deterministicTaskAllocator.ts` (484 LOC; zero importers; was not an Orchestrator count).      |
+| Store / Repository    | **51** classes (was 51 baseline; methodology-locked)                       | per-concept: kernel `KernelRepository`, core `MemoryStore`, `apiStore`, `WarRoomStore` (≈4 parallel roots, not 1)                                                   | `EpisodicMemoryStore` defined in **both** `core/src/memory/episodicStore.ts:41` and `apps/api/src/episodicMemoryStore.ts:398`. DELETED 2026-07-14: `DatasetStore` verbatim copy (consumers repointed to `observability/dataset.ts`), `LockFreeStateStore` (+ its orphaned `ILockFreeStateStore` contract in `pillarI.ts`)                                                                                                                                                    |
+| Memory system         | **19** (methodology-locked allowlist of product memory systems)            | `UnifiedMemory` (`core/src/memory/unifiedMemory.ts:167`) over `ThreeLayerMemory`                                                                                    | Allowlist (not path-walk): Unified/ThreeLayer/MemorySystem + dual curators (`MemoryCurator` + `TtlMemoryCurator`) + dual `EpisodicMemoryStore` + api parallel stores (`ProjectMemoryStore`/`NamespacedMemoryStore`/`MemoryIndexManager`) + Conversation/Semantic/Procedural/Json/Sqlite + Federation/ManagerAgent/QualityGate/CrossModelMemory. Path-walk of `memory/**` helpers is 24–32 and is NOT the locked definition. `MemorySystem` is `@deprecated` with no callers. |
+| State machine         | **6** (4 `*StateMachine` classes + `RUN_TRANSITIONS` + `STEP_TRANSITIONS`) | `contracts/src/states.ts:49/61` (RUN/STEP lifecycle tables)                                                                                                         | Classes: `TaskStateMachine`, `StateMachine`, `PatternStateMachine`, `TopologyStateMachine`. Canonical transition tables have **zero call sites** — the kernel enforces transitions in SQL (`kernel/src/postgres.ts:342`) instead; `apps/api/src/stateMachine.ts:245` and `patternStateMachine.ts:214` are two legacy engines with byte-identical interface names                                                                                                             |
+| Policy decision point | multiple                                                                   | `@commander/effect-broker` PEP for external effects (`effect-broker/src/index.ts:294`, fail-closed)                                                                 | `apps/api` middleware chain (`authMiddleware`/`jwtMiddleware`/`tenantContextMiddleware`/`securityMiddleware`); worker-plane default `PolicyEvaluator` is **deny-all** (`createWorkerPolicyEvaluator`; permit only via `COMMANDER_WORKER_EFFECT_POLICY=permit`); core hosts many guards (`GuardianAgent`, `OutboundNetworkPolicy`, `ToolPoisoningGuard`…). No single authz choke point. _(census pending; enumerated from package maps)_                                      |
 
-**Enforcement: PARTIAL (ENFORCED ceilings).** `packages/core/tests/architecture/duplicationCountGuard.test.ts`
+**Enforcement: ENFORCED (ceilings).** `packages/core/tests/architecture/duplicationCountGuard.test.ts`
 (wired into `pnpm test:arch`) fails if orchestrator/store/memory/stateMachine counts increase
-above locked ceilings (methodology in that file). Honor-system remaining: lowering counts
-still requires human consolidation work; the guard only prevents growth.
+above locked live ceilings (orchestrator≤10, store≤51, memory≤19 allowlist, stateMachine≤6 =
+classes + RUN/STEP_TRANSITIONS). Methodology is pure-fs walk + locked regexes in that file
+header. Lowering a ceiling requires a real deletion + evidence; raising requires intentional
+amendment + this changelog. Policy decision point row remains unenforced (census pending).
 
 **Gap to close:** pick the V2 canonical for each row. Next dedup targets: dual
 `EpisodicMemoryStore` (core vs apps/api) and eventual merge of `MemoryCurator` +
-`TtlMemoryCurator` into one stack. Count-guard already ENFORCED (ceilings only).
+`TtlMemoryCurator` into one stack. Count-guard ENFORCED (ceilings only — does not force deletions).
 
 ---
 
@@ -189,11 +191,22 @@ The real ENFORCED layer today is `packages/core/tests/architecture/` (run via `p
   compensation rollback, RPO/RTO drill, cross-tenant live-fire, worker autoscale.
 
 **Unenforced principles** (aspirational text only — flag if still unenforced at next review):
-§1 dependency direction (no boundary linter), §3 duplication counts (no count-guard), §5 naming (no lint).
+§1 dependency direction (no boundary linter), §5 naming (no lint).
+§3 duplication count ceilings are ENFORCED via `duplicationCountGuard.test.ts` (growth-only).
 
 ---
 
 ## Change log
+
+- **2026-07-15 (iteration: §3 count-guard methodology lock)** — Rewrote
+  `duplicationCountGuard.test.ts` to the locked audit methodology: pure-fs walk of
+  packages/** + apps/**; orchestrator `export class *Orchestrator` (10); store
+  `*Store|*Repository` (51 live, not stale 49); memory **fixed allowlist of 19**
+  product systems (not broken path check that counted 0 / not path-walk 24–32);
+  stateMachine **6** = 4 `*StateMachine` classes + `RUN_TRANSITIONS` +
+  `STEP_TRANSITIONS`. Ceilings = live only. §3 Enforcement PARTIAL → ENFORCED;
+  §6 unenforced list drops §3 count-guard. Lowering ceilings needs real deletion
+  - evidence; raising needs PRINCIPLES changelog.
 
 - **2026-07-15 (iteration: EventSourcingEngine WAL claim honesty)** — Clarified
   optional WAL: constructor default is in-memory; singleton may default a file path.
@@ -211,7 +224,8 @@ The real ENFORCED layer today is `packages/core/tests/architecture/` (run via `p
   `duplicationCountGuard.test.ts` with locked pure-fs census + ceilings
   (orchestrator≤10, store≤51, memory≤21 scoped, stateMachine≤4). Wired into
   `pnpm test:arch`. Updated §3 table to methodology-locked counts (store 51,
-  memory 21, SM 4 class-only). Enforcement upgraded NONE → PARTIAL.
+  memory 21, SM 4 class-only). Enforcement upgraded NONE → PARTIAL. (Superseded by
+  methodology-lock entry above: memory 19 allowlist, SM 6 incl. transitions.)
 
 - **2026-07-15 (iteration: claim honesty — api EpisodicMemoryStore)** — Corrected false
   "SQLite + Vector Index" file header on `apps/api/src/episodicMemoryStore.ts`. Implementation
