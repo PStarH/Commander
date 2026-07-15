@@ -1,11 +1,14 @@
 /**
- * Episodic Memory Store with SQLite + Vector Index
- * Based on research: Memory for Autonomous LLM Agents (arXiv:2603.07670v1)
+ * Episodic Memory Store (JSON file + in-memory TF-IDF vector index)
+ * Inspired by research: Memory for Autonomous LLM Agents (arXiv:2603.07670v1)
  *
- * Architecture:
- * - SQLite: Structured storage for episodic memory with metadata
- * - Vector Index: Semantic search via simple TF-IDF (can upgrade to embeddings)
- * - Write-Manage-Read Loop (𝒰-ℛ pattern)
+ * Architecture (honest — do not call this SQLite/WAL durable):
+ * - JSON file persistence via `fs.writeFileSync` (not atomic, not SQLite)
+ * - In-memory Maps for TF-IDF vectors + document frequency
+ * - Optional deferred persist for access-count updates
+ *
+ * Canonical V2 memory path is `@commander/core` UnifiedMemory / EpisodicMemoryStore
+ * (`packages/core/src/memory/*`). This apps/api copy is a parallel War-Room path.
  */
 
 import fs from 'fs';
