@@ -149,6 +149,8 @@ apps/api/dist/
 /notes.md
 /quality-commander.md
 /error-handling-comparison.md
+/CLAUDE.md
+/AGENT.md
 
 # Runtime state for apps/memory (War Room persistence lives in SQLite, not these JSON files)
 /apps/memory/
@@ -161,6 +163,7 @@ apps/api/dist/
 .mimocode/
 .sisyphus/
 .codex/
+.serena/
 
 # Root-level HTML artifacts (research reports, benchmark outputs) — regenerated on demand, do not commit
 /*.html
@@ -297,6 +300,8 @@ report.json
 # (already-committed copies still need `git rm --cached`; these rules stop recurrence)
 .commander/audit/
 .commander/otel_queue/
+packages/core/.commander/otel_queue/
+.commander/otel-collector/
 .commander/tenant_*/
 # Stray AI-tool runtime directory
 .omo/
