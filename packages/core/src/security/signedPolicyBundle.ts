@@ -174,7 +174,7 @@ export class SignedPolicyBundleManager {
         // Derive the matching public key so a signer can also self-verify.
         this.publicKey = config.ed25519PublicKeyPem
           ? createPublicKey(config.ed25519PublicKeyPem)
-          : createPublicKey(this.privateKey);
+          : createPublicKey(this.privateKey.export({ type: 'pkcs8', format: 'pem' }));
       } else if (config.ed25519PublicKeyPem) {
         this.publicKey = createPublicKey(config.ed25519PublicKeyPem);
       } else {
