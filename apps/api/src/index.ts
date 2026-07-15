@@ -512,6 +512,22 @@ registerRouter({
   },
 });
 
+// WS3 §5.1 — WarRoom demoted to read-only ops panel under /v1.
+// Only GET endpoints are mounted (readOnly: true). The legacy write endpoints
+// (missions/approve/logs/agent-state/memory) are frozen: 410 in enterprise,
+// x-legacy in standard. They never appear under /v1.
+registerRouter({
+  name: 'v1-projects',
+  mountPath: '/v1',
+  factory: () =>
+    createProjectRouter(store, memoryStore, agentStateStore, { readOnly: true }),
+  openapi: {
+    tags: ['Projects', 'WarRoom', 'Memory', 'Governance'],
+    description:
+      'Read-only WarRoom / project / memory / governance surface (WS3 §5.1 demotion).',
+  },
+});
+
 // V2 live benchmark harness routes (in-memory ledger for Layer B topology tests)
 registerRouter({
   name: 'v2-bench',
