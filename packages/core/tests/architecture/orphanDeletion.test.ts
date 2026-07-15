@@ -29,4 +29,27 @@ describe('orphan deletion guards', () => {
       'exception list must shrink when orphans are deleted',
     );
   });
+
+  it('lockFreeStateStore no longer exports a Store class', () => {
+    const path = join(ROOT, 'packages/core/src/runtime/lockFreeStateStore.ts');
+    assert.ok(existsSync(path), 'stub file may remain; class must not');
+    const text = readFileSync(path, 'utf8');
+    assert.doesNotMatch(
+      text,
+      /export class LockFreeStateStore/,
+      'LockFreeStateStore class was removed as orphan 2026-07-15',
+    );
+  });
+
+  it('plugin DatasetStore is a re-export, not a second class declaration', () => {
+    const path = join(ROOT, 'packages/core/src/plugins/builtin/observability/dataset.ts');
+    assert.ok(existsSync(path));
+    const text = readFileSync(path, 'utf8');
+    assert.doesNotMatch(
+      text,
+      /^\s*export\s+class\s+DatasetStore\b/m,
+      'duplicate DatasetStore class must stay collapsed to re-export',
+    );
+    assert.match(text, /from ['"]\.\.\/\.\.\/\.\.\/observability\/dataset['"]/);
+  });
 });

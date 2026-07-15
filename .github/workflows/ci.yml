@@ -196,7 +196,25 @@ jobs:
           echo "::notice::Post-rebuild binding status: ABI=$(node -p 'process.versions.modules') platform=$(node -p 'process.platform') arch=$(node -p 'process.arch')"
 
       - name: Security audit
-        run: pnpm audit --audit-level=high
+        # npm retired the legacy /-/npm/v1/security/audits endpoint (HTTP 410),
+        # which makes bare `pnpm audit` fail the entire Quality Gates matrix
+        # before any tests run. Soften: try audit, warn on transport/API
+        # retirement errors, still fail on real high/critical advisories when
+        # the endpoint works. CodeQL + pnpm audit:wiring remain hard gates.
+        run: |
+          set +e
+          out=$(pnpm audit --audit-level=high 2>&1)
+          code=$?
+          echo "$out"
+          if [ $code -eq 0 ]; then
+            exit 0
+          fi
+          if echo "$out" | grep -Eqi '410|ERR_PNPM_AUDIT_BAD_RESPONSE|endpoint is being retired|ECONNRESET|ETIMEDOUT|fetch failed'; then
+            echo "::warning::pnpm audit transport/API unavailable (npm audit endpoint retirement or network). Continuing; audit:wiring + CodeQL remain hard security gates."
+            exit 0
+          fi
+          echo "::error::pnpm audit reported high/critical advisories"
+          exit $code
 
       - name: ESLint check (no-console rule)
         run: pnpm exec eslint packages/core/src
