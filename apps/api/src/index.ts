@@ -19,7 +19,6 @@ import { ProjectMemoryStore } from './memoryStore';
 import { AgentStateStore } from './agentStateStore';
 import { MemoryIndexManager, DEFAULT_DOMAINS } from './memoryIndexManager';
 import { ProjectMemoryStoreAdapter } from './memoryStoreAdapter';
-import { EpisodicMemoryStore } from './episodicMemoryStore';
 import { ActionRationaleStore } from './actionRationale';
 import { ConfidenceReporter } from './confidenceReporter';
 import { createProjectRouter } from './projectEndpoints';
@@ -187,7 +186,6 @@ const memoryStore = new ProjectMemoryStore();
 const agentStateStore = new AgentStateStore();
 let memoryIndexManager: MemoryIndexManager | null = null;
 let projectMemoryAdapter: ProjectMemoryStoreAdapter | undefined;
-const episodicMemoryStore = new EpisodicMemoryStore();
 const actionRationaleStore = new ActionRationaleStore();
 const confidenceReporter = new ConfidenceReporter(actionRationaleStore);
 const agentCardRegistry = new AgentCardRegistry();
@@ -355,7 +353,6 @@ app.get('/ready', (_req, res) => {
     apiStore: apiStoreInstance ? 'ok' : 'fail',
     memoryStore: memoryStore ? 'ok' : 'fail',
     agentStateStore: agentStateStore ? 'ok' : 'fail',
-    episodicMemoryStore: episodicMemoryStore ? 'ok' : 'fail',
     memoryIndexManager: memoryIndexManager ? 'ok' : 'fail',
     confidenceReporter: confidenceReporter ? 'ok' : 'fail',
   };
@@ -409,7 +406,6 @@ app.get('/health/detailed', async (_req, res) => {
       apiStore: apiStoreInstance ? 'active' : 'inactive',
       memoryStore: memoryStore ? 'active' : 'inactive',
       agentStateStore: agentStateStore ? 'active' : 'inactive',
-      episodicMemoryStore: episodicMemoryStore ? 'active' : 'inactive',
       memoryIndexManager: memoryIndexManager ? 'active' : 'inactive',
       confidenceReporter: confidenceReporter ? 'active' : 'inactive',
       governance: checkpointManager
@@ -480,7 +476,6 @@ app.get('/system/status', (_req, res) => {
       apiStore: apiStoreInstance ? 'active' : 'inactive',
       memoryStore: memoryStore ? 'active' : 'inactive',
       agentStateStore: agentStateStore ? 'active' : 'inactive',
-      episodicMemoryStore: episodicMemoryStore ? 'active' : 'inactive',
       memoryIndexManager: memoryIndexManager ? 'active' : 'inactive',
       confidenceReporter: confidenceReporter ? 'active' : 'inactive',
     },
@@ -1191,13 +1186,6 @@ function gracefulShutdown(signal: string) {
       getWebhookDispatcher().stop();
     } catch (dispatcherErr) {
       process.stderr.write(`[shutdown] Failed to stop webhook dispatcher: ${dispatcherErr}\n`);
-    }
-
-    // Flush any pending state
-    try {
-      episodicMemoryStore['doPersist']?.();
-    } catch (persistErr) {
-      process.stderr.write(`[shutdown] Failed to persist episodic memory: ${persistErr}\n`);
     }
 
     // Close database connections (no-op for JSON store)

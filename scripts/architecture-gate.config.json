@@ -1,7 +1,12 @@
 {
   "$schema": "./architecture-gate.schema.json",
   "comment": "Legacy exceptions for Architecture V2 migration. New code must NOT be added to this list. Justifications: workerRuntimeAdapter.ts is the deliberate V1-to-V2 runtime bridge and is quarantined here while the strangler migration completes; esmCompat.ts/agentBenchmarkRunner.ts are API helpers, not public routes; workerRuntimeAdapter.ts uses an in-memory executor manifest validated at startup, not a production authority; apps/api/src/v2/v2BenchEndpoints.ts is an in-memory benchmark harness isolated from durable execution.",
-  "v2Packages": ["packages/kernel", "packages/worker-plane", "packages/effect-broker", "packages/contracts"],
+  "v2Packages": [
+    "packages/kernel",
+    "packages/worker-plane",
+    "packages/effect-broker",
+    "packages/contracts"
+  ],
   "forbiddenCoreImports": [
     "@commander/core",
     "@commander/core/runtime",
@@ -47,7 +52,6 @@
       "costEndpoints.ts",
       "dlqEndpoints.ts",
       "envSignal.ts",
-      "episodicMemoryStore.ts",
       "evalEndpoints.ts",
       "evaluation.ts",
       "evaluationEndpoints.ts",
@@ -150,7 +154,6 @@
       "costEndpoints.ts",
       "dlqEndpoints.ts",
       "envSignal.ts",
-      "episodicMemoryStore.ts",
       "evalEndpoints.ts",
       "evaluation.ts",
       "evaluationEndpoints.ts",
@@ -242,7 +245,6 @@
     "apps/api/src/consistencyMonitor.ts",
     "apps/api/src/costDashboardEndpoints.ts",
     "apps/api/src/dlqEndpoints.ts",
-    "apps/api/src/episodicMemoryStore.ts",
     "apps/api/src/evaluationRunner.ts",
     "apps/api/src/knowledgeStore.ts",
     "apps/api/src/lineageEndpoints.ts",

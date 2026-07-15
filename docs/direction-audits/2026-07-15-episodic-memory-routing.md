@@ -3,6 +3,7 @@
 **Date:** 2026-07-15  
 **Branch:** `p0/v2-kernel-e2e-closure`  
 **Decision:** **Proceed (strangler delete of apps/api store)** — not a merge of APIs  
+**Status:** Phase A **DONE** (health decouple + path-override tests no longer require module). Phase B delete of `apps/api/src/episodicMemoryStore.ts` + unit test **pending explicit user approval to delete those files**.  
 **Why not full merge:** the two classes are **different products** with incompatible contracts; apps/api copy is effectively a **health-only zombie**.
 
 ---
