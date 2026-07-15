@@ -198,6 +198,10 @@ The real ENFORCED layer today is `packages/core/tests/architecture/` (run via `p
 
 ## Change log
 
+- **2026-07-15 (iteration: more observability DRY)** — Collapsed additional near-verbatim
+  plugin observability modules to re-exports: decisionProvenance, executiveSummary,
+  experimentRunner, replay, timelineBuilder (ratio ≥0.998).
+
 - **2026-07-15 (iteration: prettier + observability DRY)** — Fixed Prettier on
   `modelRouter.ts` (CI Quality Gates was red after audit soft-continue). Collapsed
   12 verbatim-duplicate `plugins/builtin/observability/*` modules to re-exports of
