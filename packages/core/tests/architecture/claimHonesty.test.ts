@@ -21,4 +21,18 @@ describe('claim honesty', () => {
     );
     assert.match(head, /JSON file/i, 'header should describe actual JSON persistence');
   });
+
+  it('EventSourcingEngine header does not claim unconditional WAL durability', () => {
+    const path = join(ROOT, 'packages/core/src/runtime/eventSourcingEngine.ts');
+    assert.ok(existsSync(path));
+    const head = readFileSync(path, 'utf8').slice(0, 1200);
+    assert.match(head, /optional file WAL|in-memory only/i);
+    assert.doesNotMatch(
+      head,
+      /Event Sourcing Engine — WAL persistence with hash-chain integrity/,
+      'unconditional WAL claim was fixed 2026-07-15',
+    );
+    const body = readFileSync(path, 'utf8');
+    assert.match(body, /isDurable\(\): boolean/, 'must expose isDurable() for callers');
+  });
 });

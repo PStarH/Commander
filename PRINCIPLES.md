@@ -113,9 +113,9 @@ over the one implementation, not a new class. Count before/after on any change t
 above locked ceilings (methodology in that file). Honor-system remaining: lowering counts
 still requires human consolidation work; the guard only prevents growth.
 
-**Gap to close:** pick the V2 canonical for each row; next dedup targets are the
-dual `EpisodicMemoryStore` / dual `MemoryCurator` pairs; then add a count-guard
-test (locked grep methodology first) so these numbers can only go down.
+**Gap to close:** pick the V2 canonical for each row. Next dedup targets: dual
+`EpisodicMemoryStore` (core vs apps/api) and eventual merge of `MemoryCurator` +
+`TtlMemoryCurator` into one stack. Count-guard already ENFORCED (ceilings only).
 
 ---
 
@@ -134,9 +134,10 @@ test (locked grep methodology first) so these numbers can only go down.
   `RunLedger`/idempotency/checkpoint in SQLite-WAL (`atr/runLedger.ts:205`, `atr/checkpointStore.ts:9`),
   `atomicWrite` fsync-then-rename (`core/src/tools/_utils/atomicWrite.ts:14`; `apps/api/src/atomicWrite.ts:23-45`).
 - WEAK / FALSE claims:
-  - `EventSourcingEngine` advertises "WAL persistence with hash-chain integrity" but `walPath`
-    **defaults to null** → events live only in-memory unless explicitly configured
-    (`core/src/runtime/eventSourcingEngine.ts:78,303`).
+  - `EventSourcingEngine` constructor defaults `walPath=null` (in-memory). Singleton
+    `getGlobalEventSourcingEngine()` defaults to `.commander_state/event-sourcing.wal`
+    (or `COMMANDER_EVENT_SOURCING_WAL`). Header + `isDurable()` clarify optional WAL
+    (fixed 2026-07-15).
   - `apps/api` `EpisodicMemoryStore` is JSON + in-memory `Map`s (`episodicMemoryStore.ts` —
     header corrected 2026-07-15; still not SQLite/atomic). Parallel to core `memory/episodicStore.ts`.
   - `apps/api` `StateMachine` checkpoints use plain non-atomic `fs.writeFileSync`
@@ -149,8 +150,8 @@ test (locked grep methodology first) so these numbers can only go down.
   either a DSN or explicit `=0` because the image sets `NODE_ENV=production`.
   WarRoomStore remains the non-`/v1` mission store, not the `/v1` run authority.
 
-**Gap to close:** delete or fix the false "SQLite"/"WAL" labels; make `EventSourcingEngine`
-refuse to call itself durable when `walPath` is null; finish WarRoomStore demotion/removal.
+**Gap to close:** finish WarRoomStore demotion/removal as non-/v1 mission store only;
+keep claim-honesty guards green; prefer kernel event log over dual V1 event engines.
 
 ---
 
@@ -193,6 +194,12 @@ The real ENFORCED layer today is `packages/core/tests/architecture/` (run via `p
 ---
 
 ## Change log
+
+- **2026-07-15 (iteration: EventSourcingEngine WAL claim honesty)** — Clarified
+  optional WAL: constructor default is in-memory; singleton may default a file path.
+  Added `isDurable()` / `getWalPath()`. claimHonesty arch test guards the header.
+  §3 gap text no longer asks for count-guard (already ENFORCED) or dual MemoryCurator
+  same-name (renamed to TtlMemoryCurator).
 
 - **2026-07-15 (iteration: MemoryCurator naming disambiguation)** — Renamed TTL/expiry
   curator `memory/memoryCurator.ts` class to `TtlMemoryCurator` (was colliding with
