@@ -41,6 +41,14 @@ describe('orphan deletion guards', () => {
     );
   });
 
+  it('plugin autoScorer is a re-export (sample of collapsed duplicates)', () => {
+    const path = join(ROOT, 'packages/core/src/plugins/builtin/observability/autoScorer.ts');
+    assert.ok(existsSync(path));
+    const text = readFileSync(path, 'utf8');
+    assert.match(text, /from ['"]\.\.\/\.\.\/\.\.\/observability\/autoScorer['"]/);
+    assert.doesNotMatch(text, /^\s*export\s+class\s+AutoScorer\b/m);
+  });
+
   it('plugin DatasetStore is a re-export, not a second class declaration', () => {
     const path = join(ROOT, 'packages/core/src/plugins/builtin/observability/dataset.ts');
     assert.ok(existsSync(path));
