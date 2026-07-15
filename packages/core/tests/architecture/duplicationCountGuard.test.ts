@@ -40,11 +40,11 @@ const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '../../../..');
 /**
  * Live ceilings — locked 2026-07-15 methodology audit.
  * Never invent lower than live without a real deletion.
- * orchestrator=10, store=51, memory=19, stateMachine=6.
+ * orchestrator=10, store=49, memory=19, stateMachine=6.
  */
 const CEILINGS = {
   orchestrator: 10,
-  store: 51,
+  store: 49,
   memory: 19,
   stateMachine: 6,
 } as const;
