@@ -460,7 +460,7 @@ export class SupplyChainAttestor {
       try {
         privateKey = crypto.createPrivateKey(configuredKey);
         publicKeyPem = crypto
-          .createPublicKey(privateKey)
+          .createPublicKey(privateKey.export({ type: 'pkcs8', format: 'pem' }))
           .export({ type: 'spki', format: 'pem' })
           .toString();
       } catch (err) {
