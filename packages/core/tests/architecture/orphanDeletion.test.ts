@@ -60,4 +60,19 @@ describe('orphan deletion guards', () => {
     );
     assert.match(text, /from ['"]\.\.\/\.\.\/\.\.\/observability\/dataset['"]/);
   });
+
+  it('does not reintroduce apps/api episodicMemoryStore', () => {
+    assert.equal(
+      existsSync(join(ROOT, 'apps/api/src/episodicMemoryStore.ts')),
+      false,
+      'apps/api EpisodicMemoryStore was health-only zombie; deleted 2026-07-15 Phase B',
+    );
+  });
+
+  it('architecture-gate config no longer exempts episodicMemoryStore', () => {
+    const cfgPath = join(ROOT, 'scripts/architecture-gate.config.json');
+    assert.ok(existsSync(cfgPath));
+    const text = readFileSync(cfgPath, 'utf8');
+    assert.doesNotMatch(text, /episodicMemoryStore/);
+  });
 });
