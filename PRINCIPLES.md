@@ -134,8 +134,8 @@ test (locked grep methodology first) so these numbers can only go down.
   - `EventSourcingEngine` advertises "WAL persistence with hash-chain integrity" but `walPath`
     **defaults to null** → events live only in-memory unless explicitly configured
     (`core/src/runtime/eventSourcingEngine.ts:78,303`).
-  - `apps/api` `EpisodicMemoryStore` header claims "SQLite + Vector Index" but there is **no
-    `new Database`** — it's JSON + in-memory `Map`s (`episodicMemoryStore.ts:2-8` vs `:857,:106`).
+  - `apps/api` `EpisodicMemoryStore` is JSON + in-memory `Map`s (`episodicMemoryStore.ts` —
+    header corrected 2026-07-15; still not SQLite/atomic). Parallel to core `memory/episodicStore.ts`.
   - `apps/api` `StateMachine` checkpoints use plain non-atomic `fs.writeFileSync`
     (`stateMachine.ts:169,198`).
 - (2) **HOLDS for `/v1` durable path (as of 2026-07-15):** kernel defaults ON in production,
@@ -190,6 +190,11 @@ The real ENFORCED layer today is `packages/core/tests/architecture/` (run via `p
 ---
 
 ## Change log
+
+- **2026-07-15 (iteration: claim honesty — api EpisodicMemoryStore)** — Corrected false
+  "SQLite + Vector Index" file header on `apps/api/src/episodicMemoryStore.ts`. Implementation
+  remains JSON + in-memory Maps (not durable SQLite). Dual store vs core still EXISTS+WIRED;
+  consolidation deferred (apps/api/src/index.ts still constructs it).
 
 - **2026-07-15 (iteration: orphan allocator delete)** — Deleted dead
   `apps/api/src/deterministicTaskAllocator.ts` (484 LOC) after adversarial verify:
