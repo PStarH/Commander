@@ -34,11 +34,23 @@ import {
   generateWeeklyGovernanceReport,
 } from './governanceObserver';
 
+export interface CreateProjectRouterOptions {
+  /**
+   * When true, only GET (read-only) routes are mounted. Used for the /v1
+   * enterprise surface (spec WS3 §5.1) where WarRoom is demoted to a
+   * read-only ops panel — POST/PATCH endpoints are omitted entirely so
+   * they 404 rather than being reachable.
+   */
+  readOnly?: boolean;
+}
+
 export function createProjectRouter(
   store: IWarRoomStore,
   memoryStore: ProjectMemoryStore,
   agentStateStore: AgentStateStore,
+  options?: CreateProjectRouterOptions,
 ): Router {
+  const readOnly = options?.readOnly ?? false;
   const router = Router();
 
   router.get('/projects', (_req, res) => {
@@ -69,6 +81,7 @@ export function createProjectRouter(
     res.json(state);
   });
 
+  if (!readOnly) {
   router.patch('/projects/:projectId/agents/:agentId/state', (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
     if (!snapshot) {
@@ -96,6 +109,7 @@ export function createProjectRouter(
       res.status(400).json({ error: toErrorMessage(error) });
     }
   });
+  }
 
   router.get('/projects/:projectId/war-room', (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
@@ -263,6 +277,7 @@ export function createProjectRouter(
     res.json(items);
   });
 
+  if (!readOnly) {
   router.post('/projects/:projectId/missions', (req, res) => {
     const { title, objective, assignedAgentId, priority, riskLevel, governanceMode } =
       req.body as Record<string, string | undefined>;
@@ -443,6 +458,7 @@ export function createProjectRouter(
       res.status(mapErrorToStatusCode(error)).json({ error: toErrorMessage(error) });
     }
   });
+  }
 
   router.get('/projects/:projectId/governance/stats', (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
