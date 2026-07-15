@@ -1,20 +1,15 @@
 /**
- * Autonomous Memory Curator
+ * Memory Curator — single stack for TTL expiry + autonomous quality curation.
  *
- * Self-managing memory system that autonomously curates, promotes, and prunes
- * memories based on usage patterns, importance signals, and decay. Inspired by
- * Hermes Agent's "closed learning loop" where the agent decides what to persist.
+ * Merges the former dual stack:
+ * - TtlMemoryCurator (timer / deleteExpired / long-term inactivity decay)
+ * - autonomous curator (importance, promotion, duplicate merge, contradictions)
  *
- * Key behaviors:
- * - Importance re-evaluation based on access frequency and recency
- * - Decay-based eviction for episodic memories
- * - Duplicate detection and merging
- * - Layer promotion (episodic → long-term based on access patterns)
- * - Contradiction detection and resolution
- * - Periodic summarization of old memories
- * - Auto-tagging based on content analysis
- *
- * Runs as a background process triggered after N memory writes or on a timer.
+ * Trigger modes:
+ * - Write-driven: onWrite() after N writes (UnifiedMemory)
+ * - Explicit: curate() full cycle
+ * - Lightweight TTL: runForProject() (deleteExpired + optional long-term decay)
+ * - Periodic timer: start() / stop() / close() (ThreeLayerMemory)
  */
 
 import { getGlobalLogger } from '../logging';
@@ -25,15 +20,15 @@ import type { MemoryStore, EpisodicMemoryItem } from '../episodicMemory';
 // ============================================================================
 
 export interface CuratorConfig {
-  /** Run curation after this many writes */
+  /** Run full curation after this many writes (autonomous path) */
   curationInterval: number;
   /** Minimum similarity score to consider duplicates (0-1) */
   duplicateThreshold: number;
   /** Access count threshold for promotion to long-term */
   promotionAccessThreshold: number;
-  /** Days before episodic memories are eviction candidates */
+  /** Days before episodic memories are eviction candidates (policy hint) */
   episodicTtlDays: number;
-  /** Maximum memories to process per curation run */
+  /** Maximum memories to process per full curation run */
   batchSize: number;
   /** Enable automatic contradiction detection */
   detectContradictions: boolean;
@@ -41,6 +36,12 @@ export interface CuratorConfig {
   reEvaluateImportance: boolean;
   /** Enable automatic duplicate merging */
   mergeDuplicates: boolean;
+  /** Periodic timer interval in ms (default: 5 minutes) */
+  intervalMs: number;
+  /** Whether to decay long-term memories based on lastAccessedAt */
+  enableLongTermDecay: boolean;
+  /** Long-term memory inactivity threshold in days (default: 90) */
+  longTermInactivityDays: number;
 }
 
 export interface CurationResult {
@@ -65,34 +66,119 @@ export interface CuratorMemoryItem extends EpisodicMemoryItem {
 // Default Config
 // ============================================================================
 
-const DEFAULT_CURATOR_CONFIG: CuratorConfig = {
-  curationInterval: 50, // Run every 50 writes
-  duplicateThreshold: 0.85, // 85% similarity = duplicate
-  promotionAccessThreshold: 5, // 5+ accesses promotes to long-term
-  episodicTtlDays: 14, // 14 days for episodic memories
+export const DEFAULT_CURATOR_CONFIG: CuratorConfig = {
+  curationInterval: 50,
+  duplicateThreshold: 0.85,
+  promotionAccessThreshold: 5,
+  episodicTtlDays: 14,
   batchSize: 200,
   detectContradictions: true,
   reEvaluateImportance: true,
   mergeDuplicates: true,
+  intervalMs: 5 * 60 * 1000,
+  enableLongTermDecay: true,
+  longTermInactivityDays: 90,
 };
 
+/** @deprecated Use DEFAULT_CURATOR_CONFIG */
+export const DEFAULT_TTL_CURATOR_CONFIG = DEFAULT_CURATOR_CONFIG;
+
+/** @deprecated Use CuratorConfig */
+export type TtlMemoryCuratorConfig = CuratorConfig;
+
 // ============================================================================
-// Autonomous Memory Curator
+// Memory Curator (single stack)
 // ============================================================================
+
+function isMemoryStore(value: unknown): value is MemoryStore {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as MemoryStore).deleteExpired === 'function' &&
+    typeof (value as MemoryStore).search === 'function'
+  );
+}
 
 export class MemoryCurator {
   private config: CuratorConfig;
+  private store: MemoryStore | null = null;
   private writeCount = 0;
   private lastCuration: CurationResult | null = null;
   private running = false;
+  private timer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(config?: Partial<CuratorConfig>) {
-    this.config = { ...DEFAULT_CURATOR_CONFIG, ...config };
+  /**
+   * @param storeOrConfig Optional bound MemoryStore (ThreeLayer style) or config
+   * @param config Optional config when first arg is a store
+   */
+  constructor(storeOrConfig?: MemoryStore | Partial<CuratorConfig>, config?: Partial<CuratorConfig>) {
+    if (isMemoryStore(storeOrConfig)) {
+      this.store = storeOrConfig;
+      this.config = { ...DEFAULT_CURATOR_CONFIG, ...config };
+    } else {
+      this.config = { ...DEFAULT_CURATOR_CONFIG, ...storeOrConfig };
+    }
+  }
+
+  /** Bind or replace the store used by TTL/timer paths. */
+  setStore(store: MemoryStore | null): void {
+    this.store = store;
+  }
+
+  // --------------------------------------------------------------------------
+  // TTL / lightweight path (former TtlMemoryCurator)
+  // --------------------------------------------------------------------------
+
+  /**
+   * Run TTL sweep for a project: deleteExpired + optional long-term inactivity decay.
+   * Returns number of removed records.
+   */
+  async runForProject(projectId: string, store?: MemoryStore): Promise<number> {
+    const s = this.resolveStore(store);
+    let removed = await s.deleteExpired(projectId);
+
+    if (this.config.enableLongTermDecay) {
+      removed += await this.applyLongTermDecay(s, projectId);
+    }
+
+    return removed;
   }
 
   /**
-   * Called after each memory write. Triggers curation when threshold is reached.
-   * This is the "autonomous nudge" — the system decides when to curate.
+   * Start periodic tick. If onTick is omitted and a store is bound, the tick
+   * is a no-op shell (callers should pass onTick that invokes runForProject per
+   * project — stores do not expose list-all-projects).
+   */
+  start(onTick?: (curator: MemoryCurator) => Promise<void> | void): void {
+    if (this.timer) return;
+    this.timer = setInterval(async () => {
+      try {
+        if (onTick) {
+          await onTick(this);
+        }
+      } catch {
+        // Silent best-effort periodic cleanup. Errors should be logged by caller.
+      }
+    }, this.config.intervalMs);
+  }
+
+  stop(): void {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+  }
+
+  close(): void {
+    this.stop();
+  }
+
+  // --------------------------------------------------------------------------
+  // Autonomous path (write-driven + full cycle)
+  // --------------------------------------------------------------------------
+
+  /**
+   * Called after each memory write. Triggers full curation when threshold is reached.
    */
   async onWrite(store: MemoryStore, projectId: string): Promise<CurationResult | null> {
     this.writeCount++;
@@ -103,8 +189,8 @@ export class MemoryCurator {
   }
 
   /**
-   * Run a full curation cycle on the memory store.
-   * Can be called explicitly or triggered automatically by onWrite().
+   * Full curation cycle: TTL eviction, long-term decay, importance, promotion,
+   * duplicate merge, contradiction detection.
    */
   async curate(store: MemoryStore, projectId: string): Promise<CurationResult> {
     if (this.running) {
@@ -128,8 +214,8 @@ export class MemoryCurator {
     try {
       getGlobalLogger().info('MemoryCurator', 'Starting curation cycle', { projectId });
 
-      // Step 1: Evict expired episodic memories
-      result.evicted = await this.evictExpired(store, projectId);
+      // Step 1: TTL expiry + optional long-term inactivity decay
+      result.evicted = await this.runForProject(projectId, store);
 
       // Step 2: Re-evaluate importance based on access patterns
       if (this.config.reEvaluateImportance) {
@@ -176,9 +262,6 @@ export class MemoryCurator {
     }
   }
 
-  /**
-   * Get the last curation result.
-   */
   getLastCuration(): CurationResult | null {
     return this.lastCuration;
   }
@@ -187,26 +270,28 @@ export class MemoryCurator {
   // Curation Steps
   // --------------------------------------------------------------------------
 
-  /**
-   * Evict expired episodic memories.
-   */
-  private async evictExpired(store: MemoryStore, projectId: string): Promise<number> {
-    return store.deleteExpired(projectId);
+  private async applyLongTermDecay(store: MemoryStore, projectId: string): Promise<number> {
+    const threshold = new Date(
+      Date.now() - this.config.longTermInactivityDays * 24 * 60 * 60 * 1000,
+    ).toISOString();
+
+    const result = await store.search({
+      projectId,
+      minPriority: 0,
+      limit: this.config.batchSize > 0 ? Math.max(this.config.batchSize, 10000) : 10000,
+    });
+
+    let removed = 0;
+    for (const item of result.items) {
+      if (item.duration === 'LONG_TERM' && item.lastAccessedAt < threshold) {
+        await store.delete(item.id, projectId);
+        removed++;
+      }
+    }
+
+    return removed;
   }
 
-  /**
-   * Re-evaluate importance scores based on multi-factor analysis.
-   *
-   * Factors:
-   * - Recency of access: recently accessed = boost, stale = decay
-   * - Age of memory: older memories with low access get faster decay
-   * - Kind weighting: LESSON and DECISION memories are more resilient
-   * - Confidence: high-confidence memories resist decay
-   *
-   * This implements a more sophisticated importance model than simple
-   * access-count-based promotion, similar to how Generative Agents
-   * handles memory importance over time.
-   */
   private async reEvaluateImportance(store: MemoryStore, projectId: string): Promise<number> {
     let adjusted = 0;
 
@@ -224,7 +309,6 @@ export class MemoryCurator {
 
       let newPriority = item.priority;
 
-      // Factor 1: Recency-based adjustment
       if (daysSinceAccess < 1) {
         newPriority = Math.min(100, item.priority + 5);
       } else if (daysSinceAccess < 3) {
@@ -237,20 +321,16 @@ export class MemoryCurator {
         newPriority = Math.max(0, item.priority - 5);
       }
 
-      // Factor 2: Kind-based resilience (LESSON and DECISION resist decay)
       if (item.kind === 'LESSON' || item.kind === 'DECISION') {
-        // These memories are more valuable — reduce decay by 50%
         if (newPriority < item.priority) {
           newPriority = item.priority - Math.round((item.priority - newPriority) * 0.5);
         }
       }
 
-      // Factor 3: High-confidence memories resist decay
       if (item.confidence >= 0.9 && newPriority < item.priority) {
         newPriority = item.priority - Math.round((item.priority - newPriority) * 0.7);
       }
 
-      // Factor 4: Old memories with no recent access get accelerated decay
       if (daysSinceCreation > 60 && daysSinceAccess > 14) {
         newPriority = Math.max(0, newPriority - 5);
       }
@@ -268,10 +348,6 @@ export class MemoryCurator {
     return adjusted;
   }
 
-  /**
-   * Promote frequently-accessed episodic memories to long-term.
-   * This is the key "learning" behavior — the system recognizes valuable memories.
-   */
   private async promoteAccessed(store: MemoryStore, projectId: string): Promise<number> {
     let promoted = 0;
 
@@ -281,28 +357,23 @@ export class MemoryCurator {
     });
 
     for (const item of result.items) {
-      // Only promote episodic memories
       if (item.duration !== 'EPISODIC') continue;
 
-      // Check if accessed enough times to warrant promotion
-      // We approximate access count from the time since creation and last access frequency
       const createdAt = new Date(item.createdAt).getTime();
       const lastAccess = new Date(item.lastAccessedAt).getTime();
       const ageDays = (Date.now() - createdAt) / (1000 * 60 * 60 * 24);
       const recencyDays = (Date.now() - lastAccess) / (1000 * 60 * 60 * 24);
 
-      // High-priority + recently accessed = promote
       if (item.priority >= 80 && recencyDays < 3 && ageDays > 1) {
         await store.update({
           id: item.id,
           projectId,
           updates: {
-            expiresAt: undefined, // Remove expiration for long-term
+            expiresAt: undefined,
           },
         });
         promoted++;
       } else if ((item.kind === 'LESSON' || item.kind === 'DECISION') && item.confidence >= 0.9) {
-        // High-confidence lessons and decisions are always worth promoting
         await store.update({
           id: item.id,
           projectId,
@@ -317,10 +388,6 @@ export class MemoryCurator {
     return promoted;
   }
 
-  /**
-   * Detect and merge duplicate memories.
-   * Uses content similarity (token overlap) to find duplicates.
-   */
   private async mergeDuplicates(store: MemoryStore, projectId: string): Promise<number> {
     let merged = 0;
 
@@ -348,24 +415,19 @@ export class MemoryCurator {
       }
 
       if (duplicates.length > 1) {
-        // Keep the highest-priority item, merge metadata from others
         duplicates.sort((a, b) => b.priority - a.priority);
         const keeper = duplicates[0];
         const toMerge = duplicates.slice(1);
 
-        // Merge tags and evidence refs
         const allTags = new Set(keeper.tags);
-        const allEvidence = new Set(keeper.evidenceRefs ?? []);
         let maxConfidence = keeper.confidence;
 
         for (const dup of toMerge) {
           dup.tags.forEach((t: string) => allTags.add(t));
-          (dup.evidenceRefs ?? []).forEach((e: string) => allEvidence.add(e));
           maxConfidence = Math.max(maxConfidence, dup.confidence);
           processed.add(dup.id);
         }
 
-        // Update keeper with merged data
         await store.update({
           id: keeper.id,
           projectId,
@@ -375,7 +437,6 @@ export class MemoryCurator {
           },
         });
 
-        // Delete duplicates
         for (const dup of toMerge) {
           await store.delete(dup.id, projectId);
           merged++;
@@ -388,10 +449,6 @@ export class MemoryCurator {
     return merged;
   }
 
-  /**
-   * Detect contradictions between memories.
-   * Flag memories that contradict each other for review.
-   */
   private async detectContradictions(store: MemoryStore, projectId: string): Promise<number> {
     let contradictions = 0;
 
@@ -403,16 +460,12 @@ export class MemoryCurator {
 
     const decisions = result.items;
 
-    // Compare decisions with same tags for contradictions
     for (let i = 0; i < decisions.length; i++) {
       for (let j = i + 1; j < decisions.length; j++) {
-        // Only check decisions with overlapping tags
         const sharedTags = decisions[i].tags.filter((t) => decisions[j].tags.includes(t));
         if (sharedTags.length === 0) continue;
 
-        // Check for negation patterns
         if (this.detectNegation(decisions[i].content, decisions[j].content)) {
-          // Lower confidence on the older/less-priority one
           const older =
             new Date(decisions[i].createdAt) < new Date(decisions[j].createdAt)
               ? decisions[i]
@@ -438,9 +491,14 @@ export class MemoryCurator {
   // Helpers
   // --------------------------------------------------------------------------
 
-  /**
-   * Calculate text similarity using token overlap (Jaccard index).
-   */
+  private resolveStore(store?: MemoryStore): MemoryStore {
+    const s = store ?? this.store;
+    if (!s) {
+      throw new Error('MemoryCurator: no MemoryStore bound; pass store or construct with one');
+    }
+    return s;
+  }
+
   private calculateSimilarity(a: string, b: string): number {
     const tokensA = new Set(this.tokenize(a));
     const tokensB = new Set(this.tokenize(b));
@@ -456,9 +514,6 @@ export class MemoryCurator {
     return union > 0 ? intersection / union : 0;
   }
 
-  /**
-   * Tokenize text for similarity comparison.
-   */
   private tokenize(text: string): string[] {
     return text
       .toLowerCase()
@@ -467,10 +522,6 @@ export class MemoryCurator {
       .filter((w) => w.length > 2);
   }
 
-  /**
-   * Detect if two texts contradict each other.
-   * Simple heuristic: look for negation patterns near similar content.
-   */
   private detectNegation(a: string, b: string): boolean {
     const negationWords = [
       'not',
@@ -494,10 +545,9 @@ export class MemoryCurator {
     const hasNegA = tokensA.some((t) => negationWords.includes(t));
     const hasNegB = tokensB.some((t) => negationWords.includes(t));
 
-    // One has negation, the other doesn't, and they share significant content
     if (hasNegA !== hasNegB) {
       const similarity = this.calculateSimilarity(a, b);
-      return similarity > 0.5; // High similarity + different negation = contradiction
+      return similarity > 0.5;
     }
 
     return false;
@@ -531,8 +581,13 @@ export class MemoryCurator {
   }
 }
 
+/** @deprecated Use MemoryCurator — kept for one transition window after Ttl merge. */
+export const TtlMemoryCurator = MemoryCurator;
+/** @deprecated Use MemoryCurator */
+export type TtlMemoryCurator = MemoryCurator;
+
 // ============================================================================
-// Singleton
+// Singleton (UnifiedMemory write-driven path)
 // ============================================================================
 
 let globalCurator: MemoryCurator | null = null;
@@ -542,4 +597,10 @@ export function getMemoryCurator(config?: Partial<CuratorConfig>): MemoryCurator
     globalCurator = new MemoryCurator(config);
   }
   return globalCurator;
+}
+
+/** Test helper: reset singleton between suites. */
+export function resetMemoryCurator(): void {
+  globalCurator?.close();
+  globalCurator = null;
 }

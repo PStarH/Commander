@@ -21,7 +21,7 @@ import { ThompsonMemoryScorer } from './memory/thompsonMemoryScorer.js';
 // bundle clean. The value-side MemoryStore dependency is injected via
 // constructor or setMemoryStore(); see mapMemoryEntryToWriteOptions.
 import type { MemoryStore, MemoryWriteOptions, MemoryKind } from './episodicMemory';
-import { TtlMemoryCurator } from './memory/memoryCurator';
+import { MemoryCurator } from './memory/curator';
 import type { MemoryManagerAgent, MemoryObservation } from './memory/memoryManagerAgent';
 import { getGlobalSemanticMemoryStore } from './memory/semanticStore';
 import { getGlobalEpisodicStore } from './memory/episodicStore';
@@ -146,8 +146,8 @@ export class ThreeLayerMemory {
   private thompsonScorer: ThompsonMemoryScorer;
   /** Optional persistent sink for non-working layers (audit MED item 1 Phase A) */
   private memoryStore: MemoryStore | null = null;
-  /** TTL / decay curator for wired memoryStore (audit MED item 1 Phase D) */
-  private memoryCurator: TtlMemoryCurator | null = null;
+  /** TTL / decay curator for wired memoryStore (single MemoryCurator stack) */
+  private memoryCurator: MemoryCurator | null = null;
   /** Optional active memory manager agent for autonomous store/retrieve/update/summarize/discard (P1). */
   private memoryManagerAgent: MemoryManagerAgent | null = null;
   /**
@@ -270,7 +270,7 @@ export class ThreeLayerMemory {
    * `persistPath` legacy JSON file.
    *
    * Pre-condition (audit MED item 1 Phase D): once wired, callers MUST
-   * also bootstrap a TTL curator (TtlMemoryCurator.deleteExpired) before
+   * also bootstrap a TTL curator (MemoryCurator.runForProject / deleteExpired) before
    * long-running workloads hit `add()`. `applyTimeDecay` suppresses its
    * own in-memory deletion when a store is wired; decayScore→0 entries
    * therefore persist in memoryStore indefinitely until the curator runs.
@@ -280,11 +280,11 @@ export class ThreeLayerMemory {
   setMemoryStore(store: MemoryStore | null): void {
     this.memoryStore = store;
 
-    // Lifecycle management for the TTL curator (audit MED item 1 Phase D).
+    // Lifecycle management for the TTL path of MemoryCurator.
     // When a store is wired we start a curator instance; when the store is
     // removed we clean up the interval to avoid leaking timers.
     if (store && !this.memoryCurator) {
-      this.memoryCurator = new TtlMemoryCurator(store);
+      this.memoryCurator = new MemoryCurator(store);
       this.memoryCurator.start();
     } else if (!store && this.memoryCurator) {
       this.memoryCurator.close();
@@ -996,7 +996,7 @@ export class ThreeLayerMemory {
   /**
    * 应用时间衰减 (定时调用)
    *
-   * Phase B (audit MED item 1): when a `memoryStore` is wired, TtlMemoryCurator
+   * Phase B (audit MED item 1): when a `memoryStore` is wired, MemoryCurator
    * owns TTL-based eviction of the persistent layer via `deleteExpired`.
    * The in-memory shard keeps the row as a score-only lookup and the
    * `decayScore` field continues to drive activation scoring via
