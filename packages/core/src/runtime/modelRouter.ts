@@ -635,8 +635,8 @@ function isSensitiveContext(ctx: AgentExecutionContext): boolean {
           ? String((t as { name?: unknown }).name ?? '')
           : typeof t === 'object' && t !== null && 'definition' in t
             ? String(
-                ((t as { definition?: { name?: unknown } }).definition?.name as string | undefined) ??
-                  '',
+                ((t as { definition?: { name?: unknown } }).definition?.name as
+                  string | undefined) ?? '',
               )
             : '';
     if (!name) return false;
