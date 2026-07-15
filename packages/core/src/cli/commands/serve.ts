@@ -82,14 +82,13 @@ export async function cmdServe(args: string[]): Promise<void> {
       `  ${$.green}✓${$.reset} Server listening on ${$.cyan}http://${host}:${port}${$.reset}`,
     );
     console.log(`  ${$.green}✓${$.reset} API endpoints:`);
-    console.log(`    ${$.dim}POST /api/v1/execute   — Execute agent task${$.reset}`);
-    console.log(`    ${$.dim}POST /api/v1/plan      — Zero-cost deliberation${$.reset}`);
-    console.log(`    ${$.dim}POST /api/v1/memory    — Memory operations${$.reset}`);
-    console.log(`    ${$.dim}GET  /api/v1/status    — System status${$.reset}`);
-    console.log(`    ${$.dim}GET  /stream?id=...    — SSE event stream${$.reset}`);
-    console.log(`    ${$.dim}GET  /health           — Health check${$.reset}`);
+    console.log(`    ${$.dim}POST /v1/runs          — Submit durable agent run (enterprise entry)${$.reset}`);
+    console.log(`    ${$.dim}GET  /v1/runs/:id      — Query run status${$.reset}`);
+    console.log(`    ${$.dim}GET  /v1/openapi.json  — OpenAPI 3.1 spec (auto-generated)${$.reset}`);
+    console.log(`    ${$.dim}GET  /v1/health         — /v1 subtree health${$.reset}`);
+    console.log(`    ${$.dim}GET  /health           — Process liveness${$.reset}`);
+    console.log(`    ${$.dim}GET  /ready            — Readiness (real dep probes)${$.reset}`);
     console.log(`    ${$.dim}GET  /metrics          — Prometheus metrics${$.reset}`);
-    console.log(`    ${$.dim}GET  /openapi.json     — OpenAPI 3.0 spec${$.reset}`);
     console.log();
     console.log(`  ${$.green}✓${$.reset} Security components activated:`);
     console.log(
