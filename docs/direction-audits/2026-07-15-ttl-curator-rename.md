@@ -1,23 +1,27 @@
-# Direction Audit — Dual MemoryCurator
+# Direction Audit — Dual MemoryCurator → merged
 
 **Date:** 2026-07-15  
-**Full merge/delete:** **Defer** (both WIRED, different APIs)  
-**Proceed:** rename TTL curator → `TtlMemoryCurator` (§5 naming)
+**Status:** **DONE** (true merge)
 
-## Evidence
+## Outcome
 
-| Class | Path | Wired by |
-|---|---|---|
-| `MemoryCurator` (autonomous) | `packages/core/src/memory/curator.ts` | `UnifiedMemory` via `getMemoryCurator` |
-| `TtlMemoryCurator` (TTL) | `packages/core/src/memory/memoryCurator.ts` | `ThreeLayerMemory` |
+| Before | After |
+|---|---|
+| `MemoryCurator` (autonomous) in `memory/curator.ts` | **Single** `MemoryCurator` in `memory/curator.ts` |
+| `TtlMemoryCurator` (TTL) in `memory/memoryCurator.ts` | Alias only (`const TtlMemoryCurator = MemoryCurator`); file is re-export shim |
+
+## Capabilities on one class
+
+- `runForProject` / `start` / `stop` / `close` — TTL + long-term inactivity decay
+- `onWrite` / `curate` / `getLastCuration` — full autonomous cycle (TTL first)
 
 ## DoD
 
-1. Product code uses `TtlMemoryCurator` for TTL path
-2. Deprecated aliases keep one transition window
-3. memoryCurator tests green
-4. count-guard still green
+1. Product code uses one curator class for both paths
+2. Deprecated `TtlMemoryCurator` aliases for one transition window
+3. memoryCurator + curator tests green
+4. count-guard memory ceiling 19→18 green
 
 ## Residual
 
-True consolidation (one curator stack) still open.
+None for this pair. Next memory dedup: dual `EpisodicMemoryStore` (core vs apps/api).

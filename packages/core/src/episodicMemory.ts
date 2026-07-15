@@ -567,9 +567,11 @@ export {
   fromProjectMemoryItem,
   toProjectMemoryItem,
 } from './memory/utils';
+// Single curator stack lives in memory/curator.ts (TTL + autonomous merged).
 export {
-  TtlMemoryCurator,
-  DEFAULT_TTL_CURATOR_CONFIG,
-  MemoryCurator, // @deprecated alias of TtlMemoryCurator
-  DEFAULT_CURATOR_CONFIG, // @deprecated alias of DEFAULT_TTL_CURATOR_CONFIG
-} from './memory/memoryCurator';
+  MemoryCurator,
+  getMemoryCurator,
+  DEFAULT_CURATOR_CONFIG,
+  TtlMemoryCurator, // @deprecated alias of MemoryCurator
+  DEFAULT_TTL_CURATOR_CONFIG, // @deprecated alias of DEFAULT_CURATOR_CONFIG
+} from './memory/curator';

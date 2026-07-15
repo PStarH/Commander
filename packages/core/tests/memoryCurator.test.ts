@@ -1,14 +1,18 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { InMemoryMemoryStore } from '../src/memory';
-import { TtlMemoryCurator } from '../src/memory/memoryCurator';
+import { MemoryCurator } from '../src/memory/curator';
 
-describe('TtlMemoryCurator', () => {
+describe('MemoryCurator TTL path (merged stack)', () => {
   let store: InMemoryMemoryStore;
-  let curator: TtlMemoryCurator;
+  let curator: MemoryCurator;
 
   beforeEach(() => {
     store = new InMemoryMemoryStore();
-    curator = new TtlMemoryCurator(store);
+    curator = new MemoryCurator(store);
+  });
+
+  afterEach(() => {
+    curator.close();
   });
 
   it('deletes expired episodic memories', async () => {
@@ -21,7 +25,6 @@ describe('TtlMemoryCurator', () => {
       duration: 'EPISODIC',
     });
 
-    // Force expiresAt into the past
     await store.update({
       id: item.id,
       projectId: 'p1',
@@ -64,10 +67,11 @@ describe('TtlMemoryCurator', () => {
       updates: { lastAccessedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 120).toISOString() },
     });
 
-    const customCurator = new TtlMemoryCurator(store, { longTermInactivityDays: 90 });
+    const customCurator = new MemoryCurator(store, { longTermInactivityDays: 90 });
     const removed = await customCurator.runForProject('p1');
     expect(removed).toBe(1);
     expect(await store.read(item.id, 'p1')).toBeNull();
+    customCurator.close();
   });
 
   it('only affects the targeted project', async () => {
@@ -98,5 +102,25 @@ describe('TtlMemoryCurator', () => {
     expect(removed).toBe(1);
     expect(await store.read(p1Item.id, 'p1')).toBeNull();
     expect(await store.read(p2Item.id, 'p2')).not.toBeNull();
+  });
+
+  it('full curate includes TTL eviction in CurationResult.evicted', async () => {
+    const item = await store.write({
+      projectId: 'p1',
+      kind: 'LESSON',
+      title: 'expired',
+      content: 'expired content',
+      tags: [],
+      duration: 'EPISODIC',
+    });
+    await store.update({
+      id: item.id,
+      projectId: 'p1',
+      updates: { expiresAt: new Date(Date.now() - 1000).toISOString() },
+    });
+
+    const result = await curator.curate(store, 'p1');
+    expect(result.evicted).toBeGreaterThanOrEqual(1);
+    expect(await store.read(item.id, 'p1')).toBeNull();
   });
 });
