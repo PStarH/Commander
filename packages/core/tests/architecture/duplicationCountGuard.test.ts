@@ -22,7 +22,7 @@
  * - store:        `export class \w*(Store|Repository)`
  * - memory:       fixed allowlist of product memory-system class names
  *                 (not every helper under memory/; path-walk is 24–32 and is
- *                 NOT the locked definition — PRINCIPLES “memory system 19”
+ *                 NOT the locked definition — PRINCIPLES “memory system 18”
  *                 matches this allowlist exactly)
  * - stateMachine: `export class \w*StateMachine` + RUN_TRANSITIONS +
  *                 STEP_TRANSITIONS const tables in contracts
@@ -40,12 +40,13 @@ const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '../../../..');
 /**
  * Live ceilings — locked 2026-07-15 methodology audit.
  * Never invent lower than live without a real deletion.
- * orchestrator=10, store=49, memory=19, stateMachine=6.
+ * orchestrator=10, store=49, memory=18, stateMachine=6.
+ * memory 19→18: TtlMemoryCurator merged into MemoryCurator (2026-07-15).
  */
 const CEILINGS = {
   orchestrator: 10,
   store: 49,
-  memory: 19,
+  memory: 18,
   stateMachine: 6,
 } as const;
 
@@ -75,7 +76,7 @@ const STORE_RE = /^\s*export\s+class\s+(\w*(?:Store|Repository))\b/gm;
  * non-memory doubles, ProjectMemoryStoreAdapter.
  */
 const MEMORY_RE =
-  /^\s*export\s+class\s+(UnifiedMemory|ThreeLayerMemory|MemorySystem|MemoryCurator|TtlMemoryCurator|MemoryIndexManager|ProjectMemoryStore|NamespacedMemoryStore|EpisodicMemoryStore|ConversationStore|SemanticMemoryStore|ProceduralMemoryStore|MemoryFederation|MemoryManagerAgent|MemoryQualityGate|CrossModelMemory|JsonMemoryStore|SqliteMemoryStore)\b/gm;
+  /^\s*export\s+class\s+(UnifiedMemory|ThreeLayerMemory|MemorySystem|MemoryCurator|MemoryIndexManager|ProjectMemoryStore|NamespacedMemoryStore|EpisodicMemoryStore|ConversationStore|SemanticMemoryStore|ProceduralMemoryStore|MemoryFederation|MemoryManagerAgent|MemoryQualityGate|CrossModelMemory|JsonMemoryStore|SqliteMemoryStore)\b/gm;
 
 /** 4a) State machine classes */
 const SM_CLASS_RE = /^\s*export\s+class\s+(\w*StateMachine)\b/gm;

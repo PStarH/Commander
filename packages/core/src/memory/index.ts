@@ -29,9 +29,20 @@ export type {
   ConversationStoreConfig,
 } from './conversationStore';
 
-// Autonomous memory curation
-export { MemoryCurator, getMemoryCurator } from './curator';
-export type { CuratorConfig, CurationResult, CuratorMemoryItem } from './curator';
+// Memory curation (TTL expiry + autonomous quality — single stack)
+export {
+  MemoryCurator,
+  getMemoryCurator,
+  DEFAULT_CURATOR_CONFIG,
+  TtlMemoryCurator, // @deprecated alias
+  DEFAULT_TTL_CURATOR_CONFIG, // @deprecated alias
+} from './curator';
+export type {
+  CuratorConfig,
+  CurationResult,
+  CuratorMemoryItem,
+  TtlMemoryCuratorConfig, // @deprecated alias
+} from './curator';
 
 // User modeling and personalization
 export { UserModelManager, getUserModelManager } from './userModel';

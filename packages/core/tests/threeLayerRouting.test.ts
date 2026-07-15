@@ -391,7 +391,7 @@ describe('threeLayerMemory.add() routes to MemoryStore (Phase A)', () => {
 
     const evicted = m.applyTimeDecay(150); // ~150h * 0.00994 ≈ 1.49 drop > 1.0
 
-    // MemoryCurator owns TTL via deleteExpired. Three-layer doesn't delete.
+    // MemoryCurator (single stack) owns TTL via deleteExpired. Three-layer doesn't delete.
     expect(evicted).toBe(0);
     expect(m.getAll()).toHaveLength(1);
     expect(deletes).toHaveLength(0);
