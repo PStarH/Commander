@@ -820,7 +820,9 @@ export class FederatedIdentity {
         const pad = (4 - (rawSig.length % 4)) % 4;
         const signature = Buffer.from(rawSig + '='.repeat(pad), 'base64');
         const privateKey = crypto.createPrivateKey(this.oidcPrivateKey);
-        const publicKey = crypto.createPublicKey(privateKey);
+        const publicKey = crypto.createPublicKey(
+          privateKey.export({ type: 'pkcs8', format: 'pem' }),
+        );
         return crypto.verify('sha256', Buffer.from(data, 'utf-8'), publicKey, signature);
       } catch (err) {
         reportSilentFailure(err, 'federatedIdentity:828');
