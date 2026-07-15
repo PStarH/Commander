@@ -18,7 +18,7 @@
  *   - src/store.ts               -> COMMANDER_WARROOM_FILE, COMMANDER_SQLITE_WARROOM_FILE
  *   - src/memoryStore.ts         -> COMMANDER_MEMORY_FILE
  *   - src/agentStateStore.ts     -> COMMANDER_AGENT_STATE_FILE
- *   - src/episodicMemoryStore.ts -> COMMANDER_EPISODIC_FILE, COMMANDER_VECTOR_INDEX_FILE
+ *   - (removed) src/episodicMemoryStore.ts — health-only zombie; Phase B delete pending explicit approval
  *   - src/memoryIndexManager.ts  -> COMMANDER_MEMORY_DIR
  *   - src/actionRationale.ts     -> COMMANDER_ACTION_RATIONALE_FILE
  */
@@ -38,8 +38,6 @@ const assert = require('node:assert/strict');
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'commander-store-override-'));
 process.env['COMMANDER_WARROOM_FILE'] = path.join(tmpRoot, 'war-room.json');
 process.env['COMMANDER_MEMORY_FILE'] = path.join(tmpRoot, 'project-memory.json');
-process.env['COMMANDER_EPISODIC_FILE'] = path.join(tmpRoot, 'episodic-memory.json');
-process.env['COMMANDER_VECTOR_INDEX_FILE'] = path.join(tmpRoot, 'episodic-memory-vectors.json');
 process.env['COMMANDER_AGENT_STATE_FILE'] = path.join(tmpRoot, 'agent-state.json');
 process.env['COMMANDER_ACTION_RATIONALE_FILE'] = path.join(tmpRoot, 'action-rationales.json');
 process.env['COMMANDER_MEMORY_DIR'] = path.join(tmpRoot, 'memory-index-dir');
@@ -52,7 +50,6 @@ process.env['COMMANDER_MEMORY_DIR'] = path.join(tmpRoot, 'memory-index-dir');
 const { WarRoomStore, createWarRoomStore } = require('../dist/store.js');
 const { ProjectMemoryStore } = require('../dist/memoryStore.js');
 const { AgentStateStore } = require('../dist/agentStateStore.js');
-const { EpisodicMemoryStore } = require('../dist/episodicMemoryStore.js');
 const { ActionRationaleStore } = require('../dist/actionRationale.js');
 const { MemoryIndexManager } = require('../dist/memoryIndexManager.js');
 
@@ -68,13 +65,6 @@ const { MemoryIndexManager } = require('../dist/memoryIndexManager.js');
 const FALLBACK = {
   COMMANDER_WARROOM_FILE: path.resolve(__dirname, '..', 'data', 'war-room.json'),
   COMMANDER_MEMORY_FILE: path.resolve(__dirname, '..', 'data', 'project-memory.json'),
-  COMMANDER_EPISODIC_FILE: path.resolve(__dirname, '..', 'data', 'episodic-memory.json'),
-  COMMANDER_VECTOR_INDEX_FILE: path.resolve(
-    __dirname,
-    '..',
-    'data',
-    'episodic-memory-vectors.json',
-  ),
   COMMANDER_AGENT_STATE_FILE: path.resolve(__dirname, '..', 'data', 'agent-state.json'),
   COMMANDER_ACTION_RATIONALE_FILE: path.resolve(__dirname, '..', 'data', 'action-rationales.json'),
   COMMANDER_MEMORY_DIR: path.resolve(__dirname, '..', '..', 'memory'),
@@ -212,26 +202,6 @@ test('AgentStateStore reads/writes only at COMMANDER_AGENT_STATE_FILE', () => {
   assertFallbackNotTouched(before, 'AgentStateStore');
 });
 
-test('EpisodicMemoryStore reads/writes ONLY at COMMANDER_EPISODIC_FILE + COMMANDER_VECTOR_INDEX_FILE', () => {
-  const beforeEp = snapshot(FALLBACK.COMMANDER_EPISODIC_FILE);
-  const beforeVec = snapshot(FALLBACK.COMMANDER_VECTOR_INDEX_FILE);
-  const store = new EpisodicMemoryStore();
-  store.write({
-    projectId: 'project-override-test',
-    title: 'Override episodic test',
-    content: 'Verifying env var redirect',
-    type: 'decision',
-    importance: 0.7,
-    tags: ['test'],
-    agentId: 'agent-override-test',
-  });
-  assert.ok(fs.existsSync(process.env['COMMANDER_EPISODIC_FILE']));
-  assert.ok(fs.existsSync(process.env['COMMANDER_VECTOR_INDEX_FILE']));
-  const episodicItems = JSON.parse(fs.readFileSync(process.env['COMMANDER_EPISODIC_FILE'], 'utf8'));
-  assert.ok(episodicItems.some((m) => m.title === 'Override episodic test'));
-  assertFallbackNotTouched(beforeEp, 'EpisodicMemoryStore.episodic');
-  assertFallbackNotTouched(beforeVec, 'EpisodicMemoryStore.vector');
-});
 
 test('ActionRationaleStore reads/writes only at COMMANDER_ACTION_RATIONALE_FILE', () => {
   const before = snapshot(FALLBACK.COMMANDER_ACTION_RATIONALE_FILE);
@@ -278,46 +248,5 @@ function runChildProbe(probeBody) {
   return spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', cwd: distDir });
 }
 
-test('EpisodicMemoryStore: only-set-episodic (asymmetric) throws at module load', () => {
-  const result = runChildProbe(`
-    process.env.COMMANDER_EPISODIC_FILE = '/tmp/asymmetric-episodic-only.json';
-    delete process.env.COMMANDER_VECTOR_INDEX_FILE;
-    try {
-      require(path.join(process.cwd(), 'episodicMemoryStore.js'));
-      console.log('NO_THROW');
-    } catch (e) {
-      console.log('THREW:' + e.message);
-    }
-  `);
-  assert.match(result.stdout, /THREW:/);
-  assert.match(result.stdout, /must be set together/);
-});
 
-test('EpisodicMemoryStore: only-set-vector (asymmetric) throws at module load', () => {
-  const result = runChildProbe(`
-    delete process.env.COMMANDER_EPISODIC_FILE;
-    process.env.COMMANDER_VECTOR_INDEX_FILE = '/tmp/asymmetric-vector-only.json';
-    try {
-      require(path.join(process.cwd(), 'episodicMemoryStore.js'));
-      console.log('NO_THROW');
-    } catch (e) {
-      console.log('THREW:' + e.message);
-    }
-  `);
-  assert.match(result.stdout, /THREW:/);
-  assert.match(result.stdout, /must be set together/);
-});
 
-test('EpisodicMemoryStore: neither env var set loads module cleanly', () => {
-  const result = runChildProbe(`
-    delete process.env.COMMANDER_EPISODIC_FILE;
-    delete process.env.COMMANDER_VECTOR_INDEX_FILE;
-    try {
-      require(path.join(process.cwd(), 'episodicMemoryStore.js'));
-      console.log('OK');
-    } catch (e) {
-      console.log('THREW:' + e.message);
-    }
-  `);
-  assert.match(result.stdout, /OK/);
-});
