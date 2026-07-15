@@ -93,11 +93,13 @@ import { createAuditMiddleware } from './auditMiddleware';
 import { createSagaRouter } from './sagaEndpoints';
 import { createHubCorrelationsRouter } from './hubCorrelationsEndpoints';
 import { getUnifiedAuditLog, dlpResponseMiddleware } from '@commander/core/security';
+import { getEffectBroker } from '@commander/core/security/effectBroker';
 import { getGlobalTenantProvider, SimpleTenantProvider } from '@commander/core/runtime';
 import { registerRouter, mountRegisteredRouters, listRegisteredRouters } from './routerRegistry';
 import { generateOpenApiSpec } from './openApiGenerator';
 import { enterpriseRouteFreeze, legacyHeader } from './enterpriseGateway';
 import { v1TenantGuard } from './v1TenantGuard';
+import { probeReadiness } from './healthProbes';
 import { createV1GatewayRouter } from './v1GatewayEndpoints';
 import {
   getKernelDatabaseUrl,
@@ -348,23 +350,39 @@ app.get('/health', (_req, res) => {
   });
 });
 
-// Readiness probe — checks if the server is ready to accept traffic
-// (all critical stores initialized)
-app.get('/ready', (_req, res) => {
-  const checks: Record<string, 'ok' | 'fail'> = {
-    warRoom: store ? 'ok' : 'fail',
-    apiStore: apiStoreInstance ? 'ok' : 'fail',
-    memoryStore: memoryStore ? 'ok' : 'fail',
-    agentStateStore: agentStateStore ? 'ok' : 'fail',
-    memoryIndexManager: memoryIndexManager ? 'ok' : 'fail',
-    confidenceReporter: confidenceReporter ? 'ok' : 'fail',
-  };
+// Readiness probe — WS3 §6.1 honesty: real probes replace fake-READY.
+// Hard gates (database/kernel/effectBroker) fail → 503. Soft indicators
+// (warRoomStore/memoryHeap) surface as degraded/unknown but never gate.
+app.get('/ready', async (_req, res) => {
+  const result = await probeReadiness({
+    kernel: () => getV1KernelGateway(),
+    effectBroker: () => getEffectBroker(),
+    warRoomStore: () => store !== null,
+    memoryHeap: () => {
+      const mem = process.memoryUsage();
+      const total = mem.heapTotal || 1;
+      return mem.heapUsed / total;
+    },
+  });
+  res.status(result.status === 'ready' ? 200 : 503).json(result);
+});
 
-  const allOk = Object.values(checks).every((v) => v === 'ok');
-  res.status(allOk ? 200 : 503).json({
-    status: allOk ? 'ready' : 'not_ready',
-    checks,
-    timestamp: new Date().toISOString(),
+// /v1/health — WS3 §6.1: /v1 subtree deps only (kernel, effectBroker).
+// Database is intentionally omitted here because /v1 run submission depends
+// on the kernel, which itself depends on the DB; a DB failure surfaces via
+// kernel=fail. This keeps /v1/health focused on the /v1 subtree.
+app.get('/v1/health', async (_req, res) => {
+  const result = await probeReadiness({
+    kernel: () => getV1KernelGateway(),
+    effectBroker: () => getEffectBroker(),
+  });
+  res.status(result.status === 'ready' ? 200 : 503).json({
+    status: result.status,
+    checks: {
+      kernel: result.checks.kernel,
+      effectBroker: result.checks.effectBroker,
+    },
+    timestamp: result.timestamp,
   });
 });
 
