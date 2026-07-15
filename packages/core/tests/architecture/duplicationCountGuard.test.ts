@@ -41,12 +41,12 @@ const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '../../../..');
  * Live ceilings — locked 2026-07-15 methodology audit.
  * Never invent lower than live without a real deletion.
  * orchestrator=10, store=49, memory=18, stateMachine=6.
- * memory 19→18: TtlMemoryCurator merged into MemoryCurator (2026-07-15).
+ * memory 19→17 (curator merge + apps/api EpisodicMemoryStore delete): TtlMemoryCurator merged into MemoryCurator (2026-07-15).
  */
 const CEILINGS = {
   orchestrator: 10,
   store: 49,
-  memory: 18,
+  memory: 17,
   stateMachine: 6,
 } as const;
 

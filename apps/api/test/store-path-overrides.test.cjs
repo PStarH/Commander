@@ -18,7 +18,7 @@
  *   - src/store.ts               -> COMMANDER_WARROOM_FILE, COMMANDER_SQLITE_WARROOM_FILE
  *   - src/memoryStore.ts         -> COMMANDER_MEMORY_FILE
  *   - src/agentStateStore.ts     -> COMMANDER_AGENT_STATE_FILE
- *   - (removed) src/episodicMemoryStore.ts — health-only zombie; Phase B delete pending explicit approval
+ *   - (removed) src/episodicMemoryStore.ts — health-only zombie deleted Phase B 2026-07-15
  *   - src/memoryIndexManager.ts  -> COMMANDER_MEMORY_DIR
  *   - src/actionRationale.ts     -> COMMANDER_ACTION_RATIONALE_FILE
  */
