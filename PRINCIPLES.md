@@ -198,6 +198,11 @@ The real ENFORCED layer today is `packages/core/tests/architecture/` (run via `p
 
 ## Change log
 
+- **2026-07-15 (iteration: prettier + observability DRY)** — Fixed Prettier on
+  `modelRouter.ts` (CI Quality Gates was red after audit soft-continue). Collapsed
+  12 verbatim-duplicate `plugins/builtin/observability/*` modules to re-exports of
+  `packages/core/src/observability/*` (same content, different import depth).
+
 - **2026-07-15 (iteration: CI audit 410 + store consolidation)** —
   - CI: `pnpm audit` soft-continues on npm audit API 410 retirement so Quality
     Gates are not false-red before tests (CodeQL + `audit:wiring` remain hard).
