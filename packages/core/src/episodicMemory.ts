@@ -567,4 +567,9 @@ export {
   fromProjectMemoryItem,
   toProjectMemoryItem,
 } from './memory/utils';
-export { MemoryCurator, DEFAULT_CURATOR_CONFIG } from './memory/memoryCurator';
+export {
+  TtlMemoryCurator,
+  DEFAULT_TTL_CURATOR_CONFIG,
+  MemoryCurator, // @deprecated alias of TtlMemoryCurator
+  DEFAULT_CURATOR_CONFIG, // @deprecated alias of DEFAULT_TTL_CURATOR_CONFIG
+} from './memory/memoryCurator';

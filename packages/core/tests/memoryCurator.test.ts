@@ -1,14 +1,14 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { InMemoryMemoryStore } from '../src/memory';
-import { MemoryCurator } from '../src/memory/memoryCurator';
+import { TtlMemoryCurator } from '../src/memory/memoryCurator';
 
-describe('MemoryCurator', () => {
+describe('TtlMemoryCurator', () => {
   let store: InMemoryMemoryStore;
-  let curator: MemoryCurator;
+  let curator: TtlMemoryCurator;
 
   beforeEach(() => {
     store = new InMemoryMemoryStore();
-    curator = new MemoryCurator(store);
+    curator = new TtlMemoryCurator(store);
   });
 
   it('deletes expired episodic memories', async () => {
@@ -64,7 +64,7 @@ describe('MemoryCurator', () => {
       updates: { lastAccessedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 120).toISOString() },
     });
 
-    const customCurator = new MemoryCurator(store, { longTermInactivityDays: 90 });
+    const customCurator = new TtlMemoryCurator(store, { longTermInactivityDays: 90 });
     const removed = await customCurator.runForProject('p1');
     expect(removed).toBe(1);
     expect(await store.read(item.id, 'p1')).toBeNull();
