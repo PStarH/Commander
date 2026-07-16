@@ -969,7 +969,10 @@ export class ToolExecutionService {
    *
    * Config: speculativeExecution.enabled must be true (defaults to false).
    */
-  async triggerSpeculativeExecution(tenantId?: string): Promise<void> {
+  async triggerSpeculativeExecution(
+    tenantId?: string,
+    capabilityToken?: string,
+  ): Promise<void> {
     const specConfig = (
       this.runtime.config as AgentRuntimeConfig & {
         speculativeExecution?: { enabled?: boolean };
@@ -995,9 +998,34 @@ export class ToolExecutionService {
           const tool = this.runtime.tools.get(pred.name);
           if (!tool) return;
 
-          // Align with formal execute path: sanitizer + ReversibilityGate + guardian.
-          // Speculative must not bypass Layer-2 gates. Fail → skip (no cache write).
+          // Align with formal execute path: capability + sanitizer +
+          // ReversibilityGate + guardian. Fail → skip (no cache write).
           const sanitizedArgs = this.sanitizeArguments(pred.arguments);
+
+          if (capabilityToken) {
+            try {
+              let verdict: { ok: boolean; reason?: string; detail?: string };
+              if (BiscuitCapabilityAdapter.isBiscuitToken(capabilityToken)) {
+                const biscuitVerifier = getGlobalBiscuitCapabilityAdapter().createVerifier(
+                  tenantId ?? '*',
+                );
+                verdict = biscuitVerifier.verify(capabilityToken, {
+                  tool: pred.name,
+                  args: sanitizedArgs as Record<string, unknown>,
+                });
+              } else {
+                const verifier = getCapabilityTokenVerifier();
+                verdict = verifier.verify(capabilityToken, {
+                  tool: pred.name,
+                  args: sanitizedArgs as Record<string, unknown>,
+                  consumeReplay: false,
+                });
+              }
+              if (!verdict.ok) return;
+            } catch {
+              return;
+            }
+          }
 
           if (this.runtime.reversibilityGate) {
             const gateDecision = await this.runtime.reversibilityGate.evaluate(
