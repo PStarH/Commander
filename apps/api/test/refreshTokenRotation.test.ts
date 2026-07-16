@@ -28,6 +28,7 @@ const {
   persist,
   revoke,
   isActive,
+  consume,
   _resetRefreshTokenStoreForTests,
 } = await import('../src/refreshTokenStore');
 const { createUser, findUserByUsername } = await import('../src/userStore');
@@ -95,6 +96,16 @@ describe('refreshTokenStore', () => {
     persist(jti, 'user-1', exp);
     assert.equal(isActive(jti), true);
     revoke(jti);
+    assert.equal(isActive(jti), false);
+  });
+
+  test('consume is single-winner for the same jti', () => {
+    _resetRefreshTokenStoreForTests();
+    const jti = crypto.randomUUID();
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    persist(jti, 'user-1', exp);
+    assert.equal(consume(jti), true);
+    assert.equal(consume(jti), false);
     assert.equal(isActive(jti), false);
   });
 
