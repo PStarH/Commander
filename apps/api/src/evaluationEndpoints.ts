@@ -7,6 +7,30 @@ import express, { Request, Response, Router } from 'express';
 import { LLMEvaluator, ScoreSmoother, EvaluationCriterion, EvaluationRequest } from './evaluation';
 import { resolveSecureApiKey } from '@commander/core/security';
 
+/** Hard cap on batch evaluate items to prevent LLM cost / connection exhaustion. */
+export const MAX_BATCH_ITEMS = 50;
+/** Max concurrent LLM judge calls within a single batch request. */
+export const MAX_BATCH_CONCURRENCY = 3;
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  async function worker(): Promise<void> {
+    while (true) {
+      const i = nextIndex++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
 export function createEvaluationRouter(
   evaluator: LLMEvaluator,
   smoother: ScoreSmoother,
@@ -64,9 +88,17 @@ export function createEvaluationRouter(
       return res.status(400).json({ error: 'Missing or invalid items array' });
     }
 
+    if (items.length > MAX_BATCH_ITEMS) {
+      return res.status(400).json({
+        error: `Batch size exceeds maximum of ${MAX_BATCH_ITEMS}`,
+        max: MAX_BATCH_ITEMS,
+        received: items.length,
+      });
+    }
+
     const allResults: Record<string, any> = {};
 
-    for (const item of items) {
+    await mapWithConcurrency(items, MAX_BATCH_CONCURRENCY, async (item) => {
       const request: EvaluationRequest = {
         targetId: item.targetId,
         targetType: item.targetType || 'agent_output',
@@ -88,7 +120,7 @@ export function createEvaluationRouter(
           error: (error as Error).message,
         };
       }
-    }
+    });
 
     res.json({ results: allResults, count: items.length });
   });
