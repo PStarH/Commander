@@ -14,6 +14,7 @@
  * restored by uninstallOutboundNetworkPolicy().
  */
 
+import * as dns from 'node:dns';
 import { getGlobalLogger } from '../logging';
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -50,6 +51,7 @@ export interface OutboundRequestLog {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Default allowlist — common LLM API and infrastructure domains
+// (loopback / private hosts intentionally omitted — SSRF defense)
 // ──────────────────────────────────────────────────────────────────────────
 
 const DEFAULT_ALLOWLIST: readonly string[] = [
@@ -63,10 +65,6 @@ const DEFAULT_ALLOWLIST: readonly string[] = [
   'api.mistral.ai',
   'api.x.ai',
   'api.mimo.com',
-  'localhost',
-  '127.0.0.1',
-  '0.0.0.0',
-  '::1',
 ];
 
 /**
@@ -76,10 +74,42 @@ const PRIVATE_IP_PATTERNS: readonly RegExp[] = [
   /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/,
   /^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/,
   /^192\.168\.\d{1,3}\.\d{1,3}$/,
-  /^169\.254\.\d{1,3}\.\d{1,3}$/, // link-local
+  /^169\.254\.\d{1,3}\.\d{1,3}$/, // link-local / cloud metadata
   /^0\.0\.0\.0$/,
   /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/, // loopback range
 ];
+
+const BLOCKED_HOSTNAMES = new Set([
+  'localhost',
+  'metadata.google.internal',
+  'metadata',
+  '0.0.0.0',
+  '::1',
+  '[::1]',
+]);
+
+function normalizeHostname(hostname: string): string {
+  let h = hostname.trim().toLowerCase();
+  // Strip IPv6 brackets
+  if (h.startsWith('[') && h.endsWith(']')) {
+    h = h.slice(1, -1);
+  }
+  // IPv4-mapped IPv6 → extract IPv4
+  if (h.startsWith('::ffff:')) {
+    h = h.slice('::ffff:'.length);
+  }
+  return h;
+}
+
+function isPrivateOrBlockedHost(hostname: string): boolean {
+  const h = normalizeHostname(hostname);
+  if (BLOCKED_HOSTNAMES.has(h)) return true;
+  if (h === '::1' || h === '0:0:0:0:0:0:0:1') return true;
+  for (const pattern of PRIVATE_IP_PATTERNS) {
+    if (pattern.test(h)) return true;
+  }
+  return false;
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // OutboundNetworkPolicy
@@ -104,10 +134,51 @@ export class OutboundNetworkPolicy {
   }
 
   /**
-   * Check if a URL is allowed under the current policy.
+   * Check if a URL is allowed under the current policy (sync hostname checks).
+   * Private/loopback/metadata hosts are always denied when blockPrivateIPs is on —
+   * allowlist cannot bypass SSRF defense.
    */
   check(url: string): { allowed: boolean; reason?: string; domain: string } {
     return this.checkWithClassification(url, undefined);
+  }
+
+  /**
+   * Async check including DNS resolution of the hostname. Lookup failure → deny.
+   */
+  async checkAsync(
+    url: string,
+    classification?: DataClassification,
+  ): Promise<{ allowed: boolean; reason?: string; domain: string }> {
+    const sync = this.checkWithClassification(url, classification);
+    if (!sync.allowed) return sync;
+    if (!this.config.blockPrivateIPs) return sync;
+
+    const domain = sync.domain;
+    // Literal IPs / blocked hostnames already handled in sync check.
+    if (isPrivateOrBlockedHost(domain) || PRIVATE_IP_PATTERNS.some((p) => p.test(domain))) {
+      return { allowed: false, reason: `private IP blocked (SSRF defense): ${domain}`, domain };
+    }
+    // Skip DNS for pure IPv4/IPv6 literals already validated.
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(domain) || domain.includes(':')) {
+      return sync;
+    }
+
+    try {
+      const results = await dns.promises.lookup(domain, { all: true });
+      for (const { address } of results) {
+        if (isPrivateOrBlockedHost(address)) {
+          return {
+            allowed: false,
+            reason: `DNS resolved to private IP (SSRF defense): ${address}`,
+            domain,
+          };
+        }
+      }
+    } catch {
+      return { allowed: false, reason: `DNS lookup failed for: ${domain}`, domain };
+    }
+
+    return sync;
   }
 
   /**
@@ -127,28 +198,26 @@ export class OutboundNetworkPolicy {
       return { allowed: false, reason: 'malformed URL', domain: '' };
     }
 
-    const domain = parsed.hostname;
+    const domain = normalizeHostname(parsed.hostname);
 
     // Check blocklist first (always takes precedence)
     for (const blocked of this.config.blocklist) {
-      if (domain === blocked || domain.endsWith('.' + blocked)) {
+      const b = blocked.toLowerCase();
+      if (domain === b || domain.endsWith('.' + b)) {
         return { allowed: false, reason: `domain in blocklist: ${domain}`, domain };
       }
     }
 
-    // SSRF defense: block private IPs (unless explicitly allowlisted)
-    if (this.config.blockPrivateIPs && !this.config.allowlist.includes(domain)) {
-      for (const pattern of PRIVATE_IP_PATTERNS) {
-        if (pattern.test(domain)) {
-          return { allowed: false, reason: `private IP blocked (SSRF defense): ${domain}`, domain };
-        }
-      }
+    // SSRF defense: always block private/loopback/metadata — allowlist cannot bypass.
+    if (this.config.blockPrivateIPs && isPrivateOrBlockedHost(domain)) {
+      return { allowed: false, reason: `private IP blocked (SSRF defense): ${domain}`, domain };
     }
 
-    // Check global allowlist
+    // Check global allowlist (public domains only)
     let globallyAllowed = false;
     for (const allowed of this.config.allowlist) {
-      if (domain === allowed || domain.endsWith('.' + allowed)) {
+      const a = allowed.toLowerCase();
+      if (domain === a || domain.endsWith('.' + a)) {
         globallyAllowed = true;
         break;
       }
@@ -163,7 +232,8 @@ export class OutboundNetworkPolicy {
       const classAllowlist = this.config.classificationAllowlist[classification]!;
       let classAllowed = false;
       for (const allowed of classAllowlist) {
-        if (domain === allowed || domain.endsWith('.' + allowed)) {
+        const a = allowed.toLowerCase();
+        if (domain === a || domain.endsWith('.' + a)) {
           classAllowed = true;
           break;
         }
@@ -194,7 +264,7 @@ export class OutboundNetworkPolicy {
     this.originalFetch = globalThis.fetch;
     const self = this;
 
-    globalThis.fetch = function patchedFetch(
+    globalThis.fetch = async function patchedFetch(
       input: RequestInfo | URL,
       init?: RequestInit,
     ): Promise<Response> {
@@ -203,7 +273,7 @@ export class OutboundNetworkPolicy {
         init?.method ??
         (typeof input !== 'string' && !(input instanceof URL) ? input.method : 'GET');
 
-      const result = self.check(url);
+      const result = await self.checkAsync(url);
 
       // Audit log
       if (self.config.auditLog) {
