@@ -18,6 +18,7 @@ import type {
   KernelStep,
   KernelTimer,
   MarkEffectCompletionUnknownRequest,
+  TenantExecutionControl,
 } from './types.js';
 
 /**
@@ -55,6 +56,11 @@ export interface KernelRepository {
   resumeRun(runId: string, tenantId: string, actor: string): Promise<KernelRun | null>;
   /** Cancel a run and mark all non-terminal steps CANCELLED. */
   cancelRun(runId: string, tenantId: string, actor: string): Promise<KernelRun | null>;
+  /** Pause every active Agent execution owned by exactly one tenant. */
+  pauseTenant(tenantId: string, actor: string, reason?: string): Promise<TenantExecutionControl>;
+  /** Remove the tenant execution gate without resuming individually paused runs. */
+  resumeTenant(tenantId: string, actor: string): Promise<TenantExecutionControl>;
+  getTenantExecutionControl(tenantId: string): Promise<TenantExecutionControl>;
   admitEffect(request: AdmitEffectRequest): Promise<AdmitEffectResult>;
   completeEffect(
     effectId: string,
@@ -66,6 +72,7 @@ export interface KernelRepository {
   markEffectCompletionUnknown(request: MarkEffectCompletionUnknownRequest): Promise<KernelEffect | null>;
   claimOutbox(limit: number, now?: Date): Promise<KernelOutboxMessage[]>;
   markOutboxPublished(messageId: string, claimToken: string): Promise<boolean>;
+  retryOutbox(messageId: string, claimToken: string, error: { code: string; message: string }, now?: Date): Promise<boolean>;
   listEvents(runId: string, tenantId: string): Promise<KernelEvent[]>;
 
   // ── Durable Timers ──────────────────────────────────────────────────────
@@ -78,6 +85,8 @@ export interface KernelRepository {
   /** Scan for expired timers and mark them FIRED. Returns fired timers
    *  so the caller can take action (e.g., transition steps). */
   claimExpiredTimers(now?: Date, limit?: number): Promise<KernelTimer[]>;
+  acknowledgeTimer(timerId: string, tenantId: string, claimToken: string): Promise<boolean>;
+  retryTimer(timerId: string, tenantId: string, claimToken: string): Promise<boolean>;
 
   // ── Interactions ────────────────────────────────────────────────────────
 

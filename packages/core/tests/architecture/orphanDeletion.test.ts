@@ -75,4 +75,35 @@ describe('orphan deletion guards', () => {
     const text = readFileSync(cfgPath, 'utf8');
     assert.doesNotMatch(text, /episodicMemoryStore/);
   });
+
+  it('does not reintroduce deleted memory backends', () => {
+    const deletedPaths = [
+      'packages/core/src/memory/jsonStore.ts',
+      'packages/core/src/memory/sqliteMemoryStore.ts',
+      'apps/api/src/memoryStore.ts',
+      'apps/api/src/namespacedMemoryStore.ts',
+    ];
+    for (const relativePath of deletedPaths) {
+      assert.equal(
+        existsSync(join(ROOT, relativePath)),
+        false,
+        `${relativePath} was deleted during memory consolidation; do not reintroduce it`,
+      );
+    }
+  });
+
+  it('runtime memory wiring has no legacy backend symbols', () => {
+    const files = [
+      join(ROOT, 'packages/core/src/memory/utils.ts'),
+      join(ROOT, 'apps/api/src/namespacedMemoryEndpoints.ts'),
+    ];
+    for (const file of files) {
+      assert.ok(existsSync(file));
+      assert.doesNotMatch(
+        readFileSync(file, 'utf8'),
+        /JsonMemoryStore|SqliteMemoryStore|InMemoryMemoryStore|NamespacedMemoryStore/,
+        `${file} contains a deleted memory backend symbol`,
+      );
+    }
+  });
 });
