@@ -1,4 +1,6 @@
-export type PolicyEffect = 'allow' | 'deny' | 'require_approval' | 'deny_class';
+import type { PolicyEffect } from '@commander/contracts';
+
+export type { PolicyEffect } from '@commander/contracts';
 
 export type PolicyDenyClass =
   | 'deny_shell'

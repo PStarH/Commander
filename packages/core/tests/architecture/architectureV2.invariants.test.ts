@@ -82,13 +82,35 @@ describe('Architecture V2 invariants', () => {
     assert.match(src, /profileFromCliVerb/);
   });
 
-  it('V2 packages exist (kernel, control-plane)', () => {
-    // packages/orchestration was deleted 2026-07-14: it was a dead divergent
-    // fork of core/src/planner/workGraphPlanner.ts with zero importers
-    // (enterprise-trust audit ARCH-1; PRINCIPLES.md §3).
-    for (const pkg of ['kernel', 'control-plane']) {
-      assert.ok(existsSync(join(ROOT, `packages/${pkg}/package.json`)), `missing packages/${pkg}`);
-    }
+  it('V2 contracts package exists and deleted shells stay absent', () => {
+    assert.ok(existsSync(join(ROOT, 'packages/contracts/package.json')));
+    assert.equal(existsSync(join(ROOT, 'packages/control-plane')), false);
+    assert.equal(existsSync(join(ROOT, 'packages/orchestration')), false);
+  });
+
+  it('package and CI wiring expose the architecture guard', () => {
+    const packageJson = JSON.parse(read('package.json')) as {
+      scripts?: Record<string, string>;
+    };
+    assert.equal(packageJson.scripts?.['arch:guard'], 'bash scripts/arch-guard.sh');
+    assert.equal(
+      packageJson.scripts?.['arch:guard:test'],
+      'pnpm exec node --import tsx --test scripts/arch-guard.test.ts',
+    );
+    assert.match(read('.github/workflows/ci.yml'), /run: pnpm arch:guard/);
+    assert.match(read('.github/workflows/ci.yml'), /run: pnpm arch:guard:test/);
+  });
+
+  it('core reuses shared control-plane contract types', () => {
+    const controlPlane = read('packages/core/src/controlPlane/index.ts');
+    const policyTypes = read('packages/core/src/atr/policy/types.ts');
+    const pluginSandbox = read('packages/core/src/plugins/pluginSandbox.ts');
+    assert.match(controlPlane, /from ['"]@commander\/contracts['"]/);
+    assert.match(policyTypes, /from ['"]@commander\/contracts['"]/);
+    assert.match(pluginSandbox, /from ['"]@commander\/contracts['"]/);
+    assert.doesNotMatch(controlPlane, /export interface WorkloadIdentity/);
+    assert.doesNotMatch(policyTypes, /export type PolicyEffect\s*=/);
+    assert.doesNotMatch(pluginSandbox, /export type PluginSandboxMode\s*=/);
   });
 
   it('SDK exports versioned v1 resources', () => {
