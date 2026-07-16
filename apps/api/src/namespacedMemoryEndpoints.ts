@@ -117,8 +117,12 @@ function createCanonicalNamespacedMemoryRouter(memoryStore: MemoryStore): Router
     }
   });
 
+  // KNOWN GAP (WS6 audit): the unified PostgresMemoryService writes audit rows
+  // to the memory_audit_events table (postgresMemorySchema.ts), but no public
+  // query method is exposed yet, so this endpoint returns empty. Wire to a
+  // MemoryService.queryAudit() once added — do not treat empty as "no activity".
   router.get('/api/namespaced-memory/:namespace/audit', (_req, res) => {
-    res.json({ namespace: _req.params.namespace, entries: [], count: 0 });
+    res.json({ namespace: _req.params.namespace, entries: [], count: 0, unavailable: true });
   });
 
   router.get('/api/namespaced-memory/acl', (_req, res) => {
