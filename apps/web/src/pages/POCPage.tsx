@@ -101,6 +101,17 @@ export function POCPage() {
         <p className="page-desc">{t('poc.desc')}</p>
       </div>
 
+      <div
+        className="card poc-disclaimer"
+        role="note"
+        aria-label="Illustrative scenarios disclaimer"
+      >
+        <ShieldCheck size={14} style={{ color: 'var(--accent-amber)', flexShrink: 0 }} />
+        <span>
+          {t('poc.disclaimer')}
+        </span>
+      </div>
+
       <div className="metric-row">
         <div className="card metric" style={{ borderLeft: '2px solid var(--accent-green)' }}>
           <div className="metric-head">
@@ -197,6 +208,17 @@ export function POCPage() {
       </div>
 
       <style>{`
+        .poc-disclaimer {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          margin-top: 16px;
+          padding: 10px 14px;
+          font-size: 0.78rem;
+          line-height: 1.45;
+          color: var(--text-secondary);
+          border-left: 2px solid var(--accent-amber);
+        }
         .poc-grid {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
