@@ -19,7 +19,10 @@ import {
   type SafeUser,
 } from './userStore';
 import { signAccessToken, signRefreshToken, verifyToken, type AuthUser } from './jwtMiddleware';
-import { isActive as isRefreshJtiActive, revoke as revokeRefreshJti } from './refreshTokenStore';
+import {
+  consume as consumeRefreshJti,
+  revoke as revokeRefreshJti,
+} from './refreshTokenStore';
 
 /**
  * AUTH-6: a real bcrypt hash used only to spend comparable CPU on the
@@ -242,7 +245,8 @@ export function createUserAuthRouter(): Router {
       return;
     }
 
-    if (!isRefreshJtiActive(decoded.jti)) {
+    // Atomic consume: first concurrent refresh wins; replay / race → 401.
+    if (!consumeRefreshJti(decoded.jti)) {
       res.status(401).json({ error: 'Refresh token revoked or unknown' });
       return;
     }
@@ -250,13 +254,9 @@ export function createUserAuthRouter(): Router {
     // Ensure the user still exists (account may have been removed).
     const user = findUserById(decoded.id);
     if (!user) {
-      revokeRefreshJti(decoded.jti);
       res.status(401).json({ error: 'User no longer exists' });
       return;
     }
-
-    // Rotate: revoke the presented jti before issuing a new refresh token.
-    revokeRefreshJti(decoded.jti);
 
     const authUser: AuthUser = {
       id: user.id,

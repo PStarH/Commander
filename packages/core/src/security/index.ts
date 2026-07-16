@@ -941,4 +941,9 @@ export type {
 } from './ttsrEngine';
 
 // UniversalSanitizer & ResourceGovernor — unified sanitization and outbound-call governance
-export { UniversalSanitizer, ResourceGovernor } from './securityPrimitives';
+export {
+  UniversalSanitizer,
+  ResourceGovernor,
+  IntegrityLayer,
+  type SignedEntry,
+} from './securityPrimitives';
