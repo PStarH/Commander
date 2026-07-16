@@ -280,6 +280,23 @@ describe('WebhookDispatcher', () => {
       ).toThrow(/private\/internal/);
     });
 
+    it('rejects localhost hostname and cloud metadata hostnames', () => {
+      expect(() =>
+        dispatcher.registerWebhook({
+          url: 'http://localhost/webhook',
+          events: ['*'],
+          enabled: true,
+        }),
+      ).toThrow(/private\/internal/);
+      expect(() =>
+        dispatcher.registerWebhook({
+          url: 'http://metadata.google.internal/computeMetadata/v1/',
+          events: ['*'],
+          enabled: true,
+        }),
+      ).toThrow(/private\/internal/);
+    });
+
     it('rejects IPv6 ULA fc00:', () => {
       expect(() =>
         dispatcher.registerWebhook({

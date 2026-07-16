@@ -239,6 +239,14 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
           'Authentication is disabled in production. Remove AUTH_DISABLED=true before deployment.',
       });
     }
+    // Non-production: AUTH_DISABLED alone is no longer a free bypass.
+    // Require explicit COMMANDER_ALLOW_ANON=1 (same escape hatch as no-keys mode).
+    if (process.env.COMMANDER_ALLOW_ANON !== '1') {
+      return res.status(401).json({
+        error: 'Authentication required',
+        hint: 'AUTH_DISABLED requires COMMANDER_ALLOW_ANON=1 outside production',
+      });
+    }
     return next();
   }
 

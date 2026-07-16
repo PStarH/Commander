@@ -11,7 +11,8 @@ describe('outgoing webhook SSRF guard', () => {
   it('rejects localhost and loopback', () => {
     assert.equal(isSafeOutgoingWebhookUrl('http://localhost/hook'), false);
     assert.equal(isSafeOutgoingWebhookUrl('http://127.0.0.1/hook'), false);
-    assert.equal(isSafeOutgoingWebhookUrl('http://[::1]/hook'), false);
+    assert.equal(isSafeOutgoingWebhookUrl('http://[fd12::1]/hook'), false);
+    assert.equal(isSafeOutgoingWebhookUrl('http://[::ffff:127.0.0.1]/hook'), false);
   });
 
   it('rejects private RFC1918 ranges', () => {
