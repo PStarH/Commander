@@ -21,9 +21,13 @@ const PUBLIC_PATHS = new Set([
   '/a2a/.well-known/agent-card',
   '/mcp/.well-known/mcp',
   // User-auth endpoints handle their own auth via JWT — must be reachable
-  // without an API key so users can obtain their first token.
+  // without an API key so users can obtain their first token / rotate it.
   '/api/auth/login',
   '/api/auth/register',
+  // Refresh/logout present a refresh token in the body (no access JWT / API key).
+  // Must stay public to authMiddleware or deny-anon breaks the refresh flow.
+  '/api/auth/refresh',
+  '/api/auth/logout',
 ]);
 
 // ── Timing-safe API key storage ──────────────────────────────────────────────

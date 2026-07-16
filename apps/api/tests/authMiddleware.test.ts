@@ -106,6 +106,14 @@ describe('authMiddleware', () => {
     assert.equal(result.result.statusCode, 200);
   });
 
+  it('allows /api/auth/refresh and /api/auth/logout without credentials', () => {
+    for (const p of ['/api/auth/refresh', '/api/auth/logout']) {
+      const result = runAuth(p);
+      assert.equal(result.nextCalled, true, `${p} should be public`);
+      assert.equal(result.result.statusCode, 200);
+    }
+  });
+
   it('requires credentials for protected routes when API_KEYS is configured', () => {
     const result = runAuth('/api/orchestrator/status');
 

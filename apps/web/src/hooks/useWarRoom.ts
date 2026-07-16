@@ -17,6 +17,7 @@ import {
   ApprovalRequiredError,
   API_BASE,
   PROJECT_ID,
+  getAuthToken,
 } from '../api';
 
 export function useWarRoom() {
@@ -71,7 +72,13 @@ export function useWarRoom() {
 
     let eventSource: EventSource | null = null;
     try {
-      eventSource = new EventSource(`${API_BASE}/projects/${PROJECT_ID}/events`);
+      const params = new URLSearchParams();
+      const token = getAuthToken();
+      if (token) params.set('access_token', token);
+      const qs = params.toString();
+      eventSource = new EventSource(
+        `${API_BASE}/projects/${PROJECT_ID}/events${qs ? `?${qs}` : ''}`,
+      );
       eventSource.onopen = () => setConnectionStatus('connected');
       eventSource.addEventListener('snapshot', () => {
         loadAllRef.current?.();

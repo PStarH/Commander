@@ -80,4 +80,25 @@ describe('streamEndpoints auth', () => {
       await close();
     }
   });
+
+  it('allows SSE via ?access_token= JWT (EventSource-compatible)', async () => {
+    process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret-for-sse-access-token';
+    const { signAccessToken } = await import('../src/jwtMiddleware');
+    const token = signAccessToken({ id: 'u2', username: 'bob', role: 'viewer' });
+
+    const app = express();
+    app.use(createStreamRouter());
+    const { port, close } = await listen(app);
+
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${port}/events?access_token=${encodeURIComponent(token)}`,
+        { headers: { Accept: 'text/event-stream' } },
+      );
+      assert.equal(res.status, 200);
+      await res.body?.cancel();
+    } finally {
+      await close();
+    }
+  });
 });
