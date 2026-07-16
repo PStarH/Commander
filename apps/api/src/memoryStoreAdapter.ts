@@ -105,7 +105,10 @@ export class ProjectMemoryStoreAdapter {
       duration: item.duration,
       title: item.title,
       content: item.content,
-      tags: item.tags,
+      // memory-index-* tags are the MemoryIndexManager's internal retrieval
+      // keys (mirror lookups filter on them) — implementation detail, not
+      // part of the user-facing project-memory surface.
+      tags: item.tags.filter((tag) => !tag.startsWith('memory-index-')),
       priority: item.priority,
       confidence: item.confidence,
       createdAt: item.createdAt,

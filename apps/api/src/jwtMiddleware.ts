@@ -4,6 +4,7 @@ import jwt, { type JwtPayload } from 'jsonwebtoken';
 import type { UserRole } from './userStore';
 import { isProductionEnv } from './envSignal';
 import { persist as persistRefreshJti } from './refreshTokenStore';
+import { isEnterpriseProfile } from './profileSignal';
 
 // ── Express type augmentation ───────────────────────────────────────────────
 //
@@ -25,6 +26,14 @@ export interface AuthUser {
   id: string;
   username: string;
   role: UserRole;
+  /**
+   * Tenant binding carried by the JWT (WS3 §3.1). Present on enterprise access
+   * tokens; absent on legacy/dev tokens. The /v1 tenant guard treats this as
+   * authoritative and never allows a client header to widen it.
+   */
+  tenantId?: string;
+  /** Scopes carried by the JWT (e.g. runs:write, governance:read). */
+  scopes?: string[];
 }
 
 /** JWT payload shape — the standard claims plus our custom user fields. */
@@ -35,6 +44,10 @@ export interface CommanderJwtPayload extends JwtPayload {
   type?: 'access' | 'refresh';
   /** Unique id for refresh tokens — used for rotation / revocation. */
   jti?: string;
+  /** WS3 §3.1 — tenant binding for enterprise access tokens. */
+  tenant_id?: string;
+  /** WS3 §3.1 — scopes for route-level authorization. */
+  scopes?: string[];
 }
 
 // ── JWT configuration ───────────────────────────────────────────────────────
@@ -80,6 +93,12 @@ export function signAccessToken(user: AuthUser): string {
     role: user.role,
     type: 'access',
   };
+  if (typeof user.tenantId === 'string' && user.tenantId.length > 0) {
+    payload.tenant_id = user.tenantId;
+  }
+  if (Array.isArray(user.scopes) && user.scopes.length > 0) {
+    payload.scopes = user.scopes;
+  }
   return jwt.sign(payload, JWT_SECRET, {
     expiresIn: ACCESS_TOKEN_EXPIRES_IN,
     algorithm: 'HS256',
@@ -100,6 +119,8 @@ export function signRefreshToken(user: AuthUser): string {
     type: 'refresh',
     jti,
   };
+  // Refresh tokens do not carry tenant/scopes — they only mint new access
+  // tokens, which are the tokens that authorize /v1 resource access.
   const token = jwt.sign(payload, JWT_SECRET, {
     expiresIn: REFRESH_TOKEN_EXPIRES_IN,
     algorithm: 'HS256',
@@ -152,6 +173,22 @@ function isJwtPublicPath(reqPath: string): boolean {
   return reqPath.startsWith('/health') || reqPath.startsWith('/system');
 }
 
+/**
+ * /v1 sub-paths that are public metadata/health and must NOT be subject to the
+ * enterprise fail-closed reversal (WS3 §3.2). These remain reachable without a
+ * Bearer token so clients can discover the API surface and probe /v1 health.
+ */
+const V1_AUTH_EXEMPT_PATHS = new Set<string>(['/v1/openapi.json', '/v1/health']);
+
+/**
+ * Whether a path is a /v1 product path that requires an authenticated tenant
+ * in the enterprise profile. Excludes the public metadata/health sub-paths.
+ */
+function isV1ProductPath(reqPath: string): boolean {
+  if (reqPath !== '/v1' && !reqPath.startsWith('/v1/')) return false;
+  return !V1_AUTH_EXEMPT_PATHS.has(reqPath);
+}
+
 // ── Middleware ──────────────────────────────────────────────────────────────
 
 /**
@@ -160,11 +197,18 @@ function isJwtPublicPath(reqPath: string): boolean {
  * Behaviour:
  *  - Public paths (health, login, register) skip parsing entirely.
  *  - If a valid Bearer JWT is present, `req.user` is populated with the
- *    decoded identity and the request proceeds.
+ *    decoded identity (including tenant_id / scopes claims when present) and
+ *    the request proceeds.
  *  - If the Bearer token is NOT a valid JWT (or no token is present),
  *    `req.user` is set to `null` and the request proceeds — this middleware
- *    never blocks. Downstream routes (or the existing API-key authMiddleware)
- *    decide whether to reject unauthenticated requests.
+ *    normally does not block. Downstream routes (or the existing API-key
+ *    authMiddleware) decide whether to reject unauthenticated requests.
+ *  - WS3 §3.2 fail-closed reversal: in the enterprise profile, on /v1 product
+ *    paths, an invalid/expired/non-access Bearer token is rejected here with
+ *    401 INVALID_TOKEN before it can reach authMiddleware (which would
+ *    otherwise mask the code with a generic "Invalid bearer token"). This
+ *    reverses the legacy fail-open behaviour for /v1 enterprise only; all
+ *    other paths and the standard profile keep fail-open for backward compat.
  *  - If the Authorization header is not a Bearer header (e.g. X-API-Key is
  *    used instead), `req.user` stays null and the existing API-key
  *    authMiddleware handles authentication.
@@ -193,15 +237,31 @@ export function jwtMiddleware(req: Request, res: Response, next: NextFunction): 
 
   const decoded = verifyToken(token);
   if (decoded && decoded.type !== 'refresh') {
-    // Valid access token — inject the user identity.
+    // Valid access token — inject the user identity + enterprise claims.
     req.user = {
       id: decoded.id,
       username: decoded.username,
       role: decoded.role,
+      tenantId: decoded.tenant_id,
+      scopes: decoded.scopes,
     };
+    next();
+    return;
   }
-  // If verification failed, req.user remains null. The downstream
-  // authMiddleware will attempt API-key validation, preserving backward
-  // compatibility with existing API-key-based clients.
+  // Verification failed, or a refresh token was presented where an access
+  // token is required. In the enterprise profile on /v1 product paths this
+  // is fail-closed: reject immediately so the downstream /v1 tenant guard
+  // never observes an unauthenticated Bearer. Elsewhere we preserve the
+  // legacy fail-open behaviour (authMiddleware may still accept the token as
+  // an API key, or reject per its own default-deny rules).
+  if (isEnterpriseProfile() && isV1ProductPath(req.path)) {
+    res.status(401).json({
+      error: {
+        code: 'INVALID_TOKEN',
+        message: 'Bearer token is invalid, expired, or not an access token.',
+      },
+    });
+    return;
+  }
   next();
 }
