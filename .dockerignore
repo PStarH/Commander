@@ -60,9 +60,7 @@ examples/
 
 # Misc project artifacts
 benchmark-report-*/
-acquisition-readiness-eval/
 enterprise-agent-ux-audit/
 commander-*/
 external-benchmark-research/
-memory-mechanism-research/
 observability-reversibility-benchmark/

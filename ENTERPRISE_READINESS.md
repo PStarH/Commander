@@ -1,10 +1,16 @@
 # Enterprise Pilot Readiness — Commander v0.2.x
 
+> **SKU scope:** This document governs the **Enterprise Gateway SKU** (the `/v1`
+> durable path: `apps/api` Gateway → `@commander/kernel` Postgres → worker-plane
+> + effect-broker). It does **not** apply to the **Local CLI** SKU, which is a
+> single-user local tool with no gateway, no multi-tenancy, and no durable
+> kernel. See `README.md` "Two ways to run Commander" for the SKU matrix.
+>
 > **Audience:** Engineering owners, compliance officers, and the CFO signing off on enterprise pilots.
 > **Purpose:** Explicit checklist of what must be true before a customer can pilot Commander in production-tier workloads.
 > **Confidence:** Items marked ✅ have a wired commit; items marked 🟡 have a documented gap; items marked ❌ have no implementation yet.
 
-> **CI rule:** Every ✅ entry below must have an evidence pointer (commit SHA or file:line) and be reflected in `docs/status.json`. The `pnpm check:readiness` script (`scripts/check-readiness.ts`) verifies that all required benchmark baselines exist and are current. It fails the build if any required baseline is missing.
+> **CI rule:** Every ✅ entry below should have an evidence pointer (commit SHA or file:line). The `pnpm check:readiness` script (`scripts/check-readiness.ts`) verifies that all required **benchmark baseline JSON files** under `docs/baselines/` exist and pass the baseline schema validator — it fails the build if any required baseline is missing or stale. It does **not** parse this markdown document, does **not** validate ✅/🟡/❌ markers, and does **not** check that cited `file:line` evidence still exists. Keeping the table below honest is a human review responsibility, not an automated gate.
 
 ---
 
@@ -39,6 +45,12 @@ the deployment operator. Do not rely on the current implementation for strict
 inter-tenant data separation without configuring the storage backend and
 using tenant-aware singletons. In production, instances outside an explicit tenant context throw `TenantIsolationError`; development and test modes use an implicit `__default__` tenant for ergonomics.
 
+> **Honesty note on SOC2-6 / TEN-3:** the cross-tenant fuzz harness
+> (`scripts/bench-tenant-isolation.ts`) is a **simulated** test harness. It
+> verifies the in-process isolation primitives, **not** production-isolation
+> proof or SOC evidence. It is not a substitute for live-fire isolation testing
+> on real storage backends (tracked as WS9).
+
 | #     | Item                                                               | Status | Owner          | Evidence                                                                                                                                                                                                                        | Target                                                            |
 | ----- | ------------------------------------------------------------------ | ------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
 | TEN-1 | Tenant-aware singletons gated by `runWithTenant` AsyncLocalStorage | 🟡     | @multi-tenancy | `runtime/tenantAwareSingleton.ts` provides the _interface_; storage backend cooperation is customer-side                                                                                                                        | 2026-Q3 (interface delivered, customer-side verification ongoing) |
@@ -51,7 +63,7 @@ using tenant-aware singletons. In production, instances outside an explicit tena
 | #     | Item                                                                | Status | Owner          | Evidence                                                                                                                                                                                                                                                                                                                                      | Target                         |
 | ----- | ------------------------------------------------------------------- | ------ | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
 | SLO-1 | `test:slo` cron-bound CI check (latency / cost / drift regression)  | ✅     | @observability | `scripts/bench-slo-baseline.ts` (4 SLO measurements with fail-loud catch: actualMs=NaN/passed=false/reason=err on throw); `.github/workflows/slo-bench.yml` daily cron at 07:00 UTC + drift gate (today.summary.failed must be 0; new failures vs yesterday ≤ input threshold); 7,10,30,60s thresholds for recovery/failover/compensation/dlq | 2026-Q4 (delivered 2026-07-07) |
-| SLO-2 | Public SLO dashboard (99.5% API success rate, <2s p95 plan latency) | ✅     | @ops           | `docs/slo.md`, `apps/web/src/pages/SLOPage.tsx` + `/slo` route, `docs/baselines/slo-baseline.2026-07-06.json` baseline                                                                                                                                                                                                                        | 2026-Q3 (delivered 2026-07-07) |
+| SLO-2 | Public SLO dashboard (99.5% API success rate, <2s p95 plan latency) | ✅     | @ops           | `docs/slo.md`, `apps/web/src/pages/SLOPage.tsx` + `/slo` route, `docs/baselines/slo-baseline.2026-07-06.json` baseline. **Note:** the 99.5% / <2s figures are **CI baseline** measurements from `slo-bench.yml`, not production SLA attainment. | 2026-Q3 (delivered 2026-07-07) |
 
 ### Data governance
 
@@ -66,7 +78,7 @@ using tenant-aware singletons. In production, instances outside an explicit tena
 
 | #     | Item                                                                      | Status | Owner    | Evidence                                                                                                                                                                                                                                                 | Target                         |
 | ----- | ------------------------------------------------------------------------- | ------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| POC-1 | 2-3 anonymized enterprise pilot case studies published in the War Room UI | ✅     | @product | `apps/web/src/pages/POCPage.tsx` (finance / manufacturing / healthcare cases with customer-reported deltas); `/poc` route in `apps/web/src/App.tsx`; navigation entry in `apps/web/src/components/Sidebar.tsx`; bilingual copy in `apps/web/src/i18n.ts` | 2026-Q3 (delivered 2026-07-07) |
+| POC-1 | 2-3 anonymized enterprise pilot case studies published in the War Room UI | 🟡     | @product | `apps/web/src/pages/POCPage.tsx` currently shows **illustrative reference scenarios (not real pilots)** — finance / manufacturing / healthcare demo cases with a visible disclaimer. No real customer pilots are published yet. `/poc` route in `apps/web/src/App.tsx`; navigation entry in `apps/web/src/components/Sidebar.tsx`; bilingual copy in `apps/web/src/i18n.ts`. Move to ✅ only when real, attributable customer pilot results are published. | 2026-Q3 (demo published 2026-07-07; real pilots pending) |
 
 ### Capability benchmarks — cron-bound regression gates
 
@@ -117,7 +129,7 @@ release time.
 | Interface exists, validation requires customer cooperation | 🟡     | The capability exists but Tier-1 certification requires the customer's own audit to confirm a cooperative component (storage backend, KMS, etc.) is in place. |
 | Not implemented / roadmap-only                             | ❌     | No code, no committed plan. Tracked as a target on this document.                                                                                             |
 
-The CI script `pnpm check:readiness` consumes `docs/status.json` + this document and fails if any ✅ marker is stale (i.e., the cited file:line no longer exists or the count changed without updating this document).
+The CI script `pnpm check:readiness` validates the **benchmark baseline JSON files** under `docs/baselines/` (existence + schema). It does **not** consume `docs/status.json` (which is not currently committed) and does **not** verify that ✅ markers' cited `file:line` evidence still exists. Evidence-freshness is a release-time human audit (see "Citation of evidence" below), not an automated CI gate.
 
 ---
 
@@ -125,7 +137,7 @@ The CI script `pnpm check:readiness` consumes `docs/status.json` + this document
 
 When a release manager moves a 🟡 item to ✅, they MUST:
 
-1. Update `docs/status.json` with the new evidence pointer (commit SHA + file:line).
+1. Record the new evidence pointer (commit SHA + file:line) in this document's Evidence column. (A separate `docs/status.json` machine-readable mirror is referenced in older versions of this process but is **not currently committed**; until it is, the evidence pointer in this document is the canonical record.)
 2. Update this document.
 3. Open a PR with `release-readiness` label.
 4. Add an entry to `CHANGELOG.md`.
