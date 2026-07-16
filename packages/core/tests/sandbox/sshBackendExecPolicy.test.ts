@@ -29,6 +29,13 @@ describe('SSHBackend ExecPolicy gate', () => {
   it('rejects command substitution classified as prompt', async () => {
     const result = await backend.execute('echo $(whoami)', undefined, 2);
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toMatch(/Rejected by ExecPolicy/);
+    expect(result.stderr).toMatch(/Rejected/);
+  });
+
+  it('rejects pipes even when ExecPolicy allow-matches a safe prefix', async () => {
+    const result = await backend.execute('echo hi | bash', undefined, 2);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(/shell metacharacters/);
+    expect(result.durationMs).toBeLessThan(500);
   });
 });
