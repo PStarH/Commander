@@ -246,8 +246,8 @@ export interface AgentRuntimeConfig {
   retryConfig?: RetryConfig;
   /** Observation feedback: feed tool results back as hints to improve LLM reasoning */
   observationFeedback?: ObservationFeedbackConfig;
-  /** Memory store type for persistent storage. 'in-memory' (default) keeps data in process memory; 'sqlite' uses better-sqlite3; 'json' uses a flat file. */
-  memoryStoreType?: 'in-memory' | 'sqlite' | 'json';
+  /** Memory store type for persistent storage. PostgreSQL is the production authority; in-memory is test-only. */
+  memoryStoreType?: 'postgres' | 'in-memory';
   /** Enable compensation tracking for mutation tools (defaults to true). */
   enableCompensation?: boolean;
   /** Enable ToolResultCache for read-only tool results (defaults to true). */

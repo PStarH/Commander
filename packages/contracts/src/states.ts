@@ -47,9 +47,9 @@ export const TERMINAL_STEP_STATES: ReadonlySet<StepState> = new Set([
 
 /** Valid run state transitions keyed by current state. */
 export const RUN_TRANSITIONS: Readonly<Record<RunState, readonly RunState[]>> = {
-  PENDING: ['RUNNING', 'PAUSED', 'CANCELLED'],
+  PENDING: ['RUNNING', 'PAUSED', 'FAILED', 'CANCELLED'],
   RUNNING: ['PAUSED', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'COMPENSATING'],
-  PAUSED: ['RUNNING', 'CANCELLED'],
+  PAUSED: ['RUNNING', 'FAILED', 'CANCELLED'],
   SUCCEEDED: [],
   FAILED: [],
   CANCELLED: [],
@@ -59,10 +59,10 @@ export const RUN_TRANSITIONS: Readonly<Record<RunState, readonly RunState[]>> = 
 
 /** Valid step state transitions keyed by current state. */
 export const STEP_TRANSITIONS: Readonly<Record<StepState, readonly StepState[]>> = {
-  PENDING: ['RUNNING', 'SKIPPED', 'CANCELLED'],
+  PENDING: ['RUNNING', 'SKIPPED', 'FAILED', 'CANCELLED'],
   RUNNING: ['WAITING_FOR_HUMAN', 'RETRY_WAIT', 'SUCCEEDED', 'FAILED', 'CANCELLED'],
-  WAITING_FOR_HUMAN: ['RUNNING', 'CANCELLED'],
-  RETRY_WAIT: ['RUNNING', 'CANCELLED'],
+  WAITING_FOR_HUMAN: ['RUNNING', 'FAILED', 'CANCELLED'],
+  RETRY_WAIT: ['RUNNING', 'FAILED', 'CANCELLED'],
   SUCCEEDED: [],
   FAILED: [],
   CANCELLED: [],
