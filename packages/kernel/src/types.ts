@@ -43,6 +43,16 @@ export interface KernelRun {
   metadata: Record<string, unknown>;
 }
 
+export interface TenantExecutionControl {
+  tenantId: string;
+  paused: boolean;
+  generation: number;
+  actor: string;
+  reason?: string;
+  pausedAt?: string;
+  resumedAt?: string;
+}
+
 export interface KernelStep {
   id: string;
   runId: string;
@@ -75,7 +85,7 @@ export interface KernelLease {
 export interface KernelOutboxMessage {
   id: string;
   eventId: string;
-  tenantId?: string;
+  tenantId: string;
   topic: string;
   key: string;
   payload: Record<string, unknown>;
@@ -206,7 +216,7 @@ export class KernelInvariantError extends Error {
 // ── Durable Timers ──────────────────────────────────────────────────────────
 
 export type TimerType = 'INTERACTION_TIMEOUT' | 'RETRY_DELAY' | 'STEP_DEADLINE';
-export type TimerState = 'PENDING' | 'FIRED' | 'CANCELLED';
+export type TimerState = 'PENDING' | 'PROCESSING' | 'FIRED' | 'CANCELLED';
 
 export interface KernelTimer {
   id: string;
@@ -219,6 +229,7 @@ export interface KernelTimer {
   payload: Record<string, unknown>;
   createdAt: string;
   firedAt?: string;
+  claimToken?: string;
 }
 
 export interface CreateTimerRequest {
@@ -269,7 +280,7 @@ export interface KernelDlqEntry {
   id: string;
   originalId: string;
   eventId: string;
-  tenantId?: string;
+  tenantId: string;
   topic: string;
   key: string;
   payload: Record<string, unknown>;

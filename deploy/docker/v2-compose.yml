@@ -39,9 +39,8 @@ services:
   migrate:
     build:
       context: ../..
-      dockerfile: Dockerfile
-      target: timer
-    image: ${COMMANDER_TIMER_IMAGE:-commander-timer:latest}
+      dockerfile: packages/kernel/Dockerfile.ops
+    image: ${COMMANDER_KERNEL_OPS_IMAGE:-commander-kernel-ops:latest}
     entrypoint: ["node", "packages/kernel/dist/migrate.js"]
     environment:
       DATABASE_URL: postgres://commander_owner:commander_owner@postgres:5432/commander
@@ -162,35 +161,21 @@ services:
     networks:
       - commander-v2
 
-  timer:
+  kernel-ops:
     build:
       context: ../..
-      dockerfile: Dockerfile
-      target: timer
-    image: ${COMMANDER_TIMER_IMAGE:-commander-timer:latest}
+      dockerfile: packages/kernel/Dockerfile.ops
+    image: ${COMMANDER_KERNEL_OPS_IMAGE:-commander-kernel-ops:latest}
     environment:
       NODE_ENV: production
       DATABASE_URL: postgres://commander_scheduler:commander_scheduler@postgres:5432/commander
-    depends_on:
-      postgres:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-    deploy:
-      restart_policy:
-        condition: on-failure
-    networks:
-      - commander-v2
-
-  outbox:
-    build:
-      context: ../..
-      dockerfile: Dockerfile
-      target: outbox
-    image: ${COMMANDER_OUTBOX_IMAGE:-commander-outbox:latest}
-    environment:
-      NODE_ENV: production
-      DATABASE_URL: postgres://commander_scheduler:commander_scheduler@postgres:5432/commander
+      COMMANDER_RECLAIM_INTERVAL_MS: ${COMMANDER_RECLAIM_INTERVAL_MS:-5000}
+      COMMANDER_RECLAIM_BATCH_SIZE: ${COMMANDER_RECLAIM_BATCH_SIZE:-100}
+      COMMANDER_TIMER_POLL_MS: ${COMMANDER_TIMER_POLL_MS:-5000}
+      COMMANDER_TIMER_BATCH_SIZE: ${COMMANDER_TIMER_BATCH_SIZE:-100}
+      COMMANDER_OUTBOX_INTERVAL_MS: ${COMMANDER_OUTBOX_INTERVAL_MS:-1000}
+      COMMANDER_OUTBOX_BATCH_SIZE: ${COMMANDER_OUTBOX_BATCH_SIZE:-100}
+      COMMANDER_OUTBOX_MAX_ATTEMPTS: ${COMMANDER_OUTBOX_MAX_ATTEMPTS:-10}
     depends_on:
       postgres:
         condition: service_healthy
