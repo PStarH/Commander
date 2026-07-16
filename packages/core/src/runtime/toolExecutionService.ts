@@ -995,9 +995,19 @@ export class ToolExecutionService {
           const tool = this.runtime.tools.get(pred.name);
           if (!tool) return;
 
-          // Same sanitizer + guardian gate as the formal execute path —
-          // speculative must not bypass security. Fail → skip (no cache write).
+          // Align with formal execute path: sanitizer + ReversibilityGate + guardian.
+          // Speculative must not bypass Layer-2 gates. Fail → skip (no cache write).
           const sanitizedArgs = this.sanitizeArguments(pred.arguments);
+
+          if (this.runtime.reversibilityGate) {
+            const gateDecision = await this.runtime.reversibilityGate.evaluate(
+              pred.name,
+              sanitizedArgs as Record<string, unknown>,
+              { runId: `spec_${Date.now()}`, agentId: 'speculative' },
+            );
+            if (!gateDecision.allowed) return;
+          }
+
           if (this.runtime.config.securityMonitor?.enabled !== false) {
             const guardianResult = checkToolGuardian({
               agentId: 'speculative',
