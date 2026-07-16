@@ -21,9 +21,13 @@ const PUBLIC_PATHS = new Set([
   '/a2a/.well-known/agent-card',
   '/mcp/.well-known/mcp',
   // User-auth endpoints handle their own auth via JWT — must be reachable
-  // without an API key so users can obtain their first token.
+  // without an API key so users can obtain their first token / rotate it.
   '/api/auth/login',
   '/api/auth/register',
+  // Refresh/logout present a refresh token in the body (no access JWT / API key).
+  // Must stay public to authMiddleware or deny-anon breaks the refresh flow.
+  '/api/auth/refresh',
+  '/api/auth/logout',
 ]);
 
 // ── Timing-safe API key storage ──────────────────────────────────────────────
@@ -235,6 +239,14 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
           'Authentication is disabled in production. Remove AUTH_DISABLED=true before deployment.',
       });
     }
+    // Non-production: AUTH_DISABLED alone is no longer a free bypass.
+    // Require explicit COMMANDER_ALLOW_ANON=1 (same escape hatch as no-keys mode).
+    if (process.env.COMMANDER_ALLOW_ANON !== '1') {
+      return res.status(401).json({
+        error: 'Authentication required',
+        hint: 'AUTH_DISABLED requires COMMANDER_ALLOW_ANON=1 outside production',
+      });
+    }
     return next();
   }
 
@@ -295,12 +307,18 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
     keyId = matched.name;
     matchedScopes = matched.scopes;
     matchedKey = matched;
-  } else if (apiKeys.size > 0 || isProductionEnv() || getApiKeyStore().list().length > 0) {
+  } else if (
+    apiKeys.size > 0 ||
+    isProductionEnv() ||
+    getApiKeyStore().list().length > 0 ||
+    // Non-production with no keys previously fell open. Require an explicit
+    // opt-in so local/dev deploys are not anonymously writable by default.
+    process.env.COMMANDER_ALLOW_ANON !== '1'
+  ) {
     // Default-deny: require authentication whenever any API key is configured —
     // in the env cache OR the persistent store — or whenever we are in
-    // production. Previously auth fell open when keys existed only in the
-    // persistent store, or when none were configured in production, letting
-    // unauthenticated callers through to protected routes (AUTH-3 / GOV-6 / B3).
+    // production. Outside production, anonymous access is only allowed when
+    // COMMANDER_ALLOW_ANON=1 is set explicitly (dev escape hatch).
     res.status(401).json({
       error: 'Authentication required',
       hint: 'Provide X-API-Key header or Authorization: Bearer <token>',

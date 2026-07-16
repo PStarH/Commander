@@ -113,9 +113,13 @@ services:
     profiles: !reset []
     image: postgres:16-alpine
     container_name: commander-postgres
+    # SECURITY: never publish 5432 on the host in production — compose-network only.
+    # Do not add `ports:` here. Local debugging: bind "127.0.0.1:5432:5432" temporarily.
+    expose:
+      - '5432'
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-commander}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?err}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB:-commander}
     volumes:
       - postgres-data:/var/lib/postgresql/data
