@@ -1,6 +1,13 @@
 /** Canonical, versioned execution-kernel domain types. */
 
-import type { RunState, StepState } from '@commander/contracts';
+import type {
+  KernelErrorDetails,
+  KernelEvent,
+  RunState,
+  StepState,
+} from '@commander/contracts';
+
+export type { KernelErrorDetails, KernelEvent } from '@commander/contracts';
 
 export const KERNEL_API_VERSION = 'v2' as const;
 
@@ -63,30 +70,6 @@ export interface KernelLease {
   token: string;
   fencingEpoch: number;
   expiresAt: string;
-}
-
-export interface KernelErrorDetails {
-  code: string;
-  message: string;
-  retryable: boolean;
-  details?: Record<string, unknown>;
-}
-
-export interface KernelEvent {
-  id: string;
-  aggregateType: 'run' | 'step' | 'effect' | 'interaction' | 'worker';
-  aggregateId: string;
-  sequence: number;
-  type: string;
-  tenantId: string;
-  runId: string;
-  stepId?: string;
-  causationId?: string;
-  correlationId?: string;
-  actor: string;
-  schemaVersion: string;
-  payload: Record<string, unknown>;
-  occurredAt: string;
 }
 
 export interface KernelOutboxMessage {

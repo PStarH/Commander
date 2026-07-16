@@ -139,6 +139,7 @@
     "vitest": "^4.1.10"
   },
   "dependencies": {
+    "@commander/contracts": "workspace:*",
     "@commander/plugin-sdk": "workspace:*",
     "blessed": "^0.1.81",
     "better-sqlite3": "^12.11.1",
