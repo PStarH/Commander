@@ -236,9 +236,9 @@ describe('CLI Integration', () => {
 // Test 6: Memory System Integration
 // ============================================================================
 describe('Memory System', () => {
-  it('6.1 InMemoryMemoryStore stores and retrieves', async () => {
-    const { InMemoryMemoryStore } = require('../src/memory');
-    const store = new InMemoryMemoryStore();
+  it('6.1 in-memory MemoryService stores and retrieves', async () => {
+    const { InMemoryMemoryService, MemoryStoreFacade } = require('../src/memory');
+    const store = new MemoryStoreFacade(new InMemoryMemoryService(), 'test-tenant');
 
     const item = await store.write({
       projectId: 'test',
@@ -255,9 +255,9 @@ describe('Memory System', () => {
     assert.strictEqual(found!.content, 'This is a test memory entry');
   });
 
-  it('6.2 Semantic search with TF-IDF', async () => {
-    const { InMemoryMemoryStore } = require('../src/memory');
-    const store = new InMemoryMemoryStore();
+  it('6.2 semantic search with the in-memory service', async () => {
+    const { InMemoryMemoryService, MemoryStoreFacade } = require('../src/memory');
+    const store = new MemoryStoreFacade(new InMemoryMemoryService(), 'test-tenant');
 
     await store.write({
       projectId: 'test',
