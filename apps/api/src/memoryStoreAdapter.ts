@@ -13,8 +13,8 @@ import type {
  * This is the convergence layer recommended by the memory mechanism research:
  * API-layer semantics (list/overview/search/append) are implemented as a thin
  * translation over the core MemoryStore, eliminating the duplicated JSON-file
- * persistence paths in apps/api while keeping existing ProjectMemoryStore JSON
- * files as a legacy fallback during migration.
+ * persistence paths in apps/api while keeping the HTTP/project DTO contract
+ * stable during migration.
  */
 export class ProjectMemoryStoreAdapter {
   constructor(private readonly store: MemoryStore) {}
@@ -71,6 +71,22 @@ export class ProjectMemoryStoreAdapter {
       evidenceRefs: input.evidenceRefs,
     });
     return this.toProjectMemoryItem(item);
+  }
+
+  async update(
+    projectId: string,
+    id: string,
+    updates: Pick<
+      ProjectMemoryItem,
+      'title' | 'content' | 'tags' | 'priority' | 'confidence' | 'expiresAt'
+    >,
+  ): Promise<ProjectMemoryItem | null> {
+    const item = await this.store.update({ id, projectId, updates });
+    return item ? this.toProjectMemoryItem(item) : null;
+  }
+
+  async delete(projectId: string, id: string): Promise<boolean> {
+    return this.store.delete(id, projectId);
   }
 
   async close(): Promise<void> {

@@ -1,5 +1,5 @@
-import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
+import { getCurrentTenantId } from '../runtime/tenantContext';
 import { wireGlobalThreeLayerMemory } from '../threeLayerMemory';
 import type {
   MemoryStore,
@@ -7,14 +7,22 @@ import type {
   MemoryKind,
   MemoryDuration,
 } from '../episodicMemory';
-import { JsonMemoryStore } from './jsonStore';
 import { getUnifiedMemory } from './unifiedMemory';
+import { InMemoryMemoryService } from './inMemoryMemoryService';
+import { MemoryStoreFacade } from './memoryStoreFacade';
+import { PostgresMemoryService } from './postgresMemoryService';
+import type { MemoryRetentionPolicy } from './memoryService';
 
-export type MemoryStoreType = 'in-memory' | 'sqlite' | 'json';
+export type MemoryStoreType = 'postgres' | 'in-memory';
 
 export interface MemoryBootstrapOptions {
-  /** Base directory for json store or parent dir for sqlite file. */
   basePath?: string;
+  /** PostgreSQL connection string for the canonical production service. */
+  connectionString?: string;
+  /** Retention policy applied by the canonical service. */
+  retention?: MemoryRetentionPolicy;
+  /** Explicit scope used by test/bootstrap callers that are outside a request context. */
+  tenantId?: string;
 }
 
 /**
@@ -26,11 +34,14 @@ export function resolveMemoryStoreType(config?: {
 }): MemoryStoreType {
   if (config?.memoryStoreType) return config.memoryStoreType;
   const env = process.env.COMMANDER_MEMORY_STORE;
-  if (env === 'sqlite' || env === 'json' || env === 'in-memory') return env;
+  if (env === 'postgres' || env === 'in-memory') return env;
   if (process.env.VITEST === 'true' || process.env.NODE_ENV === 'test') {
     return 'in-memory';
   }
-  return 'json';
+  if (process.env.COMMANDER_POSTGRES_URL || process.env.DATABASE_URL) return 'postgres';
+  throw new Error(
+    'PostgreSQL memory persistence is required outside tests; set COMMANDER_POSTGRES_URL or DATABASE_URL',
+  );
 }
 
 export async function createMemoryStore(
@@ -39,26 +50,22 @@ export async function createMemoryStore(
 ): Promise<MemoryStore> {
   switch (type) {
     case 'in-memory': {
-      const { InMemoryMemoryStore } = await import('../memory');
-      return new InMemoryMemoryStore();
+      return new MemoryStoreFacade(
+        new InMemoryMemoryService({ retention: options?.retention }),
+        options?.tenantId ?? getCurrentTenantId,
+      );
     }
-    case 'sqlite': {
-      try {
-        const { SqliteMemoryStore } = await import('./sqliteMemoryStore');
-        const store = new SqliteMemoryStore(options?.basePath ?? '.commander/memory.db');
-        await store.init();
-        return store;
-      } catch (err) {
-        reportSilentFailure(err, 'utils:sqliteFallback');
-        getGlobalLogger().warn(
-          'createMemoryStore',
-          'SqliteMemoryStore not available, falling back to JSON store',
-        );
-        return new JsonMemoryStore(options?.basePath ?? '.commander');
-      }
+    case 'postgres': {
+      const service = new PostgresMemoryService({
+        connectionString:
+          options?.connectionString ??
+          process.env.COMMANDER_POSTGRES_URL ??
+          process.env.DATABASE_URL,
+        retention: options?.retention,
+      });
+      await service.initialize();
+      return new MemoryStoreFacade(service);
     }
-    case 'json':
-      return new JsonMemoryStore(options?.basePath ?? '.commander');
     default:
       throw new Error(`Unknown memory store type: ${type}`);
   }

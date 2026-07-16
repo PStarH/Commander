@@ -9,11 +9,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import { ContextCompactor } from '../src/runtime/contextCompactor';
-import { InMemoryMemoryStore } from '../src/memory';
+import { InMemoryMemoryService, MemoryStoreFacade } from '../src/memory';
 import { TokenGovernor } from '../src/runtime/tokenGovernor';
 import { ToolResultCache } from '../src/runtime/toolResultCache';
 import { CircuitBreaker } from '../src/runtime/circuitBreaker';
 import type { LLMMessage } from '../src/runtime/types';
+import type { MemoryStore } from '../src/episodicMemory';
 
 // ============================================================================
 // Helpers
@@ -47,6 +48,15 @@ function stats(times: number[]): {
 function heapMB(): number {
   global.gc?.();
   return process.memoryUsage().heapUsed / 1024 / 1024;
+}
+
+function createMemoryStore(maxEntries?: number): MemoryStore {
+  return new MemoryStoreFacade(
+    new InMemoryMemoryService({
+      retention: maxEntries ? { maxEntriesPerTenantProject: maxEntries } : undefined,
+    }),
+    'test-tenant',
+  );
 }
 
 // ============================================================================
@@ -90,9 +100,9 @@ describe('1. Memory Profiling — 200K Token Context', () => {
     );
   });
 
-  it('InMemoryMemoryStore bounded by LRU eviction (GAP-22 fix)', async () => {
+  it('in-memory MemoryService bounded by retention eviction (GAP-22 fix)', async () => {
     const maxEntries = 2000;
-    const store = new InMemoryMemoryStore(maxEntries);
+    const store = createMemoryStore(maxEntries);
 
     global.gc?.();
     const heapBefore = heapMB();
@@ -114,7 +124,7 @@ describe('1. Memory Profiling — 200K Token Context', () => {
     const stats = await store.getStats('test');
 
     console.log(
-      `  [Memory] InMemoryMemoryStore (maxEntries=${maxEntries}): ${stats.totalItems} items, growth=${growth.toFixed(1)}MB`,
+      `  [Memory] InMemoryMemoryService (maxEntries=${maxEntries}): ${stats.totalItems} items, growth=${growth.toFixed(1)}MB`,
     );
     // LRU eviction should cap items at maxEntries
     assert.strictEqual(
@@ -399,7 +409,7 @@ describe('3. Long-Running 1000-Round Degradation', () => {
   });
 
   it('memory store does not degrade query performance at 5000 entries', async () => {
-    const store = new InMemoryMemoryStore();
+    const store = createMemoryStore();
 
     // Populate with 5000 entries
     for (let i = 0; i < 5000; i++) {
