@@ -207,21 +207,32 @@ describe('WS9 RATE-2: A exhausts shared worker pool, B\'s lease claims still suc
 // ─── RATE-3: bench-tenant-concurrency on real kernel PG ─────────────────
 
 // probePostgres is a ProbeResult const (not a function) — see _evidence.ts.
-// hasAppRole was never a field on ProbeResult; the probe already verifies
-// COMMANDER_DB_HOST/NAME/USER are set, which is sufficient for RATE-3.
 const pgProbe = probePostgres;
 const pgReady = pgProbe.available;
+const REPO_ROOT = path.join(__dirname, '..', '..', '..', '..');
 
-describeIf(pgReady, 'WS9 RATE-3: bench-tenant-concurrency on real kernel Postgres', () => {
+describeIf(pgReady)('WS9 RATE-3: bench-tenant-concurrency on real kernel Postgres', () => {
   it('re-runs bench-tenant-concurrency against real PG; passed=true, errors=0', () => {
     const artifacts: string[] = [];
 
-    // The bench script writes a baseline JSON to docs/baselines/. Run it
-    // with a small fixed load (2 tenants × 20 requests) and parse the
-    // summary verdict. We do NOT use a heavy load here — RATE-1 and RATE-2
-    // are the actual isolation tests; RATE-3 only re-affirms that the
-    // existing bench still passes against the real backend (per
-    // to-90-plan §10 L190: `passed=false` was the historical gap).
+    // Smoke: commander_app can talk to the live PG used by the WS9 stack.
+    const host = process.env.COMMANDER_DB_HOST!;
+    const port = process.env.COMMANDER_DB_PORT ?? '5432';
+    const db = process.env.COMMANDER_DB_NAME!;
+    const user = process.env.COMMANDER_DB_USER!;
+    const password = process.env.COMMANDER_DB_PASSWORD ?? '';
+    const pgProbeRes = spawnSync(
+      'psql',
+      ['-h', host, '-p', port, '-U', user, '-d', db, '-t', '-A', '-c', 'SELECT current_user;'],
+      {
+        encoding: 'utf-8',
+        env: { ...process.env, PGPASSWORD: password },
+        timeout: 10_000,
+      },
+    );
+    expect(pgProbeRes.status).toBe(0);
+    expect((pgProbeRes.stdout ?? '').trim()).toBe(user);
+
     const outDir = path.join(WS9_BASELINE_DIR, 'rate-3-run');
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
     const outFile = path.join(outDir, `bench-tenant-concurrency.${Date.now()}.json`);
@@ -237,24 +248,26 @@ describeIf(pgReady, 'WS9 RATE-3: bench-tenant-concurrency on real kernel Postgre
         `--output=${outFile}`,
       ],
       {
-        cwd: path.join(__dirname, '..', '..', '..'),
+        cwd: REPO_ROOT,
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
         timeout: 60_000,
+        env: process.env,
       },
     );
 
     if (res.status !== 0) {
       writeFail(
         'RATE-3',
-        `bench-tenant-concurrency exited ${res.status}: ${(res.stderr ?? '').slice(0, 500)}`,
+        `bench-tenant-concurrency exited ${res.status}: ${(res.stderr ?? res.stdout ?? '').slice(0, 500)}`,
         [...artifacts, outFile],
+        'live',
       );
       throw new Error(`bench-tenant-concurrency failed: exit ${res.status}`);
     }
 
     if (!fs.existsSync(outFile)) {
-      writeFail('RATE-3', `bench-tenant-concurrency did not produce baseline at ${outFile}`, artifacts);
+      writeFail('RATE-3', `bench-tenant-concurrency did not produce baseline at ${outFile}`, artifacts, 'live');
       throw new Error(`bench baseline missing: ${outFile}`);
     }
 
@@ -271,21 +284,26 @@ describeIf(pgReady, 'WS9 RATE-3: bench-tenant-concurrency on real kernel Postgre
       expect(summary.skipped ?? 0).toBe(0);
       writePass(
         'RATE-3',
-        `bench-tenant-concurrency on real PG: passed=${summary.passed}, errors=${summary.errors}, failed=${summary.failed}, skipped=${summary.skipped}. to-90-plan §10 L190 'passed=false' gap closed.`,
+        `bench-tenant-concurrency with live PG (${user}@${host}:${port}/${db}): ` +
+          `passed=${summary.passed}, errors=${summary.errors}, failed=${summary.failed}. ` +
+          `PG smoke current_user=${user}.`,
         artifacts,
+        'live',
       );
     } catch (err) {
       writeBreach(
         'RATE-3',
-        `bench-tenant-concurrency regression: passed=${summary.passed}, errors=${summary.errors}, failed=${summary.failed}, skipped=${summary.skipped}. ${(err as Error).message ?? ''}`,
+        `bench-tenant-concurrency regression: passed=${summary.passed}, errors=${summary.errors}. ` +
+          `${(err as Error).message ?? ''}`,
         artifacts,
+        'live',
       );
       throw err;
     }
   });
 });
 
-describeIf(!pgReady, 'WS9 RATE-3 (skipped: real Postgres unavailable)', () => {
+describeIf(!pgReady)('WS9 RATE-3 (skipped: real Postgres unavailable)', () => {
   it('skips when Postgres commander_app role is not available', () => {
     expect(pgReady).toBe(false);
   });

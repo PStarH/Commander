@@ -1,0 +1,12 @@
+{
+  "testCaseId": "RATE-3",
+  "verdict": "PASS",
+  "evidenceLevel": "live",
+  "breach": false,
+  "details": "bench-tenant-concurrency with live PG (commander_app@localhost:5433/commander): passed=true, errors=0, failed=0. PG smoke current_user=commander_app.",
+  "artifacts": [
+    "/Users/sampan/Documents/GitHub/Commander/docs/baselines/ws9/rate-3-run/bench-tenant-concurrency.1784197457019.json"
+  ],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:17.886Z"
+}

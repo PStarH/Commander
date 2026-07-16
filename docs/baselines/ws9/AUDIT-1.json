@@ -1,0 +1,10 @@
+{
+  "testCaseId": "AUDIT-1",
+  "verdict": "PASS",
+  "evidenceLevel": "ci-worm-sim",
+  "breach": false,
+  "details": "Audit log tenant isolation held: A sees 2 events (all tenantId=tenant-a); B sees 1 events. Full-chain verify ok=true. A cannot observe B's security events via tenant filter. evidenceLevel=ci-worm-sim (in-process ledger).",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:18.370Z"
+}

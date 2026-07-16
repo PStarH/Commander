@@ -1,0 +1,10 @@
+{
+  "testCaseId": "AUDIT-3",
+  "verdict": "PASS",
+  "evidenceLevel": "simulated",
+  "breach": false,
+  "details": "Whole-chain deletion detected: manifest registered chain 9ed63d7bd7f04c1ea5ebf81ea1dc3595 (maxSeq=1) but no entries exist on disk. manifestGaps[0].reason=chain_missing_from_log. tamperProof=false (derived from live verify, not hardcoded). L2 sig: InMemoryKeyProvider (ci-worm-sim).",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:18.954Z"
+}

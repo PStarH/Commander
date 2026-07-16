@@ -1,0 +1,10 @@
+{
+  "testCaseId": "TAMPER-2",
+  "verdict": "PASS",
+  "evidenceLevel": "simulated",
+  "breach": false,
+  "details": "Tail deletion (5→3) detected: manifest maxSeq=5 > disk maxSeq=3. manifestGaps[0].reason=tail_truncated. tamperProof=false.",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:19.575Z"
+}

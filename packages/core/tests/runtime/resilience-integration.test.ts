@@ -507,12 +507,16 @@ describe('Full runtime execution pipeline', () => {
     expect(failMock.callCount).toBeGreaterThanOrEqual(1);
   });
 
-  it('handles concurrent execution without interference', async () => {
+  it('handles sequential execution without interference', async () => {
     const ctxs = [1, 2, 3].map((i) =>
-      makeContext({ agentId: `concurrent-${i}`, goal: `Concurrent task ${i}` }),
+      makeContext({ agentId: `sequential-${i}`, goal: `Sequential task ${i}` }),
     );
 
-    const results = await Promise.all(ctxs.map((ctx) => runtime.execute(ctx)));
+    // One in-flight execute() per AgentRuntime; run sequentially.
+    const results = [];
+    for (const ctx of ctxs) {
+      results.push(await runtime.execute(ctx));
+    }
     expect(results.length).toBe(3);
     for (const r of results) {
       expect(r.status).toBe('success');

@@ -632,6 +632,12 @@ export class IntegrityLayer {
    * Canonical JSON serialization for deterministic signing (recursive key sort).
    */
   private canonicalJson(value: unknown): string {
+    // Match JSON.stringify semantics: undefined is omitted from objects and
+    // becomes null inside arrays. Including `"key":undefined` would make
+    // signatures diverge after a JSON round-trip (JSON drops undefined).
+    if (value === undefined) {
+      return 'null';
+    }
     if (value === null || typeof value !== 'object') {
       return JSON.stringify(value);
     }
@@ -639,7 +645,9 @@ export class IntegrityLayer {
       return `[${value.map((v) => this.canonicalJson(v)).join(',')}]`;
     }
     const obj = value as Record<string, unknown>;
-    const keys = Object.keys(obj).sort();
+    const keys = Object.keys(obj)
+      .filter((k) => obj[k] !== undefined)
+      .sort();
     return `{${keys.map((k) => `${JSON.stringify(k)}:${this.canonicalJson(obj[k])}`).join(',')}}`;
   }
 

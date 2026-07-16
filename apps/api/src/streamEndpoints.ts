@@ -89,7 +89,11 @@ export function createStreamRouter(): Router {
 
       if (!token) {
         const raw = req.query.access_token;
-        token = typeof raw === 'string' ? raw : Array.isArray(raw) ? raw[0] : undefined;
+        if (typeof raw === 'string') {
+          token = raw;
+        } else if (Array.isArray(raw) && typeof raw[0] === 'string') {
+          token = raw[0];
+        }
       }
 
       redactAccessTokenFromUrl();

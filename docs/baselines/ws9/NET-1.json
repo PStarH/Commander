@@ -1,0 +1,10 @@
+{
+  "testCaseId": "NET-1",
+  "verdict": "PASS",
+  "evidenceLevel": "simulated",
+  "breach": false,
+  "details": "Per-tenant egress isolation: A→B's domain allowed=false (expected false), B→own domain allowed=true (expected true), A→own domain allowed=true (expected true), B→A's domain allowed=false (expected false). OutboundNetworkPolicy enforces per-tenant allowlist.",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:23.084Z"
+}

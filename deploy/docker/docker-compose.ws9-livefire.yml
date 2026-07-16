@@ -22,6 +22,7 @@
 #   export COMMANDER_DB_PASSWORD=commander_app
 #   export COMMANDER_VAULT_ADDR=http://localhost:8200 COMMANDER_VAULT_TOKEN=root
 #   export COMMANDER_API_HOST=localhost COMMANDER_API_PORT=3000
+#   export COMMANDER_WS9_API_KEY_A=ws9-tenant-a-api-key-test-only
 
 name: ws9-livefire
 
@@ -39,7 +40,7 @@ services:
       POSTGRES_PASSWORD: commander
       POSTGRES_DB: commander
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - pg-data:/var/lib/postgresql/data
       - ./postgres-init.ws9-livefire.sql:/docker-entrypoint-initdb.d/01-ws9-init.sql:ro
@@ -110,6 +111,18 @@ services:
       NODE_ENV: production
       PORT: "3000"
       COMMANDER_V2_MODE: "1"
+      # Required in production — without this jwtMiddleware refuses to boot.
+      JWT_SECRET: ws9-livefire-jwt-secret-not-for-production
+      # IntegrityLayer HMAC (refresh store / signed payloads) — TESTING ONLY.
+      COMMANDER_INTEGRITY_KEY: ws9-livefire-integrity-key-32chars-min
+      # Production boot gate (apps/api validateEnvironment) — TESTING ONLY.
+      # Prefer Vault injection in real deploys; these exist so the live-fire
+      # API container can start under NODE_ENV=production.
+      COMMANDER_MASTER_KEY: ws9-livefire-master-key-must-be-32b-min!!
+      COMMANDER_API_KEY: ws9-livefire-commander-api-key-test-only
+      COMMANDER_CAPABILITY_TOKEN_KEY: ws9-livefire-capability-token-key-32
+      # Tenant-bound API keys for DATA-2 header-forge live-fire (TESTING ONLY).
+      TENANT_API_KEYS: "tenant-a:ws9-tenant-a-api-key-test-only;tenant-b:ws9-tenant-b-api-key-test-only"
       # Postgres via the non-owner, RLS-subject role.
       COMMANDER_DB_HOST: postgres
       COMMANDER_DB_PORT: "5432"
@@ -117,6 +130,10 @@ services:
       COMMANDER_DB_USER: commander_app
       COMMANDER_DB_PASSWORD: commander_app
       DATABASE_URL: postgres://commander_app:commander_app@postgres:5432/commander
+      # WS9: commander_app has no CREATE on schema (spec). Keep API stores off
+      # Postgres DDL; RLS live-fire uses COMMANDER_DB_* via host-side psql.
+      API_STORE_BACKEND: memory
+      COMMANDER_MEMORY_STORE: in-memory
       # Vault-only secret path. No *_API_KEY / *_SECRET in process.env
       # (ws9-env-check enforces the keypath allowlist).
       COMMANDER_VAULT_ADDR: http://vault:8200

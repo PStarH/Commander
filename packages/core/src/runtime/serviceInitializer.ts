@@ -318,18 +318,24 @@ export function initializeServices(
   // Backward compatibility: only fail-closed (blockWithoutCallback=true) when an
   // explicit approval callback is configured. Consumers that have not opted into
   // human approval continue to receive alerts but are not blocked.
+  // IMPORTANT: do NOT wire the fail-closed defaultApprovalCallback into the
+  // gate — that would silently deny every unknown/irreversible tool even when
+  // the caller never opted into human approval.
   const hasExplicitApprovalCallback = Boolean(config.approval?.approvalCallback);
+  const explicitApprovalCallback = config.approval?.approvalCallback;
   const reversibilityGate: ReversibilityGate | null = reversibilityGateEnabled
     ? getReversibilityGate({
-        approvalCallback: async (toolName, args) => {
-          const decision = await approvalCallback({
-            id: crypto.randomUUID(),
-            toolName,
-            arguments: args,
-            reason: 'irreversible_tool',
-          });
-          return decision.approved;
-        },
+        approvalCallback: hasExplicitApprovalCallback
+          ? async (toolName, args) => {
+              const decision = await explicitApprovalCallback!({
+                id: crypto.randomUUID(),
+                toolName,
+                arguments: args,
+                reason: 'irreversible_tool',
+              });
+              return decision.approved;
+            }
+          : undefined,
         blockWithoutCallback:
           config.reversibilityGate?.blockWithoutCallback ?? hasExplicitApprovalCallback,
       })
