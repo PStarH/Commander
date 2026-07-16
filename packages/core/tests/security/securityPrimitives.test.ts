@@ -176,6 +176,48 @@ describe('SecurityPrimitives', () => {
       layer = new IntegrityLayer('test-secret-key');
     });
 
+    it('fails verification when nested data is tampered', () => {
+      const data = { id: 'gap-001', nested: { a: 1, b: 2 } };
+      const signed = layer.sign(data);
+      // Tamper nested field — old canonicalJson collapsed nested to {} so this
+      // would still verify; recursive canonical must make it fail.
+      (signed.data.nested as Record<string, unknown>).b = 999;
+      expect(layer.verify(signed)).toBe(false);
+    });
+
+    it('verification is stable across nested key order', () => {
+      const layer2 = new IntegrityLayer('test-secret-key');
+      const signed = layer.sign({ nested: { a: 1, b: 2 }, id: 'x' });
+      // Re-sign with keys in different insertion order must produce same verify
+      const signed2 = layer2.sign({ id: 'x', nested: { b: 2, a: 1 } });
+      // Same logical payload → both verify under their own signatures
+      expect(layer.verify(signed)).toBe(true);
+      expect(layer2.verify(signed2)).toBe(true);
+      // Cross-check: forging nested with swapped keys into first signature fails
+      signed.data.nested = { b: 2, a: 1 };
+      // After reassignment with same values, recursive canonical should still match
+      expect(layer.verify(signed)).toBe(true);
+    });
+
+    it('throws in production when COMMANDER_INTEGRITY_KEY is missing', () => {
+      const prevNode = process.env.NODE_ENV;
+      const prevCmd = process.env.COMMANDER_ENV;
+      const prevKey = process.env.COMMANDER_INTEGRITY_KEY;
+      try {
+        process.env.NODE_ENV = 'production';
+        delete process.env.COMMANDER_ENV;
+        delete process.env.COMMANDER_INTEGRITY_KEY;
+        expect(() => new IntegrityLayer()).toThrow(/COMMANDER_INTEGRITY_KEY/);
+      } finally {
+        if (prevNode === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = prevNode;
+        if (prevCmd === undefined) delete process.env.COMMANDER_ENV;
+        else process.env.COMMANDER_ENV = prevCmd;
+        if (prevKey === undefined) delete process.env.COMMANDER_INTEGRITY_KEY;
+        else process.env.COMMANDER_INTEGRITY_KEY = prevKey;
+      }
+    });
+
     it('signs and verifies data correctly', () => {
       const data = { id: 'gap-001', title: 'Test gap', severity: 'high' };
       const signed = layer.sign(data);
