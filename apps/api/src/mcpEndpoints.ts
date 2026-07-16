@@ -100,6 +100,10 @@ const EVAL_FLAGS = new Set([
   '--require',
   '--import',
   '--loader',
+  '--experimental-loader',
+  '--inspect',
+  '--inspect-brk',
+  '--inspect-port',
 ]);
 
 /**
@@ -126,7 +130,11 @@ function validateMcpArgs(args: readonly string[]): string | undefined {
       a.startsWith('-r=') ||
       a.startsWith('--require=') ||
       a.startsWith('--import=') ||
-      a.startsWith('--loader=')
+      a.startsWith('--loader=') ||
+      a.startsWith('--experimental-loader=') ||
+      a.startsWith('--inspect=') ||
+      a.startsWith('--inspect-brk=') ||
+      a.startsWith('--inspect-port=')
     ) {
       return `MCP command arguments may not contain an inline-eval flag ("${arg}")`;
     }
