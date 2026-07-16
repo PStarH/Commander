@@ -948,13 +948,16 @@ export {
   type SignedEntry,
 } from './securityPrimitives';
 
-// WS9 audit-chain integrity (manifest + fail-closed persistor). Not yet wired
-// into the default ledger path — callers must opt in explicitly.
+// WS9 audit-chain integrity (manifest + fail-closed persistor).
+// Runtime wiring: installAuditChainIntegrity() when COMMANDER_AUDIT_MANIFEST_DIR is set.
 export {
   ChainManifest,
   FailClosedPersistor,
   AsymmetricChainSigner,
   InMemoryKeyProvider,
   verifyWithManifest,
+  startVerifyTimer,
+  installAuditChainIntegrity,
+  resetAuditChainIntegrity,
 } from './auditChainIntegrity';
 export type { ChainHead, ManifestEntry, KeyProvider } from './auditChainIntegrity';

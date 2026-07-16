@@ -1164,6 +1164,21 @@ async function startServer(): Promise<void> {
   // Start the outgoing webhook dispatcher so registered webhooks receive
   // system events as soon as the server is ready.
   getWebhookDispatcher().start();
+
+  // WS9: opt-in audit chain manifest + verify timer (COMMANDER_AUDIT_MANIFEST_DIR).
+  if (process.env.COMMANDER_AUDIT_MANIFEST_DIR) {
+    try {
+      const { getAuditChainLedger, installAuditChainIntegrity } = await import('@commander/core');
+      installAuditChainIntegrity(getAuditChainLedger());
+      process.stdout.write('[startup] AuditChainIntegrity installed (manifest + verify timer)\n');
+    } catch (err) {
+      process.stderr.write(
+        `[startup] AuditChainIntegrity failed: ${(err as Error)?.message ?? String(err)}\n`,
+      );
+      if (process.env.NODE_ENV === 'production') throw err;
+    }
+  }
+
   httpServer = app.listen(port, () => {
     process.stdout.write(`API listening on http://localhost:${port}\n`);
     process.stdout.write(
