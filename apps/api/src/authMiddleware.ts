@@ -295,12 +295,18 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
     keyId = matched.name;
     matchedScopes = matched.scopes;
     matchedKey = matched;
-  } else if (apiKeys.size > 0 || isProductionEnv() || getApiKeyStore().list().length > 0) {
+  } else if (
+    apiKeys.size > 0 ||
+    isProductionEnv() ||
+    getApiKeyStore().list().length > 0 ||
+    // Non-production with no keys previously fell open. Require an explicit
+    // opt-in so local/dev deploys are not anonymously writable by default.
+    process.env.COMMANDER_ALLOW_ANON !== '1'
+  ) {
     // Default-deny: require authentication whenever any API key is configured —
     // in the env cache OR the persistent store — or whenever we are in
-    // production. Previously auth fell open when keys existed only in the
-    // persistent store, or when none were configured in production, letting
-    // unauthenticated callers through to protected routes (AUTH-3 / GOV-6 / B3).
+    // production. Outside production, anonymous access is only allowed when
+    // COMMANDER_ALLOW_ANON=1 is set explicitly (dev escape hatch).
     res.status(401).json({
       error: 'Authentication required',
       hint: 'Provide X-API-Key header or Authorization: Bearer <token>',
