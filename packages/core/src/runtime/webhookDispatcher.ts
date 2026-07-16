@@ -6,13 +6,12 @@
  * Integrates with MessageBus for event-driven dispatch.
  */
 import * as crypto from 'node:crypto';
-import * as http from 'node:http';
-import * as https from 'node:https';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
 import { getMessageBus } from './messageBus';
 import { ResourceGovernor } from '../security/securityPrimitives';
+import { getOutboundNetworkPolicy } from '../security/outboundNetworkPolicy';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -59,34 +58,66 @@ const DEFAULT_RETRY_MAX = 3;
 const RETRY_DELAYS_MS = [1000, 5000, 15000]; // exponential backoff
 
 // ── Security: SSRF prevention ────────────────────────────────────────────────
-// Block requests to private/internal IP ranges and cloud metadata endpoints.
-// Per OWASP SSRF Prevention Cheat Sheet: validate scheme, reject private IPs.
+const BLOCKED_WEBHOOK_HOSTS = new Set([
+  'localhost',
+  '127.0.0.1',
+  '::1',
+  '0.0.0.0',
+  '169.254.169.254',
+  'metadata.google.internal',
+  'metadata',
+]);
+
 const PRIVATE_IP_PATTERNS = [
-  /^127\./, // Loopback
-  /^10\./, // RFC 1918
-  /^172\.(1[6-9]|2[0-9]|3[0-1])\./, // RFC 1918
-  /^192\.168\./, // RFC 1918
-  /^169\.254\./, // Link-local / cloud metadata (AWS/GCP)
-  /^0\./, // Current network
-  /^\[::1\]$/, // IPv6 loopback (Node URL keeps brackets in hostname)
-  /^\[fc00:/, // IPv6 ULA
-  /^\[fe80:/, // IPv6 link-local
+  /^127\./,
+  /^10\./,
+  /^172\.(1[6-9]|2[0-9]|3[0-1])\./,
+  /^192\.168\./,
+  /^169\.254\./,
+  /^0\./,
+  /^::1$/,
+  /^0:0:0:0:0:0:0:1$/,
+  /^fc[0-9a-f]{2}:/i,
+  /^fd[0-9a-f]{2}:/i,
+  /^fe80:/i,
 ];
+
+function normalizeWebhookHostname(hostname: string): string {
+  let h = hostname.trim().toLowerCase();
+  if (h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1);
+  if (h.startsWith('::ffff:')) {
+    const rest = h.slice('::ffff:'.length);
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(rest)) {
+      h = rest;
+    } else {
+      const parts = rest.split(':');
+      if (parts.length === 2) {
+        const hi = Number.parseInt(parts[0], 16);
+        const lo = Number.parseInt(parts[1], 16);
+        if (Number.isFinite(hi) && Number.isFinite(lo)) {
+          h = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+        }
+      }
+    }
+  }
+  if (h.endsWith('.')) h = h.slice(0, -1);
+  return h;
+}
 
 /**
  * Validate a webhook URL to prevent SSRF attacks.
- * Only allows http/https schemes and rejects private/internal IP ranges.
- * Security: Based on OWASP SSRF Prevention Cheat Sheet.
+ * Aligned with apps/api outgoingWebhookEndpoints.isSafeOutgoingWebhookUrl.
  */
 function isSafeWebhookUrl(urlStr: string): boolean {
   try {
     const parsed = new URL(urlStr);
-    // Only allow http and https schemes — block file:, javascript:, data:, etc.
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       return false;
     }
-    // Reject private/internal IP ranges and cloud metadata endpoints
-    const hostname = parsed.hostname;
+    const hostname = normalizeWebhookHostname(parsed.hostname);
+    if (BLOCKED_WEBHOOK_HOSTS.has(hostname) || hostname.endsWith('.localhost')) {
+      return false;
+    }
     for (const pattern of PRIVATE_IP_PATTERNS) {
       if (pattern.test(hostname)) return false;
     }
@@ -248,10 +279,6 @@ export class WebhookDispatcher {
     const body = JSON.stringify(event);
     const signature = crypto.createHmac('sha256', wh.secret!).update(body).digest('hex');
 
-    const url = new URL(wh.url);
-    const isHttps = url.protocol === 'https:';
-    const client = isHttps ? https : http;
-
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'X-Webhook-Signature': signature,
@@ -260,39 +287,21 @@ export class WebhookDispatcher {
       ...(wh.headers ?? {}),
     };
 
-    const options: http.RequestOptions = {
-      hostname: url.hostname,
-      port: url.port || (isHttps ? 443 : 80),
-      path: url.pathname + url.search,
-      method: 'POST',
-      headers,
-    };
-
+    // Use OutboundNetworkPolicy.ssrfCheckedFetch: DNS/private-IP SSRF check +
+    // IP pin (no allowlist — webhooks target arbitrary customer URLs).
     const sendResult = await ResourceGovernor.govern(
-      () =>
-        new Promise<{ statusCode: number; success: boolean }>((resolve, reject) => {
-          const req = client.request(options, (res) => {
-            res.on('data', () => {});
-            res.on('end', () => {
-              const statusCode = res.statusCode ?? 0;
-              const success = statusCode >= 200 && statusCode < 300;
-              resolve({ statusCode, success });
-            });
-          });
-
-          let timedOut = false;
-          req.on('error', (err: Error) => {
-            if (timedOut) return;
-            reject(err);
-          });
-          req.on('timeout', () => {
-            timedOut = true;
-            req.destroy();
-            reject(new Error('timeout'));
-          });
-          req.write(body);
-          req.end();
-        }),
+      async () => {
+        const res = await getOutboundNetworkPolicy().ssrfCheckedFetch(wh.url, {
+          method: 'POST',
+          headers,
+          body,
+        });
+        const statusCode = res.status;
+        const success = statusCode >= 200 && statusCode < 300;
+        // Drain body so the socket can be reused / closed promptly.
+        await res.arrayBuffer().catch(() => undefined);
+        return { statusCode, success };
+      },
       { timeoutMs: 30000, maxPayloadBytes: 8 * 1024 * 1024 },
     );
 

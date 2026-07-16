@@ -52,6 +52,77 @@ function getStringParam(value: string | string[] | undefined): string | undefine
   return Array.isArray(value) ? value[0] : value;
 }
 
+// ── Security: SSRF prevention ────────────────────────────────────────────────
+// Reject private/loopback/link-local/metadata hosts at the API boundary
+// (defense-in-depth; WebhookDispatcher also validates at register time).
+const BLOCKED_WEBHOOK_HOSTS = new Set([
+  'localhost',
+  '127.0.0.1',
+  '::1',
+  '0.0.0.0',
+  '169.254.169.254', // AWS / OpenStack / Azure instance metadata
+  'metadata.google.internal', // GCP metadata
+  'metadata',
+]);
+
+const PRIVATE_IP_PATTERNS = [
+  /^127\./, // Loopback
+  /^10\./, // RFC 1918
+  /^172\.(1[6-9]|2[0-9]|3[0-1])\./, // RFC 1918
+  /^192\.168\./, // RFC 1918
+  /^169\.254\./, // Link-local / cloud metadata
+  /^0\./, // Current network
+  /^::1$/, // IPv6 loopback
+  /^0:0:0:0:0:0:0:1$/,
+  /^fc[0-9a-f]{2}:/i, // IPv6 ULA
+  /^fd[0-9a-f]{2}:/i,
+  /^fe80:/i, // IPv6 link-local
+];
+
+/**
+ * Validate an outgoing webhook URL against SSRF targets.
+ * Only allows http/https to non-private hosts.
+ */
+export function isSafeOutgoingWebhookUrl(urlStr: string): boolean {
+  try {
+    const parsed = new URL(urlStr);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return false;
+    }
+    let hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    // IPv4-mapped IPv6 (::ffff:127.0.0.1 or ::ffff:7f00:1) → extract IPv4
+    if (hostname.startsWith('::ffff:')) {
+      const rest = hostname.slice('::ffff:'.length);
+      if (/^\d{1,3}(\.\d{1,3}){3}$/.test(rest)) {
+        hostname = rest;
+      } else {
+        const parts = rest.split(':');
+        if (parts.length === 2) {
+          const hi = Number.parseInt(parts[0], 16);
+          const lo = Number.parseInt(parts[1], 16);
+          if (Number.isFinite(hi) && Number.isFinite(lo)) {
+            hostname = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+          } else {
+            return false;
+          }
+        } else {
+          return false;
+        }
+      }
+    }
+    if (hostname.endsWith('.')) hostname = hostname.slice(0, -1);
+    if (BLOCKED_WEBHOOK_HOSTS.has(hostname) || hostname.endsWith('.localhost')) {
+      return false;
+    }
+    for (const pattern of PRIVATE_IP_PATTERNS) {
+      if (pattern.test(hostname)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function validateCreate(
   body: unknown,
 ): { config: Omit<WebhookConfig, 'id' | 'createdAt'> } | { error: string } {
@@ -69,6 +140,11 @@ function validateCreate(
   }
   if (!url.startsWith('http://') && !url.startsWith('https://')) {
     return { error: 'url must use http or https' };
+  }
+  if (!isSafeOutgoingWebhookUrl(url)) {
+    return {
+      error: 'url must not point to private, loopback, link-local, or metadata addresses',
+    };
   }
 
   if (!Array.isArray(input.events) || input.events.length === 0) {

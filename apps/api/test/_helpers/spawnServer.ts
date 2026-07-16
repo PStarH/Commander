@@ -57,7 +57,12 @@ async function startServer(apiDir: string): Promise<ServerContext> {
     try {
       serverProcess = spawn(process.execPath, [path.join(apiDir, 'dist', 'index.js')], {
         cwd: tmpDir,
-        env: { ...process.env, PORT: String(port), AUTH_DISABLED: 'true' },
+        env: {
+          ...process.env,
+          PORT: String(port),
+          AUTH_DISABLED: 'true',
+          COMMANDER_ALLOW_ANON: '1',
+        },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (syncErr: any) {

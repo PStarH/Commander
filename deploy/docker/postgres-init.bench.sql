@@ -1,3 +1,6 @@
+-- BENCH/DEV ONLY — passwords match deploy/docker/v2-compose.yml migrate URL.
+-- Do NOT use in production. Production must render postgres-init.sql placeholders.
+
 -- Bootstrap the Commander V2 Postgres roles before the migration job starts.
 -- This script runs once as the bootstrap superuser (POSTGRES_USER) via the
 -- /docker-entrypoint-initdb.d/ mechanism.
@@ -12,9 +15,9 @@
 --   COMMANDER_OWNER_PASSWORD / COMMANDER_APP_PASSWORD / COMMANDER_SCHEDULER_PASSWORD
 --
 --   sed \
---     -e "s/__COMMANDER_OWNER_PASSWORD__/${COMMANDER_OWNER_PASSWORD}/g" \
---     -e "s/__COMMANDER_APP_PASSWORD__/${COMMANDER_APP_PASSWORD}/g" \
---     -e "s/__COMMANDER_SCHEDULER_PASSWORD__/${COMMANDER_SCHEDULER_PASSWORD}/g" \
+--     -e "s/commander_owner/${COMMANDER_OWNER_PASSWORD}/g" \
+--     -e "s/commander_app/${COMMANDER_APP_PASSWORD}/g" \
+--     -e "s/commander_scheduler/${COMMANDER_SCHEDULER_PASSWORD}/g" \
 --     postgres-init.sql | psql ...
 --
 -- After migrations complete, long-running API/worker processes MUST connect as
@@ -30,9 +33,9 @@
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_owner') THEN
-    CREATE ROLE commander_owner WITH LOGIN PASSWORD '__COMMANDER_OWNER_PASSWORD__' BYPASSRLS CREATEROLE;
+    CREATE ROLE commander_owner WITH LOGIN PASSWORD 'commander_owner' BYPASSRLS CREATEROLE;
   ELSE
-    ALTER ROLE commander_owner WITH LOGIN PASSWORD '__COMMANDER_OWNER_PASSWORD__' BYPASSRLS CREATEROLE;
+    ALTER ROLE commander_owner WITH LOGIN PASSWORD 'commander_owner' BYPASSRLS CREATEROLE;
   END IF;
 END $$;
 
@@ -41,9 +44,9 @@ END $$;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_app') THEN
-    CREATE ROLE commander_app WITH LOGIN PASSWORD '__COMMANDER_APP_PASSWORD__' NOBYPASSRLS NOCREATEROLE;
+    CREATE ROLE commander_app WITH LOGIN PASSWORD 'commander_app' NOBYPASSRLS NOCREATEROLE;
   ELSE
-    ALTER ROLE commander_app WITH LOGIN PASSWORD '__COMMANDER_APP_PASSWORD__' NOBYPASSRLS NOCREATEROLE;
+    ALTER ROLE commander_app WITH LOGIN PASSWORD 'commander_app' NOBYPASSRLS NOCREATEROLE;
   END IF;
 END $$;
 
@@ -52,9 +55,9 @@ END $$;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_scheduler') THEN
-    CREATE ROLE commander_scheduler WITH LOGIN PASSWORD '__COMMANDER_SCHEDULER_PASSWORD__' BYPASSRLS NOCREATEROLE;
+    CREATE ROLE commander_scheduler WITH LOGIN PASSWORD 'commander_scheduler' BYPASSRLS NOCREATEROLE;
   ELSE
-    ALTER ROLE commander_scheduler WITH LOGIN PASSWORD '__COMMANDER_SCHEDULER_PASSWORD__' BYPASSRLS NOCREATEROLE;
+    ALTER ROLE commander_scheduler WITH LOGIN PASSWORD 'commander_scheduler' BYPASSRLS NOCREATEROLE;
   END IF;
 END $$;
 

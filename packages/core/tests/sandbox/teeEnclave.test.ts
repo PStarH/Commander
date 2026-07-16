@@ -230,6 +230,28 @@ describe('TEESandbox', () => {
     expect(script).toMatch(/while true; do/);
   });
 
+  it('buildNitroVsockProxy does not use eval and runs via temp script', () => {
+    const script = (sandbox as any).buildNitroVsockProxy();
+    expect(script).not.toMatch(/\beval\b/);
+    expect(script).toContain('mktemp');
+    expect(script).toContain('bash "$TMP_SCRIPT"');
+    expect(script).toContain('chmod 700');
+  });
+
+  it('validateTEECommand denies prompt-policy commands', async () => {
+    const { validateTEECommand } = await import('../../src/sandbox/teeEnclave');
+    // curl matches the network prompt rule
+    const result = validateTEECommand('curl https://example.com');
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toMatch(/prompt|approval/i);
+  });
+
+  it('validateTEECommand allows safe read-only commands', async () => {
+    const { validateTEECommand } = await import('../../src/sandbox/teeEnclave');
+    const result = validateTEECommand('echo hello');
+    expect(result.allowed).toBe(true);
+  });
+
   // ── Concurrent execution safety ───────────────────────────────────
 
   it('concurrent execute() calls do not interfere', async () => {

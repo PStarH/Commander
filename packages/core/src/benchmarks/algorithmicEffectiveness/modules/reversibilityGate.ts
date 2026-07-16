@@ -11,20 +11,21 @@ const taskSuite: ReversibilityTask[] = [
   {
     id: 'read-file',
     prompt: 'Reversible read',
-    toolName: 'read_file',
+    // Must use HARDCODED_REVERSIBLE names — unknown tools default to irreversible.
+    toolName: 'file_read',
     args: { path: 'README.md' },
     expected: (out) => out === 'allowed',
   },
   {
-    id: 'list-directory',
-    prompt: 'Reversible list',
-    toolName: 'list_directory',
+    id: 'memory-list',
+    prompt: 'Reversible memory list',
+    toolName: 'memory_list',
     expected: (out) => out === 'allowed',
   },
   {
-    id: 'search-code',
+    id: 'web-search',
     prompt: 'Reversible search',
-    toolName: 'search_code',
+    toolName: 'web_search',
     args: { query: 'foo' },
     expected: (out) => out === 'allowed',
   },

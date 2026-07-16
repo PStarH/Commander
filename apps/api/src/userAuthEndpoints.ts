@@ -19,6 +19,10 @@ import {
   type SafeUser,
 } from './userStore';
 import { signAccessToken, signRefreshToken, verifyToken, type AuthUser } from './jwtMiddleware';
+import {
+  consume as consumeRefreshJti,
+  revoke as revokeRefreshJti,
+} from './refreshTokenStore';
 
 /**
  * AUTH-6: a real bcrypt hash used only to spend comparable CPU on the
@@ -221,6 +225,7 @@ export function createUserAuthRouter(): Router {
   });
 
   // ── POST /api/auth/refresh ───────────────────────────────────────────────
+  // Rotates refresh tokens: validate jti → revoke old → mint new pair.
   router.post('/api/auth/refresh', (req: Request, res: Response) => {
     const parsed = refreshSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -235,8 +240,14 @@ export function createUserAuthRouter(): Router {
     }
 
     const decoded = verifyToken(parsed.data.refreshToken);
-    if (!decoded || decoded.type !== 'refresh') {
+    if (!decoded || decoded.type !== 'refresh' || !decoded.jti) {
       res.status(401).json({ error: 'Invalid or expired refresh token' });
+      return;
+    }
+
+    // Atomic consume: first concurrent refresh wins; replay / race → 401.
+    if (!consumeRefreshJti(decoded.jti)) {
+      res.status(401).json({ error: 'Refresh token revoked or unknown' });
       return;
     }
 
@@ -253,6 +264,28 @@ export function createUserAuthRouter(): Router {
       role: user.role,
     };
     res.json(buildAuthResponse(authUser));
+  });
+
+  // ── POST /api/auth/logout ────────────────────────────────────────────────
+  // Revokes the presented refresh jti (access token TTL still applies).
+  router.post('/api/auth/logout', (req: Request, res: Response) => {
+    const parsed = refreshSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: 'Validation error',
+        details: parsed.error.issues.map((i) => ({
+          path: i.path.join('.'),
+          message: i.message,
+        })),
+      });
+      return;
+    }
+
+    const decoded = verifyToken(parsed.data.refreshToken);
+    if (decoded?.type === 'refresh' && decoded.jti) {
+      revokeRefreshJti(decoded.jti);
+    }
+    res.json({ success: true });
   });
 
   // ── GET /api/auth/users  (admin only) ────────────────────────────────────

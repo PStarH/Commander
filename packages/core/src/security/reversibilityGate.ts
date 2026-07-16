@@ -257,8 +257,9 @@ export class ReversibilityGate {
       return 'irreversible';
     }
 
-    // Default: reversible for unknown tools (they still go through ToolApproval)
-    return 'reversible';
+    // Default: irreversible for unknown tools (fail-closed). Operators must
+    // explicitly add reversibleOverrides for trusted read-only custom tools.
+    return 'irreversible';
   }
 
   /**
