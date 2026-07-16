@@ -118,7 +118,7 @@ describe('E2E: failure injection', () => {
         {
           maxRetries: 0,
           timeoutMs: 5000,
-          memoryStoreType: 'sqlite',
+          memoryStoreType: 'in-memory',
         },
         new ModelRouter(),
       );

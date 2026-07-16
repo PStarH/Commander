@@ -1,22 +1,14 @@
 /**
- * Memory Index System
- * Based on Claude Code's three-layer memory architecture
+ * Memory index facade.
  *
- * Architecture:
- * - Layer 1: In-Context Memory (active window) - handled by LLM
- * - Layer 2: memory/index.json (pointer index) - this module
- * - Layer 3: PROJECT.md (project-level config) - static
+ * Domains are lightweight runtime metadata. Memory entries themselves are
+ * stored exclusively by ProjectMemoryStoreAdapter, which delegates to the
+ * tenant-scoped canonical MemoryService. This keeps the API's domain-oriented
+ * endpoints without retaining a second JSON-file persistence owner.
  */
-
-import fs from 'fs';
-import path from 'path';
-import { v4 as uuidv4 } from 'uuid';
-import { ProjectMemoryKind } from '@commander/core';
+import type { ProjectMemoryKind } from '@commander/core';
+import type { ProjectMemoryItem } from '@commander/core';
 import { ProjectMemoryStoreAdapter } from './memoryStoreAdapter';
-
-import { getDirname, getRequire } from './esmCompat';
-const __dirname = getDirname(import.meta.url);
-const require = getRequire(import.meta.url);
 
 export interface MemoryPointer {
   domain: string;
@@ -49,137 +41,127 @@ export interface MemoryEntry {
   title: string;
   content: string;
   tags: string[];
-  /** Importance score 0-1 for retrieval prioritization */
   importance?: number;
-  /** Access count for frequency tracking */
   accessCount?: number;
-  /** Last accessed timestamp */
   lastAccessedAt?: string;
 }
 
-/** Override `COMMANDER_MEMORY_DIR` to relocate the memory-index directory (index.json + per-domain files). Default keeps the original `__dirname/../../memory/` path so production runs are untouched. Env var MUST be set before this module is required (module-load capture). */
-const MEMORY_DIR = process.env['COMMANDER_MEMORY_DIR'] ?? path.resolve(__dirname, '../../memory');
-const INDEX_FILE = path.join(MEMORY_DIR, 'index.json');
+type MemoryEntryType = MemoryEntry['type'];
+
+const DOMAIN_TAG_PREFIX = 'memory-index-domain:';
+const TYPE_TAG_PREFIX = 'memory-index-type:';
+
+function domainTag(domain: string): string {
+  return `${DOMAIN_TAG_PREFIX}${domain}`;
+}
+
+function typeTag(type: MemoryEntryType): string {
+  return `${TYPE_TAG_PREFIX}${type}`;
+}
+
+function isInternalTag(tag: string): boolean {
+  return tag.startsWith(DOMAIN_TAG_PREFIX) || tag.startsWith(TYPE_TAG_PREFIX);
+}
+
+function typeToKind(type: MemoryEntryType): ProjectMemoryKind {
+  switch (type) {
+    case 'decision':
+      return 'DECISION';
+    case 'issue':
+      return 'ISSUE';
+    case 'lesson':
+      return 'LESSON';
+    case 'context':
+    case 'pattern':
+    case 'preference':
+      return 'SUMMARY';
+  }
+}
+
+function kindToType(item: ProjectMemoryItem): MemoryEntryType {
+  const taggedType = item.tags.find((tag) => tag.startsWith(TYPE_TAG_PREFIX));
+  if (taggedType) return taggedType.slice(TYPE_TAG_PREFIX.length) as MemoryEntryType;
+  switch (item.kind) {
+    case 'DECISION':
+      return 'decision';
+    case 'ISSUE':
+      return 'issue';
+    case 'LESSON':
+      return 'lesson';
+    case 'SUMMARY':
+      return 'context';
+  }
+}
+
+function toMemoryEntry(item: ProjectMemoryItem): MemoryEntry {
+  return {
+    id: item.id,
+    timestamp: item.createdAt,
+    type: kindToType(item),
+    title: item.title,
+    content: item.content,
+    tags: item.tags.filter((tag) => !isInternalTag(tag)),
+    importance: item.priority / 100,
+    accessCount: 0,
+    lastAccessedAt: item.lastAccessedAt,
+  };
+}
+
+function toDomainMemory(domain: string, items: ProjectMemoryItem[]): DomainMemory {
+  const entries = items.map(toMemoryEntry);
+  const timestamps = entries.map((entry) => entry.timestamp).sort();
+  return {
+    domain,
+    entries,
+    metadata: {
+      createdAt: timestamps[0] ?? new Date().toISOString(),
+      updatedAt: timestamps.at(-1) ?? new Date().toISOString(),
+      entryCount: entries.length,
+    },
+  };
+}
 
 export class MemoryIndexManager {
-  private index: MemoryIndex | null = null;
+  private readonly index: MemoryIndex;
 
   constructor(
     private readonly projectId: string,
-    private readonly projectMemoryAdapter?: ProjectMemoryStoreAdapter,
+    private readonly projectMemoryAdapter: ProjectMemoryStoreAdapter,
   ) {
-    this.loadIndex();
+    this.index = { version: '2.0', projectId, pointers: [] };
   }
 
-  /**
-   * Get or create memory index
-   */
-  private loadIndex(): void {
-    if (!fs.existsSync(MEMORY_DIR)) {
-      fs.mkdirSync(MEMORY_DIR, { recursive: true });
-    }
-
-    if (fs.existsSync(INDEX_FILE)) {
-      try {
-        const raw = fs.readFileSync(INDEX_FILE, 'utf8');
-        this.index = JSON.parse(raw);
-      } catch (e) {
-        process.stderr.write(`[MemoryIndexManager] Error: ${(e as Error)?.message ?? String(e)}\n`);
-        this.index = null;
-      }
-    }
-
-    if (!this.index) {
-      this.index = {
-        version: '1.0',
-        projectId: this.projectId,
-        pointers: [],
-      };
-      this.persistIndex();
-    }
-  }
-
-  /**
-   * Add a new memory domain
-   */
   addDomain(domain: string, description: string): MemoryPointer {
-    const fileName = `${domain.toLowerCase().replace(/\s+/g, '-')}.json`;
-    const filePath = path.join(MEMORY_DIR, fileName);
+    const existing = this.index.pointers.find((pointer) => pointer.domain === domain);
+    if (existing) return existing;
 
     const pointer: MemoryPointer = {
       domain,
-      filePath: fileName,
+      filePath: `memory-service://${encodeURIComponent(this.projectId)}/domains/${encodeURIComponent(domain)}`,
       description,
       lastUpdated: new Date().toISOString(),
     };
-
-    // Check if domain already exists
-    const existing = this.index!.pointers.find((p) => p.domain === domain);
-    if (existing) {
-      return existing;
-    }
-
-    this.index!.pointers.push(pointer);
-    this.persistIndex();
-
-    // Initialize domain file if not exists
-    if (!fs.existsSync(filePath)) {
-      const domainMemory: DomainMemory = {
-        domain,
-        entries: [],
-        metadata: {
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          entryCount: 0,
-        },
-      };
-      fs.writeFileSync(filePath, JSON.stringify(domainMemory, null, 2));
-    }
-
+    this.index.pointers.push(pointer);
     return pointer;
   }
 
-  /**
-   * Get pointer for a domain
-   */
   getPointer(domain: string): MemoryPointer | undefined {
-    return this.index!.pointers.find((p) => p.domain === domain);
+    return this.index.pointers.find((pointer) => pointer.domain === domain);
   }
 
-  /**
-   * List all domains
-   */
   listDomains(): MemoryPointer[] {
-    return this.index!.pointers;
+    return this.index.pointers.map((pointer) => ({ ...pointer }));
   }
 
-  /**
-   * Read domain memory
-   */
-  readDomain(domain: string): DomainMemory | null {
-    const pointer = this.getPointer(domain);
-    if (!pointer) return null;
-
-    const filePath = path.join(MEMORY_DIR, pointer.filePath);
-    if (!fs.existsSync(filePath)) return null;
-
-    try {
-      const raw = fs.readFileSync(filePath, 'utf8');
-      return JSON.parse(raw);
-    } catch (e) {
-      process.stderr.write(`[MemoryIndexManager] Error: ${(e as Error)?.message ?? String(e)}\n`);
-      return null;
-    }
+  async readDomain(domain: string): Promise<DomainMemory | null> {
+    if (!this.getPointer(domain)) return null;
+    const items = await this.projectMemoryAdapter.search(this.projectId, {
+      tags: [domainTag(domain)],
+      limit: 500,
+    });
+    return toDomainMemory(domain, items);
   }
 
-  /**
-   * Write entry to domain memory (self-healing: append, don't overwrite).
-   *
-   * When a ProjectMemoryStoreAdapter is wired, the entry is also mirrored into
-   * the adapter-backed store as a supplemental persistence path. This keeps the
-   * existing JSON file contract intact while letting memory-index entries be
-   * discovered through the canonical MemoryStore search APIs.
-   */
   async writeEntry(
     domain: string,
     entry: Omit<MemoryEntry, 'id' | 'timestamp'>,
@@ -187,229 +169,92 @@ export class MemoryIndexManager {
     const pointer = this.getPointer(domain);
     if (!pointer) return null;
 
-    const filePath = path.join(MEMORY_DIR, pointer.filePath);
-    const domainMemory = this.readDomain(domain) || {
-      domain,
-      entries: [],
-      metadata: {
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        entryCount: 0,
-      },
-    };
-
-    // Check for duplicates before writing
-    const entryTitle = entry.title.toLowerCase().trim();
-    const existing = domainMemory.entries.find(
-      (e) => e.type === entry.type && e.title.toLowerCase().trim() === entryTitle,
+    const current = await this.readDomain(domain);
+    const existing = current?.entries.find(
+      (candidate) =>
+        candidate.type === entry.type && candidate.title.toLowerCase().trim() === entry.title.toLowerCase().trim(),
     );
+    const tags = [
+      ...new Set([...(entry.tags ?? []), domainTag(domain), typeTag(entry.type)]),
+    ];
+    const priority = Math.round((entry.importance ?? 0.5) * 100);
 
     if (existing) {
-      // Update existing entry instead of creating duplicate
-      existing.content = entry.content;
-      existing.tags = [...new Set([...existing.tags, ...(entry.tags ?? [])])];
-      existing.importance = Math.max(existing.importance ?? 0.5, entry.importance ?? 0.5);
-      existing.lastAccessedAt = new Date().toISOString();
-      domainMemory.metadata.updatedAt = new Date().toISOString();
-
-      fs.writeFileSync(filePath, JSON.stringify(domainMemory, null, 2));
-      pointer.lastUpdated = new Date().toISOString();
-      this.persistIndex();
-      return existing;
-    }
-
-    const newEntry: MemoryEntry = {
-      id: uuidv4(),
-      timestamp: new Date().toISOString(),
-      accessCount: 0,
-      lastAccessedAt: new Date().toISOString(),
-      importance: 0.5,
-      ...entry,
-    };
-
-    domainMemory.entries.push(newEntry);
-    domainMemory.metadata.updatedAt = new Date().toISOString();
-    domainMemory.metadata.entryCount = domainMemory.entries.length;
-
-    fs.writeFileSync(filePath, JSON.stringify(domainMemory, null, 2));
-
-    // Update pointer
-    pointer.lastUpdated = new Date().toISOString();
-    this.persistIndex();
-
-    // Mirror into the canonical project memory store when available.
-    if (this.projectMemoryAdapter) {
-      try {
-        await this.projectMemoryAdapter.append({
-          projectId: this.projectId,
-          kind: this.mapEntryTypeToMemoryKind(entry.type),
-          title: entry.title,
-          content: entry.content,
-          tags: entry.tags ?? [],
-          duration: 'LONG_TERM',
-        });
-      } catch (err) {
-        process.stderr.write(
-          `[MemoryIndexManager] Adapter mirror failed: ${(err as Error)?.message ?? String(err)}\n`,
-        );
+      const updated = await this.projectMemoryAdapter.update(this.projectId, existing.id, {
+        title: entry.title,
+        content: entry.content,
+        tags,
+        priority,
+        confidence: 0.8,
+        expiresAt: undefined,
+      });
+      if (updated) {
+        pointer.lastUpdated = new Date().toISOString();
+        return toMemoryEntry(updated);
       }
     }
 
-    return newEntry;
-  }
-
-  private mapEntryTypeToMemoryKind(type: MemoryEntry['type']): ProjectMemoryKind {
-    switch (type) {
-      case 'decision':
-        return 'DECISION';
-      case 'issue':
-        return 'ISSUE';
-      case 'lesson':
-        return 'LESSON';
-      case 'context':
-      case 'pattern':
-      case 'preference':
-      default:
-        return 'SUMMARY';
-    }
-  }
-
-  /**
-   * Delete entry from domain memory
-   */
-  deleteEntry(domain: string, entryId: string): boolean {
-    const pointer = this.getPointer(domain);
-    if (!pointer) return false;
-
-    const domainMemory = this.readDomain(domain);
-    if (!domainMemory) return false;
-
-    const index = domainMemory.entries.findIndex((e) => e.id === entryId);
-    if (index === -1) return false;
-
-    domainMemory.entries.splice(index, 1);
-    domainMemory.metadata.entryCount = domainMemory.entries.length;
-    domainMemory.metadata.updatedAt = new Date().toISOString();
-
-    const filePath = path.join(MEMORY_DIR, pointer.filePath);
-    fs.writeFileSync(filePath, JSON.stringify(domainMemory, null, 2));
-
+    const item = await this.projectMemoryAdapter.append({
+      projectId: this.projectId,
+      kind: typeToKind(entry.type),
+      title: entry.title,
+      content: entry.content,
+      tags,
+      duration: 'LONG_TERM',
+    });
     pointer.lastUpdated = new Date().toISOString();
-    this.persistIndex();
-
-    return true;
+    return toMemoryEntry(item);
   }
 
-  /**
-   * Search across all domains for entries matching a query.
-   * Returns results sorted by relevance (keyword match + recency + importance).
-   */
-  search(
+  async deleteEntry(domain: string, entryId: string): Promise<boolean> {
+    if (!this.getPointer(domain)) return false;
+    return this.projectMemoryAdapter.delete(this.projectId, entryId);
+  }
+
+  async search(
     query: string,
     options?: {
       domains?: string[];
-      type?: MemoryEntry['type'];
+      type?: MemoryEntryType;
       tags?: string[];
       limit?: number;
     },
-  ): Array<{ domain: string; entry: MemoryEntry; score: number }> {
-    const { domains, type, tags, limit = 20 } = options ?? {};
-    const queryLower = query.toLowerCase();
-    const queryTerms = queryLower.split(/\s+/).filter((t) => t.length >= 2);
-
+  ): Promise<Array<{ domain: string; entry: MemoryEntry; score: number }>> {
+    const domains = options?.domains ?? this.index.pointers.map((pointer) => pointer.domain);
     const results: Array<{ domain: string; entry: MemoryEntry; score: number }> = [];
-
-    const searchDomains = domains ?? this.index!.pointers.map((p) => p.domain);
-
-    for (const domainName of searchDomains) {
-      const domainMemory = this.readDomain(domainName);
-      if (!domainMemory) continue;
-
-      for (const entry of domainMemory.entries) {
-        // Filter by type
-        if (type && entry.type !== type) continue;
-        // Filter by tags
-        if (tags && tags.length > 0 && !tags.some((t) => entry.tags.includes(t))) continue;
-
-        // Score: keyword match + recency + importance
-        const text = `${entry.title} ${entry.content} ${entry.tags.join(' ')}`.toLowerCase();
-        const termHits = queryTerms.filter((t) => text.includes(t)).length;
-        const keywordScore = queryTerms.length > 0 ? termHits / queryTerms.length : 0;
-
-        const ageHours = (Date.now() - new Date(entry.timestamp).getTime()) / (1000 * 60 * 60);
-        const recency = Math.exp(-ageHours / 168); // 7-day half-life
-
-        const importance = entry.importance ?? 0.5;
-
-        const score = keywordScore * 0.5 + recency * 0.2 + importance * 0.3;
-
-        if (score > 0) {
-          results.push({ domain: domainName, entry, score });
-        }
+    for (const domain of domains) {
+      if (!this.getPointer(domain)) continue;
+      const items = await this.projectMemoryAdapter.search(this.projectId, {
+        query,
+        tags: [domainTag(domain), ...(options?.tags ?? [])],
+        limit: options?.limit ?? 20,
+      });
+      for (const item of items) {
+        const entry = toMemoryEntry(item);
+        if (options?.type && entry.type !== options.type) continue;
+        results.push({ domain, entry, score: item.priority / 100 });
       }
     }
-
-    results.sort((a, b) => b.score - a.score);
-    return results.slice(0, limit);
+    return results.sort((left, right) => right.score - left.score).slice(0, options?.limit ?? 20);
   }
 
-  /**
-   * Reconcile memory (remove duplicates, fix inconsistencies)
-   */
-  reconcile(): { removed: number; merged: number } {
+  async reconcile(): Promise<{ removed: number; merged: number }> {
     let removed = 0;
-    let merged = 0;
-
-    for (const pointer of this.index!.pointers) {
-      const domainMemory = this.readDomain(pointer.domain);
-      if (!domainMemory) continue;
-
-      // Find duplicates by title + type, and by content similarity
-      const seen = new Map<string, MemoryEntry>();
-      const contentSeen = new Map<string, MemoryEntry>();
-      const newEntries: MemoryEntry[] = [];
-
-      for (const entry of domainMemory.entries) {
+    for (const pointer of this.index.pointers) {
+      const domain = await this.readDomain(pointer.domain);
+      if (!domain) continue;
+      const seen = new Set<string>();
+      for (const entry of domain.entries) {
         const key = `${entry.type}:${entry.title.toLowerCase().trim()}`;
-        const contentKey = `${entry.type}:${entry.content.substring(0, 100).toLowerCase().trim()}`;
-
-        if (seen.has(key) || contentSeen.has(contentKey)) {
-          // Merge: keep the newer entry, merge tags and content
-          const existing = seen.get(key) ?? contentSeen.get(contentKey)!;
-          // Keep the newer entry's timestamp, merge tags
-          existing.tags = [...new Set([...existing.tags, ...entry.tags])];
-          // Keep higher importance
-          if ((entry.importance ?? 0.5) > (existing.importance ?? 0.5)) {
-            existing.importance = entry.importance;
-          }
-          merged++;
-        } else {
-          seen.set(key, entry);
-          contentSeen.set(contentKey, entry);
-          newEntries.push(entry);
-        }
+        if (seen.has(key) && (await this.deleteEntry(pointer.domain, entry.id))) removed++;
+        else seen.add(key);
       }
-
-      removed += domainMemory.entries.length - newEntries.length;
-      domainMemory.entries = newEntries;
-      domainMemory.metadata.entryCount = newEntries.length;
-
-      const filePath = path.join(MEMORY_DIR, pointer.filePath);
-      fs.writeFileSync(filePath, JSON.stringify(domainMemory, null, 2));
     }
-
-    this.index!.lastReconciled = new Date().toISOString();
-    this.persistIndex();
-
-    return { removed, merged };
-  }
-
-  private persistIndex(): void {
-    fs.writeFileSync(INDEX_FILE, JSON.stringify(this.index, null, 2));
+    this.index.lastReconciled = new Date().toISOString();
+    return { removed, merged: removed };
   }
 }
 
-// Default domains for Commander
 export const DEFAULT_DOMAINS = [
   { domain: 'Project Context', description: 'Project goals, constraints, architecture' },
   { domain: 'Decisions', description: 'Architectural decisions and rationale' },
