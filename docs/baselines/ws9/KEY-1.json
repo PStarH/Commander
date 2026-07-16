@@ -1,0 +1,10 @@
+{
+  "testCaseId": "KEY-1",
+  "verdict": "PASS",
+  "evidenceLevel": "simulated",
+  "breach": false,
+  "details": "Vault key takes precedence: resolver returned vault key (not env OPENAI_API_KEY). allowlist.forbiddenPatterns contains OPENAI_API_KEY=true. allowlist.allowed contains OPENAI_API_KEY=false (expected false). Env-held key rejected by resolver.",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:22.001Z"
+}

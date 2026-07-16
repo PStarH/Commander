@@ -250,7 +250,10 @@ describe('AgentRuntime', () => {
   });
 
   describe('single-flight request dedup', () => {
-    it('dedupes concurrent identical requests so provider is called once', async () => {
+    it('rejects overlapping execute() on the same runtime (single-flight is per-run)', async () => {
+      // AgentRuntime allows one in-flight execute() per instance
+      // (CONCURRENT_EXECUTE_REJECTED). Single-flight LLM dedup applies within a
+      // run, not across overlapping execute() calls.
       const slowProvider = new MockLLMProvider('openai', { defaultResponse: 'ok' });
       const origCall = slowProvider.call.bind(slowProvider);
       let callCount = 0;
@@ -263,9 +266,12 @@ describe('AgentRuntime', () => {
       r.registerProvider('openai', slowProvider);
       const ctx = makeContext();
       const [a, b, c] = await Promise.all([r.execute(ctx), r.execute(ctx), r.execute(ctx)]);
-      expect(a.status).toBe('success');
-      expect(b.status).toBe('success');
-      expect(c.status).toBe('success');
+      const statuses = [a, b, c].map((x) => x.status);
+      expect(statuses.filter((s) => s === 'success')).toHaveLength(1);
+      expect(statuses.filter((s) => s === 'failed')).toHaveLength(2);
+      expect([a, b, c].filter((x) => x.status === 'failed').every((x) =>
+        String(x.error ?? '').includes('CONCURRENT_EXECUTE_REJECTED'),
+      )).toBe(true);
       expect(callCount).toBe(1);
     });
 
@@ -287,14 +293,15 @@ describe('AgentRuntime', () => {
       expect(stats.inflight).toBe(0);
     });
 
-    it('disabled singleFlight bypasses dedup (provider is called every time)', async () => {
+    it('disabled singleFlight still serializes execute(); sequential calls each hit provider', async () => {
       const r = new AgentRuntime(
         { maxRetries: 1, timeoutMs: 5000, singleFlight: { enabled: false } },
         new ModelRouter(),
       );
       const p = new MockLLMProvider('openai', { defaultResponse: 'ok' });
       r.registerProvider('openai', p);
-      const [a, b] = await Promise.all([r.execute(makeContext()), r.execute(makeContext())]);
+      const a = await r.execute(makeContext());
+      const b = await r.execute(makeContext());
       expect(a.status).toBe('success');
       expect(b.status).toBe('success');
       expect(p.callCount).toBe(2);

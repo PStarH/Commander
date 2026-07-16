@@ -1,0 +1,10 @@
+{
+  "testCaseId": "DATA-2",
+  "verdict": "PASS",
+  "evidenceLevel": "live",
+  "breach": false,
+  "details": "Live /v1: tenant-a API key + forged X-Tenant-ID=tenant-b → HTTP 403; matching header path status=500. Principal tenant binding is authoritative.",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:21.264Z"
+}

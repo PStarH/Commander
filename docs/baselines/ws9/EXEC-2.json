@@ -1,0 +1,10 @@
+{
+  "testCaseId": "EXEC-2",
+  "verdict": "PASS",
+  "evidenceLevel": "simulated",
+  "breach": false,
+  "details": "Workload reuse prevention: tenantPathSegment(A)=tenant_tenant-a ≠ (B)=tenant_tenant-b. workloadId A=run-tenant-a-123 ≠ B=run-tenant-b-456. Container/workdir/volume paths are tenant-scoped; mismatch = rejection.",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:22.560Z"
+}

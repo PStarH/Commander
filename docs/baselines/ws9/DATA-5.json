@@ -1,0 +1,10 @@
+{
+  "testCaseId": "DATA-5",
+  "verdict": "PASS",
+  "evidenceLevel": "live",
+  "breach": false,
+  "details": "Live /v1/privacy/erasure: A→B body tenant 403; A→B subject prefix 403; A own erase 200; tenant-b memory mem-b-1 intact.",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:21.518Z"
+}

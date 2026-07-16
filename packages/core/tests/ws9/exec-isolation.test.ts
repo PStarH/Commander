@@ -9,8 +9,8 @@
  *   EXEC-4: A bypasses effect-broker for cross-tenant effect → rejected (in-process).
  *   EXEC-5: effect-broker not wired → startup rejects or test asserts called (in-process).
  *
- * Evidence: EXEC-2/3/4/5 exercise real ReversibilityGate + tenantContext PEPs
- * in-process (evidenceLevel=live). EXEC-1 uses describeIf for gVisor.
+ * Evidence: EXEC-2/3/4/5 are in-process PEPs → evidenceLevel=simulated.
+ * EXEC-1 needs real gVisor (runsc) adversarial harness → live when implemented.
  */
 
 import { describe, it, expect } from 'vitest';
