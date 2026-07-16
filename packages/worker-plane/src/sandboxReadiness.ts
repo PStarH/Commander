@@ -9,7 +9,9 @@ export function createProductionWorkerSandboxReadiness(
 
   return {
     async assertReady(): Promise<void> {
-      const { SandboxManager } = await import('@commander/core');
+      // Import via the single sanctioned worker-plane→core bridge
+      // (workerRuntimeAdapter), keeping the arch-guard constitution intact.
+      const { SandboxManager } = await import('./workerRuntimeAdapter.js');
       const manager = new SandboxManager({ environment: env });
       await manager.verifyReady();
     },
