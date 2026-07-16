@@ -51,6 +51,15 @@ export function createStreamRouter(): Router {
   const router = Router();
 
   const handleStream = (req: Request, res: Response): void => {
+    // Require JWT user or API-key identity before opening an SSE stream.
+    // EventSource cannot set Authorization headers; callers must use a
+    // cookie/session JWT middleware path or an authenticated proxy. Unauthenticated
+    // access would leak MessageBus topics (agent/tool/mission events).
+    if (!req.user && !req.apiKeyId) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
     // Connection cap — refuse new streams once the process is at capacity so a
     // client flood cannot exhaust sockets/memory. 503 tells clients to back off.
     if (activeConnections >= MAX_SSE_CONNECTIONS) {
