@@ -205,6 +205,45 @@ CREATE TABLE IF NOT EXISTS commander_outbox_dlq (
 );
 CREATE INDEX IF NOT EXISTS commander_outbox_dlq_topic_idx ON commander_outbox_dlq (topic, moved_to_dlq_at);
 ALTER TABLE commander_outbox_dlq ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'system';
+
+-- ── WS2 EffectBroker monopoly: effect ledger extensions + policy tables ─────
+-- Track the policy snapshot and lease fencing on each effect so the broker
+-- can verify pin consistency and lease authority after admit().
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS policy_snapshot_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS lease_worker_id TEXT;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS lease_fencing_epoch INTEGER;
+
+-- Operation allowlist. Per-tenant, per-action-pattern. Wildcards supported
+-- (e.g. 'http.*', 'compensate.*'). admit() rejects actions not in this list.
+CREATE TABLE IF NOT EXISTS commander_effect_allowlist (
+  tenant_id TEXT NOT NULL,
+  action_pattern TEXT NOT NULL,
+  allowed BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, action_pattern)
+);
+
+-- Daily tenant quota per action class (http/llm/compensate/tool/connector).
+-- The broker increments count_used (and tokens_used for llm) on each admitted effect.
+CREATE TABLE IF NOT EXISTS commander_effect_quota (
+  tenant_id TEXT NOT NULL,
+  action_class TEXT NOT NULL,
+  day DATE NOT NULL,
+  count_used INTEGER NOT NULL DEFAULT 0,
+  tokens_used BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (tenant_id, action_class, day)
+);
+
+-- Capability token revocations. The broker's CapabilityTokenVerifier
+-- queries this on every admit(). Rows expire at expires_at and may be swept.
+CREATE TABLE IF NOT EXISTS commander_capability_revocations (
+  jti TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  revoked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  reason TEXT
+);
+CREATE INDEX IF NOT EXISTS commander_capability_revocations_exp_idx ON commander_capability_revocations (expires_at);
 `;
 
 /**
@@ -231,7 +270,9 @@ BEGIN
     'commander_runs', 'commander_steps', 'commander_events',
     'commander_effects', 'commander_tenant_execution_limits',
     'commander_tenant_execution_usage', 'commander_timers',
-    'commander_interactions', 'commander_outbox', 'commander_outbox_dlq'
+    'commander_interactions', 'commander_outbox', 'commander_outbox_dlq',
+    'commander_effect_allowlist', 'commander_effect_quota',
+    'commander_capability_revocations'
   ] LOOP
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', table_name);
     EXECUTE format('DROP POLICY IF EXISTS commander_tenant_isolation ON %I', table_name);

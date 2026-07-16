@@ -44,6 +44,19 @@ export type { RunState, StepState } from './states.js';
 
 export type { AggregateType, KernelEvent } from './events.js';
 
+// --- WS2 Effect Envelope (unified external side-effect contract) ---
+export {
+  EFFECT_ACTION_NAMESPACES,
+  EFFECT_ID_PATTERN,
+  actionNamespace,
+  isValidEffectEnvelopeIdentity,
+} from './effects.js';
+export type {
+  EffectActionNamespace,
+  EffectEnvelope,
+  EffectEnvelopeStatus,
+} from './effects.js';
+
 export { KERNEL_ERROR_CODES } from './errors.js';
 export type { KernelErrorCode, KernelErrorDetails } from './errors.js';
 

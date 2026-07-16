@@ -27,6 +27,10 @@ export class InMemoryKernelRepository implements KernelRepository {
   private readonly outboxClaims = new Map<string, { token: string; expiresAt: number }>();
   private readonly tenantLimits = new Map<string, number>();
   private readonly lastFencingEpoch = new Map<string, number>();
+  // WS2 EffectBroker monopoly state
+  private readonly capabilityRevocations = new Map<string, { tenantId: string; expiresAt: number; reason?: string }>();
+  private readonly effectAllowlist = new Map<string, Map<string, boolean>>(); // tenantId -> (actionPattern -> allowed)
+  private readonly effectQuota = new Map<string, { countUsed: number; tokensUsed: number }>(); // `${tenantId}|${actionClass}|${day}`
 
   /** DR drill support: snapshot internal state for backup/restore testing.
    *  Includes the transactional outbox so that unpublished messages survive
@@ -209,6 +213,69 @@ export class InMemoryKernelRepository implements KernelRepository {
   }
   async claimOutbox(limit: number, at = new Date(), tenantId?: string): Promise<KernelOutboxMessage[]> { return [...this.outbox.values()].filter((message) => { if (message.publishedAt) return false; if (tenantId && message.payload.tenantId !== tenantId) return false; const claim = this.outboxClaims.get(message.id); return Date.parse(message.availableAt) <= at.getTime() && (!claim || claim.expiresAt <= at.getTime()); }).slice(0, limit).map((message) => { const token = randomUUID(); message.attempts++; message.claimToken = token; this.outboxClaims.set(message.id, { token, expiresAt: at.getTime() + 60_000 }); return clone(message); }); }
   async markOutboxPublished(messageId: string, claimToken: string): Promise<boolean> { const message = this.outbox.get(messageId); const claim = this.outboxClaims.get(messageId); if (!message || message.publishedAt || claim?.token !== claimToken) return false; message.publishedAt = now(); message.claimToken = undefined; this.outboxClaims.delete(messageId); return true; }
+
+  // ── WS2 EffectBroker monopoly ──
+
+  async claimOutboxByTopic(topic: string, limit: number, at = new Date()): Promise<KernelOutboxMessage[]> {
+    return [...this.outbox.values()].filter((message) => {
+      if (message.topic !== topic || message.publishedAt) return false;
+      const claim = this.outboxClaims.get(message.id);
+      return Date.parse(message.availableAt) <= at.getTime() && (!claim || claim.expiresAt <= at.getTime());
+    }).slice(0, limit).map((message) => {
+      const token = randomUUID();
+      message.attempts++;
+      message.claimToken = token;
+      this.outboxClaims.set(message.id, { token, expiresAt: at.getTime() + 60_000 });
+      return clone(message);
+    });
+  }
+
+  async isCapabilityRevoked(jti: string): Promise<boolean> {
+    const entry = this.capabilityRevocations.get(jti);
+    if (!entry) return false;
+    if (entry.expiresAt <= Date.now()) { this.capabilityRevocations.delete(jti); return false; }
+    return true;
+  }
+
+  async revokeCapability(input: { jti: string; tenantId: string; expiresAt: string; reason?: string }): Promise<void> {
+    this.capabilityRevocations.set(input.jti, { tenantId: input.tenantId, expiresAt: Date.parse(input.expiresAt), reason: input.reason });
+  }
+
+  async isActionAllowed(tenantId: string, action: string): Promise<boolean> {
+    const tenantMap = this.effectAllowlist.get(tenantId);
+    if (!tenantMap || tenantMap.size === 0) return false; // fail-closed
+    let best: { allowed: boolean; exact: boolean; len: number } | null = null;
+    for (const [pattern, allowed] of tenantMap) {
+      const matches = pattern === action || (pattern.endsWith('.*') && action.startsWith(pattern.slice(0, -1)));
+      if (!matches) continue;
+      const candidate = { allowed, exact: pattern === action, len: pattern.length };
+      if (!best || (candidate.exact && !best.exact) || (candidate.exact === best.exact && candidate.len > best.len)) best = candidate;
+    }
+    return best ? best.allowed : false;
+  }
+
+  async setAllowlistEntry(tenantId: string, actionPattern: string, allowed: boolean): Promise<void> {
+    let tenantMap = this.effectAllowlist.get(tenantId);
+    if (!tenantMap) { tenantMap = new Map(); this.effectAllowlist.set(tenantId, tenantMap); }
+    tenantMap.set(actionPattern, allowed);
+  }
+
+  async incrementQuota(input: { tenantId: string; actionClass: string; tokensUsed?: number; now?: Date }): Promise<{ countUsed: number; tokensUsed: number }> {
+    const day = (input.now ?? new Date()).toISOString().slice(0, 10);
+    const key = `${input.tenantId}|${input.actionClass}|${day}`;
+    const entry = this.effectQuota.get(key) ?? { countUsed: 0, tokensUsed: 0 };
+    entry.countUsed += 1;
+    entry.tokensUsed += input.tokensUsed ?? 0;
+    this.effectQuota.set(key, entry);
+    return { countUsed: entry.countUsed, tokensUsed: entry.tokensUsed };
+  }
+
+  async getQuota(tenantId: string, actionClass: string, at = new Date()): Promise<{ countUsed: number; tokensUsed: number }> {
+    const day = at.toISOString().slice(0, 10);
+    const key = `${tenantId}|${actionClass}|${day}`;
+    return this.effectQuota.get(key) ?? { countUsed: 0, tokensUsed: 0 };
+  }
+
   async listEvents(runId: string, tenantId: string): Promise<KernelEvent[]> { return this.events.filter((event) => event.runId === runId && event.tenantId === tenantId).map(clone); }
 
   // ── Durable Timers ──

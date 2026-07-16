@@ -560,6 +560,89 @@ export class PostgresKernelRepository implements KernelRepository {
       return (result.rowCount ?? 0) === 1;
     });
   }
+
+  // ── WS2 EffectBroker monopoly ─────────────────────────────────────────────
+
+  async claimOutboxByTopic(topic: string, limit: number, now = new Date()): Promise<KernelOutboxMessage[]> {
+    return this.withTransaction(async (client) => {
+      const token = randomUUID();
+      const result = await client.query<{ id: string; event_id: string; tenant_id: string; topic: string; key: string; payload: Record<string, unknown>; attempts: number; available_at: Date | string; published_at: Date | string | null; created_at: Date | string }>(
+        `WITH candidate AS (SELECT id FROM commander_outbox WHERE topic=$1 AND published_at IS NULL AND available_at <= $2 AND (claimed_at IS NULL OR claimed_at < $3) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT $4)
+         UPDATE commander_outbox o SET claimed_at=$2, claim_token=$5, attempts=o.attempts+1 FROM candidate WHERE o.id=candidate.id RETURNING o.*`,
+        [topic, now.toISOString(), new Date(now.getTime() - 60_000).toISOString(), limit, token]);
+      return result.rows.map((row) => ({ id: row.id, eventId: row.event_id, tenantId: row.tenant_id, topic: row.topic, key: row.key, payload: row.payload ?? {}, attempts: Number(row.attempts), availableAt: iso(row.available_at), publishedAt: row.published_at ? iso(row.published_at) : undefined, claimToken: token, createdAt: iso(row.created_at) }));
+    });
+  }
+
+  async isCapabilityRevoked(jti: string): Promise<boolean> {
+    return this.withTransaction(async (client) => {
+      const result = await client.query(`SELECT 1 FROM commander_capability_revocations WHERE jti=$1 AND expires_at > now()`, [jti]);
+      return (result.rowCount ?? 0) > 0;
+    });
+  }
+
+  async revokeCapability(input: { jti: string; tenantId: string; expiresAt: string; reason?: string }): Promise<void> {
+    await this.withTransaction(async (client) => {
+      await client.query(
+        `INSERT INTO commander_capability_revocations (jti, tenant_id, expires_at, reason) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (jti) DO UPDATE SET expires_at = EXCLUDED.expires_at, reason = EXCLUDED.reason`,
+        [input.jti, input.tenantId, input.expiresAt, input.reason ?? null],
+      );
+    });
+  }
+
+  async isActionAllowed(tenantId: string, action: string): Promise<boolean> {
+    return this.withTransaction(async (client) => {
+      // Match exact + wildcard patterns. A row is considered a match if
+      // action = action_pattern OR action_pattern ends with '.*' and action
+      // starts with the prefix. Fail-closed: no matching row ⇒ deny.
+      const result = await client.query<{ allowed: boolean }>(
+        `SELECT allowed FROM commander_effect_allowlist
+         WHERE tenant_id=$1 AND ($2 = action_pattern OR (action_pattern LIKE '%.*' AND $2 LIKE replace(action_pattern, '*', '%')))
+         ORDER BY (action_pattern = $2) DESC, length(action_pattern) DESC LIMIT 1`,
+        [tenantId, action],
+      );
+      if (!result.rows[0]) return false;
+      return result.rows[0].allowed;
+    });
+  }
+
+  async setAllowlistEntry(tenantId: string, actionPattern: string, allowed: boolean): Promise<void> {
+    await this.withTransaction(async (client) => {
+      await client.query(
+        `INSERT INTO commander_effect_allowlist (tenant_id, action_pattern, allowed) VALUES ($1, $2, $3)
+         ON CONFLICT (tenant_id, action_pattern) DO UPDATE SET allowed = EXCLUDED.allowed`,
+        [tenantId, actionPattern, allowed],
+      );
+    });
+  }
+
+  async incrementQuota(input: { tenantId: string; actionClass: string; tokensUsed?: number; now?: Date }): Promise<{ countUsed: number; tokensUsed: number }> {
+    const day = (input.now ?? new Date()).toISOString().slice(0, 10);
+    const tokens = input.tokensUsed ?? 0;
+    return this.withTransaction(async (client) => {
+      const result = await client.query<{ count_used: number; tokens_used: string }>(
+        `INSERT INTO commander_effect_quota (tenant_id, action_class, day, count_used, tokens_used) VALUES ($1, $2, $3::date, 1, $4)
+         ON CONFLICT (tenant_id, action_class, day) DO UPDATE SET count_used = commander_effect_quota.count_used + 1, tokens_used = commander_effect_quota.tokens_used + $4
+         RETURNING count_used, tokens_used`,
+        [input.tenantId, input.actionClass, day, tokens],
+      );
+      return { countUsed: result.rows[0]!.count_used, tokensUsed: Number(result.rows[0]!.tokens_used) };
+    });
+  }
+
+  async getQuota(tenantId: string, actionClass: string, now?: Date): Promise<{ countUsed: number; tokensUsed: number }> {
+    const day = (now ?? new Date()).toISOString().slice(0, 10);
+    return this.withTransaction(async (client) => {
+      const result = await client.query<{ count_used: number; tokens_used: string }>(
+        `SELECT count_used, tokens_used FROM commander_effect_quota WHERE tenant_id=$1 AND action_class=$2 AND day=$3::date`,
+        [tenantId, actionClass, day],
+      );
+      if (!result.rows[0]) return { countUsed: 0, tokensUsed: 0 };
+      return { countUsed: result.rows[0].count_used, tokensUsed: Number(result.rows[0].tokens_used) };
+    });
+  }
+
   async listEvents(runId: string, tenantId: string): Promise<KernelEvent[]> {
     return this.withTransaction(async (client) => {
       const result = await client.query<KernelEvent & { aggregate_type: KernelEvent['aggregateType']; aggregate_id: string; tenant_id: string; run_id: string; step_id: string | null; causation_id: string | null; correlation_id: string | null; schema_version: string; occurred_at: Date | string }>(`SELECT * FROM commander_events WHERE run_id=$1 AND tenant_id=$2 ORDER BY occurred_at, sequence`, [runId, tenantId]);

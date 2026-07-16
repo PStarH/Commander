@@ -103,4 +103,31 @@ export interface KernelRepository {
   listDlqEntries(limit?: number, topic?: string): Promise<KernelDlqEntry[]>;
   /** Replay a DLQ entry back into the outbox for re-publishing. */
   replayDlqEntry(dlqId: string): Promise<boolean>;
+
+  // ── WS2 EffectBroker monopoly: capability, allowlist, quota, compensation ──
+
+  /** Claim outbox messages filtered by topic. Used by the compensation
+   *  consumer to claim only `commander.compensation` messages. */
+  claimOutboxByTopic(topic: string, limit: number, now?: Date): Promise<KernelOutboxMessage[]>;
+
+  /** Returns true iff the capability token (by jti) has been revoked. */
+  isCapabilityRevoked(jti: string): Promise<boolean>;
+
+  /** Revoke a capability token by jti. Idempotent. */
+  revokeCapability(input: { jti: string; tenantId: string; expiresAt: string; reason?: string }): Promise<void>;
+
+  /** Check whether an action is allowed for a tenant per the allowlist.
+   *  Supports wildcard patterns (e.g. `http.*`, `compensate.*`). An empty
+   *  allowlist for the tenant means "deny all" (fail-closed). */
+  isActionAllowed(tenantId: string, action: string): Promise<boolean>;
+
+  /** Add or update an allowlist entry for a tenant. */
+  setAllowlistEntry(tenantId: string, actionPattern: string, allowed: boolean): Promise<void>;
+
+  /** Increment the daily quota counter for a tenant/action_class. Returns the
+   *  updated row so the broker can compare against the configured ceiling. */
+  incrementQuota(input: { tenantId: string; actionClass: string; tokensUsed?: number; now?: Date }): Promise<{ countUsed: number; tokensUsed: number }>;
+
+  /** Read the current daily quota row (or zeros if none yet). */
+  getQuota(tenantId: string, actionClass: string, now?: Date): Promise<{ countUsed: number; tokensUsed: number }>;
 }
