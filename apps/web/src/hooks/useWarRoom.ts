@@ -74,10 +74,16 @@ export function useWarRoom() {
     try {
       const params = new URLSearchParams();
       const token = getAuthToken();
-      if (token) params.set('access_token', token);
+      if (token) {
+        // Cookie preferred when API is same-site; query kept as cross-origin fallback
+        // (server strips access_token from req.url before logging).
+        document.cookie = `commander_access_token=${encodeURIComponent(token)}; path=/; SameSite=Lax`;
+        params.set('access_token', token);
+      }
       const qs = params.toString();
       eventSource = new EventSource(
         `${API_BASE}/projects/${PROJECT_ID}/events${qs ? `?${qs}` : ''}`,
+        { withCredentials: true },
       );
       eventSource.onopen = () => setConnectionStatus('connected');
       eventSource.addEventListener('snapshot', () => {

@@ -1148,6 +1148,15 @@ async function startServer(): Promise<void> {
   );
   mountRegisteredRouters(app);
 
+  // Unmatched routes — keep shape stable after errorHandler moved behind routers.
+  app.use((req, res) => {
+    res.status(404).json({
+      error: 'Not found',
+      path: req.path,
+      requestId: req.requestId,
+    });
+  });
+
   // Error handler must be registered after all routers so Express 5 can
   // forward route errors into this middleware (registering earlier skips it).
   app.use(errorHandler);

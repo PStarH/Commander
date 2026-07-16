@@ -6,13 +6,12 @@
  * Integrates with MessageBus for event-driven dispatch.
  */
 import * as crypto from 'node:crypto';
-import * as http from 'node:http';
-import * as https from 'node:https';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
 import { getMessageBus } from './messageBus';
 import { ResourceGovernor } from '../security/securityPrimitives';
+import { getOutboundNetworkPolicy } from '../security/outboundNetworkPolicy';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -280,10 +279,6 @@ export class WebhookDispatcher {
     const body = JSON.stringify(event);
     const signature = crypto.createHmac('sha256', wh.secret!).update(body).digest('hex');
 
-    const url = new URL(wh.url);
-    const isHttps = url.protocol === 'https:';
-    const client = isHttps ? https : http;
-
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'X-Webhook-Signature': signature,
@@ -292,39 +287,21 @@ export class WebhookDispatcher {
       ...(wh.headers ?? {}),
     };
 
-    const options: http.RequestOptions = {
-      hostname: url.hostname,
-      port: url.port || (isHttps ? 443 : 80),
-      path: url.pathname + url.search,
-      method: 'POST',
-      headers,
-    };
-
+    // Use OutboundNetworkPolicy.ssrfCheckedFetch: DNS/private-IP SSRF check +
+    // IP pin (no allowlist — webhooks target arbitrary customer URLs).
     const sendResult = await ResourceGovernor.govern(
-      () =>
-        new Promise<{ statusCode: number; success: boolean }>((resolve, reject) => {
-          const req = client.request(options, (res) => {
-            res.on('data', () => {});
-            res.on('end', () => {
-              const statusCode = res.statusCode ?? 0;
-              const success = statusCode >= 200 && statusCode < 300;
-              resolve({ statusCode, success });
-            });
-          });
-
-          let timedOut = false;
-          req.on('error', (err: Error) => {
-            if (timedOut) return;
-            reject(err);
-          });
-          req.on('timeout', () => {
-            timedOut = true;
-            req.destroy();
-            reject(new Error('timeout'));
-          });
-          req.write(body);
-          req.end();
-        }),
+      async () => {
+        const res = await getOutboundNetworkPolicy().ssrfCheckedFetch(wh.url, {
+          method: 'POST',
+          headers,
+          body,
+        });
+        const statusCode = res.status;
+        const success = statusCode >= 200 && statusCode < 300;
+        // Drain body so the socket can be reused / closed promptly.
+        await res.arrayBuffer().catch(() => undefined);
+        return { statusCode, success };
+      },
       { timeoutMs: 30000, maxPayloadBytes: 8 * 1024 * 1024 },
     );
 
