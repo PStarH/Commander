@@ -947,3 +947,14 @@ export {
   IntegrityLayer,
   type SignedEntry,
 } from './securityPrimitives';
+
+// WS9 audit-chain integrity (manifest + fail-closed persistor). Not yet wired
+// into the default ledger path — callers must opt in explicitly.
+export {
+  ChainManifest,
+  FailClosedPersistor,
+  AsymmetricChainSigner,
+  InMemoryKeyProvider,
+  verifyWithManifest,
+} from './auditChainIntegrity';
+export type { ChainHead, ManifestEntry, KeyProvider } from './auditChainIntegrity';
