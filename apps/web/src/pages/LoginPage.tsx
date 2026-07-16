@@ -381,18 +381,6 @@ export function LoginPage() {
               </>
             )}
 
-            {/* Hint */}
-            <p
-              style={{
-                marginTop: '16px',
-                fontSize: '0.72rem',
-                color: 'var(--text-muted)',
-                textAlign: 'center',
-              }}
-            >
-              Default admin: <code style={{ color: 'var(--text-tertiary)' }}>admin</code> /{' '}
-              <code style={{ color: 'var(--text-tertiary)' }}>commander-admin</code>
-            </p>
           </>
         )}
       </div>

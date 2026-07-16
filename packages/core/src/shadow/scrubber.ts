@@ -17,6 +17,10 @@ const FORCED_REDACT_HEADERS: readonly string[] = [
 
 export const DEFAULT_IGNORE_FIELDS = ['Authorization', 'x-api-key', 'x-auth-token', 'cookie'];
 
+/** JSON object keys whose values are always replaced (case-insensitive). */
+const SENSITIVE_FIELD_NAME =
+  /password|passwd|passcode|secret|token|authorization|credential|private[_-]?key|access[_-]?key|api[_-]?key|otp/i;
+
 /**
  * Scrub a single string value — applies all PII patterns from UniversalSanitizer.
  */
@@ -25,10 +29,23 @@ export function redactPii(text: string): string {
 }
 
 /**
- * Recursively scrub all string values in a body object.
+ * Recursively scrub body values: sensitive field names → [REDACTED],
+ * then PII patterns on remaining strings. JSON strings are parsed first.
  */
 function scrubBodyValue(value: unknown): unknown {
   if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (
+      (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+      (trimmed.startsWith('[') && trimmed.endsWith(']'))
+    ) {
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        return JSON.stringify(scrubBodyValue(parsed));
+      } catch {
+        // not valid JSON — fall through to regex scrub
+      }
+    }
     return redactPii(value);
   }
   if (Array.isArray(value)) {
@@ -37,7 +54,11 @@ function scrubBodyValue(value: unknown): unknown {
   if (value && typeof value === 'object') {
     const result: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value)) {
-      result[k] = scrubBodyValue(v);
+      if (SENSITIVE_FIELD_NAME.test(k)) {
+        result[k] = '[REDACTED]';
+      } else {
+        result[k] = scrubBodyValue(v);
+      }
     }
     return result;
   }

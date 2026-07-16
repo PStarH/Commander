@@ -174,6 +174,7 @@ export default defineConfig({
       'src/sandbox/__tests__/laneFairness.test.ts',
       'tests/sandbox/appContainer.test.ts',
       'tests/sandbox/teeEnclave.test.ts',
+      'tests/sandbox/sshBackendExecPolicy.test.ts',
       'tests/runtime/observationPurifier.test.ts',
       // --- tools ---
       // async-I/O regression tests added alongside the safePath/pathExists

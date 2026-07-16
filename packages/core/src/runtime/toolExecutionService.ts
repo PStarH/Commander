@@ -969,7 +969,10 @@ export class ToolExecutionService {
    *
    * Config: speculativeExecution.enabled must be true (defaults to false).
    */
-  async triggerSpeculativeExecution(tenantId?: string): Promise<void> {
+  async triggerSpeculativeExecution(
+    tenantId?: string,
+    capabilityToken?: string,
+  ): Promise<void> {
     const specConfig = (
       this.runtime.config as AgentRuntimeConfig & {
         speculativeExecution?: { enabled?: boolean };
@@ -995,17 +998,68 @@ export class ToolExecutionService {
           const tool = this.runtime.tools.get(pred.name);
           if (!tool) return;
 
+          // Align with formal execute path: capability is mandatory for
+          // speculative cache writes. Without a token, skip entirely so a later
+          // formal call cannot hit an unauthorized cache entry.
+          if (!capabilityToken) return;
+
+          const sanitizedArgs = this.sanitizeArguments(pred.arguments);
+
+          try {
+            let verdict: { ok: boolean; reason?: string; detail?: string };
+            if (BiscuitCapabilityAdapter.isBiscuitToken(capabilityToken)) {
+              const biscuitVerifier = getGlobalBiscuitCapabilityAdapter().createVerifier(
+                tenantId ?? '*',
+              );
+              verdict = biscuitVerifier.verify(capabilityToken, {
+                tool: pred.name,
+                args: sanitizedArgs as Record<string, unknown>,
+              });
+            } else {
+              const verifier = getCapabilityTokenVerifier();
+              verdict = verifier.verify(capabilityToken, {
+                tool: pred.name,
+                args: sanitizedArgs as Record<string, unknown>,
+                consumeReplay: false,
+              });
+            }
+            if (!verdict.ok) return;
+          } catch {
+            return;
+          }
+
+          if (this.runtime.reversibilityGate) {
+            const gateDecision = await this.runtime.reversibilityGate.evaluate(
+              pred.name,
+              sanitizedArgs as Record<string, unknown>,
+              { runId: `spec_${Date.now()}`, agentId: 'speculative' },
+            );
+            if (!gateDecision.allowed) return;
+          }
+
+          if (this.runtime.config.securityMonitor?.enabled !== false) {
+            const guardianResult = checkToolGuardian({
+              agentId: 'speculative',
+              runId: `spec_${Date.now()}`,
+              toolName: pred.name,
+              arguments: sanitizedArgs,
+              sessionId: `spec_${Date.now()}`,
+              tenantId,
+            });
+            if (!guardianResult.allowed) return;
+          }
+
           // Build a synthetic ToolCall for cache key compatibility
           const syntheticCall: ToolCall = {
             id: `spec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
             name: pred.name,
-            arguments: pred.arguments,
+            arguments: sanitizedArgs,
           };
 
           // Skip if already cached (idempotency)
           if (toolCache.get(syntheticCall, tenantId)) return;
 
-          const result = await tool.execute(pred.arguments);
+          const result = await tool.execute(sanitizedArgs);
           const toolResult: ToolResult = {
             toolCallId: syntheticCall.id,
             name: pred.name,

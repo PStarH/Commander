@@ -50,6 +50,24 @@ export class UniversalSanitizer {
     pattern: RegExp;
     replacement: string;
   }> = [
+    // Modern OpenAI project keys contain hyphens (sk-proj-...); match before generic sk-
+    {
+      name: 'openai_proj_key',
+      pattern: /\b(sk-proj-[A-Za-z0-9_-]+)\b/g,
+      replacement: 'sk-proj-[REDACTED]',
+    },
+    // OpenAI service-account keys
+    {
+      name: 'openai_svcacct_key',
+      pattern: /\b(sk-svcacct-[A-Za-z0-9_-]+)\b/g,
+      replacement: 'sk-svcacct-[REDACTED]',
+    },
+    // Anthropic API keys: sk-ant-api03-... (hyphenated segments break generic sk-ant-)
+    {
+      name: 'anthropic_api_key',
+      pattern: /\b(sk-ant-api\d{2}-[A-Za-z0-9_-]+)\b/g,
+      replacement: 'sk-ant-[REDACTED]',
+    },
     { name: 'api_key', pattern: /\b(sk-[a-zA-Z0-9]{20,})\b/g, replacement: 'sk-[REDACTED]' },
     {
       name: 'anthropic_key',
