@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1
+FROM node:22.14.0-alpine AS base
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+WORKDIR /app
+
+FROM base AS deps
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY packages/contracts/package.json ./packages/contracts/package.json
+COPY packages/kernel/package.json ./packages/kernel/package.json
+RUN pnpm install --frozen-lockfile --filter @commander/contracts --filter @commander/kernel
+
+FROM base AS build
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/packages/contracts/node_modules ./packages/contracts/node_modules
+COPY --from=deps /app/packages/kernel/node_modules ./packages/kernel/node_modules
+COPY tsconfig.base.json ./
+COPY scripts/fix-esm-imports.mjs ./scripts/fix-esm-imports.mjs
+COPY packages/contracts ./packages/contracts
+COPY packages/kernel ./packages/kernel
+RUN cd packages/contracts && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
+RUN cd packages/kernel && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
+
+FROM base AS production
+RUN addgroup -g 1001 commander \
+    && adduser -u 1001 -G commander -s /bin/sh -D commander
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/packages/contracts/node_modules ./packages/contracts/node_modules
+COPY --from=deps /app/packages/kernel/node_modules ./packages/kernel/node_modules
+COPY --from=build /app/packages/contracts/dist ./packages/contracts/dist
+COPY --from=build /app/packages/kernel/dist ./packages/kernel/dist
+COPY packages/contracts/package.json ./packages/contracts/package.json
+COPY packages/kernel/package.json ./packages/kernel/package.json
+RUN chown -R commander:commander /app
+ENV NODE_ENV=production
+USER commander
+ENTRYPOINT ["node", "packages/kernel/dist/ops/main.js"]
