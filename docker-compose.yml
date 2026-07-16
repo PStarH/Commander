@@ -93,8 +93,8 @@ services:
         - NODE_ENV=production
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
-      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}}
+      - DATABASE_URL=${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander}}
       - COMMANDER_WORKER_BOOTSTRAP=/app/packages/worker-plane/dist/bootstrap.js
       - COMMANDER_WORKER_AUTH_TOKEN=${COMMANDER_WORKER_AUTH_TOKEN:-worker-token}
       - COMMANDER_WORKER_AUTH_SUBJECT=${COMMANDER_WORKER_AUTH_SUBJECT:-worker}
@@ -124,8 +124,8 @@ services:
         - OPERATIONS_MODE=timer
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
-      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}}
+      - DATABASE_URL=${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander}}
     depends_on:
       postgres:
         condition: service_healthy
@@ -145,8 +145,8 @@ services:
         - OPERATIONS_MODE=outbox
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
-      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}}
+      - DATABASE_URL=${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander}}
     depends_on:
       postgres:
         condition: service_healthy
@@ -170,15 +170,19 @@ services:
   # ── PostgreSQL — production database backend (opt-in) ──────────────────
   # Started only with: docker compose --profile database up
   # Enables persistent, multi-replica-safe storage for the API state store.
-  # Set API_STORE_BACKEND=postgres and DATABASE_URL=postgres://commander:commander@postgres:5432/commander
+  # Set API_STORE_BACKEND=postgres and
+  # DATABASE_URL=postgres://commander:${POSTGRES_PASSWORD}@postgres:5432/commander
+  # SECURITY: not published on the host; only reachable on the compose network.
+  # For local tooling, bind loopback explicitly (e.g. "127.0.0.1:5432:5432").
+  # POSTGRES_PASSWORD is required — no default credentials.
   postgres:
     image: postgres:16-alpine
     container_name: commander-postgres
-    ports:
-      - '5432:5432'
+    expose:
+      - '5432'
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-commander}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-commander}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB:-commander}
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -197,11 +201,12 @@ services:
   # Started only with: docker compose --profile distributed up
   # Enables cross-node pub/sub for DistributedEventBus (BackendType='redis').
   # Memory-only single-box deployments do not need this service.
+  # SECURITY: not published on the host; only reachable on the compose network.
   redis:
     image: redis:7-alpine
     container_name: commander-redis
-    ports:
-      - '6379:6379'
+    expose:
+      - '6379'
     volumes:
       - redis-data:/data
     command: ['redis-server', '--appendonly', 'yes', '--maxmemory', '256mb', '--maxmemory-policy', 'allkeys-lru']
