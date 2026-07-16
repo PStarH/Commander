@@ -291,9 +291,9 @@ export function cmdHelp(showAll = false) {
         ? `
 
   ${$.bold}ADVANCED EXECUTION${$.reset}
-    ${$.cyan}company <task>${$.reset}          Enterprise: quality gating + memory
-    ${$.cyan}swarm <task> [flags]${$.reset}    Recursive decomposition + parallel
-    ${$.cyan}drive <task> [flags]${$.reset}    Autonomous step-by-step loop
+    ${$.cyan}company <task>${$.reset}          Local company-mode: quality gating + memory ${$.yellow}(exp)${$.reset}
+    ${$.cyan}swarm <task> [flags]${$.reset}    Recursive decomposition + parallel ${$.yellow}(exp)${$.reset}
+    ${$.cyan}drive <task> [flags]${$.reset}    Autonomous step-by-step loop ${$.yellow}(exp)${$.reset}
     ${$.cyan}up [task] [flags]${$.reset}       Unified execution + Web TUI
 
   ${$.bold}INFRASTRUCTURE${$.reset}
@@ -308,6 +308,11 @@ export function cmdHelp(showAll = false) {
     ${$.cyan}feedback [--rating|--bug]${$.reset} Submit feedback to improve Commander`
         : ''
     }
+
+  ${$.bold}PROFILES${$.reset}
+    ${$.cyan}local${$.reset}        Local CLI SKU (default). Runs in-process; no gateway, no multi-tenancy.
+    ${$.yellow}local·exp${$.reset}    Experimental one-run-model extension (still local).
+    ${$.dim}Enterprise routing is via POST /v1/runs (Enterprise Gateway SKU, alpha), not a CLI command.${$.reset}
 
   ${$.bold}OPTIONS${$.reset}
     ${$.cyan}--version${$.reset}               Show version

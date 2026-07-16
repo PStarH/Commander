@@ -9,7 +9,7 @@
 </p>
 
 <h1 align="center">Commander</h1>
-<p align="center"><strong>Production-grade multi-agent orchestration.</strong></p>
+<p align="center"><strong>Local-first multi-agent orchestration — v0.2 · beta</strong></p>
 
 <p align="center">
   <code>npx tsx packages/core/src/cli.ts run "audit this repo" --stream</code><br>
@@ -42,7 +42,30 @@ Every agent decision streams to you in real time. Every output passes through fi
 
 ---
 
+## Two ways to run Commander
+
+Commander ships as two distinct SKUs. The **Local CLI** is what you run on your
+own machine; the **Enterprise Gateway** is a durable, multi-tenant server path
+that is still **alpha** for enterprise use.
+
+| | Local CLI | Enterprise Gateway |
+| --- | --- | --- |
+| **Entry** | `commander run` / `pnpm gui` | `POST /v1/runs` via `apps/api` |
+| **State** | Local SQLite / JSON (`.commander_state/`) | Postgres kernel (`runs`/`steps`/`events`/outbox/leases) |
+| **Auth** | None (single user) | `COMMANDER_API_KEY` + JWT tenant claims |
+| **Tenancy** | None (implicit `__default__`) | Alpha — kernel RLS + tenant-aware singletons; storage isolation opt-in |
+| **Durable kernel** | No | Yes (auto-on in production / when a Postgres DSN is set) |
+| **Status** | Shippable as a local tool | Alpha — not yet live-fire-proven on real backends |
+
+The quick start below defaults to the **Local CLI**. To run the Enterprise
+Gateway instead, see [ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md) and the
+Docker block at the end of Quick Start.
+
+---
+
 ## Quick Start
+
+### Local CLI (default)
 
 ```bash
 # Clone and install
@@ -62,15 +85,21 @@ npx tsx packages/core/src/cli.ts run "refactor the auth module" --dry-run
 npx tsx packages/core/src/cli.ts run "explain the architecture" --stream
 ```
 
-For Docker:
+> CLI commands run the **Local CLI** (embedded runtime). Enterprise routing is
+> via the `/v1` gateway — see the block below.
+
+### Enterprise Gateway (alpha)
 
 ```bash
 export COMMANDER_API_KEY="your-secret-key"
+export COMMANDER_KERNEL_DATABASE_URL="postgres://user:pass@host:5432/commander"
 export OPENAI_API_KEY="sk-..."
 docker compose up -d
 ```
 
-API on `:4000`, Web on `:3000`.
+API on `:4000`, Web on `:3000`. Requires a Postgres DSN; the durable kernel
+auto-enables in production. Multi-tenant isolation is **alpha** — review
+[ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md) before any pilot.
 
 ---
 
@@ -139,7 +168,7 @@ If the output fails any gate, the system retries or reports the failure with ful
 
 ### Security
 
-AES-256-GCM encrypted secrets vault. Tamper-proof audit chain. RBAC with capability tokens. ISO 42001 / NIST AI RMF compliance reporting. Red team framework (47 scenarios, 8 attack categories). Tenant isolation via AsyncLocalStorage.
+AES-256-GCM encrypted secrets vault. Tamper-proof audit chain. RBAC with capability tokens. ISO 42001 / NIST AI RMF compliance **reporting scaffolds** (reporters, not certification). Red team framework (47 scenarios, 8 attack categories). Request-context tenant scoping (AsyncLocalStorage); storage-layer isolation is opt-in — Enterprise Gateway, alpha.
 
 ### Self-Optimization
 
@@ -204,7 +233,7 @@ Open `http://localhost:5173`. The console provides:
 - **Chat** — Conversational interface with real-time agent streaming
 - **Governance** — Approval queue, unified policy configuration, audit log
 - **DLQ** — Dead letter queue management with replay
-- **Security** — ISO 42001 / NIST AI RMF compliance posture
+- **Security** — ISO 42001 / NIST AI RMF compliance reporting posture (reporters, not certification)
 - **Execution** — Real-time execution feed with hallucination risk panel
 - **Agents** — Agent roster with lineage tree visualization
 
@@ -223,14 +252,17 @@ Open `http://localhost:5173`. The console provides:
 
 ## Benchmarks
 
-| Suite             | Coverage                           | Result          |
-| ----------------- | ---------------------------------- | --------------- |
-| Chaos Engineering | 255 synthetic + 55 mutation        | 55.7% pass rate |
-| Red Team          | 47 scenarios, 8 attack categories  | 100% defense    |
-| AgentDojo         | 12 security test cases             | 100% defense    |
-| RealWorld         | 50 production-like cases           | 96% pass rate   |
-| GAIA Spine        | Core capability benchmark          | Running daily   |
-| SLO               | 99.5% API success, <2s p95 latency | Measured daily  |
+> All benchmarks below run in **simulated/scripted harnesses** or as **CI
+> baselines**. They measure the harness, not a production SLA or SOC evidence.
+
+| Suite             | Coverage                           | Result                                       |
+| ----------------- | ---------------------------------- | -------------------------------------------- |
+| Chaos Engineering | 255 synthetic + 55 mutation        | 55.7% pass rate                              |
+| Red Team          | 47 scenarios, 8 attack categories  | 100% defense (simulated harness)             |
+| AgentDojo         | 12 security test cases             | 100% defense (simulated harness)             |
+| RealWorld         | 50 production-like cases           | 96% pass rate                                |
+| GAIA Spine        | Core capability benchmark          | Running daily                                |
+| SLO               | 99.5% API success, <2s p95 latency | CI baseline, not production SLA              |
 
 Full matrix: [BENCHMARK.md](BENCHMARK.md)
 
