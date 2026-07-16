@@ -6,8 +6,8 @@
  * - INTERACTION_TIMEOUT: The associated interaction is expired and the step
  *   is transitioned from WAITING_FOR_HUMAN → RETRY_WAIT (or FAILED if
  *   maxAttempts is reached).
- * - RETRY_DELAY: The step is transitioned from RETRY_WAIT → PENDING so it
- *   becomes claimable by workers again.
+ * - RETRY_DELAY: The step remains RETRY_WAIT while scheduled_at is advanced,
+ *   then the next claim performs RETRY_WAIT → RUNNING.
  * - STEP_DEADLINE: The step is transitioned to FAILED with a deadline
  *   exceeded error.
  *
@@ -18,8 +18,8 @@
  * double-process timers.
  */
 
-import type { KernelRepository } from '@commander/kernel';
-import type { KernelTimer, KernelInteraction } from '@commander/kernel';
+import type { KernelRepository } from '../repository.js';
+import type { KernelTimer, KernelInteraction } from '../types.js';
 
 export interface TimerWakeupWorkerConfig {
   /** Polling interval in milliseconds. Default: 5000 (5s). */
@@ -41,6 +41,7 @@ export class TimerWakeupWorker {
   private readonly config: TimerWakeupWorkerConfig;
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
+  private inFlight?: Promise<void>;
   private stats = {
     timersFired: 0,
     interactionsExpired: 0,
@@ -59,20 +60,21 @@ export class TimerWakeupWorker {
   start(): void {
     if (this.timer || !this.config.enabled) return;
     this.timer = setInterval(() => {
-      this.tick().catch(() => {
-        this.stats.errors++;
-      });
+      if (!this.inFlight) {
+        this.inFlight = this.tick().finally(() => { this.inFlight = undefined; });
+      }
     }, this.config.pollIntervalMs);
   }
 
   /**
    * Stop the background polling loop.
    */
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
     }
+    await this.inFlight;
   }
 
   /**
@@ -87,8 +89,20 @@ export class TimerWakeupWorker {
       // 1. Claim expired timers
       const firedTimers = await this.repo.claimExpiredTimers(new Date(), this.config.batchSize);
       for (const timer of firedTimers) {
-        await this.processFiredTimer(timer);
-        this.stats.timersFired++;
+        if (!timer.claimToken) {
+          this.stats.errors++;
+          continue;
+        }
+        try {
+          await this.processFiredTimer(timer);
+          if (!await this.repo.acknowledgeTimer(timer.id, timer.tenantId, timer.claimToken)) {
+            throw new Error(`Timer ${timer.id} acknowledgement was fenced`);
+          }
+          this.stats.timersFired++;
+        } catch {
+          await this.repo.retryTimer(timer.id, timer.tenantId, timer.claimToken);
+          this.stats.errors++;
+        }
       }
 
       // 2. Expire stale interactions
@@ -133,7 +147,7 @@ export class TimerWakeupWorker {
       }
 
       case 'RETRY_DELAY': {
-        // Transition step from RETRY_WAIT → PENDING so it becomes claimable.
+        // Advance scheduled_at while retaining RETRY_WAIT; claim performs the transition.
         await this.repo.wakeRetryStep(timer.stepId, timer.tenantId, 'kernel.timer');
         break;
       }
