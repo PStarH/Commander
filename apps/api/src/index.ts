@@ -1042,9 +1042,6 @@ app.get('/api/openapi.json', (_req, res) => {
   });
 });
 
-// ── Error handler (must be last middleware) ──────────────────────────────────
-app.use(errorHandler);
-
 // ── Startup + Graceful Shutdown ──────────────────────────────────────────────
 const port = Number(process.env.PORT || 4000);
 
@@ -1151,6 +1148,10 @@ async function startServer(): Promise<void> {
     listRegisteredRouters().map((r) => `${r.name}@${r.mountPath}`),
   );
   mountRegisteredRouters(app);
+
+  // Error handler must be registered after all routers so Express 5 can
+  // forward route errors into this middleware (registering earlier skips it).
+  app.use(errorHandler);
 
   // Start the outgoing webhook dispatcher so registered webhooks receive
   // system events as soon as the server is ready.
