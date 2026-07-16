@@ -223,7 +223,7 @@ export function writeFail(
   testCaseId: string,
   details: string,
   artifacts: string[] = [],
-  evidenceLevel: EvidenceLevel = 'live',
+  evidenceLevel: EvidenceLevel = 'simulated',
 ): string {
   const filePath = writeEvidence({
     testCaseId,
