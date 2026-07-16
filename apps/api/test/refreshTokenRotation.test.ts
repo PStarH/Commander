@@ -17,12 +17,11 @@ const tmpDir = path.join(
 );
 const originalCwd = process.cwd();
 const originalJwt = process.env.JWT_SECRET;
-const originalAuthDisabled = process.env.AUTH_DISABLED;
 
 fs.mkdirSync(path.join(tmpDir, '.commander'), { recursive: true });
 process.chdir(tmpDir);
 process.env.JWT_SECRET = 'test-jwt-secret-for-refresh-rotation';
-process.env.AUTH_DISABLED = 'true';
+// Router mounted without authMiddleware; refresh is public when middleware is present.
 
 const { signRefreshToken, verifyToken } = await import('../src/jwtMiddleware');
 const {
@@ -80,11 +79,6 @@ after(async () => {
     delete process.env.JWT_SECRET;
   } else {
     process.env.JWT_SECRET = originalJwt;
-  }
-  if (originalAuthDisabled === undefined) {
-    delete process.env.AUTH_DISABLED;
-  } else {
-    process.env.AUTH_DISABLED = originalAuthDisabled;
   }
   try {
     fs.rmSync(tmpDir, { recursive: true, force: true });
