@@ -223,6 +223,53 @@ describe('SpeculativeExecutor - triggerSpeculativeExecution integration', () => 
     expect(executeCalled).toBe(false);
   });
 
+  it('skips speculative execute when capabilityToken is missing', async () => {
+    const { ToolExecutionService } = await import('../../src/runtime/toolExecutionService');
+    const { getPatternTracker } = await import('../../src/runtime/speculativeExecutor');
+
+    let executeCalled = false;
+    let cacheSetCalled = false;
+    const mockTool = {
+      execute: async () => {
+        executeCalled = true;
+        return 'secret-result';
+      },
+    };
+    const tools = new Map([['file_read', mockTool as never]]);
+    const mockCache = {
+      get: () => null,
+      set: () => {
+        cacheSetCalled = true;
+      },
+    };
+
+    const tracker = getPatternTracker();
+    for (let i = 0; i < 10; i++) {
+      tracker.recordSequence(['file_search', 'file_read']);
+    }
+
+    const svc = new ToolExecutionService({
+      tools,
+      compensationService: {} as never,
+      cacheManager: { getToolCache: () => mockCache } as never,
+      dlq: {} as never,
+      getRunHandle: () => null,
+      config: { speculativeExecution: { enabled: true } } as never,
+      reflexionGenerator: {} as never,
+      stepTimeout: {} as never,
+      getPromotedTools: () => new Set(),
+      generateActionId: () => 'test',
+      getBreakerRegistry: () => ({ get: () => null }) as never,
+    });
+    (svc as unknown as { recentToolCalls: Array<{ name: string; arguments: Record<string, unknown> }> }).recentToolCalls =
+      [{ name: 'file_search', arguments: { q: 'x' } }];
+
+    await svc.triggerSpeculativeExecution();
+
+    expect(executeCalled).toBe(false);
+    expect(cacheSetCalled).toBe(false);
+  });
+
   it('skips speculative execute when security gate blocks', async () => {
     vi.resetModules();
     vi.doMock('../../src/security/securityGuardianFacade', () => ({
@@ -232,6 +279,26 @@ describe('SpeculativeExecutor - triggerSpeculativeExecution integration', () => 
         kind: 'gateway_blocked',
       }),
     }));
+    vi.doMock('../../src/security/capabilityToken', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('../../src/security/capabilityToken')>();
+      return {
+        ...actual,
+        getCapabilityTokenVerifier: () => ({
+          verify: () => ({ ok: true }),
+        }),
+      };
+    });
+    vi.doMock('../../src/security/biscuitCapabilityAdapter', async (importOriginal) => {
+      const actual =
+        await importOriginal<typeof import('../../src/security/biscuitCapabilityAdapter')>();
+      return {
+        ...actual,
+        BiscuitCapabilityAdapter: {
+          ...actual.BiscuitCapabilityAdapter,
+          isBiscuitToken: () => false,
+        },
+      };
+    });
 
     const { ToolExecutionService } = await import('../../src/runtime/toolExecutionService');
     const { getPatternTracker } = await import('../../src/runtime/speculativeExecutor');
@@ -274,16 +341,17 @@ describe('SpeculativeExecutor - triggerSpeculativeExecution integration', () => 
       getBreakerRegistry: () => ({ get: () => null }) as never,
     });
 
-    // Seed recent calls so planSpeculativeExecution can predict file_read
     (svc as unknown as { recentToolCalls: Array<{ name: string; arguments: Record<string, unknown> }> }).recentToolCalls =
       [{ name: 'file_search', arguments: { q: 'x' } }];
 
-    await svc.triggerSpeculativeExecution();
+    await svc.triggerSpeculativeExecution(undefined, 'test-capability-token');
 
     expect(executeCalled).toBe(false);
     expect(cacheSetCalled).toBe(false);
 
     vi.doUnmock('../../src/security/securityGuardianFacade');
+    vi.doUnmock('../../src/security/capabilityToken');
+    vi.doUnmock('../../src/security/biscuitCapabilityAdapter');
     vi.resetModules();
   });
 });

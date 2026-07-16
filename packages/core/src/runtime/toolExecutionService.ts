@@ -998,33 +998,34 @@ export class ToolExecutionService {
           const tool = this.runtime.tools.get(pred.name);
           if (!tool) return;
 
-          // Align with formal execute path: capability + sanitizer +
-          // ReversibilityGate + guardian. Fail → skip (no cache write).
+          // Align with formal execute path: capability is mandatory for
+          // speculative cache writes. Without a token, skip entirely so a later
+          // formal call cannot hit an unauthorized cache entry.
+          if (!capabilityToken) return;
+
           const sanitizedArgs = this.sanitizeArguments(pred.arguments);
 
-          if (capabilityToken) {
-            try {
-              let verdict: { ok: boolean; reason?: string; detail?: string };
-              if (BiscuitCapabilityAdapter.isBiscuitToken(capabilityToken)) {
-                const biscuitVerifier = getGlobalBiscuitCapabilityAdapter().createVerifier(
-                  tenantId ?? '*',
-                );
-                verdict = biscuitVerifier.verify(capabilityToken, {
-                  tool: pred.name,
-                  args: sanitizedArgs as Record<string, unknown>,
-                });
-              } else {
-                const verifier = getCapabilityTokenVerifier();
-                verdict = verifier.verify(capabilityToken, {
-                  tool: pred.name,
-                  args: sanitizedArgs as Record<string, unknown>,
-                  consumeReplay: false,
-                });
-              }
-              if (!verdict.ok) return;
-            } catch {
-              return;
+          try {
+            let verdict: { ok: boolean; reason?: string; detail?: string };
+            if (BiscuitCapabilityAdapter.isBiscuitToken(capabilityToken)) {
+              const biscuitVerifier = getGlobalBiscuitCapabilityAdapter().createVerifier(
+                tenantId ?? '*',
+              );
+              verdict = biscuitVerifier.verify(capabilityToken, {
+                tool: pred.name,
+                args: sanitizedArgs as Record<string, unknown>,
+              });
+            } else {
+              const verifier = getCapabilityTokenVerifier();
+              verdict = verifier.verify(capabilityToken, {
+                tool: pred.name,
+                args: sanitizedArgs as Record<string, unknown>,
+                consumeReplay: false,
+              });
             }
+            if (!verdict.ok) return;
+          } catch {
+            return;
           }
 
           if (this.runtime.reversibilityGate) {
