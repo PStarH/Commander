@@ -22,7 +22,14 @@
  *   3  orchestrator error (uncaught exception)
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+  unlinkSync,
+} from 'node:fs';
 import { resolve, join } from 'node:path';
 
 // ─── Constants ───────────────────────────────────────────────────────────
@@ -164,6 +171,23 @@ function runVitestSuite(): boolean {
   return res.status === 0;
 }
 
+/**
+ * Remove prior per-case evidence JSON so this run cannot pick up stale PASS
+ * artifacts. Keeps compliance-evidence/ subdirectory and summary.json.
+ */
+function clearCaseArtifacts(): void {
+  if (!existsSync(BASELINE_DIR)) return;
+  for (const file of readdirSync(BASELINE_DIR)) {
+    if (!file.endsWith('.json')) continue;
+    if (file === 'summary.json') continue;
+    try {
+      unlinkSync(join(BASELINE_DIR, file));
+    } catch {
+      // ignore
+    }
+  }
+}
+
 /** Collect all evidence JSON artifacts from docs/baselines/ws9/. */
 function collectEvidence(): Map<string, EvidenceArtifact> {
   const artifacts = new Map<string, EvidenceArtifact>();
@@ -253,12 +277,35 @@ function main(): void {
 
   console.log('✅ Environment gate passed. Proceeding to live-fire tests.');
 
+  // Clear stale case artifacts before this run so honesty rules see only
+  // evidence produced by the forthcoming vitest invocation.
+  clearCaseArtifacts();
+
   // Step 2: Run the WS9 vitest suite.
   console.log('\nStep 2: Running WS9 live-fire test suite...');
   console.log('   (6 test files, serial execution)');
   console.log('');
 
-  runVitestSuite();
+  const vitestOk = runVitestSuite();
+  if (!vitestOk) {
+    const summary: LiveFireSummary = {
+      verdict: 'FAIL',
+      reason: 'Vitest suite exited non-zero — refusing to treat residual/partial evidence as live.',
+      envCheck,
+      totalCases: EXPECTED_CASES.length,
+      passed: 0,
+      failed: EXPECTED_CASES.length,
+      breached: 0,
+      skipped: 0,
+      missing: [...EXPECTED_CASES],
+      cases: [],
+      ranAt: new Date().toISOString(),
+      gitSha: gitSha(),
+    };
+    writeSummary(summary);
+    console.error(`\nVerdict: FAIL (vitest non-zero; exit 1)`);
+    process.exit(1);
+  }
 
   // Step 3: Collect evidence artifacts.
   console.log('\nStep 3: Collecting evidence artifacts...');

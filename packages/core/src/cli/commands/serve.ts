@@ -28,6 +28,11 @@ import {
   installOutboundNetworkPolicy,
   resetOutboundNetworkPolicy,
 } from '../../security/outboundNetworkPolicy';
+import { getAuditChainLedger } from '../../security/auditChainLedger';
+import {
+  installAuditChainIntegrity,
+  resetAuditChainIntegrity,
+} from '../../security/auditChainIntegrity';
 
 function tryStartComponent(label: string, start: () => void, reset: () => void): boolean {
   try {
@@ -77,6 +82,15 @@ export async function cmdServe(args: string[]): Promise<void> {
       () => installOutboundNetworkPolicy(),
       () => resetOutboundNetworkPolicy(),
     );
+    const auditIntegrityInstalled = tryStartComponent(
+      'AuditChainIntegrity',
+      () => {
+        // Opt-in via COMMANDER_AUDIT_MANIFEST_DIR (WS9 compose sets this).
+        if (!process.env.COMMANDER_AUDIT_MANIFEST_DIR) return;
+        installAuditChainIntegrity(getAuditChainLedger());
+      },
+      () => resetAuditChainIntegrity(),
+    );
 
     console.log(
       `  ${$.green}✓${$.reset} Server listening on ${$.cyan}http://${host}:${port}${$.reset}`,
@@ -97,6 +111,9 @@ export async function cmdServe(args: string[]): Promise<void> {
     );
     console.log(
       `    ${$.dim}OutboundNetworkPolicy   — ${outboundPolicyInstalled ? 'egress firewall + SSRF defense' : 'not installed'}${$.reset}`,
+    );
+    console.log(
+      `    ${$.dim}AuditChainIntegrity     — ${auditIntegrityInstalled && process.env.COMMANDER_AUDIT_MANIFEST_DIR ? 'manifest + verify timer' : 'not installed (set COMMANDER_AUDIT_MANIFEST_DIR)'}${$.reset}`,
     );
     console.log(`    ${$.dim}RecoveryBootstrapper    — zombie run recovery${$.reset}`);
     console.log();

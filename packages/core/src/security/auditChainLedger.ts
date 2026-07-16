@@ -156,13 +156,13 @@ export class AuditChainLedger {
   private readonly maxFiles: number;
   private currentChainFileIndex: number = 0;
   private currentChainFileSize: number = 0;
-  /** Serialized write queue so disk order matches seq order. */
-  private writeQueue: Promise<void> = Promise.resolve();
   /** Entries that have already been durably flushed; these are NOT merged back
    * into verify() so that a deleted/corrupted persisted entry is detected. */
   private flushedEntries: WeakSet<AuditChainEntry> = new WeakSet();
   /** Master key for verification. Same instance ⇒ same chain. */
   readonly masterKeyForVerifiers: Buffer;
+  /** Optional post-persist hook (WS9 ChainManifest registration). */
+  private onPersisted: ((entry: AuditChainEntry) => void) | null = null;
 
   constructor(options?: {
     maxCache?: number;
@@ -188,16 +188,22 @@ export class AuditChainLedger {
   }
 
   /**
+   * Register a post-persist callback (e.g. ChainManifest.registerHead).
+   * Replaces any previous hook. Pass null to clear.
+   */
+  setOnPersisted(hook: ((entry: AuditChainEntry) => void) | null): void {
+    this.onPersisted = hook;
+  }
+
+  /**
    * Append a security event to the chain. Returns the chained entry.
    *
-   * Side effects (atomic in memory; persisted best-effort async):
+   * Side effects (fail-closed):
    *   1. Generates `id` + `timestamp` for the event.
-   *   2. Increments `seq` and stamps `prevHash` / `chainId`.
-   *   3. Computes `hmac = HMAC(tenantKey, canonical(partial entry))`.
-   *   4. Writes the chained entry to `audit-chain-<index>.ndjson` under
-   *      `this.persistDir` (own writer — keeps chain files colocated with
-   *      the verifier's read path).
-   *   5. Records in-memory entry (ring-buffered by `maxCache`).
+   *   2. Computes next `seq` / `hmac` without mutating in-memory state yet.
+   *   3. Synchronously persists the entry — throws `AUDIT_PERSIST_FAILED` on
+   *      any write error so the calling effect is blocked (KC-5d).
+   *   4. Only then commits in-memory seq/cache and fires integrity hooks.
    *
    * Tenant isolation: `event.context.tenantId` wins; falls back to the active
    * tenant context; `undefined` ⇒ global chain (single-tenant mode).
@@ -208,20 +214,24 @@ export class AuditChainLedger {
 
     const id = `acl_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
     const timestamp = new Date().toISOString();
-    this.seq += 1;
+    const nextSeq = this.seq + 1;
 
     const partial: Omit<AuditChainEntry, 'hmac'> = {
       ...event,
       id,
       timestamp,
       chainId: this.chainId,
-      seq: this.seq,
+      seq: nextSeq,
       prevHash: this.prevHash,
       tenantId,
     };
     const hmac = computeEntryHmac(tenantKey, partial);
     const entry: AuditChainEntry = { ...partial, hmac };
 
+    // Persist BEFORE mutating in-memory state — fail-closed (KC-5d).
+    this.persistChainedLine(entry);
+
+    this.seq = nextSeq;
     this.prevHash = hmac;
     this.entryCache.push(entry);
     if (this.entryCache.length > this.maxCache) this.entryCache.shift();
@@ -234,11 +244,20 @@ export class AuditChainLedger {
         [{ name: 'type', value: event.type }],
       );
     } catch (err) {
-      reportSilentFailure(err, 'auditChainLedger:236');
+      reportSilentFailure(err, 'auditChainLedger:metrics');
       /* best-effort */
     }
 
-    this.persistChainedLine(entry);
+    try {
+      this.onPersisted?.(entry);
+    } catch (err) {
+      // Integrity hook failure must not silently drop the already-persisted
+      // entry, but should surface so operators notice (fail-closed for KC-5a).
+      throw new Error(
+        `AUDIT_INTEGRITY_HOOK_FAILED: ${(err as Error)?.message ?? String(err)}`,
+      );
+    }
+
     return entry;
   }
 
@@ -316,10 +335,13 @@ export class AuditChainLedger {
       return true;
     });
 
-    // Group by (tenantId, chainId). Each chain is verified independently.
+    // Group by chainId only. A process-wide chain spans tenants with a shared
+    // monotonic seq; grouping by tenant would invent false seq_gap failures.
+    // Tenant filtering (opts.tenantId) still limits which entries are inspected,
+    // but HMAC continuity is checked within each chainId.
     const chains = new Map<string, AuditChainEntry[]>();
     for (const e of filtered) {
-      const key = `${e.tenantId ?? '_'}::${e.chainId}`;
+      const key = e.chainId;
       const list = chains.get(key);
       if (list) list.push(e);
       else chains.set(key, [e]);
@@ -421,41 +443,45 @@ export class AuditChainLedger {
     return { ok: true, totalEntries: filtered.length, chainsInspected: chains.size };
   }
 
-  // ── Persistence (own writer) ───────────────────────────────────────────
+  // ── Persistence (own writer, fail-closed) ──────────────────────────────
 
   private persistChainedLine(entry: AuditChainEntry): void {
-    // Serialize writes so disk order matches seq order. Use synchronous I/O
-    // inside the queue so callers see durable entries as soon as the queued
-    // task runs (after any prior writes). Audit volume is low enough that
-    // blocking writes are acceptable.
-    this.writeQueue = this.writeQueue.then(() => {
-      try {
-        const filePath = this.getCurrentChainFile();
-        const line = JSON.stringify(entry) + '\n';
-        fs.appendFileSync(filePath, line, 'utf-8');
-        this.flushedEntries.add(entry);
-        this.currentChainFileSize += Buffer.byteLength(line, 'utf-8');
-        if (this.currentChainFileSize > this.maxFileSize) {
-          this.currentChainFileIndex = (this.currentChainFileIndex + 1) % this.maxFiles;
-          this.currentChainFileSize = 0;
-        }
-      } catch (err) {
-        process.stderr.write(
-          `[auditChainLedger] Chain persist failed: ${(err as Error)?.message ?? String(err)}\n`,
-        );
+    // Synchronous fail-closed write (KC-5d). Any I/O error blocks the effect.
+    try {
+      this.ensurePersistDirOrThrow();
+      const filePath = this.getCurrentChainFile();
+      const line = JSON.stringify(entry) + '\n';
+      fs.appendFileSync(filePath, line, 'utf-8');
+      this.flushedEntries.add(entry);
+      this.currentChainFileSize += Buffer.byteLength(line, 'utf-8');
+      if (this.currentChainFileSize > this.maxFileSize) {
+        this.currentChainFileIndex = (this.currentChainFileIndex + 1) % this.maxFiles;
+        this.currentChainFileSize = 0;
       }
-    });
+    } catch (err) {
+      const msg = (err as Error)?.message ?? String(err);
+      if (msg.startsWith('AUDIT_PERSIST_FAILED')) throw err;
+      throw new Error(
+        `AUDIT_PERSIST_FAILED (fail-closed): ${this.persistDir} — ${msg}. ` +
+          'Effect blocked because audit write could not be durably persisted.',
+      );
+    }
   }
 
   private getCurrentChainFile(): string {
     return path.join(this.persistDir, `audit-chain-${this.currentChainFileIndex}.ndjson`);
   }
 
+  private ensurePersistDirOrThrow(): void {
+    if (!fs.existsSync(this.persistDir)) {
+      fs.mkdirSync(this.persistDir, { recursive: true });
+    }
+  }
+
+  /** @deprecated Prefer ensurePersistDirOrThrow — kept for resumeFromDisk callers. */
   private ensurePersistDir(): void {
     try {
-      if (!fs.existsSync(this.persistDir)) {
-        fs.mkdirSync(this.persistDir, { recursive: true });
-      }
+      this.ensurePersistDirOrThrow();
     } catch (err) {
       process.stderr.write(
         `[auditChainLedger] Failed to create persist dir: ${(err as Error)?.message ?? String(err)}\n`,
