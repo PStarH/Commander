@@ -1,8 +1,28 @@
 import { Router } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import { SequentialPipeline } from '@commander/core';
 import { PatternStateMachineFactory, PatternStateMachine } from './patternStateMachine';
 import { SequentialExecutor, createRealAgentExecutor } from './sequentialExecutor';
 import { legacyExecutionDisabledReason, isLegacyExecutionAllowed } from './legacyExecutionGuard';
+import { hasRole, type UserRole } from './userStore';
+
+function requireAuth(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  next();
+}
+
+function requireRole(requiredRole: UserRole = 'admin') {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user || !hasRole(req.user.role, requiredRole)) {
+      res.status(403).json({ error: 'Insufficient privileges' });
+      return;
+    }
+    next();
+  };
+}
 
 export function createPipelineRouter(): Router {
   const router = Router();
@@ -108,7 +128,7 @@ export function createPipelineRouter(): Router {
     }),
   });
 
-  router.post('/api/pipeline/execute', async (req, res) => {
+  router.post('/api/pipeline/execute', requireAuth, requireRole('admin'), async (req, res) => {
     const { id, name, projectId, steps, input } = req.body ?? {};
     if (!id || !Array.isArray(steps) || steps.length === 0) {
       return res.status(400).json({ error: 'id and steps[] are required' });

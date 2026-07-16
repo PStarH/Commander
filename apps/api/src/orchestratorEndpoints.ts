@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import {
   AgentRuntime,
   OpenAIProvider,
@@ -9,6 +10,7 @@ import {
   UltimateOrchestrator,
 } from '@commander/core';
 import { legacyExecutionDisabledReason, isLegacyExecutionAllowed } from './legacyExecutionGuard';
+import { hasRole, type UserRole } from './userStore';
 
 /**
  * @deprecated Architecture V2 — use POST /v1/runs with a WorkGraph instead.
@@ -22,6 +24,24 @@ import { legacyExecutionDisabledReason, isLegacyExecutionAllowed } from './legac
  * Migration: replace `POST /orchestrator/execute` with `POST /v1/runs`
  * using a multi-step WorkGraph. This router will be removed in v0.3.0.
  */
+
+function requireAuth(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  next();
+}
+
+function requireRole(requiredRole: UserRole = 'admin') {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user || !hasRole(req.user.role, requiredRole)) {
+      res.status(403).json({ error: 'Insufficient privileges' });
+      return;
+    }
+    next();
+  };
+}
 
 let orchInstance: UltimateOrchestrator | null = null;
 
@@ -67,7 +87,7 @@ export function createOrchestratorRouter(): Router {
     next();
   });
 
-  router.post('/orchestrator/execute', async (req, res) => {
+  router.post('/orchestrator/execute', requireAuth, requireRole('admin'), async (req, res) => {
     const { goal, effortLevel, tools } = req.body ?? {};
     if (!goal) return res.status(400).json({ error: 'goal is required' });
 
