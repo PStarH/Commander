@@ -15,6 +15,10 @@
     "./timerWakeupWorker": {
       "types": "./dist/timerWakeupWorker.d.ts",
       "default": "./dist/timerWakeupWorker.js"
+    },
+    "./compensationConsumer": {
+      "types": "./dist/compensationConsumer.d.ts",
+      "default": "./dist/compensationConsumer.js"
     }
   },
   "scripts": {
@@ -41,6 +45,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@commander/contracts": "workspace:*",
     "@commander/kernel": "workspace:*"
   },
   "devDependencies": {

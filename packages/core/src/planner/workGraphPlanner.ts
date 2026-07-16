@@ -6,12 +6,6 @@
  * this module never talks to providers or tools directly.
  */
 
-import {
-  getEffectBroker,
-  isEffectBrokerCompatEnabled,
-  requireEffectBrokerCompatAudit,
-} from '../security/effectBroker';
-
 export type PlannerProfile =
   | 'run' // default Ultimate-style deliberation → topology → execute
   | 'swarm' // recursive decomposition + parallel
@@ -228,22 +222,10 @@ export async function executeWorkGraph(
   summary: string;
   result?: unknown;
 }> {
-  if (!options?.dryRun && workGraphContainsEffect(graph)) {
-    const broker = getEffectBroker();
-    const compat = isEffectBrokerCompatEnabled();
-    if (!broker && !compat) {
-      return {
-        graphId: graph.graphId,
-        profile: graph.profile,
-        status: 'failed',
-        summary:
-          'WorkGraph contains external side effects but no EffectBroker is configured (fail closed)',
-      };
-    }
-    if (!broker && compat) {
-      requireEffectBrokerCompatAudit();
-    }
-  }
+  // WS2 §9: the compat shim broker-presence gate is removed. The sole PEP for
+  // external side effects is the EffectBroker wired in worker-plane bootstrap;
+  // the planner delegates execution to the supplied executor (which routes
+  // through the broker) and trusts that wiring. No global bypass remains.
 
   if (options?.dryRun || !options?.executor) {
     return {
