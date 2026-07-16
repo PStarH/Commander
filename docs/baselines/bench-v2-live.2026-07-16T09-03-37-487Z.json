@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 2,
+  "evidenceLevel": "live",
+  "baseline": {
+    "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+    "nodeVersion": "v22.22.0",
+    "pnpmVersion": "9.15.4",
+    "topology": {
+      "gateways": 2,
+      "workers": 10,
+      "operations": 2,
+      "model": "v2"
+    },
+    "datasetVersion": "unknown"
+  },
+  "summary": {
+    "passed": true,
+    "errors": 0,
+    "failed": 0,
+    "skipped": 0
+  },
+  "env": {
+    "evidence": "live",
+    "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+    "gitBranch": "master",
+    "gitDirty": true,
+    "imageDigest": "sha256:0632a1bd6985150547dae3373867a768098fd36a46d280db04d7237533edb354",
+    "nodeVersion": "v22.22.0",
+    "pnpmVersion": "9.15.4",
+    "postgresVersion": "16.x",
+    "topology": {
+      "gateways": 2,
+      "workers": 10,
+      "operations": 2,
+      "model": "v2"
+    }
+  },
+  "measurements": {
+    "live": true,
+    "seeded": true,
+    "drained": true,
+    "auditAvailable": true,
+    "runs": 10,
+    "tenants": 5,
+    "rate": 5,
+    "anomalyCounts": {
+      "duplicateClaims": 0,
+      "staleCompletions": 0,
+      "tenantLeaks": 0,
+      "unknownEffects": 0,
+      "reconciledEffects": 0,
+      "failedRuns": 0
+    },
+    "latencyMs": {
+      "total": 2102,
+      "seed": 1827,
+      "drain": 14,
+      "anomaly": 7
+    },
+    "failures": []
+  },
+  "runAt": "2026-07-16T09:03:37.487Z"
+}

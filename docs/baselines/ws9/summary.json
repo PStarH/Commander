@@ -1,0 +1,370 @@
+{
+  "verdict": "FAIL",
+  "reason": "FAIL: 1 case(s) skipped or missing evidence; missing evidence for: EXEC-1; 25 PASS artifact(s) without evidenceLevel=live: DATA-4(simulated), DATA-6(simulated), EXEC-2(simulated), EXEC-3(simulated), EXEC-4(simulated), EXEC-5(simulated), NET-1(simulated), NET-2(simulated), NET-3(simulated), RATE-1(simulated), RATE-2(simulated), AUDIT-1(ci-worm-sim), AUDIT-2(simulated), AUDIT-3(simulated), AUDIT-4(ci-worm-sim), AUDIT-5(simulated), TAMPER-1(simulated), TAMPER-2(simulated), TAMPER-3(simulated), TAMPER-4(ci-worm-sim), TAMPER-5(simulated), KEY-1(simulated), KEY-2(simulated), KEY-3(simulated), KEY-5(simulated).",
+  "envCheck": {
+    "verdict": "PASS",
+    "checks": [
+      {
+        "check": "postgres-non-owner-role",
+        "passed": true,
+        "severity": "FAIL",
+        "detail": "Connected role=commander_app session_user=commander_app; not superuser, not owner, cannot create roles/DBs."
+      },
+      {
+        "check": "rls-with-check",
+        "passed": true,
+        "severity": "FAIL",
+        "detail": "RLS enabled with WITH CHECK on all target tables (verified 6 table(s): atr_run_ledger, event_sourcing_log, memory_items, runs, steps, war_room_items)."
+      },
+      {
+        "check": "no-forbidden-env-vars",
+        "passed": true,
+        "severity": "FAIL",
+        "detail": "No forbidden *_API_KEY/*_SECRET/*_TOKEN env vars. Allowed keys present: COMMANDER_VAULT_TOKEN."
+      },
+      {
+        "check": "runsc-binary",
+        "passed": true,
+        "severity": "WARN",
+        "detail": "runsc binary available (runsc version release-20260706.0)."
+      },
+      {
+        "check": "vault-reachable",
+        "passed": true,
+        "severity": "FAIL",
+        "detail": "Vault reachable at http://localhost:8200/v1/sys/health (HTTP 200, sealed=false, token present, token value not logged)."
+      },
+      {
+        "check": "v1-gateway-only",
+        "passed": true,
+        "severity": "FAIL",
+        "detail": "/v1/health → 200; /api/runs → 410. Legacy /api/* correctly closed."
+      }
+    ],
+    "scannedAt": "2026-07-16T10:24:13.275Z"
+  },
+  "totalCases": 32,
+  "passed": 31,
+  "failed": 0,
+  "breached": 0,
+  "skipped": 1,
+  "missing": [
+    "EXEC-1"
+  ],
+  "cases": [
+    {
+      "testCaseId": "DATA-1",
+      "verdict": "PASS",
+      "evidenceLevel": "live",
+      "breach": false,
+      "details": "Postgres RLS: tenant-a SELECT run-b-1 → 0 rows; tenant-a can read run-a-1; tenant-b can read run-b-1. commander_app role + app.tenant_id GUC.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:21.199Z"
+    },
+    {
+      "testCaseId": "DATA-2",
+      "verdict": "PASS",
+      "evidenceLevel": "live",
+      "breach": false,
+      "details": "Live /v1: tenant-a API key + forged X-Tenant-ID=tenant-b → HTTP 403; matching header path status=500. Principal tenant binding is authoritative.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:21.264Z"
+    },
+    {
+      "testCaseId": "DATA-3",
+      "verdict": "PASS",
+      "evidenceLevel": "live",
+      "breach": false,
+      "details": "WITH CHECK rejected cross-tenant INSERT (tenant_id=tenant-b from tenant-a session). psql status=1; err=ERROR:  new row violates row-level security policy for table \"runs\"",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:21.386Z"
+    },
+    {
+      "testCaseId": "DATA-4",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "Cross-tenant access blocked by assertSameTenant (in-process PEP). A→B blocked=true, B→A blocked=true, same-tenant allowed=true.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:21.395Z"
+    },
+    {
+      "testCaseId": "DATA-5",
+      "verdict": "PASS",
+      "evidenceLevel": "live",
+      "breach": false,
+      "details": "Live /v1/privacy/erasure: A→B body tenant 403; A→B subject prefix 403; A own erase 200; tenant-b memory mem-b-1 intact.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:21.518Z"
+    },
+    {
+      "testCaseId": "DATA-6",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "Cross-store isolation (in-process): audit A=1 B=1; tenantKey/path segments disjoint.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:21.535Z"
+    },
+    {
+      "testCaseId": "EXEC-2",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "Workload reuse prevention: tenantPathSegment(A)=tenant_tenant-a ≠ (B)=tenant_tenant-b. workloadId A=run-tenant-a-123 ≠ B=run-tenant-b-456. Container/workdir/volume paths are tenant-scoped; mismatch = rejection.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:22.560Z"
+    },
+    {
+      "testCaseId": "EXEC-3",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "git ext::sh injection: git_execute with ext::sh command classified as irreversible (irreversible). Host-exec via git ext transport blocked.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:22.579Z"
+    },
+    {
+      "testCaseId": "EXEC-4",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "Effect-broker cross-tenant protection: A→B effect blocked=true. A→A effect allowed=true. assertSameTenant enforces effect-broker admit() contract: no cross-tenant effects without authorization.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:22.588Z"
+    },
+    {
+      "testCaseId": "EXEC-5",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "Effect-broker (ReversibilityGate) wired and functional: blockWithoutCallback=true (default), shell_execute=irreversible (irreversible). Gate enforces fail-closed: unknown tools blocked, irreversible tools require approval. Startup check: gate is constructible and active in production path.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:22.597Z"
+    },
+    {
+      "testCaseId": "NET-1",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "Per-tenant egress isolation: A→B's domain allowed=false (expected false), B→own domain allowed=true (expected true), A→own domain allowed=true (expected true), B→A's domain allowed=false (expected false). OutboundNetworkPolicy enforces per-tenant allowlist.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:23.084Z"
+    },
+    {
+      "testCaseId": "NET-2",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "SSRF defense: 169.254.169.254 allowed=false, 127.0.0.1 allowed=false, 10.0.0.1 allowed=false, 192.168.1.1 allowed=false, metadata.google.internal allowed=false. All private/metadata IPs blocked even with wildcard allowlist. blockPrivateIPs=true (fail-closed SSRF defense).",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:23.098Z"
+    },
+    {
+      "testCaseId": "NET-3",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "Host network fallback rejected for private IPs: 10.0.0.1 allowed=false (expected false). Blocklist still active: evil.com allowed=false (expected false). Public domain allowed when egress disabled: api.openai.com allowed=true (expected true — no host network bypass for SSRF).",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:23.107Z"
+    },
+    {
+      "testCaseId": "RATE-1",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "A's 10x burst did not affect B: B baseline p95=6ms / p99=6ms; during burst p95=3ms / p99=3ms. Per-tenant semaphore isolation held.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:16.916Z"
+    },
+    {
+      "testCaseId": "RATE-2",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "A exhausted shared pool with 10 simultaneous claims; B's 5 lease claims still succeeded (max latency 0ms < 100ms SLA). Per-tenant claim isolation held.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:16.931Z"
+    },
+    {
+      "testCaseId": "RATE-3",
+      "verdict": "PASS",
+      "evidenceLevel": "live",
+      "breach": false,
+      "details": "bench-tenant-concurrency with live PG (commander_app@localhost:5433/commander): passed=true, errors=0, failed=0. PG smoke current_user=commander_app.",
+      "artifacts": [
+        "/Users/sampan/Documents/GitHub/Commander/docs/baselines/ws9/rate-3-run/bench-tenant-concurrency.1784197457019.json"
+      ],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:17.886Z"
+    },
+    {
+      "testCaseId": "AUDIT-1",
+      "verdict": "PASS",
+      "evidenceLevel": "ci-worm-sim",
+      "breach": false,
+      "details": "Audit log tenant isolation held: A sees 2 events (all tenantId=tenant-a); B sees 1 events. Full-chain verify ok=true. A cannot observe B's security events via tenant filter. evidenceLevel=ci-worm-sim (in-process ledger).",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:18.370Z"
+    },
+    {
+      "testCaseId": "AUDIT-2",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "All three tamper methods detected: rewrite→invalid_hmac, delete→ok=false, tail-truncate→gap=tail_truncated. startVerifyTimer alerted=true. tamperProof derived=false on all tampered states. L2 sig: InMemoryKeyProvider (ci-worm-sim).",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:18.749Z"
+    },
+    {
+      "testCaseId": "AUDIT-3",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "Whole-chain deletion detected: manifest registered chain 9ed63d7bd7f04c1ea5ebf81ea1dc3595 (maxSeq=1) but no entries exist on disk. manifestGaps[0].reason=chain_missing_from_log. tamperProof=false (derived from live verify, not hardcoded). L2 sig: InMemoryKeyProvider (ci-worm-sim).",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:18.954Z"
+    },
+    {
+      "testCaseId": "AUDIT-4",
+      "verdict": "PASS",
+      "evidenceLevel": "ci-worm-sim",
+      "breach": false,
+      "details": "FailClosedPersistor + AuditChainLedger.logEvent both throw AUDIT_PERSIST_FAILED (KC-5d fail-closed). persistor=AUDIT_PERSIST_FAILED (fail-closed): /var/folders/p6/t9z5m71d5bx12pm7fvrf0pyc0000; ledger=AUDIT_PERSIST_FAILED (fail-closed): /var/folders/p6/t9z5m71d5bx12pm7fvrf0pyc0000",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:18.966Z"
+    },
+    {
+      "testCaseId": "AUDIT-5",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "tamperProof derived from live verify: honest chain→true, tampered chain→false. Hardcoded tamperProof:true would disagree with live value (false) → honesty gate rejects=true. KC-5f closed: no const-based tamperProof in compliance reports.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:19.366Z"
+    },
+    {
+      "testCaseId": "TAMPER-1",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "Field modification detected: verify().ok=false, reason=invalid_hmac. HMAC-SHA256 re-derivation mismatch on tampered message field.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:19.377Z"
+    },
+    {
+      "testCaseId": "TAMPER-2",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "Tail deletion (5→3) detected: manifest maxSeq=5 > disk maxSeq=3. manifestGaps[0].reason=tail_truncated. tamperProof=false.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:19.575Z"
+    },
+    {
+      "testCaseId": "TAMPER-3",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "Whole-chain delete detected: manifest has chain 533d3c204f9d4b21acdc048b5e4e231e but disk has 0 entries. manifestGaps[0].reason=chain_missing_from_log. tamperProof=false.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:19.657Z"
+    },
+    {
+      "testCaseId": "TAMPER-4",
+      "verdict": "PASS",
+      "evidenceLevel": "ci-worm-sim",
+      "breach": false,
+      "details": "Same-machine chainKey re-forge: ledger.verify().ok=true but verifyWithManifest().ok=false (head_hmac_mismatch). Wrong-key re-forge: verify().ok=false, reason=invalid_hmac. L2 keypair isolation: crossVerify=false, selfVerify=true.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:20.540Z"
+    },
+    {
+      "testCaseId": "TAMPER-5",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "FailClosedPersistor blocks effect on both paths: async threw=true, sync threw=true. Both throw AUDIT_PERSIST_FAILED. Effect cannot proceed when audit write fails (KC-5d closed).",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:20.552Z"
+    },
+    {
+      "testCaseId": "KEY-1",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "Vault key takes precedence: resolver returned vault key (not env OPENAI_API_KEY). allowlist.forbiddenPatterns contains OPENAI_API_KEY=true. allowlist.allowed contains OPENAI_API_KEY=false (expected false). Env-held key rejected by resolver.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:22.001Z"
+    },
+    {
+      "testCaseId": "KEY-2",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "ANTHROPIC_API_KEY resolved from vault (not env). vault.hasSecret=true, vault.getSecret() returns correct plaintext. AES-256-GCM at-rest encryption confirmed (ciphertext + authTag stored, plaintext only on decrypt).",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:22.012Z"
+    },
+    {
+      "testCaseId": "KEY-3",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "No env downgrade in production: resolver returned vault key (not env OPENAI_API_KEY). Vault precedence holds even when env key is present.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:22.033Z"
+    },
+    {
+      "testCaseId": "KEY-4",
+      "verdict": "PASS",
+      "evidenceLevel": "live",
+      "breach": false,
+      "details": "Forged COMMANDER_VAULT_TOKEN rejected on KV read: HTTP status=403, err=none. Vault did not authenticate with forged token. No downgrade to env key.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:22.075Z"
+    },
+    {
+      "testCaseId": "KEY-5",
+      "verdict": "PASS",
+      "evidenceLevel": "simulated",
+      "breach": false,
+      "details": "At-rest encryption verified: EncryptedSecretsVault stores secrets encrypted (AES-256-GCM). listSecrets() returns metadata only (no plaintext). allowlist contains COMMANDER_AUDIT_CHAIN_KEY=true, COMMANDER_MANIFEST_KEY=true. Both noted as Vault-injected. Audit chain uses HMAC-SHA256 with production fail-closed.",
+      "artifacts": [],
+      "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+      "ranAt": "2026-07-16T10:24:22.086Z"
+    }
+  ],
+  "ranAt": "2026-07-16T10:24:23.145Z",
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1"
+}

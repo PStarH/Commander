@@ -1,0 +1,10 @@
+{
+  "testCaseId": "TAMPER-4",
+  "verdict": "PASS",
+  "evidenceLevel": "ci-worm-sim",
+  "breach": false,
+  "details": "Same-machine chainKey re-forge: ledger.verify().ok=true but verifyWithManifest().ok=false (head_hmac_mismatch). Wrong-key re-forge: verify().ok=false, reason=invalid_hmac. L2 keypair isolation: crossVerify=false, selfVerify=true.",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:20.540Z"
+}

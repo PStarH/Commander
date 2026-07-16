@@ -340,10 +340,12 @@ describe('MetaLearner — predictions & verdicts', () => {
   });
 
   it('returns verdicts from predictions', () => {
-    // Train PARALLEL as the preferred strategy so selectStrategy predicts it
+    // Train PARALLEL so selectStrategy has a signal; exploration may still
+    // pick another strategy, so derive the mismatch from the actual prediction.
     for (let i = 0; i < 5; i++) {
       learner.recordExperience(
         makeExp({
+          id: `exp-train-${i}`,
           modelUsed: 'gpt-4',
           strategyUsed: 'PARALLEL',
           success: true,
@@ -351,17 +353,17 @@ describe('MetaLearner — predictions & verdicts', () => {
         }),
       );
     }
-    // selectStrategy records PARALLEL as the predicted strategy for this (model, task)
-    learner.selectStrategy('code_generation', 'gpt-4');
-    // Create a prediction that targetStrategy will be SEQUENTIAL
-    learner.createPrediction('edit-1', 'description', 'SEQUENTIAL', 'PARALLEL', 'gpt-4', [
+    const predicted = learner.selectStrategy('code_generation', 'gpt-4');
+    const actual = predicted === 'SEQUENTIAL' ? 'PARALLEL' : 'SEQUENTIAL';
+    learner.createPrediction('edit-1', 'description', actual, predicted, 'gpt-4', [
       'code_generation',
     ]);
-    // Actual experience uses SEQUENTIAL, different from prediction -> verdict generated
+    // Actual experience differs from lastPredictedStrategy → verdict generated
     learner.recordExperience(
       makeExp({
+        id: 'exp-actual',
         modelUsed: 'gpt-4',
-        strategyUsed: 'SEQUENTIAL',
+        strategyUsed: actual,
         success: true,
         taskType: 'code_generation',
       }),

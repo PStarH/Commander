@@ -274,6 +274,22 @@ app.use((req, res, next) => {
   next();
 });
 
+// Legacy /api/runs must advertise Gone when V2/production disables in-process
+// execution — before authMiddleware, otherwise unauthenticated probes get 401
+// and look like a still-mounted legacy surface (WS9 env-check).
+app.use('/api/runs', (req, res, next) => {
+  if (isLegacyExecutionAllowed()) {
+    next();
+    return;
+  }
+  res.status(410).json({
+    error: {
+      code: 'LEGACY_EXECUTION_GONE',
+      message: 'Legacy /api/runs is not available; use /v1/runs.',
+    },
+  });
+});
+
 // 7. Authentication (skipped when AUTH_DISABLED=true or no API_KEYS configured)
 // JWT was already parsed in step 4 for rate-limit identity. API-key auth runs
 // here and skips requests already authenticated via JWT (req.user set).
@@ -328,8 +344,10 @@ app.get('/health', (_req, res) => {
   const heapUsedMB = Math.floor(memUsage.heapUsed / 1024 / 1024);
   const heapTotalMB = Math.floor(memUsage.heapTotal / 1024 / 1024);
 
-  // Degraded if heap usage > 80%
-  const heapHealthy = heapUsedMB / heapTotalMB < 0.8;
+  // Degraded only when absolute heap is large AND ratio is high — a young
+  // process with a tiny heapTotal (e.g. 49MB) often sits at >80% and is not
+  // actually memory-exhausted.
+  const heapHealthy = heapUsedMB < 256 || heapUsedMB / Math.max(heapTotalMB, 1) < 0.9;
   const status = heapHealthy ? 'healthy' : 'degraded';
 
   res.status(heapHealthy ? 200 : 503).json({

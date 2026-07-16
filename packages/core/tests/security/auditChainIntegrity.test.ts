@@ -20,7 +20,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'os';
 
-import { AuditChainLedger } from '../../src/security/auditChainLedger';
+import {
+  AuditChainLedger,
+  computeEntryHmac,
+  deriveTenantKey,
+} from '../../src/security/auditChainLedger';
 import {
   ChainManifest,
   AsymmetricChainSigner,
@@ -180,6 +184,93 @@ describe('verifyWithManifest + tamperProof derivation', () => {
 
     const bad = verifyWithManifest(ledger, manifest);
     assert.equal(bad.tamperProof, false);
+  });
+
+  it('detects unregistered tail append (disk maxSeq > manifest maxSeq)', async () => {
+    const ledger = freshLedger(env.dir);
+    const manifest = new ChainManifest({ manifestDir: path.join(env.dir, 'manifest') });
+    ledger.logEvent({ type: 'content_threat', severity: 'high', source: 't', message: 'a' });
+    await drain();
+    const head = ledger.getEntries()[ledger.getEntries().length - 1]!;
+    manifest.registerHead({
+      chainId: ledger.chainId,
+      tenantId: undefined,
+      maxSeq: head.seq,
+      headHmac: head.hmac,
+    });
+
+    // Attacker appends a valid-looking entry without updating the manifest anchor.
+    ledger.logEvent({ type: 'content_threat', severity: 'high', source: 't', message: 'b' });
+    await drain();
+
+    const res = verifyWithManifest(ledger, manifest);
+    assert.equal(res.ok, false);
+    assert.equal(res.tamperProof, false);
+    assert.ok(
+      res.manifestGaps.some((g) => g.reason === 'disk_ahead_of_manifest'),
+      `expected disk_ahead_of_manifest, got ${JSON.stringify(res.manifestGaps)}`,
+    );
+  });
+
+  it('detects same-seq content rewrite even when chain HMAC is re-signed', async () => {
+    // Attacker with COMMANDER_AUDIT_CHAIN_KEY can recompute a valid entry HMAC so
+    // ledger.verify() alone may pass. Manifest headHmac + L2 must still fail closed.
+    const ledger = freshLedger(env.dir);
+    const manifest = new ChainManifest({ manifestDir: path.join(env.dir, 'manifest') });
+    ledger.logEvent({ type: 'content_threat', severity: 'high', source: 't', message: 'original' });
+    await drain();
+    const head = ledger.getEntries()[ledger.getEntries().length - 1]!;
+    manifest.registerHead({
+      chainId: ledger.chainId,
+      tenantId: undefined,
+      maxSeq: head.seq,
+      headHmac: head.hmac,
+    });
+
+    const chainFile = path.join(env.dir, 'audit-chain-0.ndjson');
+    const entry = JSON.parse(fs.readFileSync(chainFile, 'utf-8').trim());
+    const { hmac: _old, ...partial } = entry;
+    partial.message = 'FORGED';
+    const tenantKey = deriveTenantKey(Buffer.from(TEST_KEY, 'utf-8'), entry.tenantId);
+    entry.message = 'FORGED';
+    entry.hmac = computeEntryHmac(tenantKey, partial);
+    fs.writeFileSync(chainFile, JSON.stringify(entry) + '\n');
+
+    // Chain HMAC verifies (key-holder forgery); manifest cross-check must not.
+    assert.equal(ledger.verify().ok, true);
+    const res = verifyWithManifest(ledger, manifest);
+    assert.equal(res.ok, false);
+    assert.equal(res.tamperProof, false);
+    assert.ok(
+      res.manifestGaps.some((g) => g.reason === 'head_hmac_mismatch'),
+      `expected head_hmac_mismatch, got ${JSON.stringify(res.manifestGaps)}`,
+    );
+  });
+
+  it('detects kms_sig_invalid when L2 signature is corrupted but headHmac still matches', async () => {
+    const ledger = freshLedger(env.dir);
+    const manifest = new ChainManifest({ manifestDir: path.join(env.dir, 'manifest') });
+    ledger.logEvent({ type: 'content_threat', severity: 'high', source: 't', message: 'a' });
+    await drain();
+    const head = ledger.getEntries()[ledger.getEntries().length - 1]!;
+    manifest.registerHead({
+      chainId: ledger.chainId,
+      tenantId: undefined,
+      maxSeq: head.seq,
+      headHmac: head.hmac,
+    });
+
+    // Corrupt L2 sig while leaving headHmac aligned with disk — isolates kms_sig_invalid.
+    const entry = manifest.getEntries()[0]!;
+    (entry as { kmsSig: string }).kmsSig = Buffer.alloc(384, 0xab).toString('base64');
+
+    const res = verifyWithManifest(ledger, manifest);
+    assert.equal(res.ok, false);
+    assert.equal(res.tamperProof, false);
+    assert.ok(
+      res.manifestGaps.some((g) => g.reason === 'kms_sig_invalid'),
+      `expected kms_sig_invalid, got ${JSON.stringify(res.manifestGaps)}`,
+    );
   });
 });
 

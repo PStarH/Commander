@@ -169,12 +169,14 @@ export class ExecutionContext {
    * @param taskCategory - derived from `detectTaskType(goal)` for governor heuristics
    */
   enter(tokenBudget: number, taskCategory: TaskCategory = 'general'): ExecutionContext {
-    // NOTE: We intentionally do NOT reject concurrent enter() calls. The
-    // AgentRuntime-level single-flight request cache dedupes identical LLM
-    // requests, and callers (including tests) rely on being able to invoke
-    // execute() concurrently on the same runtime. Full per-run isolation would
-    // require one ExecutionContext per call; until then, this context is
-    // re-entered and its scratch state is reset for the latest call.
+    // Concurrency guard: a second enter() while the previous run is still
+    // active (between enter() and exit()) corrupts per-run scratch state
+    // (sliding window, governor, executedMutations). Reject it explicitly so
+    // AgentRuntime.execute() can surface a CONCURRENT_EXECUTE_REJECTED failure
+    // instead of silently stomping the in-flight run's state.
+    if (this._active) {
+      throw new ExecuteConcurrencyError();
+    }
     this._slidingWindow = new SlidingWindowOrchestrator(this.config.slidingWindowConfig);
     this._slidingWindow.resetSession();
 

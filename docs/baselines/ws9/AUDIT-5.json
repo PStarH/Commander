@@ -1,0 +1,10 @@
+{
+  "testCaseId": "AUDIT-5",
+  "verdict": "PASS",
+  "evidenceLevel": "simulated",
+  "breach": false,
+  "details": "tamperProof derived from live verify: honest chain→true, tampered chain→false. Hardcoded tamperProof:true would disagree with live value (false) → honesty gate rejects=true. KC-5f closed: no const-based tamperProof in compliance reports.",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:19.366Z"
+}

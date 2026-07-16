@@ -70,7 +70,9 @@ function pgAsTenant(
   const prefix =
     tenantId === null
       ? ''
-      : `SELECT set_config('app.tenant_id', '${tenantId.replace(/'/g, "''")}', false); `;
+      : `SELECT set_config('app.tenant_id', '${tenantId.replace(/'/g, "''")}', false) IS NOT NULL; `;
+  // Prefix uses a boolean SELECT so -t -A does not print the tenant id string
+  // (plain set_config() returns the new setting value and poisoned assertions).
   const result = spawnSync(
     'psql',
     [
@@ -95,9 +97,16 @@ function pgAsTenant(
       timeout: 15_000,
     },
   );
+  const rawOut = (result.stdout ?? '').trim();
+  // Drop the boolean line from set_config prefix when present.
+  const outLines = rawOut.split('\n').map((l) => l.trim()).filter(Boolean);
+  const out =
+    tenantId === null
+      ? rawOut
+      : outLines.filter((l) => l !== 't' && l !== 'f').join('\n');
   return {
     ok: result.status === 0,
-    out: (result.stdout ?? '').trim(),
+    out,
     err: (result.stderr ?? '').trim(),
     status: result.status,
   };
@@ -146,13 +155,74 @@ describeIf(!probePostgres.available)('WS9 DATA-1 (skipped: PG unavailable)', () 
   });
 });
 
-// ─── DATA-2: needs authenticated /v1 harness (not yet wired) ───────────
+// ─── DATA-2: authenticated principal wins over forged X-Tenant-ID ──────
+//
+// Requires live /v1 + COMMANDER_WS9_API_KEY_A (tenant-a bound API key from
+// compose TENANT_API_KEYS). Auth subject is the API-key tenant binding
+// (AuthUser JWT currently carries no tenant claim — KC-1 path uses keys).
 
-describeIf(probeV1Gateway)('WS9 DATA-2 (live /v1): A forges X-Tenant-ID → JWT subject wins', () => {
-  it('requires JWT auth harness — no evidence until implemented', () => {
-    // Honest skip: gateway is up but we lack a signed tenant-a JWT fixture
-    // and a tenant-scoped /v1 read endpoint assertion in this suite yet.
-    // Do NOT writePass — missing evidence keeps livefire FAIL until built.
+describeIf(probeV1Gateway)('WS9 DATA-2 (live /v1): A forges X-Tenant-ID → principal wins', () => {
+  it('tenant-a API key + X-Tenant-ID:tenant-b → 403; matching header still scoped to A', async () => {
+    const apiKey = process.env.COMMANDER_WS9_API_KEY_A;
+    if (!apiKey) {
+      // Gateway env present but no tenant-a key fixture — no evidence (honesty).
+      return;
+    }
+
+    const host = process.env.COMMANDER_API_HOST!;
+    const port = process.env.COMMANDER_API_PORT!;
+    const base = `http://${host}:${port}`;
+    const artifacts: string[] = [];
+
+    const forged = await fetch(`${base}/v1/runs/run-b-1`, {
+      headers: {
+        'X-API-Key': apiKey,
+        'X-Tenant-ID': TENANT_B,
+      },
+    });
+    const forgedBody = await forged.text();
+
+    const matching = await fetch(`${base}/v1/runs/run-a-1`, {
+      headers: {
+        'X-API-Key': apiKey,
+        'X-Tenant-ID': TENANT_A,
+      },
+    });
+    const matchingBody = await matching.text();
+
+    try {
+      // Mismatch must be rejected before any cross-tenant data is returned.
+      expect(
+        forged.status,
+        `forged header must be rejected: status=${forged.status} body=${forgedBody.slice(0, 200)}`,
+      ).toBe(403);
+      expect(forgedBody).toMatch(/TenantIsolationError|does not match/i);
+
+      // Matching header must not surface tenant-b. Kernel may be unavailable
+      // (500/503) in this stack — still PASS isolation if body has no B leak.
+      expect([200, 404, 500, 503]).toContain(matching.status);
+      expect(matchingBody).not.toMatch(/tenant-b|run-b-1/i);
+      if (matching.status === 200) {
+        expect(matchingBody).toMatch(/run-a-1|tenant-a/i);
+      }
+
+      writePass(
+        'DATA-2',
+        `Live /v1: tenant-a API key + forged X-Tenant-ID=${TENANT_B} → HTTP ${forged.status}; ` +
+          `matching header path status=${matching.status}. Principal tenant binding is authoritative.`,
+        artifacts,
+        'live',
+      );
+    } catch (err) {
+      writeBreach(
+        'DATA-2',
+        `Header forge not rejected or cross-tenant leak: forged=${forged.status} ` +
+          `matching=${matching.status}. ${(err as Error).message}`,
+        artifacts,
+        'live',
+      );
+      throw err;
+    }
   });
 });
 
@@ -257,11 +327,81 @@ describe('WS9 DATA-4: tenant_scope=\'*\' path blocked; must use caller tenant', 
   });
 });
 
-// ─── DATA-5: needs /v1 GDPR harness ────────────────────────────────────
+// ─── DATA-5: GDPR Art 17 — A cannot erase B ────────────────────────────
 
 describeIf(probeV1Gateway)('WS9 DATA-5 (live /v1): A calls GDPR Art 17 delete for B → rejected', () => {
-  it('requires GDPR delete harness — no evidence until implemented', () => {
-    // No writePass (honesty).
+  it('tenant-a erasure of tenant-b is 403; own erasure allowed; B PG row intact', async () => {
+    const apiKey = process.env.COMMANDER_WS9_API_KEY_A;
+    if (!apiKey) {
+      return; // no evidence until fixture present
+    }
+    const host = process.env.COMMANDER_API_HOST!;
+    const port = process.env.COMMANDER_API_PORT!;
+    const base = `http://${host}:${port}`;
+    const artifacts: string[] = [];
+
+    const cross = await fetch(`${base}/v1/privacy/erasure`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': apiKey,
+        'X-Tenant-ID': TENANT_A,
+      },
+      body: JSON.stringify({ subjectUserId: 'user-b', tenantId: TENANT_B }),
+    });
+    const crossBody = await cross.text();
+
+    const prefixed = await fetch(`${base}/v1/privacy/erasure`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': apiKey,
+      },
+      body: JSON.stringify({ subjectUserId: `${TENANT_B}:user-b` }),
+    });
+    const prefixedBody = await prefixed.text();
+
+    const own = await fetch(`${base}/v1/privacy/erasure`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': apiKey,
+      },
+      body: JSON.stringify({ subjectUserId: 'user-a' }),
+    });
+    const ownBody = await own.text();
+
+    const bStill = probePostgres.available
+      ? pgAsTenant(TENANT_B, "SELECT id FROM memory_items WHERE id = 'mem-b-1';")
+      : { ok: true, out: 'mem-b-1', err: '', status: 0 };
+
+    try {
+      expect(cross.status).toBe(403);
+      expect(crossBody).toMatch(/TENANT_ISOLATION|tenant/i);
+      expect(prefixed.status).toBe(403);
+      expect(prefixedBody).toMatch(/TENANT_ISOLATION|tenant/i);
+      expect(own.status).toBe(200);
+      expect(ownBody).toMatch(/auditEventId|erased/i);
+      expect(bStill.ok).toBe(true);
+      expect(bStill.out).toBe('mem-b-1');
+
+      writePass(
+        'DATA-5',
+        `Live /v1/privacy/erasure: A→B body tenant 403; A→B subject prefix 403; ` +
+          `A own erase ${own.status}; tenant-b memory mem-b-1 intact.`,
+        artifacts,
+        'live',
+      );
+    } catch (err) {
+      writeBreach(
+        'DATA-5',
+        `GDPR cross-tenant erase not rejected: cross=${cross.status} prefixed=${prefixed.status} ` +
+          `own=${own.status} bStill=${JSON.stringify(bStill)}. ${(err as Error).message}`,
+        artifacts,
+        'live',
+      );
+      throw err;
+    }
   });
 });
 

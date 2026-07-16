@@ -1,0 +1,10 @@
+{
+  "testCaseId": "TAMPER-5",
+  "verdict": "PASS",
+  "evidenceLevel": "simulated",
+  "breach": false,
+  "details": "FailClosedPersistor blocks effect on both paths: async threw=true, sync threw=true. Both throw AUDIT_PERSIST_FAILED. Effect cannot proceed when audit write fails (KC-5d closed).",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:20.552Z"
+}

@@ -1,0 +1,10 @@
+{
+  "testCaseId": "TAMPER-3",
+  "verdict": "PASS",
+  "evidenceLevel": "simulated",
+  "breach": false,
+  "details": "Whole-chain delete detected: manifest has chain 533d3c204f9d4b21acdc048b5e4e231e but disk has 0 entries. manifestGaps[0].reason=chain_missing_from_log. tamperProof=false.",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:19.657Z"
+}

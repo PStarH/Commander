@@ -228,7 +228,11 @@ describe('bench-v2-live live mode', () => {
     expect(doc.summary?.passed).toBe(true);
 
     const current = getCurrentBaseline();
-    const validation = validateBaseline(doc, current);
+    // Mock kernel has no real image; host docker digests must not gate this test.
+    const validation = validateBaseline(doc, { ...current, imageDigest: undefined });
+    expect(validation.reasons, `baseline validation failed: ${validation.reasons.join('; ')}`).toEqual(
+      [],
+    );
     expect(validation.ok).toBe(true);
 
     rmSync(baselinePath);

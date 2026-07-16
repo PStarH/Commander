@@ -186,7 +186,11 @@ describe('Runtime E2E: Full Pipeline', () => {
     const ctxA = makeContext({ agentId: 'agent-a' });
     const ctxB = makeContext({ agentId: 'agent-b' });
 
-    const [resA, resB] = await Promise.all([runtime.execute(ctxA), runtime.execute(ctxB)]);
+    // Sequential execution — AgentRuntime rejects concurrent execute() on the
+    // same instance (CONCURRENT_EXECUTE_REJECTED). Each run must complete before
+    // the next starts.
+    const resA = await runtime.execute(ctxA);
+    const resB = await runtime.execute(ctxB);
 
     expect(resA.status).toBe('success');
     expect(resB.status).toBe('success');
@@ -286,7 +290,13 @@ describe('Runtime E2E: Full Pipeline', () => {
       }),
     );
 
-    const results = await Promise.all(ctxs.map((ctx) => runtime.execute(ctx)));
+    // Sequential execution — AgentRuntime rejects concurrent execute() on the
+    // same instance (CONCURRENT_EXECUTE_REJECTED). Each run must complete before
+    // the next starts.
+    const results = [];
+    for (const ctx of ctxs) {
+      results.push(await runtime.execute(ctx));
+    }
     expect(results.length).toBe(3);
     results.forEach((r) => {
       expect(r.status).toBe('success');

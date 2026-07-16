@@ -65,7 +65,7 @@ test('binds tenant context from req.tenantId set by prior middleware', async () 
   }
 });
 
-test('req.tenantId takes precedence over X-Tenant-ID header', async () => {
+test('authenticated tenant binding rejects mismatched X-Tenant-ID with 403', async () => {
   const app = express();
   app.use((req: Request, _res: Response, next) => {
     (req as Request & { tenantId?: string }).tenantId = 'from-req';
@@ -81,9 +81,33 @@ test('req.tenantId takes precedence over X-Tenant-ID header', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/context`, {
       headers: { 'X-Tenant-ID': 'from-header' },
     });
+    assert.equal(res.status, 403);
+    const body = (await res.json()) as { error: string };
+    assert.equal(body.error, 'TenantIsolationError');
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test('matching X-Tenant-ID is allowed alongside authenticated binding', async () => {
+  const app = express();
+  app.use((req: Request, _res: Response, next) => {
+    (req as Request & { tenantId?: string }).tenantId = 'tenant-a';
+    next();
+  });
+  app.use(tenantContextMiddleware);
+  app.get('/context', (_req: Request, res: Response) => {
+    res.json({ tenantId: getCurrentTenantId() });
+  });
+
+  const { server, port } = await startServer(app);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/context`, {
+      headers: { 'X-Tenant-ID': 'tenant-a' },
+    });
     assert.equal(res.status, 200);
     const body = (await res.json()) as { tenantId: string | undefined };
-    assert.equal(body.tenantId, 'from-req');
+    assert.equal(body.tenantId, 'tenant-a');
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

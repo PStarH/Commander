@@ -286,14 +286,14 @@ describeIf(probeVault.available)('WS9 KEY-4 (live Vault): Forged COMMANDER_VAULT
   it('forged token returns 403/401; no downgrade to env', async () => {
     const artifacts: string[] = [];
     const vaultAddr = process.env.COMMANDER_VAULT_ADDR!;
-    const forgedToken = 's.FORGED-TOKEN-THAT-SHOULD-FAIL.xxxxxxxxxxxx';
+    const forgedToken = 'hvs.forged-ws9-token-that-must-fail';
 
     let status = 0;
     let err = '';
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 5_000);
-      const res = await fetch(`${vaultAddr}/v1/sys/health`, {
+      const res = await fetch(`${vaultAddr}/v1/secret/data/commander/tenant-a/openai-api-key`, {
         headers: { 'X-Vault-Token': forgedToken },
         signal: controller.signal,
       });
@@ -304,16 +304,17 @@ describeIf(probeVault.available)('WS9 KEY-4 (live Vault): Forged COMMANDER_VAULT
     }
 
     try {
-      // Vault should reject the forged token (403 or 401).
-      // 403 = token invalid/forbidden; 401 = unauthorized; 0 = network error.
-      // Any of these is a pass — the point is NO successful auth.
-      expect([0, 401, 403].includes(status) || err.length > 0).toBe(true);
+      // Probe a KV path (not /sys/health). Accept 401/403; also 500 when Vault
+      // rejects malformed tokens without granting data.
+      expect([0, 401, 403, 500].includes(status) || err.length > 0).toBe(true);
+      expect(status).not.toBe(200);
 
       writePass(
         'KEY-4',
-        `Forged COMMANDER_VAULT_TOKEN rejected: HTTP status=${status}, err=${err || 'none'}. ` +
+        `Forged COMMANDER_VAULT_TOKEN rejected on KV read: HTTP status=${status}, err=${err || 'none'}. ` +
           `Vault did not authenticate with forged token. No downgrade to env key.`,
         artifacts,
+        'live',
       );
     } catch (e) {
       writeBreach(

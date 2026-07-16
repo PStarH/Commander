@@ -57,7 +57,7 @@ export class GapRegistry {
       description,
       detectedAt,
       status: input.status ?? 'open',
-      owner: input.owner,
+      ...(input.owner !== undefined ? { owner: input.owner } : {}),
       relatedIssues: input.relatedIssues ?? [],
       slaDeadline,
     };

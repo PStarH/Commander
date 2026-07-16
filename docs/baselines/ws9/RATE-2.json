@@ -1,0 +1,10 @@
+{
+  "testCaseId": "RATE-2",
+  "verdict": "PASS",
+  "evidenceLevel": "simulated",
+  "breach": false,
+  "details": "A exhausted shared pool with 10 simultaneous claims; B's 5 lease claims still succeeded (max latency 0ms < 100ms SLA). Per-tenant claim isolation held.",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:16.931Z"
+}

@@ -388,9 +388,16 @@ export function createProjectRouter(
   router.post('/missions/:missionId/approve', requireAuth, requireRole('admin'), async (req, res) => {
     const { comment } = req.body as { comment?: string };
     const approver = req.user!.username;
+    const missionId = Array.isArray(req.params.missionId)
+      ? req.params.missionId[0]
+      : req.params.missionId;
+    if (!missionId) {
+      res.status(400).json({ error: 'missionId is required' });
+      return;
+    }
     try {
       const mission = store.updateMission(
-        req.params.missionId,
+        missionId,
         { status: 'DONE' },
         { bypassGovernance: true },
       );

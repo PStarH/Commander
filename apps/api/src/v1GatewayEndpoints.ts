@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import express, { type Request, type Response, type Router } from 'express';
 import { z } from 'zod';
 import {
@@ -8,6 +8,7 @@ import {
   type V1KernelGateway,
 } from './v1GatewayKernel';
 import { isTerminalRunState } from '@commander/contracts';
+import { getGlobalGdprComplianceManager } from '@commander/core/security/gdprCompliance';
 
 const idSchema = z.string().regex(/^[a-zA-Z0-9._:-]{1,128}$/);
 const providerSnapshotSchema = z.object({
@@ -342,6 +343,82 @@ export function createV1GatewayRouter(resolveKernel: () => V1KernelGateway | nul
   lifecycleRoute('cancel', 'cancelled', (kernel, runId, tenantId, actor) =>
     kernel.cancelRun(runId, tenantId, actor),
   );
+
+  // GDPR Art. 17 — tenant-bound erasure. Client-supplied tenantId can never
+  // widen the authenticated principal (WS9 DATA-5 / AUTH-2).
+  const erasureSchema = z.object({
+    subjectUserId: z.string().min(1).max(256),
+    tenantId: z.string().min(1).max(128).optional(),
+  });
+  router.post('/privacy/erasure', async (req, res) => {
+    const tenantId = requiredTenant(req, res);
+    if (!tenantId) return;
+    const parsed = erasureSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: { code: 'INVALID_REQUEST', details: parsed.error.issues },
+      });
+    }
+    const { subjectUserId, tenantId: bodyTenant } = parsed.data;
+    if (bodyTenant && bodyTenant !== tenantId) {
+      return res.status(403).json({
+        error: {
+          code: 'TENANT_ISOLATION',
+          message: 'Cannot erase data for a tenant other than the authenticated principal.',
+        },
+      });
+    }
+    // Reject subjects that encode a foreign tenant prefix (tenant-b:user).
+    if (subjectUserId.includes(':')) {
+      const prefix = subjectUserId.slice(0, subjectUserId.indexOf(':'));
+      if (prefix !== tenantId) {
+        return res.status(403).json({
+          error: {
+            code: 'TENANT_ISOLATION',
+            message: 'subjectUserId tenant prefix does not match the authenticated tenant.',
+          },
+        });
+      }
+    }
+
+    const scopedSubject = subjectUserId.includes(':')
+      ? subjectUserId
+      : `${tenantId}:${subjectUserId}`;
+    const auditEventId = `gdpr_erase_${randomUUID()}`;
+    const result = await getGlobalGdprComplianceManager().eraseUserData({
+      userId: scopedSubject,
+      anonymizeAuditLogs: true,
+      exportBeforeErasure: false,
+    });
+
+    process.stdout.write(
+      `${JSON.stringify({
+        type: 'gdpr.erasure',
+        auditEventId,
+        tenantId,
+        subjectUserId: scopedSubject,
+        actor: actor(req),
+        conversationsDeleted: result.conversationsDeleted,
+        profileDeleted: result.profileDeleted,
+        memoriesDeleted: result.memoriesDeleted,
+        at: result.timestamp,
+      })}\n`,
+    );
+
+    return res.status(200).json({
+      erased: true,
+      tenantId,
+      subjectUserId: scopedSubject,
+      auditEventId,
+      result: {
+        conversationsDeleted: result.conversationsDeleted,
+        profileDeleted: result.profileDeleted,
+        memoriesDeleted: result.memoriesDeleted,
+        auditEntriesAnonymized: result.auditEntriesAnonymized,
+        errors: result.errors,
+      },
+    });
+  });
 
   return router;
 }

@@ -1,0 +1,10 @@
+{
+  "testCaseId": "EXEC-3",
+  "verdict": "PASS",
+  "evidenceLevel": "simulated",
+  "breach": false,
+  "details": "git ext::sh injection: git_execute with ext::sh command classified as irreversible (irreversible). Host-exec via git ext transport blocked.",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:22.579Z"
+}

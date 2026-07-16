@@ -1,0 +1,10 @@
+{
+  "testCaseId": "DATA-1",
+  "verdict": "PASS",
+  "evidenceLevel": "live",
+  "breach": false,
+  "details": "Postgres RLS: tenant-a SELECT run-b-1 → 0 rows; tenant-a can read run-a-1; tenant-b can read run-b-1. commander_app role + app.tenant_id GUC.",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:21.199Z"
+}
