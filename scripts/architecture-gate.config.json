@@ -79,7 +79,6 @@
       "observabilityEndpoints.ts",
       "oidcAuthEndpoints.ts",
       "onboardingEndpoints.ts",
-      "openApiSpec.ts",
       "orchestrator.ts",
       "orchestratorEndpoints.ts",
       "outgoingWebhookEndpoints.ts",
@@ -123,6 +122,7 @@
       "userStore.ts",
       "v1GatewayEndpoints.ts",
       "v1GatewayKernel.ts",
+      "v1TenantGuard.ts",
       "validationMiddleware.ts",
       "webhookEndpoints.ts",
       "workflowEndpoints.ts"
