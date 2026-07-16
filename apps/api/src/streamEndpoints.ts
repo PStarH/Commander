@@ -19,6 +19,7 @@ import { reportSilentFailure } from '@commander/core';
 import { Router, Request, Response } from 'express';
 import { getMessageBus } from '@commander/core';
 import type { MessageBusTopic, BusMessage } from '@commander/core';
+import { verifyToken } from './jwtMiddleware';
 
 const DEFAULT_TOPICS: MessageBusTopic[] = [
   'agent.started',
@@ -51,10 +52,25 @@ export function createStreamRouter(): Router {
   const router = Router();
 
   const handleStream = (req: Request, res: Response): void => {
+    // EventSource cannot set Authorization headers. Accept a short-lived
+    // access token via ?access_token= (same JWT as Bearer) so browser clients
+    // can authenticate. Prefer header/API-key when present.
+    if (!req.user) {
+      const raw = req.query.access_token;
+      const token = typeof raw === 'string' ? raw : Array.isArray(raw) ? raw[0] : undefined;
+      if (typeof token === 'string' && token.length > 0) {
+        const decoded = verifyToken(token);
+        if (decoded && decoded.type !== 'refresh') {
+          req.user = {
+            id: decoded.id,
+            username: decoded.username,
+            role: decoded.role,
+          };
+        }
+      }
+    }
+
     // Require JWT user or API-key identity before opening an SSE stream.
-    // EventSource cannot set Authorization headers; callers must use a
-    // cookie/session JWT middleware path or an authenticated proxy. Unauthenticated
-    // access would leak MessageBus topics (agent/tool/mission events).
     if (!req.user && !req.apiKeyId) {
       res.status(401).json({ error: 'Authentication required' });
       return;

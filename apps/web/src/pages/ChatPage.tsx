@@ -13,7 +13,7 @@
  */
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Trash2, Loader, AlertCircle } from 'lucide-react';
-import { sendChatMessageStream, API_BASE, PROJECT_ID } from '../api';
+import { sendChatMessageStream, API_BASE, PROJECT_ID, getAuthToken } from '../api';
 import type { ChatMessage, ChatStreamStep } from '../api';
 
 export function ChatPage() {
@@ -52,9 +52,12 @@ export function ChatPage() {
       eventSourceRef.current.close();
     }
 
-    const es = new EventSource(
-      `${API_BASE}/projects/${PROJECT_ID}/events?topics=agent.message,tool.executed,tool.started`,
-    );
+    const params = new URLSearchParams({
+      topics: 'agent.message,tool.executed,tool.started',
+    });
+    const token = getAuthToken();
+    if (token) params.set('access_token', token);
+    const es = new EventSource(`${API_BASE}/projects/${PROJECT_ID}/events?${params.toString()}`);
     eventSourceRef.current = es;
 
     es.addEventListener('agent.message', (e) => {
