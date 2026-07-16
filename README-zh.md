@@ -21,6 +21,8 @@
 
 ---
 
+> **SKU 说明（中文版待更新）：** Commander 现以两个 SKU 提供 —— **Local CLI**（本地工具，默认）与 **Enterprise Gateway**（`/v1`，alpha）。本中文 README 尚未包含此 SKU 划分的完整说明，请以 [README.md](README.md)（英文）为权威来源。WS8 已将此列为待办。
+
 ## Commander 的独特之处
 
 **透明——一切尽在眼前。** 每个智能体的思考过程、工具调用和决策都通过 SSE 实时流式传输。没有黑箱。你可以一步步观察智能体的工作过程。

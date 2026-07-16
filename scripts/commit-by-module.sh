@@ -16,8 +16,9 @@ git add .gitignore
 git commit --no-verify -m "chore: ignore packages/core/.commander/memory local cache"
 
 # 2. 文档/CI/根目录
-git add .github/workflows/ci.yml README.md docs/dead-code-and-stubs.md \
-  COMMANDER_TASK_PACKAGES.md
+# Note: COMMANDER_TASK_PACKAGES.md was moved to .internal/docs/planning/ (WS8 root
+# cleanup); it is no longer tracked, so it is intentionally absent from this add.
+git add .github/workflows/ci.yml README.md docs/dead-code-and-stubs.md
 git commit --no-verify -m "docs: update README, CI workflow, and module audit docs"
 
 # 3. apps/api

@@ -57,7 +57,9 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     'poc.sectionLabel': 'Enterprise Pilots',
     'poc.title': 'Proof-of-Value Center',
     'poc.desc':
-      'Anonymized outcomes from production-grade Commander pilots across finance, manufacturing, and healthcare.',
+      'Illustrative reference scenarios for Commander pilots across finance, manufacturing, and healthcare. These are demo scenarios, not real customer pilots.',
+    'poc.disclaimer':
+      'These are illustrative reference scenarios, not real customer pilots. Figures are representative demo data, not customer-reported results. Real, attributable pilot case studies will be published here as they become available.',
     'poc.metric.completed': 'Completed / Live',
     'poc.metric.industries': 'Industries',
     'poc.metric.avgDuration': 'Avg. Pilot Duration',
@@ -69,7 +71,7 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     'poc.expand': 'Read more',
     'poc.collapse': 'Show less',
     'poc.footnote':
-      'All figures are customer-reported deltas vs. the prior baseline process, averaged over the pilot window.',
+      'Figures are illustrative deltas for these demo scenarios, not customer-reported results from real pilots.',
     'poc.industry.finance': 'Financial Services',
     'poc.customer.finance': 'Tier-1 Investment Bank — Trade Surveillance',
     'poc.useCase.finance':
@@ -139,7 +141,9 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     'nav.slo': 'SLO',
     'poc.sectionLabel': '企业试点',
     'poc.title': '价值验证中心',
-    'poc.desc': '来自金融、制造和医疗三个行业生产级 Commander 试点的匿名化成果。',
+    'poc.desc': '金融、制造和医疗三个行业 Commander 试点的示例参考场景。这些是演示场景，并非真实客户试点。',
+    'poc.disclaimer':
+      '这些是示例参考场景，并非真实客户试点。数据为代表性演示数据，不是客户报告的真实结果。真实、可归属的试点案例将在可用后在此发布。',
     'poc.metric.completed': '已完成 / 上线',
     'poc.metric.industries': '覆盖行业',
     'poc.metric.avgDuration': '平均试点周期',
@@ -150,7 +154,7 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     'poc.scopeTitle': '试点范围',
     'poc.expand': '展开详情',
     'poc.collapse': '收起详情',
-    'poc.footnote': '所有数据均为客户基于原基线流程在试点窗口期内报告的平均改进值。',
+    'poc.footnote': '数据为这些演示场景的示例改进值，并非来自真实试点的客户报告结果。',
     'poc.industry.finance': '金融服务',
     'poc.customer.finance': '头部投资银行 — 交易监控',
     'poc.useCase.finance': '自主告警分诊，跨交易、聊天与市场数据进行多跳证据收集。',

@@ -20,6 +20,7 @@ export async function cmdStatus() {
 
   section('SYSTEM STATUS');
   kv('Version', '1.0.0-alpha.1');
+  kv('Profile', 'local');
   kv('Node', process.version);
   kv('Platform', process.platform);
 

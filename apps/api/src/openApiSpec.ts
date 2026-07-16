@@ -7,7 +7,7 @@ export function getOpenApiSpec(version: string) {
       title: 'Commander Multi-Agent Framework API',
       version,
       description:
-        'Production-grade multi-agent orchestration with governance, quality gates, and memory management.',
+        'Local-first multi-agent orchestration (v0.2 · beta). The /v1 surface is the Enterprise Gateway SKU: a durable, multi-tenant kernel path (alpha) with governance, quality gates, and memory management.',
     },
     servers: [{ url: `http://localhost:${API_PORT}`, description: 'Local development' }],
     tags: [

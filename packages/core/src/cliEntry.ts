@@ -65,6 +65,32 @@ import { cmdSandbox } from './cli/commands/sandbox';
 // Per-command help text
 // ============================================================================
 
+// ============================================================================
+// Command profiles (SKU honesty, WS8)
+// ============================================================================
+// Every CLI command belongs to a profile. Today the CLI never routes to the
+// Enterprise Gateway (that path is `POST /v1/runs`); so the active profile is
+// always `local`. `local·exp` marks experimental one-run-model verbs. No command
+// may be labelled `enterprise` unless its handler actually calls `/v1`.
+type CliProfile = 'local' | 'local·exp';
+
+const COMMAND_PROFILES: Record<string, CliProfile> = {
+  company: 'local·exp',
+  swarm: 'local·exp',
+  drive: 'local·exp',
+  goal: 'local·exp',
+};
+
+function profileOf(cmd: string): CliProfile {
+  return COMMAND_PROFILES[cmd] ?? 'local';
+}
+
+// The CLI is a Local CLI SKU tool. Gateway routing is via `POST /v1/runs`, not
+// any CLI command. Returns `local` until a CLI command wires a `/v1` path.
+function resolveActiveProfile(): CliProfile {
+  return 'local';
+}
+
 const COMMAND_HELP: Record<string, string> = {
   run: `  ${$.bold}commander run <task> [flags]${$.reset}\n\n  Execute a task with the full multi-agent pipeline.\n\n  ${$.bold}Flags:${$.reset}\n    --dry-run              Show plan without executing\n    --stream               Real-time SSE progress streaming\n    --tui                  Terminal dashboard with live topology view\n    --mode=<mode>          Execution mode: balanced (default), fast, thorough, goal\n    --provider=<name>      Force provider (openai, anthropic, deepseek, etc.)\n    --budget=<tokens>      Token budget (default: 100000)\n    --max-rounds=<n>       Max rounds (goal mode only, default: 10)\n\n  ${$.dim}Examples:${$.reset}\n    commander run "Fix all TypeScript errors in src/"\n    commander run "Analyze auth module" --dry-run\n    commander run "Refactor auth" --stream\n    commander run showcase\n`,
   review: `  ${$.bold}commander review [flags]${$.reset}\n\n  Review code changes with AI-powered analysis.\n\n  ${$.bold}Flags:${$.reset}\n    --commit [sha]     Review a specific commit (or latest)\n    --branch           Review entire branch vs main\n    --base <ref>       Compare against a specific ref\n    --json             Output as JSON\n    --guidelines <r>   Custom rules (pipe-separated)\n\n  ${$.dim}Example:${$.reset}\n    commander review --commit\n    commander review --branch --json\n`,
@@ -77,7 +103,7 @@ const COMMAND_HELP: Record<string, string> = {
   gui: `  ${$.bold}commander gui${$.reset}\n\n  Start the Agent War Room web dashboard (API + Web UI).\n  One-click: starts API (port 4000) + Web (port 5173) and opens the browser.\n`,
   plugin: `  ${$.bold}commander plugin <subcommand>${$.reset}\n\n  Install, list, and uninstall Commander plugins.\n\n  ${$.bold}Subcommands:${$.reset}\n    install <source>   Install a plugin (npm package / github:user/repo / local path)\n    list (ls)          List installed plugins\n    uninstall <name>   Uninstall a plugin\n    info <name>        Show plugin details\n\n  ${$.dim}Examples:${$.reset}\n    commander plugin install @commander/web-scraper\n    commander plugin install ./my-plugin\n    commander plugin list\n`,
   up: `  ${$.bold}commander up [task] [flags]${$.reset}\n\n  Unified execution + Web TUI. Starts a local server (default port 4000) that\n  serves the web dashboard and optionally runs a task with live metrics.\n\n  ${$.bold}Flags:${$.reset}\n    --port=<n>      Server port (default: 4000)\n    --no-open       Do not auto-open the browser\n    --resume        Resume frozen runs from their checkpoints\n\n  ${$.dim}Examples:${$.reset}\n    commander up\n    commander up "audit this repo"\n    commander up --port=5000\n`,
-  // ── Enterprise / Advanced ─────────────────────────────────────────
+  // ── Advanced execution (local·exp) ───────────────────────────────
   company: `  ${$.bold}commander company <task>${$.reset}\n\n  Execute with Company Engine (capability matching + quality gating + memory).\n\n  ${$.dim}Example:${$.reset}\n    commander company "Build a CLI tool"\n`,
   swarm: `  ${$.bold}commander swarm <task> [flags]${$.reset}\n\n  Recursive swarm: fission (decompose) + fusion (merge).\n\n  ${$.bold}Flags:${$.reset}\n    --max-depth=<n>                    Max tree depth (default: 3)\n    --max-workers=<n>                  Max parallel workers (default: 10)\n    --mode=<balanced|thorough|fast>    Execution mode\n\n  ${$.dim}Example:${$.reset}\n    commander swarm "Audit this codebase for security issues"\n`,
   drive: `  ${$.bold}commander drive <task> [flags]${$.reset}\n\n  Autonomous drive loop with step-by-step execution.\n\n  ${$.bold}Flags:${$.reset}\n    --mode=<auto|supervised>           Drive mode\n    --iterations=<n>                   Max iterations (default: 20)\n    --verbose                          Show detailed output\n\n  ${$.dim}Example:${$.reset}\n    commander drive "Set up CI/CD pipeline" --verbose\n`,
@@ -108,7 +134,10 @@ const COMMAND_HELP: Record<string, string> = {
 function showCommandHelp(cmd: string): boolean {
   const help = COMMAND_HELP[cmd];
   if (!help) return false;
-  console.log(help);
+  const profile = profileOf(cmd);
+  const profileLabel =
+    profile === 'local·exp' ? `${$.yellow}local·exp${$.reset} (experimental)` : `${$.cyan}${profile}${$.reset}`;
+  console.log(`${help}\n  ${$.bold}Profile:${$.reset} ${profileLabel}`);
   return true;
 }
 
@@ -135,10 +164,10 @@ async function main() {
   if (args[0] === '--version' || args[0] === 'version') {
     try {
       const pkgPath = require.resolve('../../package.json');
-      console.log(require(pkgPath).version);
+      console.log(`${require(pkgPath).version} (profile: ${resolveActiveProfile()})`);
     } catch (err) {
       reportSilentFailure(err, 'cli:120');
-      console.log('unknown');
+      console.log(`unknown (profile: ${resolveActiveProfile()})`);
     }
     process.exit(0);
   }
