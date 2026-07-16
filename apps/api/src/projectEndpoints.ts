@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import type {
   CommanderRunIntent,
   CommanderRunMeta,
@@ -33,6 +34,25 @@ import {
   generateGovernanceAlerts,
   generateWeeklyGovernanceReport,
 } from './governanceObserver';
+import { hasRole, type UserRole } from './userStore';
+
+function requireAuth(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  next();
+}
+
+function requireRole(requiredRole: UserRole = 'admin') {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user || !hasRole(req.user.role, requiredRole)) {
+      res.status(403).json({ error: 'Insufficient privileges' });
+      return;
+    }
+    next();
+  };
+}
 
 export function createProjectRouter(
   store: IWarRoomStore,
@@ -351,8 +371,10 @@ export function createProjectRouter(
   // ── POST /missions/:missionId/approve — 显式审批放行高风险任务 ────────
   // MANUAL 治理模式下的 HIGH/CRITICAL 任务在 PATCH 时会被 409 阻断，
   // 必须通过此显式审批端点以 bypassGovernance=true 标记为 DONE。
-  router.post('/missions/:missionId/approve', (req, res) => {
-    const { approver, comment } = req.body as { approver?: string; comment?: string };
+  // 仅 admin（及更高）可调用；审计日志主体取自 JWT，忽略 body.approver。
+  router.post('/missions/:missionId/approve', requireAuth, requireRole('admin'), (req, res) => {
+    const { comment } = req.body as { comment?: string };
+    const approver = req.user!.username;
     try {
       const mission = store.updateMission(
         req.params.missionId,
@@ -362,7 +384,7 @@ export function createProjectRouter(
       // 记录审批日志
       store.createLog({
         missionId: mission.id,
-        message: `Mission approved by ${approver ?? 'operator'}${comment ? `: ${comment}` : ''}`,
+        message: `Mission approved by ${approver}${comment ? `: ${comment}` : ''}`,
         level: 'SUCCESS',
       });
       // 创建自动摘要（与 PATCH 路径一致）
