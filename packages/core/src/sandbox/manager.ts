@@ -3,6 +3,7 @@ import type {
   SandboxProfile,
   SandboxMechanism,
   SandboxExecutionResult,
+  SandboxIsolation,
 } from './types';
 import { discoverSandboxes, NoopSB } from './platforms';
 import { PROFILES } from './profiles';
@@ -34,20 +35,84 @@ function allowUncheckedExecution(): boolean {
   return v === '1' || v === 'true' || v === 'yes';
 }
 
+function isProduction(): boolean {
+  return process.env.NODE_ENV === 'production';
+}
+
+/**
+ * WS7 §2 — Parse `COMMANDER_SANDBOX_ISOLATION` and apply production defaults.
+ *
+ * - production + unset → `docker`
+ * - production + `process` → throws (cannot lower the baseline to non-container)
+ * - production + `gvisor` → `gvisor` (explicit, never degrades)
+ * - non-production + unset → undefined (legacy discover-first behaviour)
+ *
+ * The production check reads `env.NODE_ENV` (not the module-level `isProduction()`)
+ * so the function is fully testable via its `env` parameter — callers do not
+ * need to mutate `process.env` to exercise production behaviour.
+ */
+export function parseSandboxIsolation(
+  env: NodeJS.ProcessEnv = process.env,
+): SandboxIsolation | undefined {
+  const isProd = env.NODE_ENV === 'production';
+  const raw = env.COMMANDER_SANDBOX_ISOLATION?.toLowerCase().trim();
+  if (raw === 'docker' || raw === 'gvisor' || raw === 'process') {
+    if (raw === 'process' && isProd) {
+      throw new SandboxInitializationError(
+        'WS7 §2: COMMANDER_SANDBOX_ISOLATION=process is rejected in production. ' +
+          'Use "docker" (default) or "gvisor".',
+      );
+    }
+    return raw;
+  }
+  // production default
+  if (isProd) {
+    return 'docker';
+  }
+  return undefined;
+}
+
+/**
+ * Mechanism families that satisfy each WS7 isolation level.
+ * `process` = OS subprocess sandboxes (seatbelt/bwrap/appcontainer).
+ * `docker` = OCI container (docker).
+ * `gvisor` = OCI container with runsc (gvisor).
+ */
+const ISOLATION_MECHANISMS: Record<SandboxIsolation, SandboxMechanism[]> = {
+  process: ['seatbelt', 'bwrap', 'appcontainer'],
+  docker: ['docker'],
+  gvisor: ['gvisor'],
+};
+
 export interface SandboxManagerDeps {
   /** Override sandbox discovery for testing. */
   sandboxes?: PlatformSandbox[];
   /** Override the no-sandbox fallback policy. */
   allowNoSandbox?: boolean;
+  /** Override the WS7 isolation level (testing). */
+  isolation?: SandboxIsolation | undefined;
 }
 
 export class SandboxManager {
   private sandboxes: PlatformSandbox[] = [];
   private allowNoSandbox: boolean;
+  private isolation: SandboxIsolation | undefined;
 
   constructor(deps?: SandboxManagerDeps) {
     this.allowNoSandbox = deps?.allowNoSandbox ?? allowNoSandboxFallback();
     this.sandboxes = deps?.sandboxes ?? discoverSandboxes();
+    this.isolation = deps?.isolation ?? parseSandboxIsolation();
+
+    // WS7 §3: In production, COMMANDER_ALLOW_NO_SANDBOX is a prohibited bypass.
+    // The flag is ignored entirely — NoopSB must never be reachable in production.
+    if (isProduction() && this.allowNoSandbox) {
+      this.allowNoSandbox = false;
+      getGlobalLogger().warn(
+        'SandboxManager',
+        'WS7 §3: COMMANDER_ALLOW_NO_SANDBOX is ignored in production — fail-closed enforced',
+      );
+    }
+
     if (this.sandboxes.length === 0 && !this.allowNoSandbox) {
       throw new SandboxInitializationError(
         'No OS-level sandbox available. ' +
@@ -71,6 +136,11 @@ export class SandboxManager {
     return this.sandboxes.length > 0;
   }
 
+  /** WS7 §2: The configured isolation level (docker/gvisor/process). */
+  getIsolation(): SandboxIsolation | undefined {
+    return this.isolation;
+  }
+
   getSandbox(mechanism?: SandboxMechanism): PlatformSandbox {
     if (mechanism) {
       const found = this.sandboxes.find((s) => s.name === mechanism);
@@ -81,7 +151,30 @@ export class SandboxManager {
         mechanism,
       );
     }
+
+    // WS7 §2: If an isolation level is set, select only from its mechanism family.
+    // gvisor must NOT silently fall back to docker — explicit selection is a hard gate.
+    if (this.isolation) {
+      const allowed = ISOLATION_MECHANISMS[this.isolation];
+      const match = this.sandboxes.find((s) => allowed.includes(s.name));
+      if (match) return match;
+      // No matching sandbox for the requested isolation level.
+      if (this.isolation === 'gvisor') {
+        throw new SandboxInitializationError(
+          'WS7 §2: gvisor isolation was explicitly requested but runsc is not available. ' +
+            'gVisor does not degrade to Docker — install runsc or select docker isolation.',
+          'gvisor',
+        );
+      }
+      throw new SandboxInitializationError(
+        `WS7 §2: isolation="${this.isolation}" requested but no matching sandbox available ` +
+          `(${allowed.join(', ')}). Available: ${this.sandboxes.map((s) => s.name).join(', ') || 'none'}.`,
+      );
+    }
+
     if (this.sandboxes.length === 0) {
+      // WS7 §3: Noop fallback is dead in production — allowNoSandbox was
+      // forced to false in the constructor for production.
       if (this.allowNoSandbox) {
         getGlobalLogger().warn(
           'SandboxManager',
