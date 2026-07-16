@@ -251,6 +251,30 @@ describe('SSHBackend', () => {
     assert.strictEqual(backend.available, true);
   });
 
+  it('rejects forbidden ExecPolicy commands without spawning ssh', async () => {
+    const backend = new SSHBackend({ host: '192.0.2.1', user: 'nobody', connectTimeoutMs: 1000 });
+    const result = await backend.execute('rm -rf /', undefined, 2);
+    assert.strictEqual(result.exitCode, 1);
+    assert.match(result.stderr, /Rejected by ExecPolicy/);
+    assert.match(result.stderr, /forbidden/i);
+    assert.ok(result.durationMs < 500, 'must reject before SSH connect');
+  });
+
+  it('rejects prompt ExecPolicy commands (no interactive path on SSH)', async () => {
+    const backend = new SSHBackend({ host: '192.0.2.1', user: 'nobody', connectTimeoutMs: 1000 });
+    const result = await backend.execute('curl http://example.com', undefined, 2);
+    assert.strictEqual(result.exitCode, 1);
+    assert.match(result.stderr, /Rejected by ExecPolicy \(prompt\)/);
+    assert.ok(result.durationMs < 500, 'must reject before SSH connect');
+  });
+
+  it('rejects command substitution classified as prompt', async () => {
+    const backend = new SSHBackend({ host: '192.0.2.1', user: 'nobody', connectTimeoutMs: 1000 });
+    const result = await backend.execute('echo $(whoami)', undefined, 2);
+    assert.strictEqual(result.exitCode, 1);
+    assert.match(result.stderr, /Rejected by ExecPolicy/);
+  });
+
   it('handles execute returning error when no SSH available', async () => {
     const backend = new SSHBackend({ host: '192.0.2.1', user: 'nobody', connectTimeoutMs: 1000 });
     const result = await backend.execute('echo test', undefined, 2);
