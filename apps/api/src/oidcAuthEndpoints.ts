@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import type { Request, Response } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -11,9 +11,52 @@ import {
   updateLastLogin,
   updateUser,
   toSafeUserPublic,
+  hasRole,
   type UserRole,
 } from './userStore';
 import { signAccessToken, signRefreshToken } from './jwtMiddleware';
+
+function requireAuth(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  next();
+}
+
+function requireRole(requiredRole: UserRole = 'admin') {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user || !hasRole(req.user.role, requiredRole)) {
+      res.status(403).json({ error: 'Insufficient privileges' });
+      return;
+    }
+    next();
+  };
+}
+
+/**
+ * Validate OIDC issuer: must be https URL; optional host allowlist via
+ * OIDC_ISSUER_HOST_ALLOWLIST (comma-separated).
+ */
+export function validateOidcIssuer(issuer: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(issuer);
+  } catch {
+    return 'issuer must be a valid URL';
+  }
+  if (url.protocol !== 'https:') {
+    return 'issuer must use https';
+  }
+  const allowlist =
+    process.env.OIDC_ISSUER_HOST_ALLOWLIST?.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean) ?? [];
+  if (allowlist.length > 0 && !allowlist.includes(url.hostname)) {
+    return 'issuer hostname must be one of: ' + allowlist.join(', ');
+  }
+  return undefined;
+}
 
 // ============================================================================
 // OIDC Configuration persistence
@@ -38,7 +81,9 @@ function loadConfigFromFile(): Partial<OIDCRuntimeConfig> | null {
     const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
     return JSON.parse(raw) as Partial<OIDCRuntimeConfig>;
   } catch (err) {
-    process.stderr.write(`[oidcAuthEndpoints] Failed to read ${CONFIG_FILE}: ${err}\n`);
+    process.stderr.write(
+      '[oidcAuthEndpoints] Failed to read ' + CONFIG_FILE + ': ' + String(err) + '\n',
+    );
     return null;
   }
 }
@@ -50,13 +95,15 @@ function saveConfigToFile(config: OIDCRuntimeConfig): void {
     }
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
   } catch (err) {
-    process.stderr.write(`[oidcAuthEndpoints] Failed to write ${CONFIG_FILE}: ${err}\n`);
+    process.stderr.write(
+      '[oidcAuthEndpoints] Failed to write ' + CONFIG_FILE + ': ' + String(err) + '\n',
+    );
   }
 }
 
 function buildWebOrigin(): string {
   const webPort = process.env.WEB_PORT ?? '5173';
-  return process.env.WEB_ORIGIN ?? `http://localhost:${webPort}`;
+  return process.env.WEB_ORIGIN ?? 'http://localhost:' + webPort;
 }
 
 /**
@@ -89,7 +136,7 @@ export function getOIDCConfig(): OIDCRuntimeConfig | null {
     operatorRoles: process.env.OIDC_OPERATOR_ROLES
       ? process.env.OIDC_OPERATOR_ROLES.split(',').map((s) => s.trim())
       : (effective.operatorRoles ?? ['operator', 'developer']),
-    redirectUri: effective.redirectUri ?? `${buildWebOrigin()}/login`,
+    redirectUri: effective.redirectUri ?? buildWebOrigin() + '/login',
   };
 }
 
@@ -115,7 +162,16 @@ const exchangeSchema = z.object({
 
 const settingsSchema = z.object({
   enabled: z.boolean(),
-  issuer: z.string().min(1).max(512),
+  issuer: z
+    .string()
+    .url()
+    .max(512)
+    .superRefine((issuer, ctx) => {
+      const err = validateOidcIssuer(issuer);
+      if (err) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: err });
+      }
+    }),
   clientId: z.string().min(1).max(512),
   roleClaim: z.string().min(1).max(128).default('roles'),
   adminRoles: z.array(z.string().min(1)).default(['admin']),
@@ -176,7 +232,9 @@ export function createOIDCAuthRouter(): Router {
     try {
       result = await plugin.authenticate(parsed.data.idToken);
     } catch (err) {
-      process.stderr.write(`[oidcAuthEndpoints] OIDC exchange error: ${err}\n`);
+      process.stderr.write(
+        '[oidcAuthEndpoints] OIDC exchange error: ' + String(err) + '\n',
+      );
       res.status(401).json({ error: 'OIDC token validation failed' });
       return;
     }
@@ -235,22 +293,27 @@ export function createOIDCAuthRouter(): Router {
    *
    * Returns the persisted OIDC configuration (admin only).
    */
-  router.get('/api/auth/oidc/settings', (_req: Request, res: Response) => {
-    const config = getOIDCConfig();
-    if (!config) {
-      res.json({
-        enabled: false,
-        issuer: '',
-        clientId: '',
-        roleClaim: 'roles',
-        adminRoles: ['admin'],
-        operatorRoles: ['operator', 'developer'],
-        redirectUri: `${buildWebOrigin()}/login`,
-      });
-      return;
-    }
-    res.json(buildPublicConfig(config));
-  });
+  router.get(
+    '/api/auth/oidc/settings',
+    requireAuth,
+    requireRole('admin'),
+    (_req: Request, res: Response) => {
+      const config = getOIDCConfig();
+      if (!config) {
+        res.json({
+          enabled: false,
+          issuer: '',
+          clientId: '',
+          roleClaim: 'roles',
+          adminRoles: ['admin'],
+          operatorRoles: ['operator', 'developer'],
+          redirectUri: buildWebOrigin() + '/login',
+        });
+        return;
+      }
+      res.json(buildPublicConfig(config));
+    },
+  );
 
   /**
    * PUT /api/auth/oidc/settings
@@ -259,16 +322,29 @@ export function createOIDCAuthRouter(): Router {
    * take precedence at runtime, but the saved file is used when env vars are
    * not set.
    */
-  router.put('/api/auth/oidc/settings', (req: Request, res: Response) => {
-    const parsed = settingsSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: 'Validation error', details: parsed.error.issues });
-      return;
-    }
+  router.put(
+    '/api/auth/oidc/settings',
+    requireAuth,
+    requireRole('admin'),
+    (req: Request, res: Response) => {
+      const parsed = settingsSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: 'Validation error', details: parsed.error.issues });
+        return;
+      }
 
-    saveConfigToFile(parsed.data);
-    res.json({ status: 'saved', config: buildPublicConfig(parsed.data) });
-  });
+      const toSave = { ...parsed.data };
+      // Env is authoritative for adminRoles when set.
+      if (process.env.OIDC_ADMIN_ROLES) {
+        toSave.adminRoles = process.env.OIDC_ADMIN_ROLES.split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+      }
+
+      saveConfigToFile(toSave);
+      res.json({ status: 'saved', config: buildPublicConfig(toSave) });
+    },
+  );
 
   return router;
 }
