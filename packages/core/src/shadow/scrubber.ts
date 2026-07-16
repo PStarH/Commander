@@ -18,7 +18,8 @@ const FORCED_REDACT_HEADERS: readonly string[] = [
 export const DEFAULT_IGNORE_FIELDS = ['Authorization', 'x-api-key', 'x-auth-token', 'cookie'];
 
 /** JSON object keys whose values are always replaced (case-insensitive). */
-const SENSITIVE_FIELD_NAME = /password|secret|token|authorization|api[_-]?key/i;
+const SENSITIVE_FIELD_NAME =
+  /password|passwd|passcode|secret|token|authorization|credential|private[_-]?key|access[_-]?key|api[_-]?key|otp/i;
 
 /**
  * Scrub a single string value — applies all PII patterns from UniversalSanitizer.
