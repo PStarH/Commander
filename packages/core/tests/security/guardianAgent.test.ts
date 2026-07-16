@@ -246,6 +246,10 @@ describe('validateMcpCommand (P0.2)', () => {
     expect(validateMcpCommand('node', ['-r', 'evil'])).toMatch(/inline-eval/);
     expect(validateMcpCommand('node', ['--require', 'evil'])).toMatch(/inline-eval/);
     expect(validateMcpCommand('node', ['--import', 'evil'])).toMatch(/inline-eval/);
+    expect(validateMcpCommand('node', ['--experimental-loader', 'data:text/javascript,1'])).toMatch(
+      /inline-eval/,
+    );
+    expect(validateMcpCommand('node', ['--inspect=0.0.0.0:9229'])).toMatch(/inline-eval/);
   });
 
   it('rejects uvx by default', () => {

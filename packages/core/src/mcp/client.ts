@@ -65,6 +65,10 @@ export function validateMcpCommand(command: string, args: readonly string[] = []
     '--require',
     '--import',
     '--loader',
+    '--experimental-loader',
+    '--inspect',
+    '--inspect-brk',
+    '--inspect-port',
   ]);
   for (const arg of args) {
     const a = arg.trim().toLowerCase();
@@ -79,7 +83,11 @@ export function validateMcpCommand(command: string, args: readonly string[] = []
       a.startsWith('-r=') ||
       a.startsWith('--require=') ||
       a.startsWith('--import=') ||
-      a.startsWith('--loader=')
+      a.startsWith('--loader=') ||
+      a.startsWith('--experimental-loader=') ||
+      a.startsWith('--inspect=') ||
+      a.startsWith('--inspect-brk=') ||
+      a.startsWith('--inspect-port=')
     ) {
       return `MCP command arguments may not contain an inline-eval flag ("${arg}") — it permits arbitrary code execution.`;
     }
