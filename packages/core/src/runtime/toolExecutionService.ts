@@ -995,17 +995,32 @@ export class ToolExecutionService {
           const tool = this.runtime.tools.get(pred.name);
           if (!tool) return;
 
+          // Same sanitizer + guardian gate as the formal execute path —
+          // speculative must not bypass security. Fail → skip (no cache write).
+          const sanitizedArgs = this.sanitizeArguments(pred.arguments);
+          if (this.runtime.config.securityMonitor?.enabled !== false) {
+            const guardianResult = checkToolGuardian({
+              agentId: 'speculative',
+              runId: `spec_${Date.now()}`,
+              toolName: pred.name,
+              arguments: sanitizedArgs,
+              sessionId: `spec_${Date.now()}`,
+              tenantId,
+            });
+            if (!guardianResult.allowed) return;
+          }
+
           // Build a synthetic ToolCall for cache key compatibility
           const syntheticCall: ToolCall = {
             id: `spec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
             name: pred.name,
-            arguments: pred.arguments,
+            arguments: sanitizedArgs,
           };
 
           // Skip if already cached (idempotency)
           if (toolCache.get(syntheticCall, tenantId)) return;
 
-          const result = await tool.execute(pred.arguments);
+          const result = await tool.execute(sanitizedArgs);
           const toolResult: ToolResult = {
             toolCallId: syntheticCall.id,
             name: pred.name,
