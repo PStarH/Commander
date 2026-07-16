@@ -1,0 +1,137 @@
+name: WS7 Boot-Refuse (Sandbox Fail-Closed)
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+# WS7 §6 Phase 3: Independent CI gate that verifies production workers refuse
+# to boot without a matching sandbox backend. This workflow MUST NOT set
+# COMMANDER_ALLOW_NO_SANDBOX — it tests that the bypass is ignored in production.
+#
+# CI runners (ubuntu-latest) have Docker pre-installed, so "no sandbox at all"
+# cannot be tested here. Instead we test the isolation-match gate: gvisor
+# isolation is requested but runsc is NOT installed on CI, so getSandbox()
+# must throw rather than degrade to the available Docker backend.
+
+jobs:
+  boot-refuse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build core
+        run: pnpm --filter @commander/core build
+
+      - name: WS7 boot-refuse — process isolation rejected in production
+        shell: bash
+        env:
+          NODE_ENV: production
+          COMMANDER_SANDBOX_ISOLATION: process
+        run: |
+          set +e
+          node --input-type=module -e '
+            import { SandboxInitializationError, parseSandboxIsolation } from "./packages/core/dist/sandbox/manager.js";
+            try {
+              parseSandboxIsolation();
+              console.error("FAIL: process isolation accepted in production");
+              process.exit(1);
+            } catch (err) {
+              if (err instanceof SandboxInitializationError && /process.*rejected/i.test(err.message)) {
+                console.log("PASS: process isolation rejected in production —", err.message);
+                process.exit(0);
+              }
+              console.error("UNEXPECTED error:", err);
+              process.exit(1);
+            }
+          '
+          EXIT_CODE=$?
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "::error::WS7 process-reject test failed (exit $EXIT_CODE)"
+            exit $EXIT_CODE
+          fi
+
+      - name: WS7 boot-refuse — gvisor isolation does not degrade to docker
+        shell: bash
+        env:
+          NODE_ENV: production
+          COMMANDER_SANDBOX_ISOLATION: gvisor
+        run: |
+          set +e
+          node --input-type=module -e '
+            import { SandboxManager, SandboxInitializationError, parseSandboxIsolation } from "./packages/core/dist/sandbox/manager.js";
+            // Verify parseSandboxIsolation returns gvisor
+            const iso = parseSandboxIsolation();
+            if (iso !== "gvisor") {
+              console.error("FAIL: parseSandboxIsolation returned", iso, "expected gvisor");
+              process.exit(1);
+            }
+            // CI has Docker but NOT runsc. The constructor succeeds (Docker is
+            // discovered), but getSandbox() must throw — gvisor must NOT degrade
+            // to the available Docker backend.
+            const mgr = new SandboxManager();
+            try {
+              mgr.getSandbox();
+              console.error("FAIL: getSandbox() returned a sandbox — gvisor degraded to docker");
+              process.exit(1);
+            } catch (err) {
+              if (err instanceof SandboxInitializationError && /gvisor/i.test(err.message)) {
+                console.log("PASS: gvisor isolation did not degrade —", err.message);
+                process.exit(0);
+              }
+              console.error("UNEXPECTED error:", err);
+              process.exit(1);
+            }
+          '
+          EXIT_CODE=$?
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "::error::WS7 gvisor-no-degrade test failed (exit $EXIT_CODE)"
+            exit $EXIT_CODE
+          fi
+
+      - name: WS7 boot-refuse — COMMANDER_ALLOW_NO_SANDBOX ignored with gvisor isolation
+        shell: bash
+        env:
+          NODE_ENV: production
+          COMMANDER_SANDBOX_ISOLATION: gvisor
+          # Explicitly set the bypass — it MUST be ignored in production.
+          COMMANDER_ALLOW_NO_SANDBOX: "true"
+        run: |
+          set +e
+          node --input-type=module -e '
+            import { SandboxManager, SandboxInitializationError } from "./packages/core/dist/sandbox/manager.js";
+            // Bypass is set, but production must ignore it. With gvisor isolation
+            // and no runsc on CI, getSandbox() must throw — NoopSB must NOT be
+            // reachable even with the bypass flag set.
+            const mgr = new SandboxManager();
+            try {
+              const sb = mgr.getSandbox();
+              console.error("FAIL: getSandbox() returned", sb.name, "— NoopSB reachable via bypass in production");
+              process.exit(1);
+            } catch (err) {
+              if (err instanceof SandboxInitializationError) {
+                console.log("PASS: COMMANDER_ALLOW_NO_SANDBOX ignored in production —", err.message);
+                process.exit(0);
+              }
+              console.error("UNEXPECTED error:", err);
+              process.exit(1);
+            }
+          '
+          EXIT_CODE=$?
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "::error::WS7 bypass-ignore test failed (exit $EXIT_CODE)"
+            exit $EXIT_CODE
+          fi
