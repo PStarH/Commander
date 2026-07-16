@@ -74,6 +74,8 @@
     "check:readiness": "pnpm exec tsx scripts/check-readiness.ts",
     "bench:v2:live": "pnpm exec tsx scripts/bench-v2-live.ts",
     "test:arch": "pnpm exec tsx --test packages/core/tests/architecture/architectureV2.invariants.test.ts packages/core/tests/architecture/orphanDeletion.test.ts packages/core/tests/architecture/claimHonesty.test.ts packages/core/tests/architecture/duplicationCountGuard.test.ts packages/core/tests/architecture/v2-kernel-integration.test.ts packages/core/tests/architecture/v2-fault-recovery.test.ts packages/core/tests/architecture/v2-worker-load.test.ts packages/core/tests/architecture/v2-worker-autoscale.test.ts packages/core/tests/architecture/v2-rpo-rto-drill.test.ts packages/core/tests/architecture/v2-outbox-dlq.test.ts packages/core/tests/architecture/v2-outbox-at-least-once.test.ts packages/core/tests/architecture/v2-cross-node-fencing.test.ts packages/core/tests/architecture/v2-multi-replica-simulation.test.ts packages/core/tests/architecture/v2-pagerduty-alerting.test.ts packages/core/tests/architecture/v2-cross-tenant-live-fire.test.ts packages/core/tests/atr/pauseResumeWake.test.ts && pnpm --dir packages/core exec vitest run tests/architecture/v2-event-sourcing-integrity.test.ts tests/architecture/v2-compensation-rollback.test.ts --reporter=default",
+    "arch:guard": "bash scripts/arch-guard.sh",
+    "arch:guard:test": "pnpm exec node --import tsx --test scripts/arch-guard.test.ts",
     "arch:gate": "pnpm exec tsx scripts/architecture-gate.ts",
     "contract:check": "pnpm exec tsx scripts/contract-snapshot-check.ts",
     "contract:snapshot": "pnpm exec tsx scripts/contract-snapshot-check.ts --update-baseline",

@@ -325,8 +325,8 @@ export class InMemoryKernelRepository implements KernelRepository {
     return true;
   }
   private event(aggregateType: KernelEvent['aggregateType'], aggregateId: string, sequence: number, type: string, tenantId: string, runId: string, stepId: string | undefined, actor: string, payload: Record<string, unknown>): void {
-    const event: KernelEvent = { id: randomUUID(), aggregateType, aggregateId, sequence, type, tenantId, runId, stepId, actor, schemaVersion: 'v2', payload, occurredAt: now() }; this.events.push(event);
-    const message: KernelOutboxMessage = { id: randomUUID(), eventId: event.id, topic: `commander.${type}`, key: runId, payload: { eventId: event.id, type, runId, tenantId }, attempts: 0, availableAt: event.occurredAt, createdAt: event.occurredAt }; this.outbox.set(message.id, message);
+    const event: KernelEvent = { eventId: randomUUID(), aggregateType, aggregateId, sequence, type, tenantId, runId, stepId, actor, schemaVersion: 'v2', payload, occurredAt: now() }; this.events.push(event);
+    const message: KernelOutboxMessage = { id: randomUUID(), eventId: event.eventId, topic: `commander.${type}`, key: runId, payload: { eventId: event.eventId, type, runId, tenantId }, attempts: 0, availableAt: event.occurredAt, createdAt: event.occurredAt }; this.outbox.set(message.id, message);
   }
   private finish(runId: string, actor: string): void {
     const run = this.runs.get(runId)!; const steps = [...this.steps.values()].filter((step) => step.runId === runId);
