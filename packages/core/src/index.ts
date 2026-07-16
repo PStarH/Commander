@@ -304,8 +304,6 @@ export {
   resetSandboxManager,
   getSandboxManager,
   SandboxManager,
-  SandboxInitializationError,
-  parseSandboxIsolation,
   ExecPolicyEngine,
   TEESandbox,
 } from './sandbox';
@@ -313,7 +311,6 @@ export type {
   SandboxMode,
   SandboxProfile,
   SandboxMechanism,
-  SandboxIsolation,
   NetworkPolicy,
   FileAccessPolicy,
   SandboxExecutionResult,
@@ -321,24 +318,6 @@ export type {
   TEEBackend,
   TEEAttestation,
   TEESandboxResult,
-} from './sandbox';
-
-// WS7 §5 — Tenant sandbox policy (per-workload identity & resource naming)
-export {
-  validateWorkloadIdentity,
-  generateContainerName,
-  generateWorkloadVolumeName,
-  generateNetworkNamespaceName,
-  generateWorkloadWorkdir,
-  assertTenantScopeConsistency,
-  lockImageByDigest,
-  buildTenantSandboxPolicy,
-} from './sandbox';
-export type {
-  TenantScopeCheckPoint,
-  LockedImage,
-  TenantSandboxPolicy,
-  BuildTenantSandboxPolicyOptions,
 } from './sandbox';
 
 // Credential Manager
