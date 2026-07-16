@@ -21,6 +21,11 @@ import type { EffectEnvelope } from '@commander/contracts';
 export interface CompensationOutboxPort {
   claimOutboxByTopic(topic: string, limit: number, now?: Date): Promise<CompensationOutboxMessage[]>;
   markOutboxPublished(messageId: string, claimToken: string): Promise<boolean>;
+  /** Release a failed claim immediately with exponential backoff + recorded
+   *  error, instead of waiting for the 60s claim expiry. Messages whose
+   *  attempts reach max_attempts are moved to the DLQ by sweepOutboxDlq
+   *  (scheduled every kernel-ops timer cycle) — no infinite retry. */
+  retryOutbox(messageId: string, claimToken: string, error: { code: string; message: string }, now?: Date): Promise<boolean>;
 }
 
 export interface CompensationOutboxMessage {
@@ -140,7 +145,8 @@ export async function consumeCompensationBatch(
         payload: payload.compensationPayload ?? {},
       });
       if (!token) {
-        // Token provider refused — leave for retry.
+        // Token provider refused — record and back off (DLQ once max_attempts).
+        await outbox.retryOutbox(message.id, message.claimToken!, { code: 'COMPENSATION_TOKEN_REFUSED', message: 'token provider returned null' });
         failed++;
         continue;
       }
@@ -155,6 +161,7 @@ export async function consumeCompensationBatch(
         actor: `compensation-consumer:${options.workerId}`,
       });
       if (!admission.admitted) {
+        await outbox.retryOutbox(message.id, message.claimToken!, { code: 'COMPENSATION_ADMIT_REJECTED', message: admission.reason ?? 'unknown' });
         failed++;
         continue;
       }
@@ -168,8 +175,12 @@ export async function consumeCompensationBatch(
       // Reference result so unused-var lint stays quiet; the audit trail lives
       // in the kernel effect ledger (commander_effects) and AuditSink.
       void result;
-    } catch {
-      // Executor threw or completion unconfirmed — leave for retry/DLQ.
+    } catch (error) {
+      // Executor threw or completion unconfirmed — record + back off; the
+      // sweeper moves the message to DLQ once attempts >= max_attempts.
+      try {
+        await outbox.retryOutbox(message.id, message.claimToken!, { code: 'COMPENSATION_EXECUTE_FAILED', message: error instanceof Error ? error.message : String(error) });
+      } catch { /* claim may have expired; sweeper backoff still applies */ }
       failed++;
     }
   }

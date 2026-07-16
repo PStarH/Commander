@@ -242,3 +242,70 @@ describe('WS2 §6 capability token lifecycle', () => {
     );
   });
 });
+
+describe('WS2 §5 three-layer policy engine called by admit()', () => {
+  const admitInput = (iss: ReturnType<typeof makeTokens>['iss'], effectId: string) => ({
+    effectId,
+    token: iss.issue({ ...baseGrant, requestHash: canonicalRequestHash({}) }),
+    type: 'crm.write',
+    request: {},
+    idempotencyKey: `idem-${effectId}`,
+    lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+    actor: 'w',
+  });
+
+  it('rejects ACTION_NOT_ALLOWLISTED when the tenant allowlist denies (fail-closed)', async () => {
+    const { iss, ver } = makeTokens();
+    let admitEffectCalled = false;
+    const broker = makeBroker({
+      tokens: ver,
+      kernel: {
+        admitEffect: async () => { admitEffectCalled = true; return { admitted: true, effect: { id: 'e', state: 'ADMITTED' } }; },
+        completeEffect: async () => ({}),
+        isActionAllowed: async () => false, // no matching allowlist row ⇒ deny
+      },
+    });
+    const admission = await broker.admit(admitInput(iss, 'eff-allow-deny'));
+    assert.equal(admission.admitted, false);
+    assert.equal(admission.reason, 'ACTION_NOT_ALLOWLISTED');
+    assert.equal(admitEffectCalled, false, 'denied action must not reach kernel admission');
+  });
+
+  it('admits when allowlisted and increments the tenant quota', async () => {
+    const { iss, ver } = makeTokens();
+    const quotaCalls: Array<{ tenantId: string; actionClass: string }> = [];
+    const broker = makeBroker({
+      tokens: ver,
+      kernel: {
+        admitEffect: async () => ({ admitted: true, effect: { id: 'e', state: 'ADMITTED' } }),
+        completeEffect: async () => ({}),
+        isActionAllowed: async (tenantId: string, action: string) => tenantId === 'tenant-a' && action === 'crm.write',
+        incrementQuota: async (input: { tenantId: string; actionClass: string }) => { quotaCalls.push(input); return { countUsed: 1, tokensUsed: 0 }; },
+      },
+    });
+    const admission = await broker.admit(admitInput(iss, 'eff-allow-ok'));
+    assert.equal(admission.admitted, true);
+    assert.equal(quotaCalls.length, 1, 'admit() must record quota usage');
+    assert.deepEqual(quotaCalls[0], { tenantId: 'tenant-a', actionClass: 'crm' });
+  });
+
+  it('rejects QUOTA_EXCEEDED when daily count passes the configured ceiling', async () => {
+    const { iss, ver } = makeTokens();
+    let count = 0;
+    const broker = makeBroker({
+      tokens: ver,
+      kernel: {
+        admitEffect: async () => ({ admitted: true, effect: { id: 'e', state: 'ADMITTED' } }),
+        completeEffect: async () => ({}),
+        isActionAllowed: async () => true,
+        incrementQuota: async () => ({ countUsed: ++count, tokensUsed: 0 }),
+      },
+      options: { quotaLimits: { maxCountPerDay: 2 } },
+    });
+    assert.equal((await broker.admit(admitInput(iss, 'q1'))).admitted, true);
+    assert.equal((await broker.admit(admitInput(iss, 'q2'))).admitted, true);
+    const third = await broker.admit(admitInput(iss, 'q3'));
+    assert.equal(third.admitted, false);
+    assert.equal(third.reason, 'QUOTA_EXCEEDED');
+  });
+});
