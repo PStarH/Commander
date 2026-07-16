@@ -4,6 +4,10 @@ import type { AgentRuntimeFactoryOptions } from '@commander/core';
 import type { EffectBroker } from '@commander/effect-broker';
 
 export { KernelStepExecutor } from '@commander/core';
+// WS7: SandboxManager is re-exported so sandboxReadiness can consume it via
+// this file — the constitution's single sanctioned worker-plane→core bridge
+// (scripts/arch-guard.sh isWorkerCoreBridge).
+export { SandboxManager } from '@commander/core';
 
 export interface AgentStepExecutorOptions extends AgentRuntimeFactoryOptions {
   defaultMaxSteps?: number;

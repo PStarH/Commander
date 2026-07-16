@@ -21,7 +21,7 @@ export async function cmdGui() {
 
   console.log(`  ${$.green}Starting API server...${$.reset}`);
   console.log(`  ${$.green}Starting Web dashboard...${$.reset}`);
-  console.log(`  ${$.dim}API:${$.reset}  http://localhost:4000`);
+  console.log(`  ${$.dim}API:${$.reset}  http://localhost:4000/v1 (enterprise entry — see /v1/openapi.json)`);
   console.log(`  ${$.dim}Web:${$.reset}  http://localhost:5173\n`);
 
   const api = spawn('npx', ['tsx', 'src/index.ts'], {
