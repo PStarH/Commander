@@ -60,19 +60,46 @@ export type {
 // Existing utilities
 export { createMemoryStore, bootstrapMemoryPersistence, resolveMemoryStoreType } from './utils';
 export type { MemoryBootstrapOptions, MemoryStoreType } from './utils';
-export { JsonMemoryStore } from './jsonStore';
+export {
+  MemoryServiceValidationError,
+  assertForgetTarget,
+  assertLimit,
+  assertMemoryScope,
+} from './memoryService';
+export type {
+  ForgetMemoryInput,
+  ListMemoryInput,
+  MemoryPage,
+  MemoryRecord,
+  MemoryRetentionPolicy,
+  MemoryScope,
+  MemorySearchResult as MemoryServiceSearchResult,
+  MemoryService,
+  MemoryServiceMaintenance,
+  RetrieveMemoryInput,
+  SearchMemoryInput,
+  StoreMemoryInput,
+} from './memoryService';
+export { InMemoryMemoryService } from './inMemoryMemoryService';
+export { PostgresMemoryService } from './postgresMemoryService';
+export { memorySchemaStatements, vectorSchemaStatements } from './postgresMemorySchema';
+export { MemoryStoreFacade } from './memoryStoreFacade';
+export { MemoryMigrationRunner } from './memoryMigration';
+export type {
+  LegacyMemoryRecord,
+  MemoryMigrationCheckpointStore,
+  MemoryMigrationResult,
+  MemoryMigrationSource,
+  TenantMapping,
+} from './memoryMigration';
 export { tokenize } from './tokenizer';
 
-// Episodic memory store interface and in-memory implementation
-export { InMemoryMemoryStore } from '../episodicMemory';
+// Episodic memory store interface
 export type { MemoryStore, MemoryMeta } from '../episodicMemory';
 
 // BM25 full-text search scorer (FTS5-quality without SQLite)
 export { BM25Scorer, tokenizeForBM25 } from './ftsScorer';
 export type { BM25Config, BM25Document, BM25Result } from './ftsScorer';
-
-// SQLite-backed memory store (production-grade)
-export { SqliteMemoryStore } from './sqliteMemoryStore';
 
 // Thompson Memory Scorer - Beta distribution based usefulness tracking (0 tokens)
 export { ThompsonMemoryScorer } from './thompsonMemoryScorer';
