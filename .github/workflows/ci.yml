@@ -263,8 +263,6 @@ jobs:
       - name: Run core tests
         shell: bash
         env:
-          # WS7 §3: dev/test bypass only. CI runners lack Docker/seatbelt.
-          # Production enforcement is verified separately in ws7-boot-refuse.yml.
           COMMANDER_ALLOW_NO_SANDBOX: true
         run: |
           if [ "$SQLITE_BINDING_OK" = "false" ]; then
@@ -277,7 +275,6 @@ jobs:
       - name: Run SLO measurements
         shell: bash
         env:
-          # WS7 §3: dev/test bypass only — CI runners have no OS-level sandbox.
           COMMANDER_ALLOW_NO_SANDBOX: true
         run: pnpm --filter @commander/core test:slo
 
@@ -298,7 +295,6 @@ jobs:
 
       - name: Path security tests
         env:
-          # WS7 §3: dev/test bypass only — path security tests don't need a real sandbox.
           COMMANDER_ALLOW_NO_SANDBOX: true
         run: pnpm --filter @commander/core test:node:pathsec
 
