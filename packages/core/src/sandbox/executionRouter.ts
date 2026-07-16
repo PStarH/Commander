@@ -1,10 +1,17 @@
 import { reportSilentFailure } from '../silentFailureReporter';
-import type { ExecutionBackend, ExecutionBackendType, SandboxExecutionResult } from './types';
+import type {
+  ExecutionBackend,
+  ExecutionBackendType,
+  SandboxExecutionResult,
+  SandboxWorkloadContext,
+} from './types';
 import { LocalBackend } from './backends/localBackend';
 import { SSHBackend, resolveSSHConfig } from './backends/sshBackend';
 import { DockerExecBackend, resolveDockerExecConfig } from './backends/dockerExecBackend';
 import { getLaneManager } from './lane';
 import { getGlobalLogger } from '../logging';
+import { resolveSandboxPolicy, SandboxPolicyError } from './productionPolicy';
+import { validateSandboxWorkloadContext } from './workload';
 import { getHookManager } from '../pluginManager';
 
 /**
@@ -24,8 +31,10 @@ import { getHookManager } from '../pluginManager';
 export class ExecutionRouter {
   private localBackend: LocalBackend;
   private backends: Map<string, ExecutionBackend> = new Map();
+  private readonly environment: NodeJS.ProcessEnv;
 
-  constructor() {
+  constructor(environment: NodeJS.ProcessEnv = process.env) {
+    this.environment = environment;
     this.localBackend = new LocalBackend({ rejectOnNoSandbox: true });
   }
 
@@ -67,6 +76,7 @@ export class ExecutionRouter {
    */
   async selectBackend(args: Record<string, unknown>): Promise<ExecutionBackend> {
     const toolName = String(args._toolName ?? 'shell_execute');
+    this.assertProductionBackendRequest(args);
 
     // ── Hook: beforeBackendSelect (can override by returning a registered backend name) ──
     try {
@@ -135,7 +145,52 @@ export class ExecutionRouter {
   ): Promise<SandboxExecutionResult> {
     const backend = await this.selectBackend(args);
     const timeout = Number(args.timeout ?? 60);
-    return backend.execute(command, workdir, timeout);
+    const context = this.getWorkloadContext(args);
+    return backend.execute(command, workdir, timeout, context);
+  }
+
+  private assertProductionBackendRequest(args: Record<string, unknown>): void {
+    const policy = resolveSandboxPolicy(this.environment);
+    if (policy.environment !== 'production') return;
+
+    const backend = String(args.backend ?? '').toLowerCase();
+    if (
+      args.backend_name ||
+      backend === 'ssh' ||
+      args.ssh_host ||
+      backend === 'docker' ||
+      args.container ||
+      args.container_id ||
+      backend === 'local'
+    ) {
+      throw new SandboxPolicyError(
+        'Production execution accepts only the policy-selected local sandbox adapter; host, SSH, and arbitrary Docker backends are forbidden.',
+      );
+    }
+  }
+
+  private getWorkloadContext(args: Record<string, unknown>): SandboxWorkloadContext | undefined {
+    const values = [args._tenantId, args._runId, args._stepId, args._workloadId];
+    const hasAnyContext = values.some((value) => value !== undefined);
+    if (!values.every((value) => typeof value === 'string' && value.length > 0)) {
+      if (hasAnyContext && resolveSandboxPolicy(this.environment).environment === 'production') {
+        throw new SandboxPolicyError('Production execution requires a complete workload context.');
+      }
+      return undefined;
+    }
+    const context: SandboxWorkloadContext = {
+      tenantId: String(args._tenantId),
+      runId: String(args._runId),
+      stepId: String(args._stepId),
+      workloadId: String(args._workloadId),
+    };
+    try {
+      validateSandboxWorkloadContext(context);
+    } catch (error) {
+      if (resolveSandboxPolicy(this.environment).environment === 'production') throw error;
+      return undefined;
+    }
+    return context;
   }
 }
 

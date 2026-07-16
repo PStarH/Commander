@@ -104,6 +104,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
+    "build:production": "tsx ../../scripts/check-production-sandbox.ts && tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
     "test": "vitest run --no-cache",
     "test:quick": "vitest run --no-cache tests/ultimate/deliberation.test.ts tests/tools/pathSecurity.test.ts tests/security/",
     "test:algorithmic": "vitest run --no-cache tests/benchmarks/algorithmicEffectiveness",

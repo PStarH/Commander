@@ -304,8 +304,22 @@ export {
   resetSandboxManager,
   getSandboxManager,
   SandboxManager,
+  SandboxInitializationError,
   ExecPolicyEngine,
   TEESandbox,
+} from './sandbox';
+export {
+  SandboxPolicyError,
+  assertProductionSandboxPolicy,
+  assertProductionSandboxReady,
+  assertProductionSandboxSource,
+  resolveSandboxPolicy,
+} from './sandbox';
+export {
+  buildWorkloadDockerOptions,
+  createSandboxWorkloadContext,
+  validateSandboxWorkloadContext,
+  workloadContainerName,
 } from './sandbox';
 export type {
   SandboxMode,
@@ -314,6 +328,10 @@ export type {
   NetworkPolicy,
   FileAccessPolicy,
   SandboxExecutionResult,
+  SandboxWorkloadContext,
+  SandboxEnvironment,
+  SandboxIsolation,
+  SandboxPolicy,
   PlatformSandbox,
   TEEBackend,
   TEEAttestation,
