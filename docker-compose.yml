@@ -113,43 +113,41 @@ services:
       - worker
       - v2
 
-  # ── Timer Wakeup Worker — drives retry/deadline state transitions ────────
-  # Started with: docker compose --profile worker|v2 up
-  timer:
+  kernel-migrate:
     build:
       context: .
-      dockerfile: packages/operations/Dockerfile
-      args:
-        - NODE_ENV=production
-        - OPERATIONS_MODE=timer
+      dockerfile: packages/kernel/Dockerfile.ops
+    entrypoint: ["node", "packages/kernel/dist/migrate.js"]
     environment:
-      - NODE_ENV=production
       - DATABASE_URL=${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
-      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}}
     depends_on:
       postgres:
         condition: service_healthy
-    restart: unless-stopped
+    restart: "no"
     profiles:
       - worker
       - v2
 
-  # ── Outbox Publisher — at-least-once event delivery ────────────────────────
+  # ── Kernel Ops — reclaim + timers + durable outbox publication ──────────
   # Started with: docker compose --profile worker|v2 up
-  outbox:
+  kernel-ops:
     build:
       context: .
-      dockerfile: packages/operations/Dockerfile
-      args:
-        - NODE_ENV=production
-        - OPERATIONS_MODE=outbox
+      dockerfile: packages/kernel/Dockerfile.ops
     environment:
       - NODE_ENV=production
       - DATABASE_URL=${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
       - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}}
+      - COMMANDER_RECLAIM_INTERVAL_MS=${COMMANDER_RECLAIM_INTERVAL_MS:-5000}
+      - COMMANDER_RECLAIM_BATCH_SIZE=${COMMANDER_RECLAIM_BATCH_SIZE:-100}
+      - COMMANDER_TIMER_POLL_MS=${COMMANDER_TIMER_POLL_MS:-5000}
+      - COMMANDER_TIMER_BATCH_SIZE=${COMMANDER_TIMER_BATCH_SIZE:-100}
+      - COMMANDER_OUTBOX_INTERVAL_MS=${COMMANDER_OUTBOX_INTERVAL_MS:-1000}
+      - COMMANDER_OUTBOX_BATCH_SIZE=${COMMANDER_OUTBOX_BATCH_SIZE:-100}
+      - COMMANDER_OUTBOX_MAX_ATTEMPTS=${COMMANDER_OUTBOX_MAX_ATTEMPTS:-10}
     depends_on:
-      postgres:
-        condition: service_healthy
+      kernel-migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
     profiles:
       - worker

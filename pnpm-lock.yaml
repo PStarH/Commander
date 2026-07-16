@@ -284,16 +284,6 @@ importers:
         specifier: ^4.1.9
         version: 4.1.9(@types/node@25.9.3)(@vitest/coverage-v8@4.1.9)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.28.1)(tsx@4.23.1)(yaml@2.9.0))
 
-  packages/operations:
-    dependencies:
-      '@commander/kernel':
-        specifier: workspace:*
-        version: link:../kernel
-    devDependencies:
-      typescript:
-        specifier: 5.8.2
-        version: 5.8.2
-
   packages/plugin-sdk:
     devDependencies:
       typescript:
