@@ -42,11 +42,16 @@ export interface CapabilityReplayStore {
 
 export class InMemoryCapabilityRevocationStore implements CapabilityRevocationStore {
   private readonly revoked = new Map<string, number>();
-  revoke(jti: string, expiresAt: string): void { this.revoked.set(jti, Date.parse(expiresAt)); }
+  revoke(jti: string, expiresAt: string): void {
+    this.revoked.set(jti, Date.parse(expiresAt));
+  }
   isRevoked(jti: string): boolean {
     const expiry = this.revoked.get(jti);
     if (!expiry) return false;
-    if (expiry <= Date.now()) { this.revoked.delete(jti); return false; }
+    if (expiry <= Date.now()) {
+      this.revoked.delete(jti);
+      return false;
+    }
     return true;
   }
 }
@@ -92,7 +97,12 @@ export interface EffectKernelPort {
     request: Record<string, unknown>;
     lease: { workerId: string; workerGeneration?: number; token: string; fencingEpoch: number };
     actor: string;
-  }): Promise<{ admitted: boolean; replayed?: boolean; reason?: string; effect?: { id: string; response?: Record<string, unknown>; state: string } }>;
+  }): Promise<{
+    admitted: boolean;
+    replayed?: boolean;
+    reason?: string;
+    effect?: { id: string; response?: Record<string, unknown>; state: string };
+  }>;
   completeEffect(
     effectId: string,
     tenantId: string,
@@ -100,7 +110,12 @@ export interface EffectKernelPort {
     response: Record<string, unknown>,
     actor: string,
   ): Promise<unknown | null>;
-  markEffectCompletionUnknown?(input: { effectId: string; tenantId: string; reason: string; actor: string }): Promise<unknown | null>;
+  markEffectCompletionUnknown?(input: {
+    effectId: string;
+    tenantId: string;
+    reason: string;
+    actor: string;
+  }): Promise<unknown | null>;
 }
 
 export interface ApprovalInteractionPort {
@@ -116,7 +131,11 @@ export interface ApprovalInteractionPort {
 }
 
 export interface EffectExecutor {
-  execute(input: { type: string; request: Record<string, unknown>; signal: AbortSignal }): Promise<Record<string, unknown>>;
+  execute(input: {
+    type: string;
+    request: Record<string, unknown>;
+    signal: AbortSignal;
+  }): Promise<Record<string, unknown>>;
 }
 
 export interface AuditSink {
@@ -152,10 +171,15 @@ export interface CapabilityTokenVerifierOptions {
   clock?: () => Date;
 }
 
-interface CapabilityTokenHeader { alg: 'EdDSA'; typ: 'CAP'; kid: string; }
+interface CapabilityTokenHeader {
+  alg: 'EdDSA';
+  typ: 'CAP';
+  kid: string;
+}
 
 const encode = (value: unknown): string => Buffer.from(JSON.stringify(value)).toString('base64url');
-const decode = <T>(value: string): T => JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as T;
+const decode = <T>(value: string): T =>
+  JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as T;
 const nowIso = (clock: () => Date): string => clock().toISOString();
 
 /** Stable hash used by both the issuer and verifier for exact request binding. */
@@ -163,7 +187,10 @@ export function canonicalRequestHash(value: Record<string, unknown>): string {
   const canonical = (input: unknown): string => {
     if (input === null || typeof input !== 'object') return JSON.stringify(input);
     if (Array.isArray(input)) return `[${input.map(canonical).join(',')}]`;
-    return `{${Object.keys(input as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${canonical((input as Record<string, unknown>)[key])}`).join(',')}}`;
+    return `{${Object.keys(input as Record<string, unknown>)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonical((input as Record<string, unknown>)[key])}`)
+      .join(',')}}`;
   };
   return createHash('sha256').update(canonical(value)).digest('hex');
 }
@@ -176,6 +203,10 @@ function normalizePublicKey(key: KeyLike): KeyObject {
   return key instanceof KeyObject ? key : createPublicKey(key);
 }
 
+function publicKeyFromPrivateKey(key: KeyObject): KeyObject {
+  return createPublicKey(key.export({ format: 'pem', type: 'pkcs8' }).toString());
+}
+
 /** Ed25519 issuer. The private key never needs to be distributed to workers. */
 export class CapabilityTokenIssuer {
   private readonly privateKey: KeyObject;
@@ -186,9 +217,14 @@ export class CapabilityTokenIssuer {
     this.clock = options.clock ?? (() => new Date());
   }
 
-  get publicKey(): KeyObject { return createPublicKey(this.privateKey); }
+  get publicKey(): KeyObject {
+    return publicKeyFromPrivateKey(this.privateKey);
+  }
 
-  issue(grant: Omit<CapabilityGrant, 'issuer' | 'audience' | 'issuedAt' | 'notBefore' | 'keyId'> & Partial<Pick<CapabilityGrant, 'issuer' | 'audience' | 'issuedAt' | 'notBefore' | 'keyId'>>): string {
+  issue(
+    grant: Omit<CapabilityGrant, 'issuer' | 'audience' | 'issuedAt' | 'notBefore' | 'keyId'> &
+      Partial<Pick<CapabilityGrant, 'issuer' | 'audience' | 'issuedAt' | 'notBefore' | 'keyId'>>,
+  ): string {
     const issuedAt = grant.issuedAt ?? nowIso(this.clock);
     const notBefore = grant.notBefore ?? issuedAt;
     const payload: CapabilityGrant = {
@@ -205,9 +241,15 @@ export class CapabilityTokenIssuer {
     return `${signingInput}.${sign(null, Buffer.from(signingInput), this.privateKey).toString('base64url')}`;
   }
 
-  static generate(options: Omit<CapabilityTokenIssuerOptions, 'privateKey' | 'keyId'> & { keyId?: string }): CapabilityTokenIssuer {
+  static generate(
+    options: Omit<CapabilityTokenIssuerOptions, 'privateKey' | 'keyId'> & { keyId?: string },
+  ): CapabilityTokenIssuer {
     const { privateKey } = generateKeyPairSync('ed25519');
-    return new CapabilityTokenIssuer({ ...options, keyId: options.keyId ?? 'generated', privateKey });
+    return new CapabilityTokenIssuer({
+      ...options,
+      keyId: options.keyId ?? 'generated',
+      privateKey,
+    });
   }
 }
 
@@ -223,21 +265,54 @@ export class CapabilityTokenVerifier {
 
   async verify(token: string, at = this.clock()): Promise<CapabilityGrant> {
     const [encodedHeader, encodedPayload, encodedSignature, extra] = token.split('.');
-    if (!encodedHeader || !encodedPayload || !encodedSignature || extra) throw new Error('Malformed capability token');
+    if (!encodedHeader || !encodedPayload || !encodedSignature || extra)
+      throw new Error('Malformed capability token');
     const header = decode<CapabilityTokenHeader>(encodedHeader);
-    if (header.alg !== 'EdDSA' || header.typ !== 'CAP' || !header.kid) throw new Error('Unsupported capability token');
+    if (header.alg !== 'EdDSA' || header.typ !== 'CAP' || !header.kid)
+      throw new Error('Unsupported capability token');
     const key = this.getPublicKey(header.kid);
-    if (!verify(null, Buffer.from(`${encodedHeader}.${encodedPayload}`), key, Buffer.from(encodedSignature, 'base64url'))) throw new Error('Invalid capability token signature');
+    if (
+      !verify(
+        null,
+        Buffer.from(`${encodedHeader}.${encodedPayload}`),
+        key,
+        Buffer.from(encodedSignature, 'base64url'),
+      )
+    )
+      throw new Error('Invalid capability token signature');
     const grant = decode<CapabilityGrant>(encodedPayload);
-    if (!grant.jti || !grant.tenantId || !grant.runId || !grant.stepId || !Array.isArray(grant.effectTypes)) throw new Error('Malformed capability grant');
-    if (grant.issuer !== this.options.issuer || grant.audience !== this.options.audience || grant.keyId !== header.kid) throw new Error('Capability token issuer/audience mismatch');
+    if (
+      !grant.jti ||
+      !grant.tenantId ||
+      !grant.runId ||
+      !grant.stepId ||
+      !Array.isArray(grant.effectTypes)
+    )
+      throw new Error('Malformed capability grant');
+    if (
+      grant.issuer !== this.options.issuer ||
+      grant.audience !== this.options.audience ||
+      grant.keyId !== header.kid
+    )
+      throw new Error('Capability token issuer/audience mismatch');
     const time = at.getTime();
     const issuedAt = Date.parse(grant.issuedAt ?? '');
     const notBefore = Date.parse(grant.notBefore ?? grant.issuedAt ?? '');
     const expiresAt = Date.parse(grant.expiresAt);
-    if (![issuedAt, notBefore, expiresAt].every(Number.isFinite) || issuedAt - this.clockSkewMs > time || notBefore - this.clockSkewMs > time || expiresAt + this.clockSkewMs <= time) throw new Error('Expired or not-yet-valid capability grant');
-    if (await this.options.revocations?.isRevoked(grant.jti)) throw new Error('Capability grant revoked');
-    if (grant.nonce && await this.options.replay?.consume(`${grant.jti}:${grant.nonce}`, grant.expiresAt)) throw new Error('Capability grant replayed');
+    if (
+      ![issuedAt, notBefore, expiresAt].every(Number.isFinite) ||
+      issuedAt - this.clockSkewMs > time ||
+      notBefore - this.clockSkewMs > time ||
+      expiresAt + this.clockSkewMs <= time
+    )
+      throw new Error('Expired or not-yet-valid capability grant');
+    if (await this.options.revocations?.isRevoked(grant.jti))
+      throw new Error('Capability grant revoked');
+    if (
+      grant.nonce &&
+      (await this.options.replay?.consume(`${grant.jti}:${grant.nonce}`, grant.expiresAt))
+    )
+      throw new Error('Capability grant replayed');
     return grant;
   }
 
@@ -253,7 +328,11 @@ function privateKeyFromSeed(seed: string): KeyObject {
   // RFC 8410 PKCS#8 wrapper around a deterministic 32-byte seed. This is
   // only a compatibility adapter; production callers should inject a KMS key.
   const prefix = Buffer.from('302e020100300506032b657004220420', 'hex');
-  return createPrivateKey({ key: Buffer.concat([prefix, createHash('sha256').update(seed).digest()]), format: 'der', type: 'pkcs8' });
+  return createPrivateKey({
+    key: Buffer.concat([prefix, createHash('sha256').update(seed).digest()]),
+    format: 'der',
+    type: 'pkcs8',
+  });
 }
 
 /**
@@ -267,21 +346,37 @@ export class CapabilityTokenService {
 
   constructor(seed: string, revocations?: CapabilityRevocationStore) {
     const privateKey = privateKeyFromSeed(seed);
-    const publicKey = createPublicKey(privateKey);
+    const publicKey = publicKeyFromPrivateKey(privateKey);
     this.revocations = revocations;
-    this.issuer = new CapabilityTokenIssuer({ issuer: 'commander.compatibility', audience: 'commander.effect-broker', keyId: 'compatibility', privateKey });
-    this.verifier = new CapabilityTokenVerifier({ issuer: 'commander.compatibility', audience: 'commander.effect-broker', publicKeys: { compatibility: publicKey }, revocations });
+    this.issuer = new CapabilityTokenIssuer({
+      issuer: 'commander.compatibility',
+      audience: 'commander.effect-broker',
+      keyId: 'compatibility',
+      privateKey,
+    });
+    this.verifier = new CapabilityTokenVerifier({
+      issuer: 'commander.compatibility',
+      audience: 'commander.effect-broker',
+      publicKeys: { compatibility: publicKey },
+      revocations,
+    });
   }
 
   issue(grant: CapabilityGrant): string {
-    return this.issuer.issue({ ...grant, policySnapshotId: grant.policySnapshotId ?? 'compatibility', requestHash: grant.requestHash ?? canonicalRequestHash({}) });
+    return this.issuer.issue({
+      ...grant,
+      policySnapshotId: grant.policySnapshotId ?? 'compatibility',
+      requestHash: grant.requestHash ?? canonicalRequestHash({}),
+    });
   }
 
   verify(token: string, now = new Date()): Promise<CapabilityGrant> {
     return this.verifier.verify(token, now);
   }
 
-  revoke(grant: CapabilityGrant): void | Promise<void> { return this.revocations?.revoke(grant.jti, grant.expiresAt); }
+  revoke(grant: CapabilityGrant): void | Promise<void> {
+    return this.revocations?.revoke(grant.jti, grant.expiresAt);
+  }
 }
 
 export interface EffectBrokerOptions {
@@ -292,17 +387,25 @@ export interface EffectBrokerOptions {
 
 /** The only supported path for an external write in Architecture V2. */
 export class EffectBroker {
-  private readonly options: Required<Pick<EffectBrokerOptions, 'audience' | 'requireRequestBinding'>> & Pick<EffectBrokerOptions, 'approval'>;
+  private readonly options: Required<
+    Pick<EffectBrokerOptions, 'audience' | 'requireRequestBinding'>
+  > &
+    Pick<EffectBrokerOptions, 'approval'>;
 
   constructor(
-    private readonly tokens: Pick<CapabilityTokenService, 'verify' | 'revoke'> | CapabilityTokenVerifier,
+    private readonly tokens:
+      Pick<CapabilityTokenService, 'verify' | 'revoke'> | CapabilityTokenVerifier,
     private readonly policy: PolicyEvaluator,
     private readonly kernel: EffectKernelPort,
     private readonly executor: EffectExecutor,
     private readonly audit: AuditSink,
     options: EffectBrokerOptions = {},
   ) {
-    this.options = { audience: options.audience ?? 'commander.effect-broker', requireRequestBinding: options.requireRequestBinding ?? true, approval: options.approval };
+    this.options = {
+      audience: options.audience ?? 'commander.effect-broker',
+      requireRequestBinding: options.requireRequestBinding ?? true,
+      approval: options.approval,
+    };
   }
 
   async execute(input: {
@@ -316,40 +419,138 @@ export class EffectBroker {
     timeoutMs?: number;
   }): Promise<{ effectId: string; replayed: boolean; response?: Record<string, unknown> }> {
     const grant = await this.tokens.verify(input.token);
-    if (grant.audience !== this.options.audience) return this.reject(grant, 'AUDIENCE_MISMATCH', {});
-    if (!grant.effectTypes.includes(input.type)) return this.reject(grant, 'CAPABILITY_DENIED', { type: input.type });
-    if (this.options.requireRequestBinding && grant.requestHash !== canonicalRequestHash(input.request)) return this.reject(grant, 'REQUEST_HASH_MISMATCH', {});
-    const decision = await this.policy.evaluate({ tenantId: grant.tenantId, runId: grant.runId, stepId: grant.stepId, type: input.type, request: input.request, token: grant });
-    if (grant.policySnapshotId && grant.policySnapshotId !== decision.policySnapshotId) return this.reject(grant, 'POLICY_SNAPSHOT_MISMATCH', { expected: grant.policySnapshotId, actual: decision.policySnapshotId });
+    if (grant.audience !== this.options.audience)
+      return this.reject(grant, 'AUDIENCE_MISMATCH', {});
+    if (!grant.effectTypes.includes(input.type))
+      return this.reject(grant, 'CAPABILITY_DENIED', { type: input.type });
+    if (
+      this.options.requireRequestBinding &&
+      grant.requestHash !== canonicalRequestHash(input.request)
+    )
+      return this.reject(grant, 'REQUEST_HASH_MISMATCH', {});
+    const decision = await this.policy.evaluate({
+      tenantId: grant.tenantId,
+      runId: grant.runId,
+      stepId: grant.stepId,
+      type: input.type,
+      request: input.request,
+      token: grant,
+    });
+    if (grant.policySnapshotId && grant.policySnapshotId !== decision.policySnapshotId)
+      return this.reject(grant, 'POLICY_SNAPSHOT_MISMATCH', {
+        expected: grant.policySnapshotId,
+        actual: decision.policySnapshotId,
+      });
     if (decision.effect === 'require_approval') {
-      if (!this.options.approval) return this.reject(grant, 'APPROVAL_REQUIRED', { decisionId: decision.decisionId });
-      const interaction = await this.options.approval.createApprovalInteraction({ tenantId: grant.tenantId, runId: grant.runId, stepId: grant.stepId, effectType: input.type, request: input.request, policyDecisionId: decision.decisionId, actor: input.actor });
-      return this.reject(grant, 'APPROVAL_REQUIRED', { decisionId: decision.decisionId, interactionId: interaction.interactionId });
+      if (!this.options.approval)
+        return this.reject(grant, 'APPROVAL_REQUIRED', { decisionId: decision.decisionId });
+      const interaction = await this.options.approval.createApprovalInteraction({
+        tenantId: grant.tenantId,
+        runId: grant.runId,
+        stepId: grant.stepId,
+        effectType: input.type,
+        request: input.request,
+        policyDecisionId: decision.decisionId,
+        actor: input.actor,
+      });
+      return this.reject(grant, 'APPROVAL_REQUIRED', {
+        decisionId: decision.decisionId,
+        interactionId: interaction.interactionId,
+      });
     }
-    if (decision.effect !== 'allow') return this.reject(grant, 'POLICY_DENIED', { decisionId: decision.decisionId, reason: decision.reason });
-    const admitted = await this.kernel.admitEffect({ id: input.effectId, runId: grant.runId, stepId: grant.stepId, tenantId: grant.tenantId, type: input.type, idempotencyKey: input.idempotencyKey, policyDecisionId: decision.decisionId, request: input.request, lease: input.lease, actor: input.actor });
-    if (!admitted.admitted || !admitted.effect) return this.reject(grant, 'EFFECT_ADMISSION_REJECTED', { reason: admitted.reason ?? 'unknown' });
-    if (admitted.replayed) return { effectId: admitted.effect.id, replayed: true, response: admitted.effect.response };
+    if (decision.effect !== 'allow')
+      return this.reject(grant, 'POLICY_DENIED', {
+        decisionId: decision.decisionId,
+        reason: decision.reason,
+      });
+    const admitted = await this.kernel.admitEffect({
+      id: input.effectId,
+      runId: grant.runId,
+      stepId: grant.stepId,
+      tenantId: grant.tenantId,
+      type: input.type,
+      idempotencyKey: input.idempotencyKey,
+      policyDecisionId: decision.decisionId,
+      request: input.request,
+      lease: input.lease,
+      actor: input.actor,
+    });
+    if (!admitted.admitted || !admitted.effect)
+      return this.reject(grant, 'EFFECT_ADMISSION_REJECTED', {
+        reason: admitted.reason ?? 'unknown',
+      });
+    if (admitted.replayed)
+      return { effectId: admitted.effect.id, replayed: true, response: admitted.effect.response };
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(new Error('Effect timeout')), input.timeoutMs ?? 30_000);
+    const timer = setTimeout(
+      () => controller.abort(new Error('Effect timeout')),
+      input.timeoutMs ?? 30_000,
+    );
     try {
-      const response = await this.executor.execute({ type: input.type, request: input.request, signal: controller.signal });
-      const committed = await this.kernel.completeEffect(admitted.effect.id, grant.tenantId, input.lease, response, input.actor);
+      const response = await this.executor.execute({
+        type: input.type,
+        request: input.request,
+        signal: controller.signal,
+      });
+      const committed = await this.kernel.completeEffect(
+        admitted.effect.id,
+        grant.tenantId,
+        input.lease,
+        response,
+        input.actor,
+      );
       if (!committed) {
-        await this.kernel.markEffectCompletionUnknown?.({ effectId: admitted.effect.id, tenantId: grant.tenantId, reason: 'Kernel rejected completion after external executor returned', actor: input.actor });
+        await this.kernel.markEffectCompletionUnknown?.({
+          effectId: admitted.effect.id,
+          tenantId: grant.tenantId,
+          reason: 'Kernel rejected completion after external executor returned',
+          actor: input.actor,
+        });
         throw new EffectBrokerError('COMPLETION_UNCONFIRMED');
       }
-      await this.audit.append({ type: 'effect.completed', severity: 'low', tenantId: grant.tenantId, runId: grant.runId, stepId: grant.stepId, at: new Date().toISOString(), details: { effectId: admitted.effect.id, type: input.type, policyDecisionId: decision.decisionId } });
+      await this.audit.append({
+        type: 'effect.completed',
+        severity: 'low',
+        tenantId: grant.tenantId,
+        runId: grant.runId,
+        stepId: grant.stepId,
+        at: new Date().toISOString(),
+        details: {
+          effectId: admitted.effect.id,
+          type: input.type,
+          policyDecisionId: decision.decisionId,
+        },
+      });
       return { effectId: admitted.effect.id, replayed: false, response };
-    } finally { clearTimeout(timer); }
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
-  private async reject(grant: CapabilityGrant, code: string, details: Record<string, unknown>): Promise<never> {
-    await this.audit.append({ type: 'effect.rejected', severity: 'high', tenantId: grant.tenantId, runId: grant.runId, stepId: grant.stepId, at: new Date().toISOString(), details: { code, ...details } });
+  private async reject(
+    grant: CapabilityGrant,
+    code: string,
+    details: Record<string, unknown>,
+  ): Promise<never> {
+    await this.audit.append({
+      type: 'effect.rejected',
+      severity: 'high',
+      tenantId: grant.tenantId,
+      runId: grant.runId,
+      stepId: grant.stepId,
+      at: new Date().toISOString(),
+      details: { code, ...details },
+    });
     throw new EffectBrokerError(code, details);
   }
 }
 
 export class EffectBrokerError extends Error {
-  constructor(readonly code: string, readonly details: Record<string, unknown> = {}) { super(code); this.name = 'EffectBrokerError'; }
+  constructor(
+    readonly code: string,
+    readonly details: Record<string, unknown> = {},
+  ) {
+    super(code);
+    this.name = 'EffectBrokerError';
+  }
 }

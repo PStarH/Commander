@@ -25,6 +25,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "build:core": "cd packages/core && tsc -p tsconfig.json",
+    "build:production": "pnpm --filter @commander/core build:production",
     "build:mcp-server": "pnpm --filter @commander/mcp-server build",
     "test:mcp-server": "pnpm --filter @commander/mcp-server test",
     "publish:mcp-server": "pnpm --filter @commander/mcp-server publish --access public --no-git-checks",

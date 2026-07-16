@@ -178,6 +178,17 @@ describe('Bubblewrap Configuration', () => {
 });
 
 describe('Docker Configuration', () => {
+  it('builds container security options with a non-root user', async () => {
+    const { buildContainerSecurityOptions } = await import('../src/sandbox/platforms');
+    const options = buildContainerSecurityOptions();
+    const userIndex = options.indexOf('--user');
+
+    assert.ok(userIndex >= 0, 'container security options should set --user');
+    assert.match(options[userIndex + 1] ?? '', /^[1-9][0-9]*:[1-9][0-9]*$/);
+    assert.ok(options.includes('--cap-drop'));
+    assert.ok(options.includes('--read-only'));
+  });
+
   it('DockerSB detects Docker availability', async () => {
     const { discoverSandboxes } = await import('../src/sandbox/platforms');
     const sandboxes = discoverSandboxes();
@@ -199,7 +210,7 @@ describe('NoopSB Fallback', () => {
     assert.strictEqual(noop.name, 'none');
   });
 
-  it('NoopSB executes commands and returns output', async () => {
+  it('NoopSB refuses commands whose network policy cannot be enforced', async () => {
     const { NoopSB } = await import('../src/sandbox/platforms');
     const noop = new NoopSB();
 
@@ -216,8 +227,9 @@ describe('NoopSB Fallback', () => {
       envVarAllowList: ['PATH', 'HOME', 'USER', 'SHELL', 'TERM'],
     });
 
-    assert.ok(result.stdout.includes('hello sandbox'));
-    assert.strictEqual(result.exitCode, 0);
+    assert.strictEqual(result.stdout, '');
+    assert.strictEqual(result.exitCode, 126);
+    assert.deepEqual(result.violated, ['network_policy_not_enforceable']);
   });
 
   it('NoopSB filters secret env vars', async () => {
