@@ -17,18 +17,6 @@ export type SandboxMechanism =
   | 'ssh'
   | 'none';
 
-/**
- * WS7 isolation level — the operator-facing knob that selects which sandbox
- * backend family to use. Distinct from SandboxMechanism (which is the
- * concrete backend discovered on the host).
- *
- * - `process`: OS subprocess constrained by seccomp/cgroup/network policy
- *   (seatbelt/bwrap/appcontainer). NOT host exec. Production rejects this.
- * - `docker`: Per-workload ephemeral OCI container. Production default.
- * - `gvisor`: Docker + runsc runtime. Explicit selection — never degrades.
- */
-export type SandboxIsolation = 'process' | 'docker' | 'gvisor';
-
 export interface FileAccessPolicy {
   readablePaths: string[];
   writablePaths: string[];
@@ -125,20 +113,4 @@ export interface ExecutionBackend {
   readonly type: ExecutionBackendType;
   readonly available: boolean;
   execute(command: string, workdir?: string, timeout?: number): Promise<SandboxExecutionResult>;
-}
-
-// ============================================================================
-// WS7: Per-tenant / per-workload sandbox identity
-// ============================================================================
-
-/**
- * WS7 §5.1 — Workload identity carried into every sandboxed execution.
- * All four identity fields must be non-empty and pass a safe-charset check
- * before container creation. Container names are server-generated.
- */
-export interface WorkloadIdentity {
-  tenantId: string;
-  runId: string;
-  stepId: string;
-  workloadId: string;
 }
