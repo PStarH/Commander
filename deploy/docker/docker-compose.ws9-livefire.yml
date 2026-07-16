@@ -129,6 +129,9 @@ services:
       # Audit chain logs live on a volume separate from app data + manifest
       # (spec §3.1: HMAC key and log storage physically separated).
       COMMANDER_AUDIT_PERSIST_DIR: /var/lib/commander/audit
+      COMMANDER_AUDIT_MANIFEST_DIR: /var/lib/commander/manifest
+      COMMANDER_AUDIT_CHAIN_KEY: ws9-livefire-audit-chain-key-32chars!!
+      COMMANDER_MANIFEST_KEY: ws9-livefire-manifest-key-do-not-reuse
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:

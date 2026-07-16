@@ -484,6 +484,86 @@ export class FailClosedPersistor {
 }
 
 // ============================================================================
+// Runtime install — wire manifest + verify timer onto a live ledger
+// ============================================================================
+
+let installedStop: (() => void) | null = null;
+let installedLedger: AuditChainLedger | null = null;
+
+/**
+ * Wire {@link ChainManifest} + {@link startVerifyTimer} onto a ledger.
+ *
+ * Enabled when `COMMANDER_AUDIT_MANIFEST_DIR` is set (WS9 compose mounts
+ * `/var/lib/commander/manifest`). Idempotent per process. Returns a stop
+ * function that clears the timer and unhooks the ledger.
+ */
+export function installAuditChainIntegrity(
+  ledger: AuditChainLedger,
+  options?: {
+    manifestDir?: string;
+    manifestKey?: string;
+    intervalMs?: number;
+    onFailure?: (result: VerifyWithManifestResult) => void;
+  },
+): () => void {
+  if (installedStop && installedLedger === ledger) {
+    return installedStop;
+  }
+  if (installedStop) {
+    installedStop();
+  }
+
+  const manifestDir =
+    options?.manifestDir ??
+    process.env.COMMANDER_AUDIT_MANIFEST_DIR ??
+    path.join(ledger.persistDirectory, 'manifest');
+
+  const manifest = new ChainManifest({
+    manifestDir,
+    manifestKey: options?.manifestKey ?? process.env.COMMANDER_MANIFEST_KEY,
+  });
+
+  ledger.setOnPersisted((entry) => {
+    manifest.registerHead({
+      chainId: entry.chainId,
+      tenantId: entry.tenantId,
+      maxSeq: entry.seq,
+      headHmac: entry.hmac,
+    });
+    manifest.flush();
+  });
+
+  const stopTimer = startVerifyTimer(ledger, manifest, {
+    intervalMs: options?.intervalMs,
+    onFailure: (result) => {
+      process.stderr.write(
+        `[auditChainIntegrity] VERIFY_FAILED tamperProof=${result.tamperProof} ` +
+          `detail=${result.brokenChain?.detail ?? result.manifestGaps.map((g) => g.reason).join(',')}\n`,
+      );
+      options?.onFailure?.(result);
+    },
+  });
+
+  installedLedger = ledger;
+  installedStop = () => {
+    stopTimer();
+    ledger.setOnPersisted(null);
+    if (installedLedger === ledger) {
+      installedLedger = null;
+      installedStop = null;
+    }
+  };
+  return installedStop;
+}
+
+/** Test helper: clear installed integrity hooks. */
+export function resetAuditChainIntegrity(): void {
+  installedStop?.();
+  installedStop = null;
+  installedLedger = null;
+}
+
+// ============================================================================
 // Canonical serialization for chain heads
 // ============================================================================
 

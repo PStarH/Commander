@@ -414,6 +414,15 @@ export {
   resetAuditChainLedger,
 } from './security/auditChainLedger';
 
+// WS9 audit-chain integrity (manifest + verify timer; opt-in via COMMANDER_AUDIT_MANIFEST_DIR)
+export {
+  installAuditChainIntegrity,
+  resetAuditChainIntegrity,
+  ChainManifest,
+  FailClosedPersistor,
+  verifyWithManifest,
+} from './security/auditChainIntegrity';
+
 // AgentLineage — immutable parent→child agent relationship tracking
 export { AgentLineage, getAgentLineage, resetAgentLineage } from './security/agentLineage';
 export type { LineageNode, LineageSummary, LineageQuery } from './security/agentLineage';
