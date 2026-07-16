@@ -38,6 +38,8 @@ describe('OutboundNetworkPolicy', () => {
       expect(p.check('http://localhost:3000/api').allowed).toBe(false);
       expect(p.check('http://127.0.0.1:3000/api').allowed).toBe(false);
       expect(p.check('http://[::1]/api').allowed).toBe(false);
+      expect(p.check('http://[fd00::1]/').allowed).toBe(false);
+      expect(p.check('http://metadata.google.internal/').allowed).toBe(false);
     });
 
     it('default allowlist does not include loopback', () => {
