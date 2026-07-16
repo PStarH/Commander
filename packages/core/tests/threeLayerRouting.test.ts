@@ -13,9 +13,6 @@
  * deterministically before asserting state.
  */
 import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
 import {
   createThreeLayerMemory,
   mapMemoryEntryToWriteOptions,
@@ -25,7 +22,8 @@ import {
   type MemoryEntry,
   type MemoryLayer,
 } from '../src/threeLayerMemory';
-import { SqliteMemoryStore } from '../src/memory/sqliteMemoryStore';
+import { InMemoryMemoryService } from '../src/memory/inMemoryMemoryService';
+import { MemoryStoreFacade } from '../src/memory/memoryStoreFacade';
 import { getGlobalLogger } from '../src/logging';
 
 // ---------------------------------------------------------------------------
@@ -127,15 +125,12 @@ describe('mapMemoryEntryToWriteOptions (pure)', () => {
 // ---------------------------------------------------------------------------
 
 describe('threeLayerMemory.add() routes to MemoryStore (Phase A)', () => {
-  let tmpDir: string;
-  let store: SqliteMemoryStore;
+  let store: MemoryStoreFacade;
   let writes: Promise<unknown>[];
   let deletes: Promise<unknown>[];
 
   beforeEach(async () => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'three-layer-routing-'));
-    store = new SqliteMemoryStore(path.join(tmpDir, 'mem.db'));
-    await store.init();
+    store = new MemoryStoreFacade(new InMemoryMemoryService(), '__default__');
 
     // Deterministic promise capture for fire-and-forget writes (Phase A).
     writes = [];
@@ -159,7 +154,6 @@ describe('threeLayerMemory.add() routes to MemoryStore (Phase A)', () => {
 
   afterEach(async () => {
     await store.close();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   // Belt-and-braces: even if a test fails or the file is interrupted mid-run,
@@ -217,9 +211,7 @@ describe('threeLayerMemory.add() routes to MemoryStore (Phase A)', () => {
   });
 
   it('replaces a memoryStore: subsequent writes use the new store', async () => {
-    const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'three-layer-routing-other-'));
-    const otherStore = new SqliteMemoryStore(path.join(otherDir, 'other.db'));
-    await otherStore.init();
+    const otherStore = new MemoryStoreFacade(new InMemoryMemoryService(), '__default__');
     const otherWrites: Promise<unknown>[] = [];
     const otherOriginal = otherStore.write.bind(otherStore);
     vi.spyOn(otherStore, 'write').mockImplementation((opts) => {
@@ -246,7 +238,6 @@ describe('threeLayerMemory.add() routes to MemoryStore (Phase A)', () => {
       expect(secondResult.items).toHaveLength(1);
     } finally {
       await otherStore.close();
-      fs.rmSync(otherDir, { recursive: true, force: true });
     }
   });
 
@@ -258,7 +249,6 @@ describe('threeLayerMemory.add() routes to MemoryStore (Phase A)', () => {
     // No memoryStore ref → no writes captured (spy never invoked)
     expect(writes).toHaveLength(0);
     // No persistPath → no JSON file written
-    expect(fs.existsSync(path.join(tmpDir, 'three-layer.json'))).toBe(false);
   });
 
   it('route-out .catch branch logs structured context and never throws', async () => {
@@ -289,8 +279,7 @@ describe('threeLayerMemory.add() routes to MemoryStore (Phase A)', () => {
     );
     expect(routeOutCalls.length).toBeGreaterThan(0);
     const ctx = routeOutCalls[0]?.[2] as
-      | { entryId?: string; layer?: string; error?: string }
-      | undefined;
+      { entryId?: string; layer?: string; error?: string } | undefined;
     expect(ctx?.entryId).toBeTruthy();
     expect(ctx?.layer).toBe('episodic');
     expect(ctx?.error).toMatch(/boom/);
@@ -443,8 +432,7 @@ describe('threeLayerMemory.add() routes to MemoryStore (Phase A)', () => {
     );
     expect(evictCalls.length).toBeGreaterThan(0);
     const ctx = evictCalls[0]?.[2] as
-      | { entryId?: string; layer?: string; error?: string }
-      | undefined;
+      { entryId?: string; layer?: string; error?: string } | undefined;
     expect(ctx?.entryId).toBeTruthy();
     expect(ctx?.layer).toBe('episodic');
     expect(ctx?.error).toMatch(/boom/);

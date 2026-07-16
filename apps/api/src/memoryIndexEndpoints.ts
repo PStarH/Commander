@@ -17,8 +17,8 @@ export function createMemoryIndexRouter(memoryIndexManager: MemoryIndexManager):
     res.status(201).json(pointer);
   });
 
-  router.get('/projects/:projectId/memory-index/domains/:domain', (req, res) => {
-    const domainMemory = memoryIndexManager.readDomain(req.params.domain);
+  router.get('/projects/:projectId/memory-index/domains/:domain', async (req, res) => {
+    const domainMemory = await memoryIndexManager.readDomain(req.params.domain);
     if (!domainMemory) {
       return res.status(404).json({ error: 'Domain not found' });
     }
@@ -47,8 +47,8 @@ export function createMemoryIndexRouter(memoryIndexManager: MemoryIndexManager):
     res.status(201).json(entry);
   });
 
-  router.post('/projects/:projectId/memory-index/reconcile', (_req, res) => {
-    const result = memoryIndexManager.reconcile();
+  router.post('/projects/:projectId/memory-index/reconcile', async (_req, res) => {
+    const result = await memoryIndexManager.reconcile();
     res.json({ reconciled: true, ...result });
   });
 

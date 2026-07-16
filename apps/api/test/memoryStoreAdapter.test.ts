@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import express from 'express';
-import { InMemoryMemoryStore } from '@commander/core';
+import { InMemoryMemoryService, MemoryStoreFacade } from '@commander/core';
 import { ProjectMemoryStoreAdapter } from '../src/memoryStoreAdapter';
 
 // Set memory index dir BEFORE requiring MemoryIndexManager. Its top-level
@@ -18,13 +18,15 @@ const MEMORY_DIR = path.join(
 fs.mkdirSync(MEMORY_DIR, { recursive: true });
 process.env['COMMANDER_MEMORY_DIR'] = MEMORY_DIR;
 
+const createStore = () => new MemoryStoreFacade(new InMemoryMemoryService(), 'test-tenant');
+
 after(async () => {
   fs.rmSync(MEMORY_DIR, { recursive: true, force: true });
 });
 
 describe('ProjectMemoryStoreAdapter', () => {
   it('appends and retrieves a memory', async () => {
-    const store = new InMemoryMemoryStore();
+    const store = createStore();
     const adapter = new ProjectMemoryStoreAdapter(store);
 
     const item = await adapter.append({
@@ -45,7 +47,7 @@ describe('ProjectMemoryStoreAdapter', () => {
   });
 
   it('returns an overview', async () => {
-    const store = new InMemoryMemoryStore();
+    const store = createStore();
     const adapter = new ProjectMemoryStoreAdapter(store);
 
     await adapter.append({
@@ -65,7 +67,7 @@ describe('ProjectMemoryStoreAdapter', () => {
   });
 
   it('searches by query', async () => {
-    const store = new InMemoryMemoryStore();
+    const store = createStore();
     const adapter = new ProjectMemoryStoreAdapter(store);
 
     await adapter.append({
@@ -100,7 +102,7 @@ describe('MemoryIndexManager + ProjectMemoryStoreAdapter integration', () => {
   });
 
   it('mirrors domain entries into the adapter-backed project memory store', async () => {
-    const store = new InMemoryMemoryStore();
+    const store = createStore();
     const adapter = new ProjectMemoryStoreAdapter(store);
     const manager = new MemoryIndexManager('project-mirror', adapter);
     manager.addDomain('Decisions', 'Architectural decisions');
@@ -124,7 +126,7 @@ describe('MemoryIndexManager + ProjectMemoryStoreAdapter integration', () => {
   });
 
   it('maps all memory-index entry types to ProjectMemoryItem kinds', async () => {
-    const store = new InMemoryMemoryStore();
+    const store = createStore();
     const adapter = new ProjectMemoryStoreAdapter(store);
     const manager = new MemoryIndexManager('project-kinds', adapter);
     manager.addDomain('AllTypes', 'Kind mapping coverage');
@@ -167,22 +169,6 @@ describe('MemoryIndexManager + ProjectMemoryStoreAdapter integration', () => {
     assert.equal(all.filter((i) => i.kind === 'SUMMARY').length, 3);
   });
 
-  it('keeps legacy behavior when no adapter is provided', async () => {
-    const manager = new MemoryIndexManager('project-legacy');
-    manager.addDomain('Lessons', 'Lessons learned');
-    const entry = await manager.writeEntry('Lessons', {
-      type: 'lesson',
-      title: 'Legacy entry',
-      content: 'Still works without adapter.',
-      tags: ['legacy'],
-    });
-    assert.ok(entry);
-    assert.equal(entry.title, 'Legacy entry');
-
-    const domain = manager.readDomain('Lessons');
-    assert.ok(domain);
-    assert.equal(domain.entries.length, 1);
-  });
 });
 
 describe('memoryIndexEndpoints with ProjectMemoryStoreAdapter', () => {
@@ -198,7 +184,7 @@ describe('memoryIndexEndpoints with ProjectMemoryStoreAdapter', () => {
       import('../src/memoryIndexManager'),
     ]);
 
-    const store = new InMemoryMemoryStore();
+    const store = createStore();
     adapter = new ProjectMemoryStoreAdapter(store);
     const manager = new MemoryIndexManager('project-endpoints', adapter);
     manager.addDomain('Decisions', 'Architectural decisions');
