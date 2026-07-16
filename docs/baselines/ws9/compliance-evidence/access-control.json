@@ -1,0 +1,23 @@
+{
+  "controlId": "CC6.1",
+  "controlName": "Access Control",
+  "soc2Criteria": [
+    "CC6.1",
+    "CC6.6"
+  ],
+  "evidenceLevel": "pending",
+  "testCaseIds": [
+    "DATA-2",
+    "EXEC-4",
+    "KEY-1",
+    "KEY-2",
+    "KEY-3",
+    "KEY-4",
+    "KEY-5"
+  ],
+  "verdict": "PENDING",
+  "artifactPaths": [],
+  "collectedAt": "2026-07-16T07:18:53.822Z",
+  "verifiedBy": "ws9-livefire",
+  "gitSha": "6f69a520fd091dbebcc5b7b20535fbf91a422807"
+}

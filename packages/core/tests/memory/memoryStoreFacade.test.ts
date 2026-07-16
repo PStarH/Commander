@@ -92,4 +92,90 @@ describe('MemoryStoreFacade', () => {
     await expect(facade.read('memory-1', 'project-a')).rejects.toThrow(/tenant/i);
     expect(service.retrieve).not.toHaveBeenCalled();
   });
+
+  it('update preserves lastAccessedAt from current record and does not allow it to be overridden', async () => {
+    const originalLastAccessed = '2026-01-01T00:00:00.000Z';
+    const service = {
+      store: vi.fn().mockResolvedValue(record({ lastAccessedAt: originalLastAccessed })),
+      retrieve: vi.fn().mockResolvedValue(record({ lastAccessedAt: originalLastAccessed })),
+      search: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+      forget: vi.fn().mockResolvedValue(true),
+      list: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+      close: vi.fn().mockResolvedValue(undefined),
+    } as unknown as MemoryService;
+    const facade = new MemoryStoreFacade(service);
+
+    await runWithTenant('tenant-a', async () => {
+      const result = await facade.update({
+        id: 'memory-1',
+        projectId: 'project-a',
+        updates: {
+          tags: ['updated'],
+          priority: 75,
+        },
+      });
+
+      expect(result).not.toBeNull();
+      expect(result?.lastAccessedAt).toBe(originalLastAccessed);
+    });
+
+    expect(service.store).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lastAccessedAt: originalLastAccessed,
+        tags: ['updated'],
+        priority: 75,
+      }),
+    );
+  });
+
+  it('update returns null when the record does not exist', async () => {
+    const service = {
+      store: vi.fn(),
+      retrieve: vi.fn().mockResolvedValue(null),
+      search: vi.fn(),
+      forget: vi.fn(),
+      list: vi.fn(),
+      close: vi.fn(),
+    } as unknown as MemoryService;
+    const facade = new MemoryStoreFacade(service);
+
+    await runWithTenant('tenant-a', async () => {
+      const result = await facade.update({
+        id: 'non-existent',
+        projectId: 'project-a',
+        updates: { title: 'updated' },
+      });
+
+      expect(result).toBeNull();
+    });
+
+    expect(service.store).not.toHaveBeenCalled();
+  });
+
+  it('update deletes record when delete flag is true', async () => {
+    const service = {
+      store: vi.fn(),
+      retrieve: vi.fn().mockResolvedValue(record()),
+      search: vi.fn(),
+      forget: vi.fn().mockResolvedValue(true),
+      list: vi.fn(),
+      close: vi.fn(),
+    } as unknown as MemoryService;
+    const facade = new MemoryStoreFacade(service);
+
+    await runWithTenant('tenant-a', async () => {
+      const result = await facade.update({
+        id: 'memory-1',
+        projectId: 'project-a',
+        delete: true,
+      });
+
+      expect(result).toBeNull();
+    });
+
+    expect(service.forget).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'memory-1', scope: { tenantId: 'tenant-a', projectId: 'project-a' } }),
+    );
+    expect(service.store).not.toHaveBeenCalled();
+  });
 });

@@ -1,0 +1,16 @@
+{
+  "controlId": "CC8.1",
+  "controlName": "Change Management",
+  "soc2Criteria": [
+    "CC8.1"
+  ],
+  "evidenceLevel": "pending",
+  "testCaseIds": [
+    "EXEC-3"
+  ],
+  "verdict": "PENDING",
+  "artifactPaths": [],
+  "collectedAt": "2026-07-16T07:18:53.822Z",
+  "verifiedBy": "ws9-livefire",
+  "gitSha": "6f69a520fd091dbebcc5b7b20535fbf91a422807"
+}

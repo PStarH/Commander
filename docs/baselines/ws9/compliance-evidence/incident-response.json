@@ -1,0 +1,23 @@
+{
+  "controlId": "CC7.3",
+  "controlName": "Incident Response",
+  "soc2Criteria": [
+    "CC7.3",
+    "CC7.4"
+  ],
+  "evidenceLevel": "pending",
+  "testCaseIds": [
+    "TAMPER-1",
+    "TAMPER-2",
+    "TAMPER-3",
+    "TAMPER-4",
+    "TAMPER-5",
+    "AUDIT-4",
+    "EXEC-5"
+  ],
+  "verdict": "PENDING",
+  "artifactPaths": [],
+  "collectedAt": "2026-07-16T07:18:53.822Z",
+  "verifiedBy": "ws9-livefire",
+  "gitSha": "6f69a520fd091dbebcc5b7b20535fbf91a422807"
+}
