@@ -1,0 +1,33 @@
+name: WS2 Bypass Refuse
+
+# WS2 §4 / §10 Phase 2.7: independent CI gate that fails the build when any
+# EffectBroker bypass pattern is present in production source. Runs the static
+# scanner (scripts/ws2-build-gate.mjs) and asserts a clean exit. This workflow
+# is intentionally separate from ci.yml so a bypass cannot be hidden by
+# disabling the main CI job.
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  ws2-build-gate:
+    name: WS2 EffectBroker bypass scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Run WS2 build gate
+        run: node scripts/ws2-build-gate.mjs
+
+      - name: Verify gate exit code is clean
+        run: |
+          # Re-run and assert exit 0. The previous step already fails on non-zero,
+          # but this makes the invariant explicit in the job log.
+          node scripts/ws2-build-gate.mjs && echo "WS2 build gate: 0 bypass patterns confirmed"
