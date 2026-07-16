@@ -352,11 +352,11 @@ function checkRlsWithCheck(): CheckResult {
     }
   }
 
-  // report any fixed target table that is missing from pg_class entirely
+  // Fixed target tables must exist — missing table is FAIL (spec §3.2 / §11).
   const found = new Set(byTable.keys());
   for (const t of FIXED_TARGET_TABLES) {
     if (!found.has(t)) {
-      warnings.push(`${t}: table not found in pg_class (cannot verify RLS)`);
+      failures.push(`${t}: table not found in pg_class (cannot verify RLS)`);
     }
   }
 
@@ -542,28 +542,29 @@ async function checkV1Gateway(): Promise<CheckResult> {
     };
   }
 
-  const healthUrl = `${base.replace(/\/+$/, '')}/v1/health`;
+  // API health lives at /health (not /v1/health). Legacy /api/* must be gone.
+  const healthUrl = `${base.replace(/\/+$/, '')}/health`;
   const legacyUrl = `${base.replace(/\/+$/, '')}/api/runs`;
 
   const health = await httpGet(healthUrl);
   const legacy = await httpGet(legacyUrl);
 
-  // Both unreachable → API not up; advisory only.
+  // Host/port configured but unreachable → FAIL (spec §3.2 requires gateway).
   if ((health.error || health.status === 0) && (legacy.error || legacy.status === 0)) {
     return {
       check: NAME,
-      passed: true,
-      severity: 'WARN',
-      detail: `API not reachable at ${base}; /v1 gateway checks skipped. Non-API live-fire tests may still run; DATA tests need the API.`,
+      passed: false,
+      severity: 'FAIL',
+      detail: `API not reachable at ${base}; gateway checks required for live-fire.`,
     };
   }
 
-  // API reachable → enforce /v1 == 200 and legacy /api/* == 410|404 as FAIL.
+  // Enforce /health == 200 and legacy /api/* == 410|404 as FAIL.
   const reasons: string[] = [];
   if (health.error || health.status === 0) {
-    reasons.push(`/v1/health unreachable (${health.error ?? 'no response'})`);
+    reasons.push(`/health unreachable (${health.error ?? 'no response'})`);
   } else if (health.status !== 200) {
-    reasons.push(`/v1/health returned HTTP ${health.status} (expected 200)`);
+    reasons.push(`/health returned HTTP ${health.status} (expected 200)`);
   }
   if (legacy.error || legacy.status === 0) {
     reasons.push(`/api/runs unreachable (${legacy.error ?? 'no response'})`);

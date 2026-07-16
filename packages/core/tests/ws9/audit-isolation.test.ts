@@ -154,21 +154,19 @@ describe('WS9 AUDIT-1: A queries audit log API, cannot see B\'s events', () => {
       expect(bView.length).toBe(1);
       expect(aView.every((e) => e.tenantId === TENANT_A)).toBe(true);
       expect(aView.some((e) => e.message?.includes('tenant-b'))).toBe(false);
-      // verify({ tenantId }) only inspects that tenant's chain.
-      const aVerify = ledger.verify({ tenantId: TENANT_A });
-      expect(aVerify.ok).toBe(true);
-      // B's entries exist in the same file but A's verify does not inspect them.
-      const bVerify = ledger.verify({ tenantId: TENANT_B });
-      expect(bVerify.ok).toBe(true);
+      // Full-chain HMAC verify (shared process chainId spans tenants by design).
+      // Tenant isolation for the "API view" is the filter above — not per-tenant seq.
+      const chainVerify = ledger.verify();
+      expect(chainVerify.ok).toBe(true);
 
       writePass(
         'AUDIT-1',
         `Audit log tenant isolation held: A sees ${aView.length} events (all tenantId=${TENANT_A}); ` +
-          `B sees ${bView.length} events. A's verify({tenantId:${TENANT_A}}) ok=${aVerify.ok}; ` +
-          `B's verify({tenantId:${TENANT_B}}) ok=${bVerify.ok}. ` +
-          `A cannot observe B's security events. ` +
-          `Note: L2 asymmetric sig uses InMemoryKeyProvider (ci-worm-sim); live KMS evidence pending Vault-backed KeyProvider.`,
+          `B sees ${bView.length} events. Full-chain verify ok=${chainVerify.ok}. ` +
+          `A cannot observe B's security events via tenant filter. ` +
+          `evidenceLevel=ci-worm-sim (in-process ledger).`,
         artifacts,
+        'ci-worm-sim',
       );
     } catch (err) {
       writeBreach(
@@ -404,7 +402,7 @@ describe('WS9 AUDIT-3: Whole-chain deletion; ChainManifest detects missing chain
 // ─── AUDIT-4: Audit write failure → effect blocked (fail-closed) ─────────
 
 describe('WS9 AUDIT-4: Audit write failure blocks effect (fail-closed persistor)', () => {
-  it('FailClosedPersistor throws AUDIT_PERSIST_FAILED on write error', async () => {
+  it('FailClosedPersistor and AuditChainLedger.logEvent throw AUDIT_PERSIST_FAILED', () => {
     const artifacts: string[] = [];
     // Use a path that cannot be created (parent is a file, not a directory).
     const blocker = path.join(os.tmpdir(), `ws9-block-${process.pid}-${Date.now()}`);
@@ -413,16 +411,33 @@ describe('WS9 AUDIT-4: Audit write failure blocks effect (fail-closed persistor)
 
     const persistor = new FailClosedPersistor({ persistDir: badDir });
 
-    let threw = false;
-    let errMsg = '';
+    let persistorThrew = false;
+    let persistorMsg = '';
     try {
-      await persistor.append({ id: 'evt-1', line: '{"seq":1}' });
+      persistor.appendSync({ id: 'evt-1', line: '{"seq":1}' });
     } catch (err) {
-      threw = true;
-      errMsg = (err as Error).message;
+      persistorThrew = true;
+      persistorMsg = (err as Error).message;
     }
 
-    // Cleanup the blocker file.
+    let ledgerThrew = false;
+    let ledgerMsg = '';
+    try {
+      const ledger = new AuditChainLedger({
+        persistDir: badDir,
+        masterKey: Buffer.from('x'.repeat(64), 'utf-8'),
+      });
+      ledger.logEvent({
+        type: 'content_threat',
+        severity: 'high',
+        source: 'ws9-audit-4',
+        message: 'must not persist',
+      });
+    } catch (err) {
+      ledgerThrew = true;
+      ledgerMsg = (err as Error).message;
+    }
+
     try {
       fs.unlinkSync(blocker);
     } catch {
@@ -430,21 +445,24 @@ describe('WS9 AUDIT-4: Audit write failure blocks effect (fail-closed persistor)
     }
 
     try {
-      expect(threw).toBe(true);
-      expect(errMsg).toMatch(/AUDIT_PERSIST_FAILED|fail-closed/i);
+      expect(persistorThrew).toBe(true);
+      expect(persistorMsg).toMatch(/AUDIT_PERSIST_FAILED|fail-closed/i);
+      expect(ledgerThrew).toBe(true);
+      expect(ledgerMsg).toMatch(/AUDIT_PERSIST_FAILED|fail-closed/i);
       writePass(
         'AUDIT-4',
-        `FailClosedPersistor threw AUDIT_PERSIST_FAILED on write error (threw=${threw}). ` +
-          `Effect blocked because audit write could not be durably persisted. ` +
-          `Error: ${errMsg.slice(0, 120)}`,
+        `FailClosedPersistor + AuditChainLedger.logEvent both throw AUDIT_PERSIST_FAILED ` +
+          `(KC-5d fail-closed). persistor=${persistorMsg.slice(0, 80)}; ledger=${ledgerMsg.slice(0, 80)}`,
         artifacts,
+        'ci-worm-sim',
       );
     } catch (err) {
       writeBreach(
         'AUDIT-4',
-        `FailClosedPersistor did NOT throw on write failure (threw=${threw}). ` +
-          `Async fail-open vulnerability: effect would proceed without audit. ${(err as Error).message ?? ''}`,
+        `Persist failure did not fail-closed: persistorThrew=${persistorThrew} ledgerThrew=${ledgerThrew}. ` +
+          `${(err as Error).message ?? ''}`,
         artifacts,
+        'ci-worm-sim',
       );
       throw err;
     }
@@ -758,6 +776,8 @@ describe('WS9 TAMPER-4: Re-forge HMAC with wrong key fails; L2 keypair isolation
     fs.writeFileSync(file, JSON.stringify(entry) + '\n');
 
     const res = ledger.verify();
+    let crossVerify = true;
+    let selfVerify = false;
     try {
       expect(res.ok).toBe(false);
       expect(res.brokenChain?.reason).toBe('invalid_hmac');
@@ -775,19 +795,18 @@ describe('WS9 TAMPER-4: Re-forge HMAC with wrong key fails; L2 keypair isolation
         headHmac: 'abc'.repeat(22),
       };
       const sig1 = signer1.signHead(head);
-      // kp2 should NOT be able to verify kp1's signature (different keypairs).
-      const crossVerify = kp2.verify(Buffer.from(JSON.stringify(head), 'utf-8'), sig1);
+      // Use signer verify API (canonical head), not raw JSON over kp2.
+      const signer2 = new AsymmetricChainSigner(kp2);
+      crossVerify = signer2.verifyHead(head, sig1);
       expect(crossVerify).toBe(false);
-      // kp1 CAN verify its own signature.
-      const selfVerify = kp1.verify(Buffer.from(JSON.stringify(head), 'utf-8'), sig1);
+      selfVerify = signer1.verifyHead(head, sig1);
       expect(selfVerify).toBe(true);
 
       writePass(
         'TAMPER-4',
         `Re-forge HMAC with wrong key fails: verify().ok=${res.ok}, reason=${res.brokenChain?.reason}. ` +
-          `L2 keypair isolation: kp2.verify(kp1.sig)=${crossVerify} (expected false), kp1.verify(kp1.sig)=${selfVerify}. ` +
-          `Private key not transferable without explicit injection. ` +
-          `evidenceLevel=ci-worm-sim (InMemoryKeyProvider); live KMS evidence pending Vault-backed KeyProvider.`,
+          `L2 keypair isolation: signer2.verify(signer1.sig)=${crossVerify} (expected false), ` +
+          `signer1.self=${selfVerify}. Private key not transferable without explicit injection.`,
         artifacts,
         'ci-worm-sim',
       );

@@ -7,10 +7,8 @@
  *   NET-2: A's workload tries SSRF to 169.254.169.254 / private IP → blocked.
  *   NET-3: A tries host network as fallback → rejected; default blocked.
  *
- * Evidence: these tests exercise the real OutboundNetworkPolicy production
- * PEP (sync hostname checks + async DNS resolution + private IP blocking).
- * evidenceLevel=live for sync policy checks; SSRF private-IP blocking is live
- * (no DNS needed for literal IP checks).
+ * Evidence: in-process OutboundNetworkPolicy checks → evidenceLevel=simulated.
+ * Multi-process/container egress live evidence is a separate harness.
  */
 
 import { afterEach, beforeEach, describe, it, expect } from 'vitest';
@@ -43,26 +41,21 @@ describe('WS9 NET-1: A and B have different allowlists; A cannot reach B\'s doma
       blockPrivateIPs: true,
     });
 
+    // Compute results outside try so they're accessible in catch (block scope).
+    const aToB = policyA.check('https://api.anthropic.com/v1/messages');
+    const bToOwn = policyB.check('https://api.anthropic.com/v1/messages');
+    const aToOwn = policyA.check('https://api.openai.com/v1/chat/completions');
+    const bToA = policyB.check('https://api.openai.com/v1/chat/completions');
+
     try {
-      // A tries to access B's domain → denied by A's policy.
-      const aToB = policyA.check('https://api.anthropic.com/v1/messages');
-      expect(aToB.allowed).toBe(false);
-
-      // B can access its own domain → allowed by B's policy.
-      const bToOwn = policyB.check('https://api.anthropic.com/v1/messages');
-      expect(bToOwn.allowed).toBe(true);
-
-      // A can access its own domain → allowed by A's policy.
-      const aToOwn = policyA.check('https://api.openai.com/v1/chat/completions');
-      expect(aToOwn.allowed).toBe(true);
-
-      // B cannot access A's domain → denied by B's policy.
-      const bToA = policyB.check('https://api.openai.com/v1/chat/completions');
-      expect(bToA.allowed).toBe(false);
+      expect(aToB.allowed).toBe(false);   // A cannot reach B's domain
+      expect(bToOwn.allowed).toBe(true);   // B can reach its own domain
+      expect(aToOwn.allowed).toBe(true);   // A can reach its own domain
+      expect(bToA.allowed).toBe(false);     // B cannot reach A's domain
 
       writePass(
         'NET-1',
-        `Per-tenant egress isolation: A→B's domain allowed=${aToA.allowed} (expected false), ` +
+        `Per-tenant egress isolation: A→B's domain allowed=${aToB.allowed} (expected false), ` +
           `B→own domain allowed=${bToOwn.allowed} (expected true), ` +
           `A→own domain allowed=${aToOwn.allowed} (expected true), ` +
           `B→A's domain allowed=${bToA.allowed} (expected false). ` +
@@ -72,7 +65,9 @@ describe('WS9 NET-1: A and B have different allowlists; A cannot reach B\'s doma
     } catch (err) {
       writeBreach(
         'NET-1',
-        `Per-tenant egress isolation breach: A→B allowed=${aToB.allowed} (expected false). ${(err as Error).message ?? ''}`,
+        `Per-tenant egress isolation breach: A→B allowed=${aToB.allowed} (expected false), ` +
+          `B→own allowed=${bToOwn.allowed} (expected true), A→own allowed=${aToOwn.allowed} (expected true), ` +
+          `B→A allowed=${bToA.allowed} (expected false). ${(err as Error).message ?? ''}`,
         artifacts,
       );
       throw err;

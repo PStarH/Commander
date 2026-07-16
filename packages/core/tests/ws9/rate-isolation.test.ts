@@ -150,16 +150,18 @@ describe('WS9 RATE-2: A exhausts shared worker pool, B\'s lease claims still suc
       aStepIds.push(cmd.steps[0]!.id);
     }
 
-    // A claims all its steps (saturating "shared pool").
+    // A claims all its steps (saturating "shared pool"). leaseTtlMs is required
+    // by ClaimStepRequest — without it claimNextStep throws RangeError on
+    // `new Date(NaN).toISOString()` (at.getTime() + undefined = NaN).
+    const leaseTtlMs = 30_000;
     const aClaims: string[] = [];
     for (const stepId of aStepIds) {
       const step = await kernel.claimNextStep({
         tenantIds: [TENANT_A],
         workerId: `a-worker-${stepId.slice(-4)}`,
         workerGeneration: 1,
-        token: 'a-token',
-        fencingEpoch: 1,
-      } as never);
+        leaseTtlMs,
+      });
       if (step) aClaims.push(step.id);
     }
 
@@ -175,9 +177,8 @@ describe('WS9 RATE-2: A exhausts shared worker pool, B\'s lease claims still suc
         tenantIds: [TENANT_B],
         workerId: `b-worker-${i}`,
         workerGeneration: 1,
-        token: 'b-token',
-        fencingEpoch: 1,
-      } as never);
+        leaseTtlMs,
+      });
       const latencyMs = Date.now() - start;
       if (step) bClaims.push({ id: step.id, latencyMs });
     }
@@ -205,8 +206,11 @@ describe('WS9 RATE-2: A exhausts shared worker pool, B\'s lease claims still suc
 
 // ─── RATE-3: bench-tenant-concurrency on real kernel PG ─────────────────
 
-const pgProbe = await probePostgres();
-const pgReady = pgProbe.available && pgProbe.hasAppRole;
+// probePostgres is a ProbeResult const (not a function) — see _evidence.ts.
+// hasAppRole was never a field on ProbeResult; the probe already verifies
+// COMMANDER_DB_HOST/NAME/USER are set, which is sufficient for RATE-3.
+const pgProbe = probePostgres;
+const pgReady = pgProbe.available;
 
 describeIf(pgReady, 'WS9 RATE-3: bench-tenant-concurrency on real kernel Postgres', () => {
   it('re-runs bench-tenant-concurrency against real PG; passed=true, errors=0', () => {
