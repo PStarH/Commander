@@ -7,8 +7,9 @@
  *   3. No side effect without scheduleAction (idempotency + ledger).
  *   4. Production fail-closed: never silently bypass ATR.
  *
- * Development may set COMMANDER_ATR_SOFT_BYPASS=1 to allow legacy paths
- * during strangler migration; that flag is ignored when NODE_ENV=production.
+ * WS2 §9: the soft bypass and compat shim are removed. This gate is now a
+ * fail-closed ATR/policy PEP. Full convergence to delegate through the unified
+ * EffectBroker.admit/execute is deferred to the StepExecutor redirect phase.
  */
 
 import { createHash } from 'node:crypto';
@@ -26,11 +27,6 @@ import {
   generateInteractionId,
   type DurableInteractionStore,
 } from '../atr/durableInteractionStore';
-import { getGlobalLogger } from '../logging';
-import {
-  isEffectBrokerCompatEnabled,
-  requireEffectBrokerCompatAudit,
-} from '../security/effectBroker';
 
 export class SideEffectGateError extends Error {
   readonly code:
@@ -82,39 +78,6 @@ export interface SideEffectGateOptions {
   interactionStore?: DurableInteractionStore;
 }
 
-function softBypassAllowed(failClosed: boolean): boolean {
-  if (failClosed) return false;
-  const compat = isEffectBrokerCompatEnabled();
-  if (!compat) return false;
-  requireEffectBrokerCompatAudit();
-  return true;
-}
-
-function softAllowDecision(runId: string): PolicyDecision {
-  return {
-    effect: 'allow',
-    reason: 'COMMANDER_ATR_SOFT_BYPASS',
-    decisionPath: ['soft_bypass'],
-    matchedRule: 'soft_bypass',
-    riskScore: 0,
-    budget: {
-      tokensUsed: 0,
-      tokensBudget: 0,
-      actionsUsed: 0,
-      actionsBudget: 0,
-      estimatedCostUsd: 0,
-    },
-    latencyMs: 0,
-    cached: false,
-    cacheable: false,
-    decisionId: 'soft_bypass',
-    packVersion: 0,
-    packName: 'soft_bypass',
-    tenantId: null,
-    runId,
-  };
-}
-
 export class SideEffectGate {
   private readonly policy: PolicyHook;
   private readonly failClosed: boolean;
@@ -134,19 +97,7 @@ export class SideEffectGate {
    */
   async admit(req: SideEffectRequest): Promise<SideEffectAdmission> {
     if (!req.runHandle) {
-      if (softBypassAllowed(this.failClosed)) {
-        getGlobalLogger().warn(
-          'SideEffectGate',
-          'SOFT BYPASS: no RunHandle — effect proceeds without ATR (dev only)',
-          { toolName: req.toolName },
-        );
-        return {
-          replayed: false,
-          actionId: `bypass:${req.stepId}`,
-          decision: softAllowDecision('unknown'),
-          decisionId: 'soft_bypass',
-        };
-      }
+      // WS2 §9: soft bypass removed — always fail closed.
       throw new SideEffectGateError(
         'NO_RUN_HANDLE',
         `Side effect "${req.toolName}" rejected: no ATR RunHandle (Architecture V2 invariant)`,
@@ -232,18 +183,7 @@ export class SideEffectGate {
         tenantId: req.tenantId ?? handle.tenantId,
       });
     } catch (err) {
-      if (softBypassAllowed(this.failClosed)) {
-        getGlobalLogger().warn('SideEffectGate', 'SOFT BYPASS: scheduleAction threw', {
-          toolName: req.toolName,
-          error: (err as Error).message,
-        });
-        return {
-          replayed: false,
-          actionId: `bypass-err:${req.stepId}`,
-          decision,
-          decisionId: id,
-        };
-      }
+      // WS2 §9: soft bypass removed — scheduleAction failures always throw.
       throw new SideEffectGateError(
         'SCHEDULE_FAILED',
         `scheduleAction failed for "${req.toolName}": ${(err as Error).message}`,
@@ -252,14 +192,7 @@ export class SideEffectGate {
     }
 
     if (!scheduleResult) {
-      if (softBypassAllowed(this.failClosed)) {
-        return {
-          replayed: false,
-          actionId: `bypass-null:${req.stepId}`,
-          decision,
-          decisionId: id,
-        };
-      }
+      // WS2 §9: soft bypass removed — null scheduleResult always throws.
       throw new SideEffectGateError(
         'SCHEDULE_FAILED',
         `scheduleAction rejected "${req.toolName}" (fenced or ledger error)`,

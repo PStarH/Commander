@@ -17,7 +17,6 @@
  * - COMMANDER_WORKER_LEASE_TTL_MS: Step lease TTL (default: 30000)
  * - COMMANDER_WORKER_HEARTBEAT_MS: Heartbeat interval (default: 10000)
  * - COMMANDER_WORKER_POLL_MS: Poll interval (default: 250)
- * - COMMANDER_EFFECT_BROKER_SEED: Seed for capability token signing (default: random)
  */
 
 import { randomUUID } from 'node:crypto';
@@ -31,7 +30,7 @@ import { CompositeStepExecutor } from './compositeStepExecutor.js';
 import { createAgentStepExecutor, createExecutorManifest } from './workerRuntimeAdapter.js';
 import type { WorkerDefinition, WorkerIdentity, WorkerKind, StepExecutor } from './types.js';
 import type { EffectExecutor, PolicyEvaluator, AuditSink, EffectKernelPort } from '@commander/effect-broker';
-import { EffectBroker, CapabilityTokenService } from '@commander/effect-broker';
+import { EffectBroker, CapabilityTokenIssuer, CapabilityTokenVerifier } from '@commander/effect-broker';
 
 // Lazy import to avoid circular dependency at module load time
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -133,43 +132,44 @@ export async function createWorkerService(): Promise<WorkerService> {
 /**
  * Worker-plane effect policy selection (Architecture V2 admission force).
  *
- * Default is **fail-closed** (deny). Opt into the old allow-all bootstrap only
- * with explicit `COMMANDER_WORKER_EFFECT_POLICY=permit` (dev/demo only).
- *
- * Env:
- * - `COMMANDER_WORKER_EFFECT_POLICY=permit|allow` → permit-default (legacy)
- * - `COMMANDER_WORKER_EFFECT_POLICY=deny|fail-closed` → deny-all
- * - unset → deny-all (production-safe default)
+ * WS2: the legacy allow-all bootstrap bypass is DELETED. The bootstrap policy
+ * is always fail-closed (deny-all). A real PolicyEvaluator backed by the
+ * kernel allowlist/quota/rate-limit engine must be injected by the operator;
+ * this deny-all default exists only to make misconfiguration loud rather than
+ * permissive. The `env` parameter is retained for signature stability but is
+ * intentionally not consulted — there is no env-var bypass anymore.
  */
 export function createWorkerPolicyEvaluator(
-  env: NodeJS.ProcessEnv = process.env,
+  _env: NodeJS.ProcessEnv = process.env,
 ): PolicyEvaluator {
-  const raw = (env.COMMANDER_WORKER_EFFECT_POLICY ?? '').trim().toLowerCase();
-  if (raw === 'permit' || raw === 'allow' || raw === 'permit-default' || raw === '1') {
-    return {
-      evaluate: async () => ({
-        effect: 'allow' as const,
-        decisionId: 'permit-default',
-        reason: 'COMMANDER_WORKER_EFFECT_POLICY=permit (explicit allow-all bootstrap)',
-        policySnapshotId: 'worker-default',
-      }),
-    };
-  }
+  void _env;
   return {
     evaluate: async (input) => ({
       effect: 'deny' as const,
       decisionId: 'deny-default',
       reason:
         `Default worker policy denies external effects (type=${input.type}). ` +
-        'Configure a real PolicyEvaluator or set COMMANDER_WORKER_EFFECT_POLICY=permit for local demos only.',
+        'Inject a real PolicyEvaluator backed by the kernel allowlist/quota engine.',
       policySnapshotId: 'worker-default',
     }),
   };
 }
 
 function createEffectBroker(kernel: EffectKernelPort): EffectBroker {
-  const seed = process.env.COMMANDER_EFFECT_BROKER_SEED ?? randomUUID().replace(/-/g, '');
-  const tokens = new CapabilityTokenService(seed);
+  // WS2 §9: the CapabilityTokenService seed-based facade is removed. The worker
+  // bootstrap now generates a fresh Ed25519 keypair and builds a matching
+  // verifier. In production the verifier should be wired with the issuer's
+  // distributed public keys instead; this dev path keeps local workers working.
+  const issuer = CapabilityTokenIssuer.generate({
+    issuer: 'commander-worker',
+    audience: 'commander.effect-broker',
+    keyId: 'worker-bootstrap',
+  });
+  const tokens = new CapabilityTokenVerifier({
+    issuer: 'commander-worker',
+    audience: 'commander.effect-broker',
+    publicKeys: { 'worker-bootstrap': issuer.publicKey },
+  });
   const policy = createWorkerPolicyEvaluator();
 
   // Minimal executor: logs the effect and returns a marker. Operators can
@@ -191,9 +191,11 @@ function createEffectBroker(kernel: EffectKernelPort): EffectBroker {
     },
   };
 
+  // WS2 §4: request binding is mandatory. The EffectBroker constructor
+  // enforces this in production (throws REQUEST_BINDING_DISABLED_IN_PROD).
   return new EffectBroker(tokens, policy, kernel, executor, audit, {
     audience: 'commander.effect-broker',
-    requireRequestBinding: false,
+    requireRequestBinding: true,
   });
 }
 
@@ -208,7 +210,7 @@ async function createExecutorForKind(
 ): Promise<StepExecutor> {
   // Explicit executor manifest — validated at startup. No runtime guessing.
   const manifest = createExecutorManifest({
-    agent: () => createAgentStepExecutor(),
+    agent: () => createAgentStepExecutor({ effectBroker }),
     tool: () => new ToolStepExecutor(undefined, effectBroker),
     evaluator: () => new EvaluatorStepExecutor(),
     connector: async () => {

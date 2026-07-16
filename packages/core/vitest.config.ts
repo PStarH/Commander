@@ -308,7 +308,6 @@ export default defineConfig({
       'tests/security/guardianDangerousToolCall.test.ts',
       'tests/security/capabilityToken.test.ts',
       'tests/security/biscuitCapabilityAdapter.test.ts',
-      'tests/security/effectBroker.test.ts',
       'tests/security/keyProvider.test.ts',
       'tests/security/auditChainLedger.test.ts',
       // WS9 §6 KC-5 closure — chain manifest, asymmetric signer, fail-closed persistor

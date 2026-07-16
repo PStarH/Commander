@@ -1,6 +1,7 @@
 import { KernelStepExecutor, createAgentRuntimeFactory } from '@commander/core';
 import type { StepExecutor } from './types.js';
 import type { AgentRuntimeFactoryOptions } from '@commander/core';
+import type { EffectBroker } from '@commander/effect-broker';
 
 export { KernelStepExecutor } from '@commander/core';
 
@@ -8,15 +9,29 @@ export interface AgentStepExecutorOptions extends AgentRuntimeFactoryOptions {
   defaultMaxSteps?: number;
   defaultTokenBudget?: number;
   defaultProjectId?: string;
+  /**
+   * WS2 §10 Phase 2.4: the unified EffectBroker the agent runtime must use for
+   * external LLM provider calls (action namespace `llm.*`). When provided, the
+   * runtime's provider-call layer should route each LLM request through
+   * `broker.execute({ type: 'llm.<provider>', ... })` so every external side
+   * effect goes through the sole PEP. Provider-call interception itself is an
+   * incremental follow-up; this field establishes the wiring contract.
+   */
+  effectBroker?: EffectBroker;
 }
 
 export function createAgentStepExecutor(options: AgentStepExecutorOptions = {}): StepExecutor {
   const runtimeFactory = createAgentRuntimeFactory(options);
-  return new KernelStepExecutor(runtimeFactory, {
+  const executor = new KernelStepExecutor(runtimeFactory, {
     defaultMaxSteps: options.defaultMaxSteps,
     defaultTokenBudget: options.defaultTokenBudget,
     defaultProjectId: options.defaultProjectId,
   });
+  // WS2 §10: the broker is wired but provider-call interception is deferred.
+  // When options.effectBroker is set, downstream LLM provider calls should be
+  // wrapped through broker.execute({ type: 'llm.*' }). See spec §1 architecture.
+  void options.effectBroker;
+  return executor;
 }
 
 export interface ExecutorManifestEntry {

@@ -390,7 +390,7 @@ export class ToolExecutionService {
       }
 
       // Architecture V2: SideEffectGate — mandatory policy PDP + ATR scheduleAction.
-      // Soft bypass only when COMMANDER_EFFECT_BROKER_COMPAT=1 and not production/V2.
+      // WS2 §9: compat bypass removed; the gate is fail-closed everywhere.
       let schedulerActionId: string | null = null;
       const runHandle = this.runtime.getRunHandle();
       try {

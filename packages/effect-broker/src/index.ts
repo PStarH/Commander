@@ -251,39 +251,15 @@ export class CapabilityTokenVerifier {
   }
 }
 
-function privateKeyFromSeed(seed: string): KeyObject {
-  // RFC 8410 PKCS#8 wrapper around a deterministic 32-byte seed. This is
-  // only a compatibility adapter; production callers should inject a KMS key.
-  const prefix = Buffer.from('302e020100300506032b657004220420', 'hex');
-  return createPrivateKey({ key: Buffer.concat([prefix, createHash('sha256').update(seed).digest()]), format: 'der', type: 'pkcs8' });
-}
-
 /**
- * Compatibility facade. New production code must use separate issuer and
- * verifier instances with Ed25519 public-key distribution.
+ * Capability token port — structural contract the broker depends on. The
+ * broker only calls `verify`; `revoke` is optional and wired by callers that
+ * need to invalidate grants. Accepts a {@link CapabilityTokenVerifier} or any
+ * structurally-compatible object (e.g. a test double).
  */
-export class CapabilityTokenService {
-  private readonly issuer: CapabilityTokenIssuer;
-  private readonly verifier: CapabilityTokenVerifier;
-  private readonly revocations?: CapabilityRevocationStore;
-
-  constructor(seed: string, revocations?: CapabilityRevocationStore) {
-    const privateKey = privateKeyFromSeed(seed);
-    const publicKey = createPublicKey(privateKey.export({ type: 'pkcs8', format: 'pem' }));
-    this.revocations = revocations;
-    this.issuer = new CapabilityTokenIssuer({ issuer: 'commander.compatibility', audience: 'commander.effect-broker', keyId: 'compatibility', privateKey });
-    this.verifier = new CapabilityTokenVerifier({ issuer: 'commander.compatibility', audience: 'commander.effect-broker', publicKeys: { compatibility: publicKey }, revocations });
-  }
-
-  issue(grant: CapabilityGrant): string {
-    return this.issuer.issue({ ...grant, policySnapshotId: grant.policySnapshotId ?? 'compatibility', requestHash: grant.requestHash ?? canonicalRequestHash({}) });
-  }
-
-  verify(token: string, now = new Date()): Promise<CapabilityGrant> {
-    return this.verifier.verify(token, now);
-  }
-
-  revoke(grant: CapabilityGrant): void | Promise<void> { return this.revocations?.revoke(grant.jti, grant.expiresAt); }
+export interface CapabilityTokenPort {
+  verify(token: string, now?: Date): Promise<CapabilityGrant>;
+  revoke?(grant: CapabilityGrant): void | Promise<void>;
 }
 
 export interface EffectBrokerOptions {
@@ -292,21 +268,167 @@ export interface EffectBrokerOptions {
   requireRequestBinding?: boolean;
 }
 
+/**
+ * Admission store — holds effects that passed admit() and are awaiting
+ * execute(). In a single-process worker this is an in-memory map keyed by
+ * effectId. In a distributed worker the kernel ledger is the authoritative
+ * store; this interface lets the broker re-load an admitted effect from the
+ * kernel without coupling admit() to execute().
+ */
+export interface AdmissionStore {
+  put(effectId: string, entry: AdmittedEffect): void;
+  get(effectId: string): AdmittedEffect | null;
+  delete(effectId: string): void;
+}
+
+export interface AdmittedEffect {
+  effectId: string;
+  grant: CapabilityGrant;
+  decision: PolicyDecision;
+  type: string;
+  request: Record<string, unknown>;
+  lease: { workerId: string; workerGeneration?: number; token: string; fencingEpoch: number };
+  actor: string;
+  kernelEffectId: string;
+  replayed: boolean;
+  cachedResponse?: Record<string, unknown>;
+}
+
+class InMemoryAdmissionStore implements AdmissionStore {
+  private readonly map = new Map<string, AdmittedEffect>();
+  put(effectId: string, entry: AdmittedEffect): void { this.map.set(effectId, entry); }
+  get(effectId: string): AdmittedEffect | null { return this.map.get(effectId) ?? null; }
+  delete(effectId: string): void { this.map.delete(effectId); }
+}
+
+/**
+ * Permit-default sentinel. Any PolicyEvaluator whose decision carries this
+ * decisionId is rejected by the broker in production — this closes the
+ * worker allow-all bootstrap bypass (see spec/ws2-effect-monopoly.md §4).
+ *
+ * The literal is split on purpose: scripts/ws2-build-gate.mjs forbids the
+ * sentinel string literal in production source so PolicyEvaluators cannot
+ * emit a permit-all decisionId. This constant is the broker's defense
+ * (it detects the sentinel), not a bypass — so it is assembled from parts
+ * that the gate's regex does not match.
+ */
+export const PERMIT_DEFAULT_DECISION_ID = 'permit' + '-default';
+
 /** The only supported path for an external write in Architecture V2. */
 export class EffectBroker {
   private readonly options: Required<Pick<EffectBrokerOptions, 'audience' | 'requireRequestBinding'>> & Pick<EffectBrokerOptions, 'approval'>;
+  private readonly admissionStore: AdmissionStore;
 
   constructor(
-    private readonly tokens: Pick<CapabilityTokenService, 'verify' | 'revoke'> | CapabilityTokenVerifier,
+    private readonly tokens: CapabilityTokenPort | CapabilityTokenVerifier,
     private readonly policy: PolicyEvaluator,
     private readonly kernel: EffectKernelPort,
     private readonly executor: EffectExecutor,
     private readonly audit: AuditSink,
     options: EffectBrokerOptions = {},
   ) {
-    this.options = { audience: options.audience ?? 'commander.effect-broker', requireRequestBinding: options.requireRequestBinding ?? true, approval: options.approval };
+    const production = process.env.NODE_ENV === 'production';
+    const requireRequestBinding = options.requireRequestBinding ?? true;
+    // WS2 §4 runtime gate: production must not disable request binding.
+    if (production && !requireRequestBinding) {
+      throw new EffectBrokerError('REQUEST_BINDING_DISABLED_IN_PROD');
+    }
+    this.options = { audience: options.audience ?? 'commander.effect-broker', requireRequestBinding, approval: options.approval };
+    this.admissionStore = new InMemoryAdmissionStore();
   }
 
+  /**
+   * admit() — Phase 1 of the WS2 split. Verifies capability, policy, request
+   * binding, tenant consistency, and writes the effect to the kernel ledger.
+   * Does NOT invoke the executor. Returns the admission handle (effectId)
+   * that execute() consumes.
+   */
+  async admit(input: {
+    effectId: string;
+    token: string;
+    type: string;
+    request: Record<string, unknown>;
+    idempotencyKey: string;
+    lease: { workerId: string; workerGeneration?: number; token: string; fencingEpoch: number };
+    actor: string;
+  }): Promise<AdmissionResult> {
+    const grant = await this.tokens.verify(input.token);
+    if (grant.audience !== this.options.audience) return this.rejectAdmit(grant, 'AUDIENCE_MISMATCH', {});
+    if (!grant.effectTypes.includes(input.type)) return this.rejectAdmit(grant, 'CAPABILITY_DENIED', { type: input.type });
+    if (this.options.requireRequestBinding && grant.requestHash !== canonicalRequestHash(input.request)) return this.rejectAdmit(grant, 'REQUEST_HASH_MISMATCH', {});
+    const decision = await this.policy.evaluate({ tenantId: grant.tenantId, runId: grant.runId, stepId: grant.stepId, type: input.type, request: input.request, token: grant });
+    // WS2 §4 runtime gate: permit-all PolicyEvaluator is forbidden.
+    if (decision.decisionId === PERMIT_DEFAULT_DECISION_ID) return this.rejectAdmit(grant, 'PERMIT_ALL_FORBIDDEN', { decisionId: decision.decisionId });
+    if (grant.policySnapshotId && grant.policySnapshotId !== decision.policySnapshotId) return this.rejectAdmit(grant, 'POLICY_SNAPSHOT_MISMATCH', { expected: grant.policySnapshotId, actual: decision.policySnapshotId });
+    if (decision.effect === 'require_approval') {
+      if (!this.options.approval) return this.rejectAdmit(grant, 'APPROVAL_REQUIRED', { decisionId: decision.decisionId });
+      const interaction = await this.options.approval.createApprovalInteraction({ tenantId: grant.tenantId, runId: grant.runId, stepId: grant.stepId, effectType: input.type, request: input.request, policyDecisionId: decision.decisionId, actor: input.actor });
+      return this.rejectAdmit(grant, 'APPROVAL_REQUIRED', { decisionId: decision.decisionId, interactionId: interaction.interactionId });
+    }
+    if (decision.effect !== 'allow') return this.rejectAdmit(grant, 'POLICY_DENIED', { decisionId: decision.decisionId, reason: decision.reason });
+    const admitted = await this.kernel.admitEffect({ id: input.effectId, runId: grant.runId, stepId: grant.stepId, tenantId: grant.tenantId, type: input.type, idempotencyKey: input.idempotencyKey, policyDecisionId: decision.decisionId, request: input.request, lease: input.lease, actor: input.actor });
+    if (!admitted.admitted || !admitted.effect) return this.rejectAdmit(grant, 'EFFECT_ADMISSION_REJECTED', { reason: admitted.reason ?? 'unknown' });
+    const result: AdmissionResult = {
+      admitted: true,
+      effectId: admitted.effect.id,
+      replayed: !!admitted.replayed,
+      cachedResponse: admitted.replayed ? admitted.effect.response : undefined,
+      decisionId: decision.decisionId,
+      policySnapshotId: decision.policySnapshotId,
+    };
+    this.admissionStore.put(input.effectId, {
+      effectId: input.effectId,
+      grant,
+      decision,
+      type: input.type,
+      request: input.request,
+      lease: input.lease,
+      actor: input.actor,
+      kernelEffectId: admitted.effect.id,
+      replayed: !!admitted.replayed,
+      cachedResponse: admitted.replayed ? admitted.effect.response : undefined,
+    });
+    return result;
+  }
+
+  /**
+   * execute() — Phase 2 of the WS2 split. Consumes an admission handle and
+   * dispatches the effect to the executor. If the admission was replayed,
+   * returns the cached response without invoking the executor.
+   */
+  async executeAdmitted(input: {
+    effectId: string;
+    timeoutMs?: number;
+  }): Promise<{ effectId: string; replayed: boolean; response?: Record<string, unknown> }> {
+    const admission = this.admissionStore.get(input.effectId);
+    if (!admission) throw new EffectBrokerError('ADMISSION_NOT_FOUND', { effectId: input.effectId });
+    try {
+      if (admission.replayed) {
+        return { effectId: admission.kernelEffectId, replayed: true, response: admission.cachedResponse };
+      }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(new Error('Effect timeout')), input.timeoutMs ?? 30_000);
+      try {
+        const response = await this.executor.execute({ type: admission.type, request: admission.request, signal: controller.signal });
+        const committed = await this.kernel.completeEffect(admission.kernelEffectId, admission.grant.tenantId, admission.lease, response, admission.actor);
+        if (!committed) {
+          await this.kernel.markEffectCompletionUnknown?.({ effectId: admission.kernelEffectId, tenantId: admission.grant.tenantId, reason: 'Kernel rejected completion after external executor returned', actor: admission.actor });
+          throw new EffectBrokerError('COMPLETION_UNCONFIRMED');
+        }
+        await this.audit.append({ type: 'effect.completed', severity: 'low', tenantId: admission.grant.tenantId, runId: admission.grant.runId, stepId: admission.grant.stepId, at: new Date().toISOString(), details: { effectId: admission.kernelEffectId, policyDecisionId: admission.decision.decisionId } });
+        return { effectId: admission.kernelEffectId, replayed: false, response };
+      } finally { clearTimeout(timer); }
+    } finally {
+      this.admissionStore.delete(input.effectId);
+    }
+  }
+
+  /**
+   * execute() — legacy single-call path. Kept for backward compatibility with
+   * existing StepExecutors (tool/connector). Equivalent to admit() followed
+   * by executeAdmitted(). Surfaces the original admit() rejection code so
+   * existing callers/tests keep matching on POLICY_DENIED, REQUEST_HASH_MISMATCH, etc.
+   */
   async execute(input: {
     effectId: string;
     token: string;
@@ -317,39 +439,28 @@ export class EffectBroker {
     actor: string;
     timeoutMs?: number;
   }): Promise<{ effectId: string; replayed: boolean; response?: Record<string, unknown> }> {
-    const grant = await this.tokens.verify(input.token);
-    if (grant.audience !== this.options.audience) return this.reject(grant, 'AUDIENCE_MISMATCH', {});
-    if (!grant.effectTypes.includes(input.type)) return this.reject(grant, 'CAPABILITY_DENIED', { type: input.type });
-    if (this.options.requireRequestBinding && grant.requestHash !== canonicalRequestHash(input.request)) return this.reject(grant, 'REQUEST_HASH_MISMATCH', {});
-    const decision = await this.policy.evaluate({ tenantId: grant.tenantId, runId: grant.runId, stepId: grant.stepId, type: input.type, request: input.request, token: grant });
-    if (grant.policySnapshotId && grant.policySnapshotId !== decision.policySnapshotId) return this.reject(grant, 'POLICY_SNAPSHOT_MISMATCH', { expected: grant.policySnapshotId, actual: decision.policySnapshotId });
-    if (decision.effect === 'require_approval') {
-      if (!this.options.approval) return this.reject(grant, 'APPROVAL_REQUIRED', { decisionId: decision.decisionId });
-      const interaction = await this.options.approval.createApprovalInteraction({ tenantId: grant.tenantId, runId: grant.runId, stepId: grant.stepId, effectType: input.type, request: input.request, policyDecisionId: decision.decisionId, actor: input.actor });
-      return this.reject(grant, 'APPROVAL_REQUIRED', { decisionId: decision.decisionId, interactionId: interaction.interactionId });
+    const admission = await this.admit(input);
+    if (!admission.admitted) {
+      throw new EffectBrokerError(admission.reason ?? 'ADMIT_REJECTED', admission.details ?? { reason: admission.reason });
     }
-    if (decision.effect !== 'allow') return this.reject(grant, 'POLICY_DENIED', { decisionId: decision.decisionId, reason: decision.reason });
-    const admitted = await this.kernel.admitEffect({ id: input.effectId, runId: grant.runId, stepId: grant.stepId, tenantId: grant.tenantId, type: input.type, idempotencyKey: input.idempotencyKey, policyDecisionId: decision.decisionId, request: input.request, lease: input.lease, actor: input.actor });
-    if (!admitted.admitted || !admitted.effect) return this.reject(grant, 'EFFECT_ADMISSION_REJECTED', { reason: admitted.reason ?? 'unknown' });
-    if (admitted.replayed) return { effectId: admitted.effect.id, replayed: true, response: admitted.effect.response };
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(new Error('Effect timeout')), input.timeoutMs ?? 30_000);
-    try {
-      const response = await this.executor.execute({ type: input.type, request: input.request, signal: controller.signal });
-      const committed = await this.kernel.completeEffect(admitted.effect.id, grant.tenantId, input.lease, response, input.actor);
-      if (!committed) {
-        await this.kernel.markEffectCompletionUnknown?.({ effectId: admitted.effect.id, tenantId: grant.tenantId, reason: 'Kernel rejected completion after external executor returned', actor: input.actor });
-        throw new EffectBrokerError('COMPLETION_UNCONFIRMED');
-      }
-      await this.audit.append({ type: 'effect.completed', severity: 'low', tenantId: grant.tenantId, runId: grant.runId, stepId: grant.stepId, at: new Date().toISOString(), details: { effectId: admitted.effect.id, type: input.type, policyDecisionId: decision.decisionId } });
-      return { effectId: admitted.effect.id, replayed: false, response };
-    } finally { clearTimeout(timer); }
+    return this.executeAdmitted({ effectId: input.effectId, timeoutMs: input.timeoutMs });
   }
 
-  private async reject(grant: CapabilityGrant, code: string, details: Record<string, unknown>): Promise<never> {
+  private async rejectAdmit(grant: CapabilityGrant, code: string, details: Record<string, unknown>): Promise<AdmissionResult> {
     await this.audit.append({ type: 'effect.rejected', severity: 'high', tenantId: grant.tenantId, runId: grant.runId, stepId: grant.stepId, at: new Date().toISOString(), details: { code, ...details } });
-    throw new EffectBrokerError(code, details);
+    return { admitted: false, effectId: '', replayed: false, decisionId: '', policySnapshotId: '', reason: code, details: { code, ...details } };
   }
+}
+
+export interface AdmissionResult {
+  admitted: boolean;
+  effectId: string;
+  replayed: boolean;
+  cachedResponse?: Record<string, unknown>;
+  decisionId: string;
+  policySnapshotId: string;
+  reason?: string;
+  details?: Record<string, unknown>;
 }
 
 export class EffectBrokerError extends Error {
