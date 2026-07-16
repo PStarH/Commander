@@ -254,6 +254,12 @@ jobs:
       - name: Architecture V2 invariant gates
         run: pnpm test:arch
 
+      - name: Architecture constitution guard
+        run: pnpm arch:guard:test
+
+      - name: Architecture constitution guard (repository)
+        run: pnpm arch:guard
+
       - name: Architecture V2 package boundary gate
         run: pnpm arch:gate
 

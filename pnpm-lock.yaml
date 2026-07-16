@@ -175,17 +175,11 @@ importers:
         specifier: 5.8.2
         version: 5.8.2
 
-  packages/control-plane:
-    devDependencies:
-      '@commander/core':
-        specifier: workspace:*
-        version: link:../core
-      typescript:
-        specifier: 5.8.2
-        version: 5.8.2
-
   packages/core:
     dependencies:
+      '@commander/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@commander/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
