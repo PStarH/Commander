@@ -50,8 +50,9 @@ describe('KernelRepository — Durable Timers', () => {
 
     const expired = await repo.claimExpiredTimers(new Date(), 10);
     assert.ok(expired.length >= 1);
-    assert.equal(expired[0].state, 'FIRED');
-    assert.ok(expired[0].firedAt);
+    assert.equal(expired[0].state, 'PROCESSING');
+    assert.ok(expired[0].claimToken);
+    assert.equal(await repo.acknowledgeTimer(expired[0].id, expired[0].tenantId, expired[0].claimToken!), true);
   });
 
   it('cancels a pending timer', async () => {
