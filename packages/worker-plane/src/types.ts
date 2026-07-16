@@ -38,15 +38,26 @@ export interface WorkerRecord extends WorkerDefinition {
 
 export interface WorkerRegistry {
   initialize(): Promise<void>;
-  register(definition: WorkerDefinition, identitySubject: string, tenantIds: string[]): Promise<WorkerRecord>;
-  heartbeat(workerId: string, generation: number, activeSteps: number): Promise<WorkerRecord | null>;
+  register(
+    definition: WorkerDefinition,
+    identitySubject: string,
+    tenantIds: string[],
+  ): Promise<WorkerRecord>;
+  heartbeat(
+    workerId: string,
+    generation: number,
+    activeSteps: number,
+  ): Promise<WorkerRecord | null>;
   drain(workerId: string, generation: number): Promise<boolean>;
   markStale(before: Date): Promise<number>;
   get(workerId: string): Promise<WorkerRecord | null>;
 }
 
 export interface WorkerAuthenticator {
-  authenticate(identity: WorkerIdentity, definition: WorkerDefinition): Promise<WorkerAuthorization>;
+  authenticate(
+    identity: WorkerIdentity,
+    definition: WorkerDefinition,
+  ): Promise<WorkerAuthorization>;
 }
 
 export interface WorkerLease {
@@ -78,7 +89,12 @@ export interface KernelWorkerPort {
     tenantIds: string[];
     capabilities: string[];
   }): Promise<ClaimedStep | null>;
-  heartbeatStep(stepId: string, tenantId: string, lease: WorkerLease, leaseTtlMs: number): Promise<unknown | null>;
+  heartbeatStep(
+    stepId: string,
+    tenantId: string,
+    lease: WorkerLease,
+    leaseTtlMs: number,
+  ): Promise<unknown | null>;
   completeStep(request: {
     stepId: string;
     tenantId: string;
@@ -99,15 +115,24 @@ export interface KernelWorkerPort {
 }
 
 export interface StepExecutor {
-  execute(step: ClaimedStep, context: { signal: AbortSignal; worker: WorkerRecord }): Promise<Record<string, unknown> | undefined>;
+  execute(
+    step: ClaimedStep,
+    context: { signal: AbortSignal; worker: WorkerRecord },
+  ): Promise<Record<string, unknown> | undefined>;
 }
 
 export class WorkerExecutionError extends Error {
   constructor(
     message: string,
-    readonly options: { code?: string; retryable?: boolean; retryDelayMs?: number; details?: Record<string, unknown> } = {},
+    readonly options: {
+      code?: string;
+      retryable?: boolean;
+      retryDelayMs?: number;
+      details?: Record<string, unknown>;
+    } = {},
+    cause?: unknown,
   ) {
-    super(message);
+    super(message, cause !== undefined ? { cause } : undefined);
     this.name = 'WorkerExecutionError';
   }
 }
@@ -116,4 +141,9 @@ export interface WorkerServiceConfig {
   leaseTtlMs?: number;
   workerHeartbeatMs?: number;
   pollIntervalMs?: number;
+  sandboxReadiness?: WorkerSandboxReadiness;
+}
+
+export interface WorkerSandboxReadiness {
+  assertReady(): Promise<void>;
 }

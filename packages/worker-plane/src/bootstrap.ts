@@ -29,8 +29,14 @@ import { ToolStepExecutor } from './toolStepExecutor.js';
 import { EvaluatorStepExecutor } from './evaluatorStepExecutor.js';
 import { CompositeStepExecutor } from './compositeStepExecutor.js';
 import { createAgentStepExecutor, createExecutorManifest } from './workerRuntimeAdapter.js';
+import { createProductionWorkerSandboxReadiness } from './sandboxReadiness.js';
 import type { WorkerDefinition, WorkerIdentity, WorkerKind, StepExecutor } from './types.js';
-import type { EffectExecutor, PolicyEvaluator, AuditSink, EffectKernelPort } from '@commander/effect-broker';
+import type {
+  EffectExecutor,
+  PolicyEvaluator,
+  AuditSink,
+  EffectKernelPort,
+} from '@commander/effect-broker';
 import { EffectBroker, CapabilityTokenService } from '@commander/effect-broker';
 
 // Lazy import to avoid circular dependency at module load time
@@ -38,6 +44,8 @@ import { EffectBroker, CapabilityTokenService } from '@commander/effect-broker';
 type Pool = { connect(): Promise<any>; end(): Promise<void> };
 
 export async function createWorkerService(): Promise<WorkerService> {
+  await createProductionWorkerSandboxReadiness().assertReady();
+
   // ── Validate required env vars ──
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) {
@@ -52,7 +60,9 @@ export async function createWorkerService(): Promise<WorkerService> {
   // ── Parse configuration ──
   const workerId = process.env.COMMANDER_WORKER_ID ?? `worker-${randomUUID().slice(0, 8)}`;
   const workerKind = (process.env.COMMANDER_WORKER_KIND ?? 'agent') as WorkerKind;
-  const capabilities = (process.env.COMMANDER_WORKER_CAPABILITIES ?? 'agent').split(',').map((s) => s.trim());
+  const capabilities = (process.env.COMMANDER_WORKER_CAPABILITIES ?? 'agent')
+    .split(',')
+    .map((s) => s.trim());
   const maxConcurrency = parseInt(process.env.COMMANDER_WORKER_MAX_CONCURRENCY ?? '10', 10);
   const tenantIds = (process.env.COMMANDER_WORKER_TENANTS ?? '*').split(',').map((s) => s.trim());
 
@@ -79,7 +89,7 @@ export async function createWorkerService(): Promise<WorkerService> {
   };
 
   // ── Connect to PostgreSQL ──
-  const { Pool: PgPool } = await import('pg') as unknown as {
+  const { Pool: PgPool } = (await import('pg')) as unknown as {
     Pool: new (config: { connectionString: string; max: number }) => Pool;
   };
   const pool = new PgPool({ connectionString: dbUrl, max: maxConcurrency + 5 });
@@ -124,6 +134,7 @@ export async function createWorkerService(): Promise<WorkerService> {
       leaseTtlMs: parseInt(process.env.COMMANDER_WORKER_LEASE_TTL_MS ?? '30000', 10),
       workerHeartbeatMs: parseInt(process.env.COMMANDER_WORKER_HEARTBEAT_MS ?? '10000', 10),
       pollIntervalMs: parseInt(process.env.COMMANDER_WORKER_POLL_MS ?? '250', 10),
+      sandboxReadiness: createProductionWorkerSandboxReadiness(),
     },
   );
 
@@ -141,9 +152,7 @@ export async function createWorkerService(): Promise<WorkerService> {
  * - `COMMANDER_WORKER_EFFECT_POLICY=deny|fail-closed` → deny-all
  * - unset → deny-all (production-safe default)
  */
-export function createWorkerPolicyEvaluator(
-  env: NodeJS.ProcessEnv = process.env,
-): PolicyEvaluator {
+export function createWorkerPolicyEvaluator(env: NodeJS.ProcessEnv = process.env): PolicyEvaluator {
   const raw = (env.COMMANDER_WORKER_EFFECT_POLICY ?? '').trim().toLowerCase();
   if (raw === 'permit' || raw === 'allow' || raw === 'permit-default' || raw === '1') {
     return {
@@ -176,7 +185,11 @@ function createEffectBroker(kernel: EffectKernelPort): EffectBroker {
   // replace this with a real connector (HTTP, DB, queue, etc.) dispatcher.
   // Policy must allow first — default policy is deny-all.
   const executor: EffectExecutor = {
-    execute: async (input: { type: string; request: Record<string, unknown>; signal: AbortSignal }) => {
+    execute: async (input: {
+      type: string;
+      request: Record<string, unknown>;
+      signal: AbortSignal;
+    }) => {
       // eslint-disable-next-line no-console
       console.warn(`[effect-broker] Executing effect type=${input.type}`, input.request);
       return { executed: true, type: input.type };
@@ -185,7 +198,15 @@ function createEffectBroker(kernel: EffectKernelPort): EffectBroker {
 
   // Console audit sink. Production should forward to a durable audit store.
   const audit: AuditSink = {
-    append: async (event: { type: string; severity: 'low' | 'medium' | 'high' | 'critical'; tenantId: string; runId: string; stepId: string; at: string; details: Record<string, unknown> }) => {
+    append: async (event: {
+      type: string;
+      severity: 'low' | 'medium' | 'high' | 'critical';
+      tenantId: string;
+      runId: string;
+      stepId: string;
+      at: string;
+      details: Record<string, unknown>;
+    }) => {
       // eslint-disable-next-line no-console
       console.log(`[effect-audit] ${event.type} ${event.severity}`, event.details);
     },
@@ -219,7 +240,9 @@ async function createExecutorForKind(
 
   manifest.validate(capabilities);
 
-  const requiredCapabilities = capabilities.includes('*') ? Array.from(manifest.entries.keys()) : capabilities;
+  const requiredCapabilities = capabilities.includes('*')
+    ? Array.from(manifest.entries.keys())
+    : capabilities;
   const executors: Record<string, StepExecutor> = {};
   for (const cap of requiredCapabilities) {
     const entry = manifest.entries.get(cap);
@@ -238,7 +261,9 @@ async function createExecutorForKind(
   // Single executor — return directly
   const single = executorList[0]?.[1];
   if (!single) {
-    throw new Error(`No executor available for worker kind '${kind}' with capabilities [${capabilities.join(', ')}]`);
+    throw new Error(
+      `No executor available for worker kind '${kind}' with capabilities [${capabilities.join(', ')}]`,
+    );
   }
   return single;
 }

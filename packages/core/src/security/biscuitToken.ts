@@ -156,7 +156,9 @@ export class BiscuitCapabilityToken implements ICapabilityToken {
       format: 'der',
       type: 'pkcs8',
     });
-    const publicKey = crypto.createPublicKey(privKeyObj);
+    const publicKey = crypto.createPublicKey(
+      privKeyObj.export({ format: 'pem', type: 'pkcs8' }).toString(),
+    );
 
     const pubKeyDer = publicKey.export({ type: 'spki', format: 'der' });
     const pubKeyB64 = pubKeyDer.toString('base64');
@@ -524,7 +526,9 @@ export class BiscuitTokenIssuer {
         format: 'der',
         type: 'pkcs8',
       });
-      const pub = crypto.createPublicKey(privKeyObj);
+      const pub = crypto.createPublicKey(
+        privKeyObj.export({ format: 'pem', type: 'pkcs8' }).toString(),
+      );
       this.publicKey = pub.export({ type: 'spki', format: 'der' }).toString('base64');
     } else {
       // Generate a new key pair
