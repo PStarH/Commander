@@ -210,9 +210,8 @@ export class MCPServer {
         const toolArgs = p.arguments ?? {};
         // ── Security gate ──────────────────────────────────────────────────
         // External MCP clients must not bypass GuardianAgent / ExecPolicyEngine.
-        // Every tools/call is monitored before execution. Fail-open on internal
-        // errors (logged via reportSilentFailure) so a broken security hook
-        // never takes down a legitimate tool call.
+        // Every tools/call is monitored before execution. Fail-closed on internal
+        // errors so a broken security hook cannot silently bypass the gate.
         try {
           const guardianAgent = getGuardianAgent();
           const action: GuardianAction = {
@@ -259,7 +258,14 @@ export class MCPServer {
           }
         } catch (err) {
           reportSilentFailure(err, 'mcpServer:tools/call:securityGate');
-          // fail-open: proceed to execution
+          return {
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: MCP_ERROR_CODES.INTERNAL_ERROR,
+              message: `Tool "${p.name}" rejected: security gate unavailable`,
+            },
+          };
         }
         const MCP_TOOL_TIMEOUT_MS = 60000;
         const result = await this.withTimeout(
