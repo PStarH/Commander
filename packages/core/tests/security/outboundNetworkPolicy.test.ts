@@ -143,6 +143,48 @@ describe('OutboundNetworkPolicy', () => {
       }
     });
 
+    it('checkAsync returns public addresses for pinning', async () => {
+      const dns = await import('node:dns');
+      const original = dns.promises.lookup;
+      dns.promises.lookup = (async () => [
+        { address: '104.18.0.1', family: 4 },
+      ]) as typeof dns.promises.lookup;
+      try {
+        const p = new OutboundNetworkPolicy({
+          enabled: true,
+          allowlist: ['api.openai.com'],
+          blocklist: [],
+          blockPrivateIPs: true,
+        });
+        const result = await p.checkAsync('https://api.openai.com/v1/chat');
+        expect(result.allowed).toBe(true);
+        expect(result.addresses).toEqual(['104.18.0.1']);
+      } finally {
+        dns.promises.lookup = original;
+      }
+    });
+
+    it('checkSsrfAsync allows non-allowlisted public hosts', async () => {
+      const dns = await import('node:dns');
+      const original = dns.promises.lookup;
+      dns.promises.lookup = (async () => [
+        { address: '93.184.216.34', family: 4 },
+      ]) as typeof dns.promises.lookup;
+      try {
+        const p = new OutboundNetworkPolicy({
+          enabled: true,
+          allowlist: ['api.openai.com'],
+          blocklist: [],
+          blockPrivateIPs: true,
+        });
+        const result = await p.checkSsrfAsync('https://example.com/hook');
+        expect(result.allowed).toBe(true);
+        expect(result.addresses).toEqual(['93.184.216.34']);
+      } finally {
+        dns.promises.lookup = original;
+      }
+    });
+
     it('handles malformed URLs', () => {
       const result = policy.check('not-a-url');
       expect(result.allowed).toBe(false);
