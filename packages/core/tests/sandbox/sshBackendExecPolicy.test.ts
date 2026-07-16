@@ -38,4 +38,10 @@ describe('SSHBackend ExecPolicy gate', () => {
     expect(result.stderr).toMatch(/shell metacharacters/);
     expect(result.durationMs).toBeLessThan(500);
   });
+
+  it('rejects carriage-return metacharacters', async () => {
+    const result = await backend.execute('echo hi\rbash', undefined, 2);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(/shell metacharacters/);
+  });
 });

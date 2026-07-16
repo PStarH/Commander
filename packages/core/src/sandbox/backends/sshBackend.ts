@@ -87,7 +87,7 @@ export class SSHBackend implements ExecutionBackend {
 
     // Even "allow" rules can match a safe prefix while a pipe/script RCE follows
     // (e.g. `echo hi | bash`). Reject shell metacharacters / substitution on SSH.
-    if (/[|;&`$<>\n]|&&|\|\||\$\(/.test(command)) {
+    if (/[|;&`$<>\n\r]|&&|\|\||\$\(/.test(command)) {
       getSecurityAuditLogger().logCommandInjectionAttempt(
         'SSHBackend',
         'Rejected command with shell metacharacters',
