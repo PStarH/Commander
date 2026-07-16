@@ -263,12 +263,23 @@ jobs:
       - name: Architecture V2 package boundary gate
         run: pnpm arch:gate
 
+      - name: Production sandbox static gate
+        run: pnpm --filter @commander/core build:production
+
+      - name: Production sandbox boot-refuse
+        # boot-refuse tests construct their own production env internally
+        # (local `productionEnv` constant). Do NOT set COMMANDER_ALLOW_NO_SANDBOX
+        # here — spec §3 forbids that combination even as dead config.
+        run: pnpm --filter @commander/core exec tsx --test tests/sandbox/boot-refuse.test.ts
+
       - name: Readiness gate (strict)
         run: pnpm check:readiness
 
       - name: Run core tests
         shell: bash
         env:
+          # Dev/test bypass only: CI runners lack Docker/gVisor runtimes, so the
+          # test suite needs the noop fallback. This NEVER runs in production.
           COMMANDER_ALLOW_NO_SANDBOX: true
         run: |
           if [ "$SQLITE_BINDING_OK" = "false" ]; then
@@ -281,6 +292,7 @@ jobs:
       - name: Run SLO measurements
         shell: bash
         env:
+          # Dev/test bypass only — CI runners lack real sandbox runtimes.
           COMMANDER_ALLOW_NO_SANDBOX: true
         run: pnpm --filter @commander/core test:slo
 
@@ -301,6 +313,7 @@ jobs:
 
       - name: Path security tests
         env:
+          # Dev/test bypass only — CI runners lack real sandbox runtimes.
           COMMANDER_ALLOW_NO_SANDBOX: true
         run: pnpm --filter @commander/core test:node:pathsec
 
@@ -379,6 +392,10 @@ jobs:
         run: pnpm exec tsx --test packages/kernel/src/postgres.integration.test.ts
       - name: Worker plane e2e (execute + lease reclaim)
         run: pnpm exec tsx --test --test-force-exit packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts
+      - name: Production worker sandbox boot-refuse
+        # boot-refuse test passes env explicitly to createProductionWorkerSandboxReadiness().
+        # Do NOT set COMMANDER_ALLOW_NO_SANDBOX here — spec §3 forbids that combination.
+        run: pnpm exec tsx --test packages/worker-plane/src/boot-refuse.test.ts
       - name: Full Gateway → Worker terminal loop
         run: pnpm p0:full-loop
         env:

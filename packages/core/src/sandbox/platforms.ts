@@ -8,6 +8,7 @@ import type {
   SandboxProfile,
   SandboxExecutionResult,
   SandboxMechanism,
+  SandboxWorkloadContext,
 } from './types';
 import { getGlobalLogger } from '../logging';
 import { buildSeccompFilter, countAllowedSyscalls } from './seccompBpf';
@@ -15,6 +16,7 @@ import { getLLMAPIDomains, shquote, writeProxyScript } from './networkProxy';
 import { AppContainerSB } from './appContainer';
 import { TEESandbox } from './teeEnclave';
 import { isV8IsolateAvailable, getV8IsolateSandbox } from './v8Isolate';
+import { buildWorkloadDockerOptions } from './workload';
 
 // Expanded deny list — covers common secret-bearing env vars beyond the original 5
 const EXTRA_DENY = [
@@ -33,6 +35,11 @@ const EXTRA_DENY = [
   'ENCRYPTION_KEY',
   'CONNECTION_STRING',
   'DSN',
+  'PASSWORD',
+  'SECRET',
+  'TOKEN',
+  'CREDENTIAL',
+  'CREDENTIALS',
 ];
 
 function filterEnv(p: SandboxProfile): Record<string, string> {
@@ -52,6 +59,26 @@ function filterEnv(p: SandboxProfile): Record<string, string> {
 }
 
 const MAX_OUTPUT_BYTES = 10 * 1024 * 1024; // 10MB
+
+/** Shared OCI hardening options for Docker and gVisor workloads. */
+export function buildContainerSecurityOptions(): string[] {
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 65532;
+  const gid = typeof process.getgid === 'function' ? process.getgid() : 65532;
+  const nonRootUid = uid > 0 ? uid : 65532;
+  const nonRootGid = gid > 0 ? gid : 65532;
+
+  return [
+    '--user',
+    `${nonRootUid}:${nonRootGid}`,
+    '--cap-drop',
+    'ALL',
+    '--security-opt',
+    'no-new-privileges',
+    '--read-only',
+    '--tmpfs',
+    '/tmp:rw,noexec,nosuid,size=64m',
+  ];
+}
 
 /**
  * Safely split a command string into argv without shell interpretation.
@@ -429,7 +456,12 @@ class SeatbeltSB implements PlatformSandbox {
         }
       })();
   }
-  async execute(cmd: string, p: SandboxProfile, wd?: string): Promise<SandboxExecutionResult> {
+  async execute(
+    cmd: string,
+    p: SandboxProfile,
+    wd?: string,
+    context?: SandboxWorkloadContext,
+  ): Promise<SandboxExecutionResult> {
     const profile = buildSeatbeltProfile(p);
     // Use mkdtemp for unpredictable temp file name (prevents TOCTOU symlink attack)
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), '.cmd-sb-'));
@@ -475,7 +507,12 @@ class BwrapSB implements PlatformSandbox {
         }
       })();
   }
-  async execute(cmd: string, p: SandboxProfile, wd?: string): Promise<SandboxExecutionResult> {
+  async execute(
+    cmd: string,
+    p: SandboxProfile,
+    wd?: string,
+    context?: SandboxWorkloadContext,
+  ): Promise<SandboxExecutionResult> {
     const start = Date.now();
     const workdir = wd ?? process.cwd();
     const env = filterEnv(p);
@@ -694,7 +731,7 @@ class BwrapSB implements PlatformSandbox {
 
 // gVisor (runsc) — kernel-level sandbox providing stronger isolation than standard Docker.
 // Uses the runsc OCI runtime (gVisor's user-space kernel) which intercepts all syscalls.
-// Falls back to DockerSB if runsc is not available.
+// When runsc is unavailable, available=false; production must not downgrade to Docker.
 class GVisorSB implements PlatformSandbox {
   readonly name = 'gvisor' as const;
   readonly available: boolean;
@@ -723,7 +760,12 @@ class GVisorSB implements PlatformSandbox {
     })();
   }
 
-  async execute(cmd: string, p: SandboxProfile, wd?: string): Promise<SandboxExecutionResult> {
+  async execute(
+    cmd: string,
+    p: SandboxProfile,
+    wd?: string,
+    context?: SandboxWorkloadContext,
+  ): Promise<SandboxExecutionResult> {
     const start = Date.now();
     const workdir = wd ?? process.cwd();
     const image = process.env.COMMANDER_SANDBOX_IMAGE || 'node:22-slim';
@@ -746,17 +788,10 @@ class GVisorSB implements PlatformSandbox {
       '-w',
       workdir,
     ];
+    if (context) args.push(...buildWorkloadDockerOptions(context));
 
-    // gVisor-specific security: no-new-privileges is enforced by default
-    args.push(
-      '--cap-drop',
-      'ALL',
-      '--security-opt',
-      'no-new-privileges',
-      '--read-only',
-      '--tmpfs',
-      '/tmp:rw,noexec,nosuid,size=64m',
-    );
+    // gVisor-specific security: no-new-privileges is enforced by default.
+    args.push(...buildContainerSecurityOptions());
 
     // Network isolation
     if (p.network === 'blocked') {
@@ -940,7 +975,12 @@ class DockerSB implements PlatformSandbox {
     }
   }
 
-  async execute(cmd: string, p: SandboxProfile, wd?: string): Promise<SandboxExecutionResult> {
+  async execute(
+    cmd: string,
+    p: SandboxProfile,
+    wd?: string,
+    context?: SandboxWorkloadContext,
+  ): Promise<SandboxExecutionResult> {
     const start = Date.now();
     const workdir = wd ?? process.cwd();
     const cleanupPaths: string[] = []; // Local to this execution — concurrency-safe
@@ -970,6 +1010,7 @@ class DockerSB implements PlatformSandbox {
       '-w',
       workdir,
     ];
+    if (context) args.push(...buildWorkloadDockerOptions(context));
 
     // Network isolation: 'none' for blocked, proxy gate for 'proxy' mode
     if (p.network === 'blocked') {
@@ -1020,15 +1061,7 @@ class DockerSB implements PlatformSandbox {
     // Security (G8): Configurable CPU resource limit — prevent crypto-mining / DoS via CPU exhaustion.
     const _cpuLimit = p.cpuLimit ?? 2;
     args.push('--cpus', String(_cpuLimit), '--cpu-quota', String(Math.round(_cpuLimit * 100000)));
-    args.push(
-      '--cap-drop',
-      'ALL',
-      '--security-opt',
-      'no-new-privileges',
-      '--read-only',
-      '--tmpfs',
-      '/tmp:rw,noexec,nosuid,size=64m',
-    );
+    args.push(...buildContainerSecurityOptions());
 
     // Use --env-file to prevent env var injection via special characters
     const env = filterEnv(p);

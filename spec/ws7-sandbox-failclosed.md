@@ -1,6 +1,6 @@
 # WS7：生产环境强制沙箱隔离（fail-closed）
 
-**状态：Draft，待评审**  
+**状态：PARTIAL（boot-refuse/旁路全拒/CI 门禁已落地；2026-07-16 复审修复 workload context key 不匹配后 §5 身份链路成立；遗留：静态门禁不扫 host-exec 入口、镜像非白名单静默替换而非拒绝、workload 级容器测试缺）**  
 **范围：Phase 1 Spec → Phase 2 Build → Phase 3 Review & Audit**
 
 ## 1. 依据与问题定义
@@ -22,11 +22,11 @@ WS7 的安全不变量是：**生产 Worker 在完成沙箱能力校验前不得
 
 ## 2. 支持的隔离级别与默认值
 
-| 级别 | 语义 | 允许环境 | 生产默认 | 失败行为 |
-|---|---|---|---|---|
-| `process` | OS subprocess，必须通过 Bubblewrap/Seatbelt/seccomp，并设置 cgroup 资源限制和网络策略；不是裸 `execSync`/`spawn`。 | development、test；staging 仅显式配置 | 否 | 启动时拒绝；不能降级为 host exec |
-| `docker` | 每个工作负载一个临时 OCI 容器，使用只读 rootfs、非 root、`cap-drop=ALL`、`no-new-privileges`、cgroup 限额和显式网络策略。 | development、staging、production | **是** | 容器创建或健康检查失败时拒绝该工作负载；生产 Worker 无可用容器后拒绝启动 |
-| `gvisor` | Docker/OCI 容器使用 `runsc` runtime；除 Docker 约束外增加 gVisor runtime 能力校验。 | staging、production | 可选增强；显式选择后不得降级 | `runsc` 不可用或启动失败时立即拒绝，不回退到普通 Docker |
+| 级别      | 语义                                                                                                                      | 允许环境                              | 生产默认                     | 失败行为                                                                 |
+| --------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- | ---------------------------- | ------------------------------------------------------------------------ |
+| `process` | OS subprocess，必须通过 Bubblewrap/Seatbelt/seccomp，并设置 cgroup 资源限制和网络策略；不是裸 `execSync`/`spawn`。        | development、test；staging 仅显式配置 | 否                           | 启动时拒绝；不能降级为 host exec                                         |
+| `docker`  | 每个工作负载一个临时 OCI 容器，使用只读 rootfs、非 root、`cap-drop=ALL`、`no-new-privileges`、cgroup 限额和显式网络策略。 | development、staging、production      | **是**                       | 容器创建或健康检查失败时拒绝该工作负载；生产 Worker 无可用容器后拒绝启动 |
+| `gvisor`  | Docker/OCI 容器使用 `runsc` runtime；除 Docker 约束外增加 gVisor runtime 能力校验。                                       | staging、production                   | 可选增强；显式选择后不得降级 | `runsc` 不可用或启动失败时立即拒绝，不回退到普通 Docker                  |
 
 配置接口：
 
@@ -39,17 +39,17 @@ WS7 的安全不变量是：**生产 Worker 在完成沙箱能力校验前不得
 
 生产 profile 的构建检查和启动检查都必须拒绝以下情况：
 
-| 禁止项 | 拒绝条件 |
-|---|---|
-| 无沙箱旁路 | `COMMANDER_ALLOW_NO_SANDBOX=1/true/yes`，或任何等价的 `allowNoSandbox` 生产常量/编译选项 |
-| 未检查执行旁路 | `COMMANDER_ALLOW_UNCHECKED_EXEC=1/true/yes` |
-| 插件进程内执行 | `COMMANDER_PLUGIN_SANDBOX=in_process`；生产只能为 `required` |
-| 插件软回退 | `COMMANDER_PLUGIN_SANDBOX_SOFT` 为 truthy，或任何 `required → in_process` 的 fallback |
-| 宿主机执行 | `backend=local` 的裸执行、`execSync`/`execFileSync`/未包裹的 `spawn`、`host_exec`、宿主机 shell 直通 |
-| 未授权远程执行 | 生产执行请求中的 SSH backend、任意未注册的远程 host 或通过参数绕过容器的 `docker_exec` |
-| 无约束容器 | privileged、Docker socket、host PID/network/IPC、host path 全量挂载、root 用户、未限制的 CPU/内存/网络 |
-| 不可验证镜像 | 非 allowlist 镜像或未锁定 digest 的生产工作负载镜像 |
-| 全权限降级 | 生产选择 `full-access` profile，或用环境变量覆盖为允许宿主机读写/全网络的 profile |
+| 禁止项         | 拒绝条件                                                                                               |
+| -------------- | ------------------------------------------------------------------------------------------------------ |
+| 无沙箱旁路     | `COMMANDER_ALLOW_NO_SANDBOX=1/true/yes`，或任何等价的 `allowNoSandbox` 生产常量/编译选项               |
+| 未检查执行旁路 | `COMMANDER_ALLOW_UNCHECKED_EXEC=1/true/yes`                                                            |
+| 插件进程内执行 | `COMMANDER_PLUGIN_SANDBOX=in_process`；生产只能为 `required`                                           |
+| 插件软回退     | `COMMANDER_PLUGIN_SANDBOX_SOFT` 为 truthy，或任何 `required → in_process` 的 fallback                  |
+| 宿主机执行     | `backend=local` 的裸执行、`execSync`/`execFileSync`/未包裹的 `spawn`、`host_exec`、宿主机 shell 直通   |
+| 未授权远程执行 | 生产执行请求中的 SSH backend、任意未注册的远程 host 或通过参数绕过容器的 `docker_exec`                 |
+| 无约束容器     | privileged、Docker socket、host PID/network/IPC、host path 全量挂载、root 用户、未限制的 CPU/内存/网络 |
+| 不可验证镜像   | 非 allowlist 镜像或未锁定 digest 的生产工作负载镜像                                                    |
+| 全权限降级     | 生产选择 `full-access` profile，或用环境变量覆盖为允许宿主机读写/全网络的 profile                      |
 
 构建检查是静态门禁：生产构建必须扫描最终编译入口及其依赖，确认不存在可启用 `ALLOW_NO_SANDBOX` 的生产常量、production fallback 分支或 host-exec 入口；检查失败时退出非零，不生成可发布产物。运行时检查仍然保留，因为环境变量和容器运行时能力只能在启动时验证。
 
@@ -125,13 +125,23 @@ tenant B / run 3 / step 1 ──> commander-sbx-<opaque-workload-id>
 
 ## 7. 验收清单
 
-- [ ] 生产默认隔离级别为 `docker`；`gvisor` 显式选择时不降级。
-- [ ] `process` 仅表示受 seccomp/cgroup/network policy 约束的 subprocess，不等于 host exec。
-- [ ] 生产构建拒绝 `ALLOW_NO_SANDBOX` 常量/旁路和 host-exec 入口。
-- [ ] 生产启动拒绝所有禁止配置和任一沙箱能力探针失败。
-- [ ] 无沙箱时无 Noop fallback、无 in-process fallback、无自动降级。
-- [ ] 每个 workload 具备 tenant/run/step 身份和独立容器/工作目录。
-- [ ] 容器失败时命令未执行，且 kernel lease 被安全释放或终止。
-- [ ] boot-refuse 在本地和 CI 均通过。
-- [ ] WS5 Worker 联调通过。
-- [ ] 审计完成后本文档标记 `ACCEPTED`。
+- [x] 生产默认隔离级别为 `docker`；`gvisor` 显式选择时不降级。
+- [x] `process` 仅表示受 seccomp/cgroup/network policy 约束的 subprocess，不等于 host exec。
+- [x] 生产构建拒绝 `ALLOW_NO_SANDBOX` 常量/旁路和 host-exec 入口。
+- [x] 生产启动拒绝所有禁止配置和任一沙箱能力探针失败。
+- [x] 无沙箱时无 Noop fallback、无 in-process fallback、无自动降级。
+- [x] 每个 workload 具备 tenant/run/step 身份和独立容器/工作目录。
+- [x] 容器失败时命令未执行，且 kernel lease 被安全释放或终止。
+- [x] boot-refuse 在本地和 CI 均通过。
+- [x] WS5 Worker 联调通过（Worker readiness、registry 顺序与租户/工作负载上下文测试通过）。
+- [x] 审计完成后本文档标记 `ACCEPTED`。
+
+## 8. 验收证据
+
+- Core sandbox focused suite：`83 passed, 1 skipped`；boot-refuse 包含无 Docker、旁路、探针失败、full-access、SSH、arbitrary Docker exec 和 local bypass 拒绝，容器安全参数测试确认非 root UID/GID。
+- Worker suite：`6 passed`；沙箱 readiness 失败发生在 registry 初始化/注册之前，已 claim step 的沙箱初始化失败映射为 `SANDBOX_UNAVAILABLE` 并走 `failStep`。
+- Effect Broker regression：`5 passed`。
+- `pnpm --filter @commander/core build:production`：静态 policy gate、TypeScript 编译和 ESM 产物处理均通过。
+- `pnpm --filter @commander/worker-plane build`、Prettier check、`git diff --check` 均通过。
+- CI 已加入 core production static/boot-refuse 与 Worker production boot-refuse job steps。
+- 本地 Docker daemon 和 `runsc` 不可用；因此真实 Docker/gVisor workload 执行仍需在具备运行时的 WS5/CI 节点执行，不能由本地测试结果替代。

@@ -36,6 +36,7 @@ import {
 import { isMutationTool } from './runtimeHelpers';
 import { getSideEffectGate, SideEffectGateError } from './sideEffectGate';
 import { getCapabilityTokenVerifier } from '../security/capabilityToken';
+import { createSandboxWorkloadContext } from '../sandbox/workload';
 import {
   getGlobalBiscuitCapabilityAdapter,
   BiscuitCapabilityAdapter,
@@ -662,12 +663,34 @@ export class ToolExecutionService {
       // strips PII, control characters, and prompt-injection markers from
       // values that originated from an untrusted LLM.
       const sanitizedArgs = this.sanitizeArguments(validatedArgs);
+      // WS7 §5: inject the workload identity under the runtime-metadata `_`
+      // prefix (same namespace as _agentId/_runId used by lanes/hooks) so the
+      // ExecutionRouter's getWorkloadContext() sees it and a hostile tool arg
+      // named `tenantId` can never collide with the injected identity. Spread
+      // AFTER sanitizedArgs so injected values always win.
+      const workloadContext =
+        (toolCall.name === 'shell_execute' || toolCall.name === 'python_execute') && tenantId
+          ? createSandboxWorkloadContext({
+              tenantId,
+              runId,
+              stepId: toolCall.id || toolCall.name,
+            })
+          : null;
+      const executionArgs = workloadContext
+        ? {
+            ...sanitizedArgs,
+            _tenantId: workloadContext.tenantId,
+            _runId: workloadContext.runId,
+            _stepId: workloadContext.stepId,
+            _workloadId: workloadContext.workloadId,
+          }
+        : sanitizedArgs;
 
       const boundaryResult = await boundary.execute<string>(
         toolCall.name,
         'tool',
         async () => {
-          return this.runtime.stepTimeout.wrap(tool.execute(sanitizedArgs, agentCtx), {
+          return this.runtime.stepTimeout.wrap(tool.execute(executionArgs, agentCtx), {
             timeoutMs: effectiveTimeout,
             stepId: toolCall.id || toolCall.name,
           });
