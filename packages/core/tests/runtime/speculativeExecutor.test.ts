@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   PatternTracker,
   resetPatternTracker,
@@ -221,5 +221,69 @@ describe('SpeculativeExecutor - triggerSpeculativeExecution integration', () => 
     });
     await svc.triggerSpeculativeExecution();
     expect(executeCalled).toBe(false);
+  });
+
+  it('skips speculative execute when security gate blocks', async () => {
+    vi.resetModules();
+    vi.doMock('../../src/security/securityGuardianFacade', () => ({
+      checkToolGuardian: () => ({
+        allowed: false,
+        reason: 'blocked for test',
+        kind: 'gateway_blocked',
+      }),
+    }));
+
+    const { ToolExecutionService } = await import('../../src/runtime/toolExecutionService');
+    const { getPatternTracker } = await import('../../src/runtime/speculativeExecutor');
+
+    let executeCalled = false;
+    let cacheSetCalled = false;
+    const mockTool = {
+      execute: async () => {
+        executeCalled = true;
+        return 'secret-result';
+      },
+    };
+    const tools = new Map([['file_read', mockTool as never]]);
+    const mockCache = {
+      get: () => null,
+      set: () => {
+        cacheSetCalled = true;
+      },
+    };
+
+    const tracker = getPatternTracker();
+    for (let i = 0; i < 10; i++) {
+      tracker.recordSequence(['file_search', 'file_read']);
+    }
+
+    const svc = new ToolExecutionService({
+      tools,
+      compensationService: {} as never,
+      cacheManager: { getToolCache: () => mockCache } as never,
+      dlq: {} as never,
+      getRunHandle: () => null,
+      config: {
+        speculativeExecution: { enabled: true },
+        securityMonitor: { enabled: true },
+      } as never,
+      reflexionGenerator: {} as never,
+      stepTimeout: {} as never,
+      getPromotedTools: () => new Set(),
+      generateActionId: () => 'test',
+      getBreakerRegistry: () => ({ get: () => null }) as never,
+    });
+
+    // Seed recent calls so planSpeculativeExecution can predict file_read
+    (svc as unknown as { recentToolCalls: Array<{ name: string; arguments: Record<string, unknown> }> }).recentToolCalls =
+      [{ name: 'file_search', arguments: { q: 'x' } }];
+
+    await svc.triggerSpeculativeExecution();
+
+    expect(executeCalled).toBe(false);
+    expect(cacheSetCalled).toBe(false);
+
+    vi.doUnmock('../../src/security/securityGuardianFacade');
+    vi.resetModules();
   });
 });
