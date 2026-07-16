@@ -1,0 +1,10 @@
+{
+  "testCaseId": "DATA-3",
+  "verdict": "PASS",
+  "evidenceLevel": "live",
+  "breach": false,
+  "details": "WITH CHECK rejected cross-tenant INSERT (tenant_id=tenant-b from tenant-a session). psql status=1; err=ERROR:  new row violates row-level security policy for table \"runs\"",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:21.386Z"
+}

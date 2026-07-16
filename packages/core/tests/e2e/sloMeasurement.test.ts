@@ -18,6 +18,8 @@ import { DeadLetterQueue } from '../../src/runtime/deadLetterQueue';
 import { StateCheckpointer } from '../../src/runtime/stateCheckpointer';
 import { RunRecovery } from '../../src/runtime/runRecovery';
 import { LeaseManager } from '../../src/atr/leaseManager';
+import { resetGlobalEventSourcingEngine } from '../../src/runtime/eventSourcingEngine';
+import { resetGlobalDeterminismCapture } from '../../src/runtime/determinismCapture';
 import {
   SLO_THRESHOLDS,
   measureLatency,
@@ -28,12 +30,22 @@ import {
 
 describe('E2E: SLO measurements', () => {
   let tmpDir: string;
+  let prevWalEnv: string | undefined;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'slo-measure-'));
+    // Isolate EventSourcing WAL so full-suite pollution cannot inflate recovery latency.
+    prevWalEnv = process.env.COMMANDER_EVENT_SOURCING_WAL;
+    process.env.COMMANDER_EVENT_SOURCING_WAL = path.join(tmpDir, 'event-sourcing.wal');
+    await resetGlobalEventSourcingEngine();
+    resetGlobalDeterminismCapture();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await resetGlobalEventSourcingEngine();
+    resetGlobalDeterminismCapture();
+    if (prevWalEnv === undefined) delete process.env.COMMANDER_EVENT_SOURCING_WAL;
+    else process.env.COMMANDER_EVENT_SOURCING_WAL = prevWalEnv;
     if (fs.existsSync(tmpDir)) {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -42,7 +54,7 @@ describe('E2E: SLO measurements', () => {
   it('meets all SLO thresholds', async () => {
     const measurements: Array<ReturnType<typeof createSLOResport>['measurements'][number]> = [];
 
-    // 1. Recovery SLO: run recovery from checkpoint
+    // 1. Recovery SLO: checkpoint resume (disableReplay avoids scanning a shared WAL)
     {
       const checkpointer = new StateCheckpointer(tmpDir);
       const leaseManager = new LeaseManager({ ttlMs: 60000, maxPerRun: 4 });
@@ -72,7 +84,9 @@ describe('E2E: SLO measurements', () => {
         fencingEpoch: lease.fencingEpoch,
       });
 
-      const { durationMs } = await measureLatency(() => recovery.attempt('run-slo'));
+      const { durationMs } = await measureLatency(() =>
+        recovery.attempt('run-slo', { disableReplay: true }),
+      );
       measurements.push({
         id: 'slo-recovery',
         name: 'recovery',

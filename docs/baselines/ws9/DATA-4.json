@@ -1,0 +1,10 @@
+{
+  "testCaseId": "DATA-4",
+  "verdict": "PASS",
+  "evidenceLevel": "simulated",
+  "breach": false,
+  "details": "Cross-tenant access blocked by assertSameTenant (in-process PEP). A→B blocked=true, B→A blocked=true, same-tenant allowed=true.",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:21.395Z"
+}

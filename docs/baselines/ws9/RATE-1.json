@@ -1,0 +1,10 @@
+{
+  "testCaseId": "RATE-1",
+  "verdict": "PASS",
+  "evidenceLevel": "simulated",
+  "breach": false,
+  "details": "A's 10x burst did not affect B: B baseline p95=6ms / p99=6ms; during burst p95=3ms / p99=3ms. Per-tenant semaphore isolation held.",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:16.916Z"
+}

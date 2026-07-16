@@ -40,11 +40,15 @@ describe('AgentRuntime capacity baseline metrics', () => {
       tokenBudget: 8000,
     };
 
+    // Overlapping execute() is rejected (CONCURRENT_EXECUTE_REJECTED); the
+    // admitted run still exercises queue-depth / wait-time metric plumbing.
     const [a, b] = await Promise.all([r.execute(ctx), r.execute(ctx)]);
-    expect(a.status).toBe('success');
-    expect(b.status).toBe('success');
+    const statuses = [a.status, b.status].sort();
+    expect(statuses).toEqual(['failed', 'success']);
+    expect([a, b].some((x) => String(x.error ?? '').includes('CONCURRENT_EXECUTE_REJECTED'))).toBe(
+      true,
+    );
 
-    // The runtime serializes execute() calls, so one run should have queued.
     expect(r.getQueueDepth()).toBe(0);
 
     const queueDepth = getMetricsCollector().getGauge('runtime_queue_depth');

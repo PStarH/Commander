@@ -64,7 +64,10 @@ export interface ManifestEntry extends ChainHead {
 export type ManifestGapReason =
   | 'chain_missing_from_log' // manifest knows chain, disk does not (whole-chain deletion)
   | 'tail_truncated' // manifest maxSeq > disk maxSeq (tail-truncation)
-  | 'chain_unregistered'; // disk has chain, manifest does not (foreign insertion)
+  | 'disk_ahead_of_manifest' // disk maxSeq > manifest maxSeq (unregistered tail append)
+  | 'chain_unregistered' // disk has chain, manifest does not (foreign insertion)
+  | 'head_hmac_mismatch' // disk head hmac ≠ manifest headHmac (same-seq content rewrite)
+  | 'kms_sig_invalid'; // L2 asymmetric signature does not cover the on-disk head
 
 export interface ManifestGap {
   chainId: string;
@@ -320,16 +323,26 @@ function crossCheckManifest(
   const gaps: ManifestGap[] = [];
   const disk = collectPersistedEntries(ledger.persistDirectory);
 
-  // maxSeq per chainId on disk.
-  const diskByChain = new Map<string, { maxSeq: number; tenantId?: string }>();
+  // Per chainId: maxSeq head + entry at each seq (for anchored-head lookup).
+  const diskByChain = new Map<
+    string,
+    { maxSeq: number; tenantId?: string; bySeq: Map<number, { hmac: string; tenantId?: string }> }
+  >();
   for (const e of disk) {
-    const cur = diskByChain.get(e.chainId);
-    if (!cur || e.seq > cur.maxSeq) {
-      diskByChain.set(e.chainId, { maxSeq: e.seq, tenantId: e.tenantId });
+    let cur = diskByChain.get(e.chainId);
+    if (!cur) {
+      cur = { maxSeq: e.seq, tenantId: e.tenantId, bySeq: new Map() };
+      diskByChain.set(e.chainId, cur);
+    }
+    cur.bySeq.set(e.seq, { hmac: e.hmac, tenantId: e.tenantId });
+    if (e.seq > cur.maxSeq) {
+      cur.maxSeq = e.seq;
+      cur.tenantId = e.tenantId;
     }
   }
 
-  // Manifest entries: each must exist on disk with maxSeq >= manifest maxSeq.
+  // Manifest entries: disk maxSeq must equal manifest maxSeq, headHmac at that seq
+  // must match, and L2 kmsSig must cover the on-disk head.
   for (const m of manifest.getEntries()) {
     const onDisk = diskByChain.get(m.chainId);
     if (!onDisk) {
@@ -339,12 +352,56 @@ function crossCheckManifest(
         reason: 'chain_missing_from_log',
         detail: `manifest has chain ${m.chainId} (maxSeq=${m.maxSeq}) but no entries exist on disk`,
       });
-    } else if (onDisk.maxSeq < m.maxSeq) {
+      continue;
+    }
+    if (onDisk.maxSeq !== m.maxSeq) {
+      gaps.push({
+        chainId: m.chainId,
+        tenantId: m.tenantId,
+        reason: onDisk.maxSeq < m.maxSeq ? 'tail_truncated' : 'disk_ahead_of_manifest',
+        detail:
+          onDisk.maxSeq < m.maxSeq
+            ? `manifest maxSeq=${m.maxSeq} but disk maxSeq=${onDisk.maxSeq} — tail truncated`
+            : `manifest maxSeq=${m.maxSeq} but disk maxSeq=${onDisk.maxSeq} — unregistered tail append`,
+      });
+      continue;
+    }
+
+    const anchored = onDisk.bySeq.get(m.maxSeq);
+    if (!anchored) {
       gaps.push({
         chainId: m.chainId,
         tenantId: m.tenantId,
         reason: 'tail_truncated',
-        detail: `manifest maxSeq=${m.maxSeq} but disk maxSeq=${onDisk.maxSeq} — tail truncated`,
+        detail: `manifest anchors seq=${m.maxSeq} but that seq is missing on disk`,
+      });
+      continue;
+    }
+
+    if (anchored.hmac !== m.headHmac) {
+      gaps.push({
+        chainId: m.chainId,
+        tenantId: m.tenantId,
+        reason: 'head_hmac_mismatch',
+        detail:
+          `manifest headHmac=${m.headHmac.slice(0, 16)}… but disk seq=${m.maxSeq} ` +
+          `hmac=${anchored.hmac.slice(0, 16)}… — same-seq rewrite or key-holder forgery`,
+      });
+      continue;
+    }
+
+    const diskHead: ChainHead = {
+      chainId: m.chainId,
+      tenantId: m.tenantId,
+      maxSeq: m.maxSeq,
+      headHmac: anchored.hmac,
+    };
+    if (!manifest.verifyEntry(diskHead)) {
+      gaps.push({
+        chainId: m.chainId,
+        tenantId: m.tenantId,
+        reason: 'kms_sig_invalid',
+        detail: `L2 kmsSig does not verify over on-disk head (chainId=${m.chainId}, seq=${m.maxSeq})`,
       });
     }
   }

@@ -1,0 +1,10 @@
+{
+  "testCaseId": "NET-3",
+  "verdict": "PASS",
+  "evidenceLevel": "simulated",
+  "breach": false,
+  "details": "Host network fallback rejected for private IPs: 10.0.0.1 allowed=false (expected false). Blocklist still active: evil.com allowed=false (expected false). Public domain allowed when egress disabled: api.openai.com allowed=true (expected true — no host network bypass for SSRF).",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:23.107Z"
+}

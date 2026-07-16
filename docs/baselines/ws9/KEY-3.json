@@ -1,0 +1,10 @@
+{
+  "testCaseId": "KEY-3",
+  "verdict": "PASS",
+  "evidenceLevel": "simulated",
+  "breach": false,
+  "details": "No env downgrade in production: resolver returned vault key (not env OPENAI_API_KEY). Vault precedence holds even when env key is present.",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:22.033Z"
+}

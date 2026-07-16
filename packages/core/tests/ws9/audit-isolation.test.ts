@@ -14,8 +14,8 @@
  *   TAMPER-1: modify field → HMAC verify fails.
  *   TAMPER-2: delete tail N → manifest headHmac mismatch.
  *   TAMPER-3: whole-chain delete → manifest missing chainId.
- *   TAMPER-4: re-forge HMAC with same-machine chainKey → key in Vault/KMS,
- *             app has no plaintext access; re-forge fails.
+ *   TAMPER-4: re-forge HMAC with wrong key fails; key-holder same-seq re-sign
+ *             caught by manifest headHmac + L2 kmsSig cross-check.
  *   TAMPER-5: close audit write then execute effect → effect blocked.
  *
  * Evidence: these tests exercise the real AuditChainLedger + ChainManifest +
@@ -740,18 +740,21 @@ describe('WS9 TAMPER-3: Whole-chain delete → manifest chain_missing_from_log',
   });
 });
 
-// ─── TAMPER-4: Re-forge HMAC with wrong key fails; keypair isolation ────
+// ─── TAMPER-4: Same-machine chainKey re-forge caught by manifest headHmac ─
 
-describe('WS9 TAMPER-4: Re-forge HMAC with wrong key fails; L2 keypair isolation', () => {
+describe('WS9 TAMPER-4: Same-machine chainKey re-forge; manifest catches same-seq rewrite', () => {
   let env: { dir: string; cleanup: () => void };
   beforeEach(() => {
     env = makeTmp();
   });
   afterEach(() => env.cleanup());
 
-  it('forged HMAC with attacker key fails verify; L2 keypair not transferable', async () => {
+  it('same-key same-seq rewrite: ledger.verify ok but verifyWithManifest fails', async () => {
     const artifacts: string[] = [];
     const ledger = freshLedger(env.dir);
+    const manifest = new ChainManifest({
+      manifestDir: path.join(env.dir, 'manifest'),
+    });
 
     runWithTenant(TENANT_A, () =>
       ledger.logEvent({
@@ -763,57 +766,88 @@ describe('WS9 TAMPER-4: Re-forge HMAC with wrong key fails; L2 keypair isolation
     );
     await drain();
 
-    // Attacker tries to re-forge the HMAC with a guessed key.
-    const file = chainFile(env.dir);
-    const lines = readLines(file);
-    const entry = JSON.parse(lines[0]!);
+    const head = ledger.getEntries()[ledger.getEntries().length - 1]!;
+    manifest.registerHead({
+      chainId: ledger.chainId,
+      tenantId: TENANT_A,
+      maxSeq: head.seq,
+      headHmac: head.hmac,
+    });
+    manifest.flush();
 
-    // Re-compute HMAC with the FORGED (wrong) key.
-    const forgedTenantKey = deriveTenantKey(FORGED_KEY, TENANT_A);
-    const { hmac: _hmac, ...partial } = entry;
-    const forgedHmac = computeEntryHmac(forgedTenantKey, partial);
-    entry.hmac = forgedHmac;
+    // Spec TAMPER-4: attacker with same-machine chainKey re-forges entry HMAC
+    // in place (same seq). ledger.verify() alone may pass; manifest must not.
+    const file = chainFile(env.dir);
+    const entry = JSON.parse(readLines(file)[0]!);
+    const { hmac: _old, ...partial } = entry;
+    partial.message = 'FORGED-SAME-KEY';
+    const tenantKey = deriveTenantKey(Buffer.from(TEST_KEY, 'utf-8'), entry.tenantId);
+    entry.message = 'FORGED-SAME-KEY';
+    entry.hmac = computeEntryHmac(tenantKey, partial);
     fs.writeFileSync(file, JSON.stringify(entry) + '\n');
 
-    const res = ledger.verify();
+    const chainOk = ledger.verify();
+    const withManifest = verifyWithManifest(ledger, manifest);
+
+    // Wrong-key path still fails closed at L1.
+    const wrongKeyEntry = { ...entry, message: 'wrong-key-attempt' };
+    const { hmac: _h2, ...partial2 } = wrongKeyEntry;
+    wrongKeyEntry.hmac = computeEntryHmac(deriveTenantKey(FORGED_KEY, TENANT_A), {
+      ...partial2,
+      message: 'wrong-key-attempt',
+    });
+    fs.writeFileSync(file, JSON.stringify(wrongKeyEntry) + '\n');
+    const wrongKeyVerify = ledger.verify();
+
+    // Restore same-key forged file for L2 keypair isolation checks below.
+    fs.writeFileSync(file, JSON.stringify(entry) + '\n');
+
     let crossVerify = true;
     let selfVerify = false;
     try {
-      expect(res.ok).toBe(false);
-      expect(res.brokenChain?.reason).toBe('invalid_hmac');
+      expect(chainOk.ok).toBe(true);
+      expect(withManifest.ok).toBe(false);
+      expect(withManifest.tamperProof).toBe(false);
+      expect(
+        withManifest.manifestGaps.some((g) => g.reason === 'head_hmac_mismatch'),
+      ).toBe(true);
 
-      // L2 keypair isolation: two InMemoryKeyProvider instances cannot verify
-      // each other's signatures. This proves the private key is not transferable
-      // without explicit injection (KC-5c: key not co-located with logs).
+      expect(wrongKeyVerify.ok).toBe(false);
+      expect(wrongKeyVerify.brokenChain?.reason).toBe('invalid_hmac');
+
+      // L2 keypair isolation: private key not transferable without injection.
       const kp1 = new InMemoryKeyProvider();
       const kp2 = new InMemoryKeyProvider();
       const signer1 = new AsymmetricChainSigner(kp1);
-      const head = {
+      const signer2 = new AsymmetricChainSigner(kp2);
+      const sigHead = {
         chainId: 'test-chain',
         tenantId: TENANT_A,
         maxSeq: 1,
         headHmac: 'abc'.repeat(22),
       };
-      const sig1 = signer1.signHead(head);
-      // Use signer verify API (canonical head), not raw JSON over kp2.
-      const signer2 = new AsymmetricChainSigner(kp2);
-      crossVerify = signer2.verifyHead(head, sig1);
+      const sig1 = signer1.signHead(sigHead);
+      crossVerify = signer2.verifyHead(sigHead, sig1);
       expect(crossVerify).toBe(false);
-      selfVerify = signer1.verifyHead(head, sig1);
+      selfVerify = signer1.verifyHead(sigHead, sig1);
       expect(selfVerify).toBe(true);
 
       writePass(
         'TAMPER-4',
-        `Re-forge HMAC with wrong key fails: verify().ok=${res.ok}, reason=${res.brokenChain?.reason}. ` +
-          `L2 keypair isolation: signer2.verify(signer1.sig)=${crossVerify} (expected false), ` +
-          `signer1.self=${selfVerify}. Private key not transferable without explicit injection.`,
+        `Same-machine chainKey re-forge: ledger.verify().ok=${chainOk.ok} but ` +
+          `verifyWithManifest().ok=${withManifest.ok} (head_hmac_mismatch). ` +
+          `Wrong-key re-forge: verify().ok=${wrongKeyVerify.ok}, reason=${wrongKeyVerify.brokenChain?.reason}. ` +
+          `L2 keypair isolation: crossVerify=${crossVerify}, selfVerify=${selfVerify}.`,
         artifacts,
         'ci-worm-sim',
       );
     } catch (err) {
       writeBreach(
         'TAMPER-4',
-        `Re-forge HMAC succeeded OR keypair isolation failed: verify().ok=${res.ok}, crossVerify=${crossVerify}. ${(err as Error).message ?? ''}`,
+        `Same-key re-forge NOT caught by manifest OR wrong-key/L2 isolation failed: ` +
+          `chainOk=${chainOk.ok}, withManifest.ok=${withManifest.ok}, ` +
+          `gaps=${JSON.stringify(withManifest.manifestGaps)}, crossVerify=${crossVerify}. ` +
+          `${(err as Error).message ?? ''}`,
         artifacts,
         'ci-worm-sim',
       );

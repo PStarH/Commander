@@ -1,0 +1,10 @@
+{
+  "testCaseId": "EXEC-4",
+  "verdict": "PASS",
+  "evidenceLevel": "simulated",
+  "breach": false,
+  "details": "Effect-broker cross-tenant protection: A→B effect blocked=true. A→A effect allowed=true. assertSameTenant enforces effect-broker admit() contract: no cross-tenant effects without authorization.",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:22.588Z"
+}

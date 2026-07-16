@@ -1,0 +1,10 @@
+{
+  "testCaseId": "NET-2",
+  "verdict": "PASS",
+  "evidenceLevel": "simulated",
+  "breach": false,
+  "details": "SSRF defense: 169.254.169.254 allowed=false, 127.0.0.1 allowed=false, 10.0.0.1 allowed=false, 192.168.1.1 allowed=false, metadata.google.internal allowed=false. All private/metadata IPs blocked even with wildcard allowlist. blockPrivateIPs=true (fail-closed SSRF defense).",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:23.098Z"
+}

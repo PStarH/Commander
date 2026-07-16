@@ -194,14 +194,13 @@ describe('AgentRuntime Integration', () => {
   });
 
   describe('Concurrent execution', () => {
-    it('handles multiple concurrent executions', async () => {
-      const promises = [
-        runtime.execute(makeContext({ goal: 'Task 1' })),
-        runtime.execute(makeContext({ goal: 'Task 2' })),
-        runtime.execute(makeContext({ goal: 'Task 3' })),
-      ];
-
-      const results = await Promise.all(promises);
+    it('handles multiple sequential executions on the same runtime', async () => {
+      // Overlapping execute() on one instance is rejected
+      // (CONCURRENT_EXECUTE_REJECTED); sequential runs must succeed.
+      const results = [];
+      for (const goal of ['Task 1', 'Task 2', 'Task 3']) {
+        results.push(await runtime.execute(makeContext({ goal })));
+      }
       results.forEach((result) => {
         expect(result.status).toBe('success');
       });

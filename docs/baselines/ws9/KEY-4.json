@@ -1,0 +1,10 @@
+{
+  "testCaseId": "KEY-4",
+  "verdict": "PASS",
+  "evidenceLevel": "live",
+  "breach": false,
+  "details": "Forged COMMANDER_VAULT_TOKEN rejected on KV read: HTTP status=403, err=none. Vault did not authenticate with forged token. No downgrade to env key.",
+  "artifacts": [],
+  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+  "ranAt": "2026-07-16T10:24:22.075Z"
+}

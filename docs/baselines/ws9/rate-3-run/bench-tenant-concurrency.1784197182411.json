@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 2,
+  "benchmark": "tenant-concurrency",
+  "config": {
+    "tenantCount": 2,
+    "requestsPerTenant": 20
+  },
+  "overall": {
+    "totalRequests": 40,
+    "totalDurationMs": 252,
+    "overallRps": 159,
+    "tenantResults": [
+      {
+        "tenantId": "tenant-1",
+        "requestCount": 20,
+        "p50Ms": 11,
+        "p95Ms": 19,
+        "p99Ms": 20,
+        "avgMs": 13,
+        "errorCount": 0,
+        "totalCostUsd": 0.0075
+      },
+      {
+        "tenantId": "tenant-2",
+        "requestCount": 20,
+        "p50Ms": 11,
+        "p95Ms": 18,
+        "p99Ms": 21,
+        "avgMs": 12,
+        "errorCount": 0,
+        "totalCostUsd": 0.0064
+      }
+    ],
+    "maxTenantP99Diff": 1,
+    "fairnessIndex": 0.9998016660055534,
+    "totalErrorCount": 0
+  },
+  "summary": {
+    "passed": true,
+    "errors": 0,
+    "failed": 0,
+    "skipped": 0,
+    "fairnessIndex": 0.9998016660055534,
+    "maxTenantP99Diff": 1,
+    "errorCount": 0
+  },
+  "env": {
+    "evidence": "simulated",
+    "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
+    "gitBranch": "master",
+    "gitDirty": true,
+    "nodeVersion": "v22.22.0",
+    "pnpmVersion": "9.15.4",
+    "topology": {
+      "gateways": 1,
+      "workers": 1,
+      "operations": 1,
+      "model": "single"
+    },
+    "datasetVersion": "tenant-concurrency-v1"
+  },
+  "runAt": "2026-07-16T10:19:44.216Z"
+}
