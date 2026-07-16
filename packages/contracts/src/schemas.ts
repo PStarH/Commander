@@ -353,7 +353,7 @@ export const kernelEventSchema = {
   required: ['eventId', 'aggregateType', 'aggregateId', 'sequence', 'type', 'tenantId', 'runId', 'actor', 'schemaVersion', 'payload', 'occurredAt'],
   properties: {
     eventId: { type: 'string', format: 'uuid' },
-    aggregateType: { type: 'string', enum: ['run', 'step', 'effect', 'interaction', 'worker'] },
+    aggregateType: { type: 'string', enum: ['run', 'step', 'effect', 'interaction', 'worker', 'tenant'] },
     aggregateId: opaqueId,
     sequence: { type: 'integer', minimum: 0 },
     type: { type: 'string', minLength: 1, maxLength: 128 },

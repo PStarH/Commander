@@ -17,11 +17,15 @@ import type {
   KernelLease,
   KernelOutboxMessage,
   KernelRun,
+  KernelRunState,
   KernelStep,
+  KernelStepState,
   KernelTimer,
   MarkEffectCompletionUnknownRequest,
+  TenantExecutionControl,
 } from './types.js';
 import { KernelInvariantError } from './types.js';
+import { assertRunTransition, assertStepTransition } from './transitionValidation.js';
 
 /** Minimal pg-compatible interfaces; callers can inject pg.Pool without a hard runtime coupling. */
 export interface SqlQueryResult<T = Record<string, unknown>> {
@@ -145,6 +149,15 @@ type DbEffect = Omit<KernelEffect, 'runId' | 'stepId' | 'tenantId' | 'idempotenc
   run_id: string; step_id: string; tenant_id: string; idempotency_key: string; request_hash: string; policy_decision_id: string;
   created_at: string | Date; completed_at: string | Date | null;
 };
+type DbTenantExecutionControl = {
+  tenant_id: string;
+  paused: boolean;
+  generation: number | string;
+  actor: string;
+  reason: string | null;
+  paused_at: string | Date | null;
+  resumed_at: string | Date | null;
+};
 
 function iso(value: Date | string): string { return value instanceof Date ? value.toISOString() : new Date(value).toISOString(); }
 function json(value: unknown): string { return JSON.stringify(value ?? {}); }
@@ -154,6 +167,17 @@ function canonical(value: unknown): string {
   return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`).join(',')}}`;
 }
 function requestHash(value: Record<string, unknown>): string { return createHash('sha256').update(canonical(value)).digest('hex'); }
+function fromTenantExecutionControl(row: DbTenantExecutionControl): TenantExecutionControl {
+  return {
+    tenantId: row.tenant_id,
+    paused: row.paused,
+    generation: Number(row.generation),
+    actor: row.actor,
+    reason: row.reason ?? undefined,
+    pausedAt: row.paused_at ? iso(row.paused_at) : undefined,
+    resumedAt: row.resumed_at ? iso(row.resumed_at) : undefined,
+  };
+}
 function fromRun(row: DbRun): KernelRun {
   return { id: row.id, tenantId: row.tenant_id, intentHash: row.intent_hash, workGraphHash: row.work_graph_hash,
     workGraphVersion: row.work_graph_version, state: row.state, version: Number(row.version), policySnapshotId: row.policy_snapshot_id,
@@ -223,6 +247,11 @@ export class PostgresKernelRepository implements KernelRepository {
       }
       const run = fromRun(created.rows[0]!);
       await client.query(`INSERT INTO commander_tenant_execution_usage (tenant_id) VALUES ($1) ON CONFLICT DO NOTHING`, [command.tenantId]);
+      await client.query(
+        `INSERT INTO commander_tenant_execution_control (tenant_id, actor)
+         VALUES ($1, 'kernel') ON CONFLICT DO NOTHING`,
+        [command.tenantId],
+      );
       try {
         for (const step of command.steps) {
           await client.query(
@@ -277,14 +306,16 @@ export class PostgresKernelRepository implements KernelRepository {
     const workerGeneration = request.workerGeneration ?? -1;
     const tenantIds = request.tenantIds ?? (request.tenantId ? [request.tenantId] : []);
     return this.withTransaction(async (client) => {
-      const result = await client.query<DbStep>(
+      const result = await client.query<DbStep & { previous_state: KernelStepState }>(
         `WITH candidate AS (
-           SELECT s.id FROM commander_steps s JOIN commander_runs r ON r.id=s.run_id AND r.tenant_id=s.tenant_id
+           SELECT s.id, s.state AS previous_state FROM commander_steps s JOIN commander_runs r ON r.id=s.run_id AND r.tenant_id=s.tenant_id
            JOIN commander_workers w ON w.id=$4 AND w.generation=$5 AND w.status='ACTIVE'
            JOIN commander_tenant_execution_usage u ON u.tenant_id=s.tenant_id
+           JOIN commander_tenant_execution_control c ON c.tenant_id=s.tenant_id
            LEFT JOIN commander_tenant_execution_limits l ON l.tenant_id=s.tenant_id
            WHERE s.state IN ('PENDING','RETRY_WAIT') AND s.scheduled_at <= $1
              AND r.state IN ('PENDING','RUNNING') AND (cardinality($2::text[]) = 0 OR s.tenant_id = ANY($2::text[]))
+             AND c.paused=false
              AND (cardinality($3::text[]) = 0 OR s.kind = ANY($3::text[]))
              AND u.running_steps < COALESCE(l.max_concurrent_steps, 2147483647)
              AND NOT EXISTS (
@@ -297,19 +328,21 @@ export class PostgresKernelRepository implements KernelRepository {
                     -- This prevents starvation: even a priority=-1000 step will eventually
                     -- outrank new steps after enough time.
                     GREATEST(s.priority + FLOOR(EXTRACT(EPOCH FROM ($1::timestamptz - s.scheduled_at)) / 60), 1000) DESC,
-                    s.scheduled_at ASC, s.created_at ASC FOR UPDATE OF s, u SKIP LOCKED LIMIT 1
+                    s.scheduled_at ASC, s.created_at ASC FOR UPDATE OF s, u, c SKIP LOCKED LIMIT 1
          ), claimed AS (
            UPDATE commander_steps s SET state='RUNNING', attempt=s.attempt+1, version=s.version+1,
              lease_worker_id=$4, lease_worker_generation=$5, lease_token=$6, fencing_epoch=s.fencing_epoch+1, lease_expires_at=$7, updated_at=$1
-           FROM candidate WHERE s.id=candidate.id RETURNING s.*
+           FROM candidate WHERE s.id=candidate.id RETURNING s.*, candidate.previous_state
          ) SELECT * FROM claimed`, [now.toISOString(), tenantIds, request.capabilities ?? [], request.workerId, workerGeneration, token, expiry.toISOString()]);
       const row = result.rows[0];
       if (!row) return null;
       const step = fromStep(row);
+      assertStepTransition(row.previous_state, step.state);
       await client.query(
         `UPDATE commander_tenant_execution_usage SET running_steps=running_steps+1, updated_at=$1 WHERE tenant_id=$2`,
         [now.toISOString(), step.tenantId],
       );
+      assertRunTransition('PENDING', 'RUNNING');
       await client.query(`UPDATE commander_runs SET state='RUNNING', version=version+1, updated_at=$1 WHERE id=$2 AND tenant_id=$3 AND state='PENDING'`, [now.toISOString(), step.runId, step.tenantId]);
       await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: 'step.claimed', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor: request.workerId, payload: { attempt: step.attempt, fencingEpoch: step.lease!.fencingEpoch } });
       return step;
@@ -340,14 +373,68 @@ export class PostgresKernelRepository implements KernelRepository {
            state=CASE WHEN s.attempt < s.max_attempts THEN 'RETRY_WAIT' ELSE 'FAILED' END,
            scheduled_at=CASE WHEN s.attempt < s.max_attempts THEN $1 ELSE s.scheduled_at END,
            error=jsonb_build_object('code','LEASE_EXPIRED','message','Worker lease expired before terminal transition','retryable', s.attempt < s.max_attempts),
-           version=s.version+1, updated_at=$1, lease_worker_id=NULL, lease_token=NULL, lease_expires_at=NULL
+           version=s.version+1, updated_at=$1, lease_worker_id=NULL, lease_worker_generation=0, lease_token=NULL, lease_expires_at=NULL
          FROM expired WHERE s.id=expired.id RETURNING s.*`, [now.toISOString(), limit]);
       const reclaimed = result.rows.map(fromStep);
       for (const step of reclaimed) {
+        assertStepTransition('RUNNING', step.state);
         await this.releaseTenantSlot(client, step.tenantId);
         const retryable = step.state === 'RETRY_WAIT';
         await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: retryable ? 'step.lease_expired_requeued' : 'step.lease_expired_failed', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor: 'kernel.recovery', payload: { attempt: step.attempt } });
-        if (!retryable) await this.finishRunIfTerminal(client, step.runId, step.tenantId, 'kernel.recovery');
+        const uncertain = await client.query<{ id: string }>(
+          `UPDATE commander_effects SET
+             state='COMPLETION_UNKNOWN', response=jsonb_build_object('reason','lease_expired')
+           WHERE step_id=$1 AND tenant_id=$2 AND state='ADMITTED'
+           RETURNING id`,
+          [step.id, step.tenantId],
+        );
+        for (const effect of uncertain.rows) {
+          await this.appendEvent(client, {
+            aggregateType: 'effect', aggregateId: effect.id, sequence: 2,
+            type: 'effect.completion_unknown', tenantId: step.tenantId,
+            runId: step.runId, stepId: step.id, actor: 'kernel.recovery',
+            payload: { reason: 'lease_expired' },
+          });
+        }
+        if (!retryable) {
+          const completed = await client.query<{ id: string }>(
+            `SELECT id FROM commander_effects
+             WHERE run_id=$1 AND tenant_id=$2 AND state='COMPLETED'
+             ORDER BY created_at DESC`,
+            [step.runId, step.tenantId],
+          );
+          if (completed.rows.length > 0) {
+            const runState = await this.lockRunState(client, step.runId, step.tenantId);
+            if (runState && runState !== 'COMPENSATING') {
+              assertRunTransition(runState, 'COMPENSATING');
+              const updated = await client.query<DbRun>(
+                `UPDATE commander_runs SET state='COMPENSATING', version=version+1, updated_at=$1
+                 WHERE id=$2 AND tenant_id=$3 RETURNING *`,
+                [now.toISOString(), step.runId, step.tenantId],
+              );
+              const run = fromRun(updated.rows[0]!);
+              const source = result.rows.find((row) => row.id === step.id);
+              await this.appendEvent(client, {
+                aggregateType: 'run', aggregateId: run.id, sequence: run.version,
+                type: 'run.compensating', tenantId: run.tenantId,
+                runId: run.id, stepId: step.id, actor: 'kernel.recovery',
+                payload: { fencingEpoch: Number(source?.fencing_epoch ?? 0) },
+              });
+              const compensationKey = `${run.tenantId}/${run.id}/${Number(source?.fencing_epoch ?? 0)}`;
+              await this.appendEvent(client, {
+                aggregateType: 'effect', aggregateId: `compensation:${compensationKey}`, sequence: 1,
+                type: 'kernel.compensation.requested', tenantId: run.tenantId,
+                runId: run.id, stepId: step.id, actor: 'kernel.recovery',
+                payload: {
+                  effectIds: completed.rows.map((effect) => effect.id),
+                  fencingEpoch: Number(source?.fencing_epoch ?? 0),
+                },
+              }, compensationKey);
+            }
+          } else {
+            await this.finishRunIfTerminal(client, step.runId, step.tenantId, 'kernel.recovery');
+          }
+        }
       }
       return reclaimed;
     });
@@ -363,6 +450,7 @@ export class PostgresKernelRepository implements KernelRepository {
         [json(request.output), request.stepId, request.expectedVersion, request.lease.workerId, request.lease.workerGeneration ?? -1, request.lease.token, request.lease.fencingEpoch]);
       if (!result.rows[0]) return null;
       const step = fromStep(result.rows[0]);
+      assertStepTransition('RUNNING', step.state);
       await this.releaseTenantSlot(client, step.tenantId);
       await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: 'step.succeeded', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor: request.actor, payload: { attempt: step.attempt } });
       await this.finishRunIfTerminal(client, step.runId, step.tenantId, request.actor);
@@ -384,6 +472,7 @@ export class PostgresKernelRepository implements KernelRepository {
         [request.error.retryable && Boolean(request.retryAt), json(request.error), request.retryAt?.toISOString() ?? null, request.stepId, request.expectedVersion, request.lease.workerId, request.lease.workerGeneration ?? -1, request.lease.token, request.lease.fencingEpoch]);
       if (!result.rows[0]) return null;
       const step = fromStep(result.rows[0]);
+      assertStepTransition('RUNNING', step.state);
       await this.releaseTenantSlot(client, step.tenantId);
       await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: step.state === 'RETRY_WAIT' ? 'step.retry_scheduled' : 'step.failed', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor: request.actor, payload: { error: request.error } });
       if (step.state === 'FAILED') await this.finishRunIfTerminal(client, step.runId, step.tenantId, request.actor);
@@ -394,7 +483,7 @@ export class PostgresKernelRepository implements KernelRepository {
   async wakeRetryStep(stepId: string, tenantId: string, actor: string): Promise<KernelStep | null> {
     return this.withTransaction(async (client) => {
       const result = await client.query<DbStep>(
-        `UPDATE commander_steps SET state='PENDING', version=version+1, updated_at=now(), lease_worker_id=NULL, lease_token=NULL, lease_expires_at=NULL
+        `UPDATE commander_steps SET scheduled_at=now(), version=version+1, updated_at=now(), lease_worker_id=NULL, lease_token=NULL, lease_expires_at=NULL
          WHERE id=$1 AND tenant_id=$2 AND state='RETRY_WAIT' RETURNING *`,
         [stepId, tenantId],
       );
@@ -407,6 +496,15 @@ export class PostgresKernelRepository implements KernelRepository {
 
   async failStepByTimer(stepId: string, tenantId: string, error: { code: string; message: string; retryable: boolean; details?: Record<string, unknown> }, actor: string): Promise<KernelStep | null> {
     return this.withTransaction(async (client) => {
+      const previous = await client.query<{ state: KernelStepState }>(
+        `SELECT state FROM commander_steps
+         WHERE id=$1 AND tenant_id=$2 AND state NOT IN ('SUCCEEDED','FAILED','CANCELLED','SKIPPED')
+         FOR UPDATE`,
+        [stepId, tenantId],
+      );
+      const previousState = previous.rows[0]?.state;
+      if (!previousState) return null;
+      assertStepTransition(previousState, 'FAILED');
       const result = await client.query<DbStep>(
         `UPDATE commander_steps SET state='FAILED', error=$1::jsonb, version=version+1, updated_at=now(),
            lease_worker_id=NULL, lease_token=NULL, lease_expires_at=NULL
@@ -415,7 +513,7 @@ export class PostgresKernelRepository implements KernelRepository {
       );
       if (!result.rows[0]) return null;
       const step = fromStep(result.rows[0]);
-      await this.releaseTenantSlot(client, step.tenantId);
+      if (previousState === 'RUNNING') await this.releaseTenantSlot(client, step.tenantId);
       await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: 'step.failed', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor, payload: { error } });
       await this.finishRunIfTerminal(client, step.runId, step.tenantId, actor);
       return step;
@@ -424,6 +522,9 @@ export class PostgresKernelRepository implements KernelRepository {
 
   async pauseRun(runId: string, tenantId: string, actor: string): Promise<KernelRun | null> {
     return this.withTransaction(async (client) => {
+      const previousRunState = await this.lockRunState(client, runId, tenantId);
+      if (!previousRunState || !['PENDING', 'RUNNING'].includes(previousRunState)) return null;
+      assertRunTransition(previousRunState, 'PAUSED');
       const runResult = await client.query<DbRun>(
         `UPDATE commander_runs SET state='PAUSED', version=version+1, updated_at=now(), paused_at=now()
          WHERE id=$1 AND tenant_id=$2 AND state IN ('PENDING','RUNNING') RETURNING *`,
@@ -431,6 +532,7 @@ export class PostgresKernelRepository implements KernelRepository {
       );
       if (!runResult.rows[0]) return null;
       const run = fromRun(runResult.rows[0]);
+      assertStepTransition('RUNNING', 'RETRY_WAIT');
       const pausedSteps = await client.query<DbStep>(
         `UPDATE commander_steps SET state='RETRY_WAIT', version=version+1, updated_at=now(),
            lease_worker_id=NULL, lease_token=NULL, lease_expires_at=NULL
@@ -444,11 +546,14 @@ export class PostgresKernelRepository implements KernelRepository {
       }
       await this.appendEvent(client, { aggregateType: 'run', aggregateId: run.id, sequence: run.version, type: 'run.paused', tenantId, runId, actor, payload: {} });
       return run;
-    });
+    }, [tenantId]);
   }
 
   async resumeRun(runId: string, tenantId: string, actor: string): Promise<KernelRun | null> {
     return this.withTransaction(async (client) => {
+      const previousRunState = await this.lockRunState(client, runId, tenantId);
+      if (previousRunState !== 'PAUSED') return null;
+      assertRunTransition(previousRunState, 'RUNNING');
       const runResult = await client.query<DbRun>(
         `UPDATE commander_runs SET state='RUNNING', version=version+1, updated_at=now(), paused_at=NULL
          WHERE id=$1 AND tenant_id=$2 AND state='PAUSED' RETURNING *`,
@@ -463,6 +568,16 @@ export class PostgresKernelRepository implements KernelRepository {
 
   async cancelRun(runId: string, tenantId: string, actor: string): Promise<KernelRun | null> {
     return this.withTransaction(async (client) => {
+      const previousRunState = await this.lockRunState(client, runId, tenantId);
+      if (!previousRunState || !['PENDING', 'RUNNING', 'PAUSED'].includes(previousRunState)) return null;
+      assertRunTransition(previousRunState, 'CANCELLED');
+      const previousSteps = await this.lockStepStates(client, runId, tenantId);
+      for (const step of previousSteps) {
+        if (!['SUCCEEDED', 'FAILED', 'CANCELLED', 'SKIPPED'].includes(step.state)) {
+          assertStepTransition(step.state, 'CANCELLED');
+        }
+      }
+      const previousStepStates = new Map(previousSteps.map((step) => [step.id, step.state]));
       const runResult = await client.query<DbRun>(
         `UPDATE commander_runs SET state='CANCELLED', version=version+1, updated_at=now(), terminal_at=now()
          WHERE id=$1 AND tenant_id=$2 AND state IN ('PENDING','RUNNING','PAUSED') RETURNING *`,
@@ -479,10 +594,99 @@ export class PostgresKernelRepository implements KernelRepository {
       for (const row of cancelledSteps.rows) {
         const step = fromStep(row);
         await this.releaseTenantSlot(client, step.tenantId);
-        await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: 'step.cancelled', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor, payload: { previousState: step.state } });
+        await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: 'step.cancelled', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor, payload: { previousState: previousStepStates.get(step.id) } });
       }
       await this.appendEvent(client, { aggregateType: 'run', aggregateId: run.id, sequence: run.version, type: 'run.cancelled', tenantId, runId, actor, payload: {} });
       return run;
+    }, [tenantId]);
+  }
+
+  async pauseTenant(tenantId: string, actor: string, reason?: string): Promise<TenantExecutionControl> {
+    return this.withTransaction(async (client) => {
+      const controlResult = await client.query<DbTenantExecutionControl>(
+        `INSERT INTO commander_tenant_execution_control
+           (tenant_id, paused, generation, actor, reason, paused_at, resumed_at, updated_at)
+         VALUES ($1, true, 1, $2, $3, now(), NULL, now())
+         ON CONFLICT (tenant_id) DO UPDATE SET
+           paused=true,
+           generation=commander_tenant_execution_control.generation+1,
+           actor=EXCLUDED.actor,
+           reason=EXCLUDED.reason,
+           paused_at=now(),
+           resumed_at=NULL,
+           updated_at=now()
+         RETURNING *`,
+        [tenantId, actor, reason ?? null],
+      );
+      assertStepTransition('RUNNING', 'RETRY_WAIT');
+      const affected = await client.query<DbStep>(
+        `UPDATE commander_steps SET
+           state='RETRY_WAIT', scheduled_at=now(), version=version+1, updated_at=now(),
+           lease_worker_id=NULL, lease_worker_generation=0, lease_token=NULL, lease_expires_at=NULL
+         WHERE tenant_id=$1 AND state='RUNNING'
+         RETURNING *`,
+        [tenantId],
+      );
+      if (affected.rows.length > 0) {
+        await client.query(
+          `UPDATE commander_tenant_execution_usage SET
+             running_steps=GREATEST(0, running_steps-$1), updated_at=now()
+           WHERE tenant_id=$2`,
+          [affected.rows.length, tenantId],
+        );
+      }
+      for (const row of affected.rows) {
+        const step = fromStep(row);
+        await this.appendEvent(client, {
+          aggregateType: 'step', aggregateId: step.id, sequence: step.version,
+          type: 'step.tenant_paused', tenantId, runId: step.runId, stepId: step.id,
+          actor, payload: { reason },
+        });
+      }
+      const control = fromTenantExecutionControl(controlResult.rows[0]!);
+      await this.appendEvent(client, {
+        aggregateType: 'tenant', aggregateId: tenantId, sequence: control.generation,
+        type: 'tenant.paused', tenantId, runId: `tenant:${tenantId}`, actor,
+        payload: { reason },
+      });
+      return control;
+    }, [tenantId]);
+  }
+
+  async resumeTenant(tenantId: string, actor: string): Promise<TenantExecutionControl> {
+    return this.withTransaction(async (client) => {
+      const result = await client.query<DbTenantExecutionControl>(
+        `INSERT INTO commander_tenant_execution_control
+           (tenant_id, paused, generation, actor, reason, paused_at, resumed_at, updated_at)
+         VALUES ($1, false, 1, $2, NULL, NULL, now(), now())
+         ON CONFLICT (tenant_id) DO UPDATE SET
+           paused=false,
+           generation=commander_tenant_execution_control.generation+1,
+           actor=EXCLUDED.actor,
+           reason=NULL,
+           resumed_at=now(),
+           updated_at=now()
+         RETURNING *`,
+        [tenantId, actor],
+      );
+      const control = fromTenantExecutionControl(result.rows[0]!);
+      await this.appendEvent(client, {
+        aggregateType: 'tenant', aggregateId: tenantId, sequence: control.generation,
+        type: 'tenant.resumed', tenantId, runId: `tenant:${tenantId}`, actor, payload: {},
+      });
+      return control;
+    }, [tenantId]);
+  }
+
+  async getTenantExecutionControl(tenantId: string): Promise<TenantExecutionControl> {
+    return this.withTransaction(async (client) => {
+      const result = await client.query<DbTenantExecutionControl>(
+        'SELECT * FROM commander_tenant_execution_control WHERE tenant_id=$1',
+        [tenantId],
+      );
+      return result.rows[0]
+        ? fromTenantExecutionControl(result.rows[0])
+        : { tenantId, paused: false, generation: 0, actor: 'kernel' };
     }, [tenantId]);
   }
 
@@ -548,7 +752,7 @@ export class PostgresKernelRepository implements KernelRepository {
     return this.withTransaction(async (client) => {
       const token = randomUUID();
       const result = await client.query<{ id: string; event_id: string; tenant_id: string; topic: string; key: string; payload: Record<string, unknown>; attempts: number; available_at: Date | string; published_at: Date | string | null; created_at: Date | string }>(
-        `WITH candidate AS (SELECT id FROM commander_outbox WHERE published_at IS NULL AND available_at <= $1 AND (claimed_at IS NULL OR claimed_at < $2) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT $3)
+        `WITH candidate AS (SELECT id FROM commander_outbox WHERE published_at IS NULL AND moved_to_dlq_at IS NULL AND available_at <= $1 AND (claimed_at IS NULL OR claimed_at < $2) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT $3)
          UPDATE commander_outbox o SET claimed_at=$1, claim_token=$4, attempts=o.attempts+1 FROM candidate WHERE o.id=candidate.id RETURNING o.*`,
         [now.toISOString(), new Date(now.getTime() - 60_000).toISOString(), limit, token]);
       return result.rows.map((row) => ({ id: row.id, eventId: row.event_id, tenantId: row.tenant_id, topic: row.topic, key: row.key, payload: row.payload ?? {}, attempts: Number(row.attempts), availableAt: iso(row.available_at), publishedAt: row.published_at ? iso(row.published_at) : undefined, claimToken: token, createdAt: iso(row.created_at) }));
@@ -557,6 +761,19 @@ export class PostgresKernelRepository implements KernelRepository {
   async markOutboxPublished(messageId: string, claimToken: string): Promise<boolean> {
     return this.withTransaction(async (client) => {
       const result = await client.query(`UPDATE commander_outbox SET published_at=now(), claim_token=NULL, claimed_at=NULL WHERE id=$1 AND claim_token=$2 AND published_at IS NULL`, [messageId, claimToken]);
+      return (result.rowCount ?? 0) === 1;
+    });
+  }
+
+  async retryOutbox(messageId: string, claimToken: string, error: { code: string; message: string }, now = new Date()): Promise<boolean> {
+    return this.withTransaction(async (client) => {
+      const result = await client.query(
+        `UPDATE commander_outbox SET
+           available_at=$1::timestamptz + (POWER(2, GREATEST(0, attempts-1)) * interval '1 second'),
+           last_error=$2::jsonb, claim_token=NULL, claimed_at=NULL
+         WHERE id=$3 AND claim_token=$4 AND published_at IS NULL`,
+        [now.toISOString(), json(error), messageId, claimToken],
+      );
       return (result.rowCount ?? 0) === 1;
     });
   }
@@ -596,21 +813,44 @@ export class PostgresKernelRepository implements KernelRepository {
 
   async claimExpiredTimers(now: Date = new Date(), limit: number = 100): Promise<KernelTimer[]> {
     return this.withTransaction(async (client) => {
+      const claimToken = randomUUID();
       const result = await client.query<{
         id: string; run_id: string; step_id: string; tenant_id: string;
         fires_at: Date | string; timer_type: string; state: string;
-        payload: Record<string, unknown>; created_at: Date | string; fired_at: Date | string | null;
-      }>(`UPDATE commander_timers SET state='FIRED', fired_at=now()
+        payload: Record<string, unknown>; created_at: Date | string; fired_at: Date | string | null; claim_token: string | null;
+      }>(`UPDATE commander_timers SET state='PROCESSING', claim_token=$3, claimed_at=$1
           WHERE id IN (
             SELECT id FROM commander_timers
-            WHERE state='PENDING' AND fires_at <= $1
+            WHERE (state='PENDING' OR (state='PROCESSING' AND claimed_at <= $1::timestamptz - interval '60 seconds')) AND fires_at <= $1
             ORDER BY fires_at LIMIT $2
             FOR UPDATE SKIP LOCKED
           )
           RETURNING *`,
-        [now, limit]);
+        [now, limit, claimToken]);
       return result.rows.map(mapTimer);
     });
+  }
+
+  async acknowledgeTimer(timerId: string, tenantId: string, claimToken: string): Promise<boolean> {
+    return this.withTransaction(async (client) => {
+      const result = await client.query(
+        `UPDATE commander_timers SET state='FIRED', fired_at=now(), claim_token=NULL, claimed_at=NULL
+         WHERE id=$1 AND tenant_id=$2 AND state='PROCESSING' AND claim_token=$3`,
+        [timerId, tenantId, claimToken],
+      );
+      return (result.rowCount ?? 0) === 1;
+    }, [tenantId]);
+  }
+
+  async retryTimer(timerId: string, tenantId: string, claimToken: string): Promise<boolean> {
+    return this.withTransaction(async (client) => {
+      const result = await client.query(
+        `UPDATE commander_timers SET state='PENDING', claim_token=NULL, claimed_at=NULL
+         WHERE id=$1 AND tenant_id=$2 AND state='PROCESSING' AND claim_token=$3`,
+        [timerId, tenantId, claimToken],
+      );
+      return (result.rowCount ?? 0) === 1;
+    }, [tenantId]);
   }
 
   // ── Interactions ───────────────────────────────────────────────────────────
@@ -702,12 +942,13 @@ export class PostgresKernelRepository implements KernelRepository {
         id: string; event_id: string; tenant_id: string; topic: string; key: string;
         payload: Record<string, unknown>; attempts: number; max_attempts: number;
         created_at: Date | string;
-      }>(`SELECT id, event_id, topic, key, payload, attempts, max_attempts, created_at
+      }>(`SELECT id, event_id, tenant_id, topic, key, payload, attempts, max_attempts, created_at
           FROM commander_outbox
-          WHERE published_at IS NULL AND attempts >= max_attempts
+          WHERE published_at IS NULL AND moved_to_dlq_at IS NULL AND attempts >= max_attempts
+            AND (claimed_at IS NULL OR claimed_at <= $2::timestamptz - interval '60 seconds')
           ORDER BY created_at LIMIT $1
           FOR UPDATE SKIP LOCKED`,
-        [limit]);
+        [limit, now]);
       for (const row of expired.rows) {
         const dlqId = `dlq_${randomUUID()}`;
         await client.query(
@@ -733,9 +974,11 @@ export class PostgresKernelRepository implements KernelRepository {
            WHERE id IN (
              SELECT id FROM commander_outbox
              WHERE published_at IS NULL
+               AND moved_to_dlq_at IS NULL
                AND attempts > 0
                AND attempts < max_attempts
                AND available_at <= $1
+               AND (claimed_at IS NULL OR claimed_at <= $1::timestamptz - interval '60 seconds')
              LIMIT $2
              FOR UPDATE SKIP LOCKED
            )
@@ -793,12 +1036,34 @@ export class PostgresKernelRepository implements KernelRepository {
     });
   }
 
+  private async lockRunState(client: SqlClient, runId: string, tenantId: string): Promise<KernelRunState | null> {
+    const result = await client.query<{ state: KernelRunState }>(
+      'SELECT state FROM commander_runs WHERE id=$1 AND tenant_id=$2 FOR UPDATE',
+      [runId, tenantId],
+    );
+    return result.rows[0]?.state ?? null;
+  }
+
+  private async lockStepStates(client: SqlClient, runId: string, tenantId: string): Promise<Array<{ id: string; state: KernelStepState }>> {
+    const result = await client.query<{ id: string; state: KernelStepState }>(
+      'SELECT id, state FROM commander_steps WHERE run_id=$1 AND tenant_id=$2 FOR UPDATE',
+      [runId, tenantId],
+    );
+    return result.rows;
+  }
+
   private async finishRunIfTerminal(client: SqlClient, runId: string, tenantId: string, actor: string): Promise<void> {
+    const previousState = await this.lockRunState(client, runId, tenantId);
+    if (!previousState) return;
     const states = await client.query<{ state: string }>('SELECT state FROM commander_steps WHERE run_id=$1 AND tenant_id=$2 FOR UPDATE', [runId, tenantId]);
     if (states.rows.some((row) => row.state === 'FAILED')) {
+      if (previousState === 'FAILED') return;
+      assertRunTransition(previousState, 'FAILED');
       const updated = await client.query<DbRun>(`UPDATE commander_runs SET state='FAILED', version=version+1, updated_at=now(), terminal_at=now() WHERE id=$1 AND tenant_id=$2 AND state NOT IN ('FAILED','SUCCEEDED') RETURNING *`, [runId, tenantId]);
       if (updated.rows[0]) await this.appendEvent(client, { aggregateType: 'run', aggregateId: runId, sequence: Number(updated.rows[0].version), type: 'run.failed', tenantId, runId, actor, payload: {} });
     } else if (states.rows.length > 0 && states.rows.every((row) => ['SUCCEEDED', 'SKIPPED'].includes(row.state))) {
+      if (previousState === 'SUCCEEDED') return;
+      assertRunTransition(previousState, 'SUCCEEDED');
       const updated = await client.query<DbRun>(`UPDATE commander_runs SET state='SUCCEEDED', version=version+1, updated_at=now(), terminal_at=now() WHERE id=$1 AND tenant_id=$2 AND state NOT IN ('FAILED','SUCCEEDED') RETURNING *`, [runId, tenantId]);
       if (updated.rows[0]) await this.appendEvent(client, { aggregateType: 'run', aggregateId: runId, sequence: Number(updated.rows[0].version), type: 'run.succeeded', tenantId, runId, actor, payload: {} });
     }
@@ -810,11 +1075,11 @@ export class PostgresKernelRepository implements KernelRepository {
       [tenantId],
     );
   }
-  private async appendEvent(client: SqlClient, event: Omit<KernelEvent, 'eventId' | 'schemaVersion' | 'occurredAt'>): Promise<void> {
+  private async appendEvent(client: SqlClient, event: Omit<KernelEvent, 'eventId' | 'schemaVersion' | 'occurredAt'>, outboxKey = event.runId): Promise<void> {
     const eventId = randomUUID();
     await client.query(`INSERT INTO commander_events (id,aggregate_type,aggregate_id,sequence,type,tenant_id,run_id,step_id,causation_id,correlation_id,actor,schema_version,payload)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'v2',$12::jsonb)`, [eventId, event.aggregateType, event.aggregateId, event.sequence, event.type, event.tenantId, event.runId, event.stepId ?? null, event.causationId ?? null, event.correlationId ?? null, event.actor, json(event.payload)]);
-    await client.query(`INSERT INTO commander_outbox (id,event_id,tenant_id,topic,key,payload) VALUES ($1,$2,$3,$4,$5,$6::jsonb)`, [randomUUID(), eventId, event.tenantId, `commander.${event.type}`, event.runId, json({ eventId, type: event.type, runId: event.runId, tenantId: event.tenantId })]);
+    await client.query(`INSERT INTO commander_outbox (id,event_id,tenant_id,topic,key,payload) VALUES ($1,$2,$3,$4,$5,$6::jsonb)`, [randomUUID(), eventId, event.tenantId, `commander.${event.type}`, outboxKey, json({ eventId, type: event.type, runId: event.runId, tenantId: event.tenantId, ...event.payload })]);
   }
   private assertGraph(command: CreateKernelRun): void {
     const ids = new Set<string>();
@@ -847,7 +1112,7 @@ export class PostgresKernelRepository implements KernelRepository {
 function mapTimer(row: {
   id: string; run_id: string; step_id: string; tenant_id: string;
   fires_at: Date | string; timer_type: string; state: string;
-  payload: Record<string, unknown>; created_at: Date | string; fired_at: Date | string | null;
+  payload: Record<string, unknown>; created_at: Date | string; fired_at: Date | string | null; claim_token?: string | null;
 }): KernelTimer {
   return {
     id: row.id,
@@ -860,6 +1125,7 @@ function mapTimer(row: {
     payload: row.payload ?? {},
     createdAt: iso(row.created_at),
     firedAt: row.fired_at ? iso(row.fired_at) : undefined,
+    claimToken: row.claim_token ?? undefined,
   };
 }
 
