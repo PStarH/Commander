@@ -1,5 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { GuardianAgent, resetGuardianAgent } from '../../src/security/guardianAgent';
+import { validateMcpCommand } from '../../src/mcp/client';
+import { MCPServer } from '../../src/mcp/server';
+import * as guardianMod from '../../src/security/guardianAgent';
 
 function makeAction(
   overrides: Partial<{
@@ -219,6 +222,94 @@ describe('GuardianAgent', () => {
       const stats = guardian.getStats();
       expect(stats.totalActions).toBe(0);
       expect(stats.totalInterventions).toBe(0);
+    });
+  });
+});
+
+// ── P0.2: MCP command validation + security gate fail-closed ───────────────
+
+describe('validateMcpCommand (P0.2)', () => {
+  const prevUvx = process.env.COMMANDER_MCP_ALLOW_UVX;
+
+  afterEach(() => {
+    if (prevUvx === undefined) delete process.env.COMMANDER_MCP_ALLOW_UVX;
+    else process.env.COMMANDER_MCP_ALLOW_UVX = prevUvx;
+  });
+
+  it('rejects -e eval flag', () => {
+    expect(validateMcpCommand('node', ['-e', 'console.log(1)'])).toMatch(/inline-eval/);
+  });
+
+  it('rejects -r / --require / --import', () => {
+    expect(validateMcpCommand('node', ['-r', 'evil'])).toMatch(/inline-eval/);
+    expect(validateMcpCommand('node', ['--require', 'evil'])).toMatch(/inline-eval/);
+    expect(validateMcpCommand('node', ['--import', 'evil'])).toMatch(/inline-eval/);
+  });
+
+  it('rejects uvx by default', () => {
+    delete process.env.COMMANDER_MCP_ALLOW_UVX;
+    expect(validateMcpCommand('uvx', ['some-pkg'])).toMatch(/uvx/);
+  });
+
+  it('allows uvx when COMMANDER_MCP_ALLOW_UVX=1', () => {
+    process.env.COMMANDER_MCP_ALLOW_UVX = '1';
+    expect(validateMcpCommand('uvx', ['some-pkg'])).toBeUndefined();
+  });
+
+  it('allows node with safe args', () => {
+    expect(validateMcpCommand('node', ['server.js'])).toBeUndefined();
+  });
+});
+
+describe('MCPServer security gate fail-closed (P0.2)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns JSON-RPC error and does not execute handler when securityGate throws', async () => {
+    vi.spyOn(guardianMod, 'getGuardianAgent').mockImplementation(() => {
+      throw new Error('guardian unavailable');
+    });
+
+    const server = new MCPServer('test-mcp', '1.0.0');
+    let handlerCalled = false;
+    server.registerTool(
+      {
+        name: 'echo',
+        description: 'echo',
+        inputSchema: { type: 'object', properties: {} },
+      },
+      async () => {
+        handlerCalled = true;
+        return { content: [{ type: 'text', text: 'ok' }] };
+      },
+    );
+
+    await server.handleRequest({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 't', version: '1' },
+      },
+    });
+
+    const response = await server.handleRequest({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'echo', arguments: {} },
+    });
+
+    expect(handlerCalled).toBe(false);
+    expect(response).toMatchObject({
+      jsonrpc: '2.0',
+      id: 2,
+      error: expect.objectContaining({
+        message: expect.stringMatching(/security gate/i),
+      }),
     });
   });
 });

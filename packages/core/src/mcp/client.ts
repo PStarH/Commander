@@ -35,18 +35,37 @@ function uuid(): string {
  *  - `npx` is always forbidden at runtime (download-on-execute is a supply-chain risk).
  *  - Only explicitly allowed base names or absolute paths may be spawned.
  *  - Override via COMMANDER_MCP_ALLOWED_COMMANDS comma-separated env var.
+ *  - `uvx` is rejected unless COMMANDER_MCP_ALLOW_UVX=1.
  */
-function validateMcpCommand(command: string, args: readonly string[] = []): string | undefined {
+export function validateMcpCommand(command: string, args: readonly string[] = []): string | undefined {
   const base = path.basename(command).toLowerCase();
 
   if (base === 'npx' || command.toLowerCase().startsWith('npx ')) {
     return 'npx is not allowed for MCP stdio transport (download-on-execute supply-chain risk)';
   }
 
+  // uvx downloads and executes arbitrary packages — fail-closed unless explicitly opted in.
+  if (base === 'uvx' && process.env.COMMANDER_MCP_ALLOW_UVX !== '1') {
+    return 'uvx is not allowed for MCP stdio transport (set COMMANDER_MCP_ALLOW_UVX=1 to override)';
+  }
+
   // MCP-5: an allowlisted interpreter still becomes arbitrary code execution when
-  // handed an inline-eval flag (node -e, python -c, deno eval, ...). Treat args as
-  // part of the allowlist decision and reject eval/inline-code flags.
-  const EVAL_FLAGS = new Set(['-e', '--eval', '-c', '--command', '-p', '--print', 'eval', '-E']);
+  // handed an inline-eval / module-loader flag. Treat args as part of the allowlist
+  // decision and reject dangerous flags.
+  const EVAL_FLAGS = new Set([
+    '-e',
+    '--eval',
+    '-c',
+    '--command',
+    '-p',
+    '--print',
+    'eval',
+    '-E',
+    '-r',
+    '--require',
+    '--import',
+    '--loader',
+  ]);
   for (const arg of args) {
     const a = arg.trim().toLowerCase();
     if (
@@ -56,13 +75,21 @@ function validateMcpCommand(command: string, args: readonly string[] = []): stri
       a.startsWith('-c=') ||
       a.startsWith('--command=') ||
       a.startsWith('-p=') ||
-      a.startsWith('--print=')
+      a.startsWith('--print=') ||
+      a.startsWith('-r=') ||
+      a.startsWith('--require=') ||
+      a.startsWith('--import=') ||
+      a.startsWith('--loader=')
     ) {
       return `MCP command arguments may not contain an inline-eval flag ("${arg}") — it permits arbitrary code execution.`;
     }
   }
 
-  const defaultAllowed = ['node', 'nodejs', 'python', 'python3', 'uvx', 'bun', 'deno'];
+  const defaultAllowed = ['node', 'nodejs', 'python', 'python3', 'bun', 'deno'];
+  // uvx only joins the allowlist when explicitly opted in.
+  if (process.env.COMMANDER_MCP_ALLOW_UVX === '1') {
+    defaultAllowed.push('uvx');
+  }
   const envAllowed =
     process.env.COMMANDER_MCP_ALLOWED_COMMANDS?.split(',')
       .map((s) => s.trim().toLowerCase())
