@@ -72,7 +72,9 @@ export class PythonExecuteTool implements Tool {
 
     try {
       await fs.promises.writeFile(filePath, code, 'utf-8');
-      return formatExecResult(await execSandboxed(`python3 "${filePath}"`, timeout));
+      return formatExecResult(
+        await execSandboxed(`python3 "${filePath}"`, timeout, undefined, args),
+      );
     } finally {
       try {
         await fs.promises.unlink(filePath);
