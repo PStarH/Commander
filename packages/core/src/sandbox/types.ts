@@ -48,6 +48,13 @@ export interface SandboxExecutionResult {
   violated?: string[];
 }
 
+export interface SandboxWorkloadContext {
+  tenantId: string;
+  runId: string;
+  stepId: string;
+  workloadId: string;
+}
+
 export interface PlatformSandbox {
   readonly name: SandboxMechanism;
   readonly available: boolean;
@@ -55,6 +62,7 @@ export interface PlatformSandbox {
     command: string,
     profile: SandboxProfile,
     workdir?: string,
+    context?: SandboxWorkloadContext,
   ): Promise<SandboxExecutionResult>;
 }
 
@@ -112,5 +120,10 @@ export type BackendConfig = SSHConfig | DockerExecConfig;
 export interface ExecutionBackend {
   readonly type: ExecutionBackendType;
   readonly available: boolean;
-  execute(command: string, workdir?: string, timeout?: number): Promise<SandboxExecutionResult>;
+  execute(
+    command: string,
+    workdir?: string,
+    timeout?: number,
+    context?: SandboxWorkloadContext,
+  ): Promise<SandboxExecutionResult>;
 }

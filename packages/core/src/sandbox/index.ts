@@ -5,6 +5,7 @@ export type {
   FileAccessPolicy,
   SandboxProfile,
   SandboxExecutionResult,
+  SandboxWorkloadContext,
   PlatformSandbox,
   ExecutionBackendType,
   ExecutionBackend,
@@ -20,7 +21,26 @@ export {
   wrapCommandWithProxy,
 } from './networkProxy';
 export type { ProxySandboxConfig } from './networkProxy';
-export { SandboxManager, getSandboxManager, resetSandboxManager } from './manager';
+export {
+  SandboxManager,
+  SandboxInitializationError,
+  getSandboxManager,
+  resetSandboxManager,
+} from './manager';
+export {
+  buildWorkloadDockerOptions,
+  createSandboxWorkloadContext,
+  validateSandboxWorkloadContext,
+  workloadContainerName,
+} from './workload';
+export {
+  SandboxPolicyError,
+  assertProductionSandboxPolicy,
+  assertProductionSandboxReady,
+  assertProductionSandboxSource,
+  resolveSandboxPolicy,
+} from './productionPolicy';
+export type { SandboxEnvironment, SandboxIsolation, SandboxPolicy } from './productionPolicy';
 export { ExecPolicyEngine } from './execPolicy';
 export { ApprovalSystem, getApprovalSystem } from './approval';
 export type {
