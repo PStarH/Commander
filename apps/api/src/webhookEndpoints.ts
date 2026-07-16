@@ -342,10 +342,31 @@ export function createWebhookRouter(): Router {
       const msgType = extractXmlField(rawBody, 'MsgType');
       const content = extractXmlField(rawBody, 'Content');
 
+      // Timestamp freshness: WeCom timestamps are seconds; reject if skewed > 5 min.
+      const tsNum = timestamp !== undefined ? Number(timestamp) : NaN;
+      if (!timestamp || !Number.isFinite(tsNum) || Math.abs(Date.now() / 1000 - tsNum) > 300) {
+        res.status(401).json({ error: 'Invalid or stale timestamp' });
+        return;
+      }
+
       // Handle echostr verification (GET-style, but sometimes POSTed).
-      // This is allowed without config because it happens during app registration.
+      // Signature params must be complete; echostr participates in the signature
+      // when Encrypt is absent (WeCom URL verification).
       const echostr = req.query.echostr as string | undefined;
       if (echostr) {
+        if (!msgSignature || !nonce) {
+          res.status(401).json({ error: 'Missing signature parameters' });
+          return;
+        }
+        if (!config) {
+          res.status(401).json({ error: 'Webhook config required' });
+          return;
+        }
+        const signPayload = encrypt ?? echostr;
+        if (!verifyWeComSignature(config.secret, timestamp, nonce, signPayload, msgSignature)) {
+          res.status(401).json({ error: 'Invalid msg_signature' });
+          return;
+        }
         res.send(echostr);
         return;
       }
@@ -356,13 +377,14 @@ export function createWebhookRouter(): Router {
         return;
       }
 
-      // Basic signature verification is mandatory when a config exists
-      // (skipping full AES decryption per task constraints).
-      if (msgSignature && timestamp && nonce && encrypt) {
-        if (!verifyWeComSignature(config.secret, timestamp, nonce, encrypt, msgSignature)) {
-          res.status(401).json({ error: 'Invalid msg_signature' });
-          return;
-        }
+      // All four signature elements are mandatory — missing any → 401 (no skip).
+      if (!msgSignature || !nonce || !encrypt) {
+        res.status(401).json({ error: 'Missing signature parameters' });
+        return;
+      }
+      if (!verifyWeComSignature(config.secret, timestamp, nonce, encrypt, msgSignature)) {
+        res.status(401).json({ error: 'Invalid msg_signature' });
+        return;
       }
 
       if (msgType === 'text' && content) {
@@ -389,6 +411,9 @@ export function createWebhookRouter(): Router {
   }
   router.post('/api/webhook/wecom', wecomHandler);
   router.post('/api/webhook/wecom/:id', wecomHandler);
+  // WeCom URL verification typically arrives as GET with echostr.
+  router.get('/api/webhook/wecom', wecomHandler);
+  router.get('/api/webhook/wecom/:id', wecomHandler);
 
   // ── GET /api/webhook/config — list IM webhooks ────────────────────────
   router.get('/api/webhook/config', (_req: Request, res: Response) => {
