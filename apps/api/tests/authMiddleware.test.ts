@@ -189,12 +189,23 @@ describe('authMiddleware', () => {
     assert.equal(result.req.apiKeyId, 'ci-key');
   });
 
-  it('can be disabled explicitly for integration tests', () => {
+  it('can be disabled explicitly for integration tests with ALLOW_ANON', () => {
     process.env.AUTH_DISABLED = 'true';
+    process.env.COMMANDER_ALLOW_ANON = '1';
 
     const result = runAuth('/api/orchestrator/status');
 
     assert.equal(result.nextCalled, true);
     assert.equal(result.result.statusCode, 200);
+  });
+
+  it('rejects AUTH_DISABLED without COMMANDER_ALLOW_ANON outside production', () => {
+    process.env.AUTH_DISABLED = 'true';
+    delete process.env.COMMANDER_ALLOW_ANON;
+
+    const result = runAuth('/api/orchestrator/status');
+
+    assert.equal(result.nextCalled, false);
+    assert.equal(result.result.statusCode, 401);
   });
 });
