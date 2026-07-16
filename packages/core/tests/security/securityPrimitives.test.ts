@@ -31,6 +31,14 @@ describe('SecurityPrimitives', () => {
       expect(result.patterns).toContain('openai_proj_key');
     });
 
+    it('scrubs OpenAI service-account keys (sk-svcacct-*)', () => {
+      const key = 'sk-svcacct-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789';
+      const result = sanitizer.sanitize(`key=${key}`, 'log');
+      expect(result.sanitized).toContain('sk-svcacct-[REDACTED]');
+      expect(result.sanitized).not.toContain(key);
+      expect(result.patterns).toContain('openai_svcacct_key');
+    });
+
     it('scrubs Anthropic API keys (sk-ant-api03-*)', () => {
       const key = 'sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_extra';
       const result = sanitizer.sanitize(`key=${key}`, 'log');
