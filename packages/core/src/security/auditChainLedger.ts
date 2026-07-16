@@ -282,6 +282,12 @@ export class AuditChainLedger {
     return this.entryCache;
   }
 
+  /** Directory where chain NDJSON files are persisted. WS9 integrity layer
+   * uses this to cross-check manifest state against on-disk chains. */
+  get persistDirectory(): string {
+    return this.persistDir;
+  }
+
   /**
    * Verify persisted chain integrity for this ledger's tenant scope.
    * Re-reads all `audit-chain-*.ndjson` files, groups by chainId, sorts by

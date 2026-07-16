@@ -313,8 +313,9 @@ export class BackpressureController implements IBackpressureController {
     this.config = {
       maxTokens: config.maxTokens ?? 100,
       refillRatePerSecond: config.refillRatePerSecond ?? 50,
-      // RingBuffer requires capacity >= 1; treat 0/negative as minimal buffer.
-      bufferSize: Math.max(1, config.bufferSize ?? 200),
+      // Let invalid bufferSize (<=0, NaN) propagate to RingBuffer which throws
+      // a descriptive error — silent clamping hid misconfiguration from callers.
+      bufferSize: config.bufferSize ?? 200,
       failureThreshold: config.failureThreshold ?? 10,
       cooldownMs: config.cooldownMs ?? 5000,
       maxWaitMs: config.maxWaitMs ?? 10000,

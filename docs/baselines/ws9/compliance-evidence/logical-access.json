@@ -1,0 +1,18 @@
+{
+  "controlId": "CC6.7",
+  "controlName": "Logical Access",
+  "soc2Criteria": [
+    "CC6.7"
+  ],
+  "evidenceLevel": "pending",
+  "testCaseIds": [
+    "DATA-1",
+    "DATA-3",
+    "DATA-4"
+  ],
+  "verdict": "PENDING",
+  "artifactPaths": [],
+  "collectedAt": "2026-07-16T07:18:53.822Z",
+  "verifiedBy": "ws9-livefire",
+  "gitSha": "6f69a520fd091dbebcc5b7b20535fbf91a422807"
+}

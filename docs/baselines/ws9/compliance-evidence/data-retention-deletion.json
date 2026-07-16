@@ -1,0 +1,17 @@
+{
+  "controlId": "CC5.2",
+  "controlName": "Data Retention & Deletion",
+  "soc2Criteria": [
+    "CC5.2",
+    "CC7.1"
+  ],
+  "evidenceLevel": "pending",
+  "testCaseIds": [
+    "DATA-5"
+  ],
+  "verdict": "PENDING",
+  "artifactPaths": [],
+  "collectedAt": "2026-07-16T07:18:53.822Z",
+  "verifiedBy": "ws9-livefire",
+  "gitSha": "6f69a520fd091dbebcc5b7b20535fbf91a422807"
+}

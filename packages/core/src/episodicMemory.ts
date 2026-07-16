@@ -138,7 +138,9 @@ export interface MemoryWriteOptions {
 export interface MemoryManageOptions {
   id: string;
   projectId: string;
-  updates?: Partial<Pick<EpisodicMemoryItem, 'priority' | 'tags' | 'confidence' | 'expiresAt'>>;
+  updates?: Partial<
+    Pick<EpisodicMemoryItem, 'priority' | 'tags' | 'confidence' | 'expiresAt' | 'lastAccessedAt'>
+  >;
   delete?: boolean;
 }
 
