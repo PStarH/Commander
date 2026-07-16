@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependabot configuration for automated dependency updates
 - Pull request template for consistent PR descriptions
 - npm audit and test coverage checks in CI pipeline
-- Architecture V2 packages: `@commander/contracts`, `@commander/kernel`, `@commander/control-plane`, `@commander/worker-plane`, `@commander/operations`, `@commander/orchestration`, `@commander/effect-broker`
+- Architecture V2 packages: `@commander/contracts`, `@commander/kernel`, `@commander/worker-plane`, `@commander/operations`, `@commander/effect-broker`
 - `docs/getting-started.md` quick-start guide
 
 ### Changed
