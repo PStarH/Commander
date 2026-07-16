@@ -29,6 +29,7 @@ import { ToolStepExecutor } from './toolStepExecutor.js';
 import { EvaluatorStepExecutor } from './evaluatorStepExecutor.js';
 import { CompositeStepExecutor } from './compositeStepExecutor.js';
 import { createAgentStepExecutor, createExecutorManifest } from './workerRuntimeAdapter.js';
+import { probeSandboxCapability } from './sandboxProbe.js';
 import type { WorkerDefinition, WorkerIdentity, WorkerKind, StepExecutor } from './types.js';
 import type { EffectExecutor, PolicyEvaluator, AuditSink, EffectKernelPort } from '@commander/effect-broker';
 import { EffectBroker, CapabilityTokenService } from '@commander/effect-broker';
@@ -48,6 +49,12 @@ export async function createWorkerService(): Promise<WorkerService> {
   if (!authToken) {
     throw new Error('COMMANDER_WORKER_AUTH_TOKEN is required for worker bootstrap');
   }
+
+  // ── WS7 §4.1: Sandbox capability probe ──
+  // Production workers must verify sandbox capability before claiming work.
+  // Any probe failure throws and the worker refuses to start.
+  // No Noop fallback, no in-process fallback, no auto-degradation.
+  await probeSandboxCapability();
 
   // ── Parse configuration ──
   const workerId = process.env.COMMANDER_WORKER_ID ?? `worker-${randomUUID().slice(0, 8)}`;
