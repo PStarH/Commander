@@ -36,6 +36,7 @@ import {
 import { isMutationTool } from './runtimeHelpers';
 import { getSideEffectGate, SideEffectGateError } from './sideEffectGate';
 import { getCapabilityTokenVerifier } from '../security/capabilityToken';
+import { createSandboxWorkloadContext } from '../sandbox/workload';
 import {
   getGlobalBiscuitCapabilityAdapter,
   BiscuitCapabilityAdapter,
@@ -662,12 +663,23 @@ export class ToolExecutionService {
       // strips PII, control characters, and prompt-injection markers from
       // values that originated from an untrusted LLM.
       const sanitizedArgs = this.sanitizeArguments(validatedArgs);
+      const executionArgs =
+        (toolCall.name === 'shell_execute' || toolCall.name === 'python_execute') && tenantId
+          ? {
+              ...sanitizedArgs,
+              ...createSandboxWorkloadContext({
+                tenantId,
+                runId,
+                stepId: toolCall.id || toolCall.name,
+              }),
+            }
+          : sanitizedArgs;
 
       const boundaryResult = await boundary.execute<string>(
         toolCall.name,
         'tool',
         async () => {
-          return this.runtime.stepTimeout.wrap(tool.execute(sanitizedArgs, agentCtx), {
+          return this.runtime.stepTimeout.wrap(tool.execute(executionArgs, agentCtx), {
             timeoutMs: effectiveTimeout,
             stepId: toolCall.id || toolCall.name,
           });
