@@ -1,5 +1,6 @@
 import type { MemoryStore, EpisodicMemoryItem } from '../episodicMemory';
-import { InMemoryMemoryStore } from '../episodicMemory';
+import { InMemoryMemoryService } from '../memory/inMemoryMemoryService';
+import { MemoryStoreFacade } from '../memory/memoryStoreFacade';
 
 /**
  * Normalized score for a single benchmark suite.
@@ -201,7 +202,7 @@ export const DEFAULT_MEMORY_BENCHMARKS: MemoryBenchmarkSuite[] = [
  * Returns one result per capability area.
  */
 export async function runMemoryBenchmark(
-  store: MemoryStore = new InMemoryMemoryStore(),
+  store: MemoryStore = new MemoryStoreFacade(new InMemoryMemoryService(), 'benchmark-tenant'),
 ): Promise<MemoryBenchmarkResult[]> {
   return Promise.all(DEFAULT_MEMORY_BENCHMARKS.map((suite) => suite.run(store)));
 }

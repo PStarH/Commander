@@ -51,6 +51,9 @@ tmp/
 temp/
 *.tmp
 
+# Git worktrees (local agent isolation)
+.worktrees/
+
 # Commander state
 .commander_*
 .commander_state

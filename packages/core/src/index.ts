@@ -47,8 +47,6 @@ export {
   MemoryManageOptions,
   MemoryStats,
   MemoryStore,
-  InMemoryMemoryStore,
-  JsonMemoryStore,
   createMemoryStore,
   fromProjectMemoryItem,
   toProjectMemoryItem,
@@ -58,6 +56,37 @@ export type {
   ProjectMemoryOverview,
   ProjectMemorySearchOptions,
 } from './memory/apiTypes';
+export {
+  MemoryServiceValidationError,
+  assertForgetTarget,
+  assertLimit,
+  assertMemoryScope,
+} from './memory/memoryService';
+export type {
+  ForgetMemoryInput,
+  ListMemoryInput,
+  MemoryPage,
+  MemoryRecord,
+  MemoryRetentionPolicy,
+  MemoryScope,
+  MemorySearchResult as MemoryServiceSearchResult,
+  MemoryService,
+  MemoryServiceMaintenance,
+  RetrieveMemoryInput,
+  SearchMemoryInput,
+  StoreMemoryInput,
+} from './memory/memoryService';
+export { InMemoryMemoryService } from './memory/inMemoryMemoryService';
+export { PostgresMemoryService } from './memory/postgresMemoryService';
+export { MemoryStoreFacade } from './memory/memoryStoreFacade';
+export { MemoryMigrationRunner } from './memory/memoryMigration';
+export type {
+  LegacyMemoryRecord,
+  MemoryMigrationCheckpointStore,
+  MemoryMigrationResult,
+  MemoryMigrationSource,
+  TenantMapping,
+} from './memory/memoryMigration';
 
 // Ultimate Framework exports (legacy)
 export type {
@@ -304,8 +333,6 @@ export {
   resetSandboxManager,
   getSandboxManager,
   SandboxManager,
-  SandboxInitializationError,
-  parseSandboxIsolation,
   ExecPolicyEngine,
   TEESandbox,
 } from './sandbox';
@@ -313,7 +340,6 @@ export type {
   SandboxMode,
   SandboxProfile,
   SandboxMechanism,
-  SandboxIsolation,
   NetworkPolicy,
   FileAccessPolicy,
   SandboxExecutionResult,
@@ -321,24 +347,6 @@ export type {
   TEEBackend,
   TEEAttestation,
   TEESandboxResult,
-} from './sandbox';
-
-// WS7 §5 — Tenant sandbox policy (per-workload identity & resource naming)
-export {
-  validateWorkloadIdentity,
-  generateContainerName,
-  generateWorkloadVolumeName,
-  generateNetworkNamespaceName,
-  generateWorkloadWorkdir,
-  assertTenantScopeConsistency,
-  lockImageByDigest,
-  buildTenantSandboxPolicy,
-} from './sandbox';
-export type {
-  TenantScopeCheckPoint,
-  LockedImage,
-  TenantSandboxPolicy,
-  BuildTenantSandboxPolicyOptions,
 } from './sandbox';
 
 // Credential Manager

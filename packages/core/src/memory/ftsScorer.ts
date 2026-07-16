@@ -2,7 +2,7 @@
  * FTS5-style BM25 Scorer for In-Memory Memory Stores
  *
  * Implements Okapi BM25 ranking without requiring SQLite.
- * Used by JsonMemoryStore and ThreeLayerMemory for high-quality
+ * Used by migration tooling and ThreeLayerMemory for high-quality
  * full-text search across memory entries.
  *
  * BM25 formula:
