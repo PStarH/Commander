@@ -1,13 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { InMemoryMemoryStore } from '../src/memory';
+import { InMemoryMemoryService, MemoryStoreFacade } from '../src/memory';
+import type { MemoryStore } from '../src/episodicMemory';
 import { MemoryCurator } from '../src/memory/curator';
 
 describe('MemoryCurator TTL path (merged stack)', () => {
-  let store: InMemoryMemoryStore;
+  let store: MemoryStore;
   let curator: MemoryCurator;
 
   beforeEach(() => {
-    store = new InMemoryMemoryStore();
+    store = new MemoryStoreFacade(new InMemoryMemoryService(), 'test-tenant');
     curator = new MemoryCurator(store);
   });
 

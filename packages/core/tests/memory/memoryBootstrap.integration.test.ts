@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { bootstrapMemoryPersistence, resolveMemoryStoreType } from '../../src/memory/utils';
+import {
+  bootstrapMemoryPersistence,
+  createMemoryStore,
+  resolveMemoryStoreType,
+} from '../../src/memory/utils';
 import { getUnifiedMemory, resetUnifiedMemory } from '../../src/memory/unifiedMemory';
 import {
   getGlobalThreeLayerMemory,
@@ -28,15 +32,48 @@ describe('memory bootstrap integration', () => {
   });
 
   it('resolveMemoryStoreType prefers explicit config', () => {
-    expect(resolveMemoryStoreType({ memoryStoreType: 'sqlite' })).toBe('sqlite');
+    expect(resolveMemoryStoreType({ memoryStoreType: 'postgres' })).toBe('postgres');
   });
 
   it('resolveMemoryStoreType uses in-memory under vitest', () => {
     expect(resolveMemoryStoreType({})).toBe('in-memory');
   });
 
+  it('supports postgres as the explicit production backend', () => {
+    expect(resolveMemoryStoreType({ memoryStoreType: 'postgres' })).toBe('postgres');
+  });
+
+  it('falls back to in-memory (Local-First) outside tests without Postgres', () => {
+    const previousVitest = process.env.VITEST;
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousCommanderUrl = process.env.COMMANDER_POSTGRES_URL;
+    const previousDatabaseUrl = process.env.DATABASE_URL;
+    try {
+      delete process.env.VITEST;
+      process.env.NODE_ENV = 'production';
+      delete process.env.COMMANDER_POSTGRES_URL;
+      delete process.env.DATABASE_URL;
+      expect(resolveMemoryStoreType({})).toBe('in-memory');
+    } finally {
+      if (previousVitest === undefined) delete process.env.VITEST;
+      else process.env.VITEST = previousVitest;
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      if (previousCommanderUrl === undefined) delete process.env.COMMANDER_POSTGRES_URL;
+      else process.env.COMMANDER_POSTGRES_URL = previousCommanderUrl;
+      if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previousDatabaseUrl;
+    }
+  });
+
+  it('creates the new in-memory service behind the legacy facade for tests', async () => {
+    const store = await createMemoryStore('in-memory');
+    expect(store.constructor.name).toBe('MemoryStoreFacade');
+    await store.close();
+  });
+
   it('bootstrap wires ThreeLayerMemory and UnifiedMemory to the same store', async () => {
-    const store = await bootstrapMemoryPersistence('json', { basePath: tempDir });
+    const store = await bootstrapMemoryPersistence('in-memory', { tenantId: '__default__' });
 
     const memory = getGlobalThreeLayerMemory();
     memory.add('bootstrap integration entry', 'episodic', 'test', 0.6);
@@ -54,22 +91,5 @@ describe('memory bootstrap integration', () => {
     const search = await store.search({ projectId: 'default', limit: 20 });
     expect(search.items.length).toBeGreaterThanOrEqual(1);
     expect(search.items.some((item) => item.content.includes('bootstrap integration'))).toBe(true);
-  });
-
-  it('json store persists episodic rows across new store instances', async () => {
-    const { JsonMemoryStore } = await import('../../src/memory/jsonStore');
-    const store1 = new JsonMemoryStore(tempDir);
-    await store1.write({
-      projectId: 'default',
-      kind: 'SUMMARY',
-      duration: 'EPISODIC',
-      title: 'restart',
-      content: 'survives restart',
-      tags: [],
-    });
-
-    const store2 = new JsonMemoryStore(tempDir);
-    const search = await store2.search({ projectId: 'default', limit: 20 });
-    expect(search.items.some((item) => item.content.includes('survives restart'))).toBe(true);
   });
 });

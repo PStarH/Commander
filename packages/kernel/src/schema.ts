@@ -1,5 +1,5 @@
 /** PostgreSQL schema for the Commander execution kernel. */
-export const KERNEL_SCHEMA_VERSION = '2026-07-13.6';
+export const KERNEL_SCHEMA_VERSION = '2026-07-15.1';
 
 export const KERNEL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS commander_kernel_schema (
@@ -38,6 +38,21 @@ CREATE TABLE IF NOT EXISTS commander_tenant_execution_usage (
   running_steps INTEGER NOT NULL DEFAULT 0 CHECK (running_steps >= 0),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS commander_tenant_execution_control (
+  tenant_id TEXT PRIMARY KEY,
+  paused BOOLEAN NOT NULL DEFAULT false,
+  generation BIGINT NOT NULL DEFAULT 0,
+  actor TEXT NOT NULL,
+  reason TEXT,
+  paused_at TIMESTAMPTZ,
+  resumed_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO commander_tenant_execution_control (tenant_id, actor)
+SELECT DISTINCT tenant_id, 'kernel.migration'
+FROM commander_runs
+ON CONFLICT (tenant_id) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS commander_steps (
   id TEXT PRIMARY KEY,
@@ -145,6 +160,30 @@ CREATE INDEX IF NOT EXISTS commander_outbox_ready_idx ON commander_outbox (avail
 ALTER TABLE commander_outbox ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'system';
 UPDATE commander_outbox SET tenant_id = COALESCE(payload->>'tenantId', 'system') WHERE tenant_id = 'system';
 
+CREATE TABLE IF NOT EXISTS commander_outbox_deliveries (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL UNIQUE,
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  tenant_id TEXT NOT NULL,
+  topic TEXT NOT NULL,
+  key TEXT NOT NULL,
+  occurred_at TIMESTAMPTZ NOT NULL,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  consumer_id TEXT,
+  claim_token TEXT,
+  claimed_at TIMESTAMPTZ,
+  acknowledged_at TIMESTAMPTZ,
+  last_error JSONB,
+  moved_to_dlq_at TIMESTAMPTZ,
+  dlq_reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS commander_outbox_deliveries_ready_idx
+  ON commander_outbox_deliveries (available_at, created_at)
+  WHERE acknowledged_at IS NULL AND moved_to_dlq_at IS NULL;
+
 -- ── Durable timers ─────────────────────────────────────────────────────────
 -- Durable timers allow steps to enter WAITING_FOR_HUMAN or schedule a delayed
 -- retry. A background wakeup worker scans for expired timers and transitions
@@ -156,11 +195,18 @@ CREATE TABLE IF NOT EXISTS commander_timers (
   tenant_id TEXT NOT NULL,
   fires_at TIMESTAMPTZ NOT NULL,
   timer_type TEXT NOT NULL CHECK (timer_type IN ('INTERACTION_TIMEOUT','RETRY_DELAY','STEP_DEADLINE')),
-  state TEXT NOT NULL DEFAULT 'PENDING' CHECK (state IN ('PENDING','FIRED','CANCELLED')),
+  state TEXT NOT NULL DEFAULT 'PENDING' CHECK (state IN ('PENDING','PROCESSING','FIRED','CANCELLED')),
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  fired_at TIMESTAMPTZ
+  fired_at TIMESTAMPTZ,
+  claim_token TEXT,
+  claimed_at TIMESTAMPTZ
 );
+ALTER TABLE commander_timers ADD COLUMN IF NOT EXISTS claim_token TEXT;
+ALTER TABLE commander_timers ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
+ALTER TABLE commander_timers DROP CONSTRAINT IF EXISTS commander_timers_state_check;
+ALTER TABLE commander_timers ADD CONSTRAINT commander_timers_state_check
+  CHECK (state IN ('PENDING','PROCESSING','FIRED','CANCELLED'));
 CREATE INDEX IF NOT EXISTS commander_timers_fire_idx ON commander_timers (fires_at, state) WHERE state = 'PENDING';
 
 -- ── Interactions ───────────────────────────────────────────────────────────
@@ -189,6 +235,7 @@ CREATE INDEX IF NOT EXISTS commander_interactions_pending_idx ON commander_inter
 ALTER TABLE commander_outbox ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 10;
 ALTER TABLE commander_outbox ADD COLUMN IF NOT EXISTS dlq_reason TEXT;
 ALTER TABLE commander_outbox ADD COLUMN IF NOT EXISTS moved_to_dlq_at TIMESTAMPTZ;
+ALTER TABLE commander_outbox ADD COLUMN IF NOT EXISTS last_error JSONB;
 
 CREATE TABLE IF NOT EXISTS commander_outbox_dlq (
   id TEXT PRIMARY KEY,
@@ -203,6 +250,12 @@ CREATE TABLE IF NOT EXISTS commander_outbox_dlq (
   original_created_at TIMESTAMPTZ NOT NULL,
   moved_to_dlq_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+DELETE FROM commander_outbox_dlq newer
+USING commander_outbox_dlq older
+WHERE newer.original_id = older.original_id
+  AND (newer.moved_to_dlq_at, newer.id) > (older.moved_to_dlq_at, older.id);
+CREATE UNIQUE INDEX IF NOT EXISTS commander_outbox_dlq_original_idx
+  ON commander_outbox_dlq (original_id);
 CREATE INDEX IF NOT EXISTS commander_outbox_dlq_topic_idx ON commander_outbox_dlq (topic, moved_to_dlq_at);
 ALTER TABLE commander_outbox_dlq ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'system';
 `;
@@ -230,8 +283,8 @@ BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'commander_runs', 'commander_steps', 'commander_events',
     'commander_effects', 'commander_tenant_execution_limits',
-    'commander_tenant_execution_usage', 'commander_timers',
-    'commander_interactions', 'commander_outbox', 'commander_outbox_dlq'
+    'commander_tenant_execution_usage', 'commander_tenant_execution_control', 'commander_timers',
+    'commander_interactions', 'commander_outbox', 'commander_outbox_deliveries', 'commander_outbox_dlq'
   ] LOOP
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', table_name);
     EXECUTE format('DROP POLICY IF EXISTS commander_tenant_isolation ON %I', table_name);

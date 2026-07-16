@@ -694,9 +694,7 @@ class BwrapSB implements PlatformSandbox {
 
 // gVisor (runsc) — kernel-level sandbox providing stronger isolation than standard Docker.
 // Uses the runsc OCI runtime (gVisor's user-space kernel) which intercepts all syscalls.
-// WS7 §2: When gvisor is explicitly selected, it must NOT fall back to Docker.
-// The GVisorSB.available flag reflects runsc presence; SandboxManager.getSandbox()
-// throws SandboxInitializationError if gvisor isolation is requested but unavailable.
+// Falls back to DockerSB if runsc is not available.
 class GVisorSB implements PlatformSandbox {
   readonly name = 'gvisor' as const;
   readonly available: boolean;

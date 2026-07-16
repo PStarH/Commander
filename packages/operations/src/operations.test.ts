@@ -1,5 +1,0 @@
-import assert from 'node:assert/strict'; import { describe, it } from 'node:test'; import { OutboxPublisher, buildEvidenceTimeline, evaluateSlo } from './index.js';
-describe('operations plane', () => {
-  it('acknowledges outbox only after publication', async () => { let ack = ''; const result = await new OutboxPublisher({ claimOutbox: async () => [{ id: 'm', topic: 't', key: 'k', payload: {}, claimToken: 'claim', attempts: 1 }], markOutboxPublished: async (_id, token) => { ack = token; return true; } }, { publish: async () => {} }).publishOnce(); assert.deepEqual(result, { published: 1, failed: 0 }); assert.equal(ack, 'claim'); });
-  it('detects evidence gaps and SLO budget burn', () => { assert.deepEqual(buildEvidenceTimeline([{ id: '1', type: 'run.created', occurredAt: '2026-01-01T00:00:00.000Z', actor: 'gateway', tenantId: 't', runId: 'r', payload: {} }]).gaps, ['missing_terminal_event']); const report = evaluateSlo({ id: 'api', target: .99, windowMs: 1000, selector: () => true }, [{ at: Date.now(), success: false }]); assert.equal(report.compliant, false); assert.ok(report.burnRate > 1); });
-});

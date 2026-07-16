@@ -52,7 +52,7 @@ worker:
   secrets:
     COMMANDER_WORKER_AUTH_TOKEN: worker-token
 
-timer:
+kernelOps:
   enabled: true
   replicas: 1
   resources:
@@ -64,23 +64,13 @@ timer:
       memory: 128Mi
   env:
     NODE_ENV: production
+    COMMANDER_RECLAIM_INTERVAL_MS: "5000"
+    COMMANDER_RECLAIM_BATCH_SIZE: "100"
     COMMANDER_TIMER_POLL_MS: "5000"
     COMMANDER_TIMER_BATCH_SIZE: "100"
-
-outbox:
-  enabled: true
-  replicas: 1
-  resources:
-    limits:
-      cpu: 500m
-      memory: 512Mi
-    requests:
-      cpu: 100m
-      memory: 128Mi
-  env:
-    NODE_ENV: production
-    COMMANDER_OUTBOX_INTERVAL_MS: "5000"
-    COMMANDER_OUTBOX_LIMIT: "100"
+    COMMANDER_OUTBOX_INTERVAL_MS: "1000"
+    COMMANDER_OUTBOX_BATCH_SIZE: "100"
+    COMMANDER_OUTBOX_MAX_ATTEMPTS: "10"
 
 database:
   # Set to false if you provide your own Postgres instance via externalDatabase.
