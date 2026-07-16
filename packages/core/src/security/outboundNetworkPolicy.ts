@@ -94,9 +94,21 @@ function normalizeHostname(hostname: string): string {
   if (h.startsWith('[') && h.endsWith(']')) {
     h = h.slice(1, -1);
   }
-  // IPv4-mapped IPv6 → extract IPv4
+  // IPv4-mapped IPv6 → extract IPv4 (dotted or hex form ::ffff:7f00:1)
   if (h.startsWith('::ffff:')) {
-    h = h.slice('::ffff:'.length);
+    const rest = h.slice('::ffff:'.length);
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(rest)) {
+      h = rest;
+    } else {
+      const parts = rest.split(':');
+      if (parts.length === 2) {
+        const hi = Number.parseInt(parts[0], 16);
+        const lo = Number.parseInt(parts[1], 16);
+        if (Number.isFinite(hi) && Number.isFinite(lo)) {
+          h = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+        }
+      }
+    }
   }
   return h;
 }
