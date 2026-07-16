@@ -10,16 +10,13 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '../../../..');
 
 describe('claim honesty', () => {
-  it('apps/api EpisodicMemoryStore does not claim SQLite in its file header', () => {
+  it('apps/api EpisodicMemoryStore stays deleted after the zombie removal', () => {
     const path = join(ROOT, 'apps/api/src/episodicMemoryStore.ts');
-    assert.ok(existsSync(path));
-    const head = readFileSync(path, 'utf8').slice(0, 800);
-    assert.doesNotMatch(
-      head,
-      /Episodic Memory Store with SQLite/i,
-      'false SQLite durability claim was fixed 2026-07-15; do not reintroduce',
+    assert.equal(
+      existsSync(path),
+      false,
+      'apps/api EpisodicMemoryStore was deleted as a health-only zombie; do not reintroduce',
     );
-    assert.match(head, /JSON file/i, 'header should describe actual JSON persistence');
   });
 
   it('EventSourcingEngine header does not claim unconditional WAL durability', () => {

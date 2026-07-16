@@ -1,0 +1,218 @@
+import { randomUUID } from 'node:crypto';
+import type {
+  ForgetMemoryInput,
+  ListMemoryInput,
+  MemoryPage,
+  MemoryRecord,
+  MemoryRetentionPolicy,
+  MemoryScope,
+  MemorySearchResult,
+  MemoryService,
+  RetrieveMemoryInput,
+  SearchMemoryInput,
+  StoreMemoryInput,
+} from './memoryService';
+import { assertForgetTarget, assertLimit, assertMemoryScope } from './memoryService';
+
+export interface InMemoryMemoryServiceOptions {
+  now?: () => Date;
+  retention?: MemoryRetentionPolicy;
+}
+
+function keyFor(scope: MemoryScope, id: string): string {
+  return `${scope.tenantId}\u0000${scope.projectId}\u0000${id}`;
+}
+
+function isInScope(record: MemoryRecord, scope: MemoryScope): boolean {
+  return record.tenantId === scope.tenantId && record.projectId === scope.projectId;
+}
+
+function isLive(record: MemoryRecord, now: Date): boolean {
+  return !record.expiresAt || new Date(record.expiresAt).getTime() > now.getTime();
+}
+
+function sortRecords(left: MemoryRecord, right: MemoryRecord): number {
+  if (left.priority !== right.priority) return right.priority - left.priority;
+  if (left.createdAt !== right.createdAt) return right.createdAt.localeCompare(left.createdAt);
+  return left.id.localeCompare(right.id);
+}
+
+function matchesFilters(record: MemoryRecord, input: SearchMemoryInput | ListMemoryInput): boolean {
+  if (input.kind && record.kind !== input.kind) return false;
+  if (input.missionId && record.missionId !== input.missionId) return false;
+  if (input.agentId && record.agentId !== input.agentId) return false;
+  if (input.tags && !input.tags.every((tag) => record.tags.includes(tag))) return false;
+  if (
+    'minPriority' in input &&
+    input.minPriority !== undefined &&
+    record.priority < input.minPriority
+  ) {
+    return false;
+  }
+  if (
+    'minConfidence' in input &&
+    input.minConfidence !== undefined &&
+    record.confidence < input.minConfidence
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export class InMemoryMemoryService implements MemoryService {
+  private readonly items = new Map<string, MemoryRecord>();
+  private readonly now: () => Date;
+  private readonly retention: MemoryRetentionPolicy;
+
+  constructor(options: InMemoryMemoryServiceOptions = {}) {
+    this.now = options.now ?? (() => new Date());
+    this.retention = options.retention ?? {};
+  }
+
+  async store(input: StoreMemoryInput): Promise<MemoryRecord> {
+    assertMemoryScope(input.scope);
+    if (!input.title.trim() || !input.content.trim()) {
+      throw new Error('title and content must be non-empty');
+    }
+
+    const now = this.now();
+    const id = input.id ?? randomUUID();
+    const existing = this.items.get(keyFor(input.scope, id));
+    const createdAt = existing?.createdAt ?? now.toISOString();
+    const expiresAt =
+      input.expiresAt ??
+      (this.retention.defaultTtlMs != null
+        ? new Date(now.getTime() + this.retention.defaultTtlMs).toISOString()
+        : undefined);
+    const record: MemoryRecord = {
+      id,
+      tenantId: input.scope.tenantId,
+      projectId: input.scope.projectId,
+      missionId: input.missionId,
+      agentId: input.agentId ?? input.scope.agentId,
+      kind: input.kind,
+      duration: input.duration ?? 'EPISODIC',
+      title: input.title,
+      content: input.content,
+      tags: [...new Set(input.tags ?? [])],
+      priority: input.priority ?? 50,
+      confidence: input.confidence ?? 0.8,
+      createdAt,
+      lastAccessedAt: input.lastAccessedAt ?? now.toISOString(),
+      expiresAt,
+      evidenceRefs: input.evidenceRefs ? [...input.evidenceRefs] : undefined,
+      meta: input.meta ? { ...input.meta } : undefined,
+      embedding: input.embedding ? [...input.embedding] : undefined,
+    };
+
+    this.items.set(keyFor(input.scope, id), record);
+    this.enforceMaximum(input.scope);
+    return {
+      ...record,
+      tags: [...record.tags],
+      meta: record.meta ? { ...record.meta } : undefined,
+    };
+  }
+
+  async retrieve(input: RetrieveMemoryInput): Promise<MemoryRecord | null> {
+    assertMemoryScope(input.scope);
+    const record = this.items.get(keyFor(input.scope, input.id));
+    if (!record || !isLive(record, this.now())) return null;
+    const updated = { ...record, lastAccessedAt: this.now().toISOString() };
+    this.items.set(keyFor(input.scope, input.id), updated);
+    return {
+      ...updated,
+      tags: [...updated.tags],
+      meta: updated.meta ? { ...updated.meta } : undefined,
+    };
+  }
+
+  async search(input: SearchMemoryInput): Promise<MemorySearchResult> {
+    assertMemoryScope(input.scope);
+    const limit = assertLimit(input.limit);
+    const queryTokens = (input.query ?? '')
+      .toLowerCase()
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter(Boolean);
+    const items = this.scopedLiveRecords(input.scope)
+      .filter((record) => matchesFilters(record, input))
+      .filter((record) => {
+        if (queryTokens.length === 0) return true;
+        const haystack = `${record.title} ${record.content} ${record.tags.join(' ')}`.toLowerCase();
+        return queryTokens.every((token) => haystack.includes(token));
+      })
+      .sort(sortRecords);
+    return { items: items.slice(0, limit).map((record) => ({ ...record })), total: items.length };
+  }
+
+  async forget(input: ForgetMemoryInput): Promise<boolean> {
+    assertForgetTarget(input);
+    if (input.id) return this.items.delete(keyFor(input.scope, input.id));
+
+    let deleted = false;
+    for (const [key, record] of this.items) {
+      if (isInScope(record, input.scope) && record.missionId === input.missionId) {
+        deleted = this.items.delete(key) || deleted;
+      }
+    }
+    return deleted;
+  }
+
+  async list(input: ListMemoryInput): Promise<MemoryPage> {
+    assertMemoryScope(input.scope);
+    const limit = assertLimit(input.limit);
+    const offset = input.cursor ? Number.parseInt(input.cursor, 10) : 0;
+    if (!Number.isInteger(offset) || offset < 0)
+      throw new Error('cursor must be a non-negative integer');
+    const items = this.scopedLiveRecords(input.scope).filter((record) =>
+      matchesFilters(record, input),
+    );
+    const page = items.slice(offset, offset + limit).map((record) => ({ ...record }));
+    return {
+      items: page,
+      total: items.length,
+      nextCursor: offset + limit < items.length ? String(offset + limit) : undefined,
+    };
+  }
+
+  async purgeExpired(scope?: MemoryScope): Promise<number> {
+    if (scope) assertMemoryScope(scope);
+    const now = this.now();
+    let deleted = 0;
+    for (const [key, record] of this.items) {
+      if ((!scope || isInScope(record, scope)) && !isLive(record, now)) {
+        if (this.items.delete(key)) deleted++;
+      }
+    }
+    return deleted;
+  }
+
+  async close(): Promise<void> {
+    this.items.clear();
+  }
+
+  private scopedLiveRecords(scope: MemoryScope): MemoryRecord[] {
+    const now = this.now();
+    return [...this.items.values()]
+      .filter((record) => isInScope(record, scope) && isLive(record, now))
+      .sort(sortRecords);
+  }
+
+  private enforceMaximum(scope: MemoryScope): void {
+    const maximum = this.retention.maxEntriesPerTenantProject;
+    if (maximum == null) return;
+    if (!Number.isInteger(maximum) || maximum < 1) {
+      throw new Error('maxEntriesPerTenantProject must be a positive integer');
+    }
+    const records = this.scopedLiveRecords(scope).sort((left, right) => {
+      if (left.priority !== right.priority) return left.priority - right.priority;
+      if (left.createdAt !== right.createdAt) return left.createdAt.localeCompare(right.createdAt);
+      return left.id.localeCompare(right.id);
+    });
+    while (records.length > maximum) {
+      const record = records.shift();
+      if (record) this.items.delete(keyFor(scope, record.id));
+    }
+  }
+}
