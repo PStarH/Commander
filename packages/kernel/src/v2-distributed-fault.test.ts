@@ -408,10 +408,11 @@ describe('V2 Distributed Fault — Timer & Interaction Recovery', () => {
 
     await sleep(60);
 
-    // Should be fired now
+    // Claim processing, then acknowledge durable completion.
     const expired = await kernel.claimExpiredTimers(new Date(), 10);
     assert.equal(expired.length, 1);
-    assert.equal(expired[0]!.state, 'FIRED');
+    assert.equal(expired[0]!.state, 'PROCESSING');
+    assert.equal(await kernel.acknowledgeTimer(expired[0]!.id, tenantId, expired[0]!.claimToken!), true);
   });
 
   it('interaction lifecycle: create → answer → verify', async () => {

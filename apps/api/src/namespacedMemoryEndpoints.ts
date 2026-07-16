@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { NamespacedMemoryStore } from './namespacedMemoryStore';
+import type { MemoryStore } from '@commander/core';
 
 // Security: Valid RBAC roles for namespaced memory access.
 // Per security best practice: roles must come from server-side auth, not user input.
@@ -20,11 +20,17 @@ function getAuthenticatedRole(req: any): string {
   return 'reader';
 }
 
-export function createNamespacedMemoryRouter(): Router {
-  const router = Router();
-  const namespacedStore = new NamespacedMemoryStore();
+export function createNamespacedMemoryRouter(memoryStore: MemoryStore): Router {
+  return createCanonicalNamespacedMemoryRouter(memoryStore);
+}
 
-  router.post('/api/namespaced-memory/:namespace/write', (req, res) => {
+function createCanonicalNamespacedMemoryRouter(memoryStore: MemoryStore): Router {
+  const router = Router();
+  const canRead = (role: string) => VALID_ROLES.has(role);
+  const canWrite = (role: string) => role === 'writer' || role === 'admin' || role === 'system';
+  const namespaceTag = (namespace: string) => `namespace:${namespace}`;
+
+  router.post('/api/namespaced-memory/:namespace/write', async (req, res) => {
     const { namespace } = req.params;
     const {
       key,
@@ -36,68 +42,98 @@ export function createNamespacedMemoryRouter(): Router {
       content: memContent,
       tags,
     } = req.body ?? {};
-    if (!key || value === undefined) {
+    if (!key || value === undefined)
       return res.status(400).json({ error: 'key and value are required' });
-    }
-    // Security: Role comes from authenticated context, not request body.
     const role = getAuthenticatedRole(req);
-    const result = namespacedStore.write(
-      {
-        namespace,
-        projectId: projectId ?? 'default',
-        kind: kind ?? 'SUMMARY',
+    if (!canWrite(role)) return res.status(403).json({ error: 'Permission denied' });
+    const project = projectId ?? 'default';
+    const allowedKinds = new Set(['DECISION', 'ISSUE', 'LESSON', 'SUMMARY']);
+    const memoryKind = allowedKinds.has(kind) ? kind : 'SUMMARY';
+    try {
+      const item = await memoryStore.write({
+        projectId: project,
+        agentId: agentId ?? 'api',
+        kind: memoryKind as 'DECISION' | 'ISSUE' | 'LESSON' | 'SUMMARY',
         title: title ?? key,
-        content: memContent ?? value,
-        tags: tags ?? [],
-      },
-      { agentId: agentId ?? 'api', role, namespace },
-    );
-    if (!result) {
-      return res.status(403).json({ error: 'Permission denied' });
+        content: memContent ?? String(value),
+        tags: [...(Array.isArray(tags) ? tags : []), namespaceTag(namespace)],
+        meta: { namespace, createdBy: { agentId: agentId ?? 'api', role } },
+      });
+      res.json({ status: 'ok', namespace, id: item.id });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
-    res.json({ status: 'ok', namespace, id: result.id });
   });
 
-  router.get('/api/namespaced-memory/:namespace/read/:id', (req, res) => {
+  router.get('/api/namespaced-memory/:namespace/read/:id', async (req, res) => {
     const { namespace, id } = req.params;
-    // Security: Role from authenticated context, not user-controlled query param.
     const role = getAuthenticatedRole(req);
-    const agentId = (req.query.agentId as string) ?? 'api';
-    const item = namespacedStore.read(id, { agentId, role, namespace });
-    if (!item) {
-      return res.status(404).json({ error: 'Not found or permission denied' });
+    if (!canRead(role)) return res.status(403).json({ error: 'Permission denied' });
+    const projectId = (req.query.projectId as string) ?? 'default';
+    try {
+      const item = await memoryStore.read(id, projectId);
+      if (!item || item.meta?.namespace !== namespace) {
+        return res.status(404).json({ error: 'Not found or permission denied' });
+      }
+      res.json({ ...item, namespace });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
-    res.json(item);
   });
 
-  router.get('/api/namespaced-memory/:namespace/search', (req, res) => {
+  router.get('/api/namespaced-memory/:namespace/search', async (req, res) => {
     const { namespace } = req.params;
     const q = (req.query.q as string) ?? '';
-    // Security: Role from authenticated context, not user-controlled query param.
     const role = getAuthenticatedRole(req);
-    const agentId = (req.query.agentId as string) ?? 'api';
+    if (!canRead(role)) return res.status(403).json({ error: 'Permission denied' });
     const projectId = (req.query.projectId as string) ?? 'default';
-    const results = namespacedStore.search(
-      { projectId, query: q, namespaces: [namespace] },
-      { agentId, role, namespace },
-    );
-    res.json({ namespace, query: q, items: results.items, total: results.total });
+    try {
+      const results = await memoryStore.search({
+        projectId,
+        query: q,
+        tags: [namespaceTag(namespace)],
+        limit: Number(req.query.limit ?? 50),
+      });
+      res.json({ namespace, query: q, items: results.items, total: results.total });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
   });
 
-  router.get('/api/namespaced-memory/:namespace/stats', (req, res) => {
+  router.get('/api/namespaced-memory/:namespace/stats', async (req, res) => {
     const { namespace } = req.params;
-    res.json(namespacedStore.getNamespaceStats(namespace));
+    const projectId = (req.query.projectId as string) ?? 'default';
+    try {
+      const results = await memoryStore.search({
+        projectId,
+        tags: [namespaceTag(namespace)],
+        limit: 500,
+      });
+      const byKind = { DECISION: 0, ISSUE: 0, LESSON: 0, SUMMARY: 0 };
+      for (const item of results.items) byKind[item.kind]++;
+      res.json({ namespace, totalItems: results.total, byKind });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
   });
 
-  router.get('/api/namespaced-memory/:namespace/audit', (req, res) => {
-    const { namespace } = req.params;
-    const limit = parseInt(req.query.limit as string) ?? 50;
-    const audit = namespacedStore.getAuditLog({ namespace, limit });
-    res.json({ namespace, entries: audit, count: audit.length });
+  // KNOWN GAP (WS6 audit): the unified PostgresMemoryService writes audit rows
+  // to the memory_audit_events table (postgresMemorySchema.ts), but no public
+  // query method is exposed yet, so this endpoint returns empty. Wire to a
+  // MemoryService.queryAudit() once added — do not treat empty as "no activity".
+  router.get('/api/namespaced-memory/:namespace/audit', (_req, res) => {
+    res.json({ namespace: _req.params.namespace, entries: [], count: 0, unavailable: true });
   });
 
   router.get('/api/namespaced-memory/acl', (_req, res) => {
-    res.json({ rules: namespacedStore.getACLRules() });
+    res.json({
+      rules: [
+        { role: 'reader', permissions: ['read'] },
+        { role: 'writer', permissions: ['read', 'write'] },
+        { role: 'admin', permissions: ['read', 'write', 'delete', 'admin'] },
+        { role: 'system', permissions: ['read', 'write', 'delete', 'admin'] },
+      ],
+    });
   });
 
   return router;
