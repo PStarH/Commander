@@ -76,7 +76,7 @@ const STORE_RE = /^\s*export\s+class\s+(\w*(?:Store|Repository))\b/gm;
  * non-memory doubles, ProjectMemoryStoreAdapter.
  */
 const MEMORY_RE =
-  /^\s*export\s+class\s+(UnifiedMemory|ThreeLayerMemory|MemorySystem|MemoryCurator|MemoryIndexManager|ProjectMemoryStore|NamespacedMemoryStore|EpisodicMemoryStore|ConversationStore|SemanticMemoryStore|ProceduralMemoryStore|MemoryFederation|MemoryManagerAgent|MemoryQualityGate|CrossModelMemory|JsonMemoryStore|SqliteMemoryStore)\b/gm;
+  /^\s*export\s+class\s+(UnifiedMemory|ThreeLayerMemory|MemorySystem|MemoryCurator|MemoryIndexManager|EpisodicMemoryStore|ConversationStore|SemanticMemoryStore|ProceduralMemoryStore|MemoryFederation|MemoryManagerAgent|MemoryQualityGate|CrossModelMemory)\b/gm;
 
 /** 4a) State machine classes */
 const SM_CLASS_RE = /^\s*export\s+class\s+(\w*StateMachine)\b/gm;

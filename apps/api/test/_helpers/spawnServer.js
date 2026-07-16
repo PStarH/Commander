@@ -64,7 +64,7 @@ const STDERR_USE_FULL_THRESHOLD_CHARS = STDERR_HEAD_CHARS + STDERR_TAIL_CHARS;
  * and included in the final error message when all attempts fail.
  *
  * IMPORTANT: stores constructed at apps/api startup (WarRoomStore in store.ts:81,
- * ProjectMemoryStore in memoryStore.ts:27, AgentStateStore in agentStateStore.ts:18,
+ * AgentStateStore in agentStateStore.ts:18,
  * ActionRationaleStore in
  * actionRationale.ts:91, MemoryIndexManager in memoryIndexManager.ts:54) all
  * default their storage paths via `__dirname`-relative constants, NOT cwd.

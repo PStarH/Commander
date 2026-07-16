@@ -16,10 +16,8 @@
  *
  * Files included in the fixture:
  *   - src/store.ts               -> COMMANDER_WARROOM_FILE, COMMANDER_SQLITE_WARROOM_FILE
- *   - src/memoryStore.ts         -> COMMANDER_MEMORY_FILE
  *   - src/agentStateStore.ts     -> COMMANDER_AGENT_STATE_FILE
  *   - (removed) src/episodicMemoryStore.ts — health-only zombie deleted Phase B 2026-07-15
- *   - src/memoryIndexManager.ts  -> COMMANDER_MEMORY_DIR
  *   - src/actionRationale.ts     -> COMMANDER_ACTION_RATIONALE_FILE
  */
 
@@ -37,10 +35,8 @@ const assert = require('node:assert/strict');
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'commander-store-override-'));
 process.env['COMMANDER_WARROOM_FILE'] = path.join(tmpRoot, 'war-room.json');
-process.env['COMMANDER_MEMORY_FILE'] = path.join(tmpRoot, 'project-memory.json');
 process.env['COMMANDER_AGENT_STATE_FILE'] = path.join(tmpRoot, 'agent-state.json');
 process.env['COMMANDER_ACTION_RATIONALE_FILE'] = path.join(tmpRoot, 'action-rationales.json');
-process.env['COMMANDER_MEMORY_DIR'] = path.join(tmpRoot, 'memory-index-dir');
 
 // ---------------------------------------------------------------------------
 // REQUIRES go AFTER env vars are set so module-top-level constants capture
@@ -48,10 +44,8 @@ process.env['COMMANDER_MEMORY_DIR'] = path.join(tmpRoot, 'memory-index-dir');
 // ---------------------------------------------------------------------------
 
 const { WarRoomStore, createWarRoomStore } = require('../dist/store.js');
-const { ProjectMemoryStore } = require('../dist/memoryStore.js');
 const { AgentStateStore } = require('../dist/agentStateStore.js');
 const { ActionRationaleStore } = require('../dist/actionRationale.js');
-const { MemoryIndexManager } = require('../dist/memoryIndexManager.js');
 
 // ---------------------------------------------------------------------------
 // Fallback paths mirror what each module would have used WITHOUT the env
@@ -64,10 +58,8 @@ const { MemoryIndexManager } = require('../dist/memoryIndexManager.js');
 
 const FALLBACK = {
   COMMANDER_WARROOM_FILE: path.resolve(__dirname, '..', 'data', 'war-room.json'),
-  COMMANDER_MEMORY_FILE: path.resolve(__dirname, '..', 'data', 'project-memory.json'),
   COMMANDER_AGENT_STATE_FILE: path.resolve(__dirname, '..', 'data', 'agent-state.json'),
   COMMANDER_ACTION_RATIONALE_FILE: path.resolve(__dirname, '..', 'data', 'action-rationales.json'),
-  COMMANDER_MEMORY_DIR: path.resolve(__dirname, '..', '..', 'memory'),
 };
 
 /**
@@ -166,23 +158,6 @@ test('createWarRoomStore reads/writes only at COMMANDER_WARROOM_FILE', () => {
   assertFallbackNotTouched(before, 'createWarRoomStore');
 });
 
-test('ProjectMemoryStore reads/writes only at COMMANDER_MEMORY_FILE', () => {
-  const before = snapshot(FALLBACK.COMMANDER_MEMORY_FILE);
-  const store = new ProjectMemoryStore();
-  const item = store.append({
-    projectId: 'project-override-test',
-    kind: 'LESSON',
-    title: 'Override test',
-    content: 'Verifying env var redirect',
-    tags: ['test'],
-    agentId: 'agent-override-test',
-  });
-  assert.ok(fs.existsSync(process.env['COMMANDER_MEMORY_FILE']));
-  const items = JSON.parse(fs.readFileSync(process.env['COMMANDER_MEMORY_FILE'], 'utf8'));
-  assert.ok(items.some((i) => i.id === item.id));
-  assertFallbackNotTouched(before, 'ProjectMemoryStore');
-});
-
 test('AgentStateStore reads/writes only at COMMANDER_AGENT_STATE_FILE', () => {
   const before = snapshot(FALLBACK.COMMANDER_AGENT_STATE_FILE);
   const store = new AgentStateStore();
@@ -201,7 +176,6 @@ test('AgentStateStore reads/writes only at COMMANDER_AGENT_STATE_FILE', () => {
   );
   assertFallbackNotTouched(before, 'AgentStateStore');
 });
-
 
 test('ActionRationaleStore reads/writes only at COMMANDER_ACTION_RATIONALE_FILE', () => {
   const before = snapshot(FALLBACK.COMMANDER_ACTION_RATIONALE_FILE);
@@ -222,18 +196,6 @@ test('ActionRationaleStore reads/writes only at COMMANDER_ACTION_RATIONALE_FILE'
   assertFallbackNotTouched(before, 'ActionRationaleStore');
 });
 
-test('MemoryIndexManager reads/writes only at COMMANDER_MEMORY_DIR', () => {
-  const before = snapshot(path.join(FALLBACK.COMMANDER_MEMORY_DIR, 'index.json'));
-  const mgr = new MemoryIndexManager('project-override-test');
-  mgr.addDomain('Override-Test-Domain', 'Verifying env var redirect');
-  const indexPath = path.join(process.env['COMMANDER_MEMORY_DIR'], 'index.json');
-  assert.ok(fs.existsSync(indexPath));
-  const raw = fs.readFileSync(indexPath, 'utf8');
-  const index = JSON.parse(raw);
-  assert.ok(index.pointers.some((p) => p.domain === 'Override-Test-Domain'));
-  assertFallbackNotTouched(before, 'MemoryIndexManager');
-});
-
 // ---------------------------------------------------------------------------
 // Asymmetric-config fail-fast: launched in a child Node process because the
 // store constants are captured at module-load time in the parent's process.
@@ -247,6 +209,3 @@ function runChildProbe(probeBody) {
   `;
   return spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', cwd: distDir });
 }
-
-
-
