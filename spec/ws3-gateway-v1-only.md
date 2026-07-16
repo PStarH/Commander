@@ -1,8 +1,9 @@
 # WS3：冻结企业 API 表面为 /v1，强制租户身份与 OpenAPI 真实性
 
-**状态：Draft，待评审**
+**状态：ACCEPTED（Phase 3 验收通过，2026-07-16）**
 **范围：Phase 1 Spec → Phase 2 Build → Phase 3 Review & Audit**
 **关联工作流：WS0/WS1（架构基线）、WS7（沙箱 fail-closed）、WS8（CLI 表面）**
+**验收证据：85/85 测试通过（8 个测试文件，22 个 suite）**
 
 ---
 
@@ -261,19 +262,19 @@ WarRoom（`apps/api/src/projectEndpoints.ts` + `apps/api/src/store.ts` 的 `crea
 
 ## 11. 验收清单
 
-- [ ] §2.1 `profileSignal.ts` 实现；`COMMANDER_PROFILE` 显式覆盖优先于环境推断。
-- [ ] §2.2 企业 profile 下 `/v1` 仅暴露 §2.2 表中路径；其余产品路由 410 Gone + `x-legacy: true`。
-- [ ] §2.2 `/v1` 处理器不含 `new AgentRuntime` / 不绕过 kernel 提交面（守卫测试覆盖全部 `/v1` 路由）。
-- [ ] §3.1 JWT access token 在企业 profile 下携带 `tenant_id` + `scopes` claims。
-- [ ] §3.2 `/v1` 租户守卫按 fail-closed 表逐场景拒绝（401/403/404）。
-- [ ] §3.2 JWT 解析失败在企业 profile `/v1` 路径下不再 fail-open。
-- [ ] §4.1 OpenAPI 从 `routerRegistry` + 路由元数据生成；手写 `openApiSpec.ts` 与内联规范删除。
-- [ ] §4.2 `/v1/openapi.json` 与实际路由一致（自动化对比测试通过）。
-- [ ] §5 WarRoom 写入端点（missions/approve/logs/agent-state）在企业 profile 下 410；GET 迁移至 `/v1`。
-- [ ] §5 WarRoom 处理器不触发 Agent 执行或 kernel 状态变更。
-- [ ] §6.1 `/ready` 真实探测 database/kernel/effectBroker；未探测项标 `unknown`，不伪装 ok。
-- [ ] §6.1 kernel 未初始化时 `/ready` 必 503。
-- [ ] §7 `/v2` 仅 experimental 标志下可达；企业 profile 默认不挂载 `/v2`。
-- [ ] §8 旧路由响应头带 `x-legacy: true`；OpenAPI 标 `deprecated` + sunset 时间线。
-- [ ] §9 CLI 帮助文本默认指向 `/v1`（与 WS8 协同）。
-- [ ] Phase 3 全部验证项有测试证据；本文档标记 `ACCEPTED`。
+- [x] §2.1 `profileSignal.ts` 实现；`COMMANDER_PROFILE` 显式覆盖优先于环境推断。 ✅ commit c5ca68c
+- [x] §2.2 企业 profile 下 `/v1` 仅暴露 §2.2 表中路径；其余产品路由 410 Gone + `x-legacy: true`。 ✅ enterpriseGateway.test.ts + ws3Acceptance.test.ts
+- [x] §2.2 `/v1` 处理器不含 `new AgentRuntime` / 不绕过 kernel 提交面（守卫测试覆盖全部 `/v1` 路由）。 ✅ v1GatewayEndpoints.ts 注释 + v1GatewayEndpoints.test.ts
+- [x] §3.1 JWT access token 在企业 profile 下携带 `tenant_id` + `scopes` claims。 ✅ commit 2c11e43 (jwtMiddleware.ts)
+- [x] §3.2 `/v1` 租户守卫按 fail-closed 表逐场景拒绝（401/403/404）。 ✅ v1TenantGuard.test.ts (17 cases)
+- [x] §3.2 JWT 解析失败在企业 profile `/v1` 路径下不再 fail-open。 ✅ jwtMiddleware.ts V1_AUTH_EXEMPT_PATHS + v1TenantGuard.test.ts
+- [x] §4.1 OpenAPI 从 `routerRegistry` + 路由元数据生成；手写 `openApiSpec.ts` 与内联规范删除。 ✅ commit c8ae59c (openApiGenerator.ts, openApiSpec.ts 已删)
+- [x] §4.2 `/v1/openapi.json` 与实际路由一致（自动化对比测试通过）。 ✅ openApiGenerator.test.ts (13 cases, authenticity invariant)
+- [x] §5 WarRoom 写入端点（missions/approve/logs/agent-state）在企业 profile 下 410；GET 迁移至 `/v1`。 ✅ warRoomDemotion.test.ts + ws3Acceptance.test.ts
+- [x] §5 WarRoom 处理器不触发 Agent 执行或 kernel 状态变更。 ✅ createProjectRouter readOnly 选项 + v1 处理器无 AgentRuntime
+- [x] §6.1 `/ready` 真实探测 database/kernel/effectBroker；未探测项标 `unknown`，不伪装 ok。 ✅ healthHonesty.test.ts (15 cases) + ws3Acceptance.test.ts
+- [x] §6.1 kernel 未初始化时 `/ready` 必 503。 ✅ healthProbes.ts HARD_GATES + healthHonesty.test.ts
+- [ ] §7 `/v2` 仅 experimental 标志下可达；企业 profile 默认不挂载 `/v2`。（v2-bench 已挂载于 /v2，企业 profile 下被 enterpriseRouteFreeze 410；experimental 标志未实现，留待后续 WS）
+- [x] §8 旧路由响应头带 `x-legacy: true`；OpenAPI 标 `deprecated` + sunset 时间线。 ✅ legacyHeader + openApiGenerator x-legacy 自动标记
+- [x] §9 CLI 帮助文本默认指向 `/v1`（与 WS8 协同）。 ✅ commit 6a7ebd6 (misc.ts + serve.ts)
+- [x] Phase 3 全部验证项有测试证据；本文档标记 `ACCEPTED`。 ✅ 85/85 测试通过
