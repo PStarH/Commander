@@ -1,4 +1,5 @@
 import express, { Router } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import { MCPServer, getModelRouter, MCPClient, createMCPClient } from '@commander/core';
 import type {
   MCPTool,
@@ -8,6 +9,8 @@ import type {
   MCPClientConfig,
 } from '@commander/core';
 import { URL } from 'node:url';
+import * as path from 'node:path';
+import { hasRole, type UserRole } from './userStore';
 
 // ── Security: SSRF prevention ────────────────────────────────────────────────
 // Block requests to private/internal IP ranges and cloud metadata endpoints.
@@ -50,17 +53,22 @@ function isSafeUrl(urlStr: string): boolean {
 // ── Security: Command injection prevention ───────────────────────────────────
 // Allowlist of permitted MCP server commands for stdio transport.
 // Per OWASP OS Command Injection Defense Cheat Sheet: use allowlist, not blocklist.
-const ALLOWED_MCP_COMMANDS = new Set([
-  // SECURITY: npx is intentionally excluded. It downloads and executes arbitrary
-  // npm packages on the server, creating a remote code execution supply-chain
-  // vector. Only interpreters with a fixed, pre-installed entry point are allowed.
-  'node',
-  'python',
-  'python3',
-  'uvx',
-  // 'docker' is allowed only when the daemon is configured to run a pinned,
-  // pre-built image; the discover endpoint still validates the full command.
-  'docker',
+// SECURITY: npx, uvx, and docker are intentionally excluded (RCE / supply-chain).
+const ALLOWED_MCP_COMMANDS = new Set(['node', 'python', 'python3']);
+
+const EVAL_FLAGS = new Set([
+  '-e',
+  '--eval',
+  '-c',
+  '--command',
+  '-p',
+  '--print',
+  'eval',
+  '-E',
+  '-r',
+  '--require',
+  '--import',
+  '--loader',
 ]);
 
 /**
@@ -68,9 +76,48 @@ const ALLOWED_MCP_COMMANDS = new Set([
  * Security: Based on OWASP OS Command Injection Defense Cheat Sheet — strict allowlist.
  */
 function isAllowedCommand(command: string): boolean {
-  // Extract the base command name (no path separators, no shell metacharacters)
-  const baseName = command.split('/').pop()?.split('\\').pop() ?? '';
+  const baseName = command.split('/').pop()?.split('\\').pop()?.toLowerCase() ?? '';
   return ALLOWED_MCP_COMMANDS.has(baseName);
+}
+
+/** Reject inline-eval / module-loader flags that turn interpreters into RCE. */
+function validateMcpArgs(args: readonly string[]): string | undefined {
+  for (const arg of args) {
+    const a = arg.trim().toLowerCase();
+    if (
+      EVAL_FLAGS.has(a) ||
+      a.startsWith('-e=') ||
+      a.startsWith('--eval=') ||
+      a.startsWith('-c=') ||
+      a.startsWith('--command=') ||
+      a.startsWith('-p=') ||
+      a.startsWith('--print=') ||
+      a.startsWith('-r=') ||
+      a.startsWith('--require=') ||
+      a.startsWith('--import=') ||
+      a.startsWith('--loader=')
+    ) {
+      return `MCP command arguments may not contain an inline-eval flag ("${arg}")`;
+    }
+  }
+  return undefined;
+}
+
+function requireMcpAdmin(req: Request, res: Response, next: NextFunction): void {
+  if (req.user) {
+    if (!hasRole(req.user.role, 'admin' as UserRole)) {
+      res.status(403).json({ error: 'Insufficient privileges' });
+      return;
+    }
+    next();
+    return;
+  }
+  const scopes = req.apiScopes ?? [];
+  if (scopes.includes('mcp:admin') || scopes.includes('admin') || scopes.includes('*')) {
+    next();
+    return;
+  }
+  res.status(401).json({ error: 'Authentication required' });
 }
 
 export function createMCPRouter(): Router {
@@ -109,7 +156,7 @@ export function createMCPRouter(): Router {
   });
 
   // POST /mcp/discover — Auto-discover and inject an external MCP server's tools
-  router.post('/discover', async (req, res) => {
+  router.post('/discover', requireMcpAdmin, async (req, res) => {
     const { url, transport, command, args: toolArgs, headers, label } = req.body ?? {};
 
     if (!url && !command) {
@@ -135,13 +182,26 @@ export function createMCPRouter(): Router {
       });
     }
 
+    const argsList: string[] = Array.isArray(toolArgs) ? toolArgs.map(String) : [];
+    const argsError = validateMcpArgs(argsList);
+    if (argsError) {
+      return res.status(400).json({ error: argsError });
+    }
+
+    // Also reject when basename is uvx even if somehow allowlisted via path tricks.
+    if (command && path.basename(command).toLowerCase() === 'uvx') {
+      return res.status(400).json({
+        error: 'uvx is not allowed for MCP discover',
+      });
+    }
+
     const startTime = Date.now();
     const discoveryLabel = label ?? `mcp-${Date.now()}`;
 
     try {
       const config: MCPClientConfig = url
         ? ({ url, transport: 'streamable-http', headers: headers ?? {} } as MCPClientConfig)
-        : ({ command, args: toolArgs ?? [], transport: 'stdio' } as MCPClientConfig);
+        : ({ command, args: argsList, transport: 'stdio' } as MCPClientConfig);
 
       const client = createMCPClient(config);
       // MCPClient.connect() takes zero args in the current protocol runner;
@@ -281,9 +341,20 @@ export function createMCPClientRouter(): Router {
   // Security: express.json() with limit is applied globally in index.ts.
 
   // POST /mcp/client/connect — Connect to an external MCP server
-  router.post('/connect', async (req, res) => {
+  router.post('/connect', requireMcpAdmin, async (req, res) => {
     const { name, transport, command, args: toolArgs, url, headers } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
+
+    if (command && !isAllowedCommand(command)) {
+      return res.status(400).json({
+        error: `Command "${command}" is not in the allowed list. Permitted: ${[...ALLOWED_MCP_COMMANDS].join(', ')}`,
+      });
+    }
+    const argsList: string[] = Array.isArray(toolArgs) ? toolArgs.map(String) : [];
+    const argsError = validateMcpArgs(argsList);
+    if (argsError) {
+      return res.status(400).json({ error: argsError });
+    }
 
     // Store the connection configuration for later use
     res.json({
