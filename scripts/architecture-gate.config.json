@@ -249,7 +249,6 @@
     "apps/api/src/knowledgeStore.ts",
     "apps/api/src/lineageEndpoints.ts",
     "apps/api/src/memoryIndexManager.ts",
-    "apps/api/src/memoryStore.ts",
     "apps/api/src/persistentRateLimitStore.ts",
     "apps/api/src/pipelineEndpoints.ts",
     "apps/api/src/securityMiddleware.ts",

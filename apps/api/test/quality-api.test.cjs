@@ -8,7 +8,6 @@ const {
   createCommanderHealthCheckBenchmark,
   calculatePassAtK,
 } = require('../dist/agentBenchmarkRunner.js');
-const { NamespacedMemoryStore } = require('../dist/namespacedMemoryStore.js');
 
 // ============================================================================
 // HallucinationDetector (via core module)
@@ -115,118 +114,6 @@ test('calculatePassAtK computes correctly', () => {
   const passAtK = calculatePassAtK(results);
   assert.ok(passAtK);
   assert.ok(passAtK.passAt1 !== undefined);
-});
-
-// ============================================================================
-// NamespacedMemoryStore
-// ============================================================================
-
-test('NamespacedMemoryStore - write and read', () => {
-  const store = new NamespacedMemoryStore();
-  store.setNamespaceConfig({
-    name: 'test-ns',
-    readRoles: ['*'],
-    writeRoles: ['orchestrator'],
-    ttlDays: 30,
-  });
-
-  const written = store.write(
-    {
-      namespace: 'test-ns',
-      projectId: 'proj',
-      kind: 'SUMMARY',
-      title: 'Test',
-      content: 'Hello',
-      tags: [],
-    },
-    { agentId: 'agent-1', role: 'orchestrator', namespace: 'test-ns' },
-  );
-  assert.ok(written);
-  assert.ok(written.id);
-
-  const read = store.read(written.id, {
-    agentId: 'agent-1',
-    role: 'orchestrator',
-    namespace: 'test-ns',
-  });
-  assert.ok(read);
-  assert.equal(read.title, 'Test');
-});
-
-test('NamespacedMemoryStore - RBAC denies unauthorized write', () => {
-  const store = new NamespacedMemoryStore();
-  store.setNamespaceConfig({
-    name: 'secure-ns',
-    readRoles: ['reviewer'],
-    writeRoles: ['orchestrator'],
-    ttlDays: 30,
-  });
-
-  const result = store.write(
-    {
-      namespace: 'secure-ns',
-      projectId: 'proj',
-      kind: 'SUMMARY',
-      title: 'Hack',
-      content: 'Bad',
-      tags: [],
-    },
-    { agentId: 'intruder', role: 'reviewer', namespace: 'secure-ns' },
-  );
-  assert.equal(result, null);
-});
-
-test('NamespacedMemoryStore - audit log records actions', () => {
-  const store = new NamespacedMemoryStore();
-  store.setNamespaceConfig({
-    name: 'audit-ns',
-    readRoles: ['*'],
-    writeRoles: ['orchestrator'],
-    ttlDays: 30,
-  });
-
-  store.write(
-    {
-      namespace: 'audit-ns',
-      projectId: 'proj',
-      kind: 'SUMMARY',
-      title: 'Audit Test',
-      content: 'Logged',
-      tags: [],
-    },
-    { agentId: 'agent-1', role: 'orchestrator', namespace: 'audit-ns' },
-  );
-
-  const audit = store.getAuditLog({ namespace: 'audit-ns', limit: 10 });
-  assert.ok(audit.length > 0);
-});
-
-test('NamespacedMemoryStore - search with RBAC', () => {
-  const store = new NamespacedMemoryStore();
-  store.setNamespaceConfig({
-    name: 'search-ns',
-    readRoles: ['*'],
-    writeRoles: ['orchestrator'],
-    ttlDays: 30,
-  });
-
-  store.write(
-    {
-      namespace: 'search-ns',
-      projectId: 'proj',
-      kind: 'SUMMARY',
-      title: 'Findable',
-      content: 'Searchable content',
-      tags: ['test'],
-    },
-    { agentId: 'agent-1', role: 'orchestrator', namespace: 'search-ns' },
-  );
-
-  const results = store.search(
-    { projectId: 'proj', query: 'Findable', namespaces: ['search-ns'] },
-    { agentId: 'agent-1', role: 'orchestrator', namespace: 'search-ns' },
-  );
-  assert.ok(results.items.length > 0);
 });
 
 // ============================================================================

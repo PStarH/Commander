@@ -131,7 +131,7 @@ const TIER_DEFAULTS: Record<
       enableDescendingScheduler: true,
       enableCompensation: true,
       enableToolCaching: true,
-      memoryStoreType: 'json',
+      memoryStoreType: 'postgres',
       otelExporter: { enabled: false },
     },
     features: {
@@ -157,7 +157,7 @@ const TIER_DEFAULTS: Record<
       enableDescendingScheduler: true,
       enableCompensation: true,
       enableToolCaching: true,
-      memoryStoreType: 'sqlite',
+      memoryStoreType: 'postgres',
       otelExporter: { enabled: true },
     },
     features: {
