@@ -591,15 +591,38 @@ export class IntegrityLayer {
   private readonly key: Buffer;
 
   constructor(secret?: string) {
-    const raw = secret ?? process.env.COMMANDER_INTEGRITY_KEY ?? 'dev-integrity-key-change-in-prod';
+    const isProduction =
+      process.env.NODE_ENV === 'production' ||
+      process.env.COMMANDER_ENV === 'production' ||
+      process.env.COMMANDER_ENV === 'prod';
+    const fromEnv = process.env.COMMANDER_INTEGRITY_KEY;
+    const raw = secret ?? fromEnv;
+    if (!raw) {
+      if (isProduction) {
+        throw new Error(
+          'COMMANDER_INTEGRITY_KEY is required in production (IntegrityLayer fail-closed)',
+        );
+      }
+      // Dev-only fallback — never used when NODE_ENV/COMMANDER_ENV indicates production.
+      this.key = crypto.createHash('sha256').update('dev-integrity-key-change-in-prod').digest();
+      return;
+    }
     this.key = crypto.createHash('sha256').update(raw).digest();
   }
 
   /**
-   * Canonical JSON serialization for deterministic signing.
+   * Canonical JSON serialization for deterministic signing (recursive key sort).
    */
-  private canonicalJson(obj: Record<string, unknown>): string {
-    return JSON.stringify(obj, Object.keys(obj).sort());
+  private canonicalJson(value: unknown): string {
+    if (value === null || typeof value !== 'object') {
+      return JSON.stringify(value);
+    }
+    if (Array.isArray(value)) {
+      return `[${value.map((v) => this.canonicalJson(v)).join(',')}]`;
+    }
+    const obj = value as Record<string, unknown>;
+    const keys = Object.keys(obj).sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${this.canonicalJson(obj[k])}`).join(',')}}`;
   }
 
   /**
