@@ -152,7 +152,7 @@ export class AgentLoopOrchestrator {
       try {
         this.deps
           .getToolExecutionService()
-          .triggerSpeculativeExecution(tenantId)
+          .triggerSpeculativeExecution(tenantId, ctx.capabilityToken)
           .catch(() => {});
       } catch (err) {
         reportSilentFailure(err, 'agentRuntime:speculativeTrigger');

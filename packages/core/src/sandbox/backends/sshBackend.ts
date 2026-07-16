@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import type { ExecutionBackend, SSHConfig, SandboxExecutionResult } from '../types';
 import { getSecurityAuditLogger } from '../../security/securityAuditLogger';
+import { getExecPolicyEngine } from '../execPolicy';
 
 /** Validate that a path contains no shell metacharacters (prevents command injection via workdir). */
 export function isValidShellPath(p: string): boolean {
@@ -61,6 +62,45 @@ export class SSHBackend implements ExecutionBackend {
     timeout?: number,
   ): Promise<SandboxExecutionResult> {
     const start = Date.now();
+
+    // ExecPolicy gate: SSH has no interactive prompt path — reject both
+    // forbidden and prompt decisions so shell metacharacters / substitution
+    // never reach spawn.
+    const policyResult = getExecPolicyEngine().evaluate(command);
+    if (policyResult.decision === 'forbidden' || policyResult.decision === 'prompt') {
+      const reason =
+        policyResult.rule?.justification ??
+        `ExecPolicy decision=${policyResult.decision}`;
+      getSecurityAuditLogger().logExecPolicyForbidden('SSHBackend', reason, {
+        decision: policyResult.decision,
+        ruleId: policyResult.rule?.id,
+        matchedPattern: policyResult.matchedPattern,
+      });
+      return {
+        stdout: '',
+        stderr: `Rejected by ExecPolicy (${policyResult.decision}): ${reason}`,
+        exitCode: 1,
+        durationMs: Date.now() - start,
+        sandboxMechanism: 'ssh',
+      };
+    }
+
+    // Even "allow" rules can match a safe prefix while a pipe/script RCE follows
+    // (e.g. `echo hi | bash`). Reject shell metacharacters / substitution on SSH.
+    if (/[|;&`$<>\n\r]|&&|\|\||\$\(/.test(command)) {
+      getSecurityAuditLogger().logCommandInjectionAttempt(
+        'SSHBackend',
+        'Rejected command with shell metacharacters',
+        { commandPreview: command.slice(0, 120) },
+      );
+      return {
+        stdout: '',
+        stderr: 'Rejected: SSH commands may not contain shell metacharacters or substitution',
+        exitCode: 1,
+        durationMs: Date.now() - start,
+        sandboxMechanism: 'ssh',
+      };
+    }
 
     // Security: validate workdir to prevent command injection via path
     if (workdir && !isValidShellPath(workdir)) {
