@@ -2,8 +2,8 @@
  * Control plane facade — Architecture V2.
  *
  * Identity, tenancy, policy PDP, and audit sink entry points.
- * Implementations currently delegate to existing core modules; this
- * boundary is the future @commander/control-plane package surface.
+ * Implementations currently delegate to existing core modules; shared values
+ * crossing a package boundary belong to @commander/contracts.
  */
 
 import { getSideEffectGate, type SideEffectGate } from '../runtime/sideEffectGate';
@@ -12,19 +12,8 @@ import { getGlobalTenantProvider } from '../runtime/tenantProvider';
 import { getSecurityAuditLogger } from '../security/securityAuditLogger';
 import { createHash, randomUUID } from 'node:crypto';
 
-export interface WorkloadIdentity {
-  /** Stable workload id (agent / service account). */
-  workloadId: string;
-  tenantId: string;
-  /** Optional user that initiated the workload. */
-  userId?: string;
-  /** Capability scopes granted to this workload. */
-  scopes: string[];
-  issuedAt: string;
-  expiresAt: string;
-  /** Opaque token material (HMAC/capability). */
-  token: string;
-}
+import type { WorkloadIdentity } from '@commander/contracts';
+export type { WorkloadIdentity } from '@commander/contracts';
 
 export interface ControlPlaneConfig {
   defaultScopes?: string[];
