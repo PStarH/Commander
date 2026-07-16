@@ -4,6 +4,33 @@
 # =============================================================================
 
 services:
+  kernel-migrate:
+    profiles: !reset []
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?err}@postgres:5432/commander}
+
+  kernel-ops:
+    profiles: !reset []
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?err}@postgres:5432/commander}
+      - COMMANDER_RECLAIM_INTERVAL_MS=${COMMANDER_RECLAIM_INTERVAL_MS:-5000}
+      - COMMANDER_RECLAIM_BATCH_SIZE=${COMMANDER_RECLAIM_BATCH_SIZE:-100}
+      - COMMANDER_TIMER_POLL_MS=${COMMANDER_TIMER_POLL_MS:-5000}
+      - COMMANDER_TIMER_BATCH_SIZE=${COMMANDER_TIMER_BATCH_SIZE:-100}
+      - COMMANDER_OUTBOX_INTERVAL_MS=${COMMANDER_OUTBOX_INTERVAL_MS:-1000}
+      - COMMANDER_OUTBOX_BATCH_SIZE=${COMMANDER_OUTBOX_BATCH_SIZE:-100}
+      - COMMANDER_OUTBOX_MAX_ATTEMPTS=${COMMANDER_OUTBOX_MAX_ATTEMPTS:-10}
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
   api:
     build:
       context: .
@@ -83,6 +110,7 @@ services:
     restart: always
 
   postgres:
+    profiles: !reset []
     image: postgres:16-alpine
     container_name: commander-postgres
     environment:

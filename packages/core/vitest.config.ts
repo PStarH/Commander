@@ -267,6 +267,12 @@ export default defineConfig({
       'tests/memory/memoryManagerAgent.test.ts',
       'tests/memory/threeLayerMemoryManagerIntegration.test.ts',
       'tests/memory/memoryBootstrap.integration.test.ts',
+      'tests/memory/memoryService.contract.test.ts',
+      'tests/memory/inMemoryMemoryService.test.ts',
+      'tests/memory/postgresMemoryService.test.ts',
+      'tests/memory/postgresMemoryService.integration.test.ts',
+      'tests/memory/memoryStoreFacade.test.ts',
+      'tests/memory/memoryMigration.test.ts',
 
       // --- GDPR compliance + AdaptiveHITL weight learning ---
       'tests/architecture/gdprCompliance.test.ts',

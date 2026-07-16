@@ -68,6 +68,18 @@ describe('@commander/contracts state machine', () => {
     assert.equal(isValidRunTransition('PENDING', 'CANCELLED'), true);
   });
 
+  it('allows timer deadlines to fail non-terminal waiting steps', () => {
+    assert.equal(validateStepTransition('PENDING', 'FAILED').ok, true);
+    assert.equal(validateStepTransition('RETRY_WAIT', 'FAILED').ok, true);
+    assert.equal(validateStepTransition('WAITING_FOR_HUMAN', 'FAILED').ok, true);
+    assert.equal(validateStepTransition('FAILED', 'RUNNING').ok, false);
+  });
+
+  it('allows deadlines to fail runs before execution or while paused', () => {
+    assert.equal(validateRunTransition('PENDING', 'FAILED').ok, true);
+    assert.equal(validateRunTransition('PAUSED', 'FAILED').ok, true);
+  });
+
   it('classifies terminal states correctly', () => {
     for (const state of RUN_STATES) {
       assert.equal(isTerminalRunState(state), TERMINAL_RUN_STATES.has(state));

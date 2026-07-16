@@ -35,12 +35,7 @@ services:
       - DATABASE_URL=${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
       - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
 
-  timer:
-    environment:
-      - DATABASE_URL=${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
-      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
-
-  outbox:
+  kernel-ops:
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}
       - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-postgres://commander:commander@postgres:5432/commander}

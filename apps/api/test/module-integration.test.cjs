@@ -3,7 +3,6 @@ const assert = require('node:assert/strict');
 const { HallucinationDetector } = require('../../../packages/core/dist/index.js');
 const { MemoryPoisoningDetector } = require('../dist/memoryPoisoningDetector.js');
 const { SelfAssessmentManager } = require('../dist/selfAssessment.js');
-const { NamespacedMemoryStore } = require('../dist/namespacedMemoryStore.js');
 const {
   AgentBenchmarkRunner,
   createCommanderHealthCheckBenchmark,
@@ -82,62 +81,6 @@ test('SelfAssessmentManager - different agents are independent', () => {
   const b = manager.assess('agent-b', { type: 'research', complexity: 8 });
   assert.ok(a.confidence !== undefined);
   assert.ok(b.confidence !== undefined);
-});
-
-// ============================================================================
-// NamespacedMemoryStore
-// ============================================================================
-
-test('NamespacedMemoryStore - write and read with permissions', () => {
-  const store = new NamespacedMemoryStore();
-  // Add system role with full access
-  store.setACLRule({
-    role: 'system',
-    permissions: ['read', 'write', 'delete', 'admin'],
-    namespaces: ['*'],
-  });
-  store.setNamespaceConfig({ name: 'test', maxItems: 100, retentionPolicy: 'fifo' });
-  const written = store.write(
-    {
-      namespace: 'test',
-      projectId: 'proj',
-      kind: 'DECISION',
-      title: 'Test',
-      content: 'Content',
-      tags: [],
-    },
-    { agentId: 'agent-1', role: 'system', namespace: 'test' },
-  );
-  assert.ok(written);
-  assert.ok(written.id);
-
-  const read = store.read(written.id, { agentId: 'agent-1', role: 'system', namespace: 'test' });
-  assert.ok(read);
-  assert.equal(read.title, 'Test');
-});
-
-test('NamespacedMemoryStore - getAuditLog tracks operations', () => {
-  const store = new NamespacedMemoryStore();
-  store.setACLRule({
-    role: 'system',
-    permissions: ['read', 'write', 'delete', 'admin'],
-    namespaces: ['*'],
-  });
-  store.setNamespaceConfig({ name: 'audit-test', maxItems: 100, retentionPolicy: 'fifo' });
-  store.write(
-    {
-      namespace: 'audit-test',
-      projectId: 'proj',
-      kind: 'DECISION',
-      title: 'T',
-      content: 'C',
-      tags: [],
-    },
-    { agentId: 'agent-1', role: 'system', namespace: 'audit-test' },
-  );
-  const log = store.getAuditLog({ namespace: 'audit-test', limit: 10 });
-  assert.ok(Array.isArray(log));
-  assert.ok(log.length > 0);
 });
 
 // ============================================================================

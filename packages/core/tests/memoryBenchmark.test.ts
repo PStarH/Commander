@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { InMemoryMemoryStore } from '../src/memory';
+import { InMemoryMemoryService, MemoryStoreFacade } from '../src/memory';
 import {
   runMemoryBenchmark,
   aggregateScore,
@@ -8,8 +8,10 @@ import {
 } from '../src/benchmarks/memoryBenchmark';
 
 describe('memoryBenchmark', () => {
+  const createStore = () => new MemoryStoreFacade(new InMemoryMemoryService(), 'test-tenant');
+
   it('runs all default suites and returns normalized scores', async () => {
-    const store = new InMemoryMemoryStore();
+    const store = createStore();
     const results = await runMemoryBenchmark(store);
 
     expect(results).toHaveLength(4);
@@ -20,13 +22,13 @@ describe('memoryBenchmark', () => {
   });
 
   it('retrieval benchmark rewards top-ranked hits', async () => {
-    const store = new InMemoryMemoryStore();
+    const store = createStore();
     const result = await retrievalBenchmark.run(store);
     expect(result.score).toBeGreaterThan(0);
   });
 
   it('forgetting benchmark removes expired items but keeps long-term', async () => {
-    const store = new InMemoryMemoryStore();
+    const store = createStore();
     const result = await forgettingBenchmark.run(store);
     expect(result.score).toBe(1);
     expect(result.details.removed).toBe(1);

@@ -38,9 +38,23 @@ import * as path from 'node:path';
 
 // ── Configuration ────────────────────────────────────────────────────────
 
-const REPO_ROOT = process.env.GIT_DIR
-  ? path.dirname(path.dirname(process.env.GIT_DIR))
-  : process.cwd();
+// Resolve the actual working tree root via `git rev-parse --show-toplevel`.
+// This works in both the main checkout and linked worktrees — the previous
+// GIT_DIR-based derivation resolved to .git/ under worktrees (where
+// GIT_DIR points at .git/worktrees/<name>), causing vitestCwd/.ts file
+// reads to ENOENT against .git/packages/... Fall back to cwd() only if
+// git is unavailable (e.g. CI argv replay with no git context).
+function resolveRepoRoot(): string {
+  try {
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      encoding: 'utf-8',
+    }).trim();
+  } catch {
+    return process.cwd();
+  }
+}
+
+const REPO_ROOT = resolveRepoRoot();
 const SCANNABLE_EXT = /\.(ts|tsx|js|mjs|cjs|json|sh)$/i;
 const MAX_FILE_BYTES = 500 * 1024;
 const EXECPOLICY_TEST_FILE = 'tests/runtime/execPolicy.edge.test.ts';
