@@ -21,7 +21,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm --workspace-root exec tsx --test packages/kernel/src/kernel.test.ts packages/kernel/src/transitionValidation.test.ts packages/kernel/src/tenantPause.test.ts packages/kernel/src/ops/*.test.ts packages/kernel/src/ops/outbox/*.test.ts",
+    "test": "pnpm --workspace-root exec tsx --test packages/kernel/src/kernel.test.ts packages/kernel/src/transitionValidation.test.ts packages/kernel/src/tenantPause.test.ts packages/kernel/src/ws2-acceptance.test.ts packages/kernel/src/contracts.test.ts packages/kernel/src/ops/*.test.ts packages/kernel/src/ops/outbox/*.test.ts",
     "test:integration": "pnpm --workspace-root exec tsx --test packages/kernel/src/postgres.integration.test.ts packages/kernel/src/postgres.ops.integration.test.ts",
     "test:rls-live-fire": "pnpm --workspace-root exec tsx --test packages/kernel/src/postgres.rls-live-fire.test.ts",
     "test:pitr-failover": "COMMANDER_ENABLE_PITR_DRILL=1 pnpm --workspace-root exec tsx --test packages/kernel/src/postgres.pitr-failover.test.ts",
