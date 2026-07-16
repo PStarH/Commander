@@ -28,7 +28,6 @@ import { createProjectRouter } from '../src/projectEndpoints.js';
 import { enterpriseRouteFreeze, legacyHeader } from '../src/enterpriseGateway.js';
 import { v1TenantGuard } from '../src/v1TenantGuard.js';
 import { generateOpenApiSpec } from '../src/openApiGenerator.js';
-import { registerRouter, listRegisteredRouters, resetRegisteredRouters } from '../src/routerRegistry.js';
 import { probeReadiness } from '../src/healthProbes.js';
 import { getEffectBroker } from '@commander/core/security/effectBroker';
 
