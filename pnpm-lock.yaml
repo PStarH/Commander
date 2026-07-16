@@ -286,6 +286,9 @@ importers:
 
   packages/operations:
     dependencies:
+      '@commander/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@commander/kernel':
         specifier: workspace:*
         version: link:../kernel

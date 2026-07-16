@@ -1,5 +1,52 @@
-import assert from 'node:assert/strict'; import { describe, it } from 'node:test'; import { CapabilityTokenIssuer, CapabilityTokenService, CapabilityTokenVerifier, EffectBroker, EffectBrokerError, canonicalRequestHash } from './index.js';
-const grant = { jti: 'jti', tenantId: 'tenant', runId: 'run', stepId: 'step', effectTypes: ['crm.write'], expiresAt: '2099-01-01T00:00:00.000Z', policySnapshotId: 'p1', requestHash: canonicalRequestHash({}) };
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import {
+  CapabilityTokenIssuer,
+  CapabilityTokenVerifier,
+  EffectBroker,
+  EffectBrokerError,
+  canonicalRequestHash,
+  type CapabilityGrant,
+} from './index.js';
+
+const grant: CapabilityGrant = {
+  jti: 'jti',
+  tenantId: 'tenant',
+  runId: 'run',
+  stepId: 'step',
+  effectTypes: ['crm.write'],
+  expiresAt: '2099-01-01T00:00:00.000Z',
+  policySnapshotId: 'p1',
+  requestHash: canonicalRequestHash({}),
+} as unknown as CapabilityGrant;
+
+/**
+ * Test-only token port: pairs a freshly generated Ed25519 issuer with a
+ * matching verifier. Replaces the deleted CapabilityTokenService facade —
+ * production must wire separate issuer/verifier instances (spec §9).
+ */
+function makeTokens() {
+  const issuer = CapabilityTokenIssuer.generate({
+    issuer: 'commander-issuer',
+    audience: 'commander.effect-broker',
+    keyId: 'k1',
+  });
+  const verifier = new CapabilityTokenVerifier({
+    issuer: 'commander-issuer',
+    audience: 'commander.effect-broker',
+    publicKeys: { k1: issuer.publicKey },
+  });
+  return {
+    issue: (g: CapabilityGrant) =>
+      issuer.issue({
+        ...g,
+        policySnapshotId: g.policySnapshotId ?? 'p1',
+        requestHash: g.requestHash ?? canonicalRequestHash({}),
+      }),
+    verify: (token: string) => verifier.verify(token),
+  };
+}
+
 describe('EffectBroker', () => {
   it('supports separate Ed25519 issuer and verifier keys', async () => {
     const issuer = CapabilityTokenIssuer.generate({ issuer: 'commander-issuer', audience: 'commander.effect-broker', keyId: 'k1' });
@@ -9,11 +56,25 @@ describe('EffectBroker', () => {
     await assert.rejects(verifier.verify(`${token.slice(0, -1)}x`), /signature/);
   });
 
-  it('requires matching capability, allow policy, kernel admission, and records completion', async () => { const tokens = new CapabilityTokenService('x'.repeat(32)); let completed = false; const broker = new EffectBroker(tokens, { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) }, { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => { completed = true; return {}; } }, { execute: async () => ({ ok: true }) }, { append: async () => {} }); const result = await broker.execute({ effectId: 'effect', token: tokens.issue(grant), type: 'crm.write', request: {}, idempotencyKey: 'idem', lease: { workerId: 'w', token: 'l', fencingEpoch: 1 }, actor: 'w' }); assert.equal(result.response?.ok, true); assert.equal(completed, true); });
-  it('fails closed before executor invocation when policy denies', async () => { const tokens = new CapabilityTokenService('x'.repeat(32)); let invoked = false; const broker = new EffectBroker(tokens, { evaluate: async () => ({ effect: 'deny', decisionId: 'd1', reason: 'no', policySnapshotId: 'p1' }) }, { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => null }, { execute: async () => { invoked = true; return {}; } }, { append: async () => {} }); await assert.rejects(broker.execute({ effectId: 'effect', token: tokens.issue(grant), type: 'crm.write', request: {}, idempotencyKey: 'idem', lease: { workerId: 'w', token: 'l', fencingEpoch: 1 }, actor: 'w' }), (error: unknown) => error instanceof EffectBrokerError && error.code === 'POLICY_DENIED'); assert.equal(invoked, false); });
+  it('requires matching capability, allow policy, kernel admission, and records completion', async () => {
+    const tokens = makeTokens();
+    let completed = false;
+    const broker = new EffectBroker(tokens, { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) }, { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => { completed = true; return {}; } }, { execute: async () => ({ ok: true }) }, { append: async () => {} });
+    const result = await broker.execute({ effectId: 'effect', token: tokens.issue(grant), type: 'crm.write', request: {}, idempotencyKey: 'idem', lease: { workerId: 'w', token: 'l', fencingEpoch: 1 }, actor: 'w' });
+    assert.equal(result.response?.ok, true);
+    assert.equal(completed, true);
+  });
+
+  it('fails closed before executor invocation when policy denies', async () => {
+    const tokens = makeTokens();
+    let invoked = false;
+    const broker = new EffectBroker(tokens, { evaluate: async () => ({ effect: 'deny', decisionId: 'd1', reason: 'no', policySnapshotId: 'p1' }) }, { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => null }, { execute: async () => { invoked = true; return {}; } }, { append: async () => {} });
+    await assert.rejects(broker.execute({ effectId: 'effect', token: tokens.issue(grant), type: 'crm.write', request: {}, idempotencyKey: 'idem', lease: { workerId: 'w', token: 'l', fencingEpoch: 1 }, actor: 'w' }), (error: unknown) => error instanceof EffectBrokerError && error.code === 'POLICY_DENIED');
+    assert.equal(invoked, false);
+  });
 
   it('rejects a request whose canonical hash is not bound to the capability grant', async () => {
-    const tokens = new CapabilityTokenService('y'.repeat(32));
+    const tokens = makeTokens();
     let invoked = false;
     const broker = new EffectBroker(tokens, { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) }, { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => ({}) }, { execute: async () => { invoked = true; return {}; } }, { append: async () => {} });
     await assert.rejects(broker.execute({ effectId: 'effect', token: tokens.issue(grant), type: 'crm.write', request: { changed: true }, idempotencyKey: 'idem', lease: { workerId: 'w', token: 'l', fencingEpoch: 1 }, actor: 'w' }), (error: unknown) => error instanceof EffectBrokerError && error.code === 'REQUEST_HASH_MISMATCH');
@@ -21,7 +82,7 @@ describe('EffectBroker', () => {
   });
 
   it('creates a durable approval interaction instead of executing a required approval effect', async () => {
-    const tokens = new CapabilityTokenService('z'.repeat(32));
+    const tokens = makeTokens();
     let interactionId = '';
     let invoked = false;
     const broker = new EffectBroker(tokens, { evaluate: async () => ({ effect: 'require_approval', decisionId: 'd-approval', reason: 'high risk', policySnapshotId: 'p1' }) }, { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => ({}) }, { execute: async () => { invoked = true; return {}; } }, { append: async () => {} }, { approval: { createApprovalInteraction: async () => { interactionId = 'interaction-1'; return { interactionId, status: 'pending' }; } } });
