@@ -68,3 +68,17 @@ export {
   validateResource,
 } from './compatibility.js';
 export type { ContractSnapshot } from './compatibility.js';
+
+// --- Shared identity, policy, audit, and plugin contracts ---
+export {
+  CONTROL_PLANE_API_VERSION,
+  CONTROL_PLANE_RESOURCES,
+} from './controlPlane.js';
+export type {
+  AuditEventV2,
+  ControlPlaneResource,
+  PluginSandboxMode,
+  PolicyDecisionV2,
+  PolicyEffect,
+  WorkloadIdentity,
+} from './controlPlane.js';

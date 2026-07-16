@@ -562,8 +562,8 @@ export class PostgresKernelRepository implements KernelRepository {
   }
   async listEvents(runId: string, tenantId: string): Promise<KernelEvent[]> {
     return this.withTransaction(async (client) => {
-      const result = await client.query<KernelEvent & { aggregate_type: KernelEvent['aggregateType']; aggregate_id: string; tenant_id: string; run_id: string; step_id: string | null; causation_id: string | null; correlation_id: string | null; schema_version: string; occurred_at: Date | string }>(`SELECT * FROM commander_events WHERE run_id=$1 AND tenant_id=$2 ORDER BY occurred_at, sequence`, [runId, tenantId]);
-      return result.rows.map((row) => ({ id: row.id, aggregateType: row.aggregate_type, aggregateId: row.aggregate_id, sequence: Number(row.sequence), type: row.type, tenantId: row.tenant_id, runId: row.run_id, stepId: row.step_id ?? undefined, causationId: row.causation_id ?? undefined, correlationId: row.correlation_id ?? undefined, actor: row.actor, schemaVersion: row.schema_version, payload: row.payload ?? {}, occurredAt: iso(row.occurred_at) }));
+      const result = await client.query<{ id: string; aggregate_type: KernelEvent['aggregateType']; aggregate_id: string; sequence: number; type: string; tenant_id: string; run_id: string; step_id: string | null; causation_id: string | null; correlation_id: string | null; actor: string; schema_version: string; payload: Record<string, unknown> | null; occurred_at: Date | string }>(`SELECT * FROM commander_events WHERE run_id=$1 AND tenant_id=$2 ORDER BY occurred_at, sequence`, [runId, tenantId]);
+      return result.rows.map((row) => ({ eventId: row.id, aggregateType: row.aggregate_type, aggregateId: row.aggregate_id, sequence: Number(row.sequence), type: row.type, tenantId: row.tenant_id, runId: row.run_id, stepId: row.step_id ?? undefined, causationId: row.causation_id ?? undefined, correlationId: row.correlation_id ?? undefined, actor: row.actor, schemaVersion: row.schema_version, payload: row.payload ?? {}, occurredAt: iso(row.occurred_at) }));
     }, [tenantId]);
   }
 
@@ -810,11 +810,11 @@ export class PostgresKernelRepository implements KernelRepository {
       [tenantId],
     );
   }
-  private async appendEvent(client: SqlClient, event: Omit<KernelEvent, 'id' | 'schemaVersion' | 'occurredAt'>): Promise<void> {
-    const id = randomUUID();
+  private async appendEvent(client: SqlClient, event: Omit<KernelEvent, 'eventId' | 'schemaVersion' | 'occurredAt'>): Promise<void> {
+    const eventId = randomUUID();
     await client.query(`INSERT INTO commander_events (id,aggregate_type,aggregate_id,sequence,type,tenant_id,run_id,step_id,causation_id,correlation_id,actor,schema_version,payload)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'v2',$12::jsonb)`, [id, event.aggregateType, event.aggregateId, event.sequence, event.type, event.tenantId, event.runId, event.stepId ?? null, event.causationId ?? null, event.correlationId ?? null, event.actor, json(event.payload)]);
-    await client.query(`INSERT INTO commander_outbox (id,event_id,tenant_id,topic,key,payload) VALUES ($1,$2,$3,$4,$5,$6::jsonb)`, [randomUUID(), id, event.tenantId, `commander.${event.type}`, event.runId, json({ eventId: id, type: event.type, runId: event.runId, tenantId: event.tenantId })]);
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'v2',$12::jsonb)`, [eventId, event.aggregateType, event.aggregateId, event.sequence, event.type, event.tenantId, event.runId, event.stepId ?? null, event.causationId ?? null, event.correlationId ?? null, event.actor, json(event.payload)]);
+    await client.query(`INSERT INTO commander_outbox (id,event_id,tenant_id,topic,key,payload) VALUES ($1,$2,$3,$4,$5,$6::jsonb)`, [randomUUID(), eventId, event.tenantId, `commander.${event.type}`, event.runId, json({ eventId, type: event.type, runId: event.runId, tenantId: event.tenantId })]);
   }
   private assertGraph(command: CreateKernelRun): void {
     const ids = new Set<string>();

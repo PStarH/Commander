@@ -1,10 +1,4 @@
-/**
- * @commander/control-plane — Architecture V2 control-plane contracts.
- *
- * Stable types for identity / policy / audit. Runtime wiring remains in
- * @commander/core during strangler migration; this package is the public
- * contract surface for Gateway and SDK consumers.
- */
+/** Shared identity, policy, audit, and plugin-sandbox contracts. */
 
 export interface WorkloadIdentity {
   workloadId: string;
@@ -38,7 +32,7 @@ export interface AuditEventV2 {
   at: string;
 }
 
-/** Versioned control-plane resource names for Gateway routing. */
+/** Versioned resource names used by Gateway routing. */
 export const CONTROL_PLANE_RESOURCES = [
   'identity',
   'tenant',
@@ -51,5 +45,5 @@ export type ControlPlaneResource = (typeof CONTROL_PLANE_RESOURCES)[number];
 
 export const CONTROL_PLANE_API_VERSION = 'v2' as const;
 
-/** Plugin sandbox modes enforced by the control plane. */
+/** Plugin sandbox modes enforced at the package boundary. */
 export type PluginSandboxMode = 'in_process' | 'subprocess' | 'required';
