@@ -15,6 +15,8 @@
  */
 
 import * as dns from 'node:dns';
+import * as http from 'node:http';
+import * as https from 'node:https';
 import { getGlobalLogger } from '../logging';
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -40,6 +42,14 @@ export interface OutboundNetworkPolicyConfig {
   classificationAllowlist?: Partial<Record<DataClassification, string[]>>;
 }
 
+export interface OutboundCheckResult {
+  allowed: boolean;
+  reason?: string;
+  domain: string;
+  /** Resolved public addresses used for IP pinning (DNS rebinding defense). */
+  addresses?: string[];
+}
+
 export interface OutboundRequestLog {
   url: string;
   method: string;
@@ -47,6 +57,87 @@ export interface OutboundRequestLog {
   allowed: boolean;
   reason?: string;
   timestamp: string;
+}
+
+/**
+ * Build a URL that connects to a pinned IP while preserving the original Host
+ * via headers (caller must set Host). Prevents DNS rebinding between check and connect.
+ */
+export function pinUrlToAddress(rawUrl: string, address: string): { href: string; host: string } {
+  const parsed = new URL(rawUrl);
+  const host = parsed.hostname;
+  const pinned = new URL(rawUrl);
+  pinned.hostname = address.includes(':') ? `[${address}]` : address;
+  return { href: pinned.href, host };
+}
+
+/**
+ * Fetch via http/https with connection pinned to `address` and Host/SNI set to
+ * the original hostname. Node's fetch forbids setting Host, so we use the
+ * low-level clients for the pin path.
+ */
+export function pinnedHttpFetch(
+  rawUrl: string,
+  address: string,
+  init?: RequestInit,
+): Promise<Response> {
+  const parsed = new URL(rawUrl);
+  const isHttps = parsed.protocol === 'https:';
+  const client = isHttps ? https : http;
+  const method = (init?.method ?? 'GET').toUpperCase();
+  const headers: Record<string, string> = { Host: parsed.hostname };
+
+  if (init?.headers) {
+    const h = new Headers(init.headers);
+    h.forEach((value, key) => {
+      if (key.toLowerCase() === 'host') return;
+      headers[key] = value;
+    });
+  }
+
+  const body =
+    typeof init?.body === 'string' || init?.body instanceof Buffer || init?.body instanceof Uint8Array
+      ? init.body
+      : undefined;
+
+  return new Promise<Response>((resolve, reject) => {
+    const req = client.request(
+      {
+        hostname: address,
+        port: parsed.port || (isHttps ? 443 : 80),
+        path: parsed.pathname + parsed.search,
+        method,
+        headers,
+        servername: isHttps ? parsed.hostname : undefined,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => {
+          const status = res.statusCode ?? 0;
+          const responseHeaders = new Headers();
+          for (const [k, v] of Object.entries(res.headers)) {
+            if (v === undefined) continue;
+            if (Array.isArray(v)) {
+              for (const item of v) responseHeaders.append(k, item);
+            } else {
+              responseHeaders.set(k, v);
+            }
+          }
+          resolve(
+            new Response(Buffer.concat(chunks), {
+              status,
+              statusText: res.statusMessage,
+              headers: responseHeaders,
+            }),
+          );
+        });
+      },
+    );
+    req.on('error', reject);
+    if (body !== undefined) req.write(body);
+    req.end();
+  });
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -93,6 +184,10 @@ function normalizeHostname(hostname: string): string {
   // Strip IPv6 brackets
   if (h.startsWith('[') && h.endsWith(']')) {
     h = h.slice(1, -1);
+  }
+  // Trailing-dot FQDN (localhost. → localhost)
+  if (h.endsWith('.')) {
+    h = h.slice(0, -1);
   }
   // IPv4-mapped IPv6 → extract IPv4 (dotted or hex form ::ffff:7f00:1)
   if (h.startsWith('::ffff:')) {
@@ -161,33 +256,80 @@ export class OutboundNetworkPolicy {
 
   /**
    * Async check including DNS resolution of the hostname. Lookup failure → deny.
+   * On success, `addresses` contains public IPs suitable for connection pinning.
    */
   async checkAsync(
     url: string,
     classification?: DataClassification,
-  ): Promise<{ allowed: boolean; reason?: string; domain: string }> {
+  ): Promise<OutboundCheckResult> {
     const sync = this.checkWithClassification(url, classification);
     if (!sync.allowed) return sync;
-    if (!this.config.blockPrivateIPs) return sync;
+    return this.resolveAddresses(url, sync.domain);
+  }
 
-    const domain = sync.domain;
+  /**
+   * SSRF-only check (private/loopback/metadata + DNS). Does NOT enforce the
+   * domain allowlist — used by webhook delivery to arbitrary customer URLs.
+   */
+  async checkSsrfAsync(url: string): Promise<OutboundCheckResult> {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return { allowed: false, reason: 'malformed URL', domain: '' };
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return { allowed: false, reason: 'unsupported protocol', domain: '' };
+    }
+    const domain = normalizeHostname(parsed.hostname);
+    if (this.config.blockPrivateIPs && isPrivateOrBlockedHost(domain)) {
+      return { allowed: false, reason: `private IP blocked (SSRF defense): ${domain}`, domain };
+    }
+    if (!this.config.blockPrivateIPs) {
+      return { allowed: true, domain };
+    }
+    return this.resolveAddresses(url, domain);
+  }
+
+  /**
+   * Fetch after SSRF check + IP pin, bypassing the domain allowlist.
+   * Uses the pre-patch fetch so OutboundNetworkPolicy allowlist does not
+   * block legitimate webhook destinations.
+   */
+  async ssrfCheckedFetch(input: string, init?: RequestInit): Promise<Response> {
+    const result = await this.checkSsrfAsync(input);
+    if (!result.allowed) {
+      const err = new Error(`OUTBOUND_BLOCKED: ${result.reason}`);
+      err.name = 'OutboundNetworkPolicyError';
+      throw err;
+    }
+    const address =
+      result.addresses?.[0] ??
+      (/^\d{1,3}(\.\d{1,3}){3}$/.test(result.domain) || result.domain.includes(':')
+        ? result.domain
+        : undefined);
+    if (address) {
+      return pinnedHttpFetch(input, address, init);
+    }
+    const fetchFn = this.originalFetch ?? globalThis.fetch;
+    return fetchFn.call(globalThis, input, init);
+  }
+
+  private async resolveAddresses(url: string, domain: string): Promise<OutboundCheckResult> {
     // Literal IPs / blocked hostnames already handled in sync check.
     if (isPrivateOrBlockedHost(domain) || PRIVATE_IP_PATTERNS.some((p) => p.test(domain))) {
       return { allowed: false, reason: `private IP blocked (SSRF defense): ${domain}`, domain };
     }
-    // Skip DNS only for IPv4 literals already validated. IPv6 hostnames still
-    // need isPrivateOrBlockedHost (done above); do not skip DNS merely because
-    // the hostname contains ':' (that would skip hostnames incorrectly).
     if (/^\d{1,3}(\.\d{1,3}){3}$/.test(domain)) {
-      return sync;
+      return { allowed: true, domain, addresses: [domain] };
     }
-    // Literal IPv6 (contains ':') — already checked via isPrivateOrBlockedHost.
     if (domain.includes(':')) {
-      return sync;
+      return { allowed: true, domain, addresses: [domain] };
     }
 
     try {
       const results = await dns.promises.lookup(domain, { all: true });
+      const addresses: string[] = [];
       for (const { address } of results) {
         if (isPrivateOrBlockedHost(address)) {
           return {
@@ -196,12 +338,15 @@ export class OutboundNetworkPolicy {
             domain,
           };
         }
+        addresses.push(address);
       }
+      if (addresses.length === 0) {
+        return { allowed: false, reason: `DNS lookup returned no addresses for: ${domain}`, domain };
+      }
+      return { allowed: true, domain, addresses };
     } catch {
       return { allowed: false, reason: `DNS lookup failed for: ${domain}`, domain };
     }
-
-    return sync;
   }
 
   /**
@@ -213,7 +358,7 @@ export class OutboundNetworkPolicy {
   checkWithClassification(
     url: string,
     classification?: DataClassification,
-  ): { allowed: boolean; reason?: string; domain: string } {
+  ): OutboundCheckResult {
     let parsed: URL;
     try {
       parsed = new URL(url);
@@ -314,6 +459,12 @@ export class OutboundNetworkPolicy {
         const err = new Error(`OUTBOUND_BLOCKED: ${result.reason}`);
         err.name = 'OutboundNetworkPolicyError';
         return Promise.reject(err);
+      }
+
+      // Pin to a resolved public IP (Host/SNI preserved) to defeat DNS rebinding TOCTOU.
+      const address = result.addresses?.[0];
+      if (address && (url.startsWith('http://') || url.startsWith('https://'))) {
+        return pinnedHttpFetch(url, address, init);
       }
 
       // Pass through to original fetch
