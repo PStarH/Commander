@@ -1,7 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { bootstrapMemoryPersistence } from '../../src/memory/utils';
 import { getUnifiedMemory, resetUnifiedMemory } from '../../src/memory/unifiedMemory';
 import {
@@ -10,10 +7,7 @@ import {
 } from '../../src/threeLayerMemory';
 
 describe('sub-agent narrow context memory recall', () => {
-  let tempDir: string;
-
   beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), 'commander-subagent-mem-'));
     resetGlobalThreeLayerMemory();
     resetUnifiedMemory();
     wireGlobalThreeLayerMemory(null);
@@ -23,11 +17,10 @@ describe('sub-agent narrow context memory recall', () => {
     resetGlobalThreeLayerMemory();
     resetUnifiedMemory();
     wireGlobalThreeLayerMemory(null);
-    rmSync(tempDir, { recursive: true, force: true });
   });
 
   it('recall returns context for sub-agent injection', async () => {
-    await bootstrapMemoryPersistence('json', { basePath: tempDir });
+    await bootstrapMemoryPersistence('in-memory', { tenantId: 'test-tenant' });
     await getUnifiedMemory().remember({
       projectId: 'proj-1',
       content: 'Prior decision: use SQLite for persistence',

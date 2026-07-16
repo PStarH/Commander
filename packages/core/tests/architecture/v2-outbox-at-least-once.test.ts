@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { randomUUID, createHash } from 'node:crypto';
 
 import { InMemoryKernelRepository } from '../../../kernel/src/testing/inMemoryRepository.js';
-import { OutboxPublisher, type EventPublisher } from '../../../operations/src/index.js';
+import { OutboxPublisher, type EventPublisher } from '../../../kernel/src/index.js';
 import type { KernelOutboxMessage } from '../../../kernel/src/types.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

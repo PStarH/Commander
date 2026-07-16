@@ -746,7 +746,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
     return { ...this.config };
   }
 
-  /** Access the persistent memory store (SqliteMemoryStore, JsonMemoryStore, etc.) or null if using default in-memory. */
+  /** Access the persistent MemoryService facade or null if not initialized. */
   getMemoryStore(): MemoryStore | null {
     return this.memoryStore;
   }
