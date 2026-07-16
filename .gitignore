@@ -1,5 +1,6 @@
 .claude/
 apps/api/.commander/
+packages/core/.commander/auth.json
 packages/core/.commander/intelligence/
 packages/core/.commander/skills/
 packages/core/screenshots/

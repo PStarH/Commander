@@ -273,6 +273,7 @@ export default defineConfig({
       'tests/memory/postgresMemoryService.integration.test.ts',
       'tests/memory/memoryStoreFacade.test.ts',
       'tests/memory/memoryMigration.test.ts',
+      'tests/memory/utils.test.ts',
 
       // --- GDPR compliance + AdaptiveHITL weight learning ---
       'tests/architecture/gdprCompliance.test.ts',
@@ -310,6 +311,8 @@ export default defineConfig({
       'tests/security/effectBroker.test.ts',
       'tests/security/keyProvider.test.ts',
       'tests/security/auditChainLedger.test.ts',
+      // WS9 §6 KC-5 closure — chain manifest, asymmetric signer, fail-closed persistor
+      'tests/security/auditChainIntegrity.test.ts',
       'tests/security/agentLineage.test.ts',
       'tests/security/federatedIdentity.test.ts',
       'tests/security/outputSanitizer.test.ts',
@@ -348,6 +351,16 @@ export default defineConfig({
       'tests/security/a2aAuth.test.ts',
       'tests/security/memoryIsolation.test.ts',
       'tests/security/postgresRLS.test.ts',
+      // WS9 live-fire cross-tenant isolation tests
+      // (DATA/EXEC/NET/RATE/AUDIT/TAMPER/KEY per spec/ws9-tenant-livefire-compliance.md)
+      // describe.skip when infrastructure (PG/Vault/gVisor/API) is unavailable;
+      // unconditional tests exercise production-wired PEPs directly.
+      'tests/ws9/data-isolation.test.ts',
+      'tests/ws9/exec-isolation.test.ts',
+      'tests/ws9/net-isolation.test.ts',
+      'tests/ws9/rate-isolation.test.ts',
+      'tests/ws9/audit-isolation.test.ts',
+      'tests/ws9/key-injection.test.ts',
       'tests/security/taintTrackingPlugin.test.ts',
       'tests/security/dynamicCostGuardian.test.ts',
       'tests/security/m4-security-closure.test.ts',
