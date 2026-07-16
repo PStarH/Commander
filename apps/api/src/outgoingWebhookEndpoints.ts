@@ -52,6 +52,53 @@ function getStringParam(value: string | string[] | undefined): string | undefine
   return Array.isArray(value) ? value[0] : value;
 }
 
+// ── Security: SSRF prevention ────────────────────────────────────────────────
+// Reject private/loopback/link-local/metadata hosts at the API boundary
+// (defense-in-depth; WebhookDispatcher also validates at register time).
+const BLOCKED_WEBHOOK_HOSTS = new Set([
+  'localhost',
+  '127.0.0.1',
+  '::1',
+  '0.0.0.0',
+  '169.254.169.254', // AWS / OpenStack / Azure instance metadata
+  'metadata.google.internal', // GCP metadata
+]);
+
+const PRIVATE_IP_PATTERNS = [
+  /^127\./, // Loopback
+  /^10\./, // RFC 1918
+  /^172\.(1[6-9]|2[0-9]|3[0-1])\./, // RFC 1918
+  /^192\.168\./, // RFC 1918
+  /^169\.254\./, // Link-local / cloud metadata
+  /^0\./, // Current network
+  /^::1$/, // IPv6 loopback
+  /^fc00:/i, // IPv6 ULA
+  /^fe80:/i, // IPv6 link-local
+];
+
+/**
+ * Validate an outgoing webhook URL against SSRF targets.
+ * Only allows http/https to non-private hosts.
+ */
+export function isSafeOutgoingWebhookUrl(urlStr: string): boolean {
+  try {
+    const parsed = new URL(urlStr);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return false;
+    }
+    const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    if (BLOCKED_WEBHOOK_HOSTS.has(hostname)) {
+      return false;
+    }
+    for (const pattern of PRIVATE_IP_PATTERNS) {
+      if (pattern.test(hostname)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function validateCreate(
   body: unknown,
 ): { config: Omit<WebhookConfig, 'id' | 'createdAt'> } | { error: string } {
@@ -69,6 +116,11 @@ function validateCreate(
   }
   if (!url.startsWith('http://') && !url.startsWith('https://')) {
     return { error: 'url must use http or https' };
+  }
+  if (!isSafeOutgoingWebhookUrl(url)) {
+    return {
+      error: 'url must not point to private, loopback, link-local, or metadata addresses',
+    };
   }
 
   if (!Array.isArray(input.events) || input.events.length === 0) {
