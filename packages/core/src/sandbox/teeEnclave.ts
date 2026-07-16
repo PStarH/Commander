@@ -51,8 +51,9 @@ const TEE_FORBIDDEN_PATTERNS = [
  * Validate a command before executing it in the TEE sandbox.
  * Security: Defense-in-depth — even though TEE provides hardware isolation,
  * we still validate commands to prevent sandbox escape via malicious payloads.
+ * Exported for unit tests.
  */
-function validateTEECommand(cmd: string): { allowed: boolean; reason?: string } {
+export function validateTEECommand(cmd: string): { allowed: boolean; reason?: string } {
   // Check explicit forbidden patterns
   for (const pattern of TEE_FORBIDDEN_PATTERNS) {
     if (pattern.test(cmd)) {
@@ -60,12 +61,19 @@ function validateTEECommand(cmd: string): { allowed: boolean; reason?: string } 
     }
   }
 
-  // Check against ExecPolicy
+  // Check against ExecPolicy — only auto-allow; prompt and forbidden both deny
+  // automatic TEE execution (fail-closed; human approval is outside this path).
   const decision = teeExecPolicy.evaluate(cmd);
   if (decision.decision === 'forbidden') {
     return {
       allowed: false,
       reason: `Blocked by exec policy: ${decision.rule?.justification ?? 'forbidden'}`,
+    };
+  }
+  if (decision.decision === 'prompt') {
+    return {
+      allowed: false,
+      reason: `Blocked by exec policy: requires explicit approval (${decision.rule?.justification ?? 'prompt'})`,
     };
   }
 
@@ -689,7 +697,7 @@ while true; do
     continue
   fi
 
-  # Set up environment — parse KEY=VALUE lines safely (no eval to prevent injection)
+  # Set up environment — parse KEY=VALUE lines safely (no shell evaluation of values)
   if [ -n "$ENV" ]; then
     while IFS= read -r line; do
       [ -z "$line" ] && continue
@@ -709,9 +717,15 @@ while true; do
   mkdir -p "$DIR" 2>/dev/null || true
   cd "$DIR" 2>/dev/null || true
 
-  # Execute command and capture output
-  OUTPUT=$(eval "$CMD" 2>&1)
+  # Write decoded command to a temp script and run it — never shell-evaluate the string.
+  TMP_SCRIPT=$(mktemp /tmp/tee-cmd.XXXXXX)
+  printf '%s\\n' "$CMD" > "$TMP_SCRIPT"
+  chmod 700 "$TMP_SCRIPT"
+  set +e
+  OUTPUT=$(bash "$TMP_SCRIPT" 2>&1)
   EXIT=$?
+  set -e
+  rm -f "$TMP_SCRIPT"
 
   # Send result back (response on port 5006)
   echo "EXIT:$EXIT|$OUTPUT" | socat - VSOCK-CONNECT:3:5006 2>/dev/null || true

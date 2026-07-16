@@ -34,9 +34,10 @@ describe('ReversibilityGate', () => {
       expect(gate.classify('mcp_browser_navigate')).toBe('irreversible');
     });
 
-    it('defaults unknown tools to reversible (still go through ToolApproval)', () => {
-      expect(gate.classify('unknown_tool')).toBe('reversible');
-      expect(gate.classify('custom_helper')).toBe('reversible');
+    it('defaults unknown tools to irreversible (fail-closed)', () => {
+      expect(gate.classify('unknown_tool')).toBe('irreversible');
+      expect(gate.classify('custom_helper')).toBe('irreversible');
+      expect(gate.classify('database_drop')).toBe('irreversible');
     });
 
     it('respects custom irreversible patterns', () => {
@@ -112,6 +113,13 @@ describe('ReversibilityGate', () => {
   });
 
   describe('evaluate', () => {
+    it('blocks unknown tools when no approval callback (fail-closed default)', async () => {
+      const decision = await gate.evaluate('database_drop', { name: 'prod' });
+      expect(decision.allowed).toBe(false);
+      expect(decision.reversibility).toBe('irreversible');
+      expect(decision.requiresHumanApproval).toBe(true);
+    });
+
     it('allows reversible tools without approval', async () => {
       const decision = await gate.evaluate('file_read', { path: '/tmp/test.txt' });
       expect(decision.allowed).toBe(true);

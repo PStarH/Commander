@@ -1,7 +1,9 @@
 import type { Request, Response, NextFunction } from 'express';
+import { randomUUID } from 'node:crypto';
 import jwt, { type JwtPayload } from 'jsonwebtoken';
 import type { UserRole } from './userStore';
 import { isProductionEnv } from './envSignal';
+import { persist as persistRefreshJti } from './refreshTokenStore';
 
 // ── Express type augmentation ───────────────────────────────────────────────
 //
@@ -26,11 +28,13 @@ export interface AuthUser {
 }
 
 /** JWT payload shape — the standard claims plus our custom user fields. */
-interface CommanderJwtPayload extends JwtPayload {
+export interface CommanderJwtPayload extends JwtPayload {
   id: string;
   username: string;
   role: UserRole;
   type?: 'access' | 'refresh';
+  /** Unique id for refresh tokens — used for rotation / revocation. */
+  jti?: string;
 }
 
 // ── JWT configuration ───────────────────────────────────────────────────────
@@ -82,18 +86,28 @@ export function signAccessToken(user: AuthUser): string {
   });
 }
 
-/** Signs a long-lived refresh token (7d) used to obtain new access tokens. */
+/**
+ * Signs a long-lived refresh token (7d) used to obtain new access tokens.
+ * Each token carries a unique `jti` that is persisted so it can be rotated
+ * and revoked (see refreshTokenStore / /api/auth/refresh).
+ */
 export function signRefreshToken(user: AuthUser): string {
+  const jti = randomUUID();
   const payload: CommanderJwtPayload = {
     id: user.id,
     username: user.username,
     role: user.role,
     type: 'refresh',
+    jti,
   };
-  return jwt.sign(payload, JWT_SECRET, {
+  const token = jwt.sign(payload, JWT_SECRET, {
     expiresIn: REFRESH_TOKEN_EXPIRES_IN,
     algorithm: 'HS256',
   });
+  const decoded = jwt.decode(token) as CommanderJwtPayload | null;
+  const exp = typeof decoded?.exp === 'number' ? decoded.exp : Math.floor(Date.now() / 1000) + 7 * 24 * 3600;
+  persistRefreshJti(jti, user.id, exp);
+  return token;
 }
 
 /**
@@ -126,6 +140,8 @@ const JWT_PUBLIC_PATHS = new Set<string>([
   '/metrics',
   '/api/auth/login',
   '/api/auth/register',
+  '/api/auth/refresh',
+  '/api/auth/logout',
 ]);
 
 function isJwtPublicPath(reqPath: string): boolean {
