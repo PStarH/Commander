@@ -186,7 +186,9 @@ export class CapabilityTokenIssuer {
     this.clock = options.clock ?? (() => new Date());
   }
 
-  get publicKey(): KeyObject { return createPublicKey(this.privateKey); }
+  get publicKey(): KeyObject {
+    return createPublicKey(this.privateKey.export({ type: 'pkcs8', format: 'pem' }));
+  }
 
   issue(grant: Omit<CapabilityGrant, 'issuer' | 'audience' | 'issuedAt' | 'notBefore' | 'keyId'> & Partial<Pick<CapabilityGrant, 'issuer' | 'audience' | 'issuedAt' | 'notBefore' | 'keyId'>>): string {
     const issuedAt = grant.issuedAt ?? nowIso(this.clock);
@@ -267,7 +269,7 @@ export class CapabilityTokenService {
 
   constructor(seed: string, revocations?: CapabilityRevocationStore) {
     const privateKey = privateKeyFromSeed(seed);
-    const publicKey = createPublicKey(privateKey);
+    const publicKey = createPublicKey(privateKey.export({ type: 'pkcs8', format: 'pem' }));
     this.revocations = revocations;
     this.issuer = new CapabilityTokenIssuer({ issuer: 'commander.compatibility', audience: 'commander.effect-broker', keyId: 'compatibility', privateKey });
     this.verifier = new CapabilityTokenVerifier({ issuer: 'commander.compatibility', audience: 'commander.effect-broker', publicKeys: { compatibility: publicKey }, revocations });

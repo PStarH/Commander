@@ -11,11 +11,11 @@ import {
   ShadowProxy,
   loadShadowConfig,
   type ShadowConfig,
+  type MemoryStore,
   createMemoryStore,
 } from '@commander/core';
 import express from 'express';
 import { createWarRoomStore, apiStore } from './store';
-import { ProjectMemoryStore } from './memoryStore';
 import { AgentStateStore } from './agentStateStore';
 import { MemoryIndexManager, DEFAULT_DOMAINS } from './memoryIndexManager';
 import { ProjectMemoryStoreAdapter } from './memoryStoreAdapter';
@@ -182,7 +182,8 @@ validateEnvironment();
 const store = createWarRoomStore();
 // Wired when API_STORE_BACKEND=postgres (or sqlite/memory fallback)
 const apiStoreInstance = apiStore;
-const memoryStore = new ProjectMemoryStore();
+let memoryStore: ProjectMemoryStoreAdapter | undefined;
+let canonicalMemoryStore: MemoryStore | undefined;
 const agentStateStore = new AgentStateStore();
 let memoryIndexManager: MemoryIndexManager | null = null;
 let projectMemoryAdapter: ProjectMemoryStoreAdapter | undefined;
@@ -524,7 +525,7 @@ registerRouter({
 registerRouter({
   name: 'project',
   mountPath: '/',
-  factory: () => createProjectRouter(store, memoryStore, agentStateStore),
+  factory: () => createProjectRouter(store, memoryStore!, agentStateStore),
 });
 registerRouter({
   name: 'memory-index',
@@ -583,7 +584,7 @@ registerRouter({
 registerRouter({
   name: 'namespaced-memory',
   mountPath: '/',
-  factory: () => createNamespacedMemoryRouter(),
+  factory: () => createNamespacedMemoryRouter(canonicalMemoryStore!),
 });
 registerRouter({ name: 'a2a', mountPath: '/a2a', factory: () => a2aRouter });
 registerRouter({ name: 'a2a-v2', mountPath: '/a2a/v2', factory: () => createA2AV2Router() });
@@ -1086,25 +1087,23 @@ async function startServer(): Promise<void> {
 
   await initRateLimitStore();
 
-  // Initialize optional ProjectMemoryStoreAdapter for the memory-index router.
-  // When enabled, memory-index domain entries are mirrored into the canonical
-  // MemoryStore (in-memory/sqlite/json) so they can be discovered through the
-  // project memory APIs. Defaults to 'none' to preserve existing JSON-only
-  // behavior unless explicitly opted in.
-  const adapterType = process.env.COMMANDER_MEMORY_INDEX_ADAPTER_TYPE ?? 'none';
-  if (adapterType !== 'none') {
-    try {
-      const store = await createMemoryStore(adapterType as 'in-memory' | 'sqlite' | 'json');
-      projectMemoryAdapter = new ProjectMemoryStoreAdapter(store);
-      process.stdout.write(
-        `[MemoryIndex] Adapter enabled (${adapterType}) for project ${PROJECT_ID}\n`,
-      );
-    } catch (err) {
-      reportSilentFailure(err, 'index:startServer:adapter');
-      process.stderr.write(
-        `[MemoryIndex] Failed to initialize adapter (${adapterType}): ${(err as Error)?.message ?? String(err)}. Continuing without adapter.\n`,
-      );
-    }
+  // The API and memory-index routes share one canonical MemoryStore facade.
+  // Production defaults to Postgres; non-production defaults to the contract
+  // test double unless an explicit backend is configured.
+  const configuredMemoryType = process.env.COMMANDER_MEMORY_STORE;
+  const memoryType =
+    configuredMemoryType ?? (process.env.NODE_ENV === 'production' ? 'postgres' : 'in-memory');
+  try {
+    const canonicalStore = await createMemoryStore(memoryType as 'postgres' | 'in-memory', {
+      connectionString: process.env.COMMANDER_POSTGRES_URL ?? process.env.DATABASE_URL,
+    });
+    canonicalMemoryStore = canonicalStore;
+    projectMemoryAdapter = new ProjectMemoryStoreAdapter(canonicalStore);
+    memoryStore = projectMemoryAdapter;
+    process.stdout.write(`[Memory] Canonical service enabled (${memoryType})\n`);
+  } catch (err) {
+    reportSilentFailure(err, 'index:startServer:memory');
+    throw err;
   }
 
   memoryIndexManager = new MemoryIndexManager(PROJECT_ID, projectMemoryAdapter);
