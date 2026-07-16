@@ -96,7 +96,7 @@ export class MemoryStoreFacade implements MemoryStore {
       tags: updates.tags ?? current.tags,
       priority: updates.priority ?? current.priority,
       confidence: updates.confidence ?? current.confidence,
-      lastAccessedAt: updates.lastAccessedAt ?? current.lastAccessedAt,
+      lastAccessedAt: current.lastAccessedAt,
       expiresAt: updates.expiresAt ?? current.expiresAt,
       evidenceRefs: current.evidenceRefs,
       meta: current.meta,
