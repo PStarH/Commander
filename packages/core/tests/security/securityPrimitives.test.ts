@@ -23,6 +23,30 @@ describe('SecurityPrimitives', () => {
       expect(result.patterns).toContain('api_key');
     });
 
+    it('scrubs modern OpenAI project keys (sk-proj-*)', () => {
+      const key = 'sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_extra';
+      const result = sanitizer.sanitize(`Authorization: Bearer ${key}`, 'output');
+      expect(result.sanitized).toContain('sk-proj-[REDACTED]');
+      expect(result.sanitized).not.toContain(key);
+      expect(result.patterns).toContain('openai_proj_key');
+    });
+
+    it('scrubs OpenAI service-account keys (sk-svcacct-*)', () => {
+      const key = 'sk-svcacct-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789';
+      const result = sanitizer.sanitize(`key=${key}`, 'log');
+      expect(result.sanitized).toContain('sk-svcacct-[REDACTED]');
+      expect(result.sanitized).not.toContain(key);
+      expect(result.patterns).toContain('openai_svcacct_key');
+    });
+
+    it('scrubs Anthropic API keys (sk-ant-api03-*)', () => {
+      const key = 'sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_extra';
+      const result = sanitizer.sanitize(`key=${key}`, 'log');
+      expect(result.sanitized).toContain('sk-ant-[REDACTED]');
+      expect(result.sanitized).not.toContain(key);
+      expect(result.patterns).toContain('anthropic_api_key');
+    });
+
     it('scrubs JWT tokens', () => {
       const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.SflKxwRJSMeKKF2QT4f';
       const result = sanitizer.sanitize(jwt, 'output');
