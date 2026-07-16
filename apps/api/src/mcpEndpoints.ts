@@ -14,33 +14,51 @@ import { hasRole, type UserRole } from './userStore';
 
 // ── Security: SSRF prevention ────────────────────────────────────────────────
 // Block requests to private/internal IP ranges and cloud metadata endpoints.
-// Per OWASP SSRF Prevention Cheat Sheet: validate scheme, reject private IPs.
 const PRIVATE_IP_PATTERNS = [
-  /^127\./, // Loopback
-  /^10\./, // RFC 1918
-  /^172\.(1[6-9]|2[0-9]|3[0-1])\./, // RFC 1918
-  /^192\.168\./, // RFC 1918
-  /^169\.254\./, // Link-local / cloud metadata
-  /^0\./, // Current network
-  /^::1$/, // IPv6 loopback
-  /^fc00:/, // IPv6 ULA
-  /^fe80:/, // IPv6 link-local
+  /^127\./,
+  /^10\./,
+  /^172\.(1[6-9]|2[0-9]|3[0-1])\./,
+  /^192\.168\./,
+  /^169\.254\./,
+  /^0\./,
+  /^::1$/,
+  /^0:0:0:0:0:0:0:1$/,
+  /^fc[0-9a-f]{2}:/i, // IPv6 ULA fc00::/7
+  /^fd[0-9a-f]{2}:/i,
+  /^fe80:/i, // IPv6 link-local
 ];
+
+const BLOCKED_HOSTNAMES = new Set([
+  'localhost',
+  'metadata.google.internal',
+  'metadata',
+  '0.0.0.0',
+  '::1',
+]);
+
+function normalizeHostname(hostname: string): string {
+  let h = hostname.trim().toLowerCase();
+  if (h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1);
+  if (h.startsWith('::ffff:')) h = h.slice('::ffff:'.length);
+  // Trailing dot (DNS absolute name)
+  if (h.endsWith('.')) h = h.slice(0, -1);
+  return h;
+}
 
 /**
  * Validate a URL to prevent SSRF attacks.
- * Only allows http/https schemes and rejects private/internal IP ranges.
- * Security: Based on OWASP SSRF Prevention Cheat Sheet.
+ * Only allows http/https schemes and rejects private/internal hosts.
  */
 function isSafeUrl(urlStr: string): boolean {
   try {
     const parsed = new URL(urlStr);
-    // Only allow http and https schemes — block file:, javascript:, data:, etc.
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       return false;
     }
-    // Reject private/internal IP ranges and cloud metadata endpoints
-    const hostname = parsed.hostname;
+    const hostname = normalizeHostname(parsed.hostname);
+    if (BLOCKED_HOSTNAMES.has(hostname) || hostname.endsWith('.localhost')) {
+      return false;
+    }
     for (const pattern of PRIVATE_IP_PATTERNS) {
       if (pattern.test(hostname)) return false;
     }
@@ -98,6 +116,13 @@ function validateMcpArgs(args: readonly string[]): string | undefined {
       a.startsWith('--loader=')
     ) {
       return `MCP command arguments may not contain an inline-eval flag ("${arg}")`;
+    }
+    // Clustered short options: node -pe '…', python -Oc, etc.
+    if (a.startsWith('-') && !a.startsWith('--') && a.length > 1) {
+      const cluster = a.slice(1).split('=')[0] ?? '';
+      if (/[epcr]/.test(cluster)) {
+        return `MCP command arguments may not contain an inline-eval short-option cluster ("${arg}")`;
+      }
     }
   }
   return undefined;

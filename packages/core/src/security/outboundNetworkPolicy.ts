@@ -104,7 +104,12 @@ function normalizeHostname(hostname: string): string {
 function isPrivateOrBlockedHost(hostname: string): boolean {
   const h = normalizeHostname(hostname);
   if (BLOCKED_HOSTNAMES.has(h)) return true;
+  if (h.endsWith('.localhost')) return true;
   if (h === '::1' || h === '0:0:0:0:0:0:0:1') return true;
+  // IPv6 ULA fc00::/7 and link-local fe80::/10
+  if (/^fc[0-9a-f]{2}:/i.test(h) || /^fd[0-9a-f]{2}:/i.test(h) || /^fe80:/i.test(h)) {
+    return true;
+  }
   for (const pattern of PRIVATE_IP_PATTERNS) {
     if (pattern.test(h)) return true;
   }
@@ -158,8 +163,14 @@ export class OutboundNetworkPolicy {
     if (isPrivateOrBlockedHost(domain) || PRIVATE_IP_PATTERNS.some((p) => p.test(domain))) {
       return { allowed: false, reason: `private IP blocked (SSRF defense): ${domain}`, domain };
     }
-    // Skip DNS for pure IPv4/IPv6 literals already validated.
-    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(domain) || domain.includes(':')) {
+    // Skip DNS only for IPv4 literals already validated. IPv6 hostnames still
+    // need isPrivateOrBlockedHost (done above); do not skip DNS merely because
+    // the hostname contains ':' (that would skip hostnames incorrectly).
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(domain)) {
+      return sync;
+    }
+    // Literal IPv6 (contains ':') — already checked via isPrivateOrBlockedHost.
+    if (domain.includes(':')) {
       return sync;
     }
 
