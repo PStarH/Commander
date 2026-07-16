@@ -43,7 +43,7 @@ describe('memory bootstrap integration', () => {
     expect(resolveMemoryStoreType({ memoryStoreType: 'postgres' })).toBe('postgres');
   });
 
-  it('fails closed instead of selecting JSON outside tests without Postgres', () => {
+  it('falls back to in-memory (Local-First) outside tests without Postgres', () => {
     const previousVitest = process.env.VITEST;
     const previousNodeEnv = process.env.NODE_ENV;
     const previousCommanderUrl = process.env.COMMANDER_POSTGRES_URL;
@@ -53,7 +53,7 @@ describe('memory bootstrap integration', () => {
       process.env.NODE_ENV = 'production';
       delete process.env.COMMANDER_POSTGRES_URL;
       delete process.env.DATABASE_URL;
-      expect(() => resolveMemoryStoreType({})).toThrow(/PostgreSQL memory persistence is required/);
+      expect(resolveMemoryStoreType({})).toBe('in-memory');
     } finally {
       if (previousVitest === undefined) delete process.env.VITEST;
       else process.env.VITEST = previousVitest;

@@ -39,9 +39,14 @@ export function resolveMemoryStoreType(config?: {
     return 'in-memory';
   }
   if (process.env.COMMANDER_POSTGRES_URL || process.env.DATABASE_URL) return 'postgres';
-  throw new Error(
-    'PostgreSQL memory persistence is required outside tests; set COMMANDER_POSTGRES_URL or DATABASE_URL',
+  // Local-First (CLAUDE.md §4/§6): without an explicit Postgres DSN, fall back
+  // to the in-memory store rather than crashing. Postgres remains an explicit
+  // opt-in via COMMANDER_MEMORY_STORE=postgres or a DSN — it is not forced.
+  getGlobalLogger().warn(
+    'memory',
+    'No Postgres DSN configured; using in-memory store. Set COMMANDER_POSTGRES_URL or COMMANDER_MEMORY_STORE=postgres for durable persistence.',
   );
+  return 'in-memory';
 }
 
 export async function createMemoryStore(
