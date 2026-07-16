@@ -52,12 +52,48 @@ export function createStreamRouter(): Router {
   const router = Router();
 
   const handleStream = (req: Request, res: Response): void => {
-    // EventSource cannot set Authorization headers. Accept a short-lived
-    // access token via ?access_token= (same JWT as Bearer) so browser clients
-    // can authenticate. Prefer header/API-key when present.
+    // EventSource cannot set Authorization headers. Prefer a cookie
+    // (`commander_access_token`); fall back to ?access_token=. Always strip
+    // access_token from req.url so access/proxy logs do not retain the secret.
+    const redactAccessTokenFromUrl = (): void => {
+      if ('access_token' in req.query) {
+        delete (req.query as Record<string, unknown>).access_token;
+      }
+      const scrub = (u: string) =>
+        u
+          .replace(/([?&])access_token=[^&]*&?/g, '$1')
+          .replace(/[?&]$/, '')
+          .replace(/\?&/, '?');
+      if (req.url.includes('access_token=')) {
+        req.url = scrub(req.url);
+      }
+      if (typeof req.originalUrl === 'string' && req.originalUrl.includes('access_token=')) {
+        req.originalUrl = scrub(req.originalUrl);
+      }
+    };
+
     if (!req.user) {
-      const raw = req.query.access_token;
-      const token = typeof raw === 'string' ? raw : Array.isArray(raw) ? raw[0] : undefined;
+      let token: string | undefined;
+
+      const cookieHeader = req.headers.cookie;
+      if (typeof cookieHeader === 'string') {
+        const match = cookieHeader.match(/(?:^|;\s*)commander_access_token=([^;]+)/);
+        if (match?.[1]) {
+          try {
+            token = decodeURIComponent(match[1]);
+          } catch {
+            token = match[1];
+          }
+        }
+      }
+
+      if (!token) {
+        const raw = req.query.access_token;
+        token = typeof raw === 'string' ? raw : Array.isArray(raw) ? raw[0] : undefined;
+      }
+
+      redactAccessTokenFromUrl();
+
       if (typeof token === 'string' && token.length > 0) {
         const decoded = verifyToken(token);
         if (decoded && decoded.type !== 'refresh') {
@@ -68,6 +104,8 @@ export function createStreamRouter(): Router {
           };
         }
       }
+    } else {
+      redactAccessTokenFromUrl();
     }
 
     // Require JWT user or API-key identity before opening an SSE stream.

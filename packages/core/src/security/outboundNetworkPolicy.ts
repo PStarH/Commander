@@ -14,6 +14,9 @@
  * restored by uninstallOutboundNetworkPolicy().
  */
 
+import * as dns from 'node:dns';
+import * as http from 'node:http';
+import * as https from 'node:https';
 import { getGlobalLogger } from '../logging';
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -39,6 +42,14 @@ export interface OutboundNetworkPolicyConfig {
   classificationAllowlist?: Partial<Record<DataClassification, string[]>>;
 }
 
+export interface OutboundCheckResult {
+  allowed: boolean;
+  reason?: string;
+  domain: string;
+  /** Resolved public addresses used for IP pinning (DNS rebinding defense). */
+  addresses?: string[];
+}
+
 export interface OutboundRequestLog {
   url: string;
   method: string;
@@ -48,8 +59,90 @@ export interface OutboundRequestLog {
   timestamp: string;
 }
 
+/**
+ * Build a URL that connects to a pinned IP while preserving the original Host
+ * via headers (caller must set Host). Prevents DNS rebinding between check and connect.
+ */
+export function pinUrlToAddress(rawUrl: string, address: string): { href: string; host: string } {
+  const parsed = new URL(rawUrl);
+  const host = parsed.hostname;
+  const pinned = new URL(rawUrl);
+  pinned.hostname = address.includes(':') ? `[${address}]` : address;
+  return { href: pinned.href, host };
+}
+
+/**
+ * Fetch via http/https with connection pinned to `address` and Host/SNI set to
+ * the original hostname. Node's fetch forbids setting Host, so we use the
+ * low-level clients for the pin path.
+ */
+export function pinnedHttpFetch(
+  rawUrl: string,
+  address: string,
+  init?: RequestInit,
+): Promise<Response> {
+  const parsed = new URL(rawUrl);
+  const isHttps = parsed.protocol === 'https:';
+  const client = isHttps ? https : http;
+  const method = (init?.method ?? 'GET').toUpperCase();
+  const headers: Record<string, string> = { Host: parsed.hostname };
+
+  if (init?.headers) {
+    const h = new Headers(init.headers);
+    h.forEach((value, key) => {
+      if (key.toLowerCase() === 'host') return;
+      headers[key] = value;
+    });
+  }
+
+  const body =
+    typeof init?.body === 'string' || init?.body instanceof Buffer || init?.body instanceof Uint8Array
+      ? init.body
+      : undefined;
+
+  return new Promise<Response>((resolve, reject) => {
+    const req = client.request(
+      {
+        hostname: address,
+        port: parsed.port || (isHttps ? 443 : 80),
+        path: parsed.pathname + parsed.search,
+        method,
+        headers,
+        servername: isHttps ? parsed.hostname : undefined,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => {
+          const status = res.statusCode ?? 0;
+          const responseHeaders = new Headers();
+          for (const [k, v] of Object.entries(res.headers)) {
+            if (v === undefined) continue;
+            if (Array.isArray(v)) {
+              for (const item of v) responseHeaders.append(k, item);
+            } else {
+              responseHeaders.set(k, v);
+            }
+          }
+          resolve(
+            new Response(Buffer.concat(chunks), {
+              status,
+              statusText: res.statusMessage,
+              headers: responseHeaders,
+            }),
+          );
+        });
+      },
+    );
+    req.on('error', reject);
+    if (body !== undefined) req.write(body);
+    req.end();
+  });
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Default allowlist — common LLM API and infrastructure domains
+// (loopback / private hosts intentionally omitted — SSRF defense)
 // ──────────────────────────────────────────────────────────────────────────
 
 const DEFAULT_ALLOWLIST: readonly string[] = [
@@ -63,10 +156,6 @@ const DEFAULT_ALLOWLIST: readonly string[] = [
   'api.mistral.ai',
   'api.x.ai',
   'api.mimo.com',
-  'localhost',
-  '127.0.0.1',
-  '0.0.0.0',
-  '::1',
 ];
 
 /**
@@ -76,10 +165,63 @@ const PRIVATE_IP_PATTERNS: readonly RegExp[] = [
   /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/,
   /^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/,
   /^192\.168\.\d{1,3}\.\d{1,3}$/,
-  /^169\.254\.\d{1,3}\.\d{1,3}$/, // link-local
+  /^169\.254\.\d{1,3}\.\d{1,3}$/, // link-local / cloud metadata
   /^0\.0\.0\.0$/,
   /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/, // loopback range
 ];
+
+const BLOCKED_HOSTNAMES = new Set([
+  'localhost',
+  'metadata.google.internal',
+  'metadata',
+  '0.0.0.0',
+  '::1',
+  '[::1]',
+]);
+
+function normalizeHostname(hostname: string): string {
+  let h = hostname.trim().toLowerCase();
+  // Strip IPv6 brackets
+  if (h.startsWith('[') && h.endsWith(']')) {
+    h = h.slice(1, -1);
+  }
+  // Trailing-dot FQDN (localhost. → localhost)
+  if (h.endsWith('.')) {
+    h = h.slice(0, -1);
+  }
+  // IPv4-mapped IPv6 → extract IPv4 (dotted or hex form ::ffff:7f00:1)
+  if (h.startsWith('::ffff:')) {
+    const rest = h.slice('::ffff:'.length);
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(rest)) {
+      h = rest;
+    } else {
+      const parts = rest.split(':');
+      if (parts.length === 2) {
+        const hi = Number.parseInt(parts[0], 16);
+        const lo = Number.parseInt(parts[1], 16);
+        if (Number.isFinite(hi) && Number.isFinite(lo)) {
+          h = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+        }
+      }
+    }
+  }
+  return h;
+}
+
+function isPrivateOrBlockedHost(hostname: string): boolean {
+  const h = normalizeHostname(hostname);
+  if (BLOCKED_HOSTNAMES.has(h)) return true;
+  if (h.endsWith('.localhost')) return true;
+  if (h === '::1' || h === '0:0:0:0:0:0:0:1') return true;
+  // IPv6 ULA fc00::/7 and link-local fe80::/10
+  if (/^fc[0-9a-f]{2}:/i.test(h) || /^fd[0-9a-f]{2}:/i.test(h) || /^fe80:/i.test(h)) {
+    return true;
+  }
+  for (const pattern of PRIVATE_IP_PATTERNS) {
+    if (pattern.test(h)) return true;
+  }
+  return false;
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // OutboundNetworkPolicy
@@ -104,10 +246,107 @@ export class OutboundNetworkPolicy {
   }
 
   /**
-   * Check if a URL is allowed under the current policy.
+   * Check if a URL is allowed under the current policy (sync hostname checks).
+   * Private/loopback/metadata hosts are always denied when blockPrivateIPs is on —
+   * allowlist cannot bypass SSRF defense.
    */
   check(url: string): { allowed: boolean; reason?: string; domain: string } {
     return this.checkWithClassification(url, undefined);
+  }
+
+  /**
+   * Async check including DNS resolution of the hostname. Lookup failure → deny.
+   * On success, `addresses` contains public IPs suitable for connection pinning.
+   */
+  async checkAsync(
+    url: string,
+    classification?: DataClassification,
+  ): Promise<OutboundCheckResult> {
+    const sync = this.checkWithClassification(url, classification);
+    if (!sync.allowed) return sync;
+    return this.resolveAddresses(url, sync.domain);
+  }
+
+  /**
+   * SSRF-only check (private/loopback/metadata + DNS). Does NOT enforce the
+   * domain allowlist — used by webhook delivery to arbitrary customer URLs.
+   */
+  async checkSsrfAsync(url: string): Promise<OutboundCheckResult> {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return { allowed: false, reason: 'malformed URL', domain: '' };
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return { allowed: false, reason: 'unsupported protocol', domain: '' };
+    }
+    const domain = normalizeHostname(parsed.hostname);
+    if (this.config.blockPrivateIPs && isPrivateOrBlockedHost(domain)) {
+      return { allowed: false, reason: `private IP blocked (SSRF defense): ${domain}`, domain };
+    }
+    if (!this.config.blockPrivateIPs) {
+      return { allowed: true, domain };
+    }
+    return this.resolveAddresses(url, domain);
+  }
+
+  /**
+   * Fetch after SSRF check + IP pin, bypassing the domain allowlist.
+   * Uses the pre-patch fetch so OutboundNetworkPolicy allowlist does not
+   * block legitimate webhook destinations.
+   */
+  async ssrfCheckedFetch(input: string, init?: RequestInit): Promise<Response> {
+    const result = await this.checkSsrfAsync(input);
+    if (!result.allowed) {
+      const err = new Error(`OUTBOUND_BLOCKED: ${result.reason}`);
+      err.name = 'OutboundNetworkPolicyError';
+      throw err;
+    }
+    const address =
+      result.addresses?.[0] ??
+      (/^\d{1,3}(\.\d{1,3}){3}$/.test(result.domain) || result.domain.includes(':')
+        ? result.domain
+        : undefined);
+    if (address) {
+      return pinnedHttpFetch(input, address, init);
+    }
+    const fetchFn = this.originalFetch ?? globalThis.fetch;
+    return fetchFn.call(globalThis, input, init);
+  }
+
+  private async resolveAddresses(url: string, domain: string): Promise<OutboundCheckResult> {
+    // Literal IPs / blocked hostnames already handled in sync check.
+    if (isPrivateOrBlockedHost(domain) || PRIVATE_IP_PATTERNS.some((p) => p.test(domain))) {
+      return { allowed: false, reason: `private IP blocked (SSRF defense): ${domain}`, domain };
+    }
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(domain)) {
+      return { allowed: true, domain, addresses: [domain] };
+    }
+    if (domain.includes(':')) {
+      return { allowed: true, domain, addresses: [domain] };
+    }
+
+    try {
+      const results = await dns.promises.lookup(domain, { all: true });
+      const addresses: string[] = [];
+      for (const { address } of results) {
+        if (isPrivateOrBlockedHost(address)) {
+          return {
+            allowed: false,
+            reason: `DNS resolved to private IP (SSRF defense): ${address}`,
+            domain,
+          };
+        }
+        addresses.push(address);
+      }
+      if (addresses.length === 0) {
+        return { allowed: false, reason: `DNS lookup returned no addresses for: ${domain}`, domain };
+      }
+      return { allowed: true, domain, addresses };
+    } catch {
+      return { allowed: false, reason: `DNS lookup failed for: ${domain}`, domain };
+    }
   }
 
   /**
@@ -119,7 +358,7 @@ export class OutboundNetworkPolicy {
   checkWithClassification(
     url: string,
     classification?: DataClassification,
-  ): { allowed: boolean; reason?: string; domain: string } {
+  ): OutboundCheckResult {
     let parsed: URL;
     try {
       parsed = new URL(url);
@@ -127,28 +366,26 @@ export class OutboundNetworkPolicy {
       return { allowed: false, reason: 'malformed URL', domain: '' };
     }
 
-    const domain = parsed.hostname;
+    const domain = normalizeHostname(parsed.hostname);
 
     // Check blocklist first (always takes precedence)
     for (const blocked of this.config.blocklist) {
-      if (domain === blocked || domain.endsWith('.' + blocked)) {
+      const b = blocked.toLowerCase();
+      if (domain === b || domain.endsWith('.' + b)) {
         return { allowed: false, reason: `domain in blocklist: ${domain}`, domain };
       }
     }
 
-    // SSRF defense: block private IPs (unless explicitly allowlisted)
-    if (this.config.blockPrivateIPs && !this.config.allowlist.includes(domain)) {
-      for (const pattern of PRIVATE_IP_PATTERNS) {
-        if (pattern.test(domain)) {
-          return { allowed: false, reason: `private IP blocked (SSRF defense): ${domain}`, domain };
-        }
-      }
+    // SSRF defense: always block private/loopback/metadata — allowlist cannot bypass.
+    if (this.config.blockPrivateIPs && isPrivateOrBlockedHost(domain)) {
+      return { allowed: false, reason: `private IP blocked (SSRF defense): ${domain}`, domain };
     }
 
-    // Check global allowlist
+    // Check global allowlist (public domains only)
     let globallyAllowed = false;
     for (const allowed of this.config.allowlist) {
-      if (domain === allowed || domain.endsWith('.' + allowed)) {
+      const a = allowed.toLowerCase();
+      if (domain === a || domain.endsWith('.' + a)) {
         globallyAllowed = true;
         break;
       }
@@ -163,7 +400,8 @@ export class OutboundNetworkPolicy {
       const classAllowlist = this.config.classificationAllowlist[classification]!;
       let classAllowed = false;
       for (const allowed of classAllowlist) {
-        if (domain === allowed || domain.endsWith('.' + allowed)) {
+        const a = allowed.toLowerCase();
+        if (domain === a || domain.endsWith('.' + a)) {
           classAllowed = true;
           break;
         }
@@ -194,7 +432,7 @@ export class OutboundNetworkPolicy {
     this.originalFetch = globalThis.fetch;
     const self = this;
 
-    globalThis.fetch = function patchedFetch(
+    globalThis.fetch = async function patchedFetch(
       input: RequestInfo | URL,
       init?: RequestInit,
     ): Promise<Response> {
@@ -203,7 +441,7 @@ export class OutboundNetworkPolicy {
         init?.method ??
         (typeof input !== 'string' && !(input instanceof URL) ? input.method : 'GET');
 
-      const result = self.check(url);
+      const result = await self.checkAsync(url);
 
       // Audit log
       if (self.config.auditLog) {
@@ -221,6 +459,12 @@ export class OutboundNetworkPolicy {
         const err = new Error(`OUTBOUND_BLOCKED: ${result.reason}`);
         err.name = 'OutboundNetworkPolicyError';
         return Promise.reject(err);
+      }
+
+      // Pin to a resolved public IP (Host/SNI preserved) to defeat DNS rebinding TOCTOU.
+      const address = result.addresses?.[0];
+      if (address && (url.startsWith('http://') || url.startsWith('https://'))) {
+        return pinnedHttpFetch(url, address, init);
       }
 
       // Pass through to original fetch
