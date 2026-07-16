@@ -2,7 +2,6 @@ export type {
   SandboxMode,
   NetworkPolicy,
   SandboxMechanism,
-  SandboxIsolation,
   FileAccessPolicy,
   SandboxProfile,
   SandboxExecutionResult,
@@ -12,7 +11,6 @@ export type {
   SSHConfig,
   DockerExecConfig,
   BackendConfig,
-  WorkloadIdentity,
 } from './types';
 export { READ_ONLY, WORKSPACE_WRITE, FULL_ACCESS, HARDENED, PROFILES } from './profiles';
 export {
@@ -22,29 +20,7 @@ export {
   wrapCommandWithProxy,
 } from './networkProxy';
 export type { ProxySandboxConfig } from './networkProxy';
-export {
-  SandboxManager,
-  SandboxInitializationError,
-  parseSandboxIsolation,
-  getSandboxManager,
-  resetSandboxManager,
-} from './manager';
-export {
-  validateWorkloadIdentity,
-  generateContainerName,
-  generateWorkloadVolumeName,
-  generateNetworkNamespaceName,
-  generateWorkloadWorkdir,
-  assertTenantScopeConsistency,
-  lockImageByDigest,
-  buildTenantSandboxPolicy,
-} from './tenantSandboxPolicy';
-export type {
-  TenantScopeCheckPoint,
-  LockedImage,
-  TenantSandboxPolicy,
-  BuildTenantSandboxPolicyOptions,
-} from './tenantSandboxPolicy';
+export { SandboxManager, getSandboxManager, resetSandboxManager } from './manager';
 export { ExecPolicyEngine } from './execPolicy';
 export { ApprovalSystem, getApprovalSystem } from './approval';
 export type {

@@ -45,18 +45,24 @@ Every "one canonical X" rule names the current count so consolidation is measura
 
 **Conformance today**
 
-- (1) HOLDS. `packages/contracts` has zero internal deps and no `dependencies` block
-  (`packages/contracts/src/index.ts`, `package.json:60-63`); it is imported by kernel, sdk, api.
+- (1) **EXISTS + WIRED + ENFORCED.** `packages/contracts` has zero internal deps and no
+  runtime `dependencies` block (`packages/contracts/package.json:48-50`); the shared
+  identity/policy/audit contracts live in `packages/contracts/src/controlPlane.ts:3-49` and are
+  exported by `packages/contracts/src/index.ts:72-84`. `scripts/arch-guard.sh:128-145` checks
+  the leaf rule; CI runs `pnpm arch:guard:test` and `pnpm arch:guard` (`.github/workflows/ci.yml:257-263`).
 - (2) **VIOLATED, widely.** The core root barrel is imported wholesale by:
   `apps/api` (50 `from '@commander/core'` imports, e.g. `apps/api/src/index.ts:1-19`),
   `worker-plane` (`workerRuntimeAdapter.ts:1`), `mcp-server` (`stdioServer.ts:1-11`, 9 symbols),
   `sdk` (`commanderClient.ts:26,139,381` incl. a sync `require`), `operations` (root barrel),
   and the `apps/memory` writer (`apps/api/src/memoryIndexManager.ts:14`).
-- **Enforcement: NONE.** The "must never import core/kernel" rule is a doc comment
-  (`packages/contracts/src/index.ts:5-6`); there is no dependency-cruiser / eslint-boundaries
-  config in the repo. This principle is currently aspirational.
+- **Enforcement: PARTIAL.** The contracts leaf rule and V2 package dependency graph are
+  **ENFORCED** by `scripts/arch-guard.sh` and `.github/workflows/ci.yml`. The broader V1 rule
+  against wholesale `@commander/core` imports remains debt; existing compatibility files are
+  explicitly listed by the architecture gate and are not silently expanded.
 
-**Gap to close:** add a boundary linter that fails CI on a wholesale core-barrel import.
+**Gap to close:** retire the documented V1 core-barrel exceptions as the runtime extraction
+  proceeds. The WS0 guard prevents new V2 boundary violations and the sole
+  `worker-plane → core` bridge is `packages/worker-plane/src/workerRuntimeAdapter.ts`.
 
 ---
 
@@ -102,7 +108,7 @@ over the one implementation, not a new class. Count before/after on any change t
 
 | Concept               | Real impls                                                                  | Canonical (intended)                                                                                                                                                | Notable duplication / dead code                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | --------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Orchestrator          | **10** (was 13)                                                             | V1 `UltimateOrchestrator` (`core/src/ultimate/orchestrator.ts:64`); V2 `planWorkGraph` (`core/src/planner/workGraphPlanner.ts:112`) → kernel → worker StepExecutors | DELETED 2026-07-14: `apps/api` dead `Orchestrator` class (file slimmed to the live, tested `runAgentStep`), `AdaptiveOrchestrator`, the whole `@commander/orchestration` package (dead divergent fork). Remaining: 6 wired V1 orchestrators (Ultimate/TELOS/Swarm/Drive/Goal/AgentLoop) + 3 coordinators overlap the V2 planner path. DELETED 2026-07-15: orphan `apps/api/src/deterministicTaskAllocator.ts` (484 LOC; zero importers; was not an Orchestrator count).      |
+| Orchestrator          | **10** (was 13)                                                             | V1 `UltimateOrchestrator` (`core/src/ultimate/orchestrator.ts:64`); V2 `planWorkGraph` (`core/src/planner/workGraphPlanner.ts:112`) → kernel → worker StepExecutors | DELETED 2026-07-14: `apps/api` dead `Orchestrator` class (file slimmed to the live, tested `runAgentStep`), `AdaptiveOrchestrator`, the whole `@commander/orchestration` package (dead divergent fork). Remaining: 6 wired V1 orchestrators (Ultimate/TELOS/Swarm/Drive/Goal/AgentLoop) + 3 coordinators overlap the V2 planner path. DELETED 2026-07-15: orphan `apps/api/src/deterministicTaskAllocator.ts` (484 LOC; zero importers; was not an Orchestrator count). WS0 keeps the deleted package shell absent via `arch:guard`.      |
 | Store / Repository    | **49** classes (was 51; −2 after LockFree + DatasetStore dedupe 2026-07-15) | per-concept: kernel `KernelRepository`, core `MemoryStore`, `apiStore`, `WarRoomStore` (≈4 parallel roots, not 1)                                                   | `EpisodicMemoryStore` defined in **both** `core/src/memory/episodicStore.ts:41` and `apps/api/src/episodicMemoryStore.ts:398`. DELETED 2026-07-15: orphan `LockFreeStateStore` (zero importers; stub remains without class). DatasetStore dual file collapsed to re-export of `observability/dataset.ts` (plugin path no longer declares a second class).                                                                                                                    |
 | Memory system         | **17** (methodology-locked; −1 apps/api EpisodicMemoryStore Phase B 2026-07-15) | `UnifiedMemory` (`core/src/memory/unifiedMemory.ts:167`) over `ThreeLayerMemory`                                                                                    | Allowlist (not path-walk): Unified/ThreeLayer/MemorySystem + single `MemoryCurator` (TTL + autonomous merged 2026-07-15; `TtlMemoryCurator` is alias only) + core-only `EpisodicMemoryStore` (apps/api zombie deleted) + api parallel stores (`ProjectMemoryStore`/`NamespacedMemoryStore`/`MemoryIndexManager`) + Conversation/Semantic/Procedural/Json/Sqlite + Federation/ManagerAgent/QualityGate/CrossModelMemory. Path-walk of `memory/**` helpers is 24–32 and is NOT the locked definition. `MemorySystem` is `@deprecated` with no callers. |
 | State machine         | **6** (4 `*StateMachine` classes + `RUN_TRANSITIONS` + `STEP_TRANSITIONS`)  | `contracts/src/states.ts:49/61` (RUN/STEP lifecycle tables)                                                                                                         | Classes: `TaskStateMachine`, `StateMachine`, `PatternStateMachine`, `TopologyStateMachine`. Canonical transition tables have **zero call sites** — the kernel enforces transitions in SQL (`kernel/src/postgres.ts:342`) instead; `apps/api/src/stateMachine.ts:245` and `patternStateMachine.ts:214` are two legacy engines with byte-identical interface names                                                                                                             |
@@ -167,13 +173,15 @@ would make the purpose obvious to someone outside the team, do the rename.
 - `ShowcaseRunner` ("killer demo"), `swarm/`, `drive/`, `shadow/`, `selfEvolution/`, `companyEngine.ts`,
   `contracts/pillarI.ts`…`pillarIV.ts`. In `apps/api`: war-room theming (`store.ts:93`), `/api/v1/hub`
   (`index.ts:730`). Default project id is `project-war-room` (`apps/api/src/index.ts:111`).
-  Also **misnamed**: `@commander/control-plane` is actually a contracts/types package with no runtime
-  (`control-plane/src/index.ts:4-6`).
+  WS0 folded the misnamed `@commander/control-plane` types-only package into
+  `@commander/contracts` and deleted the empty `@commander/orchestration` shell.
 
-**Enforcement: NONE.** No lint flags ambition-naming.
+**Enforcement: PARTIAL.** `scripts/arch-guard.sh` **ENFORCES** that no new
+`control-plane`, `orchestration`, `orchestrator`, or `security` workspace package role exists.
+The remaining V1 module/class ambition names are still not linted.
 
-**Gap to close:** rename `control-plane`→ (its real function) or fold into `contracts`; treat new
-`ultimate/telos/hub/showcase`-style names as review blockers.
+**Gap to close:** treat new `ultimate/telos/hub/showcase`-style module/class names as review
+blockers and continue the planned V1 consolidation.
 
 ---
 
@@ -184,18 +192,34 @@ The real ENFORCED layer today is `packages/core/tests/architecture/` (run via `p
 - `architectureV2.invariants.test.ts` asserts: apps/api sole Gateway (`:34`), `CommanderHttpServer`
   deprecated (`:40`), `createDriverSoft` fail-closes in prod (`:46`), `SideEffectGate` wired into
   `ToolExecutionService` (`:52`), ATR `pauseRun`/`claimRunnableRun` (`:63`), `waiting_for_human`
-  first-class (`:70`), V2 packages exist (`:85`), SDK versioned `v1` (`:91`), DR runbook exists (`:101`),
+  first-class (`:70`), contracts exists and deleted package shells stay absent (`:85`),
+  SDK versioned `v1` (`:91`), DR runbook exists (`:101`),
   no silent `scheduleAction` bypass (`:113`).
+- `scripts/arch-guard.sh:17-247` checks the allowed package graph, source import direction,
+  contracts leaf status, forbidden package roles, deleted package references, and cycles.
+  It is **WIRED** into CI as `pnpm arch:guard:test` and `pnpm arch:guard` before
+  `pnpm arch:gate` (`.github/workflows/ci.yml:257-263`).
 - The `v2-*` suite covers cross-node fencing, outbox at-least-once + DLQ, event-sourcing integrity,
   compensation rollback, RPO/RTO drill, cross-tenant live-fire, worker autoscale.
 
 **Unenforced principles** (aspirational text only — flag if still unenforced at next review):
-§1 dependency direction (no boundary linter), §5 naming (no lint).
+the broader V1 ban on wholesale `@commander/core` imports and the remaining source/module naming
+rules. The contracts leaf, V2 package graph, and new package-role ban are ENFORCED by
+`pnpm arch:guard`.
 §3 duplication count ceilings are ENFORCED via `duplicationCountGuard.test.ts` (growth-only).
 
 ---
 
 ## Change log
+
+- **2026-07-15 (WS0 contracts constitution)** — Folded the types-only
+  `@commander/control-plane` surface into `packages/contracts/src/controlPlane.ts`, deleted
+  the tracked `packages/control-plane` package and ignored `packages/orchestration` residue,
+  and added `scripts/arch-guard.sh`. The guard is wired to `pnpm arch:guard` in CI and enforces
+  the contracts leaf, V2 dependency direction, forbidden orchestrator/security package roles,
+  deleted package references, and internal dependency cycles. Focused guard fixtures: 7/7 pass;
+  the full gates `pnpm arch:guard`, `pnpm arch:gate`, and `pnpm test:arch` pass. The contracts
+  snapshot baseline was regenerated and `pnpm contract:check` reports no breaking changes.
 
 - **2026-07-15 (plan: EpisodicMemoryStore routing)** — Direction Audit + strangler plan at
   `docs/direction-audits/2026-07-15-episodic-memory-routing.md`. Finding: apps/api

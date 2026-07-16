@@ -938,7 +938,7 @@ export class ThreeLayerMemory {
    * MUST complete synchronously relative to the surrounding `add()` call
    * — never `await` between the in-memory `this.delete(id)` and the
    * `routeOutDelete(id)` call, nor between `add()` invocations that might
-   * evict each other. SqliteMemoryStore.delete returns `false` (no throw)
+   * evict each other. MemoryStoreFacade.delete returns `false` (no throw)
    * for missing rows, so any `await` reopens a write/delete race that
    * leaks persistent rows without an error.
    */
@@ -1282,9 +1282,9 @@ export function mapMemoryEntryToWriteOptions(
       : undefined;
 
   return {
-    // Thread entry.id so SqliteMemoryStore.write uses it as the row's ID —
+    // Thread entry.id so the canonical store uses it as the row's ID —
     // this lets routeOutDelete(entry.id) in evictIfNeeded find and remove the
-    // same row. Without this, SqliteMemoryStore auto-generates a
+    // same row. Without this, the backend auto-generates a
     // `memory-<ts>-<rand>` ID and the eviction delete silently no-ops.
     id: entry.id,
     projectId,

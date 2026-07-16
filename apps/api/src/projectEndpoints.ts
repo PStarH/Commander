@@ -16,7 +16,7 @@ import {
   recommendStrategy,
 } from '@commander/core';
 import type { IWarRoomStore } from './store';
-import type { ProjectMemoryStore } from './memoryStore';
+import type { ProjectMemoryStoreAdapter } from './memoryStoreAdapter';
 import type { AgentStateStore } from './agentStateStore';
 import {
   isMissionStatus,
@@ -36,7 +36,7 @@ import {
 
 export function createProjectRouter(
   store: IWarRoomStore,
-  memoryStore: ProjectMemoryStore,
+  memoryStore: ProjectMemoryStoreAdapter,
   agentStateStore: AgentStateStore,
 ): Router {
   const router = Router();
@@ -105,7 +105,7 @@ export function createProjectRouter(
     res.json(snapshot);
   });
 
-  router.get('/projects/:projectId/run-context', (req, res) => {
+  router.get('/projects/:projectId/run-context', async (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
     if (!snapshot) {
       return res.status(404).json({ error: 'Project not found' });
@@ -130,20 +130,20 @@ export function createProjectRouter(
       issuedByLabel?: string;
     };
     const limit = memoryLimit ? Number(memoryLimit) : 12;
-    const memoryItems = memoryStore.search(req.params.projectId, { limit });
-    const recommendedMemorySelection = (() => {
-      if (!missionId) {
-        return { items: memoryItems, sourceTags: ['recent'] as string[] };
-      }
+    const memoryItems = await memoryStore.search(req.params.projectId, { limit });
+    let recommendedMemorySelection = { items: memoryItems, sourceTags: ['recent'] };
+    if (missionId) {
       const lowerLimit = Math.min(limit, 12);
-      const missionScoped = memoryStore
-        .search(req.params.projectId, { limit: lowerLimit, kind: undefined })
-        .filter((item) => item.missionId === missionId);
+      const missionScoped = (
+        await memoryStore.search(req.params.projectId, {
+          limit: lowerLimit,
+          kind: undefined,
+        })
+      ).filter((item) => item.missionId === missionId);
       if (missionScoped.length > 0) {
-        return { items: missionScoped, sourceTags: ['mission-scoped'] as string[] };
+        recommendedMemorySelection = { items: missionScoped, sourceTags: ['mission-scoped'] };
       }
-      return { items: memoryItems, sourceTags: ['recent'] as string[] };
-    })();
+    }
     const recommendedItems = recommendedMemorySelection.items;
     const now = new Date().toISOString();
     const runMeta: CommanderRunMeta = {
@@ -224,20 +224,28 @@ export function createProjectRouter(
     res.json(context);
   });
 
-  router.get('/projects/:projectId/memory', (req, res) => {
+  router.get('/projects/:projectId/memory', async (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
     if (!snapshot) return res.status(404).json({ error: 'Project not found' });
     const limit = req.query.limit ? Number(req.query.limit) : 24;
-    res.json(memoryStore.list(req.params.projectId, limit));
+    try {
+      res.json(await memoryStore.list(req.params.projectId, limit));
+    } catch (error) {
+      res.status(mapErrorToStatusCode(error)).json({ error: toErrorMessage(error) });
+    }
   });
 
-  router.get('/projects/:projectId/memory/overview', (req, res) => {
+  router.get('/projects/:projectId/memory/overview', async (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
     if (!snapshot) return res.status(404).json({ error: 'Project not found' });
-    res.json(memoryStore.overview(req.params.projectId));
+    try {
+      res.json(await memoryStore.overview(req.params.projectId));
+    } catch (error) {
+      res.status(mapErrorToStatusCode(error)).json({ error: toErrorMessage(error) });
+    }
   });
 
-  router.get('/projects/:projectId/memory/search', (req, res) => {
+  router.get('/projects/:projectId/memory/search', async (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
     if (!snapshot) return res.status(404).json({ error: 'Project not found' });
     const { kind, tags, q, limit } = req.query as {
@@ -254,13 +262,17 @@ export function createProjectRouter(
           .filter(Boolean)
       : undefined;
     const query = q?.trim() || undefined;
-    const items = memoryStore.search(req.params.projectId, {
-      kind: parsedKind,
-      tags: parsedTags,
-      query,
-      limit: limit ? Number(limit) : undefined,
-    });
-    res.json(items);
+    try {
+      const items = await memoryStore.search(req.params.projectId, {
+        kind: parsedKind,
+        tags: parsedTags,
+        query,
+        limit: limit ? Number(limit) : undefined,
+      });
+      res.json(items);
+    } catch (error) {
+      res.status(mapErrorToStatusCode(error)).json({ error: toErrorMessage(error) });
+    }
   });
 
   router.post('/projects/:projectId/missions', (req, res) => {
@@ -294,7 +306,7 @@ export function createProjectRouter(
     }
   });
 
-  router.patch('/missions/:missionId', (req, res) => {
+  router.patch('/missions/:missionId', async (req, res) => {
     const { status, priority, assignedAgentId, title, objective, riskLevel, governanceMode } =
       req.body as Record<string, string | undefined>;
     if (status && !isMissionStatus(status))
@@ -317,15 +329,16 @@ export function createProjectRouter(
       });
       if (mission.status === 'DONE') {
         try {
-          const existingSummary = memoryStore
-            .list(mission.projectId, 100)
-            .find((item) => item.missionId === mission.id && item.kind === 'SUMMARY');
+          const existingSummary = (await memoryStore.list(mission.projectId, 100)).find(
+            (item) => item.missionId === mission.id && item.kind === 'SUMMARY',
+          );
           if (!existingSummary) {
-            memoryStore.append({
+            await memoryStore.append({
               projectId: mission.projectId,
               missionId: mission.id,
               agentId: mission.assignedAgentId,
               kind: 'SUMMARY',
+              duration: 'EPISODIC',
               title: `任务完成：${mission.title}`,
               content: `任务「${mission.title}」已完成（优先级 ${mission.priority}，风险等级 ${mission.riskLevel}，治理模式 ${mission.governanceMode}）。目标：${mission.objective}`,
               tags: [
@@ -351,7 +364,7 @@ export function createProjectRouter(
   // ── POST /missions/:missionId/approve — 显式审批放行高风险任务 ────────
   // MANUAL 治理模式下的 HIGH/CRITICAL 任务在 PATCH 时会被 409 阻断，
   // 必须通过此显式审批端点以 bypassGovernance=true 标记为 DONE。
-  router.post('/missions/:missionId/approve', (req, res) => {
+  router.post('/missions/:missionId/approve', async (req, res) => {
     const { approver, comment } = req.body as { approver?: string; comment?: string };
     try {
       const mission = store.updateMission(
@@ -367,15 +380,16 @@ export function createProjectRouter(
       });
       // 创建自动摘要（与 PATCH 路径一致）
       try {
-        const existingSummary = memoryStore
-          .list(mission.projectId, 100)
-          .find((item) => item.missionId === mission.id && item.kind === 'SUMMARY');
+        const existingSummary = (await memoryStore.list(mission.projectId, 100)).find(
+          (item) => item.missionId === mission.id && item.kind === 'SUMMARY',
+        );
         if (!existingSummary) {
-          memoryStore.append({
+          await memoryStore.append({
             projectId: mission.projectId,
             missionId: mission.id,
             agentId: mission.assignedAgentId,
             kind: 'SUMMARY',
+            duration: 'EPISODIC',
             title: `任务完成：${mission.title}`,
             content: `任务「${mission.title}」经审批完成（优先级 ${mission.priority}，风险等级 ${mission.riskLevel}，治理模式 ${mission.governanceMode}）。目标：${mission.objective}`,
             tags: ['mission', 'done', 'approved', mission.priority.toLowerCase()],
@@ -392,7 +406,7 @@ export function createProjectRouter(
     }
   });
 
-  router.post('/projects/:projectId/memory', (req, res) => {
+  router.post('/projects/:projectId/memory', async (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
     if (!snapshot) return res.status(404).json({ error: 'Project not found' });
     const { title, content, kind, missionId, agentId, tags } = req.body as {
@@ -412,11 +426,12 @@ export function createProjectRouter(
       ? tags.filter((t): t is string => typeof t === 'string').slice(0, 8)
       : [];
     try {
-      const item = memoryStore.append({
+      const item = await memoryStore.append({
         projectId: req.params.projectId,
         missionId,
         agentId,
         kind: memoryKind,
+        duration: 'EPISODIC',
         title: title.trim(),
         content: content.trim(),
         tags: safeTags,
