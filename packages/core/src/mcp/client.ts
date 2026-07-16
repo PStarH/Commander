@@ -83,6 +83,13 @@ export function validateMcpCommand(command: string, args: readonly string[] = []
     ) {
       return `MCP command arguments may not contain an inline-eval flag ("${arg}") — it permits arbitrary code execution.`;
     }
+    // Clustered short options (node -pe, python -Oc, …)
+    if (a.startsWith('-') && !a.startsWith('--') && a.length > 1) {
+      const cluster = a.slice(1).split('=')[0] ?? '';
+      if (/[epcr]/.test(cluster)) {
+        return `MCP command arguments may not contain an inline-eval short-option cluster ("${arg}")`;
+      }
+    }
   }
 
   const defaultAllowed = ['node', 'nodejs', 'python', 'python3', 'bun', 'deno'];

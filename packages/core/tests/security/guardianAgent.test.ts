@@ -238,6 +238,8 @@ describe('validateMcpCommand (P0.2)', () => {
 
   it('rejects -e eval flag', () => {
     expect(validateMcpCommand('node', ['-e', 'console.log(1)'])).toMatch(/inline-eval/);
+    expect(validateMcpCommand('node', ['-pe', '1'])).toMatch(/inline-eval|short-option/);
+    expect(validateMcpCommand('node', ['-pce', '1'])).toMatch(/inline-eval|short-option/);
   });
 
   it('rejects -r / --require / --import', () => {
