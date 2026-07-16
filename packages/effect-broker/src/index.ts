@@ -101,6 +101,12 @@ export interface EffectKernelPort {
     actor: string,
   ): Promise<unknown | null>;
   markEffectCompletionUnknown?(input: { effectId: string; tenantId: string; reason: string; actor: string }): Promise<unknown | null>;
+  /** WS2 §5 three-layer engine. Optional so narrow test doubles can omit
+   *  them, but enforced fail-closed by admit() whenever present — the kernel
+   *  repository implements all three. */
+  isActionAllowed?(tenantId: string, action: string): Promise<boolean>;
+  incrementQuota?(input: { tenantId: string; actionClass: string; tokensUsed?: number }): Promise<{ countUsed: number; tokensUsed: number }>;
+  getQuota?(tenantId: string, actionClass: string): Promise<{ countUsed: number; tokensUsed: number }>;
 }
 
 export interface ApprovalInteractionPort {
@@ -266,6 +272,9 @@ export interface EffectBrokerOptions {
   audience?: string;
   approval?: ApprovalInteractionPort;
   requireRequestBinding?: boolean;
+  /** WS2 §5: daily per-tenant quota ceiling enforced by admit() when the
+   *  kernel port exposes incrementQuota. Undefined = record usage only. */
+  quotaLimits?: { maxCountPerDay?: number };
 }
 
 /**
@@ -316,7 +325,7 @@ export const PERMIT_DEFAULT_DECISION_ID = 'permit' + '-default';
 
 /** The only supported path for an external write in Architecture V2. */
 export class EffectBroker {
-  private readonly options: Required<Pick<EffectBrokerOptions, 'audience' | 'requireRequestBinding'>> & Pick<EffectBrokerOptions, 'approval'>;
+  private readonly options: Required<Pick<EffectBrokerOptions, 'audience' | 'requireRequestBinding'>> & Pick<EffectBrokerOptions, 'approval' | 'quotaLimits'>;
   private readonly admissionStore: AdmissionStore;
 
   constructor(
@@ -333,7 +342,7 @@ export class EffectBroker {
     if (production && !requireRequestBinding) {
       throw new EffectBrokerError('REQUEST_BINDING_DISABLED_IN_PROD');
     }
-    this.options = { audience: options.audience ?? 'commander.effect-broker', requireRequestBinding, approval: options.approval };
+    this.options = { audience: options.audience ?? 'commander.effect-broker', requireRequestBinding, approval: options.approval, quotaLimits: options.quotaLimits };
     this.admissionStore = new InMemoryAdmissionStore();
   }
 
@@ -366,6 +375,21 @@ export class EffectBroker {
       return this.rejectAdmit(grant, 'APPROVAL_REQUIRED', { decisionId: decision.decisionId, interactionId: interaction.interactionId });
     }
     if (decision.effect !== 'allow') return this.rejectAdmit(grant, 'POLICY_DENIED', { decisionId: decision.decisionId, reason: decision.reason });
+    // WS2 §5: three-layer policy engine — tenant allowlist + daily quota.
+    // Enforced fail-closed whenever the kernel port provides the methods
+    // (the kernel repository always does; narrow test doubles may omit them).
+    if (this.kernel.isActionAllowed) {
+      const allowed = await this.kernel.isActionAllowed(grant.tenantId, input.type);
+      if (!allowed) return this.rejectAdmit(grant, 'ACTION_NOT_ALLOWLISTED', { type: input.type, decisionId: decision.decisionId });
+    }
+    if (this.kernel.incrementQuota) {
+      const actionClass = input.type.split('.')[0] || input.type;
+      const usage = await this.kernel.incrementQuota({ tenantId: grant.tenantId, actionClass });
+      const maxCount = this.options.quotaLimits?.maxCountPerDay;
+      if (maxCount !== undefined && usage.countUsed > maxCount) {
+        return this.rejectAdmit(grant, 'QUOTA_EXCEEDED', { actionClass, countUsed: usage.countUsed, limit: maxCount });
+      }
+    }
     const admitted = await this.kernel.admitEffect({ id: input.effectId, runId: grant.runId, stepId: grant.stepId, tenantId: grant.tenantId, type: input.type, idempotencyKey: input.idempotencyKey, policyDecisionId: decision.decisionId, request: input.request, lease: input.lease, actor: input.actor });
     if (!admitted.admitted || !admitted.effect) return this.rejectAdmit(grant, 'EFFECT_ADMISSION_REJECTED', { reason: admitted.reason ?? 'unknown' });
     const result: AdmissionResult = {
