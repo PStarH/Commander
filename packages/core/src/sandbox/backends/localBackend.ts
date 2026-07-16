@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import type { ExecutionBackend, SandboxExecutionResult } from '../types';
+import type { ExecutionBackend, SandboxExecutionResult, SandboxWorkloadContext } from '../types';
 import { getSandboxManager } from '../manager';
 import { getGlobalSandboxScheduler } from '../scheduler';
 import { getGlobalLogger } from '../../logging';
@@ -60,6 +60,7 @@ export class LocalBackend implements ExecutionBackend {
     command: string,
     workdir?: string,
     timeout?: number,
+    context?: SandboxWorkloadContext,
   ): Promise<SandboxExecutionResult> {
     const start = Date.now();
     const sandbox = getSandboxManager();
@@ -93,7 +94,7 @@ export class LocalBackend implements ExecutionBackend {
     }
 
     if (sandbox.hasSandbox()) {
-      const result = await sandbox.execute(command, 'workspace-write', workdir);
+      const result = await sandbox.execute(command, 'workspace-write', workdir, undefined, context);
       return { ...result, durationMs: result.durationMs };
     }
 

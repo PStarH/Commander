@@ -3,10 +3,19 @@ import type {
   SandboxProfile,
   SandboxMechanism,
   SandboxExecutionResult,
+  SandboxWorkloadContext,
 } from './types';
 import { discoverSandboxes, NoopSB } from './platforms';
 import { PROFILES } from './profiles';
 import { getGlobalLogger } from '../logging';
+import * as sandboxEscapeDetector from '../security/sandboxEscapeDetector';
+import {
+  assertProductionSandboxReady,
+  resolveSandboxPolicy,
+  SandboxPolicyError,
+} from './productionPolicy';
+import { createSandboxWorkloadContext, validateSandboxWorkloadContext } from './workload';
+import type { SandboxPolicy } from './productionPolicy';
 
 export class SandboxInitializationError extends Error {
   constructor(
@@ -39,15 +48,46 @@ export interface SandboxManagerDeps {
   sandboxes?: PlatformSandbox[];
   /** Override the no-sandbox fallback policy. */
   allowNoSandbox?: boolean;
+  /** Override process environment for production boot tests. */
+  environment?: NodeJS.ProcessEnv;
 }
 
 export class SandboxManager {
   private sandboxes: PlatformSandbox[] = [];
   private allowNoSandbox: boolean;
+  private readonly policy: SandboxPolicy;
 
   constructor(deps?: SandboxManagerDeps) {
+    const policy = resolveSandboxPolicy(deps?.environment ?? process.env);
+    this.policy = policy;
+    if (policy.environment === 'production' && deps?.allowNoSandbox === true) {
+      throw new SandboxInitializationError(
+        'Explicit allowNoSandbox is forbidden in production; refusing to start.',
+      );
+    }
     this.allowNoSandbox = deps?.allowNoSandbox ?? allowNoSandboxFallback();
-    this.sandboxes = deps?.sandboxes ?? discoverSandboxes();
+    try {
+      this.sandboxes = deps?.sandboxes ?? discoverSandboxes();
+    } catch (error) {
+      if (error instanceof SandboxPolicyError || error instanceof SandboxInitializationError) {
+        throw error;
+      }
+      throw new SandboxInitializationError(
+        `Sandbox discovery failed for ${policy.environment}: ${(error as Error).message}`,
+        policy.environment === 'production' && policy.isolation !== 'process'
+          ? policy.isolation
+          : undefined,
+      );
+    }
+    if (policy.environment === 'production') {
+      assertProductionSandboxReady({
+        policy,
+        availableMechanisms: this.sandboxes
+          .filter((sandbox) => sandbox.available)
+          .map((sandbox) => sandbox.name),
+      });
+      this.sandboxes = this.sandboxes.filter((sandbox) => sandbox.name === policy.isolation);
+    }
     if (this.sandboxes.length === 0 && !this.allowNoSandbox) {
       throw new SandboxInitializationError(
         'No OS-level sandbox available. ' +
@@ -69,6 +109,44 @@ export class SandboxManager {
 
   hasSandbox(): boolean {
     return this.sandboxes.length > 0;
+  }
+
+  /**
+   * Prove that the selected production sandbox can start a constrained workload.
+   * A discovered binary or runtime is not sufficient: the boot probe must
+   * complete successfully through the same execution path used by workloads.
+   */
+  async verifyReady(): Promise<void> {
+    if (!this.policy.failClosed) return;
+
+    const mechanism = this.policy.isolation === 'gvisor' ? 'gvisor' : 'docker';
+    const context = createSandboxWorkloadContext({
+      tenantId: 'system',
+      runId: 'sandbox-boot',
+      stepId: 'probe',
+    });
+
+    try {
+      const result = await this.execute('true', 'hardened', process.cwd(), mechanism, context);
+      if (result.exitCode !== 0) {
+        throw new SandboxInitializationError(
+          `Sandbox ${mechanism} probe failed with exit code ${result.exitCode}: ${result.stderr || 'no stderr'}`,
+          mechanism,
+        );
+      }
+      if (result.sandboxMechanism !== mechanism) {
+        throw new SandboxInitializationError(
+          `Sandbox probe used ${result.sandboxMechanism}, expected ${mechanism}; refusing to start.`,
+          mechanism,
+        );
+      }
+    } catch (error) {
+      if (error instanceof SandboxInitializationError) throw error;
+      throw new SandboxInitializationError(
+        `Sandbox ${mechanism} probe could not start: ${(error as Error).message}`,
+        mechanism,
+      );
+    }
   }
 
   getSandbox(mechanism?: SandboxMechanism): PlatformSandbox {
@@ -114,75 +192,69 @@ export class SandboxManager {
     profile?: SandboxProfile | string,
     workdir?: string,
     mechanism?: SandboxMechanism,
+    context?: SandboxWorkloadContext,
   ): Promise<SandboxExecutionResult> {
     const p =
       typeof profile === 'string' ? this.getProfile(profile) : (profile ?? this.getProfile());
+
+    if (this.policy.environment === 'production') {
+      if (p.mode === 'full-access') {
+        throw new SandboxPolicyError(
+          'full-access sandbox profiles are forbidden in production; refusing to execute.',
+        );
+      }
+      if (!context) {
+        throw new SandboxInitializationError(
+          'Production sandbox execution requires a tenant/run/step workload context.',
+        );
+      }
+      validateSandboxWorkloadContext(context);
+    }
 
     // Security (G6, SBX-7): Pre-execution sandbox escape detection.
     // The detector is an enforcement control, so a load or evaluation failure
     // must FAIL CLOSED — we refuse the command instead of running it unchecked.
     // COMMANDER_ALLOW_UNCHECKED_EXEC restores the legacy fail-open path for dev.
-    let detector: typeof import('../security/sandboxEscapeDetector') | undefined;
+    let preCheck: ReturnType<typeof sandboxEscapeDetector.preCheckSandboxEscape>;
     try {
-      detector = require('../security/sandboxEscapeDetector');
+      preCheck = sandboxEscapeDetector.preCheckSandboxEscape(command, p);
     } catch (err) {
       if (!allowUncheckedExecution()) {
-        return this.blockedByDetector(
-          `sandbox escape detector failed to load: ${(err as Error).message}`,
-        );
+        return this.blockedByDetector(`sandbox escape pre-check threw: ${(err as Error).message}`);
       }
       getGlobalLogger().warn(
         'SandboxManager',
-        'escape detector unavailable and COMMANDER_ALLOW_UNCHECKED_EXEC is set — running command UNCHECKED',
+        `escape pre-check threw and COMMANDER_ALLOW_UNCHECKED_EXEC is set — running UNCHECKED: ${(err as Error).message}`,
       );
+      preCheck = undefined as never;
     }
-
-    if (detector) {
-      let preCheck: ReturnType<typeof detector.preCheckSandboxEscape>;
-      try {
-        preCheck = detector.preCheckSandboxEscape(command, p);
-      } catch (err) {
-        if (!allowUncheckedExecution()) {
-          return this.blockedByDetector(
-            `sandbox escape pre-check threw: ${(err as Error).message}`,
-          );
-        }
-        getGlobalLogger().warn(
-          'SandboxManager',
-          `escape pre-check threw and COMMANDER_ALLOW_UNCHECKED_EXEC is set — running UNCHECKED: ${(err as Error).message}`,
-        );
-        preCheck = undefined as never;
-      }
-      if (preCheck?.blocked) {
-        return {
-          stdout: '',
-          stderr: `Command blocked by sandbox escape detector: ${preCheck.indicators
-            .map((i) => i.pattern)
-            .join(', ')}`,
-          exitCode: 126,
-          durationMs: 0,
-          sandboxMechanism: 'none',
-          violated: preCheck.indicators.map((i) => i.pattern),
-        };
-      }
+    if (preCheck?.blocked) {
+      return {
+        stdout: '',
+        stderr: `Command blocked by sandbox escape detector: ${preCheck.indicators
+          .map((i) => i.pattern)
+          .join(', ')}`,
+        exitCode: 126,
+        durationMs: 0,
+        sandboxMechanism: 'none',
+        violated: preCheck.indicators.map((i) => i.pattern),
+      };
     }
 
     // Execute OUTSIDE the detector try/catch: a genuine execution error must
     // propagate, never be swallowed into a silent unchecked re-execution.
     const sb = this.getSandbox(mechanism);
-    const result = await sb.execute(command, p, workdir);
+    const result = await sb.execute(command, p, workdir, context);
 
     // Security (G6): Post-execution escape detection is advisory (RASP); a
     // failure here must not mask or re-run the command.
-    if (detector) {
-      try {
-        detector.postCheckSandboxEscape(command, result, workdir ?? process.cwd());
-      } catch (err) {
-        getGlobalLogger().warn(
-          'SandboxManager',
-          `post-execution escape check failed: ${(err as Error).message}`,
-        );
-      }
+    try {
+      sandboxEscapeDetector.postCheckSandboxEscape(command, result, workdir ?? process.cwd());
+    } catch (err) {
+      getGlobalLogger().warn(
+        'SandboxManager',
+        `post-execution escape check failed: ${(err as Error).message}`,
+      );
     }
 
     return result;
