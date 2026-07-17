@@ -16,6 +16,8 @@ import {
   assertEffectBrokerForProduction,
   mustRouteExternalEffectThroughBroker,
 } from './effectGate.js';
+import type { ToolEffectCatalog } from './toolEffectCatalog.js';
+import { DENY_ALL_TOOL_EFFECT_CATALOG } from './toolEffectCatalog.js';
 import {
   getStepWorkloadBinding,
   mintStepCapabilityToken,
@@ -73,17 +75,20 @@ export class ToolStepExecutor implements StepExecutor {
   private readonly toolRegistry: ToolRegistry;
   private readonly effectBroker?: ExternalEffectBroker;
   private readonly capabilityIssuer?: CapabilityTokenIssuer;
+  private readonly catalog: ToolEffectCatalog;
 
   constructor(
     toolRegistry?: ToolRegistry,
     effectBroker?: ExternalEffectBroker,
     capabilityIssuer?: CapabilityTokenIssuer,
+    catalog?: ToolEffectCatalog,
   ) {
     assertEffectBrokerForProduction('tool step executor', effectBroker);
     // If no registry provided, use an empty one — tools must be registered
     this.toolRegistry = toolRegistry ?? { get: () => null };
     this.effectBroker = effectBroker;
     this.capabilityIssuer = capabilityIssuer;
+    this.catalog = catalog ?? DENY_ALL_TOOL_EFFECT_CATALOG;
   }
 
   async execute(
@@ -99,7 +104,13 @@ export class ToolStepExecutor implements StepExecutor {
       );
     }
 
-if (mustRouteExternalEffectThroughBroker(input, { brokerPresent: this.effectBroker != null })) {
+    if (
+      mustRouteExternalEffectThroughBroker(input, {
+        brokerPresent: this.effectBroker != null,
+        toolName: input.toolName,
+        catalog: this.catalog,
+      })
+    ) {
       if (!this.effectBroker) {
         throw new WorkerExecutionError('External tool execution requires an Effect Broker', {
           code: 'EFFECT_BROKER_UNAVAILABLE',
