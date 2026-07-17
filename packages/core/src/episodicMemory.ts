@@ -189,6 +189,30 @@ export interface MemoryStore {
   // Statistics
   getStats(projectId: string): Promise<MemoryStats>;
 
+  /**
+   * WS6 — optional audit query. Backends that cannot serve audit set
+   * `unavailable: true`. Namespace filter uses `namespace:<name>` tags.
+   */
+  queryAudit?(options: {
+    projectId: string;
+    namespace?: string;
+    limit?: number;
+  }): Promise<{
+    entries: Array<{
+      id: string;
+      tenantId: string;
+      projectId: string;
+      memoryId?: string;
+      action: string;
+      actorId?: string;
+      success: boolean;
+      createdAt: string;
+      tags?: string[];
+    }>;
+    count: number;
+    unavailable: boolean;
+  }>;
+
   // Lifecycle
   close(): Promise<void>;
 }

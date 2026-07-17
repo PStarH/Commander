@@ -13,6 +13,7 @@ import type {
   MemoryRecord,
   MemoryScope,
   MemoryService,
+  MemoryServiceAudit,
   MemoryServiceMaintenance,
 } from './memoryService';
 import { assertMemoryScope, MemoryServiceValidationError } from './memoryService';
@@ -205,6 +206,38 @@ export class MemoryStoreFacade implements MemoryStore {
         .sort()
         .at(-1),
     };
+  }
+
+  async queryAudit(options: {
+    projectId: string;
+    namespace?: string;
+    limit?: number;
+  }): Promise<{
+    entries: Array<{
+      id: string;
+      tenantId: string;
+      projectId: string;
+      memoryId?: string;
+      action: string;
+      actorId?: string;
+      success: boolean;
+      createdAt: string;
+      tags?: string[];
+    }>;
+    count: number;
+    unavailable: boolean;
+  }> {
+    const audit = this.service as MemoryService & Partial<MemoryServiceAudit>;
+    if (typeof audit.queryAudit !== 'function') {
+      return { entries: [], count: 0, unavailable: true };
+    }
+    const scope = this.scope(options.projectId);
+    const page = await audit.queryAudit({
+      scope,
+      namespace: options.namespace,
+      limit: options.limit,
+    });
+    return { entries: page.entries, count: page.count, unavailable: false };
   }
 
   async close(): Promise<void> {

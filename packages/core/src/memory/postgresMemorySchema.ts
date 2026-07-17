@@ -55,6 +55,8 @@ export function memorySchemaStatements(): readonly string[] {
         created_at TIMESTAMPTZ NOT NULL
       )
     `,
+    // WS6: tags snapshot for namespace-scoped audit queries (nullable for legacy rows).
+    `ALTER TABLE memory_audit_events ADD COLUMN IF NOT EXISTS tags JSONB`,
     `
       CREATE INDEX IF NOT EXISTS idx_memory_audit_tenant_project_created
         ON memory_audit_events (tenant_id, project_id, created_at DESC)

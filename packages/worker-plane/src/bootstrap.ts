@@ -111,10 +111,15 @@ export async function createWorkerService(): Promise<WorkerService> {
   });
 
   // ── Create shared Effect Broker for external side effects ──
-  const effectBroker = createEffectBroker(kernel);
+  const { broker: effectBroker, issuer: capabilityIssuer } = createEffectBroker(kernel);
 
   // ── Create step executor based on worker kind ──
-  const executor = await createExecutorForKind(workerKind, capabilities, effectBroker);
+  const executor = await createExecutorForKind(
+    workerKind,
+    capabilities,
+    effectBroker,
+    capabilityIssuer,
+  );
 
   // ── Build worker service ──
   const service = new WorkerService(
@@ -161,7 +166,10 @@ export function createWorkerPolicyEvaluator(
   };
 }
 
-function createEffectBroker(kernel: EffectKernelPort): EffectBroker {
+function createEffectBroker(kernel: EffectKernelPort): {
+  broker: EffectBroker;
+  issuer: CapabilityTokenIssuer;
+} {
   // WS2 §9: the CapabilityTokenService seed-based facade is removed. The worker
   // bootstrap now generates a fresh Ed25519 keypair and builds a matching
   // verifier. In production the verifier should be wired with the issuer's
@@ -178,15 +186,20 @@ function createEffectBroker(kernel: EffectKernelPort): EffectBroker {
   });
   const policy = createWorkerPolicyEvaluator();
 
-  // Minimal executor: logs the effect and returns a marker. Operators can
-  // replace this with a real connector (HTTP, DB, queue, etc.) dispatcher.
-  // Policy must allow first — default policy is deny-all.
+  // Minimal executor: llm.* dispatches through the WS2 §1 invoke registry;
+  // other types log a marker. Operators replace this with a real connector
+  // dispatcher. Policy must allow first — default policy is deny-all (except
+  // tests that inject a permissive evaluator).
   const executor: EffectExecutor = {
     execute: async (input: {
       type: string;
       request: Record<string, unknown>;
       signal: AbortSignal;
     }) => {
+      if (input.type.startsWith('llm.')) {
+        const { dispatchLlmEffect } = await import('./llmBrokerBridge.js');
+        return dispatchLlmEffect(input);
+      }
       // eslint-disable-next-line no-console
       console.warn(`[effect-broker] Executing effect type=${input.type}`, input.request);
       return { executed: true, type: input.type };
@@ -211,10 +224,11 @@ function createEffectBroker(kernel: EffectKernelPort): EffectBroker {
 
   // WS2 §4: request binding is mandatory. The EffectBroker constructor
   // enforces this in production (throws REQUEST_BINDING_DISABLED_IN_PROD).
-  return new EffectBroker(tokens, policy, kernel, executor, audit, {
+  const broker = new EffectBroker(tokens, policy, kernel, executor, audit, {
     audience: 'commander.effect-broker',
     requireRequestBinding: true,
   });
+  return { broker, issuer };
 }
 
 /**
@@ -225,10 +239,11 @@ async function createExecutorForKind(
   kind: WorkerKind,
   capabilities: string[],
   effectBroker?: EffectBroker,
+  capabilityIssuer?: CapabilityTokenIssuer,
 ): Promise<StepExecutor> {
   // Explicit executor manifest — validated at startup. No runtime guessing.
   const manifest = createExecutorManifest({
-    agent: () => createAgentStepExecutor({ effectBroker }),
+    agent: () => createAgentStepExecutor({ effectBroker, capabilityIssuer }),
     tool: () => new ToolStepExecutor(undefined, effectBroker),
     evaluator: () => new EvaluatorStepExecutor(),
     connector: async () => {

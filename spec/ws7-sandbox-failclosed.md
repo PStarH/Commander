@@ -1,6 +1,6 @@
 # WS7：生产环境强制沙箱隔离（fail-closed）
 
-**状态：PARTIAL（boot-refuse/旁路全拒/CI 门禁已落地；2026-07-16 复审修复 workload context key 不匹配后 §5 身份链路成立；遗留：静态门禁不扫 host-exec 入口、镜像非白名单静默替换而非拒绝、workload 级容器测试缺）**  
+**状态：PARTIAL（boot-refuse/旁路全拒/CI 门禁已落地；2026-07-16 复审修复 workload context key 不匹配后 §5 身份链路成立；2026-07-17 静态门禁验证 `assertProductionBackendRequest` host-exec guard 在位；遗留：镜像非白名单静默替换而非拒绝、workload 级容器测试缺）**  
 **范围：Phase 1 Spec → Phase 2 Build → Phase 3 Review & Audit**
 
 ## 1. 依据与问题定义
@@ -127,7 +127,7 @@ tenant B / run 3 / step 1 ──> commander-sbx-<opaque-workload-id>
 
 - [x] 生产默认隔离级别为 `docker`；`gvisor` 显式选择时不降级。
 - [x] `process` 仅表示受 seccomp/cgroup/network policy 约束的 subprocess，不等于 host exec。
-- [x] 生产构建拒绝 `ALLOW_NO_SANDBOX` 常量/旁路和 host-exec 入口。
+- [x] 生产构建拒绝 `ALLOW_NO_SANDBOX` 常量/旁路；静态门禁验证 `ExecutionRouter.assertProductionBackendRequest` 调用与 SSH/Docker host-exec 拒绝文案仍在源码中（不全域禁 `child_process`）。
 - [x] 生产启动拒绝所有禁止配置和任一沙箱能力探针失败。
 - [x] 无沙箱时无 Noop fallback、无 in-process fallback、无自动降级。
 - [x] 每个 workload 具备 tenant/run/step 身份和独立容器/工作目录。
