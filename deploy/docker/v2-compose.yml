@@ -1,7 +1,7 @@
 # V2 live benchmark topology.
 # Usage:
 #   docker compose -f deploy/docker/v2-compose.yml up -d
-#   docker compose -f deploy/docker/v2-compose.yml up -d --scale worker=10 --scale timer=2 --scale outbox=2
+#   docker compose -f deploy/docker/v2-compose.yml up -d --scale worker=10 --scale kernel-ops=2
 #   pnpm bench:v2:live --image=commander-api:$GIT_SHA --base-url=http://127.0.0.1:8080
 #
 # Required environment variables (must be exported or present in a .env file):
@@ -12,8 +12,7 @@
 #   postgres   : single-node Postgres 16 (benchmark harness; production would use HA)
 #   api-*      : 2 gateway instances behind an nginx load balancer
 #   worker     : worker instance; scale with --scale worker=N
-#   timer      : timer-wakeup instance; scale with --scale timer=N
-#   outbox     : outbox-publisher instance; scale with --scale outbox=N
+#   kernel-ops : timer reclaim + outbox publish loop (one service; scale replicas via SKIP LOCKED)
 #   nginx      : layer-4 round-robin load balancer across api replicas
 
 services:
