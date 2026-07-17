@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { runWithTenant, TenantIsolationError } from '@commander/core/runtime/tenantContext';
 import { isProductionEnv } from './envSignal';
+import { isEnterpriseProfile } from './profileSignal';
 
 /**
  * Tenant ID format: alphanumeric, hyphen, underscore, dot, colon. Must not be
@@ -13,21 +14,27 @@ function readHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
+/** Production or enterprise profile — ambient X-Tenant-ID must not establish identity. */
+function rejectsAmbientTenantHeader(): boolean {
+  return isProductionEnv() || isEnterpriseProfile();
+}
+
 /**
  * Express middleware that resolves the authoritative tenant for the request and
  * binds the async tenant context for the remainder of the pipeline.
  *
  * Security model (AUTH-2 / B4 — the KC-1 tenant leg):
  *   - The tenant binding set by authMiddleware from an authenticated API key
- *     (`req.tenantId`) is authoritative.
+ *     or JWT (`req.tenantId`) is authoritative.
  *   - A client-supplied `X-Tenant-ID` header may only *match* that binding; it
  *     can never widen it. A mismatch is rejected with 403.
  *   - When there is no authenticated tenant binding (an unauthenticated caller,
  *     or a JWT identity that carries no tenant claim), a client `X-Tenant-ID` is
- *     NOT trusted to establish tenant identity in production — that is the
- *     header-spoofing cross-tenant hole. Such requests proceed with no tenant
- *     (tenant-scoped resources then fail closed). In non-production the header is
- *     honored for local/test ergonomics.
+ *     NOT trusted to establish tenant identity in production or the enterprise
+ *     profile — that is the header-spoofing cross-tenant hole. Such requests
+ *     proceed with no tenant (tenant-scoped resources then fail closed). In
+ *     non-production standard profile the header is honored for local/test
+ *     ergonomics.
  *
  * On success `req.tenantId` is set to the resolved tenant so downstream handlers
  * can trust it without ever re-reading the header. Malformed ids are rejected 400.
@@ -67,13 +74,13 @@ export function tenantContextMiddleware(req: Request, res: Response, next: NextF
   }
 
   // Case 2 — no authenticated tenant binding: never trust a client header to
-  // establish tenant identity in production (the header-spoof cross-tenant hole).
+  // establish tenant identity in production / enterprise (header-spoof hole).
   if (typeof headerTenant === 'string' && headerTenant.length > 0) {
-    if (isProductionEnv()) {
+    if (rejectsAmbientTenantHeader()) {
       res.status(403).json({
         error: 'TenantIsolationError',
         message:
-          'A tenant-bound authenticated identity is required; X-Tenant-ID alone is not accepted in production.',
+          'A tenant-bound authenticated identity is required; X-Tenant-ID alone is not accepted in production or enterprise profile.',
       });
       return;
     }
