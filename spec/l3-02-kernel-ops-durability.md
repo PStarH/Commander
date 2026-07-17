@@ -1,6 +1,6 @@
 # L3-02：Kernel ops 耐久（reclaim / timer / outbox / compensation）
 
-**状态：IN PROGRESS**
+**状态：DONE**
 **范围：Phase 1 Spec → Phase 2 Build → Phase 3 Review & Audit**
 **分支：** `feat/l3-02-kernel-ops`（base `master` @ a9d2cf9a）
 
@@ -71,7 +71,12 @@
 - 验收测试覆盖四 loop + type-level compensation required
 - 无与项目 thesis（Local-first、minimal diff）矛盾之处
 
-**Phase 3 代码审计（实施后填写）**
+**Phase 3 代码审计（实施后）**
 
-- P1/P2：待 Phase 2 完成后审查
-- P3 residual：待填
+- P1/P2：无 — 已修复测试中对 `isHealthy()` 需 `start()` 生命周期的断言
+- P3 residual：
+  - `docker-compose.yml` kernel-ops healthcheck 仍探测 `/health` 非 `/ready`（pre-existing；helm readiness 已用 `/ready`）
+  - `main.ts` compensation 为 probe-only（非 EffectBroker 全 drain），符合 WS2 边界
+  - `/ready` JSON 不暴露 per-loop 诊断字段（spec 非目标）
+
+**最终状态：DONE（honest subset）**
