@@ -187,6 +187,15 @@ export interface MarkEffectCompletionUnknownRequest {
   actor: string;
 }
 
+/** L3-08a: advance COMPLETION_UNKNOWN after remote query (no worker lease). */
+export interface ReconcileEffectRequest {
+  effectId: string;
+  tenantId: string;
+  state: 'COMPLETED' | 'FAILED';
+  response: Record<string, unknown>;
+  actor: string;
+}
+
 export type AdmitEffectResult =
   | { admitted: true; replayed: false; effect: KernelEffect }
   | { admitted: true; replayed: true; effect: KernelEffect }

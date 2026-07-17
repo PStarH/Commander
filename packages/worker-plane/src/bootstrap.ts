@@ -221,6 +221,8 @@ export function withDefaultLlmAllowlist(kernel: AllowlistKernel): EffectKernelPo
     completeEffect: (effectId, tenantId, lease, response, actor) =>
       kernel.completeEffect(effectId, tenantId, lease, response, actor),
     markEffectCompletionUnknown: kernel.markEffectCompletionUnknown?.bind(kernel),
+    getEffect: kernel.getEffect?.bind(kernel),
+    reconcileEffect: kernel.reconcileEffect?.bind(kernel),
     incrementQuota: kernel.incrementQuota?.bind(kernel),
     getQuota: kernel.getQuota?.bind(kernel),
     isActionAllowed: async (tenantId, action) => {

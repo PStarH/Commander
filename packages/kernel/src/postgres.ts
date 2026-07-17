@@ -22,6 +22,7 @@ import type {
   KernelStepState,
   KernelTimer,
   MarkEffectCompletionUnknownRequest,
+  ReconcileEffectRequest,
   TenantExecutionControl,
 } from './types.js';
 import { KernelInvariantError } from './types.js';
@@ -767,6 +768,41 @@ export class PostgresKernelRepository implements KernelRepository {
       if (!result.rows[0]) return null;
       const effect = fromEffect(result.rows[0]);
       await this.appendEvent(client, { aggregateType: 'effect', aggregateId: effect.id, sequence: 2, type: 'effect.completion_unknown', tenantId: effect.tenantId, runId: effect.runId, stepId: effect.stepId, actor: request.actor, payload: { reason: request.reason } });
+      return effect;
+    }, [request.tenantId]);
+  }
+
+  async getEffect(effectId: string, tenantId: string): Promise<KernelEffect | null> {
+    return this.withTransaction(async (client) => {
+      const result = await client.query<DbEffect>(
+        'SELECT * FROM commander_effects WHERE id=$1 AND tenant_id=$2',
+        [effectId, tenantId],
+      );
+      return result.rows[0] ? fromEffect(result.rows[0]) : null;
+    }, [tenantId]);
+  }
+
+  async reconcileEffect(request: ReconcileEffectRequest): Promise<KernelEffect | null> {
+    return this.withTransaction(async (client) => {
+      const result = await client.query<DbEffect>(
+        `UPDATE commander_effects SET state=$1, response=$2::jsonb, completed_at=now()
+         WHERE id=$3 AND tenant_id=$4 AND state='COMPLETION_UNKNOWN'
+         RETURNING *`,
+        [request.state, json(request.response), request.effectId, request.tenantId],
+      );
+      if (!result.rows[0]) return null;
+      const effect = fromEffect(result.rows[0]);
+      await this.appendEvent(client, {
+        aggregateType: 'effect',
+        aggregateId: effect.id,
+        sequence: 3,
+        type: request.state === 'COMPLETED' ? 'effect.reconciled_completed' : 'effect.reconciled_failed',
+        tenantId: effect.tenantId,
+        runId: effect.runId,
+        stepId: effect.stepId,
+        actor: request.actor,
+        payload: {},
+      });
       return effect;
     }, [request.tenantId]);
   }
