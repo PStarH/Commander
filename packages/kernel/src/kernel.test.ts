@@ -163,4 +163,40 @@ describe('execution kernel semantics', () => {
     assert.equal(stale, null);
     assert.equal((await kernel.getStep('step-generation', 'tenant-a'))?.state, 'RUNNING');
   });
+
+  it('rejects completeStep, failStep, and heartbeatStep with a mismatched tenantId', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(createRun(), 'gateway');
+    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
+    assert.ok(claimed?.lease);
+
+    assert.equal(
+      await kernel.completeStep({
+        stepId: claimed!.id,
+        tenantId: 'tenant-b',
+        lease: claimed!.lease!,
+        expectedVersion: claimed!.version,
+        output: { hacked: true },
+        actor: 'attacker',
+      }),
+      null,
+    );
+    assert.equal((await kernel.getStep('step-a', 'tenant-a'))?.state, 'RUNNING');
+
+    assert.equal(
+      await kernel.failStep({
+        stepId: claimed!.id,
+        tenantId: 'tenant-b',
+        lease: claimed!.lease!,
+        expectedVersion: claimed!.version,
+        error: { code: 'TEST', message: 'cross-tenant fail', retryable: false },
+        actor: 'attacker',
+      }),
+      null,
+    );
+    assert.equal((await kernel.getStep('step-a', 'tenant-a'))?.state, 'RUNNING');
+
+    assert.equal(await kernel.heartbeatStep(claimed!.id, 'tenant-b', claimed!.lease!, 60_000), null);
+    assert.equal((await kernel.getStep('step-a', 'tenant-a'))?.state, 'RUNNING');
+  });
 });

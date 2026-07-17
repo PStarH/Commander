@@ -961,3 +961,12 @@ export {
   resetAuditChainIntegrity,
 } from './auditChainIntegrity';
 export type { ChainHead, ManifestEntry, KeyProvider } from './auditChainIntegrity';
+
+export {
+  installOutboundNetworkPolicy,
+  uninstallOutboundNetworkPolicy,
+  resetOutboundNetworkPolicy,
+  getOutboundNetworkPolicy,
+  OutboundNetworkPolicy,
+} from './outboundNetworkPolicy';
+export type { OutboundNetworkPolicyConfig } from './outboundNetworkPolicy';

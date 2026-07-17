@@ -153,8 +153,8 @@ export class InMemoryKernelRepository implements KernelRepository {
     this.event('step', candidate.id, candidate.version, 'step.claimed', candidate.tenantId, candidate.runId, candidate.id, request.workerId, { fencingEpoch: candidate.lease.fencingEpoch });
     return clone(candidate);
   }
-  async heartbeatStep(stepId: string, _tenantId: string, lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>, leaseTtlMs: number): Promise<KernelStep | null> {
-    const step = this.steps.get(stepId); if (!step || step.state !== 'RUNNING' || !live(step.lease, lease)) return null;
+  async heartbeatStep(stepId: string, tenantId: string, lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>, leaseTtlMs: number): Promise<KernelStep | null> {
+    const step = this.steps.get(stepId); if (!step || step.tenantId !== tenantId || step.state !== 'RUNNING' || !live(step.lease, lease)) return null;
     step.lease!.expiresAt = new Date(Date.now() + leaseTtlMs).toISOString(); step.updatedAt = now(); return clone(step);
   }
   async reclaimExpiredLeases(at = new Date(), limit = 100): Promise<KernelStep[]> {
@@ -198,13 +198,13 @@ export class InMemoryKernelRepository implements KernelRepository {
     return reclaimed;
   }
   async completeStep(request: CompleteStepRequest): Promise<KernelStep | null> {
-    const step = this.steps.get(request.stepId); if (!step || step.state !== 'RUNNING' || step.version !== request.expectedVersion || !live(step.lease, request.lease)) return null;
+    const step = this.steps.get(request.stepId); if (!step || step.tenantId !== request.tenantId || step.state !== 'RUNNING' || step.version !== request.expectedVersion || !live(step.lease, request.lease)) return null;
     assertStepTransition(step.state, 'SUCCEEDED');
     step.state = 'SUCCEEDED'; step.output = request.output; step.version++; step.lease = undefined; step.updatedAt = now();
     this.event('step', step.id, step.version, 'step.succeeded', step.tenantId, step.runId, step.id, request.actor, {}); this.finish(step.runId, request.actor); return clone(step);
   }
   async failStep(request: FailStepRequest): Promise<KernelStep | null> {
-    const step = this.steps.get(request.stepId); if (!step || step.state !== 'RUNNING' || step.version !== request.expectedVersion || !live(step.lease, request.lease)) return null;
+    const step = this.steps.get(request.stepId); if (!step || step.tenantId !== request.tenantId || step.state !== 'RUNNING' || step.version !== request.expectedVersion || !live(step.lease, request.lease)) return null;
     const retry = request.error.retryable && Boolean(request.retryAt) && step.attempt < step.maxAttempts;
     const nextState = retry ? 'RETRY_WAIT' : 'FAILED';
     assertStepTransition(step.state, nextState);
@@ -314,7 +314,20 @@ export class InMemoryKernelRepository implements KernelRepository {
   }
   async admitEffect(request: AdmitEffectRequest): Promise<AdmitEffectResult> {
     const key = `${request.tenantId}:${request.idempotencyKey}`;
-    const step = this.steps.get(request.stepId); if (!step || step.runId !== request.runId || step.tenantId !== request.tenantId || step.state !== 'RUNNING' || !live(step.lease, request.lease)) return { admitted: false, reason: 'LEASE_LOST' };
+    const step = this.steps.get(request.stepId);
+    const run = this.runs.get(request.runId);
+    const compensationAdmit =
+      request.type.startsWith('compensate.') &&
+      !!run &&
+      run.state === 'COMPENSATING' &&
+      !!step &&
+      step.runId === request.runId &&
+      step.tenantId === request.tenantId;
+    if (!compensationAdmit) {
+      if (!step || step.runId !== request.runId || step.tenantId !== request.tenantId || step.state !== 'RUNNING' || !live(step.lease, request.lease)) {
+        return { admitted: false, reason: 'LEASE_LOST' };
+      }
+    }
     const fingerprint = requestHash(request.request); const previous = this.effectsByKey.get(key);
     if (previous) {
       if (previous.runId !== request.runId || previous.stepId !== request.stepId || previous.type !== request.type || previous.requestHash !== fingerprint || previous.policyDecisionId !== request.policyDecisionId) return { admitted: false, reason: 'IDEMPOTENCY_CONFLICT' };
@@ -324,7 +337,19 @@ export class InMemoryKernelRepository implements KernelRepository {
     this.effects.set(effect.id, effect); this.effectsByKey.set(key, effect); this.event('effect', effect.id, 1, 'effect.admitted', effect.tenantId, effect.runId, effect.stepId, request.actor, { type: effect.type }); return { admitted: true, replayed: false, effect: clone(effect) };
   }
   async completeEffect(effectId: string, tenantId: string, lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>, response: Record<string, unknown>, actor: string): Promise<KernelEffect | null> {
-    const effect = this.effects.get(effectId); const step = effect ? this.steps.get(effect.stepId) : undefined; if (!effect || !step || effect.tenantId !== tenantId || effect.state !== 'ADMITTED' || step.state !== 'RUNNING' || !live(step.lease, lease)) return null;
+    const effect = this.effects.get(effectId); const step = effect ? this.steps.get(effect.stepId) : undefined;
+    const run = effect ? this.runs.get(effect.runId) : undefined;
+    const compensationComplete =
+      !!effect &&
+      effect.type.startsWith('compensate.') &&
+      !!run &&
+      run.state === 'COMPENSATING' &&
+      !!step &&
+      effect.tenantId === tenantId &&
+      effect.state === 'ADMITTED';
+    if (!compensationComplete) {
+      if (!effect || !step || effect.tenantId !== tenantId || effect.state !== 'ADMITTED' || step.state !== 'RUNNING' || !live(step.lease, lease)) return null;
+    }
     effect.state = 'COMPLETED'; effect.response = response; effect.completedAt = now(); this.event('effect', effect.id, 2, 'effect.completed', tenantId, effect.runId, effect.stepId, actor, {}); return clone(effect);
   }
   async markEffectCompletionUnknown(request: MarkEffectCompletionUnknownRequest): Promise<KernelEffect | null> {
@@ -548,7 +573,7 @@ export class InMemoryKernelRepository implements KernelRepository {
   }
   private event(aggregateType: KernelEvent['aggregateType'], aggregateId: string, sequence: number, type: string, tenantId: string, runId: string, stepId: string | undefined, actor: string, payload: Record<string, unknown>, outboxKey = runId): void {
     const event: KernelEvent = { eventId: randomUUID(), aggregateType, aggregateId, sequence, type, tenantId, runId, stepId, actor, schemaVersion: 'v2', payload, occurredAt: now() }; this.events.push(event);
-    const message: KernelOutboxMessage = { id: randomUUID(), eventId: event.eventId, tenantId, topic: `commander.${type}`, key: outboxKey, payload: { eventId: event.eventId, type, runId, tenantId, ...payload }, attempts: 0, availableAt: event.occurredAt, createdAt: event.occurredAt }; this.outbox.set(message.id, message);
+    const message: KernelOutboxMessage = { id: randomUUID(), eventId: event.eventId, tenantId, topic: `commander.${type}`, key: outboxKey, payload: { ...payload, eventId: event.eventId, type, runId, stepId: stepId ?? null, tenantId }, attempts: 0, availableAt: event.occurredAt, createdAt: event.occurredAt }; this.outbox.set(message.id, message);
   }
   private finish(runId: string, actor: string): void {
     const run = this.runs.get(runId)!; const steps = [...this.steps.values()].filter((step) => step.runId === runId);

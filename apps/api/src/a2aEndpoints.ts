@@ -8,6 +8,7 @@ import express, { Request, Response, Router } from 'express';
 import { TenantIsolationError } from '@commander/core/runtime/tenantContext';
 import { AgentCardGenerator, AgentCardRegistry } from './agentCard';
 import { TaskManager, ArtifactManager, Task, TaskStatus } from './a2aTask';
+import { requireA2ABearerAuth } from './a2aAuth';
 
 export interface A2AServerConfig {
   port: number;
@@ -26,19 +27,28 @@ export function createA2ARouter(
   taskManager: TaskManager,
   artifactManager: ArtifactManager,
   cardRegistry: AgentCardRegistry,
+  options?: { authToken?: string | null },
 ): Router {
   const router = express.Router();
   // Security: express.json() with limit is applied globally in index.ts.
+  // Omit `token` unless explicitly overridden so env COMMANDER_A2A_AUTH_TOKEN is used.
+  const requireAuth = requireA2ABearerAuth({
+    mode: 'rest',
+    ...(options && 'authToken' in options ? { token: options.authToken } : {}),
+  });
 
   /**
    * GET /.well-known/agent-card
-   * Return the Agent Card for this agent
+   * Return the Agent Card for this agent (public discovery).
    */
   router.get('/.well-known/agent-card', (req: Request, res: Response) => {
     const baseUrl = req.protocol + '://' + req.get('host');
     const card = AgentCardGenerator.generateCommanderCard(baseUrl);
     res.json(card);
   });
+
+  // All non-discovery routes require bearer auth (fail-closed if token unset).
+  router.use(requireAuth);
 
   /**
    * GET /agent-cards

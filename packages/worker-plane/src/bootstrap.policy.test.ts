@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { InMemoryKernelRepository } from '../../kernel/src/testing/inMemoryRepository.ts';
-import { createWorkerPolicyEvaluator, withDefaultLlmAllowlist } from './bootstrap.js';
+import {
+  createWorkerPolicyEvaluator,
+  createWorkerCapabilityVerifier,
+  withDefaultLlmAllowlist,
+} from './bootstrap.js';
+import { CapabilityTokenIssuer, canonicalRequestHash } from '@commander/effect-broker';
 
 describe('createWorkerPolicyEvaluator', () => {
   it('allows llm.* model calls by default (agent can invoke providers)', async () => {
@@ -90,5 +95,55 @@ describe('withDefaultLlmAllowlist', () => {
     await kernel.setAllowlistEntry('tenant-a', 'llm.*', false);
     const port = withDefaultLlmAllowlist(kernel);
     assert.equal(await port.isActionAllowed!('tenant-a', 'llm.openai'), false);
+  });
+});
+
+describe('createWorkerCapabilityVerifier (WS2 §6 replay + revocation)', () => {
+  it('rejects a second verify of the same token (nonce replay)', async () => {
+    const kernel = new InMemoryKernelRepository();
+    const issuer = CapabilityTokenIssuer.generate({
+      issuer: 'commander-worker',
+      audience: 'commander.effect-broker',
+      keyId: 'worker-bootstrap',
+    });
+    const verifier = createWorkerCapabilityVerifier(issuer, kernel);
+    const token = issuer.issue({
+      jti: 'jti-replay',
+      tenantId: 't1',
+      runId: 'r1',
+      stepId: 's1',
+      effectTypes: ['llm.openai'],
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      requestHash: canonicalRequestHash({ a: 1 }),
+    });
+    await verifier.verify(token);
+    await assert.rejects(() => verifier.verify(token), /replayed/i);
+  });
+
+  it('rejects tokens whose jti was revoked in the kernel', async () => {
+    const kernel = new InMemoryKernelRepository();
+    const issuer = CapabilityTokenIssuer.generate({
+      issuer: 'commander-worker',
+      audience: 'commander.effect-broker',
+      keyId: 'worker-bootstrap',
+    });
+    const verifier = createWorkerCapabilityVerifier(issuer, kernel);
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    const token = issuer.issue({
+      jti: 'jti-revoked',
+      tenantId: 't1',
+      runId: 'r1',
+      stepId: 's1',
+      effectTypes: ['llm.openai'],
+      expiresAt,
+      requestHash: canonicalRequestHash({ a: 1 }),
+    });
+    await kernel.revokeCapability({
+      jti: 'jti-revoked',
+      tenantId: 't1',
+      expiresAt,
+      reason: 'test',
+    });
+    await assert.rejects(() => verifier.verify(token), /revoked/i);
   });
 });

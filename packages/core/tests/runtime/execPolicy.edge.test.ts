@@ -96,6 +96,12 @@ describe('D3 hardening — ExecPolicyEngine edge cases', () => {
       assert.equal(r.matchedPattern, 'sudo');
     });
 
+    it('`npx` is forbidden (supply-chain / MCP hard rule)', () => {
+      const r = engine.evaluate('npx -y some-pkg');
+      assert.equal(r.decision, 'forbidden');
+      assert.equal(r.matchedPattern, 'npx');
+    });
+
     it('fork bomb colon-fn pattern is forbidden', () => {
       const r = engine.evaluate(':(){ :|:& };:');
       assert.equal(r.decision, 'forbidden');

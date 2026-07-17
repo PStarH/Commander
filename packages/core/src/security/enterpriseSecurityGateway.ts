@@ -464,9 +464,11 @@ export class EnterpriseSecurityGateway {
       };
     } catch (err) {
       reportSilentFailure(err, 'enterpriseSecurityGateway:postLLMCheck');
+      // Fail-closed: never return unsanitized LLM output when DLP/post-check throws.
       return {
-        allowed: true,
-        sanitizedOutput: params.output,
+        allowed: false,
+        reason: 'Post-LLM security check failed — output withheld',
+        sanitizedOutput: '[REDACTED]',
         durationMs: Date.now() - startTime,
       };
     }
@@ -621,7 +623,13 @@ export class EnterpriseSecurityGateway {
       };
     } catch (err) {
       reportSilentFailure(err, 'enterpriseSecurityGateway:postToolCheck');
-      return { allowed: true, sanitizedOutput: params.output, durationMs: Date.now() - startTime };
+      // Fail-closed: never return unsanitized tool output when DLP/post-check throws.
+      return {
+        allowed: false,
+        reason: 'Post-tool security check failed — output withheld',
+        sanitizedOutput: '[REDACTED]',
+        durationMs: Date.now() - startTime,
+      };
     }
   }
 
