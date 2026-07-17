@@ -213,6 +213,24 @@ describe('L3-07 workload binding', () => {
     assert.equal(admission.reason, 'WORKLOAD_MISMATCH');
   });
 
+  it('rejects WORKLOAD_MISMATCH when binding has workloadId but grant omits it', async () => {
+    const { iss, ver } = makeTokens();
+    const broker = makeBroker(ver);
+    const { workloadId: _omit, ...grantWithoutWorkload } = baseGrant;
+    const admission = await broker.admit({
+      effectId: 'eff-wl-reverse',
+      token: iss.issue({ ...grantWithoutWorkload, requestHash: canonicalRequestHash({}) }),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem-wl-reverse',
+      lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+      actor: 'w',
+      workloadBinding: binding,
+    });
+    assert.equal(admission.admitted, false);
+    assert.equal(admission.reason, 'WORKLOAD_MISMATCH');
+  });
+
   it('rejects expired capability token before binding check matters', async () => {
     const { iss, ver } = makeTokens();
     const broker = makeBroker(ver);

@@ -382,21 +382,7 @@ export class PostgresKernelRepository implements KernelRepository {
         await this.releaseTenantSlot(client, step.tenantId);
         const retryable = step.state === 'RETRY_WAIT';
         await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: retryable ? 'step.lease_expired_requeued' : 'step.lease_expired_failed', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor: 'kernel.recovery', payload: { attempt: step.attempt } });
-        const uncertain = await client.query<{ id: string }>(
-          `UPDATE commander_effects SET
-             state='COMPLETION_UNKNOWN', response=jsonb_build_object('reason','lease_expired')
-           WHERE step_id=$1 AND tenant_id=$2 AND state='ADMITTED'
-           RETURNING id`,
-          [step.id, step.tenantId],
-        );
-        for (const effect of uncertain.rows) {
-          await this.appendEvent(client, {
-            aggregateType: 'effect', aggregateId: effect.id, sequence: 2,
-            type: 'effect.completion_unknown', tenantId: step.tenantId,
-            runId: step.runId, stepId: step.id, actor: 'kernel.recovery',
-            payload: { reason: 'lease_expired' },
-          });
-        }
+        await this.parkOrphanAdmittedEffects(client, step, 'lease_expired', 'kernel.recovery');
         if (!retryable) {
           const completed = await client.query<{ id: string }>(
             `SELECT id FROM commander_effects
@@ -454,6 +440,7 @@ export class PostgresKernelRepository implements KernelRepository {
       assertStepTransition('RUNNING', step.state);
       await this.releaseTenantSlot(client, step.tenantId);
       await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: 'step.succeeded', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor: request.actor, payload: { attempt: step.attempt } });
+      await this.parkOrphanAdmittedEffects(client, step, 'step_succeeded', request.actor);
       await this.finishRunIfTerminal(client, step.runId, step.tenantId, request.actor);
       return step;
     }, [request.tenantId]);
@@ -476,6 +463,8 @@ export class PostgresKernelRepository implements KernelRepository {
       assertStepTransition('RUNNING', step.state);
       await this.releaseTenantSlot(client, step.tenantId);
       await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: step.state === 'RETRY_WAIT' ? 'step.retry_scheduled' : 'step.failed', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor: request.actor, payload: { error: request.error } });
+      // Broker-external fail must park ADMITTED effects (same as lease reclaim).
+      await this.parkOrphanAdmittedEffects(client, step, 'step_failed', request.actor);
       if (step.state === 'FAILED') await this.finishRunIfTerminal(client, step.runId, step.tenantId, request.actor);
       return step;
     }, [request.tenantId]);
@@ -516,6 +505,7 @@ export class PostgresKernelRepository implements KernelRepository {
       const step = fromStep(result.rows[0]);
       if (previousState === 'RUNNING') await this.releaseTenantSlot(client, step.tenantId);
       await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: 'step.failed', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor, payload: { error } });
+      if (previousState === 'RUNNING') await this.parkOrphanAdmittedEffects(client, step, 'step_failed', actor);
       await this.finishRunIfTerminal(client, step.runId, step.tenantId, actor);
       return step;
     }, [tenantId]);
@@ -595,6 +585,7 @@ export class PostgresKernelRepository implements KernelRepository {
       for (const row of cancelledSteps.rows) {
         const step = fromStep(row);
         await this.releaseTenantSlot(client, step.tenantId);
+        await this.parkOrphanAdmittedEffects(client, step, 'run_cancelled', actor);
         await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: 'step.cancelled', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor, payload: { previousState: previousStepStates.get(step.id) } });
       }
       await this.appendEvent(client, { aggregateType: 'run', aggregateId: run.id, sequence: run.version, type: 'run.cancelled', tenantId, runId, actor, payload: {} });
@@ -1020,6 +1011,16 @@ export class PostgresKernelRepository implements KernelRepository {
   async createInteraction(request: CreateInteractionRequest, actor: string): Promise<KernelInteraction> {
     const id = `itr_${randomUUID()}`;
     return this.withTransaction(async (client) => {
+      const step = await client.query<{ id: string }>(
+        `SELECT id FROM commander_steps WHERE id=$1 AND run_id=$2 AND tenant_id=$3`,
+        [request.stepId, request.runId, request.tenantId],
+      );
+      if (!step.rows[0]) {
+        throw new KernelInvariantError(
+          'STEP_NOT_FOUND',
+          `Step ${request.stepId} not found for run ${request.runId} in tenant ${request.tenantId}`,
+        );
+      }
       const result = await client.query<{
         id: string; run_id: string; step_id: string; tenant_id: string;
         status: string; prompt: string; response: Record<string, unknown> | null;
@@ -1236,6 +1237,28 @@ export class PostgresKernelRepository implements KernelRepository {
        SET running_steps=GREATEST(0, running_steps-1), updated_at=now() WHERE tenant_id=$1`,
       [tenantId],
     );
+  }
+  private async parkOrphanAdmittedEffects(
+    client: SqlClient,
+    step: Pick<KernelStep, 'id' | 'tenantId' | 'runId'>,
+    reason: string,
+    actor: string,
+  ): Promise<void> {
+    const uncertain = await client.query<{ id: string }>(
+      `UPDATE commander_effects SET
+         state='COMPLETION_UNKNOWN', response=jsonb_build_object('reason',$1::text)
+       WHERE step_id=$2 AND tenant_id=$3 AND state='ADMITTED'
+       RETURNING id`,
+      [reason, step.id, step.tenantId],
+    );
+    for (const effect of uncertain.rows) {
+      await this.appendEvent(client, {
+        aggregateType: 'effect', aggregateId: effect.id, sequence: 2,
+        type: 'effect.completion_unknown', tenantId: step.tenantId,
+        runId: step.runId, stepId: step.id, actor,
+        payload: { reason },
+      });
+    }
   }
   private async appendEvent(client: SqlClient, event: Omit<KernelEvent, 'eventId' | 'schemaVersion' | 'occurredAt'>, outboxKey = event.runId): Promise<void> {
     const eventId = randomUUID();

@@ -247,11 +247,15 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
         hint: 'AUTH_DISABLED requires COMMANDER_ALLOW_ANON=1 outside production',
       });
     }
-    // Anon bypass still needs a tenant ALS binding — MemoryStoreFacade and
-    // other tenant-scoped services fail closed without one. Prefer an explicit
-    // COMMANDER_DEFAULT_TENANT_ID; fall back to "local" (never "__default__",
-    // which is reserved by runWithTenant).
-    if (!req.tenantId) {
+    // JWT tenant_id is authoritative even when AUTH_DISABLED — a stale/default
+    // req.tenantId must not override the verified access-token claim (AUTH-2).
+    if (typeof req.user?.tenantId === 'string' && req.user.tenantId.length > 0) {
+      req.tenantId = req.user.tenantId;
+    } else if (!req.tenantId) {
+      // Anon bypass still needs a tenant ALS binding — MemoryStoreFacade and
+      // other tenant-scoped services fail closed without one. Prefer an explicit
+      // COMMANDER_DEFAULT_TENANT_ID; fall back to "local" (never "__default__",
+      // which is reserved by runWithTenant).
       req.tenantId = process.env.COMMANDER_DEFAULT_TENANT_ID || 'local';
     }
     return next();
@@ -270,11 +274,9 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
   // X-Tenant-ID would be evaluated as "no principal" and either trusted
   // (non-prod) or rejected wholesale (prod), breaking JWT tenant binding.
   if (req.user) {
-    if (
-      typeof req.user.tenantId === 'string' &&
-      req.user.tenantId.length > 0 &&
-      !req.tenantId
-    ) {
+    // Always overwrite — JWT tenant_id is the authenticated principal (AUTH-2).
+    // A pre-set req.tenantId (e.g. anon default) must not win over the claim.
+    if (typeof req.user.tenantId === 'string' && req.user.tenantId.length > 0) {
       req.tenantId = req.user.tenantId;
     }
     return next();
