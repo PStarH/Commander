@@ -170,28 +170,36 @@ export class ExecutionRouter {
   }
 
   private getWorkloadContext(args: Record<string, unknown>): SandboxWorkloadContext | undefined {
-    const values = [args._tenantId, args._runId, args._stepId, args._workloadId];
-    const hasAnyContext = values.some((value) => value !== undefined);
-    if (!values.every((value) => typeof value === 'string' && value.length > 0)) {
-      if (hasAnyContext && resolveSandboxPolicy(this.environment).environment === 'production') {
-        throw new SandboxPolicyError('Production execution requires a complete workload context.');
-      }
-      return undefined;
-    }
-    const context: SandboxWorkloadContext = {
-      tenantId: String(args._tenantId),
-      runId: String(args._runId),
-      stepId: String(args._stepId),
-      workloadId: String(args._workloadId),
-    };
-    try {
-      validateSandboxWorkloadContext(context);
-    } catch (error) {
-      if (resolveSandboxPolicy(this.environment).environment === 'production') throw error;
-      return undefined;
-    }
-    return context;
+    return resolveRuntimeWorkloadContext(args, this.environment);
   }
+}
+
+/** Resolve runtime-metadata workload args (_tenantId, …) into a context object. */
+export function resolveRuntimeWorkloadContext(
+  args: Record<string, unknown>,
+  environment: NodeJS.ProcessEnv = process.env,
+): SandboxWorkloadContext | undefined {
+  const values = [args._tenantId, args._runId, args._stepId, args._workloadId];
+  const hasAnyContext = values.some((value) => value !== undefined);
+  if (!values.every((value) => typeof value === 'string' && value.length > 0)) {
+    if (hasAnyContext && resolveSandboxPolicy(environment).environment === 'production') {
+      throw new SandboxPolicyError('Production execution requires a complete workload context.');
+    }
+    return undefined;
+  }
+  const context: SandboxWorkloadContext = {
+    tenantId: String(args._tenantId),
+    runId: String(args._runId),
+    stepId: String(args._stepId),
+    workloadId: String(args._workloadId),
+  };
+  try {
+    validateSandboxWorkloadContext(context);
+  } catch (error) {
+    if (resolveSandboxPolicy(environment).environment === 'production') throw error;
+    return undefined;
+  }
+  return context;
 }
 
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';

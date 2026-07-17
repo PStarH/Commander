@@ -12,7 +12,7 @@
 <p align="center"><strong>Local-first multi-agent orchestration — v0.2 · beta</strong></p>
 
 <p align="center">
-  <code>npx tsx packages/core/src/cli.ts run "audit this repo" --stream</code><br>
+  <code>pnpm exec tsx packages/core/src/cliEntry.ts run "audit this repo" --stream</code><br>
   <sub>Every agent thought streams to your terminal. Every output is verified. 25 providers. One command.</sub>
 </p>
 
@@ -80,9 +80,9 @@ export OPENAI_API_KEY=sk-...
 pnpm gui
 
 # Or run from the terminal
-npx tsx packages/core/src/cli.ts run "audit this repo for security vulnerabilities"
-npx tsx packages/core/src/cli.ts run "refactor the auth module" --dry-run
-npx tsx packages/core/src/cli.ts run "explain the architecture" --stream
+pnpm exec tsx packages/core/src/cliEntry.ts run "audit this repo for security vulnerabilities"
+pnpm exec tsx packages/core/src/cliEntry.ts run "refactor the auth module" --dry-run
+pnpm exec tsx packages/core/src/cliEntry.ts run "explain the architecture" --stream
 ```
 
 > CLI commands run the **Local CLI** (embedded runtime). Enterprise routing is

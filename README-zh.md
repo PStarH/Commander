@@ -11,7 +11,7 @@
 <p align="center"><strong>看清 AI 在做什么。信任结果。花费更少。</strong></p>
 
 <p align="center">
-  <code>npx tsx packages/core/src/cli.ts watch "investigate this bug"</code><br>
+  <code>pnpm exec tsx packages/core/src/cliEntry.ts watch "investigate this bug"</code><br>
   <sub>无需安装。一条命令。实时查看多智能体推理过程流式传输到你的终端。</sub>
 </p>
 
@@ -21,7 +21,7 @@
 
 ---
 
-> **SKU 说明（中文版待更新）：** Commander 现以两个 SKU 提供 —— **Local CLI**（本地工具，默认）与 **Enterprise Gateway**（`/v1`，alpha）。本中文 README 尚未包含此 SKU 划分的完整说明，请以 [README.md](README.md)（英文）为权威来源。WS8 已将此列为待办。
+> **两种运行方式：** Commander 以两个 SKU 提供 —— **Local CLI**（本地工具，默认，可用于本地开发/单机）与 **Enterprise Gateway**（`/v1` + 可选 Postgres，**alpha**，非 live-fire 证明的完整多租户 SaaS）。详见英文 [README.md](README.md) 的 SKU 表与 [ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md)。
 
 ## Commander 的独特之处
 
@@ -41,7 +41,7 @@
 
 ```bash
 # 如果已有 tsx，无需安装（或使用 pnpm/npx）
-npx tsx packages/core/src/cli.ts watch "find the bug in src/server.ts and fix it"
+pnpm exec tsx packages/core/src/cliEntry.ts watch "find the bug in src/server.ts and fix it"
 ```
 
 这不是模拟——这是来自实际智能体执行的实时 SSE 流的真实录像。每一次工具调用、每一个决策、每一次验证都实时流式传输到你的终端。你可以**观看**智能体思考。
@@ -58,9 +58,9 @@ pnpm install
 export OPENAI_API_KEY=sk-...
 
 # 3. 运行任何任务
-npx tsx packages/core/src/cli.ts run "analyze this repository"
-npx tsx packages/core/src/cli.ts plan "implement authentication"    # 执行前查看计划
-npx tsx packages/core/src/cli.ts watch "debug the failing test"     # 实时查看智能体推理
+pnpm exec tsx packages/core/src/cliEntry.ts run "analyze this repository"
+pnpm exec tsx packages/core/src/cliEntry.ts plan "implement authentication"    # 执行前查看计划
+pnpm exec tsx packages/core/src/cliEntry.ts watch "debug the failing test"     # 实时查看智能体推理
 ```
 
 ---
@@ -162,10 +162,10 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 ```bash
 # 使用 CLI
-npx tsx packages/core/src/cli.ts run "your task here"
+pnpm exec tsx packages/core/src/cliEntry.ts run "your task here"
 
 # 使用 API
-npx tsx examples/api-usage.ts
+pnpm exec tsx examples/api-usage.ts
 
 # 使用 Docker
 docker compose up -d
@@ -233,7 +233,7 @@ pnpm benchmark:chaos:full        # 混沌工程基准测试（255 场景）
 通过 CLI 或 `@commander/core` 的 `Commander` 入口使用：
 
 ```bash
-npx tsx packages/core/src/cli.ts run "analyze this repository"
+pnpm exec tsx packages/core/src/cliEntry.ts run "analyze this repository"
 ```
 
 或通过 HTTP API（`apps/api`，默认 `:4000`）与 Web 控制台（`pnpm gui`）集成。
@@ -259,7 +259,7 @@ docker compose up -d
 ./scripts/deploy-vm.sh your-vm-ip --env-file .env.production
 ```
 
-生产环境覆盖层添加：CPU/内存限制、JSON 文件日志、自动重启、健康检查、速率限制、多租户支持。
+生产 Compose 覆盖层还可加：CPU/内存限制、JSON 文件日志、自动重启、健康检查、速率限制。多租户属于 **Enterprise Gateway（alpha）**——请求上下文隔离已有；存储层隔离为 opt-in，须对照 `ENTERPRISE_READINESS.md`，**勿当作完整多租户 SaaS**。
 
 ---
 

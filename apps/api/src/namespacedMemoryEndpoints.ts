@@ -1,23 +1,99 @@
 import { Router } from 'express';
 import type { MemoryStore } from '@commander/core';
+import type { AuthUser } from './jwtMiddleware';
+import type { UserRole } from './userStore';
 
-// Security: Valid RBAC roles for namespaced memory access.
-// Per security best practice: roles must come from server-side auth, not user input.
-const VALID_ROLES = new Set(['reader', 'writer', 'admin', 'system']);
+type MemoryAclRole = 'reader' | 'writer' | 'admin';
+type MemoryPermission = 'read' | 'write' | 'delete' | 'admin';
+
+interface ACLEntry {
+  role: MemoryAclRole;
+  permissions: MemoryPermission[];
+  /** Allowed namespaces; `*` grants all. */
+  namespaces: string[];
+}
 
 /**
- * Extract role from authenticated request context, NOT from user-controlled query params.
- * Security: Per OWASP — never trust user-supplied role/permission values.
- * Falls back to 'reader' (least privilege) when no authenticated role is available.
+ * Namespace ACL for HTTP auth only (API-key scopes + JWT UserRole →
+ * reader|writer|admin). Agent topology roles are not part of this surface.
  */
-function getAuthenticatedRole(req: any): string {
-  // Use role from authenticated API key scopes if available
-  const authRole = req.apiScopes?.role;
-  if (typeof authRole === 'string' && VALID_ROLES.has(authRole)) {
-    return authRole;
+const DEFAULT_ACL: ACLEntry[] = [
+  { role: 'reader', permissions: ['read'], namespaces: ['*'] },
+  { role: 'writer', permissions: ['read', 'write'], namespaces: ['*'] },
+  { role: 'admin', permissions: ['read', 'write', 'delete', 'admin'], namespaces: ['*'] },
+];
+
+/** Official API-key scopes → ACL roles. Agent role names are never accepted bare. */
+const SCOPE_TO_ACL: Record<string, MemoryAclRole> = {
+  read: 'reader',
+  write: 'writer',
+  admin: 'admin',
+  'role:read': 'reader',
+  'role:reader': 'reader',
+  'role:write': 'writer',
+  'role:writer': 'writer',
+  'role:admin': 'admin',
+};
+
+interface AuditEntry {
+  at: string;
+  action: string;
+  namespace: string;
+  role: string;
+  agentId: string;
+  id?: string;
+  ok: boolean;
+}
+
+type AuthedRequest = {
+  apiKeyId?: string;
+  apiScopes?: string[];
+  user?: AuthUser | null;
+};
+
+function isAuthenticated(req: AuthedRequest): boolean {
+  return Boolean(req.apiKeyId) || Boolean(req.user);
+}
+
+/** Map JWT UserRole → memory ACL role. */
+function userRoleToAcl(role: UserRole): MemoryAclRole {
+  if (role === 'super_admin' || role === 'admin') return 'admin';
+  if (role === 'developer' || role === 'operator') return 'writer';
+  return 'reader'; // auditor, viewer
+}
+
+/**
+ * Resolve ACL role from server-side auth only (JWT user and/or API-key scopes).
+ * Returns null when unauthenticated or when no mappable role/scope is present.
+ */
+function getAuthenticatedRole(req: AuthedRequest): MemoryAclRole | null {
+  if (!isAuthenticated(req)) return null;
+
+  const candidates: MemoryAclRole[] = [];
+  if (req.user?.role) {
+    candidates.push(userRoleToAcl(req.user.role));
   }
-  // Default to least privilege
-  return 'reader';
+  for (const scope of req.apiScopes ?? []) {
+    const mapped = SCOPE_TO_ACL[scope];
+    if (mapped) candidates.push(mapped);
+  }
+  // Prefer higher privilege when both JWT and scopes are present.
+  for (const preferred of ['admin', 'writer', 'reader'] as const) {
+    if (candidates.includes(preferred)) return preferred;
+  }
+  // Authenticated but no mappable role/scopes (e.g. only bare agent names) → deny.
+  return null;
+}
+
+function findAcl(role: string): ACLEntry | undefined {
+  return DEFAULT_ACL.find((entry) => entry.role === role);
+}
+
+function hasPermission(role: string, permission: MemoryPermission, namespace: string): boolean {
+  const acl = findAcl(role);
+  if (!acl) return false;
+  if (!acl.permissions.includes(permission)) return false;
+  return acl.namespaces.includes('*') || acl.namespaces.includes(namespace);
 }
 
 export function createNamespacedMemoryRouter(memoryStore: MemoryStore): Router {
@@ -26,9 +102,12 @@ export function createNamespacedMemoryRouter(memoryStore: MemoryStore): Router {
 
 function createCanonicalNamespacedMemoryRouter(memoryStore: MemoryStore): Router {
   const router = Router();
-  const canRead = (role: string) => VALID_ROLES.has(role);
-  const canWrite = (role: string) => role === 'writer' || role === 'admin' || role === 'system';
   const namespaceTag = (namespace: string) => `namespace:${namespace}`;
+  const auditLog: AuditEntry[] = [];
+  const pushAudit = (entry: Omit<AuditEntry, 'at'>) => {
+    auditLog.push({ ...entry, at: new Date().toISOString() });
+    if (auditLog.length > 500) auditLog.shift();
+  };
 
   router.post('/api/namespaced-memory/:namespace/write', async (req, res) => {
     const { namespace } = req.params;
@@ -45,7 +124,11 @@ function createCanonicalNamespacedMemoryRouter(memoryStore: MemoryStore): Router
     if (!key || value === undefined)
       return res.status(400).json({ error: 'key and value are required' });
     const role = getAuthenticatedRole(req);
-    if (!canWrite(role)) return res.status(403).json({ error: 'Permission denied' });
+    if (!role) return res.status(403).json({ error: 'Authentication required' });
+    if (!hasPermission(role, 'write', namespace)) {
+      pushAudit({ action: 'write', namespace, role, agentId: agentId ?? 'api', ok: false });
+      return res.status(403).json({ error: 'Permission denied' });
+    }
     const project = projectId ?? 'default';
     const allowedKinds = new Set(['DECISION', 'ISSUE', 'LESSON', 'SUMMARY']);
     const memoryKind = allowedKinds.has(kind) ? kind : 'SUMMARY';
@@ -59,8 +142,17 @@ function createCanonicalNamespacedMemoryRouter(memoryStore: MemoryStore): Router
         tags: [...(Array.isArray(tags) ? tags : []), namespaceTag(namespace)],
         meta: { namespace, createdBy: { agentId: agentId ?? 'api', role } },
       });
+      pushAudit({
+        action: 'write',
+        namespace,
+        role,
+        agentId: agentId ?? 'api',
+        id: item.id,
+        ok: true,
+      });
       res.json({ status: 'ok', namespace, id: item.id });
     } catch (error) {
+      pushAudit({ action: 'write', namespace, role, agentId: agentId ?? 'api', ok: false });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -68,15 +160,22 @@ function createCanonicalNamespacedMemoryRouter(memoryStore: MemoryStore): Router
   router.get('/api/namespaced-memory/:namespace/read/:id', async (req, res) => {
     const { namespace, id } = req.params;
     const role = getAuthenticatedRole(req);
-    if (!canRead(role)) return res.status(403).json({ error: 'Permission denied' });
+    if (!role) return res.status(403).json({ error: 'Authentication required' });
+    if (!hasPermission(role, 'read', namespace)) {
+      pushAudit({ action: 'read', namespace, role, agentId: 'api', id, ok: false });
+      return res.status(403).json({ error: 'Permission denied' });
+    }
     const projectId = (req.query.projectId as string) ?? 'default';
     try {
       const item = await memoryStore.read(id, projectId);
       if (!item || item.meta?.namespace !== namespace) {
+        pushAudit({ action: 'read', namespace, role, agentId: 'api', id, ok: false });
         return res.status(404).json({ error: 'Not found or permission denied' });
       }
+      pushAudit({ action: 'read', namespace, role, agentId: 'api', id, ok: true });
       res.json({ ...item, namespace });
     } catch (error) {
+      pushAudit({ action: 'read', namespace, role, agentId: 'api', id, ok: false });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -85,7 +184,11 @@ function createCanonicalNamespacedMemoryRouter(memoryStore: MemoryStore): Router
     const { namespace } = req.params;
     const q = (req.query.q as string) ?? '';
     const role = getAuthenticatedRole(req);
-    if (!canRead(role)) return res.status(403).json({ error: 'Permission denied' });
+    if (!role) return res.status(403).json({ error: 'Authentication required' });
+    if (!hasPermission(role, 'read', namespace)) {
+      pushAudit({ action: 'search', namespace, role, agentId: 'api', ok: false });
+      return res.status(403).json({ error: 'Permission denied' });
+    }
     const projectId = (req.query.projectId as string) ?? 'default';
     try {
       const results = await memoryStore.search({
@@ -94,14 +197,21 @@ function createCanonicalNamespacedMemoryRouter(memoryStore: MemoryStore): Router
         tags: [namespaceTag(namespace)],
         limit: Number(req.query.limit ?? 50),
       });
+      pushAudit({ action: 'search', namespace, role, agentId: 'api', ok: true });
       res.json({ namespace, query: q, items: results.items, total: results.total });
     } catch (error) {
+      pushAudit({ action: 'search', namespace, role, agentId: 'api', ok: false });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
 
   router.get('/api/namespaced-memory/:namespace/stats', async (req, res) => {
     const { namespace } = req.params;
+    const role = getAuthenticatedRole(req);
+    if (!role) return res.status(403).json({ error: 'Authentication required' });
+    if (!hasPermission(role, 'read', namespace)) {
+      return res.status(403).json({ error: 'Permission denied' });
+    }
     const projectId = (req.query.projectId as string) ?? 'default';
     try {
       const results = await memoryStore.search({
@@ -117,22 +227,39 @@ function createCanonicalNamespacedMemoryRouter(memoryStore: MemoryStore): Router
     }
   });
 
-  // KNOWN GAP (WS6 audit): the unified PostgresMemoryService writes audit rows
-  // to the memory_audit_events table (postgresMemorySchema.ts), but no public
-  // query method is exposed yet, so this endpoint returns empty. Wire to a
-  // MemoryService.queryAudit() once added — do not treat empty as "no activity".
-  router.get('/api/namespaced-memory/:namespace/audit', (_req, res) => {
-    res.json({ namespace: _req.params.namespace, entries: [], count: 0, unavailable: true });
+  // API-local audit ring (namespace RBAC path). Postgres memory_audit_events
+  // remains a separate persistence concern until MemoryService.queryAudit lands.
+  router.get('/api/namespaced-memory/:namespace/audit', (req, res) => {
+    const { namespace } = req.params;
+    const role = getAuthenticatedRole(req);
+    if (!role) return res.status(403).json({ error: 'Authentication required' });
+    if (!hasPermission(role, 'read', namespace)) {
+      return res.status(403).json({ error: 'Permission denied' });
+    }
+    const limit = Math.min(Number(req.query.limit ?? 50) || 50, 200);
+    const entries = auditLog.filter((e) => e.namespace === namespace).slice(-limit);
+    res.json({
+      namespace,
+      entries,
+      count: entries.length,
+      source: 'api-local',
+    });
   });
 
-  router.get('/api/namespaced-memory/acl', (_req, res) => {
+  // Full HTTP ACL is admin-only; other authenticated roles see only their rule.
+  router.get('/api/namespaced-memory/acl', (req, res) => {
+    const role = getAuthenticatedRole(req);
+    if (!role) return res.status(403).json({ error: 'Authentication required' });
+    const rules =
+      role === 'admin'
+        ? DEFAULT_ACL
+        : DEFAULT_ACL.filter((rule) => rule.role === role);
     res.json({
-      rules: [
-        { role: 'reader', permissions: ['read'] },
-        { role: 'writer', permissions: ['read', 'write'] },
-        { role: 'admin', permissions: ['read', 'write', 'delete', 'admin'] },
-        { role: 'system', permissions: ['read', 'write', 'delete', 'admin'] },
-      ],
+      rules: rules.map((rule) => ({
+        role: rule.role,
+        permissions: rule.permissions,
+        namespaces: rule.namespaces,
+      })),
     });
   });
 

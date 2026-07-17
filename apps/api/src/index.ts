@@ -13,6 +13,7 @@ import {
   type ShadowConfig,
   type MemoryStore,
   createMemoryStore,
+  resolveMemoryStoreType,
 } from '@commander/core';
 import express from 'express';
 import { createWarRoomStore, apiStore } from './store';
@@ -370,8 +371,8 @@ app.get('/health', (_req, res) => {
 });
 
 // Readiness probe — WS3 §6.1 honesty: real probes replace fake-READY.
-// Hard gates (database/kernel/effectBroker) fail → 503. Soft indicators
-// (warRoomStore/memoryHeap) surface as degraded/unknown but never gate.
+// Hard gates (database/kernel) fail → 503. Soft indicators
+// (effectBroker/warRoomStore/memoryHeap) surface honestly but never gate.
 app.get('/ready', async (_req, res) => {
   const result = await probeReadiness({
     kernel: () => getV1KernelGateway(),
@@ -877,14 +878,36 @@ async function startServer(): Promise<void> {
 
   await initRateLimitStore();
 
-  // The API and memory-index routes share one canonical MemoryStore facade.
-  // Production defaults to Postgres; non-production defaults to the contract
-  // test double unless an explicit backend is configured.
-  const configuredMemoryType = process.env.COMMANDER_MEMORY_STORE;
-  const memoryType =
-    configuredMemoryType ?? (process.env.NODE_ENV === 'production' ? 'postgres' : 'in-memory');
+  // Memory backend selection:
+  // - Non-production: Local-First via resolveMemoryStoreType (in-memory without DSN).
+  // - Production: require a Postgres DSN or explicit COMMANDER_MEMORY_STORE=in-memory
+  //   (never silently drop durability on the Enterprise Gateway path).
+  const explicitMemory = process.env.COMMANDER_MEMORY_STORE;
+  const hasPostgresDsn = Boolean(
+    process.env.COMMANDER_POSTGRES_URL || process.env.DATABASE_URL,
+  );
+  let memoryType: 'postgres' | 'in-memory';
+  if (process.env.NODE_ENV === 'production') {
+    if (explicitMemory === 'in-memory') {
+      memoryType = 'in-memory';
+    } else if (explicitMemory === 'postgres' || hasPostgresDsn) {
+      memoryType = 'postgres';
+    } else {
+      throw new Error(
+        '[Memory] Refusing to start: NODE_ENV=production requires COMMANDER_POSTGRES_URL ' +
+          'or DATABASE_URL for durable memory, or explicit COMMANDER_MEMORY_STORE=in-memory.',
+      );
+    }
+  } else {
+    memoryType = resolveMemoryStoreType({
+      memoryStoreType:
+        explicitMemory === 'postgres' || explicitMemory === 'in-memory'
+          ? explicitMemory
+          : undefined,
+    });
+  }
   try {
-    const canonicalStore = await createMemoryStore(memoryType as 'postgres' | 'in-memory', {
+    const canonicalStore = await createMemoryStore(memoryType, {
       connectionString: process.env.COMMANDER_POSTGRES_URL ?? process.env.DATABASE_URL,
     });
     canonicalMemoryStore = canonicalStore;

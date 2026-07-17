@@ -16,6 +16,7 @@
  *   npx tsx packages/core/src/cli/commands/diagnose.ts [--json]
  */
 
+import { fileURLToPath } from 'node:url';
 import { reportSilentFailure } from '../../silentFailureReporter';
 import { getGlobalLogger } from '../../logging';
 import { $, section, kv } from './_shared';
@@ -762,7 +763,10 @@ function printDiagnoseHelp(): void {
 `);
 }
 
-if (require.main === module) {
+const isDirectExecution =
+  !!process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+
+if (isDirectExecution) {
   const args = process.argv.slice(2);
   if (args.includes('--help') || args.includes('-h')) {
     printDiagnoseHelp();

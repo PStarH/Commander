@@ -31,6 +31,10 @@
  * silently degrade to English.
  */
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 // ============================================================================
 // Locale detection
 // ============================================================================
@@ -2748,8 +2752,6 @@ const localeOverrides: Record<Locale, Record<string, string>> = {
 };
 
 function resolveLocaleDir(candidates: string[]): string | null {
-  const fs = require('node:fs') as typeof import('node:fs');
-  const path = require('node:path') as typeof import('node:path');
   for (const dir of candidates) {
     if (!dir) continue;
     try {
@@ -2762,10 +2764,6 @@ function resolveLocaleDir(candidates: string[]): string | null {
 }
 
 function loadLocaleOverride(locale: Locale): void {
-  const fs = require('node:fs') as typeof import('node:fs');
-  const path = require('node:path') as typeof import('node:path');
-  const os = require('node:os') as typeof import('node:os');
-
   const dir = resolveLocaleDir([
     process.env.COMMANDER_LOCALES_DIR ?? '',
     path.join(process.cwd(), '.commander', 'locales'),
