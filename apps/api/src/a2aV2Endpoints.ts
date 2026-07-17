@@ -15,6 +15,7 @@ import type {
   A2ATask,
   A2ATaskState,
 } from '@commander/core';
+import { requireA2ABearerAuth } from './a2aAuth';
 
 const DEFAULT_A2A_V2_TENANT_ID = '__default__';
 
@@ -56,17 +57,22 @@ type TenantA2ATask = A2ATask & { tenantId?: string };
 const tasks = new Map<string, TenantA2ATask>();
 let taskIdCounter = 0;
 
-export function createA2AV2Router(): Router {
+export function createA2AV2Router(options?: { authToken?: string | null }): Router {
   const router = express.Router();
   // Security: express.json() with limit is applied globally in index.ts.
+  // Omit `token` unless explicitly overridden so env COMMANDER_A2A_AUTH_TOKEN is used.
+  const requireAuth = requireA2ABearerAuth({
+    mode: 'jsonrpc',
+    ...(options && 'authToken' in options ? { token: options.authToken } : {}),
+  });
 
-  // Well-known Agent Card (v1.0)
+  // Well-known Agent Card (v1.0) — public discovery; mutations require bearer auth.
   router.get(AGENT_CARD_WELL_KNOWN_PATH, (_req, res) => {
     res.json(v1AgentCard());
   });
 
   // JSON-RPC 2.0 single endpoint for all A2A methods
-  router.post('/', async (req, res) => {
+  router.post('/', requireAuth, async (req, res) => {
     const rpcReq = req.body as A2AJsonRpcRequest;
     if (!rpcReq || rpcReq.jsonrpc !== '2.0') {
       return res.status(400).json(errorResponse(rpcReq?.id ?? null, -32600, 'Invalid Request'));
@@ -87,7 +93,7 @@ export function createA2AV2Router(): Router {
   });
 
   // SSE streaming endpoint
-  router.post('/stream', async (req, res) => {
+  router.post('/stream', requireAuth, async (req, res) => {
     const rpcReq = req.body as A2AJsonRpcRequest;
     if (rpcReq.method !== A2A_METHODS.SEND_MESSAGE_STREAM) {
       return res

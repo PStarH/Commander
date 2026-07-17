@@ -26,7 +26,7 @@ const PAYLOAD = {
  *  (the sweeper would have moved them to the DLQ). */
 function makeOutbox(maxAttempts = 3) {
   const message: CompensationOutboxMessage & { errors: Array<{ code: string; message: string }>; acked: boolean } = {
-    id: 'msg-1', topic: 'commander.compensation', key: 'run-1', payload: PAYLOAD,
+    id: 'msg-1', tenantId: 'tenant-a', topic: 'commander.kernel.compensation.requested', key: 'run-1', payload: PAYLOAD,
     attempts: 0, claimToken: undefined, errors: [], acked: false,
   };
   const port: CompensationOutboxPort = {
@@ -93,5 +93,14 @@ describe('WS2 §8 compensation consumer', () => {
     assert.equal(message.errors.length, maxAttempts);
     assert.ok(message.errors.every((e) => e.code === 'COMPENSATION_EXECUTE_FAILED'));
     assert.equal(message.acked, false);
+  });
+
+  it('rejects when payload.tenantId diverges from outbox tenant_id', async () => {
+    const { port, message } = makeOutbox();
+    message.payload = { ...PAYLOAD, tenantId: 'tenant-evil' };
+    const result = await consumeCompensationBatch(port, okBroker, async () => 'token', { workerId: 'w1' });
+    assert.equal(result.failed, 1);
+    assert.equal(message.acked, false);
+    assert.equal(message.errors[0]?.code, 'COMPENSATION_TENANT_MISMATCH');
   });
 });
