@@ -36,8 +36,8 @@ function isSandboxUnavailable(error: unknown): boolean {
  * all work is leased from the shared kernel and all lifecycle writes return to it.
  */
 export class WorkerService {
-  private readonly config: Required<Omit<WorkerServiceConfig, 'sandboxReadiness'>> &
-    Pick<WorkerServiceConfig, 'sandboxReadiness'>;
+  private readonly config: Required<Omit<WorkerServiceConfig, 'sandboxReadiness' | 'onRegistered'>> &
+    Pick<WorkerServiceConfig, 'sandboxReadiness' | 'onRegistered'>;
   private worker: WorkerRecord | null = null;
   private authorization: WorkerAuthorization | null = null;
   private active = new Set<Promise<void>>();
@@ -59,6 +59,7 @@ export class WorkerService {
       workerHeartbeatMs: config.workerHeartbeatMs ?? 10_000,
       pollIntervalMs: config.pollIntervalMs ?? 250,
       sandboxReadiness: config.sandboxReadiness,
+      onRegistered: config.onRegistered,
     };
   }
 
@@ -76,6 +77,7 @@ export class WorkerService {
       authorization.tenantIds,
     );
     this.authorization = authorization;
+    this.config.onRegistered?.(this.worker);
     this.running = true;
     this.heartbeatTimer = setInterval(() => {
       void this.heartbeat();
