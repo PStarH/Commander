@@ -22,7 +22,9 @@
     "@commander/core/plugins/im/discord"
   ],
   "v2ImportExceptions": [
-    "packages/worker-plane/src/workerRuntimeAdapter.ts"
+    "packages/worker-plane/src/workerRuntimeAdapter.ts",
+    "packages/worker-plane/src/llmBrokerBridge.ts",
+    "packages/worker-plane/src/llmBrokerBridge.test.ts"
   ],
   "api": {
     "path": "apps/api/src",

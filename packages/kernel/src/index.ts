@@ -69,3 +69,5 @@ export type {
 
 // Object storage (interface only — implementations are in testing/)
 export type { ObjectStorage, ObjectStorageRef } from './testing/objectStorage.js';
+/** In-memory kernel for tests and local harnesses — not a production authority. */
+export { InMemoryKernelRepository } from './testing/inMemoryRepository.js';
