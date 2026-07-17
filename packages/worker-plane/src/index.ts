@@ -11,8 +11,21 @@ export { ApiKeyWorkerAuthenticator, WorkerAuthError } from './apiKeyAuthenticato
 export type { ApiKeyAuthenticatorConfig } from './apiKeyAuthenticator.js';
 
 // Step executors
-export { createAgentStepExecutor, createExecutorManifest } from './workerRuntimeAdapter.js';
+export {
+  createAgentStepExecutor,
+  createExecutorManifest,
+  toLlmBrokerLease,
+} from './workerRuntimeAdapter.js';
 export type { AgentStepExecutorOptions, ExecutorManifest, ExecutorManifestEntry } from './workerRuntimeAdapter.js';
+export {
+  wrapProviderWithEffectBroker,
+  dispatchLlmEffect,
+  runWithLlmEffectAuth,
+  getLlmEffectAuth,
+  createLlmEffectAuth,
+  hashLlmCallContent,
+} from './llmBrokerBridge.js';
+export type { LlmEffectAuth } from './llmBrokerBridge.js';
 export { ToolStepExecutor } from './toolStepExecutor.js';
 export type { ExternalEffectBroker, ToolHandler, ToolRegistry, ToolStepInput, ToolStepOutput } from './toolStepExecutor.js';
 export { EvaluatorStepExecutor } from './evaluatorStepExecutor.js';

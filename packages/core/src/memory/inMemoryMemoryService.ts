@@ -2,17 +2,23 @@ import { randomUUID } from 'node:crypto';
 import type {
   ForgetMemoryInput,
   ListMemoryInput,
+  MemoryAuditEvent,
+  MemoryAuditPage,
   MemoryPage,
   MemoryRecord,
   MemoryRetentionPolicy,
   MemoryScope,
   MemorySearchResult,
   MemoryService,
+  MemoryServiceAudit,
+  QueryMemoryAuditInput,
   RetrieveMemoryInput,
   SearchMemoryInput,
   StoreMemoryInput,
 } from './memoryService';
 import { assertForgetTarget, assertLimit, assertMemoryScope } from './memoryService';
+
+const AUDIT_RING_MAX = 1_000;
 
 export interface InMemoryMemoryServiceOptions {
   now?: () => Date;
@@ -59,8 +65,9 @@ function matchesFilters(record: MemoryRecord, input: SearchMemoryInput | ListMem
   return true;
 }
 
-export class InMemoryMemoryService implements MemoryService {
+export class InMemoryMemoryService implements MemoryService, MemoryServiceAudit {
   private readonly items = new Map<string, MemoryRecord>();
+  private readonly auditLog: MemoryAuditEvent[] = [];
   private readonly now: () => Date;
   private readonly retention: MemoryRetentionPolicy;
 
@@ -107,6 +114,14 @@ export class InMemoryMemoryService implements MemoryService {
 
     this.items.set(keyFor(input.scope, id), record);
     this.enforceMaximum(input.scope);
+    this.recordAudit({
+      scope: input.scope,
+      action: 'store',
+      memoryId: id,
+      actorId: record.agentId,
+      success: true,
+      tags: record.tags,
+    });
     return {
       ...record,
       tags: [...record.tags],
@@ -120,6 +135,13 @@ export class InMemoryMemoryService implements MemoryService {
     if (!record || !isLive(record, this.now())) return null;
     const updated = { ...record, lastAccessedAt: this.now().toISOString() };
     this.items.set(keyFor(input.scope, input.id), updated);
+    this.recordAudit({
+      scope: input.scope,
+      action: 'retrieve',
+      memoryId: input.id,
+      success: true,
+      tags: updated.tags,
+    });
     return {
       ...updated,
       tags: [...updated.tags],
@@ -143,20 +165,64 @@ export class InMemoryMemoryService implements MemoryService {
         return queryTokens.every((token) => haystack.includes(token));
       })
       .sort(sortRecords);
+    this.recordAudit({
+      scope: input.scope,
+      action: 'search',
+      actorId: input.scope.agentId,
+      success: true,
+      tags: input.tags,
+    });
     return { items: items.slice(0, limit).map((record) => ({ ...record })), total: items.length };
   }
 
   async forget(input: ForgetMemoryInput): Promise<boolean> {
     assertForgetTarget(input);
-    if (input.id) return this.items.delete(keyFor(input.scope, input.id));
+    if (input.id) {
+      const existing = this.items.get(keyFor(input.scope, input.id));
+      const deleted = this.items.delete(keyFor(input.scope, input.id));
+      this.recordAudit({
+        scope: input.scope,
+        action: 'forget',
+        memoryId: input.id,
+        actorId: input.scope.agentId,
+        success: deleted,
+        tags: existing?.tags,
+      });
+      return deleted;
+    }
 
     let deleted = false;
+    const tagsSnapshot: string[] = [];
     for (const [key, record] of this.items) {
       if (isInScope(record, input.scope) && record.missionId === input.missionId) {
+        tagsSnapshot.push(...record.tags);
         deleted = this.items.delete(key) || deleted;
       }
     }
+    this.recordAudit({
+      scope: input.scope,
+      action: 'forget',
+      actorId: input.scope.agentId,
+      success: deleted,
+      tags: tagsSnapshot.length > 0 ? [...new Set(tagsSnapshot)] : undefined,
+    });
     return deleted;
+  }
+
+  async queryAudit(input: QueryMemoryAuditInput): Promise<MemoryAuditPage> {
+    assertMemoryScope(input.scope);
+    const limit = assertLimit(input.limit, 50, 500);
+    const nsTag = input.namespace ? `namespace:${input.namespace}` : undefined;
+    const entries = this.auditLog
+      .filter(
+        (e) =>
+          e.tenantId === input.scope.tenantId &&
+          e.projectId === input.scope.projectId &&
+          (!nsTag || e.tags?.includes(nsTag)),
+      )
+      .slice(-limit)
+      .reverse();
+    return { entries, count: entries.length };
   }
 
   async list(input: ListMemoryInput): Promise<MemoryPage> {
@@ -190,6 +256,31 @@ export class InMemoryMemoryService implements MemoryService {
 
   async close(): Promise<void> {
     this.items.clear();
+    this.auditLog.length = 0;
+  }
+
+  private recordAudit(input: {
+    scope: MemoryScope;
+    action: string;
+    memoryId?: string;
+    actorId?: string;
+    success: boolean;
+    tags?: string[];
+  }): void {
+    this.auditLog.push({
+      id: randomUUID(),
+      tenantId: input.scope.tenantId,
+      projectId: input.scope.projectId,
+      memoryId: input.memoryId,
+      action: input.action,
+      actorId: input.actorId,
+      success: input.success,
+      createdAt: this.now().toISOString(),
+      tags: input.tags ? [...input.tags] : undefined,
+    });
+    if (this.auditLog.length > AUDIT_RING_MAX) {
+      this.auditLog.splice(0, this.auditLog.length - AUDIT_RING_MAX);
+    }
   }
 
   private scopedLiveRecords(scope: MemoryScope): MemoryRecord[] {

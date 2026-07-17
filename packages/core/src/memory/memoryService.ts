@@ -111,6 +111,40 @@ export interface MemoryServiceMaintenance {
   purgeExpired(scope?: MemoryScope): Promise<number>;
 }
 
+/** Audit row for memory operations (WS6 public query surface). */
+export interface MemoryAuditEvent {
+  id: string;
+  tenantId: string;
+  projectId: string;
+  memoryId?: string;
+  action: string;
+  actorId?: string;
+  success: boolean;
+  createdAt: string;
+  /** Tags snapshot at write time — used for namespace filtering. */
+  tags?: string[];
+}
+
+export interface QueryMemoryAuditInput {
+  scope: MemoryScope;
+  /** When set, only events whose tags include `namespace:<name>`. */
+  namespace?: string;
+  limit?: number;
+}
+
+export interface MemoryAuditPage {
+  entries: MemoryAuditEvent[];
+  count: number;
+}
+
+/**
+ * Optional audit query capability. Not all MemoryService backends persist
+ * audit (Postgres does; InMemory keeps a bounded ring for tests/local).
+ */
+export interface MemoryServiceAudit {
+  queryAudit(input: QueryMemoryAuditInput): Promise<MemoryAuditPage>;
+}
+
 export class MemoryServiceValidationError extends Error {
   constructor(message: string) {
     super(message);
