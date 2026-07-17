@@ -12,6 +12,7 @@ import type {
   WorkerServiceConfig,
 } from './types.js';
 import { WorkerExecutionError as WorkerError } from './types.js';
+import { runWithStepWorkloadIdentity } from './stepWorkloadIdentity.js';
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -155,10 +156,12 @@ export class WorkerService {
       Math.max(250, Math.floor(this.config.leaseTtlMs / 3)),
     );
     try {
-      const output = await this.executor.execute(step, {
-        signal: controller.signal,
-        worker: this.worker!,
-      });
+      const output = await runWithStepWorkloadIdentity(step, () =>
+        this.executor.execute(step, {
+          signal: controller.signal,
+          worker: this.worker!,
+        }),
+      );
       if (!leaseLost) {
         const completed = await this.kernel.completeStep({
           stepId: step.id,

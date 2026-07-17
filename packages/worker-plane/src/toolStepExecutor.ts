@@ -11,6 +11,12 @@
 
 import type { StepExecutor, ClaimedStep, WorkerRecord } from './types.js';
 import { WorkerExecutionError } from './types.js';
+import type { CapabilityTokenIssuer, WorkloadBinding } from '@commander/effect-broker';
+import {
+  getStepWorkloadBinding,
+  mintStepCapabilityToken,
+  requireStepWorkloadBinding,
+} from './stepWorkloadIdentity.js';
 
 export interface ToolStepInput {
   /** Tool name (e.g., "http.get", "git.push"). */
@@ -48,6 +54,7 @@ export interface ExternalEffectBroker {
     lease: { workerId: string; workerGeneration?: number; token: string; fencingEpoch: number };
     actor: string;
     timeoutMs?: number;
+    workloadBinding?: WorkloadBinding;
   }): Promise<{ effectId: string; replayed: boolean; response?: Record<string, unknown> }>;
 }
 
@@ -59,11 +66,17 @@ export interface ToolHandler {
 export class ToolStepExecutor implements StepExecutor {
   private readonly toolRegistry: ToolRegistry;
   private readonly effectBroker?: ExternalEffectBroker;
+  private readonly capabilityIssuer?: CapabilityTokenIssuer;
 
-  constructor(toolRegistry?: ToolRegistry, effectBroker?: ExternalEffectBroker) {
+  constructor(
+    toolRegistry?: ToolRegistry,
+    effectBroker?: ExternalEffectBroker,
+    capabilityIssuer?: CapabilityTokenIssuer,
+  ) {
     // If no registry provided, use an empty one — tools must be registered
     this.toolRegistry = toolRegistry ?? { get: () => null };
     this.effectBroker = effectBroker;
+    this.capabilityIssuer = capabilityIssuer;
   }
 
   async execute(
@@ -81,11 +94,44 @@ export class ToolStepExecutor implements StepExecutor {
 
     if (input.hasExternalEffects) {
       if (!this.effectBroker) throw new WorkerExecutionError('External tool execution requires an Effect Broker', { code: 'EFFECT_BROKER_UNAVAILABLE', retryable: false });
-      if (!step.lease || !input.effectId || !input.idempotencyKey || !input.capabilityToken) {
-        throw new WorkerExecutionError('External tool execution requires effectId, idempotencyKey, capabilityToken, and a live step lease', { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false });
+      if (!step.lease || !input.effectId || !input.idempotencyKey) {
+        throw new WorkerExecutionError('External tool execution requires effectId, idempotencyKey, and a live step lease', { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false });
+      }
+      const request = input.args ?? {};
+      let capabilityToken = input.capabilityToken;
+      const production =
+        process.env.NODE_ENV === 'production' ||
+        process.env.COMMANDER_PROFILE === 'enterprise' ||
+        process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING === '1';
+      let workloadBinding = getStepWorkloadBinding();
+      if (this.capabilityIssuer) {
+        workloadBinding = requireStepWorkloadBinding();
+        capabilityToken = mintStepCapabilityToken({
+          issuer: this.capabilityIssuer,
+          effectType: input.toolName,
+          request,
+        });
+      } else if (production) {
+        throw new WorkerExecutionError(
+          'External tool execution requires CapabilityTokenIssuer for step-bound mint in production',
+          { code: 'EFFECT_CAPABILITY_ISSUER_REQUIRED', retryable: false },
+        );
+      }
+      if (!capabilityToken) {
+        throw new WorkerExecutionError('External tool execution requires capabilityToken or capabilityIssuer', { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false });
       }
       try {
-        const result = await this.effectBroker.execute({ effectId: input.effectId, token: input.capabilityToken, type: input.toolName, request: input.args ?? {}, idempotencyKey: input.idempotencyKey, lease: step.lease, actor: context.worker.id, timeoutMs: input.timeoutMs });
+        const result = await this.effectBroker.execute({
+          effectId: input.effectId,
+          token: capabilityToken,
+          type: input.toolName,
+          request,
+          idempotencyKey: input.idempotencyKey,
+          lease: step.lease,
+          actor: context.worker.id,
+          timeoutMs: input.timeoutMs,
+          workloadBinding,
+        });
         return { result: result.response, effectId: result.effectId, replayed: result.replayed, toolName: input.toolName };
       } catch (error) {
         if (error instanceof WorkerExecutionError) throw error;
