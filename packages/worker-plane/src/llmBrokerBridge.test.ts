@@ -128,6 +128,38 @@ describe('llmBrokerBridge (WS2 §1)', () => {
     );
   });
 
+  it('does not confuse colon-bearing tenantIds in registry keys', async () => {
+    const { broker, issuer } = makeBroker();
+    const wrapped = wrapProviderWithEffectBroker(mockProvider('openai'), broker);
+    const authColon = createLlmEffectAuth({
+      tenantId: 'acme:prod',
+      runId: 'r1',
+      stepId: 's1',
+      actor: 'worker-1',
+      lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
+      issuer,
+    });
+    const authPlain = createLlmEffectAuth({
+      tenantId: 'acme',
+      runId: 'r2',
+      stepId: 's2',
+      actor: 'worker-1',
+      lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
+      issuer,
+    });
+    const [r1, r2] = await Promise.all([
+      runWithLlmEffectAuth(authColon, () =>
+        wrapped.call({ model: 'gpt', messages: [{ role: 'user', content: 'colon-tenant' }] }),
+      ),
+      runWithLlmEffectAuth(authPlain, () =>
+        wrapped.call({ model: 'gpt', messages: [{ role: 'user', content: 'plain-tenant' }] }),
+      ),
+    ]);
+    assert.match(String(r1.content), /colon-tenant/);
+    assert.match(String(r2.content), /plain-tenant/);
+    assert.equal(__testLlmInvokeRegistrySize(), 0);
+  });
+
   it('rejects tenant B dispatch for tenant A registry entry (LLM_TENANT_MISMATCH)', async () => {
     const { broker, issuer } = makeBroker({
       executor: {
