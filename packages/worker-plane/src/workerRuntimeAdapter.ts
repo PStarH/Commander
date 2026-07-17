@@ -9,6 +9,7 @@ import {
   type LlmEffectAuth,
 } from './llmBrokerBridge.js';
 import { assertEffectBrokerForProduction } from './effectGate.js';
+import { getStepWorkloadBinding } from './stepWorkloadIdentity.js';
 
 export { KernelStepExecutor } from '@commander/core';
 // WS7: SandboxManager is re-exported so sandboxReadiness can consume it via
@@ -112,13 +113,15 @@ export function createAgentStepExecutor(options: AgentStepExecutorOptions = {}):
   // Inject call-time mint auth for the duration of each agent step.
   return {
     async execute(step: ClaimedStep, context) {
+      const stepBinding = getStepWorkloadBinding();
       const auth = createLlmEffectAuth({
-        tenantId: step.tenantId,
+        tenantId: stepBinding?.tenantId ?? step.tenantId,
         runId: step.runId,
         stepId: step.id,
         actor: context.worker.id,
         lease: toLlmBrokerLease(step.lease),
         issuer,
+        workloadId: stepBinding?.workloadId,
       });
       return runWithLlmEffectAuth(auth, () => inner.execute(step, context));
     },

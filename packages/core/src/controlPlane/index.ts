@@ -18,16 +18,21 @@ export type { WorkloadIdentity } from '@commander/contracts';
 export interface ControlPlaneConfig {
   defaultScopes?: string[];
   tokenTtlSeconds?: number;
+  /** TTL for step-scoped workload identities (default 300s). */
+  stepTokenTtlSeconds?: number;
 }
 
 export class ControlPlane {
   private readonly defaultScopes: string[];
   private readonly tokenTtlSeconds: number;
+  private readonly stepTokenTtlSeconds: number;
   private readonly identities = new Map<string, WorkloadIdentity>();
+  private readonly identitiesByToken = new Map<string, WorkloadIdentity>();
 
   constructor(config: ControlPlaneConfig = {}) {
     this.defaultScopes = config.defaultScopes ?? ['agent.execute', 'tool.invoke'];
     this.tokenTtlSeconds = config.tokenTtlSeconds ?? 3600;
+    this.stepTokenTtlSeconds = config.stepTokenTtlSeconds ?? 300;
   }
 
   /** Issue a workload identity for an agent run. */
@@ -37,37 +42,99 @@ export class ControlPlane {
     scopes?: string[];
     workloadId?: string;
   }): WorkloadIdentity {
-    const now = Date.now();
-    const workloadId = input.workloadId ?? `wl_${randomUUID()}`;
-    const token = createHash('sha256')
-      .update(`${workloadId}:${input.tenantId}:${now}:${randomUUID()}`)
-      .digest('hex');
-    const identity: WorkloadIdentity = {
-      workloadId,
+    return this.storeIdentity({
       tenantId: input.tenantId,
       userId: input.userId,
-      scopes: input.scopes ?? this.defaultScopes,
-      issuedAt: new Date(now).toISOString(),
-      expiresAt: new Date(now + this.tokenTtlSeconds * 1000).toISOString(),
-      token,
-    };
-    this.identities.set(workloadId, identity);
-    this.audit('identity.issued', {
-      workloadId,
-      tenantId: input.tenantId,
-      scopes: identity.scopes,
+      scopes: input.scopes,
+      workloadId: input.workloadId,
+      ttlSeconds: this.tokenTtlSeconds,
     });
-    return identity;
+  }
+
+  /** Issue a short-lived identity bound to a claimed kernel step. */
+  issueStepIdentity(input: {
+    tenantId: string;
+    runId: string;
+    stepId: string;
+    userId?: string;
+    scopes?: string[];
+    workloadId?: string;
+  }): WorkloadIdentity {
+    return this.storeIdentity({
+      tenantId: input.tenantId,
+      runId: input.runId,
+      stepId: input.stepId,
+      userId: input.userId,
+      scopes: input.scopes,
+      workloadId: input.workloadId ?? `wl_${input.runId}_${input.stepId}_${randomUUID().slice(0, 8)}`,
+      ttlSeconds: this.stepTokenTtlSeconds,
+    });
   }
 
   getIdentity(workloadId: string): WorkloadIdentity | undefined {
     const id = this.identities.get(workloadId);
     if (!id) return undefined;
-    if (Date.parse(id.expiresAt) < Date.now()) {
-      this.identities.delete(workloadId);
+    if (this.isExpired(id)) {
+      this.dropIdentity(id);
       return undefined;
     }
     return id;
+  }
+
+  verifyIdentityByToken(token: string): WorkloadIdentity | undefined {
+    const id = this.identitiesByToken.get(token);
+    if (!id) return undefined;
+    if (this.isExpired(id)) {
+      this.dropIdentity(id);
+      return undefined;
+    }
+    return id;
+  }
+
+  private storeIdentity(input: {
+    tenantId: string;
+    runId?: string;
+    stepId?: string;
+    userId?: string;
+    scopes?: string[];
+    workloadId?: string;
+    ttlSeconds: number;
+  }): WorkloadIdentity {
+    const now = Date.now();
+    const workloadId = input.workloadId ?? `wl_${randomUUID()}`;
+    const token = createHash('sha256')
+      .update(`${workloadId}:${input.tenantId}:${input.runId ?? ''}:${input.stepId ?? ''}:${now}:${randomUUID()}`)
+      .digest('hex');
+    const identity: WorkloadIdentity = {
+      workloadId,
+      tenantId: input.tenantId,
+      runId: input.runId,
+      stepId: input.stepId,
+      userId: input.userId,
+      scopes: input.scopes ?? this.defaultScopes,
+      issuedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + input.ttlSeconds * 1000).toISOString(),
+      token,
+    };
+    this.identities.set(workloadId, identity);
+    this.identitiesByToken.set(token, identity);
+    this.audit('identity.issued', {
+      workloadId,
+      tenantId: input.tenantId,
+      runId: input.runId,
+      stepId: input.stepId,
+      scopes: identity.scopes,
+    });
+    return identity;
+  }
+
+  private isExpired(id: WorkloadIdentity): boolean {
+    return Date.parse(id.expiresAt) <= Date.now();
+  }
+
+  private dropIdentity(id: WorkloadIdentity): void {
+    this.identities.delete(id.workloadId);
+    this.identitiesByToken.delete(id.token);
   }
 
   /** Resolve tenant config via existing tenant provider. */
