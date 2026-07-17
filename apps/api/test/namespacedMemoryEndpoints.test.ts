@@ -54,19 +54,28 @@ describe('namespaced memory audit via queryAudit (WS6)', () => {
     const write = await fetch(`${baseUrl}/api/namespaced-memory/ns-a/write`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ key: 'k1', value: 'v1', projectId: 'p1' }),
+      body: JSON.stringify({ key: 'k1', value: 'v1', projectId: 'default' }),
     });
     assert.equal(write.status, 200);
 
-    const res = await fetch(`${baseUrl}/api/namespaced-memory/ns-a/audit?projectId=p1`);
+    const res = await fetch(`${baseUrl}/api/namespaced-memory/ns-a/audit?projectId=default`);
     assert.equal(res.status, 200);
     const body = (await res.json()) as {
       source: string;
       count: number;
-      entries: unknown[];
+      entries: Array<{ action?: string; success?: boolean }>;
     };
-    assert.ok(body.source === 'store' || body.source === 'api-local');
+    assert.equal(body.source, 'store');
     assert.ok(body.count >= 1);
-    assert.ok(Array.isArray(body.entries));
+    assert.ok(
+      body.entries.some((e) => e.action === 'store' && e.success === true),
+      'expected durable store audit success entry',
+    );
+  });
+
+  it('non-admin cannot override projectId for audit', async () => {
+    currentRole = 'developer';
+    const res = await fetch(`${baseUrl}/api/namespaced-memory/ns-a/audit?projectId=other`);
+    assert.equal(res.status, 403);
   });
 });
