@@ -40,6 +40,65 @@ describe('reclaim daemon', () => {
     assert.equal(daemon.isHealthy(), false);
   });
 
+  it('does not treat a pre-start tick as healthy after start until a new tick succeeds', async () => {
+    const repository = new InMemoryKernelRepository();
+    const daemon = new ReclaimDaemon(repository, { batchSize: 10, pollIntervalMs: 60_000 });
+    await daemon.tick();
+    assert.equal(daemon.isHealthy(), false);
+    daemon.start();
+    // start() clears lastOkAt; readiness must wait for the post-start tick.
+    assert.equal(daemon.isHealthy(), false);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(daemon.isHealthy(), true);
+    await daemon.stop();
+  });
+
+  it('ignores an in-flight pre-start tick when stamping health after start', async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let calls = 0;
+    const repository = {
+      reclaimExpiredLeases: async () => { calls += 1; await blocked; return []; },
+    } as unknown as InMemoryKernelRepository;
+    const daemon = new ReclaimDaemon(repository, { pollIntervalMs: 60_000 });
+    const pending = daemon.tick();
+    await Promise.resolve();
+    daemon.start();
+    assert.equal(daemon.isHealthy(), false);
+    release();
+    await pending;
+    assert.equal(daemon.isHealthy(), false);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(daemon.isHealthy(), true);
+    assert.equal(calls, 2);
+    await daemon.stop();
+  });
+
+  it('overlapping stop then start does not wipe a fresh health stamp', async () => {
+    let releaseFirstTick!: () => void;
+    const firstTickBlocked = new Promise<void>((resolve) => { releaseFirstTick = resolve; });
+    let calls = 0;
+    const repository = {
+      reclaimExpiredLeases: async () => {
+        calls += 1;
+        if (calls === 1) await firstTickBlocked;
+        return [];
+      },
+    } as unknown as InMemoryKernelRepository;
+    const daemon = new ReclaimDaemon(repository, { pollIntervalMs: 60_000 });
+    daemon.start();
+    await Promise.resolve();
+    assert.equal(daemon.isHealthy(), false);
+
+    const stopping = daemon.stop();
+    daemon.start();
+    releaseFirstTick();
+    await stopping;
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(daemon.isHealthy(), true);
+    await daemon.stop();
+  });
+
   it('does not overlap ticks', async () => {
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => { release = resolve; });
