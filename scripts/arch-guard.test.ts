@@ -12,10 +12,12 @@ interface FixturePackage {
   name: string;
   deps?: Record<string, string>;
   source?: string;
+  sourcePath?: string;
 }
 
 interface FixtureOptions {
   packages: Record<string, FixturePackage>;
+  rootFiles?: Record<string, string>;
 }
 
 function fixture(options: FixtureOptions): string {
@@ -32,7 +34,11 @@ function fixture(options: FixtureOptions): string {
           dependencies: pkg.deps ?? {},
         }),
       );
-      writeFileSync(join(packageDir, 'src', 'index.ts'), pkg.source ?? 'export {}\n');
+      const sourcePath = pkg.sourcePath ?? 'index.ts';
+      writeFileSync(join(packageDir, 'src', sourcePath), pkg.source ?? 'export {}\n');
+    }
+    for (const [file, contents] of Object.entries(options.rootFiles ?? {})) {
+      writeFileSync(join(root, file), contents);
     }
     return root;
   } catch (error) {
@@ -74,6 +80,76 @@ test('rejects a new orchestrator package', () => {
     },
   });
   assert.throws(() => runGuard(root), /forbidden package/i);
+});
+
+test('rejects a reintroduced orchestration package', () => {
+  const root = fixture({
+    packages: {
+      contracts: { name: '@commander/contracts' },
+      orchestration: { name: '@commander/orchestration' },
+    },
+  });
+  assert.throws(() => runGuard(root), /forbidden package/i);
+});
+
+test('rejects a reintroduced security package role', () => {
+  const root = fixture({
+    packages: {
+      contracts: { name: '@commander/contracts' },
+      security: { name: '@commander/security' },
+    },
+  });
+  assert.throws(() => runGuard(root), /forbidden package/i);
+});
+
+test('rejects imports of deleted control-plane package', () => {
+  const root = fixture({
+    packages: {
+      contracts: { name: '@commander/contracts' },
+      kernel: {
+        name: '@commander/kernel',
+        deps: { '@commander/contracts': 'workspace:*' },
+        source: "import '@commander/control-plane';\n",
+      },
+    },
+  });
+  assert.throws(() => runGuard(root), /deleted package/i);
+});
+
+test('rejects root package.json references to deleted packages', () => {
+  const root = fixture({
+    packages: {
+      contracts: { name: '@commander/contracts' },
+    },
+    rootFiles: {
+      'package.json': JSON.stringify({
+        name: 'commander-monorepo',
+        dependencies: {
+          '@commander/orchestration': 'workspace:*',
+        },
+      }),
+    },
+  });
+  assert.throws(() => runGuard(root), /deleted package/i);
+});
+
+test('rejects worker-plane core imports outside configured bridge files', () => {
+  const root = fixture({
+    packages: {
+      contracts: { name: '@commander/contracts' },
+      core: { name: '@commander/core', deps: { '@commander/contracts': 'workspace:*' } },
+      'worker-plane': {
+        name: '@commander/worker-plane',
+        deps: {
+          '@commander/contracts': 'workspace:*',
+          '@commander/core': 'workspace:*',
+        },
+        sourcePath: 'rogueBridge.ts',
+        source: "import '@commander/core';\n",
+      },
+    },
+  });
+  assert.throws(() => runGuard(root), /illegal source dependency/i);
 });
 
 test('rejects a reintroduced control-plane package', () => {
