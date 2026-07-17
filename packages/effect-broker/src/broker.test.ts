@@ -115,6 +115,7 @@ describe('EffectBroker', () => {
   it('fail-closes incomplete idempotent replays (ADMITTED must not return as success)', async () => {
     const tokens = makeTokens();
     let invoked = false;
+    let parkedReason = '';
     const broker = new EffectBroker(
       tokens,
       { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
@@ -125,6 +126,10 @@ describe('EffectBroker', () => {
           effect: { id: 'effect', state: 'ADMITTED' },
         }),
         completeEffect: async () => ({}),
+        markEffectCompletionUnknown: async (input) => {
+          parkedReason = input.reason;
+          return { id: input.effectId, state: 'COMPLETION_UNKNOWN' };
+        },
       },
       { execute: async () => { invoked = true; return { ok: true }; } },
       { append: async () => {} },
@@ -139,9 +144,46 @@ describe('EffectBroker', () => {
         lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
         actor: 'w',
       }),
-      (error: unknown) => error instanceof EffectBrokerError && error.code === 'EFFECT_IN_FLIGHT',
+      (error: unknown) => error instanceof EffectBrokerError && error.code === 'COMPLETION_UNKNOWN',
     );
+    assert.equal(parkedReason, 'incomplete_idempotent_replay');
     assert.equal(invoked, false);
+  });
+
+  it('parks ADMITTED effects when the executor throws so retries do not spin in-flight', async () => {
+    const tokens = makeTokens();
+    let parkedReason = '';
+    const broker = new EffectBroker(
+      tokens,
+      { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+      {
+        admitEffect: async () => ({
+          admitted: true,
+          replayed: false,
+          effect: { id: 'effect', state: 'ADMITTED' },
+        }),
+        completeEffect: async () => ({}),
+        markEffectCompletionUnknown: async (input) => {
+          parkedReason = input.reason;
+          return { id: input.effectId, state: 'COMPLETION_UNKNOWN' };
+        },
+      },
+      { execute: async () => { throw new Error('connector timeout'); } },
+      { append: async () => {} },
+    );
+    await assert.rejects(
+      broker.execute({
+        effectId: 'effect',
+        token: tokens.issue(grant),
+        type: 'crm.write',
+        request: {},
+        idempotencyKey: 'idem',
+        lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+        actor: 'w',
+      }),
+      /connector timeout/,
+    );
+    assert.equal(parkedReason, 'execute_admitted_failed');
   });
 
   it('returns cached response only for COMPLETED idempotent replays', async () => {
@@ -485,5 +527,20 @@ describe('executeAdmitted worker affinity (C-α)', () => {
     assert.equal(admission.admitted, true);
     await broker.executeAdmitted({ effectId: 'eff-no-local' });
     assert.equal(invoked, true);
+  });
+
+  it('refuses to construct without localWorkerId in production', () => {
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      assert.throws(
+        () => makeAffinityBroker(async () => ({}), {}),
+        (error: unknown) =>
+          error instanceof EffectBrokerError && error.code === 'WORKER_AFFINITY_REQUIRED_IN_PROD',
+      );
+    } finally {
+      if (prev === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prev;
+    }
   });
 });

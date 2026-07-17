@@ -1,4 +1,4 @@
-import { describe, it, before, after } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import express, { type Application } from 'express';
 import type { AddressInfo } from 'node:net';
@@ -13,6 +13,16 @@ interface TestServer {
   close: () => Promise<void>;
 }
 
+const A2A_AUTH = 'test-a2a-auth-token-16';
+
+function a2aHeaders(tenantId?: string, extra: Record<string, string> = {}): Record<string, string> {
+  return {
+    Authorization: `Bearer ${A2A_AUTH}`,
+    ...(tenantId ? { 'X-Tenant-ID': tenantId } : {}),
+    ...extra,
+  };
+}
+
 async function startServer(): Promise<TestServer> {
   const app: Application = express();
   app.use(express.json());
@@ -21,7 +31,12 @@ async function startServer(): Promise<TestServer> {
   const taskManager = new TaskManager();
   const artifactManager = new ArtifactManager();
   const cardRegistry = new AgentCardRegistry();
-  app.use('/a2a', createA2ARouter(taskManager, artifactManager, cardRegistry));
+  app.use(
+    '/a2a',
+    createA2ARouter(taskManager, artifactManager, cardRegistry, {
+      authToken: A2A_AUTH,
+    }),
+  );
 
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.on('listening', resolve));
@@ -43,10 +58,7 @@ async function createTask(
 ): Promise<Task> {
   const res = await fetch(`${baseUrl}/a2a/tasks`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Tenant-ID': tenantId,
-    },
+    headers: a2aHeaders(tenantId, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({ clientId: 'client-1', description }),
   });
   assert.equal(res.status, 201);
@@ -61,14 +73,14 @@ describe('A2A REST tenant isolation', () => {
       assert.equal(task.tenantId, 'tenant-a');
 
       const resB = await fetch(`${server.baseUrl}/a2a/tasks/${task.id}`, {
-        headers: { 'X-Tenant-ID': 'tenant-b' },
+        headers: a2aHeaders('tenant-b'),
       });
       assert.equal(resB.status, 403);
       const bodyB = (await resB.json()) as { error: string };
       assert.equal(bodyB.error, 'Forbidden');
 
       const resA = await fetch(`${server.baseUrl}/a2a/tasks/${task.id}`, {
-        headers: { 'X-Tenant-ID': 'tenant-a' },
+        headers: a2aHeaders('tenant-a'),
       });
       assert.equal(resA.status, 200);
       const bodyA = (await resA.json()) as Task;
@@ -87,7 +99,7 @@ describe('A2A REST tenant isolation', () => {
       await createTask(server.baseUrl, 'tenant-b', 'task-b1');
 
       const resA = await fetch(`${server.baseUrl}/a2a/tasks`, {
-        headers: { 'X-Tenant-ID': 'tenant-a' },
+        headers: a2aHeaders('tenant-a'),
       });
       assert.equal(resA.status, 200);
       const bodyA = (await resA.json()) as { tasks: Task[]; count: number };
@@ -95,7 +107,7 @@ describe('A2A REST tenant isolation', () => {
       assert.ok(bodyA.tasks.every((t) => t.tenantId === 'tenant-a'));
 
       const resB = await fetch(`${server.baseUrl}/a2a/tasks`, {
-        headers: { 'X-Tenant-ID': 'tenant-b' },
+        headers: a2aHeaders('tenant-b'),
       });
       assert.equal(resB.status, 200);
       const bodyB = (await resB.json()) as { tasks: Task[]; count: number };
@@ -113,7 +125,7 @@ describe('A2A REST tenant isolation', () => {
 
       const resB = await fetch(`${server.baseUrl}/a2a/tasks/${task.id}/cancel`, {
         method: 'POST',
-        headers: { 'X-Tenant-ID': 'tenant-b' },
+        headers: a2aHeaders('tenant-b'),
       });
       assert.equal(resB.status, 403);
       const bodyB = (await resB.json()) as { error: string };
@@ -121,7 +133,7 @@ describe('A2A REST tenant isolation', () => {
 
       const resA = await fetch(`${server.baseUrl}/a2a/tasks/${task.id}/cancel`, {
         method: 'POST',
-        headers: { 'X-Tenant-ID': 'tenant-a' },
+        headers: a2aHeaders('tenant-a'),
       });
       assert.equal(resA.status, 200);
       const bodyA = (await resA.json()) as Task;
@@ -136,14 +148,16 @@ describe('A2A REST tenant isolation', () => {
     try {
       const res = await fetch(`${server.baseUrl}/a2a/tasks`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: a2aHeaders(undefined, { 'Content-Type': 'application/json' }),
         body: JSON.stringify({ clientId: 'client-default', description: 'default task' }),
       });
       assert.equal(res.status, 201);
       const task = (await res.json()) as Task;
       assert.equal(task.tenantId, '__default__');
 
-      const resGet = await fetch(`${server.baseUrl}/a2a/tasks/${task.id}`);
+      const resGet = await fetch(`${server.baseUrl}/a2a/tasks/${task.id}`, {
+        headers: a2aHeaders(),
+      });
       assert.equal(resGet.status, 200);
       const body = (await resGet.json()) as Task;
       assert.equal(body.tenantId, '__default__');

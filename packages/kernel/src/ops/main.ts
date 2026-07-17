@@ -31,7 +31,7 @@ export async function main(): Promise<void> {
   const compensation = new CompensationConsumerDaemon({
     intervalMs: positiveInteger('COMMANDER_COMPENSATION_INTERVAL_MS', 5_000),
     probe: async () => {
-      await repository.claimOutboxByTopic('commander.compensation', 0);
+      await repository.claimOutboxByTopic('commander.kernel.compensation.requested', 0);
       await repository.sweepOutboxDlq(new Date(), 50);
     },
   });

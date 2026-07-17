@@ -355,10 +355,16 @@ export class EffectBroker {
     options: EffectBrokerOptions = {},
   ) {
     const production = process.env.NODE_ENV === 'production';
+    const enterprise = process.env.COMMANDER_PROFILE === 'enterprise';
     const requireRequestBinding = options.requireRequestBinding ?? true;
     // WS2 §4 runtime gate: production must not disable request binding.
     if (production && !requireRequestBinding) {
       throw new EffectBrokerError('REQUEST_BINDING_DISABLED_IN_PROD');
+    }
+    // Production/enterprise workers must pin affinity — unset localWorkerId
+    // silently skips fencing and allows cross-worker execute of admitted effects.
+    if ((production || enterprise) && !options.localWorkerId) {
+      throw new EffectBrokerError('WORKER_AFFINITY_REQUIRED_IN_PROD');
     }
     this.options = { audience: options.audience ?? 'commander.effect-broker', requireRequestBinding, approval: options.approval, quotaLimits: options.quotaLimits, localWorkerId: options.localWorkerId, localWorkerGeneration: options.localWorkerGeneration };
     this.admissionStore = new InMemoryAdmissionStore();
@@ -474,10 +480,13 @@ export class EffectBroker {
     if (!admission) throw new EffectBrokerError('ADMISSION_NOT_FOUND', { effectId: input.effectId });
     // Affinity must run inside try/finally so fail-closed consume clears the
     // process-local admission (grant/request) instead of leaking forever.
+    let finished = false;
+    let parked = false;
     try {
       this.assertWorkerAffinity(admission);
       if (admission.replayed) {
         if (admission.effectState === 'COMPLETED') {
+          finished = true;
           return { effectId: admission.kernelEffectId, replayed: true, response: admission.cachedResponse };
         }
         if (admission.effectState === 'COMPLETION_UNKNOWN') {
@@ -492,10 +501,12 @@ export class EffectBroker {
             state: admission.effectState,
           });
         }
-        // ADMITTED (or any other non-terminal): crash window / in-flight — do not invent success.
-        throw new EffectBrokerError('EFFECT_IN_FLIGHT', {
+        // ADMITTED replay: park on the ledger so step retries cannot spin on EFFECT_IN_FLIGHT forever.
+        await this.parkUnfinishedAdmission(admission, 'incomplete_idempotent_replay');
+        parked = true;
+        throw new EffectBrokerError('COMPLETION_UNKNOWN', {
           effectId: admission.kernelEffectId,
-          state: admission.effectState,
+          state: 'COMPLETION_UNKNOWN',
         });
       }
       const controller = new AbortController();
@@ -516,15 +527,35 @@ export class EffectBroker {
         });
         const committed = await this.kernel.completeEffect(admission.kernelEffectId, admission.grant.tenantId, admission.lease, response, admission.actor);
         if (!committed) {
-          await this.kernel.markEffectCompletionUnknown?.({ effectId: admission.kernelEffectId, tenantId: admission.grant.tenantId, reason: 'Kernel rejected completion after external executor returned', actor: admission.actor });
+          await this.parkUnfinishedAdmission(admission, 'Kernel rejected completion after external executor returned');
+          parked = true;
           throw new EffectBrokerError('COMPLETION_UNCONFIRMED');
         }
         await this.audit.append({ type: 'effect.completed', severity: 'low', tenantId: admission.grant.tenantId, runId: admission.grant.runId, stepId: admission.grant.stepId, at: new Date().toISOString(), details: { effectId: admission.kernelEffectId, policyDecisionId: admission.decision.decisionId } });
+        finished = true;
         return { effectId: admission.kernelEffectId, replayed: false, response };
       } finally { clearTimeout(timer); }
+    } catch (error) {
+      if (!finished && !parked && admission.effectState === 'ADMITTED') {
+        await this.parkUnfinishedAdmission(
+          admission,
+          error instanceof EffectBrokerError ? error.code : 'execute_admitted_failed',
+        );
+      }
+      throw error;
     } finally {
       this.admissionStore.delete(input.effectId);
     }
+  }
+
+  /** Park an ADMITTED ledger row so idempotent retries fail closed as COMPLETION_UNKNOWN, not in-flight spin. */
+  private async parkUnfinishedAdmission(admission: AdmittedEffect, reason: string): Promise<void> {
+    await this.kernel.markEffectCompletionUnknown?.({
+      effectId: admission.kernelEffectId,
+      tenantId: admission.grant.tenantId,
+      reason,
+      actor: admission.actor,
+    });
   }
 
   /**

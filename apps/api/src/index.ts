@@ -14,6 +14,8 @@ import {
   type MemoryStore,
   createMemoryStore,
   resolveMemoryStoreType,
+  installOutboundNetworkPolicy,
+  resetOutboundNetworkPolicy,
 } from '@commander/core';
 import express from 'express';
 import { createWarRoomStore, apiStore } from './store';
@@ -987,6 +989,18 @@ async function startServer(): Promise<void> {
   // Start the outgoing webhook dispatcher so registered webhooks receive
   // system events as soon as the server is ready.
   getWebhookDispatcher().start();
+
+  // Egress firewall + SSRF defense for all process-wide fetch (MCP HTTP, webhooks, …).
+  try {
+    resetOutboundNetworkPolicy();
+    installOutboundNetworkPolicy();
+    process.stdout.write('[startup] OutboundNetworkPolicy installed\n');
+  } catch (err) {
+    process.stderr.write(
+      `[startup] OutboundNetworkPolicy failed: ${(err as Error)?.message ?? String(err)}\n`,
+    );
+    if (process.env.NODE_ENV === 'production') throw err;
+  }
 
   // WS9: opt-in audit chain manifest + verify timer (COMMANDER_AUDIT_MANIFEST_DIR).
   if (process.env.COMMANDER_AUDIT_MANIFEST_DIR) {
