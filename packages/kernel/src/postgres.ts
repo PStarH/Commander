@@ -354,10 +354,10 @@ export class PostgresKernelRepository implements KernelRepository {
     return this.withTransaction(async (client) => {
       const result = await client.query<DbStep>(
         `UPDATE commander_steps SET lease_expires_at=$1, updated_at=now()
-         WHERE id=$2 AND state='RUNNING' AND lease_worker_id=$3 AND lease_worker_generation=$4 AND lease_token=$5 AND fencing_epoch=$6 AND lease_expires_at > now()
-           AND EXISTS (SELECT 1 FROM commander_workers w WHERE w.id=$3 AND w.generation=$4)
+         WHERE id=$2 AND tenant_id=$3 AND state='RUNNING' AND lease_worker_id=$4 AND lease_worker_generation=$5 AND lease_token=$6 AND fencing_epoch=$7 AND lease_expires_at > now()
+           AND EXISTS (SELECT 1 FROM commander_workers w WHERE w.id=$4 AND w.generation=$5)
          RETURNING *`,
-        [expiresAt, stepId, lease.workerId, lease.workerGeneration ?? -1, lease.token, lease.fencingEpoch]);
+        [expiresAt, stepId, tenantId, lease.workerId, lease.workerGeneration ?? -1, lease.token, lease.fencingEpoch]);
       return result.rows[0] ? fromStep(result.rows[0]) : null;
     }, [tenantId]);
   }
@@ -444,10 +444,10 @@ export class PostgresKernelRepository implements KernelRepository {
     return this.withTransaction(async (client) => {
       const result = await client.query<DbStep>(
         `UPDATE commander_steps SET state='SUCCEEDED', output=$1::jsonb, version=version+1, updated_at=now(), lease_worker_id=NULL, lease_token=NULL, lease_expires_at=NULL
-         WHERE id=$2 AND state='RUNNING' AND version=$3 AND lease_worker_id=$4 AND lease_worker_generation=$5 AND lease_token=$6 AND fencing_epoch=$7 AND lease_expires_at > now()
-           AND EXISTS (SELECT 1 FROM commander_workers w WHERE w.id=$4 AND w.generation=$5)
+         WHERE id=$2 AND tenant_id=$3 AND state='RUNNING' AND version=$4 AND lease_worker_id=$5 AND lease_worker_generation=$6 AND lease_token=$7 AND fencing_epoch=$8 AND lease_expires_at > now()
+           AND EXISTS (SELECT 1 FROM commander_workers w WHERE w.id=$5 AND w.generation=$6)
          RETURNING *`,
-        [json(request.output), request.stepId, request.expectedVersion, request.lease.workerId, request.lease.workerGeneration ?? -1, request.lease.token, request.lease.fencingEpoch]);
+        [json(request.output), request.stepId, request.tenantId, request.expectedVersion, request.lease.workerId, request.lease.workerGeneration ?? -1, request.lease.token, request.lease.fencingEpoch]);
       if (!result.rows[0]) return null;
       const step = fromStep(result.rows[0]);
       assertStepTransition('RUNNING', step.state);
@@ -466,10 +466,10 @@ export class PostgresKernelRepository implements KernelRepository {
            error=$2::jsonb,
            scheduled_at=CASE WHEN $1::boolean AND attempt < max_attempts THEN $3 ELSE scheduled_at END,
            version=version+1, updated_at=now(), lease_worker_id=NULL, lease_token=NULL, lease_expires_at=NULL
-         WHERE id=$4 AND state='RUNNING' AND version=$5 AND lease_worker_id=$6 AND lease_worker_generation=$7 AND lease_token=$8 AND fencing_epoch=$9 AND lease_expires_at > now()
-           AND EXISTS (SELECT 1 FROM commander_workers w WHERE w.id=$6 AND w.generation=$7)
+         WHERE id=$4 AND tenant_id=$5 AND state='RUNNING' AND version=$6 AND lease_worker_id=$7 AND lease_worker_generation=$8 AND lease_token=$9 AND fencing_epoch=$10 AND lease_expires_at > now()
+           AND EXISTS (SELECT 1 FROM commander_workers w WHERE w.id=$7 AND w.generation=$8)
          RETURNING *`,
-        [request.error.retryable && Boolean(request.retryAt), json(request.error), request.retryAt?.toISOString() ?? null, request.stepId, request.expectedVersion, request.lease.workerId, request.lease.workerGeneration ?? -1, request.lease.token, request.lease.fencingEpoch]);
+        [request.error.retryable && Boolean(request.retryAt), json(request.error), request.retryAt?.toISOString() ?? null, request.stepId, request.tenantId, request.expectedVersion, request.lease.workerId, request.lease.workerGeneration ?? -1, request.lease.token, request.lease.fencingEpoch]);
       if (!result.rows[0]) return null;
       const step = fromStep(result.rows[0]);
       assertStepTransition('RUNNING', step.state);
@@ -692,11 +692,24 @@ export class PostgresKernelRepository implements KernelRepository {
 
   async admitEffect(request: AdmitEffectRequest): Promise<AdmitEffectResult> {
     return this.withTransaction(async (client) => {
-      const step = await client.query<DbStep>(
+      let step = await client.query<DbStep>(
         `SELECT * FROM commander_steps WHERE id=$1 AND run_id=$2 AND tenant_id=$3 AND state='RUNNING' AND lease_worker_id=$4 AND lease_worker_generation=$5 AND lease_token=$6 AND fencing_epoch=$7 AND lease_expires_at > now()
            AND EXISTS (SELECT 1 FROM commander_workers w WHERE w.id=$4 AND w.generation=$5)
          FOR UPDATE`,
         [request.stepId, request.runId, request.tenantId, request.lease.workerId, request.lease.workerGeneration ?? -1, request.lease.token, request.lease.fencingEpoch]);
+      if (!step.rows[0] && request.type.startsWith('compensate.')) {
+        // Compensation effects run after the forward step lease is gone; require COMPENSATING run.
+        const run = await client.query<{ state: string }>(
+          `SELECT state FROM commander_runs WHERE id=$1 AND tenant_id=$2 FOR UPDATE`,
+          [request.runId, request.tenantId],
+        );
+        if (run.rows[0]?.state === 'COMPENSATING') {
+          step = await client.query<DbStep>(
+            `SELECT * FROM commander_steps WHERE id=$1 AND run_id=$2 AND tenant_id=$3 FOR UPDATE`,
+            [request.stepId, request.runId, request.tenantId],
+          );
+        }
+      }
       if (!step.rows[0]) return { admitted: false, reason: 'LEASE_LOST' };
       const fingerprint = requestHash(request.request);
       const existing = await client.query<DbEffect>('SELECT * FROM commander_effects WHERE tenant_id=$1 AND idempotency_key=$2', [request.tenantId, request.idempotencyKey]);
@@ -719,7 +732,7 @@ export class PostgresKernelRepository implements KernelRepository {
 
   async completeEffect(effectId: string, tenantId: string, lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>, response: Record<string, unknown>, actor: string): Promise<KernelEffect | null> {
     return this.withTransaction(async (client) => {
-      const result = await client.query<DbEffect>(
+      let result = await client.query<DbEffect>(
         `UPDATE commander_effects e SET state='COMPLETED', response=$1::jsonb, completed_at=now()
          WHERE e.id=$2 AND e.tenant_id=$3 AND e.state='ADMITTED'
            AND EXISTS (SELECT 1 FROM commander_steps s WHERE s.id=e.step_id AND s.run_id=e.run_id AND s.tenant_id=e.tenant_id AND s.state='RUNNING' AND s.lease_worker_id=$4 AND s.lease_worker_generation=$5 AND s.lease_token=$6 AND s.fencing_epoch=$7 AND s.lease_expires_at > now())
@@ -727,6 +740,16 @@ export class PostgresKernelRepository implements KernelRepository {
          RETURNING e.*`,
         [json(response), effectId, tenantId, lease.workerId, lease.workerGeneration ?? -1, lease.token, lease.fencingEpoch],
       );
+      if (!result.rows[0]) {
+        // compensate.* may complete while the run is COMPENSATING and the step lease is gone.
+        result = await client.query<DbEffect>(
+          `UPDATE commander_effects e SET state='COMPLETED', response=$1::jsonb, completed_at=now()
+           WHERE e.id=$2 AND e.tenant_id=$3 AND e.state='ADMITTED' AND e.type LIKE 'compensate.%'
+             AND EXISTS (SELECT 1 FROM commander_runs r WHERE r.id=e.run_id AND r.tenant_id=e.tenant_id AND r.state='COMPENSATING')
+           RETURNING e.*`,
+          [json(response), effectId, tenantId],
+        );
+      }
       if (!result.rows[0]) return null;
       const effect = fromEffect(result.rows[0]);
       await this.appendEvent(client, { aggregateType: 'effect', aggregateId: effect.id, sequence: 2, type: 'effect.completed', tenantId, runId: effect.runId, stepId: effect.stepId, actor, payload: {} });
@@ -1172,7 +1195,7 @@ export class PostgresKernelRepository implements KernelRepository {
     const eventId = randomUUID();
     await client.query(`INSERT INTO commander_events (id,aggregate_type,aggregate_id,sequence,type,tenant_id,run_id,step_id,causation_id,correlation_id,actor,schema_version,payload)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'v2',$12::jsonb)`, [eventId, event.aggregateType, event.aggregateId, event.sequence, event.type, event.tenantId, event.runId, event.stepId ?? null, event.causationId ?? null, event.correlationId ?? null, event.actor, json(event.payload)]);
-    await client.query(`INSERT INTO commander_outbox (id,event_id,tenant_id,topic,key,payload) VALUES ($1,$2,$3,$4,$5,$6::jsonb)`, [randomUUID(), eventId, event.tenantId, `commander.${event.type}`, outboxKey, json({ eventId, type: event.type, runId: event.runId, tenantId: event.tenantId, ...event.payload })]);
+    await client.query(`INSERT INTO commander_outbox (id,event_id,tenant_id,topic,key,payload) VALUES ($1,$2,$3,$4,$5,$6::jsonb)`, [randomUUID(), eventId, event.tenantId, `commander.${event.type}`, outboxKey, json({ ...event.payload, eventId, type: event.type, runId: event.runId, stepId: event.stepId ?? null, tenantId: event.tenantId })]);
   }
   private assertGraph(command: CreateKernelRun): void {
     const ids = new Set<string>();

@@ -447,6 +447,14 @@ export {
   verifyWithManifest,
 } from './security/auditChainIntegrity';
 
+// OutboundNetworkPolicy — egress firewall + SSRF defense (install once at process boot)
+export {
+  installOutboundNetworkPolicy,
+  uninstallOutboundNetworkPolicy,
+  resetOutboundNetworkPolicy,
+  getOutboundNetworkPolicy,
+} from './security/outboundNetworkPolicy';
+
 // AgentLineage — immutable parent→child agent relationship tracking
 export { AgentLineage, getAgentLineage, resetAgentLineage } from './security/agentLineage';
 export type { LineageNode, LineageSummary, LineageQuery } from './security/agentLineage';

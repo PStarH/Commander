@@ -30,6 +30,8 @@ export interface CompensationOutboxPort {
 
 export interface CompensationOutboxMessage {
   id: string;
+  /** Authoritative tenant from the outbox row — never trust payload.tenantId alone. */
+  tenantId: string;
   topic: string;
   key: string;
   payload: Record<string, unknown>;
@@ -87,7 +89,7 @@ export interface CompensationConsumeResult {
   replayed: number;
 }
 
-/** Payload shape expected on each `commander.compensation` outbox message. */
+/** Payload shape expected on each compensation outbox message. */
 interface CompensationPayload {
   tenantId?: string;
   runId?: string;
@@ -96,9 +98,50 @@ interface CompensationPayload {
   compensationAction?: string;
   compensationPayload?: Record<string, unknown>;
   idempotencyKey?: string;
+  /** Kernel reclaim shape: list of completed forward effect ids. */
+  effectIds?: string[];
+  fencingEpoch?: number;
+  type?: string;
 }
 
-const DEFAULT_TOPIC = 'commander.compensation';
+/** Topic emitted by reclaim when a run enters COMPENSATING (appendEvent). */
+export const KERNEL_COMPENSATION_TOPIC = 'commander.kernel.compensation.requested';
+/** Legacy / seed topic used by older tests and synthetic drains. */
+export const LEGACY_COMPENSATION_TOPIC = 'commander.compensation';
+const DEFAULT_TOPIC = KERNEL_COMPENSATION_TOPIC;
+
+/**
+ * Map kernel reclaim outbox payloads (effectIds + event envelope) onto the
+ * consumer's compensationAction shape. Explicit compensationAction wins.
+ */
+export function normalizeCompensationPayload(
+  raw: Record<string, unknown>,
+): CompensationPayload | null {
+  const base = raw as CompensationPayload;
+  if (base.compensationAction && base.tenantId && base.runId && base.stepId) {
+    return base;
+  }
+  const effectIds = Array.isArray(base.effectIds)
+    ? base.effectIds.filter((id): id is string => typeof id === 'string')
+    : [];
+  const isKernelRequest =
+    base.type === 'kernel.compensation.requested' || effectIds.length > 0;
+  if (!isKernelRequest || !base.tenantId || !base.runId || !base.stepId) {
+    return null;
+  }
+  return {
+    tenantId: base.tenantId,
+    runId: base.runId,
+    stepId: base.stepId,
+    compensationAction: 'compensate.rollback',
+    compensationPayload: {
+      effectIds,
+      fencingEpoch: base.fencingEpoch,
+      originalType: base.type,
+    },
+    idempotencyKey: base.idempotencyKey,
+  };
+}
 
 /**
  * Claim and execute one batch of compensation effects. Returns counts so a
@@ -124,11 +167,26 @@ export async function consumeCompensationBatch(
 
   for (const message of messages) {
     if (!message.claimToken) { failed++; continue; }
-    const payload = message.payload as CompensationPayload;
-    if (!payload.tenantId || !payload.runId || !payload.stepId || !payload.compensationAction) {
-      // Malformed compensation message — ack it so it doesn't loop forever;
-      // the audit gap is visible via the missing effect row.
-      await outbox.markOutboxPublished(message.id, message.claimToken);
+    const payload = normalizeCompensationPayload(message.payload);
+    if (!payload?.tenantId || !payload.runId || !payload.stepId || !payload.compensationAction) {
+      // Malformed — retry/DLQ (never silent-ack; audit must see the failure).
+      try {
+        await outbox.retryOutbox(message.id, message.claimToken, {
+          code: 'COMPENSATION_PAYLOAD_MALFORMED',
+          message: 'compensation outbox payload missing tenantId/runId/stepId/action',
+        });
+      } catch { /* claim may have expired */ }
+      failed++;
+      continue;
+    }
+    // Outbox row tenant_id is authoritative — never trust a spoofed payload.tenantId.
+    if (payload.tenantId !== message.tenantId) {
+      try {
+        await outbox.retryOutbox(message.id, message.claimToken, {
+          code: 'COMPENSATION_TENANT_MISMATCH',
+          message: 'compensation payload.tenantId diverged from outbox tenant_id',
+        });
+      } catch { /* claim may have expired */ }
       failed++;
       continue;
     }
@@ -138,7 +196,7 @@ export async function consumeCompensationBatch(
 
     try {
       const token = await tokenProvider({
-        tenantId: payload.tenantId,
+        tenantId: message.tenantId,
         runId: payload.runId,
         stepId: payload.stepId,
         action: payload.compensationAction,

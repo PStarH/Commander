@@ -22,6 +22,7 @@ import { ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
 import { getSupplyChainScanner } from '../security/supplyChainScanner';
+import { getOutboundNetworkPolicy } from '../security/outboundNetworkPolicy';
 
 function uuid(): string {
   return `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -286,7 +287,7 @@ export class StreamableHTTPClientTransport implements MCPTransport {
     const id = request.id ?? ++this.msgId;
     const body = JSON.stringify({ ...request, id, jsonrpc: '2.0' });
 
-    const res = await fetch(this.url, {
+    const res = await getOutboundNetworkPolicy().ssrfCheckedFetch(this.url, {
       method: 'POST',
       headers: this.headers,
       body,
