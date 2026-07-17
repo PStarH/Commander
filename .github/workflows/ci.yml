@@ -272,6 +272,14 @@ jobs:
         # here — spec §3 forbids that combination even as dead config.
         run: pnpm --filter @commander/core exec tsx --test tests/sandbox/boot-refuse.test.ts
 
+      - name: Kernel unit tests (compensation DLQ + WS2)
+        # L2-12: claimOutbox(+ByTopic) DLQ/max_attempts filter + poison→DLQ proofs.
+        run: pnpm --filter @commander/kernel test
+
+      - name: Effect-broker unit tests (approval binding ENFORCED)
+        # L2-11: exact request-hash / policy / audience binding proofs.
+        run: pnpm --filter @commander/effect-broker test
+
       - name: Readiness gate (strict)
         run: pnpm check:readiness
 

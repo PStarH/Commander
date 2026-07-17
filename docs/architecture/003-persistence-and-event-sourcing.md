@@ -10,7 +10,9 @@ Production deployments previously relied on SQLite, local WAL files, and in-proc
 
 ## Decision
 
-Production authority is a shared transactional PostgreSQL database. Object storage holds large payloads. Event sourcing provides auditability and recovery.
+**Target (Enterprise Gateway):** production authority is a shared transactional PostgreSQL database. Object storage holds large payloads. Event sourcing provides auditability and recovery.
+
+**Today:** `/v1` kernel uses Postgres when enabled; object-storage-as-payload-store and full event-sourced reconstruction are **not fully shipped**. Local CLI still uses SQLite/local WAL.
 
 ### Storage Responsibilities
 

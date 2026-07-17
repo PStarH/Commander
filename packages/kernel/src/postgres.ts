@@ -752,7 +752,7 @@ export class PostgresKernelRepository implements KernelRepository {
     return this.withTransaction(async (client) => {
       const token = randomUUID();
       const result = await client.query<{ id: string; event_id: string; tenant_id: string; topic: string; key: string; payload: Record<string, unknown>; attempts: number; available_at: Date | string; published_at: Date | string | null; created_at: Date | string }>(
-        `WITH candidate AS (SELECT id FROM commander_outbox WHERE published_at IS NULL AND moved_to_dlq_at IS NULL AND available_at <= $1 AND (claimed_at IS NULL OR claimed_at < $2) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT $3)
+        `WITH candidate AS (SELECT id FROM commander_outbox WHERE published_at IS NULL AND moved_to_dlq_at IS NULL AND attempts < max_attempts AND available_at <= $1 AND (claimed_at IS NULL OR claimed_at < $2) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT $3)
          UPDATE commander_outbox o SET claimed_at=$1, claim_token=$4, attempts=o.attempts+1 FROM candidate WHERE o.id=candidate.id RETURNING o.*`,
         [now.toISOString(), new Date(now.getTime() - 60_000).toISOString(), limit, token]);
       return result.rows.map((row) => ({ id: row.id, eventId: row.event_id, tenantId: row.tenant_id, topic: row.topic, key: row.key, payload: row.payload ?? {}, attempts: Number(row.attempts), availableAt: iso(row.available_at), publishedAt: row.published_at ? iso(row.published_at) : undefined, claimToken: token, createdAt: iso(row.created_at) }));
@@ -784,7 +784,7 @@ export class PostgresKernelRepository implements KernelRepository {
     return this.withTransaction(async (client) => {
       const token = randomUUID();
       const result = await client.query<{ id: string; event_id: string; tenant_id: string; topic: string; key: string; payload: Record<string, unknown>; attempts: number; available_at: Date | string; published_at: Date | string | null; created_at: Date | string }>(
-        `WITH candidate AS (SELECT id FROM commander_outbox WHERE topic=$1 AND published_at IS NULL AND available_at <= $2 AND (claimed_at IS NULL OR claimed_at < $3) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT $4)
+        `WITH candidate AS (SELECT id FROM commander_outbox WHERE topic=$1 AND published_at IS NULL AND moved_to_dlq_at IS NULL AND attempts < max_attempts AND available_at <= $2 AND (claimed_at IS NULL OR claimed_at < $3) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT $4)
          UPDATE commander_outbox o SET claimed_at=$2, claim_token=$5, attempts=o.attempts+1 FROM candidate WHERE o.id=candidate.id RETURNING o.*`,
         [topic, now.toISOString(), new Date(now.getTime() - 60_000).toISOString(), limit, token]);
       return result.rows.map((row) => ({ id: row.id, eventId: row.event_id, tenantId: row.tenant_id, topic: row.topic, key: row.key, payload: row.payload ?? {}, attempts: Number(row.attempts), availableAt: iso(row.available_at), publishedAt: row.published_at ? iso(row.published_at) : undefined, claimToken: token, createdAt: iso(row.created_at) }));
