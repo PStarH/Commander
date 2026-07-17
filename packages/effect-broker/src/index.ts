@@ -272,8 +272,10 @@ export interface EffectBrokerOptions {
   audience?: string;
   approval?: ApprovalInteractionPort;
   requireRequestBinding?: boolean;
-  /** WS2 §5: daily per-tenant quota ceiling enforced by admit() when the
-   *  kernel port exposes incrementQuota. Undefined = record usage only. */
+  /** WS2 §5: daily per-tenant quota ceiling. When set, admit() pre-checks
+   *  getQuota (if present) before kernel admission and only charges
+   *  incrementQuota after a successful *new* admit — never on LEASE_LOST
+   *  or idempotent COMPLETED replays. */
   quotaLimits?: { maxCountPerDay?: number };
 }
 
@@ -300,6 +302,8 @@ export interface AdmittedEffect {
   actor: string;
   kernelEffectId: string;
   replayed: boolean;
+  /** Kernel ledger state at admit time — replay cache-hit only when COMPLETED. */
+  effectState: string;
   cachedResponse?: Record<string, unknown>;
 }
 
@@ -382,21 +386,43 @@ export class EffectBroker {
       const allowed = await this.kernel.isActionAllowed(grant.tenantId, input.type);
       if (!allowed) return this.rejectAdmit(grant, 'ACTION_NOT_ALLOWLISTED', { type: input.type, decisionId: decision.decisionId });
     }
-    if (this.kernel.incrementQuota) {
-      const actionClass = input.type.split('.')[0] || input.type;
-      const usage = await this.kernel.incrementQuota({ tenantId: grant.tenantId, actionClass });
-      const maxCount = this.options.quotaLimits?.maxCountPerDay;
-      if (maxCount !== undefined && usage.countUsed > maxCount) {
-        return this.rejectAdmit(grant, 'QUOTA_EXCEEDED', { actionClass, countUsed: usage.countUsed, limit: maxCount });
+    const actionClass = input.type.split('.')[0] || input.type;
+    const maxCount = this.options.quotaLimits?.maxCountPerDay;
+    // Pre-check without burning quota: reject before admitEffect when already at ceiling.
+    if (maxCount !== undefined && this.kernel.getQuota) {
+      const current = await this.kernel.getQuota(grant.tenantId, actionClass);
+      if (current.countUsed >= maxCount) {
+        return this.rejectAdmit(grant, 'QUOTA_EXCEEDED', { actionClass, countUsed: current.countUsed, limit: maxCount });
       }
     }
     const admitted = await this.kernel.admitEffect({ id: input.effectId, runId: grant.runId, stepId: grant.stepId, tenantId: grant.tenantId, type: input.type, idempotencyKey: input.idempotencyKey, policyDecisionId: decision.decisionId, request: input.request, lease: input.lease, actor: input.actor });
     if (!admitted.admitted || !admitted.effect) return this.rejectAdmit(grant, 'EFFECT_ADMISSION_REJECTED', { reason: admitted.reason ?? 'unknown' });
+    // Charge only successful new admissions. LEASE_LOST / conflict never reach here;
+    // idempotent replays must not double-count.
+    if (this.kernel.incrementQuota && !admitted.replayed) {
+      const usage = await this.kernel.incrementQuota({ tenantId: grant.tenantId, actionClass });
+      if (maxCount !== undefined && usage.countUsed > maxCount) {
+        // Concurrent admits can race past getQuota; the effect is already on the ledger.
+        // Fail-closed: never hand out an admission handle for an over-quota effect, and
+        // park it so retries cannot treat ADMITTED as a silent success.
+        await this.kernel.markEffectCompletionUnknown?.({
+          effectId: admitted.effect.id,
+          tenantId: grant.tenantId,
+          reason: 'QUOTA_EXCEEDED after admission (concurrent race)',
+          actor: input.actor,
+        });
+        return this.rejectAdmit(grant, 'QUOTA_EXCEEDED', { actionClass, countUsed: usage.countUsed, limit: maxCount });
+      }
+    }
+    const effectState = admitted.effect.state;
+    // Idempotent replay is only a successful cache hit when the prior effect COMPLETED.
+    // ADMITTED / COMPLETION_UNKNOWN / FAILED must not return undefined as "success".
+    const completedReplay = !!admitted.replayed && effectState === 'COMPLETED';
     const result: AdmissionResult = {
       admitted: true,
       effectId: admitted.effect.id,
       replayed: !!admitted.replayed,
-      cachedResponse: admitted.replayed ? admitted.effect.response : undefined,
+      cachedResponse: completedReplay ? admitted.effect.response : undefined,
       decisionId: decision.decisionId,
       policySnapshotId: decision.policySnapshotId,
     };
@@ -410,15 +436,16 @@ export class EffectBroker {
       actor: input.actor,
       kernelEffectId: admitted.effect.id,
       replayed: !!admitted.replayed,
-      cachedResponse: admitted.replayed ? admitted.effect.response : undefined,
+      effectState,
+      cachedResponse: completedReplay ? admitted.effect.response : undefined,
     });
     return result;
   }
 
   /**
    * execute() — Phase 2 of the WS2 split. Consumes an admission handle and
-   * dispatches the effect to the executor. If the admission was replayed,
-   * returns the cached response without invoking the executor.
+   * dispatches the effect to the executor. Completed idempotent replays return
+   * the cached response; incomplete prior states fail closed.
    */
   async executeAdmitted(input: {
     effectId: string;
@@ -428,7 +455,26 @@ export class EffectBroker {
     if (!admission) throw new EffectBrokerError('ADMISSION_NOT_FOUND', { effectId: input.effectId });
     try {
       if (admission.replayed) {
-        return { effectId: admission.kernelEffectId, replayed: true, response: admission.cachedResponse };
+        if (admission.effectState === 'COMPLETED') {
+          return { effectId: admission.kernelEffectId, replayed: true, response: admission.cachedResponse };
+        }
+        if (admission.effectState === 'COMPLETION_UNKNOWN') {
+          throw new EffectBrokerError('COMPLETION_UNKNOWN', {
+            effectId: admission.kernelEffectId,
+            state: admission.effectState,
+          });
+        }
+        if (admission.effectState === 'FAILED') {
+          throw new EffectBrokerError('EFFECT_FAILED', {
+            effectId: admission.kernelEffectId,
+            state: admission.effectState,
+          });
+        }
+        // ADMITTED (or any other non-terminal): crash window / in-flight — do not invent success.
+        throw new EffectBrokerError('EFFECT_IN_FLIGHT', {
+          effectId: admission.kernelEffectId,
+          state: admission.effectState,
+        });
       }
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(new Error('Effect timeout')), input.timeoutMs ?? 30_000);

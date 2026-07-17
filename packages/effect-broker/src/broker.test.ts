@@ -111,6 +111,99 @@ describe('EffectBroker', () => {
     assert.equal(interactionId, 'interaction-1');
     assert.equal(invoked, false);
   });
+
+  it('fail-closes incomplete idempotent replays (ADMITTED must not return as success)', async () => {
+    const tokens = makeTokens();
+    let invoked = false;
+    const broker = new EffectBroker(
+      tokens,
+      { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+      {
+        admitEffect: async () => ({
+          admitted: true,
+          replayed: true,
+          effect: { id: 'effect', state: 'ADMITTED' },
+        }),
+        completeEffect: async () => ({}),
+      },
+      { execute: async () => { invoked = true; return { ok: true }; } },
+      { append: async () => {} },
+    );
+    await assert.rejects(
+      broker.execute({
+        effectId: 'effect',
+        token: tokens.issue(grant),
+        type: 'crm.write',
+        request: {},
+        idempotencyKey: 'idem',
+        lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+        actor: 'w',
+      }),
+      (error: unknown) => error instanceof EffectBrokerError && error.code === 'EFFECT_IN_FLIGHT',
+    );
+    assert.equal(invoked, false);
+  });
+
+  it('returns cached response only for COMPLETED idempotent replays', async () => {
+    const tokens = makeTokens();
+    let invoked = false;
+    const broker = new EffectBroker(
+      tokens,
+      { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+      {
+        admitEffect: async () => ({
+          admitted: true,
+          replayed: true,
+          effect: { id: 'effect', state: 'COMPLETED', response: { ok: true, from: 'cache' } },
+        }),
+        completeEffect: async () => ({}),
+      },
+      { execute: async () => { invoked = true; return { ok: false }; } },
+      { append: async () => {} },
+    );
+    const result = await broker.execute({
+      effectId: 'effect',
+      token: tokens.issue(grant),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem',
+      lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+      actor: 'w',
+    });
+    assert.equal(result.replayed, true);
+    assert.equal(result.response?.from, 'cache');
+    assert.equal(invoked, false);
+  });
+
+  it('fail-closes COMPLETION_UNKNOWN idempotent replays', async () => {
+    const tokens = makeTokens();
+    const broker = new EffectBroker(
+      tokens,
+      { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+      {
+        admitEffect: async () => ({
+          admitted: true,
+          replayed: true,
+          effect: { id: 'effect', state: 'COMPLETION_UNKNOWN' },
+        }),
+        completeEffect: async () => ({}),
+      },
+      { execute: async () => ({}) },
+      { append: async () => {} },
+    );
+    await assert.rejects(
+      broker.execute({
+        effectId: 'effect',
+        token: tokens.issue(grant),
+        type: 'crm.write',
+        request: {},
+        idempotencyKey: 'idem',
+        lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+        actor: 'w',
+      }),
+      (error: unknown) => error instanceof EffectBrokerError && error.code === 'COMPLETION_UNKNOWN',
+    );
+  });
 });
 
 
