@@ -130,7 +130,8 @@ Worker: 全链路本地 registry / C1
 默认 **不开**；用 feature flag + 安全评审门禁。
 
 回退开关：`COMMANDER_LLM_INVOKE_MODE=local-affinity|sealed|disabled`  
-- `disabled`：生产拒建 wrap（比静默 miss 更安全）。
+- unset / `local-affinity`：C-α 本地 registry。  
+- `disabled` / `sealed` / 未知值：构造期 fail-closed（C-γ 未落地前禁止静默降级）。
 
 ---
 
@@ -157,10 +158,11 @@ Worker: 全链路本地 registry / C1
 | `WORKER_AFFINITY_VIOLATION` | broker `executeAdmitted` | lease worker / fencing 与 `localWorkerId` 不一致（全类型；admission 在但 worker 错） |
 | `ADMISSION_NOT_FOUND` | broker | 本进程从未 admit 或 admission 已 consume |
 | `LLM_INVOKE_MISS` | bridge | 本地 registry 无条目或已 one-shot 消费 |
+| `LLM_INVOKE_EXPIRED` | bridge | registry 条目超过 `expiresAt`（consume 后拒） |
 | `LLM_TENANT_MISMATCH` | bridge | grant/registry/ALS tenant 不一致 |
 | `LLM_CONTENT_HASH_MISMATCH` | bridge | invoke 前 hash 漂移 |
 | `LLM_SEAL_EXPIRED` | C2 only | 密封信封过期 |
-| `LLM_INVOKE_MODE_DISABLED` | wrap 构造期 | kill-switch |
+| `LLM_INVOKE_MODE_DISABLED` | wrap 构造期 | `disabled` / `sealed` / 未知 mode |
 
 优先级：admission → worker affinity → tenant/registry → invoke。全部 fail-closed；不重试到随机 worker。
 
@@ -247,13 +249,16 @@ interface LlmInvokeEntry {
 ## 12. 验收定义（C-α Done）
 
 - [x] 无跨租户 invoke（测试证明）；`tenantId` 不可从 request 伪造
-- [x] 跨 worker `executeAdmitted` → `WORKER_AFFINITY_VIOLATION`（非含糊 miss）
+- [x] 跨 worker `executeAdmitted` → `WORKER_AFFINITY_VIOLATION`（非含糊 miss）；affinity 失败 consume admission（不泄漏）
 - [x] one-shot 二次 dispatch → `LLM_INVOKE_MISS`
 - [x] `LLM_INVOKE_REGISTRY` 不再从 package 公开导出
 - [x] ledger / audit 仍仅 metadata+contentHash（既有 bridge 行为保留）
-- [x] `COMMANDER_LLM_INVOKE_MODE=disabled` 在 wrap 构造期 fail-closed
+- [x] `COMMANDER_LLM_INVOKE_MODE`：仅 `unset|local-affinity` 建 wrap；`disabled|sealed|未知` 构造期 fail-closed
+- [x] registry `expiresAt` 在 dispatch 校验（过期 → `LLM_INVOKE_EXPIRED` + 删除）
 - [x] `ws2-effect-monopoly.md` §1 分层状态 + 链到本 spec；AdmissionStore 注释去掉「distributed reload」误导
+- [x] §8.5 多租户并发隔离（`Promise.all` 三租户）
 - [ ] UNKNOWN + 新 effectId 重试路径有测试（沿用 kernel recovery；显式 LLM 集成测可作 follow-up）
+- [ ] **已知缺口（follow-up）：** affinity 未校验 `fencingEpoch` / `lease.token`；bootstrap 未注入 `localWorkerGeneration`（kernel admit/complete 仍护栏）
 
 ---
 
@@ -264,3 +269,4 @@ interface LlmInvokeEntry {
 | 2026-07-17 | 初稿：方案 C 分解为 C1/C2/C3；推荐 C-α；提交 swarm 评审 |
 | 2026-07-17 | Swarm 三路 APPROVE_WITH_CHANGES；闭合 §10；冻结 M1=C-α；错误码分层；AdmissionStore/localWorkerId 硬约束 |
 | 2026-07-17 | M1 落地：`c6c16978` effect-broker affinity；`f011a568` tenant-scoped registry + kill-switch |
+| 2026-07-17 | Review fixes：affinity consume admission；invoke mode fail-closed；expiresAt 校验；并发测；fencing 标已知缺口 |

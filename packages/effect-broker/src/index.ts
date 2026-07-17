@@ -438,8 +438,10 @@ export class EffectBroker {
   }): Promise<{ effectId: string; replayed: boolean; response?: Record<string, unknown> }> {
     const admission = this.admissionStore.get(input.effectId);
     if (!admission) throw new EffectBrokerError('ADMISSION_NOT_FOUND', { effectId: input.effectId });
-    this.assertWorkerAffinity(admission);
+    // Affinity must run inside try/finally so fail-closed consume clears the
+    // process-local admission (grant/request) instead of leaking forever.
     try {
+      this.assertWorkerAffinity(admission);
       if (admission.replayed) {
         return { effectId: admission.kernelEffectId, replayed: true, response: admission.cachedResponse };
       }

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 import {
   __testLlmInvokeRegistrySize,
+  __testPlantLlmInvokeEntry,
   createLlmEffectAuth,
   dispatchLlmEffect,
   hashLlmCallContent,
@@ -242,6 +243,77 @@ describe('llmBrokerBridge (WS2 §1)', () => {
       if (prev === undefined) delete process.env.COMMANDER_LLM_INVOKE_MODE;
       else process.env.COMMANDER_LLM_INVOKE_MODE = prev;
     }
+  });
+
+  it('fail-closes wrap for sealed or unknown COMMANDER_LLM_INVOKE_MODE (C-γ not shipped)', () => {
+    const prev = process.env.COMMANDER_LLM_INVOKE_MODE;
+    try {
+      const { broker } = makeBroker();
+      for (const mode of ['sealed', 'bogus']) {
+        process.env.COMMANDER_LLM_INVOKE_MODE = mode;
+        assert.throws(
+          () => wrapProviderWithEffectBroker(mockProvider(), broker),
+          /LLM_INVOKE_MODE_DISABLED/,
+        );
+      }
+    } finally {
+      if (prev === undefined) delete process.env.COMMANDER_LLM_INVOKE_MODE;
+      else process.env.COMMANDER_LLM_INVOKE_MODE = prev;
+    }
+  });
+
+  it('rejects dispatch when registry entry expiresAt has passed', async () => {
+    __testPlantLlmInvokeEntry({
+      tenantId: 't1',
+      effectId: 'e-expired',
+      runId: 'r1',
+      stepId: 's1',
+      workerId: DEFAULT_WORKER_ID,
+      contentHash: 'abc',
+      expiresAt: Date.now() - 1,
+      invoke: async () => {
+        throw new Error('should not invoke');
+      },
+    });
+    await assert.rejects(
+      () =>
+        dispatchLlmEffect({
+          type: 'llm.openai',
+          request: { effectId: 'e-expired', contentHash: 'abc' },
+          tenantId: 't1',
+          workerId: DEFAULT_WORKER_ID,
+        }),
+      /LLM_INVOKE_EXPIRED/,
+    );
+    assert.equal(__testLlmInvokeRegistrySize(), 0);
+  });
+
+  it('isolates concurrent multi-tenant broker.execute calls', async () => {
+    const { broker, issuer } = makeBroker();
+    const wrapped = wrapProviderWithEffectBroker(mockProvider('openai'), broker);
+    const results = await Promise.all(
+      (['t-a', 't-b', 't-c'] as const).map((tenantId) => {
+        const auth = createLlmEffectAuth({
+          tenantId,
+          runId: `run-${tenantId}`,
+          stepId: 's1',
+          actor: 'worker-1',
+          lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
+          issuer,
+        });
+        return runWithLlmEffectAuth(auth, () =>
+          wrapped.call({
+            model: 'gpt',
+            messages: [{ role: 'user', content: tenantId }],
+          }),
+        );
+      }),
+    );
+    assert.equal(results.length, 3);
+    for (const [i, tenantId] of (['t-a', 't-b', 't-c'] as const).entries()) {
+      assert.match(String(results[i]!.content), new RegExp(tenantId));
+    }
+    assert.equal(__testLlmInvokeRegistrySize(), 0);
   });
 
   it('rejects when mint binds a different request hash (request binding)', async () => {

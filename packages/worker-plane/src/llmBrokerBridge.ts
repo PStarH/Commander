@@ -45,6 +45,11 @@ export function __testLlmInvokeRegistrySize(): number {
   return llmInvokeRegistry.size;
 }
 
+/** @internal test-only — plant a registry entry (e.g. expired) for dispatch checks. */
+export function __testPlantLlmInvokeEntry(entry: LlmInvokeEntry): void {
+  llmInvokeRegistry.set(invokeRegistryKey(entry.tenantId, entry.effectId), entry);
+}
+
 export interface LlmEffectAuth {
   tenantId: string;
   runId: string;
@@ -129,18 +134,32 @@ export function hashLlmCallContent(request: LLMRequest): string {
 }
 
 /**
+ * Allowed values for COMMANDER_LLM_INVOKE_MODE.
+ * - unset / local-affinity: process-local tenant-scoped registry (C-α)
+ * - disabled / sealed / unknown: fail-closed at wrap construction (C-γ sealed not shipped)
+ */
+function assertLlmInvokeModeAllowed(): void {
+  const mode = process.env.COMMANDER_LLM_INVOKE_MODE;
+  if (mode === undefined || mode === '' || mode === 'local-affinity') return;
+  if (mode === 'disabled') {
+    throw new Error(
+      'LLM_INVOKE_MODE_DISABLED: LLM invoke registry is disabled (COMMANDER_LLM_INVOKE_MODE=disabled)',
+    );
+  }
+  throw new Error(
+    `LLM_INVOKE_MODE_DISABLED: COMMANDER_LLM_INVOKE_MODE=${mode} is not implemented (allowed: unset|local-affinity|disabled); sealed requires C-γ`,
+  );
+}
+
+/**
  * Wrap an LLM provider so every call is mediated by EffectBroker.execute.
- * Fail-closed when auth context is missing or invoke mode is disabled.
+ * Fail-closed when auth context is missing or invoke mode is not local-affinity.
  */
 export function wrapProviderWithEffectBroker(
   provider: LLMProvider,
   broker: EffectBroker,
 ): LLMProvider {
-  if (process.env.COMMANDER_LLM_INVOKE_MODE === 'disabled') {
-    throw new Error(
-      'LLM_INVOKE_MODE_DISABLED: LLM invoke registry is disabled (COMMANDER_LLM_INVOKE_MODE=disabled)',
-    );
-  }
+  assertLlmInvokeModeAllowed();
   return {
     name: provider.name,
     async call(request: LLMRequest): Promise<LLMResponse> {
@@ -253,6 +272,13 @@ export async function dispatchLlmEffect(input: {
       'LLM_CONTENT_HASH_MISMATCH: invoke request contentHash diverged from registered entry',
     );
   }
+  if (Date.now() > entry.expiresAt) {
+    llmInvokeRegistry.delete(registryKey);
+    throw new Error(
+      `LLM_INVOKE_EXPIRED: registry entry expired for tenantId=${input.tenantId} effectId=${effectId}`,
+    );
+  }
+  // One-shot: consume before invoke so concurrent dispatch cannot double-call.
   llmInvokeRegistry.delete(registryKey);
   const response = await entry.invoke();
   return response as unknown as Record<string, unknown>;
