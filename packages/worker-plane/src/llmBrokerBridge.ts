@@ -2,7 +2,7 @@
  * WS2 §1 — route LLM provider calls through EffectBroker.
  *
  * The broker owns a single EffectExecutor; LLM invocations register a
- * one-shot callback keyed by effectId (also placed on the ledger request)
+ * one-shot callback keyed by tenantId:effectId (also placed on the ledger request)
  * so the executor can run the real provider.call without serializing functions.
  *
  * Capability tokens are minted **at call time** (not once per step): request
@@ -15,14 +15,35 @@ import type { EffectBroker } from '@commander/effect-broker';
 import { canonicalRequestHash, type CapabilityTokenIssuer } from '@commander/effect-broker';
 import type { LLMProvider, LLMRequest, LLMResponse } from '@commander/core';
 
-/**
- * Process-local one-shot invoke registry for llm.* effects.
- *
- * Scope: single worker process only. Not shared across isolates, threads, or
- * remote workers — each worker hosts its own registry keyed by effectId for
- * the duration of broker.execute. Multi-isolate dispatch is out of scope.
- */
-export const LLM_INVOKE_REGISTRY = new Map<string, () => Promise<LLMResponse>>();
+type LlmInvokeKey = `${string}:${string}`;
+
+interface LlmInvokeEntry {
+  tenantId: string;
+  effectId: string;
+  runId: string;
+  stepId: string;
+  workerId: string;
+  contentHash: string;
+  invoke: () => Promise<LLMResponse>;
+  expiresAt: number;
+}
+
+/** Process-local tenant-scoped one-shot invoke registry (module private). */
+const llmInvokeRegistry = new Map<LlmInvokeKey, LlmInvokeEntry>();
+
+function invokeRegistryKey(tenantId: string, effectId: string): LlmInvokeKey {
+  return `${tenantId}:${effectId}`;
+}
+
+/** @internal test-only */
+export function resetLlmInvokeRegistryForTests(): void {
+  llmInvokeRegistry.clear();
+}
+
+/** @internal test-only */
+export function __testLlmInvokeRegistrySize(): number {
+  return llmInvokeRegistry.size;
+}
 
 export interface LlmEffectAuth {
   tenantId: string;
@@ -35,6 +56,8 @@ export interface LlmEffectAuth {
     token: string;
     fencingEpoch: number;
   };
+  /** Capability mint TTL in ms (default 5 minutes). */
+  capabilityTtlMs?: number;
   /**
    * Mint a short-lived grant bound to the exact broker request body.
    * Must use the same canonicalRequestHash the broker will verify.
@@ -73,6 +96,7 @@ export function createLlmEffectAuth(input: {
     stepId: input.stepId,
     actor: input.actor,
     lease: input.lease,
+    capabilityTtlMs: ttlMs,
     mintCapabilityToken: ({ effectType, request }) =>
       input.issuer.issue({
         jti: randomUUID(),
@@ -106,12 +130,17 @@ export function hashLlmCallContent(request: LLMRequest): string {
 
 /**
  * Wrap an LLM provider so every call is mediated by EffectBroker.execute.
- * Fail-closed when auth context is missing.
+ * Fail-closed when auth context is missing or invoke mode is disabled.
  */
 export function wrapProviderWithEffectBroker(
   provider: LLMProvider,
   broker: EffectBroker,
 ): LLMProvider {
+  if (process.env.COMMANDER_LLM_INVOKE_MODE === 'disabled') {
+    throw new Error(
+      'LLM_INVOKE_MODE_DISABLED: LLM invoke registry is disabled (COMMANDER_LLM_INVOKE_MODE=disabled)',
+    );
+  }
   return {
     name: provider.name,
     async call(request: LLMRequest): Promise<LLMResponse> {
@@ -123,6 +152,8 @@ export function wrapProviderWithEffectBroker(
       }
       const effectId = randomUUID();
       const effectType = `llm.${provider.name}`;
+      const registryKey = invokeRegistryKey(auth.tenantId, effectId);
+      const capabilityTtlMs = auth.capabilityTtlMs ?? 5 * 60_000;
       // Freeze call payload so ledger hash and provider invoke stay atomic.
       const frozenRequest: LLMRequest = structuredClone(request);
       const contentHash = hashLlmCallContent(frozenRequest);
@@ -138,14 +169,23 @@ export function wrapProviderWithEffectBroker(
         effectType,
         request: requestBody,
       });
-      LLM_INVOKE_REGISTRY.set(effectId, () => {
-        const liveHash = hashLlmCallContent(frozenRequest);
-        if (liveHash !== contentHash) {
-          throw new Error(
-            'EFFECT_REQUEST_TAMPERED: LLM invoke payload diverged from admitted contentHash',
-          );
-        }
-        return provider.call(frozenRequest);
+      llmInvokeRegistry.set(registryKey, {
+        tenantId: auth.tenantId,
+        effectId,
+        runId: auth.runId,
+        stepId: auth.stepId,
+        workerId: auth.lease.workerId,
+        contentHash,
+        expiresAt: Date.now() + capabilityTtlMs,
+        invoke: () => {
+          const liveHash = hashLlmCallContent(frozenRequest);
+          if (liveHash !== contentHash) {
+            throw new Error(
+              'EFFECT_REQUEST_TAMPERED: LLM invoke payload diverged from admitted contentHash',
+            );
+          }
+          return provider.call(frozenRequest);
+        },
       });
       try {
         const result = await broker.execute({
@@ -159,16 +199,19 @@ export function wrapProviderWithEffectBroker(
         });
         return result.response as unknown as LLMResponse;
       } finally {
-        LLM_INVOKE_REGISTRY.delete(effectId);
+        llmInvokeRegistry.delete(registryKey);
       }
     },
   };
 }
 
-/** Dispatch helper for the worker EffectExecutor — llm.* → registry invoke. */
+/** Dispatch helper for the worker EffectExecutor — llm.* → tenant-scoped registry invoke. */
 export async function dispatchLlmEffect(input: {
   type: string;
   request: Record<string, unknown>;
+  signal?: AbortSignal;
+  tenantId: string;
+  workerId: string;
 }): Promise<Record<string, unknown>> {
   if (!input.type.startsWith('llm.')) {
     throw new Error(`Not an LLM effect type: ${input.type}`);
@@ -178,13 +221,39 @@ export async function dispatchLlmEffect(input: {
     throw new Error('LLM effect missing effectId for invoke registry lookup');
   }
   const expectedHash = input.request.contentHash;
-  const invoke = LLM_INVOKE_REGISTRY.get(effectId);
-  if (!invoke) {
-    throw new Error(`LLM invoke registry miss for effectId=${effectId}`);
-  }
   if (typeof expectedHash !== 'string' || !expectedHash) {
     throw new Error('LLM effect missing contentHash for invoke integrity check');
   }
-  const response = await invoke();
+  const registryKey = invokeRegistryKey(input.tenantId, effectId);
+  let entry = llmInvokeRegistry.get(registryKey);
+  if (!entry) {
+    for (const candidate of llmInvokeRegistry.values()) {
+      if (candidate.effectId === effectId) {
+        throw new Error(
+          `LLM_TENANT_MISMATCH: registry tenantId=${candidate.tenantId} dispatch tenantId=${input.tenantId}`,
+        );
+      }
+    }
+    throw new Error(
+      `LLM_INVOKE_MISS: no registry entry for tenantId=${input.tenantId} effectId=${effectId}`,
+    );
+  }
+  if (entry.tenantId !== input.tenantId) {
+    throw new Error(
+      `LLM_TENANT_MISMATCH: registry tenantId=${entry.tenantId} dispatch tenantId=${input.tenantId}`,
+    );
+  }
+  if (entry.workerId !== input.workerId) {
+    throw new Error(
+      `LLM_WORKER_MISMATCH: registry workerId=${entry.workerId} dispatch workerId=${input.workerId}`,
+    );
+  }
+  if (entry.contentHash !== expectedHash) {
+    throw new Error(
+      'LLM_CONTENT_HASH_MISMATCH: invoke request contentHash diverged from registered entry',
+    );
+  }
+  llmInvokeRegistry.delete(registryKey);
+  const response = await entry.invoke();
   return response as unknown as Record<string, unknown>;
 }
