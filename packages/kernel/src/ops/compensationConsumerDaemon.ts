@@ -24,13 +24,19 @@ export class CompensationConsumerDaemon {
   private running = false;
   private lastOkAt = 0;
   private lastError: string | undefined;
+  /** Bumped on each start(); in-flight ticks from prior epochs must not stamp health. */
+  private healthEpoch = 0;
 
   constructor(private readonly options: CompensationConsumerDaemonOptions) {}
 
   start(): void {
     if (this.running) return;
     this.running = true;
-    void this.runTick();
+    // Each start epoch must prove a fresh tick (ignore pre-stop lastOkAt).
+    this.healthEpoch += 1;
+    const epoch = this.healthEpoch;
+    this.lastOkAt = 0;
+    void this.kick(epoch);
     this.timer = setInterval(() => {
       void this.runTick();
     }, this.options.intervalMs);
@@ -39,9 +45,12 @@ export class CompensationConsumerDaemon {
   async stop(): Promise<void> {
     if (!this.running) return;
     this.running = false;
+    this.healthEpoch += 1;
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
     await this.inFlight;
+    // Only clear if still stopped — a concurrent start() may have stamped a new epoch.
+    if (!this.running) this.lastOkAt = 0;
   }
 
   /** True when a tick succeeded recently. */
@@ -59,14 +68,24 @@ export class CompensationConsumerDaemon {
     return this.lastError;
   }
 
+  /** Drain any prior in-flight work, then run one tick belonging to `epoch`. */
+  private async kick(epoch: number): Promise<void> {
+    if (this.inFlight) await this.inFlight;
+    if (!this.running || this.healthEpoch !== epoch) return;
+    await this.runTick();
+  }
+
   private async runTick(): Promise<void> {
     if (this.inFlight) return this.inFlight;
+    const epoch = this.healthEpoch;
     this.inFlight = (async () => {
       try {
         if (this.options.tick) await this.options.tick();
         else if (this.options.probe) await this.options.probe();
         else throw new Error('CompensationConsumerDaemon requires tick or probe');
-        this.lastOkAt = Date.now();
+        if (this.running && this.healthEpoch === epoch) {
+          this.lastOkAt = Date.now();
+        }
         this.lastError = undefined;
       } catch (error) {
         this.lastError = error instanceof Error ? error.message : String(error);

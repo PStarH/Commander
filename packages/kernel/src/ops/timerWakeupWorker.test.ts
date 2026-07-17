@@ -27,6 +27,52 @@ describe('timer wakeup durability', () => {
     assert.equal(worker.getStats().errors, 1);
   });
 
+  it('is unhealthy before the first successful tick', async () => {
+    const repository = new InMemoryKernelRepository();
+    const worker = new TimerWakeupWorker(repository, { pollIntervalMs: 60_000 });
+    assert.equal(worker.isHealthy(), false);
+    worker.start();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(worker.isHealthy(), true);
+    await worker.stop();
+    assert.equal(worker.isHealthy(), false);
+  });
+
+  it('does not treat a pre-start tick as healthy after start until a new tick succeeds', async () => {
+    const repository = new InMemoryKernelRepository();
+    const worker = new TimerWakeupWorker(repository, { pollIntervalMs: 60_000 });
+    await worker.tick();
+    assert.equal(worker.isHealthy(), false);
+    worker.start();
+    assert.equal(worker.isHealthy(), false);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(worker.isHealthy(), true);
+    await worker.stop();
+  });
+
+  it('ignores an in-flight pre-start tick when stamping health after start', async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let calls = 0;
+    const repository = {
+      claimExpiredTimers: async () => { calls += 1; await blocked; return []; },
+      expireStaleInteractions: async () => [],
+      sweepOutboxDlq: async () => ({ movedToDlq: 0, backoffApplied: 0 }),
+    } as unknown as KernelRepository;
+    const worker = new TimerWakeupWorker(repository, { pollIntervalMs: 60_000 });
+    const pending = worker.tick();
+    await Promise.resolve();
+    worker.start();
+    assert.equal(worker.isHealthy(), false);
+    release();
+    await pending;
+    assert.equal(worker.isHealthy(), false);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(worker.isHealthy(), true);
+    assert.equal(calls, 2);
+    await worker.stop();
+  });
+
   it('awaits the original slow tick even after another interval elapses', async () => {
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => { release = resolve; });

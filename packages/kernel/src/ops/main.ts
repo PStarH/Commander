@@ -56,8 +56,7 @@ export async function main(): Promise<void> {
   const health = await startOpsHealthServer({
     port: healthPort,
     isReady: async () => {
-      if (!runtime.runningComponents().includes('compensation')) return false;
-      if (!compensation.isHealthy()) return false;
+      if (!runtime.isReady()) return false;
       try {
         await pool.query('SELECT 1');
         return true;
