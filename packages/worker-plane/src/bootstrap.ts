@@ -141,32 +141,63 @@ export async function createWorkerService(): Promise<WorkerService> {
 }
 
 /**
- * Worker-plane effect policy selection (Architecture V2 admission force).
+ * Worker-plane effect policy (Architecture V2 admission force).
  *
- * WS2: the legacy allow-all bootstrap bypass is DELETED. The bootstrap policy
- * is always fail-closed (deny-all). A real PolicyEvaluator backed by the
- * kernel allowlist/quota/rate-limit engine must be injected by the operator;
- * this deny-all default exists only to make misconfiguration loud rather than
- * permissive. The `env` parameter is retained for signature stability but is
- * intentionally not consulted — there is no env-var bypass anymore.
+ * - `llm.*` is allow-by-default so agents can call models once EffectBroker is
+ *   wired (still subject to capability tokens + kernel allowlist).
+ * - All other external effect types remain deny-by-default (fail-closed).
+ * - `COMMANDER_WORKER_EFFECT_POLICY=permit` is intentionally ignored (WS2 §4).
  */
 export function createWorkerPolicyEvaluator(
   _env: NodeJS.ProcessEnv = process.env,
 ): PolicyEvaluator {
   void _env;
   return {
-    evaluate: async (input) => ({
-      effect: 'deny' as const,
-      decisionId: 'deny-default',
-      reason:
-        `Default worker policy denies external effects (type=${input.type}). ` +
-        'Inject a real PolicyEvaluator backed by the kernel allowlist/quota engine.',
-      policySnapshotId: 'worker-default',
-    }),
+    evaluate: async (input) => {
+      if (typeof input.type === 'string' && input.type.startsWith('llm.')) {
+        return {
+          effect: 'allow' as const,
+          decisionId: 'llm-model-default',
+          reason: `Default worker policy allows model invocation (type=${input.type}).`,
+          policySnapshotId: 'worker-llm-v1',
+        };
+      }
+      return {
+        effect: 'deny' as const,
+        decisionId: 'deny-default',
+        reason:
+          `Default worker policy denies external effects (type=${input.type}). ` +
+          'Add a kernel allowlist entry and inject a broader PolicyEvaluator for tools/connectors.',
+        policySnapshotId: 'worker-llm-v1',
+      };
+    },
   };
 }
 
-function createEffectBroker(kernel: EffectKernelPort): {
+type AllowlistKernel = EffectKernelPort & {
+  ensureAllowlistDefault?(tenantId: string, actionPattern: string, allowed: boolean): Promise<void>;
+};
+
+/** Seed llm.* allowlist defaults without overwriting explicit denies. */
+export function withDefaultLlmAllowlist(kernel: AllowlistKernel): EffectKernelPort {
+  return {
+    admitEffect: (input) => kernel.admitEffect(input),
+    completeEffect: (effectId, tenantId, lease, response, actor) =>
+      kernel.completeEffect(effectId, tenantId, lease, response, actor),
+    markEffectCompletionUnknown: kernel.markEffectCompletionUnknown?.bind(kernel),
+    incrementQuota: kernel.incrementQuota?.bind(kernel),
+    getQuota: kernel.getQuota?.bind(kernel),
+    isActionAllowed: async (tenantId, action) => {
+      if (action.startsWith('llm.') && kernel.ensureAllowlistDefault) {
+        await kernel.ensureAllowlistDefault(tenantId, 'llm.*', true);
+      }
+      if (!kernel.isActionAllowed) return action.startsWith('llm.');
+      return kernel.isActionAllowed(tenantId, action);
+    },
+  };
+}
+
+function createEffectBroker(kernel: AllowlistKernel): {
   broker: EffectBroker;
   issuer: CapabilityTokenIssuer;
 } {
@@ -185,11 +216,11 @@ function createEffectBroker(kernel: EffectKernelPort): {
     publicKeys: { 'worker-bootstrap': issuer.publicKey },
   });
   const policy = createWorkerPolicyEvaluator();
+  const effectKernel = withDefaultLlmAllowlist(kernel);
 
   // Minimal executor: llm.* dispatches through the WS2 §1 invoke registry;
   // other types log a marker. Operators replace this with a real connector
-  // dispatcher. Policy must allow first — default policy is deny-all (except
-  // tests that inject a permissive evaluator).
+  // dispatcher. Default policy allows llm.*; tools/connectors stay denied.
   const executor: EffectExecutor = {
     execute: async (input: {
       type: string;
@@ -224,7 +255,7 @@ function createEffectBroker(kernel: EffectKernelPort): {
 
   // WS2 §4: request binding is mandatory. The EffectBroker constructor
   // enforces this in production (throws REQUEST_BINDING_DISABLED_IN_PROD).
-  const broker = new EffectBroker(tokens, policy, kernel, executor, audit, {
+  const broker = new EffectBroker(tokens, policy, effectKernel, executor, audit, {
     audience: 'commander.effect-broker',
     requireRequestBinding: true,
   });

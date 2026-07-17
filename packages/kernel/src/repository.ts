@@ -133,6 +133,12 @@ export interface KernelRepository {
   /** Add or update an allowlist entry for a tenant. */
   setAllowlistEntry(tenantId: string, actionPattern: string, allowed: boolean): Promise<void>;
 
+  /**
+   * Insert a default allowlist row only when absent (never overwrites).
+   * Used by worker bootstrap to seed `llm.*` without clobbering explicit denies.
+   */
+  ensureAllowlistDefault(tenantId: string, actionPattern: string, allowed: boolean): Promise<void>;
+
   /** Increment the daily quota counter for a tenant/action_class. Returns the
    *  updated row so the broker can compare against the configured ceiling. */
   incrementQuota(input: { tenantId: string; actionClass: string; tokensUsed?: number; now?: Date }): Promise<{ countUsed: number; tokensUsed: number }>;

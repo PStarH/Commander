@@ -402,6 +402,12 @@ export class InMemoryKernelRepository implements KernelRepository {
     tenantMap.set(actionPattern, allowed);
   }
 
+  async ensureAllowlistDefault(tenantId: string, actionPattern: string, allowed: boolean): Promise<void> {
+    let tenantMap = this.effectAllowlist.get(tenantId);
+    if (!tenantMap) { tenantMap = new Map(); this.effectAllowlist.set(tenantId, tenantMap); }
+    if (!tenantMap.has(actionPattern)) tenantMap.set(actionPattern, allowed);
+  }
+
   async incrementQuota(input: { tenantId: string; actionClass: string; tokensUsed?: number; now?: Date }): Promise<{ countUsed: number; tokensUsed: number }> {
     const day = (input.now ?? new Date()).toISOString().slice(0, 10);
     const key = `${input.tenantId}|${input.actionClass}|${day}`;
