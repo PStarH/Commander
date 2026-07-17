@@ -1,0 +1,10 @@
+{
+  "testCaseId": "EXEC-1",
+  "verdict": "PASS",
+  "evidenceLevel": "live",
+  "breach": false,
+  "details": "EXEC-1 gVisor live-fire image=nginx:alpine: all 3 probes blocked; B unaffected. nsenter:blocked=true; proc-1-root-host-marker:blocked=true; cross-container-canary:blocked=true; B_unaffected=true",
+  "artifacts": [],
+  "gitSha": "0d1e20624c1c39aad4c922d8e1d9262d965fd6bf",
+  "ranAt": "2026-07-17T07:38:59.214Z"
+}
