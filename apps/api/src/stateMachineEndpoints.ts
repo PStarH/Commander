@@ -18,7 +18,7 @@
  *   (c) declare module '@commander/core' augmentation in apps/api.
  */
 
-import express from 'express';
+import express, { type Request, type Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import {
   StateMachine,
@@ -33,6 +33,29 @@ const router: express.Router = express.Router();
 
 // In-memory state machine instances (for demo; production should use proper storage)
 const stateMachines: Map<string, StateMachine> = new Map();
+
+function resolveApprover(req: Request, res: Response): string | null {
+  const principalId = req.user?.id ?? req.apiKeyId;
+  if (!principalId) {
+    res.status(401).json({ error: 'Authentication required to approve or reject.' });
+    return null;
+  }
+  const scopes = req.apiScopes ?? [];
+  const role = req.user?.role;
+  const canApprove =
+    role === 'admin' ||
+    role === 'super_admin' ||
+    scopes.includes('approve') ||
+    scopes.includes('admin') ||
+    scopes.includes('*');
+  if (!canApprove) {
+    res
+      .status(403)
+      .json({ error: 'Approve authority (admin role or approve scope) is required.' });
+    return null;
+  }
+  return principalId;
+}
 
 /**
  * POST /api/state-machine/create
@@ -180,19 +203,22 @@ router.post('/:taskId/transition', async (req, res) => {
  */
 router.post('/:taskId/approve', (req, res) => {
   try {
+    const approver = resolveApprover(req, res);
+    if (!approver) return;
+
     const { taskId } = req.params;
-    const { checkpointId, userId, comment } = req.body;
+    const { checkpointId, comment } = req.body;
 
     const sm = stateMachines.get(taskId);
     if (!sm) {
       return res.status(404).json({ error: 'State machine not found' });
     }
 
-    if (!checkpointId || !userId) {
-      return res.status(400).json({ error: 'Missing required fields: checkpointId, userId' });
+    if (!checkpointId) {
+      return res.status(400).json({ error: 'Missing required field: checkpointId' });
     }
 
-    const approved = sm.approveCheckpoint(checkpointId, userId, comment);
+    const approved = sm.approveCheckpoint(checkpointId, approver, comment);
     res.json({
       success: approved,
       message: approved ? 'Checkpoint approved' : 'Checkpoint not found or already resolved',
@@ -211,19 +237,22 @@ router.post('/:taskId/approve', (req, res) => {
  */
 router.post('/:taskId/reject', (req, res) => {
   try {
+    const approver = resolveApprover(req, res);
+    if (!approver) return;
+
     const { taskId } = req.params;
-    const { checkpointId, userId, comment } = req.body;
+    const { checkpointId, comment } = req.body;
 
     const sm = stateMachines.get(taskId);
     if (!sm) {
       return res.status(404).json({ error: 'State machine not found' });
     }
 
-    if (!checkpointId || !userId) {
-      return res.status(400).json({ error: 'Missing required fields: checkpointId, userId' });
+    if (!checkpointId) {
+      return res.status(400).json({ error: 'Missing required field: checkpointId' });
     }
 
-    const rejected = sm.rejectCheckpoint(checkpointId, userId, comment);
+    const rejected = sm.rejectCheckpoint(checkpointId, approver, comment);
     res.json({
       success: rejected,
       message: rejected ? 'Checkpoint rejected' : 'Checkpoint not found or already resolved',
