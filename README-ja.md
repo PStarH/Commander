@@ -11,7 +11,7 @@
 <p align="center"><strong>AI が何をしているか見えるように。結果を信頼して。コストを削減。</strong></p>
 
 <p align="center">
-  <code>npx tsx packages/core/src/cli.ts watch "investigate this bug"</code><br>
+  <code>pnpm exec tsx packages/core/src/cliEntry.ts watch "investigate this bug"</code><br>
   <sub>インストール不要。ワンコマンド。マルチエージェントの推論ストリームをリアルタイムでターミナルに表示。</sub>
 </p>
 
@@ -21,7 +21,7 @@
 
 ---
 
-> **SKU について（日本語版は更新待ち）：** Commander は現在 2 つの SKU で提供されます —— **Local CLI**（ローカルツール、デフォルト）と **Enterprise Gateway**（`/v1`、alpha）。この日本語 README にはまだ SKU 区分の完全な説明が含まれていません。権威ある情報源としては [README.md](README.md)（英語）を参照してください。WS8 はこれを追跡中です。
+> **2 つの実行形態：** Commander は 2 つの SKU で提供されます —— **Local CLI**（ローカルツール、デフォルト）と **Enterprise Gateway**（`/v1` + 任意 Postgres、**alpha**。live-fire 証明済みの完全マルチテナント SaaS ではありません）。詳細は英語の [README.md](README.md) SKU 表と [ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md) を参照。
 
 ## Commander の独自性
 
@@ -41,7 +41,7 @@
 
 ```bash
 # tsx があればインストール不要（または pnpm/npx を使用）
-npx tsx packages/core/src/cli.ts watch "find the bug in src/server.ts and fix it"
+pnpm exec tsx packages/core/src/cliEntry.ts watch "find the bug in src/server.ts and fix it"
 ```
 
 これはモックアップではありません——実際のエージェント実行からのライブ SSE ストリームの実録画です。すべてのツール呼び出し、すべての決定、すべての検証がリアルタイムでターミナルにストリーミングされます。エージェントの思考を**観察**できます。
@@ -58,9 +58,9 @@ pnpm install
 export OPENAI_API_KEY=sk-...
 
 # 3. 何でも実行
-npx tsx packages/core/src/cli.ts run "analyze this repository"
-npx tsx packages/core/src/cli.ts plan "implement authentication"    # 実行前に計画を確認
-npx tsx packages/core/src/cli.ts watch "debug the failing test"     # エージェントの推論をリアルタイム表示
+pnpm exec tsx packages/core/src/cliEntry.ts run "analyze this repository"
+pnpm exec tsx packages/core/src/cliEntry.ts plan "implement authentication"    # 実行前に計画を確認
+pnpm exec tsx packages/core/src/cliEntry.ts watch "debug the failing test"     # エージェントの推論をリアルタイム表示
 ```
 
 ---
@@ -162,10 +162,10 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 ```bash
 # CLI を使用
-npx tsx packages/core/src/cli.ts run "your task here"
+pnpm exec tsx packages/core/src/cliEntry.ts run "your task here"
 
 # API を使用
-npx tsx examples/api-usage.ts
+pnpm exec tsx examples/api-usage.ts
 
 # Docker を使用
 docker compose up -d
@@ -233,7 +233,7 @@ pnpm benchmark:chaos:full        # カオスエンジニアリングベンチマ
 CLI または `@commander/core` の `Commander` エントリで使用します：
 
 ```bash
-npx tsx packages/core/src/cli.ts run "analyze this repository"
+pnpm exec tsx packages/core/src/cliEntry.ts run "analyze this repository"
 ```
 
 または HTTP API（`apps/api`、既定 `:4000`）および Web コンソール（`pnpm gui`）経由で統合できます。
@@ -259,7 +259,7 @@ docker compose up -d
 ./scripts/deploy-vm.sh your-vm-ip --env-file .env.production
 ```
 
-本番環境オーバーレイで追加：CPU/メモリ制限、JSON ファイルログ、自動再起動、ヘルスチェック、レート制限、マルチテナンシー。
+本番 Compose オーバーレイで追加できるもの：CPU/メモリ制限、JSON ファイルログ、自動再起動、ヘルスチェック、レート制限。マルチテナンシーは **Enterprise Gateway（alpha）** —— リクエスト文脈の隔離はあり、ストレージ隔離は opt-in。`ENTERPRISE_READINESS.md` を参照し、完成形 SaaS 隔離とみなさないでください。
 
 ---
 
