@@ -111,7 +111,7 @@ export async function createWorkerService(): Promise<WorkerService> {
   });
 
   // ── Create shared Effect Broker for external side effects ──
-  const { broker: effectBroker, issuer: capabilityIssuer } = createEffectBroker(kernel);
+  const { broker: effectBroker, issuer: capabilityIssuer } = createEffectBroker(kernel, workerId);
 
   // ── Create step executor based on worker kind ──
   const executor = await createExecutorForKind(
@@ -197,7 +197,10 @@ export function withDefaultLlmAllowlist(kernel: AllowlistKernel): EffectKernelPo
   };
 }
 
-function createEffectBroker(kernel: AllowlistKernel): {
+function createEffectBroker(
+  kernel: AllowlistKernel,
+  localWorkerId: string,
+): {
   broker: EffectBroker;
   issuer: CapabilityTokenIssuer;
 } {
@@ -222,14 +225,22 @@ function createEffectBroker(kernel: AllowlistKernel): {
   // other types log a marker. Operators replace this with a real connector
   // dispatcher. Default policy allows llm.*; tools/connectors stay denied.
   const executor: EffectExecutor = {
-    execute: async (input: {
-      type: string;
-      request: Record<string, unknown>;
-      signal: AbortSignal;
-    }) => {
+    execute: async (input) => {
       if (input.type.startsWith('llm.')) {
+        const ctx = input.executionContext;
+        if (!ctx?.tenantId || !ctx.workerId) {
+          throw new Error(
+            'EFFECT_AUTHORIZATION_REQUIRED: llm.* execute requires executionContext tenantId and workerId from grant',
+          );
+        }
         const { dispatchLlmEffect } = await import('./llmBrokerBridge.js');
-        return dispatchLlmEffect(input);
+        return dispatchLlmEffect({
+          type: input.type,
+          request: input.request,
+          signal: input.signal,
+          tenantId: ctx.tenantId,
+          workerId: ctx.workerId,
+        });
       }
       // eslint-disable-next-line no-console
       console.warn(`[effect-broker] Executing effect type=${input.type}`, input.request);
@@ -258,6 +269,7 @@ function createEffectBroker(kernel: AllowlistKernel): {
   const broker = new EffectBroker(tokens, policy, effectKernel, executor, audit, {
     audience: 'commander.effect-broker',
     requireRequestBinding: true,
+    localWorkerId,
   });
   return { broker, issuer };
 }
