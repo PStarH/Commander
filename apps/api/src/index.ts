@@ -112,6 +112,7 @@ import {
   isCommanderKernelExplicitlyDisabled,
 } from './v1GatewayKernel';
 import { isLegacyExecutionAllowed } from './legacyExecutionGuard';
+import { isEnterpriseProfile } from './profileSignal';
 
 import { getDirname, getRequire } from './esmCompat';
 const __dirname = getDirname(import.meta.url);
@@ -290,6 +291,9 @@ app.use('/api/runs', (req, res, next) => {
     next();
     return;
   }
+  // Mounted before enterpriseRouteFreeze/legacyHeader — set freeze headers here.
+  res.set('x-legacy', 'true');
+  res.set('Deprecation', 'true');
   res.status(410).json({
     error: {
       code: 'LEGACY_EXECUTION_GONE',
@@ -816,7 +820,7 @@ registerRouter({
 // always in sync with the actual mounted routes. No handwritten paths.
 //   /v1/openapi.json — enterprise canonical (WS3 §4.1)
 //   /api/openapi.json  — standard-profile alias (marked x-legacy; enterprise
-//                        profile 410s it via enterpriseRouteFreeze)
+//                        profile 410s it in-handler — mounted before freeze)
 app.get('/v1/openapi.json', (_req, res) => {
   res.json(
     generateOpenApiSpec({
@@ -827,6 +831,19 @@ app.get('/v1/openapi.json', (_req, res) => {
   );
 });
 app.get('/api/openapi.json', (_req, res) => {
+  // Mounted before enterpriseRouteFreeze/legacyHeader — tag + freeze in-handler.
+  res.set('x-legacy', 'true');
+  res.set('Deprecation', 'true');
+  if (isEnterpriseProfile()) {
+    res.status(410).json({
+      error: {
+        code: 'GONE',
+        message:
+          'This route is frozen in the enterprise profile. Use GET /v1/openapi.json.',
+      },
+    });
+    return;
+  }
   res.json(
     generateOpenApiSpec({
       title: 'Commander Enterprise API',
