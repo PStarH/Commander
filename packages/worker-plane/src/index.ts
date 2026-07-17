@@ -26,6 +26,14 @@ export {
   hashLlmCallContent,
 } from './llmBrokerBridge.js';
 export type { LlmEffectAuth } from './llmBrokerBridge.js';
+export {
+  runWithStepWorkloadIdentity,
+  getStepWorkloadContext,
+  getStepWorkloadBinding,
+  requireStepWorkloadBinding,
+  mintStepCapabilityToken,
+} from './stepWorkloadIdentity.js';
+export type { StepWorkloadBinding, StepWorkloadContext } from './stepWorkloadIdentity.js';
 export { ToolStepExecutor } from './toolStepExecutor.js';
 export type { ExternalEffectBroker, ToolHandler, ToolRegistry, ToolStepInput, ToolStepOutput } from './toolStepExecutor.js';
 export { EvaluatorStepExecutor } from './evaluatorStepExecutor.js';

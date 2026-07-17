@@ -275,11 +275,11 @@ async function createExecutorForKind(
   // Explicit executor manifest — validated at startup. No runtime guessing.
   const manifest = createExecutorManifest({
     agent: () => createAgentStepExecutor({ effectBroker, capabilityIssuer }),
-    tool: () => new ToolStepExecutor(undefined, effectBroker),
+    tool: () => new ToolStepExecutor(undefined, effectBroker, capabilityIssuer),
     evaluator: () => new EvaluatorStepExecutor(),
     connector: async () => {
       const { ConnectorStepExecutor } = await import('./connectorStepExecutor.js');
-      return new ConnectorStepExecutor(undefined, effectBroker);
+      return new ConnectorStepExecutor(undefined, effectBroker, capabilityIssuer);
     },
   });
 

@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto';
 import type { EffectBroker } from '@commander/effect-broker';
 import { canonicalRequestHash, type CapabilityTokenIssuer } from '@commander/effect-broker';
 import type { LLMProvider, LLMRequest, LLMResponse } from '@commander/core';
+import { getStepWorkloadBinding } from './stepWorkloadIdentity.js';
 
 /**
  * Process-local one-shot invoke registry for llm.* effects.
@@ -65,10 +66,15 @@ export function createLlmEffectAuth(input: {
   issuer: CapabilityTokenIssuer;
   /** Token TTL in ms (default 5 minutes). */
   ttlMs?: number;
+  /** Step-scoped workload id from ControlPlane (preferred over ambient tenant). */
+  workloadId?: string;
 }): LlmEffectAuth {
   const ttlMs = input.ttlMs ?? 5 * 60_000;
+  const binding = getStepWorkloadBinding();
+  const tenantId = binding?.tenantId ?? input.tenantId;
+  const workloadId = binding?.workloadId ?? input.workloadId;
   return {
-    tenantId: input.tenantId,
+    tenantId,
     runId: input.runId,
     stepId: input.stepId,
     actor: input.actor,
@@ -76,9 +82,10 @@ export function createLlmEffectAuth(input: {
     mintCapabilityToken: ({ effectType, request }) =>
       input.issuer.issue({
         jti: randomUUID(),
-        tenantId: input.tenantId,
+        tenantId,
         runId: input.runId,
         stepId: input.stepId,
+        workloadId,
         effectTypes: [effectType],
         expiresAt: new Date(Date.now() + ttlMs).toISOString(),
         requestHash: canonicalRequestHash(request),
@@ -156,6 +163,11 @@ export function wrapProviderWithEffectBroker(
           idempotencyKey: `llm:${auth.runId}:${auth.stepId}:${effectId}`,
           lease: auth.lease,
           actor: auth.actor,
+          workloadBinding: getStepWorkloadBinding() ?? {
+            tenantId: auth.tenantId,
+            runId: auth.runId,
+            stepId: auth.stepId,
+          },
         });
         return result.response as unknown as LLMResponse;
       } finally {
