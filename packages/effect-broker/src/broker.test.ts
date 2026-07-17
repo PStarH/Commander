@@ -196,3 +196,122 @@ describe('ENFORCED approval binding (args / policy / audience)', () => {
     assert.equal(invoked, false);
   });
 });
+
+describe('executeAdmitted worker affinity (C-α)', () => {
+  const leaseW1 = { workerId: 'w1', token: 'l', fencingEpoch: 1 };
+
+  function makeAffinityBroker(
+    executor: (input: Parameters<import('./index.js').EffectExecutor['execute']>[0]) => Promise<Record<string, unknown>>,
+    options: { localWorkerId?: string; localWorkerGeneration?: number } = { localWorkerId: 'w1' },
+  ) {
+    const tokens = makeTokens();
+    return {
+      tokens,
+      broker: new EffectBroker(
+        tokens,
+        { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+        { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => ({}) },
+        { execute: executor },
+        { append: async () => {} },
+        options,
+      ),
+    };
+  }
+
+  it('succeeds when localWorkerId matches admission lease workerId', async () => {
+    let invoked = false;
+    let receivedContext: unknown;
+    const { tokens, broker } = makeAffinityBroker(async (input) => {
+      invoked = true;
+      receivedContext = input.executionContext;
+      return { ok: true };
+    });
+    const admission = await broker.admit({
+      effectId: 'eff-aff-ok',
+      token: tokens.issue(grant),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem',
+      lease: leaseW1,
+      actor: 'w1',
+    });
+    assert.equal(admission.admitted, true);
+    const result = await broker.executeAdmitted({ effectId: 'eff-aff-ok' });
+    assert.equal(invoked, true);
+    assert.equal(result.response?.ok, true);
+    assert.deepEqual(receivedContext, {
+      tenantId: 'tenant',
+      workerId: 'w1',
+      effectId: 'eff-aff-ok',
+    });
+  });
+
+  it('throws WORKER_AFFINITY_VIOLATION when lease workerId differs from localWorkerId', async () => {
+    let invoked = false;
+    const { tokens, broker } = makeAffinityBroker(async () => {
+      invoked = true;
+      return {};
+    });
+    const admission = await broker.admit({
+      effectId: 'eff-aff-bad',
+      token: tokens.issue(grant),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem',
+      lease: { workerId: 'w2', token: 'l', fencingEpoch: 1 },
+      actor: 'w2',
+    });
+    assert.equal(admission.admitted, true);
+    await assert.rejects(
+      broker.executeAdmitted({ effectId: 'eff-aff-bad' }),
+      (error: unknown) => error instanceof EffectBrokerError && error.code === 'WORKER_AFFINITY_VIOLATION',
+    );
+    assert.equal(invoked, false);
+  });
+
+  it('throws WORKER_AFFINITY_VIOLATION when workerGeneration mismatches', async () => {
+    let invoked = false;
+    const { tokens, broker } = makeAffinityBroker(
+      async () => {
+        invoked = true;
+        return {};
+      },
+      { localWorkerId: 'w1', localWorkerGeneration: 2 },
+    );
+    const admission = await broker.admit({
+      effectId: 'eff-gen-bad',
+      token: tokens.issue(grant),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem',
+      lease: { workerId: 'w1', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
+      actor: 'w1',
+    });
+    assert.equal(admission.admitted, true);
+    await assert.rejects(
+      broker.executeAdmitted({ effectId: 'eff-gen-bad' }),
+      (error: unknown) => error instanceof EffectBrokerError && error.code === 'WORKER_AFFINITY_VIOLATION',
+    );
+    assert.equal(invoked, false);
+  });
+
+  it('skips affinity check when localWorkerId is unset (backward compatible)', async () => {
+    let invoked = false;
+    const { tokens, broker } = makeAffinityBroker(async () => {
+      invoked = true;
+      return { ok: true };
+    }, {});
+    const admission = await broker.admit({
+      effectId: 'eff-no-local',
+      token: tokens.issue(grant),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem',
+      lease: { workerId: 'w2', token: 'l', fencingEpoch: 1 },
+      actor: 'w2',
+    });
+    assert.equal(admission.admitted, true);
+    await broker.executeAdmitted({ effectId: 'eff-no-local' });
+    assert.equal(invoked, true);
+  });
+});
