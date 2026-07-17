@@ -1,6 +1,6 @@
 {
   "verdict": "FAIL",
-  "reason": "FAIL: 1 case(s) skipped or missing evidence; missing evidence for: EXEC-1; 25 PASS artifact(s) without evidenceLevel=live: DATA-4(simulated), DATA-6(simulated), EXEC-2(simulated), EXEC-3(simulated), EXEC-4(simulated), EXEC-5(simulated), NET-1(simulated), NET-2(simulated), NET-3(simulated), RATE-1(simulated), RATE-2(simulated), AUDIT-1(ci-worm-sim), AUDIT-2(simulated), AUDIT-3(simulated), AUDIT-4(ci-worm-sim), AUDIT-5(simulated), TAMPER-1(simulated), TAMPER-2(simulated), TAMPER-3(simulated), TAMPER-4(ci-worm-sim), TAMPER-5(simulated), KEY-1(simulated), KEY-2(simulated), KEY-3(simulated), KEY-5(simulated).",
+  "reason": "FAIL: 25 PASS artifact(s) without evidenceLevel=live: DATA-4(simulated), DATA-6(simulated), EXEC-2(simulated), EXEC-3(simulated), EXEC-4(simulated), EXEC-5(simulated), NET-1(simulated), NET-2(simulated), NET-3(simulated), RATE-1(simulated), RATE-2(simulated), AUDIT-1(ci-worm-sim), AUDIT-2(simulated), AUDIT-3(simulated), AUDIT-4(ci-worm-sim), AUDIT-5(simulated), TAMPER-1(simulated), TAMPER-2(simulated), TAMPER-3(simulated), TAMPER-4(ci-worm-sim), TAMPER-5(simulated), KEY-1(simulated), KEY-2(simulated), KEY-3(simulated), KEY-5(simulated)",
   "envCheck": {
     "verdict": "PASS",
     "checks": [
@@ -44,13 +44,11 @@
     "scannedAt": "2026-07-16T10:24:13.275Z"
   },
   "totalCases": 32,
-  "passed": 31,
+  "passed": 32,
   "failed": 0,
   "breached": 0,
-  "skipped": 1,
-  "missing": [
-    "EXEC-1"
-  ],
+  "skipped": 0,
+  "missing": [],
   "cases": [
     {
       "testCaseId": "DATA-1",
@@ -111,6 +109,16 @@
       "artifacts": [],
       "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
       "ranAt": "2026-07-16T10:24:21.535Z"
+    },
+    {
+      "testCaseId": "EXEC-1",
+      "verdict": "PASS",
+      "evidenceLevel": "live",
+      "breach": false,
+      "details": "EXEC-1 gVisor live-fire image=nginx:alpine: all 3 probes blocked; B unaffected. nsenter:blocked=true; proc-1-root-host-marker:blocked=true; cross-container-canary:blocked=true; B_unaffected=true",
+      "artifacts": [],
+      "gitSha": "0d1e20624c1c39aad4c922d8e1d9262d965fd6bf",
+      "ranAt": "2026-07-17T07:38:59.214Z"
     },
     {
       "testCaseId": "EXEC-2",
@@ -365,6 +373,6 @@
       "ranAt": "2026-07-16T10:24:22.086Z"
     }
   ],
-  "ranAt": "2026-07-16T10:24:23.145Z",
-  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1"
+  "ranAt": "2026-07-17T08:12:21.980Z",
+  "gitSha": "c31aa051c90942378a2b7852ba56984220580044"
 }
