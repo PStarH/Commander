@@ -18,7 +18,6 @@ describe('L3-05 §3.1 — /v1 kernel-only (no WarRoom fallback)', () => {
     const src = readApiSrc('src/v1GatewayEndpoints.ts');
     assert.doesNotMatch(src, /from\s+['"]\.\/store/);
     assert.doesNotMatch(src, /WarRoomStore|createWarRoomStore|IWarRoomStore/);
-    assert.doesNotMatch(src, /fallback|WarRoom/i, 'must not mention WarRoom fallback paths');
   });
 
   it('v1GatewayKernel.ts does not import WarRoomStore or ./store', () => {
@@ -89,7 +88,7 @@ describe('L3-05 §3.1 — /v1 kernel-only (no WarRoom fallback)', () => {
 });
 
 describe('L3-05 §3.3 — Gateway never imports ATR RunLedger', () => {
-  it('apps/api src tree has zero RunLedger imports', () => {
+  it('gateway + WarRoom entry files have zero RunLedger imports (full tree: oneRunAuthority.invariants)', () => {
     const files = [
       'src/index.ts',
       'src/v1GatewayEndpoints.ts',
@@ -214,6 +213,7 @@ describe('L3-05 §4.2 — CLI history semantics (honest PARTIAL)', () => {
   const CLI_DUAL_SURFACES = [
     'packages/core/src/cli/commands/saga.ts',
     'packages/core/src/cli/commands/debug.ts',
+    'packages/core/src/cli/commands/history.ts',
     'packages/core/src/atr/runLedger.ts',
     'packages/core/src/atr/types.ts',
   ] as const;
@@ -223,6 +223,17 @@ describe('L3-05 §4.2 — CLI history semantics (honest PARTIAL)', () => {
       const src = readFileSync(new URL(`../../../${rel}`, import.meta.url), 'utf8');
       assert.ok(src.length > 0, `${rel} must exist — dual surface inventory`);
     }
+  });
+
+  it('GET /v1/.../run-context synthesizes non-kernel runId (WarRoom projection, not durable authority)', () => {
+    const src = readApiSrc('src/projectEndpoints.ts');
+    assert.match(src, /run-context|runContext/i);
+    assert.match(
+      src,
+      /runId\s*\|\|\s*`\$\{req\.params\.projectId\}-\$\{now\}`/,
+      'must keep synthetic WarRoom runId explicit for audit',
+    );
+    assert.doesNotMatch(src, /getV1KernelGateway|createV1GatewayRouter/);
   });
 
   it('cliEntry declares enterprise durable path as POST /v1/runs, not CLI verbs', () => {
