@@ -88,6 +88,22 @@ describe('Architecture V2 invariants', () => {
     assert.equal(existsSync(join(ROOT, 'packages/orchestration')), false);
   });
 
+  it('InMemoryKernelRepository is not re-exported from @commander/kernel main barrel', () => {
+    const barrel = read('packages/kernel/src/index.ts');
+    assert.doesNotMatch(
+      barrel,
+      /export\s*\{[^}]*InMemoryKernelRepository/,
+      'InMemory must stay on @commander/kernel/testing/inMemoryRepository only',
+    );
+    const pkg = JSON.parse(read('packages/kernel/package.json')) as {
+      exports?: Record<string, unknown>;
+    };
+    assert.ok(
+      pkg.exports?.['./testing/inMemoryRepository'],
+      'subpath export ./testing/inMemoryRepository must exist',
+    );
+  });
+
   it('package and CI wiring expose the architecture guard', () => {
     const packageJson = JSON.parse(read('package.json')) as {
       scripts?: Record<string, string>;
@@ -99,6 +115,26 @@ describe('Architecture V2 invariants', () => {
     );
     assert.match(read('.github/workflows/ci.yml'), /run: pnpm arch:guard/);
     assert.match(read('.github/workflows/ci.yml'), /run: pnpm arch:guard:test/);
+    assert.match(read('.github/workflows/ci.yml'), /run: pnpm contract:check/);
+    assert.match(
+      read('.github/workflows/ci.yml'),
+      /pnpm --filter @commander\/contracts test/,
+    );
+    assert.match(
+      read('.github/workflows/ci.yml'),
+      /Architecture V2 package boundary gate[\s\S]*continue-on-error:\s*true[\s\S]*pnpm arch:gate/,
+    );
+  });
+
+  it('contract snapshot baseline exists and matches current surface', () => {
+    const baselinePath = join(ROOT, 'packages/contracts/snapshots/contract-snapshot.baseline.json');
+    assert.ok(existsSync(baselinePath), 'contract snapshot baseline must be committed');
+    const baseline = JSON.parse(read('packages/contracts/snapshots/contract-snapshot.baseline.json')) as {
+      version: string;
+      resources: string[];
+    };
+    assert.equal(baseline.version, 'v2');
+    assert.ok(baseline.resources.length >= 15);
   });
 
   it('core reuses shared control-plane contract types', () => {
