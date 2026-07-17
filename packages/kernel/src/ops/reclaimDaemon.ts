@@ -33,6 +33,10 @@ export class ReclaimDaemon {
   };
   private timer?: ReturnType<typeof setInterval>;
   private inFlight?: Promise<void>;
+  private started = false;
+  private lastOkAt = 0;
+  /** Bumped on each start(); in-flight ticks from prior epochs must not stamp health. */
+  private healthEpoch = 0;
 
   constructor(
     private readonly repository: KernelRepository,
@@ -43,14 +47,29 @@ export class ReclaimDaemon {
 
   start(): void {
     if (!this.config.enabled || this.timer) return;
+    this.started = true;
+    // Each start epoch must prove a fresh tick (ignore pre-start / pre-stop lastOkAt).
+    this.healthEpoch += 1;
+    const epoch = this.healthEpoch;
+    this.lastOkAt = 0;
     this.timer = setInterval(() => { void this.tick().catch(() => undefined); }, this.config.pollIntervalMs);
-    void this.tick().catch(() => undefined);
+    void this.kick(epoch);
   }
 
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
+    this.started = false;
+    this.healthEpoch += 1;
     await this.inFlight;
+    // Only clear if still stopped — a concurrent start() may have stamped a new epoch.
+    if (!this.started) this.lastOkAt = 0;
+  }
+
+  /** True when a tick succeeded recently. */
+  isHealthy(now = Date.now()): boolean {
+    if (!this.started || this.lastOkAt <= 0) return false;
+    return now - this.lastOkAt <= this.config.pollIntervalMs * 3;
   }
 
   async tick(now = new Date()): Promise<ReclaimStats> {
@@ -65,7 +84,15 @@ export class ReclaimDaemon {
     return { ...this.stats };
   }
 
+  /** Drain any prior in-flight work, then run one tick belonging to `epoch`. */
+  private async kick(epoch: number): Promise<void> {
+    if (this.inFlight) await this.inFlight;
+    if (!this.started || this.healthEpoch !== epoch) return;
+    await this.tick().catch(() => undefined);
+  }
+
   private async runTick(now: Date): Promise<void> {
+    const epoch = this.healthEpoch;
     this.stats.cycles++;
     try {
       const reclaimed = await this.repository.reclaimExpiredLeases(now, this.config.batchSize);
@@ -80,6 +107,9 @@ export class ReclaimDaemon {
         }
       }
       this.stats.compensationRequested += compensatingRuns.size;
+      if (this.started && this.healthEpoch === epoch) {
+        this.lastOkAt = Date.now();
+      }
     } catch (error) {
       this.stats.errors++;
       throw error;

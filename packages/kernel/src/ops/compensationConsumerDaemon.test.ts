@@ -40,4 +40,28 @@ describe('CompensationConsumerDaemon', () => {
     assert.match(daemon.lastFailure() ?? '', /outbox unreachable/);
     await daemon.stop();
   });
+
+  it('requires a fresh successful tick after restart', async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let probes = 0;
+    const daemon = new CompensationConsumerDaemon({
+      intervalMs: 60_000,
+      probe: async () => {
+        probes += 1;
+        if (probes > 1) await blocked;
+      },
+    });
+    daemon.start();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(daemon.isHealthy(), true);
+    await daemon.stop();
+
+    daemon.start();
+    assert.equal(daemon.isHealthy(), false);
+    release();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(daemon.isHealthy(), true);
+    await daemon.stop();
+  });
 });

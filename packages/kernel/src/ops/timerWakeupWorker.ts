@@ -40,8 +40,11 @@ export class TimerWakeupWorker {
   private readonly repo: KernelRepository;
   private readonly config: TimerWakeupWorkerConfig;
   private timer: ReturnType<typeof setInterval> | null = null;
-  private running = false;
+  private started = false;
   private inFlight?: Promise<void>;
+  private lastOkAt = 0;
+  /** Bumped on each start(); in-flight ticks from prior epochs must not stamp health. */
+  private healthEpoch = 0;
   private stats = {
     timersFired: 0,
     interactionsExpired: 0,
@@ -59,11 +62,13 @@ export class TimerWakeupWorker {
    */
   start(): void {
     if (this.timer || !this.config.enabled) return;
-    this.timer = setInterval(() => {
-      if (!this.inFlight) {
-        this.inFlight = this.tick().finally(() => { this.inFlight = undefined; });
-      }
-    }, this.config.pollIntervalMs);
+    this.started = true;
+    // Each start epoch must prove a fresh tick (ignore pre-start / pre-stop lastOkAt).
+    this.healthEpoch += 1;
+    const epoch = this.healthEpoch;
+    this.lastOkAt = 0;
+    this.timer = setInterval(() => { void this.tick(); }, this.config.pollIntervalMs);
+    void this.kick(epoch);
   }
 
   /**
@@ -74,15 +79,38 @@ export class TimerWakeupWorker {
       clearInterval(this.timer);
       this.timer = null;
     }
+    this.started = false;
+    this.healthEpoch += 1;
     await this.inFlight;
+    // Only clear if still stopped — a concurrent start() may have stamped a new epoch.
+    if (!this.started) this.lastOkAt = 0;
+  }
+
+  /** True when a tick succeeded recently. */
+  isHealthy(now = Date.now()): boolean {
+    if (!this.started || this.lastOkAt <= 0) return false;
+    return now - this.lastOkAt <= this.config.pollIntervalMs * 3;
   }
 
   /**
    * Execute one polling cycle. Useful for testing.
    */
   async tick(): Promise<void> {
-    if (this.running) return;
-    this.running = true;
+    if (!this.inFlight) {
+      this.inFlight = this.runTick().finally(() => { this.inFlight = undefined; });
+    }
+    await this.inFlight;
+  }
+
+  /** Drain any prior in-flight work, then run one tick belonging to `epoch`. */
+  private async kick(epoch: number): Promise<void> {
+    if (this.inFlight) await this.inFlight;
+    if (!this.started || this.healthEpoch !== epoch) return;
+    await this.tick();
+  }
+
+  private async runTick(): Promise<void> {
+    const epoch = this.healthEpoch;
     try {
       this.stats.cycles++;
 
@@ -111,11 +139,12 @@ export class TimerWakeupWorker {
 
       // 3. Sweep outbox DLQ (opportunistic — also handles exponential backoff)
       await this.repo.sweepOutboxDlq(new Date(), this.config.batchSize);
+      if (this.started && this.healthEpoch === epoch) {
+        this.lastOkAt = Date.now();
+      }
     } catch (err) {
       this.stats.errors++;
       // Swallow — the worker must not crash on errors
-    } finally {
-      this.running = false;
     }
   }
 
