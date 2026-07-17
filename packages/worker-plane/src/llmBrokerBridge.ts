@@ -14,7 +14,19 @@ import { randomUUID } from 'node:crypto';
 import type { EffectBroker } from '@commander/effect-broker';
 import { canonicalRequestHash, type CapabilityTokenIssuer } from '@commander/effect-broker';
 import type { LLMProvider, LLMRequest, LLMResponse } from '@commander/core';
-import { getStepWorkloadBinding } from './stepWorkloadIdentity.js';
+import {
+  getStepWorkloadBinding,
+  mintStepCapabilityToken,
+  requireStepWorkloadBinding,
+} from './stepWorkloadIdentity.js';
+
+function isProductionProfile(): boolean {
+  return (
+    process.env.NODE_ENV === 'production' ||
+    process.env.COMMANDER_PROFILE === 'enterprise' ||
+    process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING === '1'
+  );
+}
 
 /**
  * Process-local one-shot invoke registry for llm.* effects.
@@ -56,6 +68,18 @@ export function getLlmEffectAuth(): LlmEffectAuth | undefined {
   return llmAuthStorage.getStore();
 }
 
+/** Resolve admit binding: verified step identity when ALS/prod; ambient only in non-prod without ALS. */
+function resolveAdmitWorkloadBinding(auth: LlmEffectAuth) {
+  if (getStepWorkloadBinding() || isProductionProfile()) {
+    return requireStepWorkloadBinding();
+  }
+  return {
+    tenantId: auth.tenantId,
+    runId: auth.runId,
+    stepId: auth.stepId,
+  };
+}
+
 /** Build ALS auth that mints per-call tokens via the worker's CapabilityTokenIssuer. */
 export function createLlmEffectAuth(input: {
   tenantId: string;
@@ -70,26 +94,42 @@ export function createLlmEffectAuth(input: {
   workloadId?: string;
 }): LlmEffectAuth {
   const ttlMs = input.ttlMs ?? 5 * 60_000;
-  const binding = getStepWorkloadBinding();
-  const tenantId = binding?.tenantId ?? input.tenantId;
-  const workloadId = binding?.workloadId ?? input.workloadId;
+  // Prod / active step ALS: tenant comes from verified ControlPlane identity only.
+  const live =
+    getStepWorkloadBinding() || isProductionProfile()
+      ? requireStepWorkloadBinding()
+      : undefined;
+  const tenantId = live?.tenantId ?? input.tenantId;
+  const runId = live?.runId ?? input.runId;
+  const stepId = live?.stepId ?? input.stepId;
+  const workloadId = live?.workloadId ?? input.workloadId;
   return {
     tenantId,
-    runId: input.runId,
-    stepId: input.stepId,
+    runId,
+    stepId,
     actor: input.actor,
     lease: input.lease,
-    mintCapabilityToken: ({ effectType, request }) =>
-      input.issuer.issue({
+    mintCapabilityToken: ({ effectType, request }) => {
+      // Re-check ALS at mint time (not create-time snapshot) so expiry/revoke fail-close.
+      if (getStepWorkloadBinding() || isProductionProfile()) {
+        return mintStepCapabilityToken({
+          issuer: input.issuer,
+          effectType,
+          request,
+          ttlMs,
+        });
+      }
+      return input.issuer.issue({
         jti: randomUUID(),
         tenantId,
-        runId: input.runId,
-        stepId: input.stepId,
+        runId,
+        stepId,
         workloadId,
         effectTypes: [effectType],
         expiresAt: new Date(Date.now() + ttlMs).toISOString(),
         requestHash: canonicalRequestHash(request),
-      }),
+      });
+    },
   };
 }
 
@@ -163,11 +203,7 @@ export function wrapProviderWithEffectBroker(
           idempotencyKey: `llm:${auth.runId}:${auth.stepId}:${effectId}`,
           lease: auth.lease,
           actor: auth.actor,
-          workloadBinding: getStepWorkloadBinding() ?? {
-            tenantId: auth.tenantId,
-            runId: auth.runId,
-            stepId: auth.stepId,
-          },
+          workloadBinding: resolveAdmitWorkloadBinding(auth),
         });
         return result.response as unknown as LLMResponse;
       } finally {

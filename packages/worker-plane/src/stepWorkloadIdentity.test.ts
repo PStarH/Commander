@@ -10,6 +10,7 @@ import {
 import type { ClaimedStep } from './types.js';
 import {
   getStepWorkloadBinding,
+  getStepWorkloadContext,
   mintStepCapabilityToken,
   requireStepWorkloadBinding,
   runWithStepWorkloadIdentity,
@@ -45,7 +46,7 @@ describe('stepWorkloadIdentity (L3-07)', () => {
     assert.equal(getStepWorkloadBinding(), undefined);
   });
 
-  it('mintStepCapabilityToken uses identity tenant, not ambient override', async () => {
+  it('mintStepCapabilityToken uses identity tenant/run/step/workloadId only', async () => {
     resetControlPlane();
     const issuer = CapabilityTokenIssuer.generate({
       issuer: 'commander-worker',
@@ -53,6 +54,8 @@ describe('stepWorkloadIdentity (L3-07)', () => {
       keyId: 'k1',
     });
     await runWithStepWorkloadIdentity(step, async () => {
+      const binding = requireStepWorkloadBinding();
+      // mint API has no tenantId/runId/stepId fields — grant must mirror ALS binding only.
       const token = mintStepCapabilityToken({
         issuer,
         effectType: 'crm.write',
@@ -64,9 +67,10 @@ describe('stepWorkloadIdentity (L3-07)', () => {
         publicKeys: { k1: issuer.publicKey },
       });
       const grant = await ver.verify(token);
-      assert.equal(grant.tenantId, 'tenant-a');
-      assert.equal(grant.runId, 'run-1');
-      assert.equal(grant.stepId, 'step-1');
+      assert.equal(grant.tenantId, binding.tenantId);
+      assert.equal(grant.runId, binding.runId);
+      assert.equal(grant.stepId, binding.stepId);
+      assert.equal(grant.workloadId, binding.workloadId);
       assert.equal(grant.requestHash, canonicalRequestHash({ action: 'x' }));
     });
   });
@@ -74,6 +78,29 @@ describe('stepWorkloadIdentity (L3-07)', () => {
   it('requireStepWorkloadBinding fails outside ALS', () => {
     resetControlPlane();
     assert.throws(() => requireStepWorkloadBinding(), /WORKLOAD_IDENTITY_REQUIRED/);
+  });
+
+  it('requireStepWorkloadBinding fails closed when step identity expired', () => {
+    resetControlPlane();
+    runWithStepWorkloadIdentity(step, () => {
+      const ctx = getStepWorkloadContext();
+      assert.ok(ctx);
+      ctx.identity.expiresAt = '2020-01-01T00:00:00.000Z';
+      assert.throws(() => requireStepWorkloadBinding(), /WORKLOAD_IDENTITY_EXPIRED/);
+      assert.throws(
+        () =>
+          mintStepCapabilityToken({
+            issuer: CapabilityTokenIssuer.generate({
+              issuer: 'commander-worker',
+              audience: 'commander.effect-broker',
+              keyId: 'k1',
+            }),
+            effectType: 'crm.write',
+            request: {},
+          }),
+        /WORKLOAD_IDENTITY_EXPIRED/,
+      );
+    });
   });
 
   it('routes broker admit with binding and rejects cross-tenant mint', async () => {
@@ -141,5 +168,31 @@ describe('stepWorkloadIdentity (L3-07)', () => {
       assert.equal(rejected.admitted, false);
       assert.equal(rejected.reason, 'TENANT_MISMATCH');
     });
+  });
+
+  it('isolates ALS binding across concurrent steps (no cross-step reuse)', async () => {
+    resetControlPlane();
+    const stepA: ClaimedStep = { ...step, id: 'step-a', runId: 'run-a' };
+    const stepB: ClaimedStep = { ...step, id: 'step-b', runId: 'run-b', tenantId: 'tenant-b' };
+    const seen: Array<{ stepId: string; tenantId: string; workloadId: string }> = [];
+
+    await Promise.all([
+      runWithStepWorkloadIdentity(stepA, async () => {
+        await new Promise((r) => setTimeout(r, 20));
+        const b = requireStepWorkloadBinding();
+        seen.push({ stepId: b.stepId, tenantId: b.tenantId, workloadId: b.workloadId });
+      }),
+      runWithStepWorkloadIdentity(stepB, async () => {
+        await new Promise((r) => setTimeout(r, 5));
+        const b = requireStepWorkloadBinding();
+        seen.push({ stepId: b.stepId, tenantId: b.tenantId, workloadId: b.workloadId });
+      }),
+    ]);
+
+    assert.equal(seen.length, 2);
+    const byStep = Object.fromEntries(seen.map((s) => [s.stepId, s]));
+    assert.equal(byStep['step-a']?.tenantId, 'tenant-a');
+    assert.equal(byStep['step-b']?.tenantId, 'tenant-b');
+    assert.notEqual(byStep['step-a']?.workloadId, byStep['step-b']?.workloadId);
   });
 });

@@ -116,6 +116,7 @@ describe('L3-07 workload binding', () => {
       actor: 'w',
       workloadBinding: binding,
     });
+    assert.equal(runBad.admitted, false);
     assert.equal(runBad.reason, 'RUN_MISMATCH');
 
     const stepBad = await broker.admit({
@@ -128,7 +129,51 @@ describe('L3-07 workload binding', () => {
       actor: 'w',
       workloadBinding: binding,
     });
+    assert.equal(stepBad.admitted, false);
     assert.equal(stepBad.reason, 'STEP_MISMATCH');
+  });
+
+  it('rejects WORKLOAD_BINDING_REQUIRED under enterprise profile', async () => {
+    const { iss, ver } = makeTokens();
+    const broker = makeBroker(ver);
+    const origEnv = process.env.NODE_ENV;
+    const origProfile = process.env.COMMANDER_PROFILE;
+    process.env.NODE_ENV = 'test';
+    process.env.COMMANDER_PROFILE = 'enterprise';
+    try {
+      const admission = await broker.admit({
+        effectId: 'eff-ent',
+        token: iss.issue({ ...baseGrant, requestHash: canonicalRequestHash({}) }),
+        type: 'crm.write',
+        request: {},
+        idempotencyKey: 'idem-ent',
+        lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+        actor: 'w',
+      });
+      assert.equal(admission.admitted, false);
+      assert.equal(admission.reason, 'WORKLOAD_BINDING_REQUIRED');
+    } finally {
+      process.env.NODE_ENV = origEnv;
+      if (origProfile === undefined) delete process.env.COMMANDER_PROFILE;
+      else process.env.COMMANDER_PROFILE = origProfile;
+    }
+  });
+
+  it('rejects WORKLOAD_MISMATCH when workloadId differs', async () => {
+    const { iss, ver } = makeTokens();
+    const broker = makeBroker(ver);
+    const admission = await broker.admit({
+      effectId: 'eff-wl-diff',
+      token: iss.issue({ ...baseGrant, requestHash: canonicalRequestHash({}) }),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem-wl-diff',
+      lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+      actor: 'w',
+      workloadBinding: { ...binding, workloadId: 'wl_other' },
+    });
+    assert.equal(admission.admitted, false);
+    assert.equal(admission.reason, 'WORKLOAD_MISMATCH');
   });
 
   it('admits when grant matches binding', async () => {
@@ -145,6 +190,27 @@ describe('L3-07 workload binding', () => {
       workloadBinding: binding,
     });
     assert.equal(admission.admitted, true);
+  });
+
+  it('rejects WORKLOAD_MISMATCH when grant has workloadId but binding omits it', async () => {
+    const { iss, ver } = makeTokens();
+    const broker = makeBroker(ver);
+    const admission = await broker.admit({
+      effectId: 'eff-wl',
+      token: iss.issue({ ...baseGrant, requestHash: canonicalRequestHash({}) }),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem-wl',
+      lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+      actor: 'w',
+      workloadBinding: {
+        tenantId: binding.tenantId,
+        runId: binding.runId,
+        stepId: binding.stepId,
+      },
+    });
+    assert.equal(admission.admitted, false);
+    assert.equal(admission.reason, 'WORKLOAD_MISMATCH');
   });
 
   it('rejects expired capability token before binding check matters', async () => {
