@@ -413,8 +413,8 @@ function bindingMismatch(
   if (grant.tenantId !== binding.tenantId) return 'TENANT_MISMATCH';
   if (grant.runId !== binding.runId) return 'RUN_MISMATCH';
   if (grant.stepId !== binding.stepId) return 'STEP_MISMATCH';
-  // Grant minted with workloadId must not admit under a binding that omits/differs.
-  if (grant.workloadId && grant.workloadId !== binding.workloadId) {
+  // Symmetric: either side pinning workloadId must match (prevents token/binding split).
+  if (grant.workloadId !== binding.workloadId) {
     return 'WORKLOAD_MISMATCH';
   }
   return null;

@@ -1,3 +1,5 @@
+import { EffectBrokerError } from '@commander/effect-broker';
+import { WorkerExecutionError } from './types.js';
 /**
  * Production/enterprise EffectBroker requirement gate (WS2 §4 / L3-03a).
  * Shared across agent, tool, and connector step executors.
@@ -84,3 +86,62 @@ export function mustRouteExternalEffectThroughBroker(
   if (isProductionEffectGate() || options?.brokerPresent === true) return true;
   return false;
 }
+
+/** Fail-closed lease shape before EffectBroker.admit (kernel fencing). */
+export function assertEffectBrokerLease(
+  lease: {
+    workerId: string;
+    workerGeneration?: number;
+    token: string;
+    fencingEpoch: number;
+  },
+  options?: { requireGeneration?: boolean },
+): void {
+  if (typeof lease.token !== 'string' || lease.token.length === 0) {
+    throw new WorkerExecutionError('Effect admission requires lease token', {
+      code: 'EFFECT_AUTHORIZATION_REQUIRED',
+      retryable: false,
+    });
+  }
+  if (!Number.isFinite(lease.fencingEpoch) || lease.fencingEpoch < 0) {
+    throw new WorkerExecutionError('Effect admission requires valid fencingEpoch', {
+      code: 'EFFECT_AUTHORIZATION_REQUIRED',
+      retryable: false,
+    });
+  }
+  if (options?.requireGeneration && lease.workerGeneration === undefined) {
+    throw new WorkerExecutionError(
+      'Effect admission requires lease workerGeneration (kernel fencing)',
+      { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false },
+    );
+  }
+}
+
+/**
+ * Preserve EffectBrokerError codes (COMPLETION_UNKNOWN, WORKER_AFFINITY_*, …)
+ * instead of collapsing everything into EFFECT_EXECUTION_FAILED.
+ */
+export function workerExecutionErrorFromEffectFailure(
+  error: unknown,
+  context: { toolName?: string; connectorName?: string; operation?: string; stepId: string },
+): WorkerExecutionError {
+  if (error instanceof WorkerExecutionError) return error;
+  if (error instanceof EffectBrokerError) {
+    const retryable =
+      error.code === 'EFFECT_IN_FLIGHT' ||
+      error.code === 'COMPLETION_UNKNOWN' ||
+      error.code === 'WORKER_AFFINITY_MISMATCH';
+    return new WorkerExecutionError(error.message, {
+      code: error.code,
+      retryable,
+      details: { ...error.details, ...context },
+    });
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return new WorkerExecutionError(message, {
+    code: 'EFFECT_EXECUTION_FAILED',
+    retryable: false,
+    details: context,
+  });
+}
+

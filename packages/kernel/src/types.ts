@@ -214,7 +214,8 @@ export class KernelInvariantError extends Error {
       | 'IDEMPOTENCY_CONFLICT'
       | 'TIMER_NOT_FOUND'
       | 'INTERACTION_NOT_FOUND'
-      | 'INTERACTION_ALREADY_ANSWERED',
+      | 'INTERACTION_ALREADY_ANSWERED'
+      | 'STEP_NOT_FOUND',
     message: string,
   ) {
     super(message);
