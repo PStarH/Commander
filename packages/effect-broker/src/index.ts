@@ -122,7 +122,17 @@ export interface ApprovalInteractionPort {
 }
 
 export interface EffectExecutor {
-  execute(input: { type: string; request: Record<string, unknown>; signal: AbortSignal }): Promise<Record<string, unknown>>;
+  execute(input: {
+    type: string;
+    request: Record<string, unknown>;
+    signal: AbortSignal;
+    executionContext?: {
+      tenantId: string;
+      workerId: string;
+      workerGeneration?: number;
+      effectId: string;
+    };
+  }): Promise<Record<string, unknown>>;
 }
 
 export interface AuditSink {
@@ -275,14 +285,16 @@ export interface EffectBrokerOptions {
   /** WS2 §5: daily per-tenant quota ceiling enforced by admit() when the
    *  kernel port exposes incrementQuota. Undefined = record usage only. */
   quotaLimits?: { maxCountPerDay?: number };
+  /** Local worker identity for executeAdmitted affinity checks (C-α). */
+  localWorkerId?: string;
+  localWorkerGeneration?: number;
 }
 
 /**
- * Admission store — holds effects that passed admit() and are awaiting
- * execute(). In a single-process worker this is an in-memory map keyed by
- * effectId. In a distributed worker the kernel ledger is the authoritative
- * store; this interface lets the broker re-load an admitted effect from the
- * kernel without coupling admit() to execute().
+ * Process-local, non-durable staging for effects that passed admit() and await
+ * execute() on this worker. NOT a cross-worker reload store — the kernel
+ * ledger is authoritative for admission state. Split admit/execute MUST stay
+ * on the same worker (enforced by localWorkerId affinity at executeAdmitted).
  */
 export interface AdmissionStore {
   put(effectId: string, entry: AdmittedEffect): void;
@@ -325,7 +337,7 @@ export const PERMIT_DEFAULT_DECISION_ID = 'permit' + '-default';
 
 /** The only supported path for an external write in Architecture V2. */
 export class EffectBroker {
-  private readonly options: Required<Pick<EffectBrokerOptions, 'audience' | 'requireRequestBinding'>> & Pick<EffectBrokerOptions, 'approval' | 'quotaLimits'>;
+  private readonly options: Required<Pick<EffectBrokerOptions, 'audience' | 'requireRequestBinding'>> & Pick<EffectBrokerOptions, 'approval' | 'quotaLimits' | 'localWorkerId' | 'localWorkerGeneration'>;
   private readonly admissionStore: AdmissionStore;
 
   constructor(
@@ -342,7 +354,7 @@ export class EffectBroker {
     if (production && !requireRequestBinding) {
       throw new EffectBrokerError('REQUEST_BINDING_DISABLED_IN_PROD');
     }
-    this.options = { audience: options.audience ?? 'commander.effect-broker', requireRequestBinding, approval: options.approval, quotaLimits: options.quotaLimits };
+    this.options = { audience: options.audience ?? 'commander.effect-broker', requireRequestBinding, approval: options.approval, quotaLimits: options.quotaLimits, localWorkerId: options.localWorkerId, localWorkerGeneration: options.localWorkerGeneration };
     this.admissionStore = new InMemoryAdmissionStore();
   }
 
@@ -426,6 +438,7 @@ export class EffectBroker {
   }): Promise<{ effectId: string; replayed: boolean; response?: Record<string, unknown> }> {
     const admission = this.admissionStore.get(input.effectId);
     if (!admission) throw new EffectBrokerError('ADMISSION_NOT_FOUND', { effectId: input.effectId });
+    this.assertWorkerAffinity(admission);
     try {
       if (admission.replayed) {
         return { effectId: admission.kernelEffectId, replayed: true, response: admission.cachedResponse };
@@ -433,7 +446,17 @@ export class EffectBroker {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(new Error('Effect timeout')), input.timeoutMs ?? 30_000);
       try {
-        const response = await this.executor.execute({ type: admission.type, request: admission.request, signal: controller.signal });
+        const response = await this.executor.execute({
+          type: admission.type,
+          request: admission.request,
+          signal: controller.signal,
+          executionContext: {
+            tenantId: admission.grant.tenantId,
+            workerId: admission.lease.workerId,
+            ...(admission.lease.workerGeneration !== undefined ? { workerGeneration: admission.lease.workerGeneration } : {}),
+            effectId: admission.effectId,
+          },
+        });
         const committed = await this.kernel.completeEffect(admission.kernelEffectId, admission.grant.tenantId, admission.lease, response, admission.actor);
         if (!committed) {
           await this.kernel.markEffectCompletionUnknown?.({ effectId: admission.kernelEffectId, tenantId: admission.grant.tenantId, reason: 'Kernel rejected completion after external executor returned', actor: admission.actor });
@@ -468,6 +491,27 @@ export class EffectBroker {
       throw new EffectBrokerError(admission.reason ?? 'ADMIT_REJECTED', admission.details ?? { reason: admission.reason });
     }
     return this.executeAdmitted({ effectId: input.effectId, timeoutMs: input.timeoutMs });
+  }
+
+  private assertWorkerAffinity(admission: AdmittedEffect): void {
+    const localWorkerId = this.options.localWorkerId;
+    if (!localWorkerId) return;
+    if (admission.lease.workerId !== localWorkerId) {
+      throw new EffectBrokerError('WORKER_AFFINITY_VIOLATION', {
+        effectId: admission.effectId,
+        expectedWorkerId: localWorkerId,
+        actualWorkerId: admission.lease.workerId,
+      });
+    }
+    const localGen = this.options.localWorkerGeneration;
+    const leaseGen = admission.lease.workerGeneration;
+    if (localGen !== undefined && leaseGen !== undefined && localGen !== leaseGen) {
+      throw new EffectBrokerError('WORKER_AFFINITY_VIOLATION', {
+        effectId: admission.effectId,
+        expectedWorkerGeneration: localGen,
+        actualWorkerGeneration: leaseGen,
+      });
+    }
   }
 
   private async rejectAdmit(grant: CapabilityGrant, code: string, details: Record<string, unknown>): Promise<AdmissionResult> {
