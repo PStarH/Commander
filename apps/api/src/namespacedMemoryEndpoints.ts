@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import type { MemoryStore } from '@commander/core';
+import { writeProductMemory, type MemoryStore } from '@commander/core';
 import type { AuthUser } from './jwtMiddleware';
 import type { UserRole } from './userStore';
 
@@ -133,7 +133,7 @@ function createCanonicalNamespacedMemoryRouter(memoryStore: MemoryStore): Router
     const allowedKinds = new Set(['DECISION', 'ISSUE', 'LESSON', 'SUMMARY']);
     const memoryKind = allowedKinds.has(kind) ? kind : 'SUMMARY';
     try {
-      const item = await memoryStore.write({
+      const item = await writeProductMemory(memoryStore, {
         projectId: project,
         agentId: agentId ?? 'api',
         kind: memoryKind as 'DECISION' | 'ISSUE' | 'LESSON' | 'SUMMARY',

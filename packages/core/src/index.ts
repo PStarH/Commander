@@ -80,6 +80,7 @@ export type {
 export { InMemoryMemoryService } from './memory/inMemoryMemoryService';
 export { PostgresMemoryService } from './memory/postgresMemoryService';
 export { MemoryStoreFacade } from './memory/memoryStoreFacade';
+export { writeProductMemory } from './memory/writeProductMemory';
 export { MemoryMigrationRunner } from './memory/memoryMigration';
 export {
   assertNamespaced,
