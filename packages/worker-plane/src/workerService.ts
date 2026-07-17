@@ -42,6 +42,8 @@ export class WorkerService {
   private worker: WorkerRecord | null = null;
   private authorization: WorkerAuthorization | null = null;
   private active = new Set<Promise<void>>();
+  /** Claims in flight (between claimNextStep call and task registration). Counted toward capacity and heartbeat so concurrent pollOnce races cannot over-claim. */
+  private claimInflight = 0;
   private running = false;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private readonly activeControllers = new Set<AbortController>();
@@ -100,17 +102,39 @@ export class WorkerService {
       !this.running ||
       !this.worker ||
       !this.authorization ||
-      this.active.size >= this.worker.maxConcurrency
+      this.active.size + this.claimInflight >= this.worker.maxConcurrency
     )
       return false;
-    const step = await this.kernel.claimNextStep({
-      workerId: this.worker.id,
-      workerGeneration: this.worker.generation,
-      leaseTtlMs: this.config.leaseTtlMs,
-      tenantIds: this.authorization.tenantIds.includes('*') ? [] : this.authorization.tenantIds,
-      capabilities: this.worker.capabilities,
-    });
+    this.claimInflight++;
+    let step: ClaimedStep | null = null;
+    try {
+      step = await this.kernel.claimNextStep({
+        workerId: this.worker.id,
+        workerGeneration: this.worker.generation,
+        leaseTtlMs: this.config.leaseTtlMs,
+        tenantIds: this.authorization.tenantIds.includes('*') ? [] : this.authorization.tenantIds,
+        capabilities: this.worker.capabilities,
+      });
+    } finally {
+      this.claimInflight--;
+    }
     if (!step) return false;
+    // stop() raced the claim: release the step back to the kernel so another worker can pick it up.
+    if (!this.running) {
+      await this.kernel.failStep({
+        stepId: step.id,
+        tenantId: step.tenantId,
+        lease: step.lease,
+        expectedVersion: step.version,
+        error: {
+          code: 'WORKER_STOPPED',
+          message: 'worker stopped during claim',
+          retryable: true,
+        },
+        actor: this.worker.id,
+      });
+      return false;
+    }
     const task = this.execute(step);
     this.active.add(task);
     void task.catch(() => undefined).finally(() => this.active.delete(task));
@@ -130,7 +154,7 @@ export class WorkerService {
     await Promise.allSettled([...this.active]);
   }
   get activeSteps(): number {
-    return this.active.size;
+    return this.active.size + this.claimInflight;
   }
   get record(): WorkerRecord | null {
     return this.worker ? structuredClone(this.worker) : null;
@@ -216,7 +240,7 @@ export class WorkerService {
     const updated = await this.registry.heartbeat(
       this.worker.id,
       this.worker.generation,
-      this.active.size,
+      this.active.size + this.claimInflight,
     );
     if (!updated) {
       this.running = false;
