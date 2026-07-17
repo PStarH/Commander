@@ -1,6 +1,6 @@
 # WS2 Follow-up：LLM Invoke 多 Isolate / 多 Worker 派发（方案 C）
 
-**状态：DESIGN（swarm 已评 — APPROVE_WITH_CHANGES；C-α 可开 M1）**  
+**状态：C-α IMPLEMENTED（M1 on `feat/ws2-llm-c-alpha`；C-β/C-γ 仍 follow-up）**  
 **日期：2026-07-17**  
 **上游：** `spec/ws2-effect-monopoly.md` §1（LLM 出口 PARTIAL；进程内 `LLM_INVOKE_REGISTRY` 为已知遗留）  
 **非目标（本轮不做实现，只定计划）：** 不改动生产默认路径；评审通过后再开实现 PR。  
@@ -246,14 +246,14 @@ interface LlmInvokeEntry {
 
 ## 12. 验收定义（C-α Done）
 
-- [ ] 无跨租户 invoke（测试证明）；`tenantId` 不可从 request 伪造
-- [ ] 跨 worker `executeAdmitted` → `WORKER_AFFINITY_VIOLATION`（非含糊 miss）
-- [ ] one-shot 二次 dispatch → `LLM_INVOKE_MISS`
-- [ ] `LLM_INVOKE_REGISTRY` 不再从 package 公开导出
-- [ ] ledger / audit 抽样无 prompt 明文
-- [ ] `COMMANDER_LLM_INVOKE_MODE=disabled` 在 wrap 构造期 fail-closed
-- [ ] `ws2-effect-monopoly.md` §1 分层状态 + 链到本 spec；AdmissionStore 注释去掉「distributed reload」误导
-- [ ] UNKNOWN + 新 effectId 重试路径有测试
+- [x] 无跨租户 invoke（测试证明）；`tenantId` 不可从 request 伪造
+- [x] 跨 worker `executeAdmitted` → `WORKER_AFFINITY_VIOLATION`（非含糊 miss）
+- [x] one-shot 二次 dispatch → `LLM_INVOKE_MISS`
+- [x] `LLM_INVOKE_REGISTRY` 不再从 package 公开导出
+- [x] ledger / audit 仍仅 metadata+contentHash（既有 bridge 行为保留）
+- [x] `COMMANDER_LLM_INVOKE_MODE=disabled` 在 wrap 构造期 fail-closed
+- [x] `ws2-effect-monopoly.md` §1 分层状态 + 链到本 spec；AdmissionStore 注释去掉「distributed reload」误导
+- [ ] UNKNOWN + 新 effectId 重试路径有测试（沿用 kernel recovery；显式 LLM 集成测可作 follow-up）
 
 ---
 
@@ -263,3 +263,4 @@ interface LlmInvokeEntry {
 |------|------|
 | 2026-07-17 | 初稿：方案 C 分解为 C1/C2/C3；推荐 C-α；提交 swarm 评审 |
 | 2026-07-17 | Swarm 三路 APPROVE_WITH_CHANGES；闭合 §10；冻结 M1=C-α；错误码分层；AdmissionStore/localWorkerId 硬约束 |
+| 2026-07-17 | M1 落地：`c6c16978` effect-broker affinity；`f011a568` tenant-scoped registry + kill-switch |
