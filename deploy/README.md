@@ -1,14 +1,14 @@
-# Commander 多租户部署层（Bridge / Silo / Pool）
+# Commander Enterprise Gateway（alpha）租户部署层（Bridge / Silo / Pool）
 
-本目录补充企业级多租户方案的**部署层**能力，与 `packages/core/src/runtime` 中的 `TenantProvider`、`TenantContext`、`SqliteMemoryStore` 等运行时隔离机制配套使用。
+本目录补充 **Enterprise Gateway（alpha）** 的租户部署层能力草案，与 `packages/core/src/runtime` 中的 `TenantProvider`、`TenantContext`、`SqliteMemoryStore` 等运行时机制配套。**不是**已验证的完整多租户 SaaS 方案；存储层隔离为 opt-in，请对照 `ENTERPRISE_READINESS.md`。
 
 ## 1. 三种部署模型
 
 | 模型 | 隔离级别 | 数据目录 | 适用场景 |
 |------|----------|----------|----------|
-| **Pool** | 逻辑隔离，共享运行时与存储 | 不创建独立目录，仅通过 `tenantId` 区分 namespace | 开发、测试、低成本 SaaS  starter 租户 |
-| **Bridge** | 共享容器/进程，但独立数据子目录 | `data/bridge/<tenantId>/{memory,runs,logs,artifacts,storage}` | 标准租户，需要数据隔离但共享基础设施 |
-| **Silo** | 独立容器/命名空间/存储卷 | `data/tenants/<tenantId>/{memory,runs,logs,artifacts,storage}` | 高级/合规租户，强隔离、独立资源 |
+| **Pool** | 逻辑隔离，共享运行时与存储 | 不创建独立目录，仅通过 `tenantId` 区分 namespace | 开发/测试、或共享池试验租户（逻辑隔离 only；勿当生产 SaaS 强隔离） |
+| **Bridge** | 共享容器/进程，但独立数据子目录 | `data/bridge/<tenantId>/{memory,runs,logs,artifacts,storage}` | 标准试验租户，需要数据目录隔离但共享基础设施 |
+| **Silo** | 独立容器/命名空间/存储卷 | `data/tenants/<tenantId>/{memory,runs,logs,artifacts,storage}` | 高级/合规试验租户，强隔离、独立资源 |
 
 运行时通过 `TenantConfig.isolation` 字段识别模型：`pool | bridge | silo`。
 

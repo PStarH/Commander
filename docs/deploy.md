@@ -34,7 +34,7 @@ Profiles compose freely:
 # Single-box with metrics dashboard
 docker compose --profile observability up
 
-# Full production stack
+# Optional ops stack (Redis + metrics + tracing) — not a certified multi-tenant SaaS deploy
 docker compose --profile distributed --profile observability --profile tracing up
 ```
 
@@ -53,11 +53,21 @@ docker compose --profile distributed --profile observability --profile tracing u
 
 ## Health checks
 
-Every long-running container has a `healthcheck`. The `web` service waits for
-`api` to become healthy (`depends_on: condition: service_healthy`), and the
-`grafana` service waits for `prometheus` to become healthy. This means a
-single `docker compose up --profile observability` will boot in dependency
-order without manual orchestration.
+Long-running compose services expose healthchecks. The `api` service serves
+`/health` and `/ready`; **kernel-ops** (worker/v2 profiles) serves
+`GET /health` (process up) and `GET /ready` (ops loops started + Postgres
+`SELECT 1`) on `COMMANDER_OPS_HEALTH_PORT` (compose default `8081`; `expose`
+and the in-container healthcheck use the same variable). Helm values may
+choose another port and must keep probes in sync. The Helm chart
+wires matching `livenessProbe` / `readinessProbe` on the kernel-ops
+Deployment. The `web` service waits for `api` to become healthy
+(`depends_on: condition: service_healthy`), and `grafana` waits for
+`prometheus`. A single `docker compose up --profile observability` therefore
+boots in dependency order without manual orchestration.
+
+Default compose is the **local / single-box** path. Durable multi-tenant
+Enterprise Gateway needs a Postgres DSN + `/v1` kernel and remains **alpha**
+(`ENTERPRISE_READINESS.md`).
 
 ## Environment variables
 

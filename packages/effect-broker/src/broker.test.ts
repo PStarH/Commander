@@ -106,3 +106,87 @@ describe('EffectBroker', () => {
     assert.equal(invoked, false);
   });
 });
+
+
+describe('ENFORCED approval binding (args / policy / audience)', () => {
+  it('rejects mutated args after a grant was bound to the original request hash', async () => {
+    const tokens = makeTokens();
+    let invoked = false;
+    const approvedRequest = { amount: 10, target: 'acct-a' };
+    const boundGrant: CapabilityGrant = {
+      ...grant,
+      requestHash: canonicalRequestHash(approvedRequest),
+    };
+    const broker = new EffectBroker(
+      tokens,
+      { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+      { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => ({}) },
+      { execute: async () => { invoked = true; return {}; } },
+      { append: async () => {} },
+    );
+    await assert.rejects(
+      broker.execute({
+        effectId: 'effect',
+        token: tokens.issue(boundGrant),
+        type: 'crm.write',
+        request: { ...approvedRequest, amount: 999 },
+        idempotencyKey: 'idem',
+        lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+        actor: 'w',
+      }),
+      (error: unknown) => error instanceof EffectBrokerError && error.code === 'REQUEST_HASH_MISMATCH',
+    );
+    assert.equal(invoked, false);
+  });
+
+  it('rejects a policy snapshot change after the grant was issued', async () => {
+    const tokens = makeTokens();
+    let invoked = false;
+    const broker = new EffectBroker(
+      tokens,
+      { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p2-rotated' }) },
+      { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => ({}) },
+      { execute: async () => { invoked = true; return {}; } },
+      { append: async () => {} },
+    );
+    await assert.rejects(
+      broker.execute({
+        effectId: 'effect',
+        token: tokens.issue({ ...grant, policySnapshotId: 'p1' }),
+        type: 'crm.write',
+        request: {},
+        idempotencyKey: 'idem',
+        lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+        actor: 'w',
+      }),
+      (error: unknown) => error instanceof EffectBrokerError && error.code === 'POLICY_SNAPSHOT_MISMATCH',
+    );
+    assert.equal(invoked, false);
+  });
+
+  it('rejects audience mismatch between grant and broker verifier', async () => {
+    const tokens = makeTokens();
+    let invoked = false;
+    const broker = new EffectBroker(
+      tokens,
+      { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+      { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => ({}) },
+      { execute: async () => { invoked = true; return {}; } },
+      { append: async () => {} },
+      { audience: 'other.audience' },
+    );
+    await assert.rejects(
+      broker.execute({
+        effectId: 'effect',
+        token: tokens.issue(grant),
+        type: 'crm.write',
+        request: {},
+        idempotencyKey: 'idem',
+        lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+        actor: 'w',
+      }),
+      (error: unknown) => error instanceof EffectBrokerError && error.code === 'AUDIENCE_MISMATCH',
+    );
+    assert.equal(invoked, false);
+  });
+});
