@@ -1,9 +1,14 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalEventSourcingEngine } from '../runtime/eventSourcingEngine';
 /**
- * RunLedger — P0-2 ATR kernel component.
+ * RunLedger — P0-2 ATR worker settlement component.
  *
- * The "settlement" half of the kernel. Coordinates the run state machine
+ * **Not the /v1 durable run authority.** Enterprise durable runs live in
+ * `packages/kernel` (Postgres) and are submitted/read via Gateway `/v1/runs*`.
+ * This ledger is worker-local SQLite settlement for idempotency and compensation
+ * within a single agent execution — it must never back Gateway `/v1` routes.
+ *
+ * The "settlement" half of the ATR runtime. Coordinates the run state machine
  * (PENDING → EXECUTING → VERIFYING → COMMITTED / ABORTED → COMPENSATED),
  * persists every CompensableAction, and integrates with:
  *
@@ -13,9 +18,10 @@ import { getGlobalEventSourcingEngine } from '../runtime/eventSourcingEngine';
  *
  * Why a separate ledger and not just "use CompensationRegistry"?
  *   CompensationRegistry is in-memory and per-AgentRuntime. The ledger is
- *   crash-safe (SQLite) and is the source of truth for "what side effects
- *   have we already taken on behalf of this runId?" — across process
- *   restarts, across worker migrations, across tenant boundaries.
+ *   crash-safe (SQLite) and is the **worker settlement** source of truth for
+ *   "what side effects have we already taken on behalf of this runId?" —
+ *   across process restarts / worker migrations. It is **not** the durable
+ *   `/v1` run authority (that remains kernel Postgres).
  *
  * The ledger's compensateAll() iterates the persisted action list in
  * REVERSE execution order, calling the registered compensation handler for
