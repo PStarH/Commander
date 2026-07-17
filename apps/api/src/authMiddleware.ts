@@ -265,7 +265,18 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
   // If jwtMiddleware already authenticated the request via a valid JWT
   // (req.user is set), skip API-key validation entirely. This keeps the two
   // auth mechanisms compatible: JWT users are not subject to API-key checks.
+  // Promote JWT tenant_id → req.tenantId so tenantContextMiddleware treats it
+  // as the authenticated principal (AUTH-2 / B4) — otherwise ambient
+  // X-Tenant-ID would be evaluated as "no principal" and either trusted
+  // (non-prod) or rejected wholesale (prod), breaking JWT tenant binding.
   if (req.user) {
+    if (
+      typeof req.user.tenantId === 'string' &&
+      req.user.tenantId.length > 0 &&
+      !req.tenantId
+    ) {
+      req.tenantId = req.user.tenantId;
+    }
     return next();
   }
 
