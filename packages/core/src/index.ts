@@ -48,6 +48,7 @@ export {
   MemoryStats,
   MemoryStore,
   createMemoryStore,
+  resolveMemoryStoreType,
   fromProjectMemoryItem,
   toProjectMemoryItem,
 } from './episodicMemory';

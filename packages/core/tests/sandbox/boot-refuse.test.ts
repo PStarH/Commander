@@ -79,6 +79,19 @@ describe('production sandbox boot refusal', () => {
     );
   });
 
+  it('refuses unchecked execution bypass in production', () => {
+    const docker = new FakeSandbox('docker');
+    assert.throws(
+      () =>
+        new SandboxManager({
+          environment: { ...productionEnv, COMMANDER_ALLOW_UNCHECKED_EXEC: 'true' },
+          sandboxes: [docker],
+        }),
+      /ALLOW_UNCHECKED_EXEC/,
+    );
+    assert.equal(docker.invoked, false);
+  });
+
   it('refuses boot when the selected sandbox cannot start a probe workload', async () => {
     const docker = new FakeSandbox('docker', 125);
     const manager = new SandboxManager({

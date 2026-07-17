@@ -188,12 +188,13 @@ describe('WS3 Phase 3 §11 — acceptance checklist', () => {
       // the old handler returned ready because `store` was always non-null.
       const result = await probeReadiness({
         kernel: () => null,
-        // No broker is wired in the api process (core shim deleted by WS2;
-        // effectBroker is a non-gating probe until WS2 wires production).
+        // Soft probe: missing broker is reported fail but does not alone decide
+        // readiness (kernel failure already forces not_ready).
         effectBroker: () => null,
       });
       assert.equal(result.status, 'not_ready');
       assert.equal(result.checks.kernel, 'fail');
+      assert.equal(result.checks.effectBroker, 'fail');
     });
 
     it('never reports ok for an unprobed dependency', async () => {

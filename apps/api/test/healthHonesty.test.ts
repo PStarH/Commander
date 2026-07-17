@@ -136,7 +136,7 @@ describe('WS3 §6 /ready — honesty invariants', () => {
     );
   });
 
-  it('reports effectBroker fail honestly but does NOT gate readiness (non-hard until WS2 wires production)', async () => {
+  it('reports effectBroker fail honestly but does NOT gate readiness (soft until real worker broker)', async () => {
     await withReadyApp(
       {
         database: async () => 'ok',
@@ -145,9 +145,8 @@ describe('WS3 §6 /ready — honesty invariants', () => {
       },
       async (base) => {
         const res = await fetch(`${base}/ready`);
-        // effectBroker has no production setEffectBroker() wiring yet (WS2
-        // deferred); gating on it made enterprise /ready permanently 503.
-        // It is still probed and reported honestly — just non-gating.
+        // API process does not host the worker-plane broker; presence is
+        // reported honestly but must not hard-gate /ready via a stub.
         assert.equal(res.status, 200);
         const body = (await res.json()) as { status: string; checks: Record<string, string> };
         assert.equal(body.status, 'ready');

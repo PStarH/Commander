@@ -28,6 +28,21 @@ export function createSandboxWorkloadContext(input: {
   return context;
 }
 
+/** Map context object fields to runtime-metadata args keys (_tenantId, …). */
+export function toRuntimeWorkloadMetadata(context: SandboxWorkloadContext): {
+  _tenantId: string;
+  _runId: string;
+  _stepId: string;
+  _workloadId: string;
+} {
+  return {
+    _tenantId: context.tenantId,
+    _runId: context.runId,
+    _stepId: context.stepId,
+    _workloadId: context.workloadId,
+  };
+}
+
 export function workloadContainerName(context: SandboxWorkloadContext): string {
   validateSandboxWorkloadContext(context);
   const digest = createHash('sha256')
