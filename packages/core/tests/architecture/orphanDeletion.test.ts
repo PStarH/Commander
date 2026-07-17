@@ -41,6 +41,14 @@ describe('orphan deletion guards', () => {
     );
   });
 
+  it('does not reintroduce MemorySystem facade', () => {
+    assert.equal(
+      existsSync(join(ROOT, 'packages/core/src/memory/memorySystem.ts')),
+      false,
+      'MemorySystem facade deleted 2026-07-17 (0 product importers); namespaceGuard keeps MEMORY-001',
+    );
+  });
+
   it('plugin autoScorer is a re-export (sample of collapsed duplicates)', () => {
     const path = join(ROOT, 'packages/core/src/plugins/builtin/observability/autoScorer.ts');
     assert.ok(existsSync(path));

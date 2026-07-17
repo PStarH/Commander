@@ -55,6 +55,14 @@ worker:
 kernelOps:
   enabled: true
   replicas: 1
+  health:
+    port: 8081
+    livenessPath: /health
+    readinessPath: /ready
+    livenessInitialDelaySeconds: 10
+    livenessPeriodSeconds: 15
+    readinessInitialDelaySeconds: 5
+    readinessPeriodSeconds: 10
   resources:
     limits:
       cpu: 500m

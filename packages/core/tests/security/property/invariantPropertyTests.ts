@@ -3,7 +3,7 @@ import fc from 'fast-check';
 import { combineTaint, canFlow } from '../../../src/security/taintTracker';
 import { preCheckSandboxEscape } from '../../../src/security/sandboxEscapeDetector';
 import type { SandboxProfile } from '../../../src/sandbox/types';
-import { MemorySystem } from '../../../src/memory/memorySystem';
+import { assertNamespaced } from '../../../src/memory/namespaceGuard';
 
 const NUM_RUNS = Number(process.env.COMMANDER_PROPERTY_TEST_NUM_RUNS) || 100;
 
@@ -93,15 +93,9 @@ describe('Security invariant property tests', () => {
     );
   });
 
-  // ── MEMORY-001 (live — exercises MemorySystem.assertNamespaced, G10) ──
+  // ── MEMORY-001 (live — exercises assertNamespaced, G10) ──
 
   it('MEMORY-001: cross-namespace writes are rejected unless ACL grants them', () => {
-    const ms = new MemorySystem({
-      unified: {
-        remember: () => {},
-        getWorkingMemory: () => ({ add: () => {}, getWorkingContext: () => [] }),
-      },
-    } as any);
     fc.assert(
       fc.property(
         fc.record({
@@ -117,9 +111,9 @@ describe('Security invariant property tests', () => {
           const shouldAllow = inOwnNs || aclGrants || aclGrantsTasks;
 
           try {
-            ms.assertNamespaced(writerId, targetPath, { role: 'test', namespaces: aclNamespaces });
+            assertNamespaced(writerId, targetPath, { role: 'test', namespaces: aclNamespaces });
             return shouldAllow;
-          } catch (e) {
+          } catch {
             return !shouldAllow;
           }
         },

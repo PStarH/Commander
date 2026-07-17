@@ -42,11 +42,12 @@ const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '../../../..');
  * Never invent lower than live without a real deletion.
  * orchestrator=10, store=49, memory=18, stateMachine=6.
  * memory 19→17 (curator merge + apps/api EpisodicMemoryStore delete): TtlMemoryCurator merged into MemoryCurator (2026-07-15).
+ * memory 17→16 (MemorySystem facade deleted 2026-07-17; assertNamespaced kept as namespaceGuard).
  */
 const CEILINGS = {
   orchestrator: 10,
   store: 49,
-  memory: 17,
+  memory: 16,
   stateMachine: 6,
 } as const;
 
@@ -76,7 +77,7 @@ const STORE_RE = /^\s*export\s+class\s+(\w*(?:Store|Repository))\b/gm;
  * non-memory doubles, ProjectMemoryStoreAdapter.
  */
 const MEMORY_RE =
-  /^\s*export\s+class\s+(UnifiedMemory|ThreeLayerMemory|MemorySystem|MemoryCurator|MemoryIndexManager|EpisodicMemoryStore|ConversationStore|SemanticMemoryStore|ProceduralMemoryStore|MemoryFederation|MemoryManagerAgent|MemoryQualityGate|CrossModelMemory)\b/gm;
+  /^\s*export\s+class\s+(UnifiedMemory|ThreeLayerMemory|MemoryCurator|MemoryIndexManager|EpisodicMemoryStore|ConversationStore|SemanticMemoryStore|ProceduralMemoryStore|MemoryFederation|MemoryManagerAgent|MemoryQualityGate|CrossModelMemory)\b/gm;
 
 /** 4a) State machine classes */
 const SM_CLASS_RE = /^\s*export\s+class\s+(\w*StateMachine)\b/gm;
