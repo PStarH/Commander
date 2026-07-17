@@ -303,7 +303,9 @@ jobs:
             apps/api/test/namespacedMemoryRbac.test.ts \
             apps/api/test/legacyExecutionGuard.test.ts \
             apps/api/test/l3-06GatewayResidual.test.ts \
-            apps/api/test/tenantContextMiddleware.test.ts
+            apps/api/test/tenantContextMiddleware.test.ts \
+            apps/api/test/oneRunAuthority.test.ts \
+            apps/api/test/warRoomDemotion.test.ts
 
       - name: Readiness gate (strict)
         run: pnpm check:readiness
