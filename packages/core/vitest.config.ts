@@ -274,6 +274,7 @@ export default defineConfig({
       'tests/memory/memoryStoreFacade.test.ts',
       'tests/memory/memoryMigration.test.ts',
       'tests/memory/utils.test.ts',
+      'tests/memory/l3-10a-productWrite.test.ts',
 
       // --- GDPR compliance + AdaptiveHITL weight learning ---
       'tests/architecture/gdprCompliance.test.ts',
