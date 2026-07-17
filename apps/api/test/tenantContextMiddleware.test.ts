@@ -156,3 +156,34 @@ test('rejects tenant id longer than 128 characters', async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+
+test('enterprise profile rejects ambient X-Tenant-ID even when NODE_ENV is development', async () => {
+  const prevProfile = process.env.COMMANDER_PROFILE;
+  const prevNode = process.env.NODE_ENV;
+  const prevCommanderEnv = process.env.COMMANDER_ENV;
+  process.env.COMMANDER_PROFILE = 'enterprise';
+  process.env.NODE_ENV = 'development';
+  delete process.env.COMMANDER_ENV;
+  try {
+    const app = buildApp();
+    const { server, port } = await startServer(app);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/context`, {
+        headers: { 'X-Tenant-ID': 'ambient-spoof' },
+      });
+      assert.equal(res.status, 403);
+      const body = (await res.json()) as { error: string; message: string };
+      assert.equal(body.error, 'TenantIsolationError');
+      assert.match(body.message, /production or enterprise/);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  } finally {
+    if (prevProfile === undefined) delete process.env.COMMANDER_PROFILE;
+    else process.env.COMMANDER_PROFILE = prevProfile;
+    if (prevNode === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNode;
+    if (prevCommanderEnv === undefined) delete process.env.COMMANDER_ENV;
+    else process.env.COMMANDER_ENV = prevCommanderEnv;
+  }
+});

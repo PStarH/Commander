@@ -289,6 +289,9 @@ app.use('/api/runs', (req, res, next) => {
     next();
     return;
   }
+  // Mounted before enterpriseRouteFreeze/legacyHeader — set freeze headers here.
+  res.set('x-legacy', 'true');
+  res.set('Deprecation', 'true');
   res.status(410).json({
     error: {
       code: 'LEGACY_EXECUTION_GONE',
@@ -826,9 +829,10 @@ app.get('/v1/openapi.json', (_req, res) => {
   );
 });
 app.get('/api/openapi.json', (_req, res) => {
+  // Mounted before enterpriseRouteFreeze/legacyHeader — tag + freeze in-handler.
+  res.set('x-legacy', 'true');
+  res.set('Deprecation', 'true');
   if (isEnterpriseProfile()) {
-    res.set('x-legacy', 'true');
-    res.set('Deprecation', 'true');
     res.status(410).json({
       error: {
         code: 'GONE',

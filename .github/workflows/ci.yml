@@ -290,7 +290,10 @@ jobs:
             packages/worker-plane/src/workerRuntimeAdapter.test.ts
           pnpm exec tsx --test \
             apps/api/test/namespacedMemoryEndpoints.test.ts \
-            apps/api/test/namespacedMemoryRbac.test.ts
+            apps/api/test/namespacedMemoryRbac.test.ts \
+            apps/api/test/legacyExecutionGuard.test.ts \
+            apps/api/test/l3-06GatewayResidual.test.ts \
+            apps/api/test/tenantContextMiddleware.test.ts
 
       - name: Readiness gate (strict)
         run: pnpm check:readiness
