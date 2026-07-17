@@ -267,6 +267,11 @@ describe('executeAdmitted worker affinity (C-α)', () => {
       (error: unknown) => error instanceof EffectBrokerError && error.code === 'WORKER_AFFINITY_VIOLATION',
     );
     assert.equal(invoked, false);
+    // Affinity fail-closed must consume admission so grant/request do not leak.
+    await assert.rejects(
+      broker.executeAdmitted({ effectId: 'eff-aff-bad' }),
+      (error: unknown) => error instanceof EffectBrokerError && error.code === 'ADMISSION_NOT_FOUND',
+    );
   });
 
   it('throws WORKER_AFFINITY_VIOLATION when workerGeneration mismatches', async () => {
