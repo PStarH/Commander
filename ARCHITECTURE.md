@@ -235,7 +235,7 @@ target. See `PRINCIPLES.md` change log for evidence.
 | WS3 | Gateway `/v1`-only: apps/api freeze, OpenAPI = surface | **In-progress** — `/v1` OpenAPI EXISTS (`openApiSpec.ts`); legacy `/api/v1/*` not yet frozen |
 | WS4 | Single planner: `planWorkGraph` profiles, freeze Ultimate verbs | **Target** — 10 orchestrator classes still exist (ceiling ENFORCED) |
 | WS5 | Runtime package: extract runtime; worker !core barrel | **Target** — core barrel still imported wholesale |
-| WS6 | Memory/store unify | **Landed (partial)** — memory allowlist 18; `MemoryCurator` merged; apps/api `EpisodicMemoryStore` zombie deleted |
+| WS6 | Memory/store unify | **Landed (partial)** — memory allowlist 7 (L3-10a); `writeProductMemory` preferred; MEMORY-001 on MemoryService.store |
 | WS7 | Sandbox fail-closed | **Landed** — worker `PolicyEvaluator` deny-default; sandbox mechanisms present (fail-closed default target) |
 
 ## Benchmarks
