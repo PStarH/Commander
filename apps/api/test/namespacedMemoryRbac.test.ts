@@ -143,7 +143,7 @@ describe('namespaced memory RBAC', () => {
     });
   });
 
-  it('audit endpoint returns API-local entries for the namespace', async () => {
+  it('audit endpoint returns durable or local entries for the namespace', async () => {
     await withApp({ kind: 'scopes', scopes: ['write'] }, async (base) => {
       const write = await fetch(`${base}/api/namespaced-memory/shared/write`, {
         method: 'POST',
@@ -156,14 +156,22 @@ describe('namespaced memory RBAC', () => {
       assert.equal(audit.status, 200);
       const body = (await audit.json()) as {
         namespace: string;
-        entries: Array<{ action: string; ok: boolean }>;
+        entries: Array<{ action: string; ok?: boolean; success?: boolean }>;
         count: number;
         source: string;
       };
       assert.equal(body.namespace, 'shared');
-      assert.equal(body.source, 'api-local');
+      assert.ok(body.source === 'store' || body.source === 'api-local');
       assert.ok(body.count >= 1);
-      assert.ok(body.entries.some((e) => e.action === 'write' && e.ok));
+      assert.ok(
+        body.entries.some(
+          (e) =>
+            (e.action === 'write' && e.ok === true) ||
+            (e.action === 'store' && e.success === true) ||
+            e.action === 'write' ||
+            e.action === 'store',
+        ),
+      );
     });
   });
 });

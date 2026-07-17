@@ -227,9 +227,9 @@ function createCanonicalNamespacedMemoryRouter(memoryStore: MemoryStore): Router
     }
   });
 
-  // API-local audit ring (namespace RBAC path). Postgres memory_audit_events
-  // remains a separate persistence concern until MemoryService.queryAudit lands.
-  router.get('/api/namespaced-memory/:namespace/audit', (req, res) => {
+  // Prefer durable MemoryService.queryAudit when available; fall back to the
+  // process-local ring for stores that do not implement persistence yet.
+  router.get('/api/namespaced-memory/:namespace/audit', async (req, res) => {
     const { namespace } = req.params;
     const role = getAuthenticatedRole(req);
     if (!role) return res.status(403).json({ error: 'Authentication required' });
@@ -237,6 +237,41 @@ function createCanonicalNamespacedMemoryRouter(memoryStore: MemoryStore): Router
       return res.status(403).json({ error: 'Permission denied' });
     }
     const limit = Math.min(Number(req.query.limit ?? 50) || 50, 200);
+    const store = memoryStore as MemoryStore & {
+      queryAudit?: (q: {
+        projectId: string;
+        namespace?: string;
+        limit?: number;
+      }) => Promise<{ entries: unknown[]; count: number; unavailable?: boolean }>;
+    };
+    if (typeof store.queryAudit === 'function') {
+      try {
+        const page = await store.queryAudit({
+          projectId: typeof req.query.projectId === 'string' ? req.query.projectId : 'default',
+          namespace,
+          limit,
+        });
+        if (page.unavailable) {
+          const entries = auditLog.filter((e) => e.namespace === namespace).slice(-limit);
+          return res.json({
+            namespace,
+            entries,
+            count: entries.length,
+            source: 'api-local',
+          });
+        }
+        return res.json({
+          namespace,
+          entries: page.entries,
+          count: page.count,
+          source: 'store',
+        });
+      } catch (error) {
+        return res.status(400).json({
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     const entries = auditLog.filter((e) => e.namespace === namespace).slice(-limit);
     res.json({
       namespace,
