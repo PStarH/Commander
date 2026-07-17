@@ -242,6 +242,8 @@ describe('executeAdmitted worker affinity (C-α)', () => {
     assert.deepEqual(receivedContext, {
       tenantId: 'tenant',
       workerId: 'w1',
+      fencingEpoch: 1,
+      leaseToken: 'l',
       effectId: 'eff-aff-ok',
     });
   });
@@ -298,6 +300,78 @@ describe('executeAdmitted worker affinity (C-α)', () => {
       (error: unknown) => error instanceof EffectBrokerError && error.code === 'WORKER_AFFINITY_VIOLATION',
     );
     assert.equal(invoked, false);
+  });
+
+  it('throws WORKER_AFFINITY_VIOLATION when localWorkerGeneration set but lease omits generation', async () => {
+    const { tokens, broker } = makeAffinityBroker(async () => ({}), {
+      localWorkerId: 'w1',
+      localWorkerGeneration: 1,
+    });
+    await broker.admit({
+      effectId: 'eff-gen-missing',
+      token: tokens.issue(grant),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem',
+      lease: { workerId: 'w1', token: 'l', fencingEpoch: 1 },
+      actor: 'w1',
+    });
+    await assert.rejects(
+      broker.executeAdmitted({ effectId: 'eff-gen-missing' }),
+      (error: unknown) => error instanceof EffectBrokerError && error.code === 'WORKER_AFFINITY_VIOLATION',
+    );
+  });
+
+  it('throws WORKER_AFFINITY_VIOLATION when lease token or fencingEpoch is invalid', async () => {
+    const { tokens, broker } = makeAffinityBroker(async () => ({}));
+    await broker.admit({
+      effectId: 'eff-no-token',
+      token: tokens.issue(grant),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem',
+      lease: { workerId: 'w1', token: '', fencingEpoch: 1 },
+      actor: 'w1',
+    });
+    await assert.rejects(
+      broker.executeAdmitted({ effectId: 'eff-no-token' }),
+      (error: unknown) => error instanceof EffectBrokerError && error.code === 'WORKER_AFFINITY_VIOLATION',
+    );
+
+    const { tokens: tokens2, broker: broker2 } = makeAffinityBroker(async () => ({}));
+    await broker2.admit({
+      effectId: 'eff-bad-epoch',
+      token: tokens2.issue(grant),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem2',
+      lease: { workerId: 'w1', token: 'l', fencingEpoch: Number.NaN },
+      actor: 'w1',
+    });
+    await assert.rejects(
+      broker2.executeAdmitted({ effectId: 'eff-bad-epoch' }),
+      (error: unknown) => error instanceof EffectBrokerError && error.code === 'WORKER_AFFINITY_VIOLATION',
+    );
+  });
+
+  it('bindLocalWorkerGeneration enables generation affinity after construction', async () => {
+    let invoked = false;
+    const { tokens, broker } = makeAffinityBroker(async () => {
+      invoked = true;
+      return { ok: true };
+    });
+    broker.bindLocalWorkerGeneration(3);
+    await broker.admit({
+      effectId: 'eff-bind-gen',
+      token: tokens.issue(grant),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem',
+      lease: { workerId: 'w1', workerGeneration: 3, token: 'l', fencingEpoch: 1 },
+      actor: 'w1',
+    });
+    await broker.executeAdmitted({ effectId: 'eff-bind-gen' });
+    assert.equal(invoked, true);
   });
 
   it('skips affinity check when localWorkerId is unset (backward compatible)', async () => {
