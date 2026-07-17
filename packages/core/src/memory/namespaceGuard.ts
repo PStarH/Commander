@@ -15,16 +15,22 @@ function normalizeAclNamespaces(namespaces: string[]): string[] {
   return namespaces.filter((n) => typeof n === 'string' && n.length > 0);
 }
 
+/** Boundary-aware path match: `agents/a` must not grant `agents/ab/...`. */
+export function pathUnderNamespace(targetPath: string, ns: string): boolean {
+  const normalized = ns.replace(/\/+$/, '');
+  if (!normalized) return false;
+  return targetPath === normalized || targetPath.startsWith(`${normalized}/`);
+}
+
 export function assertNamespaced(
   writerAgentId: string,
   targetPath: string,
   acl?: MemoryNamespaceAcl,
 ): void {
   const writerNs = `agents/${writerAgentId}`;
-  if (targetPath.startsWith(writerNs)) return;
+  if (pathUnderNamespace(targetPath, writerNs)) return;
   const namespaces = acl ? normalizeAclNamespaces(acl.namespaces) : [];
-  if (namespaces.some((ns) => targetPath.startsWith(ns))) return;
-  if (namespaces.includes('tasks') && targetPath.startsWith('tasks/')) return;
+  if (namespaces.some((ns) => pathUnderNamespace(targetPath, ns))) return;
   throw new Error(
     `MEMORY-001: agent "${writerAgentId}" attempted to write outside its namespace: ${targetPath}`,
   );

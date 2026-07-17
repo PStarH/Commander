@@ -55,6 +55,25 @@ describe('assertNamespaced (MEMORY-001)', () => {
       }),
     ).toThrow(/MEMORY-001/);
   });
+
+  it('rejects prefix-collision sibling namespaces (agent-1 vs agent-10)', () => {
+    expect(() => assertNamespaced('agent-1', 'agents/agent-10/episodic/x')).toThrow(/MEMORY-001/);
+    expect(() =>
+      assertNamespaced('agent-1', 'agents/agent-10/episodic/x', {
+        role: 'writer',
+        namespaces: ['agents/agent-1'],
+      }),
+    ).toThrow(/MEMORY-001/);
+  });
+
+  it('rejects ACL grant of tasks from matching tasks_evil/', () => {
+    expect(() =>
+      assertNamespaced('agent-1', 'tasks_evil/leak', {
+        role: 'writer',
+        namespaces: ['tasks'],
+      }),
+    ).toThrow(/MEMORY-001/);
+  });
 });
 
 describe('MEMORY-001 on default MemoryService.store path', () => {

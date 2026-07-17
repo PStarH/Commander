@@ -121,11 +121,14 @@ export function wrapProviderWithEffectBroker(
           'EFFECT_AUTHORIZATION_REQUIRED: LLM calls through EffectBroker need step lease + capability mint',
         );
       }
-      const effectId = randomUUID();
       const effectType = `llm.${provider.name}`;
       // Freeze call payload so ledger hash and provider invoke stay atomic.
       const frozenRequest: LLMRequest = structuredClone(request);
       const contentHash = hashLlmCallContent(frozenRequest);
+      // Stable effect identity + idempotency key from contentHash (not random UUID)
+      // so crash/retry within the same step dedupes on the ledger.
+      const effectId = `llm:${auth.runId}:${auth.stepId}:${contentHash}`;
+      const idempotencyKey = effectId;
       // Ledger keeps metadata + contentHash (not raw prompt) for DLP-friendly binding.
       const requestBody: Record<string, unknown> = {
         effectId,
@@ -153,10 +156,15 @@ export function wrapProviderWithEffectBroker(
           token: capabilityToken,
           type: effectType,
           request: requestBody,
-          idempotencyKey: `llm:${auth.runId}:${auth.stepId}:${effectId}`,
+          idempotencyKey,
           lease: auth.lease,
           actor: auth.actor,
         });
+        if (result.response == null) {
+          throw new Error(
+            'EFFECT_RESPONSE_MISSING: broker returned no LLM response (incomplete replay?)',
+          );
+        }
         return result.response as unknown as LLMResponse;
       } finally {
         LLM_INVOKE_REGISTRY.delete(effectId);
