@@ -110,19 +110,21 @@ over the one implementation, not a new class. Count before/after on any change t
 | --------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Orchestrator          | **10** (was 13)                                                             | V1 `UltimateOrchestrator` (`core/src/ultimate/orchestrator.ts:64`); V2 `planWorkGraph` (`core/src/planner/workGraphPlanner.ts:112`) → kernel → worker StepExecutors | DELETED 2026-07-14: `apps/api` dead `Orchestrator` class (file slimmed to the live, tested `runAgentStep`), `AdaptiveOrchestrator`, the whole `@commander/orchestration` package (dead divergent fork). Remaining: 6 wired V1 orchestrators (Ultimate/TELOS/Swarm/Drive/Goal/AgentLoop) + 3 coordinators overlap the V2 planner path. DELETED 2026-07-15: orphan `apps/api/src/deterministicTaskAllocator.ts` (484 LOC; zero importers; was not an Orchestrator count). WS0 keeps the deleted package shell absent via `arch:guard`.      |
 | Store / Repository    | **49** classes (was 51; −2 after LockFree + DatasetStore dedupe 2026-07-15) | per-concept: kernel `KernelRepository`, core `MemoryStore`, `apiStore`, `WarRoomStore` (≈4 parallel roots, not 1)                                                   | `EpisodicMemoryStore` defined in **both** `core/src/memory/episodicStore.ts:41` and `apps/api/src/episodicMemoryStore.ts:398`. DELETED 2026-07-15: orphan `LockFreeStateStore` (zero importers; stub remains without class). DatasetStore dual file collapsed to re-export of `observability/dataset.ts` (plugin path no longer declares a second class).                                                                                                                    |
-| Memory system         | **16** (methodology-locked; −1 MemorySystem facade 2026-07-17; prior −1 apps/api EpisodicMemoryStore Phase B) | `UnifiedMemory` (`core/src/memory/unifiedMemory.ts:167`) over `ThreeLayerMemory`                                                                                    | Allowlist (not path-walk): Unified/ThreeLayer + single `MemoryCurator` (TTL + autonomous merged 2026-07-15; `TtlMemoryCurator` is alias only) + core-only `EpisodicMemoryStore` (apps/api zombie deleted) + api parallel stores (`ProjectMemoryStore`/`NamespacedMemoryStore`/`MemoryIndexManager`) + Conversation/Semantic/Procedural/Json/Sqlite + Federation/ManagerAgent/QualityGate/CrossModelMemory. Path-walk of `memory/**` helpers is 24–32 and is NOT the locked definition. DELETED 2026-07-17: orphan `MemorySystem` facade (0 product importers); MEMORY-001 kept in `namespaceGuard.ts`. |
+| Memory system         | **7** (methodology-locked; L3-10a 2026-07-17: −5 non-product internals off allowlist; prior −1 MemorySystem facade; prior −1 apps/api EpisodicMemoryStore Phase B) | `UnifiedMemory` over `ThreeLayerMemory`; product writes via `writeProductMemory` → `MemoryStore` → `MemoryService.store` (MEMORY-001) | Product allowlist: Unified/ThreeLayer + MemoryCurator + Conversation/Semantic/Procedural + MemoryIndexManager. Non-product internals (still in tree, not counted): EpisodicMemoryStore (ACT-R), MemoryFederation, MemoryManagerAgent, MemoryQualityGate, CrossModelMemory. Path-walk of `memory/**` helpers is NOT the locked definition. `MemoryStoreTool` FS path is scratch-only; agent-identified calls fail-closed (L3-10a). |
 | State machine         | **6** (4 `*StateMachine` classes + `RUN_TRANSITIONS` + `STEP_TRANSITIONS`)  | `contracts/src/states.ts:49/61` (RUN/STEP lifecycle tables)                                                                                                         | Classes: `TaskStateMachine`, `StateMachine`, `PatternStateMachine`, `TopologyStateMachine`. Canonical transition tables have **zero call sites** — the kernel enforces transitions in SQL (`kernel/src/postgres.ts:342`) instead; `apps/api/src/stateMachine.ts:245` and `patternStateMachine.ts:214` are two legacy engines with byte-identical interface names                                                                                                             |
 | Policy decision point | multiple                                                                    | `@commander/effect-broker` PEP for external effects (`effect-broker/src/index.ts:294`, fail-closed)                                                                 | `apps/api` middleware chain (`authMiddleware`/`jwtMiddleware`/`tenantContextMiddleware`/`securityMiddleware`); worker-plane default `PolicyEvaluator` is **deny-all** (`createWorkerPolicyEvaluator`; permit only via `COMMANDER_WORKER_EFFECT_POLICY=permit`); core hosts many guards (`GuardianAgent`, `OutboundNetworkPolicy`, `ToolPoisoningGuard`…). No single authz choke point. _(census pending; enumerated from package maps)_                                      |
 
 **Enforcement: ENFORCED (ceilings).** `packages/core/tests/architecture/duplicationCountGuard.test.ts`
 (wired into `pnpm test:arch`) fails if orchestrator/store/memory/stateMachine counts increase
-above locked live ceilings (orchestrator≤10, store≤49, memory≤17 allowlist, stateMachine≤6 =
+above locked live ceilings (orchestrator≤10, store≤49, memory≤7 allowlist, stateMachine≤6 =
 classes + RUN/STEP_TRANSITIONS). Methodology is pure-fs walk + locked regexes in that file
 header. Lowering a ceiling requires a real deletion + evidence; raising requires intentional
 amendment + this changelog. Policy decision point row remains unenforced (census pending).
 
-**Gap to close:** pick the V2 canonical for each row. apps/api EpisodicMemoryStore zombie deleted (Phase A+B). Remaining: ProjectMemory parallel path. `MemoryCurator` + `TtlMemoryCurator` merged
-2026-07-15 into one stack (`memory/curator.ts`). Count-guard ENFORCED (ceilings only — does not force deletions).
+**Gap to close:** pick the V2 canonical for each row. apps/api EpisodicMemoryStore zombie deleted (Phase A+B).
+L3-10a: product write entry = `writeProductMemory`; MEMORY-001 on MemoryService.store ENFORCED;
+non-product memory classes remain in tree but off allowlist. Remaining specialty stores
+(Conversation/Semantic) are product features, not a second namespaced-record authority.
 
 ---
 
@@ -211,6 +213,13 @@ rules. The contracts leaf, V2 package graph, and new package-role ban are ENFORC
 ---
 
 ## Change log
+
+- **2026-07-17 (L3-10a: memory ceiling / single write API)** — Preferred product write =
+  `writeProductMemory` → `MemoryStore` → `MemoryService.store` (MEMORY-001 ENFORCED).
+  Agent-identified `MemoryStoreTool` FS path fail-closed. Product allowlist drops five
+  non-product internals (EpisodicMemoryStore, MemoryFederation, MemoryManagerAgent,
+  MemoryQualityGate, CrossModelMemory); memory ceiling 16→7. Spec:
+  `spec/l3-10a-memory-ceiling.md`.
 
 - **2026-07-15 (WS0 contracts constitution)** — Folded the types-only
   `@commander/control-plane` surface into `packages/contracts/src/controlPlane.ts`, deleted

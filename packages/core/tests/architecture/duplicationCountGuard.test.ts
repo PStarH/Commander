@@ -22,7 +22,7 @@
  * - store:        `export class \w*(Store|Repository)`
  * - memory:       fixed allowlist of product memory-system class names
  *                 (not every helper under memory/; path-walk is 24–32 and is
- *                 NOT the locked definition — PRINCIPLES “memory system 18”
+ *                 NOT the locked definition — PRINCIPLES “memory system 7”
  *                 matches this allowlist exactly)
  * - stateMachine: `export class \w*StateMachine` + RUN_TRANSITIONS +
  *                 STEP_TRANSITIONS const tables in contracts
@@ -40,14 +40,17 @@ const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '../../../..');
 /**
  * Live ceilings — locked 2026-07-15 methodology audit.
  * Never invent lower than live without a real deletion.
- * orchestrator=10, store=49, memory=18, stateMachine=6.
+ * orchestrator=10, store=49, memory=7, stateMachine=6.
  * memory 19→17 (curator merge + apps/api EpisodicMemoryStore delete): TtlMemoryCurator merged into MemoryCurator (2026-07-15).
  * memory 17→16 (MemorySystem facade deleted 2026-07-17; assertNamespaced kept as namespaceGuard).
+ * memory 16→7 (L3-10a 2026-07-17): product allowlist drops non-product internals
+ *   (EpisodicMemoryStore ACT-R, MemoryFederation, MemoryManagerAgent, MemoryQualityGate,
+ *   CrossModelMemory). Ceiling matches live product count; see spec/l3-10a-memory-ceiling.md.
  */
 const CEILINGS = {
   orchestrator: 10,
   store: 49,
-  memory: 16,
+  memory: 7,
   stateMachine: 6,
 } as const;
 
@@ -75,9 +78,12 @@ const STORE_RE = /^\s*export\s+class\s+(\w*(?:Store|Repository))\b/gm;
  * Explicitly NOT counted: Memory*Tool, errors, poisoning detectors/engines,
  * scorers (BM25/Thompson), HNSW/TemporalGraph/Reflexion helpers, InMemory*
  * non-memory doubles, ProjectMemoryStoreAdapter.
+ * L3-10a non-product internals (still in tree, not product write authority):
+ * EpisodicMemoryStore, MemoryFederation, MemoryManagerAgent, MemoryQualityGate,
+ * CrossModelMemory — see spec/l3-10a-memory-ceiling.md.
  */
 const MEMORY_RE =
-  /^\s*export\s+class\s+(UnifiedMemory|ThreeLayerMemory|MemoryCurator|MemoryIndexManager|EpisodicMemoryStore|ConversationStore|SemanticMemoryStore|ProceduralMemoryStore|MemoryFederation|MemoryManagerAgent|MemoryQualityGate|CrossModelMemory)\b/gm;
+  /^\s*export\s+class\s+(UnifiedMemory|ThreeLayerMemory|MemoryCurator|MemoryIndexManager|ConversationStore|SemanticMemoryStore|ProceduralMemoryStore)\b/gm;
 
 /** 4a) State machine classes */
 const SM_CLASS_RE = /^\s*export\s+class\s+(\w*StateMachine)\b/gm;

@@ -66,6 +66,7 @@ export class MemoryStoreFacade implements MemoryStore {
     private readonly tenant: TenantResolver = getCurrentTenantId,
   ) {}
 
+  /** Product durable write — prefer writeProductMemory() at call sites (L3-10a). */
   async write(options: MemoryWriteOptions): Promise<EpisodicMemoryItem> {
     const scope = this.scope(options.projectId, options.agentId);
     return toLegacyItem(await this.service.store(toRecordInput(options, scope)));

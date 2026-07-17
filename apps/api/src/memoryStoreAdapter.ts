@@ -1,9 +1,10 @@
-import type {
-  MemoryStore,
-  MemorySearchQuery,
-  ProjectMemoryItem,
-  ProjectMemoryOverview,
-  ProjectMemorySearchOptions,
+import {
+  writeProductMemory,
+  type MemoryStore,
+  type MemorySearchQuery,
+  type ProjectMemoryItem,
+  type ProjectMemoryOverview,
+  type ProjectMemorySearchOptions,
 } from '@commander/core';
 
 /**
@@ -15,6 +16,8 @@ import type {
  * translation over the core MemoryStore, eliminating the duplicated JSON-file
  * persistence paths in apps/api while keeping the HTTP/project DTO contract
  * stable during migration.
+ *
+ * Product writes go through writeProductMemory (L3-10a) → MEMORY-001.
  */
 export class ProjectMemoryStoreAdapter {
   constructor(private readonly store: MemoryStore) {}
@@ -59,7 +62,7 @@ export class ProjectMemoryStoreAdapter {
       'id' | 'priority' | 'confidence' | 'lastAccessedAt' | 'createdAt'
     >,
   ): Promise<ProjectMemoryItem> {
-    const item = await this.store.write({
+    const item = await writeProductMemory(this.store, {
       projectId: input.projectId,
       missionId: input.missionId,
       agentId: input.agentId,
