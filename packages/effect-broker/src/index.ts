@@ -130,6 +130,8 @@ export interface EffectExecutor {
       tenantId: string;
       workerId: string;
       workerGeneration?: number;
+      fencingEpoch: number;
+      leaseToken: string;
       effectId: string;
     };
   }): Promise<Record<string, unknown>>;
@@ -358,6 +360,11 @@ export class EffectBroker {
     this.admissionStore = new InMemoryAdmissionStore();
   }
 
+  /** Bind process-local worker generation after registry.register (bootstrap). */
+  bindLocalWorkerGeneration(generation: number): void {
+    this.options.localWorkerGeneration = generation;
+  }
+
   /**
    * admit() — Phase 1 of the WS2 split. Verifies capability, policy, request
    * binding, tenant consistency, and writes the effect to the kernel ledger.
@@ -456,6 +463,8 @@ export class EffectBroker {
             tenantId: admission.grant.tenantId,
             workerId: admission.lease.workerId,
             ...(admission.lease.workerGeneration !== undefined ? { workerGeneration: admission.lease.workerGeneration } : {}),
+            fencingEpoch: admission.lease.fencingEpoch,
+            leaseToken: admission.lease.token,
             effectId: admission.effectId,
           },
         });
@@ -505,13 +514,29 @@ export class EffectBroker {
         actualWorkerId: admission.lease.workerId,
       });
     }
+    // Align with kernel live(): missing generation coerces to -1.
     const localGen = this.options.localWorkerGeneration;
-    const leaseGen = admission.lease.workerGeneration;
-    if (localGen !== undefined && leaseGen !== undefined && localGen !== leaseGen) {
+    if (localGen !== undefined) {
+      const leaseGen = admission.lease.workerGeneration ?? -1;
+      if (leaseGen !== localGen) {
+        throw new EffectBrokerError('WORKER_AFFINITY_VIOLATION', {
+          effectId: admission.effectId,
+          expectedWorkerGeneration: localGen,
+          actualWorkerGeneration: leaseGen,
+        });
+      }
+    }
+    if (typeof admission.lease.token !== 'string' || admission.lease.token.length === 0) {
       throw new EffectBrokerError('WORKER_AFFINITY_VIOLATION', {
         effectId: admission.effectId,
-        expectedWorkerGeneration: localGen,
-        actualWorkerGeneration: leaseGen,
+        reason: 'missing_lease_token',
+      });
+    }
+    if (!Number.isFinite(admission.lease.fencingEpoch) || admission.lease.fencingEpoch < 0) {
+      throw new EffectBrokerError('WORKER_AFFINITY_VIOLATION', {
+        effectId: admission.effectId,
+        reason: 'invalid_fencing_epoch',
+        actualFencingEpoch: admission.lease.fencingEpoch,
       });
     }
   }
