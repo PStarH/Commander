@@ -38,9 +38,17 @@ export { ToolStepExecutor } from './toolStepExecutor.js';
 export type { ExternalEffectBroker, ToolHandler, ToolRegistry, ToolStepInput, ToolStepOutput } from './toolStepExecutor.js';
 export {
   assertEffectBrokerForProduction,
+  isCatalogAuthorizedLocalOnly,
   isProductionEffectGate,
   mustRouteExternalEffectThroughBroker,
 } from './effectGate.js';
+export type { EffectRoutingContext } from './effectGate.js';
+export {
+  DENY_ALL_TOOL_EFFECT_CATALOG,
+  MapToolEffectCatalog,
+  createDefaultWorkerToolEffectCatalog,
+} from './toolEffectCatalog.js';
+export type { ToolEffectCatalog } from './toolEffectCatalog.js';
 export { EvaluatorStepExecutor } from './evaluatorStepExecutor.js';
 export type { EvaluatorStepInput, EvaluatorStepOutput, EvaluationCriteria, EvaluationRule } from './evaluatorStepExecutor.js';
 export { CompositeStepExecutor } from './compositeStepExecutor.js';
