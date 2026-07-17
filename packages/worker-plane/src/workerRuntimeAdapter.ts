@@ -68,10 +68,13 @@ export function toLlmBrokerLease(lease: WorkerLease): LlmEffectAuth['lease'] {
 }
 
 export function createAgentStepExecutor(options: AgentStepExecutorOptions = {}): StepExecutor {
-  const production = process.env.NODE_ENV === 'production';
-  if (production && !options.effectBroker) {
+  const requireBroker =
+    process.env.NODE_ENV === 'production' ||
+    process.env.COMMANDER_PROFILE === 'enterprise' ||
+    process.env.COMMANDER_REQUIRE_EFFECT_BROKER === '1';
+  if (requireBroker && !options.effectBroker) {
     throw new Error(
-      'EFFECT_BROKER_UNAVAILABLE: agent step executor requires EffectBroker in production (WS2 §1)',
+      'EFFECT_BROKER_UNAVAILABLE: agent step executor requires EffectBroker in production/enterprise (WS2 §1)',
     );
   }
   // Broker without issuer wraps providers but never injects ALS → every LLM call
