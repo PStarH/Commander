@@ -25,6 +25,7 @@ import { MemoryCurator } from './memory/curator';
 import type { MemoryManagerAgent, MemoryObservation } from './memory/memoryManagerAgent';
 import { getGlobalSemanticMemoryStore } from './memory/semanticStore';
 import { getGlobalEpisodicStore } from './memory/episodicStore';
+import { writeProductMemory } from './memory/writeProductMemory';
 
 export interface ObserveResult {
   action: 'store' | 'retrieve' | 'update' | 'summarize' | 'discard';
@@ -500,7 +501,8 @@ export class ThreeLayerMemory {
     // below — never blocks add(); failures are logged, not thrown.
     if (this.memoryStore && layer !== 'working') {
       const opts = mapMemoryEntryToWriteOptions(entry);
-      this.memoryStore.write(opts).catch((err: Error) => {
+      // L3-10a: product durable route-out must use writeProductMemory (MEMORY-001).
+      writeProductMemory(this.memoryStore, opts).catch((err: Error) => {
         getGlobalLogger().warn('ThreeLayerMemory', 'route-out to memoryStore failed', {
           entryId: entry.id,
           layer: entry.layer,

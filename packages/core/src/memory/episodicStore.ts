@@ -3,6 +3,10 @@
  *
  * Implements the IEpisodicStore contract from Pillar IV.
  *
+ * L3-10a: non-product internal (Pillar IV ACT-R helper). Not the durable product
+ * write authority — product writes use writeProductMemory → MemoryStore →
+ * MemoryService.store (MEMORY-001). Kept for ThreeLayerMemory recall enrichment.
+ *
  * ACT-R Base-Level Activation:
  *   B_i(t) = ln(Σ_j (t - t_j)^(-d))
  *
