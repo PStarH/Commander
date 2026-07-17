@@ -24,6 +24,8 @@ const auth = { authenticate: async () => ({ tenantIds: ['tenant-a'], capabilitie
 class FakeKernel implements KernelWorkerPort {
   lastClaimGeneration: number | undefined;
   lastFailureCode: string | undefined;
+  claimDelayMs = 0;
+  lastHeartbeatActiveSteps: number | undefined;
   private readonly steps: Array<
     ClaimedStep & { state: 'PENDING' | 'RUNNING' | 'RETRY_WAIT' | 'SUCCEEDED'; maxAttempts: number }
   > = [];
@@ -55,6 +57,7 @@ class FakeKernel implements KernelWorkerPort {
     capabilities: string[];
   }): Promise<ClaimedStep | null> {
     this.lastClaimGeneration = request.workerGeneration;
+    if (this.claimDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.claimDelayMs));
     const step = this.steps.find(
       (candidate) =>
         ['PENDING', 'RETRY_WAIT'].includes(candidate.state) &&
@@ -346,6 +349,106 @@ describe('worker plane', () => {
     await service.waitForIdle();
     assert.equal(kernel.lastFailureCode, 'SANDBOX_UNAVAILABLE');
     assert.notEqual(kernel.getStep('wrapped-step')?.state, 'SUCCEEDED');
+    await service.stop();
+  });
+
+  it('does not over-claim when concurrent pollOnce races maxConcurrency', async () => {
+    const kernel = new FakeKernel();
+    kernel.claimDelayMs = 40;
+    kernel.addRun('run-race', 'tenant-a', [
+      { id: 'r1', kind: 'agent' },
+      { id: 'r2', kind: 'agent' },
+      { id: 'r3', kind: 'agent' },
+    ]);
+    let executing = 0;
+    let peak = 0;
+    const service = new WorkerService(
+      definition,
+      identity,
+      auth,
+      new InMemoryWorkerRegistry(),
+      kernel,
+      {
+        execute: async () => {
+          executing++;
+          peak = Math.max(peak, executing);
+          await new Promise((resolve) => setTimeout(resolve, 60));
+          executing--;
+          return {};
+        },
+      },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 60_000 },
+    );
+    await service.start();
+    const results = await Promise.all([service.pollOnce(), service.pollOnce(), service.pollOnce()]);
+    assert.equal(results.filter(Boolean).length, 2);
+    await service.waitForIdle();
+    assert.equal(peak, 2);
+    assert.equal(kernel.getStep('r3')?.state, 'PENDING');
+    await service.stop();
+  });
+
+  it('returns claimed step without executing when stop races claim', async () => {
+    const kernel = new FakeKernel();
+    kernel.claimDelayMs = 50;
+    kernel.addRun('run-stop', 'tenant-a', [{ id: 'stop-step', kind: 'agent' }]);
+    let executed = false;
+    const service = new WorkerService(
+      definition,
+      identity,
+      auth,
+      new InMemoryWorkerRegistry(),
+      kernel,
+      {
+        execute: async () => {
+          executed = true;
+          return {};
+        },
+      },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 60_000 },
+    );
+    await service.start();
+    const poll = service.pollOnce();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await service.stop();
+    assert.equal(await poll, false);
+    assert.equal(executed, false);
+    assert.equal(kernel.lastFailureCode, 'WORKER_STOPPED');
+    assert.equal(kernel.getStep('stop-step')?.state, 'PENDING');
+  });
+
+  it('counts claimInflight in activeSteps and registry heartbeat', async () => {
+    const kernel = new FakeKernel();
+    kernel.claimDelayMs = 80;
+    kernel.addRun('run-hb', 'tenant-a', [{ id: 'hb-step', kind: 'agent' }]);
+    const registry = new InMemoryWorkerRegistry();
+    const originalHeartbeat = registry.heartbeat.bind(registry);
+    registry.heartbeat = async (workerId, generation, activeSteps) => {
+      kernel.lastHeartbeatActiveSteps = activeSteps;
+      return originalHeartbeat(workerId, generation, activeSteps);
+    };
+    const service = new WorkerService(
+      definition,
+      identity,
+      auth,
+      registry,
+      kernel,
+      {
+        execute: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return {};
+        },
+      },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 15 },
+    );
+    await service.start();
+    const poll = service.pollOnce();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(service.activeSteps, 1);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(kernel.lastHeartbeatActiveSteps, 1);
+    await poll;
+    await service.waitForIdle();
     await service.stop();
   });
 });
