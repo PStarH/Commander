@@ -936,6 +936,16 @@ export class PostgresKernelRepository implements KernelRepository {
     }, [tenantId]);
   }
 
+  async listEffectsForRun(runId: string, tenantId: string): Promise<KernelEffect[]> {
+    return this.withTransaction(async (client) => {
+      const result = await client.query<DbEffect>(
+        `SELECT * FROM commander_effects WHERE run_id=$1 AND tenant_id=$2 ORDER BY created_at, id`,
+        [runId, tenantId],
+      );
+      return result.rows.map((row) => fromEffect(row));
+    }, [tenantId]);
+  }
+
   // ── Durable Timers ─────────────────────────────────────────────────────────
 
   async createTimer(request: CreateTimerRequest, actor: string): Promise<KernelTimer> {

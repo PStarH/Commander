@@ -44,6 +44,36 @@ describe('execution kernel semantics', () => {
     assert.equal((await kernel.claimNextStep({ workerId: 'worker-2', leaseTtlMs: 60_000 }))?.id, 'second');
   });
 
+  it('listEffectsForRun returns ledger rows scoped by runId and tenantId', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(createRun([{ id: 'step-a', kind: 'agent' }]), 'gateway');
+    await kernel.createRun({
+      ...createRun([{ id: 'step-b', kind: 'agent' }]),
+      id: 'run-2',
+      tenantId: 'tenant-b',
+    }, 'gateway');
+    const stepA = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000, tenantId: 'tenant-a' });
+    const stepB = await kernel.claimNextStep({ workerId: 'worker-2', leaseTtlMs: 60_000, tenantId: 'tenant-b' });
+    assert.ok(stepA?.lease);
+    assert.ok(stepB?.lease);
+    assert.equal((await kernel.admitEffect({
+      id: 'eff-run1', runId: 'run-1', stepId: 'step-a', tenantId: 'tenant-a',
+      type: 'http.write', idempotencyKey: 'k-a', policyDecisionId: 'pd-a',
+      request: { target: 'a' }, lease: stepA.lease, actor: 'worker-1',
+    })).admitted, true);
+    assert.equal((await kernel.admitEffect({
+      id: 'eff-run2', runId: 'run-2', stepId: 'step-b', tenantId: 'tenant-b',
+      type: 'http.write', idempotencyKey: 'k-b', policyDecisionId: 'pd-b',
+      request: { target: 'b' }, lease: stepB.lease, actor: 'worker-2',
+    })).admitted, true);
+
+    const forRun1 = await kernel.listEffectsForRun('run-1', 'tenant-a');
+    assert.equal(forRun1.length, 1);
+    assert.equal(forRun1[0]?.id, 'eff-run1');
+    assert.deepEqual(await kernel.listEffectsForRun('run-1', 'tenant-b'), []);
+    assert.deepEqual(await kernel.listEffectsForRun('run-missing', 'tenant-a'), []);
+  });
+
   it('writes an outbox message for lifecycle events', async () => {
     const kernel = new InMemoryKernelRepository();
     await kernel.createRun(createRun(), 'gateway');

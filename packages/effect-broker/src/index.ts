@@ -820,3 +820,27 @@ export interface AdmissionResult {
 export class EffectBrokerError extends Error {
   constructor(readonly code: string, readonly details: Record<string, unknown> = {}) { super(code); this.name = 'EffectBrokerError'; }
 }
+
+export {
+  EVIDENCE_BUNDLE_SCHEMA,
+  EVIDENCE_DLP_EXCLUDED_KEYS,
+  EVIDENCE_GENESIS_HASH,
+  EVIDENCE_RESPONSE_SUMMARY_KEYS,
+  buildEffectEvidenceBundle,
+  buildRunEvidenceBundle,
+  findDlpViolation,
+  sanitizeForEvidence,
+  verifyEvidenceBundle,
+} from './evidenceBundle.js';
+export type {
+  BuildEvidenceBundleInput,
+  EvidenceAuditSource,
+  EvidenceBundle,
+  EvidenceBundleAuditEntry,
+  EvidenceBundleEffectEntry,
+  EvidenceBundleIdentity,
+  EvidenceBundleScope,
+  EvidenceBundleVersions,
+  EvidenceEffectSource,
+  VerifyEvidenceBundleResult,
+} from './evidenceBundle.js';
