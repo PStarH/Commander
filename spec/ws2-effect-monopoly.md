@@ -1,12 +1,12 @@
 # WS2：EffectBroker 唯一外部副作用出口与 Capability 统一
 
-**状态：PARTIAL（§5/§8 已闭环；§8 claim 过滤已对称；§1 LLM：call-time mint + provider wrap + 默认允许 `llm.*`（policy + allowlist seed）+ 工具类仍 deny-default；遗留：API/Gateway 路径 LLM、多 isolate invoke registry）**
+**状态：PARTIAL（§3–§9 worker broker 主路径已闭环；§1 LLM worker：call-time mint + wrap + 默认允许 `llm.*` + C-α 租户 registry/worker affinity 已落地见 `spec/ws2-llm-multi-isolate.md`；遗留：API/Gateway LLM、C-β 调度标签）**
 **范围：Phase 1 Spec → Phase 2 Build → Phase 3 Review & Audit**
 
 > 2026-07-16 复审历史：Phase 3 曾发现 3 项 High 并驳回 ACCEPTED。同日修复：
 > - §5 三层引擎已接入 `admit()`（allowlist fail-closed 拒绝 + 配额记录/超限拒绝），验收测试 ws2-acceptance §5 三例。
 > - §8 补偿失败现调 `retryOutbox`（错误记录+立即退避），毒消息由 `sweepOutboxDlq`（kernel-ops timer 每周期运行）按 max_attempts 落 DLQ；`claimOutbox` / `claimOutboxByTopic` 均过滤 `moved_to_dlq_at` 与 `attempts < max_attempts`（禁 sweep 前死循环 reclaim）。consumer 单测四例证明重试有界；`ws2-acceptance` §8 含 claim 空/非空 + poison→DLQ + generic claimOutbox 对称（4/4）。
-> - §1 LLM 出口：`wrapProviderWithEffectBroker` + invoke registry + 默认允许 `llm.*`（policy + `ensureAllowlistDefault`）+ 生产无 broker 拒建；工具/连接器仍 deny-default；API/Gateway LLM 与多 isolate registry 仍为 follow-up。
+> - §1 LLM 出口：`wrapProviderWithEffectBroker` + 租户键控 invoke registry + worker affinity（C-α，见 `spec/ws2-llm-multi-isolate.md`）+ 默认允许 `llm.*` + 生产无 broker 拒建；工具/连接器仍 deny-default；遗留 follow-up：API/Gateway LLM、C-β 调度标签、C-γ sealed（默认 WONTFIX）。
 
 ## 0. 依据与引用合约
 

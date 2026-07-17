@@ -111,7 +111,7 @@ export async function createWorkerService(): Promise<WorkerService> {
   });
 
   // ── Create shared Effect Broker for external side effects ──
-  const { broker: effectBroker, issuer: capabilityIssuer } = createEffectBroker(kernel);
+  const { broker: effectBroker, issuer: capabilityIssuer } = createEffectBroker(kernel, workerId);
 
   // ── Create step executor based on worker kind ──
   const executor = await createExecutorForKind(
@@ -134,6 +134,8 @@ export async function createWorkerService(): Promise<WorkerService> {
       workerHeartbeatMs: parseInt(process.env.COMMANDER_WORKER_HEARTBEAT_MS ?? '10000', 10),
       pollIntervalMs: parseInt(process.env.COMMANDER_WORKER_POLL_MS ?? '250', 10),
       sandboxReadiness: createProductionWorkerSandboxReadiness(),
+      // Generation is only known after registry.register — bind into broker affinity.
+      onRegistered: (worker) => effectBroker.bindLocalWorkerGeneration(worker.generation),
     },
   );
 
@@ -197,7 +199,10 @@ export function withDefaultLlmAllowlist(kernel: AllowlistKernel): EffectKernelPo
   };
 }
 
-function createEffectBroker(kernel: AllowlistKernel): {
+function createEffectBroker(
+  kernel: AllowlistKernel,
+  localWorkerId: string,
+): {
   broker: EffectBroker;
   issuer: CapabilityTokenIssuer;
 } {
@@ -222,14 +227,30 @@ function createEffectBroker(kernel: AllowlistKernel): {
   // other types log a marker. Operators replace this with a real connector
   // dispatcher. Default policy allows llm.*; tools/connectors stay denied.
   const executor: EffectExecutor = {
-    execute: async (input: {
-      type: string;
-      request: Record<string, unknown>;
-      signal: AbortSignal;
-    }) => {
+    execute: async (input) => {
       if (input.type.startsWith('llm.')) {
+        const ctx = input.executionContext;
+        if (
+          !ctx?.tenantId ||
+          !ctx.workerId ||
+          typeof ctx.fencingEpoch !== 'number' ||
+          typeof ctx.leaseToken !== 'string' ||
+          !ctx.leaseToken
+        ) {
+          throw new Error(
+            'EFFECT_AUTHORIZATION_REQUIRED: llm.* execute requires executionContext tenantId, workerId, fencingEpoch, leaseToken from grant lease',
+          );
+        }
         const { dispatchLlmEffect } = await import('./llmBrokerBridge.js');
-        return dispatchLlmEffect(input);
+        return dispatchLlmEffect({
+          type: input.type,
+          request: input.request,
+          signal: input.signal,
+          tenantId: ctx.tenantId,
+          workerId: ctx.workerId,
+          fencingEpoch: ctx.fencingEpoch,
+          leaseToken: ctx.leaseToken,
+        });
       }
       // eslint-disable-next-line no-console
       console.warn(`[effect-broker] Executing effect type=${input.type}`, input.request);
@@ -258,6 +279,7 @@ function createEffectBroker(kernel: AllowlistKernel): {
   const broker = new EffectBroker(tokens, policy, effectKernel, executor, audit, {
     audience: 'commander.effect-broker',
     requireRequestBinding: true,
+    localWorkerId,
   });
   return { broker, issuer };
 }
