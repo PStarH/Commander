@@ -4,13 +4,16 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import type {
   ForgetMemoryInput,
   ListMemoryInput,
+  MemoryAuditPage,
   MemoryPage,
   MemoryRecord,
   MemoryRetentionPolicy,
   MemoryScope,
   MemorySearchResult,
   MemoryService,
+  MemoryServiceAudit,
   MemoryServiceMaintenance,
+  QueryMemoryAuditInput,
   RetrieveMemoryInput,
   SearchMemoryInput,
   StoreMemoryInput,
@@ -86,7 +89,9 @@ function cloneRecord(record: MemoryRecord): MemoryRecord {
   };
 }
 
-export class PostgresMemoryService implements MemoryService, MemoryServiceMaintenance {
+export class PostgresMemoryService
+  implements MemoryService, MemoryServiceMaintenance, MemoryServiceAudit
+{
   private readonly pool: PostgresPool;
   private readonly ownsPool: boolean;
   private readonly retention: MemoryRetentionPolicy;
@@ -202,7 +207,7 @@ export class PostgresMemoryService implements MemoryService, MemoryServiceMainte
         : this.inputToRecord(input, id, createdAt, expiresAt);
       await this.deleteExpiredInTransaction(client, input.scope, now);
       await this.enforceMaximumInTransaction(client, input.scope);
-      await this.audit(client, input.scope, 'store', id, input.agentId, true);
+      await this.audit(client, input.scope, 'store', id, input.agentId, true, record.tags);
       return cloneRecord(record);
     });
   }
@@ -220,7 +225,15 @@ export class PostgresMemoryService implements MemoryService, MemoryServiceMainte
         [input.scope.tenantId, input.scope.projectId, input.id],
       );
       const record = result.rows[0] ? this.rowToRecord(result.rows[0], input, this.now()) : null;
-      await this.audit(client, input.scope, 'retrieve', input.id, undefined, true);
+      await this.audit(
+        client,
+        input.scope,
+        'retrieve',
+        input.id,
+        undefined,
+        true,
+        record?.tags,
+      );
       return record ? cloneRecord(record) : null;
     });
   }
@@ -252,7 +265,15 @@ export class PostgresMemoryService implements MemoryService, MemoryServiceMainte
         values,
       );
       const items = result.rows.map((row) => this.rowToRecord(row, input, this.now()));
-      await this.audit(client, input.scope, 'search', undefined, input.scope.agentId, true);
+      await this.audit(
+        client,
+        input.scope,
+        'search',
+        undefined,
+        input.scope.agentId,
+        true,
+        input.tags,
+      );
       return { items: items.map(cloneRecord), total: Number(count.rows[0]?.count ?? 0) };
     });
   }
@@ -270,11 +291,36 @@ export class PostgresMemoryService implements MemoryService, MemoryServiceMainte
         values.push(input.missionId);
         clauses.push(`mission_id = $${values.length}`);
       }
+      // Snapshot tags before delete so namespace-scoped audit queries see forget events.
+      const prior = await client.query<{ tags: unknown }>(
+        `SELECT tags FROM memory_items WHERE ${clauses.join(' AND ')}`,
+        values,
+      );
+      const tagsSnapshot = prior.rows.flatMap((row) => {
+        if (Array.isArray(row.tags)) return row.tags.map(String);
+        if (typeof row.tags === 'string') {
+          try {
+            const parsed = JSON.parse(row.tags) as unknown;
+            return Array.isArray(parsed) ? parsed.map(String) : [];
+          } catch {
+            return [];
+          }
+        }
+        return [];
+      });
       const result = await client.query(
         `DELETE FROM memory_items WHERE ${clauses.join(' AND ')}`,
         values,
       );
-      await this.audit(client, input.scope, 'forget', input.id, input.scope.agentId, true);
+      await this.audit(
+        client,
+        input.scope,
+        'forget',
+        input.id,
+        input.scope.agentId,
+        true,
+        tagsSnapshot.length > 0 ? [...new Set(tagsSnapshot)] : undefined,
+      );
       return result.rowCount > 0;
     });
   }
@@ -450,11 +496,12 @@ export class PostgresMemoryService implements MemoryService, MemoryServiceMainte
     memoryId: string | undefined,
     actorId: string | undefined,
     success: boolean,
+    tags?: string[],
   ): Promise<void> {
     await client.query(
       `INSERT INTO memory_audit_events
-       (id, tenant_id, project_id, memory_id, action, actor_id, success, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+       (id, tenant_id, project_id, memory_id, action, actor_id, success, created_at, tags)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8::jsonb)`,
       [
         randomUUID(),
         scope.tenantId,
@@ -463,8 +510,43 @@ export class PostgresMemoryService implements MemoryService, MemoryServiceMainte
         action,
         actorId ?? null,
         success,
+        JSON.stringify(tags ?? []),
       ],
     );
+  }
+
+  async queryAudit(input: QueryMemoryAuditInput): Promise<MemoryAuditPage> {
+    assertMemoryScope(input.scope);
+    const limit = assertLimit(input.limit, 50, 500);
+    await this.initialize();
+    return this.withTransaction(input.scope, async (client) => {
+      const nsTag = input.namespace ? `namespace:${input.namespace}` : null;
+      const result = await client.query(
+        `SELECT id, tenant_id, project_id, memory_id, action, actor_id, success, created_at, tags
+         FROM memory_audit_events
+         WHERE tenant_id = $1 AND project_id = $2
+           AND ($3::text IS NULL OR tags @> jsonb_build_array($3::text))
+         ORDER BY created_at DESC
+         LIMIT $4`,
+        [input.scope.tenantId, input.scope.projectId, nsTag, limit],
+      );
+      const entries = result.rows.map((row) => ({
+        id: String(row.id),
+        tenantId: String(row.tenant_id),
+        projectId: String(row.project_id),
+        memoryId: row.memory_id == null ? undefined : String(row.memory_id),
+        action: String(row.action),
+        actorId: row.actor_id == null ? undefined : String(row.actor_id),
+        success: Boolean(row.success),
+        createdAt:
+          row.created_at instanceof Date
+            ? row.created_at.toISOString()
+            : String(row.created_at ?? ''),
+        // Use jsonArray (safe parse) — malformed legacy tags must not 400 the audit API.
+        tags: row.tags == null ? undefined : jsonArray(row.tags),
+      }));
+      return { entries, count: entries.length };
+    });
   }
 
   private rowToRecord(

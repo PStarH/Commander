@@ -131,6 +131,8 @@ export function assertProductionSandboxSource(root = process.cwd()): void {
     'packages/core/src/sandbox/executionRouter.ts',
     'packages/core/src/sandbox/platforms.ts',
     'packages/core/src/sandbox/backends/localBackend.ts',
+    // Host-exec surfaces that must remain covered by the production gate below.
+    'packages/core/src/sandbox/backends/sshBackend.ts',
     'packages/core/src/plugins/pluginSandbox.ts',
     'packages/core/src/runtime/toolExecutionService.ts',
     'packages/core/src/tools/codeExecutionTool.ts',
@@ -151,6 +153,34 @@ export function assertProductionSandboxSource(root = process.cwd()): void {
   if (!policySource.includes('assertProductionSandboxReady')) {
     throw new SandboxPolicyError(
       'Production sandbox readiness guard is missing from the build input.',
+    );
+  }
+
+  // WS7 host-exec static gate: production must keep the ExecutionRouter guard
+  // that rejects SSH / arbitrary Docker-exec / named host backends. We do NOT
+  // ban child_process globally (sandbox orchestration needs it); we verify the
+  // fail-closed host-exec entry control remains wired.
+  const routerRelative = 'packages/core/src/sandbox/executionRouter.ts';
+  const routerSource = readFileSync(resolve(root, routerRelative), 'utf8');
+  if (!routerSource.includes('assertProductionBackendRequest')) {
+    throw new SandboxPolicyError(
+      `Production source ${routerRelative} is missing assertProductionBackendRequest — host-exec backends would be ungated.`,
+    );
+  }
+  // Call site in selectBackend (not merely a private method declaration).
+  if (!/this\.assertProductionBackendRequest\s*\(/.test(routerSource)) {
+    throw new SandboxPolicyError(
+      `Production source ${routerRelative} never invokes assertProductionBackendRequest — host-exec gate is dead code.`,
+    );
+  }
+  // Rejection copy must name the forbidden host surfaces (SSH / Docker).
+  if (
+    !/SSH/i.test(routerSource) ||
+    !/Docker/i.test(routerSource) ||
+    !/forbidden/i.test(routerSource)
+  ) {
+    throw new SandboxPolicyError(
+      `Production source ${routerRelative} host-exec rejection copy must mention SSH, Docker, and forbidden.`,
     );
   }
 }

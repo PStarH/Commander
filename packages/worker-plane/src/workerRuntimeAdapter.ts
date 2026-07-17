@@ -1,7 +1,13 @@
 import { KernelStepExecutor, createAgentRuntimeFactory } from '@commander/core';
-import type { StepExecutor } from './types.js';
-import type { AgentRuntimeFactoryOptions } from '@commander/core';
-import type { EffectBroker } from '@commander/effect-broker';
+import type { StepExecutor, ClaimedStep, WorkerLease } from './types.js';
+import type { AgentRuntimeFactoryOptions, AgentRuntimeInterface, LLMProvider } from '@commander/core';
+import type { CapabilityTokenIssuer, EffectBroker } from '@commander/effect-broker';
+import {
+  createLlmEffectAuth,
+  runWithLlmEffectAuth,
+  wrapProviderWithEffectBroker,
+  type LlmEffectAuth,
+} from './llmBrokerBridge.js';
 
 export { KernelStepExecutor } from '@commander/core';
 // WS7: SandboxManager is re-exported so sandboxReadiness can consume it via
@@ -9,33 +15,118 @@ export { KernelStepExecutor } from '@commander/core';
 // (scripts/arch-guard.sh isWorkerCoreBridge).
 export { SandboxManager } from '@commander/core';
 
-export interface AgentStepExecutorOptions extends AgentRuntimeFactoryOptions {
+export type AgentStepExecutorOptions = AgentRuntimeFactoryOptions & {
   defaultMaxSteps?: number;
   defaultTokenBudget?: number;
   defaultProjectId?: string;
   /**
-   * WS2 §10 Phase 2.4: the unified EffectBroker the agent runtime must use for
-   * external LLM provider calls (action namespace `llm.*`). When provided, the
-   * runtime's provider-call layer should route each LLM request through
-   * `broker.execute({ type: 'llm.<provider>', ... })` so every external side
-   * effect goes through the sole PEP. Provider-call interception itself is an
-   * incremental follow-up; this field establishes the wiring contract.
+   * WS2 §1 / §10: unified EffectBroker for external LLM provider calls
+   * (`llm.*`). When set, registered providers are wrapped so every `call`
+   * goes through `broker.execute`. Production refuses to build an agent
+   * executor without a broker + capability issuer.
    */
   effectBroker?: EffectBroker;
+  /** Issuer used to mint per-call LLM capability tokens (request-bound). */
+  capabilityIssuer?: CapabilityTokenIssuer;
+};
+
+function wrapProviders(
+  providers: Record<string, LLMProvider> | undefined,
+  broker: EffectBroker,
+): Record<string, LLMProvider> | undefined {
+  if (!providers) return undefined;
+  const out: Record<string, LLMProvider> = {};
+  for (const [name, provider] of Object.entries(providers)) {
+    out[name] = wrapProviderWithEffectBroker(provider, broker);
+  }
+  return out;
+}
+
+/** Ensure late registerProvider calls also go through the broker wrap. */
+function withBrokerWrappedRegistration(
+  runtime: AgentRuntimeInterface,
+  broker: EffectBroker,
+): AgentRuntimeInterface {
+  const original = runtime.registerProvider.bind(runtime);
+  runtime.registerProvider = (name: string, provider: LLMProvider) => {
+    original(name, wrapProviderWithEffectBroker(provider, broker));
+  };
+  return runtime;
+}
+
+/**
+ * Map claimed step lease → EffectBroker lease fields.
+ * Must preserve `workerGeneration` (kernel treats missing as -1 → LEASE_LOST).
+ */
+export function toLlmBrokerLease(lease: WorkerLease): LlmEffectAuth['lease'] {
+  return {
+    workerId: lease.workerId,
+    workerGeneration: lease.workerGeneration,
+    token: lease.token,
+    fencingEpoch: lease.fencingEpoch,
+  };
 }
 
 export function createAgentStepExecutor(options: AgentStepExecutorOptions = {}): StepExecutor {
-  const runtimeFactory = createAgentRuntimeFactory(options);
-  const executor = new KernelStepExecutor(runtimeFactory, {
-    defaultMaxSteps: options.defaultMaxSteps,
-    defaultTokenBudget: options.defaultTokenBudget,
-    defaultProjectId: options.defaultProjectId,
+  const production = process.env.NODE_ENV === 'production';
+  if (production && !options.effectBroker) {
+    throw new Error(
+      'EFFECT_BROKER_UNAVAILABLE: agent step executor requires EffectBroker in production (WS2 §1)',
+    );
+  }
+  // Broker without issuer wraps providers but never injects ALS → every LLM call
+  // fails EFFECT_AUTHORIZATION_REQUIRED. Require both whenever broker is set.
+  if (options.effectBroker && !options.capabilityIssuer) {
+    throw new Error(
+      'EFFECT_CAPABILITY_ISSUER_REQUIRED: agent LLM path needs CapabilityTokenIssuer for request-bound mint (WS2 §1)',
+    );
+  }
+
+  const {
+    defaultMaxSteps,
+    defaultTokenBudget,
+    defaultProjectId,
+    effectBroker: broker,
+    capabilityIssuer: issuer,
+    ...factoryOptions
+  } = options;
+
+  const baseFactory = createAgentRuntimeFactory({
+    ...factoryOptions,
+    providers: broker
+      ? wrapProviders(factoryOptions.providers, broker)
+      : factoryOptions.providers,
   });
-  // WS2 §10: the broker is wired but provider-call interception is deferred.
-  // When options.effectBroker is set, downstream LLM provider calls should be
-  // wrapped through broker.execute({ type: 'llm.*' }). See spec §1 architecture.
-  void options.effectBroker;
-  return executor;
+
+  const runtimeFactory = (tenantId: string) => {
+    const runtime = baseFactory(tenantId);
+    return broker ? withBrokerWrappedRegistration(runtime, broker) : runtime;
+  };
+
+  const inner = new KernelStepExecutor(runtimeFactory, {
+    defaultMaxSteps,
+    defaultTokenBudget,
+    defaultProjectId,
+  });
+
+  if (!issuer) {
+    return inner;
+  }
+
+  // Inject call-time mint auth for the duration of each agent step.
+  return {
+    async execute(step: ClaimedStep, context) {
+      const auth = createLlmEffectAuth({
+        tenantId: step.tenantId,
+        runId: step.runId,
+        stepId: step.id,
+        actor: context.worker.id,
+        lease: toLlmBrokerLease(step.lease),
+        issuer,
+      });
+      return runWithLlmEffectAuth(auth, () => inner.execute(step, context));
+    },
+  };
 }
 
 export interface ExecutorManifestEntry {

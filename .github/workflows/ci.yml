@@ -280,6 +280,18 @@ jobs:
         # L2-11: exact request-hash / policy / audience binding proofs.
         run: pnpm --filter @commander/effect-broker test
 
+      - name: WS6/WS7 node:test gates (audit query + host-exec static + memory HTTP)
+        run: |
+          pnpm --filter @commander/core exec tsx --test \
+            tests/sandbox/productionPolicy.test.ts \
+            tests/memory/memoryAuditQuery.test.ts
+          pnpm exec tsx --test \
+            packages/worker-plane/src/llmBrokerBridge.test.ts \
+            packages/worker-plane/src/workerRuntimeAdapter.test.ts
+          pnpm exec tsx --test \
+            apps/api/test/namespacedMemoryEndpoints.test.ts \
+            apps/api/test/namespacedMemoryRbac.test.ts
+
       - name: Readiness gate (strict)
         run: pnpm check:readiness
 
