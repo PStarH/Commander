@@ -28,6 +28,11 @@ export {
 export type { LlmEffectAuth } from './llmBrokerBridge.js';
 export { ToolStepExecutor } from './toolStepExecutor.js';
 export type { ExternalEffectBroker, ToolHandler, ToolRegistry, ToolStepInput, ToolStepOutput } from './toolStepExecutor.js';
+export {
+  assertEffectBrokerForProduction,
+  isProductionEffectGate,
+  mustRouteExternalEffectThroughBroker,
+} from './effectGate.js';
 export { EvaluatorStepExecutor } from './evaluatorStepExecutor.js';
 export type { EvaluatorStepInput, EvaluatorStepOutput, EvaluationCriteria, EvaluationRule } from './evaluatorStepExecutor.js';
 export { CompositeStepExecutor } from './compositeStepExecutor.js';
