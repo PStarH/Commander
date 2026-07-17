@@ -5,6 +5,7 @@ import { PostgresOutboxDeliveryPort } from './outbox/postgresOutboxDeliveryPort.
 import { KernelOpsRuntime } from './opsRuntime.js';
 import { ReclaimDaemon } from './reclaimDaemon.js';
 import { TimerWakeupWorker } from './timerWakeupWorker.js';
+import { CompensationConsumerDaemon } from './compensationConsumerDaemon.js';
 import { startOpsHealthServer } from './healthServer.js';
 
 const positiveInteger = (name: string, fallback: number): number => {
@@ -23,6 +24,18 @@ export async function main(): Promise<void> {
   const delivery = new PostgresOutboxDeliveryPort(pool, {
     maxAttempts: positiveInteger('COMMANDER_OUTBOX_MAX_ATTEMPTS', 10),
   });
+
+  // Probe-only compensation loop: proves claim path + DLQ sweep are healthy
+  // without pulling EffectBroker into the kernel package. Full drain ticks can
+  // replace `probe` when a broker-backed worker is co-located.
+  const compensation = new CompensationConsumerDaemon({
+    intervalMs: positiveInteger('COMMANDER_COMPENSATION_INTERVAL_MS', 5_000),
+    probe: async () => {
+      await repository.claimOutboxByTopic('commander.compensation', 0);
+      await repository.sweepOutboxDlq(new Date(), 50);
+    },
+  });
+
   const runtime = new KernelOpsRuntime({
     reclaim: new ReclaimDaemon(repository, {
       pollIntervalMs: positiveInteger('COMMANDER_RECLAIM_INTERVAL_MS', 5_000),
@@ -36,14 +49,15 @@ export async function main(): Promise<void> {
     outbox: new KernelOutboxPublisher(repository, delivery),
     outboxIntervalMs: positiveInteger('COMMANDER_OUTBOX_INTERVAL_MS', 1_000),
     outboxBatchSize: positiveInteger('COMMANDER_OUTBOX_BATCH_SIZE', 100),
+    compensation,
   });
 
   const healthPort = positiveInteger('COMMANDER_OPS_HEALTH_PORT', 8081);
   const health = await startOpsHealthServer({
     port: healthPort,
     isReady: async () => {
-      // Any started ops loop + Postgres answering. Avoid magic component count.
-      if (runtime.runningComponents().length === 0) return false;
+      if (!runtime.runningComponents().includes('compensation')) return false;
+      if (!compensation.isHealthy()) return false;
       try {
         await pool.query('SELECT 1');
         return true;

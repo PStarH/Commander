@@ -56,6 +56,7 @@ function toRecordInput(item: MemoryWriteOptions, scope: MemoryScope) {
     confidence: item.confidence,
     evidenceRefs: item.evidenceRefs,
     meta: item.meta as Record<string, unknown> | undefined,
+    namespaceAcl: item.namespaceAcl,
   };
 }
 

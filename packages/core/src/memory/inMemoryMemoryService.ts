@@ -17,6 +17,7 @@ import type {
   StoreMemoryInput,
 } from './memoryService';
 import { assertForgetTarget, assertLimit, assertMemoryScope } from './memoryService';
+import { assertNamespacedStoreInput } from './namespaceGuard';
 
 const AUDIT_RING_MAX = 1_000;
 
@@ -84,6 +85,13 @@ export class InMemoryMemoryService implements MemoryService, MemoryServiceAudit 
 
     const now = this.now();
     const id = input.id ?? randomUUID();
+    const agentId = input.agentId ?? input.scope.agentId;
+    assertNamespacedStoreInput({
+      agentId,
+      id,
+      meta: input.meta,
+      namespaceAcl: input.namespaceAcl,
+    });
     const existing = this.items.get(keyFor(input.scope, id));
     const createdAt = existing?.createdAt ?? now.toISOString();
     const expiresAt =
@@ -96,7 +104,7 @@ export class InMemoryMemoryService implements MemoryService, MemoryServiceAudit 
       tenantId: input.scope.tenantId,
       projectId: input.scope.projectId,
       missionId: input.missionId,
-      agentId: input.agentId ?? input.scope.agentId,
+      agentId,
       kind: input.kind,
       duration: input.duration ?? 'EPISODIC',
       title: input.title,

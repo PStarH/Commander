@@ -81,6 +81,11 @@ export { InMemoryMemoryService } from './memory/inMemoryMemoryService';
 export { PostgresMemoryService } from './memory/postgresMemoryService';
 export { MemoryStoreFacade } from './memory/memoryStoreFacade';
 export { MemoryMigrationRunner } from './memory/memoryMigration';
+export {
+  assertNamespaced,
+  assertNamespacedStoreInput,
+  type MemoryNamespaceAcl,
+} from './memory/namespaceGuard';
 export type {
   LegacyMemoryRecord,
   MemoryMigrationCheckpointStore,
