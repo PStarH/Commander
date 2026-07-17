@@ -6,6 +6,7 @@ import type {
   CreateInteractionRequest, CreateKernelRun, CreateTimerRequest, FailStepRequest,
   KernelDlqEntry, KernelEffect, KernelEvent, KernelInteraction, KernelLease, KernelOutboxMessage, KernelRun, KernelStep, KernelTimer,
   MarkEffectCompletionUnknownRequest,
+  ReconcileEffectRequest,
   TenantExecutionControl,
 } from '../types.js';
 import { KernelInvariantError } from '../types.js';
@@ -358,6 +359,30 @@ export class InMemoryKernelRepository implements KernelRepository {
     effect.state = 'COMPLETION_UNKNOWN';
     effect.response = { completionUnknownReason: request.reason };
     this.event('effect', effect.id, 2, 'effect.completion_unknown', effect.tenantId, effect.runId, effect.stepId, request.actor, { reason: request.reason });
+    return clone(effect);
+  }
+  async getEffect(effectId: string, tenantId: string): Promise<KernelEffect | null> {
+    const effect = this.effects.get(effectId);
+    if (!effect || effect.tenantId !== tenantId) return null;
+    return clone(effect);
+  }
+  async reconcileEffect(request: ReconcileEffectRequest): Promise<KernelEffect | null> {
+    const effect = this.effects.get(request.effectId);
+    if (!effect || effect.tenantId !== request.tenantId || effect.state !== 'COMPLETION_UNKNOWN') return null;
+    effect.state = request.state;
+    effect.response = request.response;
+    effect.completedAt = now();
+    this.event(
+      'effect',
+      effect.id,
+      3,
+      request.state === 'COMPLETED' ? 'effect.reconciled_completed' : 'effect.reconciled_failed',
+      effect.tenantId,
+      effect.runId,
+      effect.stepId,
+      request.actor,
+      {},
+    );
     return clone(effect);
   }
   async claimOutbox(limit: number, at = new Date(), tenantId?: string): Promise<KernelOutboxMessage[]> {
