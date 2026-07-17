@@ -31,8 +31,12 @@ interface LlmInvokeEntry {
 /** Process-local tenant-scoped one-shot invoke registry (module private). */
 const llmInvokeRegistry = new Map<LlmInvokeKey, LlmInvokeEntry>();
 
+/**
+ * Encode tenantId so `:` (allowed in TENANT_ID_RE) cannot collide with the
+ * separator — e.g. tenant `a:b` + effect `c` vs tenant `a` + effect `b:c`.
+ */
 function invokeRegistryKey(tenantId: string, effectId: string): LlmInvokeKey {
-  return `${tenantId}:${effectId}`;
+  return `${encodeURIComponent(tenantId)}:${effectId}`;
 }
 
 /** @internal test-only */
@@ -244,12 +248,13 @@ export async function dispatchLlmEffect(input: {
     throw new Error('LLM effect missing contentHash for invoke integrity check');
   }
   const registryKey = invokeRegistryKey(input.tenantId, effectId);
-  let entry = llmInvokeRegistry.get(registryKey);
+  const entry = llmInvokeRegistry.get(registryKey);
   if (!entry) {
+    // Same effectId under another tenant → TENANT_MISMATCH without leaking that tenantId.
     for (const candidate of llmInvokeRegistry.values()) {
       if (candidate.effectId === effectId) {
         throw new Error(
-          `LLM_TENANT_MISMATCH: registry tenantId=${candidate.tenantId} dispatch tenantId=${input.tenantId}`,
+          `LLM_TENANT_MISMATCH: effectId=${effectId} is not registered for the dispatch tenant`,
         );
       }
     }
@@ -259,7 +264,7 @@ export async function dispatchLlmEffect(input: {
   }
   if (entry.tenantId !== input.tenantId) {
     throw new Error(
-      `LLM_TENANT_MISMATCH: registry tenantId=${entry.tenantId} dispatch tenantId=${input.tenantId}`,
+      `LLM_TENANT_MISMATCH: effectId=${effectId} is not registered for the dispatch tenant`,
     );
   }
   if (entry.workerId !== input.workerId) {
