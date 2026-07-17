@@ -27,9 +27,13 @@
 | **V1 Gateway handlers** | `v1GatewayEndpoints.ts` | 调度 + 查询，不执行 Agent | **是（唯一 HTTP 提交面）** | 全路由 `resolveKernel()`；无 `store` import |
 | **WarRoomStore** | `apps/api/src/store.ts` | missions + execution_logs UI | **否** | `store.ts:1031-1032`；enterprise 写入 410（`warRoomDemotion.test.ts`） |
 | **WarRoom /v1 只读** | `projectEndpoints.ts` `{ readOnly: true }` | 运维快照 | **否（projection）** | `index.ts:557-561` |
+| **WarRoom `/v1/.../run-context`** | `projectEndpoints.ts` | 从 WarRoom 组装 UI 上下文；无 query `runId` 时**合成** `projectId-timestamp` | **否（非 kernel；易与 `/v1/runs/:id` 混淆）** | `projectEndpoints.ts` runMeta；enterprise 仍可达 |
 | **ATR RunLedger** | `core/src/atr/runLedger.ts` | Worker 本地 settlement / idempotency | **否（V1 路径零引用）** | `apps/api` 无 `runLedger` import；状态机与 contracts 不同（§4） |
 | **ATR Scheduler listRuns** | `core/src/atr/scheduler.ts` | 进程内 ATR 运行列表 | **否** | 仅 core/ATR HTTP；非 Gateway `/v1` |
+| **Gateway saga/replay/pipeline runs** | `sagaEndpoints` / `replayEndpoints` / `pipelineEndpoints` | 本地 saga / 回放 / legacy pipeline | **否** | enterprise `/api/*` 410；standard 仍可达 |
+| **`/v2/runs*` bench** | `v2/v2BenchEndpoints.ts` | 内存 benchmark ledger | **否** | standard profile；非 durable |
 | **CLI saga listRuns** | `cli/commands/saga.ts` | `.commander/sagas/` 文件快照 | **否** | 本地 saga 存储，非 kernel |
+| **CLI history** | `cli/commands/history.ts` | `StateCheckpointer` 本地 session | **否** | 非 kernel |
 | **CLI intentLog** | `runtime/intentLog.ts` | 调试 intent 索引 | **否** | `debug.ts` 专用 |
 | **Legacy execute** | `legacyExecutionGuard` 保护路径 | 进程内 AgentRuntime | **否（默认 OFF）** | `PRINCIPLES.md` §2 |
 
@@ -41,9 +45,11 @@
 
 **残余 gap（本 spec 标记 PARTIAL，不假装已统一）：**
 
-- CLI `commander run` / saga / ATR 仍使用 core 本地存储与 **不同** RunState 词汇（ATR: `EXECUTING`/`COMMITTED` vs contracts: `RUNNING`/`SUCCEEDED`）。
+- CLI `commander run` / saga / history / ATR 仍使用 core 本地存储与 **不同** RunState 词汇（ATR: `EXECUTING`/`COMMITTED` vs contracts: `RUNNING`/`SUCCEEDED`）。
+- `GET /v1/projects/:id/run-context` 合成非 kernel `runId`（UI 上下文；不得当作 `GET /v1/runs/:id` 权威）。
 - WarRoomStore 在 standard profile 仍可写 mission（x-legacy），与 kernel run 无自动投影。
 - RunLedger 仍在 worker/agent 路径作为 settlement 层存在（正确角色，但非零 flag durable）。
+- Gateway `/api/saga|replay|pipeline/runs*` 与 `/v2/runs*`（bench）在 standard 仍为独立 run 面。
 
 ---
 
@@ -124,7 +130,7 @@
 - [x] §3.3 ATR/Gateway 边界 ENFORCED（architecture + api 测试）。
 - [~] §4 CLI/`/v1` 同历史语义 — **PARTIAL**（SDK/Gateway ENFORCED；CLI saga/ATR/intent 列明残余）。
 - [x] `docs/v2-migration-guide.md` §Dual path 与 spec 一致。
-- [x] `.internal/docs/status/2026-07-17-l3bc-loop-state.md` 标记 L3-05 PARTIAL。
+- [x] 主仓 gitignored 状态笔记 `.internal/docs/status/2026-07-17-l3bc-loop-state.md` 标记 L3-05 **DONE (PARTIAL)**（不进版本控制；worktree 可能另有副本）。
 
 ---
 
