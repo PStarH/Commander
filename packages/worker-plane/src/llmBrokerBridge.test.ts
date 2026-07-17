@@ -231,4 +231,42 @@ describe('llmBrokerBridge (WS2 §1)', () => {
     );
     assert.match(String(ok.content), /ok/);
   });
+
+  it('freezes call payload so contentHash and provider invoke stay atomic', async () => {
+    const { broker, issuer } = makeBroker();
+    let seen: LLMRequest | undefined;
+    const provider: LLMProvider = {
+      name: 'mock',
+      async call(req) {
+        seen = req;
+        return {
+          content: 'ok',
+          model: req.model ?? 'm',
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+          finishReason: 'stop',
+        };
+      },
+    };
+    const wrapped = wrapProviderWithEffectBroker(provider, broker);
+    const mutable: LLMRequest = {
+      model: 'gpt',
+      messages: [{ role: 'user', content: 'original' }],
+    };
+    const auth = createLlmEffectAuth({
+      tenantId: 't1',
+      runId: 'r1',
+      stepId: 's1',
+      actor: 'worker-1',
+      lease: { workerId: 'w1', workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
+      issuer,
+    });
+    const response = await runWithLlmEffectAuth(auth, async () => {
+      const pending = wrapped.call(mutable);
+      // Mutate after call starts — wrap must not observe the mutated messages.
+      mutable.messages = [{ role: 'user', content: 'TAMPERED' }];
+      return pending;
+    });
+    assert.equal(response.content, 'ok');
+    assert.equal(seen?.messages?.[0]?.content, 'original');
+  });
 });

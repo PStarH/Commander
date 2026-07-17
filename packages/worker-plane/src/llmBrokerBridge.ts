@@ -116,19 +116,30 @@ export function wrapProviderWithEffectBroker(
       }
       const effectId = randomUUID();
       const effectType = `llm.${provider.name}`;
+      // Freeze call payload so ledger hash and provider invoke stay atomic.
+      const frozenRequest: LLMRequest = structuredClone(request);
+      const contentHash = hashLlmCallContent(frozenRequest);
       // Ledger keeps metadata + contentHash (not raw prompt) for DLP-friendly binding.
       const requestBody: Record<string, unknown> = {
         effectId,
         provider: provider.name,
-        model: request.model ?? null,
-        messageCount: Array.isArray(request.messages) ? request.messages.length : 0,
-        contentHash: hashLlmCallContent(request),
+        model: frozenRequest.model ?? null,
+        messageCount: Array.isArray(frozenRequest.messages) ? frozenRequest.messages.length : 0,
+        contentHash,
       };
       const capabilityToken = auth.mintCapabilityToken({
         effectType,
         request: requestBody,
       });
-      LLM_INVOKE_REGISTRY.set(effectId, () => provider.call(request));
+      LLM_INVOKE_REGISTRY.set(effectId, () => {
+        const liveHash = hashLlmCallContent(frozenRequest);
+        if (liveHash !== contentHash) {
+          throw new Error(
+            'EFFECT_REQUEST_TAMPERED: LLM invoke payload diverged from admitted contentHash',
+          );
+        }
+        return provider.call(frozenRequest);
+      });
       try {
         const result = await broker.execute({
           effectId,
@@ -159,9 +170,13 @@ export async function dispatchLlmEffect(input: {
   if (typeof effectId !== 'string' || !effectId) {
     throw new Error('LLM effect missing effectId for invoke registry lookup');
   }
+  const expectedHash = input.request.contentHash;
   const invoke = LLM_INVOKE_REGISTRY.get(effectId);
   if (!invoke) {
     throw new Error(`LLM invoke registry miss for effectId=${effectId}`);
+  }
+  if (typeof expectedHash !== 'string' || !expectedHash) {
+    throw new Error('LLM effect missing contentHash for invoke integrity check');
   }
   const response = await invoke();
   return response as unknown as Record<string, unknown>;

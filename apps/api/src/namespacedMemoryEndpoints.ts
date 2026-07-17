@@ -246,8 +246,17 @@ function createCanonicalNamespacedMemoryRouter(memoryStore: MemoryStore): Router
     };
     if (typeof store.queryAudit === 'function') {
       try {
+        // Non-admin callers cannot pick an arbitrary projectId (cross-project audit).
+        const requestedProject =
+          typeof req.query.projectId === 'string' ? req.query.projectId : 'default';
+        const projectId = role === 'admin' ? requestedProject : 'default';
+        if (role !== 'admin' && requestedProject !== 'default') {
+          return res.status(403).json({
+            error: 'Permission denied: projectId override requires admin',
+          });
+        }
         const page = await store.queryAudit({
-          projectId: typeof req.query.projectId === 'string' ? req.query.projectId : 'default',
+          projectId,
           namespace,
           limit,
         });
