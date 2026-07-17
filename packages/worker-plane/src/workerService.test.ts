@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { resetControlPlane } from '@commander/core';
 import { InMemoryWorkerRegistry } from './registry.js';
 import { WorkerService } from './workerService.js';
 import { WorkerExecutionError } from './types.js';
 import type { ClaimedStep, KernelWorkerPort, WorkerLease } from './types.js';
+import { getStepWorkloadBinding } from './stepWorkloadIdentity.js';
 
 const identity = {
   subject: 'spiffe://commander/worker/agent-1',
@@ -132,6 +134,37 @@ class FakeKernel implements KernelWorkerPort {
 }
 
 describe('worker plane', () => {
+  it('wraps each claimed step with step-scoped workload identity ALS', async () => {
+    resetControlPlane();
+    const kernel = new FakeKernel();
+    kernel.addRun('run-wrapped', 'tenant-a', [{ id: 'wrapped-step', kind: 'agent' }]);
+    let seenBinding: ReturnType<typeof getStepWorkloadBinding>;
+    const service = new WorkerService(
+      definition,
+      identity,
+      auth,
+      new InMemoryWorkerRegistry(),
+      kernel,
+      {
+        execute: async (step) => {
+          seenBinding = getStepWorkloadBinding();
+          assert.ok(seenBinding);
+          assert.equal(seenBinding.tenantId, step.tenantId);
+          assert.equal(seenBinding.runId, step.runId);
+          assert.equal(seenBinding.stepId, step.id);
+          return { ok: true };
+        },
+      },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 60_000 },
+    );
+    await service.start();
+    assert.equal(await service.pollOnce(), true);
+    await service.waitForIdle();
+    assert.ok(seenBinding);
+    assert.equal(getStepWorkloadBinding(), undefined);
+    await service.stop();
+  });
+
   it('authenticates, registers, claims only authorized work, and completes through the kernel', async () => {
     const kernel = new FakeKernel();
     kernel.addRun('run-a', 'tenant-a', [{ id: 'agent-step', kind: 'agent' }]);

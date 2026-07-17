@@ -11,6 +11,7 @@ import {
   wrapProviderWithEffectBroker,
 } from './llmBrokerBridge.js';
 import type { LLMProvider, LLMRequest, LLMResponse } from '@commander/core';
+import { resetControlPlane } from '@commander/core';
 import {
   CapabilityTokenIssuer,
   CapabilityTokenVerifier,
@@ -22,6 +23,8 @@ import {
   type PolicyEvaluator,
   type AuditSink,
 } from '@commander/effect-broker';
+import type { ClaimedStep } from './types.js';
+import { runWithStepWorkloadIdentity } from './stepWorkloadIdentity.js';
 
 const DEFAULT_WORKER_ID = 'w1';
 
@@ -364,6 +367,52 @@ describe('llmBrokerBridge (WS2 §1)', () => {
       assert.match(String(results[i]!.content), new RegExp(tenantId));
     }
     assert.equal(__testLlmInvokeRegistrySize(), 0);
+  });
+
+  it('fail-closes LLM mint/admit in production without step workload ALS', async () => {
+    const { broker, issuer } = makeBroker();
+    const wrapped = wrapProviderWithEffectBroker(mockProvider('openai'), broker);
+    const orig = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      assert.throws(
+        () =>
+          createLlmEffectAuth({
+            tenantId: 't1',
+            runId: 'r1',
+            stepId: 's1',
+            actor: 'worker-1',
+            lease: { workerId: 'w1', token: 'lease', fencingEpoch: 1 },
+            issuer,
+          }),
+        /WORKLOAD_IDENTITY_REQUIRED/,
+      );
+      // Auth minted outside ALS must not synthesize binding in production.
+      const auth = {
+        tenantId: 't1',
+        runId: 'r1',
+        stepId: 's1',
+        actor: 'worker-1',
+        lease: { workerId: 'w1' as const, token: 'lease', fencingEpoch: 1 },
+        mintCapabilityToken: () =>
+          issuer.issue({
+            jti: 'x',
+            tenantId: 't1',
+            runId: 'r1',
+            stepId: 's1',
+            workloadId: 'wl_x',
+            effectTypes: ['llm.openai'],
+            expiresAt: '2099-01-01T00:00:00.000Z',
+            requestHash: canonicalRequestHash({}),
+          }),
+      };
+      await assert.rejects(
+        () => runWithLlmEffectAuth(auth, () => wrapped.call({ model: 'gpt', messages: [] })),
+        /WORKLOAD_IDENTITY_REQUIRED/,
+      );
+    } finally {
+      process.env.NODE_ENV = orig;
+    }
   });
 
   it('rejects when mint binds a different request hash (request binding)', async () => {
@@ -812,5 +861,67 @@ describe('llmBrokerBridge (WS2 §1)', () => {
     assert.match(String(retry.content), /retry/);
     assert.equal(providerCalls, 2);
     assert.equal(completeCalls, 2);
+  });
+
+  it('fail-closes createLlmEffectAuth in production without step identity', () => {
+    resetControlPlane();
+    const { issuer } = makeBroker();
+    const orig = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      assert.throws(
+        () =>
+          createLlmEffectAuth({
+            tenantId: 'attacker-tenant',
+            runId: 'r1',
+            stepId: 's1',
+            actor: 'worker-1',
+            lease: { workerId: 'w1', token: 'lease', fencingEpoch: 1 },
+            issuer,
+          }),
+        /WORKLOAD_IDENTITY_REQUIRED/,
+      );
+    } finally {
+      process.env.NODE_ENV = orig;
+    }
+  });
+
+  it('mints from verified step identity, not caller tenant override', async () => {
+    resetControlPlane();
+    const { broker, issuer } = makeBroker();
+    const wrapped = wrapProviderWithEffectBroker(mockProvider('openai'), broker);
+    const step: ClaimedStep = {
+      id: 'step-1',
+      runId: 'run-1',
+      tenantId: 'tenant-from-identity',
+      kind: 'agent',
+      version: 1,
+      attempt: 1,
+      input: {},
+      lease: {
+        workerId: 'w1',
+        token: 'lease',
+        fencingEpoch: 1,
+        expiresAt: '2099-01-01T00:00:00.000Z',
+      },
+    };
+    await runWithStepWorkloadIdentity(step, async () => {
+      const auth = createLlmEffectAuth({
+        tenantId: 'attacker-override',
+        runId: 'run-1',
+        stepId: 'step-1',
+        actor: 'worker-1',
+        lease: { workerId: 'w1', workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
+        issuer,
+      });
+      assert.equal(auth.tenantId, 'tenant-from-identity');
+      const response = await runWithLlmEffectAuth(auth, () =>
+        wrapped.call({
+          model: 'gpt',
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      );
+      assert.match(String(response.content), /hi/);
+    });
   });
 });

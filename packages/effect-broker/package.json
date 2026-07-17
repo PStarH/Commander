@@ -21,7 +21,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm --workspace-root exec tsx --test packages/effect-broker/src/broker.test.ts packages/effect-broker/src/ws2-acceptance.test.ts packages/effect-broker/src/l3-08a-unknown-reconcile.test.ts",
+"test": "pnpm --workspace-root exec tsx --test packages/effect-broker/src/broker.test.ts packages/effect-broker/src/ws2-acceptance.test.ts packages/effect-broker/src/l3-07-acceptance.test.ts packages/effect-broker/src/l3-08a-unknown-reconcile.test.ts",
     "prepublishOnly": "tsc -p tsconfig.json"
   },
   "keywords": [

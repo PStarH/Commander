@@ -27,7 +27,17 @@ export interface CapabilityGrant {
   policySnapshotId?: string;
   /** Canonical hash of the exact external request allowed by the grant. */
   requestHash?: string;
+  /** Step-scoped workload identity that authorized the mint. */
+  workloadId?: string;
   nonce?: string;
+}
+
+/** Kernel-claimed step context required for production effect admission. */
+export interface WorkloadBinding {
+  tenantId: string;
+  runId: string;
+  stepId: string;
+  workloadId?: string;
 }
 
 export interface CapabilityRevocationStore {
@@ -388,6 +398,28 @@ class InMemoryAdmissionStore implements AdmissionStore {
  */
 export const PERMIT_DEFAULT_DECISION_ID = 'permit' + '-default';
 
+function isProductionProfile(): boolean {
+  return (
+    process.env.NODE_ENV === 'production' ||
+    process.env.COMMANDER_PROFILE === 'enterprise' ||
+    process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING === '1'
+  );
+}
+
+function bindingMismatch(
+  grant: CapabilityGrant,
+  binding: WorkloadBinding,
+): string | null {
+  if (grant.tenantId !== binding.tenantId) return 'TENANT_MISMATCH';
+  if (grant.runId !== binding.runId) return 'RUN_MISMATCH';
+  if (grant.stepId !== binding.stepId) return 'STEP_MISMATCH';
+  // Grant minted with workloadId must not admit under a binding that omits/differs.
+  if (grant.workloadId && grant.workloadId !== binding.workloadId) {
+    return 'WORKLOAD_MISMATCH';
+  }
+  return null;
+}
+
 /** The only supported path for an external write in Architecture V2. */
 export class EffectBroker {
   private readonly options: Required<Pick<EffectBrokerOptions, 'audience' | 'requireRequestBinding'>> & Pick<EffectBrokerOptions, 'approval' | 'quotaLimits' | 'localWorkerId' | 'localWorkerGeneration'>;
@@ -436,8 +468,17 @@ export class EffectBroker {
     idempotencyKey: string;
     lease: { workerId: string; workerGeneration?: number; token: string; fencingEpoch: number };
     actor: string;
+    /** Step-scoped identity binding from kernel-claimed workload context. */
+    workloadBinding?: WorkloadBinding;
   }): Promise<AdmissionResult> {
     const grant = await this.tokens.verify(input.token);
+    if (isProductionProfile() && !input.workloadBinding) {
+      return this.rejectAdmit(grant, 'WORKLOAD_BINDING_REQUIRED', {});
+    }
+    if (input.workloadBinding) {
+      const mismatch = bindingMismatch(grant, input.workloadBinding);
+      if (mismatch) return this.rejectAdmit(grant, mismatch, { binding: input.workloadBinding });
+    }
     if (grant.audience !== this.options.audience) return this.rejectAdmit(grant, 'AUDIENCE_MISMATCH', {});
     if (!grant.effectTypes.includes(input.type)) return this.rejectAdmit(grant, 'CAPABILITY_DENIED', { type: input.type });
     if (this.options.requireRequestBinding && grant.requestHash !== canonicalRequestHash(input.request)) return this.rejectAdmit(grant, 'REQUEST_HASH_MISMATCH', {});
@@ -713,6 +754,7 @@ export class EffectBroker {
     lease: { workerId: string; workerGeneration?: number; token: string; fencingEpoch: number };
     actor: string;
     timeoutMs?: number;
+    workloadBinding?: WorkloadBinding;
   }): Promise<{ effectId: string; replayed: boolean; response?: Record<string, unknown> }> {
     const admission = await this.admit(input);
     if (!admission.admitted) {

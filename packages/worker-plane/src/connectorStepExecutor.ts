@@ -18,10 +18,16 @@
 import type { StepExecutor, ClaimedStep, WorkerRecord } from './types.js';
 import { WorkerExecutionError } from './types.js';
 import type { ExternalEffectBroker } from './toolStepExecutor.js';
+import type { CapabilityTokenIssuer } from '@commander/effect-broker';
 import {
   assertEffectBrokerForProduction,
   mustRouteExternalEffectThroughBroker,
 } from './effectGate.js';
+import {
+  getStepWorkloadBinding,
+  mintStepCapabilityToken,
+  requireStepWorkloadBinding,
+} from './stepWorkloadIdentity.js';
 
 export interface ConnectorStepInput {
   /** Connector name (e.g., "postgres", "kafka", "s3", "http"). */
@@ -80,11 +86,17 @@ export interface ConnectorRegistry {
 export class ConnectorStepExecutor implements StepExecutor {
   private readonly registry: ConnectorRegistry;
   private readonly effectBroker?: ExternalEffectBroker;
+  private readonly capabilityIssuer?: CapabilityTokenIssuer;
 
-  constructor(registry?: ConnectorRegistry, effectBroker?: ExternalEffectBroker) {
+  constructor(
+    registry?: ConnectorRegistry,
+    effectBroker?: ExternalEffectBroker,
+    capabilityIssuer?: CapabilityTokenIssuer,
+  ) {
     assertEffectBrokerForProduction('connector step executor', effectBroker);
     this.registry = registry ?? new DefaultConnectorRegistry();
     this.effectBroker = effectBroker;
+    this.capabilityIssuer = capabilityIssuer;
   }
 
   async execute(
@@ -107,16 +119,52 @@ export class ConnectorStepExecutor implements StepExecutor {
       );
     }
 
-    if (mustRouteExternalEffectThroughBroker(input, { brokerPresent: this.effectBroker != null })) {
+if (mustRouteExternalEffectThroughBroker(input, { brokerPresent: this.effectBroker != null })) {
       if (!this.effectBroker) {
         throw new WorkerExecutionError('External connector execution requires an Effect Broker', {
           code: 'EFFECT_BROKER_UNAVAILABLE',
           retryable: false,
         });
       }
-      if (!step.lease || !input.effectId || !input.idempotencyKey || !input.capabilityToken) throw new WorkerExecutionError('External connector execution requires effectId, idempotencyKey, capabilityToken, and a live step lease', { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false });
+      if (!step.lease || !input.effectId || !input.idempotencyKey) {
+        throw new WorkerExecutionError('External connector execution requires effectId, idempotencyKey, and a live step lease', { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false });
+      }
+      const request = input.args ?? {};
+      const effectType = `${input.connectorName}.${input.operation}`;
+      let capabilityToken = input.capabilityToken;
+      const production =
+        process.env.NODE_ENV === 'production' ||
+        process.env.COMMANDER_PROFILE === 'enterprise' ||
+        process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING === '1';
+      let workloadBinding = getStepWorkloadBinding();
+      if (this.capabilityIssuer) {
+        workloadBinding = requireStepWorkloadBinding();
+        capabilityToken = mintStepCapabilityToken({
+          issuer: this.capabilityIssuer,
+          effectType,
+          request,
+        });
+      } else if (production) {
+        throw new WorkerExecutionError(
+          'External connector execution requires CapabilityTokenIssuer for step-bound mint in production',
+          { code: 'EFFECT_CAPABILITY_ISSUER_REQUIRED', retryable: false },
+        );
+      }
+      if (!capabilityToken) {
+        throw new WorkerExecutionError('External connector execution requires capabilityToken or capabilityIssuer', { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false });
+      }
       try {
-        const result = await this.effectBroker.execute({ effectId: input.effectId, token: input.capabilityToken, type: `${input.connectorName}.${input.operation}`, request: input.args ?? {}, idempotencyKey: input.idempotencyKey, lease: step.lease, actor: context.worker.id, timeoutMs: input.timeoutMs });
+        const result = await this.effectBroker.execute({
+          effectId: input.effectId,
+          token: capabilityToken,
+          type: effectType,
+          request,
+          idempotencyKey: input.idempotencyKey,
+          lease: step.lease,
+          actor: context.worker.id,
+          timeoutMs: input.timeoutMs,
+          workloadBinding,
+        });
         return { result: result.response, effectId: result.effectId, replayed: result.replayed, connectorName: input.connectorName, operation: input.operation };
       } catch (error) {
         if (error instanceof WorkerExecutionError) throw error;
