@@ -35,6 +35,20 @@ describe('WS2 §5 action allowlist', () => {
     await kernel.setAllowlistEntry('tenant-a', 'http.post', true);
     assert.equal(await kernel.isActionAllowed('tenant-b', 'http.post'), false);
   });
+
+  it('ensureAllowlistDefault seeds llm.* without overwriting explicit deny', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.ensureAllowlistDefault('tenant-a', 'llm.*', true);
+    assert.equal(await kernel.isActionAllowed('tenant-a', 'llm.openai'), true);
+
+    await kernel.setAllowlistEntry('tenant-b', 'llm.*', false);
+    await kernel.ensureAllowlistDefault('tenant-b', 'llm.*', true);
+    assert.equal(
+      await kernel.isActionAllowed('tenant-b', 'llm.openai'),
+      false,
+      'explicit deny must survive ensureAllowlistDefault',
+    );
+  });
 });
 
 describe('WS2 §5 tenant quota', () => {
