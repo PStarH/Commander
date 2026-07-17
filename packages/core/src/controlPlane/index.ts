@@ -129,7 +129,7 @@ export class ControlPlane {
   }
 
   private isExpired(id: WorkloadIdentity): boolean {
-    return Date.parse(id.expiresAt) < Date.now();
+    return Date.parse(id.expiresAt) <= Date.now();
   }
 
   private dropIdentity(id: WorkloadIdentity): void {

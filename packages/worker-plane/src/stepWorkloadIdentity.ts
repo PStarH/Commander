@@ -6,8 +6,7 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
-import { getControlPlane } from '@commander/core';
-import type { WorkloadIdentity } from '@commander/contracts';
+import { getControlPlane, type WorkloadIdentity } from '@commander/core';
 import {
   canonicalRequestHash,
   type CapabilityTokenIssuer,
