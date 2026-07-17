@@ -20,7 +20,7 @@ export type { EventPublisher } from './ops/outbox/compatibilityPublisher.js';
 export { ReclaimDaemon } from './ops/reclaimDaemon.js';
 export type { ReclaimDaemonConfig, ReclaimStats } from './ops/reclaimDaemon.js';
 export { KernelOpsRuntime } from './ops/opsRuntime.js';
-export type { KernelOpsRuntimeDependencies } from './ops/opsRuntime.js';
+export type { KernelOpsRuntimeDependencies, OpsLoopHealth } from './ops/opsRuntime.js';
 export { InteractionExpiryWorker, TimerWakeupWorker } from './ops/timerWakeupWorker.js';
 export type { TimerWakeupWorkerConfig } from './ops/timerWakeupWorker.js';
 export type {
