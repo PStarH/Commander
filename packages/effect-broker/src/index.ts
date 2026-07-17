@@ -101,6 +101,32 @@ export interface EffectKernelPort {
     actor: string,
   ): Promise<unknown | null>;
   markEffectCompletionUnknown?(input: { effectId: string; tenantId: string; reason: string; actor: string }): Promise<unknown | null>;
+  /** L3-08a: load ledger effect for UNKNOWN reconcile (no side-effect execute). */
+  getEffect?(
+    effectId: string,
+    tenantId: string,
+  ): Promise<{
+    id: string;
+    state: string;
+    type: string;
+    idempotencyKey: string;
+    request: Record<string, unknown>;
+    response?: Record<string, unknown>;
+    runId: string;
+    stepId: string;
+    tenantId: string;
+  } | null>;
+  /**
+   * L3-08a: advance COMPLETION_UNKNOWN → COMPLETED|FAILED after remote query.
+   * Must not re-execute the external write; ops/reconciler actor, no worker lease.
+   */
+  reconcileEffect?(input: {
+    effectId: string;
+    tenantId: string;
+    state: 'COMPLETED' | 'FAILED';
+    response: Record<string, unknown>;
+    actor: string;
+  }): Promise<{ id: string; state: string; response?: Record<string, unknown> } | null>;
   /** WS2 §5 three-layer engine. Optional so narrow test doubles can omit
    *  them, but enforced fail-closed by admit() whenever present — the kernel
    *  repository implements all three. */
@@ -108,6 +134,27 @@ export interface EffectKernelPort {
   incrementQuota?(input: { tenantId: string; actionClass: string; tokensUsed?: number }): Promise<{ countUsed: number; tokensUsed: number }>;
   getQuota?(tenantId: string, actionClass: string): Promise<{ countUsed: number; tokensUsed: number }>;
 }
+
+/** Remote query result for L3-08a query-after-timeout. Never performs a write. */
+export type EffectRemoteOutcome =
+  | { status: 'COMPLETED'; response: Record<string, unknown> }
+  | { status: 'FAILED'; response: Record<string, unknown> }
+  | { status: 'UNKNOWN' };
+
+export interface EffectOutcomeQuerier {
+  queryOutcome(input: {
+    effectId: string;
+    idempotencyKey: string;
+    type: string;
+    request: Record<string, unknown>;
+    tenantId: string;
+  }): Promise<EffectRemoteOutcome>;
+}
+
+export type ReconcileUnknownResult =
+  | { status: 'COMPLETED'; effectId: string; response: Record<string, unknown>; invokedExecutor: false }
+  | { status: 'FAILED'; effectId: string; response: Record<string, unknown>; invokedExecutor: false }
+  | { status: 'ESCALATED'; effectId: string; reason: string; invokedExecutor: false };
 
 export interface ApprovalInteractionPort {
   createApprovalInteraction(input: {
@@ -556,6 +603,99 @@ export class EffectBroker {
       reason,
       actor: admission.actor,
     });
+  }
+
+  /**
+   * L3-08a — query-after-timeout reconcile for COMPLETION_UNKNOWN effects.
+   * Never invokes the write executor; only queries remote outcome and advances ledger.
+   */
+  async reconcileUnknown(input: {
+    effectId: string;
+    tenantId: string;
+    actor: string;
+    querier: EffectOutcomeQuerier;
+  }): Promise<ReconcileUnknownResult> {
+    if (!this.kernel.getEffect || !this.kernel.reconcileEffect) {
+      throw new EffectBrokerError('RECONCILE_UNSUPPORTED', {
+        effectId: input.effectId,
+        reason: 'kernel missing getEffect/reconcileEffect',
+      });
+    }
+    const effect = await this.kernel.getEffect(input.effectId, input.tenantId);
+    if (!effect) {
+      throw new EffectBrokerError('EFFECT_NOT_FOUND', { effectId: input.effectId, tenantId: input.tenantId });
+    }
+    if (effect.state !== 'COMPLETION_UNKNOWN') {
+      throw new EffectBrokerError('EFFECT_NOT_UNKNOWN', {
+        effectId: input.effectId,
+        state: effect.state,
+      });
+    }
+
+    const remote = await input.querier.queryOutcome({
+      effectId: effect.id,
+      idempotencyKey: effect.idempotencyKey,
+      type: effect.type,
+      request: effect.request,
+      tenantId: effect.tenantId,
+    });
+
+    if (remote.status === 'UNKNOWN') {
+      await this.audit.append({
+        type: 'effect.reconcile_escalated',
+        severity: 'high',
+        tenantId: effect.tenantId,
+        runId: effect.runId,
+        stepId: effect.stepId,
+        at: new Date().toISOString(),
+        details: {
+          effectId: effect.id,
+          idempotencyKey: effect.idempotencyKey,
+          reason: 'queryOutcome still UNKNOWN after timeout',
+        },
+      });
+      return {
+        status: 'ESCALATED',
+        effectId: effect.id,
+        reason: 'queryOutcome still UNKNOWN after timeout',
+        invokedExecutor: false,
+      };
+    }
+
+    const advanced = await this.kernel.reconcileEffect({
+      effectId: effect.id,
+      tenantId: effect.tenantId,
+      state: remote.status,
+      response: remote.response,
+      actor: input.actor,
+    });
+    if (!advanced) {
+      throw new EffectBrokerError('RECONCILE_REJECTED', {
+        effectId: effect.id,
+        attempted: remote.status,
+      });
+    }
+
+    await this.audit.append({
+      type: 'effect.reconciled',
+      severity: 'medium',
+      tenantId: effect.tenantId,
+      runId: effect.runId,
+      stepId: effect.stepId,
+      at: new Date().toISOString(),
+      details: {
+        effectId: effect.id,
+        state: remote.status,
+        idempotencyKey: effect.idempotencyKey,
+      },
+    });
+
+    return {
+      status: remote.status,
+      effectId: effect.id,
+      response: remote.response,
+      invokedExecutor: false,
+    };
   }
 
   /**
