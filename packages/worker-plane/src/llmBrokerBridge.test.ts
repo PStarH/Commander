@@ -269,4 +269,84 @@ describe('llmBrokerBridge (WS2 §1)', () => {
     assert.equal(response.content, 'ok');
     assert.equal(seen?.messages?.[0]?.content, 'original');
   });
+
+  it('uses content-stable idempotency keys so identical retries dedupe', async () => {
+    const issuer = CapabilityTokenIssuer.generate({
+      issuer: 'commander-worker',
+      audience: 'commander.effect-broker',
+      keyId: 'idem-llm',
+    });
+    const tokens = new CapabilityTokenVerifier({
+      issuer: 'commander-worker',
+      audience: 'commander.effect-broker',
+      publicKeys: { 'idem-llm': issuer.publicKey },
+    });
+    const seenKeys: string[] = [];
+    let callCount = 0;
+    const kernel: EffectKernelPort = {
+      admitEffect: async (input) => {
+        seenKeys.push(input.idempotencyKey);
+        const prior = seenKeys.filter((k) => k === input.idempotencyKey).length > 1;
+        if (prior) {
+          return {
+            admitted: true,
+            replayed: true,
+            effect: {
+              id: input.id,
+              state: 'COMPLETED',
+              response: {
+                content: 'cached',
+                model: 'm',
+                usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+                finishReason: 'stop',
+              },
+            },
+          };
+        }
+        return { admitted: true, effect: { id: input.id, state: 'ADMITTED' } };
+      },
+      completeEffect: async (_id, _tenant, _lease, response) => response,
+    };
+    const broker = new EffectBroker(
+      tokens,
+      {
+        evaluate: async () => ({
+          effect: 'allow',
+          decisionId: 'd',
+          reason: 'ok',
+          policySnapshotId: 'p1',
+        }),
+      },
+      kernel,
+      {
+        execute: async (input) => {
+          callCount += 1;
+          return dispatchLlmEffect(input);
+        },
+      },
+      { append: async () => undefined },
+      { audience: 'commander.effect-broker', requireRequestBinding: true },
+    );
+    const wrapped = wrapProviderWithEffectBroker(mockProvider('openai'), broker);
+    const auth = createLlmEffectAuth({
+      tenantId: 't1',
+      runId: 'r1',
+      stepId: 's1',
+      actor: 'worker-1',
+      lease: { workerId: 'w1', workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
+      issuer,
+    });
+    const req = { model: 'gpt', messages: [{ role: 'user' as const, content: 'same' }] };
+    const contentHash = hashLlmCallContent(req);
+    const expectedKey = `llm:r1:s1:${contentHash}`;
+
+    const first = await runWithLlmEffectAuth(auth, () => wrapped.call(req));
+    const second = await runWithLlmEffectAuth(auth, () => wrapped.call(req));
+
+    assert.equal(seenKeys[0], expectedKey);
+    assert.equal(seenKeys[1], expectedKey);
+    assert.equal(callCount, 1, 'second call must be COMPLETED cache hit, not re-invoke provider');
+    assert.match(String(first.content), /same/);
+    assert.equal(second.content, 'cached');
+  });
 });

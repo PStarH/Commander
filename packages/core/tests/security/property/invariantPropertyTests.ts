@@ -3,7 +3,7 @@ import fc from 'fast-check';
 import { combineTaint, canFlow } from '../../../src/security/taintTracker';
 import { preCheckSandboxEscape } from '../../../src/security/sandboxEscapeDetector';
 import type { SandboxProfile } from '../../../src/sandbox/types';
-import { assertNamespaced } from '../../../src/memory/namespaceGuard';
+import { assertNamespaced, pathUnderNamespace } from '../../../src/memory/namespaceGuard';
 
 const NUM_RUNS = Number(process.env.COMMANDER_PROPERTY_TEST_NUM_RUNS) || 100;
 
@@ -105,11 +105,10 @@ describe('Security invariant property tests', () => {
         }),
         ({ writerId, targetPath, aclNamespaces }) => {
           const writerNs = `agents/${writerId}`;
-          const inOwnNs = targetPath.startsWith(writerNs);
+          const inOwnNs = pathUnderNamespace(targetPath, writerNs);
           const effectiveNs = aclNamespaces.filter((ns) => ns.length > 0);
-          const aclGrants = effectiveNs.some((ns) => targetPath.startsWith(ns));
-          const aclGrantsTasks = effectiveNs.includes('tasks') && targetPath.startsWith('tasks/');
-          const shouldAllow = inOwnNs || aclGrants || aclGrantsTasks;
+          const aclGrants = effectiveNs.some((ns) => pathUnderNamespace(targetPath, ns));
+          const shouldAllow = inOwnNs || aclGrants;
 
           try {
             assertNamespaced(writerId, targetPath, { role: 'test', namespaces: aclNamespaces });

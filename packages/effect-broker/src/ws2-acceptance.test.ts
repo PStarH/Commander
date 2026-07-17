@@ -298,6 +298,7 @@ describe('WS2 §5 three-layer policy engine called by admit()', () => {
         admitEffect: async () => ({ admitted: true, effect: { id: 'e', state: 'ADMITTED' } }),
         completeEffect: async () => ({}),
         isActionAllowed: async () => true,
+        getQuota: async () => ({ countUsed: count, tokensUsed: 0 }),
         incrementQuota: async () => ({ countUsed: ++count, tokensUsed: 0 }),
       },
       options: { quotaLimits: { maxCountPerDay: 2 } },
@@ -307,5 +308,72 @@ describe('WS2 §5 three-layer policy engine called by admit()', () => {
     const third = await broker.admit(admitInput(iss, 'q3'));
     assert.equal(third.admitted, false);
     assert.equal(third.reason, 'QUOTA_EXCEEDED');
+    assert.equal(count, 2, 'rejected admit must not charge quota');
+  });
+
+  it('does not charge quota when kernel admission fails (e.g. LEASE_LOST)', async () => {
+    const { iss, ver } = makeTokens();
+    let increments = 0;
+    const broker = makeBroker({
+      tokens: ver,
+      kernel: {
+        admitEffect: async () => ({ admitted: false, reason: 'LEASE_LOST' }),
+        completeEffect: async () => ({}),
+        isActionAllowed: async () => true,
+        getQuota: async () => ({ countUsed: increments, tokensUsed: 0 }),
+        incrementQuota: async () => ({ countUsed: ++increments, tokensUsed: 0 }),
+      },
+      options: { quotaLimits: { maxCountPerDay: 10 } },
+    });
+    const admission = await broker.admit(admitInput(iss, 'lease-lost'));
+    assert.equal(admission.admitted, false);
+    assert.equal(admission.reason, 'EFFECT_ADMISSION_REJECTED');
+    assert.equal(increments, 0, 'LEASE_LOST must not burn quota');
+  });
+
+  it('does not re-charge quota on idempotent COMPLETED replay', async () => {
+    const { iss, ver } = makeTokens();
+    let increments = 0;
+    const broker = makeBroker({
+      tokens: ver,
+      kernel: {
+        admitEffect: async () => ({
+          admitted: true,
+          replayed: true,
+          effect: { id: 'e', state: 'COMPLETED', response: { ok: true } },
+        }),
+        completeEffect: async () => ({}),
+        isActionAllowed: async () => true,
+        incrementQuota: async () => ({ countUsed: ++increments, tokensUsed: 0 }),
+      },
+    });
+    const admission = await broker.admit(admitInput(iss, 'replay-quota'));
+    assert.equal(admission.admitted, true);
+    assert.equal(admission.replayed, true);
+    assert.equal(increments, 0, 'COMPLETED replay must not increment quota');
+  });
+
+  it('parks already-admitted effect when concurrent quota race exceeds ceiling', async () => {
+    const { iss, ver } = makeTokens();
+    let parked: string | undefined;
+    const broker = makeBroker({
+      tokens: ver,
+      kernel: {
+        admitEffect: async () => ({ admitted: true, effect: { id: 'e-race', state: 'ADMITTED' } }),
+        completeEffect: async () => ({}),
+        isActionAllowed: async () => true,
+        getQuota: async () => ({ countUsed: 1, tokensUsed: 0 }),
+        incrementQuota: async () => ({ countUsed: 3, tokensUsed: 0 }),
+        markEffectCompletionUnknown: async (input) => {
+          parked = input.effectId;
+          return { id: input.effectId, state: 'COMPLETION_UNKNOWN' };
+        },
+      },
+      options: { quotaLimits: { maxCountPerDay: 2 } },
+    });
+    const admission = await broker.admit(admitInput(iss, 'race-quota'));
+    assert.equal(admission.admitted, false);
+    assert.equal(admission.reason, 'QUOTA_EXCEEDED');
+    assert.equal(parked, 'e-race', 'over-quota race must park the orphan ADMITTED effect');
   });
 });

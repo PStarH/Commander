@@ -86,7 +86,7 @@ export class ExecPolicyEngine {
       'npm',
       'pnpm',
       'yarn',
-      'npx',
+      // npx forbidden — download-on-execute supply-chain risk (align with MCP whitelist)
       'tsc',
       'eslint',
       'prettier',
@@ -208,9 +208,19 @@ export class ExecPolicyEngine {
       // Forbidden: always blocked
       {
         id: 'forbid-dangerous',
-        pattern: ['sudo', 'su ', 'passwd', 'mkfs', 'dd if=', '> /dev/', ':(){ :|:& };:'],
+        pattern: [
+          'sudo',
+          'su ',
+          'passwd',
+          'mkfs',
+          'dd if=',
+          '> /dev/',
+          ':(){ :|:& };:',
+          'npx',
+        ],
         decision: 'forbidden',
-        justification: 'Dangerous commands are blocked',
+        justification:
+          'Dangerous commands are blocked (npx = download-on-execute supply-chain risk)',
         priority: 100,
       },
     );

@@ -131,7 +131,7 @@ export class ApplyPatchTool implements Tool {
         try {
           // Try TypeScript validation
           if (fileToPatch.endsWith('.ts')) {
-            const tscResult = await execSandboxed('npx tsc --noEmit 2>&1 || true', 30, cwd);
+            const tscResult = await execSandboxed('tsc --noEmit 2>&1 || true', 30, cwd);
             const tscOutput = tscResult.stdout || tscResult.stderr;
             // Split once and reuse
             const tscLines = tscOutput.split('\n');
@@ -146,7 +146,7 @@ export class ApplyPatchTool implements Tool {
 
           // Run ESLint if available
           if (await pathExists(path.join(cwd, '.eslintrc'))) {
-            const lintResult = await execSandboxed('npx eslint --quiet . 2>&1 || true', 30, cwd);
+            const lintResult = await execSandboxed('eslint --quiet . 2>&1 || true', 30, cwd);
             const lintOutput = lintResult.stdout || lintResult.stderr;
             if (lintOutput.trim()) {
               outputLines.push(`\n⚠️  Lint issues found:\n${lintOutput.slice(0, 1000)}`);

@@ -79,8 +79,9 @@ export class ToolStepExecutor implements StepExecutor {
       );
     }
 
-    if (input.hasExternalEffects) {
-      if (!this.effectBroker) throw new WorkerExecutionError('External tool execution requires an Effect Broker', { code: 'EFFECT_BROKER_UNAVAILABLE', retryable: false });
+    // Fail-closed: when a broker is wired, caller-supplied hasExternalEffects
+    // cannot bypass capability / lease / idempotency mediation.
+    if (this.effectBroker) {
       if (!step.lease || !input.effectId || !input.idempotencyKey || !input.capabilityToken) {
         throw new WorkerExecutionError('External tool execution requires effectId, idempotencyKey, capabilityToken, and a live step lease', { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false });
       }
@@ -92,6 +93,9 @@ export class ToolStepExecutor implements StepExecutor {
         const message = error instanceof Error ? error.message : String(error);
         throw new WorkerExecutionError(message, { code: 'EFFECT_EXECUTION_FAILED', retryable: false, details: { toolName: input.toolName, stepId: step.id } });
       }
+    }
+    if (input.hasExternalEffects) {
+      throw new WorkerExecutionError('External tool execution requires an Effect Broker', { code: 'EFFECT_BROKER_UNAVAILABLE', retryable: false });
     }
 
     const handler = this.toolRegistry.get(input.toolName);
