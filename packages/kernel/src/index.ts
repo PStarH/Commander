@@ -61,6 +61,7 @@ export type {
   KernelTimer,
   MarkEffectCompletionUnknownRequest,
   NewKernelStep,
+  ReconcileEffectRequest,
   InteractionStatus,
   TimerState,
   TimerType,

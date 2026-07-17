@@ -38,4 +38,6 @@ export type { EvaluatorStepInput, EvaluatorStepOutput, EvaluationCriteria, Evalu
 export { CompositeStepExecutor } from './compositeStepExecutor.js';
 export { ConnectorStepExecutor } from './connectorStepExecutor.js';
 export type { ConnectorHandler, ConnectorRegistry, ConnectorStepInput, ConnectorStepOutput, ConnectorConnectionConfig } from './connectorStepExecutor.js';
+export { InMemoryTicketAdapter } from './ticketAdapter.js';
+export type { TicketRecord } from './ticketAdapter.js';
 export { createWorkerPolicyEvaluator, withDefaultLlmAllowlist } from './bootstrap.js';

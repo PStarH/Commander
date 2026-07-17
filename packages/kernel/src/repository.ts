@@ -18,6 +18,7 @@ import type {
   KernelStep,
   KernelTimer,
   MarkEffectCompletionUnknownRequest,
+  ReconcileEffectRequest,
   TenantExecutionControl,
 } from './types.js';
 
@@ -70,6 +71,13 @@ export interface KernelRepository {
     actor: string,
   ): Promise<KernelEffect | null>;
   markEffectCompletionUnknown(request: MarkEffectCompletionUnknownRequest): Promise<KernelEffect | null>;
+  /** L3-08a: load a single effect for UNKNOWN reconcile. */
+  getEffect(effectId: string, tenantId: string): Promise<KernelEffect | null>;
+  /**
+   * L3-08a: COMPLETION_UNKNOWN → COMPLETED|FAILED after remote queryOutcome.
+   * Ops/reconciler path — no worker lease; never re-executes the write.
+   */
+  reconcileEffect(request: ReconcileEffectRequest): Promise<KernelEffect | null>;
   claimOutbox(limit: number, now?: Date): Promise<KernelOutboxMessage[]>;
   markOutboxPublished(messageId: string, claimToken: string): Promise<boolean>;
   retryOutbox(messageId: string, claimToken: string, error: { code: string; message: string }, now?: Date): Promise<boolean>;
