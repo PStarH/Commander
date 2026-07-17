@@ -147,6 +147,22 @@ services:
       - COMMANDER_OUTBOX_INTERVAL_MS=${COMMANDER_OUTBOX_INTERVAL_MS:-1000}
       - COMMANDER_OUTBOX_BATCH_SIZE=${COMMANDER_OUTBOX_BATCH_SIZE:-100}
       - COMMANDER_OUTBOX_MAX_ATTEMPTS=${COMMANDER_OUTBOX_MAX_ATTEMPTS:-10}
+      # Single source: host/compose .env → container env → in-container healthcheck.
+      - COMMANDER_OPS_HEALTH_PORT=${COMMANDER_OPS_HEALTH_PORT:-8081}
+    expose:
+      - ${COMMANDER_OPS_HEALTH_PORT:-8081}
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "const p=process.env.COMMANDER_OPS_HEALTH_PORT||'8081';fetch('http://127.0.0.1:'+p+'/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     depends_on:
       kernel-migrate:
         condition: service_completed_successfully

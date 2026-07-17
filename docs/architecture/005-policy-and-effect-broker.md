@@ -10,7 +10,9 @@ Tools, connectors, and model calls can produce irreversible external side effect
 
 ## Decision
 
-The `EffectBroker` is the only authorized path for external side effects. Policy decisions are evaluated by a PDP and enforced by a PEP at the broker.
+**Invariant (target):** the `EffectBroker` is the only authorized path for external side effects. Policy decisions are evaluated by a PDP and enforced by a PEP at the broker.
+
+**Today:** the broker exists and is fail-closed where wired; it is **not yet** the sole production effect path (`ARCHITECTURE.md` / WS2).
 
 ### Model
 

@@ -5,6 +5,7 @@ import { PostgresOutboxDeliveryPort } from './outbox/postgresOutboxDeliveryPort.
 import { KernelOpsRuntime } from './opsRuntime.js';
 import { ReclaimDaemon } from './reclaimDaemon.js';
 import { TimerWakeupWorker } from './timerWakeupWorker.js';
+import { startOpsHealthServer } from './healthServer.js';
 
 const positiveInteger = (name: string, fallback: number): number => {
   const value = Number(process.env[name] ?? fallback);
@@ -37,15 +38,36 @@ export async function main(): Promise<void> {
     outboxBatchSize: positiveInteger('COMMANDER_OUTBOX_BATCH_SIZE', 100),
   });
 
+  const healthPort = positiveInteger('COMMANDER_OPS_HEALTH_PORT', 8081);
+  const health = await startOpsHealthServer({
+    port: healthPort,
+    isReady: async () => {
+      // Any started ops loop + Postgres answering. Avoid magic component count.
+      if (runtime.runningComponents().length === 0) return false;
+      try {
+        await pool.query('SELECT 1');
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  });
+
   let stopping = false;
   const shutdown = async (): Promise<void> => {
     if (stopping) return;
     stopping = true;
     await runtime.stop();
+    await health.close();
     await pool.end();
   };
-  process.once('SIGINT', () => { void shutdown(); });
-  process.once('SIGTERM', () => { void shutdown(); });
+  process.once('SIGINT', () => {
+    void shutdown();
+  });
+  process.once('SIGTERM', () => {
+    void shutdown();
+  });
+  // Bind health first so EADDRINUSE fails closed before starting daemons.
   runtime.start();
 }
 

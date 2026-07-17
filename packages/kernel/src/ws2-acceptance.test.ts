@@ -104,4 +104,55 @@ describe('WS2 §8 compensation outbox claiming', () => {
     const claimed = await kernel.claimOutboxByTopic('commander.compensation', 10);
     assert.equal(claimed.length, 0);
   });
+
+  it('poison compensation messages hit max_attempts then stay in DLQ (no re-claim)', async () => {
+    const kernel = new InMemoryKernelRepository();
+    kernel.outboxMaxAttempts = 3;
+    kernel.seedOutboxMessage({
+      topic: 'commander.compensation',
+      payload: {
+        tenantId: 'tenant-a',
+        runId: 'run-1',
+        stepId: 'step-1',
+        compensationAction: 'crm.compensate',
+        compensationPayload: { undo: true },
+      },
+    });
+
+    let clock = Date.now();
+    for (let i = 0; i < 3; i++) {
+      const at = new Date(clock);
+      const claimed = await kernel.claimOutboxByTopic('commander.compensation', 10, at);
+      assert.equal(claimed.length, 1, `round ${i} should still serve the poison message`);
+      const msg = claimed[0]!;
+      await kernel.retryOutbox(msg.id, msg.claimToken!, { code: 'POISON', message: 'always fails' }, at);
+      clock += 60_000;
+    }
+
+    assert.equal((await kernel.claimOutboxByTopic('commander.compensation', 10, new Date(clock))).length, 0);
+    const sweep = await kernel.sweepOutboxDlq(new Date(clock), 10);
+    assert.equal(sweep.movedToDlq, 1);
+    const dlq = await kernel.listDlqEntries(10, 'commander.compensation');
+    assert.equal(dlq.length, 1);
+    assert.equal(dlq[0]!.dlqReason, 'max_attempts_exceeded');
+    assert.equal((await kernel.claimOutboxByTopic('commander.compensation', 10, new Date(clock))).length, 0);
+  });
+
+  it('generic claimOutbox also stops at max_attempts before sweep (symmetric with ByTopic)', async () => {
+    const kernel = new InMemoryKernelRepository();
+    kernel.outboxMaxAttempts = 2;
+    kernel.seedOutboxMessage({ topic: 'commander.run.created', key: 'run-x' });
+
+    let clock = Date.now();
+    for (let i = 0; i < 2; i++) {
+      const at = new Date(clock);
+      const claimed = await kernel.claimOutbox(10, at);
+      assert.equal(claimed.length, 1, `round ${i}`);
+      await kernel.retryOutbox(claimed[0]!.id, claimed[0]!.claimToken!, { code: 'POISON', message: 'fail' }, at);
+      clock += 60_000;
+    }
+    assert.equal((await kernel.claimOutbox(10, new Date(clock))).length, 0);
+    assert.equal((await kernel.sweepOutboxDlq(new Date(clock), 10)).movedToDlq, 1);
+    assert.equal((await kernel.claimOutbox(10, new Date(clock))).length, 0);
+  });
 });

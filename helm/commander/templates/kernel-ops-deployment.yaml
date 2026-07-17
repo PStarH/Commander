@@ -31,13 +31,30 @@ spec:
         - name: kernel-ops
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}-kernel-ops"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: health
+              containerPort: {{ .Values.kernelOps.health.port }}
           env:
             - name: DATABASE_URL
               value: "postgres://{{ .Values.database.user }}:{{ .Values.database.password }}@{{ include "commander.fullname" . }}-postgres:5432/{{ .Values.database.name }}"
+            - name: COMMANDER_OPS_HEALTH_PORT
+              value: {{ .Values.kernelOps.health.port | quote }}
             {{- range $key, $value := .Values.kernelOps.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
           resources:
             {{- toYaml .Values.kernelOps.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.kernelOps.health.livenessPath }}
+              port: health
+            initialDelaySeconds: {{ .Values.kernelOps.health.livenessInitialDelaySeconds }}
+            periodSeconds: {{ .Values.kernelOps.health.livenessPeriodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.kernelOps.health.readinessPath }}
+              port: health
+            initialDelaySeconds: {{ .Values.kernelOps.health.readinessInitialDelaySeconds }}
+            periodSeconds: {{ .Values.kernelOps.health.readinessPeriodSeconds }}
 {{- end }}

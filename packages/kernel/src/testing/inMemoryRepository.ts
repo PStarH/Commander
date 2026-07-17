@@ -34,6 +34,35 @@ export class InMemoryKernelRepository implements KernelRepository {
   private readonly capabilityRevocations = new Map<string, { tenantId: string; expiresAt: number; reason?: string }>();
   private readonly effectAllowlist = new Map<string, Map<string, boolean>>(); // tenantId -> (actionPattern -> allowed)
   private readonly effectQuota = new Map<string, { countUsed: number; tokensUsed: number }>(); // `${tenantId}|${actionClass}|${day}`
+  // Outbox DLQ (declared early so claimOutboxByTopic can filter DLQ'd messages)
+  private readonly dlq = new Map<string, KernelDlqEntry>();
+  /** Test-only: configurable maximum publish attempts before an outbox message is moved to the DLQ. */
+  outboxMaxAttempts = 10;
+
+  /** Test-only: enqueue an arbitrary outbox message (used by compensation DLQ proofs). */
+  seedOutboxMessage(input: {
+    topic: string;
+    tenantId?: string;
+    key?: string;
+    payload?: Record<string, unknown>;
+    attempts?: number;
+  }): KernelOutboxMessage {
+    const createdAt = now();
+    const message: KernelOutboxMessage = {
+      id: randomUUID(),
+      eventId: `evt_${randomUUID()}`,
+      tenantId: input.tenantId ?? 'tenant-a',
+      topic: input.topic,
+      key: input.key ?? 'key',
+      payload: input.payload ?? {},
+      attempts: input.attempts ?? 0,
+      availableAt: createdAt,
+      createdAt,
+    };
+    this.outbox.set(message.id, message);
+    return clone(message);
+  }
+
 
   /** DR drill support: snapshot internal state for backup/restore testing.
    *  Includes the transactional outbox so that unpublished messages survive
@@ -306,7 +335,22 @@ export class InMemoryKernelRepository implements KernelRepository {
     this.event('effect', effect.id, 2, 'effect.completion_unknown', effect.tenantId, effect.runId, effect.stepId, request.actor, { reason: request.reason });
     return clone(effect);
   }
-  async claimOutbox(limit: number, at = new Date(), tenantId?: string): Promise<KernelOutboxMessage[]> { return [...this.outbox.values()].filter((message) => { if (message.publishedAt) return false; if (tenantId && message.payload.tenantId !== tenantId) return false; const claim = this.outboxClaims.get(message.id); return Date.parse(message.availableAt) <= at.getTime() && (!claim || claim.expiresAt <= at.getTime()); }).slice(0, limit).map((message) => { const token = randomUUID(); message.attempts++; message.claimToken = token; this.outboxClaims.set(message.id, { token, expiresAt: at.getTime() + 60_000 }); return clone(message); }); }
+  async claimOutbox(limit: number, at = new Date(), tenantId?: string): Promise<KernelOutboxMessage[]> {
+    return [...this.outbox.values()].filter((message) => {
+      if (message.publishedAt) return false;
+      if (tenantId && message.payload.tenantId !== tenantId) return false;
+      if ([...this.dlq.values()].some((e) => e.originalId === message.id)) return false;
+      if (message.attempts >= this.outboxMaxAttempts) return false;
+      const claim = this.outboxClaims.get(message.id);
+      return Date.parse(message.availableAt) <= at.getTime() && (!claim || claim.expiresAt <= at.getTime());
+    }).slice(0, limit).map((message) => {
+      const token = randomUUID();
+      message.attempts++;
+      message.claimToken = token;
+      this.outboxClaims.set(message.id, { token, expiresAt: at.getTime() + 60_000 });
+      return clone(message);
+    });
+  }
   async markOutboxPublished(messageId: string, claimToken: string): Promise<boolean> { const message = this.outbox.get(messageId); const claim = this.outboxClaims.get(messageId); if (!message || message.publishedAt || claim?.token !== claimToken) return false; message.publishedAt = now(); message.claimToken = undefined; this.outboxClaims.delete(messageId); return true; }
   async retryOutbox(messageId: string, claimToken: string, _error: { code: string; message: string }, at = new Date()): Promise<boolean> { const message = this.outbox.get(messageId); const claim = this.outboxClaims.get(messageId); if (!message || message.publishedAt || claim?.token !== claimToken) return false; message.availableAt = new Date(at.getTime() + Math.pow(2, Math.max(0, message.attempts - 1)) * 1000).toISOString(); message.claimToken = undefined; this.outboxClaims.delete(messageId); return true; }
 
@@ -315,6 +359,8 @@ export class InMemoryKernelRepository implements KernelRepository {
   async claimOutboxByTopic(topic: string, limit: number, at = new Date()): Promise<KernelOutboxMessage[]> {
     return [...this.outbox.values()].filter((message) => {
       if (message.topic !== topic || message.publishedAt) return false;
+      if ([...this.dlq.values()].some((e) => e.originalId === message.id)) return false;
+      if (message.attempts >= this.outboxMaxAttempts) return false;
       const claim = this.outboxClaims.get(message.id);
       return Date.parse(message.availableAt) <= at.getTime() && (!claim || claim.expiresAt <= at.getTime());
     }).slice(0, limit).map((message) => {
@@ -450,9 +496,6 @@ export class InMemoryKernelRepository implements KernelRepository {
   }
 
   // ── Outbox DLQ ──
-  private readonly dlq = new Map<string, KernelDlqEntry>();
-  /** Test-only: configurable maximum publish attempts before an outbox message is moved to the DLQ. */
-  outboxMaxAttempts = 10;
   async sweepOutboxDlq(at = new Date(), _limit = 50): Promise<{ movedToDlq: number; backoffApplied: number }> {
     let movedToDlq = 0; let backoffApplied = 0;
     for (const [id, msg] of [...this.outbox.entries()]) {

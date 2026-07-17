@@ -54,6 +54,6 @@ Commander implements the following security measures:
 - **Input validation** on all API endpoints
 - **Structured logging** with no sensitive data in log output
 - **Dependency scanning** via npm audit in CI pipeline
-- **Multi-tenant isolation** with per-tenant rate limits, storage, and memory
+- **Tenant-aware request scoping** (AsyncLocalStorage) and optional per-tenant storage/rate limits on the **Enterprise Gateway path (alpha)**. Not production-proven multi-tenant isolation; see `ENTERPRISE_READINESS.md`.
 - **Circuit breakers** to prevent cascade failures
 - **Prompt injection detection** across multiple languages
