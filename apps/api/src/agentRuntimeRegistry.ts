@@ -27,7 +27,12 @@ const RUNTIME_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const THROUGHPUT_WINDOW_MS = 60_000;
 
 export interface RuntimeRegistryEntry {
-  runtime: AgentRuntime;
+  /**
+   * Lazily materialized. Stats-only helpers (recordRuntimeUsage / getRuntimeStats)
+   * must not construct an AgentRuntime — doing so schedules janitors, opens
+   * SQLite handles, and keeps node:test workers alive after the suite finishes.
+   */
+  runtime?: AgentRuntime;
   createdAt: number;
   lastUsedAt: number;
   totalRuns: number;
@@ -109,7 +114,6 @@ function createRuntime(): AgentRuntime {
 
 function freshEntry(): RuntimeRegistryEntry {
   return {
-    runtime: createRuntime(),
     createdAt: Date.now(),
     lastUsedAt: Date.now(),
     totalRuns: 0,
@@ -119,6 +123,14 @@ function freshEntry(): RuntimeRegistryEntry {
     runTimestamps: [],
     runDurations: [],
   };
+}
+
+function materializeRuntime(entry: RuntimeRegistryEntry): AgentRuntime {
+  if (!entry.runtime) {
+    entry.runtime = createRuntime();
+    wrapRuntimeExecute(entry);
+  }
+  return entry.runtime;
 }
 
 function pruneTimestamps(entry: RuntimeRegistryEntry): void {
@@ -189,6 +201,7 @@ function resolveTenantId(explicitTenantId?: string): string | undefined {
 
 function wrapRuntimeExecute(entry: RuntimeRegistryEntry): void {
   const rt = entry.runtime;
+  if (!rt) return;
   const original = rt.execute.bind(rt) as (
     ctx: AgentExecutionContext,
   ) => Promise<AgentExecutionResult>;
@@ -200,7 +213,7 @@ function wrapRuntimeExecute(entry: RuntimeRegistryEntry): void {
     entry.runTimestamps.push(Date.now());
     pruneTimestamps(entry);
     entry.activeRuns++;
-    entry.queuedRuns = entry.runtime.getQueueDepth();
+    entry.queuedRuns = rt.getQueueDepth();
     try {
       const result = await original(ctx);
       entry.cumulativeCostUsd += estimateRunCost(result.totalTokenUsage);
@@ -211,7 +224,7 @@ function wrapRuntimeExecute(entry: RuntimeRegistryEntry): void {
       return result;
     } finally {
       entry.activeRuns = Math.max(0, entry.activeRuns - 1);
-      entry.queuedRuns = entry.runtime.getQueueDepth();
+      entry.queuedRuns = rt.getQueueDepth();
       pruneTimestamps(entry);
     }
   };
@@ -225,7 +238,6 @@ function getEntry(explicitTenantId?: string): RuntimeRegistryEntry {
       globalEntry = freshEntry();
     }
     globalEntry.lastUsedAt = Date.now();
-    wrapRuntimeExecute(globalEntry);
     return globalEntry;
   }
 
@@ -241,14 +253,13 @@ function getEntry(explicitTenantId?: string): RuntimeRegistryEntry {
     tenantRuntimes.set(tenantId, entry);
   }
   entry.lastUsedAt = Date.now();
-  wrapRuntimeExecute(entry);
   return entry;
 }
 
 /** Get the runtime for the current tenant context (or the global fallback). */
 export function getTenantRuntime(explicitTenantId?: string): AgentRuntime {
   assertLegacyExecutionAllowed('AgentRuntimeRegistry');
-  return getEntry(explicitTenantId).runtime;
+  return materializeRuntime(getEntry(explicitTenantId));
 }
 
 /** Execute a run through the tenant-scoped runtime and update capacity stats. */
@@ -259,17 +270,18 @@ export async function executeTenantRun(
   assertLegacyExecutionAllowed('AgentRuntimeRegistry.executeTenantRun');
   const tenantId = resolveTenantId(explicitTenantId);
   const entry = getEntry(tenantId);
+  const runtime = materializeRuntime(entry);
   // The runtime.execute wrapper already updates totalRuns/activeRuns/durations,
   // so this helper only needs to drive execution and keep cost in sync.
   entry.queuedRuns = Math.max(0, entry.queuedRuns);
-  entry.queuedRuns = entry.runtime.getQueueDepth();
+  entry.queuedRuns = runtime.getQueueDepth();
 
   try {
-    const result = await entry.runtime.execute(ctx);
+    const result = await runtime.execute(ctx);
     entry.cumulativeCostUsd += estimateRunCost(result.totalTokenUsage);
     return result;
   } finally {
-    entry.queuedRuns = entry.runtime.getQueueDepth();
+    entry.queuedRuns = runtime.getQueueDepth();
   }
 }
 
@@ -339,6 +351,18 @@ export function recordRuntimeUsage(
 
 /** Reset the registry (useful for tests). */
 export function resetRuntimeRegistry(): void {
+  for (const entry of tenantRuntimes.values()) {
+    try {
+      entry.runtime?.dispose();
+    } catch {
+      /* best-effort */
+    }
+  }
+  try {
+    globalEntry?.runtime?.dispose();
+  } catch {
+    /* best-effort */
+  }
   tenantRuntimes.clear();
   globalEntry = null;
 }

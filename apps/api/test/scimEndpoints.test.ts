@@ -10,6 +10,14 @@ import { createScimRouter } from '../src/scimEndpoints';
 import { tenantContextMiddleware } from '../src/tenantContextMiddleware';
 import { ScimStore } from '../src/scimStore';
 
+/** B3 SCIM gate requires an admin JWT role or scim/admin API-key scope. */
+function injectScimAdmin(app: express.Express): void {
+  app.use((req, _res, next) => {
+    req.user = { id: 'scim-test', username: 'scim-admin', role: 'admin' };
+    next();
+  });
+}
+
 describe('SCIM 2.0 endpoints', () => {
   let app: express.Express;
   let server: ReturnType<typeof app.listen>;
@@ -23,6 +31,7 @@ describe('SCIM 2.0 endpoints', () => {
 
     app = express();
     app.use(express.json());
+    injectScimAdmin(app);
     app.use('/scim/v2', tenantContextMiddleware, createScimRouter(store));
     server = app.listen(0);
     await new Promise<void>((resolve) => server.on('listening', resolve));
@@ -216,6 +225,7 @@ describe('SCIM 2.0 endpoints', () => {
     const restartedStore = new ScimStore(tmpDir);
     const restartedApp = express();
     restartedApp.use(express.json());
+    injectScimAdmin(restartedApp);
     restartedApp.use('/scim/v2', tenantContextMiddleware, createScimRouter(restartedStore));
     const restartedServer = restartedApp.listen(0);
     await new Promise<void>((resolve) => restartedServer.on('listening', resolve));

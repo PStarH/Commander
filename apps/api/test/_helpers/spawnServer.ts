@@ -62,6 +62,9 @@ async function startServer(apiDir: string): Promise<ServerContext> {
           PORT: String(port),
           AUTH_DISABLED: 'true',
           COMMANDER_ALLOW_ANON: '1',
+          // Anon bypass needs a tenant ALS id (MemoryStoreFacade fails closed otherwise).
+          COMMANDER_DEFAULT_TENANT_ID:
+            process.env.COMMANDER_DEFAULT_TENANT_ID || 'test-tenant',
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       });

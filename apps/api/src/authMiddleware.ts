@@ -247,6 +247,13 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
         hint: 'AUTH_DISABLED requires COMMANDER_ALLOW_ANON=1 outside production',
       });
     }
+    // Anon bypass still needs a tenant ALS binding — MemoryStoreFacade and
+    // other tenant-scoped services fail closed without one. Prefer an explicit
+    // COMMANDER_DEFAULT_TENANT_ID; fall back to "local" (never "__default__",
+    // which is reserved by runWithTenant).
+    if (!req.tenantId) {
+      req.tenantId = process.env.COMMANDER_DEFAULT_TENANT_ID || 'local';
+    }
     return next();
   }
 
@@ -332,6 +339,10 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
     if (matchedKey?.tenantId) {
       req.tenantId = matchedKey.tenantId;
     }
+  } else if (!req.tenantId) {
+    // COMMANDER_ALLOW_ANON fall-through: bind a default tenant so downstream
+    // tenant-scoped stores (memory, etc.) have an ALS context.
+    req.tenantId = process.env.COMMANDER_DEFAULT_TENANT_ID || 'local';
   }
 
   next();

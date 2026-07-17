@@ -3,10 +3,7 @@ import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-
-const { WarRoomStore } = require('../dist/store.js') as {
-  WarRoomStore: new (filePath?: string) => any;
-};
+import { WarRoomStore } from '../src/store.js';
 
 function createLegacyFixture(filePath: string): void {
   const data = {
