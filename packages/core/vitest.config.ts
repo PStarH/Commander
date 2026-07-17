@@ -281,8 +281,6 @@ export default defineConfig({
       'tests/architecture/gapFixes.test.ts',
       // --- V2 architecture integrity tests ---
       'tests/architecture/v2-event-sourcing-integrity.test.ts',
-      'tests/architecture/architectureV2.invariants.test.ts',
-      'tests/architecture/oneRunAuthority.invariants.test.ts',
       // L3-07 step-scoped ControlPlane workload identity
       'tests/controlPlane/workloadIdentity.test.ts',
 
