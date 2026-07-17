@@ -162,8 +162,10 @@ function relativeFile(file) {
 
 const importPattern = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)['"]([^'"]+)['"]/g;
 const apiConfigPath = path.join(root, 'scripts', 'architecture-gate.config.json');
-const apiLegacyCoreFiles = new Set(
-  fs.existsSync(apiConfigPath) ? readJson(apiConfigPath)?.api?.legacyImportExceptions ?? [] : [],
+const gateConfig = fs.existsSync(apiConfigPath) ? readJson(apiConfigPath) : null;
+const apiLegacyCoreFiles = new Set(gateConfig?.api?.legacyImportExceptions ?? []);
+const workerCoreBridgeFiles = new Set(
+  (gateConfig?.v2ImportExceptions ?? []).map((entry) => String(entry).split(path.sep).join('/')),
 );
 const sourceFiles = [];
 for (const info of packageInfo.values()) {
@@ -195,7 +197,7 @@ for (const file of sourceFiles) {
     const isWorkerCoreBridge =
       owner === '@commander/worker-plane' &&
       dependency === '@commander/core' &&
-      relativeFile(file) === 'packages/worker-plane/src/workerRuntimeAdapter.ts';
+      workerCoreBridgeFiles.has(relativeFile(file));
     const apiSourceFile =
       owner === '@commander/api' && relativeFile(file).startsWith('apps/api/src/')
         ? relativeFile(file).slice('apps/api/src/'.length)
