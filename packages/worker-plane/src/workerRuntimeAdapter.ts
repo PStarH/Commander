@@ -8,6 +8,7 @@ import {
   wrapProviderWithEffectBroker,
   type LlmEffectAuth,
 } from './llmBrokerBridge.js';
+import { assertEffectBrokerForProduction } from './effectGate.js';
 
 export { KernelStepExecutor } from '@commander/core';
 // WS7: SandboxManager is re-exported so sandboxReadiness can consume it via
@@ -68,15 +69,7 @@ export function toLlmBrokerLease(lease: WorkerLease): LlmEffectAuth['lease'] {
 }
 
 export function createAgentStepExecutor(options: AgentStepExecutorOptions = {}): StepExecutor {
-  const requireBroker =
-    process.env.NODE_ENV === 'production' ||
-    process.env.COMMANDER_PROFILE === 'enterprise' ||
-    process.env.COMMANDER_REQUIRE_EFFECT_BROKER === '1';
-  if (requireBroker && !options.effectBroker) {
-    throw new Error(
-      'EFFECT_BROKER_UNAVAILABLE: agent step executor requires EffectBroker in production/enterprise (WS2 §1)',
-    );
-  }
+  assertEffectBrokerForProduction('agent step executor', options.effectBroker);
   // Broker without issuer wraps providers but never injects ALS → every LLM call
   // fails EFFECT_AUTHORIZATION_REQUIRED. Require both whenever broker is set.
   if (options.effectBroker && !options.capabilityIssuer) {

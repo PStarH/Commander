@@ -11,6 +11,10 @@
 
 import type { StepExecutor, ClaimedStep, WorkerRecord } from './types.js';
 import { WorkerExecutionError } from './types.js';
+import {
+  assertEffectBrokerForProduction,
+  mustRouteExternalEffectThroughBroker,
+} from './effectGate.js';
 
 export interface ToolStepInput {
   /** Tool name (e.g., "http.get", "git.push"). */
@@ -19,6 +23,8 @@ export interface ToolStepInput {
   args: Record<string, unknown>;
   /** Whether this tool produces external side effects. */
   hasExternalEffects?: boolean;
+  /** Pure-local tool (no external IO). Required in production to bypass the broker. */
+  localOnly?: boolean;
   /** Effect Broker fields. External tools must not execute without them. */
   effectId?: string;
   idempotencyKey?: string;
@@ -61,6 +67,7 @@ export class ToolStepExecutor implements StepExecutor {
   private readonly effectBroker?: ExternalEffectBroker;
 
   constructor(toolRegistry?: ToolRegistry, effectBroker?: ExternalEffectBroker) {
+    assertEffectBrokerForProduction('tool step executor', effectBroker);
     // If no registry provided, use an empty one — tools must be registered
     this.toolRegistry = toolRegistry ?? { get: () => null };
     this.effectBroker = effectBroker;
@@ -79,7 +86,7 @@ export class ToolStepExecutor implements StepExecutor {
       );
     }
 
-    if (input.hasExternalEffects) {
+    if (mustRouteExternalEffectThroughBroker(input)) {
       if (!this.effectBroker) throw new WorkerExecutionError('External tool execution requires an Effect Broker', { code: 'EFFECT_BROKER_UNAVAILABLE', retryable: false });
       if (!step.lease || !input.effectId || !input.idempotencyKey || !input.capabilityToken) {
         throw new WorkerExecutionError('External tool execution requires effectId, idempotencyKey, capabilityToken, and a live step lease', { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false });
