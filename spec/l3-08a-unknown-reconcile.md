@@ -1,6 +1,6 @@
 # L3-08a — UNKNOWN 对账最小闭环
 
-**状态：OPEN（course-correction skeleton 2026-07-17）**  
+**状态：ENFORCED（package-level 2026-07-17）**  
 **重要程度：I1**  
 **依赖：** L3-03a Effect 垄断（已合入 master）、L3-02 ops（已合入）  
 **下游：** L4-01 Governed Action Gateway MVP
@@ -15,11 +15,18 @@
 
 ## Done when
 
-- [ ] 至少 **1** 个可逆写适配器实现 `queryOutcome(effectId|idempotencyKey)`；
-- [ ] EffectBroker / kernel 路径：UNKNOWN → query → terminal state（测绿）；
-- [ ] escalate 路径：query 仍不确定时标记待人工 / kill-switch 可见；
-- [ ] chaos 测：timeout 后远端已 commit → reconcile 记 COMPLETED，不二次 invoke；
-- [ ] 无 production permit-all / 旁路完成。
+- [x] 至少 **1** 个可逆写适配器实现 `queryOutcome(effectId|idempotencyKey)` — `InMemoryTicketAdapter`
+- [x] EffectBroker / kernel 路径：UNKNOWN → query → terminal state — `EffectBroker.reconcileUnknown` + `KernelRepository.reconcileEffect`
+- [x] escalate 路径：query 仍不确定时标记待人工 — audit `effect.reconcile_escalated`
+- [x] chaos 测：timeout 后远端已 commit → reconcile 记 COMPLETED，不二次 invoke
+- [x] 无 production permit-all / 旁路完成
+
+## Evidence
+
+| 测 | 命令 |
+|----|------|
+| broker reconcile + escalate | `tsx --test packages/effect-broker/src/l3-08a-unknown-reconcile.test.ts` |
+| ticket adapter chaos | `tsx --test packages/worker-plane/src/ticketAdapter.test.ts` |
 
 ## Non-goals（本波不做）
 
