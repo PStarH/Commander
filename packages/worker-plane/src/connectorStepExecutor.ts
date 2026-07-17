@@ -18,6 +18,10 @@
 import type { StepExecutor, ClaimedStep, WorkerRecord } from './types.js';
 import { WorkerExecutionError } from './types.js';
 import type { ExternalEffectBroker } from './toolStepExecutor.js';
+import {
+  assertEffectBrokerForProduction,
+  mustRouteExternalEffectThroughBroker,
+} from './effectGate.js';
 
 export interface ConnectorStepInput {
   /** Connector name (e.g., "postgres", "kafka", "s3", "http"). */
@@ -29,6 +33,8 @@ export interface ConnectorStepInput {
   /** Connection configuration (resolved at execution time). */
   connection?: ConnectorConnectionConfig;
   hasExternalEffects?: boolean;
+  /** Pure-local connector op (no external IO). Required in production to bypass the broker. */
+  localOnly?: boolean;
   effectId?: string;
   idempotencyKey?: string;
   capabilityToken?: string;
@@ -76,6 +82,7 @@ export class ConnectorStepExecutor implements StepExecutor {
   private readonly effectBroker?: ExternalEffectBroker;
 
   constructor(registry?: ConnectorRegistry, effectBroker?: ExternalEffectBroker) {
+    assertEffectBrokerForProduction('connector step executor', effectBroker);
     this.registry = registry ?? new DefaultConnectorRegistry();
     this.effectBroker = effectBroker;
   }
@@ -100,8 +107,13 @@ export class ConnectorStepExecutor implements StepExecutor {
       );
     }
 
-    // Fail-closed: broker present → mediation required; input flag cannot bypass.
-    if (this.effectBroker) {
+    if (mustRouteExternalEffectThroughBroker(input, { brokerPresent: this.effectBroker != null })) {
+      if (!this.effectBroker) {
+        throw new WorkerExecutionError('External connector execution requires an Effect Broker', {
+          code: 'EFFECT_BROKER_UNAVAILABLE',
+          retryable: false,
+        });
+      }
       if (!step.lease || !input.effectId || !input.idempotencyKey || !input.capabilityToken) throw new WorkerExecutionError('External connector execution requires effectId, idempotencyKey, capabilityToken, and a live step lease', { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false });
       try {
         const result = await this.effectBroker.execute({ effectId: input.effectId, token: input.capabilityToken, type: `${input.connectorName}.${input.operation}`, request: input.args ?? {}, idempotencyKey: input.idempotencyKey, lease: step.lease, actor: context.worker.id, timeoutMs: input.timeoutMs });
@@ -110,9 +122,6 @@ export class ConnectorStepExecutor implements StepExecutor {
         if (error instanceof WorkerExecutionError) throw error;
         throw new WorkerExecutionError(error instanceof Error ? error.message : String(error), { code: 'EFFECT_EXECUTION_FAILED', retryable: false, details: { connectorName: input.connectorName, operation: input.operation, stepId: step.id } });
       }
-    }
-    if (input.hasExternalEffects) {
-      throw new WorkerExecutionError('External connector execution requires an Effect Broker', { code: 'EFFECT_BROKER_UNAVAILABLE', retryable: false });
     }
 
     const handler = this.registry.get(input.connectorName);
