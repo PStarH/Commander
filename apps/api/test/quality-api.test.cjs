@@ -107,13 +107,14 @@ test('createCommanderHealthCheckBenchmark returns tasks', () => {
 
 test('calculatePassAtK computes correctly', () => {
   const results = [
-    { taskId: 'a', passed: true, output: '', latencyMs: 10 },
-    { taskId: 'a', passed: true, output: '', latencyMs: 10 },
-    { taskId: 'a', passed: false, output: '', latencyMs: 10 },
+    { taskId: 'a', trials: [{ passed: true, output: '', latencyMs: 10 }] },
+    { taskId: 'b', trials: [{ passed: true, output: '', latencyMs: 10 }] },
+    { taskId: 'c', trials: [{ passed: false, output: '', latencyMs: 10 }] },
   ];
   const passAtK = calculatePassAtK(results);
   assert.ok(passAtK);
   assert.ok(passAtK.passAt1 !== undefined);
+  assert.equal(passAtK.passAt1, 2 / 3);
 });
 
 // ============================================================================
