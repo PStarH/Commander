@@ -36,6 +36,10 @@ function ensureNamespace(nsDir: string): Promise<void> {
   return fsp.mkdir(nsDir, { recursive: true }).then(() => undefined);
 }
 
+/**
+ * @deprecated L3-10a — filesystem scratch only. Product durable writes must use
+ * writeProductMemory / MemoryStore (MEMORY-001). Agent-identified calls fail-closed.
+ */
 export class MemoryStoreTool implements Tool {
   definition: ToolDefinition = {
     name: 'memory_store',
@@ -50,6 +54,11 @@ export class MemoryStoreTool implements Tool {
           type: 'string',
           description: 'Namespace (default: "default")',
           default: 'default',
+        },
+        agentId: {
+          type: 'string',
+          description:
+            'When set, product writes are required — this tool refuses (use writeProductMemory)',
         },
       },
       required: ['key', 'value'],
@@ -69,6 +78,14 @@ export class MemoryStoreTool implements Tool {
     const value = String(args.value ?? '');
     const namespace = String(args.namespace ?? 'default');
     if (!key) return 'Error: key is required';
+
+    // L3-10a: agent-identified durable writes must not use the FS scratch path.
+    if (args.agentId != null && String(args.agentId).length > 0) {
+      throw new Error(
+        'L3-10a: agent-identified product memory writes must use writeProductMemory / MemoryStore (MEMORY-001); MemoryStoreTool filesystem path is scratch-only',
+      );
+    }
+
     await ensureMemoryDir();
     const nsDir = path.join(MEMORY_DIR, namespace);
     await ensureNamespace(nsDir);

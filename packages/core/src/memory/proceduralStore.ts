@@ -12,6 +12,7 @@
 
 import type { MemoryStore, EpisodicMemoryItem, MemoryWriteOptions } from '../episodicMemory';
 import { getGlobalLogger } from '../logging';
+import { writeProductMemory } from './writeProductMemory';
 
 // ============================================================================
 // Types
@@ -101,7 +102,7 @@ export class ProceduralMemoryStore {
       },
     };
 
-    const item = await this.store.write(writeOptions);
+    const item = await writeProductMemory(this.store, writeOptions);
 
     return this.itemToEntry(item);
   }
@@ -262,7 +263,7 @@ export class ProceduralMemoryStore {
     }
 
     try {
-      await this.store.write(updatedWriteOptions);
+      await writeProductMemory(this.store, updatedWriteOptions);
     } catch (err) {
       // Write failed — attempt to restore the original entry
       getGlobalLogger().error(
@@ -272,7 +273,7 @@ export class ProceduralMemoryStore {
         { entryId },
       );
       try {
-        await this.store.write(originalWriteOptions);
+        await writeProductMemory(this.store, originalWriteOptions);
       } catch (restoreErr) {
         // Critical: both write and restore failed — data is lost
         getGlobalLogger().error(
@@ -321,7 +322,7 @@ export class ProceduralMemoryStore {
       },
     };
 
-    await this.store.write(transferOptions);
+    await writeProductMemory(this.store, transferOptions);
     return true;
   }
 

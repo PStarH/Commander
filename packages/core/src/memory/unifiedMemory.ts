@@ -26,6 +26,7 @@ import { getGlobalThreeLayerMemory, wireGlobalThreeLayerMemory } from '../threeL
 import { getCurrentTenantId } from '../runtime/tenantContext';
 import type { ThreeLayerMemory, MemoryEntry } from '../threeLayerMemory';
 import type { MemoryStore, EpisodicMemoryItem, MemoryWriteOptions } from '../episodicMemory';
+import { writeProductMemory } from './writeProductMemory';
 import { ConversationStore, getConversationStore } from './conversationStore';
 import type {
   ConversationSearchResult,
@@ -258,7 +259,7 @@ export class UnifiedMemory {
         evidenceRefs: options.evidenceRefs,
       };
 
-      const item = await this.memoryStore!.write(writeOptions);
+      const item = await writeProductMemory(this.memoryStore!, writeOptions);
 
       // Trigger autonomous curation
       if (this.config.enableCuration) {
@@ -742,7 +743,7 @@ export class UnifiedMemory {
       const createdAt = new Date(entry.createdAt).getTime();
       if (createdAt < twoHoursAgo && entry.importance >= 0.3) {
         // Promote to episodic in MemoryStore
-        await this.memoryStore!.write({
+        await writeProductMemory(this.memoryStore!, {
           projectId,
           kind: 'SUMMARY',
           duration: 'EPISODIC',
