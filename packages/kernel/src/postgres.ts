@@ -834,6 +834,16 @@ export class PostgresKernelRepository implements KernelRepository {
     });
   }
 
+  async ensureAllowlistDefault(tenantId: string, actionPattern: string, allowed: boolean): Promise<void> {
+    await this.withTransaction(async (client) => {
+      await client.query(
+        `INSERT INTO commander_effect_allowlist (tenant_id, action_pattern, allowed) VALUES ($1, $2, $3)
+         ON CONFLICT (tenant_id, action_pattern) DO NOTHING`,
+        [tenantId, actionPattern, allowed],
+      );
+    });
+  }
+
   async incrementQuota(input: { tenantId: string; actionClass: string; tokensUsed?: number; now?: Date }): Promise<{ countUsed: number; tokensUsed: number }> {
     const day = (input.now ?? new Date()).toISOString().slice(0, 10);
     const tokens = input.tokensUsed ?? 0;
