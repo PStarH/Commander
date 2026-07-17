@@ -36,7 +36,7 @@ import {
 import { isMutationTool } from './runtimeHelpers';
 import { getSideEffectGate, SideEffectGateError } from './sideEffectGate';
 import { getCapabilityTokenVerifier } from '../security/capabilityToken';
-import { createSandboxWorkloadContext } from '../sandbox/workload';
+import { createSandboxWorkloadContext, toRuntimeWorkloadMetadata } from '../sandbox/workload';
 import {
   getGlobalBiscuitCapabilityAdapter,
   BiscuitCapabilityAdapter,
@@ -677,13 +677,7 @@ export class ToolExecutionService {
             })
           : null;
       const executionArgs = workloadContext
-        ? {
-            ...sanitizedArgs,
-            _tenantId: workloadContext.tenantId,
-            _runId: workloadContext.runId,
-            _stepId: workloadContext.stepId,
-            _workloadId: workloadContext.workloadId,
-          }
+        ? { ...sanitizedArgs, ...toRuntimeWorkloadMetadata(workloadContext) }
         : sanitizedArgs;
 
       const boundaryResult = await boundary.execute<string>(

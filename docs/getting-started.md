@@ -2,6 +2,8 @@
 
 5 分钟内在本地跑起来，并通过 CLI 或 Web Console 运行第一个多代理任务。
 
+下文默认是 **Local CLI / 本地单机** 路径。Enterprise Gateway（`/v1` + Postgres）见英文 `README.md` SKU 表与 `ENTERPRISE_READINESS.md`，状态为 **alpha**。
+
 ---
 
 ## 前置要求
@@ -59,7 +61,7 @@ pnpm gui
 ### 方式 B：终端 CLI
 
 ```bash
-npx tsx packages/core/src/cli.ts run "audit this repo for security vulnerabilities" --stream
+pnpm exec tsx packages/core/src/cliEntry.ts run "audit this repo for security vulnerabilities" --stream
 ```
 
 `--stream` 会实时输出每个代理的思考、工具调用和质量门决策。
@@ -94,7 +96,7 @@ pnpm --filter @commander/core test:quick
 ## 6. 下一步
 
 - 查看架构概览：`docs/architecture/`
-- 查看 CLI 全部命令：`npx tsx packages/core/src/cli.ts --help`
+- 查看 CLI 全部命令：`pnpm exec tsx packages/core/src/cliEntry.ts --help`
 - 查看 OpenAPI 规范：启动 API 后访问 http://localhost:4000/openapi.json
 
 ---

@@ -280,7 +280,6 @@ export type { BatchAPIConfig, BatchSubmissionResult, BatchPollResult } from './b
 // Tenant Provider — re-exported through the runtime barrel so core internal
 // consumers can import alongside other runtime primitives.
 export {
-  TenantProvider,
   NullTenantProvider,
   SimpleTenantProvider,
   ThreeLayerMemoryRegistry,
@@ -290,7 +289,7 @@ export {
   getGlobalMemoryRegistry,
   resetGlobalMemoryRegistry,
 } from './tenantProvider';
-export type { TenantConfig } from './tenantProvider';
+export type { TenantProvider, TenantConfig } from './tenantProvider';
 
 export { TenantManager, getTenantManager, resetTenantManager } from './tenantManager';
 export type { TenantOverrides, TenantResolutionResult } from './tenantManager';

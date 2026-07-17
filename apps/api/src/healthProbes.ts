@@ -7,8 +7,9 @@
  * `unknown`/`degraded` are surfaced honestly but do not fail the probe.
  *
  * Hard gates (503 if `fail`): database, kernel.
- * Soft indicators (never 503): effectBroker (until WS2 wires it), warRoomStore
- * (`degraded`), memoryHeap (`degraded`).
+ * Soft indicators (never 503): effectBroker (honest presence probe; API process
+ * does not host the worker-plane broker), warRoomStore (`degraded`),
+ * memoryHeap (`degraded`).
  */
 
 /** Outcome of a single dependency probe. */
@@ -69,11 +70,9 @@ export function probeMemoryHeap(fn: (() => number) | undefined): ProbeStatus {
 /**
  * Hard gates whose `fail` status forces 503.
  *
- * effectBroker is intentionally NOT a hard gate: there is no production
- * setEffectBroker() wiring yet (WS2 unfinished), so gating on it would make
- * /ready permanently 503 in enterprise deployments. It is still probed and
- * reported honestly (§6.2 "honest indicators but never gate") — promote it
- * back to a hard gate once WS2 wires the broker into the runtime.
+ * effectBroker is intentionally NOT a hard gate: the API process does not
+ * host the worker-plane `@commander/effect-broker`. Presence is still probed
+ * and reported honestly; a throw-on-admit stub must not mint a green hard gate.
  */
 const HARD_GATES = ['database', 'kernel'] as const;
 

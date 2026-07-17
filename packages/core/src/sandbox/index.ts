@@ -30,6 +30,7 @@ export {
 export {
   buildWorkloadDockerOptions,
   createSandboxWorkloadContext,
+  toRuntimeWorkloadMetadata,
   validateSandboxWorkloadContext,
   workloadContainerName,
 } from './workload';
@@ -50,7 +51,11 @@ export type {
   ApprovalRequest,
   ApprovalGate,
 } from './approval';
-export { ExecutionRouter, getExecutionRouter } from './executionRouter';
+export {
+  ExecutionRouter,
+  getExecutionRouter,
+  resolveRuntimeWorkloadContext,
+} from './executionRouter';
 export { LocalBackend } from './backends/localBackend';
 export { SSHBackend, resolveSSHConfig } from './backends/sshBackend';
 export { DockerExecBackend, resolveDockerExecConfig } from './backends/dockerExecBackend';
