@@ -297,7 +297,9 @@ jobs:
           pnpm exec tsx --test \
             packages/worker-plane/src/llmBrokerBridge.test.ts \
             packages/worker-plane/src/workerRuntimeAdapter.test.ts \
-            packages/worker-plane/src/stepWorkloadIdentity.test.ts
+            packages/worker-plane/src/stepWorkloadIdentity.test.ts \
+            packages/worker-plane/src/l3-03b-gateway-localonly.test.ts \
+            packages/worker-plane/src/l3-03a-effect-tool-monopoly.test.ts
           pnpm exec tsx --test \
             apps/api/test/namespacedMemoryEndpoints.test.ts \
             apps/api/test/namespacedMemoryRbac.test.ts \
