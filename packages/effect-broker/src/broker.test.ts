@@ -53,7 +53,13 @@ describe('EffectBroker', () => {
     const verifier = new CapabilityTokenVerifier({ issuer: 'commander-issuer', audience: 'commander.effect-broker', publicKeys: { k1: issuer.publicKey } });
     const token = issuer.issue({ jti: 'ed-jti', tenantId: 'tenant', runId: 'run', stepId: 'step', effectTypes: ['crm.write'], expiresAt: '2099-01-01T00:00:00.000Z', policySnapshotId: 'p1', requestHash: canonicalRequestHash({}) });
     assert.equal((await verifier.verify(token)).issuer, 'commander-issuer');
-    await assert.rejects(verifier.verify(`${token.slice(0, -1)}x`), /signature/);
+    // Flip a signature byte — trailing-char swaps are flaky under base64url (can be a no-op).
+    const [header, payload, signature] = token.split('.');
+    assert.ok(header && payload && signature);
+    const sigBytes = Buffer.from(signature, 'base64url');
+    sigBytes[0] = (sigBytes[0]! ^ 0xff) & 0xff;
+    const forged = `${header}.${payload}.${sigBytes.toString('base64url')}`;
+    await assert.rejects(verifier.verify(forged), /signature/i);
   });
 
   it('CapabilityTokenIssuer.publicKey derives via pkcs8 PEM export path', async () => {
