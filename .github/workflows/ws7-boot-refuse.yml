@@ -1,0 +1,47 @@
+name: WS7 Boot Refuse
+
+# WS7 §6 Phase 3: independent CI gate for production sandbox boot-refuse.
+# Intentionally separate from ci.yml so dev/test jobs may set
+# COMMANDER_ALLOW_NO_SANDBOX without weakening this gate.
+# Do NOT set COMMANDER_ALLOW_NO_SANDBOX in this workflow.
+# pnpm version comes from root package.json packageManager (no with.version).
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  ws7-boot-refuse:
+    name: WS7 production sandbox boot-refuse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build packages for worker boot-refuse
+        run: |
+          pnpm --filter @commander/contracts build
+          pnpm --filter @commander/plugin-sdk build
+          pnpm --filter @commander/kernel build
+          pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/core build
+          pnpm --filter @commander/worker-plane build
+
+      - name: Production sandbox static gate
+        run: pnpm --filter @commander/core build:production
+
+      - name: Core production sandbox boot-refuse
+        run: pnpm --filter @commander/core exec tsx --test tests/sandbox/boot-refuse.test.ts
+
+      - name: Worker production sandbox boot-refuse
+        run: pnpm exec tsx --test packages/worker-plane/src/boot-refuse.test.ts
