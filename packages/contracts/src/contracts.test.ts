@@ -1,4 +1,7 @@
 import assert from 'node:assert';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import {
   CONTRACTS_VERSION,
@@ -287,6 +290,21 @@ describe('@commander/contracts compatibility', () => {
     const snap = snapshotContracts();
     const changes = detectBreakingChanges(snap, snap);
     assert.deepStrictEqual(changes, []);
+  });
+
+  it('committed baseline has no breaking drift from current snapshot', () => {
+    const baselinePath = join(
+      dirname(fileURLToPath(import.meta.url)),
+      '../snapshots/contract-snapshot.baseline.json',
+    );
+    const baseline = JSON.parse(readFileSync(baselinePath, 'utf8')) as ReturnType<typeof snapshotContracts>;
+    const current = snapshotContracts();
+    const changes = detectBreakingChanges(baseline, current);
+    assert.deepStrictEqual(
+      changes,
+      [],
+      `baseline drift detected: ${changes.join('; ')}`,
+    );
   });
 
   it('error codes are stable', () => {
