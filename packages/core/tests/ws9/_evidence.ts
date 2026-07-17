@@ -100,12 +100,31 @@ export const probeVault: ProbeResult = (() => {
   return { available: true, reason: `Vault at ${addr}` };
 })();
 
-/** Check gVisor availability: runsc binary present. */
+/**
+ * Check gVisor availability: runsc on PATH, or docker with `runsc` runtime
+ * configured (matches GVisorSB — Colima often exposes runsc only inside the VM).
+ */
 export const probeGvisor: ProbeResult = (() => {
-  if (!hasBinary('runsc')) {
-    return { available: false, reason: 'runsc binary not found on PATH' };
+  if (hasBinary('runsc')) {
+    return { available: true, reason: 'runsc binary present' };
   }
-  return { available: true, reason: 'runsc binary present' };
+  if (hasBinary('docker')) {
+    const info = spawnSync('docker', ['info', '--format', '{{.Runtimes}}'], {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'ignore'],
+      timeout: 8_000,
+    });
+    if (info.status === 0 && (info.stdout ?? '').includes('runsc')) {
+      return {
+        available: true,
+        reason: 'docker runtime runsc configured (runsc not on PATH)',
+      };
+    }
+  }
+  return {
+    available: false,
+    reason: 'runsc binary not found on PATH and docker runsc runtime not configured',
+  };
 })();
 
 /** Check /v1 gateway availability: COMMANDER_API_HOST/PORT set. */
