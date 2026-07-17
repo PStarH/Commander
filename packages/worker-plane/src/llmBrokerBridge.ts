@@ -23,6 +23,8 @@ interface LlmInvokeEntry {
   runId: string;
   stepId: string;
   workerId: string;
+  fencingEpoch: number;
+  leaseToken: string;
   contentHash: string;
   invoke: () => Promise<LLMResponse>;
   expiresAt: number;
@@ -156,6 +158,38 @@ function assertLlmInvokeModeAllowed(): void {
 }
 
 /**
+ * Race provider invoke against broker AbortSignal. LLMProvider.call has no
+ * signal param — we fail the dispatch promise on abort even if HTTP continues.
+ */
+function invokeWithSignal(
+  invoke: () => Promise<LLMResponse>,
+  signal?: AbortSignal,
+): Promise<LLMResponse> {
+  if (!signal) return invoke();
+  if (signal.aborted) {
+    const reason = signal.reason;
+    return Promise.reject(reason instanceof Error ? reason : new Error('LLM_INVOKE_ABORTED'));
+  }
+  return new Promise<LLMResponse>((resolve, reject) => {
+    const onAbort = () => {
+      const reason = signal.reason;
+      reject(reason instanceof Error ? reason : new Error('LLM_INVOKE_ABORTED'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    invoke().then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+/**
  * Wrap an LLM provider so every call is mediated by EffectBroker.execute.
  * Fail-closed when auth context is missing or invoke mode is not local-affinity.
  */
@@ -198,6 +232,8 @@ export function wrapProviderWithEffectBroker(
         runId: auth.runId,
         stepId: auth.stepId,
         workerId: auth.lease.workerId,
+        fencingEpoch: auth.lease.fencingEpoch,
+        leaseToken: auth.lease.token,
         contentHash,
         expiresAt: Date.now() + capabilityTtlMs,
         invoke: () => {
@@ -235,6 +271,8 @@ export async function dispatchLlmEffect(input: {
   signal?: AbortSignal;
   tenantId: string;
   workerId: string;
+  fencingEpoch: number;
+  leaseToken: string;
 }): Promise<Record<string, unknown>> {
   if (!input.type.startsWith('llm.')) {
     throw new Error(`Not an LLM effect type: ${input.type}`);
@@ -272,6 +310,14 @@ export async function dispatchLlmEffect(input: {
       `LLM_WORKER_MISMATCH: registry workerId=${entry.workerId} dispatch workerId=${input.workerId}`,
     );
   }
+  if (entry.fencingEpoch !== input.fencingEpoch) {
+    throw new Error(
+      `LLM_LEASE_MISMATCH: registry fencingEpoch=${entry.fencingEpoch} dispatch fencingEpoch=${input.fencingEpoch}`,
+    );
+  }
+  if (entry.leaseToken !== input.leaseToken) {
+    throw new Error('LLM_LEASE_MISMATCH: registry lease token diverged from dispatch lease');
+  }
   if (entry.contentHash !== expectedHash) {
     throw new Error(
       'LLM_CONTENT_HASH_MISMATCH: invoke request contentHash diverged from registered entry',
@@ -285,6 +331,6 @@ export async function dispatchLlmEffect(input: {
   }
   // One-shot: consume before invoke so concurrent dispatch cannot double-call.
   llmInvokeRegistry.delete(registryKey);
-  const response = await entry.invoke();
+  const response = await invokeWithSignal(entry.invoke, input.signal);
   return response as unknown as Record<string, unknown>;
 }

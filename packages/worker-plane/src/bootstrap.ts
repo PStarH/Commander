@@ -134,6 +134,8 @@ export async function createWorkerService(): Promise<WorkerService> {
       workerHeartbeatMs: parseInt(process.env.COMMANDER_WORKER_HEARTBEAT_MS ?? '10000', 10),
       pollIntervalMs: parseInt(process.env.COMMANDER_WORKER_POLL_MS ?? '250', 10),
       sandboxReadiness: createProductionWorkerSandboxReadiness(),
+      // Generation is only known after registry.register — bind into broker affinity.
+      onRegistered: (worker) => effectBroker.bindLocalWorkerGeneration(worker.generation),
     },
   );
 
@@ -228,9 +230,15 @@ function createEffectBroker(
     execute: async (input) => {
       if (input.type.startsWith('llm.')) {
         const ctx = input.executionContext;
-        if (!ctx?.tenantId || !ctx.workerId) {
+        if (
+          !ctx?.tenantId ||
+          !ctx.workerId ||
+          typeof ctx.fencingEpoch !== 'number' ||
+          typeof ctx.leaseToken !== 'string' ||
+          !ctx.leaseToken
+        ) {
           throw new Error(
-            'EFFECT_AUTHORIZATION_REQUIRED: llm.* execute requires executionContext tenantId and workerId from grant',
+            'EFFECT_AUTHORIZATION_REQUIRED: llm.* execute requires executionContext tenantId, workerId, fencingEpoch, leaseToken from grant lease',
           );
         }
         const { dispatchLlmEffect } = await import('./llmBrokerBridge.js');
@@ -240,6 +248,8 @@ function createEffectBroker(
           signal: input.signal,
           tenantId: ctx.tenantId,
           workerId: ctx.workerId,
+          fencingEpoch: ctx.fencingEpoch,
+          leaseToken: ctx.leaseToken,
         });
       }
       // eslint-disable-next-line no-console
