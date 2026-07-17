@@ -82,6 +82,8 @@ export interface KernelRepository {
   markOutboxPublished(messageId: string, claimToken: string): Promise<boolean>;
   retryOutbox(messageId: string, claimToken: string, error: { code: string; message: string }, now?: Date): Promise<boolean>;
   listEvents(runId: string, tenantId: string): Promise<KernelEvent[]>;
+  /** Effect ledger rows for a run (commander_effects). */
+  listEffectsForRun(runId: string, tenantId: string): Promise<KernelEffect[]>;
 
   // ── Durable Timers ──────────────────────────────────────────────────────
 

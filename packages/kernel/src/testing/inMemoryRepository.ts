@@ -475,6 +475,9 @@ export class InMemoryKernelRepository implements KernelRepository {
   }
 
   async listEvents(runId: string, tenantId: string): Promise<KernelEvent[]> { return this.events.filter((event) => event.runId === runId && event.tenantId === tenantId).map(clone); }
+  async listEffectsForRun(runId: string, tenantId: string): Promise<KernelEffect[]> {
+    return [...this.effects.values()].filter((effect) => effect.runId === runId && effect.tenantId === tenantId).map(clone);
+  }
 
   // ── Durable Timers ──
   private readonly timers = new Map<string, KernelTimer>();
