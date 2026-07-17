@@ -180,6 +180,8 @@ export function createProjectRouter(
     }
     const recommendedItems = recommendedMemorySelection.items;
     const now = new Date().toISOString();
+    // Synthetic runId is WarRoom UI context only — not kernel durable authority.
+    // Clients must not treat this as GET /v1/runs/:id.
     const runMeta: CommanderRunMeta = {
       runId: runId || `${req.params.projectId}-${now}`,
       issuedAt: now,

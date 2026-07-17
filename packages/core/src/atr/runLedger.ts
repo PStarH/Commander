@@ -18,9 +18,10 @@ import { getGlobalEventSourcingEngine } from '../runtime/eventSourcingEngine';
  *
  * Why a separate ledger and not just "use CompensationRegistry"?
  *   CompensationRegistry is in-memory and per-AgentRuntime. The ledger is
- *   crash-safe (SQLite) and is the source of truth for "what side effects
- *   have we already taken on behalf of this runId?" — across process
- *   restarts, across worker migrations, across tenant boundaries.
+ *   crash-safe (SQLite) and is the **worker settlement** source of truth for
+ *   "what side effects have we already taken on behalf of this runId?" —
+ *   across process restarts / worker migrations. It is **not** the durable
+ *   `/v1` run authority (that remains kernel Postgres).
  *
  * The ledger's compensateAll() iterates the persisted action list in
  * REVERSE execution order, calling the registered compensation handler for
