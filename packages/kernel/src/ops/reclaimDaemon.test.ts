@@ -29,6 +29,17 @@ describe('reclaim daemon', () => {
     assert.equal((await repository.getStep('step-a', 'tenant-a'))?.state, 'RETRY_WAIT');
   });
 
+  it('is unhealthy before the first successful tick', async () => {
+    const repository = new InMemoryKernelRepository();
+    const daemon = new ReclaimDaemon(repository, { batchSize: 10, pollIntervalMs: 60_000 });
+    assert.equal(daemon.isHealthy(), false);
+    daemon.start();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(daemon.isHealthy(), true);
+    await daemon.stop();
+    assert.equal(daemon.isHealthy(), false);
+  });
+
   it('does not overlap ticks', async () => {
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => { release = resolve; });

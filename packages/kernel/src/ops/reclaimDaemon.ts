@@ -33,6 +33,8 @@ export class ReclaimDaemon {
   };
   private timer?: ReturnType<typeof setInterval>;
   private inFlight?: Promise<void>;
+  private started = false;
+  private lastOkAt = 0;
 
   constructor(
     private readonly repository: KernelRepository,
@@ -43,6 +45,7 @@ export class ReclaimDaemon {
 
   start(): void {
     if (!this.config.enabled || this.timer) return;
+    this.started = true;
     this.timer = setInterval(() => { void this.tick().catch(() => undefined); }, this.config.pollIntervalMs);
     void this.tick().catch(() => undefined);
   }
@@ -50,7 +53,14 @@ export class ReclaimDaemon {
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
+    this.started = false;
     await this.inFlight;
+  }
+
+  /** True when a tick succeeded recently. */
+  isHealthy(now = Date.now()): boolean {
+    if (!this.started || this.lastOkAt <= 0) return false;
+    return now - this.lastOkAt <= this.config.pollIntervalMs * 3;
   }
 
   async tick(now = new Date()): Promise<ReclaimStats> {
@@ -80,6 +90,7 @@ export class ReclaimDaemon {
         }
       }
       this.stats.compensationRequested += compensatingRuns.size;
+      this.lastOkAt = Date.now();
     } catch (error) {
       this.stats.errors++;
       throw error;

@@ -27,6 +27,17 @@ describe('timer wakeup durability', () => {
     assert.equal(worker.getStats().errors, 1);
   });
 
+  it('is unhealthy before the first successful tick', async () => {
+    const repository = new InMemoryKernelRepository();
+    const worker = new TimerWakeupWorker(repository, { pollIntervalMs: 60_000 });
+    assert.equal(worker.isHealthy(), false);
+    worker.start();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(worker.isHealthy(), true);
+    await worker.stop();
+    assert.equal(worker.isHealthy(), false);
+  });
+
   it('awaits the original slow tick even after another interval elapses', async () => {
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => { release = resolve; });

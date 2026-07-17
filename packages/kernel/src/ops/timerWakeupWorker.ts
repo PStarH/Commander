@@ -40,8 +40,10 @@ export class TimerWakeupWorker {
   private readonly repo: KernelRepository;
   private readonly config: TimerWakeupWorkerConfig;
   private timer: ReturnType<typeof setInterval> | null = null;
-  private running = false;
+  private started = false;
+  private ticking = false;
   private inFlight?: Promise<void>;
+  private lastOkAt = 0;
   private stats = {
     timersFired: 0,
     interactionsExpired: 0,
@@ -59,11 +61,15 @@ export class TimerWakeupWorker {
    */
   start(): void {
     if (this.timer || !this.config.enabled) return;
+    this.started = true;
     this.timer = setInterval(() => {
       if (!this.inFlight) {
         this.inFlight = this.tick().finally(() => { this.inFlight = undefined; });
       }
     }, this.config.pollIntervalMs);
+    if (!this.inFlight) {
+      this.inFlight = this.tick().finally(() => { this.inFlight = undefined; });
+    }
   }
 
   /**
@@ -74,15 +80,22 @@ export class TimerWakeupWorker {
       clearInterval(this.timer);
       this.timer = null;
     }
+    this.started = false;
     await this.inFlight;
+  }
+
+  /** True when a tick succeeded recently. */
+  isHealthy(now = Date.now()): boolean {
+    if (!this.started || this.lastOkAt <= 0) return false;
+    return now - this.lastOkAt <= this.config.pollIntervalMs * 3;
   }
 
   /**
    * Execute one polling cycle. Useful for testing.
    */
   async tick(): Promise<void> {
-    if (this.running) return;
-    this.running = true;
+    if (this.ticking) return;
+    this.ticking = true;
     try {
       this.stats.cycles++;
 
@@ -111,11 +124,12 @@ export class TimerWakeupWorker {
 
       // 3. Sweep outbox DLQ (opportunistic — also handles exponential backoff)
       await this.repo.sweepOutboxDlq(new Date(), this.config.batchSize);
+      this.lastOkAt = Date.now();
     } catch (err) {
       this.stats.errors++;
       // Swallow — the worker must not crash on errors
     } finally {
-      this.running = false;
+      this.ticking = false;
     }
   }
 
