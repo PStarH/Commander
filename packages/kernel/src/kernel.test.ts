@@ -229,4 +229,148 @@ describe('execution kernel semantics', () => {
     assert.equal(await kernel.heartbeatStep(claimed!.id, 'tenant-b', claimed!.lease!, 60_000), null);
     assert.equal((await kernel.getStep('step-a', 'tenant-a'))?.state, 'RUNNING');
   });
+
+  it('L3-08a reconcileEffect advances COMPLETION_UNKNOWN only (CAS)', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(createRun(), 'gateway');
+    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
+    assert.ok(claimed?.lease);
+    const admitted = await kernel.admitEffect({
+      id: 'effect-recon',
+      runId: 'run-1',
+      stepId: claimed!.id,
+      tenantId: 'tenant-a',
+      type: 'ticket.create',
+      idempotencyKey: 'idem-recon',
+      policyDecisionId: 'decision-1',
+      request: { title: 't' },
+      lease: claimed!.lease!,
+      actor: 'worker-1',
+    });
+    assert.equal(admitted.admitted, true);
+    assert.equal(
+      (await kernel.markEffectCompletionUnknown({
+        effectId: 'effect-recon',
+        tenantId: 'tenant-a',
+        reason: 'timeout',
+        actor: 'worker-1',
+      }))?.state,
+      'COMPLETION_UNKNOWN',
+    );
+    assert.equal(
+      await kernel.reconcileEffect({
+        effectId: 'effect-recon',
+        tenantId: 'tenant-b',
+        state: 'COMPLETED',
+        response: { ok: true },
+        actor: 'reconciler',
+      }),
+      null,
+      'cross-tenant reconcile must fail',
+    );
+    assert.equal(
+      (await kernel.reconcileEffect({
+        effectId: 'effect-recon',
+        tenantId: 'tenant-a',
+        state: 'COMPLETED',
+        response: { ticketId: 'T-1' },
+        actor: 'reconciler',
+      }))?.state,
+      'COMPLETED',
+    );
+    assert.equal(
+      await kernel.reconcileEffect({
+        effectId: 'effect-recon',
+        tenantId: 'tenant-a',
+        state: 'FAILED',
+        response: { retry: true },
+        actor: 'reconciler',
+      }),
+      null,
+      'second reconcile must be rejected (no longer UNKNOWN)',
+    );
+  });
+
+  it('parks ADMITTED effects as COMPLETION_UNKNOWN when failStep ends the step', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(createRun(), 'gateway');
+    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
+    assert.ok(claimed?.lease);
+    assert.equal(
+      (
+        await kernel.admitEffect({
+          id: 'effect-orphan',
+          runId: 'run-1',
+          stepId: claimed!.id,
+          tenantId: 'tenant-a',
+          type: 'http.write',
+          idempotencyKey: 'orphan-key',
+          policyDecisionId: 'decision-1',
+          request: { target: 'x' },
+          lease: claimed!.lease!,
+          actor: 'worker-1',
+        })
+      ).admitted,
+      true,
+    );
+    const failed = await kernel.failStep({
+      stepId: claimed!.id,
+      tenantId: 'tenant-a',
+      lease: claimed!.lease!,
+      expectedVersion: claimed!.version,
+      error: { code: 'WORKER_CRASH', message: 'died after admit', retryable: false },
+      actor: 'worker-1',
+    });
+    assert.equal(failed?.state, 'FAILED');
+    assert.equal((await kernel.getEffect('effect-orphan', 'tenant-a'))?.state, 'COMPLETION_UNKNOWN');
+  });
+
+  it('rejects createInteraction when step is not bound to the given tenant/run', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(createRun(), 'gateway');
+    await assert.rejects(
+      () =>
+        kernel.createInteraction(
+          { runId: 'run-1', stepId: 'step-a', tenantId: 'tenant-b', prompt: 'cross-tenant?' },
+          'attacker',
+        ),
+      (err: unknown) => err instanceof Error && (err as { code?: string }).code === 'STEP_NOT_FOUND',
+    );
+    await assert.rejects(
+      () =>
+        kernel.createInteraction(
+          { runId: 'run-missing', stepId: 'step-a', tenantId: 'tenant-a', prompt: 'wrong run?' },
+          'attacker',
+        ),
+      (err: unknown) => err instanceof Error && (err as { code?: string }).code === 'STEP_NOT_FOUND',
+    );
+  });
+
+  it('parks ADMITTED effects as COMPLETION_UNKNOWN when cancelRun ends open steps', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(createRun(), 'gateway');
+    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
+    assert.ok(claimed?.lease);
+    assert.equal(
+      (
+        await kernel.admitEffect({
+          id: 'effect-cancel-orphan',
+          runId: 'run-1',
+          stepId: claimed!.id,
+          tenantId: 'tenant-a',
+          type: 'http.write',
+          idempotencyKey: 'cancel-orphan-key',
+          policyDecisionId: 'decision-1',
+          request: { target: 'z' },
+          lease: claimed!.lease!,
+          actor: 'worker-1',
+        })
+      ).admitted,
+      true,
+    );
+    const cancelled = await kernel.cancelRun('run-1', 'tenant-a', 'control-plane');
+    assert.equal(cancelled?.state, 'CANCELLED');
+    assert.equal((await kernel.getStep('step-a', 'tenant-a'))?.state, 'CANCELLED');
+    assert.equal((await kernel.getEffect('effect-cancel-orphan', 'tenant-a'))?.state, 'COMPLETION_UNKNOWN');
+  });
 });

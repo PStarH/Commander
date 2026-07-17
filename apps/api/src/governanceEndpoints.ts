@@ -4,9 +4,8 @@
  */
 
 import express, { Request, Response, Router } from 'express';
-import {
-  CheckpointManager,
-  RiskScoreCalculator,
+import { CheckpointManager, RiskScoreCalculator } from './governanceCheckpoint';
+import type {
   GovernanceCheckpoint,
   CheckpointStats,
   RiskFactor,
@@ -45,6 +44,24 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
       return null;
     }
     return principalId;
+  }
+
+  /** GOV-3 inbox: list/detail scoped to authenticated principal. */
+  function resolvePrincipalForInbox(req: Request, res: Response): string | null {
+    const principalId = req.user?.id ?? req.apiKeyId;
+    if (!principalId) {
+      res.status(401).json({ error: 'Authentication required.' });
+      return null;
+    }
+    return principalId;
+  }
+
+  function canViewCheckpoint(checkpoint: GovernanceCheckpoint, principalId: string): boolean {
+    return (
+      checkpoint.requiredApprovals.includes(principalId) ||
+      checkpoint.context.agentId === principalId ||
+      checkpoint.currentApprovals.some((a) => a.reviewerId === principalId)
+    );
   }
 
   /**
@@ -117,9 +134,15 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
    * Get checkpoint details
    */
   router.get('/checkpoints/:id', (req: Request, res: Response) => {
+    const principal = resolvePrincipalForInbox(req, res);
+    if (!principal) return;
+
     const checkpoint = checkpointManager.get(String(req.params.id));
     if (!checkpoint) {
       return res.status(404).json({ error: 'Checkpoint not found' });
+    }
+    if (!canViewCheckpoint(checkpoint, principal)) {
+      return res.status(403).json({ error: 'Not authorized to view this checkpoint.' });
     }
     res.json(checkpoint);
   });
@@ -129,16 +152,21 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
    * List checkpoints with filters
    */
   router.get('/checkpoints', (req: Request, res: Response) => {
+    const principal = resolvePrincipalForInbox(req, res);
+    if (!principal) return;
+
     const { missionId, approverId, status } = req.query;
 
-    let checkpoints: GovernanceCheckpoint[];
+    if (approverId !== undefined && String(approverId) !== principal) {
+      return res.status(403).json({
+        error: 'Cannot list pending approvals for a principal other than the authenticated identity.',
+      });
+    }
 
-    if (approverId) {
-      checkpoints = checkpointManager.getPendingForApprover(approverId as string);
-    } else if (missionId) {
-      checkpoints = checkpointManager.getPendingByMission(missionId as string);
-    } else {
-      checkpoints = checkpointManager.getAll();
+    // Never expose getAll / cross-mission pending — inbox is principal-scoped (GOV-3).
+    let checkpoints = checkpointManager.getPendingForApprover(principal);
+    if (missionId) {
+      checkpoints = checkpoints.filter((c) => c.missionId === String(missionId));
     }
 
     if (status) {
@@ -160,8 +188,20 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
 
     try {
       const existing = checkpointManager.get(String(req.params.id));
-      if (existing && existing.context.agentId === approver) {
+      if (!existing) {
+        return res.status(404).json({ error: 'Checkpoint not found' });
+      }
+      if (existing.context.agentId === approver) {
         return res.status(403).json({ error: 'You cannot approve your own checkpoint.' });
+      }
+      // GOV-4: admin role is not enough — must be listed in requiredApprovals.
+      if (
+        existing.requiredApprovals.length > 0 &&
+        !existing.requiredApprovals.includes(approver)
+      ) {
+        return res.status(403).json({
+          error: 'Approver is not listed in requiredApprovals for this checkpoint.',
+        });
       }
       const checkpoint = checkpointManager.approve(
         String(req.params.id),
@@ -190,6 +230,19 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
     }
 
     try {
+      const existing = checkpointManager.get(String(req.params.id));
+      if (!existing) {
+        return res.status(404).json({ error: 'Checkpoint not found' });
+      }
+      // GOV-4: same binding as approve — admin role alone is not enough.
+      if (
+        existing.requiredApprovals.length > 0 &&
+        !existing.requiredApprovals.includes(approver)
+      ) {
+        return res.status(403).json({
+          error: 'Rejecter is not listed in requiredApprovals for this checkpoint.',
+        });
+      }
       const checkpoint = checkpointManager.reject(String(req.params.id), approver, reason);
       res.json(checkpoint);
     } catch (error) {
@@ -202,6 +255,10 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
    * Add evidence to a checkpoint
    */
   router.post('/checkpoints/:id/evidence', (req: Request, res: Response) => {
+    // GOV-3/GOV-4: evidence mutation requires an authenticated principal.
+    const principal = resolvePrincipalForInbox(req, res);
+    if (!principal) return;
+
     const { type, timestamp, content, source } = req.body;
 
     if (!type || !content || !source) {
@@ -211,6 +268,13 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
     }
 
     try {
+      const existing = checkpointManager.get(String(req.params.id));
+      if (!existing) {
+        return res.status(404).json({ error: 'Checkpoint not found' });
+      }
+      if (!canViewCheckpoint(existing, principal)) {
+        return res.status(403).json({ error: 'Not authorized to add evidence to this checkpoint.' });
+      }
       const checkpoint = checkpointManager.addEvidence(String(req.params.id), {
         type,
         timestamp: timestamp || new Date().toISOString(),
@@ -281,13 +345,17 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
    * Get all pending approvals for a reviewer
    */
   router.get('/pending-approvals', (req: Request, res: Response) => {
-    const { reviewerId } = req.query;
+    const principal = resolvePrincipalForInbox(req, res);
+    if (!principal) return;
 
-    if (!reviewerId) {
-      return res.status(400).json({ error: 'Missing reviewerId' });
+    const { reviewerId } = req.query;
+    if (reviewerId !== undefined && String(reviewerId) !== principal) {
+      return res.status(403).json({
+        error: 'Cannot list pending approvals for a principal other than the authenticated identity.',
+      });
     }
 
-    const pending = checkpointManager.getPendingForApprover(reviewerId as string);
+    const pending = checkpointManager.getPendingForApprover(principal);
     res.json({ pending, count: pending.length });
   });
 
@@ -297,4 +365,4 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
 /**
  * Export types for external use
  */
-export { GovernanceCheckpoint, CheckpointStats, RiskFactor };
+export type { GovernanceCheckpoint, CheckpointStats, RiskFactor };

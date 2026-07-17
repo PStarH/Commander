@@ -170,13 +170,7 @@ export class InMemoryKernelRepository implements KernelRepository {
       step.scheduledAt = retryable ? at.toISOString() : step.scheduledAt;
       step.error = { code: 'LEASE_EXPIRED', message: 'Worker lease expired before terminal transition', retryable };
       this.event('step', step.id, step.version, retryable ? 'step.lease_expired_requeued' : 'step.lease_expired_failed', step.tenantId, step.runId, step.id, 'kernel.recovery', { attempt: step.attempt });
-      for (const effect of this.effects.values()) {
-        if (effect.stepId === step.id && effect.tenantId === step.tenantId && effect.state === 'ADMITTED') {
-          effect.state = 'COMPLETION_UNKNOWN';
-          effect.response = { completionUnknownReason: 'lease_expired' };
-          this.event('effect', effect.id, 2, 'effect.completion_unknown', effect.tenantId, effect.runId, effect.stepId, 'kernel.recovery', { reason: 'lease_expired' });
-        }
-      }
+      this.parkOrphanAdmittedEffects(step, 'lease_expired', 'kernel.recovery');
       if (!retryable) {
         const completedEffects = [...this.effects.values()].filter(
           (effect) => effect.runId === step.runId && effect.tenantId === step.tenantId && effect.state === 'COMPLETED',
@@ -202,7 +196,9 @@ export class InMemoryKernelRepository implements KernelRepository {
     const step = this.steps.get(request.stepId); if (!step || step.tenantId !== request.tenantId || step.state !== 'RUNNING' || step.version !== request.expectedVersion || !live(step.lease, request.lease)) return null;
     assertStepTransition(step.state, 'SUCCEEDED');
     step.state = 'SUCCEEDED'; step.output = request.output; step.version++; step.lease = undefined; step.updatedAt = now();
-    this.event('step', step.id, step.version, 'step.succeeded', step.tenantId, step.runId, step.id, request.actor, {}); this.finish(step.runId, request.actor); return clone(step);
+    this.event('step', step.id, step.version, 'step.succeeded', step.tenantId, step.runId, step.id, request.actor, {});
+    this.parkOrphanAdmittedEffects(step, 'step_succeeded', request.actor);
+    this.finish(step.runId, request.actor); return clone(step);
   }
   async failStep(request: FailStepRequest): Promise<KernelStep | null> {
     const step = this.steps.get(request.stepId); if (!step || step.tenantId !== request.tenantId || step.state !== 'RUNNING' || step.version !== request.expectedVersion || !live(step.lease, request.lease)) return null;
@@ -210,7 +206,9 @@ export class InMemoryKernelRepository implements KernelRepository {
     const nextState = retry ? 'RETRY_WAIT' : 'FAILED';
     assertStepTransition(step.state, nextState);
     step.state = nextState; step.error = request.error; step.scheduledAt = request.retryAt?.toISOString() ?? step.scheduledAt; step.version++; step.lease = undefined; step.updatedAt = now();
-    this.event('step', step.id, step.version, retry ? 'step.retry_scheduled' : 'step.failed', step.tenantId, step.runId, step.id, request.actor, { error: request.error }); if (!retry) this.finish(step.runId, request.actor); return clone(step);
+    this.event('step', step.id, step.version, retry ? 'step.retry_scheduled' : 'step.failed', step.tenantId, step.runId, step.id, request.actor, { error: request.error });
+    this.parkOrphanAdmittedEffects(step, 'step_failed', request.actor);
+    if (!retry) this.finish(step.runId, request.actor); return clone(step);
   }
   async wakeRetryStep(stepId: string, tenantId: string, actor: string): Promise<KernelStep | null> {
     const step = this.steps.get(stepId); if (!step || step.tenantId !== tenantId || step.state !== 'RETRY_WAIT') return null;
@@ -219,9 +217,12 @@ export class InMemoryKernelRepository implements KernelRepository {
   }
   async failStepByTimer(stepId: string, tenantId: string, error: { code: string; message: string; retryable: boolean; details?: Record<string, unknown> }, actor: string): Promise<KernelStep | null> {
     const step = this.steps.get(stepId); if (!step || step.tenantId !== tenantId || ['SUCCEEDED', 'FAILED', 'CANCELLED', 'SKIPPED'].includes(step.state)) return null;
+    const wasRunning = step.state === 'RUNNING';
     assertStepTransition(step.state, 'FAILED');
     step.state = 'FAILED'; step.error = error; step.version++; step.lease = undefined; step.updatedAt = now();
-    this.event('step', step.id, step.version, 'step.failed', step.tenantId, step.runId, step.id, actor, { error }); this.finish(step.runId, actor); return clone(step);
+    this.event('step', step.id, step.version, 'step.failed', step.tenantId, step.runId, step.id, actor, { error });
+    if (wasRunning) this.parkOrphanAdmittedEffects(step, 'step_failed', actor);
+    this.finish(step.runId, actor); return clone(step);
   }
   async pauseRun(runId: string, tenantId: string, actor: string): Promise<KernelRun | null> {
     const run = this.runs.get(runId); if (!run || run.tenantId !== tenantId || !['PENDING', 'RUNNING'].includes(run.state)) return null;
@@ -262,6 +263,7 @@ export class InMemoryKernelRepository implements KernelRepository {
       if (step.runId === runId && step.tenantId === tenantId && !['SUCCEEDED', 'FAILED', 'CANCELLED', 'SKIPPED'].includes(step.state)) {
         const previousState = step.state;
         step.state = 'CANCELLED'; step.version++; step.lease = undefined; step.updatedAt = run.updatedAt;
+        this.parkOrphanAdmittedEffects(step, 'run_cancelled', actor);
         this.event('step', step.id, step.version, 'step.cancelled', step.tenantId, step.runId, step.id, actor, { previousState });
       }
     }
@@ -360,6 +362,19 @@ export class InMemoryKernelRepository implements KernelRepository {
     effect.response = { completionUnknownReason: request.reason };
     this.event('effect', effect.id, 2, 'effect.completion_unknown', effect.tenantId, effect.runId, effect.stepId, request.actor, { reason: request.reason });
     return clone(effect);
+  }
+  private parkOrphanAdmittedEffects(
+    step: Pick<KernelStep, 'id' | 'tenantId' | 'runId'>,
+    reason: string,
+    actor: string,
+  ): void {
+    for (const effect of this.effects.values()) {
+      if (effect.stepId === step.id && effect.tenantId === step.tenantId && effect.state === 'ADMITTED') {
+        effect.state = 'COMPLETION_UNKNOWN';
+        effect.response = { completionUnknownReason: reason };
+        this.event('effect', effect.id, 2, 'effect.completion_unknown', effect.tenantId, effect.runId, effect.stepId, actor, { reason });
+      }
+    }
   }
   async getEffect(effectId: string, tenantId: string): Promise<KernelEffect | null> {
     const effect = this.effects.get(effectId);
@@ -519,6 +534,13 @@ export class InMemoryKernelRepository implements KernelRepository {
   // ── Interactions ──
   private readonly interactions = new Map<string, KernelInteraction>();
   async createInteraction(request: CreateInteractionRequest, actor: string): Promise<KernelInteraction> {
+    const step = this.steps.get(request.stepId);
+    if (!step || step.tenantId !== request.tenantId || step.runId !== request.runId) {
+      throw new KernelInvariantError(
+        'STEP_NOT_FOUND',
+        `Step ${request.stepId} not found for run ${request.runId} in tenant ${request.tenantId}`,
+      );
+    }
     const interaction: KernelInteraction = {
       id: `itr_${randomUUID()}`, runId: request.runId, stepId: request.stepId, tenantId: request.tenantId,
       status: 'pending', prompt: request.prompt, createdAt: now(),
