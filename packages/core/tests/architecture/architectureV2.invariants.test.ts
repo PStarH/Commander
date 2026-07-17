@@ -99,6 +99,18 @@ describe('Architecture V2 invariants', () => {
     );
     assert.match(read('.github/workflows/ci.yml'), /run: pnpm arch:guard/);
     assert.match(read('.github/workflows/ci.yml'), /run: pnpm arch:guard:test/);
+    assert.match(read('.github/workflows/ci.yml'), /run: pnpm contract:check/);
+  });
+
+  it('contract snapshot baseline exists and matches current surface', () => {
+    const baselinePath = join(ROOT, 'packages/contracts/snapshots/contract-snapshot.baseline.json');
+    assert.ok(existsSync(baselinePath), 'contract snapshot baseline must be committed');
+    const baseline = JSON.parse(read('packages/contracts/snapshots/contract-snapshot.baseline.json')) as {
+      version: string;
+      resources: string[];
+    };
+    assert.equal(baseline.version, 'v2');
+    assert.ok(baseline.resources.length >= 15);
   });
 
   it('core reuses shared control-plane contract types', () => {

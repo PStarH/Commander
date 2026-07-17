@@ -260,6 +260,9 @@ jobs:
       - name: Architecture constitution guard (repository)
         run: pnpm arch:guard
 
+      - name: Contract snapshot freeze check
+        run: pnpm contract:check
+
       - name: Architecture V2 package boundary gate
         run: pnpm arch:gate
 
