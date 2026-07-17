@@ -3,6 +3,9 @@
 export interface WorkloadIdentity {
   workloadId: string;
   tenantId: string;
+  /** Present for step-scoped identities issued at kernel claim time. */
+  runId?: string;
+  stepId?: string;
   userId?: string;
   scopes: string[];
   issuedAt: string;

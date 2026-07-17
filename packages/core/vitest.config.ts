@@ -281,6 +281,8 @@ export default defineConfig({
       'tests/architecture/gapFixes.test.ts',
       // --- V2 architecture integrity tests ---
       'tests/architecture/v2-event-sourcing-integrity.test.ts',
+      // L3-07 step-scoped ControlPlane workload identity
+      'tests/controlPlane/workloadIdentity.test.ts',
 
       // --- memory (audit MED item 1 — Phase A route-out) ---
       'tests/threeLayerRouting.test.ts',
