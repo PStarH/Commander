@@ -1,6 +1,6 @@
 # WS2：EffectBroker 唯一外部副作用出口与 Capability 统一
 
-**状态：PARTIAL（§5/§8 已闭环；§8 claim 过滤已对称；§1 LLM：call-time mint + provider wrap + 默认允许 `llm.*`（policy + allowlist seed）+ 工具类仍 deny-default；遗留：API/Gateway 路径 LLM、多 isolate invoke registry）**
+**状态：PARTIAL（§3–§9 worker broker 主路径已闭环；§1 LLM worker：call-time mint + wrap + 默认允许 `llm.*`；多 isolate/租户 affinity → `spec/ws2-llm-multi-isolate.md` C-α；遗留：API/Gateway LLM）**
 **范围：Phase 1 Spec → Phase 2 Build → Phase 3 Review & Audit**
 
 > 2026-07-16 复审历史：Phase 3 曾发现 3 项 High 并驳回 ACCEPTED。同日修复：
