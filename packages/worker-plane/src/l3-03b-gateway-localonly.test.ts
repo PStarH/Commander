@@ -122,7 +122,7 @@ describe('L3-03b forged localOnly bypass closed (production)', () => {
         return { effectId: 'e1', replayed: false, response: { via: 'broker' } };
       },
     };
-    await withEnv({ NODE_ENV: 'production' }, async () => {
+    await withEnv({ NODE_ENV: 'test', COMMANDER_REQUIRE_EFFECT_BROKER: '1' }, async () => {
       const executor = new ToolStepExecutor(
         {
           get: () => ({
@@ -162,7 +162,7 @@ describe('L3-03b forged localOnly bypass closed (production)', () => {
         return { effectId: 'e2', replayed: false, response: { blocked: true } };
       },
     };
-    await withEnv({ NODE_ENV: 'production' }, async () => {
+    await withEnv({ NODE_ENV: 'test', COMMANDER_REQUIRE_EFFECT_BROKER: '1' }, async () => {
       const executor = new ToolStepExecutor(
         {
           get: (name) =>
@@ -198,7 +198,7 @@ describe('L3-03b forged localOnly bypass closed (production)', () => {
   it('3. Catalog-authorized echo + localOnly uses registry in production', async () => {
     let brokerInvoked = false;
     const catalog = createDefaultWorkerToolEffectCatalog();
-    await withEnv({ NODE_ENV: 'production' }, async () => {
+    await withEnv({ NODE_ENV: 'test', COMMANDER_REQUIRE_EFFECT_BROKER: '1' }, async () => {
       const executor = new ToolStepExecutor(
         {
           get: (name) =>
@@ -228,7 +228,7 @@ describe('L3-03b forged localOnly bypass closed (production)', () => {
     let registryHit = false;
     let brokerHit = false;
     const catalog = new MapToolEffectCatalog(new Set(), new Set(['memory']));
-    await withEnv({ NODE_ENV: 'production' }, async () => {
+    await withEnv({ NODE_ENV: 'test', COMMANDER_REQUIRE_EFFECT_BROKER: '1' }, async () => {
       const executor = new ConnectorStepExecutor(
         {
           get: () => {
@@ -272,7 +272,7 @@ describe('L3-03b forged localOnly bypass closed (production)', () => {
     let registryHit = false;
     let brokerHit = false;
     const catalog = createDefaultWorkerToolEffectCatalog();
-    await withEnv({ NODE_ENV: 'production' }, async () => {
+    await withEnv({ NODE_ENV: 'test', COMMANDER_REQUIRE_EFFECT_BROKER: '1' }, async () => {
       const executor = new ConnectorStepExecutor(
         {
           get: (name) => {
@@ -359,5 +359,45 @@ describe('L3-03b dev compatibility', () => {
         assert.deepEqual((result as { result: unknown }).result, { echo: 'dev' });
       },
     );
+  });
+
+  it('8. Prod omits catalog ctor arg → DENY_ALL; forged localOnly still uses broker', async () => {
+    let registryHit = false;
+    let brokerHit = false;
+    await withEnv({ NODE_ENV: 'test', COMMANDER_REQUIRE_EFFECT_BROKER: '1' }, async () => {
+      // Catalog arg omitted — ToolStepExecutor must default to DENY_ALL.
+      const executor = new ToolStepExecutor(
+        {
+          get: (name) => {
+            if (name !== 'echo') return null;
+            return {
+              execute: async () => {
+                registryHit = true;
+                return { leaked: true };
+              },
+            };
+          },
+        },
+        {
+          execute: async () => {
+            brokerHit = true;
+            return { effectId: 'eff-deny', replayed: false, response: { gated: true } };
+          },
+        },
+      );
+      const step = createMockStep({
+        input: {
+          toolName: 'echo',
+          args: { message: 'x' },
+          localOnly: true,
+          effectId: 'eff-deny',
+          idempotencyKey: 'idem-deny',
+          capabilityToken: 'tok',
+        },
+      });
+      await executor.execute(step, { signal: ac.signal, worker: createMockWorker() });
+      assert.equal(registryHit, false);
+      assert.equal(brokerHit, true);
+    });
   });
 });

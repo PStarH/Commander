@@ -189,7 +189,7 @@ describe('L3-03a ToolStepExecutor production monopoly', () => {
         return { effectId: 'e1', replayed: false, response: { via: 'broker' } };
       },
     };
-    await withEnv({ NODE_ENV: 'production' }, async () => {
+    await withEnv({ NODE_ENV: 'test', COMMANDER_REQUIRE_EFFECT_BROKER: '1' }, async () => {
       const executor = new ToolStepExecutor(
         { get: () => ({ execute: async () => { handlerInvoked = true; return {}; } }) },
         stubBroker,
@@ -211,7 +211,7 @@ describe('L3-03a ToolStepExecutor production monopoly', () => {
   });
 
   it('3. Prod catalog-authorized localOnly echo may use registry without broker fields', async () => {
-    await withEnv({ NODE_ENV: 'production' }, async () => {
+    await withEnv({ NODE_ENV: 'test', COMMANDER_REQUIRE_EFFECT_BROKER: '1' }, async () => {
       const catalog = new MapToolEffectCatalog(new Set(['echo']), new Set());
       const stubBroker = {
         execute: async () => {
@@ -226,6 +226,7 @@ describe('L3-03a ToolStepExecutor production monopoly', () => {
               : null,
         },
         stubBroker,
+        undefined,
         catalog,
       );
       const step = createMockStep({
@@ -387,7 +388,7 @@ describe('L3-03a ConnectorStepExecutor production monopoly', () => {
         return { effectId: 'c1', replayed: false, response: { rows: [] } };
       },
     };
-    await withEnv({ NODE_ENV: 'production' }, async () => {
+    await withEnv({ NODE_ENV: 'test', COMMANDER_REQUIRE_EFFECT_BROKER: '1' }, async () => {
       const executor = new ConnectorStepExecutor(
         {
           get: () => {
@@ -421,7 +422,7 @@ describe('L3-03a ConnectorStepExecutor production monopoly', () => {
   });
 
   it('7c. Prod catalog-authorized localOnly connector may use registry', async () => {
-    await withEnv({ NODE_ENV: 'production' }, async () => {
+    await withEnv({ NODE_ENV: 'test', COMMANDER_REQUIRE_EFFECT_BROKER: '1' }, async () => {
       const catalog = new MapToolEffectCatalog(new Set(), new Set(['memory']));
       const executor = new ConnectorStepExecutor(
         {
@@ -440,6 +441,7 @@ describe('L3-03a ConnectorStepExecutor production monopoly', () => {
             throw new Error('broker must not run');
           },
         },
+        undefined,
         catalog,
       );
       const step = createMockStep({

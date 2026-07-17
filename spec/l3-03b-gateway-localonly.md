@@ -1,6 +1,6 @@
 # L3-03b：Gateway / localOnly catalog authority
 
-**状态：DONE**
+**状态：DONE（worker catalog ENFORCED；Gateway HTTP catalog sync PARTIAL）**
 **范围：Phase 1 Spec → Phase 2 Build → Phase 3 Review & Audit**
 **分支：** `feat/l3-03b-gateway-localonly`（base `master` @ 869a7a70，L3-03a 已合）
 
@@ -54,7 +54,7 @@
 1. **Forged tool localOnly**：prod + `http.post` + `localOnly: true` + 无 catalog 条目 → broker 路径；handler 未调用
 2. **Catalog-authorized**：prod + `echo` + catalog 含 echo + `localOnly: true` → registry
 3. **Forged connector localOnly**：prod + `postgres` + `localOnly: true` + 无 catalog → broker
-4. **Connector connection gate**：prod + catalog `memory` + `localOnly` + `connection` → broker 或 `LOCALONLY_CONNECTION_FORBIDDEN`
+4. **Connector connection gate**：prod + catalog `memory` + `localOnly` + `connection` → **强制 broker**（无单独 `LOCALONLY_CONNECTION_FORBIDDEN` 错误码；有 broker 字段则走 admit）
 5. **Dev 不变**：非 prod gate + `localOnly: true` 无 catalog 仍可 registry（L3-03a 兼容）
 6. **Deny-all catalog default**：executor 无 catalog 注入 → prod 等同 `DENY_ALL`
 
