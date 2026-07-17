@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { afterEach, describe, it } from 'node:test';
 import {
-  LLM_INVOKE_REGISTRY,
+  __testLlmInvokeRegistrySize,
   createLlmEffectAuth,
   dispatchLlmEffect,
   hashLlmCallContent,
+  resetLlmInvokeRegistryForTests,
   runWithLlmEffectAuth,
   wrapProviderWithEffectBroker,
 } from './llmBrokerBridge.js';
@@ -20,6 +21,8 @@ import {
   type AuditSink,
 } from '@commander/effect-broker';
 
+const DEFAULT_WORKER_ID = 'w1';
+
 function mockProvider(name = 'mock'): LLMProvider {
   return {
     name,
@@ -34,7 +37,25 @@ function mockProvider(name = 'mock'): LLMProvider {
   };
 }
 
-function makeBroker(): { broker: EffectBroker; issuer: CapabilityTokenIssuer } {
+function dispatchFromExecutionContext(input: Parameters<EffectExecutor['execute']>[0]) {
+  const ctx = input.executionContext;
+  if (!ctx?.tenantId || !ctx.workerId) {
+    throw new Error('test executor: missing executionContext tenantId/workerId');
+  }
+  return dispatchLlmEffect({
+    type: input.type,
+    request: input.request,
+    signal: input.signal,
+    tenantId: ctx.tenantId,
+    workerId: ctx.workerId,
+  });
+}
+
+function makeBroker(options?: {
+  localWorkerId?: string;
+  executor?: EffectExecutor;
+}): { broker: EffectBroker; issuer: CapabilityTokenIssuer } {
+  const localWorkerId = options?.localWorkerId ?? DEFAULT_WORKER_ID;
   const issuer = CapabilityTokenIssuer.generate({
     issuer: 'commander-worker',
     audience: 'commander.effect-broker',
@@ -60,18 +81,22 @@ function makeBroker(): { broker: EffectBroker; issuer: CapabilityTokenIssuer } {
     }),
     completeEffect: async (_id, _tenant, _lease, response) => ({ ok: true, response }),
   };
-  const executor: EffectExecutor = {
-    execute: async (input) => dispatchLlmEffect(input),
-  };
+  const executor: EffectExecutor =
+    options?.executor ?? { execute: async (input) => dispatchFromExecutionContext(input) };
   const audit: AuditSink = { append: async () => undefined };
   const broker = new EffectBroker(tokens, policy, kernel, executor, audit, {
     audience: 'commander.effect-broker',
     requireRequestBinding: true,
+    localWorkerId,
   });
   return { broker, issuer };
 }
 
 describe('llmBrokerBridge (WS2 §1)', () => {
+  afterEach(() => {
+    resetLlmInvokeRegistryForTests();
+  });
+
   it('mints call-time request-bound tokens and routes through broker', async () => {
     const { broker, issuer } = makeBroker();
     const wrapped = wrapProviderWithEffectBroker(mockProvider('openai'), broker);
@@ -80,7 +105,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
       runId: 'r1',
       stepId: 's1',
       actor: 'worker-1',
-      lease: { workerId: 'w1', token: 'lease', fencingEpoch: 1 },
+      lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
       issuer,
     });
     const response = await runWithLlmEffectAuth(auth, () =>
@@ -90,7 +115,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
       }),
     );
     assert.match(String(response.content), /hi/);
-    assert.equal(LLM_INVOKE_REGISTRY.size, 0);
+    assert.equal(__testLlmInvokeRegistrySize(), 0);
   });
 
   it('fail-closes when LLM auth context is missing', async () => {
@@ -102,6 +127,123 @@ describe('llmBrokerBridge (WS2 §1)', () => {
     );
   });
 
+  it('rejects tenant B dispatch for tenant A registry entry (LLM_TENANT_MISMATCH)', async () => {
+    const { broker, issuer } = makeBroker({
+      executor: {
+        execute: async (input) =>
+          dispatchLlmEffect({
+            type: input.type,
+            request: input.request,
+            signal: input.signal,
+            tenantId: 'tenant-b',
+            workerId: input.executionContext!.workerId,
+          }),
+      },
+    });
+    const wrapped = wrapProviderWithEffectBroker(mockProvider('openai'), broker);
+    const auth = createLlmEffectAuth({
+      tenantId: 'tenant-a',
+      runId: 'r1',
+      stepId: 's1',
+      actor: 'worker-1',
+      lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
+      issuer,
+    });
+    await assert.rejects(
+      () =>
+        runWithLlmEffectAuth(auth, () =>
+          wrapped.call({ model: 'gpt', messages: [{ role: 'user', content: 'x' }] }),
+        ),
+      /LLM_TENANT_MISMATCH/,
+    );
+    assert.equal(__testLlmInvokeRegistrySize(), 0);
+  });
+
+  it('rejects dispatch when workerId does not match registry entry', async () => {
+    const { broker, issuer } = makeBroker({
+      executor: {
+        execute: async (input) =>
+          dispatchLlmEffect({
+            type: input.type,
+            request: input.request,
+            signal: input.signal,
+            tenantId: input.executionContext!.tenantId,
+            workerId: 'wrong-worker',
+          }),
+      },
+    });
+    const wrapped = wrapProviderWithEffectBroker(mockProvider('openai'), broker);
+    const auth = createLlmEffectAuth({
+      tenantId: 't1',
+      runId: 'r1',
+      stepId: 's1',
+      actor: 'worker-1',
+      lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
+      issuer,
+    });
+    await assert.rejects(
+      () =>
+        runWithLlmEffectAuth(auth, () =>
+          wrapped.call({ model: 'gpt', messages: [{ role: 'user', content: 'x' }] }),
+        ),
+      /LLM_WORKER_MISMATCH/,
+    );
+    assert.equal(__testLlmInvokeRegistrySize(), 0);
+  });
+
+  it('one-shot second dispatch yields LLM_INVOKE_MISS', async () => {
+    let capturedEffectId: string | undefined;
+    let capturedHash: string | undefined;
+    const { broker, issuer } = makeBroker({
+      executor: {
+        execute: async (input) => {
+          capturedEffectId = input.request.effectId as string;
+          capturedHash = input.request.contentHash as string;
+          return dispatchFromExecutionContext(input);
+        },
+      },
+    });
+    const wrapped = wrapProviderWithEffectBroker(mockProvider('openai'), broker);
+    const auth = createLlmEffectAuth({
+      tenantId: 't1',
+      runId: 'r1',
+      stepId: 's1',
+      actor: 'worker-1',
+      lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
+      issuer,
+    });
+    await runWithLlmEffectAuth(auth, () =>
+      wrapped.call({ model: 'gpt', messages: [{ role: 'user', content: 'once' }] }),
+    );
+    assert.ok(capturedEffectId);
+    assert.ok(capturedHash);
+    await assert.rejects(
+      () =>
+        dispatchLlmEffect({
+          type: 'llm.openai',
+          request: { effectId: capturedEffectId!, contentHash: capturedHash! },
+          tenantId: 't1',
+          workerId: DEFAULT_WORKER_ID,
+        }),
+      /LLM_INVOKE_MISS/,
+    );
+  });
+
+  it('fail-closes wrap construction when COMMANDER_LLM_INVOKE_MODE=disabled', () => {
+    const prev = process.env.COMMANDER_LLM_INVOKE_MODE;
+    process.env.COMMANDER_LLM_INVOKE_MODE = 'disabled';
+    try {
+      const { broker } = makeBroker();
+      assert.throws(
+        () => wrapProviderWithEffectBroker(mockProvider(), broker),
+        /LLM_INVOKE_MODE_DISABLED/,
+      );
+    } finally {
+      if (prev === undefined) delete process.env.COMMANDER_LLM_INVOKE_MODE;
+      else process.env.COMMANDER_LLM_INVOKE_MODE = prev;
+    }
+  });
+
   it('rejects when mint binds a different request hash (request binding)', async () => {
     const { broker, issuer } = makeBroker();
     const wrapped = wrapProviderWithEffectBroker(mockProvider('openai'), broker);
@@ -110,7 +252,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
       runId: 'r1',
       stepId: 's1',
       actor: 'worker-1',
-      lease: { workerId: 'w1', token: 'lease', fencingEpoch: 1 },
+      lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
       issuer,
     });
     // Sabotage: mint against a different body than the broker receives.
@@ -181,9 +323,13 @@ describe('llmBrokerBridge (WS2 §1)', () => {
       tokens,
       policy,
       kernel,
-      { execute: async (input) => dispatchLlmEffect(input) },
+      { execute: async (input) => dispatchFromExecutionContext(input) },
       { append: async () => undefined },
-      { audience: 'commander.effect-broker', requireRequestBinding: true },
+      {
+        audience: 'commander.effect-broker',
+        requireRequestBinding: true,
+        localWorkerId: DEFAULT_WORKER_ID,
+      },
     );
     const wrapped = wrapProviderWithEffectBroker(mockProvider('openai'), broker);
 
@@ -196,7 +342,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
             stepId: 's1',
             actor: 'worker-1',
             // Bug shape: omit workerGeneration → ?? -1 → kernel LEASE_LOST
-            lease: { workerId: 'w1', token: 'lease', fencingEpoch: 1 },
+            lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
             issuer,
           }),
           () => wrapped.call({ model: 'gpt', messages: [{ role: 'user', content: 'x' }] }),
@@ -220,7 +366,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
         stepId: 's1',
         actor: 'worker-1',
         lease: {
-          workerId: 'w1',
+          workerId: DEFAULT_WORKER_ID,
           workerGeneration: claimedGeneration,
           token: 'lease',
           fencingEpoch: 1,
@@ -257,7 +403,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
       runId: 'r1',
       stepId: 's1',
       actor: 'worker-1',
-      lease: { workerId: 'w1', workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
+      lease: { workerId: DEFAULT_WORKER_ID, workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
       issuer,
     });
     const response = await runWithLlmEffectAuth(auth, async () => {
