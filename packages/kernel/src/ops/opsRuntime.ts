@@ -13,6 +13,8 @@ export interface KernelOpsRuntimeDependencies {
   outbox: OutboxComponent;
   outboxIntervalMs: number;
   outboxBatchSize: number;
+  /** Compensation consumer / probe loop — required for /ready to prove drain health. */
+  compensation?: StartStopComponent;
 }
 
 export class KernelOpsRuntime {
@@ -27,6 +29,7 @@ export class KernelOpsRuntime {
     this.running = true;
     this.dependencies.reclaim.start();
     this.dependencies.timer.start();
+    this.dependencies.compensation?.start();
     this.outboxTimer = setInterval(
       () => { void this.publishOutbox(); },
       this.dependencies.outboxIntervalMs,
@@ -42,12 +45,16 @@ export class KernelOpsRuntime {
     await Promise.all([
       this.dependencies.reclaim.stop(),
       this.dependencies.timer.stop(),
+      this.dependencies.compensation?.stop(),
       this.outboxInFlight,
     ]);
   }
 
   runningComponents(): string[] {
-    return this.running ? ['reclaim', 'timer', 'outbox'] : [];
+    if (!this.running) return [];
+    const components = ['reclaim', 'timer', 'outbox'];
+    if (this.dependencies.compensation) components.push('compensation');
+    return components;
   }
 
   private async publishOutbox(): Promise<void> {

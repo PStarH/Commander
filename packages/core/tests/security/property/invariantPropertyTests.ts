@@ -106,8 +106,9 @@ describe('Security invariant property tests', () => {
         ({ writerId, targetPath, aclNamespaces }) => {
           const writerNs = `agents/${writerId}`;
           const inOwnNs = targetPath.startsWith(writerNs);
-          const aclGrants = aclNamespaces.some((ns) => targetPath.startsWith(ns));
-          const aclGrantsTasks = aclNamespaces.includes('tasks') && targetPath.startsWith('tasks/');
+          const effectiveNs = aclNamespaces.filter((ns) => ns.length > 0);
+          const aclGrants = effectiveNs.some((ns) => targetPath.startsWith(ns));
+          const aclGrantsTasks = effectiveNs.includes('tasks') && targetPath.startsWith('tasks/');
           const shouldAllow = inOwnNs || aclGrants || aclGrantsTasks;
 
           try {

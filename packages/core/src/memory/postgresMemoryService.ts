@@ -19,6 +19,7 @@ import type {
   StoreMemoryInput,
 } from './memoryService';
 import { assertForgetTarget, assertLimit, assertMemoryScope } from './memoryService';
+import { assertNamespacedStoreInput } from './namespaceGuard';
 import { memorySchemaStatements, vectorSchemaStatements } from './postgresMemorySchema';
 
 interface QueryResult<T = Record<string, unknown>> {
@@ -141,6 +142,13 @@ export class PostgresMemoryService
 
     const now = this.now();
     const id = input.id ?? randomUUID();
+    const agentId = input.agentId ?? input.scope.agentId;
+    assertNamespacedStoreInput({
+      agentId,
+      id,
+      meta: input.meta,
+      namespaceAcl: input.namespaceAcl,
+    });
     const createdAt = now.toISOString();
     const expiresAt =
       input.expiresAt ??
@@ -172,7 +180,7 @@ export class PostgresMemoryService
         input.scope.tenantId,
         input.scope.projectId,
         input.missionId ?? null,
-        input.agentId ?? input.scope.agentId ?? null,
+        agentId ?? null,
         input.kind,
         input.duration ?? 'EPISODIC',
         input.title,
@@ -207,7 +215,7 @@ export class PostgresMemoryService
         : this.inputToRecord(input, id, createdAt, expiresAt);
       await this.deleteExpiredInTransaction(client, input.scope, now);
       await this.enforceMaximumInTransaction(client, input.scope);
-      await this.audit(client, input.scope, 'store', id, input.agentId, true, record.tags);
+      await this.audit(client, input.scope, 'store', id, agentId, true, record.tags);
       return cloneRecord(record);
     });
   }

@@ -141,6 +141,8 @@ function createCanonicalNamespacedMemoryRouter(memoryStore: MemoryStore): Router
         content: memContent ?? String(value),
         tags: [...(Array.isArray(tags) ? tags : []), namespaceTag(namespace)],
         meta: { namespace, createdBy: { agentId: agentId ?? 'api', role } },
+        // Server-injected after RBAC — never accept namespaceAcl from request body.
+        namespaceAcl: { role, namespaces: [namespace] },
       });
       pushAudit({
         action: 'write',
