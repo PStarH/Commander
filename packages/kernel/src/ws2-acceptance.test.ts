@@ -6,6 +6,9 @@
  * §8 — compensation outbox: claimOutboxByTopic drains the compensation topic.
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import { InMemoryKernelRepository } from './testing/inMemoryRepository.js';
 
@@ -154,5 +157,30 @@ describe('WS2 §8 compensation outbox claiming', () => {
     assert.equal((await kernel.claimOutbox(10, new Date(clock))).length, 0);
     assert.equal((await kernel.sweepOutboxDlq(new Date(clock), 10)).movedToDlq, 1);
     assert.equal((await kernel.claimOutbox(10, new Date(clock))).length, 0);
+  });
+
+  it('Postgres claimOutbox SQL keeps DLQ + max_attempts filters (source ENFORCED)', () => {
+    // InMemory proves semantics; this gate prevents the production SQL from
+    // regressing to pre-filter claim loops without a live Postgres suite.
+    const src = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), 'postgres.ts'),
+      'utf8',
+    );
+    const claimOutbox = src.match(/async claimOutbox\([\s\S]*?^  async markOutboxPublished/m);
+    const claimByTopic = src.match(
+      /async claimOutboxByTopic\([\s\S]*?^  async isCapabilityRevoked/m,
+    );
+    assert.ok(claimOutbox, 'claimOutbox method not found in postgres.ts');
+    assert.ok(claimByTopic, 'claimOutboxByTopic method not found in postgres.ts');
+    for (const [name, body] of [
+      ['claimOutbox', claimOutbox![0]],
+      ['claimOutboxByTopic', claimByTopic![0]],
+    ] as const) {
+      assert.match(
+        body,
+        /moved_to_dlq_at IS NULL AND attempts < max_attempts/,
+        `${name} SQL must filter DLQ and max_attempts`,
+      );
+    }
   });
 });
