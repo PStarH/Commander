@@ -15,6 +15,13 @@ import type { EffectBroker } from '@commander/effect-broker';
 import { canonicalRequestHash, type CapabilityTokenIssuer } from '@commander/effect-broker';
 import type { LLMProvider, LLMRequest, LLMResponse } from '@commander/core';
 
+/**
+ * Process-local one-shot invoke registry for llm.* effects.
+ *
+ * Scope: single worker process only. Not shared across isolates, threads, or
+ * remote workers — each worker hosts its own registry keyed by effectId for
+ * the duration of broker.execute. Multi-isolate dispatch is out of scope.
+ */
 export const LLM_INVOKE_REGISTRY = new Map<string, () => Promise<LLMResponse>>();
 
 export interface LlmEffectAuth {

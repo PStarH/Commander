@@ -33,4 +33,4 @@ export type { EvaluatorStepInput, EvaluatorStepOutput, EvaluationCriteria, Evalu
 export { CompositeStepExecutor } from './compositeStepExecutor.js';
 export { ConnectorStepExecutor } from './connectorStepExecutor.js';
 export type { ConnectorHandler, ConnectorRegistry, ConnectorStepInput, ConnectorStepOutput, ConnectorConnectionConfig } from './connectorStepExecutor.js';
-export { createWorkerPolicyEvaluator } from './bootstrap.js';
+export { createWorkerPolicyEvaluator, withDefaultLlmAllowlist } from './bootstrap.js';

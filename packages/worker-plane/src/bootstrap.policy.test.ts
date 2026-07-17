@@ -1,9 +1,25 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { createWorkerPolicyEvaluator } from './bootstrap.js';
+import { InMemoryKernelRepository } from '../../kernel/src/testing/inMemoryRepository.ts';
+import { createWorkerPolicyEvaluator, withDefaultLlmAllowlist } from './bootstrap.js';
 
 describe('createWorkerPolicyEvaluator', () => {
-  it('defaults to deny-all (admission force)', async () => {
+  it('allows llm.* model calls by default (agent can invoke providers)', async () => {
+    const policy = createWorkerPolicyEvaluator({});
+    const decision = await policy.evaluate({
+      tenantId: 't1',
+      runId: 'r1',
+      stepId: 's1',
+      type: 'llm.openai',
+      request: { effectId: 'e1', contentHash: 'h' },
+      token: {} as never,
+    });
+    assert.equal(decision.effect, 'allow');
+    assert.equal(decision.decisionId, 'llm-model-default');
+    assert.equal(decision.policySnapshotId, 'worker-llm-v1');
+  });
+
+  it('denies non-llm external effects by default (fail-closed)', async () => {
     const policy = createWorkerPolicyEvaluator({});
     const decision = await policy.evaluate({
       tenantId: 't1',
@@ -17,14 +33,13 @@ describe('createWorkerPolicyEvaluator', () => {
     assert.equal(decision.decisionId, 'deny-default');
   });
 
-  it('allows only with explicit COMMANDER_WORKER_EFFECT_POLICY=permit', async () => {
+  it('never enables permit-all via COMMANDER_WORKER_EFFECT_POLICY=permit', async () => {
     // WS2 §4: the permit-all bypass is DELETED. Even with the legacy env var
-    // set, the bootstrap policy must deny. This is the WS2 safety invariant:
-    // no allow-all bootstrap path exists.
+    // set, non-llm tools stay denied.
     const policy = createWorkerPolicyEvaluator({
       COMMANDER_WORKER_EFFECT_POLICY: 'permit',
     } as NodeJS.ProcessEnv);
-    const decision = await policy.evaluate({
+    const tool = await policy.evaluate({
       tenantId: 't1',
       runId: 'r1',
       stepId: 's1',
@@ -32,11 +47,21 @@ describe('createWorkerPolicyEvaluator', () => {
       request: {},
       token: {} as never,
     });
-    assert.equal(decision.effect, 'deny');
-    assert.notEqual(decision.decisionId, 'permit-default');
+    assert.equal(tool.effect, 'deny');
+    assert.notEqual(tool.decisionId, 'permit-default');
+
+    const llm = await policy.evaluate({
+      tenantId: 't1',
+      runId: 'r1',
+      stepId: 's1',
+      type: 'llm.anthropic',
+      request: {},
+      token: {} as never,
+    });
+    assert.equal(llm.effect, 'allow');
   });
 
-  it('denies in production even if NODE_ENV=production without explicit permit', async () => {
+  it('denies http.* in production without an explicit allowlist path', async () => {
     const policy = createWorkerPolicyEvaluator({
       NODE_ENV: 'production',
     } as NodeJS.ProcessEnv);
@@ -49,5 +74,21 @@ describe('createWorkerPolicyEvaluator', () => {
       token: {} as never,
     });
     assert.equal(decision.effect, 'deny');
+  });
+});
+
+describe('withDefaultLlmAllowlist', () => {
+  it('seeds llm.* so model actions pass isActionAllowed', async () => {
+    const kernel = new InMemoryKernelRepository();
+    const port = withDefaultLlmAllowlist(kernel);
+    assert.equal(await port.isActionAllowed!('tenant-a', 'llm.openai'), true);
+    assert.equal(await port.isActionAllowed!('tenant-a', 'crm.write'), false);
+  });
+
+  it('does not overwrite an explicit llm.* deny', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.setAllowlistEntry('tenant-a', 'llm.*', false);
+    const port = withDefaultLlmAllowlist(kernel);
+    assert.equal(await port.isActionAllowed!('tenant-a', 'llm.openai'), false);
   });
 });
