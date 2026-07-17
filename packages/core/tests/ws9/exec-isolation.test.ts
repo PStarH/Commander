@@ -10,7 +10,9 @@
  *   EXEC-5: effect-broker not wired → startup rejects or test asserts called (in-process).
  *
  * Evidence: EXEC-2/3/4/5 are in-process PEPs → evidenceLevel=simulated.
- * EXEC-1 needs real gVisor (runsc) adversarial harness → live when implemented.
+ * EXEC-1: real docker+runsc adversarial harness → evidenceLevel=live only on
+ * real block evidence. Mock/helper tests MUST NOT write live evidence.
+ * Infra failure (no image / docker down) → no artifact (honesty).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -22,22 +24,143 @@ import {
   describeIf,
   writePass,
   writeBreach,
-  writeFail,
   TENANT_A,
   TENANT_B,
 } from './_evidence';
+import {
+  evaluateExec1Isolation,
+  isEscapeBlocked,
+  runExec1LiveFire,
+  type EscapeProbeResult,
+} from './exec1-gvisor-harness';
+
+// ─── EXEC-1 helpers (no runsc required; never write live evidence) ───────
+
+describe('WS9 EXEC-1 helpers (unit, no live evidence)', () => {
+  const secrets = { hostMarker: 'HOSTSECRET-x', canaryB: 'CANARY-B-x' };
+
+  it('isEscapeBlocked: nsenter EPERM → blocked', () => {
+    const d = isEscapeBlocked(
+      'nsenter',
+      {
+        status: 1,
+        stdout: '',
+        stderr: "nsenter: setns(): can't reassociate to namespace 'mnt': Operation not permitted",
+      },
+      secrets,
+    );
+    expect(d.blocked).toBe(true);
+  });
+
+  it('isEscapeBlocked: nsenter printing uid=0 → not blocked (breach)', () => {
+    const d = isEscapeBlocked(
+      'nsenter',
+      { status: 0, stdout: 'uid=0(root) gid=0(root)', stderr: '' },
+      secrets,
+    );
+    expect(d.blocked).toBe(false);
+  });
+
+  it('isEscapeBlocked: host marker absent → blocked; present → breach', () => {
+    expect(
+      isEscapeBlocked(
+        'proc-1-root-host-marker',
+        { status: 1, stdout: '', stderr: 'No such file or directory' },
+        secrets,
+      ).blocked,
+    ).toBe(true);
+    expect(
+      isEscapeBlocked(
+        'proc-1-root-host-marker',
+        { status: 0, stdout: secrets.hostMarker, stderr: '' },
+        secrets,
+      ).blocked,
+    ).toBe(false);
+  });
+
+  it('isEscapeBlocked: B canary absent → blocked; present → breach', () => {
+    expect(
+      isEscapeBlocked(
+        'cross-container-canary',
+        { status: 1, stdout: '', stderr: "can't open '/tmp/canary-b'" },
+        secrets,
+      ).blocked,
+    ).toBe(true);
+    expect(
+      isEscapeBlocked(
+        'cross-container-canary',
+        { status: 0, stdout: secrets.canaryB, stderr: '' },
+        secrets,
+      ).blocked,
+    ).toBe(false);
+  });
+
+  it('evaluateExec1Isolation requires all probes blocked + B unaffected', () => {
+    const okProbes: EscapeProbeResult[] = [
+      { id: 'nsenter', blocked: true, detail: 'ok', status: 1, output: '' },
+      { id: 'proc-1-root-host-marker', blocked: true, detail: 'ok', status: 1, output: '' },
+      { id: 'cross-container-canary', blocked: true, detail: 'ok', status: 1, output: '' },
+    ];
+    expect(evaluateExec1Isolation(okProbes, true).ok).toBe(true);
+    expect(evaluateExec1Isolation(okProbes, false).ok).toBe(false);
+    expect(
+      evaluateExec1Isolation(
+        [{ ...okProbes[0], blocked: false }, okProbes[1], okProbes[2]],
+        true,
+      ).ok,
+    ).toBe(false);
+  });
+
+  it('runExec1LiveFire with mock runner that fails docker → infraError, no throw', () => {
+    const result = runExec1LiveFire({
+      runner: () => ({ status: 1, stdout: '', stderr: 'docker missing', error: 'ENOENT' }),
+    });
+    expect(result.infraError).toBeTruthy();
+    expect(result.ok).toBe(false);
+    // Honesty: callers must not writePass on infraError (asserted by live test contract).
+  });
+});
 
 // ─── EXEC-1: A in gVisor tries nsenter → blocked (needs gVisor) ──────────
 
 describeIf(probeGvisor)('WS9 EXEC-1 (live gVisor): A tries nsenter/proc access → blocked', () => {
-  it('requires adversarial gVisor harness — no evidence until implemented', () => {
-    // runsc is present, but the multi-container escape harness is not wired yet.
-    // Do NOT writePass — missing EXEC-1 evidence keeps livefire FAIL (honesty).
+  it('adversarial docker+runsc probes blocked; B unaffected → live PASS', () => {
+    const artifacts: string[] = [];
+    const result = runExec1LiveFire();
+
+    // Infra flake (image pull / daemon): honest skip — no evidence artifact.
+    if (result.infraError) {
+      console.warn(`[EXEC-1] infra unavailable, no evidence: ${result.infraError}`);
+      return;
+    }
+
+    try {
+      expect(result.ok).toBe(true);
+      expect(result.bUnaffected).toBe(true);
+      for (const p of result.probes) {
+        expect(p.blocked).toBe(true);
+      }
+
+      writePass(
+        'EXEC-1',
+        result.details,
+        artifacts,
+        'live',
+      );
+    } catch (err) {
+      writeBreach(
+        'EXEC-1',
+        `gVisor isolation BREACH or assertion failure: ${result.details}. ${(err as Error).message ?? ''}`,
+        artifacts,
+        'live',
+      );
+      throw err;
+    }
   });
 });
 
 describeIf(!probeGvisor.available)('WS9 EXEC-1 (skipped: gVisor unavailable)', () => {
-  it('skipped — runsc binary not available', () => {
+  it('skipped — runsc / docker runsc runtime not available', () => {
     // No evidence produced.
   });
 });
