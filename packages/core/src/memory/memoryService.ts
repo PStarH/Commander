@@ -1,4 +1,5 @@
 import type { MemoryDuration, MemoryKind } from '../episodicMemory';
+import type { MemoryNamespaceAcl } from './namespaceGuard';
 
 export interface MemoryScope {
   tenantId: string;
@@ -44,6 +45,11 @@ export interface StoreMemoryInput {
   evidenceRefs?: string[];
   meta?: Record<string, unknown>;
   embedding?: number[];
+  /**
+   * Server-injected namespace ACL for MEMORY-001. Never copy from client meta —
+   * only trusted callers (e.g. namespaced-memory HTTP after RBAC) may set this.
+   */
+  namespaceAcl?: MemoryNamespaceAcl;
 }
 
 export interface RetrieveMemoryInput {

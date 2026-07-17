@@ -3,23 +3,29 @@ import { describe, it } from 'node:test';
 import { KernelOpsRuntime } from './opsRuntime.js';
 
 describe('kernel ops runtime', () => {
-  it('starts and stops reclaim, timer, and outbox as one runtime', async () => {
+  it('starts and stops reclaim, timer, outbox, and compensation as one runtime', async () => {
     const calls: string[] = [];
     const runtime = new KernelOpsRuntime({
       reclaim: { start: () => { calls.push('reclaim:start'); }, stop: async () => { calls.push('reclaim:stop'); } },
       timer: { start: () => { calls.push('timer:start'); }, stop: () => { calls.push('timer:stop'); } },
       outbox: { publish: async () => { calls.push('outbox:publish'); } },
+      compensation: {
+        start: () => { calls.push('compensation:start'); },
+        stop: async () => { calls.push('compensation:stop'); },
+      },
       outboxIntervalMs: 60_000,
       outboxBatchSize: 10,
     });
 
     runtime.start();
-    assert.deepEqual(runtime.runningComponents(), ['reclaim', 'timer', 'outbox']);
+    assert.deepEqual(runtime.runningComponents(), ['reclaim', 'timer', 'outbox', 'compensation']);
     await runtime.stop();
     assert.deepEqual(runtime.runningComponents(), []);
     assert.equal(calls.includes('reclaim:start'), true);
     assert.equal(calls.includes('timer:start'), true);
+    assert.equal(calls.includes('compensation:start'), true);
     assert.equal(calls.includes('outbox:publish'), true);
+    assert.equal(calls.includes('compensation:stop'), true);
   });
 
   it('contains an outbox tick failure so shutdown remains clean', async () => {

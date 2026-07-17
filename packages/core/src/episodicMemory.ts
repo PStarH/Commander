@@ -130,6 +130,10 @@ export interface MemoryWriteOptions {
   duration?: MemoryDuration;
   /** Structured metadata (procedural fields, etc.) */
   meta?: MemoryMeta;
+  /**
+   * Server-injected MEMORY-001 ACL. Must not be taken from untrusted client input.
+   */
+  namespaceAcl?: { role: string; namespaces: string[] };
 }
 
 /**
