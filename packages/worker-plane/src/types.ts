@@ -142,6 +142,8 @@ export interface WorkerServiceConfig {
   workerHeartbeatMs?: number;
   pollIntervalMs?: number;
   sandboxReadiness?: WorkerSandboxReadiness;
+  /** Called after registry.register so callers can bind worker generation (e.g. EffectBroker). */
+  onRegistered?: (worker: WorkerRecord) => void;
 }
 
 export interface WorkerSandboxReadiness {

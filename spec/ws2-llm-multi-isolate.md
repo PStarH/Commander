@@ -161,6 +161,7 @@ Worker: 全链路本地 registry / C1
 | `LLM_INVOKE_EXPIRED` | bridge | registry 条目超过 `expiresAt`（consume 后拒） |
 | `LLM_TENANT_MISMATCH` | bridge | grant/registry/ALS tenant 不一致 |
 | `LLM_CONTENT_HASH_MISMATCH` | bridge | invoke 前 hash 漂移 |
+| `LLM_LEASE_MISMATCH` | bridge | registry 与 dispatch 的 fencingEpoch / leaseToken 不一致 |
 | `LLM_SEAL_EXPIRED` | C2 only | 密封信封过期 |
 | `LLM_INVOKE_MODE_DISABLED` | wrap 构造期 | `disabled` / `sealed` / 未知 mode |
 
@@ -179,6 +180,8 @@ interface LlmInvokeEntry {
   runId: string;
   stepId: string;
   workerId: string;
+  fencingEpoch: number;
+  leaseToken: string;
   contentHash: string;
   /** one-shot */
   invoke: () => Promise<LLMResponse>;
@@ -257,8 +260,9 @@ interface LlmInvokeEntry {
 - [x] registry `expiresAt` 在 dispatch 校验（过期 → `LLM_INVOKE_EXPIRED` + 删除）
 - [x] `ws2-effect-monopoly.md` §1 分层状态 + 链到本 spec；AdmissionStore 注释去掉「distributed reload」误导
 - [x] §8.5 多租户并发隔离（`Promise.all` 三租户）
-- [ ] UNKNOWN + 新 effectId 重试路径有测试（沿用 kernel recovery；显式 LLM 集成测可作 follow-up）
-- [ ] **已知缺口（follow-up）：** affinity 未校验 `fencingEpoch` / `lease.token`；bootstrap 未注入 `localWorkerGeneration`（kernel admit/complete 仍护栏）
+- [x] UNKNOWN + 新 effectId 重试：`COMPLETION_UNCONFIRMED` 后同 effectId → `LLM_INVOKE_MISS`；新 effectId 可重试
+- [x] affinity 校验 `fencingEpoch` + `lease.token`（结构 fail-closed）+ registry/dispatch 比对；bootstrap `onRegistered` → `bindLocalWorkerGeneration`
+- [x] broker `AbortSignal` 竞态取消 dispatch（`LLMProvider.call` 无 signal 时仍 fail dispatch promise）
 
 ---
 
@@ -270,3 +274,4 @@ interface LlmInvokeEntry {
 | 2026-07-17 | Swarm 三路 APPROVE_WITH_CHANGES；闭合 §10；冻结 M1=C-α；错误码分层；AdmissionStore/localWorkerId 硬约束 |
 | 2026-07-17 | M1 落地：`c6c16978` effect-broker affinity；`f011a568` tenant-scoped registry + kill-switch |
 | 2026-07-17 | Review fixes：affinity consume admission；invoke mode fail-closed；expiresAt 校验；并发测；fencing 标已知缺口 |
+| 2026-07-17 | 残留风险闭合：fencing/token + generation bind；signal abort；UNKNOWN 重试测；monopoly 历史 bullet |
