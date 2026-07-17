@@ -133,7 +133,7 @@ v0 **不**建设通用 trace warehouse；复用 `commander_effects` + `AuditSink
 | 1 | 库函数导出 run/effect bundle，含 identity + policy + effect + versions | ENFORCED | `evidenceBundle.test.ts` |
 | 2 | 默认排除 CoT / gen_ai prompt 字段 | ENFORCED | `evidenceBundle.test.ts` DLP 用例 |
 | 3 | `verifyEvidenceBundle` 检测 contentHash / entry 链篡改 | ENFORCED | `evidenceBundle.test.ts` tamper 用例 |
-| 4 | Kernel `listEffectsForRun` 读 ledger | ENFORCED | inMemory + 接口 |
+| 4 | Kernel `listEffectsForRun` 读 ledger | ENFORCED | `kernel.test.ts` inMemory 作用域用例；接口 + Postgres 实现存在（无 live DB 测） |
 | 5 | Gateway HTTP `/v1/.../evidence` | PARTIAL | 未实现；v0 不要求 |
 | 6 | WORM / KMS 外部锚定 | PARTIAL | 对齐 WS9 §6 远期项 |
 
@@ -145,7 +145,8 @@ v0 **不**建设通用 trace warehouse；复用 `commander_effects` + `AuditSink
 
 ```bash
 pnpm --workspace-root exec tsx --test \
-  packages/effect-broker/src/evidenceBundle.test.ts
+  packages/effect-broker/src/evidenceBundle.test.ts \
+  packages/kernel/src/kernel.test.ts
 ```
 
-覆盖：happy path、DLP 剥离、entry 链、contentHash 篡改、缺 approval 字段可选。
+覆盖：happy path、DLP 剥离、entry 链、contentHash 篡改、字段篡改/audit 删除、缺 approval 字段可选、`listEffectsForRun` 租户/run 作用域。
