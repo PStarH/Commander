@@ -94,7 +94,17 @@ async function startServer(apiDir) {
     try {
       serverProcess = spawn(process.execPath, [path.join(apiDir, 'dist', 'index.js')], {
         cwd: tmpDir,
-        env: { ...process.env, PORT: String(port) },
+        // Keep in sync with spawnServer.ts: the security round requires
+        // AUTH_DISABLED to be paired with an explicit COMMANDER_ALLOW_ANON.
+        env: {
+          ...process.env,
+          PORT: String(port),
+          AUTH_DISABLED: 'true',
+          COMMANDER_ALLOW_ANON: '1',
+          // Keep in sync with spawnServer.ts — anon bypass needs a tenant ALS id.
+          COMMANDER_DEFAULT_TENANT_ID:
+            process.env.COMMANDER_DEFAULT_TENANT_ID || 'test-tenant',
+        },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (syncErr) {
