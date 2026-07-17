@@ -20,6 +20,25 @@ export const EVIDENCE_DLP_EXCLUDED_KEYS = new Set([
   'rawcompletion',
 ]);
 
+/** Response summary is fail-closed: only non-sensitive metadata keys. */
+export const EVIDENCE_RESPONSE_SUMMARY_KEYS = new Set([
+  'contenthash',
+  'status',
+  'httpstatus',
+  'bytes',
+  'contenttype',
+  'errorcode',
+  'ok',
+]);
+
+/**
+ * Field-name secrets always redacted in exported payloads.
+ * Substring match on normalized keys (aligns with shadow scrubber) so
+ * refresh_token / client_secret / access_token are not fail-open.
+ */
+const EVIDENCE_SECRET_FIELD_NAME =
+  /password|passwd|passcode|secret|token|authorization|credential|privatekey|accesskey|apikey|otp|cookie|xapikey|xauthtoken/i;
+
 export interface EvidenceBundleScope {
   tenantId: string;
   runId: string;
@@ -141,6 +160,16 @@ function sha256(value: unknown): string {
   return createHash('sha256').update(canonicalJson(value)).digest('hex');
 }
 
+/** Drop undefined so hashes match JSON.parse(JSON.stringify(...)) round-trips. */
+function compact<T extends Record<string, unknown>>(obj: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined) continue;
+    out[key] = value;
+  }
+  return out as T;
+}
+
 function normalizeKey(key: string): string {
   return key.toLowerCase().replace(/[_-]/g, '');
 }
@@ -153,13 +182,26 @@ function isDlpExcludedKey(key: string): boolean {
   return false;
 }
 
-/** Recursively remove DLP-excluded keys; does not mutate input. */
+function isSecretFieldKey(key: string): boolean {
+  return EVIDENCE_SECRET_FIELD_NAME.test(normalizeKey(key));
+}
+
+function isAllowedResponseSummaryKey(key: string): boolean {
+  return EVIDENCE_RESPONSE_SUMMARY_KEYS.has(normalizeKey(key));
+}
+
+/** responseSummary values are metadata scalars only — nested objects are a DLP bypass. */
+function isResponseSummaryScalar(value: unknown): boolean {
+  return value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
+}
+
+/** Recursively remove DLP keys and secret field names; does not mutate input. */
 export function sanitizeForEvidence(value: unknown): unknown {
   if (value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map(sanitizeForEvidence);
   const result: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (isDlpExcludedKey(key)) continue;
+    if (isDlpExcludedKey(key) || isSecretFieldKey(key)) continue;
     result[key] = sanitizeForEvidence(child);
   }
   return result;
@@ -176,7 +218,7 @@ export function findDlpViolation(value: unknown, path = ''): string | undefined 
   }
   for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
     const next = path ? `${path}.${key}` : key;
-    if (isDlpExcludedKey(key)) return next;
+    if (isDlpExcludedKey(key) || isSecretFieldKey(key)) return next;
     const hit = findDlpViolation(child, next);
     if (hit) return hit;
   }
@@ -186,19 +228,39 @@ export function findDlpViolation(value: unknown, path = ''): string | undefined 
 function summarizeResponse(response?: Record<string, unknown>): Record<string, unknown> | undefined {
   if (!response) return undefined;
   const sanitized = sanitizeForEvidence(response) as Record<string, unknown>;
-  if (Object.keys(sanitized).length === 0) return undefined;
-  return sanitized;
+  const summary: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(sanitized)) {
+    if (!isAllowedResponseSummaryKey(key)) continue;
+    if (!isResponseSummaryScalar(child)) continue;
+    summary[key] = child;
+  }
+  if (Object.keys(summary).length === 0) return undefined;
+  return summary;
 }
 
-function capabilityGrantRef(grant?: CapabilityGrant): EvidenceBundleIdentity['capabilityGrant'] {
+function capabilityGrantRef(
+  grant: CapabilityGrant | undefined,
+  tenantId: string,
+  runId: string,
+): EvidenceBundleIdentity['capabilityGrant'] {
   if (!grant) return undefined;
-  return {
+  // Fail-closed: never bind another tenant/run's grant into this package.
+  if (grant.tenantId !== tenantId || grant.runId !== runId) return undefined;
+  return compact({
     jti: grant.jti,
     issuer: grant.issuer,
     audience: grant.audience,
     requestHash: grant.requestHash,
     policySnapshotId: grant.policySnapshotId,
-  };
+  });
+}
+
+function scopeEffects(input: BuildEvidenceBundleInput): EvidenceEffectSource[] {
+  return input.effects.filter((e) => e.tenantId === input.tenantId && e.runId === input.runId);
+}
+
+function scopeAuditEvents(input: BuildEvidenceBundleInput): EvidenceAuditSource[] {
+  return (input.auditEvents ?? []).filter((e) => e.tenantId === input.tenantId && e.runId === input.runId);
 }
 
 function hashChainedEntries<T extends { entryHash: string; prevEntryHash: string }>(
@@ -216,7 +278,7 @@ function hashChainedEntries<T extends { entryHash: string; prevEntryHash: string
 
 function buildEffectEntries(effects: EvidenceEffectSource[]): EvidenceBundleEffectEntry[] {
   const sorted = [...effects].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
-  const bare = sorted.map((effect) => ({
+  const bare = sorted.map((effect) => compact({
     effectId: effect.id,
     stepId: effect.stepId,
     type: effect.type,
@@ -233,7 +295,7 @@ function buildEffectEntries(effects: EvidenceEffectSource[]): EvidenceBundleEffe
 
 function buildAuditEntries(events: EvidenceAuditSource[]): EvidenceBundleAuditEntry[] {
   const sorted = [...events].sort((a, b) => a.at.localeCompare(b.at) || a.type.localeCompare(b.type));
-  const bare = sorted.map((event) => ({
+  const bare = sorted.map((event) => compact({
     type: event.type,
     at: event.at,
     severity: event.severity,
@@ -253,19 +315,19 @@ export function buildRunEvidenceBundle(input: BuildEvidenceBundleInput): Evidenc
     schemaVersion: EVIDENCE_BUNDLE_SCHEMA,
     bundleId: input.bundleId ?? randomUUID(),
     exportedAt: input.exportedAt ?? new Date().toISOString(),
-    scope: { tenantId: input.tenantId, runId: input.runId, effectId: input.effectId },
-    identity: {
+    scope: compact({ tenantId: input.tenantId, runId: input.runId, effectId: input.effectId }),
+    identity: compact({
       intentHash: input.intentHash,
       workGraphHash: input.workGraphHash,
-      capabilityGrant: capabilityGrantRef(input.capabilityGrant),
-    },
-    versions: {
+      capabilityGrant: capabilityGrantRef(input.capabilityGrant, input.tenantId, input.runId),
+    }),
+    versions: compact({
       policySnapshotId: input.policySnapshotId,
       workGraphVersion: input.workGraphVersion,
       kernelApiVersion: input.kernelApiVersion,
-    },
-    effects: buildEffectEntries(input.effects),
-    auditEvents: buildAuditEntries(input.auditEvents ?? []),
+    }),
+    effects: buildEffectEntries(scopeEffects(input)),
+    auditEvents: buildAuditEntries(scopeAuditEvents(input)),
   };
   return attachContentHash(body);
 }
@@ -274,10 +336,8 @@ export function buildEffectEvidenceBundle(
   input: BuildEvidenceBundleInput & { effectId: string },
 ): EvidenceBundle {
   const match = input.effects.filter((e) => e.id === input.effectId);
-  const audit = (input.auditEvents ?? []).filter((e) => {
-    const effectId = e.details.effectId;
-    return typeof effectId === 'string' ? effectId === input.effectId : true;
-  });
+  // Only keep audit rows explicitly bound to this effectId (fail-closed scope).
+  const audit = (input.auditEvents ?? []).filter((e) => e.details.effectId === input.effectId);
   return buildRunEvidenceBundle({ ...input, effects: match, auditEvents: audit, effectId: input.effectId });
 }
 
@@ -294,6 +354,21 @@ function recomputeAuditEntry(entry: EvidenceBundleAuditEntry): string {
 export function verifyEvidenceBundle(bundle: EvidenceBundle): VerifyEvidenceBundleResult {
   const dlpHit = findDlpViolation(bundle);
   if (dlpHit) return { ok: false, reason: `DLP field present: ${dlpHit}`, brokenAt: 'dlp' };
+
+  for (let i = 0; i < bundle.effects.length; i++) {
+    const summary = bundle.effects[i].responseSummary;
+    if (!summary) continue;
+    for (const [key, child] of Object.entries(summary)) {
+      if (!isAllowedResponseSummaryKey(key) || !isResponseSummaryScalar(child)) {
+        return {
+          ok: false,
+          reason: `responseSummary contains non-allowlisted or non-scalar key: ${key}`,
+          brokenAt: 'dlp',
+          index: i,
+        };
+      }
+    }
+  }
 
   let prev = EVIDENCE_GENESIS_HASH;
   for (let i = 0; i < bundle.effects.length; i++) {
