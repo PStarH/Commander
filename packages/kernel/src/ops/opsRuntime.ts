@@ -26,12 +26,18 @@ export class KernelOpsRuntime {
   private outboxTimer?: ReturnType<typeof setInterval>;
   private outboxInFlight?: Promise<void>;
   private lastOutboxOkAt = 0;
+  /** Bumped on each start(); in-flight publishes from prior epochs must not stamp readiness. */
+  private outboxEpoch = 0;
 
   constructor(private readonly dependencies: KernelOpsRuntimeDependencies) {}
 
   start(): void {
     if (this.running) return;
     this.running = true;
+    // Each start epoch must prove a fresh outbox tick (ignore pre-stop success).
+    this.outboxEpoch += 1;
+    const epoch = this.outboxEpoch;
+    this.lastOutboxOkAt = 0;
     this.dependencies.reclaim.start();
     this.dependencies.timer.start();
     this.dependencies.compensation.start();
@@ -39,12 +45,13 @@ export class KernelOpsRuntime {
       () => { void this.publishOutbox(); },
       this.dependencies.outboxIntervalMs,
     );
-    void this.publishOutbox();
+    void this.kickOutbox(epoch);
   }
 
   async stop(): Promise<void> {
     if (!this.running) return;
     this.running = false;
+    this.outboxEpoch += 1;
     if (this.outboxTimer) clearInterval(this.outboxTimer);
     this.outboxTimer = undefined;
     await Promise.all([
@@ -53,6 +60,8 @@ export class KernelOpsRuntime {
       this.dependencies.compensation.stop(),
       this.outboxInFlight,
     ]);
+    // Only clear if still stopped — a concurrent start() may have stamped a new epoch.
+    if (!this.running) this.lastOutboxOkAt = 0;
   }
 
   runningComponents(): string[] {
@@ -70,11 +79,23 @@ export class KernelOpsRuntime {
     return now - this.lastOutboxOkAt <= this.dependencies.outboxIntervalMs * 3;
   }
 
+  /** Drain any prior in-flight publish, then run one publish belonging to `epoch`. */
+  private async kickOutbox(epoch: number): Promise<void> {
+    if (this.outboxInFlight) await this.outboxInFlight;
+    if (!this.running || this.outboxEpoch !== epoch) return;
+    await this.publishOutbox();
+  }
+
   private async publishOutbox(): Promise<void> {
     if (this.outboxInFlight) return this.outboxInFlight;
+    const epoch = this.outboxEpoch;
     this.outboxInFlight = this.dependencies.outbox
       .publish(this.dependencies.outboxBatchSize)
-      .then(() => { this.lastOutboxOkAt = Date.now(); })
+      .then(() => {
+        if (this.running && this.outboxEpoch === epoch) {
+          this.lastOutboxOkAt = Date.now();
+        }
+      })
       .catch(() => undefined)
       .finally(() => { this.outboxInFlight = undefined; });
     return this.outboxInFlight;
