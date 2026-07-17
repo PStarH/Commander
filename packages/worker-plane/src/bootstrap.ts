@@ -25,18 +25,14 @@ import { WorkerService } from './workerService.js';
 import { PostgresWorkerRegistry } from './registry.js';
 import { ApiKeyWorkerAuthenticator } from './apiKeyAuthenticator.js';
 import { ToolStepExecutor } from './toolStepExecutor.js';
+import { createDefaultWorkerToolEffectCatalog } from './toolEffectCatalog.js';
 import { EvaluatorStepExecutor } from './evaluatorStepExecutor.js';
 import { CompositeStepExecutor } from './compositeStepExecutor.js';
 import { createAgentStepExecutor, createExecutorManifest } from './workerRuntimeAdapter.js';
 import { createProductionWorkerSandboxReadiness } from './sandboxReadiness.js';
 import type { WorkerDefinition, WorkerIdentity, WorkerKind, StepExecutor } from './types.js';
-import type { EffectExecutor, PolicyEvaluator, AuditSink, EffectKernelPort, CapabilityRevocationStore } from '@commander/effect-broker';
-import {
-  EffectBroker,
-  CapabilityTokenIssuer,
-  CapabilityTokenVerifier,
-  InMemoryCapabilityReplayStore,
-} from '@commander/effect-broker';
+import type { EffectExecutor, PolicyEvaluator, AuditSink, EffectKernelPort } from '@commander/effect-broker';
+import { EffectBroker, CapabilityTokenIssuer, CapabilityTokenVerifier } from '@commander/effect-broker';
 
 // Lazy import to avoid circular dependency at module load time
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -183,36 +179,7 @@ export function createWorkerPolicyEvaluator(
 
 type AllowlistKernel = EffectKernelPort & {
   ensureAllowlistDefault?(tenantId: string, actionPattern: string, allowed: boolean): Promise<void>;
-  isCapabilityRevoked?(jti: string): Promise<boolean>;
 };
-
-/**
- * WS2 §6: capability verify must consume nonce replay and check jti revocation.
- * Process-local replay store is fail-closed for single-worker; multi-worker
- * durable replay remains a follow-up (kernel ledger).
- */
-export function createWorkerCapabilityVerifier(
-  issuer: CapabilityTokenIssuer,
-  kernel: Pick<AllowlistKernel, 'isCapabilityRevoked'>,
-): CapabilityTokenVerifier {
-  const revocations: CapabilityRevocationStore = {
-    isRevoked: async (jti) => {
-      // Fail-closed: missing revocation port must not admit tokens as "not revoked".
-      if (!kernel.isCapabilityRevoked) return true;
-      return kernel.isCapabilityRevoked(jti);
-    },
-    revoke: () => {
-      // Workers are verify-only; gateway/kernel owns revokeCapability writes.
-    },
-  };
-  return new CapabilityTokenVerifier({
-    issuer: 'commander-worker',
-    audience: 'commander.effect-broker',
-    publicKeys: { 'worker-bootstrap': issuer.publicKey },
-    replay: new InMemoryCapabilityReplayStore(),
-    revocations,
-  });
-}
 
 /** Seed llm.* allowlist defaults without overwriting explicit denies. */
 export function withDefaultLlmAllowlist(kernel: AllowlistKernel): EffectKernelPort {
@@ -221,8 +188,6 @@ export function withDefaultLlmAllowlist(kernel: AllowlistKernel): EffectKernelPo
     completeEffect: (effectId, tenantId, lease, response, actor) =>
       kernel.completeEffect(effectId, tenantId, lease, response, actor),
     markEffectCompletionUnknown: kernel.markEffectCompletionUnknown?.bind(kernel),
-    getEffect: kernel.getEffect?.bind(kernel),
-    reconcileEffect: kernel.reconcileEffect?.bind(kernel),
     incrementQuota: kernel.incrementQuota?.bind(kernel),
     getQuota: kernel.getQuota?.bind(kernel),
     isActionAllowed: async (tenantId, action) => {
@@ -251,7 +216,11 @@ function createEffectBroker(
     audience: 'commander.effect-broker',
     keyId: 'worker-bootstrap',
   });
-  const tokens = createWorkerCapabilityVerifier(issuer, kernel);
+  const tokens = new CapabilityTokenVerifier({
+    issuer: 'commander-worker',
+    audience: 'commander.effect-broker',
+    publicKeys: { 'worker-bootstrap': issuer.publicKey },
+  });
   const policy = createWorkerPolicyEvaluator();
   const effectKernel = withDefaultLlmAllowlist(kernel);
 
@@ -326,14 +295,16 @@ async function createExecutorForKind(
   effectBroker?: EffectBroker,
   capabilityIssuer?: CapabilityTokenIssuer,
 ): Promise<StepExecutor> {
+  const toolEffectCatalog = createDefaultWorkerToolEffectCatalog();
+
   // Explicit executor manifest — validated at startup. No runtime guessing.
   const manifest = createExecutorManifest({
     agent: () => createAgentStepExecutor({ effectBroker, capabilityIssuer }),
-    tool: () => new ToolStepExecutor(undefined, effectBroker, capabilityIssuer),
+    tool: () => new ToolStepExecutor(undefined, effectBroker, capabilityIssuer, toolEffectCatalog),
     evaluator: () => new EvaluatorStepExecutor(),
     connector: async () => {
       const { ConnectorStepExecutor } = await import('./connectorStepExecutor.js');
-      return new ConnectorStepExecutor(undefined, effectBroker, capabilityIssuer);
+      return new ConnectorStepExecutor(undefined, effectBroker, capabilityIssuer, toolEffectCatalog);
     },
   });
 
