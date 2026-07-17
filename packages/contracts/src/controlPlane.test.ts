@@ -12,6 +12,8 @@ import type {
 const identity: WorkloadIdentity = {
   workloadId: 'worker-1',
   tenantId: 'tenant-1',
+  runId: 'run-1',
+  stepId: 'step-1',
   scopes: ['run:execute'],
   issuedAt: '2026-07-15T00:00:00.000Z',
   expiresAt: '2026-07-15T01:00:00.000Z',
@@ -40,6 +42,8 @@ const sandbox: PluginSandboxMode = 'required';
 
 test('exports migrated control-plane contracts without a runtime dependency', () => {
   assert.equal(identity.tenantId, 'tenant-1');
+  assert.equal(identity.runId, 'run-1');
+  assert.equal(identity.stepId, 'step-1');
   assert.equal(decision.effect, 'require_approval');
   assert.equal(audit.type, 'effect.admitted');
   assert.equal(effect, 'allow');
