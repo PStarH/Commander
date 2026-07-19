@@ -97,6 +97,7 @@
     "p0:kernel-e2e": "pnpm exec tsx scripts/p0-kernel-e2e.ts",
     "p0:kernel-pg": "pnpm exec tsx --test --test-force-exit packages/kernel/src/postgres.integration.test.ts packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts",
     "p0:full-loop": "pnpm exec tsx scripts/p0-full-loop.ts",
+    "demo:l4-a": "NODE_PATH=apps/api/node_modules pnpm exec tsx scripts/l4-a-golden-demo.ts",
     "publish:core": "cd packages/core && pnpm publish --access public --no-git-checks",
     "release:core": "pnpm run build:core && pnpm run test:core && pnpm run publish:core",
     "lint": "npx eslint packages/core/src && pnpm run format:check && cd packages/core && npx tsc --noEmit",
