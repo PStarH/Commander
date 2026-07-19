@@ -20,7 +20,13 @@ import type {
   MarkEffectCompletionUnknownRequest,
   ReconcileEffectRequest,
   TenantExecutionControl,
+  KillSwitch,
+  KillSwitchMatchDims,
+  PutKillSwitchInput,
+  RemoveKillSwitchInput,
 } from './types.js';
+
+export type { KillSwitchMatchDims } from './types.js';
 
 /**
  * The only persistence boundary used by the execution kernel.
@@ -155,4 +161,11 @@ export interface KernelRepository {
 
   /** Read the current daily quota row (or zeros if none yet). */
   getQuota(tenantId: string, actionClass: string, now?: Date): Promise<{ countUsed: number; tokensUsed: number }>;
+
+  // ── L4-04 Kill switches ───────────────────────────────────────────────────
+
+  putKillSwitch(input: PutKillSwitchInput): Promise<KillSwitch>;
+  removeKillSwitch(input: RemoveKillSwitchInput): Promise<void>;
+  listKillSwitches(tenantId: string): Promise<KillSwitch[]>;
+  findMatchingKillSwitch(tenantId: string, dims: KillSwitchMatchDims): Promise<KillSwitch | null>;
 }

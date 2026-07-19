@@ -40,6 +40,7 @@
   "errorCodes": [
     "DUPLICATE_RUN",
     "DUPLICATE_STEP",
+    "DUPLICATE_INTERACTION",
     "INVALID_GRAPH",
     "LEASE_LOST",
     "VERSION_CONFLICT",
