@@ -1092,6 +1092,72 @@ class EvalWilcoxonResult(CommanderModel):
 
 
 # ============================================================================
+# Governed Action Gateway (L4-A)
+# ============================================================================
+
+ActionEffect = Literal["allow", "deny", "require_approval"]
+
+
+class ActionDecision(CommanderModel):
+    """Policy decision for a governed action."""
+
+    effect: ActionEffect
+    decision_id: str = Field(..., alias="decisionId")
+    reason: str
+    policy_snapshot_id: str = Field(..., alias="policySnapshotId")
+
+
+class ActionSimulation(ActionDecision):
+    """Simulation result pinned before action submission."""
+
+    simulation_id: str = Field(..., alias="simulationId")
+    action_digest: str = Field(..., alias="actionDigest")
+
+
+class GovernedAction(CommanderModel):
+    """Persisted governed action view returned by /v1/actions."""
+
+    run_id: str = Field(..., alias="runId")
+    step_id: str = Field(..., alias="stepId")
+    effect_id: str = Field(..., alias="effectId")
+    state: str
+    decision: ActionDecision
+    simulation: ActionSimulation
+    action_digest: str = Field(..., alias="actionDigest")
+    policy_snapshot_id: str = Field(..., alias="policySnapshotId")
+    created_at: str = Field(..., alias="createdAt")
+    updated_at: str = Field(..., alias="updatedAt")
+
+
+class ProposeActionInput(CommanderModel):
+    """Wire payload for simulate/propose governed actions."""
+
+    source: str
+    package: str
+    model: str
+    tool: str
+    destination: str
+    effect_type: str = Field(..., alias="effectType")
+    args: dict[str, Any]
+    idempotency_key: str = Field(..., alias="idempotencyKey")
+
+
+class ActionApprovalInput(CommanderModel):
+    """Approval binding persisted with the simulation."""
+
+    action_digest: str = Field(..., alias="actionDigest")
+    simulation_id: str = Field(..., alias="simulationId")
+    policy_snapshot_id: str = Field(..., alias="policySnapshotId")
+
+
+class ActionEvidenceBundle(CommanderModel):
+    """Evidence bundle and verification result."""
+
+    bundle: dict[str, Any]
+    verification: dict[str, Any]
+
+
+# ============================================================================
 # Auth
 # ============================================================================
 
