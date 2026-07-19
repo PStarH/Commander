@@ -78,6 +78,10 @@ describe('@commander/contracts state machine', () => {
     assert.equal(validateStepTransition('FAILED', 'RUNNING').ok, false);
   });
 
+  it('allows an answered human interaction to release its waiting step', () => {
+    assert.equal(validateStepTransition('WAITING_FOR_HUMAN', 'RETRY_WAIT').ok, true);
+  });
+
   it('allows deadlines to fail runs before execution or while paused', () => {
     assert.equal(validateRunTransition('PENDING', 'FAILED').ok, true);
     assert.equal(validateRunTransition('PAUSED', 'FAILED').ok, true);
@@ -308,6 +312,7 @@ describe('@commander/contracts compatibility', () => {
   });
 
   it('error codes are stable', () => {
+    assert.ok(KERNEL_ERROR_CODES.includes('DUPLICATE_INTERACTION'));
     assert.ok(KERNEL_ERROR_CODES.includes('LEASE_LOST'));
     assert.ok(KERNEL_ERROR_CODES.includes('VERSION_CONFLICT'));
     assert.ok(KERNEL_ERROR_CODES.includes('POLICY_DENIED'));

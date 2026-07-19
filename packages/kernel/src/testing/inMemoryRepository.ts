@@ -8,7 +8,12 @@ import type {
   MarkEffectCompletionUnknownRequest,
   ReconcileEffectRequest,
   TenantExecutionControl,
+  KillSwitch,
+  KillSwitchMatchDims,
+  PutKillSwitchInput,
+  RemoveKillSwitchInput,
 } from '../types.js';
+import { findMatchingKillSwitchWithLookup } from '../killSwitchMatching.js';
 import { KernelInvariantError } from '../types.js';
 import { assertRunTransition, assertStepTransition } from '../transitionValidation.js';
 import { createHash } from 'node:crypto';
@@ -31,10 +36,12 @@ export class InMemoryKernelRepository implements KernelRepository {
   private readonly tenantLimits = new Map<string, number>();
   private readonly tenantControls = new Map<string, TenantExecutionControl>();
   private readonly lastFencingEpoch = new Map<string, number>();
+  private readonly interactions = new Map<string, KernelInteraction>();
   // WS2 EffectBroker monopoly state
   private readonly capabilityRevocations = new Map<string, { tenantId: string; expiresAt: number; reason?: string }>();
   private readonly effectAllowlist = new Map<string, Map<string, boolean>>(); // tenantId -> (actionPattern -> allowed)
   private readonly effectQuota = new Map<string, { countUsed: number; tokensUsed: number }>(); // `${tenantId}|${actionClass}|${day}`
+  private readonly killSwitches = new Map<string, KillSwitch>(); // `${tenantId}|${scope}|${value}`
   // Outbox DLQ (declared early so claimOutboxByTopic can filter DLQ'd messages)
   private readonly dlq = new Map<string, KernelDlqEntry>();
   /** Test-only: configurable maximum publish attempts before an outbox message is moved to the DLQ. */
@@ -68,10 +75,11 @@ export class InMemoryKernelRepository implements KernelRepository {
   /** DR drill support: snapshot internal state for backup/restore testing.
    *  Includes the transactional outbox so that unpublished messages survive
    *  a backup/restore cycle (mirrors a real Postgres outbox table). */
-  snapshot(): { runs: Map<string, KernelRun>; steps: Map<string, KernelStep>; events: KernelEvent[]; outbox: Map<string, KernelOutboxMessage>; outboxClaims: Map<string, { token: string; expiresAt: number }> } {
+  snapshot(): { runs: Map<string, KernelRun>; steps: Map<string, KernelStep>; interactions: Map<string, KernelInteraction>; events: KernelEvent[]; outbox: Map<string, KernelOutboxMessage>; outboxClaims: Map<string, { token: string; expiresAt: number }> } {
     return {
       runs: new Map([...this.runs].map(([k, v]) => [k, structuredClone(v)])),
       steps: new Map([...this.steps].map(([k, v]) => [k, structuredClone(v)])),
+      interactions: new Map([...this.interactions].map(([k, v]) => [k, structuredClone(v)])),
       events: this.events.map((e) => structuredClone(e)),
       outbox: new Map([...this.outbox].map(([k, v]) => [k, structuredClone(v)])),
       outboxClaims: new Map([...this.outboxClaims].map(([k, v]) => [k, structuredClone(v)])),
@@ -81,11 +89,13 @@ export class InMemoryKernelRepository implements KernelRepository {
   /** DR drill support: restore from a snapshot into this instance.
    *  The outbox fields are optional for backward compatibility with older
    *  snapshots that only carried runs/steps/events. */
-  loadSnapshot(snapshot: { runs: Map<string, KernelRun>; steps: Map<string, KernelStep>; events: KernelEvent[]; outbox?: Map<string, KernelOutboxMessage>; outboxClaims?: Map<string, { token: string; expiresAt: number }> }): void {
+  loadSnapshot(snapshot: { runs: Map<string, KernelRun>; steps: Map<string, KernelStep>; interactions?: Map<string, KernelInteraction>; events: KernelEvent[]; outbox?: Map<string, KernelOutboxMessage>; outboxClaims?: Map<string, { token: string; expiresAt: number }> }): void {
     this.runs.clear();
     for (const [k, v] of snapshot.runs) this.runs.set(k, v);
     this.steps.clear();
     for (const [k, v] of snapshot.steps) this.steps.set(k, v);
+    this.interactions.clear();
+    if (snapshot.interactions) for (const [k, v] of snapshot.interactions) this.interactions.set(k, structuredClone(v));
     this.events.length = 0;
     for (const e of snapshot.events) this.events.push(e);
     this.outbox.clear();
@@ -98,14 +108,36 @@ export class InMemoryKernelRepository implements KernelRepository {
   async createRun(command: CreateKernelRun, actor: string): Promise<KernelRun> {
     if (this.runs.has(command.id)) throw new KernelInvariantError('DUPLICATE_RUN', `Run ${command.id} already exists`);
     const ids = new Set(command.steps.map((step) => step.id));
-    if (ids.size !== command.steps.length) throw new KernelInvariantError('DUPLICATE_STEP', 'Duplicate step ID');
+    if (ids.size !== command.steps.length || [...ids].some((id) => this.steps.has(id))) throw new KernelInvariantError('DUPLICATE_STEP', 'Duplicate step ID');
     for (const step of command.steps) for (const dep of step.dependencies ?? []) if (!ids.has(dep)) throw new KernelInvariantError('INVALID_GRAPH', `Unknown dependency ${dep}`);
+    const interactionIds = command.steps.flatMap((step) => step.interaction ? [step.interaction.id] : []);
+    if (new Set(interactionIds).size !== interactionIds.length || interactionIds.some((id) => this.interactions.has(id))) {
+      throw new KernelInvariantError('DUPLICATE_INTERACTION', 'Duplicate interaction ID');
+    }
     const createdAt = now();
     const run: KernelRun = { id: command.id, tenantId: command.tenantId, intentHash: command.intentHash, workGraphHash: command.workGraphHash, workGraphVersion: command.workGraphVersion, policySnapshotId: command.policySnapshotId, state: 'PENDING', version: 1, metadata: command.metadata ?? {}, createdAt, updatedAt: createdAt };
     this.runs.set(run.id, run);
     for (const newStep of command.steps) {
-      const step: KernelStep = { id: newStep.id, runId: run.id, tenantId: run.tenantId, kind: newStep.kind, state: 'PENDING', version: 1, attempt: 0, maxAttempts: newStep.maxAttempts ?? 1, priority: newStep.priority ?? 0, dependencies: newStep.dependencies ?? [], input: newStep.input ?? {}, scheduledAt: newStep.scheduledAt ?? createdAt, createdAt, updatedAt: createdAt };
+      const step: KernelStep = { id: newStep.id, runId: run.id, tenantId: run.tenantId, kind: newStep.kind, state: newStep.initialState ?? 'PENDING', version: 1, attempt: 0, maxAttempts: newStep.maxAttempts ?? 1, priority: newStep.priority ?? 0, dependencies: newStep.dependencies ?? [], input: newStep.input ?? {}, scheduledAt: newStep.scheduledAt ?? createdAt, createdAt, updatedAt: createdAt };
       this.steps.set(step.id, step);
+      if (newStep.interaction) {
+        const interaction: KernelInteraction = {
+          id: newStep.interaction.id,
+          runId: run.id,
+          stepId: step.id,
+          tenantId: run.tenantId,
+          status: 'pending',
+          prompt: newStep.interaction.prompt,
+          createdAt,
+          expiresAt: newStep.interaction.expiresAt,
+        };
+        this.interactions.set(interaction.id, interaction);
+        this.event('interaction', interaction.id, 0, 'interaction.created', run.tenantId, run.id, step.id, actor, {
+          interactionId: interaction.id,
+          prompt: interaction.prompt,
+          expiresAt: interaction.expiresAt ?? null,
+        });
+      }
     }
     this.event('run', run.id, run.version, 'run.created', run.tenantId, run.id, undefined, actor, { stepCount: command.steps.length });
     return clone(run);
@@ -489,6 +521,39 @@ export class InMemoryKernelRepository implements KernelRepository {
     return this.effectQuota.get(key) ?? { countUsed: 0, tokensUsed: 0 };
   }
 
+  private killSwitchKey(tenantId: string, scope: KillSwitch['scope'], value: string): string {
+    return `${tenantId}|${scope}|${value}`;
+  }
+
+  async putKillSwitch(input: PutKillSwitchInput): Promise<KillSwitch> {
+    const entry: KillSwitch = {
+      tenantId: input.tenantId,
+      scope: input.scope,
+      value: input.value,
+      enabled: input.enabled,
+      reason: input.reason,
+      actor: input.actor,
+      updatedAt: now(),
+    };
+    this.killSwitches.set(this.killSwitchKey(input.tenantId, input.scope, input.value), entry);
+    return clone(entry);
+  }
+
+  async removeKillSwitch(input: RemoveKillSwitchInput): Promise<void> {
+    this.killSwitches.delete(this.killSwitchKey(input.tenantId, input.scope, input.value));
+  }
+
+  async listKillSwitches(tenantId: string): Promise<KillSwitch[]> {
+    return [...this.killSwitches.values()]
+      .filter((entry) => entry.tenantId === tenantId)
+      .map(clone)
+      .sort((a, b) => a.scope.localeCompare(b.scope) || a.value.localeCompare(b.value));
+  }
+
+  async findMatchingKillSwitch(tenantId: string, dims: KillSwitchMatchDims): Promise<KillSwitch | null> {
+    return findMatchingKillSwitchWithLookup(tenantId, dims, (id) => this.listKillSwitches(id));
+  }
+
   async listEvents(runId: string, tenantId: string): Promise<KernelEvent[]> { return this.events.filter((event) => event.runId === runId && event.tenantId === tenantId).map(clone); }
   async listEffectsForRun(runId: string, tenantId: string): Promise<KernelEffect[]> {
     return [...this.effects.values()].filter((effect) => effect.runId === runId && effect.tenantId === tenantId).map(clone);
@@ -532,7 +597,6 @@ export class InMemoryKernelRepository implements KernelRepository {
   }
 
   // ── Interactions ──
-  private readonly interactions = new Map<string, KernelInteraction>();
   async createInteraction(request: CreateInteractionRequest, actor: string): Promise<KernelInteraction> {
     const step = this.steps.get(request.stepId);
     if (!step || step.tenantId !== request.tenantId || step.runId !== request.runId) {
@@ -547,7 +611,11 @@ export class InMemoryKernelRepository implements KernelRepository {
       expiresAt: request.expiresAt?.toISOString(),
     };
     this.interactions.set(interaction.id, interaction);
-    this.event('interaction', interaction.id, 0, 'interaction.created', request.tenantId, request.runId, request.stepId, actor, { interactionId: interaction.id });
+    this.event('interaction', interaction.id, 0, 'interaction.created', request.tenantId, request.runId, request.stepId, actor, {
+      interactionId: interaction.id,
+      prompt: interaction.prompt,
+      expiresAt: interaction.expiresAt ?? null,
+    });
     return clone(interaction);
   }
   async answerInteraction(request: AnswerInteractionRequest): Promise<KernelInteraction> {
@@ -555,10 +623,26 @@ export class InMemoryKernelRepository implements KernelRepository {
     if (!interaction || interaction.runId !== request.runId || interaction.tenantId !== request.tenantId || interaction.status !== 'pending') {
       throw new KernelInvariantError('INTERACTION_NOT_FOUND', `Interaction ${request.interactionId} not found or already answered`);
     }
+    const step = this.steps.get(interaction.stepId);
+    if (!step || step.runId !== request.runId || step.tenantId !== request.tenantId || step.state !== 'WAITING_FOR_HUMAN') {
+      throw new KernelInvariantError('INTERACTION_NOT_FOUND', `Interaction ${request.interactionId} has no matching waiting step`);
+    }
+    const answeredAt = now();
     interaction.status = 'answered';
     interaction.response = request.response;
-    interaction.answeredAt = now();
-    this.event('interaction', interaction.id, 1, 'interaction.answered', request.tenantId, request.runId, interaction.stepId, request.actor, {});
+    interaction.answeredAt = answeredAt;
+    if (request.releaseStep !== false) {
+      assertStepTransition(step.state, 'RETRY_WAIT');
+      step.state = 'RETRY_WAIT';
+      step.scheduledAt = answeredAt;
+      step.version++;
+      step.lease = undefined;
+      step.updatedAt = answeredAt;
+    }
+    this.event('interaction', interaction.id, 1, 'interaction.answered', request.tenantId, request.runId, interaction.stepId, request.actor, { response: request.response });
+    if (request.releaseStep !== false) {
+      this.event('step', step.id, step.version, 'step.interaction_answered', step.tenantId, step.runId, step.id, request.actor, { interactionId: interaction.id });
+    }
     return clone(interaction);
   }
   async getInteraction(interactionId: string, tenantId: string): Promise<KernelInteraction | null> {
