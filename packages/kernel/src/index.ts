@@ -66,6 +66,11 @@ export type {
   TimerState,
   TimerType,
   TenantExecutionControl,
+  KillSwitch,
+  KillSwitchMatchDims,
+  KillSwitchScope,
+  PutKillSwitchInput,
+  RemoveKillSwitchInput,
 } from './types.js';
 
 // Object storage (interface only — implementations are in testing/)
