@@ -9,6 +9,7 @@ import {
 } from './v1GatewayKernel';
 import { isTerminalRunState } from '@commander/contracts';
 import { getGlobalGdprComplianceManager } from '@commander/core/security/gdprCompliance';
+import { createActionGatewayRouter } from './actionGatewayEndpoints';
 
 const idSchema = z.string().regex(/^[a-zA-Z0-9._:-]{1,128}$/);
 const providerSnapshotSchema = z.object({
@@ -161,6 +162,7 @@ function renderRun(run: {
 /** V1 resource API. It schedules durable work; it never constructs AgentRuntime. */
 export function createV1GatewayRouter(resolveKernel: () => V1KernelGateway | null): Router {
   const router = express.Router();
+  router.use('/actions', createActionGatewayRouter(resolveKernel));
   router.post('/runs', async (req, res) => {
     const tenantId = requiredTenant(req, res);
     if (!tenantId) return;
@@ -171,6 +173,25 @@ export function createV1GatewayRouter(resolveKernel: () => V1KernelGateway | nul
       return res
         .status(400)
         .json({ error: { code: 'INVALID_REQUEST', details: parsed.error.issues } });
+    if (
+      parsed.data.metadata?.actionGateway !== undefined ||
+      parsed.data.steps?.some(
+        (step) =>
+          (step.kind === 'agent' &&
+            Array.isArray((step.input as { tools?: unknown }).tools) &&
+            (step.input as { tools: unknown[] }).tools.length > 0) ||
+          step.kind === 'tool' ||
+          step.kind === 'connector',
+      )
+    ) {
+      return res.status(403).json({
+        error: {
+          code: 'ACTION_GATEWAY_REQUIRED',
+          message:
+            'Externally effecting tool, connector, or agent-declared tool work must be proposed through POST /v1/actions.',
+        },
+      });
+    }
     const kernel = resolveKernel();
     if (!kernel)
       return res.status(503).json({
