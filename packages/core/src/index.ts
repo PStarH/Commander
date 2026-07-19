@@ -1390,6 +1390,12 @@ export {
   StreamableHTTPClientTransport,
   createMCPClient,
   MCPServer,
+  LOCAL_MCP_TOOL_NAMES,
+  buildMcpActionEnvelope,
+  createFetchActionGatewayExecutor,
+  toolRequiresActionGateway,
+  shouldRouteToolThroughActionGateway,
+  ActionGatewayPolicyError,
   MCP_ERROR_CODES,
   MCP_PROTOCOL_VERSION,
   canTransition,
@@ -1398,6 +1404,11 @@ export {
   A2A_PROTOCOL_VERSION,
   A2A_ERROR,
   A2A_METHODS,
+} from './mcp';
+export type {
+  ActionGatewayProposeInput,
+  ActionGatewayProposeResult,
+  ActionGatewayExecutor,
 } from './mcp';
 
 export {
