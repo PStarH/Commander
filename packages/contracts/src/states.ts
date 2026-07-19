@@ -61,7 +61,7 @@ export const RUN_TRANSITIONS: Readonly<Record<RunState, readonly RunState[]>> = 
 export const STEP_TRANSITIONS: Readonly<Record<StepState, readonly StepState[]>> = {
   PENDING: ['RUNNING', 'SKIPPED', 'FAILED', 'CANCELLED'],
   RUNNING: ['WAITING_FOR_HUMAN', 'RETRY_WAIT', 'SUCCEEDED', 'FAILED', 'CANCELLED'],
-  WAITING_FOR_HUMAN: ['RUNNING', 'FAILED', 'CANCELLED'],
+  WAITING_FOR_HUMAN: ['RUNNING', 'RETRY_WAIT', 'FAILED', 'CANCELLED'],
   RETRY_WAIT: ['RUNNING', 'FAILED', 'CANCELLED'],
   SUCCEEDED: [],
   FAILED: [],

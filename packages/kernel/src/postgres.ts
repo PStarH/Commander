@@ -24,8 +24,13 @@ import type {
   MarkEffectCompletionUnknownRequest,
   ReconcileEffectRequest,
   TenantExecutionControl,
+  KillSwitch,
+  KillSwitchMatchDims,
+  PutKillSwitchInput,
+  RemoveKillSwitchInput,
 } from './types.js';
 import { KernelInvariantError } from './types.js';
+import { findMatchingKillSwitchWithLookup } from './killSwitchMatching.js';
 import { assertRunTransition, assertStepTransition } from './transitionValidation.js';
 
 /** Minimal pg-compatible interfaces; callers can inject pg.Pool without a hard runtime coupling. */
@@ -257,12 +262,40 @@ export class PostgresKernelRepository implements KernelRepository {
         for (const step of command.steps) {
           await client.query(
             `INSERT INTO commander_steps (id, run_id, tenant_id, kind, state, max_attempts, priority, dependencies, input, scheduled_at)
-             VALUES ($1,$2,$3,$4,'PENDING',$5,$6,$7::jsonb,$8::jsonb,$9)`,
-            [step.id, command.id, command.tenantId, step.kind, step.maxAttempts ?? 1, step.priority ?? 0, json(step.dependencies ?? []), json(step.input), step.scheduledAt ?? new Date().toISOString()],
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10)`,
+            [step.id, command.id, command.tenantId, step.kind, step.initialState ?? 'PENDING', step.maxAttempts ?? 1, step.priority ?? 0, json(step.dependencies ?? []), json(step.input), step.scheduledAt ?? new Date().toISOString()],
           );
+          if (step.interaction) {
+            await client.query(
+              `INSERT INTO commander_interactions (id,run_id,step_id,tenant_id,prompt,expires_at)
+               VALUES ($1,$2,$3,$4,$5,$6)`,
+              [step.interaction.id, command.id, step.id, command.tenantId, step.interaction.prompt, step.interaction.expiresAt ?? null],
+            );
+            await this.appendEvent(client, {
+              aggregateType: 'interaction',
+              aggregateId: step.interaction.id,
+              sequence: 0,
+              type: 'interaction.created',
+              tenantId: command.tenantId,
+              runId: command.id,
+              stepId: step.id,
+              actor,
+              payload: {
+                interactionId: step.interaction.id,
+                prompt: step.interaction.prompt,
+                expiresAt: step.interaction.expiresAt ?? null,
+              },
+            });
+          }
         }
       } catch (error) {
-        if ((error as { code?: string }).code === '23505') throw new KernelInvariantError('DUPLICATE_STEP', `A step in run ${command.id} already exists`);
+        const uniqueViolation = error as { code?: string; constraint?: string };
+        if (uniqueViolation.code === '23505' && uniqueViolation.constraint?.startsWith('commander_interactions_')) {
+          throw new KernelInvariantError('DUPLICATE_INTERACTION', `An interaction in run ${command.id} already exists`);
+        }
+        if (uniqueViolation.code === '23505' && uniqueViolation.constraint?.startsWith('commander_steps_')) {
+          throw new KernelInvariantError('DUPLICATE_STEP', `A step in run ${command.id} already exists`);
+        }
         throw error;
       }
       await this.appendEvent(client, { aggregateType: 'run', aggregateId: command.id, sequence: 1, type: 'run.created', tenantId: command.tenantId, runId: command.id, actor, payload: { workGraphHash: command.workGraphHash, stepCount: command.steps.length } });
@@ -920,6 +953,65 @@ export class PostgresKernelRepository implements KernelRepository {
     });
   }
 
+  async putKillSwitch(input: PutKillSwitchInput): Promise<KillSwitch> {
+    return this.withTransaction(async (client) => {
+      const result = await client.query<{
+        tenant_id: string;
+        scope: string;
+        value: string;
+        enabled: boolean;
+        reason: string | null;
+        actor: string;
+        updated_at: Date | string;
+      }>(
+        `INSERT INTO commander_action_kill_switches (tenant_id, scope, value, enabled, reason, actor, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, now())
+         ON CONFLICT (tenant_id, scope, value) DO UPDATE
+           SET enabled = EXCLUDED.enabled,
+               reason = EXCLUDED.reason,
+               actor = EXCLUDED.actor,
+               updated_at = now()
+         RETURNING tenant_id, scope, value, enabled, reason, actor, updated_at`,
+        [input.tenantId, input.scope, input.value, input.enabled, input.reason ?? null, input.actor],
+      );
+      return mapKillSwitch(result.rows[0]!);
+    }, [input.tenantId]);
+  }
+
+  async removeKillSwitch(input: RemoveKillSwitchInput): Promise<void> {
+    await this.withTransaction(async (client) => {
+      await client.query(
+        `DELETE FROM commander_action_kill_switches WHERE tenant_id=$1 AND scope=$2 AND value=$3`,
+        [input.tenantId, input.scope, input.value],
+      );
+    }, [input.tenantId]);
+  }
+
+  async listKillSwitches(tenantId: string): Promise<KillSwitch[]> {
+    return this.withTransaction(async (client) => {
+      const result = await client.query<{
+        tenant_id: string;
+        scope: string;
+        value: string;
+        enabled: boolean;
+        reason: string | null;
+        actor: string;
+        updated_at: Date | string;
+      }>(
+        `SELECT tenant_id, scope, value, enabled, reason, actor, updated_at
+         FROM commander_action_kill_switches
+         WHERE tenant_id=$1
+         ORDER BY scope, value`,
+        [tenantId],
+      );
+      return result.rows.map((row) => mapKillSwitch(row));
+    }, [tenantId]);
+  }
+
+  async findMatchingKillSwitch(tenantId: string, dims: KillSwitchMatchDims): Promise<KillSwitch | null> {
+    return findMatchingKillSwitchWithLookup(tenantId, dims, (id) => this.listKillSwitches(id));
+  }
+
   async listEvents(runId: string, tenantId: string): Promise<KernelEvent[]> {
     return this.withTransaction(async (client) => {
       const result = await client.query<{ id: string; aggregate_type: KernelEvent['aggregateType']; aggregate_id: string; sequence: number; type: string; tenant_id: string; run_id: string; step_id: string | null; causation_id: string | null; correlation_id: string | null; actor: string; schema_version: string; payload: Record<string, unknown> | null; occurred_at: Date | string }>(`SELECT * FROM commander_events WHERE run_id=$1 AND tenant_id=$2 ORDER BY occurred_at, sequence`, [runId, tenantId]);
@@ -1028,26 +1120,72 @@ export class PostgresKernelRepository implements KernelRepository {
       }>(`INSERT INTO commander_interactions (id,run_id,step_id,tenant_id,prompt,expires_at)
           VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
         [id, request.runId, request.stepId, request.tenantId, request.prompt, request.expiresAt ?? null]);
-      await this.appendEvent(client, { aggregateType: 'interaction', aggregateId: id, sequence: 0, type: 'interaction.created', tenantId: request.tenantId, runId: request.runId, stepId: request.stepId, actor, payload: { interactionId: id } });
+      await this.appendEvent(client, { aggregateType: 'interaction', aggregateId: id, sequence: 0, type: 'interaction.created', tenantId: request.tenantId, runId: request.runId, stepId: request.stepId, actor, payload: { interactionId: id, prompt: request.prompt, expiresAt: request.expiresAt?.toISOString() ?? null } });
       return mapInteraction(result.rows[0]!);
     }, [request.tenantId]);
   }
 
   async answerInteraction(request: AnswerInteractionRequest): Promise<KernelInteraction> {
     return this.withTransaction(async (client) => {
+      const locked = await client.query<{
+        id: string; run_id: string; step_id: string; tenant_id: string;
+        status: string; prompt: string; response: Record<string, unknown> | null;
+        created_at: Date | string; answered_at: Date | string | null; expires_at: Date | string | null;
+        step_state: KernelStepState;
+      }>(`SELECT i.*, s.state AS step_state
+          FROM commander_interactions i
+          JOIN commander_steps s
+            ON s.id=i.step_id AND s.run_id=i.run_id AND s.tenant_id=i.tenant_id
+          WHERE i.id=$1 AND i.run_id=$2 AND i.tenant_id=$3
+            AND i.status='pending' AND s.state='WAITING_FOR_HUMAN'
+          FOR UPDATE OF i, s`,
+        [request.interactionId, request.runId, request.tenantId]);
+      const interaction = locked.rows[0];
+      if (!interaction) {
+        throw new KernelInvariantError('INTERACTION_NOT_FOUND', `Interaction ${request.interactionId} not found or already answered`);
+      }
+      let released: { rows: DbStep[] };
+      if (request.releaseStep === false) {
+        const current = await client.query<DbStep>(
+          `SELECT * FROM commander_steps
+           WHERE id=$1 AND run_id=$2 AND tenant_id=$3 AND state='WAITING_FOR_HUMAN'`,
+          [interaction.step_id, request.runId, request.tenantId],
+        );
+        if (!current.rows[0]) {
+          throw new KernelInvariantError('INTERACTION_NOT_FOUND', `Interaction ${request.interactionId} has no matching waiting step`);
+        }
+        released = { rows: current.rows };
+      } else {
+        assertStepTransition(interaction.step_state, 'RETRY_WAIT');
+        released = await client.query<DbStep>(
+          `UPDATE commander_steps
+           SET state='RETRY_WAIT', scheduled_at=now(), version=version+1, updated_at=now(),
+             lease_worker_id=NULL, lease_worker_generation=0, lease_token=NULL, lease_expires_at=NULL
+           WHERE id=$1 AND run_id=$2 AND tenant_id=$3 AND state='WAITING_FOR_HUMAN'
+           RETURNING *`,
+          [interaction.step_id, request.runId, request.tenantId],
+        );
+        if (!released.rows[0]) {
+          throw new KernelInvariantError('INTERACTION_NOT_FOUND', `Interaction ${request.interactionId} has no matching waiting step`);
+        }
+      }
       const result = await client.query<{
         id: string; run_id: string; step_id: string; tenant_id: string;
         status: string; prompt: string; response: Record<string, unknown> | null;
         created_at: Date | string; answered_at: Date | string | null; expires_at: Date | string | null;
       }>(`UPDATE commander_interactions
           SET status='answered', response=$1::jsonb, answered_at=now()
-          WHERE id=$2 AND run_id=$3 AND tenant_id=$4 AND status='pending'
+          WHERE id=$2 AND run_id=$3 AND tenant_id=$4 AND step_id=$5 AND status='pending'
           RETURNING *`,
-        [json(request.response), request.interactionId, request.runId, request.tenantId]);
+        [json(request.response), request.interactionId, request.runId, request.tenantId, interaction.step_id]);
       if (!result.rows[0]) {
         throw new KernelInvariantError('INTERACTION_NOT_FOUND', `Interaction ${request.interactionId} not found or already answered`);
       }
-      await this.appendEvent(client, { aggregateType: 'interaction', aggregateId: request.interactionId, sequence: 1, type: 'interaction.answered', tenantId: request.tenantId, runId: request.runId, stepId: result.rows[0]!.step_id, actor: request.actor, payload: { response: request.response } });
+      const step = fromStep(released.rows[0]!);
+      await this.appendEvent(client, { aggregateType: 'interaction', aggregateId: request.interactionId, sequence: 1, type: 'interaction.answered', tenantId: request.tenantId, runId: request.runId, stepId: interaction.step_id, actor: request.actor, payload: { response: request.response } });
+      if (request.releaseStep !== false) {
+        await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: 'step.interaction_answered', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor: request.actor, payload: { interactionId: request.interactionId } });
+      }
       return mapInteraction(result.rows[0]!);
     }, [request.tenantId]);
   }
@@ -1293,6 +1431,26 @@ export class PostgresKernelRepository implements KernelRepository {
 }
 
 // ── Row mappers ──────────────────────────────────────────────────────────────
+
+function mapKillSwitch(row: {
+  tenant_id: string;
+  scope: string;
+  value: string;
+  enabled: boolean;
+  reason: string | null;
+  actor: string;
+  updated_at: Date | string;
+}): KillSwitch {
+  return {
+    tenantId: row.tenant_id,
+    scope: row.scope as KillSwitch['scope'],
+    value: row.value,
+    enabled: row.enabled,
+    reason: row.reason ?? undefined,
+    actor: row.actor,
+    updatedAt: iso(row.updated_at),
+  };
+}
 
 function mapTimer(row: {
   id: string; run_id: string; step_id: string; tenant_id: string;
