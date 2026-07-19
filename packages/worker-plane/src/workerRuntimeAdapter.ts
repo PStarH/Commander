@@ -11,11 +11,13 @@ import {
 import { assertEffectBrokerForProduction } from './effectGate.js';
 import { getStepWorkloadBinding } from './stepWorkloadIdentity.js';
 
-export { KernelStepExecutor } from '@commander/core';
-// WS7: SandboxManager is re-exported so sandboxReadiness can consume it via
-// this file — the constitution's single sanctioned worker-plane→core bridge
-// (scripts/arch-guard.sh isWorkerCoreBridge).
-export { SandboxManager } from '@commander/core';
+export {
+  KernelStepExecutor,
+  SandboxManager,
+  getControlPlane,
+  resetControlPlane,
+} from '@commander/core';
+export type { WorkloadIdentity } from '@commander/core';
 
 export type AgentStepExecutorOptions = AgentRuntimeFactoryOptions & {
   defaultMaxSteps?: number;

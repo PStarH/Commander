@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { resetControlPlane } from '@commander/core';
+import { resetControlPlane } from './workerRuntimeAdapter.js';
 import { InMemoryWorkerRegistry } from './registry.js';
 import { WorkerService } from './workerService.js';
 import { WorkerExecutionError } from './types.js';
@@ -158,7 +158,7 @@ describe('worker plane', () => {
           return { ok: true };
         },
       },
-      { leaseTtlMs: 1_000, workerHeartbeatMs: 60_000 },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 1_000 },
     );
     await service.start();
     assert.equal(await service.pollOnce(), true);
@@ -180,7 +180,7 @@ describe('worker plane', () => {
       registry,
       kernel,
       { execute: async () => ({ completed: true }) },
-      { leaseTtlMs: 1_000, workerHeartbeatMs: 60_000 },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 1_000 },
     );
     await service.start();
     assert.equal(await service.pollOnce(), true);
@@ -215,7 +215,7 @@ describe('worker plane', () => {
           return {};
         },
       },
-      { leaseTtlMs: 1_000, workerHeartbeatMs: 60_000 },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 1_000 },
     );
     await service.start();
     assert.equal(await service.pollOnce(), true);
@@ -255,7 +255,7 @@ describe('worker plane', () => {
           });
         },
       },
-      { leaseTtlMs: 1_000, workerHeartbeatMs: 60_000 },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 1_000 },
     );
     await service.start();
     await service.pollOnce();
@@ -310,7 +310,7 @@ describe('worker plane', () => {
           throw error;
         },
       },
-      { leaseTtlMs: 1_000, workerHeartbeatMs: 60_000 },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 1_000 },
     );
 
     await service.start();
@@ -341,7 +341,7 @@ describe('worker plane', () => {
           );
         },
       },
-      { leaseTtlMs: 1_000, workerHeartbeatMs: 60_000 },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 1_000 },
     );
 
     await service.start();
@@ -377,7 +377,7 @@ describe('worker plane', () => {
           return {};
         },
       },
-      { leaseTtlMs: 1_000, workerHeartbeatMs: 60_000 },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 1_000 },
     );
     await service.start();
     const results = await Promise.all([service.pollOnce(), service.pollOnce(), service.pollOnce()]);
@@ -405,7 +405,7 @@ describe('worker plane', () => {
           return {};
         },
       },
-      { leaseTtlMs: 1_000, workerHeartbeatMs: 60_000 },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 1_000 },
     );
     await service.start();
     const poll = service.pollOnce();

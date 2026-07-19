@@ -198,6 +198,8 @@ export class ConnectorStepExecutor implements StepExecutor {
     }
 
     const started = Date.now();
+    const timeoutMs = input.timeoutMs ?? 60_000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     try {
       const result = await Promise.race([
@@ -208,18 +210,19 @@ export class ConnectorStepExecutor implements StepExecutor {
           stepId: step.id,
         }),
         new Promise<never>((_, reject) => {
-          const timer = setTimeout(() => {
+          timer = setTimeout(() => {
             reject(new WorkerExecutionError(
-              `Connector '${input.connectorName}' operation '${input.operation}' timed out after ${input.timeoutMs ?? 60_000}ms`,
+              `Connector '${input.connectorName}' operation '${input.operation}' timed out after ${timeoutMs}ms`,
               { code: 'TIMEOUT', retryable: true, retryDelayMs: 30_000 },
             ));
-          }, input.timeoutMs ?? 60_000);
+          }, timeoutMs);
           context.signal.addEventListener('abort', () => {
             clearTimeout(timer);
             reject(new WorkerExecutionError('Connector execution aborted', { code: 'ABORTED', retryable: true, retryDelayMs: 5000 }));
           }, { once: true });
         }),
       ]);
+      clearTimeout(timer);
 
       const output: ConnectorStepOutput = {
         result,
@@ -229,6 +232,7 @@ export class ConnectorStepExecutor implements StepExecutor {
       };
       return output as unknown as Record<string, unknown>;
     } catch (error) {
+      clearTimeout(timer);
       if (error instanceof WorkerExecutionError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       throw new WorkerExecutionError(message, {
