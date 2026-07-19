@@ -3,11 +3,13 @@ import {
   getModelRouter,
   createAllTools,
   MCP_PROTOCOL_VERSION,
+  createFetchActionGatewayExecutor,
   type ModelTier,
   type MCPTool,
   type MCPResource,
   type MCPPrompt,
   type MCPServerCapabilities,
+  type ActionGatewayExecutor,
 } from '@commander/core';
 
 export interface StdioMcpServerOptions {
@@ -19,6 +21,12 @@ export interface StdioMcpServerOptions {
   modelRouterOnly?: boolean;
   /** If true, expose dangerous built-in tools such as shell_execute (default: false). */
   allowDangerousTools?: boolean;
+  /** Override Action Gateway base URL (defaults to COMMANDER_ACTION_GATEWAY_URL). */
+  actionGatewayUrl?: string;
+  /** Override Action Gateway API key (defaults to COMMANDER_API_KEY). */
+  actionGatewayApiKey?: string;
+  /** Inject a custom Action Gateway executor (used by tests). */
+  actionGatewayExecutor?: ActionGatewayExecutor;
 }
 
 export interface StdioMcpServerStatus {
@@ -45,6 +53,7 @@ export function createStdioMcpServer(options: StdioMcpServerOptions = {}): {
   server: MCPServer;
   status: StdioMcpServerStatus;
 } {
+  currentStdioOptions = options;
   const name = options.name ?? 'commander-mcp-server';
   const version = options.version ?? '0.2.0';
   const startTime = Date.now();
@@ -245,10 +254,52 @@ function registerModelRouterTools(server: MCPServer): void {
 function registerCommanderTools(server: MCPServer, allowDangerousTools: boolean): void {
   try {
     const tools = createAllTools();
-    server.registerCommanderTools(tools, undefined, { allowDangerousTools });
+    const executor = resolveActionGatewayExecutor();
+    server.registerCommanderTools(tools, undefined, {
+      allowDangerousTools,
+      actionGatewayExecutor: executor,
+    });
   } catch (err) {
     process.stderr.write(
       `[commander-mcp-server] Failed to register Commander tools: ${err instanceof Error ? err.message : String(err)}\n`,
     );
   }
 }
+
+export function isEnterpriseOrProductionMcpMode(env: NodeJS.ProcessEnv = process.env): boolean {
+  const profile = env.COMMANDER_PROFILE?.trim().toLowerCase();
+  if (profile === 'enterprise') return true;
+  const commanderEnv = env.COMMANDER_ENV?.trim().toLowerCase();
+  if (commanderEnv === 'production' || commanderEnv === 'prod') return true;
+  return env.NODE_ENV === 'production';
+}
+
+export function assertActionGatewayConfigured(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { allowDangerousTools?: boolean } = {},
+): void {
+  const requireGateway =
+    isEnterpriseOrProductionMcpMode(env) || options.allowDangerousTools === true;
+  if (!requireGateway) return;
+  if (!env.COMMANDER_ACTION_GATEWAY_URL?.trim()) {
+    throw new Error(
+      options.allowDangerousTools === true && !isEnterpriseOrProductionMcpMode(env)
+        ? 'COMMANDER_ACTION_GATEWAY_URL is required when --allow-dangerous-tools is set.'
+        : 'COMMANDER_ACTION_GATEWAY_URL is required in enterprise/production MCP mode.',
+    );
+  }
+}
+
+function resolveActionGatewayExecutor(): ActionGatewayExecutor | undefined {
+  const options = currentStdioOptions;
+  if (options?.actionGatewayExecutor) return options.actionGatewayExecutor;
+  const actionGatewayUrl =
+    options?.actionGatewayUrl?.trim() || process.env.COMMANDER_ACTION_GATEWAY_URL?.trim();
+  if (!actionGatewayUrl) return undefined;
+  return createFetchActionGatewayExecutor({
+    baseUrl: actionGatewayUrl,
+    apiKey: options?.actionGatewayApiKey ?? process.env.COMMANDER_API_KEY,
+  });
+}
+
+let currentStdioOptions: StdioMcpServerOptions | undefined;

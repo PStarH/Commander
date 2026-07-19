@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { startStdioServer } from './stdioServer';
+import { assertActionGatewayConfigured, startStdioServer } from './stdioServer';
 
 const HELP = `
 commander-mcp-server
@@ -57,6 +57,17 @@ export function run(argv: string[] = process.argv): void {
   if (options.help) {
     process.stdout.write(HELP.trim() + '\n');
     process.exit(0);
+  }
+
+  try {
+    assertActionGatewayConfigured(process.env, {
+      allowDangerousTools: options.allowDangerousTools === true,
+    });
+  } catch (err) {
+    process.stderr.write(
+      `[commander-mcp-server] ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    process.exit(1);
   }
 
   startStdioServer({
