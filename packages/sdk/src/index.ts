@@ -100,4 +100,14 @@ export type {
   SdkV1Resource,
 } from './v1/resources';
 export { CommanderGatewayClient, CommanderGatewayError } from './v1/client';
-export type { GatewayClientOptions, GatewayRun } from './v1/client';
+export type {
+  GatewayClientOptions,
+  GatewayRun,
+  ActionEffect,
+  ActionDecision,
+  ActionSimulation,
+  GovernedAction,
+  ProposeActionInput,
+  ActionApprovalInput,
+  ActionEvidenceBundle,
+} from './v1/client';
