@@ -21,6 +21,7 @@ export class InMemoryTicketAdapter implements EffectOutcomeQuerier {
   private seq = 0;
   /** Counts create() invocations — reconcile must not increment this. */
   createInvocations = 0;
+  compensateInvocations = 0;
 
   private key(tenantId: string, idempotencyKey: string): string {
     return `${tenantId}:${idempotencyKey}`;
@@ -45,6 +46,17 @@ export class InMemoryTicketAdapter implements EffectOutcomeQuerier {
       status: 'open',
     };
     this.byIdempotency.set(k, record);
+    return { ...record };
+  }
+
+  async compensate(input: {
+    tenantId: string;
+    idempotencyKey: string;
+  }): Promise<TicketRecord> {
+    this.compensateInvocations += 1;
+    const record = this.byIdempotency.get(this.key(input.tenantId, input.idempotencyKey));
+    if (!record) throw new Error('DEMO_TICKET_NOT_FOUND');
+    record.status = 'closed';
     return { ...record };
   }
 

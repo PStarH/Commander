@@ -29,6 +29,33 @@ const grantBase = {
 };
 
 describe('L3-08a InMemoryTicketAdapter chaos', () => {
+  it('compensates a created ticket by idempotency key without deleting its audit identity', async () => {
+    const tickets = new InMemoryTicketAdapter();
+    const created = await tickets.create({
+      tenantId: 'tenant',
+      idempotencyKey: 'idem-reversible-1',
+      title: 'Reversible ticket',
+    });
+    assert.equal(created.status, 'open');
+
+    const compensated = await tickets.compensate({
+      tenantId: 'tenant',
+      idempotencyKey: 'idem-reversible-1',
+    });
+    assert.equal(compensated.ticketId, created.ticketId);
+    assert.equal(compensated.status, 'closed');
+
+    const outcome = await tickets.queryOutcome({
+      effectId: 'effect-create',
+      idempotencyKey: 'idem-reversible-1',
+      type: 'demo.ticket.create',
+      request: {},
+      tenantId: 'tenant',
+    });
+    assert.equal(outcome.status, 'COMPLETED');
+    assert.equal(outcome.response?.status, 'closed');
+  });
+
   it('timeout-after-remote-commit reconciles COMPLETED without second create', async () => {
     const issuer = CapabilityTokenIssuer.generate({
       issuer: 'commander-worker',

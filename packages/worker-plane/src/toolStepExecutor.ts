@@ -30,6 +30,10 @@ export interface ToolStepInput {
   toolName: string;
   /** Tool arguments. */
   args: Record<string, unknown>;
+  /** Canonical broker effect type when it differs from the framework tool name. */
+  effectType?: string;
+  /** Server-persisted Action Gateway envelope passed intact to EffectBroker. */
+  actionEnvelope?: Record<string, unknown>;
   /** Whether this tool produces external side effects. */
   hasExternalEffects?: boolean;
   /** Pure-local tool (no external IO). Required in production to bypass the broker. */
@@ -127,7 +131,8 @@ export class ToolStepExecutor implements StepExecutor {
           { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false },
         );
       }
-      const request = input.args ?? {};
+      const request = input.actionEnvelope ?? input.args ?? {};
+      const effectType = input.effectType ?? input.toolName;
       let capabilityToken = input.capabilityToken;
       const production =
         process.env.NODE_ENV === 'production' ||
@@ -138,7 +143,7 @@ export class ToolStepExecutor implements StepExecutor {
         workloadBinding = requireStepWorkloadBinding();
         capabilityToken = mintStepCapabilityToken({
           issuer: this.capabilityIssuer,
-          effectType: input.toolName,
+          effectType,
           request,
         });
       } else if (production) {
@@ -157,7 +162,7 @@ export class ToolStepExecutor implements StepExecutor {
         const result = await this.effectBroker.execute({
           effectId: input.effectId,
           token: capabilityToken,
-          type: input.toolName,
+          type: effectType,
           request,
           idempotencyKey: input.idempotencyKey,
           lease: step.lease,
