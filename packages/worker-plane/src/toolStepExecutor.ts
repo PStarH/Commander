@@ -29,6 +29,10 @@ export interface ToolStepInput {
   toolName: string;
   /** Tool arguments. */
   args: Record<string, unknown>;
+  /** Canonical broker effect type when it differs from the framework tool name. */
+  effectType?: string;
+  /** Server-persisted Action Gateway envelope passed intact to EffectBroker. */
+  actionEnvelope?: Record<string, unknown>;
   /** Whether this tool produces external side effects. */
   hasExternalEffects?: boolean;
   /** Pure-local tool (no external IO). Required in production to bypass the broker. */
@@ -120,7 +124,8 @@ export class ToolStepExecutor implements StepExecutor {
       if (!step.lease || !input.effectId || !input.idempotencyKey) {
         throw new WorkerExecutionError('External tool execution requires effectId, idempotencyKey, and a live step lease', { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false });
       }
-      const request = input.args ?? {};
+      const request = input.actionEnvelope ?? input.args ?? {};
+      const effectType = input.effectType ?? input.toolName;
       let capabilityToken = input.capabilityToken;
       const production =
         process.env.NODE_ENV === 'production' ||
@@ -131,7 +136,7 @@ export class ToolStepExecutor implements StepExecutor {
         workloadBinding = requireStepWorkloadBinding();
         capabilityToken = mintStepCapabilityToken({
           issuer: this.capabilityIssuer,
-          effectType: input.toolName,
+          effectType,
           request,
         });
       } else if (production) {
@@ -147,7 +152,7 @@ export class ToolStepExecutor implements StepExecutor {
         const result = await this.effectBroker.execute({
           effectId: input.effectId,
           token: capabilityToken,
-          type: input.toolName,
+          type: effectType,
           request,
           idempotencyKey: input.idempotencyKey,
           lease: step.lease,
@@ -172,6 +177,8 @@ export class ToolStepExecutor implements StepExecutor {
     }
 
     const started = Date.now();
+    const timeoutMs = input.timeoutMs ?? 30_000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     try {
       const result = await Promise.race([
@@ -182,18 +189,19 @@ export class ToolStepExecutor implements StepExecutor {
           stepId: step.id,
         }),
         new Promise<never>((_, reject) => {
-          const timer = setTimeout(() => {
+          timer = setTimeout(() => {
             reject(new WorkerExecutionError(
-              `Tool '${input.toolName}' timed out after ${input.timeoutMs ?? 30000}ms`,
+              `Tool '${input.toolName}' timed out after ${timeoutMs}ms`,
               { code: 'TIMEOUT', retryable: true, retryDelayMs: 10_000 },
             ));
-          }, input.timeoutMs ?? 30_000);
+          }, timeoutMs);
           context.signal.addEventListener('abort', () => {
             clearTimeout(timer);
             reject(new WorkerExecutionError('Tool execution aborted', { code: 'ABORTED', retryable: true, retryDelayMs: 1000 }));
           }, { once: true });
         }),
       ]);
+      clearTimeout(timer);
 
       const output: ToolStepOutput = {
         result,
@@ -202,6 +210,7 @@ export class ToolStepExecutor implements StepExecutor {
       };
       return output as unknown as Record<string, unknown>;
     } catch (error) {
+      clearTimeout(timer);
       if (error instanceof WorkerExecutionError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       throw new WorkerExecutionError(message, {
