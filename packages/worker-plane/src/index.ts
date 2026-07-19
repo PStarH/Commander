@@ -4,7 +4,7 @@ export { WorkerExecutionError } from './types.js';
 export type { ClaimedStep, KernelWorkerPort, StepExecutor, WorkerAuthenticator, WorkerAuthorization, WorkerDefinition, WorkerIdentity, WorkerKind, WorkerRecord, WorkerRegistry, WorkerServiceConfig, WorkerStatus, WorkerLease } from './types.js';
 
 // Production bootstrap
-export { createWorkerService } from './bootstrap.js';
+export { createWorkerEffectExecutor, createWorkerService } from './bootstrap.js';
 
 // Authentication
 export { ApiKeyWorkerAuthenticator, WorkerAuthError } from './apiKeyAuthenticator.js';

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { resetControlPlane } from '@commander/core';
+import { resetControlPlane } from './workerRuntimeAdapter.js';
 import {
   CapabilityTokenIssuer,
   CapabilityTokenVerifier,
