@@ -1,6 +1,7 @@
 """Commander Python SDK — multi-agent orchestration via HTTP."""
 
 from ._client import Agent, CommanderClient
+from ._gateway_client import CommanderGatewayClient
 from ._exceptions import (
     AuthenticationError,
     CommanderError,
@@ -80,6 +81,13 @@ from ._types import (
     EvalJudgeResult,
     EvalStatus,
     EvalWilcoxonResult,
+    ActionDecision,
+    ActionEffect,
+    ActionSimulation,
+    GovernedAction,
+    ProposeActionInput,
+    ActionApprovalInput,
+    ActionEvidenceBundle,
     ExecutionEvent,
     ExecutionEventType,
     ExecutionResult,
@@ -193,6 +201,7 @@ from .security import (
 
 __all__ = [
     "CommanderClient",
+    "CommanderGatewayClient",
     "CommanderClientSync",
     "Agent",
     "CommanderModel",
@@ -323,6 +332,13 @@ __all__ = [
     "EvalComparePair",
     "EvalCompareResult",
     "EvalWilcoxonResult",
+    "ActionDecision",
+    "ActionEffect",
+    "ActionSimulation",
+    "GovernedAction",
+    "ProposeActionInput",
+    "ActionApprovalInput",
+    "ActionEvidenceBundle",
     "User",
     "UserList",
     "AuthTokens",
