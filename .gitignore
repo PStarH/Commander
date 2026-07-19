@@ -321,3 +321,4 @@ packages/core/.commander/otel_queue/
 # Local audits, AI plans, diligence, fix-lists. See .internal/README.md
 # ---------------------------------------------------------------------------
 .internal/
+.superpowers/
