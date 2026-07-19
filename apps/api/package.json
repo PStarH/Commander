@@ -26,6 +26,7 @@
   "dependencies": {
     "@commander/contracts": "workspace:*",
     "@commander/core": "workspace:*",
+    "@commander/effect-broker": "workspace:*",
     "@commander/kernel": "workspace:*",
     "bcryptjs": "^3.0.3",
     "express": "^5.2.1",
