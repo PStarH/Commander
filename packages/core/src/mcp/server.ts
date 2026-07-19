@@ -27,6 +27,146 @@ import type { Tool } from '../runtime/types';
 import { getGuardianAgent, type GuardianAction } from '../security/guardianAgent';
 import { getExecPolicyEngine } from '../sandbox/execPolicy';
 import { reportSilentFailure } from '../silentFailureReporter';
+import { createHash } from 'node:crypto';
+
+/** Pure-local MCP tools that never require Action Gateway (read/router only). */
+export const LOCAL_MCP_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'list_models',
+  'route_task',
+]);
+
+export interface ActionGatewayProposeInput {
+  source: string;
+  package: string;
+  model: string;
+  tool: string;
+  destination: string;
+  effectType: string;
+  args: Record<string, unknown>;
+  idempotencyKey: string;
+}
+
+export interface ActionGatewayProposeResult {
+  action: Record<string, unknown>;
+  idempotentReplay: boolean;
+}
+
+export class ActionGatewayPolicyError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly body: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = 'ActionGatewayPolicyError';
+  }
+}
+
+export interface ActionGatewayExecutor {
+  proposeAction(input: ActionGatewayProposeInput): Promise<ActionGatewayProposeResult>;
+}
+
+export function buildMcpActionEnvelope(
+  tool: Tool,
+  args: Record<string, unknown>,
+  model = process.env.COMMANDER_MCP_MODEL ?? 'mcp-default',
+): ActionGatewayProposeInput {
+  const toolName = tool.definition.name;
+  let destination = tool.externalSystem
+    ? `${tool.externalSystem}://default`
+    : `mcp://commander/${toolName}`;
+  let effectType = `mcp.tool.${toolName}`;
+  if (toolName === 'ticket.create') {
+    effectType = 'demo.ticket.create';
+    destination =
+      args.requireApproval === true ? 'demo://tickets/approval' : 'demo://tickets';
+  } else if (toolName === 'ticket.compensate') {
+    effectType = 'compensate.demo.ticket.create';
+    destination = 'demo://tickets';
+  }
+  const idempotencyKey = `mcp-${createHash('sha256')
+    .update(JSON.stringify({ toolName, args }))
+    .digest('hex')
+    .slice(0, 32)}`;
+  return {
+    source: 'mcp',
+    package: 'commander.mcp',
+    model,
+    tool: toolName,
+    destination,
+    effectType,
+    args,
+    idempotencyKey,
+  };
+}
+
+export function createFetchActionGatewayExecutor(options: {
+  baseUrl: string;
+  apiKey?: string;
+  fetch?: typeof globalThis.fetch;
+}): ActionGatewayExecutor {
+  const fetchImpl = options.fetch ?? globalThis.fetch;
+  if (!fetchImpl) {
+    throw new Error('A fetch implementation is required for the Action Gateway executor');
+  }
+  const baseUrl = options.baseUrl.replace(/\/$/, '');
+  return {
+    async proposeAction(input) {
+      const headers = new Headers({
+        accept: 'application/json',
+        'content-type': 'application/json',
+        'Idempotency-Key': input.idempotencyKey,
+      });
+      if (options.apiKey) {
+        headers.set('authorization', `Bearer ${options.apiKey}`);
+      }
+      const response = await fetchImpl(`${baseUrl}/v1/actions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(input),
+      });
+      const body = await response.text();
+      if (!response.ok) {
+        let parsed: { error?: { code?: string; message?: string } } | null = null;
+        try {
+          parsed = JSON.parse(body) as { error?: { code?: string; message?: string } };
+        } catch {
+          parsed = null;
+        }
+        const code = parsed?.error?.code;
+        if (
+          response.status === 403 &&
+          (code === 'ACTION_POLICY_DENIED' || code === 'KILL_SWITCH_ACTIVE')
+        ) {
+          throw new ActionGatewayPolicyError(
+            code,
+            parsed?.error?.message ?? 'Action Gateway policy denied the request.',
+            (parsed ?? { raw: body }) as Record<string, unknown>,
+          );
+        }
+        throw new Error(`Action Gateway request failed (${response.status}): ${body}`);
+      }
+      const json = JSON.parse(body) as {
+        action: Record<string, unknown>;
+        idempotentReplay: boolean;
+      };
+      return { action: json.action, idempotentReplay: json.idempotentReplay };
+    },
+  };
+}
+
+/** Non-local, non-read-only tools must go through Action Gateway (fail-closed). */
+export function toolRequiresActionGateway(tool: Tool): boolean {
+  if (LOCAL_MCP_TOOL_NAMES.has(tool.definition.name)) return false;
+  return tool.isReadOnly !== true;
+}
+
+export function shouldRouteToolThroughActionGateway(
+  tool: Tool,
+  executor?: ActionGatewayExecutor,
+): executor is ActionGatewayExecutor {
+  return Boolean(executor) && toolRequiresActionGateway(tool);
+}
 
 export interface MCPToolRegistration {
   definition: MCPTool;
@@ -444,9 +584,10 @@ export class MCPServer {
   registerCommanderTools(
     tools: Map<string, Tool>,
     filter?: (name: string, tool: Tool) => boolean,
-    options?: { allowDangerousTools?: boolean },
+    options?: { allowDangerousTools?: boolean; actionGatewayExecutor?: ActionGatewayExecutor },
   ): void {
     const allowDangerous = options?.allowDangerousTools === true;
+    const actionGatewayExecutor = options?.actionGatewayExecutor;
     for (const [name, tool] of tools) {
       // Default security filter: never expose destructive tools to external
       // MCP clients unless the caller explicitly opts in via allowDangerousTools.
@@ -461,12 +602,54 @@ export class MCPServer {
         },
         async (args: Record<string, unknown>) => {
           try {
+            if (toolRequiresActionGateway(tool)) {
+              if (!actionGatewayExecutor) {
+                return {
+                  content: [
+                    {
+                      type: 'text' as const,
+                      text:
+                        `Error executing ${name}: ACTION_GATEWAY_REQUIRED — ` +
+                        'non-read-only MCP tools cannot execute locally; ' +
+                        'configure COMMANDER_ACTION_GATEWAY_URL and propose via /v1/actions.',
+                    },
+                  ] as MCPTextContent[],
+                };
+              }
+              const envelope = buildMcpActionEnvelope(tool, args);
+              const result = await actionGatewayExecutor.proposeAction(envelope);
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: JSON.stringify(
+                      {
+                        action: result.action,
+                        idempotentReplay: result.idempotentReplay,
+                      },
+                      null,
+                      2,
+                    ),
+                  },
+                ],
+              } satisfies MCPToolResult;
+            }
             const result = await tool.execute(args);
             // Return as text content for MCP compatibility
             return {
               content: [{ type: 'text' as const, text: result }],
             } satisfies MCPToolResult;
           } catch (err) {
+            if (err instanceof ActionGatewayPolicyError) {
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: `Action Gateway policy denied (${err.code}): ${err.message}`,
+                  },
+                ] as MCPTextContent[],
+              };
+            }
             return {
               content: [
                 {
