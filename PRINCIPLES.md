@@ -233,6 +233,10 @@ rules. The contracts leaf, V2 package graph, and new package-role ban are ENFORC
   and not an allowedDependencies entry until that package lands on the branch base.
   **Gap ENFORCED via claimHonesty:** no production main wires
   `consumeCompensationBatch` + real EffectBroker (library-only under kernel ops).
+  Also closed living-map noise: ARCHITECTURE WS0 no longer says “boundary linter not yet
+  ENFORCED”; it matches the V2 table — `pnpm arch:guard` **ENFORCES** contracts leaf + V2
+  graph + deleted-package ban (V1 wholesale `@commander/core` ban remains PARTIAL /
+  allowlisted).
 - **2026-07-17 (L3-10a: memory ceiling / single write API)** — Preferred product write =
   `writeProductMemory` → `MemoryStore` → `MemoryService.store` (MEMORY-001 ENFORCED).
   Agent-identified `MemoryStoreTool` FS path fail-closed. Product allowlist drops five
@@ -366,9 +370,11 @@ rules. The contracts leaf, V2 package graph, and new package-role ban are ENFORC
 - **2026-07-14** — Initial honest baseline. Written from architecture inventory `wf_db80bc0a-04f`
   (15 package maps + orchestrator/store/memory/state-machine duplication censuses). Records the
   V1→V2 strangler split and the live duplication counts (orchestrator 13, store 51, memory 19,
-  state-machine 6) as the debt the "single canonical" invariants exist to retire. No principle is
-  enforced beyond the `test:arch` suite; §1/§3/§5 are aspirational pending a boundary linter,
-  count-guard, and naming lint respectively.
+  state-machine 6) as the debt the "single canonical" invariants exist to retire. **As of this
+  baseline date**, no principle was enforced beyond the `test:arch` suite; §1/§3/§5 were
+  aspirational pending a boundary linter, count-guard, and naming lint respectively.
+  **Superseded later:** 2026-07-15+ `scripts/arch-guard.sh` ENFORCES contracts leaf + V2 graph;
+  §3 count-guard ENFORCED 2026-07-15 — see later changelog. Naming lint remains PARTIAL.
   Provenance note: the orchestrator/store/memory/state-machine counts in §3 are census-backed; the
   policy-decision-point row (§3) and the §2/§4/§5 conformance findings are reconstructed from the
   15 package maps (each file:line-cited) — the dedicated policy census and the plane/durability/
