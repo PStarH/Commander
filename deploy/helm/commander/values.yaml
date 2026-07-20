@@ -1,12 +1,10 @@
 # =============================================================================
-# Commander Helm Chart — Values
+# Commander Helm Chart — Values (Cell v0)
 # =============================================================================
 
-# Deployment tier: hobbyist | team | enterprise
-# Overrides auto-detection when set.
+# Deployment tier: demo | team | enterprise
 tier: 'team'
 
-# Global image settings
 image:
   repository: commander
   tag: latest
@@ -14,10 +12,10 @@ image:
 
 imagePullSecrets: []
 
-# API Server
 api:
   replicas: 2
   port: 4000
+  terminationGracePeriodSeconds: 60
   resources:
     requests:
       cpu: 250m
@@ -25,30 +23,30 @@ api:
     limits:
       cpu: 2000m
       memory: 4Gi
-  # Health check configuration
   health:
     livenessPath: /health
     readinessPath: /ready
     metricsPath: /metrics
     initialDelaySeconds: 10
     periodSeconds: 15
-  # Autoscaling
   autoscaling:
     enabled: true
     minReplicas: 2
     maxReplicas: 10
     targetCPUUtilizationPercentage: 70
     targetMemoryUtilizationPercentage: 80
-  # PodDisruptionBudget
   pdb:
     enabled: false
     minAvailable: 1
-  # Secrets referenced by the API deployment
   secrets:
+    existingSecret: ''
+    create: false
     masterKeySecret: ''
     jwtSecretSecret: ''
+    apiKeySecret: ''
+    capabilityTokenKeySecret: ''
+    integrityKeySecret: ''
 
-# Web GUI
 web:
   enabled: true
   replicas: 1
@@ -61,10 +59,16 @@ web:
       cpu: 500m
       memory: 256Mi
 
-# Worker plane
 worker:
   enabled: false
   replicas: 2
+  terminationGracePeriodSeconds: 60
+  health:
+    port: 8083
+    livenessPath: /health
+    readinessPath: /ready
+    initialDelaySeconds: 15
+    periodSeconds: 15
   image:
     repository: ''
     tag: ''
@@ -88,148 +92,38 @@ worker:
   leaseTtlMs: 30000
   heartbeatMs: 10000
 
-# Database migration job (runs as a Helm post-install/post-upgrade hook)
-migration:
+kernelOps:
+  enabled: false
+  replicas: 1
+  terminationGracePeriodSeconds: 60
+  image:
+    repository: ''
+    tag: ''
+    pullPolicy: ''
+  health:
+    port: 8081
+    livenessPath: /health
+    readinessPath: /ready
+    livenessInitialDelaySeconds: 10
+    livenessPeriodSeconds: 15
+    readinessInitialDelaySeconds: 5
+    readinessPeriodSeconds: 10
   resources:
     requests:
       cpu: 100m
-      memory: 256Mi
+      memory: 128Mi
     limits:
       cpu: 500m
       memory: 512Mi
+  env:
+    COMMANDER_RECLAIM_INTERVAL_MS: '5000'
+    COMMANDER_RECLAIM_BATCH_SIZE: '100'
+    COMMANDER_TIMER_POLL_MS: '5000'
+    COMMANDER_TIMER_BATCH_SIZE: '100'
+    COMMANDER_OUTBOX_INTERVAL_MS: '1000'
+    COMMANDER_OUTBOX_BATCH_SIZE: '100'
+    COMMANDER_OUTBOX_MAX_ATTEMPTS: '10'
 
-# LLM Provider configuration
-llm:
-  # Primary provider (auto-detected from env if not set)
-  provider: ''
-  model: ''
-  # API keys — use existing secrets or set via env
-  openaiApiKeySecret: ''
-  anthropicApiKeySecret: ''
-  googleApiKeySecret: ''
-
-# Redis configuration (Enterprise tier)
-redis:
-  enabled: false
-  image:
-    repository: redis
-    tag: '7-alpine'
-  port: 6379
-  resources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-    limits:
-      cpu: 500m
-      memory: 1Gi
-  persistence:
-    enabled: true
-    size: 10Gi
-    storageClass: ''
-
-# Database backend configuration
-# When `database.enabled` is true, a PostgreSQL StatefulSet is deployed and the
-# API is configured to use it via DATABASE_URL. When false, the API falls back
-# to the local SQLite file backend (single-replica only).
-database:
-  enabled: false
-  backend: sqlite
-  # Built-in PostgreSQL (set backend: postgres to use)
-  postgres:
-    image:
-      repository: postgres
-      tag: '16-alpine'
-    port: 5432
-    user: commander
-    # SECURITY: do not commit real passwords to values. Either reference an
-    # existing Secret via existingSecret/existingSecretKey, or let the chart
-    # create a Secret from this value. The password is never injected into Pod
-    # env vars directly.
-    password: commander
-    database: commander
-    # Name of an existing Secret containing the full DATABASE_URL under the key
-    # specified by existingSecretKey. When unset, the chart creates a Secret.
-    existingSecret: ''
-    existingSecretKey: url
-    resources:
-      requests:
-        cpu: 100m
-        memory: 256Mi
-      limits:
-        cpu: 500m
-        memory: 1Gi
-    persistence:
-      enabled: true
-      size: 10Gi
-      storageClass: ''
-  # Override the auto-generated DATABASE_URL (e.g. to use an external managed DB)
-  connectionString: ''
-
-# Persistence
-persistence:
-  enabled: true
-  # Storage class for state/traces/memory volumes
-  storageClass: ''
-  # Size per volume
-  stateSize: 5Gi
-  tracesSize: 10Gi
-  memorySize: 5Gi
-  resultsSize: 10Gi
-
-# Commander configuration
-config:
-  # Node environment
-  nodeEnv: production
-  # Log level: debug | info | warn | error
-  logLevel: info
-  # CORS allowed origins (comma-separated)
-  corsOrigins: ''
-  # API rate limit (requests per minute per IP)
-  rateLimitPerMinute: 120
-  # Token budget hard cap per run
-  tokenBudgetHardCap: 200000
-  # Max concurrent runs
-  maxConcurrency: 20
-  # Multi-tenant provider: null | simple | multi
-  tenantProvider: 'simple'
-
-# Observability
-observability:
-  # Prometheus metrics
-  metrics:
-    enabled: true
-    port: 9090
-    path: /metrics
-  # OpenTelemetry export
-  otel:
-    enabled: false
-    endpoint: ''
-    serviceName: commander
-
-# Ingress
-ingress:
-  enabled: false
-  className: ''
-  annotations: {}
-  hosts:
-    - host: commander.local
-      paths:
-        - path: /
-          pathType: Prefix
-  tls: []
-
-# Service account
-serviceAccount:
-  create: true
-  name: ''
-  annotations: {}
-  # SECURITY: keep automount disabled by default. Only enable it for Pods that
-  # genuinely need to call the Kubernetes API.
-  automount: false
-
-# Network policy
-
-# Adapter-ops deploy unit (EffectBroker compensation/reconcile drain — not a V2 plane)
 adapterOps:
   enabled: false
   replicas: 2
@@ -259,6 +153,116 @@ adapterOps:
   egress:
     allowlist: []
 
+sandboxd:
+  enabled: false
+
+migration:
+  terminationGracePeriodSeconds: 30
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+llm:
+  provider: ''
+  model: ''
+  openaiApiKeySecret: ''
+  anthropicApiKeySecret: ''
+  googleApiKeySecret: ''
+
+redis:
+  enabled: false
+  image:
+    repository: redis
+    tag: '7-alpine'
+  port: 6379
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ''
+
+database:
+  enabled: false
+  backend: sqlite
+  postgres:
+    bundled: false
+    image:
+      repository: postgres
+      tag: '16-alpine'
+    port: 5432
+    user: commander
+    # Schema requires empty inline password — supply via existingSecret.
+    password: ''
+    database: commander
+    existingSecret: ''
+    existingSecretKey: url
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: ''
+  connectionString: ''
+
+persistence:
+  enabled: true
+  storageClass: ''
+  stateSize: 5Gi
+  tracesSize: 10Gi
+  memorySize: 5Gi
+  resultsSize: 10Gi
+
+config:
+  nodeEnv: production
+  logLevel: info
+  corsOrigins: ''
+  rateLimitPerMinute: 120
+  tokenBudgetHardCap: 200000
+  maxConcurrency: 20
+  tenantProvider: 'simple'
+
+observability:
+  metrics:
+    enabled: true
+    port: 9090
+    path: /metrics
+  otel:
+    enabled: false
+    endpoint: ''
+    serviceName: commander
+
+ingress:
+  enabled: false
+  className: ''
+  annotations: {}
+  hosts:
+    - host: commander.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+serviceAccount:
+  create: true
+  name: ''
+  annotations: {}
+  automount: false
+
 networkPolicy:
   enabled: false
   ingressControllerNamespace: ''
@@ -266,24 +270,21 @@ networkPolicy:
     adapterCidrs: []
     databaseCidrs: []
 
-# Pod security context
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 1000
+  runAsGroup: 1000
   fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
 
-# Security context
 securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
   capabilities:
     drop:
       - ALL
-  readOnlyRootFilesystem: false
 
-# Node selector
 nodeSelector: {}
-
-# Tolerations
 tolerations: []
-
-# Affinity
 affinity: {}

@@ -1,0 +1,83 @@
+# =============================================================================
+# Commander — Kernel Ops Deployment
+# =============================================================================
+{{- if .Values.kernelOps.enabled }}
+{{- include "commander.requireEnterpriseSecrets" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "commander.fullname" . }}-kernel-ops
+  labels:
+    {{- include "commander.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kernel-ops
+spec:
+  replicas: {{ .Values.kernelOps.replicas }}
+  selector:
+    matchLabels:
+      {{- include "commander.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: kernel-ops
+  template:
+    metadata:
+      labels:
+        {{- include "commander.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: kernel-ops
+    spec:
+      serviceAccountName: {{ include "commander.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.kernelOps.terminationGracePeriodSeconds }}
+      securityContext: {{ toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: kernel-ops
+          image: "{{ .Values.kernelOps.image.repository | default .Values.image.repository }}:{{ .Values.kernelOps.image.tag | default (printf "%s-kernel-ops" (.Values.image.tag | default .Chart.AppVersion)) }}"
+          imagePullPolicy: {{ .Values.kernelOps.image.pullPolicy | default .Values.image.pullPolicy }}
+          ports:
+            - name: health
+              containerPort: {{ .Values.kernelOps.health.port }}
+          env:
+            - name: NODE_ENV
+              value: {{ .Values.config.nodeEnv | quote }}
+            - name: COMMANDER_OPS_HEALTH_PORT
+              value: {{ .Values.kernelOps.health.port | quote }}
+            {{- if include "commander.postgresBackend" . }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.databaseUrlSecretName" . | quote }}
+                  key: {{ include "commander.databaseUrlSecretKey" . | quote }}
+            - name: COMMANDER_KERNEL_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.databaseUrlSecretName" . | quote }}
+                  key: {{ include "commander.databaseUrlSecretKey" . | quote }}
+            - name: COMMANDER_KERNEL_BACKEND
+              value: postgres
+            {{- end }}
+            {{- range $key, $value := .Values.kernelOps.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          resources: {{ toYaml .Values.kernelOps.resources | nindent 12 }}
+          securityContext:
+            {{- include "commander.cellSecurityContext" . | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.kernelOps.health.livenessPath }}
+              port: health
+            initialDelaySeconds: {{ .Values.kernelOps.health.livenessInitialDelaySeconds }}
+            periodSeconds: {{ .Values.kernelOps.health.livenessPeriodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.kernelOps.health.readinessPath }}
+              port: health
+            initialDelaySeconds: {{ .Values.kernelOps.health.readinessInitialDelaySeconds }}
+            periodSeconds: {{ .Values.kernelOps.health.readinessPeriodSeconds }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}
