@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 2,
+  "benchmark": "tenant-isolation",
+  "config": {
+    "maxMutations": 1000
+  },
+  "report": {
+    "targetName": "memory_store",
+    "totalCases": 261,
+    "defended": 261,
+    "leaks": 0,
+    "errors": 0,
+    "durationMs": 16,
+    "leakDetails": []
+  },
+  "summary": {
+    "passed": true,
+    "errors": 0,
+    "failed": 0,
+    "skipped": 0,
+    "leakCount": 0,
+    "errorCount": 0
+  },
+  "env": {
+    "evidence": "simulated",
+    "gitSha": "42cd47637f28dc0b7957a6aaa1f5a8ee7a99fa26",
+    "gitBranch": "feat/l4-b",
+    "gitDirty": true,
+    "nodeVersion": "v22.22.0",
+    "pnpmVersion": "9.15.4",
+    "topology": {
+      "gateways": 1,
+      "workers": 1,
+      "operations": 1,
+      "model": "single"
+    }
+  },
+  "runAt": "2026-07-20T07:09:46.754Z"
+}
