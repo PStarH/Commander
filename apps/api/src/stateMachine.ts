@@ -19,6 +19,7 @@ import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
+import { atomicWriteFileSync, readJsonFileSafe } from './atomicWrite';
 import { getDirname, getRequire } from './esmCompat';
 const __dirname = getDirname(import.meta.url);
 const require = getRequire(import.meta.url);
@@ -165,8 +166,9 @@ function persistState(state: AgentState, config: PersistenceConfig): void {
   const stateDir = path.join(config.path);
   fs.mkdirSync(stateDir, { recursive: true });
 
+  // REL-3: atomic write so a crash mid-write cannot truncate the state file.
   const stateFile = path.join(stateDir, `${state.memory.taskId}.json`);
-  fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
+  atomicWriteFileSync(stateFile, JSON.stringify(state, null, 2));
 }
 
 /**
@@ -176,15 +178,8 @@ function loadState(taskId: string, config: PersistenceConfig): AgentState | null
   if (!config.enabled) return null;
 
   const stateFile = path.join(config.path, `${taskId}.json`);
-  if (!fs.existsSync(stateFile)) return null;
-
-  try {
-    const raw = fs.readFileSync(stateFile, 'utf8');
-    return JSON.parse(raw) as AgentState;
-  } catch (e) {
-    process.stderr.write(`[StateMachine] Error: ${(e as Error)?.message ?? String(e)}\n`);
-    return null;
-  }
+  // REL-4: quarantine corrupt files instead of throwing / silently failing parse.
+  return readJsonFileSafe<AgentState | null>(stateFile, null);
 }
 
 /**
@@ -195,7 +190,8 @@ function saveCheckpoint(state: AgentState): string {
   const checkpointFile = path.join(CHECKPOINTS_DIR, `${checkpointId}.json`);
 
   fs.mkdirSync(CHECKPOINTS_DIR, { recursive: true });
-  fs.writeFileSync(
+  // REL-3: atomic write so a crash mid-write cannot leave a half-written checkpoint.
+  atomicWriteFileSync(
     checkpointFile,
     JSON.stringify(
       {
@@ -224,15 +220,8 @@ function loadCheckpoint(checkpointId: string): AgentState | null {
   // Security: Strip path separators to prevent traversal (e.g. "../../etc/passwd")
   const safeId = path.basename(checkpointId);
   const checkpointFile = path.join(CHECKPOINTS_DIR, `${safeId}.json`);
-  if (!fs.existsSync(checkpointFile)) return null;
-
-  try {
-    const raw = fs.readFileSync(checkpointFile, 'utf8');
-    return JSON.parse(raw) as AgentState;
-  } catch (e) {
-    process.stderr.write(`[StateMachine] Error: ${(e as Error)?.message ?? String(e)}\n`);
-    return null;
-  }
+  // REL-4: quarantine corrupt files instead of throwing / silently failing parse.
+  return readJsonFileSafe<AgentState | null>(checkpointFile, null);
 }
 
 // ============================================================================
