@@ -103,7 +103,13 @@ function isBlockedIpv6Literal(host: string): string | null {
   if (h === '::1' || h === '0:0:0:0:0:0:0:1') return 'IPv6 loopback';
   if (h === '::' || h === '0:0:0:0:0:0:0:0') return 'IPv6 unspecified';
   // link-local fe80::/10
-  if (h.startsWith('fe80:') || h.startsWith('fe8') || h.startsWith('fe9') || h.startsWith('fea') || h.startsWith('feb')) {
+  if (
+    h.startsWith('fe80:') ||
+    h.startsWith('fe8') ||
+    h.startsWith('fe9') ||
+    h.startsWith('fea') ||
+    h.startsWith('feb')
+  ) {
     return 'IPv6 link-local (fe80::/10)';
   }
   // ULA fc00::/7 → fc00::/8 and fd00::/8
