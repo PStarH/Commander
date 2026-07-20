@@ -1,3 +1,5 @@
+import { isToolAbortNonRetryableForLLM } from './toolResultShape';
+
 export type ErrorClass = 'transient' | 'permanent' | 'unknown';
 
 export interface ClassifiedError {
@@ -14,6 +16,14 @@ const RE_NETWORK_ERROR =
 export function classifyLLMError(err: unknown): ClassifiedError {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
   const statusCode = extractStatus(err);
+
+  // 仅工具 AbortError / TOOL_TIMEOUT / TOOL_ABORTED：不可重试。
+  // 裸 StepTimeoutError 留给下方网络 transient——LLM stepTimeout.wrap 须可重试。
+  // TES/Boundary 的工具超时禁二次 execute 由 isAbortOrTimeoutError 在边界内处理。
+  // ECONNABORTED 不走此分支，仍由下方网络 transient 处理。
+  if (isToolAbortNonRetryableForLLM(err)) {
+    return { retryable: false, errorClass: 'unknown', message: truncate(msg, 200) };
+  }
 
   // Permanent: never retry
   if (statusCode === 400)
