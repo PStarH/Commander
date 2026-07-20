@@ -239,6 +239,7 @@ export class InMemoryKernelRepository implements KernelRepository {
       if (step.runId === runId && step.tenantId === tenantId && step.state === 'RUNNING') {
         if (step.lease) this.lastFencingEpoch.set(step.id, step.lease.fencingEpoch);
         step.state = 'RETRY_WAIT'; step.version++; step.lease = undefined; step.updatedAt = run.updatedAt;
+        this.parkOrphanAdmittedEffects(step, 'run_paused', actor);
         this.event('step', step.id, step.version, 'step.paused', step.tenantId, step.runId, step.id, actor, { previousState: 'RUNNING' });
       }
     }
@@ -295,6 +296,7 @@ export class InMemoryKernelRepository implements KernelRepository {
       step.lease = undefined;
       step.updatedAt = pausedAt;
       step.scheduledAt = pausedAt;
+      this.parkOrphanAdmittedEffects(step, 'tenant_paused', actor);
       this.event('step', step.id, step.version, 'step.tenant_paused', tenantId, step.runId, step.id, actor, { reason });
     }
     this.event('tenant', tenantId, control.generation, 'tenant.paused', tenantId, `tenant:${tenantId}`, undefined, actor, { reason });
