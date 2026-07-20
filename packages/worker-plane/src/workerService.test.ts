@@ -439,6 +439,45 @@ describe('worker plane', () => {
     assert.equal(kernel.getStep('stop-step')?.state, 'RETRY_WAIT');
   });
 
+  it('aborts in-flight step controllers when stop() is called', async () => {
+    const kernel = new FakeKernel();
+    kernel.addRun('run-abort-stop', 'tenant-a', [{ id: 'abort-stop-step', kind: 'agent' }]);
+    let sawAbort = false;
+    const service = new WorkerService(
+      definition,
+      identity,
+      auth,
+      new InMemoryWorkerRegistry(),
+      kernel,
+      {
+        execute: async (_step, context) => {
+          await new Promise<void>((_resolve, reject) => {
+            if (context.signal.aborted) {
+              sawAbort = true;
+              reject(new Error('already aborted'));
+              return;
+            }
+            context.signal.addEventListener(
+              'abort',
+              () => {
+                sawAbort = true;
+                reject(new Error('Worker stopped'));
+              },
+              { once: true },
+            );
+          });
+          return {};
+        },
+      },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 60_000 },
+    );
+    await service.start();
+    assert.equal(await service.pollOnce(), true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await service.stop();
+    assert.equal(sawAbort, true, 'stop() must abort activeControllers so drain does not hang');
+  });
+
   it('counts claimInflight in activeSteps and registry heartbeat', async () => {
     const kernel = new FakeKernel();
     kernel.claimDelayMs = 80;
