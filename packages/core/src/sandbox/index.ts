@@ -42,7 +42,13 @@ export {
   resolveSandboxPolicy,
 } from './productionPolicy';
 export type { SandboxEnvironment, SandboxIsolation, SandboxPolicy } from './productionPolicy';
-export { ExecPolicyEngine } from './execPolicy';
+export {
+  ExecPolicyEngine,
+  extractExecPolicyPayload,
+  isShellOrPythonExecTool,
+  getExecPolicyEngine,
+  resetExecPolicyEngine,
+} from './execPolicy';
 export { ApprovalSystem, getApprovalSystem } from './approval';
 export type {
   ApprovalMode,
