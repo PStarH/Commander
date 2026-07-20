@@ -13,10 +13,13 @@ describe('SqliteKernelRepository integration', () => {
     const repo = new SqliteKernelRepository({ path, wal: true, busyTimeoutMs: 5000, synchronous: 'NORMAL' });
     await repo.initialize();
     try {
-      const mode = statSync(path).mode & 0o777;
-      assert.equal(mode, 0o600);
-      const dirMode = statSync(dir).mode & 0o777;
-      assert.equal(dirMode, 0o700);
+      // Windows NTFS does not honor Unix mode bits the same way.
+      if (process.platform !== 'win32') {
+        const mode = statSync(path).mode & 0o777;
+        assert.equal(mode, 0o600);
+        const dirMode = statSync(dir).mode & 0o777;
+        assert.equal(dirMode, 0o700);
+      }
     } finally {
       repo.close();
       rmSync(dir, { recursive: true, force: true });
