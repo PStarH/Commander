@@ -13,6 +13,11 @@ export interface OpsHealthHandle {
 export async function startOpsHealthServer(options: {
   port: number;
   isReady: () => boolean | Promise<boolean>;
+  /**
+   * Optional details merged into /ready JSON (e.g. compensationMode).
+   * Used so operators can tell probe-alive from true drain.
+   */
+  getReadyDetails?: () => Record<string, unknown> | Promise<Record<string, unknown>>;
 }): Promise<OpsHealthHandle> {
   const server: Server = createServer((req, res) => {
     const url = req.url?.split('?')[0] ?? '/';
@@ -23,10 +28,19 @@ export async function startOpsHealthServer(options: {
     }
     if (url === '/ready') {
       void Promise.resolve()
-        .then(() => options.isReady())
-        .then((ready) => {
+        .then(async () => {
+          const ready = await options.isReady();
+          const details = options.getReadyDetails ? await options.getReadyDetails() : {};
+          return { ready, details };
+        })
+        .then(({ ready, details }) => {
           res.writeHead(ready ? 200 : 503, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ status: ready ? 'ready' : 'not_ready' }));
+          res.end(
+            JSON.stringify({
+              status: ready ? 'ready' : 'not_ready',
+              ...details,
+            }),
+          );
         })
         .catch(() => {
           res.writeHead(503, { 'content-type': 'application/json' });
