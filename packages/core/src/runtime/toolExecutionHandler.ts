@@ -391,6 +391,8 @@ export class ToolExecutionHandler {
           .getOrchestrator()
           .planExecution(stageCalls, this.deps.getTools(), {
             capabilityToken: ctx.capabilityToken,
+            // CAP-02: bind approval-plane audience to the same tenant as execute.
+            tenantId,
           });
         const approvedCalls = [...planResult.concurrent, ...planResult.serial];
 

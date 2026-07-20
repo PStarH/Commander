@@ -108,11 +108,14 @@ export class ToolExecutionService {
         try {
           let verdict: { ok: boolean; reason?: string; detail?: string; jti?: string };
 
+          // CAP-02: always bind verify audience (HMAC + Biscuit same semantics).
+          // Concrete tenantId rejects wildcard aud='*'; missing/empty tenantId
+          // uses '*' so a stolen tenant-scoped token cannot authorize unbound
+          // execute (fail-closed for multi-tenant leakage into single-tenant path).
+          const expectedAud = tenantId && tenantId.length > 0 ? tenantId : '*';
           if (BiscuitCapabilityAdapter.isBiscuitToken(capabilityToken)) {
             // Biscuit (Ed25519) verification
-            const biscuitVerifier = getGlobalBiscuitCapabilityAdapter().createVerifier(
-              tenantId ?? '*',
-            );
+            const biscuitVerifier = getGlobalBiscuitCapabilityAdapter().createVerifier(expectedAud);
             verdict = biscuitVerifier.verify(capabilityToken, {
               tool: toolCall.name,
               args: toolCall.arguments as Record<string, unknown>,
@@ -127,6 +130,7 @@ export class ToolExecutionService {
               tool: toolCall.name,
               args: toolCall.arguments as Record<string, unknown>,
               consumeReplay: false,
+              aud: expectedAud,
             });
           }
           if (!verdict.ok) {
@@ -1040,10 +1044,11 @@ export class ToolExecutionService {
 
           try {
             let verdict: { ok: boolean; reason?: string; detail?: string };
+            // CAP-02: same audience binding as formal execute path (HMAC + Biscuit).
+            const expectedAud = tenantId && tenantId.length > 0 ? tenantId : '*';
             if (BiscuitCapabilityAdapter.isBiscuitToken(capabilityToken)) {
-              const biscuitVerifier = getGlobalBiscuitCapabilityAdapter().createVerifier(
-                tenantId ?? '*',
-              );
+              const biscuitVerifier =
+                getGlobalBiscuitCapabilityAdapter().createVerifier(expectedAud);
               verdict = biscuitVerifier.verify(capabilityToken, {
                 tool: pred.name,
                 args: sanitizedArgs as Record<string, unknown>,
@@ -1054,6 +1059,7 @@ export class ToolExecutionService {
                 tool: pred.name,
                 args: sanitizedArgs as Record<string, unknown>,
                 consumeReplay: false,
+                aud: expectedAud,
               });
             }
             if (!verdict.ok) return;
