@@ -10,6 +10,8 @@ paths-ignore:
   - '**/conformance/**'
   - '**/node_modules/**'
   - '**/dist/**'
+  # WeCom protocol mandates SHA-1 msg_signature; not a chosen weak hash.
+  - 'apps/api/src/webhookCrypto.ts'
   - 'deploy/helm/**'
   - 'helm/**'
 
