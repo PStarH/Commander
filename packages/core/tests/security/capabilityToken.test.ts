@@ -78,6 +78,26 @@ function makeVerifier(masterKey = Buffer.alloc(32, 7), expectedAud?: string) {
   return new CapabilityTokenVerifier({ masterKey, expectedAud });
 }
 
+/** Test helper: when aud omitted, bind from token payload so non-aud assertions stay focused. */
+function verifyTok(
+  verifier: CapabilityTokenVerifier,
+  encoded: string,
+  req: { tool: string; args: Record<string, unknown>; aud?: string; consumeReplay?: boolean },
+) {
+  let aud = req.aud;
+  if (aud === undefined) {
+    try {
+      aud = decode(encoded).payload.aud;
+    } catch {
+      /* malformed — leave undefined so omit-aud fail-closed surfaces */
+    }
+  }
+  return CapabilityTokenVerifier.prototype.verify.call(verifier, encoded, {
+    ...req,
+    ...(aud !== undefined ? { aud } : {}),
+  });
+}
+
 beforeAll(() => {
   resetCapabilityTokenState();
   resetAuditChainLedger();
@@ -101,7 +121,7 @@ it('Phase 2.1 — issue + verify round-trip succeeds', () => {
     tools: ['file_write', 'memory_read'],
     ttlSeconds: 10,
   });
-  const r = verifier.verify(tok, { tool: 'file_write', args: { path: '/x.ts' } });
+  const r = verifyTok(verifier, tok, { tool: 'file_write', args: { path: '/x.ts' } });
   assert.equal(r.ok, true);
   if (r.ok) {
     assert.equal(r.sub, 'agent-1');
@@ -126,7 +146,7 @@ it('Phase 2.1 — tampered payload fails signature verification', () => {
     .replace(/\//g, '_');
   const stillOldSigB64 = parts[2]!;
   const forged = `${headerB64}.${newPayloadB64}.${stillOldSigB64}`;
-  const r = verifier.verify(forged, { tool: 'shell_execute', args: {} });
+  const r = verifyTok(verifier, forged, { tool: 'shell_execute', args: {} });
   assert.equal(r.ok, false);
   if (!r.ok) assert.equal(r.reason, 'signature_mismatch');
 });
@@ -136,7 +156,7 @@ it('Phase 2.1 — malicious master key cannot verify token', () => {
   const attackerKey = Buffer.alloc(32, 99);
   const verifier = makeVerifier(attackerKey);
   const tok = issuer.issue({ sub: 'a', aud: '*', tools: ['web_search'], ttlSeconds: 10 });
-  const r = verifier.verify(tok, { tool: 'web_search', args: {} });
+  const r = verifyTok(verifier, tok, { tool: 'web_search', args: {} });
   assert.equal(r.ok, false);
   if (!r.ok) assert.equal(r.reason, 'signature_mismatch');
 });
@@ -190,7 +210,7 @@ it('Phase 2.1 — jti uniqueness across N issuances', () => {
 
 it('Phase 2.1 — malformed token: missing dots is rejected', () => {
   const verifier = makeVerifier(Buffer.alloc(32, 7));
-  const r = verifier.verify('abc.def', { tool: 'x', args: {} });
+  const r = verifyTok(verifier, 'abc.def', { tool: 'x', args: {} });
   assert.equal(r.ok, false);
   if (!r.ok) assert.equal(r.reason, 'malformed_encoding');
 });
@@ -200,7 +220,7 @@ it('Phase 2.1 — malformed token: bad base64 signature rejected', () => {
   const tok = issuer.issue({ sub: 'a', aud: '*', tools: ['web_search'], ttlSeconds: 10 });
   const parts = tok.split('.');
   parts[2] = '!!!not-base64!!!';
-  const r = makeVerifier(issuer.masterKey).verify(parts.join('.'), {
+  const r = verifyTok(makeVerifier(issuer.masterKey), parts.join('.'), {
     tool: 'web_search',
     args: {},
   });
@@ -226,7 +246,7 @@ it('Phase 2.1 — token expired is rejected', () => {
   while (Date.now() < deadline) {
     /* spin briefly */
   }
-  const r = verifier.verify(tok, { tool: 'web_search', args: {} });
+  const r = verifyTok(verifier, tok, { tool: 'web_search', args: {} });
   assert.equal(r.ok, false);
   if (!r.ok) assert.equal(r.reason, 'expired');
 }, 10000);
@@ -235,9 +255,117 @@ it('Phase 2.1 — audience mismatch is rejected', () => {
   const issuer = makeIssuer();
   const verifier = makeVerifier(issuer.masterKey, 'tenant-A');
   const tok = issuer.issue({ sub: 'a', aud: 'tenant-B', tools: ['web_search'], ttlSeconds: 10 });
+  // Raw verify: constructor expectedAud must win (verifyTok would bind token aud).
   const r = verifier.verify(tok, { tool: 'web_search', args: {} });
   assert.equal(r.ok, false);
   if (!r.ok) assert.equal(r.reason, 'aud_mismatch');
+});
+
+it("CAP-02 — hard: aud='*' and wrong tenant rejected; same tenant accepted", () => {
+  const issuer = makeIssuer();
+  const verifier = makeVerifier(issuer.masterKey);
+  const wild = issuer.issue({ sub: 'a', aud: '*', tools: ['web_search'], ttlSeconds: 10 });
+  const tenantA = issuer.issue({
+    sub: 'a',
+    aud: 'tenant-a',
+    tools: ['web_search'],
+    ttlSeconds: 10,
+  });
+  const tenantB = issuer.issue({
+    sub: 'a',
+    aud: 'tenant-b',
+    tools: ['web_search'],
+    ttlSeconds: 10,
+  });
+
+  const rejectWild = verifyTok(verifier, wild, { tool: 'web_search', args: {}, aud: 'tenant-b' });
+  assert.equal(rejectWild.ok, false);
+  if (!rejectWild.ok) {
+    assert.equal(rejectWild.reason, 'aud_mismatch');
+    assert.match(rejectWild.detail ?? '', /aud=\*|tenant-scoped verify/i);
+  }
+
+  const rejectWrong = verifyTok(verifier, tenantA, {
+    tool: 'web_search',
+    args: {},
+    aud: 'tenant-b',
+  });
+  assert.equal(rejectWrong.ok, false);
+  if (!rejectWrong.ok) assert.equal(rejectWrong.reason, 'aud_mismatch');
+
+  const acceptSame = verifyTok(verifier, tenantB, {
+    tool: 'web_search',
+    args: {},
+    aud: 'tenant-b',
+  });
+  assert.equal(acceptSame.ok, true);
+});
+
+it("CAP-02 — wildcard aud='*' rejected when constructor expects concrete tenant", () => {
+  const issuer = makeIssuer();
+  const verifier = makeVerifier(issuer.masterKey, 'tenant-A');
+  const tok = issuer.issue({ sub: 'a', aud: '*', tools: ['web_search'], ttlSeconds: 10 });
+  // Raw verify: constructor expectedAud must win (verifyTok would bind token aud).
+  const r = verifier.verify(tok, { tool: 'web_search', args: {} });
+  assert.equal(r.ok, false);
+  if (!r.ok) {
+    assert.equal(r.reason, 'aud_mismatch');
+    assert.match(r.detail ?? '', /aud=\*|tenant-scoped verify/i);
+  }
+});
+
+it('CAP-02 — missing tenantId verify path: expectedAud="*" accepts wildcard, rejects concrete tenant', () => {
+  // Fail-closed residual for unbound / single-tenant execute: ToolExecutionService
+  // passes aud:'*' when tenantId is absent so a stolen tenant-scoped token cannot
+  // authorize tools outside a tenant context (never omit aud → fail-open).
+  const issuer = makeIssuer();
+  const verifier = makeVerifier(issuer.masterKey);
+  const wild = issuer.issue({ sub: 'a', aud: '*', tools: ['web_search'], ttlSeconds: 10 });
+  const scoped = issuer.issue({
+    sub: 'a',
+    aud: 'tenant-A',
+    tools: ['web_search'],
+    ttlSeconds: 10,
+  });
+  const ok = verifyTok(verifier, wild, {
+    tool: 'web_search',
+    args: {},
+    aud: '*',
+    consumeReplay: false,
+  });
+  assert.equal(ok.ok, true);
+  const bad = verifyTok(verifier, scoped, {
+    tool: 'web_search',
+    args: {},
+    aud: '*',
+    consumeReplay: false,
+  });
+  assert.equal(bad.ok, false);
+  if (!bad.ok) assert.equal(bad.reason, 'aud_mismatch');
+
+  // Omitting aud entirely is fail-closed at the primitive (CAP-02) — both
+  // wildcard and tenant-scoped tokens are rejected when expectedAud is absent.
+  const unboundWild = issuer.issue({ sub: 'a', aud: '*', tools: ['web_search'], ttlSeconds: 10 });
+  const unboundScoped = issuer.issue({
+    sub: 'a',
+    aud: 'tenant-A',
+    tools: ['web_search'],
+    ttlSeconds: 10,
+  });
+  const omitAudWild = verifier.verify(unboundWild, {
+    tool: 'web_search',
+    args: {},
+    consumeReplay: false,
+  });
+  const omitAudScoped = verifier.verify(unboundScoped, {
+    tool: 'web_search',
+    args: {},
+    consumeReplay: false,
+  });
+  assert.equal(omitAudWild.ok, false, 'omit-aud must not accept wildcard');
+  assert.equal(omitAudScoped.ok, false, 'omit-aud must not accept scoped');
+  if (!omitAudWild.ok) assert.equal(omitAudWild.reason, 'aud_mismatch');
+  if (!omitAudScoped.ok) assert.equal(omitAudScoped.reason, 'aud_mismatch');
 });
 
 it('Phase 2.1 — wildcard tool scope matches', () => {
@@ -247,9 +375,9 @@ it('Phase 2.1 — wildcard tool scope matches', () => {
   // consumes the (jti, nonce) pair on success, so a second successful
   // verify of the *same* token would otherwise be flagged as a replay.
   const issue = () => issuer.issue({ sub: 'a', aud: '*', tools: ['memory_*'], ttlSeconds: 10 });
-  const r1 = verifier.verify(issue(), { tool: 'memory_read', args: {} });
-  const r2 = verifier.verify(issue(), { tool: 'memory_write', args: { content: 'x' } });
-  const r3 = verifier.verify(issue(), { tool: 'shell_execute', args: {} });
+  const r1 = verifyTok(verifier, issue(), { tool: 'memory_read', args: {} });
+  const r2 = verifyTok(verifier, issue(), { tool: 'memory_write', args: { content: 'x' } });
+  const r3 = verifyTok(verifier, issue(), { tool: 'shell_execute', args: {} });
   assert.equal(r1.ok, true);
   assert.equal(r2.ok, true);
   assert.equal(r3.ok, false);
@@ -266,9 +394,9 @@ it('Phase 2.1 — arg-shape regex match approves, mismatch rejects', () => {
     argShapes: { file_write: { path: ['^/workspace/', '^/tmp/'] } },
     ttlSeconds: 10,
   });
-  const ok = verifier.verify(tok, { tool: 'file_write', args: { path: '/workspace/x.ts' } });
+  const ok = verifyTok(verifier, tok, { tool: 'file_write', args: { path: '/workspace/x.ts' } });
   assert.equal(ok.ok, true);
-  const bad = verifier.verify(tok, { tool: 'file_write', args: { path: '/etc/passwd' } });
+  const bad = verifyTok(verifier, tok, { tool: 'file_write', args: { path: '/etc/passwd' } });
   assert.equal(bad.ok, false);
   if (!bad.ok) assert.equal(bad.reason, 'arg_shape_mismatch');
 });
@@ -283,10 +411,10 @@ it('Phase 2.1 — arg-shape: missing/null param fails closed (no undefined coerc
     argShapes: { file_write: { path: ['^.*'] } }, // permissive regex, but missing arg must fail
     ttlSeconds: 10,
   });
-  const missing = verifier.verify(tok, { tool: 'file_write', args: {} });
+  const missing = verifyTok(verifier, tok, { tool: 'file_write', args: {} });
   assert.equal(missing.ok, false);
   if (!missing.ok) assert.equal(missing.reason, 'arg_shape_mismatch');
-  const explicitNull = verifier.verify(tok, { tool: 'file_write', args: { path: null } });
+  const explicitNull = verifyTok(verifier, tok, { tool: 'file_write', args: { path: null } });
   assert.equal(explicitNull.ok, false);
   if (!explicitNull.ok) assert.equal(explicitNull.reason, 'arg_shape_mismatch');
 });
@@ -296,7 +424,7 @@ it('Phase 2.1 — revocation: jti off the ledger rejects', () => {
   const verifier = makeVerifier(issuer.masterKey);
   const tok = issuer.issue({ sub: 'a', aud: '*', tools: ['web_search'], ttlSeconds: 30 });
   assert.equal(issuer.revoke(decode(tok).payload.jti, 'incident_response'), true);
-  const r = verifier.verify(tok, { tool: 'web_search', args: {} });
+  const r = verifyTok(verifier, tok, { tool: 'web_search', args: {} });
   assert.equal(r.ok, false);
   if (!r.ok) assert.equal(r.reason, 'jti_revoked');
 });
@@ -313,12 +441,12 @@ it('Phase 2.1 — revocation: revoking parent invalidates descendant', () => {
     parent: decode(root),
   });
   assert.equal(
-    verifier.verify(child, { tool: 'file_write', args: {} }).ok,
+    verifyTok(verifier, child, { tool: 'file_write', args: {} }).ok,
     true,
     'child must be accepted before parent revocation',
   );
   issuer.revoke(decode(root).payload.jti, 'parent_revoked');
-  const r = verifier.verify(child, { tool: 'file_write', args: {} });
+  const r = verifyTok(verifier, child, { tool: 'file_write', args: {} });
   assert.equal(r.ok, false);
   if (!r.ok) assert.equal(r.reason, 'parent_jti_revoked');
 });
@@ -433,11 +561,11 @@ it('Phase 2.1 — issuer + verifier sharing a masterKey roundtrip; mismatched ke
   const iA = new CapabilityTokenIssuer({ masterKey: shared });
   const vA = new CapabilityTokenVerifier({ masterKey: shared });
   const tok = iA.issue({ sub: 'x', aud: '*', tools: ['web_search'], ttlSeconds: 30 });
-  assert.equal(vA.verify(tok, { tool: 'web_search', args: {} }).ok, true);
+  assert.equal(verifyTok(vA, tok, { tool: 'web_search', args: {} }).ok, true);
 
   const otherKey = Buffer.alloc(32, 22);
   const vB = new CapabilityTokenVerifier({ masterKey: otherKey });
-  assert.equal(vB.verify(tok, { tool: 'web_search', args: {} }).ok, false);
+  assert.equal(verifyTok(vB, tok, { tool: 'web_search', args: {} }).ok, false);
 });
 
 it('Phase 2.1 — clock-skew tolerance: future iat within skew window is accepted', () => {
@@ -458,7 +586,7 @@ it('Phase 2.1 — clock-skew tolerance: future iat within skew window is accepte
     nonce: 'abcd1234',
   };
   const tok = sign(payload, issuer.masterKey);
-  const r = verifier.verify(tok, { tool: 'web_search', args: {} });
+  const r = verifyTok(verifier, tok, { tool: 'web_search', args: {} });
   assert.equal(r.ok, true);
 });
 
@@ -481,7 +609,7 @@ it('Phase 2.1 — clock-skew tolerance: future iat beyond skew window is rejecte
     nonce: 'abcd1234',
   };
   const tok = sign(payload, issuer.masterKey);
-  const r = verifier.verify(tok, { tool: 'web_search', args: {} });
+  const r = verifyTok(verifier, tok, { tool: 'web_search', args: {} });
   assert.equal(r.ok, false);
   if (!r.ok) assert.equal(r.reason, 'not_yet_valid');
 });
@@ -507,6 +635,158 @@ it('Phase 2.1 — ToolApproval integration: valid token short-circuits policy', 
   );
   assert.equal(r.approved, true);
   assert.match(r.reason ?? '', /^capability-token:/);
+});
+
+it('CAP-02 — ToolApproval: matching tenant aud short-circuits; wrong/missing aud must not', async () => {
+  const issuer = makeIssuer();
+  const verifier = makeVerifier(issuer.masterKey);
+  // Deny callback: only capability-token fast-path can approve (git_push is manual).
+  const denyApprover: Parameters<typeof ToolApproval>[0] = () => ({
+    approved: false,
+    requestId: 'deny',
+    approvedAt: new Date().toISOString(),
+    reason: 'human-deny',
+  });
+  const ta = new ToolApproval(denyApprover, undefined, verifier);
+
+  const tenantATok = issuer.issue({
+    sub: 'agent-X',
+    aud: 'tenant-a',
+    tools: ['git_push'],
+    ttlSeconds: 30,
+  });
+  const wildTok = issuer.issue({
+    sub: 'agent-X',
+    aud: '*',
+    tools: ['git_push'],
+    ttlSeconds: 30,
+  });
+
+  // Matching aud → capability-token short-circuit approve
+  const match = await ta.requestApproval(
+    'git_push',
+    { remote: 'origin' },
+    {
+      token: tenantATok,
+      tenantId: 'tenant-a',
+    },
+  );
+  assert.equal(match.approved, true);
+  assert.match(match.reason ?? '', /^capability-token:/);
+
+  // Wrong tenant → must NOT short-circuit (falls through to deny)
+  const wrong = await ta.requestApproval(
+    'git_push',
+    { remote: 'origin' },
+    {
+      token: tenantATok,
+      tenantId: 'tenant-b',
+    },
+  );
+  assert.equal(wrong.approved, false);
+  assert.equal(wrong.reason, 'human-deny');
+  assert.doesNotMatch(wrong.reason ?? '', /^capability-token:/);
+
+  // Wildcard token vs concrete tenant → must NOT short-circuit
+  const wildVsConcrete = await ta.requestApproval(
+    'git_push',
+    { remote: 'origin' },
+    {
+      token: wildTok,
+      tenantId: 'tenant-a',
+    },
+  );
+  assert.equal(wildVsConcrete.approved, false);
+  assert.equal(wildVsConcrete.reason, 'human-deny');
+  assert.doesNotMatch(wildVsConcrete.reason ?? '', /^capability-token:/);
+
+  // Missing tenantId → expectedAud='*' accepts only wildcard (TES parity)
+  const missingTenantWild = await ta.requestApproval(
+    'git_push',
+    { remote: 'origin' },
+    {
+      token: wildTok,
+    },
+  );
+  assert.equal(missingTenantWild.approved, true);
+  assert.match(missingTenantWild.reason ?? '', /^capability-token:/);
+
+  const missingTenantScoped = await ta.requestApproval(
+    'git_push',
+    { remote: 'origin' },
+    {
+      token: tenantATok,
+    },
+  );
+  assert.equal(missingTenantScoped.approved, false);
+  assert.equal(missingTenantScoped.reason, 'human-deny');
+  assert.doesNotMatch(missingTenantScoped.reason ?? '', /^capability-token:/);
+});
+
+it('CAP-02 — toolOrchestrator planExecution binds tenantId into ToolApproval aud', async () => {
+  const issuer = makeIssuer();
+  const verifier = makeVerifier(issuer.masterKey);
+  const denyApprover: Parameters<typeof ToolApproval>[0] = () => ({
+    approved: false,
+    requestId: 'deny',
+    approvedAt: new Date().toISOString(),
+    reason: 'human-deny',
+  });
+  const ta = new ToolApproval(denyApprover, undefined, verifier);
+
+  const { ToolOrchestrator } = await import('../../src/runtime/toolOrchestrator');
+  const orch = new ToolOrchestrator(
+    {
+      enabled: true,
+      useApproval: true,
+      defaultToolTimeoutMs: 30_000,
+      turnTimeoutMs: 120_000,
+      maxRetries: 0,
+      circuitBreakerThreshold: 99,
+      circuitBreakerCooldownMs: 60_000,
+    },
+    ta,
+  );
+
+  const tools = new Map([
+    [
+      'git_push',
+      {
+        definition: { name: 'git_push', description: 'push', inputSchema: {} },
+        isConcurrencySafe: false,
+        execute: async () => ({ output: 'ok' }),
+      },
+    ],
+  ]);
+
+  const tenantATok = issuer.issue({
+    sub: 'agent-X',
+    aud: 'tenant-a',
+    tools: ['git_push'],
+    ttlSeconds: 30,
+  });
+
+  const toolCall = {
+    id: 'tc-1',
+    name: 'git_push',
+    arguments: { remote: 'origin' },
+  };
+
+  // Matching tenantId → not skipped (capability-token approve)
+  const okPlan = await orch.planExecution([toolCall], tools, {
+    capabilityToken: tenantATok,
+    tenantId: 'tenant-a',
+  });
+  assert.equal(okPlan.skipped.length, 0);
+  assert.equal(okPlan.serial.length + okPlan.concurrent.length, 1);
+
+  // Wrong tenantId → skipped (no capability-token short-circuit)
+  const badPlan = await orch.planExecution([toolCall], tools, {
+    capabilityToken: tenantATok,
+    tenantId: 'tenant-b',
+  });
+  assert.equal(badPlan.skipped.length, 1);
+  assert.match(badPlan.skipped[0]!.reason, /human-deny|Approval rejected/);
 });
 
 it('Phase 2.1 — ToolApproval integration: invalid token falls through to approver (manual-level tool)', async () => {
@@ -632,7 +912,7 @@ it('Phase 2.1 — revocation audit event recorded; reset state clears the ledger
   resetRevocationLedger();
   // After reset, the verifier should now accept the token again.
   const verifier = makeVerifier(issuer.masterKey);
-  assert.equal(verifier.verify(tok, { tool: 'web_search', args: {} }).ok, true);
+  assert.equal(verifyTok(verifier, tok, { tool: 'web_search', args: {} }).ok, true);
 });
 
 it('Phase 2.1 — getCapabilityTokenIssuer singleton + resetCapabilityTokenState isolation', () => {
@@ -680,7 +960,7 @@ it('Phase 2.1 — Resolution short-circuit: wrong typ header', () => {
     .replace(/\+/g, '-')
     .replace(/\//g, '_');
   const tok = `${header}.${payloadB64}.${sig}`;
-  const r = makeVerifier(issuer.masterKey).verify(tok, { tool: 'web_search', args: {} });
+  const r = verifyTok(makeVerifier(issuer.masterKey), tok, { tool: 'web_search', args: {} });
   assert.equal(r.ok, false);
   if (!r.ok) assert.equal(r.reason, 'malformed_payload');
 });
@@ -723,12 +1003,12 @@ it('Phase 2.1 — delegation accepts child scope that is a strict subset of pare
     parent: decode(root),
   });
   assert.equal(
-    verifier.verify(child, { tool: 'memory_read', args: {} }).ok,
+    verifyTok(verifier, child, { tool: 'memory_read', args: {} }).ok,
     true,
     'narrower-scope child must be accepted',
   );
   assert.equal(
-    verifier.verify(child, { tool: 'file_read', args: {} }).ok,
+    verifyTok(verifier, child, { tool: 'file_read', args: {} }).ok,
     false,
     'child token cannot enact a tool outside its narrowed scope',
   );
@@ -753,12 +1033,12 @@ it('Phase 2.1 — delegation: parent wildcard covers child explicit tool name', 
     parent: decode(root),
   });
   assert.equal(
-    verifier.verify(child, { tool: 'memory_read', args: {} }).ok,
+    verifyTok(verifier, child, { tool: 'memory_read', args: {} }).ok,
     true,
     'wildcard-propagated child must be accepted',
   );
   assert.equal(
-    verifier.verify(child, { tool: 'memory_write', args: {} }).ok,
+    verifyTok(verifier, child, { tool: 'memory_write', args: {} }).ok,
     false,
     'child token still cannot enact a tool it did not name',
   );
@@ -1011,7 +1291,7 @@ it('Phase 2.1 — worker code path uses verifier singleton instead of issuer.cre
   const issuer = getCapabilityTokenIssuer();
   const verifier = getCapabilityTokenVerifier();
   const tok = issuer.issue({ sub: 'agent-1', aud: '*', tools: ['file_read'], ttlSeconds: 30 });
-  const r = verifier.verify(tok, { tool: 'file_read', args: {} });
+  const r = verifyTok(verifier, tok, { tool: 'file_read', args: {} });
   assert.equal(r.ok, true);
   assert.equal(typeof (verifier as any).issue, 'undefined');
   resetCapabilityTokenState();
@@ -1026,10 +1306,10 @@ it('Phase 2.2 — replay detection: verifying the same token twice fails with re
   const verifier = makeVerifier(issuer.masterKey);
   const tok = issuer.issue({ sub: 'a', aud: '*', tools: ['web_search'], ttlSeconds: 30 });
   // First presentation: token is valid → succeeds and consumes the (jti, nonce).
-  const r1 = verifier.verify(tok, { tool: 'web_search', args: {} });
+  const r1 = verifyTok(verifier, tok, { tool: 'web_search', args: {} });
   assert.equal(r1.ok, true, 'first verify succeeds');
   // Second presentation of the identical token within its TTL → replay.
-  const r2 = verifier.verify(tok, { tool: 'web_search', args: {} });
+  const r2 = verifyTok(verifier, tok, { tool: 'web_search', args: {} });
   assert.equal(r2.ok, false, 'second verify of same token is rejected');
   if (!r2.ok) assert.equal(r2.reason, 'replay_detected');
 });
@@ -1042,8 +1322,8 @@ it('Phase 2.2 — different nonce: two distinct tokens with same scope both veri
   // Distinct issuances yield distinct (jti, nonce) pairs, so neither is a replay.
   assert.notEqual(decode(tok1).payload.jti, decode(tok2).payload.jti);
   assert.notEqual(decode(tok1).payload.nonce, decode(tok2).payload.nonce);
-  const r1 = verifier.verify(tok1, { tool: 'web_search', args: {} });
-  const r2 = verifier.verify(tok2, { tool: 'web_search', args: {} });
+  const r1 = verifyTok(verifier, tok1, { tool: 'web_search', args: {} });
+  const r2 = verifyTok(verifier, tok2, { tool: 'web_search', args: {} });
   assert.equal(r1.ok, true, 'first token verifies');
   assert.equal(r2.ok, true, 'second token (different nonce) also verifies');
 });
@@ -1072,7 +1352,7 @@ it('Phase 2.2 — cache cleanup: after token expiry, same jti+nonce verifies aga
     },
     key,
   );
-  const r1 = verifier.verify(tok1, { tool: 'web_search', args: {} });
+  const r1 = verifyTok(verifier, tok1, { tool: 'web_search', args: {} });
   assert.equal(r1.ok, true, 'first verify succeeds and records the replay entry');
   // Wait past expiry + clock skew so the replay-cache entry is sweepable.
   // Sweep threshold is exp + CLOCK_SKEW_SECONDS; sleep beyond it.
@@ -1100,7 +1380,7 @@ it('Phase 2.2 — cache cleanup: after token expiry, same jti+nonce verifies aga
     },
     key,
   );
-  const r2 = verifier.verify(tok2, { tool: 'web_search', args: {} });
+  const r2 = verifyTok(verifier, tok2, { tool: 'web_search', args: {} });
   assert.equal(r2.ok, true, 'after the old entry expired, the same jti+nonce verifies again');
 }, 20000);
 
@@ -1108,13 +1388,13 @@ it('Phase 2.2 — resetReplayCache: cleared cache lets a replayed token verify a
   const issuer = makeIssuer();
   const verifier = makeVerifier(issuer.masterKey);
   const tok = issuer.issue({ sub: 'a', aud: '*', tools: ['web_search'], ttlSeconds: 30 });
-  const r1 = verifier.verify(tok, { tool: 'web_search', args: {} });
+  const r1 = verifyTok(verifier, tok, { tool: 'web_search', args: {} });
   assert.equal(r1.ok, true, 'first verify succeeds');
-  const r2 = verifier.verify(tok, { tool: 'web_search', args: {} });
+  const r2 = verifyTok(verifier, tok, { tool: 'web_search', args: {} });
   assert.equal(r2.ok, false, 'second verify is a replay');
   if (!r2.ok) assert.equal(r2.reason, 'replay_detected');
   // Reset the replay cache — the consumed pair is forgotten.
   resetReplayCache();
-  const r3 = verifier.verify(tok, { tool: 'web_search', args: {} });
+  const r3 = verifyTok(verifier, tok, { tool: 'web_search', args: {} });
   assert.equal(r3.ok, true, 'after resetReplayCache, the token verifies again');
 });

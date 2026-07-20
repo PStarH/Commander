@@ -125,7 +125,7 @@ export class ToolOrchestrator {
   async planExecution(
     toolCalls: ToolCall[],
     tools: Map<string, Tool>,
-    context?: { capabilityToken?: string },
+    context?: { capabilityToken?: string; tenantId?: string },
   ): Promise<ToolExecutionPlan> {
     const concurrent: ToolCall[] = [];
     const serial: ToolCall[] = [];
@@ -158,8 +158,10 @@ export class ToolOrchestrator {
 
       // Check tool-level approval only for registered tools.
       if (tool && this.config.useApproval && this.approval) {
+        // CAP-02: pass tenantId so ToolApproval binds aud (same as TES).
         const approvalResult = await this.approval.requestApproval(tc.name, tc.arguments, {
           token: context?.capabilityToken,
+          tenantId: context?.tenantId,
         });
         if (!approvalResult.approved) {
           skipped.push({
