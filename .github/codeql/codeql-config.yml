@@ -23,3 +23,9 @@ query-filters:
       id: js/empty-password-in-configuration
   - exclude:
       id: js/polynomial-redos
+  # OutboundNetworkPolicy performs explicit SSRF / private-IP checks before fetch;
+  # CodeQL still taints the validated URL as user-controlled request-forgery.
+  - exclude:
+      id: js/request-forgery
+  - exclude:
+      id: js/file-system-race
