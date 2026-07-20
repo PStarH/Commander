@@ -417,17 +417,37 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
       - run: pnpm install
+      - name: Rebuild better-sqlite3 (repositoryContract SQLite suite)
+        run: pnpm rebuild better-sqlite3
       - name: Build kernel / worker-plane / core / api
         run: |
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/plugin-sdk build
           pnpm --filter @commander/kernel build
           pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/action-adapters build
           pnpm --filter @commander/core build
           pnpm --filter @commander/worker-plane build
           pnpm --filter @commander/api build
       - name: Kernel PostgreSQL integration (fencing + tenant isolation)
         run: pnpm exec tsx --test packages/kernel/src/postgres.integration.test.ts
+      - name: Kernel PostgreSQL ops + compensation race (C4/C5/C2 PG)
+        run: |
+          pnpm exec tsx --test --test-concurrency=1 \
+            packages/kernel/src/postgres.ops.integration.test.ts \
+            packages/kernel/src/ops/outbox/compensationPublisherRace.integration.test.ts \
+            packages/kernel/src/ops/outbox/compensationPublisherRace.postgres.integration.test.ts
+      - name: Assert PG compensation tests did not skip
+        run: bash scripts/l4-b-assert-pg-compensation-tests-ran.sh
+      - name: L4-B compensation dual-process race (C6, PG)
+        run: pnpm cell:compensation-dual-race -- --seed=16
+      - name: Upload dual-process race artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: l4-b-compensation-dual-race
+          path: artifacts/l4-b-compensation-dual-race-*.json
+          if-no-files-found: error
       - name: Worker plane e2e (execute + lease reclaim)
         run: pnpm exec tsx --test --test-force-exit packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts
       - name: Production worker sandbox boot-refuse

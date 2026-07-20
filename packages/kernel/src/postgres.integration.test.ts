@@ -3,8 +3,59 @@ import { describe, it } from 'node:test';
 import { Pool } from 'pg';
 import { PostgresKernelRepository } from './postgres.js';
 import { runKernelMigrations } from './migrations.js';
+import { KernelInvariantError } from './types.js';
+import { runKernelRepositoryContractTests } from './testing/repositoryContract.js';
 
 const databaseUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
+
+async function resetPostgresContractTables(pool: Pool): Promise<void> {
+  // Contract suite reuses fixed ids (run-1 / tenant-a); wipe between cases.
+  // Keep migration ledger so runKernelMigrations stays idempotent.
+  await pool.query(`
+    DO $reset$
+    DECLARE r RECORD;
+    BEGIN
+      FOR r IN
+        SELECT tablename
+        FROM pg_tables
+        WHERE schemaname = 'public'
+          AND tablename LIKE 'commander_%'
+          AND tablename <> 'commander_kernel_migrations'
+      LOOP
+        EXECUTE format('TRUNCATE TABLE %I CASCADE', r.tablename);
+      END LOOP;
+    END
+    $reset$;
+  `);
+}
+
+if (databaseUrl) {
+  runKernelRepositoryContractTests({
+    name: 'Postgres',
+    create: async () => {
+      const pool = new Pool({ connectionString: databaseUrl, max: 4 });
+      await runKernelMigrations(pool);
+      await resetPostgresContractTables(pool);
+      const repo = new PostgresKernelRepository(pool, { schedulerMode: true });
+      (repo as PostgresKernelRepository & { _contractPool?: Pool })._contractPool = pool;
+      return repo;
+    },
+    destroy: async (repo) => {
+      const pg = repo as PostgresKernelRepository & { _contractPool?: Pool };
+      if (pg._contractPool) await pg._contractPool.end();
+    },
+    seedWorker: async (repo) => {
+      const pg = repo as PostgresKernelRepository & { _contractPool?: Pool };
+      const workerId = `contract-worker-${Date.now()}`;
+      await pg._contractPool!.query(
+        `INSERT INTO commander_workers (id,kind,version,capabilities,max_concurrency,status,generation,identity_subject,tenant_ids)
+         VALUES ($1,'agent','contract','["agent","tool"]',4,'ACTIVE',1,$1,$2::jsonb)`,
+        [workerId, JSON.stringify(['tenant-a'])],
+      );
+      return { workerId, generation: 1 };
+    },
+  });
+}
 
 describe('PostgresKernelRepository integration', () => {
   it('runs checksummed migrations, enforces worker generation fencing, and preserves tenant isolation', { skip: !databaseUrl }, async () => {
@@ -84,6 +135,134 @@ describe('PostgresKernelRepository integration', () => {
     } finally {
       await pool.query('DELETE FROM commander_runs WHERE tenant_id = ANY($1::text[])', [[tenantA, tenantB]]);
       await pool.query('DELETE FROM commander_workers WHERE id = ANY($1::text[])', [[workerA, workerB]]);
+      await pool.end();
+    }
+  });
+
+  it('atomically releases kernel-native approvals with fencing and tenant isolation', { skip: !databaseUrl }, async () => {
+    if (!databaseUrl) return;
+    const pool = new Pool({ connectionString: databaseUrl, max: 8 });
+    const suffix = `${Date.now()}-${process.pid}`;
+    const tenantA = `approval-a-${suffix}`;
+    const tenantB = `approval-b-${suffix}`;
+    const runId = `run-approval-${suffix}`;
+    const stepId = `step-approval-${suffix}`;
+    const interactionId = `interaction-approval-${suffix}`;
+    const rolledBackRunId = `run-approval-rollback-${suffix}`;
+    const rolledBackStepId = `step-approval-rollback-${suffix}`;
+    const workerId = `worker-approval-${suffix}`;
+    const repoA = new PostgresKernelRepository(pool);
+    const repoB = new PostgresKernelRepository(pool);
+    try {
+      await runKernelMigrations(pool);
+      await pool.query(
+        `INSERT INTO commander_workers (id,kind,version,capabilities,max_concurrency,status,generation,identity_subject,tenant_ids)
+         VALUES ($1,'agent','integration','["tool"]',1,'ACTIVE',1,$2,$3::jsonb)`,
+        [workerId, workerId, JSON.stringify([tenantA])],
+      );
+      await repoA.createRun({
+        id: runId,
+        tenantId: tenantA,
+        intentHash: 'approval-intent',
+        workGraphHash: 'approval-graph',
+        workGraphVersion: 'v1',
+        policySnapshotId: 'approval-policy',
+        steps: [{
+          id: stepId,
+          kind: 'tool',
+          initialState: 'WAITING_FOR_HUMAN',
+          maxAttempts: 2,
+          interaction: {
+            id: interactionId,
+            prompt: 'Approve integration action?',
+            expiresAt: '2030-01-01T00:00:00.000Z',
+          },
+        }],
+      }, 'integration');
+
+      await assert.rejects(
+        () => repoA.createRun({
+          id: rolledBackRunId,
+          tenantId: tenantA,
+          intentHash: 'rollback-intent',
+          workGraphHash: 'rollback-graph',
+          workGraphVersion: 'v1',
+          policySnapshotId: 'approval-policy',
+          steps: [{
+            id: rolledBackStepId,
+            kind: 'tool',
+            initialState: 'WAITING_FOR_HUMAN',
+            interaction: { id: interactionId, prompt: 'Duplicate interaction' },
+          }],
+        }, 'integration'),
+        (error) => error instanceof KernelInvariantError && error.code === 'DUPLICATE_INTERACTION',
+      );
+      assert.equal(await repoA.getRun(rolledBackRunId, tenantA), null);
+      assert.equal(await repoA.getStep(rolledBackStepId, tenantA), null);
+
+      assert.equal(await repoB.getInteraction(interactionId, tenantB), null);
+      assert.equal(await repoB.getStep(stepId, tenantB), null);
+      await assert.rejects(
+        () => repoB.answerInteraction({
+          interactionId,
+          runId,
+          tenantId: tenantB,
+          response: { approved: true },
+          actor: 'cross-tenant-reviewer',
+        }),
+        (error) => error instanceof KernelInvariantError && error.code === 'INTERACTION_NOT_FOUND',
+      );
+
+      const answers = await Promise.allSettled([
+        repoA.answerInteraction({
+          interactionId,
+          runId,
+          tenantId: tenantA,
+          response: { approved: true, reviewer: 'reviewer-a' },
+          actor: 'reviewer-a',
+        }),
+        repoA.answerInteraction({
+          interactionId,
+          runId,
+          tenantId: tenantA,
+          response: { approved: true, reviewer: 'reviewer-b' },
+          actor: 'reviewer-b',
+        }),
+      ]);
+      assert.equal(answers.filter((result) => result.status === 'fulfilled').length, 1);
+      const rejected = answers.find((result) => result.status === 'rejected');
+      assert.ok(rejected?.status === 'rejected');
+      assert.ok(rejected.reason instanceof KernelInvariantError);
+      assert.equal(rejected.reason.code, 'INTERACTION_NOT_FOUND');
+
+      const claimed = await repoA.claimNextStep({
+        workerId,
+        workerGeneration: 1,
+        tenantIds: [tenantA],
+        capabilities: ['tool'],
+        leaseTtlMs: 30_000,
+      });
+      assert.equal(claimed?.id, stepId);
+      assert.equal(claimed?.state, 'RUNNING');
+      assert.equal(claimed?.lease?.fencingEpoch, 1);
+      assert.ok(claimed?.lease?.token);
+      assert.equal(await repoA.completeStep({
+        stepId,
+        tenantId: tenantA,
+        lease: { ...claimed!.lease!, token: 'stale-token' },
+        expectedVersion: claimed!.version,
+        actor: workerId,
+      }), null);
+      assert.ok(await repoA.completeStep({
+        stepId,
+        tenantId: tenantA,
+        lease: claimed!.lease!,
+        expectedVersion: claimed!.version,
+        actor: workerId,
+      }));
+    } finally {
+      await pool.query('DELETE FROM commander_runs WHERE tenant_id = ANY($1::text[])', [[tenantA, tenantB]]);
+      await pool.query('DELETE FROM commander_workers WHERE id=$1', [workerId]);
       await pool.end();
     }
   });

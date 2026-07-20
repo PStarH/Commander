@@ -94,6 +94,8 @@
     "docker:down": "docker compose down",
     "docker:v2": "docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up -d --build",
     "docker:v2:down": "docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 down",
+    "docker:cell": "docker compose -f docker-compose.yml -f docker-compose.cell.yml --profile cell up -d --build",
+    "docker:cell:down": "docker compose -f docker-compose.yml -f docker-compose.cell.yml --profile cell down -v",
     "p0:kernel-e2e": "pnpm exec tsx scripts/p0-kernel-e2e.ts",
     "p0:kernel-pg": "pnpm exec tsx --test --test-force-exit packages/kernel/src/postgres.integration.test.ts packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts",
     "p0:full-loop": "pnpm exec tsx scripts/p0-full-loop.ts",
@@ -106,6 +108,8 @@
     "format": "npx prettier --write \"packages/core/src/**/*.ts\" \"packages/core/tests/**/*.ts\" \"apps/api/src/**/*.ts\" \"apps/web/src/**/*.{ts,tsx}\" \"scripts/**/*.ts\"",
     "format:check": "npx prettier --check \"packages/core/src/**/*.ts\" \"packages/core/tests/**/*.ts\" \"apps/api/src/**/*.ts\" \"apps/web/src/**/*.{ts,tsx}\" \"scripts/**/*.ts\"",
     "cell:smoke": "pnpm exec tsx scripts/l4-b-cell-smoke.ts",
+    "cell:compensation-e2e": "pnpm exec tsx scripts/l4-b-cell-compensation-e2e.ts",
+    "cell:compensation-dual-race": "pnpm exec tsx scripts/l4-b-compensation-dual-process-race.ts",
     "cell:up-assert": "pnpm exec tsx scripts/l4-b-cell-up-assert.ts",
     "cell:image-boot-smoke": "pnpm exec tsx scripts/l4-b-image-boot-smoke.ts",
     "helm:cell-assert": "pnpm run helm:cell-assert:demo && pnpm run helm:cell-assert:enterprise",
@@ -122,7 +126,11 @@
     "typescript-eslint": "^8.62.0"
   },
   "dependencies": {
+    "@commander/core": "workspace:*",
+    "@commander/kernel": "workspace:*",
+    "@commander/worker-plane": "workspace:*",
     "js-yaml": "^4.1.1",
+    "pg": "^8.15.0",
     "playwright": "^1.61.1",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"
