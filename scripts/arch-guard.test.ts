@@ -116,6 +116,43 @@ test('rejects imports of deleted control-plane package', () => {
   assert.throws(() => runGuard(root), /deleted package/i);
 });
 
+test('rejects reintroduced operations package (ghost plane banned)', () => {
+  const root = fixture({
+    packages: {
+      contracts: { name: '@commander/contracts' },
+      kernel: {
+        name: '@commander/kernel',
+        deps: { '@commander/contracts': 'workspace:*' },
+      },
+      operations: {
+        name: '@commander/operations',
+        deps: {
+          '@commander/kernel': 'workspace:*',
+          '@commander/contracts': 'workspace:*',
+        },
+      },
+    },
+  });
+  assert.throws(
+    () => runGuard(root),
+    /no dependency policy exists for workspace package @commander\/operations/i,
+  );
+});
+
+test('rejects imports of deleted operations package', () => {
+  const root = fixture({
+    packages: {
+      contracts: { name: '@commander/contracts' },
+      kernel: {
+        name: '@commander/kernel',
+        deps: { '@commander/contracts': 'workspace:*' },
+        source: "import '@commander/operations';\n",
+      },
+    },
+  });
+  assert.throws(() => runGuard(root), /deleted package/i);
+});
+
 test('rejects root package.json references to deleted packages', () => {
   const root = fixture({
     packages: {
@@ -238,7 +275,7 @@ test('rejects action-adapters importing core', () => {
   assert.throws(() => runGuard(root), /illegal.*dependency|action-adapters.*core/i);
 });
 
-test('rejects operations importing @commander/core', () => {
+test('rejects adapter-ops importing @commander/core', () => {
   const root = fixture({
     packages: {
       contracts: { name: '@commander/contracts' },
@@ -257,8 +294,8 @@ test('rejects operations importing @commander/core', () => {
           '@commander/effect-broker': 'workspace:*',
         },
       },
-      operations: {
-        name: '@commander/operations',
+      'adapter-ops': {
+        name: '@commander/adapter-ops',
         deps: {
           '@commander/kernel': 'workspace:*',
           '@commander/contracts': 'workspace:*',
@@ -270,10 +307,10 @@ test('rejects operations importing @commander/core', () => {
       },
     },
   });
-  assert.throws(() => runGuard(root), /illegal.*dependency|operations.*core|forbidden @commander\/core/i);
+  assert.throws(() => runGuard(root), /illegal.*dependency|adapter-ops.*core|forbidden @commander\/core/i);
 });
 
-test('rejects operations importing apps/api', () => {
+test('rejects adapter-ops importing apps/api', () => {
   const root = fixture({
     packages: {
       contracts: { name: '@commander/contracts' },
@@ -292,8 +329,8 @@ test('rejects operations importing apps/api', () => {
           '@commander/effect-broker': 'workspace:*',
         },
       },
-      operations: {
-        name: '@commander/operations',
+      'adapter-ops': {
+        name: '@commander/adapter-ops',
         deps: {
           '@commander/kernel': 'workspace:*',
           '@commander/contracts': 'workspace:*',

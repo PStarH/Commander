@@ -9,13 +9,13 @@ COPY packages/contracts/package.json ./packages/contracts/package.json
 COPY packages/effect-broker/package.json ./packages/effect-broker/package.json
 COPY packages/kernel/package.json ./packages/kernel/package.json
 COPY packages/action-adapters/package.json ./packages/action-adapters/package.json
-COPY packages/operations/package.json ./packages/operations/package.json
+COPY packages/adapter-ops/package.json ./packages/adapter-ops/package.json
 RUN pnpm install --frozen-lockfile \
     --filter @commander/contracts \
     --filter @commander/effect-broker \
     --filter @commander/kernel \
     --filter @commander/action-adapters \
-    --filter @commander/operations
+    --filter @commander/adapter-ops
 
 FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules
@@ -23,19 +23,19 @@ COPY --from=deps /app/packages/contracts/node_modules ./packages/contracts/node_
 COPY --from=deps /app/packages/effect-broker/node_modules ./packages/effect-broker/node_modules
 COPY --from=deps /app/packages/kernel/node_modules ./packages/kernel/node_modules
 COPY --from=deps /app/packages/action-adapters/node_modules ./packages/action-adapters/node_modules
-COPY --from=deps /app/packages/operations/node_modules ./packages/operations/node_modules
+COPY --from=deps /app/packages/adapter-ops/node_modules ./packages/adapter-ops/node_modules
 COPY tsconfig.base.json ./
 COPY scripts/fix-esm-imports.mjs ./scripts/fix-esm-imports.mjs
 COPY packages/contracts ./packages/contracts
 COPY packages/effect-broker ./packages/effect-broker
 COPY packages/kernel ./packages/kernel
 COPY packages/action-adapters ./packages/action-adapters
-COPY packages/operations ./packages/operations
+COPY packages/adapter-ops ./packages/adapter-ops
 RUN cd packages/contracts && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/effect-broker && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/kernel && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/action-adapters && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
-RUN cd packages/operations && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
+RUN cd packages/adapter-ops && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 
 FROM base AS production
 RUN addgroup -g 1001 commander \
@@ -45,20 +45,20 @@ COPY --from=deps /app/packages/contracts/node_modules ./packages/contracts/node_
 COPY --from=deps /app/packages/effect-broker/node_modules ./packages/effect-broker/node_modules
 COPY --from=deps /app/packages/kernel/node_modules ./packages/kernel/node_modules
 COPY --from=deps /app/packages/action-adapters/node_modules ./packages/action-adapters/node_modules
-COPY --from=deps /app/packages/operations/node_modules ./packages/operations/node_modules
+COPY --from=deps /app/packages/adapter-ops/node_modules ./packages/adapter-ops/node_modules
 COPY --from=build /app/packages/contracts/dist ./packages/contracts/dist
 COPY --from=build /app/packages/contracts/schemas ./packages/contracts/schemas
 COPY --from=build /app/packages/contracts/fixtures ./packages/contracts/fixtures
 COPY --from=build /app/packages/effect-broker/dist ./packages/effect-broker/dist
 COPY --from=build /app/packages/kernel/dist ./packages/kernel/dist
 COPY --from=build /app/packages/action-adapters/dist ./packages/action-adapters/dist
-COPY --from=build /app/packages/operations/dist ./packages/operations/dist
+COPY --from=build /app/packages/adapter-ops/dist ./packages/adapter-ops/dist
 COPY packages/contracts/package.json ./packages/contracts/package.json
 COPY packages/effect-broker/package.json ./packages/effect-broker/package.json
 COPY packages/kernel/package.json ./packages/kernel/package.json
 COPY packages/action-adapters/package.json ./packages/action-adapters/package.json
-COPY packages/operations/package.json ./packages/operations/package.json
+COPY packages/adapter-ops/package.json ./packages/adapter-ops/package.json
 RUN chown -R commander:commander /app
 ENV NODE_ENV=production
 USER commander
-ENTRYPOINT ["node", "packages/operations/dist/run.js"]
+ENTRYPOINT ["node", "packages/adapter-ops/dist/run.js"]

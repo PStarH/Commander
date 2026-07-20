@@ -62,7 +62,7 @@ describe('commander dev supervisor', () => {
     assert.equal(specs.length, 4);
     assert.deepEqual(
       specs.map((s) => s.role),
-      ['api', 'worker', 'kernel-ops', 'operations'],
+      ['api', 'worker', 'kernel-ops', 'adapter-ops'],
     );
     assert.equal(specs[0]?.args.includes('apps/api/src/index.ts'), true);
     assert.equal(specs[1]?.args[0], 'packages/worker-plane/dist/main.js');
@@ -82,7 +82,7 @@ describe('commander dev supervisor', () => {
     );
     await shutdownChildren(children, DEV_SHUTDOWN_ORDER, 'SIGTERM', 10);
     assert.deepEqual(killed.slice(0, 4), [
-      'operations:SIGTERM',
+      'adapter-ops:SIGTERM',
       'worker:SIGTERM',
       'kernel-ops:SIGTERM',
       'api:SIGTERM',

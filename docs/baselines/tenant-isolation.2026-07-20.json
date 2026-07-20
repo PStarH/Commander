@@ -35,5 +35,6 @@
       "model": "single"
     }
   },
-  "runAt": "2026-07-20T07:09:46.754Z"
+  "runAt": "2026-07-20T07:09:46.754Z",
+  "note": "CI readiness fixture (simulated evidence; NON-SCORING \u2014 does not count toward required readiness / residual\u2192100)"
 }

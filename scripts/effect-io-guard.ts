@@ -13,7 +13,7 @@ const SCAN_ROOTS = [
   'packages/kernel/src',
   'packages/effect-broker/src',
   'packages/worker-plane/src',
-  'packages/operations/src',
+  'packages/adapter-ops/src',
   'packages/action-adapters/src',
   'packages/contracts/src',
   'packages/core/src',

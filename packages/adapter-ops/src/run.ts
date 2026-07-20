@@ -12,7 +12,10 @@ function positiveInteger(name: string, fallback: number): number {
 function parseEgressAllowlist(): string[] {
   const raw = process.env.COMMANDER_ADAPTER_EGRESS_ALLOWLIST?.trim() ?? '';
   if (!raw) return [];
-  return raw.split(',').map((s) => s.trim()).filter(Boolean);
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 export async function main(): Promise<void> {
@@ -53,6 +56,6 @@ export async function main(): Promise<void> {
 }
 
 void main().catch((error: unknown) => {
-  console.error('[operations] fatal:', error);
+  console.error('[adapter-ops] fatal:', error);
   process.exitCode = 1;
 });

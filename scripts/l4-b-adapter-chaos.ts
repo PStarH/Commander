@@ -24,7 +24,7 @@ import {
   createGitHubPullRequestCreateAdapter,
 } from '@commander/action-adapters';
 import { createActionAdapterEffectExecutor } from '../packages/worker-plane/src/actionAdapterExecutor.js';
-import { ReconciliationDaemon } from '../packages/operations/src/reconciliationDaemon.js';
+import { ReconciliationDaemon } from '../packages/adapter-ops/src/reconciliationDaemon.js';
 
 export const L4B_CHAOS_MODE = 'enforced-fake-http' as const;
 
