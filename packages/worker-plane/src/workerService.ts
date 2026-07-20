@@ -33,6 +33,28 @@ function isSandboxUnavailable(error: unknown): boolean {
 }
 
 /**
+ * Preserve retry intent from WorkerExecutionError and structurally compatible
+ * errors (e.g. core KernelStepExecutorError) that cross package boundaries
+ * without sharing a prototype.
+ */
+function toWorkerExecutionError(error: unknown): WorkerError {
+  if (error instanceof WorkerError) return error;
+  if (error instanceof Error) {
+    const options = (error as Error & { options?: WorkerError['options'] }).options;
+    if (options && typeof options === 'object') {
+      return new WorkerError(error.message, {
+        code: options.code,
+        retryable: options.retryable,
+        retryDelayMs: options.retryDelayMs,
+        details: options.details,
+      }, error);
+    }
+    return new WorkerError(error.message, { code: 'EXECUTOR_FAILED', retryable: false }, error);
+  }
+  return new WorkerError(String(error), { code: 'EXECUTOR_FAILED', retryable: false });
+}
+
+/**
  * Process-local worker loop. It has no HTTP server and no AgentRuntime import:
  * all work is leased from the shared kernel and all lifecycle writes return to it.
  */
@@ -93,8 +115,15 @@ export class WorkerService {
   async run(signal?: AbortSignal): Promise<void> {
     await this.start();
     while (this.running && !signal?.aborted) {
-      const claimed = await this.pollOnce();
-      if (!claimed) await sleep(this.config.pollIntervalMs);
+      try {
+        const claimed = await this.pollOnce();
+        if (!claimed) await sleep(this.config.pollIntervalMs);
+      } catch {
+        // Transient kernel/claim failures must not kill the worker process.
+        // Capacity (claimInflight) is released in pollOnce finally; back off and continue.
+        if (!this.running || signal?.aborted) break;
+        await sleep(this.config.pollIntervalMs);
+      }
     }
     await this.stop();
   }
@@ -212,14 +241,13 @@ export class WorkerService {
     } catch (error) {
       if (!leaseLost) {
         const sandboxUnavailable = isSandboxUnavailable(error);
-        const known =
-          !sandboxUnavailable && error instanceof WorkerError
-            ? error
-            : new WorkerError((error as Error).message, {
-                code: sandboxUnavailable ? 'SANDBOX_UNAVAILABLE' : 'EXECUTOR_FAILED',
-                retryable: false,
-                details: error instanceof WorkerError ? error.options.details : undefined,
-              });
+        const known = sandboxUnavailable
+          ? new WorkerError((error as Error).message, {
+              code: 'SANDBOX_UNAVAILABLE',
+              retryable: false,
+              details: error instanceof WorkerError ? error.options.details : undefined,
+            }, error)
+          : toWorkerExecutionError(error);
         const failed = await this.kernel.failStep({
           stepId: step.id,
           tenantId: step.tenantId,
