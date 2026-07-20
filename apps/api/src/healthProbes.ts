@@ -7,9 +7,9 @@
  * `unknown`/`degraded` are surfaced honestly but do not fail the probe.
  *
  * Hard gates (503 if `fail`): database, kernel.
- * Soft indicators (never 503): effectBroker (honest presence probe; API process
- * does not host the worker-plane broker), warRoomStore (`degraded`),
- * memoryHeap (`degraded`).
+ * Soft indicators (never 503): effectBroker (API process does not host the
+ * worker-plane `@commander/effect-broker`; unwired → `unknown`, never a fake
+ * `fail`), warRoomStore (`degraded`), memoryHeap (`degraded`).
  */
 
 /** Outcome of a single dependency probe. */
@@ -24,7 +24,12 @@ export interface ReadinessProbeDeps {
   database?: () => Promise<'ok'>;
   /** Kernel gateway resolver; non-null = ok, null = fail. */
   kernel: () => unknown | null;
-  /** EffectBroker resolver; non-null = ok, null = fail. */
+  /**
+   * EffectBroker resolver for this process.
+   * - non-null → `ok` (a real broker handle is wired in-process)
+   * - null → `unknown` (API process does not host worker-plane broker;
+   *   absence is expected, not a failed probe)
+   */
   effectBroker: () => unknown | null;
   /** WarRoom store presence; true = ok, false = degraded (never gates). */
   warRoomStore?: () => boolean;
@@ -50,9 +55,17 @@ export function probeKernel(fn: () => unknown | null): ProbeStatus {
   return fn() !== null ? 'ok' : 'fail';
 }
 
-/** Map a null/non-null resolver to ok/fail. */
+/**
+ * Map a null/non-null resolver to ok/unknown.
+ *
+ * Rationale: `@commander/core/security/effectBroker` is a process-local registry
+ * stub. `setEffectBroker` has zero production call sites; the real monopoly lives
+ * in worker-plane `@commander/effect-broker`. Reporting null as `fail` permanently
+ * paints /ready and /v1/health red even on healthy Gateway nodes (claim dishonesty).
+ * Unwired → `unknown` per WS3 §6.2. Soft indicator only — never a hard gate.
+ */
 export function probeEffectBroker(fn: () => unknown | null): ProbeStatus {
-  return fn() !== null ? 'ok' : 'fail';
+  return fn() !== null ? 'ok' : 'unknown';
 }
 
 /** Map warRoomStore presence: true=ok, false=degraded. Never gates. */
@@ -71,8 +84,8 @@ export function probeMemoryHeap(fn: (() => number) | undefined): ProbeStatus {
  * Hard gates whose `fail` status forces 503.
  *
  * effectBroker is intentionally NOT a hard gate: the API process does not
- * host the worker-plane `@commander/effect-broker`. Presence is still probed
- * and reported honestly; a throw-on-admit stub must not mint a green hard gate.
+ * host the worker-plane `@commander/effect-broker`. Unwired presence is
+ * `unknown` (not `fail`); wiring a stub only to paint green is forbidden.
  */
 const HARD_GATES = ['database', 'kernel'] as const;
 
