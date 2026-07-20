@@ -1,0 +1,1066 @@
+{
+  "baselineCount": 95,
+  "exceptions": [
+    {
+      "id": "api-onboarding-fetch",
+      "path": "apps/api/src/onboardingEndpoints.ts",
+      "owner": "@commander/api",
+      "reason": "Onboarding provider HTTP — migrate to action-adapters",
+      "replacement": "packages/action-adapters/llm/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "api-evaluation-fetch",
+      "path": "apps/api/src/evaluationEndpoints.ts",
+      "owner": "@commander/api",
+      "reason": "Evaluation LLM direct fetch — migrate to action-adapters",
+      "replacement": "packages/action-adapters/llm/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-atr-adapters-github",
+      "path": "packages/core/src/atr/adapters/github.ts",
+      "owner": "@commander/core",
+      "reason": "ATR git/GitHub integration — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-atr-gitSnapshot",
+      "path": "packages/core/src/atr/gitSnapshot.ts",
+      "owner": "@commander/core",
+      "reason": "ATR git/GitHub integration — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-cli-commands--shared",
+      "path": "packages/core/src/cli/commands/_shared.ts",
+      "owner": "@commander/core",
+      "reason": "CLI subprocess/HTTP — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-cli-commands-convenience",
+      "path": "packages/core/src/cli/commands/convenience.ts",
+      "owner": "@commander/core",
+      "reason": "CLI subprocess/HTTP — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-cli-commands-core",
+      "path": "packages/core/src/cli/commands/core.ts",
+      "owner": "@commander/core",
+      "reason": "CLI subprocess/HTTP — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-cli-commands-dev",
+      "path": "packages/core/src/cli/commands/dev.ts",
+      "owner": "@commander/core",
+      "reason": "CLI subprocess/HTTP — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch(",
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-cli-commands-history",
+      "path": "packages/core/src/cli/commands/history.ts",
+      "owner": "@commander/core",
+      "reason": "CLI subprocess/HTTP — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-cli-commands-manage",
+      "path": "packages/core/src/cli/commands/manage.ts",
+      "owner": "@commander/core",
+      "reason": "CLI subprocess/HTTP — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch(",
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-cli-commands-misc",
+      "path": "packages/core/src/cli/commands/misc.ts",
+      "owner": "@commander/core",
+      "reason": "CLI subprocess/HTTP — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-cli-commands-quickstart",
+      "path": "packages/core/src/cli/commands/quickstart.ts",
+      "owner": "@commander/core",
+      "reason": "CLI subprocess/HTTP — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-cli-commands-security",
+      "path": "packages/core/src/cli/commands/security.ts",
+      "owner": "@commander/core",
+      "reason": "CLI subprocess/HTTP — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-cli-commands-small-features",
+      "path": "packages/core/src/cli/commands/small-features.ts",
+      "owner": "@commander/core",
+      "reason": "CLI subprocess/HTTP — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-cli-commands-up",
+      "path": "packages/core/src/cli/commands/up.ts",
+      "owner": "@commander/core",
+      "reason": "CLI subprocess/HTTP — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "node:http",
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-cliEntry",
+      "path": "packages/core/src/cliEntry.ts",
+      "owner": "@commander/core",
+      "reason": "CLI subprocess/HTTP — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-commander-probe",
+      "path": "packages/core/src/commander/probe.ts",
+      "owner": "@commander/core",
+      "reason": "Legacy packages/core external I/O — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-harness-harnessInfrastructure",
+      "path": "packages/core/src/harness/harnessInfrastructure.ts",
+      "owner": "@commander/core",
+      "reason": "Legacy packages/core external I/O — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process",
+        "spawn("
+      ]
+    },
+    {
+      "id": "core-infrastructure-background",
+      "path": "packages/core/src/infrastructure/background.ts",
+      "owner": "@commander/core",
+      "reason": "Legacy packages/core external I/O — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-infrastructure-notifications",
+      "path": "packages/core/src/infrastructure/notifications.ts",
+      "owner": "@commander/core",
+      "reason": "Legacy packages/core external I/O — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch(",
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-lsp-lspClient",
+      "path": "packages/core/src/lsp/lspClient.ts",
+      "owner": "@commander/core",
+      "reason": "LSP subprocess client",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-lsp-lspManager",
+      "path": "packages/core/src/lsp/lspManager.ts",
+      "owner": "@commander/core",
+      "reason": "LSP subprocess client",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-mcp-a2aClient",
+      "path": "packages/core/src/mcp/a2aClient.ts",
+      "owner": "@commander/core",
+      "reason": "MCP/A2A protocol I/O — core protocol surface",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch(",
+        "node:https"
+      ]
+    },
+    {
+      "id": "core-mcp-a2aServer",
+      "path": "packages/core/src/mcp/a2aServer.ts",
+      "owner": "@commander/core",
+      "reason": "MCP/A2A protocol I/O — core protocol surface",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "node:http",
+        "node:https"
+      ]
+    },
+    {
+      "id": "core-mcp-client",
+      "path": "packages/core/src/mcp/client.ts",
+      "owner": "@commander/core",
+      "reason": "MCP/A2A protocol I/O — core protocol surface",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-observability-datadogExporter",
+      "path": "packages/core/src/observability/datadogExporter.ts",
+      "owner": "@commander/core",
+      "reason": "Observability export HTTP — OTel/Datadog/PagerDuty",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "node:https"
+      ]
+    },
+    {
+      "id": "core-observability-otelExporter",
+      "path": "packages/core/src/observability/otelExporter.ts",
+      "owner": "@commander/core",
+      "reason": "Observability export HTTP — OTel/Datadog/PagerDuty",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-observability-pagerDutyAlerting",
+      "path": "packages/core/src/observability/pagerDutyAlerting.ts",
+      "owner": "@commander/core",
+      "reason": "Observability export HTTP — OTel/Datadog/PagerDuty",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-pluginLoader",
+      "path": "packages/core/src/pluginLoader.ts",
+      "owner": "@commander/core",
+      "reason": "Legacy packages/core external I/O — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-plugins-builtin-gap-issueAutoCreate",
+      "path": "packages/core/src/plugins/builtin/gap/issueAutoCreate.ts",
+      "owner": "@commander/core",
+      "reason": "IM/plugin HTTP integrations — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-plugins-im-discord-index",
+      "path": "packages/core/src/plugins/im/discord/index.ts",
+      "owner": "@commander/core",
+      "reason": "IM/plugin HTTP integrations — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-plugins-im-slack-index",
+      "path": "packages/core/src/plugins/im/slack/index.ts",
+      "owner": "@commander/core",
+      "reason": "IM/plugin HTTP integrations — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-plugins-im-teams-index",
+      "path": "packages/core/src/plugins/im/teams/index.ts",
+      "owner": "@commander/core",
+      "reason": "IM/plugin HTTP integrations — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-reviewAgent",
+      "path": "packages/core/src/reviewAgent.ts",
+      "owner": "@commander/core",
+      "reason": "Legacy packages/core external I/O — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-runtime-adapters-telegramAdapter",
+      "path": "packages/core/src/runtime/adapters/telegramAdapter.ts",
+      "owner": "@commander/core",
+      "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-runtime-batchApiClient",
+      "path": "packages/core/src/runtime/batchApiClient.ts",
+      "owner": "@commander/core",
+      "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-runtime-embedding",
+      "path": "packages/core/src/runtime/embedding.ts",
+      "owner": "@commander/core",
+      "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-runtime-geminiCacheManager",
+      "path": "packages/core/src/runtime/geminiCacheManager.ts",
+      "owner": "@commander/core",
+      "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-runtime-httpServer",
+      "path": "packages/core/src/runtime/httpServer.ts",
+      "owner": "@commander/core",
+      "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "node:http",
+        "node:https"
+      ]
+    },
+    {
+      "id": "core-runtime-keychain",
+      "path": "packages/core/src/runtime/keychain.ts",
+      "owner": "@commander/core",
+      "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-runtime-lspIntegration",
+      "path": "packages/core/src/runtime/lspIntegration.ts",
+      "owner": "@commander/core",
+      "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-runtime-mtlsRuntimeProxy",
+      "path": "packages/core/src/runtime/mtlsRuntimeProxy.ts",
+      "owner": "@commander/core",
+      "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "node:https"
+      ]
+    },
+    {
+      "id": "core-runtime-mtlsRuntimeServer",
+      "path": "packages/core/src/runtime/mtlsRuntimeServer.ts",
+      "owner": "@commander/core",
+      "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "node:https"
+      ]
+    },
+    {
+      "id": "core-runtime-oidcAuthPlugin",
+      "path": "packages/core/src/runtime/oidcAuthPlugin.ts",
+      "owner": "@commander/core",
+      "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "node:https"
+      ]
+    },
+    {
+      "id": "core-runtime-openTelemetryExporter",
+      "path": "packages/core/src/runtime/openTelemetryExporter.ts",
+      "owner": "@commander/core",
+      "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "node:http",
+        "node:https"
+      ]
+    },
+    {
+      "id": "core-runtime-pluginSandboxContext",
+      "path": "packages/core/src/runtime/pluginSandboxContext.ts",
+      "owner": "@commander/core",
+      "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-runtime-privacyRouter",
+      "path": "packages/core/src/runtime/privacyRouter.ts",
+      "owner": "@commander/core",
+      "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-runtime-provenance",
+      "path": "packages/core/src/runtime/provenance.ts",
+      "owner": "@commander/core",
+      "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-runtime-providers-anthropicProvider",
+      "path": "packages/core/src/runtime/providers/anthropicProvider.ts",
+      "owner": "@commander/core",
+      "reason": "Legacy LLM provider HTTP in core — migrate to worker-plane EffectBroker",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-runtime-providers-baseOpenAICompatible",
+      "path": "packages/core/src/runtime/providers/baseOpenAICompatible.ts",
+      "owner": "@commander/core",
+      "reason": "Legacy LLM provider HTTP in core — migrate to worker-plane EffectBroker",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-runtime-providers-cohereProvider",
+      "path": "packages/core/src/runtime/providers/cohereProvider.ts",
+      "owner": "@commander/core",
+      "reason": "Legacy LLM provider HTTP in core — migrate to worker-plane EffectBroker",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-runtime-providers-deepseekProvider",
+      "path": "packages/core/src/runtime/providers/deepseekProvider.ts",
+      "owner": "@commander/core",
+      "reason": "Legacy LLM provider HTTP in core — migrate to worker-plane EffectBroker",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-runtime-providers-glmProvider",
+      "path": "packages/core/src/runtime/providers/glmProvider.ts",
+      "owner": "@commander/core",
+      "reason": "Legacy LLM provider HTTP in core — migrate to worker-plane EffectBroker",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-runtime-providers-googleProvider",
+      "path": "packages/core/src/runtime/providers/googleProvider.ts",
+      "owner": "@commander/core",
+      "reason": "Legacy LLM provider HTTP in core — migrate to worker-plane EffectBroker",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-runtime-providers-mimoProvider",
+      "path": "packages/core/src/runtime/providers/mimoProvider.ts",
+      "owner": "@commander/core",
+      "reason": "Legacy LLM provider HTTP in core — migrate to worker-plane EffectBroker",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-runtime-providers-ollamaProvider",
+      "path": "packages/core/src/runtime/providers/ollamaProvider.ts",
+      "owner": "@commander/core",
+      "reason": "Legacy LLM provider HTTP in core — migrate to worker-plane EffectBroker",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-runtime-providers-openaiProvider",
+      "path": "packages/core/src/runtime/providers/openaiProvider.ts",
+      "owner": "@commander/core",
+      "reason": "Legacy LLM provider HTTP in core — migrate to worker-plane EffectBroker",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-runtime-providers-replicateProvider",
+      "path": "packages/core/src/runtime/providers/replicateProvider.ts",
+      "owner": "@commander/core",
+      "reason": "Legacy LLM provider HTTP in core — migrate to worker-plane EffectBroker",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-runtime-providers-vllmProvider",
+      "path": "packages/core/src/runtime/providers/vllmProvider.ts",
+      "owner": "@commander/core",
+      "reason": "Legacy LLM provider HTTP in core — migrate to worker-plane EffectBroker",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-runtime-providers-xiaomiProvider",
+      "path": "packages/core/src/runtime/providers/xiaomiProvider.ts",
+      "owner": "@commander/core",
+      "reason": "Legacy LLM provider HTTP in core — migrate to worker-plane EffectBroker",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-runtime-siemForwarder",
+      "path": "packages/core/src/runtime/siemForwarder.ts",
+      "owner": "@commander/core",
+      "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "node:http",
+        "node:https",
+        "from 'net'"
+      ]
+    },
+    {
+      "id": "core-sandbox-appContainer",
+      "path": "packages/core/src/sandbox/appContainer.ts",
+      "owner": "@commander/core",
+      "reason": "Sandbox execution subprocess — bounded local/docker/ssh backends",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-sandbox-backends-dockerExecBackend",
+      "path": "packages/core/src/sandbox/backends/dockerExecBackend.ts",
+      "owner": "@commander/core",
+      "reason": "Sandbox execution subprocess — bounded local/docker/ssh backends",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-sandbox-backends-localBackend",
+      "path": "packages/core/src/sandbox/backends/localBackend.ts",
+      "owner": "@commander/core",
+      "reason": "Sandbox execution subprocess — bounded local/docker/ssh backends",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-sandbox-backends-sshBackend",
+      "path": "packages/core/src/sandbox/backends/sshBackend.ts",
+      "owner": "@commander/core",
+      "reason": "Sandbox execution subprocess — bounded local/docker/ssh backends",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-sandbox-platforms",
+      "path": "packages/core/src/sandbox/platforms.ts",
+      "owner": "@commander/core",
+      "reason": "Sandbox execution subprocess — bounded local/docker/ssh backends",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-sandbox-resourceAttenuator",
+      "path": "packages/core/src/sandbox/resourceAttenuator.ts",
+      "owner": "@commander/core",
+      "reason": "Sandbox execution subprocess — bounded local/docker/ssh backends",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-sandbox-scheduler",
+      "path": "packages/core/src/sandbox/scheduler.ts",
+      "owner": "@commander/core",
+      "reason": "Sandbox execution subprocess — bounded local/docker/ssh backends",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-sandbox-teeEnclave",
+      "path": "packages/core/src/sandbox/teeEnclave.ts",
+      "owner": "@commander/core",
+      "reason": "Sandbox execution subprocess — bounded local/docker/ssh backends",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-security-adversarialAttacker",
+      "path": "packages/core/src/security/adversarialAttacker.ts",
+      "owner": "@commander/core",
+      "reason": "Security tooling network/subprocess — gateway-scoped; migrate adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-security-cveDatabase",
+      "path": "packages/core/src/security/cveDatabase.ts",
+      "owner": "@commander/core",
+      "reason": "Security tooling network/subprocess — gateway-scoped; migrate adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-security-cveDatabaseIntegration",
+      "path": "packages/core/src/security/cveDatabaseIntegration.ts",
+      "owner": "@commander/core",
+      "reason": "Security tooling network/subprocess — gateway-scoped; migrate adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "WebSocket"
+      ]
+    },
+    {
+      "id": "core-security-edgeSecurityProfile",
+      "path": "packages/core/src/security/edgeSecurityProfile.ts",
+      "owner": "@commander/core",
+      "reason": "Security tooling network/subprocess — gateway-scoped; migrate adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-security-litellmPricing",
+      "path": "packages/core/src/security/litellmPricing.ts",
+      "owner": "@commander/core",
+      "reason": "Security tooling network/subprocess — gateway-scoped; migrate adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-security-memoryPoisoningDefenseEngine",
+      "path": "packages/core/src/security/memoryPoisoningDefenseEngine.ts",
+      "owner": "@commander/core",
+      "reason": "Security tooling network/subprocess — gateway-scoped; migrate adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "axios"
+      ]
+    },
+    {
+      "id": "core-security-outboundNetworkPolicy",
+      "path": "packages/core/src/security/outboundNetworkPolicy.ts",
+      "owner": "@commander/core",
+      "reason": "Security tooling network/subprocess — gateway-scoped; migrate adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "node:http",
+        "node:https"
+      ]
+    },
+    {
+      "id": "core-security-pluginSupplyChainScenarios",
+      "path": "packages/core/src/security/pluginSupplyChainScenarios.ts",
+      "owner": "@commander/core",
+      "reason": "Security tooling network/subprocess — gateway-scoped; migrate adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-security-rotationSignoffVerifier",
+      "path": "packages/core/src/security/rotationSignoffVerifier.ts",
+      "owner": "@commander/core",
+      "reason": "Security tooling network/subprocess — gateway-scoped; migrate adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-security-runtimeDependencyGuard",
+      "path": "packages/core/src/security/runtimeDependencyGuard.ts",
+      "owner": "@commander/core",
+      "reason": "Security tooling network/subprocess — gateway-scoped; migrate adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "axios",
+        "undici",
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-security-securityPrimitives",
+      "path": "packages/core/src/security/securityPrimitives.ts",
+      "owner": "@commander/core",
+      "reason": "Security tooling network/subprocess — gateway-scoped; migrate adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-security-semanticFirewall",
+      "path": "packages/core/src/security/semanticFirewall.ts",
+      "owner": "@commander/core",
+      "reason": "Security tooling network/subprocess — gateway-scoped; migrate adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "axios",
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-security-supplyChainScanner",
+      "path": "packages/core/src/security/supplyChainScanner.ts",
+      "owner": "@commander/core",
+      "reason": "Security tooling network/subprocess — gateway-scoped; migrate adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "axios"
+      ]
+    },
+    {
+      "id": "core-shadow-proxy",
+      "path": "packages/core/src/shadow/proxy.ts",
+      "owner": "@commander/core",
+      "reason": "Shadow proxy HTTP — DLP redaction path",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-shadow-runner",
+      "path": "packages/core/src/shadow/runner.ts",
+      "owner": "@commander/core",
+      "reason": "Shadow proxy HTTP — DLP redaction path",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch(",
+        "node:http"
+      ]
+    },
+    {
+      "id": "core-skills-skillCurator",
+      "path": "packages/core/src/skills/skillCurator.ts",
+      "owner": "@commander/core",
+      "reason": "Skill install/scan subprocess",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-skills-skillInstaller",
+      "path": "packages/core/src/skills/skillInstaller.ts",
+      "owner": "@commander/core",
+      "reason": "Skill install/scan subprocess",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-skills-skillSecurityScanner",
+      "path": "packages/core/src/skills/skillSecurityScanner.ts",
+      "owner": "@commander/core",
+      "reason": "Skill install/scan subprocess",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-smoke-attackPoCs",
+      "path": "packages/core/src/smoke/attackPoCs.ts",
+      "owner": "@commander/core",
+      "reason": "Legacy packages/core external I/O — migrate to action-adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-tools--utils-httpClient",
+      "path": "packages/core/src/tools/_utils/httpClient.ts",
+      "owner": "@commander/core",
+      "reason": "Agent tools subprocess/HTTP — migrate to registered tool adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-tools-codeSearchTool",
+      "path": "packages/core/src/tools/codeSearchTool.ts",
+      "owner": "@commander/core",
+      "reason": "Agent tools subprocess/HTTP — migrate to registered tool adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-tools-gitTool",
+      "path": "packages/core/src/tools/gitTool.ts",
+      "owner": "@commander/core",
+      "reason": "Agent tools subprocess/HTTP — migrate to registered tool adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-tools-multimodal-screenshotTool",
+      "path": "packages/core/src/tools/multimodal/screenshotTool.ts",
+      "owner": "@commander/core",
+      "reason": "Agent tools subprocess/HTTP — migrate to registered tool adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-tools-multimodal-visionTool",
+      "path": "packages/core/src/tools/multimodal/visionTool.ts",
+      "owner": "@commander/core",
+      "reason": "Agent tools subprocess/HTTP — migrate to registered tool adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "fetch("
+      ]
+    },
+    {
+      "id": "core-tools-patchTool",
+      "path": "packages/core/src/tools/patchTool.ts",
+      "owner": "@commander/core",
+      "reason": "Agent tools subprocess/HTTP — migrate to registered tool adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    },
+    {
+      "id": "core-tools-verificationTool",
+      "path": "packages/core/src/tools/verificationTool.ts",
+      "owner": "@commander/core",
+      "reason": "Agent tools subprocess/HTTP — migrate to registered tool adapters",
+      "replacement": "packages/action-adapters/* (future)",
+      "expiresAt": "2026-12-31",
+      "patterns": [
+        "child_process"
+      ]
+    }
+  ]
+}
