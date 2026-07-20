@@ -228,9 +228,43 @@ serviceAccount:
   automount: false
 
 # Network policy
+
+# Adapter-ops deploy unit (EffectBroker compensation/reconcile drain — not a V2 plane)
+adapterOps:
+  enabled: false
+  replicas: 2
+  terminationGracePeriodSeconds: 60
+  image:
+    repository: ''
+    tag: ''
+    pullPolicy: ''
+  health:
+    port: 8082
+    livenessPath: /health
+    readinessPath: /ready
+    livenessInitialDelaySeconds: 10
+    livenessPeriodSeconds: 15
+    readinessInitialDelaySeconds: 5
+    readinessPeriodSeconds: 10
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  secrets:
+    existingSecret: ''
+    create: false
+  egress:
+    allowlist: []
+
 networkPolicy:
   enabled: false
   ingressControllerNamespace: ''
+  egress:
+    adapterCidrs: []
+    databaseCidrs: []
 
 # Pod security context
 podSecurityContext:
