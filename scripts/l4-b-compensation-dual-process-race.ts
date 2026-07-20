@@ -16,7 +16,6 @@ import { mkdir, writeFile, unlink, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { Pool } from 'pg';
 import { runKernelMigrations } from '../packages/kernel/src/migrations.js';
 import { KERNEL_COMPENSATION_TOPIC } from '../packages/kernel/src/ops/compensationConsumer.js';
 import {
@@ -26,7 +25,13 @@ import {
 } from './l4-b-cell-compose.js';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
-const TSX_CLI = createRequire(import.meta.url).resolve('tsx/cli');
+const requireFromRoot = createRequire(import.meta.url);
+const TSX_CLI = requireFromRoot.resolve('tsx/cli');
+// `pg` lives on @commander/kernel — resolve from that package so root scripts work under pnpm.
+const requireFromKernel = createRequire(
+  fileURLToPath(new URL('../packages/kernel/package.json', import.meta.url)),
+);
+const { Pool } = requireFromKernel('pg') as typeof import('pg');
 const DEFAULT_DEADLINE_MS = 120_000;
 
 const HELP = `L4-B compensation dual-process race (C6)
