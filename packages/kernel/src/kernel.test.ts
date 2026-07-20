@@ -886,6 +886,81 @@ describe('execution kernel semantics', () => {
     );
   });
 
+  it('cancels open sibling steps when a terminal fail finishes the run as FAILED', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(
+      createRun([
+        { id: 'step-a', kind: 'agent', maxAttempts: 1 },
+        { id: 'step-b', kind: 'agent', maxAttempts: 1 },
+      ]),
+      'gateway',
+    );
+    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
+    assert.equal(claimed?.id, 'step-a');
+    assert.ok(claimed?.lease);
+
+    const failed = await kernel.failStep({
+      stepId: claimed!.id,
+      tenantId: 'tenant-a',
+      lease: claimed!.lease!,
+      expectedVersion: claimed!.version,
+      error: { code: 'DOWNSTREAM_FAILED', message: 'no effects', retryable: false },
+      actor: 'worker-1',
+    });
+    assert.equal(failed?.state, 'FAILED');
+    assert.equal((await kernel.getRun('run-1', 'tenant-a'))?.state, 'FAILED');
+    assert.equal((await kernel.getStep('step-b', 'tenant-a'))?.state, 'CANCELLED');
+    assert.equal(
+      await kernel.claimNextStep({ workerId: 'worker-2', leaseTtlMs: 60_000 }),
+      null,
+    );
+  });
+
+  it('cancels open sibling steps when terminal fail enters COMPENSATING', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(
+      createRun([
+        { id: 'step-a', kind: 'agent', maxAttempts: 1 },
+        { id: 'step-b', kind: 'agent', maxAttempts: 1 },
+      ]),
+      'gateway',
+    );
+    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
+    assert.ok(claimed?.lease);
+    assert.equal(
+      (
+        await kernel.admitEffect({
+          id: 'effect-sibling',
+          runId: 'run-1',
+          stepId: claimed!.id,
+          tenantId: 'tenant-a',
+          type: 'http.write',
+          idempotencyKey: 'sibling-key',
+          policyDecisionId: 'decision-1',
+          request: { target: 'crm' },
+          lease: claimed!.lease!,
+          actor: 'worker-1',
+        })
+      ).admitted,
+      true,
+    );
+    assert.ok(
+      await kernel.completeEffect('effect-sibling', 'tenant-a', claimed!.lease!, { ok: true }, 'worker-1'),
+    );
+
+    const failed = await kernel.failStep({
+      stepId: claimed!.id,
+      tenantId: 'tenant-a',
+      lease: claimed!.lease!,
+      expectedVersion: claimed!.version,
+      error: { code: 'DOWNSTREAM_FAILED', message: 'after effect', retryable: false },
+      actor: 'worker-1',
+    });
+    assert.equal(failed?.state, 'FAILED');
+    assert.equal((await kernel.getRun('run-1', 'tenant-a'))?.state, 'COMPENSATING');
+    assert.equal((await kernel.getStep('step-b', 'tenant-a'))?.state, 'CANCELLED');
+  });
+
   // NOTE: compensation *request* ≠ drain. packages/kernel ops compensation remains
   // probe-only unless a drain owner lands; this PR closes fail→request honesty only.
 });
