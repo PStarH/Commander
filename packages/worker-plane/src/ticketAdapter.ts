@@ -49,10 +49,7 @@ export class InMemoryTicketAdapter implements EffectOutcomeQuerier {
     return { ...record };
   }
 
-  async compensate(input: {
-    tenantId: string;
-    idempotencyKey: string;
-  }): Promise<TicketRecord> {
+  async compensate(input: { tenantId: string; idempotencyKey: string }): Promise<TicketRecord> {
     this.compensateInvocations += 1;
     const record = this.byIdempotency.get(this.key(input.tenantId, input.idempotencyKey));
     if (!record) throw new Error('DEMO_TICKET_NOT_FOUND');
@@ -70,8 +67,14 @@ export class InMemoryTicketAdapter implements EffectOutcomeQuerier {
     const hit = this.byIdempotency.get(this.key(input.tenantId, input.idempotencyKey));
     if (!hit) return { status: 'UNKNOWN' };
     if (hit.status === 'failed') {
-      return { status: 'FAILED', response: { ticketId: hit.ticketId, title: hit.title, status: hit.status } };
+      return {
+        status: 'FAILED',
+        response: { ticketId: hit.ticketId, title: hit.title, status: hit.status },
+      };
     }
-    return { status: 'COMPLETED', response: { ticketId: hit.ticketId, title: hit.title, status: hit.status } };
+    return {
+      status: 'COMPLETED',
+      response: { ticketId: hit.ticketId, title: hit.title, status: hit.status },
+    };
   }
 }

@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  MCPServer,
-  createFetchActionGatewayExecutor,
-  type Tool,
-} from '@commander/core';
+import { MCPServer, createFetchActionGatewayExecutor, type Tool } from '@commander/core';
 import {
   assertActionGatewayConfigured,
   createStdioMcpServer,
@@ -310,7 +306,11 @@ describe('action gateway MCP routing', () => {
   it('surfaces ActionGatewayPolicyError as MCP text', async () => {
     const { MCPServer, ActionGatewayPolicyError } = await import('@commander/core');
     const tool = {
-      definition: { name: 'demo_external_write', description: 'w', inputSchema: { type: 'object' } },
+      definition: {
+        name: 'demo_external_write',
+        description: 'w',
+        inputSchema: { type: 'object' },
+      },
       isReadOnly: false,
       execute: async () => 'local',
     };

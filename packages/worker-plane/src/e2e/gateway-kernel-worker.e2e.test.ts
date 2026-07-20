@@ -117,8 +117,7 @@ async function createInMemoryActionRun(
         {
           id: stepId,
           kind: 'tool',
-          initialState:
-            input.effect === 'require_approval' ? 'WAITING_FOR_HUMAN' : 'PENDING',
+          initialState: input.effect === 'require_approval' ? 'WAITING_FOR_HUMAN' : 'PENDING',
           interaction:
             input.effect === 'require_approval'
               ? { id: interactionId, prompt: 'Approve demo ticket?' }
@@ -130,6 +129,8 @@ async function createInMemoryActionRun(
             actionEnvelope: executionEnvelope,
             effectId,
             idempotencyKey: envelope.idempotencyKey,
+            // Must match run/decision snapshot — mint defaults to 'policy' otherwise.
+            policySnapshotId: 'action-gateway-mvp-v1',
           },
         },
       ],
@@ -163,17 +164,15 @@ describe('Action Gateway → Kernel → EffectBroker → demo adapter', () => {
     });
     const tickets = new InMemoryTicketAdapter();
     const bootstrap = await import('../bootstrap.js');
-    const createWorkerEffectExecutor = (bootstrap as Record<string, unknown>)
-      .createWorkerEffectExecutor;
+    const createWorkerEffectExecutor = bootstrap.createWorkerEffectExecutor;
     assert.equal(typeof createWorkerEffectExecutor, 'function');
     const auditEvents: Array<{ type: string; details: Record<string, unknown> }> = [];
     const broker = new EffectBroker(
       verifier,
       createWorkerPolicyEvaluator(kernel),
       kernel,
-      (createWorkerEffectExecutor as (adapter: InMemoryTicketAdapter) => {
-        execute: (input: unknown) => Promise<Record<string, unknown>>;
-      })(tickets),
+      // 签名是 (tickets = adapter)，不能传 { tickets } 对象字面量
+      createWorkerEffectExecutor(tickets),
       {
         append: async (event) => {
           auditEvents.push({ type: event.type, details: event.details });
@@ -296,10 +295,8 @@ describe('Action Gateway → Kernel → EffectBroker → demo adapter', () => {
       );
       assert.equal(tickets.createInvocations, 2, 'mutated action never invokes adapter');
       assert.equal(
-        (await kernel.listEffectsForRun(
-          'run-action-mutated-after-approval',
-          mutated.tenantId,
-        )).length,
+        (await kernel.listEffectsForRun('run-action-mutated-after-approval', mutated.tenantId))
+          .length,
         0,
         'mutated action is rejected before broker admission',
       );
@@ -314,10 +311,7 @@ describe('Action Gateway → Kernel → EffectBroker → demo adapter', () => {
       });
       assert.equal(await worker.pollOnce(), true);
       await worker.waitForIdle();
-      const compensationStep = await kernel.getStep(
-        compensation.stepId,
-        compensation.tenantId,
-      );
+      const compensationStep = await kernel.getStep(compensation.stepId, compensation.tenantId);
       assert.equal(
         (await kernel.getRun('run-action-compensate', compensation.tenantId))?.state,
         'SUCCEEDED',

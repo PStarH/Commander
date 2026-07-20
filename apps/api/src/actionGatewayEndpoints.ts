@@ -135,9 +135,7 @@ function requiredApprover(req: Request, res: Response): string | null {
   const isAdminUser = req.user?.role === 'admin' || req.user?.role === 'super_admin';
   const apiScopes = req.apiKeyId ? (req.apiScopes ?? []) : [];
   const hasApiApprovalScope =
-    apiScopes.includes('actions:approve') ||
-    apiScopes.includes('admin') ||
-    apiScopes.includes('*');
+    apiScopes.includes('actions:approve') || apiScopes.includes('admin') || apiScopes.includes('*');
   if (!isAdminUser && !hasApiApprovalScope) {
     res.status(403).json({
       error: {
@@ -164,9 +162,7 @@ function requiredKillSwitchManager(req: Request, res: Response): string | null {
   const isAdminUser = req.user?.role === 'admin' || req.user?.role === 'super_admin';
   const apiScopes = req.apiKeyId ? (req.apiScopes ?? []) : [];
   const hasKillScope =
-    apiScopes.includes('actions:kill') ||
-    apiScopes.includes('admin') ||
-    apiScopes.includes('*');
+    apiScopes.includes('actions:kill') || apiScopes.includes('admin') || apiScopes.includes('*');
   if (!isAdminUser && !hasKillScope) {
     res.status(403).json({
       error: {
@@ -396,7 +392,7 @@ function evidenceAuditDetails(event: KernelEvent): Record<string, unknown> {
   if (event.type === 'interaction.answered') {
     const response =
       event.payload.response && typeof event.payload.response === 'object'
-        ? event.payload.response as Record<string, unknown>
+        ? (event.payload.response as Record<string, unknown>)
         : {};
     return {
       interactionId: event.aggregateId,
@@ -407,9 +403,7 @@ function evidenceAuditDetails(event: KernelEvent): Record<string, unknown> {
   return event.payload;
 }
 
-export function createActionGatewayRouter(
-  resolveKernel: () => V1KernelGateway | null,
-): Router {
+export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway | null): Router {
   const router = express.Router();
 
   router.get('/kill-switches', async (req, res) => {
@@ -420,7 +414,10 @@ export function createActionGatewayRouter(
     const kernel = resolveKernel();
     if (!kernel) {
       return res.status(503).json({
-        error: { code: 'KERNEL_UNAVAILABLE', message: 'Shared execution kernel is not configured.' },
+        error: {
+          code: 'KERNEL_UNAVAILABLE',
+          message: 'Shared execution kernel is not configured.',
+        },
       });
     }
     try {
@@ -449,7 +446,10 @@ export function createActionGatewayRouter(
     const kernel = resolveKernel();
     if (!kernel) {
       return res.status(503).json({
-        error: { code: 'KERNEL_UNAVAILABLE', message: 'Shared execution kernel is not configured.' },
+        error: {
+          code: 'KERNEL_UNAVAILABLE',
+          message: 'Shared execution kernel is not configured.',
+        },
       });
     }
     const value = decodeURIComponent(req.params.value);
@@ -492,7 +492,10 @@ export function createActionGatewayRouter(
     const kernel = resolveKernel();
     if (!kernel) {
       return res.status(503).json({
-        error: { code: 'KERNEL_UNAVAILABLE', message: 'Shared execution kernel is not configured.' },
+        error: {
+          code: 'KERNEL_UNAVAILABLE',
+          message: 'Shared execution kernel is not configured.',
+        },
       });
     }
     try {
@@ -600,8 +603,7 @@ export function createActionGatewayRouter(
           {
             id: stepId,
             kind: 'tool',
-            initialState:
-              decision.effect === 'require_approval' ? 'WAITING_FOR_HUMAN' : 'PENDING',
+            initialState: decision.effect === 'require_approval' ? 'WAITING_FOR_HUMAN' : 'PENDING',
             interaction: interactionId
               ? {
                   id: interactionId,
@@ -650,7 +652,10 @@ export function createActionGatewayRouter(
     const kernel = resolveKernel();
     if (!kernel) {
       return res.status(503).json({
-        error: { code: 'KERNEL_UNAVAILABLE', message: 'Shared execution kernel is not configured.' },
+        error: {
+          code: 'KERNEL_UNAVAILABLE',
+          message: 'Shared execution kernel is not configured.',
+        },
       });
     }
     const loaded = await loadAction(kernel, req.params.runId, tenantId);
@@ -668,17 +673,20 @@ export function createActionGatewayRouter(
     const kernel = resolveKernel();
     if (!kernel) {
       return res.status(503).json({
-        error: { code: 'KERNEL_UNAVAILABLE', message: 'Shared execution kernel is not configured.' },
+        error: {
+          code: 'KERNEL_UNAVAILABLE',
+          message: 'Shared execution kernel is not configured.',
+        },
       });
     }
     const loaded = await loadAction(kernel, req.params.runId, tenantId);
     if (!loaded) return actionNotFound(res);
-    if (
-      loaded.metadata.decision.effect !== 'require_approval' ||
-      !loaded.metadata.interactionId
-    ) {
+    if (loaded.metadata.decision.effect !== 'require_approval' || !loaded.metadata.interactionId) {
       return res.status(409).json({
-        error: { code: 'ACTION_APPROVAL_NOT_REQUIRED', message: 'This action is not awaiting approval.' },
+        error: {
+          code: 'ACTION_APPROVAL_NOT_REQUIRED',
+          message: 'This action is not awaiting approval.',
+        },
       });
     }
     if (parsed.data.actionDigest !== loaded.metadata.simulation.actionDigest) {
@@ -740,17 +748,20 @@ export function createActionGatewayRouter(
     const kernel = resolveKernel();
     if (!kernel) {
       return res.status(503).json({
-        error: { code: 'KERNEL_UNAVAILABLE', message: 'Shared execution kernel is not configured.' },
+        error: {
+          code: 'KERNEL_UNAVAILABLE',
+          message: 'Shared execution kernel is not configured.',
+        },
       });
     }
     const loaded = await loadAction(kernel, req.params.runId, tenantId);
     if (!loaded) return actionNotFound(res);
-    if (
-      loaded.metadata.decision.effect !== 'require_approval' ||
-      !loaded.metadata.interactionId
-    ) {
+    if (loaded.metadata.decision.effect !== 'require_approval' || !loaded.metadata.interactionId) {
       return res.status(409).json({
-        error: { code: 'ACTION_APPROVAL_NOT_REQUIRED', message: 'This action is not awaiting approval.' },
+        error: {
+          code: 'ACTION_APPROVAL_NOT_REQUIRED',
+          message: 'This action is not awaiting approval.',
+        },
       });
     }
     const interactions = await kernel.listInteractions(loaded.run.id, tenantId);
@@ -787,7 +798,10 @@ export function createActionGatewayRouter(
     const kernel = resolveKernel();
     if (!kernel) {
       return res.status(503).json({
-        error: { code: 'KERNEL_UNAVAILABLE', message: 'Shared execution kernel is not configured.' },
+        error: {
+          code: 'KERNEL_UNAVAILABLE',
+          message: 'Shared execution kernel is not configured.',
+        },
       });
     }
     const loaded = await loadAction(kernel, req.params.runId, tenantId);
@@ -814,7 +828,10 @@ export function createActionGatewayRouter(
     const kernel = resolveKernel();
     if (!kernel) {
       return res.status(503).json({
-        error: { code: 'KERNEL_UNAVAILABLE', message: 'Shared execution kernel is not configured.' },
+        error: {
+          code: 'KERNEL_UNAVAILABLE',
+          message: 'Shared execution kernel is not configured.',
+        },
       });
     }
     const loaded = await loadAction(kernel, req.params.runId, tenantId);

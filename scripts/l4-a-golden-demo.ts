@@ -166,7 +166,10 @@ async function startHarness(gateway: InMemoryGateway): Promise<DemoHarness> {
     req.apiScopes = ['actions:approve', 'actions:kill', 'admin'];
     next();
   });
-  app.use('/v1', createV1GatewayRouter(() => gateway));
+  app.use(
+    '/v1',
+    createV1GatewayRouter(() => gateway),
+  );
   const server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
@@ -222,16 +225,12 @@ async function createDemoWorker(kernel: InMemoryKernelRepository, tickets: InMem
     publicKeys: { 'l4-a-demo': issuer.publicKey },
   });
   const bootstrap = await import('../packages/worker-plane/src/bootstrap.js');
-  const createWorkerEffectExecutor = bootstrap.createWorkerEffectExecutor as (
-    adapter: InMemoryTicketAdapter,
-  ) => {
-    execute: (input: unknown) => Promise<Record<string, unknown>>;
-  };
   const broker = new EffectBroker(
     verifier,
     createWorkerPolicyEvaluator(kernel),
     kernel,
-    createWorkerEffectExecutor(tickets),
+    // 签名是 (tickets = adapter)，不能传 { tickets } 对象字面量
+    bootstrap.createWorkerEffectExecutor(tickets),
     { append: async () => {} },
     { requireRequestBinding: true, localWorkerId: 'l4-a-demo-worker' },
   );
@@ -272,7 +271,10 @@ async function checkPolicySimulation(baseUrl: string): Promise<void> {
     idempotencyKey: 'l4-a-sim-allow',
   });
   assert.equal(allow.status, 200);
-  assert.equal((await allow.json() as { simulation: { effect: string } }).simulation.effect, 'allow');
+  assert.equal(
+    ((await allow.json()) as { simulation: { effect: string } }).simulation.effect,
+    'allow',
+  );
 
   const deny = await postJson(baseUrl, '/v1/actions/simulate', {
     ...BASE_ACTION,
@@ -280,7 +282,10 @@ async function checkPolicySimulation(baseUrl: string): Promise<void> {
     idempotencyKey: 'l4-a-sim-deny',
   });
   assert.equal(deny.status, 200);
-  assert.equal((await deny.json() as { simulation: { effect: string } }).simulation.effect, 'deny');
+  assert.equal(
+    ((await deny.json()) as { simulation: { effect: string } }).simulation.effect,
+    'deny',
+  );
 
   const approval = await postJson(baseUrl, '/v1/actions/simulate', {
     ...BASE_ACTION,
@@ -289,7 +294,7 @@ async function checkPolicySimulation(baseUrl: string): Promise<void> {
   });
   assert.equal(approval.status, 200);
   assert.equal(
-    (await approval.json() as { simulation: { effect: string } }).simulation.effect,
+    ((await approval.json()) as { simulation: { effect: string } }).simulation.effect,
     'require_approval',
   );
 }
@@ -307,7 +312,9 @@ async function checkProposeApproveExecute(
       idempotencyKey: 'l4-a-propose-execute',
     });
     assert.equal(proposed.status, 202);
-    const payload = (await proposed.json()) as { action: { runId: string; decision: { effect: string } } };
+    const payload = (await proposed.json()) as {
+      action: { runId: string; decision: { effect: string } };
+    };
     assert.equal(payload.action.decision.effect, 'allow');
 
     assert.equal(await worker.pollOnce(), true);
@@ -328,19 +335,25 @@ async function checkExactApprovalBinding(baseUrl: string, gateway: InMemoryGatew
     destination: 'demo://tickets/approval',
     idempotencyKey: 'l4-a-binding',
   });
-  const action = (await proposed.json() as { action: { runId: string; simulation: { actionDigest: string; simulationId: string; policySnapshotId: string } } }).action;
+  const action = (
+    (await proposed.json()) as {
+      action: {
+        runId: string;
+        simulation: { actionDigest: string; simulationId: string; policySnapshotId: string };
+      };
+    }
+  ).action;
 
-  const rejected = await postJson(
-    baseUrl,
-    `/v1/actions/${action.runId}/approve`,
-    {
-      actionDigest: '0'.repeat(64),
-      simulationId: action.simulation.simulationId,
-      policySnapshotId: action.simulation.policySnapshotId,
-    },
-  );
+  const rejected = await postJson(baseUrl, `/v1/actions/${action.runId}/approve`, {
+    actionDigest: '0'.repeat(64),
+    simulationId: action.simulation.simulationId,
+    policySnapshotId: action.simulation.policySnapshotId,
+  });
   assert.equal(rejected.status, 409);
-  assert.equal((await rejected.json() as { error: { code: string } }).error.code, 'ACTION_DIGEST_MISMATCH');
+  assert.equal(
+    ((await rejected.json()) as { error: { code: string } }).error.code,
+    'ACTION_DIGEST_MISMATCH',
+  );
 
   const evaluator = createWorkerPolicyEvaluator(gateway.repository);
   const mutatedRun = 'l4-a-mutated-run';
@@ -406,6 +419,7 @@ async function checkExactApprovalBinding(baseUrl: string, gateway: InMemoryGatew
             actionEnvelope: { ...envelope, args: { title: 'Mutated title' } },
             effectId,
             idempotencyKey: envelope.idempotencyKey,
+            policySnapshotId: 'action-gateway-mvp-v1',
           },
         },
       ],
@@ -455,7 +469,10 @@ async function checkKillSwitchBlocks(baseUrl: string, gateway: InMemoryGateway):
     idempotencyKey: 'l4-a-kill-sim',
   });
   assert.equal(blocked.status, 403);
-  assert.equal((await blocked.json() as { error: { code: string } }).error.code, 'KILL_SWITCH_ACTIVE');
+  assert.equal(
+    ((await blocked.json()) as { error: { code: string } }).error.code,
+    'KILL_SWITCH_ACTIVE',
+  );
 
   await gateway.repository.removeKillSwitch({
     tenantId: GOLDEN_DEMO_TENANT,
@@ -469,7 +486,14 @@ async function checkKillSwitchBlocks(baseUrl: string, gateway: InMemoryGateway):
     destination: 'demo://tickets/approval',
     idempotencyKey: 'l4-a-kill-after-approval',
   });
-  const action = (await proposed.json() as { action: { runId: string; simulation: { actionDigest: string; simulationId: string; policySnapshotId: string } } }).action;
+  const action = (
+    (await proposed.json()) as {
+      action: {
+        runId: string;
+        simulation: { actionDigest: string; simulationId: string; policySnapshotId: string };
+      };
+    }
+  ).action;
   const approved = await postJson(
     baseUrl,
     `/v1/actions/${action.runId}/approve`,
@@ -515,7 +539,12 @@ async function checkEvidenceVerification(baseUrl: string, gateway: InMemoryGatew
       Authorization: 'Bearer SENSITIVE_AUTH_TOKEN',
     },
   });
-  const payload = (await proposed.json() as { action: { runId: string; simulation: { actionDigest: string; simulationId: string; policySnapshotId: string } } });
+  const payload = (await proposed.json()) as {
+    action: {
+      runId: string;
+      simulation: { actionDigest: string; simulationId: string; policySnapshotId: string };
+    };
+  };
   const approved = await postJson(
     baseUrl,
     `/v1/actions/${payload.action.runId}/approve`,
@@ -572,7 +601,11 @@ async function checkEvidenceVerification(baseUrl: string, gateway: InMemoryGatew
   assert.equal(evidence.status, 200);
   const evidenceText = await evidence.text();
   const evidencePayload = JSON.parse(evidenceText) as {
-    bundle: { schemaVersion: string; scope: { runId: string }; effects: Array<{ responseSummary: { status: string } }> };
+    bundle: {
+      schemaVersion: string;
+      scope: { runId: string };
+      effects: Array<{ responseSummary: { status: string } }>;
+    };
     verification: { ok: boolean };
   };
   assert.equal(evidencePayload.bundle.schemaVersion, 'l3-11.v0');
@@ -595,7 +628,14 @@ async function checkCompletionUnknown(baseUrl: string, gateway: InMemoryGateway)
     destination: 'demo://tickets/approval',
     idempotencyKey: 'l4-a-unknown',
   });
-  const action = (await proposed.json() as { action: { runId: string; simulation: { actionDigest: string; simulationId: string; policySnapshotId: string } } }).action;
+  const action = (
+    (await proposed.json()) as {
+      action: {
+        runId: string;
+        simulation: { actionDigest: string; simulationId: string; policySnapshotId: string };
+      };
+    }
+  ).action;
   const approved = await postJson(
     baseUrl,
     `/v1/actions/${action.runId}/approve`,
@@ -612,7 +652,10 @@ async function checkCompletionUnknown(baseUrl: string, gateway: InMemoryGateway)
   });
   assert.ok(claimed?.lease);
   const run = await gateway.repository.getRun(action.runId, GOLDEN_DEMO_TENANT);
-  const metadata = run!.metadata.actionGateway as { effectId: string; envelope: Record<string, unknown> };
+  const metadata = run!.metadata.actionGateway as {
+    effectId: string;
+    envelope: Record<string, unknown>;
+  };
   await gateway.repository.admitEffect({
     id: metadata.effectId,
     runId: action.runId,
@@ -633,7 +676,10 @@ async function checkCompletionUnknown(baseUrl: string, gateway: InMemoryGateway)
   });
 
   const current = await fetch(`${baseUrl}/v1/actions/${action.runId}`);
-  assert.equal((await current.json() as { action: { state: string } }).action.state, 'COMPLETION_UNKNOWN');
+  assert.equal(
+    ((await current.json()) as { action: { state: string } }).action.state,
+    'COMPLETION_UNKNOWN',
+  );
 }
 
 async function checkReconcile(baseUrl: string, gateway: InMemoryGateway): Promise<void> {
@@ -642,16 +688,21 @@ async function checkReconcile(baseUrl: string, gateway: InMemoryGateway): Promis
     destination: 'demo://tickets/approval',
     idempotencyKey: 'l4-a-reconcile',
   });
-  const action = (await proposed.json() as {
-    action: {
-      runId: string;
-      simulation: { actionDigest: string; simulationId: string; policySnapshotId: string };
-    };
-  }).action;
+  const action = (
+    (await proposed.json()) as {
+      action: {
+        runId: string;
+        simulation: { actionDigest: string; simulationId: string; policySnapshotId: string };
+      };
+    }
+  ).action;
 
   const noUnknown = await postJson(baseUrl, `/v1/actions/${action.runId}/reconcile`, {});
   assert.equal(noUnknown.status, 409);
-  assert.equal((await noUnknown.json() as { error: { code: string } }).error.code, 'NO_RECONCILABLE_EFFECT');
+  assert.equal(
+    ((await noUnknown.json()) as { error: { code: string } }).error.code,
+    'NO_RECONCILABLE_EFFECT',
+  );
 
   const approved = await postJson(
     baseUrl,
@@ -669,7 +720,10 @@ async function checkReconcile(baseUrl: string, gateway: InMemoryGateway): Promis
   });
   assert.ok(claimed?.lease);
   const run = await gateway.repository.getRun(action.runId, GOLDEN_DEMO_TENANT);
-  const metadata = run!.metadata.actionGateway as { effectId: string; envelope: Record<string, unknown> };
+  const metadata = run!.metadata.actionGateway as {
+    effectId: string;
+    envelope: Record<string, unknown>;
+  };
   await gateway.repository.admitEffect({
     id: metadata.effectId,
     runId: action.runId,
@@ -691,7 +745,10 @@ async function checkReconcile(baseUrl: string, gateway: InMemoryGateway): Promis
 
   const reconcile = await postJson(baseUrl, `/v1/actions/${action.runId}/reconcile`, {});
   assert.equal(reconcile.status, 501);
-  const reconcilePayload = (await reconcile.json()) as { error: { code: string }; effectId: string };
+  const reconcilePayload = (await reconcile.json()) as {
+    error: { code: string };
+    effectId: string;
+  };
   assert.equal(reconcilePayload.error.code, 'RECONCILER_NOT_CONFIGURED');
   assert.equal(reconcilePayload.effectId, metadata.effectId);
 }
@@ -703,7 +760,8 @@ async function checkSdkPolicyEquivalence(baseUrl: string): Promise<void> {
   };
   const direct = await postJson(baseUrl, '/v1/actions/simulate', input);
   assert.equal(direct.status, 200);
-  const directSimulation = (await direct.json() as { simulation: Record<string, unknown> }).simulation;
+  const directSimulation = ((await direct.json()) as { simulation: Record<string, unknown> })
+    .simulation;
 
   const client = new CommanderGatewayClient({
     baseUrl,
@@ -768,9 +826,7 @@ export async function runGoldenDemo(options: { silent?: boolean } = {}): Promise
     console.log(
       `[l4-a-golden-demo] mode=${result.mode} checks=${passed}/${checks.length} elapsedMs=${result.elapsedMs}`,
     );
-    console.log(
-      '[l4-a-golden-demo] SDK example: packages/sdk/examples/governed-action.ts',
-    );
+    console.log('[l4-a-golden-demo] SDK example: packages/sdk/examples/governed-action.ts');
     console.log(
       '[l4-a-golden-demo] Python example: packages/python-sdk/examples/governed_action.py',
     );

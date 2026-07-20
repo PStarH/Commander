@@ -31,7 +31,12 @@ import { CompositeStepExecutor } from './compositeStepExecutor.js';
 import { createAgentStepExecutor, createExecutorManifest } from './workerRuntimeAdapter.js';
 import { createProductionWorkerSandboxReadiness } from './sandboxReadiness.js';
 import type { WorkerDefinition, WorkerIdentity, WorkerKind, StepExecutor } from './types.js';
-import type { EffectExecutor, PolicyEvaluator, AuditSink, EffectKernelPort } from '@commander/effect-broker';
+import type {
+  EffectExecutor,
+  PolicyEvaluator,
+  AuditSink,
+  EffectKernelPort,
+} from '@commander/effect-broker';
 import {
   EffectBroker,
   CapabilityTokenIssuer,
@@ -254,11 +259,14 @@ export function createWorkerPolicyEvaluator(
         }
         try {
           const killSwitch = await kernel.findMatchingKillSwitch(input.tenantId, {
-            package: typeof actionEnvelope.package === 'string' ? actionEnvelope.package : undefined,
+            package:
+              typeof actionEnvelope.package === 'string' ? actionEnvelope.package : undefined,
             model: typeof actionEnvelope.model === 'string' ? actionEnvelope.model : undefined,
             tool: typeof actionEnvelope.tool === 'string' ? actionEnvelope.tool : undefined,
             destination:
-              typeof actionEnvelope.destination === 'string' ? actionEnvelope.destination : undefined,
+              typeof actionEnvelope.destination === 'string'
+                ? actionEnvelope.destination
+                : undefined,
             effectType:
               typeof actionEnvelope.effectType === 'string' ? actionEnvelope.effectType : undefined,
           });
@@ -407,9 +415,7 @@ export function withDefaultLlmAllowlist(kernel: AllowlistKernel): EffectKernelPo
   };
 }
 
-export function createWorkerEffectExecutor(
-  tickets = new InMemoryTicketAdapter(),
-): EffectExecutor {
+export function createWorkerEffectExecutor(tickets = new InMemoryTicketAdapter()): EffectExecutor {
   return {
     execute: async (input) => {
       if (input.type.startsWith('llm.')) {
@@ -555,7 +561,12 @@ async function createExecutorForKind(
     evaluator: () => new EvaluatorStepExecutor(),
     connector: async () => {
       const { ConnectorStepExecutor } = await import('./connectorStepExecutor.js');
-      return new ConnectorStepExecutor(undefined, effectBroker, capabilityIssuer, toolEffectCatalog);
+      return new ConnectorStepExecutor(
+        undefined,
+        effectBroker,
+        capabilityIssuer,
+        toolEffectCatalog,
+      );
     },
   });
 

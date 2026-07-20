@@ -1,6 +1,10 @@
 import { KernelStepExecutor, createAgentRuntimeFactory } from '@commander/core';
 import type { StepExecutor, ClaimedStep, WorkerLease } from './types.js';
-import type { AgentRuntimeFactoryOptions, AgentRuntimeInterface, LLMProvider } from '@commander/core';
+import type {
+  AgentRuntimeFactoryOptions,
+  AgentRuntimeInterface,
+  LLMProvider,
+} from '@commander/core';
 import type { CapabilityTokenIssuer, EffectBroker } from '@commander/effect-broker';
 import {
   createLlmEffectAuth,
@@ -92,9 +96,7 @@ export function createAgentStepExecutor(options: AgentStepExecutorOptions = {}):
 
   const baseFactory = createAgentRuntimeFactory({
     ...factoryOptions,
-    providers: broker
-      ? wrapProviders(factoryOptions.providers, broker)
-      : factoryOptions.providers,
+    providers: broker ? wrapProviders(factoryOptions.providers, broker) : factoryOptions.providers,
   });
 
   const runtimeFactory = (tenantId: string) => {
