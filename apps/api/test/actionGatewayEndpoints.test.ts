@@ -10,6 +10,8 @@ import type { V1KernelGateway } from '../src/v1GatewayKernel.js';
 import { GatewayIdempotencyConflictError } from '../src/v1GatewayKernel.js';
 import { createV1GatewayRouter } from '../src/v1GatewayEndpoints.js';
 
+process.env.COMMANDER_ENABLE_DEMO_TICKET = '1';
+
 class InMemoryGateway implements V1KernelGateway {
   readonly repository = new InMemoryKernelRepository();
   private readonly submissions = new Map<string, string>();
@@ -49,6 +51,9 @@ class InMemoryGateway implements V1KernelGateway {
 
   getRun(runId: string, tenantId: string) {
     return this.repository.getRun(runId, tenantId);
+  }
+  listRuns(tenantId: string, options?: { limit?: number }) {
+    return this.repository.listRuns(tenantId, options);
   }
   getStep(stepId: string, tenantId: string) {
     return this.repository.getStep(stepId, tenantId);
@@ -92,6 +97,12 @@ class InMemoryGateway implements V1KernelGateway {
   ) {
     if (this.killSwitchLookupError) throw this.killSwitchLookupError;
     return this.repository.findMatchingKillSwitch(tenantId, dims);
+  }
+  requestReconcile(input: Parameters<InMemoryKernelRepository['requestReconcile']>[0]) {
+    return this.repository.requestReconcile(input);
+  }
+  requestCompensation(input: Parameters<InMemoryKernelRepository['requestCompensation']>[0]) {
+    return this.repository.requestCompensation(input);
   }
 }
 
@@ -476,6 +487,22 @@ describe('L4-01 governed action HTTP API', () => {
       const step = await gateway.repository.getStep(actionMetadata.stepId, 'tenant-a');
       assert.equal(step?.kind, 'tool');
       assert.equal(step?.input.effectType, 'demo.ticket.create');
+    });
+  });
+
+  it('rejects reserved idempotencyKey prefixes cmp: and simulation:', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const cmp = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'cmp:effect-1:1.0.0',
+      });
+      assert.equal(cmp.status, 400);
+      const simulation = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'simulation:deadbeef',
+      });
+      assert.equal(simulation.status, 400);
     });
   });
 
@@ -999,5 +1026,218 @@ describe('L4-01 governed action HTTP API', () => {
       assert.equal(response.status, 503);
       assert.equal((await response.json() as any).error.code, 'KILL_SWITCH_LOOKUP_FAILED');
     });
+  });
+
+  it('POST reconcile enqueues COMPLETION_UNKNOWN effects with 202', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const created = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'action-reconcile-202',
+      });
+      const payload = (await created.json()) as any;
+      const action = payload.action;
+      const run = await gateway.repository.getRun(action.runId, 'tenant-a');
+      const gatewayMetadata = run!.metadata.actionGateway as any;
+      const step = await gateway.repository.claimNextStep({
+        workerId: 'reconcile-worker',
+        workerGeneration: 1,
+        tenantId: 'tenant-a',
+        capabilities: ['tool'],
+        leaseTtlMs: 60_000,
+      });
+      assert.ok(step?.lease);
+      await gateway.repository.admitEffect({
+        id: gatewayMetadata.effectId,
+        runId: action.runId,
+        stepId: gatewayMetadata.stepId,
+        tenantId: 'tenant-a',
+        type: 'demo.ticket.create',
+        idempotencyKey: 'action-reconcile-202',
+        policyDecisionId: 'action-gateway-allow',
+        request: gatewayMetadata.envelope,
+        lease: step.lease,
+        actor: 'reconcile-worker',
+      });
+      await gateway.repository.markEffectCompletionUnknown({
+        effectId: gatewayMetadata.effectId,
+        tenantId: 'tenant-a',
+        reason: 'timeout',
+        actor: 'reconcile-worker',
+      });
+      const reconcile = await postJson(
+        baseUrl,
+        `/v1/actions/${action.runId}/reconcile`,
+        {},
+      );
+      assert.equal(reconcile.status, 202);
+      const body = (await reconcile.json()) as any;
+      assert.equal(body.enqueued, true);
+      assert.equal(body.effectId, gatewayMetadata.effectId);
+      assert.ok(body.reconcileAfter);
+    });
+  });
+
+  it('POST reconcile returns 404 for wrong tenant', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const created = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'action-reconcile-tenant',
+      });
+      const payload = (await created.json()) as any;
+      const response = await fetch(
+        `${baseUrl}/v1/actions/${payload.action.runId}/reconcile`,
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-test-tenant': 'tenant-b',
+          },
+          body: '{}',
+        },
+      );
+      assert.equal(response.status, 404);
+      assert.equal((await response.json() as any).error.code, 'ACTION_NOT_FOUND');
+    });
+  });
+
+  it('limits compensate to admin users or approval-scoped API keys', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const forbidden = await postJson(
+        baseUrl,
+        '/v1/actions/run-auth-compensate/compensate',
+        {},
+        'tenant-a',
+        'api-read',
+      );
+      assert.equal(forbidden.status, 403);
+      assert.equal((await forbidden.json() as any).error.code, 'ACTION_APPROVAL_FORBIDDEN');
+    });
+  });
+
+  it('POST compensate enqueues a new compensation run with 202', async () => {
+    const gateway = new InMemoryGateway();
+    const savedToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token-for-compensate';
+    try {
+    await withGateway(gateway, async (baseUrl) => {
+      const created = await postJson(
+        baseUrl,
+        '/v1/actions',
+        {
+          source: 'test-agent',
+          package: 'test-package',
+          model: 'test-model',
+          tool: 'github.pull-request.create',
+          destination: 'github://acme/repo/pulls',
+          effectType: 'connector.github.pull-request.create',
+          args: { title: 'compensate me' },
+          idempotencyKey: 'action-compensate-202',
+        },
+        'tenant-a',
+        'api-approver',
+      );
+      const payload = (await created.json()) as any;
+      assert.equal(payload.action.decision.effect, 'require_approval');
+      const approved = await postJson(
+        baseUrl,
+        `/v1/actions/${payload.action.runId}/approve`,
+        approvalBinding(payload.action),
+      );
+      assert.equal(approved.status, 200);
+      const action = payload.action;
+      const run = await gateway.repository.getRun(action.runId, 'tenant-a');
+      const gatewayMetadata = run!.metadata.actionGateway as any;
+      const step = await gateway.repository.claimNextStep({
+        workerId: 'comp-worker',
+        workerGeneration: 1,
+        tenantId: 'tenant-a',
+        capabilities: ['tool'],
+        leaseTtlMs: 60_000,
+      });
+      assert.ok(step?.lease);
+      await gateway.repository.admitEffect({
+        id: gatewayMetadata.effectId,
+        runId: action.runId,
+        stepId: gatewayMetadata.stepId,
+        tenantId: 'tenant-a',
+        type: 'connector.github.pull-request.create',
+        idempotencyKey: 'action-compensate-202',
+        policyDecisionId: 'action-gateway-allow-after-approval',
+        request: gatewayMetadata.envelope,
+        lease: step.lease,
+        actor: 'comp-worker',
+      });
+      await gateway.repository.completeEffect(
+        gatewayMetadata.effectId,
+        'tenant-a',
+        step.lease,
+        { prNumber: 42 },
+        'comp-worker',
+      );
+      await gateway.repository.completeStep({
+        stepId: step.id,
+        tenantId: 'tenant-a',
+        lease: step.lease,
+        expectedVersion: step.version,
+        output: { ok: true },
+        actor: 'comp-worker',
+      });
+      const originalRun = await gateway.getRun(action.runId, 'tenant-a');
+      assert.equal(originalRun?.state, 'SUCCEEDED');
+      const compensate = await postJson(
+        baseUrl,
+        `/v1/actions/${action.runId}/compensate`,
+        {},
+      );
+      assert.equal(compensate.status, 202);
+      const body = (await compensate.json()) as any;
+      assert.notEqual(body.compensationRunId, action.runId);
+      assert.equal(body.originalRunId, action.runId);
+      assert.equal(body.effectId, gatewayMetadata.effectId);
+      assert.equal(body.idempotencyKey, `cmp:${gatewayMetadata.effectId}:1.0.0`);
+      const originalAfter = await gateway.getRun(action.runId, 'tenant-a');
+      assert.equal(originalAfter?.state, 'SUCCEEDED');
+    });
+    } finally {
+      if (savedToken === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = savedToken;
+    }
+  });
+
+  it('allows simulate without adapter creds but execute is fail-closed', async () => {
+    const gateway = new InMemoryGateway();
+    const adapterAction = {
+      source: 'test-agent',
+      package: 'test-package',
+      model: 'test-model',
+      tool: 'github.pull-request.create',
+      destination: 'github://acme/repo/pulls',
+      effectType: 'connector.github.pull-request.create',
+      args: { title: 'no creds' },
+      idempotencyKey: 'action-no-creds-01',
+    };
+    const saved = {
+      GITHUB_TOKEN: process.env.GITHUB_TOKEN,
+      GITHUB_PAT: process.env.GITHUB_PAT,
+    };
+    delete process.env.GITHUB_TOKEN;
+    delete process.env.GITHUB_PAT;
+    try {
+      await withGateway(gateway, async (baseUrl) => {
+        const simulated = await postJson(baseUrl, '/v1/actions/simulate', adapterAction);
+        assert.equal(simulated.status, 200);
+        const executed = await postJson(baseUrl, '/v1/actions', adapterAction);
+        assert.equal(executed.status, 403);
+        assert.equal((await executed.json() as any).error.code, 'ADAPTER_CREDENTIALS_MISSING');
+      });
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 });

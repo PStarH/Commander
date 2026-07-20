@@ -1,0 +1,31 @@
+{
+  "$id": "commander.event/v2",
+  "type": "object",
+  "required": ["kind", "schemaVersion", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "kind": { "type": "string", "const": "event" },
+    "schemaVersion": { "type": "string", "const": "commander.event/v2" },
+    "payload": {
+      "type": "object",
+      "required": ["eventId", "aggregateType", "aggregateId", "sequence", "type", "tenantId", "runId", "actor", "schemaVersion", "payload", "occurredAt"],
+      "additionalProperties": false,
+      "properties": {
+        "eventId": { "type": "string" },
+        "aggregateType": { "type": "string", "enum": ["run", "step", "effect", "interaction", "worker", "tenant"] },
+        "aggregateId": { "type": "string" },
+        "sequence": { "type": "integer" },
+        "type": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "runId": { "type": "string" },
+        "stepId": { "type": "string" },
+        "causationId": { "type": "string" },
+        "correlationId": { "type": "string" },
+        "actor": { "type": "string" },
+        "schemaVersion": { "type": "string", "const": "commander.event/v2" },
+        "payload": { "type": "object" },
+        "occurredAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

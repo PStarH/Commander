@@ -74,6 +74,46 @@ describe('execution kernel semantics', () => {
     assert.deepEqual(await kernel.listEffectsForRun('run-missing', 'tenant-a'), []);
   });
 
+  it('listRuns returns tenant runs ordered by updatedAt desc with limit clamp', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun({ ...createRun([{ id: 'step-old', kind: 'agent' }]), id: 'run-old' }, 'gateway');
+    await kernel.createRun({ ...createRun([{ id: 'step-new', kind: 'agent' }]), id: 'run-new' }, 'gateway');
+    await kernel.createRun({
+      ...createRun([{ id: 'step-other', kind: 'agent' }]),
+      id: 'run-other',
+      tenantId: 'tenant-b',
+    }, 'gateway');
+    // Force distinct updatedAt — createRun timestamps can collide within the same ms.
+    const runsMap = (kernel as unknown as { runs: Map<string, { updatedAt: string }> }).runs;
+    runsMap.get('run-old')!.updatedAt = '2026-07-17T01:00:00.000Z';
+    runsMap.get('run-new')!.updatedAt = '2026-07-19T01:00:00.000Z';
+
+    const runs = await kernel.listRuns('tenant-a', { limit: 1 });
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0]?.id, 'run-new');
+    assert.equal(runs[0]?.tenantId, 'tenant-a');
+    assert.deepEqual(
+      (await kernel.listRuns('tenant-a')).map((run) => run.id),
+      ['run-new', 'run-old'],
+    );
+    assert.deepEqual((await kernel.listRuns('tenant-b')).map((run) => run.id), ['run-other']);
+    assert.equal((await kernel.listRuns('tenant-a', { limit: 0 })).length, 1);
+    assert.equal((await kernel.listRuns('tenant-a', { limit: 999 })).length, 2);
+  });
+
+  it('coexists listRuns with reconcile/compensation repository methods', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(createRun([{ id: 'step-coexist', kind: 'agent' }]), 'gateway');
+    assert.equal(typeof kernel.listRuns, 'function');
+    assert.equal(typeof kernel.requestReconcile, 'function');
+    assert.equal(typeof kernel.claimReconcileEffects, 'function');
+    assert.equal(typeof kernel.requestCompensation, 'function');
+    assert.equal(typeof kernel.reconcileEffect, 'function');
+    const listed = await kernel.listRuns('tenant-a', { limit: 10 });
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0]?.id, 'run-1');
+  });
+
   it('writes an outbox message for lifecycle events', async () => {
     const kernel = new InMemoryKernelRepository();
     await kernel.createRun(createRun(), 'gateway');
@@ -372,5 +412,105 @@ describe('execution kernel semantics', () => {
     assert.equal(cancelled?.state, 'CANCELLED');
     assert.equal((await kernel.getStep('step-a', 'tenant-a'))?.state, 'CANCELLED');
     assert.equal((await kernel.getEffect('effect-cancel-orphan', 'tenant-a'))?.state, 'COMPLETION_UNKNOWN');
+  });
+
+  it('requestReconcile sets reconcile_after for COMPLETION_UNKNOWN effects', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(createRun(), 'gateway');
+    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
+    assert.ok(claimed?.lease);
+    await kernel.admitEffect({
+      id: 'effect-req-recon',
+      runId: 'run-1',
+      stepId: claimed!.id,
+      tenantId: 'tenant-a',
+      type: 'connector.github.pull-request.create',
+      idempotencyKey: 'req-recon',
+      policyDecisionId: 'decision-1',
+      request: {},
+      lease: claimed!.lease!,
+      actor: 'worker-1',
+    });
+    await kernel.markEffectCompletionUnknown({
+      effectId: 'effect-req-recon',
+      tenantId: 'tenant-a',
+      reason: 'timeout',
+      actor: 'api',
+    });
+    const scheduled = new Date(Date.now() + 60_000).toISOString();
+    const updated = await kernel.requestReconcile({
+      effectId: 'effect-req-recon',
+      tenantId: 'tenant-a',
+      actor: 'api',
+      reconcileAfter: scheduled,
+    });
+    assert.equal(updated?.reconcileAfter, scheduled);
+  });
+
+  it('failEffect transitions ADMITTED to FAILED while holding lease', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(createRun(), 'gateway');
+    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
+    assert.ok(claimed?.lease);
+    await kernel.admitEffect({
+      id: 'effect-fail',
+      runId: 'run-1',
+      stepId: claimed!.id,
+      tenantId: 'tenant-a',
+      type: 'connector.github.pull-request.create',
+      idempotencyKey: 'fail-key',
+      policyDecisionId: 'decision-1',
+      request: {},
+      lease: claimed!.lease!,
+      actor: 'worker-1',
+    });
+    const failed = await kernel.failEffect({
+      effectId: 'effect-fail',
+      tenantId: 'tenant-a',
+      lease: claimed!.lease!,
+      error: { code: 'AUTH_FAILED', message: '401', retryable: false },
+      actor: 'worker-1',
+    });
+    assert.equal(failed?.state, 'FAILED');
+    assert.equal((await kernel.getEffect('effect-fail', 'tenant-a'))?.state, 'FAILED');
+  });
+
+  it('claimReconcileEffects respects reconcile_after scheduling', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(createRun(), 'gateway');
+    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
+    assert.ok(claimed?.lease);
+    await kernel.admitEffect({
+      id: 'effect-claim',
+      runId: 'run-1',
+      stepId: claimed!.id,
+      tenantId: 'tenant-a',
+      type: 'connector.github.pull-request.create',
+      idempotencyKey: 'claim-key',
+      policyDecisionId: 'decision-1',
+      request: {},
+      lease: claimed!.lease!,
+      actor: 'worker-1',
+    });
+    await kernel.markEffectCompletionUnknown({
+      effectId: 'effect-claim',
+      tenantId: 'tenant-a',
+      reason: 'timeout',
+      actor: 'worker-1',
+    });
+    const future = new Date(Date.now() + 120_000).toISOString();
+    await kernel.requestReconcile({
+      effectId: 'effect-claim',
+      tenantId: 'tenant-a',
+      actor: 'api',
+      reconcileAfter: future,
+    });
+    assert.equal((await kernel.claimReconcileEffects({ limit: 5, now: new Date() })).length, 0);
+    const claimedEffects = await kernel.claimReconcileEffects({
+      limit: 5,
+      now: new Date(Date.parse(future) + 1),
+    });
+    assert.equal(claimedEffects.length, 1);
+    assert.equal(claimedEffects[0]?.effect.id, 'effect-claim');
   });
 });

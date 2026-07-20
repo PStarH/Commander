@@ -10,6 +10,19 @@
 export { KERNEL_RLS_SQL, KERNEL_ROLES_SQL, KERNEL_SCHEMA_SQL, KERNEL_SCHEMA_VERSION } from './schema.js';
 export { KERNEL_MIGRATIONS, runKernelMigrations } from './migrations.js';
 export { PostgresKernelRepository } from './postgres.js';
+export { SqliteKernelRepository } from './sqlite.js';
+export {
+  createKernelRepository,
+  resolveKernelBackend,
+  KernelBackendRefusedError,
+  KernelBackendMissingError,
+} from './repositoryFactory.js';
+export type {
+  KernelBackend,
+  KernelRepositoryFactoryOptions,
+  KernelRepositoryHandle,
+} from './repositoryFactory.js';
+export { SQLITE_KERNEL_SCHEMA_SQL, SQLITE_KERNEL_SCHEMA_VERSION, SQLITE_KERNEL_TABLES } from './sqliteSchema.js';
 export { assertRunTransition, assertStepTransition } from './transitionValidation.js';
 export { InMemoryOutboxDeliveryPort } from './ops/outbox/inMemoryOutboxDeliveryPort.js';
 export { PostgresOutboxDeliveryPort } from './ops/outbox/postgresOutboxDeliveryPort.js';
@@ -18,6 +31,17 @@ export type { KernelOutboxPublishResult } from './ops/outbox/kernelOutboxPublish
 export { OutboxPublisher } from './ops/outbox/compatibilityPublisher.js';
 export type { EventPublisher } from './ops/outbox/compatibilityPublisher.js';
 export { ReclaimDaemon } from './ops/reclaimDaemon.js';
+export {
+  consumeCompensationBatch,
+  KERNEL_COMPENSATION_TOPIC,
+} from './ops/compensationConsumer.js';
+export type {
+  CompensationConsumeResult,
+  CompensationConsumerOptions,
+  CompensationEffectBroker,
+  CompensationOutboxPort,
+  CompensationTokenProvider,
+} from './ops/compensationConsumer.js';
 export type { ReclaimDaemonConfig, ReclaimStats } from './ops/reclaimDaemon.js';
 export { KernelOpsRuntime } from './ops/opsRuntime.js';
 export type { KernelOpsRuntimeDependencies, OpsLoopHealth } from './ops/opsRuntime.js';
@@ -62,6 +86,14 @@ export type {
   MarkEffectCompletionUnknownRequest,
   NewKernelStep,
   ReconcileEffectRequest,
+  RequestReconcileInput,
+  ClaimReconcileEffectsInput,
+  ClaimedReconcileEffect,
+  RescheduleReconcileInput,
+  EscalateReconcileInput,
+  FailEffectRequest,
+  RequestCompensationInput,
+  RequestCompensationResult,
   InteractionStatus,
   TimerState,
   TimerType,

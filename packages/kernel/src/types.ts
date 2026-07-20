@@ -111,6 +111,12 @@ export interface KernelEffect {
   response?: Record<string, unknown>;
   createdAt: string;
   completedAt?: string;
+  reconcileAttempts: number;
+  reconcileAfter: string | null;
+  reconcileClaimToken: string | null;
+  reconcileClaimExpiresAt: string | null;
+  reconcileLastError: Record<string, unknown> | null;
+  reconcileEscalatedAt: string | null;
 }
 
 export interface CreateKernelRun {
@@ -200,6 +206,63 @@ export interface ReconcileEffectRequest {
   state: 'COMPLETED' | 'FAILED';
   response: Record<string, unknown>;
   actor: string;
+}
+
+export interface RequestReconcileInput {
+  effectId: string;
+  tenantId: string;
+  actor: string;
+  reconcileAfter?: string;
+}
+
+export interface ClaimReconcileEffectsInput {
+  limit: number;
+  now?: Date;
+  claimTtlMs?: number;
+}
+
+export interface ClaimedReconcileEffect {
+  effect: KernelEffect;
+  claimToken: string;
+}
+
+export interface RescheduleReconcileInput {
+  effectId: string;
+  tenantId: string;
+  claimToken: string;
+  reconcileAfter: string;
+  lastError?: { code: string; message: string };
+}
+
+export interface EscalateReconcileInput {
+  effectId: string;
+  tenantId: string;
+  claimToken: string;
+  reason: string;
+}
+
+export interface FailEffectRequest {
+  effectId: string;
+  tenantId: string;
+  lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>;
+  error: { code: string; message: string; retryable: boolean; details?: Record<string, unknown> };
+  actor: string;
+}
+
+export interface RequestCompensationInput {
+  tenantId: string;
+  originalRunId: string;
+  originalEffectId?: string;
+  actor: string;
+  adapterVersion: string;
+  compensationEffectType: string;
+}
+
+export interface RequestCompensationResult {
+  compensationRunId: string;
+  originalEffectId: string;
+  originalRunId: string;
+  outboxMessageId?: string;
 }
 
 export type AdmitEffectResult =

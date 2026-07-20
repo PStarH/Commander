@@ -1,6 +1,6 @@
 # L3-03b：Gateway / localOnly catalog authority
 
-**状态：DONE（worker catalog ENFORCED；Gateway HTTP catalog sync PARTIAL）**
+**状态：DONE（worker catalog ENFORCED；Gateway HTTP catalog sync OPEN → `L3-03b-http`）**
 **范围：Phase 1 Spec → Phase 2 Build → Phase 3 Review & Audit**
 **分支：** `feat/l3-03b-gateway-localonly`（base `master` @ 869a7a70，L3-03a 已合）
 
@@ -88,9 +88,9 @@
 
 **Gateway HTTP catalog 同步：PARTIAL** — v0 用 worker bootstrap `MapToolEffectCatalog`（echo/memory）；无 Gateway HTTP 拉取或 claim 校验。
 
-**Phase 3 代码审计**
+## KNOWN LIMITATION
 
-- P1/P2：无
-- P3 residual：Gateway 侧 step 编排仍可能下发未 catalog 校验的 `localOnly` claim（worker 已 fail-closed 拒 bypass）；HTTP catalog 同步待 follow-up
+- **无 Gateway HTTP catalog sync**：生产路径的 `localOnly` / tool effect 校验在 **worker** 侧经 `MapToolEffectCatalog`（bootstrap 注入）ENFORCED；Gateway **不**提供 `GET /v1/tools/effect-catalog` 或等价 HTTP 拉取/claim 校验面。
+- **Follow-up ID：** `L3-03b-http` — Gateway HTTP catalog sync + step 编排侧 catalog 校验（worker fail-closed 已覆盖 bypass；Gateway HTTP 面仍 OPEN）。
 
-**最终状态：DONE（worker catalog-authoritative localOnly ENFORCED）**
+**最终状态：DONE（worker catalog-authoritative localOnly ENFORCED；HTTP sync OPEN → `L3-03b-http`）**

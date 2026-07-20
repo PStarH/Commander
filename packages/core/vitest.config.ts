@@ -20,6 +20,7 @@ export default defineConfig({
     setupFiles: ['tests/setup.ts'],
     include: [
       'tests/cli/envLoader.test.ts',
+      'tests/cli/history.v1.test.ts',
       'tests/cli/action.test.ts',
       'tests/planner/workGraphPlanner.test.ts',
       // --- atr ---

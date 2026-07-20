@@ -6,6 +6,12 @@ import {
   type EvidenceAuditSource,
   type EvidenceEffectSource,
 } from '@commander/effect-broker';
+import {
+  compensationIdempotencyKey,
+  findAdapterManifest,
+  evaluateManifestGatewayEffect,
+  FIXED_ACTION_ADAPTER_MANIFESTS,
+} from '@commander/contracts';
 import type { KernelEvent } from '@commander/kernel';
 import {
   GatewayIdempotencyConflictError,
@@ -29,7 +35,12 @@ const actionInputSchema = z
     destination: z.string().min(1).max(512),
     effectType: z.string().regex(/^[a-zA-Z0-9._:-]{1,128}$/),
     args: z.record(z.string(), z.unknown()),
-    idempotencyKey: z.string().regex(/^[A-Za-z0-9._:-]{8,256}$/),
+    idempotencyKey: z
+      .string()
+      .regex(/^[A-Za-z0-9._:-]{8,256}$/)
+      .refine((k) => !k.startsWith('cmp:') && !k.startsWith('simulation:'), {
+        message: 'idempotencyKey must not use reserved system prefixes (cmp:, simulation:)',
+      }),
   })
   .strict();
 
@@ -44,6 +55,13 @@ const approvalSchema = z
 const rejectionSchema = z
   .object({
     reason: z.string().min(1).max(2_000).optional(),
+  })
+  .strict();
+
+const compensateSchema = z
+  .object({
+    originalEffectId: z.string().min(1).max(256).optional(),
+    adapterVersion: z.string().min(1).max(64).optional(),
   })
   .strict();
 
@@ -224,40 +242,76 @@ function deterministicId(prefix: string, value: string): string {
   return `${prefix}_${canonicalValueHash(value).slice(0, 32)}`;
 }
 
+function adapterCredentialsConfigured(manifest: { adapterId: string }): boolean {
+  if (manifest.adapterId === 'github.pull-request.create') {
+    return Boolean(process.env.GITHUB_TOKEN || process.env.GITHUB_PAT);
+  }
+  if (manifest.adapterId === 'servicenow.incident.create') {
+    return Boolean(
+      process.env.SERVICENOW_INSTANCE &&
+        process.env.SERVICENOW_USERNAME &&
+        process.env.SERVICENOW_PASSWORD,
+    );
+  }
+  return false;
+}
+
 function evaluateAction(envelope: ActionEnvelope): ActionDecision {
-  const isCreate =
-    envelope.effectType === 'demo.ticket.create' && envelope.tool === 'ticket.create';
-  const isCompensation =
-    envelope.effectType === 'compensate.demo.ticket.create' &&
-    envelope.tool === 'ticket.compensate';
-  if (!isCreate && !isCompensation) {
+  const manifest = findAdapterManifest({
+    effectType: envelope.effectType,
+    toolName: envelope.tool,
+    destination: envelope.destination,
+  });
+  if (manifest) {
+    const effect = evaluateManifestGatewayEffect(manifest, envelope.destination);
+    return {
+      effect,
+      decisionId: `action-gateway-${effect}`,
+      reason: `Registered adapter ${manifest.adapterId} (${effect}).`,
+      policySnapshotId: ACTION_POLICY_SNAPSHOT,
+    };
+  }
+  if (process.env.COMMANDER_ENABLE_DEMO_TICKET === '1') {
+    const isCreate =
+      envelope.effectType === 'demo.ticket.create' && envelope.tool === 'ticket.create';
+    const isCompensation =
+      envelope.effectType === 'compensate.demo.ticket.create' &&
+      envelope.tool === 'ticket.compensate';
+    if (!isCreate && !isCompensation) {
+      return {
+        effect: 'deny',
+        decisionId: 'action-gateway-deny',
+        reason: `Effect type '${envelope.effectType}' is not registered by the Action Gateway.`,
+        policySnapshotId: ACTION_POLICY_SNAPSHOT,
+      };
+    }
+    if (envelope.destination === 'demo://tickets') {
+      return {
+        effect: 'allow',
+        decisionId: 'action-gateway-allow',
+        reason: 'The registered demo ticket destination is allowed.',
+        policySnapshotId: ACTION_POLICY_SNAPSHOT,
+      };
+    }
+    if (envelope.destination === 'demo://tickets/approval') {
+      return {
+        effect: 'require_approval',
+        decisionId: 'action-gateway-require_approval',
+        reason: 'The approval demo destination requires a human decision.',
+        policySnapshotId: ACTION_POLICY_SNAPSHOT,
+      };
+    }
     return {
       effect: 'deny',
       decisionId: 'action-gateway-deny',
-      reason: `Effect type '${envelope.effectType}' is not registered by the Action Gateway.`,
-      policySnapshotId: ACTION_POLICY_SNAPSHOT,
-    };
-  }
-  if (envelope.destination === 'demo://tickets') {
-    return {
-      effect: 'allow',
-      decisionId: 'action-gateway-allow',
-      reason: 'The registered demo ticket destination is allowed.',
-      policySnapshotId: ACTION_POLICY_SNAPSHOT,
-    };
-  }
-  if (envelope.destination === 'demo://tickets/approval') {
-    return {
-      effect: 'require_approval',
-      decisionId: 'action-gateway-require_approval',
-      reason: 'The approval demo destination requires a human decision.',
+      reason: `Destination '${envelope.destination}' is not registered by the Action Gateway.`,
       policySnapshotId: ACTION_POLICY_SNAPSHOT,
     };
   }
   return {
     effect: 'deny',
     decisionId: 'action-gateway-deny',
-    reason: `Destination '${envelope.destination}' is not registered by the Action Gateway.`,
+    reason: `Effect type '${envelope.effectType}' is not registered by the Action Gateway.`,
     policySnapshotId: ACTION_POLICY_SNAPSHOT,
   };
 }
@@ -549,6 +603,19 @@ export function createActionGatewayRouter(
     const envelope: ActionEnvelope = { tenantId, ...parsed.data };
     if (await rejectIfKillSwitchActive(kernel, envelope, res)) return;
     const simulation = buildSimulation(envelope);
+    const manifest = findAdapterManifest({
+      effectType: envelope.effectType,
+      toolName: envelope.tool,
+      destination: envelope.destination,
+    });
+    if (manifest && !adapterCredentialsConfigured(manifest)) {
+      return res.status(403).json({
+        error: {
+          code: 'ADAPTER_CREDENTIALS_MISSING',
+          message: `Adapter credentials are not configured for ${manifest.adapterId}.`,
+        },
+      });
+    }
     const decision: ActionDecision = {
       effect: simulation.effect,
       decisionId: simulation.decisionId,
@@ -616,6 +683,7 @@ export function createActionGatewayRouter(
               effectId,
               idempotencyKey: envelope.idempotencyKey,
               hasExternalEffects: true,
+              policySnapshotId: simulation.policySnapshotId,
             },
           },
         ],
@@ -792,19 +860,109 @@ export function createActionGatewayRouter(
     }
     const loaded = await loadAction(kernel, req.params.runId, tenantId);
     if (!loaded) return actionNotFound(res);
+    const terminalRunStates = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED', 'COMPENSATED']);
     const effects = await kernel.listEffects(loaded.run.id, tenantId);
     const unknown = effects.find((effect) => effect.state === 'COMPLETION_UNKNOWN');
     if (!unknown) {
+      if (terminalRunStates.has(loaded.run.state)) {
+        return res.status(409).json({
+          error: { code: 'EFFECT_ALREADY_TERMINAL', message: 'No completion-unknown effect exists.' },
+        });
+      }
       return res.status(409).json({
         error: { code: 'NO_RECONCILABLE_EFFECT', message: 'No completion-unknown effect exists.' },
       });
     }
-    return res.status(501).json({
-      error: {
-        code: 'RECONCILER_NOT_CONFIGURED',
-        message: 'The adapter reconciler is not configured on this API process.',
-      },
+    const enqueued = await kernel.requestReconcile({
       effectId: unknown.id,
+      tenantId,
+      actor: actor(req),
+      reconcileAfter: new Date().toISOString(),
+    });
+    if (!enqueued) {
+      return res.status(409).json({
+        error: { code: 'NO_RECONCILABLE_EFFECT', message: 'Effect is not eligible for reconcile.' },
+      });
+    }
+    return res.status(202).json({
+      enqueued: true,
+      effectId: unknown.id,
+      reconcileAfter: enqueued.reconcileAfter,
+    });
+  });
+
+  router.post('/:runId/compensate', async (req, res) => {
+    const tenantId = requiredTenant(req, res);
+    if (!tenantId) return;
+    const reviewer = requiredApprover(req, res);
+    if (!reviewer) return;
+    const parsed = compensateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return invalidRequest(res, parsed.error);
+    const kernel = resolveKernel();
+    if (!kernel) {
+      return res.status(503).json({
+        error: { code: 'KERNEL_UNAVAILABLE', message: 'Shared execution kernel is not configured.' },
+      });
+    }
+    const loaded = await loadAction(kernel, req.params.runId, tenantId);
+    if (!loaded) return actionNotFound(res);
+    const effects = await kernel.listEffects(loaded.run.id, tenantId);
+    const completedForward = effects.filter(
+      (effect) => effect.state === 'COMPLETED' && !effect.type.startsWith('compensate.'),
+    );
+    const target =
+      (parsed.data.originalEffectId
+        ? completedForward.find((effect) => effect.id === parsed.data.originalEffectId)
+        : completedForward[completedForward.length - 1]) ?? null;
+    if (!target) {
+      return res.status(409).json({
+        error: {
+          code: 'COMPENSATION_NOT_ELIGIBLE',
+          message: 'No completed forward effect is eligible for compensation.',
+        },
+      });
+    }
+    const manifest = FIXED_ACTION_ADAPTER_MANIFESTS.find(
+      (entry) => entry.effectType === target.type,
+    );
+    if (!manifest || !manifest.reversible) {
+      return res.status(409).json({
+        error: {
+          code: 'COMPENSATION_NOT_ELIGIBLE',
+          message: 'Effect type is not reversible via a registered adapter.',
+        },
+      });
+    }
+    const adapterVersion = parsed.data.adapterVersion ?? manifest.adapterVersion;
+    if (adapterVersion !== manifest.adapterVersion) {
+      return res.status(409).json({
+        error: {
+          code: 'COMPENSATION_NOT_ELIGIBLE',
+          message: 'Adapter version does not match the registered manifest.',
+        },
+      });
+    }
+    const result = await kernel.requestCompensation({
+      tenantId,
+      originalRunId: loaded.run.id,
+      originalEffectId: target.id,
+      actor: actor(req),
+      adapterVersion,
+      compensationEffectType: manifest.compensationEffectType,
+    });
+    if (!result) {
+      return res.status(409).json({
+        error: {
+          code: 'COMPENSATION_NOT_ELIGIBLE',
+          message: 'Compensation could not be enqueued for this action run.',
+        },
+      });
+    }
+    return res.status(202).json({
+      compensationRunId: result.compensationRunId,
+      originalRunId: result.originalRunId,
+      effectId: result.originalEffectId,
+      idempotencyKey: compensationIdempotencyKey(target.id, adapterVersion),
     });
   });
 

@@ -1,27 +1,6 @@
 #!/usr/bin/env node
 /**
- * Contract snapshot baseline check.
- *
- * Snapshots the current public contract surface area (resources, run/step
- * states, error codes, schema names) from @commander/contracts and compares
- * it against a committed baseline.
- *
- * Modes:
- *   - default            : detect breaking changes vs. baseline. Exits with
- *                          code 1 if any breaking change (removed resource,
- *                          state, error code, or schema) is found.
- *   - --update-baseline  : write the current snapshot as the new baseline.
- *
- * Run:
- *   npx tsx scripts/contract-snapshot-check.ts                     # check
- *   npx tsx scripts/contract-snapshot-check.ts --update-baseline   # refresh
- *
- * The baseline lives at:
- *   packages/contracts/snapshots/contract-snapshot.baseline.json
- *
- * Note: only REMOVALS are breaking. Additions are non-breaking and do not
- * fail the check — they are silently absorbed the next time the baseline is
- * refreshed.
+ * Contract snapshot baseline check (v2 constitution freeze).
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -29,42 +8,37 @@ import {
   snapshotContracts,
   detectBreakingChanges,
   type ContractSnapshot,
-} from '../packages/contracts/src/compatibility.js';
+} from '../packages/contracts/src/compatibility.v2.js';
 
 const ROOT = process.cwd();
 const BASELINE_PATH = resolve(ROOT, 'packages/contracts/snapshots/contract-snapshot.baseline.json');
 const UPDATE_FLAG = '--update-baseline';
 
-/** Deterministic serialization so baseline diffs stay reviewable. */
 function serialize(snapshot: ContractSnapshot): string {
   return JSON.stringify(snapshot, null, 2) + '\n';
 }
 
 function summarize(snapshot: ContractSnapshot): string {
+  const contractKeys = Object.keys(snapshot.contracts);
   return (
-    `version=${snapshot.version} ` +
-    `resources=${snapshot.resources.length} ` +
+    `packageVersion=${snapshot.packageVersion} ` +
+    `contracts=${contractKeys.length} ` +
     `runStates=${snapshot.runStates.length} ` +
     `stepStates=${snapshot.stepStates.length} ` +
-    `errorCodes=${snapshot.errorCodes.length} ` +
-    `schemaNames=${snapshot.schemaNames.length}`
+    `errorCodes=${snapshot.errorCodes.length}`
   );
 }
 
 function readBaseline(): ContractSnapshot {
   if (!existsSync(BASELINE_PATH)) {
     console.error(`[contract:check] No baseline found at ${BASELINE_PATH}.`);
-    console.error(
-      '[contract:check] Create one with: npx tsx scripts/contract-snapshot-check.ts --update-baseline',
-    );
+    console.error('[contract:check] Create one with: pnpm contract:snapshot');
     process.exit(1);
   }
   try {
     return JSON.parse(readFileSync(BASELINE_PATH, 'utf-8')) as ContractSnapshot;
   } catch (err) {
-    console.error(
-      `[contract:check] Failed to parse baseline at ${BASELINE_PATH}: ${(err as Error).message}`,
-    );
+    console.error(`[contract:check] Failed to parse baseline: ${(err as Error).message}`);
     process.exit(1);
   }
 }
@@ -90,14 +64,9 @@ function main(): void {
 
   if (breaking.length > 0) {
     console.error('[contract:check] Breaking contract changes detected:');
-    for (const change of breaking) {
-      console.error(`  - ${change}`);
-    }
+    for (const change of breaking) console.error(`  - ${change}`);
     console.error('');
-    console.error('[contract:check] If these changes are intentional, refresh the baseline:');
-    console.error(
-      '[contract:check]   npx tsx scripts/contract-snapshot-check.ts --update-baseline',
-    );
+    console.error('[contract:check] If intentional, run: pnpm contract:snapshot');
     process.exit(1);
   }
 

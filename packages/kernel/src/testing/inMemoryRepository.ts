@@ -7,6 +7,14 @@ import type {
   KernelDlqEntry, KernelEffect, KernelEvent, KernelInteraction, KernelLease, KernelOutboxMessage, KernelRun, KernelStep, KernelTimer,
   MarkEffectCompletionUnknownRequest,
   ReconcileEffectRequest,
+  RequestReconcileInput,
+  ClaimReconcileEffectsInput,
+  ClaimedReconcileEffect,
+  RescheduleReconcileInput,
+  EscalateReconcileInput,
+  FailEffectRequest,
+  RequestCompensationInput,
+  RequestCompensationResult,
   TenantExecutionControl,
   KillSwitch,
   KillSwitchMatchDims,
@@ -14,6 +22,7 @@ import type {
   RemoveKillSwitchInput,
 } from '../types.js';
 import { findMatchingKillSwitchWithLookup } from '../killSwitchMatching.js';
+import { KERNEL_COMPENSATION_TOPIC, LEGACY_COMPENSATION_TOPIC } from '../ops/compensationConsumer.js';
 import { KernelInvariantError } from '../types.js';
 import { assertRunTransition, assertStepTransition } from '../transitionValidation.js';
 import { createHash } from 'node:crypto';
@@ -24,6 +33,23 @@ const live = (lease: KernelStep['lease'], supplied: Pick<KernelLease, 'workerId'
   Boolean(lease && lease.workerId === supplied.workerId && lease.token === supplied.token && lease.fencingEpoch === supplied.fencingEpoch && (lease.workerGeneration ?? -1) === (supplied.workerGeneration ?? -1) && Date.parse(lease.expiresAt) > Date.now());
 const canonical = (value: unknown): string => value === null || typeof value !== 'object' ? JSON.stringify(value) : Array.isArray(value) ? `[${value.map(canonical).join(',')}]` : `{${Object.keys(value as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`).join(',')}}`;
 const requestHash = (value: Record<string, unknown>): string => createHash('sha256').update(canonical(value)).digest('hex');
+const reconcileDefaults = (): Pick<
+  KernelEffect,
+  | 'reconcileAttempts'
+  | 'reconcileAfter'
+  | 'reconcileClaimToken'
+  | 'reconcileClaimExpiresAt'
+  | 'reconcileLastError'
+  | 'reconcileEscalatedAt'
+> => ({
+  reconcileAttempts: 0,
+  reconcileAfter: null,
+  reconcileClaimToken: null,
+  reconcileClaimExpiresAt: null,
+  reconcileLastError: null,
+  reconcileEscalatedAt: null,
+});
+const TERMINAL_RUN_STATES = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED', 'COMPENSATED']);
 
 export class InMemoryKernelRepository implements KernelRepository {
   private readonly runs = new Map<string, KernelRun>();
@@ -149,6 +175,15 @@ export class InMemoryKernelRepository implements KernelRepository {
     this.tenantLimits.set(tenantId, maxConcurrentSteps);
   }
   async getRun(runId: string, tenantId: string): Promise<KernelRun | null> { const record = this.runs.get(runId); return record?.tenantId === tenantId ? clone(record) : null; }
+  async listRuns(tenantId: string, options?: { limit?: number }): Promise<KernelRun[]> {
+    const requested = options?.limit ?? 50;
+    const limit = Math.min(200, Math.max(1, Number.isFinite(requested) ? Math.trunc(requested) : 50));
+    return [...this.runs.values()]
+      .filter((run) => run.tenantId === tenantId)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id))
+      .slice(0, limit)
+      .map(clone);
+  }
   async getStep(stepId: string, tenantId: string): Promise<KernelStep | null> { const record = this.steps.get(stepId); return record?.tenantId === tenantId ? clone(record) : null; }
   async claimNextStep(request: ClaimStepRequest): Promise<KernelStep | null> {
     const at = request.now ?? new Date();
@@ -368,7 +403,20 @@ export class InMemoryKernelRepository implements KernelRepository {
       if (previous.runId !== request.runId || previous.stepId !== request.stepId || previous.type !== request.type || previous.requestHash !== fingerprint || previous.policyDecisionId !== request.policyDecisionId) return { admitted: false, reason: 'IDEMPOTENCY_CONFLICT' };
       return { admitted: true, replayed: true, effect: clone(previous) };
     }
-    const effect: KernelEffect = { id: request.id, runId: request.runId, stepId: request.stepId, tenantId: request.tenantId, type: request.type, idempotencyKey: request.idempotencyKey, requestHash: fingerprint, policyDecisionId: request.policyDecisionId, state: 'ADMITTED', request: request.request, createdAt: now() };
+    const effect: KernelEffect = {
+      id: request.id,
+      runId: request.runId,
+      stepId: request.stepId,
+      tenantId: request.tenantId,
+      type: request.type,
+      idempotencyKey: request.idempotencyKey,
+      requestHash: fingerprint,
+      policyDecisionId: request.policyDecisionId,
+      state: 'ADMITTED',
+      request: request.request,
+      createdAt: now(),
+      ...reconcileDefaults(),
+    };
     this.effects.set(effect.id, effect); this.effectsByKey.set(key, effect); this.event('effect', effect.id, 1, 'effect.admitted', effect.tenantId, effect.runId, effect.stepId, request.actor, { type: effect.type }); return { admitted: true, replayed: false, effect: clone(effect) };
   }
   async completeEffect(effectId: string, tenantId: string, lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>, response: Record<string, unknown>, actor: string): Promise<KernelEffect | null> {
@@ -392,6 +440,8 @@ export class InMemoryKernelRepository implements KernelRepository {
     if (!effect || effect.tenantId !== request.tenantId || effect.state !== 'ADMITTED') return null;
     effect.state = 'COMPLETION_UNKNOWN';
     effect.response = { completionUnknownReason: request.reason };
+    effect.reconcileAfter = now();
+    effect.reconcileAttempts = 0;
     this.event('effect', effect.id, 2, 'effect.completion_unknown', effect.tenantId, effect.runId, effect.stepId, request.actor, { reason: request.reason });
     return clone(effect);
   }
@@ -404,6 +454,8 @@ export class InMemoryKernelRepository implements KernelRepository {
       if (effect.stepId === step.id && effect.tenantId === step.tenantId && effect.state === 'ADMITTED') {
         effect.state = 'COMPLETION_UNKNOWN';
         effect.response = { completionUnknownReason: reason };
+        effect.reconcileAfter = now();
+        effect.reconcileAttempts = 0;
         this.event('effect', effect.id, 2, 'effect.completion_unknown', effect.tenantId, effect.runId, effect.stepId, actor, { reason });
       }
     }
@@ -432,9 +484,222 @@ export class InMemoryKernelRepository implements KernelRepository {
     );
     return clone(effect);
   }
+  async requestReconcile(input: RequestReconcileInput): Promise<KernelEffect | null> {
+    const effect = this.effects.get(input.effectId);
+    if (!effect || effect.tenantId !== input.tenantId || effect.state !== 'COMPLETION_UNKNOWN') return null;
+    effect.reconcileAfter = input.reconcileAfter ?? now();
+    return clone(effect);
+  }
+  async claimReconcileEffects(input: ClaimReconcileEffectsInput): Promise<ClaimedReconcileEffect[]> {
+    const at = input.now ?? new Date();
+    const claimTtlMs = input.claimTtlMs ?? 60_000;
+    const claimed: ClaimedReconcileEffect[] = [];
+    const candidates = [...this.effects.values()]
+      .filter((effect) => {
+        if (effect.state !== 'COMPLETION_UNKNOWN' || effect.reconcileEscalatedAt) return false;
+        if (!effect.reconcileAfter || Date.parse(effect.reconcileAfter) > at.getTime()) return false;
+        if (
+          effect.reconcileClaimExpiresAt &&
+          Date.parse(effect.reconcileClaimExpiresAt) > at.getTime()
+        ) {
+          return false;
+        }
+        return true;
+      })
+      .sort((a, b) => Date.parse(a.reconcileAfter ?? '') - Date.parse(b.reconcileAfter ?? ''));
+    for (const effect of candidates.slice(0, input.limit)) {
+      const claimToken = randomUUID();
+      effect.reconcileClaimToken = claimToken;
+      effect.reconcileClaimExpiresAt = new Date(at.getTime() + claimTtlMs).toISOString();
+      claimed.push({ effect: clone(effect), claimToken });
+    }
+    return claimed;
+  }
+  async rescheduleReconcile(input: RescheduleReconcileInput): Promise<boolean> {
+    const effect = this.effects.get(input.effectId);
+    if (
+      !effect ||
+      effect.tenantId !== input.tenantId ||
+      effect.state !== 'COMPLETION_UNKNOWN' ||
+      effect.reconcileClaimToken !== input.claimToken
+    ) {
+      return false;
+    }
+    effect.reconcileAttempts += 1;
+    effect.reconcileAfter = input.reconcileAfter;
+    effect.reconcileClaimToken = null;
+    effect.reconcileClaimExpiresAt = null;
+    if (input.lastError) {
+      effect.reconcileLastError = input.lastError;
+    }
+    return true;
+  }
+  async escalateReconcile(input: EscalateReconcileInput): Promise<boolean> {
+    const effect = this.effects.get(input.effectId);
+    if (
+      !effect ||
+      effect.tenantId !== input.tenantId ||
+      effect.state !== 'COMPLETION_UNKNOWN' ||
+      effect.reconcileClaimToken !== input.claimToken
+    ) {
+      return false;
+    }
+    effect.reconcileEscalatedAt = now();
+    effect.reconcileClaimToken = null;
+    effect.reconcileClaimExpiresAt = null;
+    effect.reconcileLastError = { code: 'RECONCILE_ESCALATED', message: input.reason };
+    this.event(
+      'effect',
+      effect.id,
+      effect.reconcileAttempts + 100,
+      'effect.reconcile_escalated',
+      effect.tenantId,
+      effect.runId,
+      effect.stepId,
+      'reconciliation-daemon',
+      { reason: input.reason },
+    );
+    return true;
+  }
+  async releaseReconcileClaim(effectId: string, tenantId: string, claimToken: string): Promise<boolean> {
+    const effect = this.effects.get(effectId);
+    if (
+      !effect ||
+      effect.tenantId !== tenantId ||
+      effect.reconcileClaimToken !== claimToken
+    ) {
+      return false;
+    }
+    effect.reconcileClaimToken = null;
+    effect.reconcileClaimExpiresAt = null;
+    return true;
+  }
+  async failEffect(request: FailEffectRequest): Promise<KernelEffect | null> {
+    const effect = this.effects.get(request.effectId);
+    const step = effect ? this.steps.get(effect.stepId) : undefined;
+    if (
+      !effect ||
+      !step ||
+      effect.tenantId !== request.tenantId ||
+      effect.state !== 'ADMITTED' ||
+      step.state !== 'RUNNING' ||
+      !live(step.lease, request.lease)
+    ) {
+      return null;
+    }
+    effect.state = 'FAILED';
+    effect.response = request.error;
+    effect.completedAt = now();
+    this.event(
+      'effect',
+      effect.id,
+      2,
+      'effect.failed',
+      request.tenantId,
+      effect.runId,
+      effect.stepId,
+      request.actor,
+      { error: request.error },
+    );
+    return clone(effect);
+  }
+  async requestCompensation(input: RequestCompensationInput): Promise<RequestCompensationResult | null> {
+    const originalRun = this.runs.get(input.originalRunId);
+    if (!originalRun || originalRun.tenantId !== input.tenantId) return null;
+    if (!TERMINAL_RUN_STATES.has(originalRun.state)) return null;
+    const forwardEffects = [...this.effects.values()].filter(
+      (effect) =>
+        effect.runId === input.originalRunId &&
+        effect.tenantId === input.tenantId &&
+        effect.state === 'COMPLETED' &&
+        !effect.type.startsWith('compensate.'),
+    );
+    if (forwardEffects.length === 0) return null;
+    const target =
+      (input.originalEffectId
+        ? forwardEffects.find((effect) => effect.id === input.originalEffectId)
+        : forwardEffects[forwardEffects.length - 1]) ?? null;
+    if (!target) return null;
+    const idempotencyKey = `cmp:${target.id}:${input.adapterVersion}`;
+    const compensationRunId = `run_${createHash('sha256')
+      .update(`${input.tenantId}:compensation:${idempotencyKey}`)
+      .digest('hex')
+      .slice(0, 40)}`;
+    const existingRun = this.runs.get(compensationRunId);
+    if (existingRun) {
+      return {
+        compensationRunId,
+        originalEffectId: target.id,
+        originalRunId: input.originalRunId,
+      };
+    }
+    const stepId = `step_${createHash('sha256').update(`${compensationRunId}:tool`).digest('hex').slice(0, 32)}`;
+    await this.createRun(
+      {
+        id: compensationRunId,
+        tenantId: input.tenantId,
+        intentHash: createHash('sha256').update(`compensate:${target.id}`).digest('hex'),
+        workGraphHash: createHash('sha256').update(stepId).digest('hex'),
+        workGraphVersion: 'action-gateway-compensation/v1',
+        policySnapshotId: 'compensation-enqueue-v1',
+        metadata: {
+          compensation: {
+            originalRunId: input.originalRunId,
+            originalEffectId: target.id,
+            adapterVersion: input.adapterVersion,
+          },
+        },
+        steps: [
+          {
+            id: stepId,
+            kind: 'tool',
+            input: {
+              effectType: input.compensationEffectType,
+              originalEffectId: target.id,
+              idempotencyKey,
+            },
+          },
+        ],
+      },
+      input.actor,
+    );
+    const compensationKey = `${input.tenantId}/${compensationRunId}/${target.id}`;
+    this.event(
+      'effect',
+      `compensation:${compensationKey}`,
+      1,
+      'kernel.compensation.requested',
+      input.tenantId,
+      compensationRunId,
+      stepId,
+      input.actor,
+      {
+        type: 'kernel.compensation.requested',
+        tenantId: input.tenantId,
+        runId: compensationRunId,
+        stepId,
+        originalEffectId: target.id,
+        compensationAction: input.compensationEffectType,
+        compensationPayload: {
+          originalEffectId: target.id,
+          forwardResponse: target.response ?? {},
+        },
+        idempotencyKey,
+      },
+      compensationKey,
+    );
+    const outboxMessage = [...this.outbox.values()].find((message) => message.key === compensationKey);
+    return {
+      compensationRunId,
+      originalEffectId: target.id,
+      originalRunId: input.originalRunId,
+      outboxMessageId: outboxMessage?.id,
+    };
+  }
   async claimOutbox(limit: number, at = new Date(), tenantId?: string): Promise<KernelOutboxMessage[]> {
     return [...this.outbox.values()].filter((message) => {
       if (message.publishedAt) return false;
+      if (message.topic === KERNEL_COMPENSATION_TOPIC || message.topic === LEGACY_COMPENSATION_TOPIC) return false;
       if (tenantId && message.payload.tenantId !== tenantId) return false;
       if ([...this.dlq.values()].some((e) => e.originalId === message.id)) return false;
       if (message.attempts >= this.outboxMaxAttempts) return false;

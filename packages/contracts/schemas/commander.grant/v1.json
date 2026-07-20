@@ -1,0 +1,99 @@
+{
+  "$id": "commander.grant/v1",
+  "type": "object",
+  "required": [
+    "kind",
+    "schemaVersion",
+    "payload"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "type": "string",
+      "const": "grant"
+    },
+    "schemaVersion": {
+      "type": "string",
+      "const": "commander.grant/v1"
+    },
+    "payload": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "jti",
+        "tenantId",
+        "runId",
+        "stepId",
+        "effectTypes",
+        "expiresAt",
+        "issuer",
+        "audience",
+        "issuedAt",
+        "notBefore",
+        "keyId",
+        "requestHash",
+        "workloadId",
+        "policySnapshotId",
+        "nonce"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "commander.grant/v1"
+        },
+        "jti": {
+          "type": "string"
+        },
+        "tenantId": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "stepId": {
+          "type": "string"
+        },
+        "effectTypes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "issuer": {
+          "type": "string"
+        },
+        "audience": {
+          "type": "string"
+        },
+        "issuedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "notBefore": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "keyId": {
+          "type": "string"
+        },
+        "requestHash": {
+          "type": "string"
+        },
+        "workloadId": {
+          "type": "string"
+        },
+        "policySnapshotId": {
+          "type": "string"
+        },
+        "nonce": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

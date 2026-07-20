@@ -121,7 +121,7 @@ describe('L3-05 §4.1 — SDK and /v1 share kernel run semantics', () => {
   });
 
   it('FakeGateway round-trip uses contracts-compatible run states', async () => {
-    class ProbeGateway implements V1KernelGateway {
+    class ProbeGateway {
       async submit(input: Parameters<V1KernelGateway['submit']>[0]) {
         const ts = new Date().toISOString();
         return {
@@ -156,6 +156,9 @@ describe('L3-05 §4.1 — SDK and /v1 share kernel run semantics', () => {
           metadata: {},
         };
       }
+      async listRuns() {
+        return [];
+      }
       async listEvents() {
         return [];
       }
@@ -176,7 +179,7 @@ describe('L3-05 §4.1 — SDK and /v1 share kernel run semantics', () => {
       (req as express.Request & { tenantId?: string }).tenantId = 'tenant-a';
       next();
     });
-    app.use('/v1', createV1GatewayRouter(() => new ProbeGateway()));
+    app.use('/v1', createV1GatewayRouter(() => new ProbeGateway() as unknown as V1KernelGateway));
 
     const server = createServer(app);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

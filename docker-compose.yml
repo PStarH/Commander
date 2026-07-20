@@ -10,6 +10,8 @@
 #   docker compose --profile worker up           # worker + timer + outbox (needs DB)
 #   docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up
 #     # P0 Architecture V2: api kernel-on + postgres + worker plane
+#   docker compose -f docker-compose.yml -f docker-compose.cell.yml --profile cell up
+#     # L4-07 Cell v0: api + worker + kernel-ops + adapter-ops + postgres
 # =============================================================================
 # Local-first design: the default `docker compose up` runs ONLY api + web with
 # in-memory EventBus. Distributed/observability services are opt-in so single-box
@@ -58,6 +60,7 @@ services:
       # Empty = auto (ON in production / when DATABASE_URL set). Set 0 to force off.
       - COMMANDER_KERNEL_ENABLED=${COMMANDER_KERNEL_ENABLED:-}
       - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-}}
+      - COMMANDER_KERNEL_BACKEND=${COMMANDER_KERNEL_BACKEND:-postgres}
       # -------------------------------------------------------------------------
       # SECURITY: The values below are DEV-ONLY defaults. They let you run
       # `docker compose up` locally without creating a .env file first. They are
@@ -95,6 +98,7 @@ services:
       - NODE_ENV=production
       - DATABASE_URL=${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander}
       - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander}}
+      - COMMANDER_KERNEL_BACKEND=postgres
       - COMMANDER_WORKER_BOOTSTRAP=/app/packages/worker-plane/dist/bootstrap.js
       - COMMANDER_WORKER_AUTH_TOKEN=${COMMANDER_WORKER_AUTH_TOKEN:-worker-token}
       - COMMANDER_WORKER_AUTH_SUBJECT=${COMMANDER_WORKER_AUTH_SUBJECT:-worker}
@@ -122,6 +126,7 @@ services:
       - NODE_ENV=production
       - DATABASE_URL=${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander}
       - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander}}
+      - COMMANDER_KERNEL_BACKEND=postgres
     depends_on:
       postgres:
         condition: service_healthy
@@ -140,6 +145,7 @@ services:
       - NODE_ENV=production
       - DATABASE_URL=${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander}
       - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander}}
+      - COMMANDER_KERNEL_BACKEND=postgres
       - COMMANDER_RECLAIM_INTERVAL_MS=${COMMANDER_RECLAIM_INTERVAL_MS:-5000}
       - COMMANDER_RECLAIM_BATCH_SIZE=${COMMANDER_RECLAIM_BATCH_SIZE:-100}
       - COMMANDER_TIMER_POLL_MS=${COMMANDER_TIMER_POLL_MS:-5000}
@@ -171,7 +177,7 @@ services:
       - worker
       - v2
 
-  # Web GUI — Agent War Room dashboard
+  # Web GUI — Agent War Room dashboard (profile-gated: root target:web Dockerfile not always present)
   web:
     build:
       context: .
@@ -182,6 +188,9 @@ services:
       api:
         condition: service_healthy
     restart: unless-stopped
+    profiles:
+      - web
+      - gui
 
   # ── PostgreSQL — production database backend (opt-in) ──────────────────
   # Started only with: docker compose --profile database up

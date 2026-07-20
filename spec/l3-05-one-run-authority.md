@@ -1,6 +1,6 @@
 # L3-05：一 Run 权威（去双语义）
 
-**状态：PARTIAL（§2 `/v1` kernel-only ENFORCED；§3 WarRoom/ATR 降级守卫 ENFORCED；§4 CLI/`/v1` 历史语义 PARTIAL）**
+**状态：PARTIAL（§2 `/v1` kernel-only ENFORCED；§3 WarRoom/ATR 降级守卫 ENFORCED；§4 enterprise/API `commander history` 列表 ≡ `GET /v1/runs` ENFORCED；local SKU + saga/ATR 残余 dual surfaces 仍 PARTIAL）**
 **范围：Phase 1 Spec → Phase 2 Build → Phase 3 Review & Audit**
 **关联：** WS3/L3-06（Gateway `/v1` only）、PRINCIPLES §2/§4、`docs/v2-migration-guide.md` §Dual path
 
@@ -33,7 +33,7 @@
 | **Gateway saga/replay/pipeline runs** | `sagaEndpoints` / `replayEndpoints` / `pipelineEndpoints` | 本地 saga / 回放 / legacy pipeline | **否** | enterprise `/api/*` 410；standard 仍可达 |
 | **`/v2/runs*` bench** | `v2/v2BenchEndpoints.ts` | 内存 benchmark ledger | **否** | standard profile；非 durable |
 | **CLI saga listRuns** | `cli/commands/saga.ts` | `.commander/sagas/` 文件快照 | **否** | 本地 saga 存储，非 kernel |
-| **CLI history** | `cli/commands/history.ts` | `StateCheckpointer` 本地 session | **否** | 非 kernel |
+| **CLI history** | `cli/commands/history.ts` | API 模式 → `GET /v1/runs`；local SKU → `StateCheckpointer` | API：**是（远端 kernel）**；local：**否** | `history.ts` + `history.v1.test.ts`；view/delete/prune 仍 local |
 | **CLI intentLog** | `runtime/intentLog.ts` | 调试 intent 索引 | **否** | `debug.ts` 专用 |
 | **Legacy execute** | `legacyExecutionGuard` 保护路径 | 进程内 AgentRuntime | **否（默认 OFF）** | `PRINCIPLES.md` §2 |
 
@@ -45,7 +45,7 @@
 
 **残余 gap（本 spec 标记 PARTIAL，不假装已统一）：**
 
-- CLI `commander run` / saga / history / ATR 仍使用 core 本地存储与 **不同** RunState 词汇（ATR: `EXECUTING`/`COMMITTED` vs contracts: `RUNNING`/`SUCCEEDED`）。
+- CLI `commander run` / saga / ATR 仍使用 core 本地存储与 **不同** RunState 词汇（ATR: `EXECUTING`/`COMMITTED` vs contracts: `RUNNING`/`SUCCEEDED`）。`commander history` 在 API 模式（`COMMANDER_API_URL`）已 ≡ `GET /v1/runs`（见 §4.1）；仅 local SKU 与 view/delete/prune 仍走 StateCheckpointer。
 - `GET /v1/projects/:id/run-context` 合成非 kernel `runId`（UI 上下文；不得当作 `GET /v1/runs/:id` 权威）。
 - WarRoomStore 在 standard profile 仍可写 mission（x-legacy），与 kernel run 无自动投影。
 - RunLedger 仍在 worker/agent 路径作为 settlement 层存在（正确角色，但非零 flag durable）。
@@ -88,13 +88,15 @@
 |---|---|---|---|
 | SDK `CommanderGatewayClient` | `POST/GET /v1/runs*` | contracts `RunState` | kernel（远端） |
 | Gateway `/v1` | 同上 | `renderRun().state` from kernel | kernel |
+| CLI `commander history`（API 模式） | `GET /v1/runs` when `COMMANDER_API_URL` set（凭证 `COMMANDER_API_KEY`；不复用 LLM `apiBase`/`apiKey`） | contracts `RunState` | kernel（远端） |
 
-**证据：** `packages/sdk/src/v1/client.ts`；`v1GatewayEndpoints.ts` 使用 `isTerminalRunState` from contracts。
+**证据：** `packages/sdk/src/v1/client.ts`；`v1GatewayEndpoints.ts`；`packages/core/src/cli/commands/history.ts` + `tests/cli/history.v1.test.ts`；`apps/api/test/v1ListRuns.test.ts`。
 
 ### 4.2 PARTIAL（残余 dual surfaces — 诚实清单）
 
 | 客户端 | 入口 | 状态词汇 | 与 `/v1` 关系 |
 |---|---|---|---|
+| CLI `commander history`（local SKU） | `StateCheckpointer` | session `phase` | 非 durable `/v1` 权威（help 标注） |
 | CLI `commander saga` | 本地 `.commander/sagas/` | saga snapshot `state` | 独立；非 kernel |
 | CLI `commander debug intent` | `intentLog` | ad-hoc | 调试 only |
 | ATR scheduler / RunLedger | `.commander/atr_ledger.db` | ATR `RunState`（EXECUTING/COMMITTED/…） | worker settlement；**非** Gateway 历史 |
@@ -128,7 +130,8 @@
 - [x] §3.1 `/v1` kernel-only ENFORCED（`oneRunAuthority.test.ts` + 既有 `v1GatewayEndpoints.test.ts`）。
 - [x] §3.2 WarRoom demotion ENFORCED（继承 `warRoomDemotion.test.ts`）。
 - [x] §3.3 ATR/Gateway 边界 ENFORCED（architecture + api 测试）。
-- [~] §4 CLI/`/v1` 同历史语义 — **PARTIAL**（SDK/Gateway ENFORCED；CLI saga/ATR/intent 列明残余）。
+- [x] §4.1 enterprise/API `commander history` ≡ `GET /v1/runs` — **ENFORCED**（L3 Wave closeout）。
+- [~] §4.2 local SKU / saga / ATR dual surfaces — **PARTIAL**（诚实残余，不假装已统一）。
 - [x] `docs/v2-migration-guide.md` §Dual path 与 spec 一致。
 - [x] 主仓 gitignored 状态笔记 `.internal/docs/status/2026-07-17-l3bc-loop-state.md` 标记 L3-05 **DONE (PARTIAL)**（不进版本控制；worktree 可能另有副本）。
 

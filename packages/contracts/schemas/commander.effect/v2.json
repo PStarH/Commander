@@ -1,0 +1,35 @@
+{
+  "$id": "commander.effect/v2",
+  "type": "object",
+  "required": ["kind", "schemaVersion", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "kind": { "type": "string", "const": "effect" },
+    "schemaVersion": { "type": "string", "const": "commander.effect/v2" },
+    "payload": {
+      "type": "object",
+      "required": ["id", "tenantId", "runId", "stepId", "kind", "action", "status", "adapterId", "adapterVersion", "requestDigest", "policyDecisionId", "idempotencyKey", "fencingEpoch", "createdAt"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "runId": { "type": "string" },
+        "stepId": { "type": "string" },
+        "kind": { "type": "string" },
+        "action": { "type": "string" },
+        "status": { "type": "string", "enum": ["ADMITTED", "COMPLETION_UNKNOWN", "COMPLETED", "FAILED"] },
+        "adapterId": { "type": "string" },
+        "adapterVersion": { "type": "string" },
+        "requestDigest": { "type": "string" },
+        "policyDecisionId": { "type": "string" },
+        "idempotencyKey": { "type": "string" },
+        "compensatesEffectId": { "type": "string" },
+        "responseDigest": { "type": "string" },
+        "responseSummary": { "type": "object" },
+        "fencingEpoch": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "completedAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

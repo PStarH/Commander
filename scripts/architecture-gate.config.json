@@ -5,7 +5,9 @@
     "packages/kernel",
     "packages/worker-plane",
     "packages/effect-broker",
-    "packages/contracts"
+    "packages/contracts",
+    "packages/action-adapters",
+    "packages/operations"
   ],
   "forbiddenCoreImports": [
     "@commander/core",
@@ -234,6 +236,7 @@
   },
   "authorityExceptions": [
     "packages/worker-plane/src/registry.ts",
+    "packages/worker-plane/src/sqliteRegistry.ts",
     "packages/worker-plane/src/workerRuntimeAdapter.ts",
     "packages/effect-broker/src/index.ts",
     "apps/api/src/a2aV2Endpoints.ts",
@@ -263,6 +266,9 @@
     "apps/api/src/sharedRuntime.ts",
     "apps/api/src/webhookEndpoints.ts",
     "apps/api/src/pauseEndpoints.ts",
-    "apps/api/src/atomicWrite.ts"
+    "apps/api/src/atomicWrite.ts",
+    "packages/kernel/src/sqlite.ts",
+    "packages/kernel/src/sqliteSchema.ts",
+    "packages/kernel/src/sqlitePool.ts"
   ]
 }

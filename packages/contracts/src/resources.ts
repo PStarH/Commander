@@ -125,7 +125,14 @@ export interface WorkerV2 {
 
 // ---------------------------------------------------------------------------
 
-export type EffectStatus = 'ADMITTED' | 'EXECUTING' | 'COMPLETION_UNKNOWN' | 'COMPLETED' | 'FAILED' | 'COMPENSATED' | 'REJECTED';
+/** @deprecated Use EffectDurableStatus from effectContract — observation states moved out. */
+export type EffectObservationLegacy = 'EXECUTING' | 'REJECTED' | 'COMPENSATED';
+
+/** Durable ledger row states (kernel commander_effects.state). */
+export type EffectDurableStatus = 'ADMITTED' | 'COMPLETION_UNKNOWN' | 'COMPLETED' | 'FAILED';
+
+/** Legacy alias — durable states only. */
+export type EffectStatus = EffectDurableStatus;
 
 /**
  * A single intended external side effect with idempotency key, policy decision,

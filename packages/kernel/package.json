@@ -14,6 +14,14 @@
     "./testing/inMemoryRepository": {
       "types": "./src/testing/inMemoryRepository.ts",
       "default": "./src/testing/inMemoryRepository.ts"
+    },
+    "./testing/repositoryContract": {
+      "types": "./src/testing/repositoryContract.ts",
+      "default": "./src/testing/repositoryContract.ts"
+    },
+    "./testing/kernelTranscript": {
+      "types": "./src/testing/kernelTranscript.ts",
+      "default": "./src/testing/kernelTranscript.ts"
     }
   },
   "files": [
@@ -25,8 +33,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm --workspace-root exec tsx --test packages/kernel/src/kernel.test.ts packages/kernel/src/transitionValidation.test.ts packages/kernel/src/tenantPause.test.ts packages/kernel/src/ws2-acceptance.test.ts packages/kernel/src/contracts.test.ts packages/kernel/src/kernel-m2.test.ts packages/kernel/src/killSwitch.test.ts packages/kernel/src/ops/*.test.ts packages/kernel/src/ops/outbox/*.test.ts",
-    "test:integration": "pnpm --workspace-root exec tsx --test packages/kernel/src/postgres.integration.test.ts packages/kernel/src/postgres.ops.integration.test.ts packages/kernel/src/postgres.dlq.integration.test.ts",
+    "test": "pnpm --workspace-root exec tsx --test packages/kernel/src/kernel.test.ts packages/kernel/src/transitionValidation.test.ts packages/kernel/src/tenantPause.test.ts packages/kernel/src/ws2-acceptance.test.ts packages/kernel/src/contracts.test.ts packages/kernel/src/kernel-m2.test.ts packages/kernel/src/killSwitch.test.ts packages/kernel/src/repositoryFactory.test.ts packages/kernel/src/sqliteSchema.test.ts packages/kernel/src/sqlite.integration.test.ts packages/kernel/src/testing/repositoryContract.ts packages/kernel/src/testing/kernelTranscript.test.ts packages/kernel/src/ops/*.test.ts packages/kernel/src/ops/outbox/*.test.ts",
+    "test:sqlite": "pnpm --workspace-root exec tsx --test packages/kernel/src/sqlite.integration.test.ts packages/kernel/src/testing/repositoryContract.ts",
+    "test:integration": "pnpm --workspace-root exec tsx --test packages/kernel/src/postgres.integration.test.ts packages/kernel/src/postgres.ops.integration.test.ts packages/kernel/src/postgres.dlq.integration.test.ts packages/kernel/src/postgres.reconcile.integration.test.ts packages/kernel/src/ops/outbox/compensationPublisherRace.postgres.integration.test.ts",
     "test:rls-live-fire": "pnpm --workspace-root exec tsx --test packages/kernel/src/postgres.rls-live-fire.test.ts",
     "test:pitr-failover": "COMMANDER_ENABLE_PITR_DRILL=1 pnpm --workspace-root exec tsx --test packages/kernel/src/postgres.pitr-failover.test.ts",
     "start:ops": "node dist/ops/main.js",
@@ -58,9 +67,11 @@
   },
   "dependencies": {
     "@commander/contracts": "workspace:*",
+    "better-sqlite3": "^12.11.1",
     "pg": "^8.15.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/pg": "^8.11.0",
     "typescript": "^5.0.0"
   }

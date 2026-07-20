@@ -1,4 +1,5 @@
 .commander/webhooks.json
+.commander/dev/
 .commander/*.db
 .commander/*.db-shm
 .commander/*.db-wal

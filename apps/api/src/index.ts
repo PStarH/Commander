@@ -101,6 +101,7 @@ import { getGlobalTenantProvider, SimpleTenantProvider } from '@commander/core/r
 import { registerRouter, mountRegisteredRouters, listRegisteredRouters } from './routerRegistry';
 import { generateOpenApiSpec } from './openApiGenerator';
 import { enterpriseRouteFreeze, legacyHeader } from './enterpriseGateway';
+import { deprecatedPathMetrics } from './deprecatedMetrics';
 import { v1TenantGuard } from './v1TenantGuard';
 import { probeReadiness } from './healthProbes';
 import { createV1GatewayRouter } from './v1GatewayEndpoints';
@@ -886,11 +887,11 @@ async function startServer(): Promise<void> {
           '(or set =1) and provide COMMANDER_KERNEL_DATABASE_URL or DATABASE_URL.',
       );
     }
-    if (!isCommanderKernelEnabled() || !getKernelDatabaseUrl() || getV1KernelGateway() === null) {
+    if (!isCommanderKernelEnabled() || getV1KernelGateway() === null) {
       throw new Error(
         '[kernel] Refusing to start: NODE_ENV=production requires an initialized durable kernel. ' +
-          'Provide COMMANDER_KERNEL_DATABASE_URL or DATABASE_URL so V1 resource routes run on ' +
-          'the shared durable kernel instead of failing closed.',
+          'Set COMMANDER_KERNEL_BACKEND=postgres (or sqlite with COMMANDER_KERNEL_SQLITE_PATH) and provide ' +
+          'COMMANDER_KERNEL_DATABASE_URL or DATABASE_URL so V1 resource routes run on the shared durable kernel.',
       );
     }
   }
@@ -986,6 +987,7 @@ async function startServer(): Promise<void> {
   //   3. legacyHeader — x-legacy: true tag for non-/v1 paths in standard (§8.1)
   app.use(v1TenantGuard());
   app.use(enterpriseRouteFreeze());
+  app.use(deprecatedPathMetrics());
   app.use(legacyHeader());
 
   mountRegisteredRouters(app);
@@ -1042,8 +1044,12 @@ async function startServer(): Promise<void> {
   });
 }
 
-startServer().catch((err: Error) => {
-  process.stderr.write(`[startup] Failed to start API server: ${err.message}\n`);
+startServer().catch((err: Error & { code?: string }) => {
+  if (err.code === 'KERNEL_BACKEND_REFUSED') {
+    process.stderr.write(`[startup] KERNEL_BACKEND_REFUSED: ${err.message}\n`);
+  } else {
+    process.stderr.write(`[startup] Failed to start API server: ${err.message}\n`);
+  }
   process.exit(1);
 });
 

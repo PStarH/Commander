@@ -117,7 +117,14 @@ describe('stepWorkloadIdentity (L3-07)', () => {
     });
     const broker = new EffectBroker(
       tokens,
-      { evaluate: async () => ({ effect: 'allow' as const, decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+      {
+        evaluate: async () => ({
+          effect: 'allow' as const,
+          decisionId: 'd1',
+          reason: 'ok',
+          policySnapshotId: 'policy',
+        }),
+      },
       {
         admitEffect: async () => ({ admitted: true, effect: { id: 'e1', state: 'ADMITTED' } }),
         completeEffect: async () => ({}),
