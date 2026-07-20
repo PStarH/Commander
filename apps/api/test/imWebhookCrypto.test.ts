@@ -2,46 +2,12 @@
  * Crypto helpers for IM webhook verification — length-safe timing compare,
  * DingTalk freshness, Feishu constant-time token check.
  *
- * Mirrors the private helpers in webhookEndpoints.ts (kept local so we can
- * unit-test without exporting production internals).
+ * Imports the shared production module so tests cannot drift from live routes.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-
-function timingSafeEqualString(a: string, b: string): boolean {
-  const aBuf = Buffer.from(a);
-  const bBuf = Buffer.from(b);
-  if (aBuf.length === 0 || bBuf.length === 0) return false;
-  const len = Math.max(aBuf.length, bBuf.length);
-  const aPad = Buffer.alloc(len);
-  const bPad = Buffer.alloc(len);
-  aBuf.copy(aPad);
-  bBuf.copy(bPad);
-  const contentEq = crypto.timingSafeEqual(aPad, bPad);
-  const lenA = Buffer.alloc(4);
-  const lenB = Buffer.alloc(4);
-  lenA.writeUInt32BE(aBuf.length);
-  lenB.writeUInt32BE(bBuf.length);
-  const lengthEq = crypto.timingSafeEqual(lenA, lenB);
-  return contentEq && lengthEq;
-}
-
-function isTimestampFresh(timestamp: string, unit: 'ms' | 's', maxSkewSec = 300): boolean {
-  const n = Number(timestamp);
-  if (!Number.isFinite(n)) return false;
-  const tsMs = unit === 'ms' ? n : n * 1000;
-  return Math.abs(Date.now() - tsMs) <= maxSkewSec * 1000;
-}
-
-function verifyDingTalkSignature(timestamp: string, sign: string, secret: string): boolean {
-  if (!isTimestampFresh(timestamp, 'ms')) return false;
-  const expected = crypto
-    .createHmac('sha256', secret)
-    .update(timestamp + '\n' + secret)
-    .digest('base64');
-  return timingSafeEqualString(expected, sign);
-}
+import { timingSafeEqualString, verifyDingTalkSignature } from '../src/webhookCrypto';
 
 describe('timingSafeEqualString', () => {
   it('matches equal non-empty strings', () => {
