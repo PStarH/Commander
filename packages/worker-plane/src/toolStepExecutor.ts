@@ -210,18 +210,17 @@ export class ToolStepExecutor implements StepExecutor {
               "Tool '" + input.toolName + "' timed out after " + timeoutMs + 'ms',
               {
                 code: 'TIMEOUT',
-                // Non-cooperative: handler ignored abort — do not claim safe retry.
-                retryable: cooperative,
-                retryDelayMs: cooperative ? 10_000 : undefined,
+                // cancel/timeout 已胜出：retryable 恒 false（堵 microtask dual-dispatch）；
+                // cooperative 仅遥测（同步窗内 abort-linked），不驱动 retry。对齐 #74。
+                retryable: false,
                 details: { toolName: input.toolName, stepId: step.id, cooperative },
               },
             ),
           abortError: (cooperative) =>
             new WorkerExecutionError('Tool execution aborted', {
               code: 'ABORTED',
-              // Non-cooperative parent-abort hard-exit: do not claim safe retry.
-              retryable: cooperative,
-              retryDelayMs: cooperative ? 1000 : undefined,
+              // 同上：abort 胜出后非 retryable；cooperative 仅遥测。
+              retryable: false,
               details: { toolName: input.toolName, stepId: step.id, cooperative },
             }),
         },

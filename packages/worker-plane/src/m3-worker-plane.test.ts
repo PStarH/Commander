@@ -311,7 +311,8 @@ describe('ToolStepExecutor', () => {
       () => executor.execute(step, { signal: ac.signal, worker: createMockWorker() }),
       (err: WorkerExecutionError) =>
         err.options.code === 'TIMEOUT' &&
-        err.options.retryable === true &&
+        // cancel 已胜出：retryable 恒 false；cooperative 仅遥测。
+        err.options.retryable === false &&
         err.options.details?.cooperative === true,
     );
     assert.equal(sawAbort, true);
@@ -371,7 +372,7 @@ describe('ToolStepExecutor', () => {
       () => executor.execute(step, { signal: ac.signal, worker: createMockWorker() }),
       (err: WorkerExecutionError) =>
         err.options.code === 'TIMEOUT' &&
-        err.options.retryable === true &&
+        err.options.retryable === false &&
         err.options.details?.cooperative === true,
     );
     assert.equal(sawAbort, true);
@@ -430,7 +431,7 @@ describe('ToolStepExecutor', () => {
       () => execPromise,
       (err: WorkerExecutionError) =>
         err.options.code === 'ABORTED' &&
-        err.options.retryable === true &&
+        err.options.retryable === false &&
         err.options.details?.cooperative === true,
     );
   });
@@ -609,7 +610,7 @@ describe('ToolStepExecutor', () => {
   });
 
   // Probe B: abort 监听器内同步副作用后再 setTimeout(0) reject(signal.reason)
-  // —— settle 宏任务晚于关窗，不得标 coop/retryable（dual-dispatch）。
+  // —— settle 宏任务晚于关窗 → cooperative:false；retryable 亦 false。
   it('parent abort + abort-listener SE then setTimeout(0) reject(reason) is non-cooperative', async () => {
     const parent = new AbortController();
     let sideEffect = false;
@@ -679,6 +680,99 @@ describe('ToolStepExecutor', () => {
         err.options.code === 'TIMEOUT' &&
         err.options.retryable === false &&
         err.options.details?.cooperative === false,
+    );
+    assert.equal(sideEffect, true);
+  });
+
+  // Probe C: abort 监听器内 SE + queueMicrotask / Promise.then / nextTick / setImmediate
+  // reject(reason) —— 关窗是 macrotask，这些洞可能仍落在 coop 窗（cooperative 可 true/false）；
+  // 闸门是 retryable:false（与 #74 TOOL_ABORTED/TIMEOUT nonRetryable 一致）。
+  async function probeCAbortListenerDeferredReject(
+    schedule: (fn: () => void) => void,
+    label: string,
+  ): Promise<void> {
+    const parent = new AbortController();
+    let sideEffect = false;
+    const mockRegistry = {
+      get: () => ({
+        execute: async (_args: Record<string, unknown>, ctx: { signal: AbortSignal }) => {
+          await new Promise<void>((_resolve, reject) => {
+            ctx.signal.addEventListener(
+              'abort',
+              () => {
+                sideEffect = true;
+                schedule(() => reject(ctx.signal.reason));
+              },
+              { once: true },
+            );
+          });
+          return { never: true };
+        },
+      }),
+    };
+    const executor = new ToolStepExecutor(mockRegistry);
+    const step = createMockStep({
+      input: { toolName: 'probe-c-' + label, args: {}, timeoutMs: 5_000 },
+    });
+    const execPromise = executor.execute(step, {
+      signal: parent.signal,
+      worker: createMockWorker(),
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    parent.abort();
+    await assert.rejects(
+      () => execPromise,
+      (err: WorkerExecutionError) =>
+        err.options.code === 'ABORTED' && err.options.retryable === false,
+    );
+    assert.equal(sideEffect, true);
+  }
+
+  it('Probe C: parent abort + SE then queueMicrotask reject(reason) is non-retryable', async () => {
+    await probeCAbortListenerDeferredReject((fn) => queueMicrotask(fn), 'queueMicrotask');
+  });
+
+  it('Probe C: parent abort + SE then Promise.then reject(reason) is non-retryable', async () => {
+    await probeCAbortListenerDeferredReject((fn) => {
+      void Promise.resolve().then(fn);
+    }, 'promise-then');
+  });
+
+  it('Probe C: parent abort + SE then nextTick reject(reason) is non-retryable', async () => {
+    await probeCAbortListenerDeferredReject((fn) => process.nextTick(fn), 'nextTick');
+  });
+
+  it('Probe C: parent abort + SE then setImmediate reject(reason) is non-retryable', async () => {
+    await probeCAbortListenerDeferredReject((fn) => setImmediate(fn), 'setImmediate');
+  });
+
+  it('Probe C: timeout + SE then queueMicrotask reject(reason) is non-retryable', async () => {
+    let sideEffect = false;
+    const mockRegistry = {
+      get: () => ({
+        execute: async (_args: Record<string, unknown>, ctx: { signal: AbortSignal }) => {
+          await new Promise<void>((_resolve, reject) => {
+            ctx.signal.addEventListener(
+              'abort',
+              () => {
+                sideEffect = true;
+                queueMicrotask(() => reject(ctx.signal.reason));
+              },
+              { once: true },
+            );
+          });
+          return { never: true };
+        },
+      }),
+    };
+    const executor = new ToolStepExecutor(mockRegistry);
+    const step = createMockStep({
+      input: { toolName: 'probe-c-timeout-micro', args: {}, timeoutMs: 30 },
+    });
+    await assert.rejects(
+      () => executor.execute(step, { signal: ac.signal, worker: createMockWorker() }),
+      (err: WorkerExecutionError) =>
+        err.options.code === 'TIMEOUT' && err.options.retryable === false,
     );
     assert.equal(sideEffect, true);
   });
@@ -767,7 +861,7 @@ describe('ToolStepExecutor', () => {
     );
   });
 
-  it('reject(signal.reason) Error(aborted) remains cooperative', async () => {
+  it('reject(signal.reason) Error(aborted) remains cooperative telemetry but non-retryable', async () => {
     const parent = new AbortController();
     let sawAbort = false;
     const mockRegistry = {
@@ -800,13 +894,13 @@ describe('ToolStepExecutor', () => {
       () => execPromise,
       (err: WorkerExecutionError) =>
         err.options.code === 'ABORTED' &&
-        err.options.retryable === true &&
+        err.options.retryable === false &&
         err.options.details?.cooperative === true,
     );
     assert.equal(sawAbort, true);
   });
 
-  it('parent abort of cooperative tool remains retryable', async () => {
+  it('parent abort of cooperative tool is telemetry-cooperative but non-retryable', async () => {
     const parent = new AbortController();
     let sawAbort = false;
     const mockRegistry = {
@@ -838,7 +932,7 @@ describe('ToolStepExecutor', () => {
       () => execPromise,
       (err: WorkerExecutionError) =>
         err.options.code === 'ABORTED' &&
-        err.options.retryable === true &&
+        err.options.retryable === false &&
         err.options.details?.cooperative === true,
     );
     assert.equal(sawAbort, true);
