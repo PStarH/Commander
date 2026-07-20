@@ -16,7 +16,7 @@ import {
 } from '@commander/action-adapters';
 import { KERNEL_COMPENSATION_TOPIC } from '@commander/kernel';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
-import { CompensationDaemon } from '../packages/operations/src/compensationDaemon.js';
+import { CompensationDaemon } from '../packages/adapter-ops/src/compensationDaemon.js';
 import { createChaosMockFetch } from './l4-b-adapter-chaos.js';
 import {
   assertComposeCellHealth,

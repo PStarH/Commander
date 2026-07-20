@@ -89,5 +89,6 @@
     },
     "datasetVersion": "tenant-concurrency-v1"
   },
-  "runAt": "2026-07-20T07:09:57.268Z"
+  "runAt": "2026-07-20T07:09:57.268Z",
+  "note": "CI readiness fixture (simulated evidence; NON-SCORING \u2014 does not count toward required readiness / residual\u2192100)"
 }

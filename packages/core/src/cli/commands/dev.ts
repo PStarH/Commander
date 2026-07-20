@@ -30,9 +30,9 @@ export class DevAlreadyRunningError extends Error {
   }
 }
 
-export type DevChildRole = 'api' | 'worker' | 'kernel-ops' | 'operations';
+export type DevChildRole = 'api' | 'worker' | 'kernel-ops' | 'adapter-ops';
 
-export const DEV_SHUTDOWN_ORDER: DevChildRole[] = ['operations', 'worker', 'kernel-ops', 'api'];
+export const DEV_SHUTDOWN_ORDER: DevChildRole[] = ['adapter-ops', 'worker', 'kernel-ops', 'api'];
 
 export interface DevLayout {
   dataDir: string;
@@ -156,9 +156,9 @@ export function buildDevChildSpecs(input: {
       cwd: input.repoRoot,
     },
     {
-      role: 'operations',
+      role: 'adapter-ops',
       command: node,
-      args: ['packages/operations/dist/run.js'],
+      args: ['packages/adapter-ops/dist/run.js'],
       env: input.env,
       cwd: input.repoRoot,
     },

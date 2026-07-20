@@ -80,7 +80,7 @@ services:
   adapter-ops:
     build:
       context: .
-      dockerfile: packages/operations/Dockerfile.ops
+      dockerfile: packages/adapter-ops/Dockerfile.ops
     environment:
       - NODE_ENV=production
       - COMMANDER_KERNEL_BACKEND=postgres

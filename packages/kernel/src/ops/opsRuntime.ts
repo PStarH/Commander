@@ -17,7 +17,7 @@ export interface KernelOpsRuntimeDependencies {
   outbox: OutboxComponent;
   outboxIntervalMs: number;
   outboxBatchSize: number;
-  /** Compensation consumer — owned by `@commander/operations` (Wave 1). */
+  /** Compensation consumer — EffectBroker drain owned by `@commander/adapter-ops` deploy unit when wired; kernel-ops probes claimability when tick omitted. */
   compensation?: StartStopComponent & OpsLoopHealth;
 }
 
@@ -41,10 +41,9 @@ export class KernelOpsRuntime {
     this.dependencies.reclaim.start();
     this.dependencies.timer.start();
     this.dependencies.compensation?.start();
-    this.outboxTimer = setInterval(
-      () => { void this.publishOutbox(); },
-      this.dependencies.outboxIntervalMs,
-    );
+    this.outboxTimer = setInterval(() => {
+      void this.publishOutbox();
+    }, this.dependencies.outboxIntervalMs);
     void this.kickOutbox(epoch);
   }
 
@@ -101,7 +100,9 @@ export class KernelOpsRuntime {
         }
       })
       .catch(() => undefined)
-      .finally(() => { this.outboxInFlight = undefined; });
+      .finally(() => {
+        this.outboxInFlight = undefined;
+      });
     return this.outboxInFlight;
   }
 }

@@ -108,7 +108,7 @@
     "helm:cell-assert": "pnpm run helm:cell-assert:demo && pnpm run helm:cell-assert:enterprise",
     "helm:cell-assert:demo": "helm template cell-demo deploy/helm/commander -f deploy/helm/commander/values-demo.yaml --set image.tag=test | pnpm exec tsx scripts/helm-cell-assert.ts --profile demo",
     "helm:cell-assert:enterprise": "helm template cell-enterprise deploy/helm/commander -f deploy/helm/commander/values-enterprise.yaml --set image.tag=test | pnpm exec tsx scripts/helm-cell-assert.ts --profile enterprise",
-    "test:deploy-gates": "pnpm helm:cell-assert && pnpm --filter @commander/operations test && pnpm exec tsx --test apps/api/test/kernelEnabled.test.ts && pnpm exec tsx --test scripts/helm-cell-assert.test.ts scripts/l4-b-cell-smoke.test.ts scripts/dr-backup-verify.test.ts && pnpm effect:io-guard:test",
+    "test:deploy-gates": "pnpm helm:cell-assert && pnpm --filter @commander/adapter-ops test && pnpm exec tsx --test apps/api/test/kernelEnabled.test.ts && pnpm exec tsx --test scripts/helm-cell-assert.test.ts scripts/l4-b-cell-smoke.test.ts scripts/dr-backup-verify.test.ts && pnpm effect:io-guard:test",
     "dr:verify": "pnpm exec tsx scripts/dr-backup-verify.ts --full",
     "p0:kernel-e2e": "pnpm exec tsx scripts/p0-kernel-e2e.ts",
     "p0:kernel-pg": "pnpm exec tsx --test --test-force-exit packages/kernel/src/postgres.integration.test.ts packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts",
