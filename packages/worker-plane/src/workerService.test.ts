@@ -26,6 +26,7 @@ class FakeKernel implements KernelWorkerPort {
   lastClaimGeneration: number | undefined;
   lastFailureCode: string | undefined;
   lastFailureRetryable: boolean | undefined;
+  lastFailureRetryAt: Date | undefined;
   heartbeatCount = 0;
   claimDelayMs = 0;
   lastHeartbeatActiveSteps: number | undefined;
@@ -138,10 +139,14 @@ class FakeKernel implements KernelWorkerPort {
       return null;
     this.lastFailureCode = request.error.code;
     this.lastFailureRetryable = request.error.retryable;
-    // Non-retryable must leave claimable path as FAILED (not PENDING).
-    // Retryable without retryAt stays PENDING (e.g. WORKER_STOPPED requeue).
-    if (!request.error.retryable) step.state = 'FAILED';
-    else step.state = request.retryAt ? 'RETRY_WAIT' : 'PENDING';
+    this.lastFailureRetryAt = request.retryAt;
+    // Match production kernel: retryable requeue requires both retryable and retryAt.
+    // Without retryAt the real kernel finishes as FAILED (not PENDING).
+    if (request.error.retryable && request.retryAt) {
+      step.state = 'RETRY_WAIT';
+    } else {
+      step.state = 'FAILED';
+    }
     return {};
   }
   getRun(id: string): { state: string } | undefined {
@@ -430,7 +435,8 @@ describe('worker plane', () => {
     assert.equal(await poll, false);
     assert.equal(executed, false);
     assert.equal(kernel.lastFailureCode, 'WORKER_STOPPED');
-    assert.equal(kernel.getStep('stop-step')?.state, 'PENDING');
+    assert.ok(kernel.lastFailureRetryAt instanceof Date, 'retryAt required for kernel requeue');
+    assert.equal(kernel.getStep('stop-step')?.state, 'RETRY_WAIT');
   });
 
   it('counts claimInflight in activeSteps and registry heartbeat', async () => {
