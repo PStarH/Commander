@@ -1,0 +1,26 @@
+name: Commander CodeQL
+
+paths-ignore:
+  - '**/test/**'
+  - '**/tests/**'
+  - '**/*.test.ts'
+  - '**/*.spec.ts'
+  - '**/*.e2e.test.ts'
+  - '**/__tests__/**'
+  - '**/conformance/**'
+  - '**/node_modules/**'
+  - '**/dist/**'
+  - 'deploy/helm/**'
+  - 'helm/**'
+
+query-filters:
+  - exclude:
+      id: js/missing-rate-limiting
+  - exclude:
+      id: js/empty-password-in-configuration
+  - exclude:
+      id: js/polynomial-redos
+  - exclude:
+      id: js/request-forgery
+  - exclude:
+      id: js/file-system-race
