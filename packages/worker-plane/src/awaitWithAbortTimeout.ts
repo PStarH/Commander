@@ -14,12 +14,22 @@ export interface AwaitWithAbortTimeoutOptions {
   /** Grace after abort before hard-failing non-cooperative work (default 50ms). */
   abortGraceMs?: number;
   /**
-   * cooperative=true when handler reject-settled after abort (honored cancel);
-   * false after grace hard-cancel or late success resolve (ignored cancel).
+   * cooperative=true only for abort-linked reject after cancel (honored cancel);
+   * false after grace hard-cancel, late success resolve, or late non-abort reject.
    */
   timeoutError: (cooperative: boolean) => Error;
   /** Same cooperative semantics as timeoutError for parent-abort outcomes. */
   abortError: (cooperative: boolean) => Error;
+}
+
+/** True when rejection proves the handler honored abort (not ignore-then-throw). */
+export function isAbortLinkedRejection(error: unknown, signal: AbortSignal): boolean {
+  if (!signal.aborted) return false;
+  if (error === signal.reason) return true;
+  if (typeof error === 'object' && error !== null && (error as { name?: string }).name === 'AbortError') {
+    return true;
+  }
+  return false;
 }
 
 export async function awaitWithAbortTimeout<T>(
@@ -121,16 +131,19 @@ export async function awaitWithAbortTimeout<T>(
         },
         (error) => {
           if (closed) return;
+          // Fail-closed: after cancel, only abort-linked reject is cooperative.
+          // Ignore-signal + late throw must not claim retryable (dual-dispatch).
+          const cooperative = isAbortLinkedRejection(error, local.signal);
           if (parentSignal.aborted) {
-            rejectAbort(true);
+            rejectAbort(cooperative);
             return;
           }
           if (timedOut) {
-            rejectTimeout(true);
+            rejectTimeout(cooperative);
             return;
           }
           if (local.signal.aborted) {
-            rejectAbort(true);
+            rejectAbort(cooperative);
             return;
           }
           close(() => reject(error));

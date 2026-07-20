@@ -285,16 +285,18 @@ describe('ToolStepExecutor', () => {
       get: () => ({
         execute: async (_args: Record<string, unknown>, ctx: { signal: AbortSignal }) => {
           await new Promise<void>((resolve, reject) => {
+            const abortLinked = () =>
+              ctx.signal.reason ?? new DOMException('Aborted', 'AbortError');
             if (ctx.signal.aborted) {
               sawAbort = true;
-              reject(new Error('aborted early'));
+              reject(abortLinked());
               return;
             }
             ctx.signal.addEventListener(
               'abort',
               () => {
                 sawAbort = true;
-                reject(new Error('aborted'));
+                reject(abortLinked());
               },
               { once: true },
             );
@@ -350,7 +352,7 @@ describe('ToolStepExecutor', () => {
               'abort',
               () => {
                 sawAbort = true;
-                reject(new Error('aborted'));
+                reject(ctx.signal.reason ?? new DOMException('Aborted', 'AbortError'));
               },
               { once: true },
             );
@@ -406,9 +408,11 @@ describe('ToolStepExecutor', () => {
       get: () => ({
         execute: async (_args: Record<string, unknown>, ctx: { signal: AbortSignal }) => {
           await new Promise<void>((_resolve, reject) => {
-            ctx.signal.addEventListener('abort', () => reject(new Error('aborted')), {
-              once: true,
-            });
+            ctx.signal.addEventListener(
+              'abort',
+              () => reject(ctx.signal.reason ?? new DOMException('Aborted', 'AbortError')),
+              { once: true },
+            );
           });
           return { never: true };
         },
@@ -506,6 +510,53 @@ describe('ToolStepExecutor', () => {
     );
   });
 
+  it('parent abort + late throw (ignore signal) is non-cooperative', async () => {
+    const parent = new AbortController();
+    const mockRegistry = {
+      get: () => ({
+        // Ignores abort; side-effect window then throw — must not claim cooperative/retryable.
+        execute: async () => {
+          await new Promise((r) => setTimeout(r, 30));
+          throw new Error('side-effect-failed');
+        },
+      }),
+    };
+    const executor = new ToolStepExecutor(mockRegistry);
+    const step = createMockStep({ input: { toolName: 'late-throw', args: {}, timeoutMs: 5_000 } });
+    const execPromise = executor.execute(step, {
+      signal: parent.signal,
+      worker: createMockWorker(),
+    });
+    parent.abort();
+    await assert.rejects(
+      () => execPromise,
+      (err: WorkerExecutionError) =>
+        err.options.code === 'ABORTED' &&
+        err.options.retryable === false &&
+        err.options.details?.cooperative === false,
+    );
+  });
+
+  it('timeout + late throw (ignore signal) is non-cooperative', async () => {
+    const mockRegistry = {
+      get: () => ({
+        execute: async () => {
+          await new Promise((r) => setTimeout(r, 40));
+          throw new Error('side-effect-failed');
+        },
+      }),
+    };
+    const executor = new ToolStepExecutor(mockRegistry);
+    const step = createMockStep({ input: { toolName: 'late-throw', args: {}, timeoutMs: 20 } });
+    await assert.rejects(
+      () => executor.execute(step, { signal: ac.signal, worker: createMockWorker() }),
+      (err: WorkerExecutionError) =>
+        err.options.code === 'TIMEOUT' &&
+        err.options.retryable === false &&
+        err.options.details?.cooperative === false,
+    );
+  });
+
   it('parent abort of cooperative tool remains retryable', async () => {
     const parent = new AbortController();
     let sawAbort = false;
@@ -517,7 +568,7 @@ describe('ToolStepExecutor', () => {
               'abort',
               () => {
                 sawAbort = true;
-                reject(new Error('aborted'));
+                reject(ctx.signal.reason ?? new DOMException('Aborted', 'AbortError'));
               },
               { once: true },
             );
