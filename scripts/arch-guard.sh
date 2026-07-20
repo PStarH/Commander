@@ -12,13 +12,17 @@ const root = path.resolve(process.env.ROOT_DIR);
 const failures = [];
 const skipDirectories = new Set(['node_modules', 'dist', '.git', '.turbo', 'coverage']);
 const forbiddenPackagePattern = /(^|[-_.])(control-plane|orchestration|orchestrator|security)(?=$|[-_.])/i;
-const deletedPackageImportPattern = /^@commander\/(control-plane|orchestration)(?:\/|$)/;
+// WS1 folded packages/operations into packages/kernel/src/ops.
+// Ban resurrecting the ghost plane. L4-B may add deploy unit @commander/adapter-ops
+// later (separate PR / package); do NOT leave a forward-compat @commander/operations hook.
+const deletedPackageImportPattern = /^@commander\/(control-plane|orchestration|operations)(?:\/|$)/;
 
+// Ops on master = packages/kernel/src/ops only. No @commander/operations policy.
+// No @commander/adapter-ops entry until that package exists on the branch base.
 const allowedDependencies = {
   '@commander/contracts': [],
   '@commander/kernel': ['@commander/contracts'],
   '@commander/effect-broker': ['@commander/contracts'],
-  '@commander/operations': ['@commander/kernel', '@commander/contracts'],
   '@commander/worker-plane': [
     '@commander/contracts',
     '@commander/kernel',
@@ -214,7 +218,7 @@ for (const file of sourceFiles) {
     ) {
       failures.push(`Illegal source dependency: ${relativeFile(file)} (${owner} -> ${dependency})`);
     }
-    if (['@commander/kernel', '@commander/effect-broker', '@commander/operations'].includes(owner) && dependency === '@commander/core') {
+    if (['@commander/kernel', '@commander/effect-broker'].includes(owner) && dependency === '@commander/core') {
       failures.push(`V2 implementation package ${owner} imports forbidden @commander/core in ${relativeFile(file)}`);
     }
   }
@@ -224,14 +228,14 @@ for (const file of ['package.json', 'pnpm-lock.yaml']) {
   const absolute = path.join(root, file);
   if (!fs.existsSync(absolute)) continue;
   const source = fs.readFileSync(absolute, 'utf8');
-  if (/@commander\/(control-plane|orchestration)\b/.test(source)) {
+  if (/@commander\/(control-plane|orchestration|operations)\b/.test(source)) {
     failures.push(`${file} references a deleted package`);
   }
 }
 
 for (const info of packageInfo.values()) {
   const source = fs.readFileSync(info.manifestPath, 'utf8');
-  if (/@commander\/(control-plane|orchestration)\b/.test(source)) {
+  if (/@commander\/(control-plane|orchestration|operations)\b/.test(source)) {
     failures.push(`${relativeFile(info.manifestPath)} references a deleted package`);
   }
 }
