@@ -2,6 +2,7 @@ import { reportSilentFailure } from '@commander/core';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { atomicWriteFileSync, readJsonFileSafe } from './atomicWrite';
 
 /**
  * Persistent API key store for the HTTP API layer.
@@ -59,23 +60,15 @@ function ensureDir(): void {
 }
 
 function readRecords(): ApiKeyRecord[] {
-  try {
-    if (!fs.existsSync(KEYS_FILE)) return [];
-    const raw = fs.readFileSync(KEYS_FILE, 'utf-8');
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (err) {
-    reportSilentFailure(err, 'apiKeyStore:readRecords');
-    return [];
-  }
+  // REL-4: 损坏或错形（如 {"keys":[...]}）均隔离，禁止 silent [] → create() 原地抹钥。
+  const parsed = readJsonFileSafe<unknown>(KEYS_FILE, null, Array.isArray);
+  return parsed === null ? [] : (parsed as ApiKeyRecord[]);
 }
 
 function writeRecords(records: ApiKeyRecord[]): void {
   try {
-    ensureDir();
-    const tmp = `${KEYS_FILE}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(records, null, 2), 'utf-8');
-    fs.renameSync(tmp, KEYS_FILE);
+    // REL-3: fsync-then-rename so API key material is never half-written.
+    atomicWriteFileSync(KEYS_FILE, JSON.stringify(records, null, 2));
   } catch (err) {
     reportSilentFailure(err, 'apiKeyStore:writeRecords');
   }

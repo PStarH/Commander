@@ -20,6 +20,7 @@ import * as path from 'path';
 import { z } from 'zod';
 import { toErrorMessage } from './routeHelpers';
 import { validateBody } from './validationMiddleware';
+import { atomicWriteFileSync, readJsonFileSafe, isPlainObjectJson } from './atomicWrite';
 
 const APPROVAL_MODE_FILE = path.join(process.cwd(), '.commander', 'approval-mode.json');
 const AUDIT_LOG_FILE = path.join(process.cwd(), '.commander', 'security-audit.jsonl');
@@ -145,20 +146,23 @@ interface CustomPolicyStore {
 }
 
 function loadCustomPolicies(): CustomPolicyStore {
-  try {
-    const raw = fs.readFileSync(CUSTOM_POLICIES_FILE, 'utf-8');
-    return JSON.parse(raw) as CustomPolicyStore;
-  } catch {
-    return { policies: [], lastUpdated: new Date().toISOString() };
-  }
+  // REL-4: 损坏或错形（非 {policies,lastUpdated} 对象）隔离，禁止 silent empty → wipe。
+  const empty: CustomPolicyStore = { policies: [], lastUpdated: new Date().toISOString() };
+  const parsed = readJsonFileSafe<CustomPolicyStore | null>(
+    CUSTOM_POLICIES_FILE,
+    null,
+    isPlainObjectJson,
+  );
+  if (parsed === null) return empty;
+  return {
+    policies: Array.isArray(parsed.policies) ? parsed.policies : [],
+    lastUpdated: typeof parsed.lastUpdated === 'string' ? parsed.lastUpdated : empty.lastUpdated,
+  };
 }
 
 function saveCustomPolicies(store: CustomPolicyStore): void {
-  const dir = path.dirname(CUSTOM_POLICIES_FILE);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  fs.writeFileSync(CUSTOM_POLICIES_FILE, JSON.stringify(store, null, 2), 'utf-8');
+  // REL-3: atomic write for custom approval policies.
+  atomicWriteFileSync(CUSTOM_POLICIES_FILE, JSON.stringify(store, null, 2));
 }
 
 function getAllPolicies(): ToolPolicy[] {
@@ -170,21 +174,19 @@ function getAllPolicies(): ToolPolicy[] {
 }
 
 function readSandboxMode(): ApprovalMode {
-  try {
-    const raw = fs.readFileSync(APPROVAL_MODE_FILE, 'utf-8');
-    const data = JSON.parse(raw);
-    return (data.mode as ApprovalMode) ?? 'auto-edit';
-  } catch {
-    return 'auto-edit';
-  }
+  // REL-4: 损坏或错形隔离，禁止 silent default → 下次写入抹掉审批模式。
+  const data = readJsonFileSafe<{ mode?: ApprovalMode } | null>(
+    APPROVAL_MODE_FILE,
+    null,
+    isPlainObjectJson,
+  );
+  if (data === null) return 'auto-edit';
+  return data.mode ?? 'auto-edit';
 }
 
 function writeSandboxMode(mode: ApprovalMode): void {
-  const dir = path.dirname(APPROVAL_MODE_FILE);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  fs.writeFileSync(APPROVAL_MODE_FILE, JSON.stringify({ mode }, null, 2), 'utf-8');
+  // REL-3: atomic write for approval mode.
+  atomicWriteFileSync(APPROVAL_MODE_FILE, JSON.stringify({ mode }, null, 2));
 }
 
 // ── Audit log reading ───────────────────────────────────────────────────

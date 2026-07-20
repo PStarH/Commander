@@ -29,6 +29,7 @@ import * as path from 'path';
 import { z } from 'zod';
 import { toErrorMessage } from './routeHelpers';
 import { validateBody } from './validationMiddleware';
+import { atomicWriteFileSync, readJsonFileSafe, isPlainObjectJson } from './atomicWrite';
 
 // ── 常量 ───────────────────────────────────────────────────────────────────
 
@@ -143,18 +144,13 @@ interface ResolvedProvider {
 
 /** 读取 .commander.json，文件不存在时返回空对象。 */
 async function readCommanderConfig(): Promise<Record<string, unknown>> {
-  try {
-    const raw = await fsp.readFile(COMMANDER_CONFIG_FILE, 'utf-8');
-    try {
-      return JSON.parse(raw) as Record<string, unknown>;
-    } catch (err) {
-      reportSilentFailure(err, 'onboardingEndpoints:readCommanderConfig:parse');
-      return {};
-    }
-  } catch (err) {
-    reportSilentFailure(err, 'onboardingEndpoints:readCommanderConfig:read');
-    return {};
-  }
+  // REL-4: 损坏或错形隔离，禁止 silent {} → writeCommanderConfig 合并写入抹掉配置。
+  const parsed = readJsonFileSafe<Record<string, unknown> | null>(
+    COMMANDER_CONFIG_FILE,
+    null,
+    isPlainObjectJson,
+  );
+  return parsed ?? {};
 }
 
 /** 合并写入 .commander.json（保留既有字段）。 */
@@ -166,7 +162,7 @@ async function writeCommanderConfig(updates: Record<string, unknown>): Promise<v
   if (!fsSync.existsSync(dir)) {
     await fsp.mkdir(dir, { recursive: true });
   }
-  await fsp.writeFile(COMMANDER_CONFIG_FILE, JSON.stringify(merged, null, 2), 'utf-8');
+  atomicWriteFileSync(COMMANDER_CONFIG_FILE, JSON.stringify(merged, null, 2));
 }
 
 /**
@@ -259,17 +255,19 @@ async function dirHasContent(dir: string): Promise<boolean> {
 
 /** 读取 onboarding-complete.json，返回已完成的步骤列表。 */
 async function readCompletedSteps(): Promise<{ steps: string[]; isComplete: boolean }> {
-  try {
-    const raw = await fsp.readFile(ONBOARDING_COMPLETE_FILE, 'utf-8');
-    const data = JSON.parse(raw) as { completedAt?: string; userId?: string; steps?: string[] };
-    return {
-      steps: Array.isArray(data.steps) ? data.steps.map(String) : [],
-      isComplete: Boolean(data.completedAt),
-    };
-  } catch (err) {
-    reportSilentFailure(err, 'onboardingEndpoints:readCompletedSteps');
+  // REL-4: 损坏或错形隔离，禁止 silent empty → 下次写入抹掉 onboarding 状态。
+  const data = readJsonFileSafe<{ completedAt?: string; userId?: string; steps?: string[] } | null>(
+    ONBOARDING_COMPLETE_FILE,
+    null,
+    isPlainObjectJson,
+  );
+  if (data === null) {
     return { steps: [], isComplete: false };
   }
+  return {
+    steps: Array.isArray(data.steps) ? data.steps.map(String) : [],
+    isComplete: Boolean(data.completedAt),
+  };
 }
 
 // ── Provider 连通性测试 ────────────────────────────────────────────────────
@@ -755,7 +753,7 @@ export function createOnboardingRouter(): Router {
         if (!fsSync.existsSync(COMMANDER_DIR)) {
           await fsp.mkdir(COMMANDER_DIR, { recursive: true });
         }
-        await fsp.writeFile(ONBOARDING_COMPLETE_FILE, JSON.stringify(payload, null, 2), 'utf-8');
+        atomicWriteFileSync(ONBOARDING_COMPLETE_FILE, JSON.stringify(payload, null, 2));
         res.json({ success: true, completedAt: payload.completedAt });
       } catch (error) {
         res.status(500).json({ error: toErrorMessage(error) });

@@ -90,4 +90,65 @@ describe('claim honesty', () => {
       'non-atomic fs.writeFileSync was fixed 2026-07-20; do not reintroduce',
     );
   });
+
+  it('security-sensitive Gateway JSON stores use atomicWrite + readJsonFileSafe (REL-3/REL-4)', () => {
+    const arrayStores = [
+      'apps/api/src/userStore.ts',
+      'apps/api/src/apiKeyStore.ts',
+      'apps/api/src/webhookEndpoints.ts',
+      'apps/api/src/workflowEndpoints.ts',
+      'apps/api/src/actionRationale.ts',
+    ];
+    const objectStores = [
+      'apps/api/src/settingsStore.ts',
+      'apps/api/src/oidcAuthEndpoints.ts',
+      'apps/api/src/approvalConfigEndpoints.ts',
+      'apps/api/src/onboardingEndpoints.ts',
+    ];
+    const files = [...arrayStores, ...objectStores, 'apps/api/src/refreshTokenStore.ts'];
+    for (const rel of files) {
+      const p = join(ROOT, rel);
+      assert.ok(existsSync(p), `${rel} must exist`);
+      const body = readFileSync(p, 'utf8');
+      assert.match(body, /atomicWriteFileSync/, `${rel} must use atomicWriteFileSync`);
+      assert.match(
+        body,
+        /readJsonFileSafe/,
+        `${rel} must use readJsonFileSafe (corrupt-load must not silent-[] then wipe)`,
+      );
+      assert.doesNotMatch(
+        body,
+        /fs\.writeFileSync\s*\(/,
+        `${rel} must not use non-atomic fs.writeFileSync`,
+      );
+    }
+    for (const rel of arrayStores) {
+      const body = readFileSync(join(ROOT, rel), 'utf8');
+      assert.match(
+        body,
+        /readJsonFileSafe\s*<[^>]*>\s*\([^)]*Array\.isArray/,
+        `${rel} must pass Array.isArray shape guard (wrong-shape must quarantine)`,
+      );
+    }
+    for (const rel of objectStores) {
+      const body = readFileSync(join(ROOT, rel), 'utf8');
+      assert.match(
+        body,
+        /isPlainObjectJson/,
+        `${rel} must use isPlainObjectJson shape guard (wrong-shape must quarantine)`,
+      );
+    }
+    const refreshBody = readFileSync(join(ROOT, 'apps/api/src/refreshTokenStore.ts'), 'utf8');
+    assert.match(
+      refreshBody,
+      /isRefreshStoreShape|isSignedEnvelope/,
+      'refreshTokenStore must validate signed-or-array top-level shape',
+    );
+    const helper = readFileSync(join(ROOT, 'apps/api/src/atomicWrite.ts'), 'utf8');
+    assert.match(
+      helper,
+      /isExpectedShape/,
+      'readJsonFileSafe must support shape quarantine after parse OK',
+    );
+  });
 });
