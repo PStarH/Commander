@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { resetControlPlane } from '@commander/core';
+import { getGlobalLogger, getGlobalMetrics, resetControlPlane } from '@commander/core';
 import { InMemoryWorkerRegistry } from './registry.js';
 import { WorkerService } from './workerService.js';
 import { WorkerExecutionError } from './types.js';
@@ -676,7 +676,10 @@ describe('worker plane', () => {
     kernel.addRun('run-struct', 'tenant-a', [{ id: 'agent-step', kind: 'agent' }]);
     class StructuralExecutorError extends Error {
       readonly options: { code?: string; retryable?: boolean; retryDelayMs?: number };
-      constructor(message: string, options: { code?: string; retryable?: boolean; retryDelayMs?: number }) {
+      constructor(
+        message: string,
+        options: { code?: string; retryable?: boolean; retryDelayMs?: number },
+      ) {
         super(message);
         this.name = 'KernelStepExecutorError';
         this.options = options;
@@ -717,6 +720,14 @@ describe('worker plane', () => {
       return original(request);
     };
     kernel.addRun('run-resilient', 'tenant-a', [{ id: 'step-ok', kind: 'agent' }]);
+    const logged: Array<{ level: string; message: string }> = [];
+    const onLog = (entry: { component: string; level: string; message: string }) => {
+      if (entry.component === 'WorkerService' && entry.message.includes('claim loop swallowed')) {
+        logged.push({ level: entry.level, message: entry.message });
+      }
+    };
+    getGlobalLogger().onLog(onLog);
+    const before = getGlobalMetrics().getLatest('worker.claim_loop.errors');
     const service = new WorkerService(
       definition,
       identity,
@@ -733,7 +744,15 @@ describe('worker plane', () => {
     await service.waitForIdle();
     ac.abort();
     await running;
+    getGlobalLogger().offLog(onLog);
     assert.equal(kernel.getRun('run-resilient')?.state, 'SUCCEEDED');
+    assert.ok(logged.length >= 1, 'claim-loop swallow must emit error-level log');
+    assert.equal(logged[0]?.level, 'error');
+    const after = getGlobalMetrics().getLatest('worker.claim_loop.errors');
+    assert.ok(after, 'claim-loop swallow must increment worker.claim_loop.errors');
+    assert.ok(
+      !before || after.timestamp >= before.timestamp,
+      'metric point must be recorded for swallowed claim error',
+    );
   });
-
 });
