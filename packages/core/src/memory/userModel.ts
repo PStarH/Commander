@@ -21,7 +21,7 @@
 
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
-import { mkdir, readFile, writeFile, access, unlink } from 'fs/promises';
+import { mkdir, readFile, writeFile, unlink } from 'fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 import { getCurrentTenantId } from '../runtime/tenantContext';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
@@ -178,19 +178,15 @@ export class UserModelManager {
    */
   async loadProfile(userId: string): Promise<UserProfile | null> {
     const filePath = this.getModelPath(userId);
-    try {
-      await access(filePath);
-    } catch (err) {
-      reportSilentFailure(err, 'userModel:181');
-      return null;
-    }
-
+    // Single read (no prior access/stat) — avoids TOCTOU races flagged by CodeQL.
     try {
       const data = JSON.parse(await readFile(filePath, 'utf-8'));
       const profile = this.deserializeProfile(data);
       this.models.set(userId, profile);
       return profile;
     } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code === 'ENOENT') return null;
       getGlobalLogger().warn('UserModel', 'Failed to load profile', { userId, error: String(err) });
       return null;
     }

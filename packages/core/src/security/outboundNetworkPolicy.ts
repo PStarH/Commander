@@ -302,16 +302,24 @@ export class OutboundNetworkPolicy {
       err.name = 'OutboundNetworkPolicyError';
       throw err;
     }
+    // Rebuild from validated parse so request URL is not the raw user string (CodeQL).
+    const validated = new URL(input);
+    if (validated.protocol !== 'http:' && validated.protocol !== 'https:') {
+      const err = new Error('OUTBOUND_BLOCKED: unsupported protocol');
+      err.name = 'OutboundNetworkPolicyError';
+      throw err;
+    }
+    const safeHref = validated.href;
     const address =
       result.addresses?.[0] ??
       (/^\d{1,3}(\.\d{1,3}){3}$/.test(result.domain) || result.domain.includes(':')
         ? result.domain
         : undefined);
     if (address) {
-      return pinnedHttpFetch(input, address, init);
+      return pinnedHttpFetch(safeHref, address, init);
     }
     const fetchFn = this.originalFetch ?? globalThis.fetch;
-    return fetchFn.call(globalThis, input, init);
+    return fetchFn.call(globalThis, safeHref, init);
   }
 
   private async resolveAddresses(url: string, domain: string): Promise<OutboundCheckResult> {
