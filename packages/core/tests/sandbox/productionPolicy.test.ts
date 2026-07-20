@@ -12,10 +12,7 @@ import {
 } from '../../src/sandbox/productionPolicy';
 
 /** Minimal fixture tree for assertProductionSandboxSource. */
-function writeSandboxSourceFixture(
-  root: string,
-  options: { executionRouterBody: string },
-): void {
+function writeSandboxSourceFixture(root: string, options: { executionRouterBody: string }): void {
   const files: Record<string, string> = {
     'packages/core/src/sandbox/productionPolicy.ts':
       'export function assertProductionSandboxReady() {}\n',
@@ -99,6 +96,20 @@ describe('production sandbox policy', () => {
     );
   });
 
+  it('rejects SCRIPT_VM_SOFT in production (align with plugin soft)', () => {
+    assert.throws(
+      () => resolveSandboxPolicy({ NODE_ENV: 'production', COMMANDER_SCRIPT_VM_SOFT: '1' }),
+      /SCRIPT_VM_SOFT/,
+    );
+  });
+
+  it('rejects ALLOW_EXEC_SCRIPT in production (align with soft bans)', () => {
+    assert.throws(
+      () => resolveSandboxPolicy({ NODE_ENV: 'production', COMMANDER_ALLOW_EXEC_SCRIPT: '1' }),
+      /ALLOW_EXEC_SCRIPT/,
+    );
+  });
+
   it('rejects a production policy with no selected backend', () => {
     const policy = resolveSandboxPolicy({ NODE_ENV: 'production' });
     assert.throws(
@@ -154,9 +165,6 @@ describe('production sandbox policy', () => {
         }
       `,
     });
-    assert.throws(
-      () => assertProductionSandboxSource(root),
-      /host-exec|SSH|Docker|forbidden/i,
-    );
+    assert.throws(() => assertProductionSandboxSource(root), /host-exec|SSH|Docker|forbidden/i);
   });
 });
