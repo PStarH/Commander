@@ -3,6 +3,8 @@ import type { ExecutionBackend, SandboxExecutionResult, SandboxWorkloadContext }
 import { getSandboxManager } from '../manager';
 import { getGlobalSandboxScheduler } from '../scheduler';
 import { getGlobalLogger } from '../../logging';
+import { getSecurityAuditLogger } from '../../security/securityAuditLogger';
+import { getExecPolicyEngine } from '../execPolicy';
 
 /** Shell metacharacters that enable command injection — blocks fallback execSync. */
 export const SHELL_UNSAFE_RE = /[;&|`$(){}[\]!#~<>*\n\t'"\\\x00-\x1f]/;
@@ -64,6 +66,27 @@ export class LocalBackend implements ExecutionBackend {
   ): Promise<SandboxExecutionResult> {
     const start = Date.now();
     const sandbox = getSandboxManager();
+
+    // ExecPolicy gate: mirror SSHBackend — prompt/forbidden both deny so
+    // extract-miss paths (e.g. code.testCommand → execSandboxed → Local) cannot
+    // run ungated shell. Interactive approval is not available on this hot path.
+    const policyResult = getExecPolicyEngine().evaluate(command);
+    if (policyResult.decision === 'forbidden' || policyResult.decision === 'prompt') {
+      const reason =
+        policyResult.rule?.justification ?? `ExecPolicy decision=${policyResult.decision}`;
+      getSecurityAuditLogger().logExecPolicyForbidden('LocalBackend', reason, {
+        decision: policyResult.decision,
+        ruleId: policyResult.rule?.id,
+        matchedPattern: policyResult.matchedPattern,
+      });
+      return {
+        stdout: '',
+        stderr: `Rejected by ExecPolicy (${policyResult.decision}): ${reason}`,
+        exitCode: 1,
+        durationMs: Date.now() - start,
+        sandboxMechanism: 'none',
+      };
+    }
 
     // Integrate with HybridSandboxScheduler for deadlock detection and
     // resource tracking. This connects the execution hot path to the
