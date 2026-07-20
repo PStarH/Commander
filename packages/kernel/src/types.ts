@@ -165,6 +165,13 @@ export interface FailStepRequest {
   expectedVersion: number;
   actor: string;
   retryAt?: Date;
+  /**
+   * Refund the claim attempt before the retry/fail decision.
+   * Use when the worker never started execution (e.g. stop-during-claim):
+   * claim already did attempt++, and without a refund default maxAttempts=1
+   * would terminal-FAIL even with retryable+retryAt.
+   */
+  refundAttempt?: boolean;
 }
 
 export interface AdmitEffectRequest {

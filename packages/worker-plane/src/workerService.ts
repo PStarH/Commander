@@ -37,7 +37,9 @@ function isSandboxUnavailable(error: unknown): boolean {
  * all work is leased from the shared kernel and all lifecycle writes return to it.
  */
 export class WorkerService {
-  private readonly config: Required<Omit<WorkerServiceConfig, 'sandboxReadiness' | 'onRegistered'>> &
+  private readonly config: Required<
+    Omit<WorkerServiceConfig, 'sandboxReadiness' | 'onRegistered'>
+  > &
     Pick<WorkerServiceConfig, 'sandboxReadiness' | 'onRegistered'>;
   private worker: WorkerRecord | null = null;
   private authorization: WorkerAuthorization | null = null;
@@ -119,12 +121,9 @@ export class WorkerService {
       this.claimInflight--;
     }
     if (!step) return false;
-    // stop() raced the claim: release the step back to the kernel so another worker can pick it up.
-    // Kernel only requeues when retryable AND retryAt are set; without retryAt the step
-    // becomes terminal FAILED (and burns the claim attempt).
-    // Final-attempt burn: claim already did attempt++. If attempt >= maxAttempts, the kernel
-    // still finishes terminal FAILED even with retryAt — WORKER_STOPPED on the last lease can
-    // burn that attempt (existing kernel contract; not waived here).
+    // stop() raced the claim: release the step back without burning the claim attempt.
+    // claimNextStep already did attempt++; default maxAttempts=1 would otherwise terminal-FAIL
+    // even with retryable+retryAt. refundAttempt restores pre-claim attempt so requeue works.
     if (!this.running) {
       await this.kernel.failStep({
         stepId: step.id,
@@ -137,6 +136,7 @@ export class WorkerService {
           retryable: true,
         },
         retryAt: new Date(),
+        refundAttempt: true,
         actor: this.worker.id,
       });
       return false;

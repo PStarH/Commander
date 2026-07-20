@@ -41,7 +41,12 @@ class FakeKernel implements KernelWorkerPort {
   addRun(
     id: string,
     tenantId: string,
-    definitions: Array<{ id: string; kind: string; input?: Record<string, unknown> }>,
+    definitions: Array<{
+      id: string;
+      kind: string;
+      input?: Record<string, unknown>;
+      maxAttempts?: number;
+    }>,
   ): void {
     this.runs.set(id, { tenantId, state: 'PENDING' });
     for (const definition of definitions)
@@ -53,7 +58,8 @@ class FakeKernel implements KernelWorkerPort {
         attempt: 0,
         input: definition.input ?? {},
         state: 'PENDING',
-        maxAttempts: 2,
+        // Default matches production (maxAttempts ?? 1). Callers that need retries set explicitly.
+        maxAttempts: definition.maxAttempts ?? 1,
         lease: { workerId: '', token: '', fencingEpoch: 0, expiresAt: '' },
       });
   }
@@ -128,6 +134,7 @@ class FakeKernel implements KernelWorkerPort {
     expectedVersion: number;
     error: { retryable: boolean; code?: string };
     retryAt?: Date;
+    refundAttempt?: boolean;
   }): Promise<unknown | null> {
     const step = this.steps.find((candidate) => candidate.id === request.stepId);
     if (
@@ -140,20 +147,21 @@ class FakeKernel implements KernelWorkerPort {
     this.lastFailureCode = request.error.code;
     this.lastFailureRetryable = request.error.retryable;
     this.lastFailureRetryAt = request.retryAt;
-    // Match production kernel: retryable requeue requires both retryable and retryAt.
-    // Without retryAt the real kernel finishes as FAILED (not PENDING).
-    if (request.error.retryable && request.retryAt) {
-      step.state = 'RETRY_WAIT';
-    } else {
-      step.state = 'FAILED';
-    }
+    // Match production kernel: refundAttempt first, then retryable && retryAt && attempt < maxAttempts.
+    if (request.refundAttempt && step.attempt > 0) step.attempt -= 1;
+    const retry =
+      Boolean(request.error.retryable) &&
+      Boolean(request.retryAt) &&
+      step.attempt < step.maxAttempts;
+    step.state = retry ? 'RETRY_WAIT' : 'FAILED';
     return {};
   }
   getRun(id: string): { state: string } | undefined {
     return this.runs.get(id);
   }
-  getStep(id: string): { state: string } | undefined {
-    return this.steps.find((step) => step.id === id);
+  getStep(id: string): { state: string; attempt?: number } | undefined {
+    const step = this.steps.find((candidate) => candidate.id === id);
+    return step ? { state: step.state, attempt: step.attempt } : undefined;
   }
 }
 
@@ -250,7 +258,7 @@ describe('worker plane', () => {
 
   it('rejects unapproved capability declarations and preserves executor retry intent', async () => {
     const kernel = new FakeKernel();
-    kernel.addRun('run-a', 'tenant-a', [{ id: 'agent-step', kind: 'agent' }]);
+    kernel.addRun('run-a', 'tenant-a', [{ id: 'agent-step', kind: 'agent', maxAttempts: 2 }]);
     const denied = new WorkerService(
       { ...definition, capabilities: ['agent', 'tool'] },
       identity,
@@ -412,7 +420,8 @@ describe('worker plane', () => {
   it('returns claimed step without executing when stop races claim', async () => {
     const kernel = new FakeKernel();
     kernel.claimDelayMs = 50;
-    kernel.addRun('run-stop', 'tenant-a', [{ id: 'stop-step', kind: 'agent' }]);
+    // Production default maxAttempts=1: without refundAttempt this would terminal-FAIL after claim++.
+    kernel.addRun('run-stop', 'tenant-a', [{ id: 'stop-step', kind: 'agent', maxAttempts: 1 }]);
     let executed = false;
     const service = new WorkerService(
       definition,
@@ -437,6 +446,11 @@ describe('worker plane', () => {
     assert.equal(kernel.lastFailureCode, 'WORKER_STOPPED');
     assert.ok(kernel.lastFailureRetryAt instanceof Date, 'retryAt required for kernel requeue');
     assert.equal(kernel.getStep('stop-step')?.state, 'RETRY_WAIT');
+    assert.equal(
+      kernel.getStep('stop-step')?.attempt,
+      0,
+      'stop-during-claim must refund the claim attempt',
+    );
   });
 
   it('aborts in-flight step controllers when stop() is called', async () => {

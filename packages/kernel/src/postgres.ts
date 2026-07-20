@@ -419,21 +419,23 @@ export class PostgresKernelRepository implements KernelRepository {
 
   async failStep(request: FailStepRequest): Promise<KernelStep | null> {
     return this.withTransaction(async (client) => {
+      // refundAttempt: evaluate retry against post-refund attempt (claim already did attempt++).
       const result = await client.query<DbStep>(
         `UPDATE commander_steps SET
-           state=CASE WHEN $1::boolean AND attempt < max_attempts THEN 'RETRY_WAIT' ELSE 'FAILED' END,
+           attempt=CASE WHEN $11::boolean THEN GREATEST(0, attempt - 1) ELSE attempt END,
+           state=CASE WHEN $1::boolean AND (CASE WHEN $11::boolean THEN GREATEST(0, attempt - 1) ELSE attempt END) < max_attempts THEN 'RETRY_WAIT' ELSE 'FAILED' END,
            error=$2::jsonb,
-           scheduled_at=CASE WHEN $1::boolean AND attempt < max_attempts THEN $3 ELSE scheduled_at END,
+           scheduled_at=CASE WHEN $1::boolean AND (CASE WHEN $11::boolean THEN GREATEST(0, attempt - 1) ELSE attempt END) < max_attempts THEN $3 ELSE scheduled_at END,
            version=version+1, updated_at=now(), lease_worker_id=NULL, lease_token=NULL, lease_expires_at=NULL
          WHERE id=$4 AND tenant_id=$5 AND state='RUNNING' AND version=$6 AND lease_worker_id=$7 AND lease_worker_generation=$8 AND lease_token=$9 AND fencing_epoch=$10 AND lease_expires_at > now()
            AND EXISTS (SELECT 1 FROM commander_workers w WHERE w.id=$7 AND w.generation=$8)
          RETURNING *`,
-        [request.error.retryable && Boolean(request.retryAt), json(request.error), request.retryAt?.toISOString() ?? null, request.stepId, request.tenantId, request.expectedVersion, request.lease.workerId, request.lease.workerGeneration ?? -1, request.lease.token, request.lease.fencingEpoch]);
+        [request.error.retryable && Boolean(request.retryAt), json(request.error), request.retryAt?.toISOString() ?? null, request.stepId, request.tenantId, request.expectedVersion, request.lease.workerId, request.lease.workerGeneration ?? -1, request.lease.token, request.lease.fencingEpoch, Boolean(request.refundAttempt)]);
       if (!result.rows[0]) return null;
       const step = fromStep(result.rows[0]);
       assertStepTransition('RUNNING', step.state);
       await this.releaseTenantSlot(client, step.tenantId);
-      await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: step.state === 'RETRY_WAIT' ? 'step.retry_scheduled' : 'step.failed', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor: request.actor, payload: { error: request.error } });
+      await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: step.state === 'RETRY_WAIT' ? 'step.retry_scheduled' : 'step.failed', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor: request.actor, payload: { error: request.error, refundAttempt: Boolean(request.refundAttempt) } });
       // Broker-external fail must park ADMITTED effects (same as lease reclaim).
       await this.parkOrphanAdmittedEffects(client, step, 'step_failed', request.actor);
       if (step.state === 'FAILED') {
