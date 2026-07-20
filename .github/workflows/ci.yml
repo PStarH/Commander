@@ -512,6 +512,7 @@ jobs:
         run: |
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/plugin-sdk build
+          pnpm --filter @commander/effect-broker build
           pnpm --filter @commander/kernel build
           pnpm --filter @commander/action-adapters build
 
@@ -538,7 +539,7 @@ jobs:
         run: pnpm cell:compensation-e2e -- --mode compose --up
 
       - name: Upload cell up-assert artifacts
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: l4-b-cell-up-assert
@@ -554,7 +555,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload image boot smoke artifacts
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: l4-b-image-boot-smoke
