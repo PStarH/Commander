@@ -132,11 +132,12 @@ export class InMemoryKernelRepository implements KernelRepository {
       [...this.steps.values()].filter((other) => other.tenantId === step.tenantId && other.state === 'RUNNING').length <
         (this.tenantLimits.get(step.tenantId) ?? Number.MAX_SAFE_INTEGER),
     ).sort((a, b) => {
-      // Aging: boost priority by +1 per minute of waiting, capped at 1000
+      // Aging: boost priority by +1 per minute of waiting, capped at 1000.
+      // Must be min() — max(..., 1000) collapses every step to ≥1000 and kills priority.
       const ageA = Math.floor((at.getTime() - Date.parse(a.scheduledAt)) / 60_000);
       const ageB = Math.floor((at.getTime() - Date.parse(b.scheduledAt)) / 60_000);
-      const boostedA = Math.max(a.priority + ageA, 1000);
-      const boostedB = Math.max(b.priority + ageB, 1000);
+      const boostedA = Math.min(a.priority + ageA, 1000);
+      const boostedB = Math.min(b.priority + ageB, 1000);
       // Sort by: fewest running steps for tenant → boosted priority → earliest scheduled
       const runningA = [...this.steps.values()].filter((s) => s.tenantId === a.tenantId && s.state === 'RUNNING').length;
       const runningB = [...this.steps.values()].filter((s) => s.tenantId === b.tenantId && s.state === 'RUNNING').length;
@@ -172,19 +173,7 @@ export class InMemoryKernelRepository implements KernelRepository {
       this.event('step', step.id, step.version, retryable ? 'step.lease_expired_requeued' : 'step.lease_expired_failed', step.tenantId, step.runId, step.id, 'kernel.recovery', { attempt: step.attempt });
       this.parkOrphanAdmittedEffects(step, 'lease_expired', 'kernel.recovery');
       if (!retryable) {
-        const completedEffects = [...this.effects.values()].filter(
-          (effect) => effect.runId === step.runId && effect.tenantId === step.tenantId && effect.state === 'COMPLETED',
-        );
-        if (completedEffects.length > 0) {
-          const run = this.runs.get(step.runId)!;
-          assertRunTransition(run.state, 'COMPENSATING');
-          run.state = 'COMPENSATING'; run.version++; run.updatedAt = at.toISOString();
-          this.event('run', run.id, run.version, 'run.compensating', run.tenantId, run.id, step.id, 'kernel.recovery', { fencingEpoch });
-          const compensationKey = `${run.tenantId}/${run.id}/${fencingEpoch}`;
-          this.event('effect', `compensation:${compensationKey}`, 1, 'kernel.compensation.requested', run.tenantId, run.id, step.id, 'kernel.recovery', {
-            effectIds: completedEffects.map((effect) => effect.id), fencingEpoch,
-          }, compensationKey);
-        } else {
+        if (!this.requestCompensationIfNeeded(step, fencingEpoch, 'kernel.recovery', at)) {
           this.finish(step.runId, 'kernel.recovery');
         }
       }
@@ -205,10 +194,18 @@ export class InMemoryKernelRepository implements KernelRepository {
     const retry = request.error.retryable && Boolean(request.retryAt) && step.attempt < step.maxAttempts;
     const nextState = retry ? 'RETRY_WAIT' : 'FAILED';
     assertStepTransition(step.state, nextState);
+    const fencingEpoch = step.lease?.fencingEpoch ?? this.lastFencingEpoch.get(step.id) ?? 0;
+    if (step.lease) this.lastFencingEpoch.set(step.id, step.lease.fencingEpoch);
     step.state = nextState; step.error = request.error; step.scheduledAt = request.retryAt?.toISOString() ?? step.scheduledAt; step.version++; step.lease = undefined; step.updatedAt = now();
     this.event('step', step.id, step.version, retry ? 'step.retry_scheduled' : 'step.failed', step.tenantId, step.runId, step.id, request.actor, { error: request.error });
     this.parkOrphanAdmittedEffects(step, 'step_failed', request.actor);
-    if (!retry) this.finish(step.runId, request.actor); return clone(step);
+    if (!retry) {
+      // Terminal fail with completed effects must compensate (parity with reclaim).
+      if (!this.requestCompensationIfNeeded(step, fencingEpoch, request.actor)) {
+        this.finish(step.runId, request.actor);
+      }
+    }
+    return clone(step);
   }
   async wakeRetryStep(stepId: string, tenantId: string, actor: string): Promise<KernelStep | null> {
     const step = this.steps.get(stepId); if (!step || step.tenantId !== tenantId || step.state !== 'RETRY_WAIT') return null;
@@ -219,10 +216,15 @@ export class InMemoryKernelRepository implements KernelRepository {
     const step = this.steps.get(stepId); if (!step || step.tenantId !== tenantId || ['SUCCEEDED', 'FAILED', 'CANCELLED', 'SKIPPED'].includes(step.state)) return null;
     const wasRunning = step.state === 'RUNNING';
     assertStepTransition(step.state, 'FAILED');
+    const fencingEpoch = step.lease?.fencingEpoch ?? this.lastFencingEpoch.get(step.id) ?? 0;
+    if (step.lease) this.lastFencingEpoch.set(step.id, step.lease.fencingEpoch);
     step.state = 'FAILED'; step.error = error; step.version++; step.lease = undefined; step.updatedAt = now();
     this.event('step', step.id, step.version, 'step.failed', step.tenantId, step.runId, step.id, actor, { error });
     if (wasRunning) this.parkOrphanAdmittedEffects(step, 'step_failed', actor);
-    this.finish(step.runId, actor); return clone(step);
+    if (!this.requestCompensationIfNeeded(step, fencingEpoch, actor)) {
+      this.finish(step.runId, actor);
+    }
+    return clone(step);
   }
   async pauseRun(runId: string, tenantId: string, actor: string): Promise<KernelRun | null> {
     const run = this.runs.get(runId); if (!run || run.tenantId !== tenantId || !['PENDING', 'RUNNING'].includes(run.state)) return null;
@@ -237,6 +239,7 @@ export class InMemoryKernelRepository implements KernelRepository {
       if (step.runId === runId && step.tenantId === tenantId && step.state === 'RUNNING') {
         if (step.lease) this.lastFencingEpoch.set(step.id, step.lease.fencingEpoch);
         step.state = 'RETRY_WAIT'; step.version++; step.lease = undefined; step.updatedAt = run.updatedAt;
+        this.parkOrphanAdmittedEffects(step, 'run_paused', actor);
         this.event('step', step.id, step.version, 'step.paused', step.tenantId, step.runId, step.id, actor, { previousState: 'RUNNING' });
       }
     }
@@ -293,6 +296,7 @@ export class InMemoryKernelRepository implements KernelRepository {
       step.lease = undefined;
       step.updatedAt = pausedAt;
       step.scheduledAt = pausedAt;
+      this.parkOrphanAdmittedEffects(step, 'tenant_paused', actor);
       this.event('step', step.id, step.version, 'step.tenant_paused', tenantId, step.runId, step.id, actor, { reason });
     }
     this.event('tenant', tenantId, control.generation, 'tenant.paused', tenantId, `tenant:${tenantId}`, undefined, actor, { reason });
@@ -621,13 +625,68 @@ export class InMemoryKernelRepository implements KernelRepository {
     this.dlq.delete(dlqId);
     return true;
   }
+
+  /**
+   * If the run has COMPLETED effects, move it to COMPENSATING and emit
+   * kernel.compensation.requested. Returns true when compensation was requested
+   * (caller must not finish as FAILED).
+   */
+  private requestCompensationIfNeeded(
+    step: Pick<KernelStep, 'id' | 'tenantId' | 'runId'>,
+    fencingEpoch: number,
+    actor: string,
+    at = new Date(),
+  ): boolean {
+    // 内存实现单线程无竞态；快照仍在进入 COMPENSATING / cancel 之前，对齐 postgres 锁序语义。
+    const run = this.runs.get(step.runId);
+    if (!run) return false;
+    const completedEffects = [...this.effects.values()].filter(
+      (effect) => effect.runId === step.runId && effect.tenantId === step.tenantId && effect.state === 'COMPLETED',
+    );
+    if (completedEffects.length === 0) return false;
+    if (run.state === 'COMPENSATING') {
+      this.cancelOpenStepsForTerminalRun(run.id, run.tenantId, actor, 'run_compensating');
+      return true;
+    }
+    assertRunTransition(run.state, 'COMPENSATING');
+    run.state = 'COMPENSATING'; run.version++; run.updatedAt = at.toISOString();
+    this.event('run', run.id, run.version, 'run.compensating', run.tenantId, run.id, step.id, actor, { fencingEpoch });
+    const compensationKey = `${run.tenantId}/${run.id}/${fencingEpoch}`;
+    this.event('effect', `compensation:${compensationKey}`, 1, 'kernel.compensation.requested', run.tenantId, run.id, step.id, actor, {
+      effectIds: completedEffects.map((effect) => effect.id), fencingEpoch,
+    }, compensationKey);
+    this.cancelOpenStepsForTerminalRun(run.id, run.tenantId, actor, 'run_compensating');
+    return true;
+  }
   private event(aggregateType: KernelEvent['aggregateType'], aggregateId: string, sequence: number, type: string, tenantId: string, runId: string, stepId: string | undefined, actor: string, payload: Record<string, unknown>, outboxKey = runId): void {
     const event: KernelEvent = { eventId: randomUUID(), aggregateType, aggregateId, sequence, type, tenantId, runId, stepId, actor, schemaVersion: 'v2', payload, occurredAt: now() }; this.events.push(event);
     const message: KernelOutboxMessage = { id: randomUUID(), eventId: event.eventId, tenantId, topic: `commander.${type}`, key: outboxKey, payload: { ...payload, eventId: event.eventId, type, runId, stepId: stepId ?? null, tenantId }, attempts: 0, availableAt: event.occurredAt, createdAt: event.occurredAt }; this.outbox.set(message.id, message);
   }
+  private cancelOpenStepsForTerminalRun(runId: string, tenantId: string, actor: string, reason: string): void {
+    for (const step of [...this.steps.values()]) {
+      if (step.runId !== runId || step.tenantId !== tenantId) continue;
+      if (['SUCCEEDED', 'FAILED', 'CANCELLED', 'SKIPPED'].includes(step.state)) continue;
+      const previousState = step.state;
+      assertStepTransition(previousState, 'CANCELLED');
+      if (step.lease) this.lastFencingEpoch.set(step.id, step.lease.fencingEpoch);
+      step.state = 'CANCELLED';
+      step.version++;
+      step.lease = undefined;
+      step.updatedAt = now();
+      step.error = { code: 'RUN_TERMINAL', message: reason, retryable: false };
+      this.parkOrphanAdmittedEffects(step, reason, actor);
+      this.event('step', step.id, step.version, 'step.cancelled', step.tenantId, step.runId, step.id, actor, { reason, previousState });
+    }
+  }
+
   private finish(runId: string, actor: string): void {
     const run = this.runs.get(runId)!; const steps = [...this.steps.values()].filter((step) => step.runId === runId);
-    if (steps.some((step) => step.state === 'FAILED')) { assertRunTransition(run.state, 'FAILED'); run.state = 'FAILED'; run.version++; run.updatedAt = now(); run.terminalAt = run.updatedAt; this.event('run', run.id, run.version, 'run.failed', run.tenantId, run.id, undefined, actor, {}); }
+    if (steps.some((step) => step.state === 'FAILED')) {
+      assertRunTransition(run.state, 'FAILED');
+      this.cancelOpenStepsForTerminalRun(runId, run.tenantId, actor, 'run_failed');
+      run.state = 'FAILED'; run.version++; run.updatedAt = now(); run.terminalAt = run.updatedAt;
+      this.event('run', run.id, run.version, 'run.failed', run.tenantId, run.id, undefined, actor, {});
+    }
     else if (steps.length > 0 && steps.every((step) => ['SUCCEEDED', 'SKIPPED'].includes(step.state))) { assertRunTransition(run.state, 'SUCCEEDED'); run.state = 'SUCCEEDED'; run.version++; run.updatedAt = now(); run.terminalAt = run.updatedAt; this.event('run', run.id, run.version, 'run.succeeded', run.tenantId, run.id, undefined, actor, {}); }
   }
 }

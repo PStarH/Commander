@@ -1,12 +1,13 @@
 /**
  * Kernel-ops compensation consumer loop.
  *
- * Drains / probes the `commander.compensation` outbox on an interval so
- * readiness can prove the consumer is alive — not merely that Postgres answers
- * SELECT 1. When a tick callback is provided (full EffectBroker drain), it is
- * used; otherwise the daemon probes claimability with limit 0 (no side effects)
- * and runs DLQ sweep so poison messages still progress.
+ * Proves the consumer loop is alive for readiness — not merely that Postgres
+ * answers SELECT 1. When `tick` is provided (full EffectBroker drain), mode is
+ * `drain`. When only `probe` is provided (limit-0 claim + DLQ sweep), mode is
+ * `probe` — claimability is proven but outbox messages are NOT drained.
  */
+
+export type CompensationConsumerMode = 'drain' | 'probe';
 
 export interface CompensationConsumerDaemonOptions {
   intervalMs: number;
@@ -27,7 +28,24 @@ export class CompensationConsumerDaemon {
   /** Bumped on each start(); in-flight ticks from prior epochs must not stamp health. */
   private healthEpoch = 0;
 
-  constructor(private readonly options: CompensationConsumerDaemonOptions) {}
+  constructor(private readonly options: CompensationConsumerDaemonOptions) {
+    if (!options.tick && !options.probe) {
+      throw new Error('CompensationConsumerDaemon requires tick or probe');
+    }
+  }
+
+  /**
+   * `drain` when a full EffectBroker tick is wired; `probe` when only limit-0
+   * claimability is checked. Ready≠draining when this returns `probe`.
+   */
+  mode(): CompensationConsumerMode {
+    return this.options.tick ? 'drain' : 'probe';
+  }
+
+  /** True only when mode is drain — never true for probe-only production default. */
+  isDraining(): boolean {
+    return this.mode() === 'drain';
+  }
 
   start(): void {
     if (this.running) return;
