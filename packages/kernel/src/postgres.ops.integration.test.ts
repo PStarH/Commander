@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { Pool } from 'pg';
+import {
+  consumeCompensationBatch,
+  KERNEL_COMPENSATION_TOPIC,
+  LEGACY_COMPENSATION_TOPIC,
+} from './ops/compensationConsumer.js';
 import { runKernelMigrations } from './migrations.js';
 import { KernelOutboxPublisher } from './ops/outbox/kernelOutboxPublisher.js';
 import { PostgresOutboxDeliveryPort } from './ops/outbox/postgresOutboxDeliveryPort.js';
@@ -9,7 +14,7 @@ import { PostgresKernelRepository } from './postgres.js';
 const databaseUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
 
 describe('PostgreSQL kernel ops durability', () => {
-  it('persists tenant pause, reclaim compensation, and WS2 delivery', { skip: !databaseUrl }, async () => {
+  it('persists tenant pause, reclaim compensation via consumer, and WS2 delivery', { skip: !databaseUrl }, async () => {
     if (!databaseUrl) return;
     const pool = new Pool({ connectionString: databaseUrl, max: 8 });
     const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -21,6 +26,10 @@ describe('PostgreSQL kernel ops durability', () => {
     const delivery = new PostgresOutboxDeliveryPort(pool, { baseBackoffMs: 1 });
     try {
       await runKernelMigrations(pool);
+      await pool.query(
+        `DELETE FROM commander_outbox WHERE topic = ANY($1::text[])`,
+        [[KERNEL_COMPENSATION_TOPIC, LEGACY_COMPENSATION_TOPIC]],
+      );
       await pool.query(
         `INSERT INTO commander_workers
            (id,kind,version,capabilities,max_concurrency,status,generation,identity_subject,tenant_ids)
@@ -76,13 +85,77 @@ describe('PostgreSQL kernel ops durability', () => {
 
       await new KernelOutboxPublisher(repo, delivery).publish(100);
       const deliveries = await delivery.claim('ws2', 100);
-      const compensation = deliveries.find(
-        (message) => message.topic === 'commander.kernel.compensation.requested',
+      const compensationInWs2 = deliveries.filter(
+        (message) => message.topic === KERNEL_COMPENSATION_TOPIC,
       );
-      assert.ok(compensation);
-      assert.equal(compensation.tenantId, tenantC);
-      assert.equal(await delivery.acknowledge(compensation.deliveryId, 'stale'), false);
-      assert.equal(await delivery.acknowledge(compensation.deliveryId, compensation.claimToken), true);
+      assert.equal(
+        compensationInWs2.length,
+        0,
+        'kernel-ops publisher must not deliver compensation topics on WS2',
+      );
+
+      const pendingComp = await pool.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM commander_outbox
+         WHERE tenant_id=$1 AND topic=$2 AND published_at IS NULL`,
+        [tenantC, KERNEL_COMPENSATION_TOPIC],
+      );
+      const pendingCount = Number(pendingComp.rows[0]?.count ?? 0);
+      assert.equal(pendingCount, 1);
+
+      await pool.query(
+        `DELETE FROM commander_outbox
+         WHERE topic = ANY($1::text[]) AND tenant_id <> $2`,
+        [[KERNEL_COMPENSATION_TOPIC, LEGACY_COMPENSATION_TOPIC], tenantC],
+      );
+
+      let compensated = 0;
+      const consumeResult = await consumeCompensationBatch(
+        repo,
+        {
+          admit: async (input) => {
+            const cmpAdmit = await repo.admitEffect({
+              id: input.effectId,
+              runId: stepC.runId,
+              stepId: stepC.id,
+              tenantId: tenantC,
+              type: input.type,
+              idempotencyKey: input.idempotencyKey,
+              request: input.request,
+              policyDecisionId: 'cmp-decision',
+              lease: {
+                workerId: input.lease.workerId,
+                token: input.lease.token,
+                fencingEpoch: input.lease.fencingEpoch,
+              },
+              actor: input.actor,
+            });
+            return {
+              admitted: cmpAdmit.admitted,
+              effectId: input.effectId,
+              replayed: !!cmpAdmit.replayed,
+              reason: cmpAdmit.reason,
+            };
+          },
+          executeAdmitted: async (input) => {
+            compensated += 1;
+            const completed = await repo.completeEffect(
+              input.effectId,
+              tenantC,
+              { workerId: 'cmp-worker', token: 'cmp-lease', fencingEpoch: 1 },
+              { rolledBack: true },
+              'compensation-consumer:cmp-worker',
+            );
+            assert.ok(completed);
+            return { effectId: input.effectId, replayed: false, response: { rolledBack: true } };
+          },
+        },
+        async () => 'cmp-token',
+        { workerId: 'cmp-worker', topic: KERNEL_COMPENSATION_TOPIC, limit: 10 },
+      );
+      assert.equal(consumeResult.consumed, 1);
+      assert.equal(consumeResult.succeeded, 1);
+      assert.equal(compensated, 1);
+      assert.equal((await repo.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 10)).length, 0);
 
       const durableEventId = `restart-event-${suffix}`;
       await delivery.publish({
@@ -104,6 +177,7 @@ describe('PostgreSQL kernel ops durability', () => {
       assert.notEqual(redelivered.claimToken, firstClaim.claimToken);
     } finally {
       await pool.query('DELETE FROM commander_outbox_deliveries WHERE tenant_id = ANY($1::text[])', [[tenantA, tenantB, tenantC]]);
+      await pool.query('DELETE FROM commander_outbox WHERE tenant_id = ANY($1::text[])', [[tenantA, tenantB, tenantC]]);
       await pool.query('DELETE FROM commander_runs WHERE tenant_id = ANY($1::text[])', [[tenantA, tenantB, tenantC]]);
       await pool.query('DELETE FROM commander_tenant_execution_control WHERE tenant_id = ANY($1::text[])', [[tenantA, tenantB, tenantC]]);
       await pool.query('DELETE FROM commander_workers WHERE id=$1', [workerId]);
