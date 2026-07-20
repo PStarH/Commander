@@ -96,7 +96,9 @@ export async function cmdServe(args: string[]): Promise<void> {
       `  ${$.green}✓${$.reset} Server listening on ${$.cyan}http://${host}:${port}${$.reset}`,
     );
     console.log(`  ${$.green}✓${$.reset} API endpoints:`);
-    console.log(`    ${$.dim}POST /v1/runs          — Submit durable agent run (enterprise entry)${$.reset}`);
+    console.log(
+      `    ${$.dim}POST /v1/runs          — Submit durable agent run (enterprise entry)${$.reset}`,
+    );
     console.log(`    ${$.dim}GET  /v1/runs/:id      — Query run status${$.reset}`);
     console.log(`    ${$.dim}GET  /v1/openapi.json  — OpenAPI 3.1 spec (auto-generated)${$.reset}`);
     console.log(`    ${$.dim}GET  /v1/health         — /v1 subtree health${$.reset}`);

@@ -208,16 +208,7 @@ export class ExecPolicyEngine {
       // Forbidden: always blocked
       {
         id: 'forbid-dangerous',
-        pattern: [
-          'sudo',
-          'su ',
-          'passwd',
-          'mkfs',
-          'dd if=',
-          '> /dev/',
-          ':(){ :|:& };:',
-          'npx',
-        ],
+        pattern: ['sudo', 'su ', 'passwd', 'mkfs', 'dd if=', '> /dev/', ':(){ :|:& };:', 'npx'],
         decision: 'forbidden',
         justification:
           'Dangerous commands are blocked (npx = download-on-execute supply-chain risk)',

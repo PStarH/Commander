@@ -126,7 +126,8 @@ export function signRefreshToken(user: AuthUser): string {
     algorithm: 'HS256',
   });
   const decoded = jwt.decode(token) as CommanderJwtPayload | null;
-  const exp = typeof decoded?.exp === 'number' ? decoded.exp : Math.floor(Date.now() / 1000) + 7 * 24 * 3600;
+  const exp =
+    typeof decoded?.exp === 'number' ? decoded.exp : Math.floor(Date.now() / 1000) + 7 * 24 * 3600;
   persistRefreshJti(jti, user.id, exp);
   return token;
 }
