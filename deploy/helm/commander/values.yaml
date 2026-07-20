@@ -201,6 +201,7 @@ database:
       tag: '16-alpine'
     port: 5432
     user: commander
+    # Schema requires empty inline password — supply via existingSecret.
     password: ''
     database: commander
     existingSecret: ''

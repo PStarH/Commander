@@ -227,12 +227,7 @@ export {
 } from './contentScanner';
 
 // UniversalSanitizer & ResourceGovernor — unified sanitization and outbound-call governance
-export {
-  UniversalSanitizer,
-  ResourceGovernor,
-  IntegrityLayer,
-  type SignedEntry,
-} from './security';
+export { UniversalSanitizer, ResourceGovernor, IntegrityLayer, type SignedEntry } from './security';
 
 // IM Provider SPI
 export type {

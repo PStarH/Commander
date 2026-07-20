@@ -233,15 +233,7 @@ export class PostgresMemoryService
         [input.scope.tenantId, input.scope.projectId, input.id],
       );
       const record = result.rows[0] ? this.rowToRecord(result.rows[0], input, this.now()) : null;
-      await this.audit(
-        client,
-        input.scope,
-        'retrieve',
-        input.id,
-        undefined,
-        true,
-        record?.tags,
-      );
+      await this.audit(client, input.scope, 'retrieve', input.id, undefined, true, record?.tags);
       return record ? cloneRecord(record) : null;
     });
   }

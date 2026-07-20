@@ -201,15 +201,17 @@ jobs:
         # before any tests run. Soften: try audit, warn on transport/API
         # retirement errors, still fail on real high/critical advisories when
         # the endpoint works. CodeQL + pnpm audit:wiring remain hard gates.
+        # Force bash: Windows default shell is pwsh and cannot parse this script.
+        shell: bash
         run: |
           set +e
           out=$(pnpm audit --audit-level=high 2>&1)
           code=$?
-          echo "$out"
+          printf '%s\n' "$out"
           if [ $code -eq 0 ]; then
             exit 0
           fi
-          if echo "$out" | grep -Eqi '410|ERR_PNPM_AUDIT_BAD_RESPONSE|endpoint is being retired|ECONNRESET|ETIMEDOUT|fetch failed'; then
+          if printf '%s\n' "$out" | grep -Eqi '410|ERR_PNPM_AUDIT_BAD_RESPONSE|endpoint is being retired|ECONNRESET|ETIMEDOUT|fetch failed'; then
             echo "::warning::pnpm audit transport/API unavailable (npm audit endpoint retirement or network). Continuing; audit:wiring + CodeQL remain hard security gates."
             exit 0
           fi

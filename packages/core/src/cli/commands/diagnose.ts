@@ -763,8 +763,7 @@ function printDiagnoseHelp(): void {
 `);
 }
 
-const isDirectExecution =
-  !!process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+const isDirectExecution = !!process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
 
 if (isDirectExecution) {
   const args = process.argv.slice(2);

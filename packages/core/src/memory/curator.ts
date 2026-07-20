@@ -111,7 +111,10 @@ export class MemoryCurator {
    * @param storeOrConfig Optional bound MemoryStore (ThreeLayer style) or config
    * @param config Optional config when first arg is a store
    */
-  constructor(storeOrConfig?: MemoryStore | Partial<CuratorConfig>, config?: Partial<CuratorConfig>) {
+  constructor(
+    storeOrConfig?: MemoryStore | Partial<CuratorConfig>,
+    config?: Partial<CuratorConfig>,
+  ) {
     if (isMemoryStore(storeOrConfig)) {
       this.store = storeOrConfig;
       this.config = { ...DEFAULT_CURATOR_CONFIG, ...config };

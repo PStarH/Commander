@@ -22,7 +22,7 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import { mkdir, readFile, writeFile, access, unlink } from 'fs/promises';
-import { join, dirname } from 'node:path';
+import { dirname, resolve, sep } from 'node:path';
 import { getCurrentTenantId } from '../runtime/tenantContext';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
@@ -623,7 +623,12 @@ export class UserModelManager {
   private getModelPath(userId: string): string {
     const safeId = userId.replace(/[^a-zA-Z0-9_-]/g, '_');
     const safeTenantId = this.getTenantId().replace(/[^a-zA-Z0-9_.-]/g, '_');
-    return join(this.config.modelPath, `tenant_${safeTenantId}`, `${safeId}.json`);
+    const base = resolve(this.config.modelPath);
+    const filePath = resolve(base, `tenant_${safeTenantId}`, `${safeId}.json`);
+    if (filePath !== base && !filePath.startsWith(base + sep)) {
+      throw new Error('Invalid user model path');
+    }
+    return filePath;
   }
 
   private serializeProfile(profile: UserProfile): Record<string, unknown> {

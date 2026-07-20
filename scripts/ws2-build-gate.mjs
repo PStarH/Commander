@@ -31,7 +31,15 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const SCAN_ROOTS = ['packages', 'apps'];
 const SCAN_GLOBS = ['.ts', '.tsx'];
-const TEST_PATTERNS = [/\.test\./, /\.spec\./, /\/tests?\//, /\/__tests__\//, /\.e2e\./];
+const TEST_PATTERNS = [
+  /\.test\./,
+  /\.spec\./,
+  /\/tests?\//,
+  /\/__tests__\//,
+  /\.e2e\./,
+  // Conformance harness exercises negative broker options; not production runtime.
+  /\/conformance\//,
+];
 
 // Each entry: [regex, label]. Regex is case-insensitive where noted.
 const FORBIDDEN = [

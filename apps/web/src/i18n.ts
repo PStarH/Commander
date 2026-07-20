@@ -141,7 +141,8 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     'nav.slo': 'SLO',
     'poc.sectionLabel': '企业试点',
     'poc.title': '价值验证中心',
-    'poc.desc': '金融、制造和医疗三个行业 Commander 试点的示例参考场景。这些是演示场景，并非真实客户试点。',
+    'poc.desc':
+      '金融、制造和医疗三个行业 Commander 试点的示例参考场景。这些是演示场景，并非真实客户试点。',
     'poc.disclaimer':
       '这些是示例参考场景，并非真实客户试点。数据为代表性演示数据，不是客户报告的真实结果。真实、可归属的试点案例将在可用后在此发布。',
     'poc.metric.completed': '已完成 / 上线',
