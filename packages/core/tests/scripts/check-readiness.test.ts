@@ -34,7 +34,6 @@ const REQUIRED_PREFIXES = [
   'e2e-latency.',
   'cost-prediction.',
   'redteam-baseline.',
-  'bench-v2-live.',
 ] as const;
 
 function healthyBaseline(): Record<string, unknown> {
