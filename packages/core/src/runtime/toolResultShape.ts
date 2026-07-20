@@ -76,6 +76,71 @@ export function toolErrorRow(tc: ToolCall, errorMsg: string): SyntheticErrorRow 
   };
 }
 
+/** DOM/Node AbortError 标准文案；刻意不用裸 `abort`，避免误伤 ECONNABORTED。 */
+const RE_DOM_ABORT_MESSAGE = /\b(this|the) operation was aborted\b/i;
+
+/**
+ * 跨层识别 TIMEOUT/ABORTED：覆盖 ToolOrchestrator 前缀、TES StepTimeoutError、
+ * 以及父取消 AbortError 文案（This/The operation was aborted）。
+ * 刻意不匹配 ECONNABORTED 等网络 abort（那些仍可 transient retry）。
+ */
+export function isAbortOrTimeoutToolError(error: string): boolean {
+  return (
+    error.startsWith('TOOL_TIMEOUT:') ||
+    error.startsWith('TOOL_ABORTED:') ||
+    error.includes('TOOL_TIMEOUT') ||
+    error.includes('TOOL_ABORTED') ||
+    /exceeded timeout/i.test(error) ||
+    RE_DOM_ABORT_MESSAGE.test(error)
+  );
+}
+
+/**
+ * 工具路径 Error 对象版：供 TES / StepErrorBoundary 识别。
+ * AbortError / StepTimeoutError → 边界内不可二次 execute；ECONNABORTED 不走此路径。
+ */
+export function isAbortOrTimeoutError(err: unknown): boolean {
+  if (err && typeof err === 'object' && 'name' in err) {
+    const name = String((err as { name: unknown }).name);
+    if (name === 'AbortError' || name === 'StepTimeoutError') return true;
+  }
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  return isAbortOrTimeoutToolError(msg);
+}
+
+/**
+ * LLM 分类器用：仅工具侧 abort/取消标记不可重试。
+ * 不含裸 StepTimeoutError——llmCaller 也经 stepTimeout.wrap，超时须保持 transient retry。
+ * ECONNABORTED 不走此路径（仍由网络 transient 处理）。
+ */
+export function isToolAbortNonRetryableForLLM(err: unknown): boolean {
+  if (err && typeof err === 'object' && 'name' in err) {
+    const name = String((err as { name: unknown }).name);
+    if (name === 'AbortError') return true;
+  }
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  return (
+    msg.includes('TOOL_TIMEOUT') ||
+    msg.includes('TOOL_ABORTED') ||
+    RE_DOM_ABORT_MESSAGE.test(msg)
+  );
+}
+
+/**
+ * TIMEOUT/ABORTED 的模型 advice（与 tip formatError 对齐）。
+ * 禁止「If transient, retry」：orphan 可能仍在跑，再调即跨层 dual-dispatch。
+ * Orphan 副作用与 #72 同残留——此处只禁重试建议，不宣称进程级杀停。
+ */
+export function formatAbortTimeoutAdviceLines(error: string): string[] {
+  const nonCooperative = error.includes('(non-cooperative)');
+  return [
+    `  - Do not retry this call (abort/timeout; orphan work may still be running)`,
+    nonCooperative
+      ? `  - Non-cooperative: tool ignored abortSignal; retry risks dual-dispatch`
+      : `  - Prefer a different approach; do not re-dispatch the same tool call`,
+  ];
+}
+
 /**
  * Discriminated-union return type for `AgentRuntime.applyPreToolCallGates`.
  *
