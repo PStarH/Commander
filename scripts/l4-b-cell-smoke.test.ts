@@ -4,6 +4,7 @@ import {
   applyApiGateToComposeSidecarSteps,
   assertKernelBackendOnCellServices,
   runCellSmoke,
+  runOptionalChaosStep,
 } from './l4-b-cell-smoke.js';
 
 const KERNEL_BACKEND_ENV = { COMMANDER_KERNEL_BACKEND: 'postgres' };
@@ -29,6 +30,18 @@ describe('l4-b-cell-smoke', () => {
       return;
     }
     assert.equal(result.passed, false, 'mock must not pass when S6 is false');
+  });
+
+  it('runOptionalChaosStep omits S7 by default when helper is missing', async () => {
+    const steps: Record<string, boolean> = {};
+    await runOptionalChaosStep(steps);
+    assert.equal(steps.S7_chaos, undefined);
+  });
+
+  it('runOptionalChaosStep records S7=false when REQUIRE and helper missing', async () => {
+    const steps: Record<string, boolean> = {};
+    await runOptionalChaosStep(steps, { require: true });
+    assert.equal(steps.S7_chaos, false);
   });
 
   it('applyApiGateToComposeSidecarSteps forces S4–S6 false when S1 or S2 is false', () => {
