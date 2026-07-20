@@ -15,6 +15,7 @@ import {
   type UserRole,
 } from './userStore';
 import { signAccessToken, signRefreshToken, resolveAccessTenantId } from './jwtMiddleware';
+import { atomicWriteFileSync, readJsonFileSafe, isPlainObjectJson } from './atomicWrite';
 
 function requireAuth(req: Request, res: Response, next: NextFunction): void {
   if (!req.user) {
@@ -76,16 +77,8 @@ export interface OIDCRuntimeConfig {
 }
 
 function loadConfigFromFile(): Partial<OIDCRuntimeConfig> | null {
-  try {
-    if (!fs.existsSync(CONFIG_FILE)) return null;
-    const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
-    return JSON.parse(raw) as Partial<OIDCRuntimeConfig>;
-  } catch (err) {
-    process.stderr.write(
-      '[oidcAuthEndpoints] Failed to read ' + CONFIG_FILE + ': ' + String(err) + '\n',
-    );
-    return null;
-  }
+  // REL-4: 损坏或错形隔离，禁止 silent null → 下次 save 抹掉 OIDC 配置。
+  return readJsonFileSafe<Partial<OIDCRuntimeConfig> | null>(CONFIG_FILE, null, isPlainObjectJson);
 }
 
 function saveConfigToFile(config: OIDCRuntimeConfig): void {
@@ -93,7 +86,7 @@ function saveConfigToFile(config: OIDCRuntimeConfig): void {
     if (!fs.existsSync(CONFIG_DIR)) {
       fs.mkdirSync(CONFIG_DIR, { recursive: true });
     }
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
+    atomicWriteFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
   } catch (err) {
     process.stderr.write(
       '[oidcAuthEndpoints] Failed to write ' + CONFIG_FILE + ': ' + String(err) + '\n',

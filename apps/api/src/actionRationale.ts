@@ -15,6 +15,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { getDirname, getRequire } from './esmCompat';
+import { atomicWriteFileSync, readJsonFileSafe } from './atomicWrite';
 const __dirname = getDirname(import.meta.url);
 const require = getRequire(import.meta.url);
 
@@ -266,14 +267,9 @@ export class ActionRationaleStore {
       return [];
     }
 
-    try {
-      const raw = fs.readFileSync(this.filePath, 'utf8');
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (e) {
-      process.stderr.write(`[ActionRationale] Error: ${(e as Error)?.message ?? String(e)}\n`);
-      return [];
-    }
+    // REL-4: 损坏或错形均隔离，禁止 silent [] → persist 原地抹掉 rationale 账本。
+    const parsed = readJsonFileSafe<unknown>(this.filePath, null, Array.isArray);
+    return parsed === null ? [] : (parsed as ActionRationale[]);
   }
 
   private persist(): void {
@@ -282,7 +278,8 @@ export class ActionRationaleStore {
 
   private write(items: ActionRationale[]): void {
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    fs.writeFileSync(this.filePath, JSON.stringify(items, null, 2));
+    // REL-3: atomic write for action rationale ledger.
+    atomicWriteFileSync(this.filePath, JSON.stringify(items, null, 2));
   }
 
   private generateId(): string {
