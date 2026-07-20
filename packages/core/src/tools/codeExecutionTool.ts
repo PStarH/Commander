@@ -255,8 +255,6 @@ Using specialized tools is REQUIRED because they return hashline-anchored output
     for (const [k, v] of Object.entries(args)) {
       if (k.startsWith('_')) backendArgs[k] = v;
     }
-    return formatExecResult(
-      await execSandboxed(command, timeout, resolvedWorkdir, backendArgs),
-    );
+    return formatExecResult(await execSandboxed(command, timeout, resolvedWorkdir, backendArgs));
   }
 }

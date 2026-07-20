@@ -8,6 +8,10 @@ import assert from 'node:assert/strict';
 import {
   extractExecPolicyPayload,
   isShellOrPythonExecTool,
+  isExecScriptTool,
+  isExecScriptAllowed,
+  denyExecScriptUnlessAllowed,
+  SCRIPT_NESTED_SHELL_EQUIVALENT_TOOLS,
   getExecPolicyEngine,
   resetExecPolicyEngine,
 } from '../../src/sandbox/execPolicy';
@@ -42,7 +46,7 @@ describe('extractExecPolicyPayload', () => {
     );
   });
 
-  it('returns null for exec action=script (not shell policy surface)', () => {
+  it('returns null for exec action=script (gated separately, deny-by-default)', () => {
     assert.equal(
       extractExecPolicyPayload('exec', { action: 'script', script: 'console.log(1)' }),
       null,
@@ -52,6 +56,45 @@ describe('extractExecPolicyPayload', () => {
   it('returns null for non-exec tools', () => {
     assert.equal(extractExecPolicyPayload('file_read', { path: 'x' }), null);
     assert.equal(extractExecPolicyPayload('web_search', { query: 'x' }), null);
+  });
+});
+
+describe('isExecScriptTool / deny-by-default', () => {
+  it('recognizes exec action=script and execute_script', () => {
+    assert.equal(isExecScriptTool('exec', { action: 'script' }), true);
+    assert.equal(isExecScriptTool('execute_script', { script: 'x' }), true);
+    assert.equal(isExecScriptTool('exec', { action: 'shell' }), false);
+    assert.equal(isExecScriptTool('shell_execute'), false);
+  });
+
+  it('isExecScriptAllowed defaults to false (fail-closed)', () => {
+    const prev = process.env.COMMANDER_ALLOW_EXEC_SCRIPT;
+    delete process.env.COMMANDER_ALLOW_EXEC_SCRIPT;
+    assert.equal(isExecScriptAllowed(), false);
+    process.env.COMMANDER_ALLOW_EXEC_SCRIPT = '1';
+    assert.equal(isExecScriptAllowed(), true);
+    if (prev === undefined) delete process.env.COMMANDER_ALLOW_EXEC_SCRIPT;
+    else process.env.COMMANDER_ALLOW_EXEC_SCRIPT = prev;
+  });
+
+  it('script nested tool map excludes shell-equivalent tools', () => {
+    assert.equal(SCRIPT_NESTED_SHELL_EQUIVALENT_TOOLS.has('exec'), true);
+    assert.equal(SCRIPT_NESTED_SHELL_EQUIVALENT_TOOLS.has('shell_execute'), true);
+    assert.equal(SCRIPT_NESTED_SHELL_EQUIVALENT_TOOLS.has('python_execute'), true);
+    assert.equal(SCRIPT_NESTED_SHELL_EQUIVALENT_TOOLS.has('execute_script'), true);
+    assert.equal(SCRIPT_NESTED_SHELL_EQUIVALENT_TOOLS.has('file'), false);
+  });
+
+  it('denyExecScriptUnlessAllowed fail-closed unless opt-in', () => {
+    const prev = process.env.COMMANDER_ALLOW_EXEC_SCRIPT;
+    delete process.env.COMMANDER_ALLOW_EXEC_SCRIPT;
+    const denied = denyExecScriptUnlessAllowed();
+    assert.ok(denied);
+    assert.match(denied!, /EXEC_SCRIPT_DENIED/);
+    process.env.COMMANDER_ALLOW_EXEC_SCRIPT = '1';
+    assert.equal(denyExecScriptUnlessAllowed(), null);
+    if (prev === undefined) delete process.env.COMMANDER_ALLOW_EXEC_SCRIPT;
+    else process.env.COMMANDER_ALLOW_EXEC_SCRIPT = prev;
   });
 });
 

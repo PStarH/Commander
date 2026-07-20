@@ -45,6 +45,10 @@ export type { SandboxEnvironment, SandboxIsolation, SandboxPolicy } from './prod
 export {
   ExecPolicyEngine,
   extractExecPolicyPayload,
+  isExecScriptTool,
+  isExecScriptAllowed,
+  denyExecScriptUnlessAllowed,
+  SCRIPT_NESTED_SHELL_EQUIVALENT_TOOLS,
   isShellOrPythonExecTool,
   getExecPolicyEngine,
   resetExecPolicyEngine,
