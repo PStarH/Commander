@@ -14,8 +14,9 @@ export interface AwaitWithAbortTimeoutOptions {
   /** Grace after abort before hard-failing non-cooperative work (default 50ms). */
   abortGraceMs?: number;
   /**
-   * cooperative=true only for abort-linked reject after cancel (honored cancel);
-   * false after grace hard-cancel, late success resolve, or late non-abort reject.
+   * cooperative=true only for abort-linked reject inside the abort coop window
+   * (honored cancel before next macrotask); false after grace hard-cancel, late
+   * success, or late reject (including late throw of signal.reason after side effects).
    */
   timeoutError: (cooperative: boolean) => Error;
   /** Same cooperative semantics as timeoutError for parent-abort outcomes. */
@@ -23,15 +24,16 @@ export interface AwaitWithAbortTimeoutOptions {
 }
 
 /**
- * 仅当 rejection 与 signal.reason 为同一引用时视为合作取消。
+ * 仅当 rejection 与 signal.reason 为同一引用时视为 abort-linked。
  *
  * 本仓库 abort 路径始终写入 reason（timeout→Error('timeout')；
  * parent→parent.reason ?? Error('aborted')；stop→Error('Worker stopped')），
- * 合作 handler 应 reject(signal.reason)，与 identity 对齐。
+ * 合作 handler 应在 abort 监听器内 reject(signal.reason)。
  *
- * 置信度缺口（刻意 fail-closed，无法仅凭 identity 消除）：
- * - ignore 信号做完副作用后仍 throw signal.reason（同一对象）→ 仍会判 coop
- * - 文案相同的新 Error('aborted') / 伪造 AbortError → 一律非 coop（正确）
+ * 伪造 AbortError / 文案相同的新 Error('aborted') → 非 linked（正确）。
+ * linked  alone 不够：ignore 后副作用再 throw signal.reason 仍同引用；
+ * 须叠加 abort 协作窗口（abortLocal：先 setTimeout(0) 关窗再 abort，finally 快照）
+ * 才标 cooperative/retryable。
  */
 export function isAbortLinkedRejection(error: unknown, signal: AbortSignal): boolean {
   return signal.aborted && error === signal.reason;
@@ -47,12 +49,21 @@ export async function awaitWithAbortTimeout<T>(
   let timedOut = false;
   let settled = false;
   let closed = false;
+  /**
+   * abort 后的协作窗口：覆盖 abort 同步监听器（真 coop reject）。
+   * abortLocal 先 setTimeout(0) 关窗再 abort，保证监听器内 setTimeout(0) reject
+   * 不会排在关窗之前误入窗；同步 reject 仍在窗内。
+   */
+  let abortCoopWindow = false;
+  let settledInCoopWindow = false;
   let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
   let graceTimer: ReturnType<typeof setTimeout> | undefined;
+  let coopWindowTimer: ReturnType<typeof setTimeout> | undefined;
   let onParentAbort: (() => void) | undefined;
 
   const run = work(local.signal).finally(() => {
     settled = true;
+    if (abortCoopWindow) settledInCoopWindow = true;
   });
   // Abandoned non-cooperative work must not surface as unhandledRejection.
   void run.catch(() => {});
@@ -64,6 +75,7 @@ export async function awaitWithAbortTimeout<T>(
         closed = true;
         if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
         if (graceTimer !== undefined) clearTimeout(graceTimer);
+        if (coopWindowTimer !== undefined) clearTimeout(coopWindowTimer);
         fn();
       };
 
@@ -75,6 +87,27 @@ export async function awaitWithAbortTimeout<T>(
         close(() => reject(options.abortError(cooperative)));
       };
 
+      /**
+       * Soft-abort local signal；协作窗口覆盖 abort 同步监听器（真 coop）。
+       *
+       * 关窗 setTimeout(0) 必须先于 local.abort 入队：若先 abort，监听器内
+       *「副作用 + setTimeout(0, reject(signal.reason))」会把 settle 定时器排在
+       * 关窗之前 → settle 仍落在 coop 窗 → 误标 retryable（dual-dispatch）。
+       * 先关窗再 abort：监听器的 setTimeout(0) 晚于关窗 → fail-closed；
+       * 同步 reject(signal.reason) 仍在窗内 → coop/retryable。
+       * （#74 toolOrchestrator 同源 abortLocal 须保持同一顺序。）
+       */
+      const abortLocal = (reason: unknown): void => {
+        if (local.signal.aborted) return;
+        abortCoopWindow = true;
+        if (coopWindowTimer !== undefined) clearTimeout(coopWindowTimer);
+        coopWindowTimer = setTimeout(() => {
+          abortCoopWindow = false;
+          coopWindowTimer = undefined;
+        }, 0);
+        local.abort(reason);
+      };
+
       /** Soft-abort already fired; after grace, hard-reject if work ignored it. */
       const scheduleHardExit = (hardReject: () => void): void => {
         if (graceTimer !== undefined || closed) return;
@@ -84,10 +117,15 @@ export async function awaitWithAbortTimeout<T>(
         }, abortGraceMs);
       };
 
+      /**
+       * abort/timeout 已开火后的 settle：仅窗口内 abort-linked 仍可 coop/retryable；
+       * 晚抛 signal.reason（副作用后再抛）与 late-success 一样 fail-closed。
+       */
+      const coopAfterCancel = (error: unknown): boolean =>
+        settledInCoopWindow && isAbortLinkedRejection(error, local.signal);
+
       onParentAbort = () => {
-        if (!local.signal.aborted) {
-          local.abort(parentSignal.reason ?? new Error('aborted'));
-        }
+        abortLocal(parentSignal.reason ?? new Error('aborted'));
         // Parent abort must hard-exit non-cooperative work (same as timeout path).
         scheduleHardExit(() => rejectAbort(false));
       };
@@ -103,7 +141,7 @@ export async function awaitWithAbortTimeout<T>(
           return;
         }
         timedOut = true;
-        if (!local.signal.aborted) local.abort(new Error('timeout'));
+        abortLocal(new Error('timeout'));
         scheduleHardExit(() => {
           if (parentSignal.aborted) {
             rejectAbort(false);
@@ -136,19 +174,16 @@ export async function awaitWithAbortTimeout<T>(
         },
         (error) => {
           if (closed) return;
-          // Fail-closed: after cancel, only abort-linked reject is cooperative.
-          // Ignore-signal + late throw must not claim retryable (dual-dispatch).
-          const cooperative = isAbortLinkedRejection(error, local.signal);
           if (parentSignal.aborted) {
-            rejectAbort(cooperative);
+            rejectAbort(coopAfterCancel(error));
             return;
           }
           if (timedOut) {
-            rejectTimeout(cooperative);
+            rejectTimeout(coopAfterCancel(error));
             return;
           }
           if (local.signal.aborted) {
-            rejectAbort(cooperative);
+            rejectAbort(coopAfterCancel(error));
             return;
           }
           close(() => reject(error));
@@ -159,5 +194,6 @@ export async function awaitWithAbortTimeout<T>(
     if (onParentAbort) parentSignal.removeEventListener('abort', onParentAbort);
     if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
     if (graceTimer !== undefined) clearTimeout(graceTimer);
+    if (coopWindowTimer !== undefined) clearTimeout(coopWindowTimer);
   }
 }

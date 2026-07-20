@@ -557,6 +557,132 @@ describe('ToolStepExecutor', () => {
     );
   });
 
+  it('parent abort + late throw signal.reason (ignore) is non-cooperative', async () => {
+    const parent = new AbortController();
+    const mockRegistry = {
+      get: () => ({
+        // 忽略 abort、做完副作用后再抛同一 reason — 不得标 coop/retryable（dual-dispatch）。
+        execute: async (_args: Record<string, unknown>, ctx: { signal: AbortSignal }) => {
+          await new Promise((r) => setTimeout(r, 30));
+          throw ctx.signal.reason;
+        },
+      }),
+    };
+    const executor = new ToolStepExecutor(mockRegistry);
+    const step = createMockStep({
+      input: { toolName: 'late-throw-reason', args: {}, timeoutMs: 5_000 },
+    });
+    const execPromise = executor.execute(step, {
+      signal: parent.signal,
+      worker: createMockWorker(),
+    });
+    parent.abort();
+    await assert.rejects(
+      () => execPromise,
+      (err: WorkerExecutionError) =>
+        err.options.code === 'ABORTED' &&
+        err.options.retryable === false &&
+        err.options.details?.cooperative === false,
+    );
+  });
+
+  it('timeout + late throw signal.reason (ignore) is non-cooperative', async () => {
+    const mockRegistry = {
+      get: () => ({
+        execute: async (_args: Record<string, unknown>, ctx: { signal: AbortSignal }) => {
+          await new Promise((r) => setTimeout(r, 40));
+          throw ctx.signal.reason;
+        },
+      }),
+    };
+    const executor = new ToolStepExecutor(mockRegistry);
+    const step = createMockStep({
+      input: { toolName: 'late-throw-reason', args: {}, timeoutMs: 20 },
+    });
+    await assert.rejects(
+      () => executor.execute(step, { signal: ac.signal, worker: createMockWorker() }),
+      (err: WorkerExecutionError) =>
+        err.options.code === 'TIMEOUT' &&
+        err.options.retryable === false &&
+        err.options.details?.cooperative === false,
+    );
+  });
+
+  // Probe B: abort 监听器内同步副作用后再 setTimeout(0) reject(signal.reason)
+  // —— settle 宏任务晚于关窗，不得标 coop/retryable（dual-dispatch）。
+  it('parent abort + abort-listener SE then setTimeout(0) reject(reason) is non-cooperative', async () => {
+    const parent = new AbortController();
+    let sideEffect = false;
+    const mockRegistry = {
+      get: () => ({
+        execute: async (_args: Record<string, unknown>, ctx: { signal: AbortSignal }) => {
+          await new Promise<void>((_resolve, reject) => {
+            ctx.signal.addEventListener(
+              'abort',
+              () => {
+                sideEffect = true;
+                setTimeout(() => reject(ctx.signal.reason), 0);
+              },
+              { once: true },
+            );
+          });
+          return { never: true };
+        },
+      }),
+    };
+    const executor = new ToolStepExecutor(mockRegistry);
+    const step = createMockStep({
+      input: { toolName: 'probe-b-parent', args: {}, timeoutMs: 5_000 },
+    });
+    const execPromise = executor.execute(step, {
+      signal: parent.signal,
+      worker: createMockWorker(),
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    parent.abort();
+    await assert.rejects(
+      () => execPromise,
+      (err: WorkerExecutionError) =>
+        err.options.code === 'ABORTED' &&
+        err.options.retryable === false &&
+        err.options.details?.cooperative === false,
+    );
+    assert.equal(sideEffect, true);
+  });
+
+  it('timeout + abort-listener SE then setTimeout(0) reject(reason) is non-cooperative', async () => {
+    let sideEffect = false;
+    const mockRegistry = {
+      get: () => ({
+        execute: async (_args: Record<string, unknown>, ctx: { signal: AbortSignal }) => {
+          await new Promise<void>((_resolve, reject) => {
+            ctx.signal.addEventListener(
+              'abort',
+              () => {
+                sideEffect = true;
+                setTimeout(() => reject(ctx.signal.reason), 0);
+              },
+              { once: true },
+            );
+          });
+          return { never: true };
+        },
+      }),
+    };
+    const executor = new ToolStepExecutor(mockRegistry);
+    const step = createMockStep({
+      input: { toolName: 'probe-b-timeout', args: {}, timeoutMs: 30 },
+    });
+    await assert.rejects(
+      () => executor.execute(step, { signal: ac.signal, worker: createMockWorker() }),
+      (err: WorkerExecutionError) =>
+        err.options.code === 'TIMEOUT' &&
+        err.options.retryable === false &&
+        err.options.details?.cooperative === false,
+    );
+    assert.equal(sideEffect, true);
+  });
+
   it('forged AbortError after ignore is non-cooperative', async () => {
     const parent = new AbortController();
     const mockRegistry = {
