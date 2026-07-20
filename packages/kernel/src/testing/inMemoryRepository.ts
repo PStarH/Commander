@@ -642,7 +642,11 @@ export class InMemoryKernelRepository implements KernelRepository {
     );
     if (completedEffects.length === 0) return false;
     const run = this.runs.get(step.runId);
-    if (!run || run.state === 'COMPENSATING') return run?.state === 'COMPENSATING';
+    if (!run) return false;
+    if (run.state === 'COMPENSATING') {
+      this.cancelOpenStepsForTerminalRun(run.id, run.tenantId, actor, 'run_compensating');
+      return true;
+    }
     assertRunTransition(run.state, 'COMPENSATING');
     run.state = 'COMPENSATING'; run.version++; run.updatedAt = at.toISOString();
     this.event('run', run.id, run.version, 'run.compensating', run.tenantId, run.id, step.id, actor, { fencingEpoch });
@@ -650,15 +654,38 @@ export class InMemoryKernelRepository implements KernelRepository {
     this.event('effect', `compensation:${compensationKey}`, 1, 'kernel.compensation.requested', run.tenantId, run.id, step.id, actor, {
       effectIds: completedEffects.map((effect) => effect.id), fencingEpoch,
     }, compensationKey);
+    this.cancelOpenStepsForTerminalRun(run.id, run.tenantId, actor, 'run_compensating');
     return true;
   }
   private event(aggregateType: KernelEvent['aggregateType'], aggregateId: string, sequence: number, type: string, tenantId: string, runId: string, stepId: string | undefined, actor: string, payload: Record<string, unknown>, outboxKey = runId): void {
     const event: KernelEvent = { eventId: randomUUID(), aggregateType, aggregateId, sequence, type, tenantId, runId, stepId, actor, schemaVersion: 'v2', payload, occurredAt: now() }; this.events.push(event);
     const message: KernelOutboxMessage = { id: randomUUID(), eventId: event.eventId, tenantId, topic: `commander.${type}`, key: outboxKey, payload: { ...payload, eventId: event.eventId, type, runId, stepId: stepId ?? null, tenantId }, attempts: 0, availableAt: event.occurredAt, createdAt: event.occurredAt }; this.outbox.set(message.id, message);
   }
+  private cancelOpenStepsForTerminalRun(runId: string, tenantId: string, actor: string, reason: string): void {
+    for (const step of [...this.steps.values()]) {
+      if (step.runId !== runId || step.tenantId !== tenantId) continue;
+      if (['SUCCEEDED', 'FAILED', 'CANCELLED', 'SKIPPED'].includes(step.state)) continue;
+      const previousState = step.state;
+      assertStepTransition(previousState, 'CANCELLED');
+      if (step.lease) this.lastFencingEpoch.set(step.id, step.lease.fencingEpoch);
+      step.state = 'CANCELLED';
+      step.version++;
+      step.lease = undefined;
+      step.updatedAt = now();
+      step.error = { code: 'RUN_TERMINAL', message: reason, retryable: false };
+      this.parkOrphanAdmittedEffects(step, reason, actor);
+      this.event('step', step.id, step.version, 'step.cancelled', step.tenantId, step.runId, step.id, actor, { reason, previousState });
+    }
+  }
+
   private finish(runId: string, actor: string): void {
     const run = this.runs.get(runId)!; const steps = [...this.steps.values()].filter((step) => step.runId === runId);
-    if (steps.some((step) => step.state === 'FAILED')) { assertRunTransition(run.state, 'FAILED'); run.state = 'FAILED'; run.version++; run.updatedAt = now(); run.terminalAt = run.updatedAt; this.event('run', run.id, run.version, 'run.failed', run.tenantId, run.id, undefined, actor, {}); }
+    if (steps.some((step) => step.state === 'FAILED')) {
+      assertRunTransition(run.state, 'FAILED');
+      this.cancelOpenStepsForTerminalRun(runId, run.tenantId, actor, 'run_failed');
+      run.state = 'FAILED'; run.version++; run.updatedAt = now(); run.terminalAt = run.updatedAt;
+      this.event('run', run.id, run.version, 'run.failed', run.tenantId, run.id, undefined, actor, {});
+    }
     else if (steps.length > 0 && steps.every((step) => ['SUCCEEDED', 'SKIPPED'].includes(step.state))) { assertRunTransition(run.state, 'SUCCEEDED'); run.state = 'SUCCEEDED'; run.version++; run.updatedAt = now(); run.terminalAt = run.updatedAt; this.event('run', run.id, run.version, 'run.succeeded', run.tenantId, run.id, undefined, actor, {}); }
   }
 }

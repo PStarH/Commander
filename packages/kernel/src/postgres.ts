@@ -1226,7 +1226,10 @@ export class PostgresKernelRepository implements KernelRepository {
     if (completed.rows.length === 0) return false;
     const runState = await this.lockRunState(client, step.runId, step.tenantId);
     if (!runState) return false;
-    if (runState === 'COMPENSATING') return true;
+    if (runState === 'COMPENSATING') {
+      await this.cancelOpenStepsForTerminalRun(client, step.runId, step.tenantId, actor, 'run_compensating');
+      return true;
+    }
     assertRunTransition(runState, 'COMPENSATING');
     const updated = await client.query<DbRun>(
       `UPDATE commander_runs SET state='COMPENSATING', version=version+1, updated_at=$1
@@ -1251,7 +1254,51 @@ export class PostgresKernelRepository implements KernelRepository {
         fencingEpoch,
       },
     }, compensationKey);
+    // COMPENSATING runs are not claimable; cancel leftover open siblings.
+    await this.cancelOpenStepsForTerminalRun(client, run.id, run.tenantId, actor, 'run_compensating');
     return true;
+  }
+
+
+  /**
+   * When a run becomes unclaimable (FAILED / COMPENSATING), cancel remaining
+   * non-terminal sibling steps so they do not sit PENDING forever.
+   */
+  private async cancelOpenStepsForTerminalRun(
+    client: SqlClient,
+    runId: string,
+    tenantId: string,
+    actor: string,
+    reason: string,
+  ): Promise<void> {
+    const open = await client.query<DbStep & { previous_state: string }>(
+      `WITH candidates AS (
+         SELECT id, state AS previous_state FROM commander_steps
+         WHERE run_id=$2 AND tenant_id=$3
+           AND state NOT IN ('SUCCEEDED','FAILED','CANCELLED','SKIPPED')
+         FOR UPDATE
+       )
+       UPDATE commander_steps s SET
+         state='CANCELLED', version=s.version+1, updated_at=now(),
+         lease_worker_id=NULL, lease_token=NULL, lease_expires_at=NULL,
+         error=jsonb_build_object('code','RUN_TERMINAL','message',$1::text,'retryable',false)
+       FROM candidates c WHERE s.id=c.id
+       RETURNING s.*, c.previous_state`,
+      [reason, runId, tenantId],
+    );
+    for (const row of open.rows) {
+      const step = fromStep(row);
+      if (row.previous_state === 'RUNNING') {
+        await this.releaseTenantSlot(client, step.tenantId);
+      }
+      assertStepTransition(row.previous_state as KernelStepState, 'CANCELLED');
+      await this.parkOrphanAdmittedEffects(client, step, reason, actor);
+      await this.appendEvent(client, {
+        aggregateType: 'step', aggregateId: step.id, sequence: step.version,
+        type: 'step.cancelled', tenantId: step.tenantId, runId: step.runId, stepId: step.id,
+        actor, payload: { reason, previousState: row.previous_state },
+      });
+    }
   }
 
   private async finishRunIfTerminal(client: SqlClient, runId: string, tenantId: string, actor: string): Promise<void> {
@@ -1261,6 +1308,7 @@ export class PostgresKernelRepository implements KernelRepository {
     if (states.rows.some((row) => row.state === 'FAILED')) {
       if (previousState === 'FAILED') return;
       assertRunTransition(previousState, 'FAILED');
+      await this.cancelOpenStepsForTerminalRun(client, runId, tenantId, actor, 'run_failed');
       const updated = await client.query<DbRun>(`UPDATE commander_runs SET state='FAILED', version=version+1, updated_at=now(), terminal_at=now() WHERE id=$1 AND tenant_id=$2 AND state NOT IN ('FAILED','SUCCEEDED') RETURNING *`, [runId, tenantId]);
       if (updated.rows[0]) await this.appendEvent(client, { aggregateType: 'run', aggregateId: runId, sequence: Number(updated.rows[0].version), type: 'run.failed', tenantId, runId, actor, payload: {} });
     } else if (states.rows.length > 0 && states.rows.every((row) => ['SUCCEEDED', 'SKIPPED'].includes(row.state))) {
