@@ -130,6 +130,7 @@
       "v1GatewayKernel.ts",
       "v1TenantGuard.ts",
       "validationMiddleware.ts",
+      "webhookCrypto.ts",
       "webhookEndpoints.ts",
       "workflowEndpoints.ts"
     ],
@@ -229,6 +230,7 @@
       "workflowEndpoints.ts",
       "agentBenchmarkRunner.ts",
       "esmCompat.ts",
+      "webhookCrypto.ts",
       "webhookEndpoints.ts",
       "chatEndpoints.ts",
       "sharedRuntime.ts",
