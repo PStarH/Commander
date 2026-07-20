@@ -130,6 +130,8 @@ async function createInMemoryActionRun(
             actionEnvelope: executionEnvelope,
             effectId,
             idempotencyKey: envelope.idempotencyKey,
+            // Must match run/decision snapshot — mint defaults to 'policy' otherwise.
+            policySnapshotId: 'action-gateway-mvp-v1',
           },
         },
       ],
@@ -163,17 +165,14 @@ describe('Action Gateway → Kernel → EffectBroker → demo adapter', () => {
     });
     const tickets = new InMemoryTicketAdapter();
     const bootstrap = await import('../bootstrap.js');
-    const createWorkerEffectExecutor = (bootstrap as Record<string, unknown>)
-      .createWorkerEffectExecutor;
+    const createWorkerEffectExecutor = bootstrap.createWorkerEffectExecutor;
     assert.equal(typeof createWorkerEffectExecutor, 'function');
     const auditEvents: Array<{ type: string; details: Record<string, unknown> }> = [];
     const broker = new EffectBroker(
       verifier,
       createWorkerPolicyEvaluator(kernel),
       kernel,
-      (createWorkerEffectExecutor as (adapter: InMemoryTicketAdapter) => {
-        execute: (input: unknown) => Promise<Record<string, unknown>>;
-      })(tickets),
+      createWorkerEffectExecutor({ tickets }),
       {
         append: async (event) => {
           auditEvents.push({ type: event.type, details: event.details });
