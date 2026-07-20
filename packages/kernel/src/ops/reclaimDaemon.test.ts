@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { InMemoryKernelRepository } from '../testing/inMemoryRepository.js';
+import { KERNEL_COMPENSATION_TOPIC } from './compensationConsumer.js';
 import { ReclaimDaemon } from './reclaimDaemon.js';
 
 describe('reclaim daemon', () => {
@@ -144,9 +145,10 @@ describe('reclaim daemon', () => {
     await new ReclaimDaemon(repository).tick(new Date(base.getTime() + 2_000));
 
     assert.equal((await repository.getRun('run-a', 'tenant-a'))?.state, 'COMPENSATING');
-    const messages = await repository.claimOutbox(100, new Date(base.getTime() + 3_000));
-    const compensation = messages.filter(
-      (message) => message.topic === 'commander.kernel.compensation.requested',
+    const compensation = await repository.claimOutboxByTopic(
+      KERNEL_COMPENSATION_TOPIC,
+      10,
+      new Date(base.getTime() + 3_000),
     );
     assert.equal(compensation.length, 1);
     assert.equal(compensation[0]?.payload.effectIds instanceof Array, true);

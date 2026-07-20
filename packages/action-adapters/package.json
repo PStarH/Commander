@@ -1,0 +1,37 @@
+{
+  "name": "@commander/action-adapters",
+  "version": "0.2.0",
+  "description": "Commander L4-02 production action adapters (GitHub PR, ServiceNow Incident)",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
+    "typecheck": "tsc --noEmit",
+    "pretest": "pnpm --filter @commander/contracts build && pnpm --filter @commander/effect-broker build",
+    "test": "pnpm --workspace-root exec tsx --test packages/action-adapters/src/registry.test.ts packages/action-adapters/src/credentialProvider.test.ts packages/action-adapters/src/github/pullRequestCreate.test.ts packages/action-adapters/src/servicenow/incidentCreate.test.ts packages/action-adapters/src/conformance/suite.test.ts packages/action-adapters/src/live/github.live.test.ts packages/action-adapters/src/live/servicenow.live.test.ts",
+    "prepublishOnly": "tsc -p tsconfig.json"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@commander/contracts": "workspace:*",
+    "@commander/effect-broker": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "typescript": "^5.0.0"
+  }
+}

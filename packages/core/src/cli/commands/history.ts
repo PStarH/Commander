@@ -1,6 +1,96 @@
 import { $, section, kv } from './_shared';
 import { StateCheckpointer } from '../../runtime/stateCheckpointer';
 
+export interface V1RunListItem {
+  id: string;
+  state: string;
+  tenantId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Gateway API base when enterprise/API mode is active; otherwise null (local SKU).
+ * Only COMMANDER_API_URL — never reuse LLM file-config keys (apiBase/apiKey).
+ */
+export function resolveGatewayApiBase(): string | null {
+  const fromEnv = (process.env.COMMANDER_API_URL ?? '').trim();
+  if (fromEnv) return fromEnv.replace(/\/$/, '');
+  return null;
+}
+
+/** Gateway auth: COMMANDER_API_KEY only (not LLM provider apiKey). */
+export function resolveGatewayApiKey(): string | undefined {
+  const fromEnv = (process.env.COMMANDER_API_KEY ?? '').trim();
+  return fromEnv || undefined;
+}
+
+export class GatewayListRunsError extends Error {
+  readonly status?: number;
+  readonly kind: 'http' | 'network' | 'invalid_json';
+
+  constructor(
+    message: string,
+    options?: { status?: number; kind?: 'http' | 'network' | 'invalid_json' },
+  ) {
+    super(message);
+    this.name = 'GatewayListRunsError';
+    this.status = options?.status;
+    this.kind = options?.kind ?? 'http';
+  }
+}
+
+export async function fetchV1Runs(apiBase: string, limit = 50): Promise<V1RunListItem[]> {
+  const headers = new Headers({ accept: 'application/json' });
+  const apiKey = resolveGatewayApiKey();
+  if (apiKey) headers.set('x-api-key', apiKey);
+
+  let response: Response;
+  try {
+    response = await fetch(`${apiBase}/v1/runs?limit=${limit}`, { headers });
+  } catch (err) {
+    throw new GatewayListRunsError(
+      `Gateway unreachable at ${apiBase}: ${err instanceof Error ? err.message : String(err)}`,
+      { kind: 'network' },
+    );
+  }
+
+  if (!response.ok) {
+    const body = await response.text();
+    const authHint =
+      response.status === 401 || response.status === 403
+        ? ' Check COMMANDER_API_KEY.'
+        : '';
+    throw new GatewayListRunsError(
+      `Gateway list runs failed (${response.status}): ${body}${authHint}`,
+      { status: response.status, kind: 'http' },
+    );
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new GatewayListRunsError(`Gateway returned non-JSON for ${apiBase}/v1/runs`, {
+      status: response.status,
+      kind: 'invalid_json',
+    });
+  }
+
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    !Array.isArray((payload as { runs?: unknown }).runs)
+  ) {
+    throw new GatewayListRunsError(`Gateway list runs response missing runs[]`, {
+      status: response.status,
+      kind: 'invalid_json',
+    });
+  }
+
+  return (payload as { runs: V1RunListItem[] }).runs;
+}
+
 export async function cmdHistory(subargs: string[]) {
   try {
     if (subargs[0] === 'view' && subargs[1]) {
@@ -27,10 +117,19 @@ export async function cmdHistory(subargs: string[]) {
       return;
     }
 
+    const apiBase = resolveGatewayApiBase();
+    if (apiBase) {
+      await cmdHistoryFromApi(apiBase);
+      return;
+    }
+
     const checkpointer = new StateCheckpointer();
     const entries = checkpointer.listCheckpoints();
 
     section('SESSION HISTORY');
+    console.log(
+      `  ${$.dim}Source: local StateCheckpointer (not durable /v1 authority)${$.reset}`,
+    );
     if (entries.length === 0) {
       console.log(`  ${$.dim}No saved sessions found.${$.reset}`);
       console.log(
@@ -67,10 +166,43 @@ export async function cmdHistory(subargs: string[]) {
     console.error(
       `\n  ${$.red}ERROR${$.reset} Failed to read session history: ${err instanceof Error ? err.message : String(err)}`,
     );
-    console.error(
-      `  ${$.dim}→ Check that .commander/ directory exists and is readable.${$.reset}\n`,
-    );
+    if (err instanceof GatewayListRunsError) {
+      console.error(
+        `  ${$.dim}→ Check COMMANDER_API_URL / COMMANDER_API_KEY and Gateway availability.${$.reset}\n`,
+      );
+    } else {
+      console.error(
+        `  ${$.dim}→ Check that .commander/ directory exists and is readable.${$.reset}\n`,
+      );
+    }
   }
+}
+
+async function cmdHistoryFromApi(apiBase: string) {
+  const runs = await fetchV1Runs(apiBase);
+  section('RUN HISTORY (/v1)');
+  console.log(`  ${$.dim}Source: ${apiBase}/v1/runs (durable kernel authority)${$.reset}`);
+  if (runs.length === 0) {
+    console.log(`  ${$.dim}No runs found for the authenticated tenant.${$.reset}\n`);
+    return;
+  }
+
+  kv('Total', `${runs.length}`, $.cyan);
+  for (const run of runs) {
+    const ts = new Date(run.updatedAt).toLocaleString();
+    const statusColor =
+      run.state === 'SUCCEEDED'
+        ? $.green
+        : run.state === 'FAILED' || run.state === 'CANCELLED'
+          ? $.red
+          : $.yellow;
+    const runIdShort = run.id.length > 20 ? run.id.slice(0, 20) + '…' : run.id;
+    console.log(`  ${statusColor}${run.state.padEnd(14)}${$.reset} ${$.dim}${ts}${$.reset}`);
+    console.log(`      ${$.gray}${runIdShort}${$.reset}`);
+  }
+  console.log(
+    `\n  ${$.dim}View/delete/prune remain local-only (StateCheckpointer); use GET /v1/runs/:id for remote status.${$.reset}\n`,
+  );
 }
 
 export async function cmdHistoryView(runId: string) {

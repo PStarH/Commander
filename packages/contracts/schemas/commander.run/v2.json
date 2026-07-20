@@ -1,0 +1,30 @@
+{
+  "$id": "commander.run/v2",
+  "type": "object",
+  "required": ["kind", "schemaVersion", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "kind": { "type": "string", "const": "run" },
+    "schemaVersion": { "type": "string", "const": "commander.run/v2" },
+    "payload": {
+      "type": "object",
+      "required": ["id", "tenantId", "state", "version", "intentHash", "workGraphHash", "workGraphVersion", "policySnapshotId", "createdAt", "updatedAt", "metadata"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "state": { "type": "string", "enum": ["PENDING", "RUNNING", "PAUSED", "SUCCEEDED", "FAILED", "CANCELLED", "COMPENSATING", "COMPENSATED"] },
+        "version": { "type": "integer" },
+        "intentHash": { "type": "string" },
+        "workGraphHash": { "type": "string" },
+        "workGraphVersion": { "type": "string" },
+        "policySnapshotId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "pausedAt": { "type": "string", "format": "date-time" },
+        "terminalAt": { "type": "string", "format": "date-time" },
+        "metadata": { "type": "object" }
+      }
+    }
+  }
+}

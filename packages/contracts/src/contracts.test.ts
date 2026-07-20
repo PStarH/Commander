@@ -105,29 +105,32 @@ describe('@commander/contracts state machine', () => {
 
 describe('@commander/contracts resources', () => {
   it('exports all 15 canonical resources', () => {
-    const resources = [
-      'OrganizationV2',
-      'ProjectV2',
-      'EnvironmentV2',
-      'PrincipalV2',
-      'RunV2',
-      'StepV2',
-      'WorkGraphV2',
-      'InteractionV2',
-      'ArtifactV2',
-      'PolicyBundleV2',
-      'WorkerV2',
-      'EffectV2',
-      'AgentDefinitionV2',
-      'ToolDefinitionV2',
-      'ConnectorDefinitionV2',
+    const resourceSchemas = [
+      'organization',
+      'project',
+      'environment',
+      'principal',
+      'run',
+      'step',
+      'workGraph',
+      'interaction',
+      'artifact',
+      'policyBundle',
+      'worker',
+      'effect',
+      'agentDefinition',
+      'toolDefinition',
+      'connectorDefinition',
     ];
-    // If this test compiles, the types exist. Verify via snapshot.
-    const snap = snapshotContracts();
-    for (const r of resources) {
-      assert.ok(snap.resources.includes(r), `Resource ${r} missing from snapshot`);
+    for (const key of resourceSchemas) {
+      assert.ok(key in CONTRACT_SCHEMAS, `Schema ${key} missing from CONTRACT_SCHEMAS`);
+      const schema = CONTRACT_SCHEMAS[key as keyof typeof CONTRACT_SCHEMAS] as { $id?: string };
+      assert.match(schema.$id ?? '', /\/v2\//, `${key} schema $id must reference v2`);
     }
-    assert.equal(snap.resources.length, 15);
+    assert.equal(resourceSchemas.length, 15);
+    const snap = snapshotContracts();
+    assert.equal(Object.keys(snap.contracts).length, 5);
+    assert.equal(snap.packageVersion, 'v2');
   });
 });
 
@@ -190,10 +193,10 @@ describe('@commander/contracts JSON schemas', () => {
     assert.deepStrictEqual(stateEnum, [...STEP_STATES]);
   });
 
-  it('effect schema has all 7 effect statuses', () => {
+  it('effect schema has four durable effect statuses', () => {
     const effectSchema = CONTRACT_SCHEMAS.effect as any;
     const statuses = effectSchema.properties.status.enum;
-    assert.deepStrictEqual(statuses, ['ADMITTED', 'EXECUTING', 'COMPLETION_UNKNOWN', 'COMPLETED', 'FAILED', 'COMPENSATED', 'REJECTED']);
+    assert.deepStrictEqual(statuses, ['ADMITTED', 'COMPLETION_UNKNOWN', 'COMPLETED', 'FAILED']);
   });
 
   it('connector schema has data classification enum', () => {
@@ -262,24 +265,23 @@ describe('@commander/contracts compatibility', () => {
     assert.equal(isCompatibleSchemaVersion('v3'), false);
   });
 
-  it('snapshotContracts returns all resources, states, and error codes', () => {
+  it('snapshotContracts returns constitution contracts, states, and error codes', () => {
     const snap = snapshotContracts();
-    assert.equal(snap.version, 'v2');
-    assert.equal(snap.resources.length, 15);
+    assert.equal(snap.packageVersion, 'v2');
+    assert.equal(Object.keys(snap.contracts).length, 5);
     assert.ok(snap.runStates.length >= 8);
     assert.ok(snap.stepStates.length >= 8);
     assert.ok(snap.errorCodes.length >= 20);
-    assert.ok(snap.schemaNames.length >= 17);
+    assert.ok(snap.contracts.grant.schemaHash.length === 64);
   });
 
-  it('detectBreakingChanges identifies removed resources', () => {
+  it('detectBreakingChanges identifies removed required grant field', () => {
     const baseline = snapshotContracts();
-    const current = snapshotContracts();
-    // Simulate a removed resource
-    current.resources = current.resources.filter((r) => r !== 'EffectV2');
+    const current = structuredClone(baseline);
+    current.contracts.grant.required = current.contracts.grant.required.filter((f) => f !== 'nonce');
     const changes = detectBreakingChanges(baseline, current);
     assert.ok(changes.length > 0);
-    assert.ok(changes.some((c) => c.includes('EffectV2')));
+    assert.ok(changes.some((c) => c.includes('nonce')));
   });
 
   it('detectBreakingChanges identifies removed states', () => {

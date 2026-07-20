@@ -1,0 +1,18 @@
+{
+  "kind": "artifact",
+  "schemaVersion": "commander.artifact/v1",
+  "payload": {
+    "id": "art-minimal-1",
+    "contentType": "text/plain",
+    "sizeBytes": 42,
+    "digest": {
+      "algorithm": "sha-256",
+      "value": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    "uri": "commander://tenant-1/run-minimal-1/art-minimal-1",
+    "tenantId": "tenant-1",
+    "runId": "run-minimal-1",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "schemaVersion": "commander.artifact/v1"
+  }
+}

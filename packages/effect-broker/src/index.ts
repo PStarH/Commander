@@ -8,29 +8,14 @@ import {
   verify,
   KeyObject,
 } from 'node:crypto';
+import {
+  GRANT_CONTRACT_VERSION,
+  upcastLegacyGrantToV1,
+  type GrantV1,
+} from '@commander/contracts';
+import { AdapterExecutionError } from './adapterErrors.js';
 
-export interface CapabilityGrant {
-  jti: string;
-  tenantId: string;
-  runId: string;
-  stepId: string;
-  effectTypes: string[];
-  expiresAt: string;
-  /** Workload identity that issued the grant. */
-  issuer?: string;
-  /** Intended verifier/audience. */
-  audience?: string;
-  issuedAt?: string;
-  notBefore?: string;
-  keyId?: string;
-  /** Policy version pinned when the grant was minted. */
-  policySnapshotId?: string;
-  /** Canonical hash of the exact external request allowed by the grant. */
-  requestHash?: string;
-  /** Step-scoped workload identity that authorized the mint. */
-  workloadId?: string;
-  nonce?: string;
-}
+export type CapabilityGrant = GrantV1;
 
 /** Kernel-claimed step context required for production effect admission. */
 export interface WorkloadBinding {
@@ -137,6 +122,13 @@ export interface EffectKernelPort {
     response: Record<string, unknown>;
     actor: string;
   }): Promise<{ id: string; state: string; response?: Record<string, unknown> } | null>;
+  failEffect?(request: {
+    effectId: string;
+    tenantId: string;
+    lease: { workerId: string; workerGeneration?: number; token: string; fencingEpoch: number };
+    error: { code: string; message: string; retryable: boolean; details?: Record<string, unknown> };
+    actor: string;
+  }): Promise<{ id: string; state: string } | null>;
   /** WS2 §5 three-layer engine. Optional so narrow test doubles can omit
    *  them, but enforced fail-closed by admit() whenever present — the kernel
    *  repository implements all three. */
@@ -158,6 +150,7 @@ export interface EffectOutcomeQuerier {
     type: string;
     request: Record<string, unknown>;
     tenantId: string;
+    signal?: AbortSignal;
   }): Promise<EffectRemoteOutcome>;
 }
 
@@ -243,6 +236,17 @@ export function canonicalRequestHash(value: Record<string, unknown>): string {
   return createHash('sha256').update(canonical(value)).digest('hex');
 }
 
+function normalizeVerifiedGrant(
+  raw: GrantV1 & { schemaVersion?: string },
+  defaults: { issuer: string; audience: string; keyId: string },
+): GrantV1 {
+  if (raw.schemaVersion === GRANT_CONTRACT_VERSION) return raw as GrantV1;
+  if (raw.schemaVersion && raw.schemaVersion !== GRANT_CONTRACT_VERSION) {
+    throw new Error(`Unsupported capability grant schemaVersion: ${raw.schemaVersion}`);
+  }
+  return upcastLegacyGrantToV1(raw, defaults);
+}
+
 function normalizePrivateKey(key: KeyLike): KeyObject {
   return key instanceof KeyObject ? key : createPrivateKey(key);
 }
@@ -265,16 +269,28 @@ export class CapabilityTokenIssuer {
     return createPublicKey(this.privateKey.export({ type: 'pkcs8', format: 'pem' }));
   }
 
-  issue(grant: Omit<CapabilityGrant, 'issuer' | 'audience' | 'issuedAt' | 'notBefore' | 'keyId'> & Partial<Pick<CapabilityGrant, 'issuer' | 'audience' | 'issuedAt' | 'notBefore' | 'keyId'>>): string {
+  issue(
+    grant: Omit<GrantV1, 'schemaVersion' | 'issuer' | 'audience' | 'issuedAt' | 'notBefore' | 'keyId'> &
+      Partial<Pick<GrantV1, 'schemaVersion' | 'issuer' | 'audience' | 'issuedAt' | 'notBefore' | 'keyId' | 'workloadId' | 'requestHash' | 'policySnapshotId' | 'nonce'>>,
+  ): string {
     const issuedAt = grant.issuedAt ?? nowIso(this.clock);
     const notBefore = grant.notBefore ?? issuedAt;
-    const payload: CapabilityGrant = {
-      ...grant,
-      issuer: this.options.issuer,
-      audience: this.options.audience,
-      keyId: this.options.keyId,
+    const payload: GrantV1 = {
+      schemaVersion: GRANT_CONTRACT_VERSION,
+      jti: grant.jti,
+      tenantId: grant.tenantId,
+      runId: grant.runId,
+      stepId: grant.stepId,
+      effectTypes: grant.effectTypes,
+      expiresAt: grant.expiresAt,
+      issuer: grant.issuer ?? this.options.issuer,
+      audience: grant.audience ?? this.options.audience,
+      keyId: grant.keyId ?? this.options.keyId,
       issuedAt,
       notBefore,
+      requestHash: grant.requestHash ?? '',
+      workloadId: grant.workloadId ?? '',
+      policySnapshotId: grant.policySnapshotId ?? '',
       nonce: grant.nonce ?? randomUUID(),
     };
     const header: CapabilityTokenHeader = { alg: 'EdDSA', typ: 'CAP', kid: this.options.keyId };
@@ -305,12 +321,17 @@ export class CapabilityTokenVerifier {
     if (header.alg !== 'EdDSA' || header.typ !== 'CAP' || !header.kid) throw new Error('Unsupported capability token');
     const key = this.getPublicKey(header.kid);
     if (!verify(null, Buffer.from(`${encodedHeader}.${encodedPayload}`), key, Buffer.from(encodedSignature, 'base64url'))) throw new Error('Invalid capability token signature');
-    const grant = decode<CapabilityGrant>(encodedPayload);
+    const raw = decode<GrantV1 & { schemaVersion?: string }>(encodedPayload);
+    const grant = normalizeVerifiedGrant(raw, {
+      issuer: this.options.issuer,
+      audience: this.options.audience,
+      keyId: header.kid,
+    });
     if (!grant.jti || !grant.tenantId || !grant.runId || !grant.stepId || !Array.isArray(grant.effectTypes)) throw new Error('Malformed capability grant');
     if (grant.issuer !== this.options.issuer || grant.audience !== this.options.audience || grant.keyId !== header.kid) throw new Error('Capability token issuer/audience mismatch');
     const time = at.getTime();
-    const issuedAt = Date.parse(grant.issuedAt ?? '');
-    const notBefore = Date.parse(grant.notBefore ?? grant.issuedAt ?? '');
+    const issuedAt = Date.parse(grant.issuedAt);
+    const notBefore = Date.parse(grant.notBefore);
     const expiresAt = Date.parse(grant.expiresAt);
     if (![issuedAt, notBefore, expiresAt].every(Number.isFinite) || issuedAt - this.clockSkewMs > time || notBefore - this.clockSkewMs > time || expiresAt + this.clockSkewMs <= time) throw new Error('Expired or not-yet-valid capability grant');
     if (await this.options.revocations?.isRevoked(grant.jti)) throw new Error('Capability grant revoked');
@@ -414,7 +435,9 @@ function bindingMismatch(
   if (grant.runId !== binding.runId) return 'RUN_MISMATCH';
   if (grant.stepId !== binding.stepId) return 'STEP_MISMATCH';
   // Symmetric: either side pinning workloadId must match (prevents token/binding split).
-  if (grant.workloadId !== binding.workloadId) {
+  const gw = grant.workloadId || undefined;
+  const bw = binding.workloadId || undefined;
+  if (gw !== bw) {
     return 'WORKLOAD_MISMATCH';
   }
   return null;
@@ -625,10 +648,39 @@ export class EffectBroker {
       } finally { clearTimeout(timer); }
     } catch (error) {
       if (!finished && !parked && admission.effectState === 'ADMITTED') {
-        await this.parkUnfinishedAdmission(
-          admission,
-          error instanceof EffectBrokerError ? error.code : 'execute_admitted_failed',
-        );
+        if (error instanceof AdapterExecutionError) {
+          if (error.commitState === 'NOT_COMMITTED' && this.kernel.failEffect) {
+            await this.kernel.failEffect({
+              effectId: admission.kernelEffectId,
+              tenantId: admission.grant.tenantId,
+              lease: admission.lease,
+              error: {
+                code: error.code,
+                message: error.message,
+                retryable: error.retryable,
+                details: error.details,
+              },
+              actor: admission.actor,
+            });
+            throw new EffectBrokerError('EFFECT_FAILED', {
+              effectId: admission.kernelEffectId,
+              adapterCode: error.code,
+            });
+          }
+          if (error.commitState === 'UNKNOWN') {
+            await this.parkUnfinishedAdmission(admission, error.code);
+            parked = true;
+            throw new EffectBrokerError('COMPLETION_UNKNOWN', {
+              effectId: admission.kernelEffectId,
+            });
+          }
+        }
+        if (!parked) {
+          await this.parkUnfinishedAdmission(
+            admission,
+            error instanceof EffectBrokerError ? error.code : 'execute_admitted_failed',
+          );
+        }
       }
       throw error;
     } finally {
@@ -679,6 +731,7 @@ export class EffectBroker {
       type: effect.type,
       request: effect.request,
       tenantId: effect.tenantId,
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (remote.status === 'UNKNOWN') {
@@ -844,3 +897,13 @@ export type {
   EvidenceEffectSource,
   VerifyEvidenceBundleResult,
 } from './evidenceBundle.js';
+
+export {
+  AdapterExecutionError,
+  adapterErrorFromHttpStatus,
+  classifyAdapterError,
+} from './adapterErrors.js';
+export type {
+  AdapterCommitState,
+  AdapterRetryMode,
+} from './adapterErrors.js';

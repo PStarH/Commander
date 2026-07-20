@@ -14,12 +14,6 @@ export type RunStateV1 = RunState;
 /** Canonical step state. Re-exported from @commander/contracts. */
 export type StepStateV1 = StepState;
 
-/**
- * @deprecated Use {@link RunStateV1} from @commander/contracts.
- * Legacy lowercase status names are being removed in Architecture V2 (WP7).
- */
-export type RunStatusV1 = RunStateV1;
-
 export interface RunV1 {
   id: string;
   status: RunStateV1;

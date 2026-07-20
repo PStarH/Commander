@@ -58,6 +58,7 @@ import {
   cmdWorkflow,
   cmdDiagnose,
   cmdAction,
+  cmdDev,
 } from './cli/commands';
 import { cmdFix } from './cli/commands/convenience';
 import { cmdSandbox } from './cli/commands/sandbox';
@@ -130,6 +131,7 @@ const COMMAND_HELP: Record<string, string> = {
   security: `  ${$.bold}commander security <subcommand> [args]${$.reset}\n\n  Run Commander's adversarial / red-team / compliance test batteries.\n\n  ${$.bold}Subcommands:${$.reset}\n    redteam              Red-team battery\n    compliance-audit     Compliance audit\n    adversarial-llm      Adversarial LLM test\n    hard-adversarial     Hard adversarial test\n    unknown-adversarial  Unknown-attack adversarial test\n\n  ${$.dim}Example:${$.reset}\n    commander security redteam --rounds 3\n`,
   workflow: `  ${$.bold}commander workflow <subcommand>${$.reset}\n\n  Manage workflows and the scheduler daemon.\n\n  ${$.bold}Subcommands:${$.reset}\n    ls                       List available and scheduled workflows\n    run <id>                Execute a workflow\n    create <name>           Scaffold a new workflow (--description= --cron=)\n    schedule <id>            Schedule a workflow (--cron="..." --interval="30m")\n    unschedule <id>          Remove a schedule\n    pause <id> | resume <id>  Pause / resume a schedule\n    history [wfId]          Show execution history\n    daemon                  Start the scheduler daemon\n    stop                     Stop the scheduler daemon\n`,
   diagnose: `  ${$.bold}commander diagnose [flags]${$.reset}\n\n  Run V2 distributed stack health diagnostics.\n\n  Checks four subsystems and prints a PASS/FAIL/WARN summary:\n    1. V2 kernel health    — DB connectivity, schema version, run/step counts\n    2. Worker plane health — env vars, V2 mode, worker registration & heartbeats\n    3. Storage backend     — backend type, production fail-closed posture\n    4. Security posture    — OutboundNetworkPolicy, ReversibilityGate, AnomalyDetector\n\n  ${$.bold}Flags:${$.reset}\n    --json     Machine-readable JSON output\n    --help     Show this help message\n\n  ${$.bold}Exit codes:${$.reset}\n    0  All critical checks passed\n    1  One or more critical checks failed\n\n  ${$.dim}Example:${$.reset}\n    commander diagnose\n    commander diagnose --json\n`,
+  dev: `  ${$.bold}commander dev [flags]${$.reset}\n\n  Start the local enterprise dev stack (API + worker + kernel-ops + operations).\n\n  ${$.bold}Flags:${$.reset}\n    --data-dir=<path>   Data directory (default: .commander/dev)\n    --port=<n>          API port (default: 4000)\n    --reset             Wipe data directory before start\n    --no-open           Do not open browser\n    --verbose           Verbose child output + ops.env snapshot\n\n  ${$.dim}Example:${$.reset}\n    commander dev --port=4010 --no-open\n`,
 };
 
 function showCommandHelp(cmd: string): boolean {
@@ -269,6 +271,15 @@ async function main() {
     case 'up': {
       const { positional, flags } = parseFlags(rest);
       await cmdUp(positional, flags);
+      break;
+    }
+    case 'dev': {
+      const { flags } = parseFlags(rest);
+      if (rest.includes('--help')) {
+        showCommandHelp('dev');
+        process.exit(0);
+      }
+      await cmdDev(rest, flags);
       break;
     }
 

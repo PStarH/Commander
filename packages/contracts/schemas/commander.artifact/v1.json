@@ -1,0 +1,33 @@
+{
+  "$id": "commander.artifact/v1",
+  "type": "object",
+  "required": ["kind", "schemaVersion", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "kind": { "type": "string", "const": "artifact" },
+    "schemaVersion": { "type": "string", "const": "commander.artifact/v1" },
+    "payload": {
+      "type": "object",
+      "required": ["id", "contentType", "sizeBytes", "digest", "uri", "tenantId", "runId", "createdAt", "schemaVersion"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "contentType": { "type": "string" },
+        "sizeBytes": { "type": "integer", "minimum": 0 },
+        "digest": {
+          "type": "object",
+          "required": ["algorithm", "value"],
+          "properties": {
+            "algorithm": { "type": "string", "enum": ["sha-256", "sha-512", "blake3"] },
+            "value": { "type": "string" }
+          }
+        },
+        "uri": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "runId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "schemaVersion": { "type": "string", "const": "commander.artifact/v1" }
+      }
+    }
+  }
+}

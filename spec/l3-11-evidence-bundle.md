@@ -1,6 +1,6 @@
 # L3-11：Evidence Bundle v0（可验证执行证据导出）
 
-**状态：PARTIAL（库级导出 + contentHash 链校验已落地；Gateway `/v1` HTTP 端点未接；WORM/SIEM 锚定不在 v0 范围）**  
+**状态：HTTP 面 ENFORCED（`GET /v1/runs/:runId/evidence`）；WORM/SIEM 锚定仍非范围**  
 **范围：Phase 1 Spec → Phase 2 Build → Phase 3 Review & Audit**  
 **关联：L3-03a Effect 垄断、WS2 §audit 双写、WS9 §6 审计链（远期对齐）**
 
@@ -134,10 +134,10 @@ v0 **不**建设通用 trace warehouse；复用 `commander_effects` + `AuditSink
 | 2 | 默认排除 CoT / gen_ai prompt 字段 | ENFORCED | `evidenceBundle.test.ts` DLP 用例 |
 | 3 | `verifyEvidenceBundle` 检测 contentHash / entry 链篡改 | ENFORCED | `evidenceBundle.test.ts` tamper 用例 |
 | 4 | Kernel `listEffectsForRun` 读 ledger | ENFORCED | `kernel.test.ts` inMemory 作用域用例；接口 + Postgres 实现存在（无 live DB 测） |
-| 5 | Gateway HTTP `/v1/.../evidence` | PARTIAL | 未实现；v0 不要求 |
-| 6 | WORM / KMS 外部锚定 | PARTIAL | 对齐 WS9 §6 远期项 |
+| 5 | Gateway HTTP `GET /v1/runs/:runId/evidence` | ENFORCED | `v1GatewayEndpoints.ts` + `apps/api/test/v1RunEvidence.test.ts`（L3 Wave closeout 2026-07-19） |
+| 6 | WORM / KMS 外部锚定 | PARTIAL | 对齐 WS9 §6 远期项；**不在** L3-11 v0 |
 
-**Phase 3 诚实结论：** v0 为 **PARTIAL**——包级导出与校验 ENFORCED；HTTP 与 WORM 锚定 PARTIAL。
+**Phase 3 诚实结论（2026-07-19）：** 包级导出/校验 + Gateway HTTP 面 **ENFORCED**；WORM/SIEM 锚定仍 **PARTIAL / 非范围**。
 
 ---
 

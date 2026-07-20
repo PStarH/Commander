@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync, sign } from 'node:crypto';
 import { describe, it } from 'node:test';
 import {
   CapabilityTokenIssuer,
@@ -75,6 +76,38 @@ describe('EffectBroker', () => {
     const verified = await verifier.verify(token);
     assert.equal(verified.tenantId, 'tenant');
     assert.equal(verified.effectTypes[0], 'crm.write');
+  });
+
+  it('CapabilityTokenVerifier rejects unknown grant schemaVersion', async () => {
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const encode = (value: unknown): string => Buffer.from(JSON.stringify(value)).toString('base64url');
+    const header = { alg: 'EdDSA', typ: 'CAP', kid: 'k1' };
+    const payload = {
+      schemaVersion: 'commander.grant/v99',
+      jti: 'jti-v99',
+      tenantId: 'tenant',
+      runId: 'run',
+      stepId: 'step',
+      effectTypes: ['crm.write'],
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      issuer: 'commander-issuer',
+      audience: 'commander.effect-broker',
+      issuedAt: '2026-01-01T00:00:00.000Z',
+      notBefore: '2026-01-01T00:00:00.000Z',
+      keyId: 'k1',
+      requestHash: canonicalRequestHash({}),
+      workloadId: 'w1',
+      policySnapshotId: 'p1',
+      nonce: 'n1',
+    };
+    const signingInput = `${encode(header)}.${encode(payload)}`;
+    const token = `${signingInput}.${sign(null, Buffer.from(signingInput), privateKey).toString('base64url')}`;
+    const verifier = new CapabilityTokenVerifier({
+      issuer: 'commander-issuer',
+      audience: 'commander.effect-broker',
+      publicKeys: { k1: publicKey },
+    });
+    await assert.rejects(verifier.verify(token), /Unsupported capability grant schemaVersion/);
   });
 
   it('requires matching capability, allow policy, kernel admission, and records completion', async () => {

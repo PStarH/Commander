@@ -2,6 +2,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import express, { type Request, type Response, type Router } from 'express';
 import { z } from 'zod';
 import {
+  buildRunEvidenceBundle,
+  sanitizeForEvidence,
+  verifyEvidenceBundle,
+  type EvidenceAuditSource,
+  type EvidenceEffectSource,
+} from '@commander/effect-broker';
+import {
   GatewayIdempotencyConflictError,
   GatewayStepIdConflictError,
   type KernelRun,
@@ -159,10 +166,45 @@ function renderRun(run: {
   };
 }
 
+function renderRunListItem(run: KernelRun) {
+  return {
+    id: run.id,
+    state: run.state,
+    tenantId: run.tenantId,
+    createdAt: run.createdAt,
+    updatedAt: run.updatedAt,
+  };
+}
+
+function clampListLimit(raw: unknown): number {
+  const parsed = typeof raw === 'string' || typeof raw === 'number' ? Number(raw) : NaN;
+  if (!Number.isFinite(parsed)) return 50;
+  return Math.min(200, Math.max(1, Math.trunc(parsed)));
+}
+
 /** V1 resource API. It schedules durable work; it never constructs AgentRuntime. */
 export function createV1GatewayRouter(resolveKernel: () => V1KernelGateway | null): Router {
   const router = express.Router();
   router.use('/actions', createActionGatewayRouter(resolveKernel));
+
+  // List before /runs/:runId so "runs" is not captured as a runId.
+  router.get('/runs', async (req, res) => {
+    const tenantId = requiredTenant(req, res);
+    if (!tenantId) return;
+    const kernel = resolveKernel();
+    if (!kernel) {
+      return res.status(503).json({
+        error: {
+          code: 'KERNEL_UNAVAILABLE',
+          message: 'Shared execution kernel is not configured.',
+        },
+      });
+    }
+    const limit = clampListLimit(req.query.limit);
+    const runs = await kernel.listRuns(tenantId, { limit });
+    return res.json({ runs: runs.map(renderRunListItem) });
+  });
+
   router.post('/runs', async (req, res) => {
     const tenantId = requiredTenant(req, res);
     if (!tenantId) return;
@@ -283,8 +325,85 @@ export function createV1GatewayRouter(resolveKernel: () => V1KernelGateway | nul
           message: 'Shared execution kernel is not configured.',
         },
       });
+    const run = await kernel.getRun(req.params.runId, tenantId);
+    if (!run) {
+      return res
+        .status(404)
+        .json({ error: { code: 'RUN_NOT_FOUND', message: 'Run was not found.' } });
+    }
     const events = await kernel.listEvents(req.params.runId, tenantId);
-    res.json({ events });
+    // Fail-closed DLP: event payloads may contain prompts/tool args/secrets.
+    res.json({
+      events: events.map((event) => ({
+        ...event,
+        payload: sanitizeForEvidence(event.payload) as Record<string, unknown>,
+      })),
+    });
+  });
+
+  router.get('/runs/:runId/evidence', async (req, res) => {
+    const tenantId = requiredTenant(req, res);
+    if (!tenantId) return;
+    const kernel = resolveKernel();
+    if (!kernel) {
+      return res.status(503).json({
+        error: {
+          code: 'KERNEL_UNAVAILABLE',
+          message: 'Shared execution kernel is not configured.',
+        },
+      });
+    }
+    const run = await kernel.getRun(req.params.runId, tenantId);
+    if (!run) {
+      return res
+        .status(404)
+        .json({ error: { code: 'RUN_NOT_FOUND', message: 'Run was not found.' } });
+    }
+    const [effects, events] = await Promise.all([
+      kernel.listEffects(run.id, tenantId),
+      kernel.listEvents(run.id, tenantId),
+    ]);
+    const evidenceEffects: EvidenceEffectSource[] = effects.map((effect) => ({
+      id: effect.id,
+      runId: effect.runId,
+      stepId: effect.stepId,
+      tenantId: effect.tenantId,
+      type: effect.type,
+      state: effect.state,
+      policyDecisionId: effect.policyDecisionId,
+      requestHash: effect.requestHash,
+      request: effect.request,
+      response: effect.response,
+      createdAt: effect.createdAt,
+      completedAt: effect.completedAt,
+    }));
+    const auditEvents: EvidenceAuditSource[] = events.map((event) => ({
+      type: event.type,
+      severity:
+        event.type.includes('failed') || event.type.includes('denied') ? 'high' : 'low',
+      tenantId: event.tenantId,
+      runId: event.runId,
+      stepId: event.stepId ?? run.id,
+      at: event.occurredAt,
+      details: sanitizeForEvidence(event.payload) as Record<string, unknown>,
+    }));
+    const bundle = buildRunEvidenceBundle({
+      tenantId,
+      runId: run.id,
+      intentHash: run.intentHash,
+      workGraphHash: run.workGraphHash,
+      workGraphVersion: run.workGraphVersion,
+      policySnapshotId: run.policySnapshotId,
+      kernelApiVersion: 'v1',
+      effects: evidenceEffects,
+      auditEvents,
+      exportedAt: run.updatedAt,
+      bundleId: `bundle_${createHash('sha256')
+        .update(`${run.id}:${run.updatedAt}`)
+        .digest('hex')
+        .slice(0, 40)}`,
+    });
+    return res.json({ bundle, verification: verifyEvidenceBundle(bundle) });
   });
 
   // ── Lightweight status probe for benchmarks / workers ────────────────────

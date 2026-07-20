@@ -75,12 +75,63 @@ export type { OpenApiV1Spec } from './openapi.js';
 export {
   CONTRACT_VERSION,
   MIN_SUPPORTED_SCHEMA_VERSION,
-  detectBreakingChanges,
   isCompatibleSchemaVersion,
-  snapshotContracts,
   validateResource,
 } from './compatibility.js';
-export type { ContractSnapshot } from './compatibility.js';
+
+export {
+  CONSTITUTION_CONTRACT_VERSIONS,
+  RUN_CONTRACT_VERSION,
+  EVENT_CONTRACT_VERSION,
+  EFFECT_CONTRACT_VERSION,
+  GRANT_CONTRACT_VERSION,
+  ARTIFACT_CONTRACT_VERSION,
+} from './versioned.js';
+export type { VersionedContract, ConstitutionContractVersion } from './versioned.js';
+
+export { GrantV1, GRANT_CONTRACT_VERSION as GRANT_VERSION, wrapGrantV1 } from './grant.js';
+export type { GrantContractV1 } from './grant.js';
+
+export { RunPayloadV2, RUN_CONTRACT_VERSION as RUN_VERSION, wrapRunV2 } from './runContract.js';
+export type { RunContractV2 } from './runContract.js';
+
+export { EventPayloadV2, EVENT_CONTRACT_VERSION as EVENT_VERSION, wrapEventV2 } from './eventContract.js';
+export type { EventContractV2 } from './eventContract.js';
+
+export {
+  EffectPayloadV2,
+  EFFECT_DURABLE_STATES,
+  EFFECT_CONTRACT_VERSION as EFFECT_VERSION,
+  wrapEffectV2,
+  toEffectContractV2,
+  fromEffectContractV2,
+} from './effectContract.js';
+export type {
+  EffectContractV2,
+  EffectDurableStatus,
+  EffectObservationStatus,
+} from './effectContract.js';
+
+export {
+  ArtifactPayloadV1,
+  ARTIFACT_CONTRACT_VERSION as ARTIFACT_VERSION,
+  wrapArtifactV1,
+  toArtifactContractV1,
+} from './artifactContract.js';
+export type { ArtifactContractV1, ArtifactDigestV1 } from './artifactContract.js';
+
+export {
+  snapshotContracts,
+  detectBreakingChanges,
+  detectSchemaBreakingChanges,
+  canonicalSchemaHash,
+  fixtureHash,
+  sortKeysDeep,
+} from './compatibility.v2.js';
+export type { ContractSnapshot, ContractSchemaEntry } from './compatibility.v2.js';
+
+export { upcastLegacyGrantToV1, getLegacyGrantUpcastCount } from './upcasters/index.js';
+export type { LegacyGrantPayload } from './upcasters/index.js';
 
 // --- Shared identity, policy, audit, and plugin contracts ---
 export {
@@ -95,3 +146,19 @@ export type {
   PolicyEffect,
   WorkloadIdentity,
 } from './controlPlane.js';
+
+export {
+  commanderActionMarker,
+  compensationIdempotencyKey,
+  evaluateManifestGatewayEffect,
+  findAdapterManifest,
+  FIXED_ACTION_ADAPTER_MANIFESTS,
+  githubPrBodyMarker,
+  GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR,
+  servicenowCorrelationId,
+  SERVICENOW_INCIDENT_CREATE_DESCRIPTOR,
+} from './actionAdapters.js';
+export type {
+  ActionAdapterDescriptorV1,
+  ActionGatewayEffect,
+} from './actionAdapters.js';

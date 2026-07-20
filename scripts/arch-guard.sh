@@ -18,11 +18,18 @@ const allowedDependencies = {
   '@commander/contracts': [],
   '@commander/kernel': ['@commander/contracts'],
   '@commander/effect-broker': ['@commander/contracts'],
-  '@commander/operations': ['@commander/kernel', '@commander/contracts'],
+  '@commander/action-adapters': ['@commander/contracts', '@commander/effect-broker'],
+  '@commander/operations': [
+    '@commander/kernel',
+    '@commander/contracts',
+    '@commander/effect-broker',
+    '@commander/action-adapters',
+  ],
   '@commander/worker-plane': [
     '@commander/contracts',
     '@commander/kernel',
     '@commander/effect-broker',
+    '@commander/action-adapters',
     '@commander/core',
   ],
   '@commander/api': [
@@ -251,6 +258,19 @@ function visit(name, chain = []) {
   visited.add(name);
 }
 for (const name of graph.keys()) visit(name);
+
+const deletedSymbols = ['RunStatusV1'];
+const grantAuthorityPackages = new Set(['@commander/api', '@commander/worker-plane']);
+for (const file of sourceFiles) {
+  const src = fs.readFileSync(file, 'utf8');
+  const owner = packageForFile(file)?.name;
+  for (const sym of deletedSymbols) {
+    if (src.includes(sym)) failures.push(`Resurrected deleted symbol ${sym} in ${relativeFile(file)}`);
+  }
+  if (owner && grantAuthorityPackages.has(owner) && /\binterface\s+(CapabilityGrant|GrantV1)\b/.test(src)) {
+    failures.push(`Ad-hoc grant interface in ${relativeFile(file)}; use @commander/contracts GrantV1`);
+  }
+}
 
 if (failures.length > 0) {
   console.error('Architecture constitution guard failed:');

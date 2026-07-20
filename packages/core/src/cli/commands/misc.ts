@@ -270,7 +270,7 @@ export function cmdHelp(showAll = false) {
     ${$.cyan}fix${$.reset}                           Auto-fix lint, formatting & type errors
     ${$.cyan}status${$.reset}                        System status & active provider
     ${$.cyan}config [sub]${$.reset}                  View/change settings
-    ${$.cyan}history${$.reset}                       List past sessions
+    ${$.cyan}history${$.reset}                       List runs (/v1 when COMMANDER_API_URL set; else local)
 
   ${$.bold}RUN FLAGS${$.reset}
     ${$.cyan}--dry-run${$.reset}              Show plan without executing

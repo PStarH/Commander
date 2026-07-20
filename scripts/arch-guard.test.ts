@@ -218,3 +218,191 @@ test('rejects a relative import that escapes its package boundary', () => {
   });
   assert.throws(() => runGuard(root), /relative import escapes package boundary/i);
 });
+
+test('rejects action-adapters importing core', () => {
+  const root = fixture({
+    packages: {
+      contracts: { name: '@commander/contracts' },
+      'effect-broker': { name: '@commander/effect-broker' },
+      'action-adapters': {
+        name: '@commander/action-adapters',
+        deps: {
+          '@commander/contracts': 'workspace:*',
+          '@commander/effect-broker': 'workspace:*',
+          '@commander/core': 'workspace:*',
+        },
+        source: "import '@commander/core';\n",
+      },
+    },
+  });
+  assert.throws(() => runGuard(root), /illegal.*dependency|action-adapters.*core/i);
+});
+
+test('rejects operations importing @commander/core', () => {
+  const root = fixture({
+    packages: {
+      contracts: { name: '@commander/contracts' },
+      kernel: {
+        name: '@commander/kernel',
+        deps: { '@commander/contracts': 'workspace:*' },
+      },
+      'effect-broker': {
+        name: '@commander/effect-broker',
+        deps: { '@commander/contracts': 'workspace:*' },
+      },
+      'action-adapters': {
+        name: '@commander/action-adapters',
+        deps: {
+          '@commander/contracts': 'workspace:*',
+          '@commander/effect-broker': 'workspace:*',
+        },
+      },
+      operations: {
+        name: '@commander/operations',
+        deps: {
+          '@commander/kernel': 'workspace:*',
+          '@commander/contracts': 'workspace:*',
+          '@commander/effect-broker': 'workspace:*',
+          '@commander/action-adapters': 'workspace:*',
+          '@commander/core': 'workspace:*',
+        },
+        source: "import '@commander/core';\n",
+      },
+    },
+  });
+  assert.throws(() => runGuard(root), /illegal.*dependency|operations.*core|forbidden @commander\/core/i);
+});
+
+test('rejects operations importing apps/api', () => {
+  const root = fixture({
+    packages: {
+      contracts: { name: '@commander/contracts' },
+      kernel: {
+        name: '@commander/kernel',
+        deps: { '@commander/contracts': 'workspace:*' },
+      },
+      'effect-broker': {
+        name: '@commander/effect-broker',
+        deps: { '@commander/contracts': 'workspace:*' },
+      },
+      'action-adapters': {
+        name: '@commander/action-adapters',
+        deps: {
+          '@commander/contracts': 'workspace:*',
+          '@commander/effect-broker': 'workspace:*',
+        },
+      },
+      operations: {
+        name: '@commander/operations',
+        deps: {
+          '@commander/kernel': 'workspace:*',
+          '@commander/contracts': 'workspace:*',
+          '@commander/effect-broker': 'workspace:*',
+          '@commander/action-adapters': 'workspace:*',
+        },
+        source: "import '../../../apps/api/src/index.js';\n",
+      },
+    },
+  });
+  assert.throws(() => runGuard(root), /relative import escapes package boundary/i);
+});
+
+test('rejects action-adapters importing core via source', () => {
+  const root = fixture({
+    packages: {
+      contracts: { name: '@commander/contracts' },
+      core: { name: '@commander/core', deps: { '@commander/contracts': 'workspace:*' } },
+      'effect-broker': {
+        name: '@commander/effect-broker',
+        deps: { '@commander/contracts': 'workspace:*' },
+      },
+      'action-adapters': {
+        name: '@commander/action-adapters',
+        deps: {
+          '@commander/contracts': 'workspace:*',
+          '@commander/effect-broker': 'workspace:*',
+        },
+        source: "import '@commander/core';\n",
+      },
+    },
+  });
+  assert.throws(() => runGuard(root), /illegal source dependency|illegal dependency/i);
+});
+
+test('rejects commander dev importing @commander/kernel', () => {
+  const root = fixture({
+    packages: {
+      contracts: { name: '@commander/contracts' },
+      core: {
+        name: '@commander/core',
+        deps: { '@commander/contracts': 'workspace:*', '@commander/kernel': 'workspace:*' },
+        source: "import '@commander/kernel';\nexport async function cmdDev() {}\n",
+      },
+    },
+  });
+  assert.throws(() => runGuard(root), /illegal source dependency|kernel/i);
+});
+
+test('rejects commander dev importing apps/api paths', () => {
+  const root = fixture({
+    packages: {
+      contracts: { name: '@commander/contracts' },
+      core: {
+        name: '@commander/core',
+        source: "import '../../../apps/api/src/index.js';\nexport async function cmdDev() {}\n",
+      },
+    },
+  });
+  assert.throws(() => runGuard(root), /relative import escapes package boundary/i);
+});
+
+test('rejects commander dev importing @commander/worker-plane', () => {
+  const root = fixture({
+    packages: {
+      contracts: { name: '@commander/contracts' },
+      kernel: { name: '@commander/kernel', deps: { '@commander/contracts': 'workspace:*' } },
+      'worker-plane': { name: '@commander/worker-plane', deps: { '@commander/kernel': 'workspace:*' } },
+      core: {
+        name: '@commander/core',
+        deps: { '@commander/worker-plane': 'workspace:*' },
+        source: "import '@commander/worker-plane';\nexport async function cmdDev() {}\n",
+      },
+    },
+  });
+  assert.throws(() => runGuard(root), /illegal source dependency|worker-plane/i);
+});
+
+test('rejects resurrected RunStatusV1 symbol', () => {
+  const root = fixture({
+    packages: {
+      contracts: { name: '@commander/contracts' },
+      sdk: {
+        name: '@commander/sdk',
+        deps: { '@commander/contracts': 'workspace:*' },
+        source: 'export type RunStatusV1 = string;\n',
+      },
+    },
+  });
+  assert.throws(() => runGuard(root), /Resurrected deleted symbol RunStatusV1/i);
+});
+
+test('rejects ad-hoc CapabilityGrant interface in worker-plane', () => {
+  const root = fixture({
+    packages: {
+      contracts: { name: '@commander/contracts' },
+      kernel: {
+        name: '@commander/kernel',
+        deps: { '@commander/contracts': 'workspace:*' },
+      },
+      'worker-plane': {
+        name: '@commander/worker-plane',
+        deps: {
+          '@commander/contracts': 'workspace:*',
+          '@commander/kernel': 'workspace:*',
+        },
+        source: 'export interface CapabilityGrant { jti: string }\n',
+      },
+    },
+  });
+  assert.throws(() => runGuard(root), /Ad-hoc grant interface/i);
+});

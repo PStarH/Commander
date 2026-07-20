@@ -690,10 +690,15 @@ async function checkReconcile(baseUrl: string, gateway: InMemoryGateway): Promis
   });
 
   const reconcile = await postJson(baseUrl, `/v1/actions/${action.runId}/reconcile`, {});
-  assert.equal(reconcile.status, 501);
-  const reconcilePayload = (await reconcile.json()) as { error: { code: string }; effectId: string };
-  assert.equal(reconcilePayload.error.code, 'RECONCILER_NOT_CONFIGURED');
+  assert.equal(reconcile.status, 202);
+  const reconcilePayload = (await reconcile.json()) as {
+    enqueued: boolean;
+    effectId: string;
+    reconcileAfter: string;
+  };
+  assert.equal(reconcilePayload.enqueued, true);
   assert.equal(reconcilePayload.effectId, metadata.effectId);
+  assert.ok(reconcilePayload.reconcileAfter);
 }
 
 async function checkSdkPolicyEquivalence(baseUrl: string): Promise<void> {

@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "Commander Helm Values",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["tier"],
+  "properties": {
+    "tier": {
+      "type": "string",
+      "enum": ["demo", "team", "enterprise"]
+    },
+    "sandboxd": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": false }
+      }
+    },
+    "database": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "backend": { "type": "string", "enum": ["sqlite", "postgres"] },
+        "postgres": {
+          "type": "object",
+          "properties": {
+            "bundled": { "type": "boolean" },
+            "password": { "type": "string", "maxLength": 0 },
+            "existingSecret": { "type": "string" }
+          }
+        }
+      }
+    },
+    "worker": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "authTokenSecret": { "type": "string" }
+      }
+    },
+    "kernelOps": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" }
+      }
+    },
+    "adapterOps": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "secrets": {
+          "type": "object",
+          "properties": {
+            "existingSecret": { "type": "string" }
+          }
+        }
+      }
+    },
+    "api": {
+      "type": "object",
+      "properties": {
+        "secrets": {
+          "type": "object",
+          "properties": {
+            "existingSecret": { "type": "string" }
+          }
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "properties": {
+        "egress": {
+          "type": "object",
+          "properties": {
+            "adapterCidrs": {
+              "type": "array",
+              "items": { "type": "string", "not": { "const": "0.0.0.0/0" } }
+            },
+            "databaseCidrs": {
+              "type": "array",
+              "items": { "type": "string", "not": { "const": "0.0.0.0/0" } }
+            }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "tier": { "const": "enterprise" } } },
+      "then": {
+        "properties": {
+          "database": {
+            "properties": {
+              "postgres": {
+                "properties": {
+                  "bundled": { "const": false },
+                  "existingSecret": { "minLength": 1 }
+                },
+                "required": ["bundled", "existingSecret"]
+              }
+            }
+          },
+          "worker": {
+            "properties": {
+              "enabled": { "const": true },
+              "authTokenSecret": { "minLength": 1 }
+            },
+            "required": ["enabled", "authTokenSecret"]
+          },
+          "kernelOps": {
+            "properties": { "enabled": { "const": true } },
+            "required": ["enabled"]
+          },
+          "adapterOps": {
+            "properties": {
+              "enabled": { "const": true },
+              "secrets": {
+                "properties": { "existingSecret": { "minLength": 1 } },
+                "required": ["existingSecret"]
+              }
+            },
+            "required": ["enabled", "secrets"]
+          }
+        }
+      }
+    }
+  ]
+}
