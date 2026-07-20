@@ -70,14 +70,36 @@ export async function atomicWriteFile(filePath: string, data: string | Buffer): 
   }
 }
 
+/** Optional top-level shape guard; fail → same `.corrupt-*` quarantine as parse errors. */
+export type JsonShapeGuard = (value: unknown) => boolean;
+
+/** 顶层应为普通对象（非 null / 非数组）。 */
+export function isPlainObjectJson(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function quarantineAside(filePath: string): void {
+  try {
+    fs.renameSync(filePath, `${filePath}.corrupt-${Date.now()}`);
+  } catch {
+    /* quarantine is best-effort — never throw from a load path */
+  }
+}
+
 /**
- * Read and JSON.parse a file, quarantining a corrupt file instead of letting the
- * parse throw (which can crash-loop a boot path) or silently discarding it (which
- * lets the next write overwrite recoverable state permanently). On parse failure
- * the corrupt file is moved aside to `<file>.corrupt-<ts>` and `fallback` is
- * returned so the caller can reseed. Returns `fallback` when the file is absent.
+ * Read and JSON.parse a file, quarantining corrupt **or wrong-shape** payloads
+ * instead of letting parse throw (crash-loop) or silently discarding (next write
+ * permanently wipes recoverable state). On parse / shape failure the file is
+ * moved aside to `<file>.corrupt-<ts>` and `fallback` is returned so the caller
+ * can reseed. Returns `fallback` when the file is absent.
+ *
+ * `isExpectedShape`：解析成功后校验顶层形态（数组 vs 已知键对象）；错形与损坏同级隔离。
  */
-export function readJsonFileSafe<T>(filePath: string, fallback: T): T {
+export function readJsonFileSafe<T>(
+  filePath: string,
+  fallback: T,
+  isExpectedShape?: JsonShapeGuard,
+): T {
   let raw: string;
   try {
     raw = fs.readFileSync(filePath, 'utf8');
@@ -85,13 +107,14 @@ export function readJsonFileSafe<T>(filePath: string, fallback: T): T {
     return fallback;
   }
   try {
-    return JSON.parse(raw) as T;
-  } catch {
-    try {
-      fs.renameSync(filePath, `${filePath}.corrupt-${Date.now()}`);
-    } catch {
-      /* quarantine is best-effort — never throw from a load path */
+    const parsed: unknown = JSON.parse(raw);
+    if (isExpectedShape && !isExpectedShape(parsed)) {
+      quarantineAside(filePath);
+      return fallback;
     }
+    return parsed as T;
+  } catch {
+    quarantineAside(filePath);
     return fallback;
   }
 }

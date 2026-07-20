@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { hashSync } from 'bcryptjs';
+import { atomicWriteFileSync, readJsonFileSafe } from './atomicWrite';
 import { isProductionEnv } from './envSignal';
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -63,29 +64,16 @@ let cache: User[] | null = null;
 let initialized = false;
 
 function loadFromDisk(): User[] {
-  try {
-    if (!fs.existsSync(USERS_FILE)) {
-      return [];
-    }
-    const raw = fs.readFileSync(USERS_FILE, 'utf-8');
-    const parsed = JSON.parse(raw) as User[];
-    if (!Array.isArray(parsed)) {
-      process.stderr.write(`[userStore] users.json is not an array — ignoring\n`);
-      return [];
-    }
-    return parsed;
-  } catch (err) {
-    process.stderr.write(`[userStore] Failed to read users.json: ${err}\n`);
-    return [];
-  }
+  // REL-4: 损坏或错形（如 {"users":[...]}）均隔离到 .corrupt-*，禁止 silent [] →
+  // ensureDefaultAdmin 原地抹掉 passwordHash（与 refreshTokenStore 对齐）。
+  const parsed = readJsonFileSafe<User[] | null>(USERS_FILE, null, Array.isArray);
+  return parsed ?? [];
 }
 
 function saveToDisk(users: User[]): void {
   try {
-    if (!fs.existsSync(USERS_DIR)) {
-      fs.mkdirSync(USERS_DIR, { recursive: true });
-    }
-    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf-8');
+    // REL-3: atomic write so a crash mid-write cannot truncate password hashes.
+    atomicWriteFileSync(USERS_FILE, JSON.stringify(users, null, 2));
   } catch (err) {
     process.stderr.write(`[userStore] Failed to write users.json: ${err}\n`);
   }
@@ -297,4 +285,10 @@ export function countAdmins(): number {
 
 export function toSafeUserPublic(user: User): SafeUser {
   return toSafeUser(user);
+}
+
+/** Test helper: clear in-memory cache so the next access re-reads disk. */
+export function _resetUserStoreForTests(): void {
+  cache = null;
+  initialized = false;
 }

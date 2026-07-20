@@ -1,8 +1,8 @@
 import { Router } from 'express';
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { atomicWriteFileSync, readJsonFileSafe } from './atomicWrite';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -41,25 +41,15 @@ const WORKFLOWS_FILE = path.join(WORKFLOWS_DIR, 'workflows.json');
 let cache: WorkflowDefinition[] | null = null;
 
 function loadFromDisk(): WorkflowDefinition[] {
-  try {
-    if (!fs.existsSync(WORKFLOWS_FILE)) {
-      return [];
-    }
-    const raw = fs.readFileSync(WORKFLOWS_FILE, 'utf-8');
-    const parsed = JSON.parse(raw) as WorkflowDefinition[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (err) {
-    process.stderr.write(`[workflowStore] Failed to read workflows.json: ${err}\n`);
-    return [];
-  }
+  // REL-4: 损坏或错形均隔离，禁止 silent [] → 下次写入抹掉 workflows。
+  const parsed = readJsonFileSafe<unknown>(WORKFLOWS_FILE, null, Array.isArray);
+  return parsed === null ? [] : (parsed as WorkflowDefinition[]);
 }
 
 function saveToDisk(workflows: WorkflowDefinition[]): void {
   try {
-    if (!fs.existsSync(WORKFLOWS_DIR)) {
-      fs.mkdirSync(WORKFLOWS_DIR, { recursive: true });
-    }
-    fs.writeFileSync(WORKFLOWS_FILE, JSON.stringify(workflows, null, 2), 'utf-8');
+    // REL-3: atomic write so a crash mid-write cannot truncate workflows.
+    atomicWriteFileSync(WORKFLOWS_FILE, JSON.stringify(workflows, null, 2));
   } catch (err) {
     process.stderr.write(`[workflowStore] Failed to write workflows.json: ${err}\n`);
   }
