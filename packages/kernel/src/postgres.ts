@@ -326,9 +326,9 @@ export class PostgresKernelRepository implements KernelRepository {
              )
            ORDER BY u.running_steps ASC,
                     -- Aging: boost priority by +1 per minute of waiting, capped at 1000.
-                    -- This prevents starvation: even a priority=-1000 step will eventually
-                    -- outrank new steps after enough time.
-                    GREATEST(s.priority + FLOOR(EXTRACT(EPOCH FROM ($1::timestamptz - s.scheduled_at)) / 60), 1000) DESC,
+                    -- Must be LEAST (not GREATEST): GREATEST(..., 1000) collapses every step
+                    -- to ≥1000 and kills priority ordering / anti-starvation intent.
+                    LEAST(s.priority + FLOOR(EXTRACT(EPOCH FROM ($1::timestamptz - s.scheduled_at)) / 60), 1000) DESC,
                     s.scheduled_at ASC, s.created_at ASC FOR UPDATE OF s, u, c SKIP LOCKED LIMIT 1
          ), claimed AS (
            UPDATE commander_steps s SET state='RUNNING', attempt=s.attempt+1, version=s.version+1,
@@ -384,41 +384,12 @@ export class PostgresKernelRepository implements KernelRepository {
         await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: retryable ? 'step.lease_expired_requeued' : 'step.lease_expired_failed', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor: 'kernel.recovery', payload: { attempt: step.attempt } });
         await this.parkOrphanAdmittedEffects(client, step, 'lease_expired', 'kernel.recovery');
         if (!retryable) {
-          const completed = await client.query<{ id: string }>(
-            `SELECT id FROM commander_effects
-             WHERE run_id=$1 AND tenant_id=$2 AND state='COMPLETED'
-             ORDER BY created_at DESC`,
-            [step.runId, step.tenantId],
+          const source = result.rows.find((row) => row.id === step.id);
+          const fencingEpoch = Number(source?.fencing_epoch ?? 0);
+          const compensated = await this.requestCompensationIfNeeded(
+            client, step, fencingEpoch, 'kernel.recovery', now,
           );
-          if (completed.rows.length > 0) {
-            const runState = await this.lockRunState(client, step.runId, step.tenantId);
-            if (runState && runState !== 'COMPENSATING') {
-              assertRunTransition(runState, 'COMPENSATING');
-              const updated = await client.query<DbRun>(
-                `UPDATE commander_runs SET state='COMPENSATING', version=version+1, updated_at=$1
-                 WHERE id=$2 AND tenant_id=$3 RETURNING *`,
-                [now.toISOString(), step.runId, step.tenantId],
-              );
-              const run = fromRun(updated.rows[0]!);
-              const source = result.rows.find((row) => row.id === step.id);
-              await this.appendEvent(client, {
-                aggregateType: 'run', aggregateId: run.id, sequence: run.version,
-                type: 'run.compensating', tenantId: run.tenantId,
-                runId: run.id, stepId: step.id, actor: 'kernel.recovery',
-                payload: { fencingEpoch: Number(source?.fencing_epoch ?? 0) },
-              });
-              const compensationKey = `${run.tenantId}/${run.id}/${Number(source?.fencing_epoch ?? 0)}`;
-              await this.appendEvent(client, {
-                aggregateType: 'effect', aggregateId: `compensation:${compensationKey}`, sequence: 1,
-                type: 'kernel.compensation.requested', tenantId: run.tenantId,
-                runId: run.id, stepId: step.id, actor: 'kernel.recovery',
-                payload: {
-                  effectIds: completed.rows.map((effect) => effect.id),
-                  fencingEpoch: Number(source?.fencing_epoch ?? 0),
-                },
-              }, compensationKey);
-            }
-          } else {
+          if (!compensated) {
             await this.finishRunIfTerminal(client, step.runId, step.tenantId, 'kernel.recovery');
           }
         }
@@ -465,7 +436,16 @@ export class PostgresKernelRepository implements KernelRepository {
       await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: step.state === 'RETRY_WAIT' ? 'step.retry_scheduled' : 'step.failed', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor: request.actor, payload: { error: request.error } });
       // Broker-external fail must park ADMITTED effects (same as lease reclaim).
       await this.parkOrphanAdmittedEffects(client, step, 'step_failed', request.actor);
-      if (step.state === 'FAILED') await this.finishRunIfTerminal(client, step.runId, step.tenantId, request.actor);
+      if (step.state === 'FAILED') {
+        // Terminal fail with completed forward effects must compensate (parity with reclaim).
+        const fencingEpoch = Number(result.rows[0]?.fencing_epoch ?? 0);
+        const compensated = await this.requestCompensationIfNeeded(
+          client, step, fencingEpoch, request.actor,
+        );
+        if (!compensated) {
+          await this.finishRunIfTerminal(client, step.runId, step.tenantId, request.actor);
+        }
+      }
       return step;
     }, [request.tenantId]);
   }
@@ -506,7 +486,12 @@ export class PostgresKernelRepository implements KernelRepository {
       if (previousState === 'RUNNING') await this.releaseTenantSlot(client, step.tenantId);
       await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: 'step.failed', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor, payload: { error } });
       if (previousState === 'RUNNING') await this.parkOrphanAdmittedEffects(client, step, 'step_failed', actor);
-      await this.finishRunIfTerminal(client, step.runId, step.tenantId, actor);
+      // Deadline / interaction timeout with completed effects must compensate.
+      const fencingEpoch = Number(result.rows[0]?.fencing_epoch ?? 0);
+      const compensated = await this.requestCompensationIfNeeded(client, step, fencingEpoch, actor);
+      if (!compensated) {
+        await this.finishRunIfTerminal(client, step.runId, step.tenantId, actor);
+      }
       return step;
     }, [tenantId]);
   }
@@ -533,6 +518,9 @@ export class PostgresKernelRepository implements KernelRepository {
       for (const row of pausedSteps.rows) {
         const step = fromStep(row);
         await this.releaseTenantSlot(client, step.tenantId);
+        // Lease revoked: ADMITTED effects are no longer completable via step lease.
+        // Park as COMPLETION_UNKNOWN so retries fail closed instead of re-executing writes.
+        await this.parkOrphanAdmittedEffects(client, step, 'run_paused', actor);
         await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: 'step.paused', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor, payload: { previousState: 'RUNNING' } });
       }
       await this.appendEvent(client, { aggregateType: 'run', aggregateId: run.id, sequence: run.version, type: 'run.paused', tenantId, runId, actor, payload: {} });
@@ -629,6 +617,7 @@ export class PostgresKernelRepository implements KernelRepository {
       }
       for (const row of affected.rows) {
         const step = fromStep(row);
+        await this.parkOrphanAdmittedEffects(client, step, 'tenant_paused', actor);
         await this.appendEvent(client, {
           aggregateType: 'step', aggregateId: step.id, sequence: step.version,
           type: 'step.tenant_paused', tenantId, runId: step.runId, stepId: step.id,
@@ -1215,6 +1204,114 @@ export class PostgresKernelRepository implements KernelRepository {
     return result.rows;
   }
 
+
+  /**
+   * If the run has COMPLETED effects, move it to COMPENSATING and emit
+   * kernel.compensation.requested. Returns true when compensation was requested
+   * (caller must not finish as FAILED). Shared by reclaim / failStep / failStepByTimer.
+   */
+  private async requestCompensationIfNeeded(
+    client: SqlClient,
+    step: Pick<KernelStep, 'id' | 'tenantId' | 'runId'>,
+    fencingEpoch: number,
+    actor: string,
+    now = new Date(),
+  ): Promise<boolean> {
+    // 必须先锁 run / steps / COMPLETED|ADMITTED effects，再快照 COMPLETED：
+    // 否则并行 sibling completeEffect（不对 step 做 FOR UPDATE）可在快照后、cancel 前
+    // 把 ADMITTED 标成 COMPLETED，随后 step 被 CANCELLED，副作用脱离补偿 effectIds。
+    const runState = await this.lockRunState(client, step.runId, step.tenantId);
+    if (!runState) return false;
+    await this.lockStepStates(client, step.runId, step.tenantId);
+    await client.query(
+      `SELECT id FROM commander_effects
+       WHERE run_id=$1 AND tenant_id=$2 AND state IN ('COMPLETED','ADMITTED')
+       ORDER BY created_at ASC
+       FOR UPDATE`,
+      [step.runId, step.tenantId],
+    );
+    const completed = await client.query<{ id: string }>(
+      `SELECT id FROM commander_effects
+       WHERE run_id=$1 AND tenant_id=$2 AND state='COMPLETED'
+       ORDER BY created_at DESC`,
+      [step.runId, step.tenantId],
+    );
+    if (completed.rows.length === 0) return false;
+    if (runState === 'COMPENSATING') {
+      await this.cancelOpenStepsForTerminalRun(client, step.runId, step.tenantId, actor, 'run_compensating');
+      return true;
+    }
+    assertRunTransition(runState, 'COMPENSATING');
+    const updated = await client.query<DbRun>(
+      `UPDATE commander_runs SET state='COMPENSATING', version=version+1, updated_at=$1
+       WHERE id=$2 AND tenant_id=$3 RETURNING *`,
+      [now.toISOString(), step.runId, step.tenantId],
+    );
+    if (!updated.rows[0]) return false;
+    const run = fromRun(updated.rows[0]);
+    await this.appendEvent(client, {
+      aggregateType: 'run', aggregateId: run.id, sequence: run.version,
+      type: 'run.compensating', tenantId: run.tenantId,
+      runId: run.id, stepId: step.id, actor,
+      payload: { fencingEpoch },
+    });
+    const compensationKey = `${run.tenantId}/${run.id}/${fencingEpoch}`;
+    await this.appendEvent(client, {
+      aggregateType: 'effect', aggregateId: `compensation:${compensationKey}`, sequence: 1,
+      type: 'kernel.compensation.requested', tenantId: run.tenantId,
+      runId: run.id, stepId: step.id, actor,
+      payload: {
+        effectIds: completed.rows.map((effect) => effect.id),
+        fencingEpoch,
+      },
+    }, compensationKey);
+    // COMPENSATING runs are not claimable; cancel leftover open siblings.
+    await this.cancelOpenStepsForTerminalRun(client, run.id, run.tenantId, actor, 'run_compensating');
+    return true;
+  }
+
+
+  /**
+   * When a run becomes unclaimable (FAILED / COMPENSATING), cancel remaining
+   * non-terminal sibling steps so they do not sit PENDING forever.
+   */
+  private async cancelOpenStepsForTerminalRun(
+    client: SqlClient,
+    runId: string,
+    tenantId: string,
+    actor: string,
+    reason: string,
+  ): Promise<void> {
+    const open = await client.query<DbStep & { previous_state: string }>(
+      `WITH candidates AS (
+         SELECT id, state AS previous_state FROM commander_steps
+         WHERE run_id=$2 AND tenant_id=$3
+           AND state NOT IN ('SUCCEEDED','FAILED','CANCELLED','SKIPPED')
+         FOR UPDATE
+       )
+       UPDATE commander_steps s SET
+         state='CANCELLED', version=s.version+1, updated_at=now(),
+         lease_worker_id=NULL, lease_token=NULL, lease_expires_at=NULL,
+         error=jsonb_build_object('code','RUN_TERMINAL','message',$1::text,'retryable',false)
+       FROM candidates c WHERE s.id=c.id
+       RETURNING s.*, c.previous_state`,
+      [reason, runId, tenantId],
+    );
+    for (const row of open.rows) {
+      const step = fromStep(row);
+      if (row.previous_state === 'RUNNING') {
+        await this.releaseTenantSlot(client, step.tenantId);
+      }
+      assertStepTransition(row.previous_state as KernelStepState, 'CANCELLED');
+      await this.parkOrphanAdmittedEffects(client, step, reason, actor);
+      await this.appendEvent(client, {
+        aggregateType: 'step', aggregateId: step.id, sequence: step.version,
+        type: 'step.cancelled', tenantId: step.tenantId, runId: step.runId, stepId: step.id,
+        actor, payload: { reason, previousState: row.previous_state },
+      });
+    }
+  }
+
   private async finishRunIfTerminal(client: SqlClient, runId: string, tenantId: string, actor: string): Promise<void> {
     const previousState = await this.lockRunState(client, runId, tenantId);
     if (!previousState) return;
@@ -1222,6 +1319,7 @@ export class PostgresKernelRepository implements KernelRepository {
     if (states.rows.some((row) => row.state === 'FAILED')) {
       if (previousState === 'FAILED') return;
       assertRunTransition(previousState, 'FAILED');
+      await this.cancelOpenStepsForTerminalRun(client, runId, tenantId, actor, 'run_failed');
       const updated = await client.query<DbRun>(`UPDATE commander_runs SET state='FAILED', version=version+1, updated_at=now(), terminal_at=now() WHERE id=$1 AND tenant_id=$2 AND state NOT IN ('FAILED','SUCCEEDED') RETURNING *`, [runId, tenantId]);
       if (updated.rows[0]) await this.appendEvent(client, { aggregateType: 'run', aggregateId: runId, sequence: Number(updated.rows[0].version), type: 'run.failed', tenantId, runId, actor, payload: {} });
     } else if (states.rows.length > 0 && states.rows.every((row) => ['SUCCEEDED', 'SKIPPED'].includes(row.state))) {

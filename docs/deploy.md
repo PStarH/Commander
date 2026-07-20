@@ -55,8 +55,9 @@ docker compose --profile distributed --profile observability --profile tracing u
 
 Long-running compose services expose healthchecks. The `api` service serves
 `/health` and `/ready`; **kernel-ops** (worker/v2 profiles) serves
-`GET /health` (process up) and `GET /ready` (ops loops started + Postgres
-`SELECT 1`) on `COMMANDER_OPS_HEALTH_PORT` (compose default `8081`; `expose`
+`GET /health` (process up) and `GET /ready` (ops loops healthy + Postgres
+`SELECT 1` + compensation **drain** mode — probe-only wiring returns **503**)
+on `COMMANDER_OPS_HEALTH_PORT` (compose default `8081`; `expose`
 and the in-container healthcheck use the same variable). Helm values may
 choose another port and must keep probes in sync. The Helm chart
 wires matching `livenessProbe` / `readinessProbe` on the kernel-ops

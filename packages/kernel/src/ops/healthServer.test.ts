@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { describe, it } from 'node:test';
-import { startOpsHealthServer } from './healthServer.js';
+import { isKernelOpsReadyForTraffic, startOpsHealthServer } from './healthServer.js';
 
 async function freePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -21,11 +21,49 @@ async function freePort(): Promise<number> {
 }
 
 describe('ops healthServer', () => {
+  it('fail-closes traffic readiness when compensation is probe-only', () => {
+    assert.equal(
+      isKernelOpsReadyForTraffic({
+        loopsReady: true,
+        compensationDraining: false,
+        databaseOk: true,
+      }),
+      false,
+    );
+  });
+
+  it('allows traffic readiness only when drain + loops + db are all ok', () => {
+    assert.equal(
+      isKernelOpsReadyForTraffic({
+        loopsReady: true,
+        compensationDraining: true,
+        databaseOk: true,
+      }),
+      true,
+    );
+    assert.equal(
+      isKernelOpsReadyForTraffic({
+        loopsReady: false,
+        compensationDraining: true,
+        databaseOk: true,
+      }),
+      false,
+    );
+    assert.equal(
+      isKernelOpsReadyForTraffic({
+        loopsReady: true,
+        compensationDraining: true,
+        databaseOk: false,
+      }),
+      false,
+    );
+  });
+
   it('awaits bind success and serves /health', async () => {
     const port = await freePort();
     const health = await startOpsHealthServer({ port, isReady: () => true });
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/health`);
+      const res = await fetch('http://127.0.0.1:' + port + '/health');
       assert.equal(res.status, 200);
       assert.deepEqual(await res.json(), { status: 'ok' });
     } finally {
@@ -42,10 +80,7 @@ describe('ops healthServer', () => {
       blocker.listen(port, () => resolve());
     });
     try {
-      await assert.rejects(
-        () => startOpsHealthServer({ port, isReady: () => true }),
-        /EADDRINUSE/,
-      );
+      await assert.rejects(() => startOpsHealthServer({ port, isReady: () => true }), /EADDRINUSE/);
     } finally {
       await new Promise<void>((resolve, reject) => {
         blocker.close((err) => (err ? reject(err) : resolve()));
@@ -57,8 +92,66 @@ describe('ops healthServer', () => {
     const port = await freePort();
     const health = await startOpsHealthServer({ port, isReady: () => false });
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/ready`);
+      const res = await fetch('http://127.0.0.1:' + port + '/ready');
       assert.equal(res.status, 503);
+    } finally {
+      await health.close();
+    }
+  });
+
+  it('default probe-only fails /ready with 503 while honesty fields stay accurate', async () => {
+    // Mirrors main.ts: probe → compensationDraining false → isKernelOpsReadyForTraffic false → 503.
+    // K8s httpGet only sees the status code; JSON alone must not green the probe.
+    const port = await freePort();
+    const health = await startOpsHealthServer({
+      port,
+      isReady: () =>
+        isKernelOpsReadyForTraffic({
+          loopsReady: true,
+          compensationDraining: false,
+          databaseOk: true,
+        }),
+      getReadyDetails: () => ({
+        compensationMode: 'probe',
+        compensationDraining: false,
+      }),
+    });
+    try {
+      const res = await fetch('http://127.0.0.1:' + port + '/ready');
+      assert.equal(res.status, 503);
+      assert.deepEqual(await res.json(), {
+        status: 'not_ready',
+        compensationMode: 'probe',
+        compensationDraining: false,
+      });
+    } finally {
+      await health.close();
+    }
+  });
+
+  it('returns 200 from /ready when drain mode is wired and loops are healthy', async () => {
+    const port = await freePort();
+    const health = await startOpsHealthServer({
+      port,
+      isReady: () =>
+        isKernelOpsReadyForTraffic({
+          loopsReady: true,
+          compensationDraining: true,
+          databaseOk: true,
+        }),
+      getReadyDetails: () => ({
+        compensationMode: 'drain',
+        compensationDraining: true,
+      }),
+    });
+    try {
+      const res = await fetch('http://127.0.0.1:' + port + '/ready');
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), {
+        status: 'ready',
+        compensationMode: 'drain',
+        compensationDraining: true,
+      });
     } finally {
       await health.close();
     }

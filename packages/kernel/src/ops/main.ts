@@ -6,12 +6,12 @@ import { KernelOpsRuntime } from './opsRuntime.js';
 import { ReclaimDaemon } from './reclaimDaemon.js';
 import { TimerWakeupWorker } from './timerWakeupWorker.js';
 import { CompensationConsumerDaemon } from './compensationConsumerDaemon.js';
-import { startOpsHealthServer } from './healthServer.js';
+import { isKernelOpsReadyForTraffic, startOpsHealthServer } from './healthServer.js';
 
 const positiveInteger = (name: string, fallback: number): number => {
   const value = Number(process.env[name] ?? fallback);
   if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer`);
+    throw new Error(name + ' must be a positive integer');
   }
   return value;
 };
@@ -25,9 +25,13 @@ export async function main(): Promise<void> {
     maxAttempts: positiveInteger('COMMANDER_OUTBOX_MAX_ATTEMPTS', 10),
   });
 
-  // Probe-only compensation loop: proves claim path + DLQ sweep are healthy
-  // without pulling EffectBroker into the kernel package. Full drain ticks can
-  // replace `probe` when a broker-backed worker is co-located.
+  // Default compensation loop is probe-only (limit-0 claim + DLQ sweep) so the
+  // kernel package stays free of EffectBroker. That proves claimability, not drain.
+  //
+  // Fail-closed for K8s httpGet: /ready returns 503 unless a real drain tick
+  // is wired (compensation.isDraining()). Honesty fields alone are insufficient
+  // because probes only check status codes. Wire tick when a broker-backed
+  // drain owner co-locates with kernel-ops.
   const compensation = new CompensationConsumerDaemon({
     intervalMs: positiveInteger('COMMANDER_COMPENSATION_INTERVAL_MS', 5_000),
     probe: async () => {
@@ -56,14 +60,24 @@ export async function main(): Promise<void> {
   const health = await startOpsHealthServer({
     port: healthPort,
     isReady: async () => {
-      if (!runtime.isReady()) return false;
+      let databaseOk = false;
       try {
         await pool.query('SELECT 1');
-        return true;
+        databaseOk = true;
       } catch {
-        return false;
+        databaseOk = false;
       }
+      return isKernelOpsReadyForTraffic({
+        loopsReady: runtime.isReady(),
+        compensationDraining: compensation.isDraining(),
+        databaseOk,
+      });
     },
+    getReadyDetails: () => ({
+      // Explicit honesty: default wiring is probe-only until a drain tick is supplied.
+      compensationMode: compensation.mode(),
+      compensationDraining: compensation.isDraining(),
+    }),
   });
 
   let stopping = false;
