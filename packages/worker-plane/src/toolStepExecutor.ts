@@ -216,12 +216,13 @@ export class ToolStepExecutor implements StepExecutor {
                 details: { toolName: input.toolName, stepId: step.id, cooperative },
               },
             ),
-          abortError: () =>
+          abortError: (cooperative) =>
             new WorkerExecutionError('Tool execution aborted', {
               code: 'ABORTED',
-              retryable: true,
-              retryDelayMs: 1000,
-              details: { toolName: input.toolName, stepId: step.id },
+              // Non-cooperative parent-abort hard-exit: do not claim safe retry.
+              retryable: cooperative,
+              retryDelayMs: cooperative ? 1000 : undefined,
+              details: { toolName: input.toolName, stepId: step.id, cooperative },
             }),
         },
       );

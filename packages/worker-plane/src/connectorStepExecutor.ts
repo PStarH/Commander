@@ -262,15 +262,17 @@ export class ConnectorStepExecutor implements StepExecutor {
                 },
               },
             ),
-          abortError: () =>
+          abortError: (cooperative) =>
             new WorkerExecutionError('Connector execution aborted', {
               code: 'ABORTED',
-              retryable: true,
-              retryDelayMs: 5000,
+              // Non-cooperative parent-abort hard-exit: do not claim safe retry.
+              retryable: cooperative,
+              retryDelayMs: cooperative ? 5000 : undefined,
               details: {
                 connectorName: input.connectorName,
                 operation: input.operation,
                 stepId: step.id,
+                cooperative,
               },
             }),
         },
