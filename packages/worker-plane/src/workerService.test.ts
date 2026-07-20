@@ -28,7 +28,10 @@ class FakeKernel implements KernelWorkerPort {
   claimDelayMs = 0;
   lastHeartbeatActiveSteps: number | undefined;
   private readonly steps: Array<
-    ClaimedStep & { state: 'PENDING' | 'RUNNING' | 'RETRY_WAIT' | 'SUCCEEDED' | 'FAILED'; maxAttempts: number }
+    ClaimedStep & {
+      state: 'PENDING' | 'RUNNING' | 'RETRY_WAIT' | 'SUCCEEDED' | 'FAILED';
+      maxAttempts: number;
+    }
   > = [];
   private readonly runs = new Map<string, { tenantId: string; state: 'PENDING' | 'SUCCEEDED' }>();
   private readonly limits = new Map<string, number>();
@@ -58,7 +61,8 @@ class FakeKernel implements KernelWorkerPort {
     capabilities: string[];
   }): Promise<ClaimedStep | null> {
     this.lastClaimGeneration = request.workerGeneration;
-    if (this.claimDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.claimDelayMs));
+    if (this.claimDelayMs > 0)
+      await new Promise((resolve) => setTimeout(resolve, this.claimDelayMs));
     const step = this.steps.find(
       (candidate) =>
         ['PENDING', 'RETRY_WAIT'].includes(candidate.state) &&
@@ -75,7 +79,7 @@ class FakeKernel implements KernelWorkerPort {
     step.lease = {
       workerId: request.workerId,
       workerGeneration: request.workerGeneration ?? 0,
-      token: `lease-${step.id}`,
+      token: 'lease-' + step.id,
       fencingEpoch: step.lease.fencingEpoch + 1,
       expiresAt: new Date(Date.now() + request.leaseTtlMs).toISOString(),
     };
@@ -426,6 +430,45 @@ describe('worker plane', () => {
     assert.equal(kernel.lastFailureCode, 'WORKER_STOPPED');
     assert.ok(kernel.lastFailureRetryAt instanceof Date, 'retryAt required for kernel requeue');
     assert.equal(kernel.getStep('stop-step')?.state, 'RETRY_WAIT');
+  });
+
+  it('aborts in-flight step controllers when stop() is called', async () => {
+    const kernel = new FakeKernel();
+    kernel.addRun('run-abort-stop', 'tenant-a', [{ id: 'abort-stop-step', kind: 'agent' }]);
+    let sawAbort = false;
+    const service = new WorkerService(
+      definition,
+      identity,
+      auth,
+      new InMemoryWorkerRegistry(),
+      kernel,
+      {
+        execute: async (_step, context) => {
+          await new Promise<void>((_resolve, reject) => {
+            if (context.signal.aborted) {
+              sawAbort = true;
+              reject(new Error('already aborted'));
+              return;
+            }
+            context.signal.addEventListener(
+              'abort',
+              () => {
+                sawAbort = true;
+                reject(new Error('Worker stopped'));
+              },
+              { once: true },
+            );
+          });
+          return {};
+        },
+      },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 60_000 },
+    );
+    await service.start();
+    assert.equal(await service.pollOnce(), true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await service.stop();
+    assert.equal(sawAbort, true, 'stop() must abort activeControllers so drain does not hang');
   });
 
   it('counts claimInflight in activeSteps and registry heartbeat', async () => {
