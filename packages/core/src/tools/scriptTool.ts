@@ -5,6 +5,7 @@ import { getGlobalLogger } from '../logging';
 import {
   denyExecScriptUnlessAllowed,
   SCRIPT_NESTED_SHELL_EQUIVALENT_TOOLS,
+  isScriptVmFallbackAllowed,
 } from '../sandbox/execPolicy';
 
 // ── Security: Try to load isolated-vm for true V8 Isolate isolation ──────────
@@ -210,28 +211,42 @@ export class ExecuteScriptTool implements Tool {
     // Security: Prefer isolated-vm (true V8 Isolate) over Node.js vm module.
     // Per Node.js docs: vm is NOT a security sandbox — prototype chain escapes
     // are possible. isolated-vm provides real heap isolation.
+    // Production fail-closed: no Node vm fallback (COMMANDER_SCRIPT_VM_SOFT banned,
+    // same as COMMANDER_PLUGIN_SANDBOX_SOFT). Non-production may use hardened vm.
+    const allowVmFallback = isScriptVmFallbackAllowed();
+
     if (isolatedVm) {
       try {
         await this.runScriptInIsolate(script, tools, console_);
         return;
       } catch (err) {
-        // If isolated-vm fails (e.g. tool call serialization issue), log and
-        // fall back to hardened vm — but warn about the security implication.
+        if (!allowVmFallback) {
+          throw new Error(
+            'EXEC_SCRIPT_ISOLATE_REQUIRED: isolated-vm execution failed and vm fallback is ' +
+              'disabled in production. Install/fix isolated-vm (COMMANDER_SCRIPT_VM_SOFT is ' +
+              'forbidden in production, same as plugin soft fallback).',
+            { cause: err instanceof Error ? err : undefined },
+          );
+        }
         getGlobalLogger().warn(
           'ExecuteScriptTool',
           'isolated-vm execution failed, falling back to hardened vm (less secure)',
           { error: err instanceof Error ? err.message : String(err) },
         );
       }
+    } else if (!allowVmFallback) {
+      throw new Error(
+        'EXEC_SCRIPT_ISOLATE_REQUIRED: isolated-vm is not installed and vm fallback is ' +
+          'disabled in production. Install isolated-vm (pnpm add isolated-vm). ' +
+          'COMMANDER_SCRIPT_VM_SOFT is forbidden in production.',
+      );
     } else {
-      // Security: Warn that isolated-vm is not installed.
       getGlobalLogger().warn(
         'ExecuteScriptTool',
         'Using Node.js vm module — NOT a security sandbox. Install isolated-vm for true isolation: pnpm add isolated-vm',
       );
     }
 
-    // Fall back to hardened vm module
     await this.runScriptInVm(script, tools, console_);
   }
 

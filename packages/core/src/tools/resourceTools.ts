@@ -323,10 +323,31 @@ export class CodeResourceTool implements Tool {
       handler: async (args) => normalizeToolResult(await new CodeSearchTool().execute(args)),
     },
     refine: {
-      description: 'Refactor or optimize code according to a prompt',
+      description:
+        'Refactor or optimize code according to a prompt (test-driven when testCommand set)',
       params: {
-        path: { type: 'string', description: 'Path to the file to refine' },
-        instructions: { type: 'string', description: 'Instructions for the refinement' },
+        prompt: {
+          type: 'string',
+          description: 'The code generation / refinement task description',
+        },
+        language: {
+          type: 'string',
+          enum: ['python', 'javascript', 'typescript', 'go', 'rust'],
+          description: 'Programming language',
+        },
+        testCommand: {
+          type: 'string',
+          description: 'Command to run tests (e.g., "python -m pytest test.py") — ExecPolicy-gated',
+        },
+        codeFile: { type: 'string', description: 'File to write the generated code to' },
+        maxIterations: {
+          type: 'number',
+          description: 'Maximum refinement iterations (default: 3)',
+        },
+        verifyOnly: {
+          type: 'boolean',
+          description: 'If true, only run verification without generating code',
+        },
       },
       handler: async (args) => normalizeToolResult(await new CodeRefinerTool().execute(args)),
     },
@@ -527,7 +548,7 @@ export class ExecResourceTool implements Tool {
     },
     script: {
       description:
-        'Execute a JavaScript script that calls other tools programmatically via `tools.toolName(args)`. Denied by default (set COMMANDER_ALLOW_EXEC_SCRIPT=1); shell-equivalent tools are never injectable.',
+        'Execute a JavaScript script that calls other tools programmatically via `tools.toolName(args)`. Denied by default (set COMMANDER_ALLOW_EXEC_SCRIPT=1); shell/write/executable surfaces are never injectable.',
       params: {
         script: { type: 'string', description: 'JavaScript code to execute' },
         tools: {

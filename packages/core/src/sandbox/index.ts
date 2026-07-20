@@ -49,6 +49,7 @@ export {
   isExecScriptAllowed,
   denyExecScriptUnlessAllowed,
   SCRIPT_NESTED_SHELL_EQUIVALENT_TOOLS,
+  isScriptVmFallbackAllowed,
   isShellOrPythonExecTool,
   getExecPolicyEngine,
   resetExecPolicyEngine,
