@@ -248,12 +248,21 @@ export function main(strict: boolean = STRICT): CheckResult[] {
   const hasRecommendedFailures = results.some(
     (r) => !r.passed && r.declaredStatus === 'recommended',
   );
+  // residual→100 requires at least one required slot that passed with live evidence.
+  // An empty required set (all recommended / simulated non-scoring) must not be claimed as 100.
+  const requiredSlots = results.filter((r) => r.declaredStatus === 'required');
+  const residual100Claimable = requiredSlots.length > 0 && requiredSlots.every((r) => r.passed);
 
   if (strict && !requiredPassed) {
     console.log('❌ READINESS FAIL');
     process.exit(1);
   } else if (!strict && !requiredPassed) {
     console.log('⚠️  Readiness would fail in strict mode (running with --non-strict)');
+    process.exit(0);
+  } else if (!residual100Claimable) {
+    console.log(
+      '✅ READINESS PASS (no required live baselines — residual→100 NOT claimed; simulated is non-scoring)',
+    );
     process.exit(0);
   } else if (hasRecommendedFailures) {
     console.log('✅ READINESS PASS (required items all pass; recommended items have warnings)');

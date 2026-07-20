@@ -491,7 +491,7 @@ jobs:
 
       - run: pnpm install
 
-      - name: Rebuild better-sqlite3 (operations sqlite tests)
+      - name: Rebuild better-sqlite3 (adapter-ops / kernel sqlite tests)
         run: pnpm rebuild better-sqlite3
 
       - name: Install Helm
