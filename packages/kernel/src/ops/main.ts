@@ -1,11 +1,14 @@
-import { Pool } from 'pg';
-import { PostgresKernelRepository } from '../postgres.js';
+import {
+  createKernelRepository,
+  KernelBackendMissingError,
+  KernelBackendRefusedError,
+} from '../repositoryFactory.js';
 import { KernelOutboxPublisher } from './outbox/kernelOutboxPublisher.js';
+import { InProcessOutboxDeliveryPort } from './outbox/inProcessOutboxDeliveryPort.js';
 import { PostgresOutboxDeliveryPort } from './outbox/postgresOutboxDeliveryPort.js';
 import { KernelOpsRuntime } from './opsRuntime.js';
 import { ReclaimDaemon } from './reclaimDaemon.js';
 import { TimerWakeupWorker } from './timerWakeupWorker.js';
-import { CompensationConsumerDaemon } from './compensationConsumerDaemon.js';
 import { startOpsHealthServer } from './healthServer.js';
 
 const positiveInteger = (name: string, fallback: number): number => {
@@ -17,24 +20,25 @@ const positiveInteger = (name: string, fallback: number): number => {
 };
 
 export async function main(): Promise<void> {
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) throw new Error('DATABASE_URL is required for kernel ops');
-  const pool = new Pool({ connectionString });
-  const repository = new PostgresKernelRepository(pool, { schedulerMode: true });
-  const delivery = new PostgresOutboxDeliveryPort(pool, {
-    maxAttempts: positiveInteger('COMMANDER_OUTBOX_MAX_ATTEMPTS', 10),
-  });
+  let handle;
+  try {
+    handle = await createKernelRepository({ env: process.env });
+  } catch (error) {
+    if (error instanceof KernelBackendRefusedError || error instanceof KernelBackendMissingError) {
+      console.error(`[kernel-ops] ${error.code}: ${error.message}`);
+      process.exitCode = 1;
+      return;
+    }
+    throw error;
+  }
 
-  // Probe-only compensation loop: proves claim path + DLQ sweep are healthy
-  // without pulling EffectBroker into the kernel package. Full drain ticks can
-  // replace `probe` when a broker-backed worker is co-located.
-  const compensation = new CompensationConsumerDaemon({
-    intervalMs: positiveInteger('COMMANDER_COMPENSATION_INTERVAL_MS', 5_000),
-    probe: async () => {
-      await repository.claimOutboxByTopic('commander.kernel.compensation.requested', 0);
-      await repository.sweepOutboxDlq(new Date(), 50);
-    },
-  });
+  const repository = handle.repository;
+  const delivery =
+    handle.backend === 'postgres' && handle.postgresPool
+      ? new PostgresOutboxDeliveryPort(handle.postgresPool, {
+          maxAttempts: positiveInteger('COMMANDER_OUTBOX_MAX_ATTEMPTS', 10),
+        })
+      : new InProcessOutboxDeliveryPort();
 
   const runtime = new KernelOpsRuntime({
     reclaim: new ReclaimDaemon(repository, {
@@ -49,7 +53,6 @@ export async function main(): Promise<void> {
     outbox: new KernelOutboxPublisher(repository, delivery),
     outboxIntervalMs: positiveInteger('COMMANDER_OUTBOX_INTERVAL_MS', 1_000),
     outboxBatchSize: positiveInteger('COMMANDER_OUTBOX_BATCH_SIZE', 100),
-    compensation,
   });
 
   const healthPort = positiveInteger('COMMANDER_OPS_HEALTH_PORT', 8081);
@@ -57,12 +60,15 @@ export async function main(): Promise<void> {
     port: healthPort,
     isReady: async () => {
       if (!runtime.isReady()) return false;
-      try {
-        await pool.query('SELECT 1');
-        return true;
-      } catch {
-        return false;
+      if (handle.backend === 'postgres' && handle.postgresPool) {
+        try {
+          await handle.postgresPool.query('SELECT 1');
+          return true;
+        } catch {
+          return false;
+        }
       }
+      return true;
     },
   });
 
@@ -72,7 +78,7 @@ export async function main(): Promise<void> {
     stopping = true;
     await runtime.stop();
     await health.close();
-    await pool.end();
+    await handle.close();
   };
   process.once('SIGINT', () => {
     void shutdown();
@@ -80,7 +86,6 @@ export async function main(): Promise<void> {
   process.once('SIGTERM', () => {
     void shutdown();
   });
-  // Bind health first so EADDRINUSE fails closed before starting daemons.
   runtime.start();
 }
 

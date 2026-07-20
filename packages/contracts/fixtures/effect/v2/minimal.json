@@ -1,0 +1,20 @@
+{
+  "kind": "effect",
+  "schemaVersion": "commander.effect/v2",
+  "payload": {
+    "id": "eff-minimal-1",
+    "tenantId": "tenant-1",
+    "runId": "run-minimal-1",
+    "stepId": "step-1",
+    "kind": "connector.github.pullRequestCreate",
+    "action": "connector.github.pullRequestCreate",
+    "status": "ADMITTED",
+    "adapterId": "github.pullRequestCreate",
+    "adapterVersion": "1.0.0",
+    "requestDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "policyDecisionId": "dec-1",
+    "idempotencyKey": "idem-key-12345678",
+    "fencingEpoch": 0,
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  }
+}

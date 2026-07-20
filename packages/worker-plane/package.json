@@ -24,7 +24,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm --workspace-root exec tsx --test packages/worker-plane/src/workerService.test.ts packages/worker-plane/src/stepWorkloadIdentity.test.ts packages/worker-plane/src/llmBrokerBridge.test.ts packages/worker-plane/src/m3-worker-plane.test.ts packages/worker-plane/src/l3-03b-gateway-localonly.test.ts packages/worker-plane/src/l3-03a-effect-tool-monopoly.test.ts packages/worker-plane/src/ticketAdapter.test.ts packages/worker-plane/src/actionGatewayPolicy.test.ts",
+    "test": "pnpm --workspace-root exec tsx --test packages/worker-plane/src/workerService.test.ts packages/worker-plane/src/stepWorkloadIdentity.test.ts packages/worker-plane/src/llmBrokerBridge.test.ts packages/worker-plane/src/m3-worker-plane.test.ts packages/worker-plane/src/l3-03b-gateway-localonly.test.ts packages/worker-plane/src/l3-03a-effect-tool-monopoly.test.ts packages/worker-plane/src/ticketAdapter.test.ts packages/worker-plane/src/actionGatewayPolicy.test.ts packages/worker-plane/src/bootstrap.policy.test.ts packages/worker-plane/src/sqliteRegistry.test.ts",
     "test:e2e": "pnpm --workspace-root exec tsx --test --test-force-exit packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts",
     "test:e2e:pg": "pnpm --workspace-root exec tsx --test --test-force-exit packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts",
     "prepublishOnly": "tsc -p tsconfig.json"
@@ -52,13 +52,17 @@
     "access": "public"
   },
   "dependencies": {
+    "@commander/action-adapters": "workspace:*",
+    "@commander/contracts": "workspace:*",
     "@commander/core": "workspace:*",
     "@commander/kernel": "workspace:*",
     "@commander/effect-broker": "workspace:*",
-    "pg": "^8.15.0"
+    "pg": "^8.15.0",
+    "better-sqlite3": "^12.11.1"
   },
   "optionalDependencies": {},
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.9.3",
     "@types/pg": "^8.11.0",
     "typescript": "^5.0.0"

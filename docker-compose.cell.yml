@@ -1,0 +1,113 @@
+# =============================================================================
+# Commander — Cell profile override (L4-07)
+# Usage:
+#   export COMMANDER_API_KEY="$(openssl rand -hex 32)"
+#   export POSTGRES_PASSWORD="$(openssl rand -hex 16)"
+#   export COMMANDER_MASTER_KEY=… JWT_SECRET=… COMMANDER_CAPABILITY_TOKEN_KEY=…
+#   export COMMANDER_INTEGRITY_KEY=… COMMANDER_WORKER_AUTH_TOKEN=…
+#   # Optional: DOCKER_GID — worker entrypoint auto-aligns to docker.sock GID.
+#   # Override only if you need compose group_add without rebuilding the image:
+#   #   export DOCKER_GID=$(docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine stat -c %g /var/run/docker.sock)
+#   docker compose -f docker-compose.yml -f docker-compose.cell.yml --profile cell up -d --build
+# =============================================================================
+
+services:
+  postgres:
+    profiles:
+      - cell
+
+  kernel-migrate:
+    profiles:
+      - cell
+
+  api:
+    profiles:
+      - cell
+    environment:
+      - API_STORE_BACKEND=postgres
+      - COMMANDER_KERNEL_ENABLED=1
+      - COMMANDER_KERNEL_BACKEND=postgres
+      - COMMANDER_ENABLE_DEMO_TICKET=${COMMANDER_ENABLE_DEMO_TICKET:-}
+      - API_KEYS=${API_KEYS:-}
+      - TENANT_API_KEYS=${TENANT_API_KEYS:-}
+      - COMMANDER_CELL_TENANT_ID=${COMMANDER_CELL_TENANT_ID:-}
+      - COMMANDER_DEFAULT_TENANT_ID=${COMMANDER_DEFAULT_TENANT_ID:-${COMMANDER_CELL_TENANT_ID:-}}
+      - DATABASE_URL=postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander
+      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander
+      - COMMANDER_MASTER_KEY=${COMMANDER_MASTER_KEY:?set COMMANDER_MASTER_KEY}
+      - JWT_SECRET=${JWT_SECRET:?set JWT_SECRET}
+      - COMMANDER_CAPABILITY_TOKEN_KEY=${COMMANDER_CAPABILITY_TOKEN_KEY:?set COMMANDER_CAPABILITY_TOKEN_KEY}
+      - COMMANDER_INTEGRITY_KEY=${COMMANDER_INTEGRITY_KEY:?set COMMANDER_INTEGRITY_KEY}
+    depends_on:
+      kernel-migrate:
+        condition: service_completed_successfully
+
+  worker:
+    profiles:
+      - cell
+    # Demo cell: sibling Docker sandbox via host engine (not ALLOW_NO_SANDBOX).
+    # Entrypoint auto-joins the sock GID; group_add is optional belt-and-suspenders.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - ${DOCKER_GID:-0}
+    user: '0:0'
+    environment:
+      - COMMANDER_WORKER_AUTH_TOKEN=${COMMANDER_WORKER_AUTH_TOKEN:?set COMMANDER_WORKER_AUTH_TOKEN}
+      - COMMANDER_WORKER_HEALTH_PORT=8083
+      - COMMANDER_KERNEL_BACKEND=postgres
+      - COMMANDER_ENABLE_DEMO_TICKET=${COMMANDER_ENABLE_DEMO_TICKET:-}
+      - COMMANDER_CELL_TENANT_ID=${COMMANDER_CELL_TENANT_ID:-}
+      - COMMANDER_SANDBOX_ISOLATION=docker
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8083/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  kernel-ops:
+    profiles:
+      - cell
+
+  adapter-ops:
+    build:
+      context: .
+      dockerfile: packages/operations/Dockerfile.ops
+    environment:
+      - NODE_ENV=production
+      - COMMANDER_KERNEL_BACKEND=postgres
+      - DATABASE_URL=postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander
+      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander
+      - COMMANDER_ADAPTER_OPS_HEALTH_PORT=8082
+      - COMMANDER_CELL_TIER=demo
+      - COMMANDER_CELL_TENANT_ID=${COMMANDER_CELL_TENANT_ID:-local}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - COMMANDER_ADAPTER_EGRESS_ALLOWLIST=10.0.0.0/8
+    expose:
+      - '8082'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8082/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      kernel-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    profiles:
+      - cell

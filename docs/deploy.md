@@ -27,6 +27,8 @@ State is persisted in named volumes (`commander_state`, `commander_traces`,
 | `distributed` | Redis | Multi-node EventBus fan-out, >1 api replica |
 | `observability` | Prometheus + Grafana | Production metrics collection + dashboards |
 | `tracing` | Jaeger | OTLP distributed tracing of LLM + tool calls |
+| `cell` | api + worker + kernel-ops + adapter-ops + postgres | L4-07 Cell v0 topology smoke |
+| `v2` / `worker` | worker + kernel-ops + migrate | Durable kernel (see docker-compose.v2.yml) |
 
 Profiles compose freely:
 
@@ -89,6 +91,14 @@ See `.env.example` for the full list. Highlights:
 6. **Configure log persistence**: set `COMMANDER_LOG_PERSIST=true` and rotate the volume (the system auto-degrades to Error-only logging at 10000 entries of backlog).
 7. **Back up the `commander_state` volume** — it contains the EventSourcingEngine WAL and is the source of truth for crash recovery.
 
+### SQLite kernel (cell / v2 worker)
+
+Durable kernel on SQLite (`SqliteKernelRepository`) is intended for **single-writer** cell
+topology: one `kernel-ops` (or equivalent) process owns the DB file. Claims and reclaims use
+`BEGIN IMMEDIATE` so concurrent connections serialize instead of emulating Postgres
+`FOR UPDATE SKIP LOCKED`. Do not point multiple writers at the same SQLite file without
+external locking; use Postgres for multi-writer outbox/lease throughput.
+
 ## Extending Commander
 
 ### Adding an LLM provider
@@ -116,16 +126,47 @@ hook surface: 16 fire points, config schema, tool adapter). Register via
 through `buildSandboxedLoadContext` so their permissions stay strictly below
 the host's (see `packages/core/tests/pluginPermissions.test.ts`).
 
-## Helm (Kubernetes)
+## Helm (Kubernetes) — Cell v0
 
-A Helm chart is provided at [deploy/helm/commander](helm/commander) for
-Kubernetes deployments with HPA, ingress, network policies, and a Redis
-StatefulSet. Read [deploy/helm/commander/values.yaml](helm/commander/values.yaml)
-for the full configuration surface.
+The **single** Helm chart lives at [deploy/helm/commander](deploy/helm/commander).
+The legacy top-level `helm/commander` chart has been removed.
+
+Profiles:
+- `values-demo.yaml` — bundled Postgres, all cell components (local/kind only)
+- `values-enterprise.yaml` — external Postgres + `existingSecret` references
 
 ```bash
+helm lint deploy/helm/commander -f deploy/helm/commander/values-demo.yaml
 helm install commander deploy/helm/commander \
-  --set commander.apiKey=$(openssl rand -hex 32) \
-  --set ingress.enabled=true \
-  --set ingress.hosts[0].host=commander.example.com
+  -f deploy/helm/commander/values-enterprise.yaml \
+  --set database.postgres.existingSecret=cmdr-db \
+  --set api.secrets.existingSecret=cmdr-api \
+  --set worker.authTokenSecret=cmdr-worker \
+  --set adapterOps.secrets.existingSecret=cmdr-adapters
+pnpm helm:cell-assert
 ```
+
+### Cell compose profile
+
+```bash
+export COMMANDER_API_KEY="$(openssl rand -hex 32)"
+export POSTGRES_PASSWORD="$(openssl rand -hex 16)"
+export COMMANDER_MASTER_KEY="$(openssl rand -hex 32)"
+export JWT_SECRET="$(openssl rand -hex 32)"
+export COMMANDER_CAPABILITY_TOKEN_KEY="$(openssl rand -hex 32)"
+export COMMANDER_INTEGRITY_KEY="$(openssl rand -hex 32)"
+export COMMANDER_WORKER_AUTH_TOKEN="$(openssl rand -hex 32)"
+docker compose -f docker-compose.yml -f docker-compose.cell.yml --profile cell up -d --build
+pnpm cell:smoke
+```
+
+### NetworkPolicy and FQDN egress
+
+Standard Kubernetes `NetworkPolicy` matches IP/CIDR only — not FQDN hostnames.
+For SaaS adapters (GitHub, ServiceNow), configure `networkPolicy.egress.adapterCidrs`
+with provider IP ranges, or use Cilium `CiliumNetworkPolicy`, Calico egress rules,
+or a cluster egress proxy / service mesh. The chart **never** renders `0.0.0.0/0`
+as an egress allowlist.
+
+`sandboxd` is disabled by default (`values.sandboxd.enabled: false`) and renders
+**zero** Kubernetes resources when enabled (placeholder only).

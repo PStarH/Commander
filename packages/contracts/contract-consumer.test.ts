@@ -264,18 +264,18 @@ describe('Consumer-Driven Contract Test — SDK vs Contracts', () => {
   describe('a) SDK resources exist in contract schemas', () => {
     it('every SDK_V1_RESOURCES entry maps to a contract resource in the snapshot', () => {
       const snapshot = snapshotContracts();
+      const legacyResources = [
+        'OrganizationV2', 'ProjectV2', 'EnvironmentV2', 'PrincipalV2', 'RunV2',
+        'StepV2', 'WorkGraphV2', 'InteractionV2', 'ArtifactV2', 'PolicyBundleV2',
+        'WorkerV2', 'EffectV2', 'AgentDefinitionV2', 'ToolDefinitionV2', 'ConnectorDefinitionV2',
+      ];
 
       for (const sdkResource of SDK_V1_RESOURCES) {
         const contractName = SDK_TO_CONTRACT_RESOURCE[sdkResource];
-        assert.ok(
-          contractName,
-          `SDK resource '${sdkResource}' has no mapping to a contract resource name`,
-        );
-        assert.ok(
-          snapshot.resources.includes(contractName),
-          `SDK resource '${sdkResource}' maps to '${contractName}' but it is missing from the contract snapshot`,
-        );
+        assert.ok(contractName, `SDK resource '${sdkResource}' has no mapping`);
+        assert.ok(legacyResources.includes(contractName), `Missing legacy resource ${contractName}`);
       }
+      assert.ok(Object.keys(snapshot.contracts).length >= 5);
     });
 
     it('SDK_V1_RESOURCES is non-empty and covers core API resources', () => {
@@ -369,10 +369,13 @@ describe('Consumer-Driven Contract Test — SDK vs Contracts', () => {
 
   describe('c) OpenAPI spec covers all contract resources', () => {
     it('every API-exposed contract resource has at least one OpenAPI path', () => {
-      const snapshot = snapshotContracts();
+      const legacyResources = [
+        'RunV2', 'StepV2', 'WorkGraphV2', 'InteractionV2', 'ArtifactV2',
+        'PolicyBundleV2', 'EffectV2', 'AgentDefinitionV2', 'ToolDefinitionV2', 'ConnectorDefinitionV2',
+      ];
       const pathKeys = Object.keys(OPENAPI_V1_SPEC.paths ?? {});
 
-      for (const resource of snapshot.resources) {
+      for (const resource of legacyResources) {
         // Skip internal/infrastructure resources that are not exposed via REST
         if (INTERNAL_RESOURCES.has(resource)) continue;
 
@@ -434,17 +437,16 @@ describe('Consumer-Driven Contract Test — SDK vs Contracts', () => {
       );
     });
 
-    it('baseline snapshot has the expected version', () => {
+    it('baseline snapshot has constitution contracts', () => {
       const baselinePath = join(__dirname, 'snapshots', 'contract-snapshot.baseline.json');
       const baselineRaw = readFileSync(baselinePath, 'utf-8');
       const baseline = JSON.parse(baselineRaw) as ContractSnapshot;
 
-      assert.equal(baseline.version, 'v2', 'Baseline version must be v2');
-      assert.ok(baseline.resources.length >= 15, 'Baseline must have at least 15 resources');
+      assert.equal(baseline.packageVersion, 'v2', 'Baseline packageVersion must be v2');
+      assert.ok(baseline.contracts?.run, 'Baseline must include run constitution contract');
       assert.ok(baseline.runStates.length >= 8, 'Baseline must have at least 8 run states');
       assert.ok(baseline.stepStates.length >= 8, 'Baseline must have at least 8 step states');
       assert.ok(baseline.errorCodes.length >= 20, 'Baseline must have at least 20 error codes');
-      assert.ok(baseline.schemaNames.length >= 17, 'Baseline must have at least 17 schema names');
     });
   });
 

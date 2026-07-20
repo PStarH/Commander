@@ -6,7 +6,7 @@ import express from 'express';
 import { createV1GatewayRouter } from '../src/v1GatewayEndpoints.js';
 import type { V1KernelGateway } from '../src/v1GatewayKernel.js';
 
-class FakeGateway implements V1KernelGateway {
+class FakeGateway {
   private readonly runs = new Map<string, any>();
   async submit(input: any) {
     const id = `run-${input.idempotencyKey}`;
@@ -18,6 +18,12 @@ class FakeGateway implements V1KernelGateway {
     return { run, created: true };
   }
   async getRun(runId: string, tenantId: string) { const value = this.runs.get(runId); return value?.tenantId === tenantId ? value : null; }
+  async listRuns(tenantId: string, options?: { limit?: number }) {
+    const limit = options?.limit ?? 50;
+    return [...this.runs.values()]
+      .filter((run) => run.tenantId === tenantId)
+      .slice(0, limit);
+  }
   async listEvents(runId: string, tenantId: string) { return (await this.getRun(runId, tenantId)) ? [{ id: 'event-1', runId, tenantId, type: 'run.created' }] as any[] : []; }
   async pauseRun(runId: string, tenantId: string, _actor: string) {
     const run = await this.getRun(runId, tenantId);
@@ -39,11 +45,14 @@ class FakeGateway implements V1KernelGateway {
   }
 }
 
-async function withGateway(kernel: V1KernelGateway | null, action: (baseUrl: string) => Promise<void>): Promise<void> {
+async function withGateway(kernel: FakeGateway | null, action: (baseUrl: string) => Promise<void>): Promise<void> {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => { (req as any).tenantId = 'tenant-a'; (req as any).apiKeyId = 'test-key'; next(); });
-  app.use('/v1', createV1GatewayRouter(() => kernel));
+  app.use(
+    '/v1',
+    createV1GatewayRouter(() => (kernel ? (kernel as unknown as V1KernelGateway) : null)),
+  );
   const server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {

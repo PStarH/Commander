@@ -159,10 +159,12 @@ export function createLlmEffectAuth(input: {
         tenantId,
         runId,
         stepId,
-        workloadId,
+        workloadId: workloadId ?? '',
         effectTypes: [effectType],
         expiresAt: new Date(Date.now() + ttlMs).toISOString(),
         requestHash: canonicalRequestHash(request),
+        policySnapshotId: 'worker-llm-v1',
+        nonce: randomUUID(),
       });
     },
   };

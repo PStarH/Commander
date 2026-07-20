@@ -250,7 +250,7 @@ export const effectSchema = {
     stepId: opaqueId,
     tenantId: tenantIdSchema,
     kind: { type: 'string', minLength: 1, maxLength: 128 },
-    status: { type: 'string', enum: ['ADMITTED', 'EXECUTING', 'COMPLETION_UNKNOWN', 'COMPLETED', 'FAILED', 'COMPENSATED', 'REJECTED'] },
+    status: { type: 'string', enum: ['ADMITTED', 'COMPLETION_UNKNOWN', 'COMPLETED', 'FAILED'] },
     idempotencyKey: { type: 'string', minLength: 8, maxLength: 256 },
     policyDecisionId: { type: 'string', minLength: 1, maxLength: 256 },
     arguments: { type: 'object', additionalProperties: true },

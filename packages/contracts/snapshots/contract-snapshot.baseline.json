@@ -1,22 +1,381 @@
 {
-  "version": "v2",
-  "resources": [
-    "OrganizationV2",
-    "ProjectV2",
-    "EnvironmentV2",
-    "PrincipalV2",
-    "RunV2",
-    "StepV2",
-    "WorkGraphV2",
-    "InteractionV2",
-    "ArtifactV2",
-    "PolicyBundleV2",
-    "WorkerV2",
-    "EffectV2",
-    "AgentDefinitionV2",
-    "ToolDefinitionV2",
-    "ConnectorDefinitionV2"
-  ],
+  "packageVersion": "v2",
+  "contracts": {
+    "run": {
+      "schemaVersion": "commander.run/v2",
+      "schemaHash": "d6219e18aa18cf3b8ddda6aa64396488fdad5c0496a8ba8af5aae76f6011c660",
+      "required": [
+        "id",
+        "tenantId",
+        "state",
+        "version",
+        "intentHash",
+        "workGraphHash",
+        "workGraphVersion",
+        "policySnapshotId",
+        "createdAt",
+        "updatedAt",
+        "metadata"
+      ],
+      "enums": {
+        "state": [
+          "PENDING",
+          "RUNNING",
+          "PAUSED",
+          "SUCCEEDED",
+          "FAILED",
+          "CANCELLED",
+          "COMPENSATING",
+          "COMPENSATED"
+        ]
+      },
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "tenantId": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        },
+        "intentHash": {
+          "type": "string"
+        },
+        "workGraphHash": {
+          "type": "string"
+        },
+        "workGraphVersion": {
+          "type": "string"
+        },
+        "policySnapshotId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "pausedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "terminalAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "metadata": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "fixtureHashes": {
+        "minimal": "241865773998f13a08f08b14cf8a0d6d47fe0d4a09b458b99db665d03355d831"
+      }
+    },
+    "event": {
+      "schemaVersion": "commander.event/v2",
+      "schemaHash": "f3f90519d71a692a7c18418f9a773a627586be6665e7dae1513abc6f932301d5",
+      "required": [
+        "eventId",
+        "aggregateType",
+        "aggregateId",
+        "sequence",
+        "type",
+        "tenantId",
+        "runId",
+        "actor",
+        "schemaVersion",
+        "payload",
+        "occurredAt"
+      ],
+      "enums": {
+        "aggregateType": [
+          "run",
+          "step",
+          "effect",
+          "interaction",
+          "worker",
+          "tenant"
+        ]
+      },
+      "properties": {
+        "eventId": {
+          "type": "string"
+        },
+        "aggregateType": {
+          "type": "string"
+        },
+        "aggregateId": {
+          "type": "string"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "type": {
+          "type": "string"
+        },
+        "tenantId": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "stepId": {
+          "type": "string"
+        },
+        "causationId": {
+          "type": "string"
+        },
+        "correlationId": {
+          "type": "string"
+        },
+        "actor": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "string"
+        },
+        "payload": {
+          "type": "object"
+        },
+        "occurredAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false,
+      "fixtureHashes": {
+        "minimal": "7239c902a542e46b7ee098ca5594050bdc94380e9d1a1c6f8437096c1fbe65ea"
+      }
+    },
+    "effect": {
+      "schemaVersion": "commander.effect/v2",
+      "schemaHash": "ad79c5707ea9be517b75a49e1f8c8f2254ee8dd96906db18cb0acbc7d644bc3c",
+      "required": [
+        "id",
+        "tenantId",
+        "runId",
+        "stepId",
+        "kind",
+        "action",
+        "status",
+        "adapterId",
+        "adapterVersion",
+        "requestDigest",
+        "policyDecisionId",
+        "idempotencyKey",
+        "fencingEpoch",
+        "createdAt"
+      ],
+      "enums": {
+        "status": [
+          "ADMITTED",
+          "COMPLETION_UNKNOWN",
+          "COMPLETED",
+          "FAILED"
+        ]
+      },
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "tenantId": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "stepId": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "adapterId": {
+          "type": "string"
+        },
+        "adapterVersion": {
+          "type": "string"
+        },
+        "requestDigest": {
+          "type": "string"
+        },
+        "policyDecisionId": {
+          "type": "string"
+        },
+        "idempotencyKey": {
+          "type": "string"
+        },
+        "compensatesEffectId": {
+          "type": "string"
+        },
+        "responseDigest": {
+          "type": "string"
+        },
+        "responseSummary": {
+          "type": "object"
+        },
+        "fencingEpoch": {
+          "type": "integer"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false,
+      "fixtureHashes": {
+        "minimal": "fbd6cc59f0b778e68b9ee082fbc1afbddba5a68a794c0e404d72439f4fe3bf83"
+      }
+    },
+    "grant": {
+      "schemaVersion": "commander.grant/v1",
+      "schemaHash": "ea4bacbdc484233af6111607040ddf1049ed57af584cf92503e39b2edaabaead",
+      "required": [
+        "schemaVersion",
+        "jti",
+        "tenantId",
+        "runId",
+        "stepId",
+        "effectTypes",
+        "expiresAt",
+        "issuer",
+        "audience",
+        "issuedAt",
+        "notBefore",
+        "keyId",
+        "requestHash",
+        "workloadId",
+        "policySnapshotId",
+        "nonce"
+      ],
+      "enums": {},
+      "properties": {
+        "schemaVersion": {
+          "type": "string"
+        },
+        "jti": {
+          "type": "string"
+        },
+        "tenantId": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "stepId": {
+          "type": "string"
+        },
+        "effectTypes": {
+          "type": "array"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "issuer": {
+          "type": "string"
+        },
+        "audience": {
+          "type": "string"
+        },
+        "issuedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "notBefore": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "keyId": {
+          "type": "string"
+        },
+        "requestHash": {
+          "type": "string"
+        },
+        "workloadId": {
+          "type": "string"
+        },
+        "policySnapshotId": {
+          "type": "string"
+        },
+        "nonce": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "fixtureHashes": {
+        "minimal": "819543e867234c46cce1b1c81b3471e490a4485cf9718103e3ca57884e885b8e"
+      }
+    },
+    "artifact": {
+      "schemaVersion": "commander.artifact/v1",
+      "schemaHash": "50266745b24fb33baaa6d8314da441fdb210a2fcde3430b9e6a45111dd5aecad",
+      "required": [
+        "id",
+        "contentType",
+        "sizeBytes",
+        "digest",
+        "uri",
+        "tenantId",
+        "runId",
+        "createdAt",
+        "schemaVersion"
+      ],
+      "enums": {},
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "contentType": {
+          "type": "string"
+        },
+        "sizeBytes": {
+          "type": "integer"
+        },
+        "digest": {
+          "type": "object"
+        },
+        "uri": {
+          "type": "string"
+        },
+        "tenantId": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "schemaVersion": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "fixtureHashes": {
+        "minimal": "5030cd7bcd0c16125fe1ca3d5c56e72e617d96ae46a5e3f20f05295079c5eebe"
+      }
+    }
+  },
   "runStates": [
     "PENDING",
     "RUNNING",
@@ -59,24 +418,5 @@
     "EFFECT_ADMISSION_REJECTED",
     "KERNEL_UNAVAILABLE",
     "POLICY_SNAPSHOT_UNAVAILABLE"
-  ],
-  "schemaNames": [
-    "organization",
-    "project",
-    "environment",
-    "principal",
-    "run",
-    "step",
-    "workGraph",
-    "interaction",
-    "artifact",
-    "policyBundle",
-    "worker",
-    "effect",
-    "agentDefinition",
-    "toolDefinition",
-    "connectorDefinition",
-    "kernelEvent",
-    "kernelError"
   ]
 }

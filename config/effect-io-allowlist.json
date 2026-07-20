@@ -1,0 +1,32 @@
+{
+  "paths": [
+    {
+      "id": "llm-broker-bridge-readonly",
+      "path": "packages/worker-plane/src/llmBrokerBridge.ts",
+      "owner": "@commander/worker-plane",
+      "reason": "LLM provider read via EffectBroker-minted grant only",
+      "patterns": ["fetch("]
+    },
+    {
+      "id": "kernel-ops-health-server",
+      "path": "packages/kernel/src/ops/healthServer.ts",
+      "owner": "@commander/kernel",
+      "reason": "K8s liveness/readiness probe HTTP listener only",
+      "patterns": ["node:http"]
+    },
+    {
+      "id": "worker-health-server",
+      "path": "packages/worker-plane/src/healthServer.ts",
+      "owner": "@commander/worker-plane",
+      "reason": "K8s liveness/readiness probe HTTP listener only",
+      "patterns": ["node:http"]
+    },
+    {
+      "id": "operations-health-server",
+      "path": "packages/operations/src/healthServer.ts",
+      "owner": "@commander/operations",
+      "reason": "K8s liveness/readiness probe HTTP listener only",
+      "patterns": ["node:http"]
+    }
+  ]
+}

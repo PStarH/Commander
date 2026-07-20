@@ -4,8 +4,36 @@ import { Pool } from 'pg';
 import { PostgresKernelRepository } from './postgres.js';
 import { runKernelMigrations } from './migrations.js';
 import { KernelInvariantError } from './types.js';
+import { runKernelRepositoryContractTests } from './testing/repositoryContract.js';
 
 const databaseUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
+
+if (databaseUrl) {
+  runKernelRepositoryContractTests({
+    name: 'Postgres',
+    create: async () => {
+      const pool = new Pool({ connectionString: databaseUrl, max: 4 });
+      await runKernelMigrations(pool);
+      const repo = new PostgresKernelRepository(pool, { schedulerMode: true });
+      (repo as PostgresKernelRepository & { _contractPool?: Pool })._contractPool = pool;
+      return repo;
+    },
+    destroy: async (repo) => {
+      const pg = repo as PostgresKernelRepository & { _contractPool?: Pool };
+      if (pg._contractPool) await pg._contractPool.end();
+    },
+    seedWorker: async (repo) => {
+      const pg = repo as PostgresKernelRepository & { _contractPool?: Pool };
+      const workerId = `contract-worker-${Date.now()}`;
+      await pg._contractPool!.query(
+        `INSERT INTO commander_workers (id,kind,version,capabilities,max_concurrency,status,generation,identity_subject,tenant_ids)
+         VALUES ($1,'agent','contract','["agent","tool"]',4,'ACTIVE',1,$1,$2::jsonb)`,
+        [workerId, JSON.stringify(['tenant-a'])],
+      );
+      return { workerId, generation: 1 };
+    },
+  });
+}
 
 describe('PostgresKernelRepository integration', () => {
   it('runs checksummed migrations, enforces worker generation fencing, and preserves tenant isolation', { skip: !databaseUrl }, async () => {

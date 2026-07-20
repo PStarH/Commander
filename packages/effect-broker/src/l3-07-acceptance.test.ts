@@ -192,6 +192,27 @@ describe('L3-07 workload binding', () => {
     assert.equal(admission.admitted, true);
   });
 
+  it('admits when both grant and binding omit workloadId', async () => {
+    const { iss, ver } = makeTokens();
+    const broker = makeBroker(ver);
+    const { workloadId: _omit, ...grantWithoutWorkload } = baseGrant;
+    const admission = await broker.admit({
+      effectId: 'eff-wl-both-omit',
+      token: iss.issue({ ...grantWithoutWorkload, requestHash: canonicalRequestHash({}) }),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem-wl-both-omit',
+      lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+      actor: 'w',
+      workloadBinding: {
+        tenantId: binding.tenantId,
+        runId: binding.runId,
+        stepId: binding.stepId,
+      },
+    });
+    assert.equal(admission.admitted, true);
+  });
+
   it('rejects WORKLOAD_MISMATCH when grant has workloadId but binding omits it', async () => {
     const { iss, ver } = makeTokens();
     const broker = makeBroker(ver);

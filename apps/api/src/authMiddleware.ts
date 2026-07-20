@@ -16,6 +16,9 @@ declare global {
 
 const PUBLIC_PATHS = new Set([
   '/health',
+  // Align with jwtMiddleware JWT_PUBLIC_PATHS — orchestrators/LBs probe
+  // readiness without secrets. Soft status fields must stay non-sensitive.
+  '/ready',
   '/system/status',
   '/api/openapi.json',
   '/a2a/.well-known/agent-card',
@@ -137,7 +140,19 @@ function getCachedKeys(): Map<string, StoredKey> {
     cachedTenantApiKeysRaw = tenantRaw;
     cachedApiKeys = parseApiKeys(raw);
     for (const [hash, stored] of parseTenantApiKeys(tenantRaw)) {
-      cachedApiKeys.set(hash, stored);
+      const existing = cachedApiKeys.get(hash);
+      // Same raw key may appear in API_KEYS (scopes) and TENANT_API_KEYS (tenant).
+      // Merge so tenant binding does not strip approval/admin scopes.
+      cachedApiKeys.set(
+        hash,
+        existing
+          ? {
+              ...stored,
+              name: existing.name,
+              scopes: [...new Set([...existing.scopes, ...stored.scopes])],
+            }
+          : stored,
+      );
     }
   }
   return cachedApiKeys;

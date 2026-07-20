@@ -4,7 +4,10 @@ const require = getRequire(import.meta.url);
 
 import {
   KernelInvariantError,
-  PostgresKernelRepository,
+  createKernelRepository,
+  resolveKernelBackend,
+  KernelBackendRefusedError,
+  KernelBackendMissingError,
   type KernelRepository,
   type AnswerInteractionRequest,
   type KernelEffect,
@@ -39,6 +42,7 @@ export interface V1KernelGateway {
     actor: string;
   }): Promise<{ run: KernelRun; created: boolean }>;
   getRun(runId: string, tenantId: string): Promise<KernelRun | null>;
+  listRuns(tenantId: string, options?: { limit?: number }): Promise<KernelRun[]>;
   getStep(stepId: string, tenantId: string): Promise<KernelStep | null>;
   listEvents(runId: string, tenantId: string): Promise<KernelEvent[]>;
   listInteractions(runId: string, tenantId: string): Promise<KernelInteraction[]>;
@@ -64,6 +68,25 @@ export interface V1KernelGateway {
   removeKillSwitch(input: RemoveKillSwitchInput): Promise<void>;
   listKillSwitches(tenantId: string): Promise<KillSwitch[]>;
   findMatchingKillSwitch(tenantId: string, dims: KillSwitchMatchDims): Promise<KillSwitch | null>;
+  requestReconcile(input: {
+    effectId: string;
+    tenantId: string;
+    actor: string;
+    reconcileAfter?: string;
+  }): Promise<KernelEffect | null>;
+  requestCompensation(input: {
+    tenantId: string;
+    originalRunId: string;
+    originalEffectId?: string;
+    actor: string;
+    adapterVersion: string;
+    compensationEffectType: string;
+  }): Promise<{
+    compensationRunId: string;
+    originalEffectId: string;
+    originalRunId: string;
+    outboxMessageId?: string;
+  } | null>;
 }
 
 export type { KernelRun } from '@commander/kernel';
@@ -213,6 +236,9 @@ class RepositoryV1KernelGateway implements V1KernelGateway {
   getRun(runId: string, tenantId: string): Promise<KernelRun | null> {
     return this.repository.getRun(runId, tenantId);
   }
+  listRuns(tenantId: string, options?: { limit?: number }): Promise<KernelRun[]> {
+    return this.repository.listRuns(tenantId, options);
+  }
   getStep(stepId: string, tenantId: string): Promise<KernelStep | null> {
     return this.repository.getStep(stepId, tenantId);
   }
@@ -252,6 +278,24 @@ class RepositoryV1KernelGateway implements V1KernelGateway {
   findMatchingKillSwitch(tenantId: string, dims: KillSwitchMatchDims): Promise<KillSwitch | null> {
     return this.repository.findMatchingKillSwitch(tenantId, dims);
   }
+  requestReconcile(input: {
+    effectId: string;
+    tenantId: string;
+    actor: string;
+    reconcileAfter?: string;
+  }): Promise<KernelEffect | null> {
+    return this.repository.requestReconcile(input);
+  }
+  requestCompensation(input: {
+    tenantId: string;
+    originalRunId: string;
+    originalEffectId?: string;
+    actor: string;
+    adapterVersion: string;
+    compensationEffectType: string;
+  }) {
+    return this.repository.requestCompensation(input);
+  }
 }
 
 export class GatewayIdempotencyConflictError extends Error {
@@ -270,6 +314,7 @@ export class GatewayStepIdConflictError extends Error {
 
 let gateway: V1KernelGateway | null = null;
 let initializePromise: Promise<void> | null = null;
+let repositoryHandle: Awaited<ReturnType<typeof createKernelRepository>> | null = null;
 
 /**
  * Kernel Postgres DSN: COMMANDER_KERNEL_DATABASE_URL, else DATABASE_URL.
@@ -303,6 +348,7 @@ export function isCommanderKernelEnabled(env: NodeJS.ProcessEnv = process.env): 
   if (raw === '1' || raw === 'true' || raw === 'on' || raw === 'yes') return true;
   if (env.NODE_ENV === 'production') return true;
   if (env.COMMANDER_V2_MODE === '1') return true;
+  if (resolveKernelBackend(env) === 'sqlite' && env.COMMANDER_KERNEL_SQLITE_PATH?.trim()) return true;
   return getKernelDatabaseUrl(env).length > 0;
 }
 
@@ -315,22 +361,15 @@ export function isCommanderKernelExplicitlyDisabled(env: NodeJS.ProcessEnv = pro
 export async function initializeV1KernelGateway(): Promise<void> {
   if (!isCommanderKernelEnabled()) return;
   if (initializePromise) return initializePromise;
-  const connectionString = getKernelDatabaseUrl();
-  if (!connectionString)
-    throw new Error(
-      'Kernel enabled (COMMANDER_KERNEL_ENABLED default-on or =1) requires COMMANDER_KERNEL_DATABASE_URL or DATABASE_URL',
-    );
   initializePromise = (async () => {
-    const pg = require('pg') as {
-      Pool: new (options: { connectionString: string }) => { connect(): Promise<unknown> };
-    };
-    const pool = new pg.Pool({ connectionString });
-    const repository = new PostgresKernelRepository(pool as never);
-    await repository.initialize();
-    gateway = new RepositoryV1KernelGateway(repository);
+    const handle = await createKernelRepository({ env: process.env });
+    repositoryHandle = handle;
+    gateway = new RepositoryV1KernelGateway(handle.repository);
   })();
   return initializePromise;
 }
+
+export { KernelBackendRefusedError, KernelBackendMissingError };
 
 export function getV1KernelGateway(): V1KernelGateway | null {
   return gateway;

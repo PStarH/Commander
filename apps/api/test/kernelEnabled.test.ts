@@ -9,7 +9,9 @@ import {
   getKernelDatabaseUrl,
   isCommanderKernelEnabled,
   isCommanderKernelExplicitlyDisabled,
+  KernelBackendRefusedError,
 } from '../src/v1GatewayKernel';
+import { createKernelRepository, KernelBackendMissingError } from '@commander/kernel';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
 
 describe('isCommanderKernelEnabled', () => {
@@ -122,6 +124,53 @@ describe('isCommanderKernelEnabled', () => {
         COMMANDER_KERNEL_ENABLED: 'off',
       } as NodeJS.ProcessEnv),
       false,
+    );
+  });
+
+  it('defaults ON when sqlite backend path is configured', () => {
+    assert.equal(
+      isCommanderKernelEnabled({
+        NODE_ENV: 'development',
+        COMMANDER_KERNEL_BACKEND: 'sqlite',
+        COMMANDER_KERNEL_SQLITE_PATH: '/tmp/kernel.sqlite',
+      } as NodeJS.ProcessEnv),
+      true,
+    );
+  });
+});
+
+describe('createKernelRepository boot policy (API)', () => {
+  it('refuses production sqlite with KERNEL_BACKEND_REFUSED', async () => {
+    await assert.rejects(
+      () =>
+        createKernelRepository({
+          env: {
+            NODE_ENV: 'production',
+            COMMANDER_KERNEL_BACKEND: 'sqlite',
+            COMMANDER_KERNEL_SQLITE_PATH: '/tmp/x.sqlite',
+          },
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof KernelBackendRefusedError);
+        assert.equal((error as KernelBackendRefusedError).code, 'KERNEL_BACKEND_REFUSED');
+        return true;
+      },
+    );
+  });
+
+  it('throws KernelBackendMissingError in production when DSN is set but backend is missing', async () => {
+    await assert.rejects(
+      () =>
+        createKernelRepository({
+          env: {
+            NODE_ENV: 'production',
+            COMMANDER_KERNEL_DATABASE_URL: 'postgres://kernel@127.0.0.1:5432/kernel',
+          },
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof KernelBackendMissingError);
+        return true;
+      },
     );
   });
 });

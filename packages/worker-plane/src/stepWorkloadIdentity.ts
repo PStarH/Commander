@@ -16,6 +16,8 @@ import type { ClaimedStep } from './types.js';
 
 export interface StepWorkloadBinding extends WorkloadBinding {
   workloadId: string;
+  /** From run/step input — must match EffectBroker policy decision snapshot. */
+  policySnapshotId?: string;
 }
 
 export interface StepWorkloadContext {
@@ -39,11 +41,16 @@ export function runWithStepWorkloadIdentity<T>(step: ClaimedStep, fn: () => T): 
     runId: step.runId,
     stepId: step.id,
   });
+  const policySnapshotId =
+    typeof step.input.policySnapshotId === 'string' && step.input.policySnapshotId.length > 0
+      ? step.input.policySnapshotId
+      : undefined;
   const binding: StepWorkloadBinding = {
     tenantId: identity.tenantId,
     runId: step.runId,
     stepId: step.id,
     workloadId: identity.workloadId,
+    ...(policySnapshotId ? { policySnapshotId } : {}),
   };
   return stepWorkloadStorage.run({ identity, binding }, fn);
 }
@@ -83,9 +90,12 @@ export function mintStepCapabilityToken(input: {
   effectType: string;
   request: Record<string, unknown>;
   ttlMs?: number;
+  policySnapshotId?: string;
 }): string {
   const binding = requireStepWorkloadBinding();
   const ttlMs = input.ttlMs ?? 5 * 60_000;
+  const policySnapshotId =
+    input.policySnapshotId ?? binding.policySnapshotId ?? 'policy';
   return input.issuer.issue({
     jti: randomUUID(),
     tenantId: binding.tenantId,
@@ -95,5 +105,7 @@ export function mintStepCapabilityToken(input: {
     effectTypes: [input.effectType],
     expiresAt: new Date(Date.now() + ttlMs).toISOString(),
     requestHash: canonicalRequestHash(input.request),
+    policySnapshotId,
+    nonce: randomUUID(),
   });
 }

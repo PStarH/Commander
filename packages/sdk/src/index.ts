@@ -90,7 +90,6 @@ export { SDK_API_VERSION, SDK_V1_RESOURCES } from './v1/resources';
 export type {
   RunV1,
   RunStateV1,
-  RunStatusV1,
   StepV1,
   StepStateV1,
   WorkGraphV1,

@@ -39,7 +39,12 @@ import {
   canonicalRequestHash,
 } from '@commander/effect-broker';
 import type { KernelInteraction, KernelRun, KernelStep } from '@commander/kernel';
+import {
+  createActionAdapterEffectExecutor,
+  createProductionAdapterRegistry,
+} from './actionAdapterExecutor.js';
 import { InMemoryTicketAdapter } from './ticketAdapter.js';
+import { createKernelWorkerPort } from './kernelWorkerPort.js';
 
 // Lazy import to avoid circular dependency at module load time
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -49,14 +54,35 @@ export async function createWorkerService(): Promise<WorkerService> {
   await createProductionWorkerSandboxReadiness().assertReady();
 
   // ── Validate required env vars ──
+  const kernelBackend = (process.env.COMMANDER_KERNEL_BACKEND ?? '').trim().toLowerCase();
+  const sqlitePath = process.env.COMMANDER_KERNEL_SQLITE_PATH?.trim();
   const dbUrl = process.env.DATABASE_URL;
-  if (!dbUrl) {
-    throw new Error('DATABASE_URL is required for worker bootstrap');
+  const useSqlite = kernelBackend === 'sqlite' || (!kernelBackend && !dbUrl && sqlitePath);
+
+  if (kernelBackend && kernelBackend !== 'postgres' && kernelBackend !== 'sqlite') {
+    throw new Error(`Unsupported COMMANDER_KERNEL_BACKEND: ${kernelBackend}`);
+  }
+  if (useSqlite) {
+    if (!sqlitePath) {
+      throw new Error('COMMANDER_KERNEL_SQLITE_PATH is required for sqlite worker bootstrap');
+    }
+  } else if (!dbUrl) {
+    throw new Error('DATABASE_URL is required for postgres worker bootstrap');
   }
 
   const authToken = process.env.COMMANDER_WORKER_AUTH_TOKEN;
   if (!authToken) {
     throw new Error('COMMANDER_WORKER_AUTH_TOKEN is required for worker bootstrap');
+  }
+
+  const adapterRegistry = createProductionAdapterRegistry();
+  if (
+    process.env.COMMANDER_PROFILE === 'enterprise' &&
+    adapterRegistry.listDescriptors().length === 0
+  ) {
+    throw new Error(
+      'ENTERPRISE_WORKER_REQUIRES_ACTION_ADAPTERS: set COMMANDER_CELL_TENANT_ID and adapter credentials',
+    );
   }
 
   // ── Parse configuration ──
@@ -90,26 +116,37 @@ export async function createWorkerService(): Promise<WorkerService> {
     },
   };
 
-  // ── Connect to PostgreSQL ──
-  const { Pool: PgPool } = (await import('pg')) as unknown as {
-    Pool: new (config: { connectionString: string; max: number }) => Pool;
-  };
-  const pool = new PgPool({ connectionString: dbUrl, max: maxConcurrency + 5 });
-
-  // ── Create kernel repository adapter ──
-  // Lazy dynamic import to avoid circular dependency at module load time.
-  // A worker configured to serve all tenants ('*') acts like a scheduler/recovery
-  // process for cross-tenant claim/heartbeat and must connect as the
-  // commander_scheduler role. Workers scoped to specific tenants use the
-  // commander_app role and carry an explicit tenant scope on every write.
+  // ── Connect to kernel backend ──
   const allTenants = tenantIds.includes('*');
-  const { PostgresKernelRepository } = (await import('@commander/kernel')) as unknown as {
-    PostgresKernelRepository: new (pool: any, options?: { schedulerMode?: boolean }) => any;
-  };
-  const kernel = new PostgresKernelRepository(pool, { schedulerMode: allTenants });
+  let kernel: import('@commander/kernel').KernelRepository;
+  let registry: import('./types.js').WorkerRegistry;
+  let pool: Pool | null = null;
 
-  // ── Create registry ──
-  const registry = new PostgresWorkerRegistry(pool);
+  if (useSqlite) {
+    const { createKernelRepository } = (await import('@commander/kernel')) as unknown as {
+      createKernelRepository: (opts?: { env?: NodeJS.ProcessEnv; sqlitePath?: string }) => Promise<{
+        repository: import('@commander/kernel').KernelRepository;
+        close(): Promise<void>;
+      }>;
+    };
+    const handle = await createKernelRepository({ env: process.env, sqlitePath });
+    kernel = handle.repository;
+    const Database = (await import('better-sqlite3')).default as new (path: string) => import('better-sqlite3').Database;
+    const db = new Database(sqlitePath!);
+    db.pragma('foreign_keys = ON');
+    const { SqliteWorkerRegistry } = await import('./sqliteRegistry.js');
+    registry = new SqliteWorkerRegistry(db);
+  } else {
+    const { Pool: PgPool } = (await import('pg')) as unknown as {
+      Pool: new (config: { connectionString: string; max: number }) => Pool;
+    };
+    pool = new PgPool({ connectionString: dbUrl!, max: maxConcurrency + 5 });
+    const { PostgresKernelRepository } = (await import('@commander/kernel')) as unknown as {
+      PostgresKernelRepository: new (pool: Pool, options?: { schedulerMode?: boolean }) => typeof kernel;
+    };
+    kernel = new PostgresKernelRepository(pool, { schedulerMode: allTenants });
+    registry = new PostgresWorkerRegistry(pool);
+  }
 
   // ── Create authenticator ──
   const authenticator = new ApiKeyWorkerAuthenticator({
@@ -119,7 +156,11 @@ export async function createWorkerService(): Promise<WorkerService> {
   });
 
   // ── Create shared Effect Broker for external side effects ──
-  const { broker: effectBroker, issuer: capabilityIssuer } = createEffectBroker(kernel, workerId);
+  const { broker: effectBroker, issuer: capabilityIssuer } = createEffectBroker(
+    kernel,
+    workerId,
+    adapterRegistry,
+  );
 
   // ── Create step executor based on worker kind ──
   const executor = await createExecutorForKind(
@@ -135,7 +176,7 @@ export async function createWorkerService(): Promise<WorkerService> {
     identity,
     authenticator,
     registry,
-    kernel,
+    createKernelWorkerPort(kernel),
     executor,
     {
       leaseTtlMs: parseInt(process.env.COMMANDER_WORKER_LEASE_TTL_MS ?? '30000', 10),
@@ -407,9 +448,16 @@ export function withDefaultLlmAllowlist(kernel: AllowlistKernel): EffectKernelPo
   };
 }
 
-export function createWorkerEffectExecutor(
-  tickets = new InMemoryTicketAdapter(),
-): EffectExecutor {
+export function createWorkerEffectExecutor(options?: {
+  tickets?: InMemoryTicketAdapter;
+  registry?: ReturnType<typeof createProductionAdapterRegistry>;
+}): EffectExecutor {
+  const registry = options?.registry ?? createProductionAdapterRegistry();
+  const adapterExecutor = createActionAdapterEffectExecutor(registry);
+  const tickets =
+    options?.tickets ??
+    (process.env.COMMANDER_ENABLE_DEMO_TICKET === '1' ? new InMemoryTicketAdapter() : undefined);
+
   return {
     execute: async (input) => {
       if (input.type.startsWith('llm.')) {
@@ -437,6 +485,9 @@ export function createWorkerEffectExecutor(
         });
       }
       if (input.type === 'demo.ticket.create') {
+        if (!tickets) {
+          throw new Error('UNREGISTERED_EFFECT_TYPE: demo.ticket.create');
+        }
         const ctx = input.executionContext;
         const args = input.request.args;
         if (
@@ -460,6 +511,9 @@ export function createWorkerEffectExecutor(
         };
       }
       if (input.type === 'compensate.demo.ticket.create') {
+        if (!tickets) {
+          throw new Error('UNREGISTERED_EFFECT_TYPE: compensate.demo.ticket.create');
+        }
         const ctx = input.executionContext;
         const args = input.request.args;
         if (
@@ -480,6 +534,9 @@ export function createWorkerEffectExecutor(
           status: ticket.status,
         };
       }
+      if (registry.resolve(input.type)) {
+        return adapterExecutor.execute(input);
+      }
       throw new Error(`UNREGISTERED_EFFECT_TYPE: ${input.type}`);
     },
   };
@@ -488,6 +545,7 @@ export function createWorkerEffectExecutor(
 function createEffectBroker(
   kernel: AllowlistKernel,
   localWorkerId: string,
+  registry = createProductionAdapterRegistry(),
 ): {
   broker: EffectBroker;
   issuer: CapabilityTokenIssuer;
@@ -508,7 +566,7 @@ function createEffectBroker(
   });
   const policy = createWorkerPolicyEvaluator(kernel);
   const effectKernel = withDefaultLlmAllowlist(kernel);
-  const executor = createWorkerEffectExecutor();
+  const executor = createWorkerEffectExecutor({ registry });
 
   // Console audit sink. Production should forward to a durable audit store.
   const audit: AuditSink = {

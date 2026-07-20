@@ -1,0 +1,41 @@
+# Demo cell profile — bundled Postgres, all cell components enabled.
+# DEV ONLY: secrets created by chart for local/kind smoke. Do not use in production.
+tier: demo
+
+web:
+  enabled: false
+
+worker:
+  enabled: true
+  replicas: 2
+  authTokenSecret: ''
+
+kernelOps:
+  enabled: true
+
+adapterOps:
+  enabled: true
+  replicas: 2
+  secrets:
+    create: true
+
+database:
+  enabled: true
+  backend: postgres
+  postgres:
+    bundled: true
+    password: ''
+    existingSecret: ''
+
+networkPolicy:
+  enabled: true
+
+sandboxd:
+  enabled: false
+
+api:
+  secrets:
+    create: true
+
+persistence:
+  enabled: false

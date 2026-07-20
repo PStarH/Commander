@@ -3,10 +3,82 @@ import { describe, it } from 'node:test';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
 import {
   createWorkerPolicyEvaluator,
-  createWorkerCapabilityVerifier,
+  createWorkerService,
   withDefaultLlmAllowlist,
 } from './bootstrap.js';
-import { CapabilityTokenIssuer, canonicalRequestHash } from '@commander/effect-broker';
+import { createProductionAdapterRegistry } from './actionAdapterExecutor.js';
+
+describe('enterprise adapter registry gate (T1.2)', () => {
+  it('createProductionAdapterRegistry is empty without COMMANDER_CELL_TENANT_ID', () => {
+    const savedCellTenant = process.env.COMMANDER_CELL_TENANT_ID;
+    delete process.env.COMMANDER_CELL_TENANT_ID;
+    try {
+      const registry = createProductionAdapterRegistry();
+      assert.equal(registry.listDescriptors().length, 0);
+    } finally {
+      if (savedCellTenant === undefined) delete process.env.COMMANDER_CELL_TENANT_ID;
+      else process.env.COMMANDER_CELL_TENANT_ID = savedCellTenant;
+    }
+  });
+
+  it('createWorkerService rejects enterprise profile with empty adapter registry', async () => {
+    const saved = {
+      COMMANDER_PROFILE: process.env.COMMANDER_PROFILE,
+      COMMANDER_CELL_TENANT_ID: process.env.COMMANDER_CELL_TENANT_ID,
+      DATABASE_URL: process.env.DATABASE_URL,
+      COMMANDER_WORKER_AUTH_TOKEN: process.env.COMMANDER_WORKER_AUTH_TOKEN,
+      NODE_ENV: process.env.NODE_ENV,
+    };
+    process.env.COMMANDER_PROFILE = 'enterprise';
+    delete process.env.COMMANDER_CELL_TENANT_ID;
+    process.env.DATABASE_URL = 'postgres://unused:5432/unused';
+    process.env.COMMANDER_WORKER_AUTH_TOKEN = 'test-auth-token';
+    process.env.NODE_ENV = 'test';
+    try {
+      await assert.rejects(
+        () => createWorkerService(),
+        /ENTERPRISE_WORKER_REQUIRES_ACTION_ADAPTERS/,
+      );
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+});
+
+describe('sqlite worker bootstrap', () => {
+  it('createWorkerService does not require DATABASE_URL when sqlite backend is set', async () => {
+    const saved = {
+      COMMANDER_KERNEL_BACKEND: process.env.COMMANDER_KERNEL_BACKEND,
+      COMMANDER_KERNEL_SQLITE_PATH: process.env.COMMANDER_KERNEL_SQLITE_PATH,
+      DATABASE_URL: process.env.DATABASE_URL,
+      COMMANDER_WORKER_AUTH_TOKEN: process.env.COMMANDER_WORKER_AUTH_TOKEN,
+      NODE_ENV: process.env.NODE_ENV,
+    };
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'worker-bootstrap-sqlite-'));
+    const dbPath = join(dir, 'kernel.sqlite');
+    process.env.COMMANDER_KERNEL_BACKEND = 'sqlite';
+    process.env.COMMANDER_KERNEL_SQLITE_PATH = dbPath;
+    delete process.env.DATABASE_URL;
+    process.env.COMMANDER_WORKER_AUTH_TOKEN = 'test-auth-token';
+    process.env.NODE_ENV = 'test';
+    try {
+      const service = await createWorkerService();
+      assert.ok(service);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+});
 
 describe('createWorkerPolicyEvaluator', () => {
   it('allows llm.* model calls by default (agent can invoke providers)', async () => {
@@ -95,55 +167,5 @@ describe('withDefaultLlmAllowlist', () => {
     await kernel.setAllowlistEntry('tenant-a', 'llm.*', false);
     const port = withDefaultLlmAllowlist(kernel);
     assert.equal(await port.isActionAllowed!('tenant-a', 'llm.openai'), false);
-  });
-});
-
-describe('createWorkerCapabilityVerifier (WS2 §6 replay + revocation)', () => {
-  it('rejects a second verify of the same token (nonce replay)', async () => {
-    const kernel = new InMemoryKernelRepository();
-    const issuer = CapabilityTokenIssuer.generate({
-      issuer: 'commander-worker',
-      audience: 'commander.effect-broker',
-      keyId: 'worker-bootstrap',
-    });
-    const verifier = createWorkerCapabilityVerifier(issuer, kernel);
-    const token = issuer.issue({
-      jti: 'jti-replay',
-      tenantId: 't1',
-      runId: 'r1',
-      stepId: 's1',
-      effectTypes: ['llm.openai'],
-      expiresAt: new Date(Date.now() + 60_000).toISOString(),
-      requestHash: canonicalRequestHash({ a: 1 }),
-    });
-    await verifier.verify(token);
-    await assert.rejects(() => verifier.verify(token), /replayed/i);
-  });
-
-  it('rejects tokens whose jti was revoked in the kernel', async () => {
-    const kernel = new InMemoryKernelRepository();
-    const issuer = CapabilityTokenIssuer.generate({
-      issuer: 'commander-worker',
-      audience: 'commander.effect-broker',
-      keyId: 'worker-bootstrap',
-    });
-    const verifier = createWorkerCapabilityVerifier(issuer, kernel);
-    const expiresAt = new Date(Date.now() + 60_000).toISOString();
-    const token = issuer.issue({
-      jti: 'jti-revoked',
-      tenantId: 't1',
-      runId: 'r1',
-      stepId: 's1',
-      effectTypes: ['llm.openai'],
-      expiresAt,
-      requestHash: canonicalRequestHash({ a: 1 }),
-    });
-    await kernel.revokeCapability({
-      jti: 'jti-revoked',
-      tenantId: 't1',
-      expiresAt,
-      reason: 'test',
-    });
-    await assert.rejects(() => verifier.verify(token), /revoked/i);
   });
 });

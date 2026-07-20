@@ -1,0 +1,22 @@
+{
+  "kind": "grant",
+  "schemaVersion": "commander.grant/v1",
+  "payload": {
+    "schemaVersion": "commander.grant/v1",
+    "jti": "grant-jti-1",
+    "tenantId": "tenant-1",
+    "runId": "run-minimal-1",
+    "stepId": "step-1",
+    "effectTypes": ["connector.github.pullRequestCreate"],
+    "expiresAt": "2026-12-31T23:59:59.000Z",
+    "issuer": "commander-issuer",
+    "audience": "commander.effect-broker",
+    "issuedAt": "2026-01-01T00:00:00.000Z",
+    "notBefore": "2026-01-01T00:00:00.000Z",
+    "keyId": "key-1",
+    "requestHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "workloadId": "workload-1",
+    "policySnapshotId": "policy-snap-1",
+    "nonce": "nonce-1"
+  }
+}

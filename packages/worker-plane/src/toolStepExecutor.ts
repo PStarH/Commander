@@ -41,6 +41,8 @@ export interface ToolStepInput {
   effectId?: string;
   idempotencyKey?: string;
   capabilityToken?: string;
+  /** Must match run/policy decision snapshot for EffectBroker admit. */
+  policySnapshotId?: string;
   /** Optional timeout override in milliseconds. */
   timeoutMs?: number;
 }
@@ -138,6 +140,8 @@ export class ToolStepExecutor implements StepExecutor {
           issuer: this.capabilityIssuer,
           effectType,
           request,
+          policySnapshotId:
+            typeof input.policySnapshotId === 'string' ? input.policySnapshotId : undefined,
         });
       } else if (production) {
         throw new WorkerExecutionError(
