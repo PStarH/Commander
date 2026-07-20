@@ -56,9 +56,24 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 
 const EXPECTED_MEMORY_DIR = path.join(process.cwd(), '.commander_memory');
 
+/** Windows CI can hit ENOTEMPTY/EBUSY while AV or node still holds files. */
+async function rmMemoryDirRetry(): Promise<void> {
+  for (let i = 0; i < 8; i++) {
+    try {
+      await fsp.rm(EXPECTED_MEMORY_DIR, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOTEMPTY' && code !== 'EBUSY' && code !== 'EPERM') throw err;
+      await new Promise((r) => setTimeout(r, 50 * (i + 1)));
+    }
+  }
+  await fsp.rm(EXPECTED_MEMORY_DIR, { recursive: true, force: true });
+}
+
 describe('persistenceTool lazy async init contract', () => {
   beforeEach(async () => {
-    await fsp.rm(EXPECTED_MEMORY_DIR, { recursive: true, force: true });
+    await rmMemoryDirRetry();
     // Reset module cache so each test gets a fresh persistenceTool instance
     // with `ensureMemoryDirOnce = undefined`. Without this, the module-level
     // singleton from a prior test would suppress the mkdir calls that the
@@ -69,7 +84,7 @@ describe('persistenceTool lazy async init contract', () => {
   });
 
   afterEach(async () => {
-    await fsp.rm(EXPECTED_MEMORY_DIR, { recursive: true, force: true });
+    await rmMemoryDirRetry();
   });
 
   it('module load: importing persistenceTool does NOT mkdir for MEMORY_DIR', async () => {
