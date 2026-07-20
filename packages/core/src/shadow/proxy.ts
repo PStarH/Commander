@@ -111,8 +111,17 @@ export class ShadowProxy {
   }
 
   private async mirror(ctx: ProxyContext): Promise<void> {
-    const scrubbed = scrubRequest(ctx.request, this.config.ignoreFields);
-    const shadowUrl = this.config.endpoint + ctx.request.url;
+    // Scrub headers, body, AND url — query/path secrets must not reach shadow.
+    const scrubbed = scrubRequest(
+      {
+        headers: ctx.request.headers,
+        body: ctx.request.body,
+        url: ctx.request.url,
+      },
+      this.config.ignoreFields,
+    );
+    const safePath = scrubbed.url ?? '/';
+    const shadowUrl = this.config.endpoint + safePath;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.config.timeoutMs);
 
@@ -129,7 +138,7 @@ export class ShadowProxy {
 
       const entry: DriftEntry = {
         timestamp: new Date().toISOString(),
-        endpoint: ctx.request.url,
+        endpoint: safePath,
         prodStatus: ctx.response.status,
         shadowStatus,
         prodLatencyMs: ctx.latencyMs,
