@@ -427,6 +427,56 @@ describe('ToolStepExecutor', () => {
       (err: WorkerExecutionError) => err.options.code === 'ABORTED',
     );
   });
+
+  it('force-exits non-cooperative tool handlers on parent abort within grace', async () => {
+    const parent = new AbortController();
+    const started = Date.now();
+    const mockRegistry = {
+      get: () => ({
+        execute: async () => new Promise(() => {}),
+      }),
+    };
+    const executor = new ToolStepExecutor(mockRegistry);
+    const step = createMockStep({ input: { toolName: 'hang', args: {}, timeoutMs: 5_000 } });
+    const execPromise = executor.execute(step, {
+      signal: parent.signal,
+      worker: createMockWorker(),
+    });
+    parent.abort();
+    await assert.rejects(
+      () => execPromise,
+      (err: WorkerExecutionError) => err.options.code === 'ABORTED',
+    );
+    assert.ok(
+      Date.now() - started < 400,
+      'parent abort + non-coop hang must hard-exit within grace bound',
+    );
+  });
+
+  it('parent abort near timeout boundary still hard-exits non-cooperative hang', async () => {
+    const parent = new AbortController();
+    const started = Date.now();
+    const mockRegistry = {
+      get: () => ({
+        execute: async () => new Promise(() => {}),
+      }),
+    };
+    const executor = new ToolStepExecutor(mockRegistry);
+    const step = createMockStep({ input: { toolName: 'hang', args: {}, timeoutMs: 80 } });
+    const execPromise = executor.execute(step, {
+      signal: parent.signal,
+      worker: createMockWorker(),
+    });
+    // Abort near the timeout boundary — must not disable timeout hard-exit either.
+    await new Promise((r) => setTimeout(r, 60));
+    parent.abort();
+    await assert.rejects(
+      () => execPromise,
+      (err: WorkerExecutionError) =>
+        err.options.code === 'ABORTED' || err.options.code === 'TIMEOUT',
+    );
+    assert.ok(Date.now() - started < 500, 'near-boundary parent abort must not hang forever');
+  });
 });
 
 // ── EvaluatorStepExecutor tests ──

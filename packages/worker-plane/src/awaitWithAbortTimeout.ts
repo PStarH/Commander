@@ -1,10 +1,11 @@
 /**
- * Abort-aware await with hard timeout exit.
+ * Abort-aware await with hard timeout / parent-abort exit.
  *
  * Linked AbortSignal covers cooperative handlers. Promise.race alone left
  * orphaned work running; abort-only left non-cooperative handlers stuck under
- * lease heartbeat. This helper aborts on timeout, waits a short grace for
- * cooperative settle, then force-rejects so the step await always terminates.
+ * lease heartbeat. This helper aborts on timeout or parent abort, waits a short
+ * grace for cooperative settle, then force-rejects so the step await always
+ * terminates.
  */
 
 export interface AwaitWithAbortTimeoutOptions {
@@ -23,17 +24,13 @@ export async function awaitWithAbortTimeout<T>(
 ): Promise<T> {
   const { parentSignal, timeoutMs, abortGraceMs = 50 } = options;
   const local = new AbortController();
-  const onParentAbort = () => {
-    if (!local.signal.aborted) local.abort(parentSignal.reason ?? new Error('aborted'));
-  };
-  if (parentSignal.aborted) onParentAbort();
-  else parentSignal.addEventListener('abort', onParentAbort, { once: true });
 
   let timedOut = false;
   let settled = false;
   let closed = false;
   let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
   let graceTimer: ReturnType<typeof setTimeout> | undefined;
+  let onParentAbort: (() => void) | undefined;
 
   const run = work(local.signal).finally(() => {
     settled = true;
@@ -55,19 +52,46 @@ export async function awaitWithAbortTimeout<T>(
         close(() => reject(options.timeoutError(cooperative)));
       };
 
+      const rejectAbort = (): void => {
+        close(() => reject(options.abortError()));
+      };
+
+      /** Soft-abort already fired; after grace, hard-reject if work ignored it. */
+      const scheduleHardExit = (hardReject: () => void): void => {
+        if (graceTimer !== undefined || closed) return;
+        graceTimer = setTimeout(() => {
+          if (closed || settled) return;
+          hardReject();
+        }, abortGraceMs);
+      };
+
+      onParentAbort = () => {
+        if (!local.signal.aborted) {
+          local.abort(parentSignal.reason ?? new Error('aborted'));
+        }
+        // Parent abort must hard-exit non-cooperative work (same as timeout path).
+        scheduleHardExit(rejectAbort);
+      };
+
+      if (parentSignal.aborted) onParentAbort();
+      else parentSignal.addEventListener('abort', onParentAbort, { once: true });
+
       timeoutTimer = setTimeout(() => {
-        // Parent abort wins over timer (ABORTED vs TIMEOUT mapping).
-        if (closed || parentSignal.aborted) return;
+        if (closed) return;
+        // Parent owns ABORTED mapping; still ensure a hard-exit is armed.
+        if (parentSignal.aborted) {
+          scheduleHardExit(rejectAbort);
+          return;
+        }
         timedOut = true;
         if (!local.signal.aborted) local.abort(new Error('timeout'));
-        graceTimer = setTimeout(() => {
-          if (closed) return;
+        scheduleHardExit(() => {
           if (parentSignal.aborted) {
-            close(() => reject(options.abortError()));
+            rejectAbort();
             return;
           }
-          if (!settled) rejectTimeout(false);
-        }, abortGraceMs);
+          rejectTimeout(false);
+        });
       }, timeoutMs);
 
       void run.then(
@@ -75,7 +99,7 @@ export async function awaitWithAbortTimeout<T>(
           if (closed) return;
           // Parent abort takes priority over a racing timeout flag.
           if (parentSignal.aborted) {
-            close(() => reject(options.abortError()));
+            rejectAbort();
             return;
           }
           if (timedOut) {
@@ -84,7 +108,7 @@ export async function awaitWithAbortTimeout<T>(
             return;
           }
           if (local.signal.aborted) {
-            close(() => reject(options.abortError()));
+            rejectAbort();
             return;
           }
           close(() => resolve(value));
@@ -92,7 +116,7 @@ export async function awaitWithAbortTimeout<T>(
         (error) => {
           if (closed) return;
           if (parentSignal.aborted) {
-            close(() => reject(options.abortError()));
+            rejectAbort();
             return;
           }
           if (timedOut) {
@@ -100,7 +124,7 @@ export async function awaitWithAbortTimeout<T>(
             return;
           }
           if (local.signal.aborted) {
-            close(() => reject(options.abortError()));
+            rejectAbort();
             return;
           }
           close(() => reject(error));
@@ -108,7 +132,7 @@ export async function awaitWithAbortTimeout<T>(
       );
     });
   } finally {
-    parentSignal.removeEventListener('abort', onParentAbort);
+    if (onParentAbort) parentSignal.removeEventListener('abort', onParentAbort);
     if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
     if (graceTimer !== undefined) clearTimeout(graceTimer);
   }

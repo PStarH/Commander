@@ -30,7 +30,10 @@ class FakeKernel implements KernelWorkerPort {
   claimDelayMs = 0;
   lastHeartbeatActiveSteps: number | undefined;
   private readonly steps: Array<
-    ClaimedStep & { state: 'PENDING' | 'RUNNING' | 'RETRY_WAIT' | 'SUCCEEDED'; maxAttempts: number }
+    ClaimedStep & {
+      state: 'PENDING' | 'RUNNING' | 'RETRY_WAIT' | 'SUCCEEDED' | 'FAILED';
+      maxAttempts: number;
+    }
   > = [];
   private readonly runs = new Map<string, { tenantId: string; state: 'PENDING' | 'SUCCEEDED' }>();
   private readonly limits = new Map<string, number>();
@@ -135,7 +138,10 @@ class FakeKernel implements KernelWorkerPort {
       return null;
     this.lastFailureCode = request.error.code;
     this.lastFailureRetryable = request.error.retryable;
-    step.state = request.error.retryable && request.retryAt ? 'RETRY_WAIT' : 'PENDING';
+    // Non-retryable must leave claimable path as FAILED (not PENDING).
+    // Retryable without retryAt stays PENDING (e.g. WORKER_STOPPED requeue).
+    if (!request.error.retryable) step.state = 'FAILED';
+    else step.state = request.retryAt ? 'RETRY_WAIT' : 'PENDING';
     return {};
   }
   getRun(id: string): { state: string } | undefined {
@@ -501,7 +507,7 @@ describe('worker plane', () => {
     assert.equal(await service.pollOnce(), true);
     await service.waitForIdle();
     assert.ok(Date.now() - started < boundMs, 'step must leave RUNNING within bound');
-    assert.notEqual(kernel.getStep('hang-tool')?.state, 'RUNNING');
+    assert.equal(kernel.getStep('hang-tool')?.state, 'FAILED');
     assert.equal(kernel.lastFailureCode, 'TIMEOUT');
     assert.equal(kernel.lastFailureRetryable, false);
     const heartbeatsAtIdle = kernel.heartbeatCount;
@@ -511,6 +517,53 @@ describe('worker plane', () => {
       heartbeatsAtIdle,
       'lease heartbeat must stop after timeout failStep',
     );
+    await service.stop();
+  });
+
+  it('parent abort of non-cooperative tool leaves RUNNING via failStep', async () => {
+    resetControlPlane();
+    const kernel = new FakeKernel();
+    kernel.addRun('run-abort-hang', 'tenant-a', [
+      {
+        id: 'abort-hang-tool',
+        kind: 'tool',
+        input: { toolName: 'hang', args: {}, timeoutMs: 30_000 },
+      },
+    ]);
+    const toolDef = {
+      ...definition,
+      id: 'tool-abort-worker',
+      kind: 'tool' as const,
+      capabilities: ['tool'],
+    };
+    const toolAuth = {
+      authenticate: async () => ({ tenantIds: ['tenant-a'], capabilities: ['tool'] }),
+    };
+    const registry = new InMemoryWorkerRegistry();
+    const executor = new ToolStepExecutor({
+      get: () => ({
+        execute: async () => new Promise(() => {}),
+      }),
+    });
+    const service = new WorkerService(
+      toolDef,
+      { ...identity, subject: 'spiffe://commander/worker/tool-abort-worker' },
+      toolAuth,
+      registry,
+      kernel,
+      executor,
+      { leaseTtlMs: 600, workerHeartbeatMs: 40 },
+    );
+    await service.start();
+    const boundMs = 800;
+    const started = Date.now();
+    assert.equal(await service.pollOnce(), true);
+    // Bump generation so worker heartbeat aborts active step controllers (parent abort).
+    await registry.register(toolDef, 'spiffe://commander/worker/tool-abort-worker', ['tenant-a']);
+    await service.waitForIdle();
+    assert.ok(Date.now() - started < boundMs, 'parent-abort step must leave RUNNING within bound');
+    assert.notEqual(kernel.getStep('abort-hang-tool')?.state, 'RUNNING');
+    assert.equal(kernel.lastFailureCode, 'ABORTED');
     await service.stop();
   });
 });
