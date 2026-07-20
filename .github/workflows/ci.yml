@@ -299,9 +299,10 @@ jobs:
 
       - name: WS6/WS7 node:test gates (audit query + host-exec static + memory HTTP)
         run: |
-          # Worker-plane tests import @commander/effect-broker from dist.
+          # Worker-plane tests import @commander/effect-broker + action-adapters from dist.
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/action-adapters build
           pnpm --filter @commander/core exec tsx --test \
             tests/sandbox/productionPolicy.test.ts \
             tests/memory/memoryAuditQuery.test.ts
