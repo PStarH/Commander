@@ -491,14 +491,19 @@ export class ToolExecutionService {
         throw e;
       }
 
-      // ExecPolicy gate: evaluate shell/Python commands before execution
+      // ExecPolicy gate: evaluate shell/Python commands before execution.
+      // Covers legacy shell_execute/python_execute AND consolidated `exec` resource tool.
       // Research backing: Codex CLI command safety classification, Claude Code deny-first evaluation
-      if (toolCall.name === 'shell_execute' || toolCall.name === 'python_execute') {
-        const command = String(validatedArgs.command ?? validatedArgs.code ?? '');
+      {
+        const { extractExecPolicyPayload, getExecPolicyEngine } =
+          await import('../sandbox/execPolicy');
+        const command = extractExecPolicyPayload(
+          toolCall.name,
+          validatedArgs as Record<string, unknown>,
+        );
         if (command) {
           try {
-            const { ExecPolicyEngine } = await import('../sandbox/execPolicy');
-            const policy = new ExecPolicyEngine();
+            const policy = getExecPolicyEngine();
             const decision = policy.evaluate(command);
             if (decision.decision === 'forbidden') {
               const errorMsg = `EXEC_POLICY_FORBIDDEN: Command blocked by security policy. Rule: ${decision.rule?.id ?? 'unknown'}. Justification: ${decision.rule?.justification ?? 'dangerous command'}`;
@@ -673,8 +678,9 @@ export class ToolExecutionService {
       // ExecutionRouter's getWorkloadContext() sees it and a hostile tool arg
       // named `tenantId` can never collide with the injected identity. Spread
       // AFTER sanitizedArgs so injected values always win.
+      const { isShellOrPythonExecTool } = await import('../sandbox/execPolicy');
       const workloadContext =
-        (toolCall.name === 'shell_execute' || toolCall.name === 'python_execute') && tenantId
+        isShellOrPythonExecTool(toolCall.name, sanitizedArgs as Record<string, unknown>) && tenantId
           ? createSandboxWorkloadContext({
               tenantId,
               runId,
