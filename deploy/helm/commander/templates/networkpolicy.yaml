@@ -176,4 +176,54 @@ spec:
         - protocol: TCP
           port: {{ .Values.database.postgres.port }}
     {{- end }}
+
+---
+# Allow adapter-ops egress to PostgreSQL, DNS, and adapter CIDR allowlist
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "commander.fullname" . }}-adapter-ops-egress
+  labels:
+    {{- include "commander.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "commander.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: adapter-ops
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- if include "commander.bundledPostgres" . }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "commander.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: postgres
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.database.postgres.port }}
+    {{- end }}
+    {{- range .Values.networkPolicy.egress.databaseCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.database.postgres.port }}
+    {{- end }}
+    {{- range .Values.networkPolicy.egress.adapterCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- end }}
 {{- end }}
