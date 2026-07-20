@@ -643,3 +643,167 @@ export function getExecPolicyEngine(): ExecPolicyEngine {
 export function resetExecPolicyEngine(): void {
   defaultExecPolicyInstance = undefined;
 }
+
+/**
+ * Extract a shell/python payload that ExecPolicy should evaluate for a tool call.
+ *
+ * Live tools use the consolidated `exec` resource tool (`action: shell|python`).
+ * Legacy names `shell_execute` / `python_execute` remain supported.
+ * Returns null when the tool is not a shell/python execution surface (e.g. file tools).
+ *
+ * Note: `exec` action=`script` / `execute_script` has no command payload here.
+ * Those surfaces can nest `tools.exec({action:'shell'})` via direct tool.execute
+ * (bypassing ToolExecutionService), so they are denied by default — see
+ * {@link isExecScriptTool} / {@link isExecScriptAllowed}.
+ */
+export function extractExecPolicyPayload(
+  toolName: string,
+  args: Record<string, unknown>,
+): string | null {
+  if (toolName === 'shell_execute') {
+    return typeof args.command === 'string' && args.command ? args.command : null;
+  }
+  if (toolName === 'python_execute') {
+    return typeof args.code === 'string' && args.code ? args.code : null;
+  }
+  if (toolName === 'exec') {
+    const action = String(args.action ?? '').toLowerCase();
+    if (action === 'shell') {
+      return typeof args.command === 'string' && args.command ? args.command : null;
+    }
+    if (action === 'python') {
+      return typeof args.code === 'string' && args.code ? args.code : null;
+    }
+    // script: no shell/python payload — gated separately (deny-by-default)
+    return null;
+  }
+  // code.refine / refine_code: testCommand → execSandboxed (LocalBackend ExecPolicy gates)
+  if (toolName === 'refine_code') {
+    return typeof args.testCommand === 'string' && args.testCommand ? args.testCommand : null;
+  }
+  if (toolName === 'code') {
+    const action = String(args.action ?? '').toLowerCase();
+    if (action === 'refine') {
+      return typeof args.testCommand === 'string' && args.testCommand ? args.testCommand : null;
+    }
+    return null;
+  }
+  // apply_patch: verifyCommand → execSandboxed (LocalBackend ExecPolicy gates)
+  if (toolName === 'apply_patch') {
+    return typeof args.verifyCommand === 'string' && args.verifyCommand ? args.verifyCommand : null;
+  }
+  // Exact-name only — no toolName.includes('shell'|'python') fuzzy match
+  // (over-matches e.g. shellshock_* / powershell_*; misses code.testCommand / apply_patch.verifyCommand).
+  return null;
+}
+
+/**
+ * Programmatic script surfaces that can invoke other tools without re-entering
+ * ToolExecutionService (and thus without ExecPolicy on nested shell/python).
+ */
+export function isExecScriptTool(toolName: string, args?: Record<string, unknown>): boolean {
+  if (toolName === 'execute_script') return true;
+  if (toolName === 'exec') {
+    const action = String(args?.action ?? '').toLowerCase();
+    // Accept both STRAP action=script and accidental aliases that would otherwise
+    // skip the shell/python ExecPolicy payload path.
+    return action === 'script' || action === 'execute_script';
+  }
+  return false;
+}
+
+/**
+ * 生产运行时信号（与 apps/api envSignal.isProductionEnv 对齐）：
+ * NODE_ENV=production 或 COMMANDER_ENV=production|prod。
+ * 仅依赖 process.env，不跨包引用 apps/api。
+ */
+function isProductionRuntimeEnv(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (
+    env.NODE_ENV === 'production' ||
+    env.COMMANDER_ENV === 'production' ||
+    env.COMMANDER_ENV === 'prod'
+  );
+}
+
+/**
+ * Opt-in for exec action=script / execute_script.
+ * Default deny: nested tools.exec({action:'shell'}) would otherwise bypass ExecPolicy.
+ *
+ * 生产环境一律拒绝（对齐 {@link isScriptVmFallbackAllowed}）：即便
+ * COMMANDER_ALLOW_EXEC_SCRIPT=1 也不放行。resolveSandboxPolicy 的 prod ban
+ * 是懒加载的，apps/api 启动未必调用；本运行时门禁不依赖 policy resolve。
+ */
+export function isExecScriptAllowed(): boolean {
+  // 与 isScriptVmFallbackAllowed / envSignal 同构：任一生产信号 fail-closed。
+  if (isProductionRuntimeEnv()) return false;
+  return process.env.COMMANDER_ALLOW_EXEC_SCRIPT === '1';
+}
+
+/**
+ * Whether ExecuteScriptTool may fall back to Node.js `vm` when isolated-vm is
+ * missing or fails. Production is always fail-closed (COMMANDER_SCRIPT_VM_SOFT
+ * is ignored / rejected at policy resolve — same as COMMANDER_PLUGIN_SANDBOX_SOFT).
+ * Non-production may use hardened Node `vm`.
+ */
+export function isScriptVmFallbackAllowed(): boolean {
+  // 与 isExecScriptAllowed / envSignal 对齐：COMMANDER_ENV=production 亦 fail-closed。
+  return !isProductionRuntimeEnv();
+}
+
+/**
+ * Fail-closed gate for script surfaces. Returns an error message when denied,
+ * or null when allowed.
+ */
+export function denyExecScriptUnlessAllowed(): string | null {
+  if (isExecScriptAllowed()) return null;
+  if (isProductionRuntimeEnv()) {
+    return (
+      'EXEC_SCRIPT_DENIED: exec action=script is forbidden in production ' +
+      '(COMMANDER_ALLOW_EXEC_SCRIPT is ignored; nested tool calls would bypass ' +
+      'ToolExecutionService / ExecPolicy).'
+    );
+  }
+  return (
+    'EXEC_SCRIPT_DENIED: exec action=script is denied by default because ' +
+    'nested tool calls bypass ToolExecutionService / ExecPolicy. Set COMMANDER_ALLOW_EXEC_SCRIPT=1 to enable ' +
+    '(shell/write/executable surfaces remain excluded from the script tool map; ' +
+    'production always denies).'
+  );
+}
+
+/**
+ * Tools that must never be injectable into exec.script nested maps.
+ * Nested calls use tool.execute directly (bypass ToolExecutionService /
+ * ExecPolicy / capability re-entry). Strip shell-equivalents, write-surface,
+ * AND executable surfaces (e.g. code.refine → testCommand / apply_patch → verifyCommand → execSandboxed)
+ * even when COMMANDER_ALLOW_EXEC_SCRIPT=1.
+ */
+export const SCRIPT_NESTED_SHELL_EQUIVALENT_TOOLS: ReadonlySet<string> = new Set([
+  // Shell / code execution equivalents
+  'exec',
+  'shell_execute',
+  'python_execute',
+  'execute_script',
+  // Executable surfaces: testCommand / verifyCommand → execSandboxed without TES
+  'code',
+  'refine_code',
+  // Write / repo / patch surfaces (still TES-bypass if injected; apply_patch also has verifyCommand)
+  'file',
+  'git',
+  'apply_patch',
+  'system',
+  'verify',
+  'file_hash_edit',
+  'file_write',
+  'file_edit',
+]);
+
+/** Tools whose execution injects sandbox workload identity metadata. */
+export function isShellOrPythonExecTool(toolName: string, args?: Record<string, unknown>): boolean {
+  if (toolName === 'shell_execute' || toolName === 'python_execute') return true;
+  if (toolName === 'exec') {
+    const action = String(args?.action ?? '').toLowerCase();
+    return action === 'shell' || action === 'python';
+  }
+  return false;
+}

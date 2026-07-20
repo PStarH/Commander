@@ -116,6 +116,40 @@ const IRREVERSIBLE_ARG_PATTERNS: ReadonlyArray<{ tool: string; pattern: RegExp; 
       pattern: /\b(sudo|su\s|chown|chmod|passwd|useradd|userdel)\b/i,
       reason: 'privilege escalation',
     },
+    // refine_code / code / apply_patch: testCommand / verifyCommand → execSandboxed
+    {
+      tool: 'refine_code',
+      pattern:
+        /\b(rm\s+-rf|mkfs\b|dd\s+if=|chmod\s+777|>\s*\/dev\/|>>\s*\/dev\/|shutdown\b|reboot\b|halt\b)/i,
+      reason: 'destructive shell command',
+    },
+    {
+      tool: 'refine_code',
+      pattern: /\b(curl|wget|nc|ncat|socat|scp|rsync)\b/i,
+      reason: 'network exfiltration via shell',
+    },
+    {
+      tool: 'code',
+      pattern:
+        /\b(rm\s+-rf|mkfs\b|dd\s+if=|chmod\s+777|>\s*\/dev\/|>>\s*\/dev\/|shutdown\b|reboot\b|halt\b)/i,
+      reason: 'destructive shell command',
+    },
+    {
+      tool: 'code',
+      pattern: /\b(curl|wget|nc|ncat|socat|scp|rsync)\b/i,
+      reason: 'network exfiltration via shell',
+    },
+    {
+      tool: 'apply_patch',
+      pattern:
+        /\b(rm\s+-rf|mkfs\b|dd\s+if=|chmod\s+777|>\s*\/dev\/|>>\s*\/dev\/|shutdown\b|reboot\b|halt\b)/i,
+      reason: 'destructive shell command',
+    },
+    {
+      tool: 'apply_patch',
+      pattern: /\b(curl|wget|nc|ncat|socat|scp|rsync)\b/i,
+      reason: 'network exfiltration via shell',
+    },
     // file_write/edit to system paths
     {
       tool: 'file_write',
@@ -276,6 +310,10 @@ export class ReversibilityGate {
       let textToCheck = '';
       if (rule.tool === 'shell_execute' || rule.tool === 'python_execute') {
         textToCheck = String(args.command ?? args.code ?? args.script ?? args.cmd ?? '');
+      } else if (rule.tool === 'refine_code' || rule.tool === 'code') {
+        textToCheck = String(args.testCommand ?? '');
+      } else if (rule.tool === 'apply_patch') {
+        textToCheck = String(args.verifyCommand ?? '');
       } else if (rule.tool === 'file_write' || rule.tool === 'file_edit') {
         textToCheck = String(args.path ?? args.filepath ?? args.filename ?? '');
       } else if (rule.tool === 'git_push') {
