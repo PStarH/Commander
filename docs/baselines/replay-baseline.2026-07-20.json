@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 2,
+  "benchmark": "event-sourcing-replay",
+  "results": [
+    {
+      "eventCount": 1000,
+      "appendTotalMs": 707,
+      "appendPerEventMs": 0.707,
+      "replayTotalMs": 2,
+      "replayEventsPerSec": 500000,
+      "replayPerEventMs": 0.002,
+      "verifyIntegrityMs": 51,
+      "snapshotMs": 95,
+      "replayFromSnapshotMs": 0,
+      "snapshotSpeedup": 0,
+      "heapUsedMB": 12
+    },
+    {
+      "eventCount": 10000,
+      "appendTotalMs": 7678,
+      "appendPerEventMs": 0.7678,
+      "replayTotalMs": 204,
+      "replayEventsPerSec": 49020,
+      "replayPerEventMs": 0.0204,
+      "verifyIntegrityMs": 330,
+      "snapshotMs": 207,
+      "replayFromSnapshotMs": 0,
+      "snapshotSpeedup": 0,
+      "heapUsedMB": 25
+    },
+    {
+      "eventCount": 100000,
+      "appendTotalMs": 23278,
+      "appendPerEventMs": 0.23278,
+      "replayTotalMs": 1552,
+      "replayEventsPerSec": 64433,
+      "replayPerEventMs": 0.01552,
+      "verifyIntegrityMs": 2647,
+      "snapshotMs": 1476,
+      "replayFromSnapshotMs": 0,
+      "snapshotSpeedup": 0,
+      "heapUsedMB": 76
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "errors": 0,
+    "failed": 0,
+    "skipped": 0
+  },
+  "scale1k": {
+    "eventCount": 1000,
+    "appendTotalMs": 707,
+    "appendPerEventMs": 0.707,
+    "replayTotalMs": 2,
+    "replayEventsPerSec": 500000,
+    "replayPerEventMs": 0.002,
+    "verifyIntegrityMs": 51,
+    "snapshotMs": 95,
+    "replayFromSnapshotMs": 0,
+    "snapshotSpeedup": 0,
+    "heapUsedMB": 12
+  },
+  "scale10k": {
+    "eventCount": 10000,
+    "appendTotalMs": 7678,
+    "appendPerEventMs": 0.7678,
+    "replayTotalMs": 204,
+    "replayEventsPerSec": 49020,
+    "replayPerEventMs": 0.0204,
+    "verifyIntegrityMs": 330,
+    "snapshotMs": 207,
+    "replayFromSnapshotMs": 0,
+    "snapshotSpeedup": 0,
+    "heapUsedMB": 25
+  },
+  "scale100k": {
+    "eventCount": 100000,
+    "appendTotalMs": 23278,
+    "appendPerEventMs": 0.23278,
+    "replayTotalMs": 1552,
+    "replayEventsPerSec": 64433,
+    "replayPerEventMs": 0.01552,
+    "verifyIntegrityMs": 2647,
+    "snapshotMs": 1476,
+    "replayFromSnapshotMs": 0,
+    "snapshotSpeedup": 0,
+    "heapUsedMB": 76
+  },
+  "env": {
+    "evidence": "simulated",
+    "gitSha": "c3d115cd8a878477f5943d2d3641df63d159c06d",
+    "gitBranch": "feat/l4-b",
+    "gitDirty": true,
+    "nodeVersion": "v22.22.0",
+    "pnpmVersion": "9.15.4",
+    "topology": {
+      "gateways": 1,
+      "workers": 1,
+      "operations": 1,
+      "model": "single"
+    },
+    "datasetVersion": "event-sourcing-replay-v1"
+  },
+  "runAt": "2026-07-20T07:10:46.590Z",
+  "note": "CI readiness fixture (simulated evidence; NON-SCORING \u2014 does not count toward required readiness / residual\u2192100)"
+}
