@@ -183,7 +183,11 @@ export function assertForgetTarget(input: ForgetMemoryInput): void {
   }
 }
 
-export function assertLimit(limit: number | undefined, defaultLimit = 50, maxLimit = 10_000): number {
+export function assertLimit(
+  limit: number | undefined,
+  defaultLimit = 50,
+  maxLimit = 10_000,
+): number {
   const resolved = limit ?? defaultLimit;
   if (!Number.isInteger(resolved) || resolved < 1 || resolved > maxLimit) {
     throw new MemoryServiceValidationError(`limit must be an integer between 1 and ${maxLimit}`);

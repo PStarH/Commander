@@ -117,9 +117,12 @@ describe('FileSearchTool — glob pattern resolution', () => {
     const result = await tool.execute({ pattern: '**/*.ts', maxResults: 100 });
     assert.ok(result.includes('.ts'), 'Should find .ts files');
     assert.ok(result.length > 0, 'Should return at least one result');
-    // Verify recursion — benchmark files appear early alphabetically
+    // Normalize separators — Windows FileSearchTool may emit `\`.
+    const normalized = result.replace(/\\/g, '/');
     assert.ok(
-      result.includes('benchmarks/') || result.includes('dist/') || result.includes('cli.ts'),
+      normalized.includes('benchmarks/') ||
+        normalized.includes('dist/') ||
+        normalized.includes('cli.ts'),
       'Should find files in subdirectories via recursion',
     );
   });
@@ -833,14 +836,16 @@ describe('Multimodal tools — workspace boundary', () => {
     it('accepts default outputPath (generates unique path within workspace)', async () => {
       const { ScreenshotCaptureTool } = await import('../../src/tools/multimodal/screenshotTool');
       const tool = new ScreenshotCaptureTool();
+      // about:blank is rejected by SSRF guard after default path resolution — proves
+      // workspace path was accepted (no Access denied) without launching capture.
       const result = await tool.execute({ url: 'about:blank' });
-      // If playwright isn't installed, it should fail with install prompt, not boundary error
       assert.ok(!result.includes('Access denied'), 'Should not deny default path');
       assert.ok(
-        result.includes('Screenshot') ||
+        result.includes('refusing to capture') ||
+          result.includes('Screenshot') ||
           result.includes('playwright') ||
           result.includes('install'),
-        `Should attempt capture, got: ${result.slice(0, 100)}`,
+        `Should proceed past path check, got: ${result.slice(0, 120)}`,
       );
     });
 
