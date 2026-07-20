@@ -70,8 +70,9 @@ Every "one canonical X" rule names the current count so consolidation is measura
   explicitly listed by the architecture gate and are not silently expanded.
 
 **Gap to close:** retire the documented V1 core-barrel exceptions as the runtime extraction
-proceeds. The WS0 guard prevents new V2 boundary violations and the sole
-`worker-plane → core` bridge is `packages/worker-plane/src/workerRuntimeAdapter.ts`.
+proceeds. The WS0 `arch-guard` **ENFORCES** the V2 package graph / deleted-package ban /
+contracts leaf; `worker-plane → core` remains allowlisted only via
+`scripts/architecture-gate.config.json` `v2ImportExceptions` (not silently expanded).
 
 ---
 
