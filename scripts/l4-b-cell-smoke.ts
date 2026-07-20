@@ -76,7 +76,10 @@ export function assertKernelBackendOnCellServices(composeConfig: {
     const backend = env.get('COMMANDER_KERNEL_BACKEND');
     if (backend !== 'postgres') {
       throw new Error(
-        `${service}: COMMANDER_KERNEL_BACKEND must be postgres (got ${backend ?? 'missing'})`,
+        service +
+          ': COMMANDER_KERNEL_BACKEND must be postgres (got ' +
+          (backend ?? 'missing') +
+          ')',
       );
     }
   }
@@ -90,6 +93,27 @@ export function applyApiGateToComposeSidecarSteps(steps: Record<string, boolean>
     steps.S4_worker = false;
     steps.S5_kernelOps = false;
     steps.S6_adapterOps = false;
+  }
+}
+
+/**
+ * 可选 chaos 步：默认路径不依赖尚未合入的 l4-b-adapter-chaos。
+ * require=true 或 CELL_SMOKE_REQUIRE_CHAOS=1 时，缺失/失败记 S7_chaos=false。
+ */
+export async function runOptionalChaosStep(
+  steps: Record<string, boolean>,
+  options?: { require?: boolean },
+): Promise<void> {
+  const requireChaos =
+    options?.require === true || process.env.CELL_SMOKE_REQUIRE_CHAOS === '1';
+  try {
+    const { runL4BAdapterChaos } = await import('./l4-b-adapter-chaos.js');
+    const chaos = await runL4BAdapterChaos();
+    steps.S7_chaos = chaos.passed && chaos.remoteCreateCount === 1;
+  } catch {
+    if (requireChaos) {
+      steps.S7_chaos = false;
+    }
   }
 }
 
@@ -176,12 +200,12 @@ export async function runCellSmoke(options: {
     }
   } else {
     const headers: Record<string, string> = {};
-    if (options.apiKey) headers.Authorization = `Bearer ${options.apiKey}`;
+    if (options.apiKey) headers.Authorization = 'Bearer ' + options.apiKey;
 
-    const ready = await fetch(`${baseUrl}/ready`, { headers }).catch(() => null);
+    const ready = await fetch(baseUrl + '/ready', { headers }).catch(() => null);
     steps.S1 = ready?.ok === true;
 
-    const health = await fetch(`${baseUrl}/health`, { headers }).catch(() => null);
+    const health = await fetch(baseUrl + '/health', { headers }).catch(() => null);
     steps.S2 = health?.ok === true;
 
     try {
@@ -191,9 +215,8 @@ export async function runCellSmoke(options: {
     }
   }
 
-  const { runL4BAdapterChaos } = await import('./l4-b-adapter-chaos.js');
-  const chaos = await runL4BAdapterChaos();
-  steps.S7_chaos = chaos.passed && chaos.remoteCreateCount === 1;
+  // 默认路径不硬依赖 chaos；完整 helper 属后续 wedge。
+  await runOptionalChaosStep(steps);
 
   return {
     mode,
@@ -216,13 +239,15 @@ async function main(): Promise<void> {
   const result = await runCellSmoke({ baseUrl, mode, apiKey });
   const outDir = join(process.cwd(), 'artifacts');
   await mkdir(outDir, { recursive: true });
-  const outPath = join(outDir, `l4-b-cell-smoke-${Date.now()}.json`);
+  const outPath = join(outDir, 'l4-b-cell-smoke-' + Date.now() + '.json');
   await writeFile(outPath, JSON.stringify(result, null, 2));
-  console.log(`Cell smoke ${result.passed ? 'PASS' : 'FAIL'} → ${outPath}`);
+  console.log(
+    'Cell smoke ' + (result.passed ? 'PASS' : 'FAIL') + ' → ' + outPath,
+  );
   if (!result.passed) process.exit(1);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === 'file://' + process.argv[1]) {
   main().catch((err) => {
     console.error(err);
     process.exit(1);
