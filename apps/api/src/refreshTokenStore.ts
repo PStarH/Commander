@@ -13,6 +13,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { IntegrityLayer, type SignedEntry } from '@commander/core/security/securityPrimitives';
+import { atomicWriteFileSync, readJsonFileSafe } from './atomicWrite';
 
 export interface RefreshTokenRecord {
   jti: string;
@@ -51,53 +52,59 @@ function isSignedEnvelope(value: unknown): value is SignedEntry {
   );
 }
 
+function quarantineStoreFile(reason: string): void {
+  process.stderr.write(`[refreshTokenStore] ${reason} — quarantining file\n`);
+  try {
+    fs.renameSync(STORE_FILE, `${STORE_FILE}.corrupt-${Date.now()}`);
+  } catch {
+    /* quarantine is best-effort — never throw from a load path */
+  }
+}
+
+function isRefreshStoreShape(value: unknown): boolean {
+  return isSignedEnvelope(value) || Array.isArray(value);
+}
+
 function loadUnlocked(): RefreshTokenRecord[] {
   if (cache) {
     return cache;
   }
-  try {
-    if (!fs.existsSync(STORE_FILE)) {
+  // REL-4: 损坏 / 错形 / 完整性失败均隔离，禁止 silent [] → 下次写入永久抹掉 jti 账本。
+  // 信心缺口：多副本下仍无共享权威；HMAC 密钥轮换导致的误隔离需人工恢复 .corrupt-*。
+  const parsed = readJsonFileSafe<unknown>(STORE_FILE, null, isRefreshStoreShape);
+  if (parsed === null) {
+    cache = [];
+    return cache;
+  }
+
+  // Preferred: IntegrityLayer envelope. Reject tampered/unsigned files.
+  if (isSignedEnvelope(parsed)) {
+    if (!integrity.verify(parsed)) {
+      quarantineStoreFile('Integrity check failed');
       cache = [];
       return cache;
     }
-    const raw = fs.readFileSync(STORE_FILE, 'utf-8');
-    const parsed = JSON.parse(raw) as unknown;
-
-    // Preferred: IntegrityLayer envelope. Reject tampered/unsigned files.
-    if (isSignedEnvelope(parsed)) {
-      if (!integrity.verify(parsed)) {
-        process.stderr.write('[refreshTokenStore] Integrity check failed — treating as empty\n');
-        cache = [];
-        return cache;
-      }
-      const records = parsed.data.records;
-      cache = Array.isArray(records) ? (records as RefreshTokenRecord[]) : [];
+    const records = parsed.data.records;
+    if (!Array.isArray(records)) {
+      quarantineStoreFile('Signed envelope records not an array');
+      cache = [];
       return cache;
     }
-
-    // Legacy unsigned array — accept once, next save will re-sign.
-    if (Array.isArray(parsed)) {
-      cache = parsed as RefreshTokenRecord[];
-      return cache;
-    }
-
-    cache = [];
-  } catch {
-    cache = [];
+    cache = records as RefreshTokenRecord[];
+    return cache;
   }
+
+  // Legacy unsigned array — accept once, next save will re-sign.
+  cache = parsed as RefreshTokenRecord[];
   return cache;
 }
 
 function saveUnlocked(records: RefreshTokenRecord[]): void {
   cache = records;
   try {
-    if (!fs.existsSync(STORE_DIR)) {
-      fs.mkdirSync(STORE_DIR, { recursive: true });
-    }
+    // REL-3: fsync-then-rename so signed refresh-token ledger is crash-safe.
     const signed = integrity.sign({ records } as Record<string, unknown>);
-    const tmp = `${STORE_FILE}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(signed, null, 2), 'utf-8');
-    fs.renameSync(tmp, STORE_FILE);
+    atomicWriteFileSync(STORE_FILE, JSON.stringify(signed, null, 2));
   } catch (err) {
     process.stderr.write(`[refreshTokenStore] Failed to write: ${err}\n`);
   }
@@ -185,7 +192,8 @@ export function revokeAllForUser(userId: string): void {
 
 /** Test helper: clear in-memory + on-disk state. */
 export function _resetRefreshTokenStoreForTests(): void {
-  cache = [];
+  // Must be null (not []) so the next load re-reads disk — [] is truthy and skips I/O.
+  cache = null;
   try {
     if (fs.existsSync(STORE_FILE)) {
       fs.unlinkSync(STORE_FILE);
