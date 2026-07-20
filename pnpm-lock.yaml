@@ -196,9 +196,6 @@ importers:
       '@commander/kernel':
         specifier: workspace:*
         version: link:../kernel
-      pg:
-        specifier: ^8.15.0
-        version: 8.22.0
     devDependencies:
       tsx:
         specifier: ^4.23.1
