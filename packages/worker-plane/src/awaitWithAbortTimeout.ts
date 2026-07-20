@@ -14,9 +14,10 @@ export interface AwaitWithAbortTimeoutOptions {
   /** Grace after abort before hard-failing non-cooperative work (default 50ms). */
   abortGraceMs?: number;
   /**
-   * cooperative=true only for abort-linked reject inside the abort coop window
-   * (honored cancel before next macrotask); false after grace hard-cancel, late
-   * success, or late reject (including late throw of signal.reason after side effects).
+   * cooperative=true：仅窗口内 abort-linked reject（遥测，不驱动 retry）。
+   * cancel/timeout 已胜出后，调用方须对返回错误固定 retryable:false
+   * （对齐 #74 TOOL_ABORTED/TOOL_TIMEOUT nonRetryable）—— microtask/nextTick
+   * 洞无法靠 boolean+setTimeout(0) 单独堵死，故 cooperative 与 retryable 拆分。
    */
   timeoutError: (cooperative: boolean) => Error;
   /** Same cooperative semantics as timeoutError for parent-abort outcomes. */
@@ -31,9 +32,9 @@ export interface AwaitWithAbortTimeoutOptions {
  * 合作 handler 应在 abort 监听器内 reject(signal.reason)。
  *
  * 伪造 AbortError / 文案相同的新 Error('aborted') → 非 linked（正确）。
- * linked  alone 不够：ignore 后副作用再 throw signal.reason 仍同引用；
+ * linked alone 不够：ignore 后副作用再 throw signal.reason 仍同引用；
  * 须叠加 abort 协作窗口（abortLocal：先 setTimeout(0) 关窗再 abort，finally 快照）
- * 才标 cooperative/retryable。
+ * 才标 cooperative（遥测；非 retryable）。
  */
 export function isAbortLinkedRejection(error: unknown, signal: AbortSignal): boolean {
   return signal.aborted && error === signal.reason;
@@ -50,9 +51,11 @@ export async function awaitWithAbortTimeout<T>(
   let settled = false;
   let closed = false;
   /**
-   * abort 后的协作窗口：覆盖 abort 同步监听器（真 coop reject）。
+   * abort 后的协作窗口：覆盖 abort 同步监听器（真 coop reject → 遥测 cooperative）。
    * abortLocal 先 setTimeout(0) 关窗再 abort，保证监听器内 setTimeout(0) reject
    * 不会排在关窗之前误入窗；同步 reject 仍在窗内。
+   * 注意：queueMicrotask / Promise.then / nextTick / setImmediate 仍可能在关窗前
+   * settle → cooperative 可能为 true；retryable 必须由调用方恒 false 堵 dual-dispatch。
    */
   let abortCoopWindow = false;
   let settledInCoopWindow = false;
@@ -88,14 +91,16 @@ export async function awaitWithAbortTimeout<T>(
       };
 
       /**
-       * Soft-abort local signal；协作窗口覆盖 abort 同步监听器（真 coop）。
+       * Soft-abort local signal；协作窗口覆盖 abort 同步监听器（真 coop 遥测）。
        *
        * 关窗 setTimeout(0) 必须先于 local.abort 入队：若先 abort，监听器内
        *「副作用 + setTimeout(0, reject(signal.reason))」会把 settle 定时器排在
-       * 关窗之前 → settle 仍落在 coop 窗 → 误标 retryable（dual-dispatch）。
+       * 关窗之前 → settle 仍落在 coop 窗 → 误标 cooperative。
        * 先关窗再 abort：监听器的 setTimeout(0) 晚于关窗 → fail-closed；
-       * 同步 reject(signal.reason) 仍在窗内 → coop/retryable。
-       * （#74 toolOrchestrator 同源 abortLocal 须保持同一顺序。）
+       * 同步 reject(signal.reason) 仍在窗内 → cooperative:true（遥测）。
+       * microtask 洞无法用关窗单独堵死 → retryable 须与 cooperative 拆分。
+       * （#74 toolOrchestrator 同源 abortLocal 须保持同一顺序；#74 已对
+       * TOOL_ABORTED/TOOL_TIMEOUT 字符串 nonRetryable。）
        */
       const abortLocal = (reason: unknown): void => {
         if (local.signal.aborted) return;
@@ -118,8 +123,9 @@ export async function awaitWithAbortTimeout<T>(
       };
 
       /**
-       * abort/timeout 已开火后的 settle：仅窗口内 abort-linked 仍可 coop/retryable；
-       * 晚抛 signal.reason（副作用后再抛）与 late-success 一样 fail-closed。
+       * abort/timeout 已开火后的 settle：仅窗口内 abort-linked → cooperative 遥测；
+       * 晚抛 signal.reason（副作用后再抛）与 late-success 一样 cooperative:false。
+       * retryable 不由此决定（调用方对 abort/timeout 错误恒 false）。
        */
       const coopAfterCancel = (error: unknown): boolean =>
         settledInCoopWindow && isAbortLinkedRejection(error, local.signal);
@@ -157,7 +163,7 @@ export async function awaitWithAbortTimeout<T>(
           // Parent abort takes priority over a racing timeout flag.
           if (parentSignal.aborted) {
             // Late success after parent abort: same as timeout late-resolve —
-            // handler ignored cancel intent; do not claim cooperative/retryable.
+            // handler ignored cancel intent; not cooperative cancel.
             rejectAbort(false);
             return;
           }
