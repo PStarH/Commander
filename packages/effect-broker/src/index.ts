@@ -158,6 +158,7 @@ export interface EffectOutcomeQuerier {
     type: string;
     request: Record<string, unknown>;
     tenantId: string;
+    signal?: AbortSignal;
   }): Promise<EffectRemoteOutcome>;
 }
 
@@ -844,3 +845,10 @@ export type {
   EvidenceEffectSource,
   VerifyEvidenceBundleResult,
 } from './evidenceBundle.js';
+
+export {
+  AdapterExecutionError,
+  adapterErrorFromHttpStatus,
+  classifyAdapterError,
+} from './adapterErrors.js';
+export type { AdapterCommitState, AdapterRetryMode } from './adapterErrors.js';
