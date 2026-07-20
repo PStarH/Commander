@@ -13,7 +13,7 @@
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { PostgresKernelRepository } from '@commander/kernel';
-import { Pool } from './load-pg.js';
+import { Pool } from 'pg';
 import type { LLMProvider, LLMRequest, LLMResponse } from '@commander/core';
 import {
   WorkerService,
