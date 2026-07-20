@@ -862,13 +862,14 @@ export class AgentRuntime implements AgentRuntimeInterface {
         // availableTools is typed as string[], but some tests pass Tool objects;
         // canonicalize to names so issue() can encode the claim set.
         const toolNames = ctx.availableTools
-          .map((t) =>
-            typeof t === 'string'
-              ? t
-              : typeof t === 'object' && t && 'name' in t
-                ? String((t as { name: unknown }).name)
-                : '',
-          )
+          .map((t) => {
+            if (typeof t === 'string') return t;
+            if (typeof t !== 'object' || !t) return '';
+            const direct = (t as { name?: unknown }).name;
+            if (typeof direct === 'string' && direct.length > 0) return direct;
+            const nested = (t as { definition?: { name?: unknown } }).definition?.name;
+            return typeof nested === 'string' ? nested : '';
+          })
           .filter((n) => n.length > 0);
         ctx.capabilityToken = issuer.issue({
           sub: ctx.agentId,
