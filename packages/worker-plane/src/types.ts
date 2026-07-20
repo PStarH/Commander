@@ -111,6 +111,8 @@ export interface KernelWorkerPort {
     error: { code: string; message: string; retryable: boolean; details?: Record<string, unknown> };
     retryAt?: Date;
     actor: string;
+    /** See FailStepRequest.refundAttempt — stop-during-claim must not burn the only attempt. */
+    refundAttempt?: boolean;
   }): Promise<unknown | null>;
 }
 
