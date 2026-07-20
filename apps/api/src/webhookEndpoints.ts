@@ -110,19 +110,55 @@ function generateSecret(): string {
   return crypto.randomBytes(32).toString('hex');
 }
 
+/**
+ * Length-safe constant-time string compare.
+ * crypto.timingSafeEqual throws on length mismatch; catching that is fail-closed
+ * but still leaks length via exception path. Pad to equal length and always run
+ * a full-buffer compare; require equal original lengths for success.
+ */
+function timingSafeEqualString(a: string, b: string): boolean {
+  const aBuf = Buffer.from(a);
+  const bBuf = Buffer.from(b);
+  // Empty secrets/signatures must never match (including empty==empty).
+  if (aBuf.length === 0 || bBuf.length === 0) return false;
+  const len = Math.max(aBuf.length, bBuf.length);
+  const aPad = Buffer.alloc(len);
+  const bPad = Buffer.alloc(len);
+  aBuf.copy(aPad);
+  bBuf.copy(bPad);
+  const contentEq = crypto.timingSafeEqual(aPad, bPad);
+  // Encode full lengths as 4-byte BE so lengths > 255 still compare correctly.
+  const lenA = Buffer.alloc(4);
+  const lenB = Buffer.alloc(4);
+  lenA.writeUInt32BE(aBuf.length);
+  lenB.writeUInt32BE(bBuf.length);
+  const lengthEq = crypto.timingSafeEqual(lenA, lenB);
+  return contentEq && lengthEq;
+}
+
+/** Reject timestamps outside ±maxSkewSec (DingTalk uses ms; WeCom uses seconds). */
+function isTimestampFresh(timestamp: string, unit: 'ms' | 's', maxSkewSec = 300): boolean {
+  const n = Number(timestamp);
+  if (!Number.isFinite(n)) return false;
+  const tsMs = unit === 'ms' ? n : n * 1000;
+  return Math.abs(Date.now() - tsMs) <= maxSkewSec * 1000;
+}
+
 // ── DingTalk signature verification ───────────────────────────────────────
 
 /**
  * DingTalk robot signature verification.
  * Algorithm: HmacSHA256(timestamp + "\n" + secret), base64-encoded.
+ * Timestamp is milliseconds; reject if skewed > 5 minutes (replay defense).
  */
 function verifyDingTalkSignature(timestamp: string, sign: string, secret: string): boolean {
   try {
+    if (!isTimestampFresh(timestamp, 'ms')) return false;
     const expected = crypto
       .createHmac('sha256', secret)
       .update(timestamp + '\n' + secret)
       .digest('base64');
-    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sign));
+    return timingSafeEqualString(expected, sign);
   } catch (err) {
     reportSilentFailure(err, 'webhookEndpoints:verifyDingTalkSignature');
     return false;
@@ -147,7 +183,7 @@ function verifyWeComSignature(
   try {
     const parts = [token, timestamp, nonce, encrypt].sort();
     const sha1 = crypto.createHash('sha1').update(parts.join('')).digest('hex');
-    return crypto.timingSafeEqual(Buffer.from(sha1), Buffer.from(msgSignature));
+    return timingSafeEqualString(sha1, msgSignature);
   } catch (err) {
     reportSilentFailure(err, 'webhookEndpoints:verifyWeComSignature');
     return false;
@@ -277,9 +313,9 @@ export function createWebhookRouter(): Router {
         return;
       }
 
-      // Token verification is mandatory when a config exists.
+      // Token verification is mandatory when a config exists (constant-time).
       const token = typeof header.token === 'string' ? header.token : '';
-      if (!token || token !== config.secret) {
+      if (!token || !timingSafeEqualString(token, config.secret)) {
         res.status(401).json({ error: 'Invalid verification token' });
         return;
       }
