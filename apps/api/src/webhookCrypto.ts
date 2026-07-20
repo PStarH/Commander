@@ -72,6 +72,8 @@ export function verifyWeComSignature(
 ): boolean {
   try {
     const parts = [token, timestamp, nonce, encrypt].sort();
+    // WeCom callback protocol mandates SHA-1 for msg_signature (not chosen by us).
+    // codeql[js/weak-cryptographic-algorithm]: protocol-required WeCom msg_signature
     const sha1 = crypto.createHash('sha1').update(parts.join('')).digest('hex');
     return timingSafeEqualString(sha1, msgSignature);
   } catch (err) {
