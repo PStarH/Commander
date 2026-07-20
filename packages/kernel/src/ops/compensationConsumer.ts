@@ -49,6 +49,12 @@ export interface CompensationEffectBroker {
     idempotencyKey: string;
     lease: { workerId: string; workerGeneration?: number; token: string; fencingEpoch: number };
     actor: string;
+    workloadBinding?: {
+      tenantId: string;
+      runId: string;
+      stepId: string;
+      workloadId?: string;
+    };
   }): Promise<{ admitted: boolean; effectId: string; replayed: boolean; reason?: string }>;
   executeAdmitted(input: { effectId: string; timeoutMs?: number }): Promise<{ effectId: string; replayed: boolean; response?: Record<string, unknown> }>;
 }
@@ -80,6 +86,15 @@ export interface CompensationConsumerOptions {
   workerId: string;
   /** Fencing epoch for the lease. Defaults to 1. */
   fencingEpoch?: number;
+  /** Optional adapter registry — unregistered `compensate.*` actions are retried, not executed. */
+  registry?: { resolve(action: string): unknown };
+  onAdapterUnregistered?: (input: {
+    tenantId: string;
+    runId: string;
+    stepId: string;
+    compensationAction: string;
+    messageId: string;
+  }) => Promise<void>;
 }
 
 export interface CompensationConsumeResult {
@@ -191,6 +206,29 @@ export async function consumeCompensationBatch(
       continue;
     }
 
+    const compensationAction = payload.compensationAction;
+    if (
+      compensationAction.startsWith('compensate.') &&
+      options.registry &&
+      !options.registry.resolve(compensationAction)
+    ) {
+      try {
+        await outbox.retryOutbox(message.id, message.claimToken, {
+          code: 'COMPENSATION_ADAPTER_UNREGISTERED',
+          message: `No adapter registered for ${compensationAction}`,
+        });
+      } catch { /* claim may have expired */ }
+      await options.onAdapterUnregistered?.({
+        tenantId: message.tenantId,
+        runId: payload.runId!,
+        stepId: payload.stepId!,
+        compensationAction,
+        messageId: message.id,
+      });
+      failed++;
+      continue;
+    }
+
     const effectId = `cmp_${randomUUID()}`;
     const idempotencyKey = payload.idempotencyKey ?? `cmp:${message.id}`;
 
@@ -209,14 +247,21 @@ export async function consumeCompensationBatch(
         continue;
       }
 
+      const compensationRequest = payload.compensationPayload ?? {};
       const admission = await broker.admit({
         effectId,
         token,
         type: payload.compensationAction,
-        request: payload.compensationPayload ?? {},
+        request: compensationRequest,
         idempotencyKey,
         lease: { workerId: options.workerId, token: `cmp-lease:${message.id}`, fencingEpoch },
         actor: `compensation-consumer:${options.workerId}`,
+        workloadBinding: {
+          tenantId: message.tenantId,
+          runId: payload.runId!,
+          stepId: payload.stepId!,
+          workloadId: options.workerId,
+        },
       });
       if (!admission.admitted) {
         await outbox.retryOutbox(message.id, message.claimToken!, { code: 'COMPENSATION_ADMIT_REJECTED', message: admission.reason ?? 'unknown' });

@@ -127,8 +127,7 @@ describe('Kill switch matrix', () => {
     };
     await assert.rejects(
       () => repo.findMatchingKillSwitch('tenant-a', dims),
-      (error) =>
-        error instanceof KernelInvariantError && error.code === 'KILL_SWITCH_LOOKUP_FAILED',
+      (error) => error instanceof KernelInvariantError && error.code === 'KILL_SWITCH_LOOKUP_FAILED',
     );
   });
 });
