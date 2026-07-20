@@ -298,6 +298,8 @@ jobs:
         run: pnpm --filter @commander/effect-broker test
 
       - name: WS6/WS7 node:test gates (audit query + host-exec static + memory HTTP)
+        # Use bash so multiline `\` continuations work on Windows (pwsh treats them as args).
+        shell: bash
         run: |
           # API + worker-plane tests import workspace packages from dist.
           pnpm --filter @commander/contracts build
