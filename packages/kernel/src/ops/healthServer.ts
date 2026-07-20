@@ -10,6 +10,18 @@ export interface OpsHealthHandle {
   close(): Promise<void>;
 }
 
+/**
+ * Default K8s httpGet readiness contract for kernel-ops.
+ * Fail-closed: probe-only (compensationDraining false) never returns ready.
+ */
+export function isKernelOpsReadyForTraffic(parts: {
+  loopsReady: boolean;
+  compensationDraining: boolean;
+  databaseOk: boolean;
+}): boolean {
+  return parts.loopsReady && parts.compensationDraining && parts.databaseOk;
+}
+
 export async function startOpsHealthServer(options: {
   port: number;
   isReady: () => boolean | Promise<boolean>;

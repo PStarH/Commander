@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { describe, it } from 'node:test';
-import { startOpsHealthServer } from './healthServer.js';
+import { isKernelOpsReadyForTraffic, startOpsHealthServer } from './healthServer.js';
 
 async function freePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -21,6 +21,44 @@ async function freePort(): Promise<number> {
 }
 
 describe('ops healthServer', () => {
+  it('fail-closes traffic readiness when compensation is probe-only', () => {
+    assert.equal(
+      isKernelOpsReadyForTraffic({
+        loopsReady: true,
+        compensationDraining: false,
+        databaseOk: true,
+      }),
+      false,
+    );
+  });
+
+  it('allows traffic readiness only when drain + loops + db are all ok', () => {
+    assert.equal(
+      isKernelOpsReadyForTraffic({
+        loopsReady: true,
+        compensationDraining: true,
+        databaseOk: true,
+      }),
+      true,
+    );
+    assert.equal(
+      isKernelOpsReadyForTraffic({
+        loopsReady: false,
+        compensationDraining: true,
+        databaseOk: true,
+      }),
+      false,
+    );
+    assert.equal(
+      isKernelOpsReadyForTraffic({
+        loopsReady: true,
+        compensationDraining: true,
+        databaseOk: false,
+      }),
+      false,
+    );
+  });
+
   it('awaits bind success and serves /health', async () => {
     const port = await freePort();
     const health = await startOpsHealthServer({ port, isReady: () => true });
@@ -61,36 +99,18 @@ describe('ops healthServer', () => {
     }
   });
 
-  it('exposes compensationMode on /ready so probe is not mistaken for drain', async () => {
+  it('default probe-only fails /ready with 503 while honesty fields stay accurate', async () => {
+    // Mirrors main.ts: probe → compensationDraining false → isKernelOpsReadyForTraffic false → 503.
+    // K8s httpGet only sees the status code; JSON alone must not green the probe.
     const port = await freePort();
     const health = await startOpsHealthServer({
       port,
-      isReady: () => true,
-      getReadyDetails: () => ({
-        compensationMode: 'probe',
-        compensationDraining: false,
-      }),
-    });
-    try {
-      const res = await fetch('http://127.0.0.1:' + port + '/ready');
-      assert.equal(res.status, 200);
-      assert.deepEqual(await res.json(), {
-        status: 'ready',
-        compensationMode: 'probe',
-        compensationDraining: false,
-      });
-    } finally {
-      await health.close();
-    }
-  });
-
-  it('supports opt-in drain require: probe-only fails ready while fields stay honest', async () => {
-    // Mirrors COMMANDER_READY_REQUIRE_COMPENSATION_DRAIN=1 + probe wiring in main.
-    // Default (env unset) still returns 200 for probe — residual documented in main.ts.
-    const port = await freePort();
-    const health = await startOpsHealthServer({
-      port,
-      isReady: () => false,
+      isReady: () =>
+        isKernelOpsReadyForTraffic({
+          loopsReady: true,
+          compensationDraining: false,
+          databaseOk: true,
+        }),
       getReadyDetails: () => ({
         compensationMode: 'probe',
         compensationDraining: false,
@@ -103,6 +123,34 @@ describe('ops healthServer', () => {
         status: 'not_ready',
         compensationMode: 'probe',
         compensationDraining: false,
+      });
+    } finally {
+      await health.close();
+    }
+  });
+
+  it('returns 200 from /ready when drain mode is wired and loops are healthy', async () => {
+    const port = await freePort();
+    const health = await startOpsHealthServer({
+      port,
+      isReady: () =>
+        isKernelOpsReadyForTraffic({
+          loopsReady: true,
+          compensationDraining: true,
+          databaseOk: true,
+        }),
+      getReadyDetails: () => ({
+        compensationMode: 'drain',
+        compensationDraining: true,
+      }),
+    });
+    try {
+      const res = await fetch('http://127.0.0.1:' + port + '/ready');
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), {
+        status: 'ready',
+        compensationMode: 'drain',
+        compensationDraining: true,
       });
     } finally {
       await health.close();
