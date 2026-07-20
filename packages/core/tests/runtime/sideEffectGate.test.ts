@@ -9,13 +9,9 @@
  *
  *   1. NO_RUN_HANDLE: effect must be rejected when no ATR RunHandle is
  *      supplied in fail-closed mode (production / V2 default).
- *   2. Soft bypass: when the explicit compat flag is set outside production
- *      and the gate is constructed without `failClosed`, the bypass
- *      admission must succeed AND mark the call as soft-bypass (so audit
- *      log scrapers can find it).
- *   3. The soft-bypass flag must be **ignored** when `failClosed: true`
- *      is passed explicitly, or when NODE_ENV=production /
- *      COMMANDER_V2_MODE=1, or when the compat flag is absent.
+ *   2. Soft bypass shim removed (WS2): COMMANDER_EFFECT_BROKER_COMPAT no longer
+ *      admits without a runHandle — missing handle always rejects.
+ *   3. Explicit failClosed / production / V2 mode remain fail-closed.
  *   4. SideEffectGateError surfaces code, decision, and interactionId for
  *      callers that need to translate the rejection into a structured
  *      response (HTTP 4xx, gap registry, etc.).
@@ -172,29 +168,19 @@ describe('SideEffectGate — V2 mandatory PEP', () => {
   // ─── 2. Soft bypass (dev-only) ────────────────────────────────────────────
 
   describe('Soft bypass when explicit compat flag is set', () => {
-    it('returns a bypass admission when runHandle is null and compat is enabled', async () => {
+    it('still rejects missing runHandle — soft bypass shim is removed', async () => {
       process.env.COMMANDER_EFFECT_BROKER_COMPAT = '1';
       process.env.NODE_ENV = 'test';
-      // failClosed default in test mode is false (only production/V2
-      // enable it), so the default constructor honors the bypass.
       const gate = new SideEffectGate();
       const req = baseRequest({ runHandle: null, stepId: 's-soft' });
 
-      const result = await gate.admit(req);
-
-      expect(result.replayed).toBe(false);
-      expect(result.actionId).toBe('bypass:s-soft');
-      expect(result.decisionId).toBe('soft_bypass');
-      expect(result.decision.effect).toBe('allow');
-      expect(result.decision.reason).toBe('COMMANDER_ATR_SOFT_BYPASS');
-      expect(result.decision.decisionPath).toEqual(['soft_bypass']);
-      expect(result.decision.matchedRule).toBe('soft_bypass');
-      // Bypass admission must not invent a cached result.
-      expect(result.cachedResult).toBeUndefined();
-      expect(result.cachedError).toBeUndefined();
+      await expect(gate.admit(req)).rejects.toMatchObject({
+        name: 'SideEffectGateError',
+        code: 'NO_RUN_HANDLE',
+      });
     });
 
-    it('explicit failClosed overrides the compat flag', async () => {
+    it('explicit failClosed rejects missing runHandle', async () => {
       process.env.COMMANDER_EFFECT_BROKER_COMPAT = '1';
       const gate = new SideEffectGate({ failClosed: true });
       await expect(gate.admit(baseRequest({ runHandle: null }))).rejects.toMatchObject({
