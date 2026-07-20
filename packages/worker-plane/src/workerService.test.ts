@@ -564,6 +564,51 @@ describe('worker plane', () => {
     assert.ok(Date.now() - started < boundMs, 'parent-abort step must leave RUNNING within bound');
     assert.notEqual(kernel.getStep('abort-hang-tool')?.state, 'RUNNING');
     assert.equal(kernel.lastFailureCode, 'ABORTED');
+    assert.equal(kernel.lastFailureRetryable, false);
+    assert.equal(kernel.getStep('abort-hang-tool')?.state, 'FAILED');
     await service.stop();
+  });
+
+  it('stop aborts activeControllers so non-cooperative hang leaves RUNNING', async () => {
+    resetControlPlane();
+    const kernel = new FakeKernel();
+    kernel.addRun('run-stop-hang', 'tenant-a', [
+      {
+        id: 'stop-hang-tool',
+        kind: 'tool',
+        input: { toolName: 'hang', args: {}, timeoutMs: 30_000 },
+      },
+    ]);
+    const toolDef = {
+      ...definition,
+      id: 'tool-stop-worker',
+      kind: 'tool' as const,
+      capabilities: ['tool'],
+    };
+    const toolAuth = {
+      authenticate: async () => ({ tenantIds: ['tenant-a'], capabilities: ['tool'] }),
+    };
+    const service = new WorkerService(
+      toolDef,
+      { ...identity, subject: 'spiffe://commander/worker/tool-stop-worker' },
+      toolAuth,
+      new InMemoryWorkerRegistry(),
+      kernel,
+      new ToolStepExecutor({
+        get: () => ({
+          execute: async () => new Promise(() => {}),
+        }),
+      }),
+      { leaseTtlMs: 600, workerHeartbeatMs: 60_000 },
+    );
+    await service.start();
+    assert.equal(await service.pollOnce(), true);
+    const boundMs = 800;
+    const started = Date.now();
+    await service.stop();
+    assert.ok(Date.now() - started < boundMs, 'stop must abort active hang within bound');
+    assert.equal(kernel.lastFailureCode, 'ABORTED');
+    assert.equal(kernel.lastFailureRetryable, false);
+    assert.equal(kernel.getStep('stop-hang-tool')?.state, 'FAILED');
   });
 });

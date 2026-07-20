@@ -424,11 +424,14 @@ describe('ToolStepExecutor', () => {
     parent.abort();
     await assert.rejects(
       () => execPromise,
-      (err: WorkerExecutionError) => err.options.code === 'ABORTED',
+      (err: WorkerExecutionError) =>
+        err.options.code === 'ABORTED' &&
+        err.options.retryable === true &&
+        err.options.details?.cooperative === true,
     );
   });
 
-  it('force-exits non-cooperative tool handlers on parent abort within grace', async () => {
+  it('force-exits non-cooperative tool handlers on parent abort without claiming retryable', async () => {
     const parent = new AbortController();
     const started = Date.now();
     const mockRegistry = {
@@ -445,12 +448,84 @@ describe('ToolStepExecutor', () => {
     parent.abort();
     await assert.rejects(
       () => execPromise,
-      (err: WorkerExecutionError) => err.options.code === 'ABORTED',
+      (err: WorkerExecutionError) =>
+        err.options.code === 'ABORTED' &&
+        err.options.retryable === false &&
+        err.options.details?.cooperative === false,
     );
     assert.ok(
       Date.now() - started < 400,
       'parent abort + non-coop hang must hard-exit within grace bound',
     );
+  });
+
+  it('parent abort of cooperative tool remains retryable', async () => {
+    const parent = new AbortController();
+    let sawAbort = false;
+    const mockRegistry = {
+      get: () => ({
+        execute: async (_args: Record<string, unknown>, ctx: { signal: AbortSignal }) => {
+          await new Promise<void>((_resolve, reject) => {
+            ctx.signal.addEventListener(
+              'abort',
+              () => {
+                sawAbort = true;
+                reject(new Error('aborted'));
+              },
+              { once: true },
+            );
+          });
+          return { never: true };
+        },
+      }),
+    };
+    const executor = new ToolStepExecutor(mockRegistry);
+    const step = createMockStep({ input: { toolName: 'slow', args: {}, timeoutMs: 5_000 } });
+    const execPromise = executor.execute(step, {
+      signal: parent.signal,
+      worker: createMockWorker(),
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    parent.abort();
+    await assert.rejects(
+      () => execPromise,
+      (err: WorkerExecutionError) =>
+        err.options.code === 'ABORTED' &&
+        err.options.retryable === true &&
+        err.options.details?.cooperative === true,
+    );
+    assert.equal(sawAbort, true);
+  });
+
+  it('force-exits non-cooperative connector handlers on parent abort without claiming retryable', async () => {
+    const parent = new AbortController();
+    const started = Date.now();
+    const registry = {
+      get: () => ({
+        initialize: async () => {},
+        close: async () => {},
+        execute: async () => new Promise(() => {}),
+      }),
+      register: () => {},
+    };
+    const executor = new ConnectorStepExecutor(registry);
+    const step = createMockStep({
+      kind: 'connector',
+      input: { connectorName: 'hang', operation: 'query', args: {}, timeoutMs: 5_000 },
+    });
+    const execPromise = executor.execute(step, {
+      signal: parent.signal,
+      worker: createMockWorker(),
+    });
+    parent.abort();
+    await assert.rejects(
+      () => execPromise,
+      (err: WorkerExecutionError) =>
+        err.options.code === 'ABORTED' &&
+        err.options.retryable === false &&
+        err.options.details?.cooperative === false,
+    );
+    assert.ok(Date.now() - started < 400, 'parent abort + non-coop connector must hard-exit');
   });
 
   it('parent abort near timeout boundary still hard-exits non-cooperative hang', async () => {
@@ -472,8 +547,16 @@ describe('ToolStepExecutor', () => {
     parent.abort();
     await assert.rejects(
       () => execPromise,
-      (err: WorkerExecutionError) =>
-        err.options.code === 'ABORTED' || err.options.code === 'TIMEOUT',
+      (err: WorkerExecutionError) => {
+        if (err.options.code === 'ABORTED') {
+          return err.options.retryable === false && err.options.details?.cooperative === false;
+        }
+        return (
+          err.options.code === 'TIMEOUT' &&
+          err.options.retryable === false &&
+          err.options.details?.cooperative === false
+        );
+      },
     );
     assert.ok(Date.now() - started < 500, 'near-boundary parent abort must not hang forever');
   });
