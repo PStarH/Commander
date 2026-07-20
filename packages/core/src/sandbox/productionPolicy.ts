@@ -12,6 +12,10 @@ export interface SandboxPolicy {
   uncheckedExecutionBypassRequested: boolean;
   pluginSandboxMode: string;
   pluginSoftFallbackRequested: boolean;
+  /** COMMANDER_SCRIPT_VM_SOFT — banned in production (align with plugin soft). */
+  scriptVmSoftFallbackRequested: boolean;
+  /** COMMANDER_ALLOW_EXEC_SCRIPT — banned in production (align with soft bans). */
+  execScriptBypassRequested: boolean;
 }
 
 export class SandboxPolicyError extends Error {
@@ -70,6 +74,8 @@ export function resolveSandboxPolicy(env: NodeJS.ProcessEnv = process.env): Sand
       env.COMMANDER_PLUGIN_SANDBOX?.trim().toLowerCase() ||
       (environment === 'production' ? 'required' : 'in_process'),
     pluginSoftFallbackRequested: isTruthy(env.COMMANDER_PLUGIN_SANDBOX_SOFT),
+    scriptVmSoftFallbackRequested: isTruthy(env.COMMANDER_SCRIPT_VM_SOFT),
+    execScriptBypassRequested: isTruthy(env.COMMANDER_ALLOW_EXEC_SCRIPT),
   };
 
   assertProductionSandboxPolicy(policy);
@@ -102,6 +108,16 @@ export function assertProductionSandboxPolicy(policy: SandboxPolicy): void {
   if (policy.pluginSoftFallbackRequested) {
     throw new SandboxPolicyError(
       'COMMANDER_PLUGIN_SANDBOX_SOFT is forbidden in production; soft fallback is disabled.',
+    );
+  }
+  if (policy.scriptVmSoftFallbackRequested) {
+    throw new SandboxPolicyError(
+      'COMMANDER_SCRIPT_VM_SOFT is forbidden in production; soft fallback is disabled.',
+    );
+  }
+  if (policy.execScriptBypassRequested) {
+    throw new SandboxPolicyError(
+      'COMMANDER_ALLOW_EXEC_SCRIPT is forbidden in production; soft bypass is disabled.',
     );
   }
 }

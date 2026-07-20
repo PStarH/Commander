@@ -16,12 +16,35 @@ describe('isUrlSafe', () => {
       'http://localhost:3000',
       'http://127.0.0.1',
       'http://127.0.0.1:8080',
+      'http://127.0.0.2',
+      'http://127.1.1.1',
       'http://0.0.0.0',
+      'http://0.0.0.1',
       'http://[::1]',
     ]) {
       const r = isUrlSafe(host);
       assert.strictEqual(r.safe, false, `expected ${host} to be blocked`);
       assert.ok(r.reason, `expected a reason for ${host}`);
+    }
+  });
+
+  it('blocks decimal/hex encoded loopback and metadata IPs', () => {
+    // Node URL normalizes these to dotted form before our checks.
+    assert.strictEqual(isUrlSafe('http://2130706433/').safe, false); // 127.0.0.1
+    assert.strictEqual(isUrlSafe('http://0x7f000001/').safe, false);
+    assert.strictEqual(isUrlSafe('http://127.1/').safe, false);
+    assert.strictEqual(isUrlSafe('http://2852039166/').safe, false); // 169.254.169.254
+  });
+
+  it('blocks IPv4-mapped IPv6 private addresses', () => {
+    for (const host of [
+      'http://[::ffff:7f00:1]/', // 127.0.0.1
+      'http://[::ffff:a9fe:a9fe]/', // 169.254.169.254
+      'http://[::ffff:a00:1]/', // 10.0.0.1
+      'http://[::ffff:c0a8:1]/', // 192.168.0.1
+      'http://[::ffff:10.0.0.1]/',
+    ]) {
+      assert.strictEqual(isUrlSafe(host).safe, false, `expected ${host} to be blocked`);
     }
   });
 
@@ -38,13 +61,16 @@ describe('isUrlSafe', () => {
       'http://172.31.255.255',
       'http://192.168.1.1',
       'http://169.254.1.1',
+      'http://100.64.0.1', // CGNAT
     ]) {
       assert.strictEqual(isUrlSafe(host).safe, false, `expected ${host} to be blocked`);
     }
   });
 
-  it('blocks IPv6 link-local', () => {
+  it('blocks IPv6 link-local and ULA', () => {
     assert.strictEqual(isUrlSafe('http://[fe80::1]/').safe, false);
+    assert.strictEqual(isUrlSafe('http://[fc00::1]/').safe, false);
+    assert.strictEqual(isUrlSafe('http://[fd12:3456:789a::1]/').safe, false);
   });
 
   it('blocks common internal service ports', () => {
