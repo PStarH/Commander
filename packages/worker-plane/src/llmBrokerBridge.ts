@@ -152,6 +152,8 @@ export function createLlmEffectAuth(input: {
           effectType,
           request,
           ttlMs,
+          // Match non-ALS mint + worker LLM PolicyEvaluator snapshot (bootstrap).
+          policySnapshotId: 'worker-llm-v1',
         });
       }
       return input.issuer.issue({
