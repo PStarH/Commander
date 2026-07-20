@@ -8,12 +8,34 @@ import { runKernelRepositoryContractTests } from './testing/repositoryContract.j
 
 const databaseUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
 
+async function resetPostgresContractTables(pool: Pool): Promise<void> {
+  // Contract suite reuses fixed ids (run-1 / tenant-a); wipe between cases.
+  // Keep migration ledger so runKernelMigrations stays idempotent.
+  await pool.query(`
+    DO $reset$
+    DECLARE r RECORD;
+    BEGIN
+      FOR r IN
+        SELECT tablename
+        FROM pg_tables
+        WHERE schemaname = 'public'
+          AND tablename LIKE 'commander_%'
+          AND tablename <> 'commander_kernel_migrations'
+      LOOP
+        EXECUTE format('TRUNCATE TABLE %I CASCADE', r.tablename);
+      END LOOP;
+    END
+    $reset$;
+  `);
+}
+
 if (databaseUrl) {
   runKernelRepositoryContractTests({
     name: 'Postgres',
     create: async () => {
       const pool = new Pool({ connectionString: databaseUrl, max: 4 });
       await runKernelMigrations(pool);
+      await resetPostgresContractTables(pool);
       const repo = new PostgresKernelRepository(pool, { schedulerMode: true });
       (repo as PostgresKernelRepository & { _contractPool?: Pool })._contractPool = pool;
       return repo;
