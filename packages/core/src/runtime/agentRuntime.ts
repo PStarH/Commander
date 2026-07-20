@@ -851,6 +851,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
     // Issue a capability token authorizing the agent's available tools unless
     // the caller already supplied one. The token is scoped to this run and
     // forwarded to the tool execution service for authorization checks.
+    // Fail-closed: if tools are listed but we cannot mint a token, abort the
+    // run rather than executing tools unconstrained (CAP-01).
     if (!ctx.capabilityToken && ctx.availableTools.length > 0) {
       try {
         const issuer = getCapabilityTokenIssuer();
@@ -865,6 +867,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
         });
       } catch (capErr) {
         reportSilentFailure(capErr, 'agentRuntime:issueCapabilityToken');
+        throw new Error(
+          `CAPABILITY_TOKEN_REQUIRED: failed to issue capability token for tools [${ctx.availableTools.join(', ')}]: ${capErr instanceof Error ? capErr.message : String(capErr)}`,
+        );
       }
     }
 

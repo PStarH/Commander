@@ -1,7 +1,12 @@
 // packages/core/tests/shadow/scrubber.test.ts
 import { describe, it, expect, afterEach } from 'vitest';
 import * as http from 'node:http';
-import { scrubRequest, redactPii, DEFAULT_IGNORE_FIELDS } from '../../src/shadow/scrubber';
+import {
+  scrubRequest,
+  scrubUrl,
+  redactPii,
+  DEFAULT_IGNORE_FIELDS,
+} from '../../src/shadow/scrubber';
 import { startShadowRunner } from '../../src/shadow/runner';
 
 describe('scrubber', () => {
@@ -71,6 +76,32 @@ describe('scrubber', () => {
     expect(parsed.password).toBe('[REDACTED]');
     expect(parsed.note).toBe('hello');
     expect(result.body as string).not.toContain('mysecret123');
+  });
+
+  it('scrubUrl redacts query token/api_key secrets', () => {
+    const out = scrubUrl('/api/foo?access_token=sk-live-secret&ok=1');
+    expect(out).toContain('access_token=%5BREDACTED%5D');
+    expect(out).not.toContain('sk-live-secret');
+    expect(out).toContain('ok=1');
+  });
+
+  it('scrubUrl redacts sk- path segments', () => {
+    const out = scrubUrl('/v1/keys/sk-abcdefghijklmnopqrstuvwxyz/meta');
+    expect(out).toContain('[REDACTED]');
+    expect(out).not.toContain('sk-abcdefghijklmnopqrstuvwxyz');
+  });
+
+  it('scrubRequest includes scrubbed url', () => {
+    const result = scrubRequest(
+      {
+        headers: {},
+        url: '/callback?api_key=super-secret&q=hello',
+      },
+      DEFAULT_IGNORE_FIELDS,
+    );
+    expect(result.url).toBeDefined();
+    expect(result.url).not.toContain('super-secret');
+    expect(result.url).toContain('api_key=%5BREDACTED%5D');
   });
 });
 
