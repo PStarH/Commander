@@ -304,9 +304,10 @@ describe('startVerifyTimer', () => {
 
 describe('FailClosedPersistor', () => {
   it('throws on write failure in fail-closed mode (does not swallow)', async () => {
-    // Use a regular file as persistDir so mkdir fails on all platforms
-    // (Unix absolute fake paths can still be created on Windows as D:\...).
-    const blocker = path.join(os.tmpdir(), `audit-persist-block-${Date.now()}`);
+    // Blocker file under cwd (not os.tmpdir) so mkdir on the path fails everywhere.
+    const blockerDir = path.join(process.cwd(), '.tmp-audit-persist-block');
+    fs.mkdirSync(blockerDir, { recursive: true });
+    const blocker = path.join(blockerDir, `block-${Date.now()}`);
     fs.writeFileSync(blocker, 'not-a-directory');
     try {
       const persistor = new FailClosedPersistor({ persistDir: blocker });
@@ -315,7 +316,7 @@ describe('FailClosedPersistor', () => {
         /AUDIT_PERSIST_FAILED|fail-closed/i,
       );
     } finally {
-      fs.rmSync(blocker, { force: true });
+      fs.rmSync(blockerDir, { recursive: true, force: true });
     }
   });
 
