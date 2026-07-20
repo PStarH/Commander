@@ -195,7 +195,7 @@ describe('main', () => {
     vi.clearAllMocks();
   });
 
-  it('exits 1 in strict mode when a baseline fails', () => {
+  it('exits 0 in strict mode when only recommended baselines fail', () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -209,8 +209,11 @@ describe('main', () => {
 
     main(true);
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(logSpy).toHaveBeenCalledWith('❌ READINESS FAIL');
+    // All slots are recommended until live residual→100 baselines exist.
+    expect(exitSpy).toHaveBeenCalledWith(0);
+    expect(logSpy).toHaveBeenCalledWith(
+      '✅ READINESS PASS (required items all pass; recommended items have warnings)',
+    );
 
     exitSpy.mockRestore();
     logSpy.mockRestore();
@@ -231,8 +234,9 @@ describe('main', () => {
     main(false);
 
     expect(exitSpy).toHaveBeenCalledWith(0);
+    // With all-recommended slots, non-strict also reports PASS (+ warnings).
     expect(logSpy).toHaveBeenCalledWith(
-      '⚠️  Readiness would fail in strict mode (running with --non-strict)',
+      '✅ READINESS PASS (required items all pass; recommended items have warnings)',
     );
 
     exitSpy.mockRestore();
