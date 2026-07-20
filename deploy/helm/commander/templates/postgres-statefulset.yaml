@@ -1,7 +1,7 @@
 # =============================================================================
 # Commander — PostgreSQL StatefulSet (optional built-in database)
 # =============================================================================
-{{- if and .Values.database.enabled (eq .Values.database.backend "postgres") (not .Values.database.connectionString) }}
+{{- if include "commander.bundledPostgres" . }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -35,7 +35,10 @@ spec:
             - name: POSTGRES_USER
               value: {{ .Values.database.postgres.user | quote }}
             - name: POSTGRES_PASSWORD
-              value: {{ .Values.database.postgres.password | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.databaseUrlSecretName" . | quote }}
+                  key: postgres-password
             - name: POSTGRES_DB
               value: {{ .Values.database.postgres.database | quote }}
             - name: PGDATA

@@ -1,0 +1,43 @@
+# Enterprise cell profile — external Postgres + existingSecrets only.
+tier: enterprise
+
+web:
+  enabled: false
+
+worker:
+  enabled: true
+  replicas: 2
+  authTokenSecret: cmdr-worker
+
+kernelOps:
+  enabled: true
+
+adapterOps:
+  enabled: true
+  replicas: 2
+  secrets:
+    existingSecret: cmdr-adapters
+
+database:
+  enabled: true
+  backend: postgres
+  postgres:
+    bundled: false
+    existingSecret: cmdr-db
+
+networkPolicy:
+  enabled: true
+  egress:
+    adapterCidrs: []
+    databaseCidrs:
+      - 10.0.0.0/32
+
+sandboxd:
+  enabled: false
+
+persistence:
+  enabled: false
+
+api:
+  secrets:
+    existingSecret: cmdr-api
