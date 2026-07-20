@@ -253,9 +253,7 @@ export class AuditChainLedger {
     } catch (err) {
       // Integrity hook failure must not silently drop the already-persisted
       // entry, but should surface so operators notice (fail-closed for KC-5a).
-      throw new Error(
-        `AUDIT_INTEGRITY_HOOK_FAILED: ${(err as Error)?.message ?? String(err)}`,
-      );
+      throw new Error(`AUDIT_INTEGRITY_HOOK_FAILED: ${(err as Error)?.message ?? String(err)}`);
     }
 
     return entry;

@@ -58,9 +58,7 @@ export async function fetchV1Runs(apiBase: string, limit = 50): Promise<V1RunLis
   if (!response.ok) {
     const body = await response.text();
     const authHint =
-      response.status === 401 || response.status === 403
-        ? ' Check COMMANDER_API_KEY.'
-        : '';
+      response.status === 401 || response.status === 403 ? ' Check COMMANDER_API_KEY.' : '';
     throw new GatewayListRunsError(
       `Gateway list runs failed (${response.status}): ${body}${authHint}`,
       { status: response.status, kind: 'http' },
@@ -127,9 +125,7 @@ export async function cmdHistory(subargs: string[]) {
     const entries = checkpointer.listCheckpoints();
 
     section('SESSION HISTORY');
-    console.log(
-      `  ${$.dim}Source: local StateCheckpointer (not durable /v1 authority)${$.reset}`,
-    );
+    console.log(`  ${$.dim}Source: local StateCheckpointer (not durable /v1 authority)${$.reset}`);
     if (entries.length === 0) {
       console.log(`  ${$.dim}No saved sessions found.${$.reset}`);
       console.log(

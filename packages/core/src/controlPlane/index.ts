@@ -66,7 +66,8 @@ export class ControlPlane {
       stepId: input.stepId,
       userId: input.userId,
       scopes: input.scopes,
-      workloadId: input.workloadId ?? `wl_${input.runId}_${input.stepId}_${randomUUID().slice(0, 8)}`,
+      workloadId:
+        input.workloadId ?? `wl_${input.runId}_${input.stepId}_${randomUUID().slice(0, 8)}`,
       ttlSeconds: this.stepTokenTtlSeconds,
     });
   }
@@ -103,7 +104,9 @@ export class ControlPlane {
     const now = Date.now();
     const workloadId = input.workloadId ?? `wl_${randomUUID()}`;
     const token = createHash('sha256')
-      .update(`${workloadId}:${input.tenantId}:${input.runId ?? ''}:${input.stepId ?? ''}:${now}:${randomUUID()}`)
+      .update(
+        `${workloadId}:${input.tenantId}:${input.runId ?? ''}:${input.stepId ?? ''}:${now}:${randomUUID()}`,
+      )
       .digest('hex');
     const identity: WorkloadIdentity = {
       workloadId,

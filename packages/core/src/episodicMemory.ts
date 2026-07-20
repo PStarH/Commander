@@ -197,11 +197,7 @@ export interface MemoryStore {
    * WS6 — optional audit query. Backends that cannot serve audit set
    * `unavailable: true`. Namespace filter uses `namespace:<name>` tags.
    */
-  queryAudit?(options: {
-    projectId: string;
-    namespace?: string;
-    limit?: number;
-  }): Promise<{
+  queryAudit?(options: { projectId: string; namespace?: string; limit?: number }): Promise<{
     entries: Array<{
       id: string;
       tenantId: string;

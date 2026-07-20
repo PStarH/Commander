@@ -16,6 +16,7 @@ import {
 } from './v1GatewayKernel';
 import { isTerminalRunState } from '@commander/contracts';
 import { getGlobalGdprComplianceManager } from '@commander/core/security/gdprCompliance';
+import { defaultEffectCatalogDocument, validateStepsAgainstEffectCatalog } from './effectCatalog';
 import { createActionGatewayRouter } from './actionGatewayEndpoints';
 
 const idSchema = z.string().regex(/^[a-zA-Z0-9._:-]{1,128}$/);
@@ -185,6 +186,16 @@ function clampListLimit(raw: unknown): number {
 /** V1 resource API. It schedules durable work; it never constructs AgentRuntime. */
 export function createV1GatewayRouter(resolveKernel: () => V1KernelGateway | null): Router {
   const router = express.Router();
+  const effectCatalog = defaultEffectCatalogDocument();
+
+  // L3-03b-http: Gateway-authoritative localOnly allowlist for workers + admit checks.
+  router.get('/effect-catalog', async (req, res) => {
+    const tenantId = requiredTenant(req, res);
+    if (!tenantId) return;
+    res.json(effectCatalog);
+  });
+
+  // L4-B: durable actions surface under /v1/actions
   router.use('/actions', createActionGatewayRouter(resolveKernel));
 
   // List before /runs/:runId so "runs" is not captured as a runId.
@@ -215,42 +226,6 @@ export function createV1GatewayRouter(resolveKernel: () => V1KernelGateway | nul
       return res
         .status(400)
         .json({ error: { code: 'INVALID_REQUEST', details: parsed.error.issues } });
-    if (
-      parsed.data.metadata?.actionGateway !== undefined ||
-      parsed.data.steps?.some(
-        (step) =>
-          (step.kind === 'agent' &&
-            Array.isArray((step.input as { tools?: unknown }).tools) &&
-            (step.input as { tools: unknown[] }).tools.length > 0) ||
-          step.kind === 'tool' ||
-          step.kind === 'connector',
-      )
-    ) {
-      return res.status(403).json({
-        error: {
-          code: 'ACTION_GATEWAY_REQUIRED',
-          message:
-            'Externally effecting tool, connector, or agent-declared tool work must be proposed through POST /v1/actions.',
-        },
-      });
-    }
-    const kernel = resolveKernel();
-    if (!kernel)
-      return res.status(503).json({
-        error: {
-          code: 'KERNEL_UNAVAILABLE',
-          message: 'Shared execution kernel is not configured.',
-        },
-      });
-    const policySnapshotId =
-      parsed.data.policySnapshotId ?? process.env.COMMANDER_DEFAULT_POLICY_SNAPSHOT_ID;
-    if (!policySnapshotId)
-      return res.status(503).json({
-        error: {
-          code: 'POLICY_SNAPSHOT_UNAVAILABLE',
-          message: 'No policy snapshot is configured for V1 run submission.',
-        },
-      });
     const defaultDefinitionVersion = process.env.COMMANDER_DEFAULT_AGENT_DEFINITION_VERSION ?? 'v1';
     const defaultProviderSnapshot = {
       provider: process.env.COMMANDER_DEFAULT_PROVIDER ?? 'openai',
@@ -269,6 +244,55 @@ export function createV1GatewayRouter(resolveKernel: () => V1KernelGateway | nul
         },
       ]
     ).map((step, index) => ({ ...step, id: step.id ?? stepId(`${tenantId}:${key}`, index) }));
+
+    // L3-03b-http: catalog admit before Action Gateway — forged localOnly must
+    // surface LOCALONLY_NOT_IN_CATALOG (400), not be shadowed by 403.
+    const catalogRejection = validateStepsAgainstEffectCatalog(steps, effectCatalog);
+    if (catalogRejection) {
+      return res.status(400).json({ error: catalogRejection });
+    }
+
+    // L4-B: external effects use POST /v1/actions. Exception: catalog-authorized
+    // localOnly tool/connector steps may still admit on POST /v1/runs (L3-03b).
+    const requiresActionGateway =
+      parsed.data.metadata?.actionGateway !== undefined ||
+      steps.some((step) => {
+        if (step.kind === 'agent') {
+          const tools = (step.input as { tools?: unknown } | undefined)?.tools;
+          return Array.isArray(tools) && tools.length > 0;
+        }
+        if (step.kind === 'tool' || step.kind === 'connector') {
+          return (step.input as { localOnly?: unknown } | undefined)?.localOnly !== true;
+        }
+        return false;
+      });
+    if (requiresActionGateway) {
+      return res.status(403).json({
+        error: {
+          code: 'ACTION_GATEWAY_REQUIRED',
+          message:
+            'Externally effecting tool, connector, or agent-declared tool work must be proposed through POST /v1/actions.',
+        },
+      });
+    }
+
+    const kernel = resolveKernel();
+    if (!kernel)
+      return res.status(503).json({
+        error: {
+          code: 'KERNEL_UNAVAILABLE',
+          message: 'Shared execution kernel is not configured.',
+        },
+      });
+    const policySnapshotId =
+      parsed.data.policySnapshotId ?? process.env.COMMANDER_DEFAULT_POLICY_SNAPSHOT_ID;
+    if (!policySnapshotId)
+      return res.status(503).json({
+        error: {
+          code: 'POLICY_SNAPSHOT_UNAVAILABLE',
+          message: 'No policy snapshot is configured for V1 run submission.',
+        },
+      });
     try {
       const result = await kernel.submit({
         tenantId,
@@ -379,8 +403,7 @@ export function createV1GatewayRouter(resolveKernel: () => V1KernelGateway | nul
     }));
     const auditEvents: EvidenceAuditSource[] = events.map((event) => ({
       type: event.type,
-      severity:
-        event.type.includes('failed') || event.type.includes('denied') ? 'high' : 'low',
+      severity: event.type.includes('failed') || event.type.includes('denied') ? 'high' : 'low',
       tenantId: event.tenantId,
       runId: event.runId,
       stepId: event.stepId ?? run.id,

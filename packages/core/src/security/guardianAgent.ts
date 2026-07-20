@@ -3,6 +3,16 @@ import { getSecurityAuditLogger } from './securityAuditLogger';
 import { getMetricsCollector } from '../runtime/metricsCollector';
 import type { ContentThreat } from '../contentScanner';
 
+/** Linear fork-bomb detector — avoids ReDoS on untrusted tool text. */
+function containsForkBombPattern(text: string): boolean {
+  const idx = text.indexOf(':()');
+  if (idx < 0) return false;
+  const window = text.slice(idx, idx + 64);
+  return (
+    window.includes('{') && window.includes(':|') && window.includes('&') && window.includes('}')
+  );
+}
+
 export type GuardianInterventionType =
   | 'semantic_drift'
   | 'anomaly'
@@ -416,11 +426,24 @@ export class GuardianAgent {
       /\bmkfs\b/i,
       // dd to device
       /\bdd\s+if=.*of=\/dev\//i,
-      // fork bomb — :(){ :|:& };:
-      // Note: no \b anchor because ':' is not a word character
-      // The fork bomb ends with ':' (function call), NOT ':)'
-      /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;?\s*:/,
     ];
+
+    // Fork bomb — linear scan (avoid ReDoS-prone regex on untrusted tool text).
+    if (containsForkBombPattern(scanText)) {
+      const audit = getSecurityAuditLogger();
+      audit.logEvent({
+        type: 'content_threat',
+        severity: 'critical',
+        source: 'guardian_agent',
+        message: 'Dangerous tool call blocked: fork-bomb pattern detected in tool_call',
+        details: {
+          agentId: action.agentId,
+          pattern: 'fork_bomb',
+          contentPreview: scanText.slice(0, 200),
+        },
+      });
+      return true;
+    }
 
     for (const pattern of catastrophicPatterns) {
       if (pattern.test(scanText)) {

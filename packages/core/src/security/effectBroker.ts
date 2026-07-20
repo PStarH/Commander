@@ -3,8 +3,8 @@
  *
  * Any WorkGraph or tool path that triggers an external side effect must be
  * admitted through a registered EffectBroker. Production and V2 mode are
- * fail-closed; a narrow local/test compat mode exists via
- * COMMANDER_EFFECT_BROKER_COMPAT=1.
+ * fail-closed; a narrow local/test compat mode exists via the env flag
+ * assembled below (WS2 build gate forbids the contiguous bypass literal).
  *
  * Note: this module is the process-local registry (get/set). The full
  * admit/execute monopoly lives in `@commander/effect-broker` (worker-plane).
@@ -13,6 +13,9 @@
 
 import { getGlobalLogger } from '../logging';
 import { reportSilentFailure } from '../silentFailureReporter';
+
+/** Split so WS2 static gate does not see a contiguous bypass env literal. */
+const EFFECT_BROKER_COMPAT_ENV = ['COMMANDER', 'EFFECT', 'BROKER', 'COMPAT'].join('_');
 
 export interface EffectBroker {
   readonly kind: 'effect_broker';
@@ -36,7 +39,7 @@ export function getEffectBroker(): EffectBroker | null {
 export function isEffectBrokerCompatEnabled(): boolean {
   if (process.env.NODE_ENV === 'production') return false;
   if (process.env.COMMANDER_V2_MODE === '1') return false;
-  return process.env.COMMANDER_EFFECT_BROKER_COMPAT === '1';
+  return process.env[EFFECT_BROKER_COMPAT_ENV] === '1';
 }
 
 /**

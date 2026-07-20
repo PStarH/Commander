@@ -33,9 +33,7 @@ export interface ReadinessProbeDeps {
 }
 
 /** Run a database probe, mapping outcomes to ProbeStatus. */
-export async function probeDatabase(
-  fn: (() => Promise<'ok'>) | undefined,
-): Promise<ProbeStatus> {
+export async function probeDatabase(fn: (() => Promise<'ok'>) | undefined): Promise<ProbeStatus> {
   if (!fn) return 'unknown';
   try {
     const result = await fn();
