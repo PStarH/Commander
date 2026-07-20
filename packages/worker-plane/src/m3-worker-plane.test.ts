@@ -459,6 +459,53 @@ describe('ToolStepExecutor', () => {
     );
   });
 
+  it('parent abort + late success resolve is non-cooperative like timeout late-resolve', async () => {
+    const parent = new AbortController();
+    const mockRegistry = {
+      get: () => ({
+        // Ignores abort signal; resolves successfully after parent abort (probe: resolve@30ms).
+        execute: async () => {
+          await new Promise((r) => setTimeout(r, 30));
+          return { late: true };
+        },
+      }),
+    };
+    const executor = new ToolStepExecutor(mockRegistry);
+    const step = createMockStep({ input: { toolName: 'late', args: {}, timeoutMs: 5_000 } });
+    const execPromise = executor.execute(step, {
+      signal: parent.signal,
+      worker: createMockWorker(),
+    });
+    parent.abort();
+    await assert.rejects(
+      () => execPromise,
+      (err: WorkerExecutionError) =>
+        err.options.code === 'ABORTED' &&
+        err.options.retryable === false &&
+        err.options.details?.cooperative === false,
+    );
+  });
+
+  it('timeout + late success resolve is non-cooperative', async () => {
+    const mockRegistry = {
+      get: () => ({
+        execute: async () => {
+          await new Promise((r) => setTimeout(r, 80));
+          return { late: true };
+        },
+      }),
+    };
+    const executor = new ToolStepExecutor(mockRegistry);
+    const step = createMockStep({ input: { toolName: 'late', args: {}, timeoutMs: 20 } });
+    await assert.rejects(
+      () => executor.execute(step, { signal: ac.signal, worker: createMockWorker() }),
+      (err: WorkerExecutionError) =>
+        err.options.code === 'TIMEOUT' &&
+        err.options.retryable === false &&
+        err.options.details?.cooperative === false,
+    );
+  });
+
   it('parent abort of cooperative tool remains retryable', async () => {
     const parent = new AbortController();
     let sawAbort = false;
