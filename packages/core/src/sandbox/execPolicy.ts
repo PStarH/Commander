@@ -717,9 +717,7 @@ export function isExecScriptTool(toolName: string, args?: Record<string, unknown
  * NODE_ENV=production 或 COMMANDER_ENV=production|prod。
  * 仅依赖 process.env，不跨包引用 apps/api。
  */
-function isProductionRuntimeEnv(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
+function isProductionRuntimeEnv(env: NodeJS.ProcessEnv = process.env): boolean {
   return (
     env.NODE_ENV === 'production' ||
     env.COMMANDER_ENV === 'production' ||
