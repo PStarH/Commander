@@ -28,11 +28,10 @@ export function requireA2ABearerAuth(options?: {
   const mode = options?.mode ?? 'jsonrpc';
   return (req, res, next) => {
     const token =
-      options && 'token' in options ? options.token ?? undefined : resolveA2AAuthToken();
+      options && 'token' in options ? (options.token ?? undefined) : resolveA2AAuthToken();
 
     if (!token) {
-      const message =
-        'A2A server authToken is not configured. Refusing unauthenticated requests.';
+      const message = 'A2A server authToken is not configured. Refusing unauthenticated requests.';
       if (mode === 'jsonrpc') {
         return res.status(500).json({
           jsonrpc: '2.0',

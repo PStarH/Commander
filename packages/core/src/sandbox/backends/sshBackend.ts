@@ -69,8 +69,7 @@ export class SSHBackend implements ExecutionBackend {
     const policyResult = getExecPolicyEngine().evaluate(command);
     if (policyResult.decision === 'forbidden' || policyResult.decision === 'prompt') {
       const reason =
-        policyResult.rule?.justification ??
-        `ExecPolicy decision=${policyResult.decision}`;
+        policyResult.rule?.justification ?? `ExecPolicy decision=${policyResult.decision}`;
       getSecurityAuditLogger().logExecPolicyForbidden('SSHBackend', reason, {
         decision: policyResult.decision,
         ruleId: policyResult.rule?.id,

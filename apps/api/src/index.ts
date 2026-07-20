@@ -563,12 +563,10 @@ registerRouter({
 registerRouter({
   name: 'v1-projects',
   mountPath: '/v1',
-  factory: () =>
-    createProjectRouter(store, memoryStore!, agentStateStore, { readOnly: true }),
+  factory: () => createProjectRouter(store, memoryStore!, agentStateStore, { readOnly: true }),
   openapi: {
     tags: ['Projects', 'WarRoom', 'Memory', 'Governance'],
-    description:
-      'Read-only WarRoom / project / memory / governance surface (WS3 §5.1 demotion).',
+    description: 'Read-only WarRoom / project / memory / governance surface (WS3 §5.1 demotion).',
   },
 });
 
@@ -838,8 +836,7 @@ app.get('/api/openapi.json', (_req, res) => {
     res.status(410).json({
       error: {
         code: 'GONE',
-        message:
-          'This route is frozen in the enterprise profile. Use GET /v1/openapi.json.',
+        message: 'This route is frozen in the enterprise profile. Use GET /v1/openapi.json.',
       },
     });
     return;
@@ -902,9 +899,7 @@ async function startServer(): Promise<void> {
   // - Production: require a Postgres DSN or explicit COMMANDER_MEMORY_STORE=in-memory
   //   (never silently drop durability on the Enterprise Gateway path).
   const explicitMemory = process.env.COMMANDER_MEMORY_STORE;
-  const hasPostgresDsn = Boolean(
-    process.env.COMMANDER_POSTGRES_URL || process.env.DATABASE_URL,
-  );
+  const hasPostgresDsn = Boolean(process.env.COMMANDER_POSTGRES_URL || process.env.DATABASE_URL);
   let memoryType: 'postgres' | 'in-memory';
   if (process.env.NODE_ENV === 'production') {
     if (explicitMemory === 'in-memory') {

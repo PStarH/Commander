@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, rmSync } from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { run } from '../../../../scripts/bench-failover-rto-live.ts';
 import { validateBaseline, type BaselineDocument } from '../../src/benchmarks/baselineSchema';
 import { getCurrentBaseline } from '../../../../scripts/check-readiness.ts';
 
-const TEMP_BASELINE = '/tmp/failover-rto-live.test.json';
+const TEMP_BASELINE = path.join(os.tmpdir(), 'failover-rto-live.test.json');
 
 describe('bench-failover-rto-live baseline output', () => {
   it('writes a valid passing simulated baseline in local mode', async () => {

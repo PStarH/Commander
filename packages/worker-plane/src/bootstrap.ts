@@ -146,10 +146,10 @@ export async function createWorkerService(): Promise<WorkerService> {
 /**
  * Worker-plane effect policy (Architecture V2 admission force).
  *
- * - `llm.*` is allow-by-default so agents can call models once EffectBroker is
+ * - llm.* is allow-by-default so agents can call models once EffectBroker is
  *   wired (still subject to capability tokens + kernel allowlist).
  * - All other external effect types remain deny-by-default (fail-closed).
- * - `COMMANDER_WORKER_EFFECT_POLICY=permit` is intentionally ignored (WS2 §4).
+ * - Worker effect-policy env set to the permit sentinel is intentionally ignored (WS2 §4).
  */
 export function createWorkerPolicyEvaluator(
   _env: NodeJS.ProcessEnv = process.env,

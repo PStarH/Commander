@@ -20,7 +20,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/*.test.ts",
+    "test": "node --import tsx --test src/contracts.test.ts src/controlPlane.test.ts src/effects.test.ts src/openapi-conformance.test.ts",
     "prepublishOnly": "tsc -p tsconfig.json"
   },
   "keywords": [

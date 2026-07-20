@@ -356,7 +356,9 @@ function buildOperation(reg: RouterRegistration, openApiPath: string): OpenApiOp
 /**
  * Collects unique tags from all operations for the document-level `tags` array.
  */
-function collectTags(paths: Record<string, Record<string, OpenApiOperation>>): Array<{ name: string; description: string }> {
+function collectTags(
+  paths: Record<string, Record<string, OpenApiOperation>>,
+): Array<{ name: string; description: string }> {
   const tagSet = new Set<string>();
   for (const pathOps of Object.values(paths)) {
     for (const op of Object.values(pathOps)) {
@@ -365,10 +367,12 @@ function collectTags(paths: Record<string, Record<string, OpenApiOperation>>): A
       }
     }
   }
-  return Array.from(tagSet).sort().map((name) => ({
-    name,
-    description: tagDescription(name),
-  }));
+  return Array.from(tagSet)
+    .sort()
+    .map((name) => ({
+      name,
+      description: tagDescription(name),
+    }));
 }
 
 function tagDescription(name: string): string {

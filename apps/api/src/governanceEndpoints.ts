@@ -5,11 +5,7 @@
 
 import express, { Request, Response, Router } from 'express';
 import { CheckpointManager, RiskScoreCalculator } from './governanceCheckpoint';
-import type {
-  GovernanceCheckpoint,
-  CheckpointStats,
-  RiskFactor,
-} from './governanceCheckpoint';
+import type { GovernanceCheckpoint, CheckpointStats, RiskFactor } from './governanceCheckpoint';
 import { MissionGovernanceMode, MissionRiskLevel } from '@commander/core';
 
 /**
@@ -159,7 +155,8 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
 
     if (approverId !== undefined && String(approverId) !== principal) {
       return res.status(403).json({
-        error: 'Cannot list pending approvals for a principal other than the authenticated identity.',
+        error:
+          'Cannot list pending approvals for a principal other than the authenticated identity.',
       });
     }
 
@@ -195,10 +192,7 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
         return res.status(403).json({ error: 'You cannot approve your own checkpoint.' });
       }
       // GOV-4: admin role is not enough — must be listed in requiredApprovals.
-      if (
-        existing.requiredApprovals.length > 0 &&
-        !existing.requiredApprovals.includes(approver)
-      ) {
+      if (existing.requiredApprovals.length > 0 && !existing.requiredApprovals.includes(approver)) {
         return res.status(403).json({
           error: 'Approver is not listed in requiredApprovals for this checkpoint.',
         });
@@ -235,10 +229,7 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
         return res.status(404).json({ error: 'Checkpoint not found' });
       }
       // GOV-4: same binding as approve — admin role alone is not enough.
-      if (
-        existing.requiredApprovals.length > 0 &&
-        !existing.requiredApprovals.includes(approver)
-      ) {
+      if (existing.requiredApprovals.length > 0 && !existing.requiredApprovals.includes(approver)) {
         return res.status(403).json({
           error: 'Rejecter is not listed in requiredApprovals for this checkpoint.',
         });
@@ -273,7 +264,9 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
         return res.status(404).json({ error: 'Checkpoint not found' });
       }
       if (!canViewCheckpoint(existing, principal)) {
-        return res.status(403).json({ error: 'Not authorized to add evidence to this checkpoint.' });
+        return res
+          .status(403)
+          .json({ error: 'Not authorized to add evidence to this checkpoint.' });
       }
       const checkpoint = checkpointManager.addEvidence(String(req.params.id), {
         type,
@@ -351,7 +344,8 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
     const { reviewerId } = req.query;
     if (reviewerId !== undefined && String(reviewerId) !== principal) {
       return res.status(403).json({
-        error: 'Cannot list pending approvals for a principal other than the authenticated identity.',
+        error:
+          'Cannot list pending approvals for a principal other than the authenticated identity.',
       });
     }
 
