@@ -177,13 +177,30 @@ void describe('@commander/sdk — Gateway V1 client', () => {
       apiKey: 'key',
       fetch: async (_url: string, init?: RequestInit) => {
         captured = init;
-        return new Response(JSON.stringify({
-          run: { id: 'run-1', status: 'pending', tenantId: 'tenant-a', createdAt: 'now', updatedAt: 'now', intentHash: 'i', workGraphHash: 'g', workGraphVersion: 'v1', policySnapshotId: 'p1' },
-          idempotentReplay: false,
-        }), { status: 202, headers: { 'content-type': 'application/json' } });
+        return new Response(
+          JSON.stringify({
+            run: {
+              id: 'run-1',
+              status: 'pending',
+              tenantId: 'tenant-a',
+              createdAt: 'now',
+              updatedAt: 'now',
+              intentHash: 'i',
+              workGraphHash: 'g',
+              workGraphVersion: 'v1',
+              policySnapshotId: 'p1',
+            },
+            idempotentReplay: false,
+          }),
+          { status: 202, headers: { 'content-type': 'application/json' } },
+        );
       },
     });
-    const result = await client.submitRun({ goal: 'reconcile invoices', policySnapshotId: 'p1', idempotencyKey: 'idem-key-0001' });
+    const result = await client.submitRun({
+      goal: 'reconcile invoices',
+      policySnapshotId: 'p1',
+      idempotencyKey: 'idem-key-0001',
+    });
     assert.equal(result.accepted, true);
     assert.equal(result.run.id, 'run-1');
     assert.equal(new Headers(captured?.headers).get('idempotency-key'), 'idem-key-0001');
@@ -287,10 +304,13 @@ void describe('@commander/sdk — Gateway V1 client', () => {
       apiKey: 'key',
       fetch: async (_url: string, init?: RequestInit) => {
         captured = init;
-        return new Response(JSON.stringify({ action: { ...actionFixtures.action, state: 'REJECTED' } }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
+        return new Response(
+          JSON.stringify({ action: { ...actionFixtures.action, state: 'REJECTED' } }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          },
+        );
       },
     });
     const result = await client.rejectAction('run-action-1', { reason: 'too risky' });

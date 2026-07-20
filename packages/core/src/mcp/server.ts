@@ -30,10 +30,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import { createHash } from 'node:crypto';
 
 /** Pure-local MCP tools that never require Action Gateway (read/router only). */
-export const LOCAL_MCP_TOOL_NAMES: ReadonlySet<string> = new Set([
-  'list_models',
-  'route_task',
-]);
+export const LOCAL_MCP_TOOL_NAMES: ReadonlySet<string> = new Set(['list_models', 'route_task']);
 
 export interface ActionGatewayProposeInput {
   source: string;
@@ -78,8 +75,7 @@ export function buildMcpActionEnvelope(
   let effectType = `mcp.tool.${toolName}`;
   if (toolName === 'ticket.create') {
     effectType = 'demo.ticket.create';
-    destination =
-      args.requireApproval === true ? 'demo://tickets/approval' : 'demo://tickets';
+    destination = args.requireApproval === true ? 'demo://tickets/approval' : 'demo://tickets';
   } else if (toolName === 'ticket.compensate') {
     effectType = 'compensate.demo.ticket.create';
     destination = 'demo://tickets';

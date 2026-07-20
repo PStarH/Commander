@@ -53,8 +53,7 @@ async function createActionRun(
   const effect = options.effect ?? 'allow';
   const actionEnvelope = { ...envelope, tenantId };
   const actionDigest = options.actionDigest ?? digest(actionEnvelope);
-  const policySnapshotId =
-    options.metadataPolicySnapshotId ?? 'action-gateway-mvp-v1';
+  const policySnapshotId = options.metadataPolicySnapshotId ?? 'action-gateway-mvp-v1';
   const decisionId = options.decisionId ?? `action-gateway-${effect}`;
   const simulationId = options.simulationId ?? `${runId}-simulation`;
   await repository.createRun(

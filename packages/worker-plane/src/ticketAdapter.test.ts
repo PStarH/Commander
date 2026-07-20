@@ -109,7 +109,8 @@ describe('L3-08a InMemoryTicketAdapter chaos', () => {
       completeEffect: async () => null, // always fail ledger confirm → UNKNOWN
       markEffectCompletionUnknown: async (input) => {
         const effect = effects.get(input.effectId);
-        if (!effect || effect.tenantId !== input.tenantId || effect.state !== 'ADMITTED') return null;
+        if (!effect || effect.tenantId !== input.tenantId || effect.state !== 'ADMITTED')
+          return null;
         effect.state = 'COMPLETION_UNKNOWN';
         return { ...effect };
       },
@@ -120,7 +121,11 @@ describe('L3-08a InMemoryTicketAdapter chaos', () => {
       },
       reconcileEffect: async (input) => {
         const effect = effects.get(input.effectId);
-        if (!effect || effect.tenantId !== input.tenantId || effect.state !== 'COMPLETION_UNKNOWN') {
+        if (
+          !effect ||
+          effect.tenantId !== input.tenantId ||
+          effect.state !== 'COMPLETION_UNKNOWN'
+        ) {
           return null;
         }
         effect.state = input.state;
