@@ -57,8 +57,9 @@ Every "one canonical X" rule names the current count so consolidation is measura
 - (2) **VIOLATED, widely.** The core root barrel is imported wholesale by:
   `apps/api` (50 `from '@commander/core'` imports, e.g. `apps/api/src/index.ts:1-19`),
   `worker-plane` (`workerRuntimeAdapter.ts:1`), `mcp-server` (`stdioServer.ts:1-11`, 9 symbols),
-  `sdk` (`commanderClient.ts:26,139,381` incl. a sync `require`), `operations` (root barrel),
+  `sdk` (`commanderClient.ts:26,139,381` incl. a sync `require`),
   and the `apps/memory` writer (`apps/api/src/memoryIndexManager.ts:14`).
+  (`@commander/adapter-ops` does not import the core barrel.)
 - **Enforcement: PARTIAL.** The contracts leaf rule and V2 package dependency graph are
   **ENFORCED** by `scripts/arch-guard.sh` and `.github/workflows/ci.yml`. The broader V1 rule
   against wholesale `@commander/core` imports remains debt; existing compatibility files are

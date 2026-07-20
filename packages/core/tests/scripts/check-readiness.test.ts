@@ -251,7 +251,8 @@ describe('main', () => {
       logSpy.mock.calls.some(
         (c) =>
           typeof c[0] === 'string' &&
-          (c[0].includes('READINESS PASS') || c[0].includes('recommended items have warnings')),
+          c[0].includes('residual→100 NOT claimed') &&
+          c[0].includes('simulated is non-scoring'),
       ),
     ).toBe(true);
 
