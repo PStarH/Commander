@@ -23,7 +23,7 @@ import {
   COMPOSE_CMD,
   tryComposeCellUp,
 } from './l4-b-cell-compose.js';
-import { Pool } from './load-pg.js';
+import { Pool } from 'pg';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const TSX_CLI = createRequire(import.meta.url).resolve('tsx/cli');
