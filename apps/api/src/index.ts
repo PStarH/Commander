@@ -378,8 +378,10 @@ app.get('/health', (_req, res) => {
 // Readiness probe — WS3 §6.1 honesty: real probes replace fake-READY.
 // Hard gates (database/kernel) fail → 503. Soft indicators
 // (warRoomStore/memoryHeap) surface honestly but never gate.
-// Effect monopoly is worker-plane-owned; do not probe the always-null core
-// process registry (see direction audit 2026-07-20-effect-broker-health-registry).
+// Effect monopoly / PEP is NOT on this surface — observe worker-plane
+// EffectBroker bootstrap/assert, kernel-ops GET /ready (ops loops), and
+// (L4-B) adapter-ops GET /ready for compensation drain. Do not probe the
+// always-null core registry (direction audit 2026-07-20-effect-broker-health-registry).
 app.get('/ready', async (_req, res) => {
   const result = await probeReadiness({
     kernel: () => getV1KernelGateway(),
