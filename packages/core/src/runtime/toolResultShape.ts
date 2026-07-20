@@ -120,9 +120,7 @@ export function isToolAbortNonRetryableForLLM(err: unknown): boolean {
   }
   const msg = err instanceof Error ? err.message : String(err ?? '');
   return (
-    msg.includes('TOOL_TIMEOUT') ||
-    msg.includes('TOOL_ABORTED') ||
-    RE_DOM_ABORT_MESSAGE.test(msg)
+    msg.includes('TOOL_TIMEOUT') || msg.includes('TOOL_ABORTED') || RE_DOM_ABORT_MESSAGE.test(msg)
   );
 }
 
