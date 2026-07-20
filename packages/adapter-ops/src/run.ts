@@ -1,4 +1,4 @@
-import { createOperationsWiring } from './wiring.js';
+import { createAdapterOpsWiring } from './wiring.js';
 import { startAdapterOpsHealthServer } from './healthServer.js';
 
 function positiveInteger(name: string, fallback: number): number {
@@ -19,7 +19,7 @@ function parseEgressAllowlist(): string[] {
 }
 
 export async function main(): Promise<void> {
-  const wiring = await createOperationsWiring();
+  const wiring = await createAdapterOpsWiring();
   wiring.reconciliation.start();
   wiring.compensation.start();
 

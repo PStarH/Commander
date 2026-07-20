@@ -116,7 +116,7 @@ function createStdoutAuditSink(): AuditSink {
   };
 }
 
-export async function createOperationsWiring(): Promise<{
+export async function createAdapterOpsWiring(): Promise<{
   reconciliation: ReconciliationDaemon;
   compensation: CompensationDaemon;
   close: () => Promise<void>;
