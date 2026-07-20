@@ -437,11 +437,27 @@ export class Tier1AgentLoop {
     );
 
     const plan = await orchestrator.planExecution(toolCalls, toolMap);
+    // Forward parent abort + real loop fields — never forge empty goal/tools/budgets.
+    const abortSignal = params.abortSignal ?? params.signal;
     const context = {
       runId,
       agentId,
       stepNumber: 0,
       tenantId: params.tenantId,
+      abortSignal,
+      agentContext: {
+        agentId,
+        runId,
+        projectId: params.sessionId ?? runId,
+        goal: params.goal,
+        tenantId: params.tenantId,
+        userId: params.userId,
+        contextData: {},
+        availableTools: params.availableTools,
+        maxSteps: params.maxSteps,
+        tokenBudget: params.tokenBudget,
+        abortSignal,
+      },
     };
 
     const orchestrated = await orchestrator.execute(plan, toolMap, context);

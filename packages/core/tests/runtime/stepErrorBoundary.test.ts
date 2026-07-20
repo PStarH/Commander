@@ -147,4 +147,33 @@ describe('StepErrorBoundary', () => {
     const elapsed = Date.now() - start;
     expect(elapsed).toBeLessThan(500); // retry-after=0 → immediate retry
   });
+
+  it('does not retry AbortError or StepTimeout even when maxRetries > 0', async () => {
+    const abortErr = new Error('This operation was aborted');
+    abortErr.name = 'AbortError';
+    {
+      const { boundary } = createBoundary({ maxRetries: 1, retryDelayMs: 5, onPermanent: 'abort' });
+      let calls = 0;
+      const result = await boundary.execute('test-op', 'tool', async () => {
+        calls++;
+        throw abortErr;
+      });
+      expect(calls).toBe(1);
+      expect(result.attempts).toBe(1);
+      expect(result.success).toBe(false);
+    }
+    {
+      const { boundary } = createBoundary({ maxRetries: 1, retryDelayMs: 5, onPermanent: 'abort' });
+      let calls = 0;
+      const result = await boundary.execute('test-op', 'tool', async () => {
+        calls++;
+        throw Object.assign(new Error('Step "x" exceeded timeout of 30ms'), {
+          name: 'StepTimeoutError',
+        });
+      });
+      expect(calls).toBe(1);
+      expect(result.attempts).toBe(1);
+      expect(result.success).toBe(false);
+    }
+  });
 });

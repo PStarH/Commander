@@ -980,6 +980,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
    * Execute a tool call and return STRUCTURED error context to the model.
    * Instead of silently logging errors, the model receives enough context
    * to reason about the failure and decide next steps.
+   *
+   * 主路径委托 TES：TIMEOUT/ABORTED advice 禁止 transient retry（对齐 Orchestrator.formatError）。
+   * TEH 侧只 planExecution，不经 Orchestrator.execute。
    */
   private async executeTool(
     runId: string,
