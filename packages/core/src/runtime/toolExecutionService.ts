@@ -495,8 +495,32 @@ export class ToolExecutionService {
       // Covers legacy shell_execute/python_execute AND consolidated `exec` resource tool.
       // Research backing: Codex CLI command safety classification, Claude Code deny-first evaluation
       {
-        const { extractExecPolicyPayload, getExecPolicyEngine } =
-          await import('../sandbox/execPolicy');
+        const {
+          extractExecPolicyPayload,
+          getExecPolicyEngine,
+          isExecScriptTool,
+          denyExecScriptUnlessAllowed,
+        } = await import('../sandbox/execPolicy');
+        // exec action=script / execute_script can nest tools.exec({action:'shell'})
+        // via direct tool.execute — bypassing this gate. Deny unless explicitly opted in.
+        if (isExecScriptTool(toolCall.name, validatedArgs as Record<string, unknown>)) {
+          const scriptDeny = denyExecScriptUnlessAllowed();
+          if (scriptDeny) {
+            bus.publish('tool.blocked', agentId, {
+              runId,
+              toolName: toolCall.name,
+              reason: 'exec_script_denied',
+              detail: scriptDeny,
+            });
+            return {
+              toolCallId: toolCall.id,
+              name: toolCall.name,
+              output: scriptDeny,
+              error: scriptDeny,
+              durationMs: 0,
+            };
+          }
+        }
         const command = extractExecPolicyPayload(
           toolCall.name,
           validatedArgs as Record<string, unknown>,

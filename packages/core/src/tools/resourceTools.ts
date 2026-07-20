@@ -43,6 +43,10 @@ import {
 import { HandoffTool, HandoffCheckTool } from './handoffTool';
 import { PythonExecuteTool, ShellExecuteTool } from './codeExecutionTool';
 import { ExecuteScriptTool } from './scriptTool';
+import {
+  SCRIPT_NESTED_SHELL_EQUIVALENT_TOOLS,
+  denyExecScriptUnlessAllowed,
+} from '../sandbox/execPolicy';
 import { VisionAnalyzeTool } from './multimodal/visionTool';
 import { PdfExtractTool } from './multimodal/pdfTool';
 import { ScreenshotCaptureTool } from './multimodal/screenshotTool';
@@ -483,8 +487,11 @@ export class ExecResourceTool implements Tool {
   private toolMap = new Map<string, (args: Record<string, unknown>) => Promise<string>>();
 
   setTools(tools: Map<string, Tool>): void {
+    // Never inject shell-equivalent tools into exec.script — nested calls use
+    // tool.execute directly and would bypass ToolExecutionService / ExecPolicy.
     this.toolMap = new Map();
     for (const [name, tool] of tools) {
+      if (SCRIPT_NESTED_SHELL_EQUIVALENT_TOOLS.has(name)) continue;
       this.toolMap.set(name, (args) =>
         Promise.resolve(tool.execute(args)).then(normalizeToolResult),
       );
@@ -520,7 +527,7 @@ export class ExecResourceTool implements Tool {
     },
     script: {
       description:
-        'Execute a JavaScript script that calls other tools programmatically via `tools.toolName(args)`',
+        'Execute a JavaScript script that calls other tools programmatically via `tools.toolName(args)`. Denied by default (set COMMANDER_ALLOW_EXEC_SCRIPT=1); shell-equivalent tools are never injectable.',
       params: {
         script: { type: 'string', description: 'JavaScript code to execute' },
         tools: {
@@ -533,7 +540,11 @@ export class ExecResourceTool implements Tool {
           description: 'Maximum execution time in seconds (default: 30, max: 120)',
         },
       },
-      handler: async (args) => normalizeToolResult(await this.scriptTool.execute(args)),
+      handler: async (args) => {
+        const denied = denyExecScriptUnlessAllowed();
+        if (denied) return `Error: ${denied}`;
+        return normalizeToolResult(await this.scriptTool.execute(args));
+      },
     },
   };
 

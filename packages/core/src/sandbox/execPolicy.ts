@@ -650,6 +650,11 @@ export function resetExecPolicyEngine(): void {
  * Live tools use the consolidated `exec` resource tool (`action: shell|python`).
  * Legacy names `shell_execute` / `python_execute` remain supported.
  * Returns null when the tool is not a shell/python execution surface (e.g. file tools).
+ *
+ * Note: `exec` action=`script` / `execute_script` has no command payload here.
+ * Those surfaces can nest `tools.exec({action:'shell'})` via direct tool.execute
+ * (bypassing ToolExecutionService), so they are denied by default — see
+ * {@link isExecScriptTool} / {@link isExecScriptAllowed}.
  */
 export function extractExecPolicyPayload(
   toolName: string,
@@ -669,7 +674,7 @@ export function extractExecPolicyPayload(
     if (action === 'python') {
       return typeof args.code === 'string' && args.code ? args.code : null;
     }
-    // script action is JS tooling, not shell — no ExecPolicy command payload
+    // script: no shell/python payload — gated separately (deny-by-default)
     return null;
   }
   // Fallback: some wrappers pass command/code without the legacy name
@@ -681,6 +686,47 @@ export function extractExecPolicyPayload(
   }
   return null;
 }
+
+/**
+ * Programmatic script surfaces that can invoke other tools without re-entering
+ * ToolExecutionService (and thus without ExecPolicy on nested shell/python).
+ */
+export function isExecScriptTool(toolName: string, args?: Record<string, unknown>): boolean {
+  if (toolName === 'execute_script') return true;
+  if (toolName === 'exec') {
+    return String(args?.action ?? '').toLowerCase() === 'script';
+  }
+  return false;
+}
+
+/**
+ * Opt-in for exec action=script / execute_script.
+ * Default deny: nested tools.exec({action:'shell'}) would otherwise bypass ExecPolicy.
+ */
+export function isExecScriptAllowed(): boolean {
+  return process.env.COMMANDER_ALLOW_EXEC_SCRIPT === '1';
+}
+
+/**
+ * Fail-closed gate for script surfaces. Returns an error message when denied,
+ * or null when allowed.
+ */
+export function denyExecScriptUnlessAllowed(): string | null {
+  if (isExecScriptAllowed()) return null;
+  return (
+    'EXEC_SCRIPT_DENIED: exec action=script is denied by default because ' +
+    'nested shell/python tool calls bypass ExecPolicy. Set COMMANDER_ALLOW_EXEC_SCRIPT=1 to enable ' +
+    '(shell-equivalent tools remain excluded from the script tool map).'
+  );
+}
+
+/** Tools that must never be injectable into exec.script (shell-equivalent power). */
+export const SCRIPT_NESTED_SHELL_EQUIVALENT_TOOLS: ReadonlySet<string> = new Set([
+  'exec',
+  'shell_execute',
+  'python_execute',
+  'execute_script',
+]);
 
 /** Tools whose execution injects sandbox workload identity metadata. */
 export function isShellOrPythonExecTool(toolName: string, args?: Record<string, unknown>): boolean {
