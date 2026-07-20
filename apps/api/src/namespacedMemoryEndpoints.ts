@@ -296,10 +296,7 @@ function createCanonicalNamespacedMemoryRouter(memoryStore: MemoryStore): Router
   router.get('/api/namespaced-memory/acl', (req, res) => {
     const role = getAuthenticatedRole(req);
     if (!role) return res.status(403).json({ error: 'Authentication required' });
-    const rules =
-      role === 'admin'
-        ? DEFAULT_ACL
-        : DEFAULT_ACL.filter((rule) => rule.role === role);
+    const rules = role === 'admin' ? DEFAULT_ACL : DEFAULT_ACL.filter((rule) => rule.role === role);
     res.json({
       rules: rules.map((rule) => ({
         role: rule.role,

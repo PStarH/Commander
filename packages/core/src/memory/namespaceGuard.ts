@@ -52,12 +52,11 @@ export function assertNamespacedStoreInput(input: {
 
   const recordId = input.id ?? 'pending';
   const meta = input.meta ?? {};
-  const namespace = typeof meta.namespace === 'string' && meta.namespace.length > 0
-    ? meta.namespace.replace(/\/$/, '')
-    : undefined;
-  const targetPath = namespace
-    ? `${namespace}/${recordId}`
-    : `agents/${agentId}/${recordId}`;
+  const namespace =
+    typeof meta.namespace === 'string' && meta.namespace.length > 0
+      ? meta.namespace.replace(/\/$/, '')
+      : undefined;
+  const targetPath = namespace ? `${namespace}/${recordId}` : `agents/${agentId}/${recordId}`;
 
   let acl: MemoryNamespaceAcl | undefined;
   if (input.namespaceAcl && typeof input.namespaceAcl.role === 'string') {

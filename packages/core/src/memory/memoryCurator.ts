@@ -14,7 +14,12 @@ export {
   getMemoryCurator,
   resetMemoryCurator,
 } from './curator';
-export type { CuratorConfig, CurationResult, CuratorMemoryItem, TtlMemoryCuratorConfig } from './curator';
+export type {
+  CuratorConfig,
+  CurationResult,
+  CuratorMemoryItem,
+  TtlMemoryCuratorConfig,
+} from './curator';
 
 /** @deprecated Use CuratorConfig */
 export type MemoryCuratorConfig = import('./curator').CuratorConfig;

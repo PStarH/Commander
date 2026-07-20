@@ -201,6 +201,9 @@ jobs:
         # before any tests run. Soften: try audit, warn on transport/API
         # retirement errors, still fail on real high/critical advisories when
         # the endpoint works. CodeQL + pnpm audit:wiring remain hard gates.
+        # Explicit bash: Windows runners default to pwsh and parse this as .ps1
+        # (ParserError on `if echo "$out" | grep ...`).
+        shell: bash
         run: |
           set +e
           out=$(pnpm audit --audit-level=high 2>&1)

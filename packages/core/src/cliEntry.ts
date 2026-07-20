@@ -136,7 +136,9 @@ function showCommandHelp(cmd: string): boolean {
   if (!help) return false;
   const profile = profileOf(cmd);
   const profileLabel =
-    profile === 'local·exp' ? `${$.yellow}local·exp${$.reset} (experimental)` : `${$.cyan}${profile}${$.reset}`;
+    profile === 'local·exp'
+      ? `${$.yellow}local·exp${$.reset} (experimental)`
+      : `${$.cyan}${profile}${$.reset}`;
   console.log(`${help}\n  ${$.bold}Profile:${$.reset} ${profileLabel}`);
   return true;
 }

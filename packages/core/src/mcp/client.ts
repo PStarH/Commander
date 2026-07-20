@@ -38,7 +38,10 @@ function uuid(): string {
  *  - Override via COMMANDER_MCP_ALLOWED_COMMANDS comma-separated env var.
  *  - `uvx` is rejected unless COMMANDER_MCP_ALLOW_UVX=1.
  */
-export function validateMcpCommand(command: string, args: readonly string[] = []): string | undefined {
+export function validateMcpCommand(
+  command: string,
+  args: readonly string[] = [],
+): string | undefined {
   const base = path.basename(command).toLowerCase();
 
   if (base === 'npx' || command.toLowerCase().startsWith('npx ')) {

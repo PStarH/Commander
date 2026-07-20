@@ -115,7 +115,11 @@ export class InMemoryKeyProvider implements KeyProvider {
     });
     this.publicKey = publicKey;
     this.privateKey = privateKey;
-    this.keyId = `in-memory:${crypto.createHash('sha256').update(publicKey.export({ type: 'spki', format: 'der' })).digest('hex').slice(0, 16)}`;
+    this.keyId = `in-memory:${crypto
+      .createHash('sha256')
+      .update(publicKey.export({ type: 'spki', format: 'der' }))
+      .digest('hex')
+      .slice(0, 16)}`;
   }
 
   sign(data: Buffer): string {
@@ -128,10 +132,15 @@ export class InMemoryKeyProvider implements KeyProvider {
 
   verify(data: Buffer, signature: string): boolean {
     try {
-      return crypto.verify('sha256', data, {
-        key: this.publicKey,
-        padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
-      }, Buffer.from(signature, 'base64'));
+      return crypto.verify(
+        'sha256',
+        data,
+        {
+          key: this.publicKey,
+          padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+        },
+        Buffer.from(signature, 'base64'),
+      );
     } catch {
       return false;
     }
@@ -316,10 +325,7 @@ export function verifyWithManifest(
 }
 
 /** Compute gaps between the manifest registry and on-disk chains. */
-function crossCheckManifest(
-  ledger: AuditChainLedger,
-  manifest: ChainManifest,
-): ManifestGap[] {
+function crossCheckManifest(ledger: AuditChainLedger, manifest: ChainManifest): ManifestGap[] {
   const gaps: ManifestGap[] = [];
   const disk = collectPersistedEntries(ledger.persistDirectory);
 
@@ -625,17 +631,20 @@ export function resetAuditChainIntegrity(): void {
 // ============================================================================
 
 function canonicalHead(head: ChainHead): string {
-  return JSON.stringify({
-    chainId: head.chainId,
-    tenantId: head.tenantId ?? null,
-    maxSeq: head.maxSeq,
-    headHmac: head.headHmac,
-  }, Object.keys({
-    chainId: 0,
-    tenantId: 0,
-    maxSeq: 0,
-    headHmac: 0,
-  }).sort());
+  return JSON.stringify(
+    {
+      chainId: head.chainId,
+      tenantId: head.tenantId ?? null,
+      maxSeq: head.maxSeq,
+      headHmac: head.headHmac,
+    },
+    Object.keys({
+      chainId: 0,
+      tenantId: 0,
+      maxSeq: 0,
+      headHmac: 0,
+    }).sort(),
+  );
 }
 
 /**
@@ -651,9 +660,7 @@ function computeManifestHmac(
   key: Buffer,
   payload: { version: number; entries: ManifestEntry[] },
 ): string {
-  const canonicalEntries = payload.entries.map((e) =>
-    canonicalEntry(e),
-  );
+  const canonicalEntries = payload.entries.map((e) => canonicalEntry(e));
   // Build canonical string with sorted top-level keys.
   const parts: string[] = [];
   parts.push('"entries":' + '[' + canonicalEntries.join(',') + ']');
