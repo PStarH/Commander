@@ -153,39 +153,66 @@ describe('getKernelDatabaseUrl', () => {
 
 describe('canonicalWorkGraphHash', () => {
   it('binds the complete deterministic initial state and interaction semantics', () => {
-    const base = [{
-      id: 'step-approval',
-      kind: 'tool',
-      initialState: 'WAITING_FOR_HUMAN' as const,
-      interaction: {
-        id: 'interaction-approval',
-        prompt: 'Approve action?',
-        expiresAt: '2030-01-01T00:00:00.000Z',
+    const base = [
+      {
+        id: 'step-approval',
+        kind: 'tool',
+        initialState: 'WAITING_FOR_HUMAN' as const,
+        interaction: {
+          id: 'interaction-approval',
+          prompt: 'Approve action?',
+          expiresAt: '2030-01-01T00:00:00.000Z',
+        },
+        input: { b: 2, a: 1 },
       },
-      input: { b: 2, a: 1 },
-    }];
+    ];
     const baseHash = canonicalWorkGraphHash(base);
 
-    assert.notEqual(canonicalWorkGraphHash([{
-      ...base[0],
-      initialState: 'PENDING',
-    }]), baseHash);
-    assert.notEqual(canonicalWorkGraphHash([{
-      ...base[0],
-      interaction: { ...base[0].interaction, id: 'interaction-other' },
-    }]), baseHash);
-    assert.notEqual(canonicalWorkGraphHash([{
-      ...base[0],
-      interaction: { ...base[0].interaction, prompt: 'Approve a different action?' },
-    }]), baseHash);
-    assert.notEqual(canonicalWorkGraphHash([{
-      ...base[0],
-      interaction: { ...base[0].interaction, expiresAt: '2031-01-01T00:00:00.000Z' },
-    }]), baseHash);
-    assert.equal(canonicalWorkGraphHash([{
-      ...base[0],
-      input: { a: 1, b: 2 },
-    }]), baseHash);
+    assert.notEqual(
+      canonicalWorkGraphHash([
+        {
+          ...base[0],
+          initialState: 'PENDING',
+        },
+      ]),
+      baseHash,
+    );
+    assert.notEqual(
+      canonicalWorkGraphHash([
+        {
+          ...base[0],
+          interaction: { ...base[0].interaction, id: 'interaction-other' },
+        },
+      ]),
+      baseHash,
+    );
+    assert.notEqual(
+      canonicalWorkGraphHash([
+        {
+          ...base[0],
+          interaction: { ...base[0].interaction, prompt: 'Approve a different action?' },
+        },
+      ]),
+      baseHash,
+    );
+    assert.notEqual(
+      canonicalWorkGraphHash([
+        {
+          ...base[0],
+          interaction: { ...base[0].interaction, expiresAt: '2031-01-01T00:00:00.000Z' },
+        },
+      ]),
+      baseHash,
+    );
+    assert.equal(
+      canonicalWorkGraphHash([
+        {
+          ...base[0],
+          input: { a: 1, b: 2 },
+        },
+      ]),
+      baseHash,
+    );
     assert.equal(
       canonicalWorkGraphHash([{ id: 'step-default', kind: 'agent' }]),
       canonicalWorkGraphHash([{ id: 'step-default', kind: 'agent', initialState: 'PENDING' }]),
@@ -236,11 +263,13 @@ describe('gateway submission idempotency hash', () => {
   it('ignores nested object key order throughout the submission', () => {
     const first = {
       goal: 'canonical replay',
-      steps: [{
-        id: 'step-canonical',
-        kind: 'tool',
-        input: { args: { outer: { b: 2, a: 1 }, z: true } },
-      }],
+      steps: [
+        {
+          id: 'step-canonical',
+          kind: 'tool',
+          input: { args: { outer: { b: 2, a: 1 }, z: true } },
+        },
+      ],
       workGraphVersion: 'v1',
       policySnapshotId: 'policy-v1',
       metadata: { actionGateway: { nested: { second: 2, first: 1 } } },
@@ -249,16 +278,15 @@ describe('gateway submission idempotency hash', () => {
       policySnapshotId: 'policy-v1',
       metadata: { actionGateway: { nested: { first: 1, second: 2 } } },
       workGraphVersion: 'v1',
-      steps: [{
-        kind: 'tool',
-        id: 'step-canonical',
-        input: { args: { z: true, outer: { a: 1, b: 2 } } },
-      }],
+      steps: [
+        {
+          kind: 'tool',
+          id: 'step-canonical',
+          input: { args: { z: true, outer: { a: 1, b: 2 } } },
+        },
+      ],
       goal: 'canonical replay',
     };
-    assert.equal(
-      canonicalGatewaySubmissionHash(first),
-      canonicalGatewaySubmissionHash(reordered),
-    );
+    assert.equal(canonicalGatewaySubmissionHash(first), canonicalGatewaySubmissionHash(reordered));
   });
 });

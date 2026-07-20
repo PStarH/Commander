@@ -1,11 +1,6 @@
 /** Canonical, versioned execution-kernel domain types. */
 
-import type {
-  KernelErrorDetails,
-  KernelEvent,
-  RunState,
-  StepState,
-} from '@commander/contracts';
+import type { KernelErrorDetails, KernelEvent, RunState, StepState } from '@commander/contracts';
 
 export type { KernelErrorDetails, KernelEvent } from '@commander/contracts';
 
@@ -304,12 +299,7 @@ export interface AnswerInteractionRequest {
 // ── Kill switches (L4-04) ───────────────────────────────────────────────────
 
 export type KillSwitchScope =
-  | 'tenant'
-  | 'package'
-  | 'model'
-  | 'tool'
-  | 'destination'
-  | 'effect-type';
+  'tenant' | 'package' | 'model' | 'tool' | 'destination' | 'effect-type';
 
 export interface KillSwitch {
   tenantId: string;

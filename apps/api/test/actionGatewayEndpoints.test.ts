@@ -136,7 +136,10 @@ async function withGateway(
     }
     next();
   });
-  app.use('/v1', createV1GatewayRouter(() => gateway));
+  app.use(
+    '/v1',
+    createV1GatewayRouter(() => gateway),
+  );
   const server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
@@ -288,11 +291,10 @@ describe('L4-04 kill switch matrix', () => {
         idempotencyKey: 'action-kill-after-approval-sim',
       });
       assert.equal(blocked.status, 403);
-      assert.equal((await blocked.json() as any).error.code, 'KILL_SWITCH_ACTIVE');
+      assert.equal(((await blocked.json()) as any).error.code, 'KILL_SWITCH_ACTIVE');
 
-      const { createWorkerPolicyEvaluator } = await import(
-        '../../../packages/worker-plane/src/bootstrap.js'
-      );
+      const { createWorkerPolicyEvaluator } =
+        await import('../../../packages/worker-plane/src/bootstrap.js');
       const action = payload.action;
       const decision = await createWorkerPolicyEvaluator(gateway.repository).evaluate({
         tenantId: 'tenant-a',
@@ -335,7 +337,7 @@ describe('L4-01 governed action HTTP API', () => {
           body: request.body === undefined ? undefined : JSON.stringify(request.body),
         });
         assert.equal(response.status, 401, `${request.method} ${request.path}`);
-        assert.equal((await response.json() as any).error.code, 'AUTHENTICATION_REQUIRED');
+        assert.equal(((await response.json()) as any).error.code, 'AUTHENTICATION_REQUIRED');
       }
     });
   });
@@ -353,7 +355,7 @@ describe('L4-01 governed action HTTP API', () => {
         body: JSON.stringify(baseAction),
       });
       assert.equal(response.status, 401);
-      assert.equal((await response.json() as any).error.code, 'TENANT_IDENTITY_REQUIRED');
+      assert.equal(((await response.json()) as any).error.code, 'TENANT_IDENTITY_REQUIRED');
     });
   });
 
@@ -365,7 +367,7 @@ describe('L4-01 governed action HTTP API', () => {
         destination: 'demo://tickets/approval',
         idempotencyKey: 'action-auth-approve',
       });
-      const firstAction = (await first.json() as any).action;
+      const firstAction = ((await first.json()) as any).action;
       const firstRunId = firstAction.runId;
 
       for (const principal of ['api-read', 'user-operator']) {
@@ -377,7 +379,7 @@ describe('L4-01 governed action HTTP API', () => {
           principal,
         );
         assert.equal(forbidden.status, 403, principal);
-        assert.equal((await forbidden.json() as any).error.code, 'ACTION_APPROVAL_FORBIDDEN');
+        assert.equal(((await forbidden.json()) as any).error.code, 'ACTION_APPROVAL_FORBIDDEN');
       }
       const unauthenticated = await postJson(
         baseUrl,
@@ -402,7 +404,7 @@ describe('L4-01 governed action HTTP API', () => {
         destination: 'demo://tickets/approval',
         idempotencyKey: 'action-auth-reject',
       });
-      const secondRunId = (await second.json() as any).action.runId;
+      const secondRunId = ((await second.json()) as any).action.runId;
       const rejected = await postJson(
         baseUrl,
         `/v1/actions/${secondRunId}/reject`,
@@ -419,7 +421,7 @@ describe('L4-01 governed action HTTP API', () => {
     await withGateway(gateway, async (baseUrl) => {
       const simulated = await postJson(baseUrl, '/v1/actions/simulate', baseAction);
       assert.equal(simulated.status, 200);
-      const simulation = (await simulated.json() as any).simulation;
+      const simulation = ((await simulated.json()) as any).simulation;
       assert.deepEqual(Object.keys(simulation).sort(), [
         'actionDigest',
         'decisionId',
@@ -429,17 +431,11 @@ describe('L4-01 governed action HTTP API', () => {
         'simulationId',
       ]);
       assert.equal(simulation.effect, 'allow');
-      const simulationRun = await gateway.repository.getRun(
-        simulation.simulationId,
-        'tenant-a',
-      );
+      const simulationRun = await gateway.repository.getRun(simulation.simulationId, 'tenant-a');
       assert.ok(simulationRun);
       assert.equal(simulationRun.state, 'CANCELLED');
       assert.ok(simulationRun.terminalAt);
-      assert.deepEqual(
-        simulationRun.metadata.actionGatewaySimulation,
-        simulation,
-      );
+      assert.deepEqual(simulationRun.metadata.actionGatewaySimulation, simulation);
       assert.equal(
         (await gateway.repository.listEffectsForRun(simulation.simulationId, 'tenant-a')).length,
         0,
@@ -459,7 +455,7 @@ describe('L4-01 governed action HTTP API', () => {
 
       const proposed = await postJson(baseUrl, '/v1/actions', baseAction);
       assert.equal(proposed.status, 202);
-      const payload = await proposed.json() as any;
+      const payload = (await proposed.json()) as any;
       assert.equal(payload.action.decision.effect, 'allow');
       assert.deepEqual(Object.keys(payload.action.decision).sort(), [
         'decisionId',
@@ -488,7 +484,7 @@ describe('L4-01 governed action HTTP API', () => {
         idempotencyKey: 'action-key-denied',
       });
       assert.equal(denied.status, 403);
-      const payload = await denied.json() as any;
+      const payload = (await denied.json()) as any;
       assert.equal(payload.action.decision.effect, 'deny');
       const claimed = await gateway.repository.claimNextStep({
         workerId: 'deny-worker',
@@ -512,7 +508,7 @@ describe('L4-01 governed action HTTP API', () => {
         idempotencyKey: 'action-key-compensate',
       });
       assert.equal(proposed.status, 202);
-      const payload = await proposed.json() as any;
+      const payload = (await proposed.json()) as any;
       assert.equal(payload.action.decision.effect, 'allow');
       const step = await gateway.repository.getStep(payload.action.stepId, 'tenant-a');
       assert.equal(step?.input.effectType, 'compensate.demo.ticket.create');
@@ -528,21 +524,17 @@ describe('L4-01 governed action HTTP API', () => {
         idempotencyKey: 'action-key-approval',
       });
       assert.equal(proposed.status, 202);
-      const payload = await proposed.json() as any;
+      const payload = (await proposed.json()) as any;
       assert.equal(payload.action.decision.effect, 'require_approval');
       assert.equal(payload.action.state, 'WAITING_FOR_APPROVAL');
 
-      const approved = await postJson(
-        baseUrl,
-        `/v1/actions/${payload.action.runId}/approve`,
-        {
-          actionDigest: payload.action.simulation.actionDigest,
-          simulationId: payload.action.simulation.simulationId,
-          policySnapshotId: payload.action.simulation.policySnapshotId,
-        },
-      );
+      const approved = await postJson(baseUrl, `/v1/actions/${payload.action.runId}/approve`, {
+        actionDigest: payload.action.simulation.actionDigest,
+        simulationId: payload.action.simulation.simulationId,
+        policySnapshotId: payload.action.simulation.policySnapshotId,
+      });
       assert.equal(approved.status, 200);
-      assert.equal((await approved.json() as any).action.state, 'APPROVED');
+      assert.equal(((await approved.json()) as any).action.state, 'APPROVED');
 
       const run = await gateway.repository.getRun(payload.action.runId, 'tenant-a');
       const metadata = run!.metadata.actionGateway as any;
@@ -551,13 +543,12 @@ describe('L4-01 governed action HTTP API', () => {
         'RETRY_WAIT',
       );
       assert.equal(
-        (await gateway.repository.listInteractions(payload.action.runId, 'tenant-a'))[0]
-          ?.response?.approved,
+        (await gateway.repository.listInteractions(payload.action.runId, 'tenant-a'))[0]?.response
+          ?.approved,
         true,
       );
       assert.deepEqual(
-        (await gateway.repository.listInteractions(payload.action.runId, 'tenant-a'))[0]
-          ?.response,
+        (await gateway.repository.listInteractions(payload.action.runId, 'tenant-a'))[0]?.response,
         {
           approved: true,
           actionDigest: payload.action.simulation.actionDigest,
@@ -580,26 +571,19 @@ describe('L4-01 governed action HTTP API', () => {
         idempotencyKey: 'action-approval-digest-mismatch',
       };
       const simulated = await postJson(baseUrl, '/v1/actions/simulate', actionInput);
-      const simulation = (await simulated.json() as any).simulation;
+      const simulation = ((await simulated.json()) as any).simulation;
       const proposed = await postJson(baseUrl, '/v1/actions', actionInput);
-      const action = (await proposed.json() as any).action;
+      const action = ((await proposed.json()) as any).action;
 
-      const rejected = await postJson(
-        baseUrl,
-        `/v1/actions/${action.runId}/approve`,
-        {
-          actionDigest: '0'.repeat(64),
-          simulationId: simulation.simulationId,
-          policySnapshotId: simulation.policySnapshotId,
-        },
-      );
+      const rejected = await postJson(baseUrl, `/v1/actions/${action.runId}/approve`, {
+        actionDigest: '0'.repeat(64),
+        simulationId: simulation.simulationId,
+        policySnapshotId: simulation.policySnapshotId,
+      });
       assert.equal(rejected.status, 409);
-      assert.equal((await rejected.json() as any).error.code, 'ACTION_DIGEST_MISMATCH');
+      assert.equal(((await rejected.json()) as any).error.code, 'ACTION_DIGEST_MISMATCH');
 
-      const interactions = await gateway.repository.listInteractions(
-        action.runId,
-        'tenant-a',
-      );
+      const interactions = await gateway.repository.listInteractions(action.runId, 'tenant-a');
       assert.equal(interactions[0]?.status, 'pending');
     });
   });
@@ -613,7 +597,7 @@ describe('L4-01 governed action HTTP API', () => {
           destination: 'demo://tickets/approval',
           idempotencyKey,
         });
-        const action = (await response.json() as any).action;
+        const action = ((await response.json()) as any).action;
         const approved = await postJson(
           baseUrl,
           `/v1/actions/${action.runId}/approve`,
@@ -623,13 +607,14 @@ describe('L4-01 governed action HTTP API', () => {
         const run = await gateway.repository.getRun(action.runId, 'tenant-a');
         return { action, metadata: run!.metadata.actionGateway as any };
       };
-      const claim = () => gateway.repository.claimNextStep({
-        workerId: 'status-worker',
-        workerGeneration: 1,
-        tenantId: 'tenant-a',
-        capabilities: ['tool'],
-        leaseTtlMs: 30_000,
-      });
+      const claim = () =>
+        gateway.repository.claimNextStep({
+          workerId: 'status-worker',
+          workerGeneration: 1,
+          tenantId: 'tenant-a',
+          capabilities: ['tool'],
+          leaseTtlMs: 30_000,
+        });
 
       const unknown = await proposeApproval('action-status-unknown');
       const unknownStep = await claim();
@@ -655,7 +640,7 @@ describe('L4-01 governed action HTTP API', () => {
       const unknownGet = await fetch(`${baseUrl}/v1/actions/${unknown.action.runId}`, {
         headers: { 'x-test-tenant': 'tenant-a' },
       });
-      assert.equal((await unknownGet.json() as any).action.state, 'COMPLETION_UNKNOWN');
+      assert.equal(((await unknownGet.json()) as any).action.state, 'COMPLETION_UNKNOWN');
 
       const terminal = await proposeApproval('action-status-terminal');
       const terminalStep = await claim();
@@ -690,7 +675,7 @@ describe('L4-01 governed action HTTP API', () => {
       const terminalGet = await fetch(`${baseUrl}/v1/actions/${terminal.action.runId}`, {
         headers: { 'x-test-tenant': 'tenant-a' },
       });
-      assert.equal((await terminalGet.json() as any).action.state, 'SUCCEEDED');
+      assert.equal(((await terminalGet.json()) as any).action.state, 'SUCCEEDED');
     });
   });
 
@@ -702,18 +687,13 @@ describe('L4-01 governed action HTTP API', () => {
         destination: 'demo://tickets/approval',
         idempotencyKey: 'action-key-reject',
       });
-      const payload = await proposed.json() as any;
-      const rejected = await postJson(
-        baseUrl,
-        `/v1/actions/${payload.action.runId}/reject`,
-        { reason: 'not authorized' },
-      );
+      const payload = (await proposed.json()) as any;
+      const rejected = await postJson(baseUrl, `/v1/actions/${payload.action.runId}/reject`, {
+        reason: 'not authorized',
+      });
       assert.equal(rejected.status, 200);
-      assert.equal((await rejected.json() as any).action.state, 'REJECTED');
-      const rejectedStep = await gateway.repository.getStep(
-        payload.action.stepId,
-        'tenant-a',
-      );
+      assert.equal(((await rejected.json()) as any).action.state, 'REJECTED');
+      const rejectedStep = await gateway.repository.getStep(payload.action.stepId, 'tenant-a');
       assert.equal(rejectedStep?.state, 'CANCELLED');
       assert.equal(
         (await gateway.repository.getRun(payload.action.runId, 'tenant-a'))?.state,
@@ -730,7 +710,7 @@ describe('L4-01 governed action HTTP API', () => {
         destination: 'demo://tickets/approval',
         idempotencyKey: 'action-key-tenant',
       });
-      const payload = await proposed.json() as any;
+      const payload = (await proposed.json()) as any;
 
       const crossTenantGet = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}`, {
         headers: { 'x-test-tenant': 'tenant-b' },
@@ -753,8 +733,8 @@ describe('L4-01 governed action HTTP API', () => {
       const replay = await postJson(baseUrl, '/v1/actions', baseAction);
       assert.equal(first.status, 202);
       assert.equal(replay.status, 200);
-      const firstPayload = await first.json() as any;
-      const replayPayload = await replay.json() as any;
+      const firstPayload = (await first.json()) as any;
+      const replayPayload = (await replay.json()) as any;
       assert.equal(replayPayload.idempotentReplay, true);
       assert.equal(replayPayload.action.runId, firstPayload.action.runId);
       assert.equal(
@@ -778,7 +758,7 @@ describe('L4-01 governed action HTTP API', () => {
           Authorization: 'Bearer SENSITIVE_AUTH_TOKEN',
         },
       });
-      const payload = await proposed.json() as any;
+      const payload = (await proposed.json()) as any;
       const approved = await postJson(
         baseUrl,
         `/v1/actions/${payload.action.runId}/approve`,
@@ -827,10 +807,9 @@ describe('L4-01 governed action HTTP API', () => {
         output: { status: 'ok' },
         actor: 'evidence-worker',
       });
-      const evidence = await fetch(
-        `${baseUrl}/v1/actions/${payload.action.runId}/evidence`,
-        { headers: { 'x-test-tenant': 'tenant-a' } },
-      );
+      const evidence = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}/evidence`, {
+        headers: { 'x-test-tenant': 'tenant-a' },
+      });
       assert.equal(evidence.status, 200);
       const evidenceText = await evidence.text();
       const evidencePayload = JSON.parse(evidenceText) as any;
@@ -862,20 +841,15 @@ describe('L4-01 governed action HTTP API', () => {
         destination: 'demo://tickets/approval',
         idempotencyKey: 'action-key-reject-evidence',
       });
-      const payload = await proposed.json() as any;
-      const rejected = await postJson(
-        baseUrl,
-        `/v1/actions/${payload.action.runId}/reject`,
-        {
-          reason: 'Bearer USER_CONTROLLED_REJECT_SECRET',
-        },
-      );
+      const payload = (await proposed.json()) as any;
+      const rejected = await postJson(baseUrl, `/v1/actions/${payload.action.runId}/reject`, {
+        reason: 'Bearer USER_CONTROLLED_REJECT_SECRET',
+      });
       assert.equal(rejected.status, 200);
 
-      const evidence = await fetch(
-        `${baseUrl}/v1/actions/${payload.action.runId}/evidence`,
-        { headers: { 'x-test-tenant': 'tenant-a' } },
-      );
+      const evidence = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}/evidence`, {
+        headers: { 'x-test-tenant': 'tenant-a' },
+      });
       assert.equal(evidence.status, 200);
       const evidenceText = await evidence.text();
       const evidencePayload = JSON.parse(evidenceText) as any;
@@ -936,7 +910,7 @@ describe('L4-01 governed action HTTP API', () => {
         }),
       });
       assert.equal(response.status, 403);
-      assert.equal((await response.json() as any).error.code, 'ACTION_GATEWAY_REQUIRED');
+      assert.equal(((await response.json()) as any).error.code, 'ACTION_GATEWAY_REQUIRED');
     });
   });
 
@@ -968,7 +942,7 @@ describe('L4-01 governed action HTTP API', () => {
         }),
       });
       assert.equal(response.status, 403);
-      assert.equal((await response.json() as any).error.code, 'ACTION_GATEWAY_REQUIRED');
+      assert.equal(((await response.json()) as any).error.code, 'ACTION_GATEWAY_REQUIRED');
     });
   });
 
@@ -987,7 +961,7 @@ describe('L4-01 governed action HTTP API', () => {
         args: { title: 'second' },
       });
       assert.equal(conflict.status, 409);
-      assert.equal((await conflict.json() as any).error.code, 'IDEMPOTENCY_KEY_CONFLICT');
+      assert.equal(((await conflict.json()) as any).error.code, 'IDEMPOTENCY_KEY_CONFLICT');
     });
   });
 
@@ -997,7 +971,7 @@ describe('L4-01 governed action HTTP API', () => {
     await withGateway(gateway, async (baseUrl) => {
       const response = await postJson(baseUrl, '/v1/actions/simulate', baseAction);
       assert.equal(response.status, 503);
-      assert.equal((await response.json() as any).error.code, 'KILL_SWITCH_LOOKUP_FAILED');
+      assert.equal(((await response.json()) as any).error.code, 'KILL_SWITCH_LOOKUP_FAILED');
     });
   });
 });
