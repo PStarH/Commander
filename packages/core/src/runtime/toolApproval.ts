@@ -553,6 +553,12 @@ export class ToolApproval {
       reason?: string;
       /** Short-lived capability token; presence + verifier triggers fast-path. */
       token?: string;
+      /**
+       * Tenant audience for CAP-02 binding (same semantics as ToolExecutionService).
+       * Concrete tenant rejects wildcard aud='*'; missing/empty uses '*' so a
+       * stolen tenant-scoped token cannot short-circuit the approval plane.
+       */
+      tenantId?: string;
     },
   ): Promise<ApprovalResult> {
     // Reject malformed tool calls defensively rather than crashing on missing
@@ -580,10 +586,14 @@ export class ToolApproval {
     if (context?.token && tokenVerifier) {
       // Non-consuming: approval is a pre-check; ToolExecutionService also verifies.
       // Consuming here would make concurrent multi-tool runs fail with replay_detected.
+      // CAP-02: always bind verify audience — omit-aud must not fail-open the
+      // approval plane (even if TES later rejects execute).
+      const expectedAud = context.tenantId && context.tenantId.length > 0 ? context.tenantId : '*';
       const v = tokenVerifier.verify(context.token, {
         tool: toolName,
         args,
         consumeReplay: false,
+        aud: expectedAud,
       });
       if (v.ok) {
         this.recordDecision(toolName, true, 'auto');

@@ -18,7 +18,13 @@ import {
   type UserRole,
   type SafeUser,
 } from './userStore';
-import { signAccessToken, signRefreshToken, verifyToken, type AuthUser } from './jwtMiddleware';
+import {
+  signAccessToken,
+  signRefreshToken,
+  verifyToken,
+  type AuthUser,
+  resolveAccessTenantId,
+} from './jwtMiddleware';
 import { consume as consumeRefreshJti, revoke as revokeRefreshJti } from './refreshTokenStore';
 
 /**
@@ -170,6 +176,7 @@ export function createUserAuthRouter(): Router {
       id: result.user.id,
       username: result.user.username,
       role: result.user.role,
+      tenantId: resolveAccessTenantId(),
     };
     updateLastLogin(result.user.id);
     res.status(201).json(buildAuthResponse(authUser));
@@ -206,6 +213,7 @@ export function createUserAuthRouter(): Router {
       id: user.id,
       username: user.username,
       role: user.role,
+      tenantId: resolveAccessTenantId(),
     };
     updateLastLogin(user.id);
     res.json(buildAuthResponse(authUser));
@@ -259,6 +267,7 @@ export function createUserAuthRouter(): Router {
       id: user.id,
       username: user.username,
       role: user.role,
+      tenantId: resolveAccessTenantId(),
     };
     res.json(buildAuthResponse(authUser));
   });

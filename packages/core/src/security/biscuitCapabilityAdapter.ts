@@ -124,10 +124,10 @@ export class BiscuitCapabilityAdapter {
   }
 
   /**
-   * Create a verifier for a specific tenant.
+   * Create a verifier for a specific tenant (aud required — CAP-02 fail-closed).
    * The verifier checks that the token's tenant fact matches the expected audience.
    */
-  createVerifier(expectedAud?: string): BiscuitCapabilityVerifier {
+  createVerifier(expectedAud: string): BiscuitCapabilityVerifier {
     return new BiscuitCapabilityVerifier(this.verifier, expectedAud);
   }
 
@@ -156,9 +156,9 @@ export class BiscuitCapabilityAdapter {
  */
 export class BiscuitCapabilityVerifier {
   private biscuitVerifier: BiscuitTokenVerifier;
-  private expectedAud?: string;
+  private expectedAud: string;
 
-  constructor(biscuitVerifier: BiscuitTokenVerifier, expectedAud?: string) {
+  constructor(biscuitVerifier: BiscuitTokenVerifier, expectedAud: string) {
     this.biscuitVerifier = biscuitVerifier;
     this.expectedAud = expectedAud;
   }
@@ -171,7 +171,7 @@ export class BiscuitCapabilityVerifier {
    * 2. Ed25519 signature chain (all blocks)
    * 3. Expiry (not expired)
    * 4. Authorization (allow("tool") fact exists for the requested tool)
-   * 5. Tenant matching (if expectedAud is set)
+   * 5. Tenant matching (CAP-02; aligned with HMAC — omit-aud fail-closed)
    */
   verify(encoded: string, req: BiscuitVerifyRequest): BiscuitVerifyResult {
     // Check format
@@ -223,19 +223,40 @@ export class BiscuitCapabilityVerifier {
       };
     }
 
-    // Check tenant (audience) if expectedAud is set
-    if (this.expectedAud && this.expectedAud !== '*') {
-      const tenantAuthorized = token.authorize({
-        predicate: 'tenant',
-        args: [this.expectedAud],
-      });
-      if (!tenantAuthorized) {
-        return {
-          ok: false,
-          reason: 'aud_mismatch',
-          detail: `token tenant does not match expected audience '${this.expectedAud}'`,
-        };
-      }
+    // Audience — CAP-02 (aligned with HMAC CapabilityTokenVerifier):
+    // - Concrete expectedAud rejects token tenant='*' and wrong tenants.
+    // - expectedAud='*' accepts only wildcard tokens (fail-closed vs stolen
+    //   tenant-scoped bsc_ when TES has no/empty tenantId).
+    // - expectedAud='' / missing is misuse: reject (never skip / fail-open).
+    const expectedAud = this.expectedAud;
+    if (expectedAud.length === 0) {
+      return {
+        ok: false,
+        reason: 'aud_mismatch',
+        detail: 'empty expected audience is not allowed',
+      };
+    }
+    const tokenIsWildcard = token.authorize({
+      predicate: 'tenant',
+      args: ['*'],
+    });
+    const tokenMatchesExpected = token.authorize({
+      predicate: 'tenant',
+      args: [expectedAud],
+    });
+    if (expectedAud !== '*' && tokenIsWildcard) {
+      return {
+        ok: false,
+        reason: 'aud_mismatch',
+        detail: `token aud=* is not accepted for tenant-scoped verify (expected=${expectedAud})`,
+      };
+    }
+    if (!tokenMatchesExpected && !tokenIsWildcard) {
+      return {
+        ok: false,
+        reason: 'aud_mismatch',
+        detail: `token tenant does not match expected audience '${expectedAud}'`,
+      };
     }
 
     // Extract a pseudo-jti from the token's first block
