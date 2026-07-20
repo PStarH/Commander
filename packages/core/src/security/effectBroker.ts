@@ -1,14 +1,17 @@
 /**
- * EffectBroker — Architecture V2 mandatory registry for external side effects.
+ * EffectBroker — process-local registry stub (NOT the production PEP).
  *
- * Any WorkGraph or tool path that triggers an external side effect must be
- * admitted through a registered EffectBroker. Production and V2 mode are
- * fail-closed; a narrow local/test compat mode exists via
- * COMMANDER_EFFECT_BROKER_COMPAT=1.
+ * The full admit/execute monopoly lives in `@commander/effect-broker`
+ * (worker-plane). This module only stores an optional in-process handle via
+ * get/set for readiness probes and local experiments.
  *
- * Note: this module is the process-local registry (get/set). The full
- * admit/execute monopoly lives in `@commander/effect-broker` (worker-plane).
- * Wiring setEffectBroker() here does NOT claim LLM outlet monopoly.
+ * Claim honesty:
+ * - `setEffectBroker` is not wired on the live Gateway path today.
+ * - A null registry is expected in `apps/api` and must not be reported as a
+ *   hard health failure (see `apps/api/src/healthProbes.ts` → `unknown`).
+ * - Production external effects go through worker-plane EffectBroker + kernel
+ *   effect ledger; V1 tool paths still use SideEffectGate + ATR (strangler).
+ * - `COMMANDER_EFFECT_BROKER_COMPAT=1` is a non-prod audit-logged escape hatch only.
  */
 
 import { getGlobalLogger } from '../logging';
