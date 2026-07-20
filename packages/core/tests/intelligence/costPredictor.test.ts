@@ -377,7 +377,12 @@ describe('costPredictor', () => {
     });
 
     it('handles persistence errors silently', () => {
-      const predictor = new CostPredictor('/proc/invalid-cost-predictor-path-that-should-fail');
+      // Parent path is a regular file so mkdir/write fails with ENOTDIR on all
+      // platforms. Do NOT use `/proc/...` — on Linux writing under /proc can
+      // block indefinitely (Ubuntu CI hang), while macOS/Windows fail fast.
+      const blockedParent = path.join(tmp, 'not-a-directory');
+      fs.writeFileSync(blockedParent, 'x');
+      const predictor = new CostPredictor(path.join(blockedParent, 'child'));
       expect(() =>
         predictor.record({
           taskType: 'coding',

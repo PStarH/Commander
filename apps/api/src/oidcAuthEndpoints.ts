@@ -232,9 +232,7 @@ export function createOIDCAuthRouter(): Router {
     try {
       result = await plugin.authenticate(parsed.data.idToken);
     } catch (err) {
-      process.stderr.write(
-        '[oidcAuthEndpoints] OIDC exchange error: ' + String(err) + '\n',
-      );
+      process.stderr.write('[oidcAuthEndpoints] OIDC exchange error: ' + String(err) + '\n');
       res.status(401).json({ error: 'OIDC token validation failed' });
       return;
     }

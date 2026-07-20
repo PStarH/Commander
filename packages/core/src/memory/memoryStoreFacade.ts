@@ -210,11 +210,7 @@ export class MemoryStoreFacade implements MemoryStore {
     };
   }
 
-  async queryAudit(options: {
-    projectId: string;
-    namespace?: string;
-    limit?: number;
-  }): Promise<{
+  async queryAudit(options: { projectId: string; namespace?: string; limit?: number }): Promise<{
     entries: Array<{
       id: string;
       tenantId: string;

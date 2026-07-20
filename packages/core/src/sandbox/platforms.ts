@@ -825,8 +825,10 @@ class GVisorSB implements PlatformSandbox {
     if (p.memoryLimitMB && p.memoryLimitMB > 0) args.push('--memory', `${p.memoryLimitMB}m`);
 
     // Security (G8): Configurable CPU resource limit — prevent crypto-mining / DoS via CPU exhaustion.
+    // Use --cpus only. Pairing --cpus (NanoCpus) with --cpu-quota conflicts on modern Docker
+    // ("Conflicting options: Nano CPUs and CPU Quota") and breaks Ubuntu CI pathsec.
     const _cpuLimit = p.cpuLimit ?? 2;
-    args.push('--cpus', String(_cpuLimit), '--cpu-quota', String(Math.round(_cpuLimit * 100000)));
+    args.push('--cpus', String(_cpuLimit));
 
     // Environment filtering
     const env = filterEnv(p);
@@ -1059,8 +1061,9 @@ class DockerSB implements PlatformSandbox {
 
     if (p.memoryLimitMB && p.memoryLimitMB > 0) args.push('--memory', `${p.memoryLimitMB}m`);
     // Security (G8): Configurable CPU resource limit — prevent crypto-mining / DoS via CPU exhaustion.
+    // Use --cpus only (see DockerSandbox note above — do not also set --cpu-quota).
     const _cpuLimit = p.cpuLimit ?? 2;
-    args.push('--cpus', String(_cpuLimit), '--cpu-quota', String(Math.round(_cpuLimit * 100000)));
+    args.push('--cpus', String(_cpuLimit));
     args.push(...buildContainerSecurityOptions());
 
     // Use --env-file to prevent env var injection via special characters
