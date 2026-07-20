@@ -375,7 +375,7 @@ jobs:
 
       - name: CLI check
         shell: bash
-        run: cd packages/core && npx -p tsx tsx src/cli.ts status
+        run: cd packages/core && pnpm exec tsx src/cliEntry.ts status
 
       - name: Build core package
         shell: bash
