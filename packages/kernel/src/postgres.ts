@@ -518,6 +518,9 @@ export class PostgresKernelRepository implements KernelRepository {
       for (const row of pausedSteps.rows) {
         const step = fromStep(row);
         await this.releaseTenantSlot(client, step.tenantId);
+        // Lease revoked: ADMITTED effects are no longer completable via step lease.
+        // Park as COMPLETION_UNKNOWN so retries fail closed instead of re-executing writes.
+        await this.parkOrphanAdmittedEffects(client, step, 'run_paused', actor);
         await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: 'step.paused', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor, payload: { previousState: 'RUNNING' } });
       }
       await this.appendEvent(client, { aggregateType: 'run', aggregateId: run.id, sequence: run.version, type: 'run.paused', tenantId, runId, actor, payload: {} });
@@ -614,6 +617,7 @@ export class PostgresKernelRepository implements KernelRepository {
       }
       for (const row of affected.rows) {
         const step = fromStep(row);
+        await this.parkOrphanAdmittedEffects(client, step, 'tenant_paused', actor);
         await this.appendEvent(client, {
           aggregateType: 'step', aggregateId: step.id, sequence: step.version,
           type: 'step.tenant_paused', tenantId, runId: step.runId, stepId: step.id,
