@@ -180,7 +180,12 @@ export interface IssueOptions {
 export interface VerifyRequest {
   tool: string;
   args: Record<string, unknown>;
-  /** Optional caller-supplied audience; if absent, token's aud must equal '*'. */
+  /**
+   * Caller-supplied audience (overrides constructor expectedAud).
+   * Concrete tenant rejects token aud='*' (CAP-02). When execute has no
+   * tenantId pass aud:'*'. Omitting both constructor and request aud is
+   * fail-closed (`aud_mismatch`) — never skip audience checks.
+   */
   aud?: string;
   /**
    * When true (default), a successful verify records (jti, nonce) so a second
@@ -480,8 +485,8 @@ export class CapabilityTokenIssuer {
     return added;
   }
 
-  /** Create a verifier bound to this issuer's master key. */
-  createVerifier(expectedAud?: string): CapabilityTokenVerifier {
+  /** Create a verifier bound to this issuer's master key (aud required). */
+  createVerifier(expectedAud: string): CapabilityTokenVerifier {
     return new CapabilityTokenVerifier({
       masterKey: this.masterKey,
       expectedAud,
@@ -496,7 +501,11 @@ export class CapabilityTokenIssuer {
 
 export interface VerifierOptions {
   masterKey: Buffer | string;
-  /** Audience string the verifier expects (token aud must equal this unless '*'). */
+  /**
+   * Audience the verifier expects. Concrete tenant rejects token aud='*'
+   * (CAP-02). Always pass a concrete aud (or '*') via constructor or
+   * `VerifyRequest.aud` — omitting both is fail-closed (`aud_mismatch`).
+   */
   expectedAud?: string;
   auditLogger?: CapabilityAuditLogger;
 }
@@ -575,9 +584,22 @@ export class CapabilityTokenVerifier {
         `parent jti=${payload.parent_jti.slice(0, 12)}… was revoked`,
       );
 
-    // Audience
-    if (this.expectedAud !== undefined && payload.aud !== this.expectedAud && payload.aud !== '*')
-      return reject('aud_mismatch', `token aud=${payload.aud} expected=${this.expectedAud}`);
+    // Audience — constructor expectedAud OR per-request req.aud (CAP-02).
+    // Omit-aud is fail-closed: new callers that skip aud must not reopen CAP-02.
+    // Concrete tenant rejects wildcard tokens; expectedAud='*' accepts only '*'.
+    const expectedAud = req.aud ?? this.expectedAud;
+    if (expectedAud === undefined || expectedAud.length === 0) {
+      return reject('aud_mismatch', 'expected audience is required (omit-aud fail-open is closed)');
+    }
+    if (expectedAud !== '*' && payload.aud === '*') {
+      return reject(
+        'aud_mismatch',
+        `token aud=* is not accepted for tenant-scoped verify (expected=${expectedAud})`,
+      );
+    }
+    if (payload.aud !== expectedAud && payload.aud !== '*') {
+      return reject('aud_mismatch', `token aud=${payload.aud} expected=${expectedAud}`);
+    }
 
     // Scope: tool membership (wildcard-aware via shared toolMatches()).
     const toolCovered = payload.scope.tools.some((p) => toolMatches(p, req.tool));
