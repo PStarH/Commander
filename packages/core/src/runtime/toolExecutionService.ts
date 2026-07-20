@@ -986,10 +986,7 @@ export class ToolExecutionService {
    *
    * Config: speculativeExecution.enabled must be true (defaults to false).
    */
-  async triggerSpeculativeExecution(
-    tenantId?: string,
-    capabilityToken?: string,
-  ): Promise<void> {
+  async triggerSpeculativeExecution(tenantId?: string, capabilityToken?: string): Promise<void> {
     const specConfig = (
       this.runtime.config as AgentRuntimeConfig & {
         speculativeExecution?: { enabled?: boolean };

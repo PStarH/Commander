@@ -19,10 +19,7 @@ import {
   type SafeUser,
 } from './userStore';
 import { signAccessToken, signRefreshToken, verifyToken, type AuthUser } from './jwtMiddleware';
-import {
-  consume as consumeRefreshJti,
-  revoke as revokeRefreshJti,
-} from './refreshTokenStore';
+import { consume as consumeRefreshJti, revoke as revokeRefreshJti } from './refreshTokenStore';
 
 /**
  * AUTH-6: a real bcrypt hash used only to spend comparable CPU on the

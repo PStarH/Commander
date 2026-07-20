@@ -23,7 +23,9 @@ function loadInventory(): DeprecatedAuthority[] {
   // Image builds must COPY this file; missing inventory must not 500 product routes.
   if (!existsSync(path)) return [];
   try {
-    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as { authorities?: DeprecatedAuthority[] };
+    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as {
+      authorities?: DeprecatedAuthority[];
+    };
     return (parsed.authorities ?? []).filter((a) => a.status === 'deprecated');
   } catch {
     return [];
@@ -60,7 +62,10 @@ function matchInventoryRoute(method: string, path: string): DeprecatedAuthority 
     for (const route of entry.routes) {
       if (routePatternToRegex(route).test(key)) return entry;
       const [, pattern] = route.split(' ');
-      if (pattern?.endsWith('/*') && key.startsWith(`${method.toUpperCase()} ${pattern.slice(0, -2)}`)) {
+      if (
+        pattern?.endsWith('/*') &&
+        key.startsWith(`${method.toUpperCase()} ${pattern.slice(0, -2)}`)
+      ) {
         return entry;
       }
     }
@@ -81,7 +86,9 @@ export function deprecatedPathMetrics(): RequestHandler {
       res.set('x-legacy', 'true');
       if (entry.sunsetAt) res.set('Sunset', httpDate(entry.sunsetAt));
       if (entry.replacement) {
-        const linkTarget = entry.replacement.startsWith('/') ? entry.replacement : `/${entry.replacement}`;
+        const linkTarget = entry.replacement.startsWith('/')
+          ? entry.replacement
+          : `/${entry.replacement}`;
         res.set('Link', `<${linkTarget}>; rel="successor-version"`);
       }
     }
@@ -90,7 +97,10 @@ export function deprecatedPathMetrics(): RequestHandler {
 }
 
 export function commanderDeprecatedPathRequestsTotal(): string {
-  const lines = ['# HELP commander_deprecated_path_requests_total Deprecated path requests', '# TYPE commander_deprecated_path_requests_total counter'];
+  const lines = [
+    '# HELP commander_deprecated_path_requests_total Deprecated path requests',
+    '# TYPE commander_deprecated_path_requests_total counter',
+  ];
   for (const [surface, count] of counters) {
     lines.push(`commander_deprecated_path_requests_total{surface="${surface}"} ${count}`);
   }

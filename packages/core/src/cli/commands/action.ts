@@ -36,11 +36,13 @@ export async function actionApiFetch(
   return fetchImpl(`${config.baseUrl}${path}`, { ...init, headers });
 }
 
-async function killList(
-  config: ActionApiConfig,
-  fetchImpl: typeof fetch,
-): Promise<void> {
-  const response = await actionApiFetch('/v1/actions/kill-switches', { method: 'GET' }, config, fetchImpl);
+async function killList(config: ActionApiConfig, fetchImpl: typeof fetch): Promise<void> {
+  const response = await actionApiFetch(
+    '/v1/actions/kill-switches',
+    { method: 'GET' },
+    config,
+    fetchImpl,
+  );
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`Kill switch list failed (${response.status}): ${body}`);

@@ -121,8 +121,13 @@ describe('commander dev supervisor', () => {
     const filtered = Object.fromEntries(
       Object.entries(env).filter(([k]) => k === 'PORT' || k.startsWith('COMMANDER_')),
     );
-    writeFileSync(join(layout.dataDir, 'ops.env'), JSON.stringify(filtered, null, 2), { mode: 0o600 });
-    const written = JSON.parse(readFileSync(join(layout.dataDir, 'ops.env'), 'utf8')) as Record<string, string>;
+    writeFileSync(join(layout.dataDir, 'ops.env'), JSON.stringify(filtered, null, 2), {
+      mode: 0o600,
+    });
+    const written = JSON.parse(readFileSync(join(layout.dataDir, 'ops.env'), 'utf8')) as Record<
+      string,
+      string
+    >;
     assert.equal(written.PORT, '4010');
     assert.ok(written.COMMANDER_KERNEL_BACKEND);
     assert.equal(written.PATH, undefined);

@@ -1,4 +1,14 @@
-import { chmodSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, closeSync, writeSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  closeSync,
+  writeSync,
+} from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import * as path from 'node:path';
@@ -43,7 +53,10 @@ export function resolveDevLayout(flags: DevCommandFlags, cwd = process.cwd()): D
   };
 }
 
-export function prepareDevDataDir(layout: DevLayout, reset: boolean): { apiKey: string; workerAuthToken: string } {
+export function prepareDevDataDir(
+  layout: DevLayout,
+  reset: boolean,
+): { apiKey: string; workerAuthToken: string } {
   if (reset && existsSync(layout.dataDir)) {
     rmSync(layout.dataDir, { recursive: true, force: true });
   }
@@ -152,11 +165,7 @@ export function buildDevChildSpecs(input: {
   ];
 }
 
-export type SpawnFn = (
-  command: string,
-  args: string[],
-  options: SpawnOptions,
-) => ChildProcess;
+export type SpawnFn = (command: string, args: string[], options: SpawnOptions) => ChildProcess;
 
 export async function pollReady(url: string, timeoutMs = 120_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
@@ -210,7 +219,9 @@ export async function cmdDev(
     const filteredEnv = Object.fromEntries(
       Object.entries(env).filter(([k]) => k === 'PORT' || k.startsWith('COMMANDER_')),
     );
-    writeFileSync(path.join(layout.dataDir, 'ops.env'), JSON.stringify(filteredEnv, null, 2), { mode: 0o600 });
+    writeFileSync(path.join(layout.dataDir, 'ops.env'), JSON.stringify(filteredEnv, null, 2), {
+      mode: 0o600,
+    });
   }
 
   const spawnFn = options.spawnFn ?? spawn;

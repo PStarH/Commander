@@ -7,9 +7,16 @@
  * Must use `docker run --entrypoint node` (no bind-mount of contracts or host node_modules).
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+
+function assertSafeImageTag(imageTag: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(imageTag)) {
+    throw new Error(`Invalid image tag: ${imageTag}`);
+  }
+  return imageTag;
+}
 
 const DEFAULT_DOCKERFILE = 'packages/worker-plane/Dockerfile';
 const DEFAULT_IMAGE_TAG = 'l4-b-image-boot-smoke-local';
@@ -151,17 +158,30 @@ function resolveGitSha(): string {
 }
 
 function dockerBuild(imageTag: string): void {
-  execSync(
-    `docker build -f ${DEFAULT_DOCKERFILE} -t ${imageTag} .`,
-    { cwd: process.cwd(), stdio: 'inherit' },
-  );
+  const tag = assertSafeImageTag(imageTag);
+  execFileSync('docker', ['build', '-f', DEFAULT_DOCKERFILE, '-t', tag, '.'], {
+    cwd: process.cwd(),
+    stdio: 'inherit',
+  });
 }
 
 function dockerRunInImageProbe(imageTag: string): InImageProbePayload {
+  const tag = assertSafeImageTag(imageTag);
   const source = buildInImageProbeSource();
   try {
-    const stdout = execSync(
-      `docker run --rm -i --workdir ${CONTAINER_WORKDIR} --entrypoint node ${imageTag} --input-type=module`,
+    const stdout = execFileSync(
+      'docker',
+      [
+        'run',
+        '--rm',
+        '-i',
+        '--workdir',
+        CONTAINER_WORKDIR,
+        '--entrypoint',
+        'node',
+        tag,
+        '--input-type=module',
+      ],
       {
         cwd: process.cwd(),
         input: source,
@@ -183,12 +203,11 @@ function dockerRunInImageProbe(imageTag: string): InImageProbePayload {
 
 function dockerRmi(imageTag: string): void {
   try {
-    execSync(`docker rmi ${imageTag}`, { stdio: 'pipe' });
+    execFileSync('docker', ['rmi', assertSafeImageTag(imageTag)], { stdio: 'pipe' });
   } catch {
     /* best effort */
   }
 }
-
 export async function runImageBootSmoke(options: {
   imageTag?: string;
   skipBuild?: boolean;

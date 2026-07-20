@@ -2451,9 +2451,6 @@ class CommanderClient:
         )
 
 
-from ._gateway_client import CommanderGatewayClient  # noqa: E402
-
-
 def _parse_retry_after(response: httpx.Response) -> float | None:
     raw = response.headers.get("Retry-After")
     if raw is None:

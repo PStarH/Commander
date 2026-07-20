@@ -348,7 +348,8 @@ export function isCommanderKernelEnabled(env: NodeJS.ProcessEnv = process.env): 
   if (raw === '1' || raw === 'true' || raw === 'on' || raw === 'yes') return true;
   if (env.NODE_ENV === 'production') return true;
   if (env.COMMANDER_V2_MODE === '1') return true;
-  if (resolveKernelBackend(env) === 'sqlite' && env.COMMANDER_KERNEL_SQLITE_PATH?.trim()) return true;
+  if (resolveKernelBackend(env) === 'sqlite' && env.COMMANDER_KERNEL_SQLITE_PATH?.trim())
+    return true;
   return getKernelDatabaseUrl(env).length > 0;
 }
 
