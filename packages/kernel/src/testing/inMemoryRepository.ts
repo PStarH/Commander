@@ -191,13 +191,14 @@ export class InMemoryKernelRepository implements KernelRepository {
   }
   async failStep(request: FailStepRequest): Promise<KernelStep | null> {
     const step = this.steps.get(request.stepId); if (!step || step.tenantId !== request.tenantId || step.state !== 'RUNNING' || step.version !== request.expectedVersion || !live(step.lease, request.lease)) return null;
+    if (request.refundAttempt && step.attempt > 0) step.attempt -= 1;
     const retry = request.error.retryable && Boolean(request.retryAt) && step.attempt < step.maxAttempts;
     const nextState = retry ? 'RETRY_WAIT' : 'FAILED';
     assertStepTransition(step.state, nextState);
     const fencingEpoch = step.lease?.fencingEpoch ?? this.lastFencingEpoch.get(step.id) ?? 0;
     if (step.lease) this.lastFencingEpoch.set(step.id, step.lease.fencingEpoch);
     step.state = nextState; step.error = request.error; step.scheduledAt = request.retryAt?.toISOString() ?? step.scheduledAt; step.version++; step.lease = undefined; step.updatedAt = now();
-    this.event('step', step.id, step.version, retry ? 'step.retry_scheduled' : 'step.failed', step.tenantId, step.runId, step.id, request.actor, { error: request.error });
+    this.event('step', step.id, step.version, retry ? 'step.retry_scheduled' : 'step.failed', step.tenantId, step.runId, step.id, request.actor, { error: request.error, refundAttempt: Boolean(request.refundAttempt) });
     this.parkOrphanAdmittedEffects(step, 'step_failed', request.actor);
     if (!retry) {
       // Terminal fail with completed effects must compensate (parity with reclaim).
