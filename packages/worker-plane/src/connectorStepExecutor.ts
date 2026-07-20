@@ -30,6 +30,7 @@ import {
   mintStepCapabilityToken,
   requireStepWorkloadBinding,
 } from './stepWorkloadIdentity.js';
+import { awaitWithAbortTimeout } from './awaitWithAbortTimeout.js';
 
 export interface ConnectorStepInput {
   /** Connector name (e.g., "postgres", "kafka", "s3", "http"). */
@@ -73,7 +74,11 @@ export interface ConnectorHandler {
   /** Initialize the connection (called once per worker). */
   initialize(config: ConnectorConnectionConfig): Promise<void>;
   /** Execute an operation. */
-  execute(operation: string, args: Record<string, unknown>, ctx: { signal: AbortSignal; tenantId: string; runId: string; stepId: string }): Promise<unknown>;
+  execute(
+    operation: string,
+    args: Record<string, unknown>,
+    ctx: { signal: AbortSignal; tenantId: string; runId: string; stepId: string },
+  ): Promise<unknown>;
   /** Close the connection (called on worker shutdown). */
   close(): Promise<void>;
 }
@@ -111,17 +116,17 @@ export class ConnectorStepExecutor implements StepExecutor {
     const input = step.input as unknown as ConnectorStepInput;
 
     if (!input.connectorName || typeof input.connectorName !== 'string') {
-      throw new WorkerExecutionError(
-        `Step ${step.id} missing required field: connectorName`,
-        { code: 'INVALID_INPUT', retryable: false },
-      );
+      throw new WorkerExecutionError('Step ' + step.id + ' missing required field: connectorName', {
+        code: 'INVALID_INPUT',
+        retryable: false,
+      });
     }
 
     if (!input.operation || typeof input.operation !== 'string') {
-      throw new WorkerExecutionError(
-        `Step ${step.id} missing required field: operation`,
-        { code: 'INVALID_INPUT', retryable: false },
-      );
+      throw new WorkerExecutionError('Step ' + step.id + ' missing required field: operation', {
+        code: 'INVALID_INPUT',
+        retryable: false,
+      });
     }
 
     if (
@@ -139,10 +144,13 @@ export class ConnectorStepExecutor implements StepExecutor {
         });
       }
       if (!step.lease || !input.effectId || !input.idempotencyKey) {
-        throw new WorkerExecutionError('External connector execution requires effectId, idempotencyKey, and a live step lease', { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false });
+        throw new WorkerExecutionError(
+          'External connector execution requires effectId, idempotencyKey, and a live step lease',
+          { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false },
+        );
       }
       const request = input.args ?? {};
-      const effectType = `${input.connectorName}.${input.operation}`;
+      const effectType = input.connectorName + '.' + input.operation;
       let capabilityToken = input.capabilityToken;
       const production =
         process.env.NODE_ENV === 'production' ||
@@ -163,7 +171,10 @@ export class ConnectorStepExecutor implements StepExecutor {
         );
       }
       if (!capabilityToken) {
-        throw new WorkerExecutionError('External connector execution requires capabilityToken or capabilityIssuer', { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false });
+        throw new WorkerExecutionError(
+          'External connector execution requires capabilityToken or capabilityIssuer',
+          { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false },
+        );
       }
       try {
         const result = await this.effectBroker.execute({
@@ -177,18 +188,35 @@ export class ConnectorStepExecutor implements StepExecutor {
           timeoutMs: input.timeoutMs,
           workloadBinding,
         });
-        return { result: result.response, effectId: result.effectId, replayed: result.replayed, connectorName: input.connectorName, operation: input.operation };
+        return {
+          result: result.response,
+          effectId: result.effectId,
+          replayed: result.replayed,
+          connectorName: input.connectorName,
+          operation: input.operation,
+        };
       } catch (error) {
         if (error instanceof WorkerExecutionError) throw error;
-        throw new WorkerExecutionError(error instanceof Error ? error.message : String(error), { code: 'EFFECT_EXECUTION_FAILED', retryable: false, details: { connectorName: input.connectorName, operation: input.operation, stepId: step.id } });
+        throw new WorkerExecutionError(error instanceof Error ? error.message : String(error), {
+          code: 'EFFECT_EXECUTION_FAILED',
+          retryable: false,
+          details: {
+            connectorName: input.connectorName,
+            operation: input.operation,
+            stepId: step.id,
+          },
+        });
       }
     }
 
     const handler = this.registry.get(input.connectorName);
     if (!handler) {
       throw new WorkerExecutionError(
-        `Connector '${input.connectorName}' not found in registry`,
-        { code: 'CONNECTOR_NOT_FOUND', retryable: false },
+        "Connector '" + input.connectorName + "' not found in registry",
+        {
+          code: 'CONNECTOR_NOT_FOUND',
+          retryable: false,
+        },
       );
     }
 
@@ -198,28 +226,56 @@ export class ConnectorStepExecutor implements StepExecutor {
     }
 
     const started = Date.now();
+    const timeoutMs = input.timeoutMs ?? 60_000;
 
     try {
-      const result = await Promise.race([
-        handler.execute(input.operation, input.args ?? {}, {
-          signal: context.signal,
-          tenantId: step.tenantId,
-          runId: step.runId,
-          stepId: step.id,
-        }),
-        new Promise<never>((_, reject) => {
-          const timer = setTimeout(() => {
-            reject(new WorkerExecutionError(
-              `Connector '${input.connectorName}' operation '${input.operation}' timed out after ${input.timeoutMs ?? 60_000}ms`,
-              { code: 'TIMEOUT', retryable: true, retryDelayMs: 30_000 },
-            ));
-          }, input.timeoutMs ?? 60_000);
-          context.signal.addEventListener('abort', () => {
-            clearTimeout(timer);
-            reject(new WorkerExecutionError('Connector execution aborted', { code: 'ABORTED', retryable: true, retryDelayMs: 5000 }));
-          }, { once: true });
-        }),
-      ]);
+      const result = await awaitWithAbortTimeout(
+        (signal) =>
+          handler.execute(input.operation, input.args ?? {}, {
+            signal,
+            tenantId: step.tenantId,
+            runId: step.runId,
+            stepId: step.id,
+          }),
+        {
+          parentSignal: context.signal,
+          timeoutMs,
+          timeoutError: (cooperative) =>
+            new WorkerExecutionError(
+              "Connector '" +
+                input.connectorName +
+                "' operation '" +
+                input.operation +
+                "' timed out after " +
+                timeoutMs +
+                'ms',
+              {
+                code: 'TIMEOUT',
+                // cancel/timeout 已胜出：retryable 恒 false（堵 microtask dual-dispatch）；
+                // cooperative 仅遥测（同步窗内 abort-linked），不驱动 retry。对齐 #74。
+                retryable: false,
+                details: {
+                  connectorName: input.connectorName,
+                  operation: input.operation,
+                  stepId: step.id,
+                  cooperative,
+                },
+              },
+            ),
+          abortError: (cooperative) =>
+            new WorkerExecutionError('Connector execution aborted', {
+              code: 'ABORTED',
+              // 同上：abort 胜出后非 retryable；cooperative 仅遥测。
+              retryable: false,
+              details: {
+                connectorName: input.connectorName,
+                operation: input.operation,
+                stepId: step.id,
+                cooperative,
+              },
+            }),
+        },
+      );
 
       const output: ConnectorStepOutput = {
         result,
@@ -235,7 +291,11 @@ export class ConnectorStepExecutor implements StepExecutor {
         code: 'CONNECTOR_EXECUTION_FAILED',
         retryable: this.isRetryable(error),
         retryDelayMs: 10_000,
-        details: { connectorName: input.connectorName, operation: input.operation, stepId: step.id },
+        details: {
+          connectorName: input.connectorName,
+          operation: input.operation,
+          stepId: step.id,
+        },
       });
     }
   }
@@ -243,9 +303,11 @@ export class ConnectorStepExecutor implements StepExecutor {
   private isRetryable(error: unknown): boolean {
     if (error instanceof Error) {
       const msg = error.message.toLowerCase();
-      if (msg.includes('timeout') || msg.includes('etimedout') || msg.includes('econnreset')) return true;
+      if (msg.includes('timeout') || msg.includes('etimedout') || msg.includes('econnreset'))
+        return true;
       if (msg.includes('rate limit') || msg.includes('429') || msg.includes('503')) return true;
-      if (msg.includes('connection') && (msg.includes('refused') || msg.includes('reset'))) return true;
+      if (msg.includes('connection') && (msg.includes('refused') || msg.includes('reset')))
+        return true;
     }
     return false;
   }
