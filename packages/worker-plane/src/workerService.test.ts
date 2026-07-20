@@ -6,6 +6,7 @@ import { WorkerService } from './workerService.js';
 import { WorkerExecutionError } from './types.js';
 import type { ClaimedStep, KernelWorkerPort, WorkerLease } from './types.js';
 import { getStepWorkloadBinding } from './stepWorkloadIdentity.js';
+import { ToolStepExecutor } from './toolStepExecutor.js';
 
 const identity = {
   subject: 'spiffe://commander/worker/agent-1',
@@ -24,6 +25,8 @@ const auth = { authenticate: async () => ({ tenantIds: ['tenant-a'], capabilitie
 class FakeKernel implements KernelWorkerPort {
   lastClaimGeneration: number | undefined;
   lastFailureCode: string | undefined;
+  lastFailureRetryable: boolean | undefined;
+  heartbeatCount = 0;
   claimDelayMs = 0;
   lastHeartbeatActiveSteps: number | undefined;
   private readonly steps: Array<
@@ -31,7 +34,11 @@ class FakeKernel implements KernelWorkerPort {
   > = [];
   private readonly runs = new Map<string, { tenantId: string; state: 'PENDING' | 'SUCCEEDED' }>();
   private readonly limits = new Map<string, number>();
-  addRun(id: string, tenantId: string, definitions: Array<{ id: string; kind: string }>): void {
+  addRun(
+    id: string,
+    tenantId: string,
+    definitions: Array<{ id: string; kind: string; input?: Record<string, unknown> }>,
+  ): void {
     this.runs.set(id, { tenantId, state: 'PENDING' });
     for (const definition of definitions)
       this.steps.push({
@@ -40,7 +47,7 @@ class FakeKernel implements KernelWorkerPort {
         tenantId,
         version: 1,
         attempt: 0,
-        input: {},
+        input: definition.input ?? {},
         state: 'PENDING',
         maxAttempts: 2,
         lease: { workerId: '', token: '', fencingEpoch: 0, expiresAt: '' },
@@ -57,7 +64,8 @@ class FakeKernel implements KernelWorkerPort {
     capabilities: string[];
   }): Promise<ClaimedStep | null> {
     this.lastClaimGeneration = request.workerGeneration;
-    if (this.claimDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.claimDelayMs));
+    if (this.claimDelayMs > 0)
+      await new Promise((resolve) => setTimeout(resolve, this.claimDelayMs));
     const step = this.steps.find(
       (candidate) =>
         ['PENDING', 'RETRY_WAIT'].includes(candidate.state) &&
@@ -74,7 +82,7 @@ class FakeKernel implements KernelWorkerPort {
     step.lease = {
       workerId: request.workerId,
       workerGeneration: request.workerGeneration ?? 0,
-      token: `lease-${step.id}`,
+      token: 'lease-' + step.id,
       fencingEpoch: step.lease.fencingEpoch + 1,
       expiresAt: new Date(Date.now() + request.leaseTtlMs).toISOString(),
     };
@@ -86,6 +94,7 @@ class FakeKernel implements KernelWorkerPort {
     _lease: WorkerLease,
     _leaseTtlMs: number,
   ): Promise<unknown | null> {
+    this.heartbeatCount++;
     return {};
   }
   async completeStep(request: {
@@ -125,6 +134,7 @@ class FakeKernel implements KernelWorkerPort {
     )
       return null;
     this.lastFailureCode = request.error.code;
+    this.lastFailureRetryable = request.error.retryable;
     step.state = request.error.retryable && request.retryAt ? 'RETRY_WAIT' : 'PENDING';
     return {};
   }
@@ -449,6 +459,58 @@ describe('worker plane', () => {
     assert.equal(kernel.lastHeartbeatActiveSteps, 1);
     await poll;
     await service.waitForIdle();
+    await service.stop();
+  });
+
+  it('non-cooperative tool timeout leaves RUNNING and stops lease heartbeat', async () => {
+    resetControlPlane();
+    const kernel = new FakeKernel();
+    kernel.addRun('run-hang', 'tenant-a', [
+      {
+        id: 'hang-tool',
+        kind: 'tool',
+        input: { toolName: 'hang', args: {}, timeoutMs: 40 },
+      },
+    ]);
+    const toolDef = {
+      ...definition,
+      id: 'tool-worker',
+      kind: 'tool' as const,
+      capabilities: ['tool'],
+    };
+    const toolAuth = {
+      authenticate: async () => ({ tenantIds: ['tenant-a'], capabilities: ['tool'] }),
+    };
+    const executor = new ToolStepExecutor({
+      get: () => ({
+        execute: async () => new Promise(() => {}),
+      }),
+    });
+    const service = new WorkerService(
+      toolDef,
+      { ...identity, subject: 'spiffe://commander/worker/tool-worker' },
+      toolAuth,
+      new InMemoryWorkerRegistry(),
+      kernel,
+      executor,
+      { leaseTtlMs: 600, workerHeartbeatMs: 60_000 },
+    );
+    await service.start();
+    const boundMs = 800;
+    const started = Date.now();
+    assert.equal(await service.pollOnce(), true);
+    await service.waitForIdle();
+    assert.ok(Date.now() - started < boundMs, 'step must leave RUNNING within bound');
+    assert.notEqual(kernel.getStep('hang-tool')?.state, 'RUNNING');
+    assert.equal(kernel.lastFailureCode, 'TIMEOUT');
+    assert.equal(kernel.lastFailureRetryable, false);
+    const heartbeatsAtIdle = kernel.heartbeatCount;
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    assert.equal(
+      kernel.heartbeatCount,
+      heartbeatsAtIdle,
+      'lease heartbeat must stop after timeout failStep',
+    );
     await service.stop();
   });
 });

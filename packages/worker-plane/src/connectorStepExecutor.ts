@@ -30,6 +30,7 @@ import {
   mintStepCapabilityToken,
   requireStepWorkloadBinding,
 } from './stepWorkloadIdentity.js';
+import { awaitWithAbortTimeout } from './awaitWithAbortTimeout.js';
 
 export interface ConnectorStepInput {
   /** Connector name (e.g., "postgres", "kafka", "s3", "http"). */
@@ -73,7 +74,11 @@ export interface ConnectorHandler {
   /** Initialize the connection (called once per worker). */
   initialize(config: ConnectorConnectionConfig): Promise<void>;
   /** Execute an operation. */
-  execute(operation: string, args: Record<string, unknown>, ctx: { signal: AbortSignal; tenantId: string; runId: string; stepId: string }): Promise<unknown>;
+  execute(
+    operation: string,
+    args: Record<string, unknown>,
+    ctx: { signal: AbortSignal; tenantId: string; runId: string; stepId: string },
+  ): Promise<unknown>;
   /** Close the connection (called on worker shutdown). */
   close(): Promise<void>;
 }
@@ -111,17 +116,17 @@ export class ConnectorStepExecutor implements StepExecutor {
     const input = step.input as unknown as ConnectorStepInput;
 
     if (!input.connectorName || typeof input.connectorName !== 'string') {
-      throw new WorkerExecutionError(
-        `Step ${step.id} missing required field: connectorName`,
-        { code: 'INVALID_INPUT', retryable: false },
-      );
+      throw new WorkerExecutionError('Step ' + step.id + ' missing required field: connectorName', {
+        code: 'INVALID_INPUT',
+        retryable: false,
+      });
     }
 
     if (!input.operation || typeof input.operation !== 'string') {
-      throw new WorkerExecutionError(
-        `Step ${step.id} missing required field: operation`,
-        { code: 'INVALID_INPUT', retryable: false },
-      );
+      throw new WorkerExecutionError('Step ' + step.id + ' missing required field: operation', {
+        code: 'INVALID_INPUT',
+        retryable: false,
+      });
     }
 
     if (
@@ -139,10 +144,13 @@ export class ConnectorStepExecutor implements StepExecutor {
         });
       }
       if (!step.lease || !input.effectId || !input.idempotencyKey) {
-        throw new WorkerExecutionError('External connector execution requires effectId, idempotencyKey, and a live step lease', { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false });
+        throw new WorkerExecutionError(
+          'External connector execution requires effectId, idempotencyKey, and a live step lease',
+          { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false },
+        );
       }
       const request = input.args ?? {};
-      const effectType = `${input.connectorName}.${input.operation}`;
+      const effectType = input.connectorName + '.' + input.operation;
       let capabilityToken = input.capabilityToken;
       const production =
         process.env.NODE_ENV === 'production' ||
@@ -163,7 +171,10 @@ export class ConnectorStepExecutor implements StepExecutor {
         );
       }
       if (!capabilityToken) {
-        throw new WorkerExecutionError('External connector execution requires capabilityToken or capabilityIssuer', { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false });
+        throw new WorkerExecutionError(
+          'External connector execution requires capabilityToken or capabilityIssuer',
+          { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false },
+        );
       }
       try {
         const result = await this.effectBroker.execute({
@@ -177,18 +188,35 @@ export class ConnectorStepExecutor implements StepExecutor {
           timeoutMs: input.timeoutMs,
           workloadBinding,
         });
-        return { result: result.response, effectId: result.effectId, replayed: result.replayed, connectorName: input.connectorName, operation: input.operation };
+        return {
+          result: result.response,
+          effectId: result.effectId,
+          replayed: result.replayed,
+          connectorName: input.connectorName,
+          operation: input.operation,
+        };
       } catch (error) {
         if (error instanceof WorkerExecutionError) throw error;
-        throw new WorkerExecutionError(error instanceof Error ? error.message : String(error), { code: 'EFFECT_EXECUTION_FAILED', retryable: false, details: { connectorName: input.connectorName, operation: input.operation, stepId: step.id } });
+        throw new WorkerExecutionError(error instanceof Error ? error.message : String(error), {
+          code: 'EFFECT_EXECUTION_FAILED',
+          retryable: false,
+          details: {
+            connectorName: input.connectorName,
+            operation: input.operation,
+            stepId: step.id,
+          },
+        });
       }
     }
 
     const handler = this.registry.get(input.connectorName);
     if (!handler) {
       throw new WorkerExecutionError(
-        `Connector '${input.connectorName}' not found in registry`,
-        { code: 'CONNECTOR_NOT_FOUND', retryable: false },
+        "Connector '" + input.connectorName + "' not found in registry",
+        {
+          code: 'CONNECTOR_NOT_FOUND',
+          retryable: false,
+        },
       );
     }
 
@@ -199,33 +227,54 @@ export class ConnectorStepExecutor implements StepExecutor {
 
     const started = Date.now();
     const timeoutMs = input.timeoutMs ?? 60_000;
-    // Linked controller so timeout cancels cooperative handlers (Promise.race alone does not).
-    const local = new AbortController();
-    const onParentAbort = () => {
-      if (!local.signal.aborted) local.abort(context.signal.reason ?? new Error('aborted'));
-    };
-    if (context.signal.aborted) onParentAbort();
-    else context.signal.addEventListener('abort', onParentAbort, { once: true });
-
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      if (!local.signal.aborted) {
-        local.abort(
-          new Error(
-            `Connector '${input.connectorName}' operation '${input.operation}' timed out after ${timeoutMs}ms`,
-          ),
-        );
-      }
-    }, timeoutMs);
 
     try {
-      const result = await handler.execute(input.operation, input.args ?? {}, {
-        signal: local.signal,
-        tenantId: step.tenantId,
-        runId: step.runId,
-        stepId: step.id,
-      });
+      const result = await awaitWithAbortTimeout(
+        (signal) =>
+          handler.execute(input.operation, input.args ?? {}, {
+            signal,
+            tenantId: step.tenantId,
+            runId: step.runId,
+            stepId: step.id,
+          }),
+        {
+          parentSignal: context.signal,
+          timeoutMs,
+          timeoutError: (cooperative) =>
+            new WorkerExecutionError(
+              "Connector '" +
+                input.connectorName +
+                "' operation '" +
+                input.operation +
+                "' timed out after " +
+                timeoutMs +
+                'ms',
+              {
+                code: 'TIMEOUT',
+                // Non-cooperative: handler ignored abort — do not claim safe retry.
+                retryable: cooperative,
+                retryDelayMs: cooperative ? 30_000 : undefined,
+                details: {
+                  connectorName: input.connectorName,
+                  operation: input.operation,
+                  stepId: step.id,
+                  cooperative,
+                },
+              },
+            ),
+          abortError: () =>
+            new WorkerExecutionError('Connector execution aborted', {
+              code: 'ABORTED',
+              retryable: true,
+              retryDelayMs: 5000,
+              details: {
+                connectorName: input.connectorName,
+                operation: input.operation,
+                stepId: step.id,
+              },
+            }),
+        },
+      );
 
       const output: ConnectorStepOutput = {
         result,
@@ -235,53 +284,29 @@ export class ConnectorStepExecutor implements StepExecutor {
       };
       return output as unknown as Record<string, unknown>;
     } catch (error) {
-      if (timedOut) {
-        throw new WorkerExecutionError(
-          `Connector '${input.connectorName}' operation '${input.operation}' timed out after ${timeoutMs}ms`,
-          {
-            code: 'TIMEOUT',
-            retryable: true,
-            retryDelayMs: 30_000,
-            details: {
-              connectorName: input.connectorName,
-              operation: input.operation,
-              stepId: step.id,
-            },
-          },
-        );
-      }
-      if (context.signal.aborted || local.signal.aborted) {
-        throw new WorkerExecutionError('Connector execution aborted', {
-          code: 'ABORTED',
-          retryable: true,
-          retryDelayMs: 5000,
-          details: {
-            connectorName: input.connectorName,
-            operation: input.operation,
-            stepId: step.id,
-          },
-        });
-      }
       if (error instanceof WorkerExecutionError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       throw new WorkerExecutionError(message, {
         code: 'CONNECTOR_EXECUTION_FAILED',
         retryable: this.isRetryable(error),
         retryDelayMs: 10_000,
-        details: { connectorName: input.connectorName, operation: input.operation, stepId: step.id },
+        details: {
+          connectorName: input.connectorName,
+          operation: input.operation,
+          stepId: step.id,
+        },
       });
-    } finally {
-      clearTimeout(timer);
-      context.signal.removeEventListener('abort', onParentAbort);
     }
   }
 
   private isRetryable(error: unknown): boolean {
     if (error instanceof Error) {
       const msg = error.message.toLowerCase();
-      if (msg.includes('timeout') || msg.includes('etimedout') || msg.includes('econnreset')) return true;
+      if (msg.includes('timeout') || msg.includes('etimedout') || msg.includes('econnreset'))
+        return true;
       if (msg.includes('rate limit') || msg.includes('429') || msg.includes('503')) return true;
-      if (msg.includes('connection') && (msg.includes('refused') || msg.includes('reset'))) return true;
+      if (msg.includes('connection') && (msg.includes('refused') || msg.includes('reset')))
+        return true;
     }
     return false;
   }

@@ -23,6 +23,7 @@ import {
   mintStepCapabilityToken,
   requireStepWorkloadBinding,
 } from './stepWorkloadIdentity.js';
+import { awaitWithAbortTimeout } from './awaitWithAbortTimeout.js';
 
 export interface ToolStepInput {
   /** Tool name (e.g., "http.get", "git.push"). */
@@ -68,7 +69,10 @@ export interface ExternalEffectBroker {
 
 export interface ToolHandler {
   /** Execute the tool with the given arguments. */
-  execute(args: Record<string, unknown>, ctx: { signal: AbortSignal; tenantId: string; runId: string; stepId: string }): Promise<unknown>;
+  execute(
+    args: Record<string, unknown>,
+    ctx: { signal: AbortSignal; tenantId: string; runId: string; stepId: string },
+  ): Promise<unknown>;
 }
 
 export class ToolStepExecutor implements StepExecutor {
@@ -98,10 +102,10 @@ export class ToolStepExecutor implements StepExecutor {
     const input = step.input as unknown as ToolStepInput;
 
     if (!input.toolName || typeof input.toolName !== 'string') {
-      throw new WorkerExecutionError(
-        `Step ${step.id} missing required field: toolName`,
-        { code: 'INVALID_INPUT', retryable: false },
-      );
+      throw new WorkerExecutionError('Step ' + step.id + ' missing required field: toolName', {
+        code: 'INVALID_INPUT',
+        retryable: false,
+      });
     }
 
     if (
@@ -118,7 +122,10 @@ export class ToolStepExecutor implements StepExecutor {
         });
       }
       if (!step.lease || !input.effectId || !input.idempotencyKey) {
-        throw new WorkerExecutionError('External tool execution requires effectId, idempotencyKey, and a live step lease', { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false });
+        throw new WorkerExecutionError(
+          'External tool execution requires effectId, idempotencyKey, and a live step lease',
+          { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false },
+        );
       }
       const request = input.args ?? {};
       let capabilityToken = input.capabilityToken;
@@ -141,7 +148,10 @@ export class ToolStepExecutor implements StepExecutor {
         );
       }
       if (!capabilityToken) {
-        throw new WorkerExecutionError('External tool execution requires capabilityToken or capabilityIssuer', { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false });
+        throw new WorkerExecutionError(
+          'External tool execution requires capabilityToken or capabilityIssuer',
+          { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false },
+        );
       }
       try {
         const result = await this.effectBroker.execute({
@@ -155,45 +165,66 @@ export class ToolStepExecutor implements StepExecutor {
           timeoutMs: input.timeoutMs,
           workloadBinding,
         });
-        return { result: result.response, effectId: result.effectId, replayed: result.replayed, toolName: input.toolName };
+        return {
+          result: result.response,
+          effectId: result.effectId,
+          replayed: result.replayed,
+          toolName: input.toolName,
+        };
       } catch (error) {
         if (error instanceof WorkerExecutionError) throw error;
         const message = error instanceof Error ? error.message : String(error);
-        throw new WorkerExecutionError(message, { code: 'EFFECT_EXECUTION_FAILED', retryable: false, details: { toolName: input.toolName, stepId: step.id } });
+        throw new WorkerExecutionError(message, {
+          code: 'EFFECT_EXECUTION_FAILED',
+          retryable: false,
+          details: { toolName: input.toolName, stepId: step.id },
+        });
       }
     }
 
     const handler = this.toolRegistry.get(input.toolName);
     if (!handler) {
-      throw new WorkerExecutionError(
-        `Tool '${input.toolName}' not found in registry`,
-        { code: 'TOOL_NOT_FOUND', retryable: false },
-      );
+      throw new WorkerExecutionError("Tool '" + input.toolName + "' not found in registry", {
+        code: 'TOOL_NOT_FOUND',
+        retryable: false,
+      });
     }
 
     const started = Date.now();
     const timeoutMs = input.timeoutMs ?? 30_000;
-    // Linked controller so timeout actually cancels cooperative handlers (Promise.race alone does not).
-    const local = new AbortController();
-    const onParentAbort = () => {
-      if (!local.signal.aborted) local.abort(context.signal.reason ?? new Error('aborted'));
-    };
-    if (context.signal.aborted) onParentAbort();
-    else context.signal.addEventListener('abort', onParentAbort, { once: true });
-
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      if (!local.signal.aborted) local.abort(new Error(`Tool '${input.toolName}' timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
 
     try {
-      const result = await handler.execute(input.args ?? {}, {
-        signal: local.signal,
-        tenantId: step.tenantId,
-        runId: step.runId,
-        stepId: step.id,
-      });
+      const result = await awaitWithAbortTimeout(
+        (signal) =>
+          handler.execute(input.args ?? {}, {
+            signal,
+            tenantId: step.tenantId,
+            runId: step.runId,
+            stepId: step.id,
+          }),
+        {
+          parentSignal: context.signal,
+          timeoutMs,
+          timeoutError: (cooperative) =>
+            new WorkerExecutionError(
+              "Tool '" + input.toolName + "' timed out after " + timeoutMs + 'ms',
+              {
+                code: 'TIMEOUT',
+                // Non-cooperative: handler ignored abort — do not claim safe retry.
+                retryable: cooperative,
+                retryDelayMs: cooperative ? 10_000 : undefined,
+                details: { toolName: input.toolName, stepId: step.id, cooperative },
+              },
+            ),
+          abortError: () =>
+            new WorkerExecutionError('Tool execution aborted', {
+              code: 'ABORTED',
+              retryable: true,
+              retryDelayMs: 1000,
+              details: { toolName: input.toolName, stepId: step.id },
+            }),
+        },
+      );
 
       const output: ToolStepOutput = {
         result,
@@ -202,20 +233,6 @@ export class ToolStepExecutor implements StepExecutor {
       };
       return output as unknown as Record<string, unknown>;
     } catch (error) {
-      if (timedOut) {
-        throw new WorkerExecutionError(
-          `Tool '${input.toolName}' timed out after ${timeoutMs}ms`,
-          { code: 'TIMEOUT', retryable: true, retryDelayMs: 10_000, details: { toolName: input.toolName, stepId: step.id } },
-        );
-      }
-      if (context.signal.aborted || local.signal.aborted) {
-        throw new WorkerExecutionError('Tool execution aborted', {
-          code: 'ABORTED',
-          retryable: true,
-          retryDelayMs: 1000,
-          details: { toolName: input.toolName, stepId: step.id },
-        });
-      }
       if (error instanceof WorkerExecutionError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       throw new WorkerExecutionError(message, {
@@ -224,16 +241,14 @@ export class ToolStepExecutor implements StepExecutor {
         retryDelayMs: 5_000,
         details: { toolName: input.toolName, stepId: step.id },
       });
-    } finally {
-      clearTimeout(timer);
-      context.signal.removeEventListener('abort', onParentAbort);
     }
   }
 
   private isRetryable(error: unknown): boolean {
     if (error instanceof Error) {
       const msg = error.message.toLowerCase();
-      if (msg.includes('timeout') || msg.includes('etimedout') || msg.includes('econnreset')) return true;
+      if (msg.includes('timeout') || msg.includes('etimedout') || msg.includes('econnreset'))
+        return true;
       if (msg.includes('rate limit') || msg.includes('429') || msg.includes('503')) return true;
     }
     return false;
