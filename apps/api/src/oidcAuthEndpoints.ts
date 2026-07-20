@@ -14,7 +14,7 @@ import {
   hasRole,
   type UserRole,
 } from './userStore';
-import { signAccessToken, signRefreshToken } from './jwtMiddleware';
+import { signAccessToken, signRefreshToken, resolveAccessTenantId } from './jwtMiddleware';
 
 function requireAuth(req: Request, res: Response, next: NextFunction): void {
   if (!req.user) {
@@ -277,6 +277,7 @@ export function createOIDCAuthRouter(): Router {
       id: localUser.id,
       username: localUser.username,
       role: localUser.role as AuthRole,
+      tenantId: resolveAccessTenantId(),
     };
 
     res.json({

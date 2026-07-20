@@ -24,13 +24,8 @@ process.env.JWT_SECRET = 'test-jwt-secret-for-refresh-rotation';
 // Router mounted without authMiddleware; refresh is public when middleware is present.
 
 const { signRefreshToken, verifyToken } = await import('../src/jwtMiddleware');
-const {
-  persist,
-  revoke,
-  isActive,
-  consume,
-  _resetRefreshTokenStoreForTests,
-} = await import('../src/refreshTokenStore');
+const { persist, revoke, isActive, consume, _resetRefreshTokenStoreForTests } =
+  await import('../src/refreshTokenStore');
 const { createUser, findUserByUsername } = await import('../src/userStore');
 const { createUserAuthRouter } = await import('../src/userAuthEndpoints');
 const express = (await import('express')).default;
@@ -127,6 +122,38 @@ describe('refreshTokenStore', () => {
 });
 
 describe('auth refresh rotation', () => {
+  test('AUTH-01: login and refresh access tokens carry tenant_id', async () => {
+    const prev = process.env.COMMANDER_DEFAULT_TENANT_ID;
+    process.env.COMMANDER_DEFAULT_TENANT_ID = 'tenant-auth01';
+    try {
+      const login = await request('/api/auth/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'refreshuser', password: 'password123' }),
+      });
+      assert.equal(login.status, 200);
+      const loginBody = (await login.json()) as { token: string; refreshToken: string };
+      const access = verifyToken(loginBody.token);
+      assert.ok(access);
+      assert.equal(access!.type, 'access');
+      assert.equal(access!.tenant_id, 'tenant-auth01');
+
+      const refreshed = await request('/api/auth/refresh', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ refreshToken: loginBody.refreshToken }),
+      });
+      assert.equal(refreshed.status, 200);
+      const refreshedBody = (await refreshed.json()) as { token: string };
+      const rotated = verifyToken(refreshedBody.token);
+      assert.ok(rotated);
+      assert.equal(rotated!.tenant_id, 'tenant-auth01');
+    } finally {
+      if (prev === undefined) delete process.env.COMMANDER_DEFAULT_TENANT_ID;
+      else process.env.COMMANDER_DEFAULT_TENANT_ID = prev;
+    }
+  });
+
   test('POST /api/auth/refresh rotates jti and rejects reused token', async () => {
     const login = await request('/api/auth/login', {
       method: 'POST',

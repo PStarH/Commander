@@ -83,6 +83,19 @@ if (!process.env.JWT_SECRET) {
 const ACCESS_TOKEN_EXPIRES_IN = '24h';
 const REFRESH_TOKEN_EXPIRES_IN = '7d';
 
+/**
+ * AUTH-01: tenant claim for access tokens minted by login/register/refresh/OIDC.
+ * Prefer COMMANDER_DEFAULT_TENANT_ID; fall back to `local` (same ambient default
+ * as authMiddleware). Per-user tenant binding can tighten this later without
+ * changing the claim surface.
+ */
+export function resolveAccessTenantId(explicit?: string): string {
+  if (typeof explicit === 'string' && explicit.length > 0) return explicit;
+  const fromEnv = process.env.COMMANDER_DEFAULT_TENANT_ID;
+  if (typeof fromEnv === 'string' && fromEnv.length > 0) return fromEnv;
+  return 'local';
+}
+
 // ── Token helpers ───────────────────────────────────────────────────────────
 
 /** Signs a short-lived access token (24h) carrying the user identity. */
