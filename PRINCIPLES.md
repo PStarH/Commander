@@ -151,16 +151,15 @@ non-product memory classes remain in tree but off allowlist. Remaining specialty
 
 - REAL: kernel Postgres with transactional outbox (`kernel/src/postgres.ts:815-817`), core ATR
   `RunLedger`/idempotency/checkpoint in SQLite-WAL (`atr/runLedger.ts:205`, `atr/checkpointStore.ts:9`),
-  `atomicWrite` fsync-then-rename (`core/src/tools/_utils/atomicWrite.ts:14`; `apps/api/src/atomicWrite.ts:23-45`).
+  `atomicWrite` fsync-then-rename (`core/src/tools/_utils/atomicWrite.ts:14`; `apps/api/src/atomicWrite.ts:23-45`;
+  legacy `apps/api` StateMachine persist/checkpoint via `atomicWriteFileSync`, fixed 2026-07-20).
 - WEAK / FALSE claims:
   - `EventSourcingEngine` constructor defaults `walPath=null` (in-memory). Singleton
     `getGlobalEventSourcingEngine()` defaults to `.commander_state/event-sourcing.wal`
     (or `COMMANDER_EVENT_SOURCING_WAL`). Header + `isDurable()` clarify optional WAL
     (fixed 2026-07-15).
-  - `apps/api` `EpisodicMemoryStore` is JSON + in-memory `Map`s (`episodicMemoryStore.ts` —
-    header corrected 2026-07-15; still not SQLite/atomic). Parallel to core `memory/episodicStore.ts`.
-  - `apps/api` `StateMachine` checkpoints use plain non-atomic `fs.writeFileSync`
-    (`stateMachine.ts:169,198`).
+  - ~~`apps/api` `EpisodicMemoryStore`~~ **DELETED** (zombie removal; `claimHonesty` enforces
+    absence). Core still has ACT-R `memory/episodicStore.ts` as a non-product internal.
 - (2) **HOLDS for `/v1` durable path (as of 2026-07-15):** kernel defaults ON in production,
   under `COMMANDER_V2_MODE=1`, or when a Postgres DSN is set (`isCommanderKernelEnabled`);
   production refuses `COMMANDER_KERNEL_ENABLED=0` and refuses boot without DSN + initialized
