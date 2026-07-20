@@ -670,4 +670,70 @@ describe('worker plane', () => {
     assert.equal(kernel.lastFailureRetryable, false);
     assert.equal(kernel.getStep('stop-hang-tool')?.state, 'FAILED');
   });
+
+  it('preserves retry intent from structural KernelStepExecutorError-like errors', async () => {
+    const kernel = new FakeKernel();
+    kernel.addRun('run-struct', 'tenant-a', [{ id: 'agent-step', kind: 'agent' }]);
+    class StructuralExecutorError extends Error {
+      readonly options: { code?: string; retryable?: boolean; retryDelayMs?: number };
+      constructor(message: string, options: { code?: string; retryable?: boolean; retryDelayMs?: number }) {
+        super(message);
+        this.name = 'KernelStepExecutorError';
+        this.options = options;
+      }
+    }
+    const service = new WorkerService(
+      definition,
+      identity,
+      auth,
+      new InMemoryWorkerRegistry(),
+      kernel,
+      {
+        execute: async () => {
+          throw new StructuralExecutorError('Step aborted during execution', {
+            code: 'ABORTED',
+            retryable: true,
+            retryDelayMs: 1000,
+          });
+        },
+      },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 60_000 },
+    );
+    await service.start();
+    await service.pollOnce();
+    await service.waitForIdle();
+    assert.equal(kernel.lastFailureCode, 'ABORTED');
+    assert.equal(kernel.getStep('agent-step')?.state, 'RETRY_WAIT');
+    await service.stop();
+  });
+
+  it('keeps the poll loop alive when claimNextStep throws', async () => {
+    const kernel = new FakeKernel();
+    let claims = 0;
+    const original = kernel.claimNextStep.bind(kernel);
+    kernel.claimNextStep = async (request) => {
+      claims += 1;
+      if (claims === 1) throw new Error('temporary database failure');
+      return original(request);
+    };
+    kernel.addRun('run-resilient', 'tenant-a', [{ id: 'step-ok', kind: 'agent' }]);
+    const service = new WorkerService(
+      definition,
+      identity,
+      auth,
+      new InMemoryWorkerRegistry(),
+      kernel,
+      { execute: async () => ({ ok: true }) },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 60_000, pollIntervalMs: 10 },
+    );
+    const ac = new AbortController();
+    const running = service.run(ac.signal);
+    // Allow first throw + backoff + successful claim
+    await new Promise((r) => setTimeout(r, 80));
+    await service.waitForIdle();
+    ac.abort();
+    await running;
+    assert.equal(kernel.getRun('run-resilient')?.state, 'SUCCEEDED');
+  });
+
 });
