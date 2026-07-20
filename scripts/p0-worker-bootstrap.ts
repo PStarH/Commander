@@ -12,8 +12,8 @@
  */
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
-import { Pool } from 'pg';
 import { PostgresKernelRepository } from '@commander/kernel';
+import { Pool } from './load-pg.js';
 import type { LLMProvider, LLMRequest, LLMResponse } from '@commander/core';
 import {
   WorkerService,
