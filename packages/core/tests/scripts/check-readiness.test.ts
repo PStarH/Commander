@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { resolve as pathResolve, basename as pathBasename } from 'node:path';
 
 vi.mock('node:fs', () => ({
   existsSync: vi.fn(),
@@ -23,6 +24,9 @@ import {
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 
 const CURRENT = getCurrentBaseline();
+
+/** Cross-platform mock root — must match path.resolve() used by checkBaselineFile. */
+const MOCK_BASELINES_DIR = pathResolve('/mock/baselines');
 
 const REQUIRED_PREFIXES = [
   'tenant-isolation.',
@@ -57,22 +61,22 @@ function mockBaselineFiles(filesByPrefix: Record<string, MockFile[]>): void {
 
   for (const files of Object.values(filesByPrefix)) {
     for (const f of files) {
-      const path = `/mock/baselines/${f.name}`;
+      const filePath = pathResolve(MOCK_BASELINES_DIR, f.name);
       allFiles.push(f.name);
-      allContents[path] = JSON.stringify(f.content);
+      allContents[filePath] = JSON.stringify(f.content);
     }
   }
 
   vi.mocked(existsSync).mockReturnValue(true);
   vi.mocked(readdirSync).mockReturnValue(allFiles);
   vi.mocked(readFileSync).mockImplementation((p) => {
-    const path = typeof p === 'string' ? p : p.toString();
-    if (path in allContents) return allContents[path];
-    throw new Error(`unexpected read: ${path}`);
+    const filePath = typeof p === 'string' ? p : p.toString();
+    if (filePath in allContents) return allContents[filePath];
+    throw new Error(`unexpected read: ${filePath}`);
   });
   vi.mocked(statSync).mockImplementation((p) => {
-    const path = typeof p === 'string' ? p : p.toString();
-    const name = path.split('/').pop() ?? '';
+    const filePath = typeof p === 'string' ? p : p.toString();
+    const name = pathBasename(filePath);
     for (const files of Object.values(filesByPrefix)) {
       const found = files.find((f) => f.name === name);
       if (found) return { mtimeMs: found.mtimeMs } as ReturnType<typeof statSync>;
@@ -111,7 +115,7 @@ describe('checkBaselineFile', () => {
       ],
     });
 
-    const result = checkBaselineFile('/mock/baselines', 'tenant-concurrency.', 'required', CURRENT);
+    const result = checkBaselineFile(MOCK_BASELINES_DIR, 'tenant-concurrency.', 'required', CURRENT);
     expect(result.passed).toBe(true);
     expect(result.reason).toBeUndefined();
   });
@@ -131,7 +135,7 @@ describe('checkBaselineFile', () => {
       ],
     });
 
-    const result = checkBaselineFile('/mock/baselines', 'tenant-concurrency.', 'required', CURRENT);
+    const result = checkBaselineFile(MOCK_BASELINES_DIR, 'tenant-concurrency.', 'required', CURRENT);
     expect(result.passed).toBe(false);
     expect(result.reason).toContain('errors > 0');
   });
@@ -151,7 +155,7 @@ describe('checkBaselineFile', () => {
       ],
     });
 
-    const result = checkBaselineFile('/mock/baselines', 'tenant-concurrency.', 'required', CURRENT);
+    const result = checkBaselineFile(MOCK_BASELINES_DIR, 'tenant-concurrency.', 'required', CURRENT);
     expect(result.passed).toBe(false);
     expect(result.reason).toContain('summary.passed is not true');
   });
@@ -180,7 +184,7 @@ describe('checkBaselineFile', () => {
       ],
     });
 
-    const result = checkBaselineFile('/mock/baselines', 'tenant-concurrency.', 'required', CURRENT);
+    const result = checkBaselineFile(MOCK_BASELINES_DIR, 'tenant-concurrency.', 'required', CURRENT);
     expect(result.passed).toBe(false);
     expect(result.evidencePath).toContain('tenant-concurrency.2026-07-13.json');
   });
