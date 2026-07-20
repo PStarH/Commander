@@ -18,11 +18,13 @@ const allowedDependencies = {
   '@commander/contracts': [],
   '@commander/kernel': ['@commander/contracts'],
   '@commander/effect-broker': ['@commander/contracts'],
+  '@commander/action-adapters': ['@commander/contracts', '@commander/effect-broker'],
   '@commander/operations': ['@commander/kernel', '@commander/contracts'],
   '@commander/worker-plane': [
     '@commander/contracts',
     '@commander/kernel',
     '@commander/effect-broker',
+    '@commander/action-adapters',
     '@commander/core',
   ],
   '@commander/api': [
