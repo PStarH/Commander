@@ -11,6 +11,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import { DeadLetterQueue, type DeadLetterEntry, type DLQCategory } from './deadLetterQueue';
 import { classifyLLMError, computeBackoff, type ErrorClass } from './llmRetry';
 import type { Reflexion, ReflexionContext, ReflexionGenerator } from './reflexionGenerator';
+import { isAbortOrTimeoutError } from './toolResultShape';
 
 export type RecoveryStrategy = 'retry' | 'fallback' | 'skip' | 'abort';
 
@@ -91,20 +92,24 @@ export class StepErrorBoundary {
         return { success: true, value, errorClass: 'transient', attempts, recovered: attempt > 0 };
       } catch (err) {
         const classified = classifyLLMError(err);
+        // 工具 abort/超时（含 StepTimeoutError）：边界内不二次 execute。
+        // 与 classifyLLMError 解耦——后者须让 LLM StepTimeout 保持 transient。
+        const toolAbortOrTimeout = isAbortOrTimeoutError(err);
+        const retryable = toolAbortOrTimeout ? false : classified.retryable;
         lastError = classified.message;
-        lastErrorClass = classified.errorClass;
+        lastErrorClass = toolAbortOrTimeout ? 'unknown' : classified.errorClass;
 
         this.recordToDLQ(
           operationName,
           category,
           lastError,
           lastErrorClass,
-          classified.retryable,
+          retryable,
           attempt,
           options,
         );
 
-        if (!classified.retryable) {
+        if (!retryable) {
           const strategy = this.config.onPermanent;
           if (strategy === 'abort') {
             return {
