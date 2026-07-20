@@ -16,6 +16,10 @@ export default defineConfig({
     // realistic headroom for E2E flows; slow E2E tests further override with
     // explicit per-`it` timeouts so they don't fight the global ceiling.
     testTimeout: 180000,
+    hookTimeout: 60000,
+    // CI: prevent open handles (timers/servers/sqlite) from hanging the process
+    // after the suite finishes — observed as multi-hour "Run core tests" on Ubuntu.
+    forceExit: true,
     retry: 2,
     setupFiles: ['tests/setup.ts'],
     include: [
