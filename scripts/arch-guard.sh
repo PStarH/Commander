@@ -12,14 +12,22 @@ const root = path.resolve(process.env.ROOT_DIR);
 const failures = [];
 const skipDirectories = new Set(['node_modules', 'dist', '.git', '.turbo', 'coverage']);
 const forbiddenPackagePattern = /(^|[-_.])(control-plane|orchestration|orchestrator|security)(?=$|[-_.])/i;
-const deletedPackageImportPattern = /^@commander\/(control-plane|orchestration)(?:\/|$)/;
+// WS1 folded packages/operations into packages/kernel/src/ops.
+// Ban resurrecting the ghost plane; adapter compensation lives in @commander/adapter-ops.
+const deletedPackageImportPattern = /^@commander\/(control-plane|orchestration|operations)(?:\/|$)/;
 
 const allowedDependencies = {
   '@commander/contracts': [],
   '@commander/kernel': ['@commander/contracts'],
   '@commander/effect-broker': ['@commander/contracts'],
   '@commander/action-adapters': ['@commander/contracts', '@commander/effect-broker'],
-  '@commander/operations': ['@commander/kernel', '@commander/contracts'],
+  // Deploy unit for EffectBroker-backed compensation/reconcile — not a V2 plane.
+  '@commander/adapter-ops': [
+    '@commander/kernel',
+    '@commander/contracts',
+    '@commander/effect-broker',
+    '@commander/action-adapters',
+  ],
   '@commander/worker-plane': [
     '@commander/contracts',
     '@commander/kernel',
@@ -216,7 +224,7 @@ for (const file of sourceFiles) {
     ) {
       failures.push(`Illegal source dependency: ${relativeFile(file)} (${owner} -> ${dependency})`);
     }
-    if (['@commander/kernel', '@commander/effect-broker', '@commander/operations'].includes(owner) && dependency === '@commander/core') {
+    if (['@commander/kernel', '@commander/effect-broker', '@commander/adapter-ops'].includes(owner) && dependency === '@commander/core') {
       failures.push(`V2 implementation package ${owner} imports forbidden @commander/core in ${relativeFile(file)}`);
     }
   }
@@ -226,14 +234,14 @@ for (const file of ['package.json', 'pnpm-lock.yaml']) {
   const absolute = path.join(root, file);
   if (!fs.existsSync(absolute)) continue;
   const source = fs.readFileSync(absolute, 'utf8');
-  if (/@commander\/(control-plane|orchestration)\b/.test(source)) {
+  if (/@commander\/(control-plane|orchestration|operations)\b/.test(source)) {
     failures.push(`${file} references a deleted package`);
   }
 }
 
 for (const info of packageInfo.values()) {
   const source = fs.readFileSync(info.manifestPath, 'utf8');
-  if (/@commander\/(control-plane|orchestration)\b/.test(source)) {
+  if (/@commander\/(control-plane|orchestration|operations)\b/.test(source)) {
     failures.push(`${relativeFile(info.manifestPath)} references a deleted package`);
   }
 }
@@ -253,6 +261,15 @@ function visit(name, chain = []) {
   visited.add(name);
 }
 for (const name of graph.keys()) visit(name);
+
+const grantAuthorityPackages = new Set(['@commander/api', '@commander/worker-plane']);
+for (const file of sourceFiles) {
+  const src = fs.readFileSync(file, 'utf8');
+  const owner = packageForFile(file)?.name;
+  if (owner && grantAuthorityPackages.has(owner) && /\binterface\s+(CapabilityGrant|GrantV1)\b/.test(src)) {
+    failures.push(`Ad-hoc grant interface in ${relativeFile(file)}; use @commander/contracts GrantV1`);
+  }
+}
 
 if (failures.length > 0) {
   console.error('Architecture constitution guard failed:');

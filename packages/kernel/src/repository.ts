@@ -19,8 +19,22 @@ import type {
   KernelTimer,
   MarkEffectCompletionUnknownRequest,
   ReconcileEffectRequest,
+  RequestReconcileInput,
+  ClaimReconcileEffectsInput,
+  ClaimedReconcileEffect,
+  RescheduleReconcileInput,
+  EscalateReconcileInput,
+  FailEffectRequest,
+  RequestCompensationInput,
+  RequestCompensationResult,
   TenantExecutionControl,
+  KillSwitch,
+  KillSwitchMatchDims,
+  PutKillSwitchInput,
+  RemoveKillSwitchInput,
 } from './types.js';
+
+export type { KillSwitchMatchDims } from './types.js';
 
 /**
  * The only persistence boundary used by the execution kernel.
@@ -35,6 +49,8 @@ export interface KernelRepository {
   /** Control-plane configured maximum simultaneously running steps for a tenant. */
   setTenantConcurrencyLimit(tenantId: string, maxConcurrentSteps: number): Promise<void>;
   getRun(runId: string, tenantId: string): Promise<KernelRun | null>;
+  /** List runs for a tenant, newest updatedAt first. */
+  listRuns(tenantId: string, options?: { limit?: number }): Promise<KernelRun[]>;
   getStep(stepId: string, tenantId: string): Promise<KernelStep | null>;
   claimNextStep(request: ClaimStepRequest): Promise<KernelStep | null>;
   heartbeatStep(
@@ -78,6 +94,13 @@ export interface KernelRepository {
    * Ops/reconciler path — no worker lease; never re-executes the write.
    */
   reconcileEffect(request: ReconcileEffectRequest): Promise<KernelEffect | null>;
+  requestReconcile(input: RequestReconcileInput): Promise<KernelEffect | null>;
+  claimReconcileEffects(input: ClaimReconcileEffectsInput): Promise<ClaimedReconcileEffect[]>;
+  rescheduleReconcile(input: RescheduleReconcileInput): Promise<boolean>;
+  escalateReconcile(input: EscalateReconcileInput): Promise<boolean>;
+  releaseReconcileClaim(effectId: string, tenantId: string, claimToken: string): Promise<boolean>;
+  failEffect(request: FailEffectRequest): Promise<KernelEffect | null>;
+  requestCompensation(input: RequestCompensationInput): Promise<RequestCompensationResult | null>;
   claimOutbox(limit: number, now?: Date): Promise<KernelOutboxMessage[]>;
   markOutboxPublished(messageId: string, claimToken: string): Promise<boolean>;
   retryOutbox(messageId: string, claimToken: string, error: { code: string; message: string }, now?: Date): Promise<boolean>;
@@ -155,4 +178,11 @@ export interface KernelRepository {
 
   /** Read the current daily quota row (or zeros if none yet). */
   getQuota(tenantId: string, actionClass: string, now?: Date): Promise<{ countUsed: number; tokensUsed: number }>;
+
+  // ── L4-04 Kill switches ───────────────────────────────────────────────────
+
+  putKillSwitch(input: PutKillSwitchInput): Promise<KillSwitch>;
+  removeKillSwitch(input: RemoveKillSwitchInput): Promise<void>;
+  listKillSwitches(tenantId: string): Promise<KillSwitch[]>;
+  findMatchingKillSwitch(tenantId: string, dims: KillSwitchMatchDims): Promise<KillSwitch | null>;
 }
