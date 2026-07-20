@@ -198,28 +198,34 @@ export class ConnectorStepExecutor implements StepExecutor {
     }
 
     const started = Date.now();
+    const timeoutMs = input.timeoutMs ?? 60_000;
+    // Linked controller so timeout cancels cooperative handlers (Promise.race alone does not).
+    const local = new AbortController();
+    const onParentAbort = () => {
+      if (!local.signal.aborted) local.abort(context.signal.reason ?? new Error('aborted'));
+    };
+    if (context.signal.aborted) onParentAbort();
+    else context.signal.addEventListener('abort', onParentAbort, { once: true });
+
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      if (!local.signal.aborted) {
+        local.abort(
+          new Error(
+            `Connector '${input.connectorName}' operation '${input.operation}' timed out after ${timeoutMs}ms`,
+          ),
+        );
+      }
+    }, timeoutMs);
 
     try {
-      const result = await Promise.race([
-        handler.execute(input.operation, input.args ?? {}, {
-          signal: context.signal,
-          tenantId: step.tenantId,
-          runId: step.runId,
-          stepId: step.id,
-        }),
-        new Promise<never>((_, reject) => {
-          const timer = setTimeout(() => {
-            reject(new WorkerExecutionError(
-              `Connector '${input.connectorName}' operation '${input.operation}' timed out after ${input.timeoutMs ?? 60_000}ms`,
-              { code: 'TIMEOUT', retryable: true, retryDelayMs: 30_000 },
-            ));
-          }, input.timeoutMs ?? 60_000);
-          context.signal.addEventListener('abort', () => {
-            clearTimeout(timer);
-            reject(new WorkerExecutionError('Connector execution aborted', { code: 'ABORTED', retryable: true, retryDelayMs: 5000 }));
-          }, { once: true });
-        }),
-      ]);
+      const result = await handler.execute(input.operation, input.args ?? {}, {
+        signal: local.signal,
+        tenantId: step.tenantId,
+        runId: step.runId,
+        stepId: step.id,
+      });
 
       const output: ConnectorStepOutput = {
         result,
@@ -229,6 +235,33 @@ export class ConnectorStepExecutor implements StepExecutor {
       };
       return output as unknown as Record<string, unknown>;
     } catch (error) {
+      if (timedOut) {
+        throw new WorkerExecutionError(
+          `Connector '${input.connectorName}' operation '${input.operation}' timed out after ${timeoutMs}ms`,
+          {
+            code: 'TIMEOUT',
+            retryable: true,
+            retryDelayMs: 30_000,
+            details: {
+              connectorName: input.connectorName,
+              operation: input.operation,
+              stepId: step.id,
+            },
+          },
+        );
+      }
+      if (context.signal.aborted || local.signal.aborted) {
+        throw new WorkerExecutionError('Connector execution aborted', {
+          code: 'ABORTED',
+          retryable: true,
+          retryDelayMs: 5000,
+          details: {
+            connectorName: input.connectorName,
+            operation: input.operation,
+            stepId: step.id,
+          },
+        });
+      }
       if (error instanceof WorkerExecutionError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       throw new WorkerExecutionError(message, {
@@ -237,6 +270,9 @@ export class ConnectorStepExecutor implements StepExecutor {
         retryDelayMs: 10_000,
         details: { connectorName: input.connectorName, operation: input.operation, stepId: step.id },
       });
+    } finally {
+      clearTimeout(timer);
+      context.signal.removeEventListener('abort', onParentAbort);
     }
   }
 
