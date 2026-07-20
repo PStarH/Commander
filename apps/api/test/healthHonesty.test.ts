@@ -14,11 +14,11 @@ import {
  * WS3 §6 health check honesty tests.
  *
  * Verifies:
- * - /ready returns 503 when any hard gate (database/kernel/effectBroker) fails.
+ * - /ready returns 503 when any hard gate (database/kernel) fails.
  * - /ready returns 200 only when all hard gates pass.
  * - /ready marks non-gated deps as 'degraded' (not 'ok') when unwired.
  * - /ready never returns 'ok' for an unprobed dependency (§6.2 invariant).
- * - /v1/health reflects only /v1 subtree deps (kernel, effectBroker).
+ * - /v1/health reflects only /v1 subtree deps (kernel). Effect monopoly is worker-plane.
  */
 
 function noop() {}
@@ -37,13 +37,11 @@ async function withReadyApp(
     const result = await probeReadiness({
       database: deps.database,
       kernel: deps.kernel,
-      effectBroker: deps.effectBroker,
     });
     res.status(result.status === 'ready' ? 200 : 503).json({
       status: result.status,
       checks: {
         kernel: result.checks.kernel,
-        effectBroker: result.checks.effectBroker,
       },
     });
   });
@@ -136,7 +134,24 @@ describe('WS3 §6 /ready — honesty invariants', () => {
     );
   });
 
-  it('reports effectBroker fail honestly but does NOT gate readiness (soft until real worker broker)', async () => {
+  it('omits effectBroker from default product probe path (worker-plane owns monopoly)', async () => {
+    await withReadyApp(
+      {
+        database: async () => 'ok',
+        kernel: () => ({} as never),
+        // no effectBroker dep — API must not pretend to host the real broker
+      },
+      async (base) => {
+        const res = await fetch(`${base}/ready`);
+        assert.equal(res.status, 200);
+        const body = (await res.json()) as { status: string; checks: Record<string, string> };
+        assert.equal(body.status, 'ready');
+        assert.equal(body.checks.effectBroker, undefined);
+      },
+    );
+  });
+
+  it('when a local registry probe is wired, fail is soft (does not gate)', async () => {
     await withReadyApp(
       {
         database: async () => 'ok',
@@ -145,8 +160,6 @@ describe('WS3 §6 /ready — honesty invariants', () => {
       },
       async (base) => {
         const res = await fetch(`${base}/ready`);
-        // API process does not host the worker-plane broker; presence is
-        // reported honestly but must not hard-gate /ready via a stub.
         assert.equal(res.status, 200);
         const body = (await res.json()) as { status: string; checks: Record<string, string> };
         assert.equal(body.status, 'ready');
@@ -171,7 +184,6 @@ describe('WS3 §6 /ready — honesty invariants', () => {
         assert.equal(body.status, 'ready');
         assert.equal(body.checks.database, 'ok');
         assert.equal(body.checks.kernel, 'ok');
-        assert.equal(body.checks.effectBroker, 'ok');
       },
     );
   });
@@ -219,39 +231,37 @@ describe('WS3 §6 /v1/health — subtree-only deps', () => {
       {
         database: async () => 'ok',
         kernel: () => null,
-        effectBroker: () => ({} as never),
       },
       async (base) => {
         const res = await fetch(`${base}/v1/health`);
         assert.equal(res.status, 503);
         const body = (await res.json()) as {
           status: string;
-          checks: { kernel: string; effectBroker: string };
+          checks: { kernel: string; effectBroker?: string };
         };
         assert.equal(body.status, 'not_ready');
         assert.equal(body.checks.kernel, 'fail');
-        assert.equal(body.checks.effectBroker, 'ok');
+        assert.equal(body.checks.effectBroker, undefined);
       },
     );
   });
 
-  it('returns 200 when kernel and effectBroker are ready', async () => {
+  it('returns 200 when kernel is ready (effectBroker not an API subtree dep)', async () => {
     await withReadyApp(
       {
         database: async () => 'ok',
         kernel: () => ({} as never),
-        effectBroker: () => ({} as never),
       },
       async (base) => {
         const res = await fetch(`${base}/v1/health`);
         assert.equal(res.status, 200);
         const body = (await res.json()) as {
           status: string;
-          checks: { kernel: string; effectBroker: string };
+          checks: { kernel: string; effectBroker?: string };
         };
         assert.equal(body.status, 'ready');
         assert.equal(body.checks.kernel, 'ok');
-        assert.equal(body.checks.effectBroker, 'ok');
+        assert.equal(body.checks.effectBroker, undefined);
       },
     );
   });
