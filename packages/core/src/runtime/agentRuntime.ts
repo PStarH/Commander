@@ -854,9 +854,12 @@ export class AgentRuntime implements AgentRuntimeInterface {
     if (!ctx.capabilityToken && ctx.availableTools.length > 0) {
       try {
         const issuer = getCapabilityTokenIssuer();
+        // Prefer a concrete tenant audience. Global '*' tokens are rejected
+        // when a tenant-scoped verify runs (CAP-02), so only use '*' when no
+        // tenant context exists (single-tenant / local).
         ctx.capabilityToken = issuer.issue({
           sub: ctx.agentId,
-          aud: tenantId ?? '*',
+          aud: tenantId && tenantId.length > 0 ? tenantId : '*',
           tools: ctx.availableTools,
           ttlSeconds: 300,
         });
