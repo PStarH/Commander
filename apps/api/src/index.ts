@@ -787,11 +787,9 @@ registerRouter({
   mountPath: '/api/v1/governance',
   factory: () => governanceRouter,
 });
-registerRouter({
-  name: 'v1-state-machine',
-  mountPath: '/api/v1/state-machine',
-  factory: () => stateMachineRouter,
-});
+// Intentionally not mounted under /api/v1/* — in-memory StateMachine is not
+// durable run authority. Legacy path remains /api/state-machine behind
+// COMMANDER_LEGACY_EXECUTION=1 (see stateMachineEndpoints + pipelineEndpoints).
 registerRouter({
   name: 'v1-self-assessment',
   mountPath: '/api/v1',
