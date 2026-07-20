@@ -423,6 +423,8 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
       - run: pnpm install
+      - name: Rebuild better-sqlite3 (repositoryContract SQLite suite)
+        run: pnpm rebuild better-sqlite3
       - name: Build kernel / worker-plane / core / api
         run: |
           pnpm --filter @commander/contracts build
@@ -506,6 +508,13 @@ jobs:
 
       - run: pnpm install
 
+      - name: Build host packages for cell scripts (C3 imports action-adapters)
+        run: |
+          pnpm --filter @commander/contracts build
+          pnpm --filter @commander/plugin-sdk build
+          pnpm --filter @commander/kernel build
+          pnpm --filter @commander/action-adapters build
+
       - name: Generate cell compose secrets
         run: |
           echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" >> "$GITHUB_ENV"
@@ -537,7 +546,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload cell compensation e2e artifacts
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: l4-b-cell-compensation-e2e
