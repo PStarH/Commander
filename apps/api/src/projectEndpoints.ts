@@ -102,33 +102,33 @@ export function createProjectRouter(
   });
 
   if (!readOnly) {
-  router.patch('/projects/:projectId/agents/:agentId/state', (req, res) => {
-    const snapshot = store.getProjectSnapshot(req.params.projectId);
-    if (!snapshot) {
-      return res.status(404).json({ error: 'Project not found' });
-    }
-    const agent = snapshot.agents.find((a) => a.agentId === req.params.agentId);
-    if (!agent) {
-      return res.status(404).json({ error: 'Agent not found' });
-    }
-    const { summary, preferences, tags } = req.body as {
-      summary?: string;
-      preferences?: string;
-      tags?: string[];
-    };
-    try {
-      const state = agentStateStore.upsert({
-        projectId: req.params.projectId,
-        agentId: req.params.agentId,
-        summary,
-        preferences,
-        tags,
-      });
-      res.json(state);
-    } catch (error) {
-      res.status(400).json({ error: toErrorMessage(error) });
-    }
-  });
+    router.patch('/projects/:projectId/agents/:agentId/state', (req, res) => {
+      const snapshot = store.getProjectSnapshot(req.params.projectId);
+      if (!snapshot) {
+        return res.status(404).json({ error: 'Project not found' });
+      }
+      const agent = snapshot.agents.find((a) => a.agentId === req.params.agentId);
+      if (!agent) {
+        return res.status(404).json({ error: 'Agent not found' });
+      }
+      const { summary, preferences, tags } = req.body as {
+        summary?: string;
+        preferences?: string;
+        tags?: string[];
+      };
+      try {
+        const state = agentStateStore.upsert({
+          projectId: req.params.projectId,
+          agentId: req.params.agentId,
+          summary,
+          preferences,
+          tags,
+        });
+        res.json(state);
+      } catch (error) {
+        res.status(400).json({ error: toErrorMessage(error) });
+      }
+    });
   }
 
   router.get('/projects/:projectId/war-room', (req, res) => {
@@ -312,198 +312,203 @@ export function createProjectRouter(
   });
 
   if (!readOnly) {
-  router.post('/projects/:projectId/missions', (req, res) => {
-    const { title, objective, assignedAgentId, priority, riskLevel, governanceMode } =
-      req.body as Record<string, string | undefined>;
-    if (!title?.trim()) return res.status(400).json({ error: 'title is required' });
-    if (!assignedAgentId?.trim())
-      return res.status(400).json({ error: 'assignedAgentId is required' });
-    const nextPriority = priority ?? 'MEDIUM';
-    if (!isMissionPriority(nextPriority))
-      return res.status(400).json({ error: 'Invalid priority' });
-    const nextRiskLevel =
-      riskLevel && isMissionRiskLevel(riskLevel) ? (riskLevel as MissionRiskLevel) : undefined;
-    const nextGovernanceMode =
-      governanceMode && isMissionGovernanceMode(governanceMode)
-        ? (governanceMode as MissionGovernanceMode)
-        : undefined;
-    try {
-      const mission = store.createMission({
-        projectId: req.params.projectId,
-        title: title.trim(),
-        objective: objective?.trim() || 'No objective provided yet.',
-        assignedAgentId: assignedAgentId.trim(),
-        priority: nextPriority as MissionPriority,
-        riskLevel: nextRiskLevel,
-        governanceMode: nextGovernanceMode,
-      });
-      res.status(201).json(mission);
-    } catch (error) {
-      res.status(mapErrorToStatusCode(error)).json({ error: toErrorMessage(error) });
-    }
-  });
-
-  router.patch('/missions/:missionId', async (req, res) => {
-    const { status, priority, assignedAgentId, title, objective, riskLevel, governanceMode } =
-      req.body as Record<string, string | undefined>;
-    if (status && !isMissionStatus(status))
-      return res.status(400).json({ error: 'Invalid status' });
-    if (priority && !isMissionPriority(priority))
-      return res.status(400).json({ error: 'Invalid priority' });
-    if (riskLevel && !isMissionRiskLevel(riskLevel))
-      return res.status(400).json({ error: 'Invalid riskLevel' });
-    if (governanceMode && !isMissionGovernanceMode(governanceMode))
-      return res.status(400).json({ error: 'Invalid governanceMode' });
-    try {
-      const mission = store.updateMission(req.params.missionId, {
-        status: status as MissionStatus | undefined,
-        priority: priority as MissionPriority | undefined,
-        assignedAgentId: assignedAgentId?.trim(),
-        title: title?.trim(),
-        objective: objective?.trim(),
-        riskLevel: riskLevel as MissionRiskLevel | undefined,
-        governanceMode: governanceMode as MissionGovernanceMode | undefined,
-      });
-      if (mission.status === 'DONE') {
-        try {
-          const existingSummary = (await memoryStore.list(mission.projectId, 100)).find(
-            (item) => item.missionId === mission.id && item.kind === 'SUMMARY',
-          );
-          if (!existingSummary) {
-            await memoryStore.append({
-              projectId: mission.projectId,
-              missionId: mission.id,
-              agentId: mission.assignedAgentId,
-              kind: 'SUMMARY',
-              duration: 'EPISODIC',
-              title: `任务完成：${mission.title}`,
-              content: `任务「${mission.title}」已完成（优先级 ${mission.priority}，风险等级 ${mission.riskLevel}，治理模式 ${mission.governanceMode}）。目标：${mission.objective}`,
-              tags: [
-                'mission',
-                'done',
-                mission.priority.toLowerCase(),
-                mission.riskLevel.toLowerCase(),
-              ],
-            });
-          }
-        } catch (e) {
-          process.stderr.write(
-            `[MemorySummary] Failed to create auto-summary: ${(e as Error)?.message}\n`,
-          );
-        }
-      }
-      res.json(mission);
-    } catch (error) {
-      res.status(mapErrorToStatusCode(error)).json({ error: toErrorMessage(error) });
-    }
-  });
-
-  // ── POST /missions/:missionId/approve — 显式审批放行高风险任务 ────────
-  // MANUAL 治理模式下的 HIGH/CRITICAL 任务在 PATCH 时会被 409 阻断，
-  // 必须通过此显式审批端点以 bypassGovernance=true 标记为 DONE。
-  // 仅 admin（及更高）可调用；审计日志主体取自 JWT，忽略 body.approver。
-  router.post('/missions/:missionId/approve', requireAuth, requireRole('admin'), async (req, res) => {
-    const { comment } = req.body as { comment?: string };
-    const approver = req.user!.username;
-    const missionId = Array.isArray(req.params.missionId)
-      ? req.params.missionId[0]
-      : req.params.missionId;
-    if (!missionId) {
-      res.status(400).json({ error: 'missionId is required' });
-      return;
-    }
-    try {
-      const mission = store.updateMission(
-        missionId,
-        { status: 'DONE' },
-        { bypassGovernance: true },
-      );
-      // 记录审批日志
-      store.createLog({
-        missionId: mission.id,
-        message: `Mission approved by ${approver}${comment ? `: ${comment}` : ''}`,
-        level: 'SUCCESS',
-      });
-      // 创建自动摘要（与 PATCH 路径一致）
+    router.post('/projects/:projectId/missions', (req, res) => {
+      const { title, objective, assignedAgentId, priority, riskLevel, governanceMode } =
+        req.body as Record<string, string | undefined>;
+      if (!title?.trim()) return res.status(400).json({ error: 'title is required' });
+      if (!assignedAgentId?.trim())
+        return res.status(400).json({ error: 'assignedAgentId is required' });
+      const nextPriority = priority ?? 'MEDIUM';
+      if (!isMissionPriority(nextPriority))
+        return res.status(400).json({ error: 'Invalid priority' });
+      const nextRiskLevel =
+        riskLevel && isMissionRiskLevel(riskLevel) ? (riskLevel as MissionRiskLevel) : undefined;
+      const nextGovernanceMode =
+        governanceMode && isMissionGovernanceMode(governanceMode)
+          ? (governanceMode as MissionGovernanceMode)
+          : undefined;
       try {
-        const existingSummary = (await memoryStore.list(mission.projectId, 100)).find(
-          (item) => item.missionId === mission.id && item.kind === 'SUMMARY',
-        );
-        if (!existingSummary) {
-          await memoryStore.append({
-            projectId: mission.projectId,
-            missionId: mission.id,
-            agentId: mission.assignedAgentId,
-            kind: 'SUMMARY',
-            duration: 'EPISODIC',
-            title: `任务完成：${mission.title}`,
-            content: `任务「${mission.title}」经审批完成（优先级 ${mission.priority}，风险等级 ${mission.riskLevel}，治理模式 ${mission.governanceMode}）。目标：${mission.objective}`,
-            tags: ['mission', 'done', 'approved', mission.priority.toLowerCase()],
-          });
-        }
-      } catch (e) {
-        process.stderr.write(
-          `[MemorySummary] Failed to create auto-summary on approve: ${(e as Error)?.message}\n`,
-        );
+        const mission = store.createMission({
+          projectId: req.params.projectId,
+          title: title.trim(),
+          objective: objective?.trim() || 'No objective provided yet.',
+          assignedAgentId: assignedAgentId.trim(),
+          priority: nextPriority as MissionPriority,
+          riskLevel: nextRiskLevel,
+          governanceMode: nextGovernanceMode,
+        });
+        res.status(201).json(mission);
+      } catch (error) {
+        res.status(mapErrorToStatusCode(error)).json({ error: toErrorMessage(error) });
       }
-      res.json(mission);
-    } catch (error) {
-      res.status(mapErrorToStatusCode(error)).json({ error: toErrorMessage(error) });
-    }
-  });
+    });
 
-  router.post('/projects/:projectId/memory', async (req, res) => {
-    const snapshot = store.getProjectSnapshot(req.params.projectId);
-    if (!snapshot) return res.status(404).json({ error: 'Project not found' });
-    const { title, content, kind, missionId, agentId, tags } = req.body as {
-      title?: string;
-      content?: string;
-      kind?: string;
-      missionId?: string;
-      agentId?: string;
-      tags?: string[];
-    };
-    if (!title?.trim()) return res.status(400).json({ error: 'title is required' });
-    if (!content?.trim()) return res.status(400).json({ error: 'content is required' });
-    const memoryKind: ProjectMemoryKind = isProjectMemoryKind(kind || 'SUMMARY')
-      ? ((kind || 'SUMMARY') as ProjectMemoryKind)
-      : 'SUMMARY';
-    const safeTags = Array.isArray(tags)
-      ? tags.filter((t): t is string => typeof t === 'string').slice(0, 8)
-      : [];
-    try {
-      const item = await memoryStore.append({
-        projectId: req.params.projectId,
-        missionId,
-        agentId,
-        kind: memoryKind,
-        duration: 'EPISODIC',
-        title: title.trim(),
-        content: content.trim(),
-        tags: safeTags,
-      });
-      res.status(201).json(item);
-    } catch (error) {
-      res.status(400).json({ error: toErrorMessage(error) });
-    }
-  });
+    router.patch('/missions/:missionId', async (req, res) => {
+      const { status, priority, assignedAgentId, title, objective, riskLevel, governanceMode } =
+        req.body as Record<string, string | undefined>;
+      if (status && !isMissionStatus(status))
+        return res.status(400).json({ error: 'Invalid status' });
+      if (priority && !isMissionPriority(priority))
+        return res.status(400).json({ error: 'Invalid priority' });
+      if (riskLevel && !isMissionRiskLevel(riskLevel))
+        return res.status(400).json({ error: 'Invalid riskLevel' });
+      if (governanceMode && !isMissionGovernanceMode(governanceMode))
+        return res.status(400).json({ error: 'Invalid governanceMode' });
+      try {
+        const mission = store.updateMission(req.params.missionId, {
+          status: status as MissionStatus | undefined,
+          priority: priority as MissionPriority | undefined,
+          assignedAgentId: assignedAgentId?.trim(),
+          title: title?.trim(),
+          objective: objective?.trim(),
+          riskLevel: riskLevel as MissionRiskLevel | undefined,
+          governanceMode: governanceMode as MissionGovernanceMode | undefined,
+        });
+        if (mission.status === 'DONE') {
+          try {
+            const existingSummary = (await memoryStore.list(mission.projectId, 100)).find(
+              (item) => item.missionId === mission.id && item.kind === 'SUMMARY',
+            );
+            if (!existingSummary) {
+              await memoryStore.append({
+                projectId: mission.projectId,
+                missionId: mission.id,
+                agentId: mission.assignedAgentId,
+                kind: 'SUMMARY',
+                duration: 'EPISODIC',
+                title: `任务完成：${mission.title}`,
+                content: `任务「${mission.title}」已完成（优先级 ${mission.priority}，风险等级 ${mission.riskLevel}，治理模式 ${mission.governanceMode}）。目标：${mission.objective}`,
+                tags: [
+                  'mission',
+                  'done',
+                  mission.priority.toLowerCase(),
+                  mission.riskLevel.toLowerCase(),
+                ],
+              });
+            }
+          } catch (e) {
+            process.stderr.write(
+              `[MemorySummary] Failed to create auto-summary: ${(e as Error)?.message}\n`,
+            );
+          }
+        }
+        res.json(mission);
+      } catch (error) {
+        res.status(mapErrorToStatusCode(error)).json({ error: toErrorMessage(error) });
+      }
+    });
 
-  router.post('/missions/:missionId/logs', (req, res) => {
-    const { message, level } = req.body as { message?: string; level?: string };
-    if (!message?.trim()) return res.status(400).json({ error: 'message is required' });
-    const nextLevel = level ?? 'INFO';
-    if (!isLogLevel(nextLevel)) return res.status(400).json({ error: 'Invalid log level' });
-    try {
-      const log = store.createLog({
-        missionId: req.params.missionId,
-        message: message.trim(),
-        level: nextLevel,
-      });
-      res.status(201).json(log);
-    } catch (error) {
-      res.status(mapErrorToStatusCode(error)).json({ error: toErrorMessage(error) });
-    }
-  });
+    // ── POST /missions/:missionId/approve — 显式审批放行高风险任务 ────────
+    // MANUAL 治理模式下的 HIGH/CRITICAL 任务在 PATCH 时会被 409 阻断，
+    // 必须通过此显式审批端点以 bypassGovernance=true 标记为 DONE。
+    // 仅 admin（及更高）可调用；审计日志主体取自 JWT，忽略 body.approver。
+    router.post(
+      '/missions/:missionId/approve',
+      requireAuth,
+      requireRole('admin'),
+      async (req, res) => {
+        const { comment } = req.body as { comment?: string };
+        const approver = req.user!.username;
+        const missionId = Array.isArray(req.params.missionId)
+          ? req.params.missionId[0]
+          : req.params.missionId;
+        if (!missionId) {
+          res.status(400).json({ error: 'missionId is required' });
+          return;
+        }
+        try {
+          const mission = store.updateMission(
+            missionId,
+            { status: 'DONE' },
+            { bypassGovernance: true },
+          );
+          // 记录审批日志
+          store.createLog({
+            missionId: mission.id,
+            message: `Mission approved by ${approver}${comment ? `: ${comment}` : ''}`,
+            level: 'SUCCESS',
+          });
+          // 创建自动摘要（与 PATCH 路径一致）
+          try {
+            const existingSummary = (await memoryStore.list(mission.projectId, 100)).find(
+              (item) => item.missionId === mission.id && item.kind === 'SUMMARY',
+            );
+            if (!existingSummary) {
+              await memoryStore.append({
+                projectId: mission.projectId,
+                missionId: mission.id,
+                agentId: mission.assignedAgentId,
+                kind: 'SUMMARY',
+                duration: 'EPISODIC',
+                title: `任务完成：${mission.title}`,
+                content: `任务「${mission.title}」经审批完成（优先级 ${mission.priority}，风险等级 ${mission.riskLevel}，治理模式 ${mission.governanceMode}）。目标：${mission.objective}`,
+                tags: ['mission', 'done', 'approved', mission.priority.toLowerCase()],
+              });
+            }
+          } catch (e) {
+            process.stderr.write(
+              `[MemorySummary] Failed to create auto-summary on approve: ${(e as Error)?.message}\n`,
+            );
+          }
+          res.json(mission);
+        } catch (error) {
+          res.status(mapErrorToStatusCode(error)).json({ error: toErrorMessage(error) });
+        }
+      },
+    );
+
+    router.post('/projects/:projectId/memory', async (req, res) => {
+      const snapshot = store.getProjectSnapshot(req.params.projectId);
+      if (!snapshot) return res.status(404).json({ error: 'Project not found' });
+      const { title, content, kind, missionId, agentId, tags } = req.body as {
+        title?: string;
+        content?: string;
+        kind?: string;
+        missionId?: string;
+        agentId?: string;
+        tags?: string[];
+      };
+      if (!title?.trim()) return res.status(400).json({ error: 'title is required' });
+      if (!content?.trim()) return res.status(400).json({ error: 'content is required' });
+      const memoryKind: ProjectMemoryKind = isProjectMemoryKind(kind || 'SUMMARY')
+        ? ((kind || 'SUMMARY') as ProjectMemoryKind)
+        : 'SUMMARY';
+      const safeTags = Array.isArray(tags)
+        ? tags.filter((t): t is string => typeof t === 'string').slice(0, 8)
+        : [];
+      try {
+        const item = await memoryStore.append({
+          projectId: req.params.projectId,
+          missionId,
+          agentId,
+          kind: memoryKind,
+          duration: 'EPISODIC',
+          title: title.trim(),
+          content: content.trim(),
+          tags: safeTags,
+        });
+        res.status(201).json(item);
+      } catch (error) {
+        res.status(400).json({ error: toErrorMessage(error) });
+      }
+    });
+
+    router.post('/missions/:missionId/logs', (req, res) => {
+      const { message, level } = req.body as { message?: string; level?: string };
+      if (!message?.trim()) return res.status(400).json({ error: 'message is required' });
+      const nextLevel = level ?? 'INFO';
+      if (!isLogLevel(nextLevel)) return res.status(400).json({ error: 'Invalid log level' });
+      try {
+        const log = store.createLog({
+          missionId: req.params.missionId,
+          message: message.trim(),
+          level: nextLevel,
+        });
+        res.status(201).json(log);
+      } catch (error) {
+        res.status(mapErrorToStatusCode(error)).json({ error: toErrorMessage(error) });
+      }
+    });
   }
 
   router.get('/projects/:projectId/governance/stats', (req, res) => {
