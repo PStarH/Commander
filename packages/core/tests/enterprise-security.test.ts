@@ -702,10 +702,14 @@ describe('Auth Middleware timing safety', () => {
     // This test verifies that the auth middleware code uses crypto.timingSafeEqual
     // and SHA-256 hashing, which we can check by importing the module
     const fs = require('node:fs');
-    const authCode = fs.readFileSync(
-      '/Users/sampan/Documents/GitHub/Commander/apps/api/src/authMiddleware.ts',
-      'utf8',
+    const path = require('node:path');
+    const authPath = path.resolve(
+      process.cwd(),
+      process.cwd().endsWith(`${path.sep}packages${path.sep}core`)
+        ? '../../apps/api/src/authMiddleware.ts'
+        : 'apps/api/src/authMiddleware.ts',
     );
+    const authCode = fs.readFileSync(authPath, 'utf8');
 
     // Verify timing-safe comparison is used
     assert.ok(authCode.includes('timingSafeEqual'), 'Should use timingSafeEqual');
