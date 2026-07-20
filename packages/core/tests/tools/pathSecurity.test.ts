@@ -117,9 +117,13 @@ describe('FileSearchTool — glob pattern resolution', () => {
     const result = await tool.execute({ pattern: '**/*.ts', maxResults: 100 });
     assert.ok(result.includes('.ts'), 'Should find .ts files');
     assert.ok(result.length > 0, 'Should return at least one result');
+    // Normalize separators — Windows FileSearchTool may emit `\`.
+    const normalized = result.replace(/\\/g, '/');
     // Verify recursion — benchmark files appear early alphabetically
     assert.ok(
-      result.includes('benchmarks/') || result.includes('dist/') || result.includes('cli.ts'),
+      normalized.includes('benchmarks/') ||
+        normalized.includes('dist/') ||
+        normalized.includes('cli.ts'),
       'Should find files in subdirectories via recursion',
     );
   });
