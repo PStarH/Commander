@@ -52,6 +52,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@commander/action-adapters": "workspace:*",
     "@commander/core": "workspace:*",
     "@commander/kernel": "workspace:*",
     "@commander/effect-broker": "workspace:*",

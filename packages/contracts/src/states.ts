@@ -47,11 +47,9 @@ export const TERMINAL_STEP_STATES: ReadonlySet<StepState> = new Set([
 
 /** Valid run state transitions keyed by current state. */
 export const RUN_TRANSITIONS: Readonly<Record<RunState, readonly RunState[]>> = {
-  // PENDING/PAUSED may still hold COMPLETED effects (e.g. pause then deadline);
-  // compensation replaces the historical *→FAILED finish path in those cases.
-  PENDING: ['RUNNING', 'PAUSED', 'FAILED', 'CANCELLED', 'COMPENSATING'],
+  PENDING: ['RUNNING', 'PAUSED', 'FAILED', 'CANCELLED'],
   RUNNING: ['PAUSED', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'COMPENSATING'],
-  PAUSED: ['RUNNING', 'FAILED', 'CANCELLED', 'COMPENSATING'],
+  PAUSED: ['RUNNING', 'FAILED', 'CANCELLED'],
   SUCCEEDED: [],
   FAILED: [],
   CANCELLED: [],
@@ -63,6 +61,7 @@ export const RUN_TRANSITIONS: Readonly<Record<RunState, readonly RunState[]>> = 
 export const STEP_TRANSITIONS: Readonly<Record<StepState, readonly StepState[]>> = {
   PENDING: ['RUNNING', 'SKIPPED', 'FAILED', 'CANCELLED'],
   RUNNING: ['WAITING_FOR_HUMAN', 'RETRY_WAIT', 'SUCCEEDED', 'FAILED', 'CANCELLED'],
+  // 人工应答后释放 step → RETRY_WAIT（与 kernel answerInteraction / repositoryContract 对齐）
   WAITING_FOR_HUMAN: ['RUNNING', 'RETRY_WAIT', 'FAILED', 'CANCELLED'],
   RETRY_WAIT: ['RUNNING', 'FAILED', 'CANCELLED'],
   SUCCEEDED: [],
