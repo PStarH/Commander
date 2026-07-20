@@ -27,6 +27,7 @@
     "packages/worker-plane/src/llmBrokerBridge.test.ts",
     "packages/worker-plane/src/stepWorkloadIdentity.ts",
     "packages/worker-plane/src/stepWorkloadIdentity.test.ts",
+    "packages/worker-plane/src/workerService.ts",
     "packages/worker-plane/src/workerService.test.ts"
   ],
   "api": {
