@@ -140,7 +140,11 @@ describe('D3 hardening — ExecPolicyEngine edge cases', () => {
 
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'execPolicy-symlink-'));
       try {
-        const link = path.join(tmpDir, 'mycat');
+        // Force an uppercase path segment so Linux case-sensitivity is exercised
+        // even when mkdtemp's random suffix happens to be all-lowercase.
+        const mixedCaseDir = path.join(tmpDir, 'SymLinkCase');
+        fs.mkdirSync(mixedCaseDir);
+        const link = path.join(mixedCaseDir, 'mycat');
         fs.symlinkSync(realCat, link);
         const r = engine.evaluate(`${link} /etc/shadow`);
         // After commandNameAliases.resolveRealPath, the basename is 'cat';
