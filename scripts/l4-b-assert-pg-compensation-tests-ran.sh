@@ -19,12 +19,13 @@ out="$(
 )"
 printf '%s\n' "$out"
 
-if ! printf '%s\n' "$out" | rg -q '# skipped 0'; then
+# Prefer grep over rg — GitHub-hosted runners do not ship ripgrep by default.
+if ! printf '%s\n' "$out" | grep -Eq '# skipped 0'; then
   echo "ERROR: expected '# skipped 0' in Node test summary (PG tests must not skip)" >&2
   exit 1
 fi
 
-if ! printf '%s\n' "$out" | rg -q '# pass [1-9]'; then
+if ! printf '%s\n' "$out" | grep -Eq '# pass [1-9][0-9]*'; then
   echo "ERROR: expected at least one passing test ('# pass N' with N>=1)" >&2
   exit 1
 fi
