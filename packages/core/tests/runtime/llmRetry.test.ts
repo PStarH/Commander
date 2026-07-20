@@ -66,6 +66,35 @@ describe('classifyLLMError', () => {
     expect(result.errorClass).toBe('transient');
   });
 
+  it('classifies LLM StepTimeout as transient; tool Abort/TOOL_* as non-retryable', () => {
+    // LLM 经 stepTimeout.wrap 抛 StepTimeoutError：须 transient（与 a1301eb7 对齐）
+    const stepTimeout = classifyLLMError(
+      Object.assign(new Error('Step "call-1" exceeded timeout of 30ms'), {
+        name: 'StepTimeoutError',
+      }),
+    );
+    expect(stepTimeout.retryable).toBe(true);
+    expect(stepTimeout.errorClass).toBe('transient');
+
+    // 父取消 AbortError：不可重试
+    const abortErr = new Error('This operation was aborted');
+    abortErr.name = 'AbortError';
+    const abort = classifyLLMError(abortErr);
+    expect(abort.retryable).toBe(false);
+    expect(abort.errorClass).toBe('unknown');
+
+    // 工具标记：不可重试
+    expect(classifyLLMError(new Error('TOOL_TIMEOUT: "x" exceeded 30ms')).retryable).toBe(false);
+    expect(classifyLLMError(new Error('TOOL_ABORTED: parent abortSignal fired')).retryable).toBe(
+      false,
+    );
+
+    // 网络 abort 仍可 transient retry（无 ECONNABORTED 误伤）
+    const net = classifyLLMError(new Error('network ECONNABORTED'));
+    expect(net.retryable).toBe(true);
+    expect(net.errorClass).toBe('transient');
+  });
+
   it('classifies network errors as transient', () => {
     const result = classifyLLMError(new Error('ECONNREFUSED connect'));
     expect(result.retryable).toBe(true);

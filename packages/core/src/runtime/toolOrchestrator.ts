@@ -12,8 +12,12 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
-import type { ToolCall, ToolResult, Tool } from './types';
-import { toolErrorRow } from './toolResultShape';
+import type { ToolCall, ToolResult, Tool, AgentExecutionContext } from './types';
+import {
+  formatAbortTimeoutAdviceLines,
+  isAbortOrTimeoutToolError,
+  toolErrorRow,
+} from './toolResultShape';
 import type { ToolApproval } from './toolApproval';
 import { CircuitBreakerRegistry } from './circuitBreakerRegistry';
 import { getGuardianAgent } from '../security/guardianAgent';
@@ -70,6 +74,27 @@ export interface ToolExecutionContext {
   agentId: string;
   stepNumber: number;
   tenantId?: string;
+  /** Parent/agent abort — linked into the per-tool timeout controller. */
+  abortSignal?: AbortSignal;
+  /**
+   * Real agent execution context when the caller has one.
+   * Never forge empty goal/tools/budget placeholders — pass through or omit.
+   */
+  agentContext?: AgentExecutionContext;
+}
+
+/**
+ * 仅当 rejection 与 signal.reason 为同一引用时视为 abort-linked（对齐 #72）。
+ *
+ * 合作 handler 应在 abort 监听器内 reject(signal.reason)。
+ * 伪造 AbortError / 文案相同的新 Error('aborted') → 非 linked（正确）。
+ * linked alone 不够：ignore 后副作用再 throw signal.reason 仍同引用；
+ * 须叠加 abort 协作窗口（abortLocal：先 setTimeout(0) 关窗再 abort，finally 快照）
+ * 才标 cooperative（非 retryable）。
+ * hard-fail 后工具 Promise 可能继续跑（orphan）；await 已 settle，仅吞 unhandledRejection。
+ */
+export function isAbortLinkedRejection(error: unknown, signal: AbortSignal): boolean {
+  return signal.aborted && error === signal.reason;
 }
 
 // ============================================================================
@@ -382,16 +407,197 @@ export class ToolOrchestrator {
           }
         }
 
-        const execPromise = tool.execute(toolCall.arguments);
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          const timer = setTimeout(
-            () => reject(new Error(`TOOL_TIMEOUT: "${toolCall.name}" exceeded ${timeout}ms`)),
-            timeout,
-          );
-          if (typeof timer.unref === 'function') timer.unref();
-        });
+        // Soft-abort at timeout / parent cancel (cooperative tools), then hard-fail the
+        // await after a short grace so non-cooperative tools cannot pin the orchestrator.
+        // Parent abort schedules grace-only hard-exit — does NOT wait remaining timeoutMs.
+        // Mirrors worker-plane #72 awaitWithAbortTimeout (abort + force-complete).
+        const controller = new AbortController();
+        const parentSignal = context.abortSignal;
+        const abortMsgBase = 'TOOL_ABORTED: parent abortSignal fired';
+        const timeoutMsgBase =
+          'TOOL_TIMEOUT: "' + toolCall.name + '" exceeded ' + String(timeout) + 'ms';
+        // Cap grace; scale down for short timeouts so tests stay fast (#72 abortGrace).
+        const graceMs = Math.min(5_000, Math.max(25, Math.min(timeout, 50)));
 
-        const output = await Promise.race([execPromise, timeoutPromise]);
+        let timedOut = false;
+        let closed = false;
+        let settled = false;
+        /**
+         * abort 后的协作窗口：覆盖 abort 同步监听器 + async 额外微任务跳（对齐 #72）。
+         * 用 setTimeout(0) 关窗（而非 queueMicrotask），避免 finally 链晚一拍误伤真协作；
+         * 宏任务里再 throw signal.reason（副作用后）则 fail-closed。
+         */
+        let abortCoopWindow = false;
+        let settledInCoopWindow = false;
+        let softTimer: ReturnType<typeof setTimeout> | undefined;
+        let graceTimer: ReturnType<typeof setTimeout> | undefined;
+        let coopWindowTimer: ReturnType<typeof setTimeout> | undefined;
+        let onParentAbort: (() => void) | undefined;
+
+        // Pass through real agentContext when provided; otherwise only identity + abortSignal.
+        // Do not forge empty goal / availableTools / tokenBudget placeholders.
+        const execCtx = (
+          context.agentContext
+            ? { ...context.agentContext, abortSignal: controller.signal }
+            : {
+                agentId: context.agentId,
+                runId: context.runId,
+                tenantId: context.tenantId,
+                abortSignal: controller.signal,
+              }
+        ) as AgentExecutionContext;
+
+        const execPromise = tool.execute(toolCall.arguments, execCtx).finally(() => {
+          settled = true;
+          if (abortCoopWindow) settledInCoopWindow = true;
+        });
+        // Abandoned non-cooperative work must not surface as unhandledRejection.
+        void execPromise.then(
+          () => undefined,
+          () => undefined,
+        );
+
+        let output: string;
+        try {
+          output = await new Promise<string>((resolve, reject) => {
+            const close = (fn: () => void): void => {
+              if (closed) return;
+              closed = true;
+              if (softTimer !== undefined) clearTimeout(softTimer);
+              if (graceTimer !== undefined) clearTimeout(graceTimer);
+              if (coopWindowTimer !== undefined) clearTimeout(coopWindowTimer);
+              fn();
+            };
+
+            // cooperative=true only for abort-linked reject inside the abort coop window;
+            // false after grace hard-cancel, late success, or late reject (incl. late
+            // throw of signal.reason after side effects) — 对齐 #72.
+            const withCoop = (base: string, cooperative: boolean): string =>
+              cooperative ? base : base + ' (non-cooperative)';
+
+            const rejectTimeout = (cooperative: boolean): void => {
+              close(() => reject(new Error(withCoop(timeoutMsgBase, cooperative))));
+            };
+
+            const rejectAbort = (cooperative: boolean): void => {
+              close(() => reject(new Error(withCoop(abortMsgBase, cooperative))));
+            };
+
+            /**
+             * Soft-abort local signal；协作窗口覆盖 abort 同步监听器（真 coop）。
+             *
+             * 关窗 setTimeout(0) 必须先于 controller.abort 入队：若先 abort，监听器内
+             *「副作用 + setTimeout(0, reject(signal.reason))」会把 settle 定时器排在
+             * 关窗之前 → settle 仍落在 coop 窗 → 误标 cooperative（跨层可能误当成可重试 / dual-dispatch）。
+             * 先关窗再 abort：监听器的 setTimeout(0) 晚于关窗 → fail-closed；
+             * 同步 reject(signal.reason) 仍在窗内 → cooperative。
+             * 本编排器对 TOOL_TIMEOUT/TOOL_ABORTED 一律不重试；formatError 亦禁止模型再调。
+             * （对齐 #72 awaitWithAbortTimeout.abortLocal 顺序。）
+             */
+            const abortLocal = (reason: unknown): void => {
+              if (controller.signal.aborted) return;
+              abortCoopWindow = true;
+              if (coopWindowTimer !== undefined) clearTimeout(coopWindowTimer);
+              coopWindowTimer = setTimeout(() => {
+                abortCoopWindow = false;
+                coopWindowTimer = undefined;
+              }, 0);
+              if (typeof coopWindowTimer.unref === 'function') coopWindowTimer.unref();
+              controller.abort(reason);
+            };
+
+            /** Soft-abort already fired; after grace, hard-reject if work ignored it. */
+            const scheduleHardExit = (hardReject: () => void): void => {
+              if (graceTimer !== undefined || closed) return;
+              graceTimer = setTimeout(() => {
+                if (closed || settled) return;
+                hardReject();
+              }, graceMs);
+              if (typeof graceTimer.unref === 'function') graceTimer.unref();
+            };
+
+            /**
+             * abort/timeout 已开火后的 settle：仅窗口内 abort-linked 仍可 coop；
+             * 晚抛 signal.reason（副作用后再抛）与 late-success 一样 fail-closed。
+             */
+            const coopAfterCancel = (error: unknown): boolean =>
+              settledInCoopWindow && isAbortLinkedRejection(error, controller.signal);
+
+            onParentAbort = (): void => {
+              abortLocal(parentSignal?.reason ?? new Error('aborted'));
+              // Parent abort must hard-exit non-cooperative work (same as timeout path).
+              scheduleHardExit(() => rejectAbort(false));
+            };
+
+            if (parentSignal) {
+              if (parentSignal.aborted) onParentAbort();
+              else parentSignal.addEventListener('abort', onParentAbort, { once: true });
+            }
+
+            softTimer = setTimeout(() => {
+              if (closed) return;
+              // Parent owns ABORTED mapping; still ensure a hard-exit is armed.
+              if (parentSignal?.aborted) {
+                scheduleHardExit(() => rejectAbort(false));
+                return;
+              }
+              timedOut = true;
+              abortLocal(new Error(timeoutMsgBase));
+              scheduleHardExit(() => {
+                if (parentSignal?.aborted) {
+                  rejectAbort(false);
+                  return;
+                }
+                rejectTimeout(false);
+              });
+            }, timeout);
+            if (typeof softTimer.unref === 'function') softTimer.unref();
+
+            void execPromise.then(
+              (value) => {
+                if (closed) return;
+                if (parentSignal?.aborted) {
+                  // Late success after parent abort: ignored cancel — not cooperative.
+                  rejectAbort(false);
+                  return;
+                }
+                if (timedOut) {
+                  // Late resolve after timeout: completion unknown — not cooperative.
+                  rejectTimeout(false);
+                  return;
+                }
+                if (controller.signal.aborted) {
+                  rejectAbort(true);
+                  return;
+                }
+                close(() => resolve(value));
+              },
+              (error) => {
+                if (closed) return;
+                if (parentSignal?.aborted) {
+                  rejectAbort(coopAfterCancel(error));
+                  return;
+                }
+                if (timedOut) {
+                  rejectTimeout(coopAfterCancel(error));
+                  return;
+                }
+                if (controller.signal.aborted) {
+                  rejectAbort(coopAfterCancel(error));
+                  return;
+                }
+                close(() => reject(error instanceof Error ? error : new Error(String(error))));
+              },
+            );
+          });
+        } finally {
+          if (onParentAbort && parentSignal) {
+            parentSignal.removeEventListener('abort', onParentAbort);
+          }
+          if (softTimer !== undefined) clearTimeout(softTimer);
+          if (graceTimer !== undefined) clearTimeout(graceTimer);
+          if (coopWindowTimer !== undefined) clearTimeout(coopWindowTimer);
+        }
         const durationMs = Date.now() - startTime;
 
         this.recordSuccess(toolCall.name);
@@ -435,7 +641,14 @@ export class ToolOrchestrator {
         const durationMs = Date.now() - startTime;
         lastError = err instanceof Error ? err.message : String(err);
 
-        this.recordFailure(toolCall.name);
+        // Non-cooperative hard timeout / parent abort: do not amplify side-effects via retry.
+        const nonRetryable =
+          lastError.startsWith('TOOL_TIMEOUT:') || lastError.startsWith('TOOL_ABORTED:');
+
+        // 父取消 / soft-timeout 不是工具故障：不计入熔断，避免重复取消误开路。
+        if (!nonRetryable) {
+          this.recordFailure(toolCall.name);
+        }
 
         try {
           getIntentLog(context.tenantId).write({
@@ -450,15 +663,15 @@ export class ToolOrchestrator {
               toolCallId: toolCall.id,
               durationMs,
               attempt: attempt + 1,
-              willRetry: attempt < this.config.maxRetries,
+              willRetry: !nonRetryable && attempt < this.config.maxRetries,
             },
           });
-        } catch (err) {
-          reportSilentFailure(err, 'toolOrchestrator:364');
+        } catch (logErr) {
+          reportSilentFailure(logErr, 'toolOrchestrator:364');
           /* best-effort */
         }
 
-        if (attempt < this.config.maxRetries) {
+        if (!nonRetryable && attempt < this.config.maxRetries) {
           retries++;
           await new Promise((r) => {
             const t = setTimeout(r, 500 * (attempt + 1));
@@ -519,6 +732,8 @@ export class ToolOrchestrator {
 
   /**
    * Format a structured error message for the model.
+   * TIMEOUT/ABORTED（含 non-coop）禁止建议重试：orphan 可能仍在跑，再调即跨层 dual-dispatch。
+   * advice 文案经 toolResultShape 与 TES 主路径对齐（TEH 仅 planExecution）。
    */
   private formatError(
     toolCall: ToolCall,
@@ -526,14 +741,19 @@ export class ToolOrchestrator {
     durationMs: number,
     attempts: number,
   ): string {
+    const advice = isAbortOrTimeoutToolError(error)
+      ? [`advice:`, ...formatAbortTimeoutAdviceLines(error)]
+      : [
+          `advice:`,
+          `  - If transient, retry the call`,
+          `  - If args invalid, correct and retry`,
+          `  - If tool unavailable, try a different approach`,
+        ];
     return [
       `tool_error: "${toolCall.name}" failed after ${attempts} attempt(s) (${durationMs}ms)`,
       `  reason: ${error}`,
       `  args: ${JSON.stringify(toolCall.arguments)}`,
-      `advice:`,
-      `  - If transient, retry the call`,
-      `  - If args invalid, correct and retry`,
-      `  - If tool unavailable, try a different approach`,
+      ...advice,
     ].join('\n');
   }
 
