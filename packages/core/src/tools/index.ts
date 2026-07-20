@@ -82,6 +82,7 @@ import {
 } from './resourceTools';
 import { FileHashEditTool } from './fileHashEditTool';
 import { LspResourceTool } from './lspResourceTool';
+import { SCRIPT_NESTED_SHELL_EQUIVALENT_TOOLS } from '../sandbox/execPolicy';
 
 /**
  * Create the full set of tools exposed to the LLM.
@@ -123,6 +124,7 @@ export function createAllTools(options?: { enableMetaTools?: boolean }): Map<str
   if (options?.enableMetaTools) {
     const subToolMap = new Map<string, (args: Record<string, unknown>) => Promise<string>>();
     for (const [name, tool] of tools) {
+      if (SCRIPT_NESTED_SHELL_EQUIVALENT_TOOLS.has(name)) continue;
       subToolMap.set(name, (args) => Promise.resolve(tool.execute(args)).then(String));
     }
 
@@ -139,12 +141,14 @@ export function createAllTools(options?: { enableMetaTools?: boolean }): Map<str
 /**
  * Build a map of tool executor functions from a tool map.
  * Useful for wiring programmatic tool callers (e.g., exec.script).
+ * Shell-equivalent tools are never included (nested bypass of ExecPolicy).
  */
 export function buildToolExecutorMap(
   tools: Map<string, Tool>,
 ): Map<string, (args: Record<string, unknown>) => Promise<string>> {
   const map = new Map<string, (args: Record<string, unknown>) => Promise<string>>();
   for (const [name, tool] of tools) {
+    if (SCRIPT_NESTED_SHELL_EQUIVALENT_TOOLS.has(name)) continue;
     map.set(name, (args) => Promise.resolve(tool.execute(args)).then(String));
   }
   return map;

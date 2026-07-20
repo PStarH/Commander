@@ -305,7 +305,8 @@ jobs:
           pnpm --filter @commander/core build
           pnpm --filter @commander/core exec tsx --test \
             tests/sandbox/productionPolicy.test.ts \
-            tests/memory/memoryAuditQuery.test.ts
+            tests/memory/memoryAuditQuery.test.ts \
+            tests/security/exec-policy-resource-tool.test.ts
           pnpm exec tsx --test \
             packages/worker-plane/src/llmBrokerBridge.test.ts \
             packages/worker-plane/src/workerRuntimeAdapter.test.ts \

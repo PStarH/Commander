@@ -28,6 +28,11 @@ import * as path from 'path';
 import { getSharedRuntime } from './sharedRuntime';
 import { toErrorMessage } from './routeHelpers';
 import { validateBody } from './validationMiddleware';
+import {
+  timingSafeEqualString,
+  verifyDingTalkSignature,
+  verifyWeComSignature,
+} from './webhookCrypto';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -108,50 +113,6 @@ function generateId(): string {
 
 function generateSecret(): string {
   return crypto.randomBytes(32).toString('hex');
-}
-
-// ── DingTalk signature verification ───────────────────────────────────────
-
-/**
- * DingTalk robot signature verification.
- * Algorithm: HmacSHA256(timestamp + "\n" + secret), base64-encoded.
- */
-function verifyDingTalkSignature(timestamp: string, sign: string, secret: string): boolean {
-  try {
-    const expected = crypto
-      .createHmac('sha256', secret)
-      .update(timestamp + '\n' + secret)
-      .digest('base64');
-    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sign));
-  } catch (err) {
-    reportSilentFailure(err, 'webhookEndpoints:verifyDingTalkSignature');
-    return false;
-  }
-}
-
-// ── WeCom signature verification (basic) ──────────────────────────────────
-
-/**
- * WeCom msg_signature = sha1(sort([token, timestamp, nonce, encrypt]))
- * For simplicity (and because full AES decryption is complex), we perform
- * the signature verification but skip AES decryption of the message body.
- * The raw XML is parsed for the text content.
- */
-function verifyWeComSignature(
-  token: string,
-  timestamp: string,
-  nonce: string,
-  encrypt: string,
-  msgSignature: string,
-): boolean {
-  try {
-    const parts = [token, timestamp, nonce, encrypt].sort();
-    const sha1 = crypto.createHash('sha1').update(parts.join('')).digest('hex');
-    return crypto.timingSafeEqual(Buffer.from(sha1), Buffer.from(msgSignature));
-  } catch (err) {
-    reportSilentFailure(err, 'webhookEndpoints:verifyWeComSignature');
-    return false;
-  }
 }
 
 /** Extract <Tag>content</Tag> from a WeCom XML payload. */
@@ -277,9 +238,9 @@ export function createWebhookRouter(): Router {
         return;
       }
 
-      // Token verification is mandatory when a config exists.
+      // Token verification is mandatory when a config exists (constant-time).
       const token = typeof header.token === 'string' ? header.token : '';
-      if (!token || token !== config.secret) {
+      if (!token || !timingSafeEqualString(token, config.secret)) {
         res.status(401).json({ error: 'Invalid verification token' });
         return;
       }
