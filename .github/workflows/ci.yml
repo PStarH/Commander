@@ -311,7 +311,10 @@ jobs:
             apps/api/test/warRoomDemotion.test.ts
 
       - name: Readiness gate (strict)
-        run: pnpm check:readiness
+        # Simulated/synthetic docs/baselines fixtures are non-scoring.
+        # Required slots must use live evidence; until then they are recommended.
+        # residual→100 is refused unless required live baselines pass.
+        run: pnpm exec tsx scripts/check-readiness.ts
 
       - name: Run core tests
         shell: bash
