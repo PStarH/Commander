@@ -220,6 +220,39 @@ describe('ToolStepExecutor', () => {
     assert.equal(invoked, false);
     assert.equal(brokerInput?.type, 'http.post');
   });
+
+  it('aborts the tool handler signal on timeout instead of only racing the promise', async () => {
+    let sawAbort = false;
+    const mockRegistry = {
+      get: () => ({
+        execute: async (_args: Record<string, unknown>, ctx: { signal: AbortSignal }) => {
+          await new Promise<void>((resolve, reject) => {
+            if (ctx.signal.aborted) {
+              sawAbort = true;
+              reject(new Error('aborted early'));
+              return;
+            }
+            ctx.signal.addEventListener(
+              'abort',
+              () => {
+                sawAbort = true;
+                reject(new Error('aborted'));
+              },
+              { once: true },
+            );
+          });
+          return { never: true };
+        },
+      }),
+    };
+    const executor = new ToolStepExecutor(mockRegistry);
+    const step = createMockStep({ input: { toolName: 'slow', args: {}, timeoutMs: 30 } });
+    await assert.rejects(
+      () => executor.execute(step, { signal: ac.signal, worker: createMockWorker() }),
+      (err: WorkerExecutionError) => err.options.code === 'TIMEOUT' && err.options.retryable === true,
+    );
+    assert.equal(sawAbort, true);
+  });
 });
 
 // ── EvaluatorStepExecutor tests ──
