@@ -286,19 +286,23 @@ export class ExecPolicyEngine {
     const normalized = command.toLowerCase().trim().replace(/\s+/g, ' ');
 
     // Strip process wrapper prefixes for matching (Claude Code pattern)
-    let strippedCommand = command;
+    let strippedOriginal = command;
     for (const wrapper of ExecPolicyEngine.WRAPPER_PREFIXES) {
       const re = new RegExp(`^${wrapper}(\\s+(-[a-zA-Z]+|\\d+))*\\s+`, 'i');
-      const match = strippedCommand.match(re);
+      const match = strippedOriginal.match(re);
       if (match) {
-        strippedCommand = strippedCommand.slice(match[0].length);
+        strippedOriginal = strippedOriginal.slice(match[0].length);
         break; // only strip one wrapper level
       }
     }
-    // Normalize whitespace in stripped command too, so candidates match patterns
-    strippedCommand = strippedCommand.toLowerCase().trim().replace(/\s+/g, ' ');
+    // Collapse whitespace but PRESERVE case for candidate extraction. Linux CI
+    // is case-sensitive; mkdtemp suffixes often include uppercase letters.
+    // Lowercasing before realpath makes symlink resolution miss the file
+    // (aliases stay `mycat` → default prompt). macOS APFS hid this bug.
+    strippedOriginal = strippedOriginal.trim().replace(/\s+/g, ' ');
+    const strippedNormalized = strippedOriginal.toLowerCase();
 
-    const candidates = this.extractCommandCandidates(strippedCommand);
+    const candidates = this.extractCommandCandidates(strippedOriginal);
     const sorted = [...this.rules].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
 
     // SECURITY: Check for command substitution ($(...) or backticks) BEFORE rule matching.
@@ -318,15 +322,17 @@ export class ExecPolicyEngine {
       };
     }
 
-    // Evaluate each rule against the (possibly wrapper-stripped) command
-    const effectiveCandidates =
-      strippedCommand !== command ? this.extractCommandCandidates(strippedCommand) : candidates;
+    // When a wrapper was stripped, also match against the pre-strip command.
+    const originalCandidates =
+      strippedNormalized !== normalized
+        ? this.extractCommandCandidates(command.trim().replace(/\s+/g, ' '))
+        : candidates;
 
     for (const rule of sorted) {
       for (const pattern of rule.pattern) {
         if (
           this.matchesPattern(candidates, pattern) ||
-          this.matchesPattern(effectiveCandidates, pattern)
+          this.matchesPattern(originalCandidates, pattern)
         ) {
           return { decision: rule.decision, rule, matchedPattern: pattern };
         }
