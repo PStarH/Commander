@@ -557,6 +557,129 @@ describe('ToolStepExecutor', () => {
     );
   });
 
+  it('forged AbortError after ignore is non-cooperative', async () => {
+    const parent = new AbortController();
+    const mockRegistry = {
+      get: () => ({
+        // Ignores abort; side-effect window then forge AbortError — must not claim coop.
+        execute: async () => {
+          await new Promise((r) => setTimeout(r, 30));
+          throw new DOMException('Aborted', 'AbortError');
+        },
+      }),
+    };
+    const executor = new ToolStepExecutor(mockRegistry);
+    const step = createMockStep({ input: { toolName: 'forge-abort', args: {}, timeoutMs: 5_000 } });
+    const execPromise = executor.execute(step, {
+      signal: parent.signal,
+      worker: createMockWorker(),
+    });
+    parent.abort();
+    await assert.rejects(
+      () => execPromise,
+      (err: WorkerExecutionError) =>
+        err.options.code === 'ABORTED' &&
+        err.options.retryable === false &&
+        err.options.details?.cooperative === false,
+    );
+  });
+
+  it('forged {name:AbortError} after ignore is non-cooperative', async () => {
+    const parent = new AbortController();
+    const mockRegistry = {
+      get: () => ({
+        execute: async () => {
+          await new Promise((r) => setTimeout(r, 30));
+          throw { name: 'AbortError', message: 'Aborted' };
+        },
+      }),
+    };
+    const executor = new ToolStepExecutor(mockRegistry);
+    const step = createMockStep({
+      input: { toolName: 'forge-abort-plain', args: {}, timeoutMs: 5_000 },
+    });
+    const execPromise = executor.execute(step, {
+      signal: parent.signal,
+      worker: createMockWorker(),
+    });
+    parent.abort();
+    await assert.rejects(
+      () => execPromise,
+      (err: WorkerExecutionError) =>
+        err.options.code === 'ABORTED' &&
+        err.options.retryable === false &&
+        err.options.details?.cooperative === false,
+    );
+  });
+
+  it('fresh Error(aborted) copy after ignore is non-cooperative', async () => {
+    const parent = new AbortController();
+    const mockRegistry = {
+      get: () => ({
+        // stop()/parent 路径 reason 是 Error('aborted') 等对象；文案相同的新实例不算 linked。
+        execute: async () => {
+          await new Promise((r) => setTimeout(r, 30));
+          throw new Error('aborted');
+        },
+      }),
+    };
+    const executor = new ToolStepExecutor(mockRegistry);
+    const step = createMockStep({
+      input: { toolName: 'forge-aborted-msg', args: {}, timeoutMs: 5_000 },
+    });
+    const execPromise = executor.execute(step, {
+      signal: parent.signal,
+      worker: createMockWorker(),
+    });
+    parent.abort(new Error('aborted'));
+    await assert.rejects(
+      () => execPromise,
+      (err: WorkerExecutionError) =>
+        err.options.code === 'ABORTED' &&
+        err.options.retryable === false &&
+        err.options.details?.cooperative === false,
+    );
+  });
+
+  it('reject(signal.reason) Error(aborted) remains cooperative', async () => {
+    const parent = new AbortController();
+    let sawAbort = false;
+    const mockRegistry = {
+      get: () => ({
+        execute: async (_args: Record<string, unknown>, ctx: { signal: AbortSignal }) => {
+          await new Promise<void>((_resolve, reject) => {
+            ctx.signal.addEventListener(
+              'abort',
+              () => {
+                sawAbort = true;
+                // 与 awaitWithAbortTimeout 的 local.abort(parent.reason ?? Error('aborted')) 对齐
+                reject(ctx.signal.reason);
+              },
+              { once: true },
+            );
+          });
+          return { never: true };
+        },
+      }),
+    };
+    const executor = new ToolStepExecutor(mockRegistry);
+    const step = createMockStep({ input: { toolName: 'coop-reason', args: {}, timeoutMs: 5_000 } });
+    const execPromise = executor.execute(step, {
+      signal: parent.signal,
+      worker: createMockWorker(),
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    parent.abort(new Error('aborted'));
+    await assert.rejects(
+      () => execPromise,
+      (err: WorkerExecutionError) =>
+        err.options.code === 'ABORTED' &&
+        err.options.retryable === true &&
+        err.options.details?.cooperative === true,
+    );
+    assert.equal(sawAbort, true);
+  });
+
   it('parent abort of cooperative tool remains retryable', async () => {
     const parent = new AbortController();
     let sawAbort = false;
