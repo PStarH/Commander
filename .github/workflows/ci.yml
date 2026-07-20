@@ -429,6 +429,7 @@ jobs:
           pnpm --filter @commander/plugin-sdk build
           pnpm --filter @commander/kernel build
           pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/action-adapters build
           pnpm --filter @commander/core build
           pnpm --filter @commander/worker-plane build
           pnpm --filter @commander/api build
@@ -445,7 +446,7 @@ jobs:
       - name: L4-B compensation dual-process race (C6, PG)
         run: pnpm cell:compensation-dual-race -- --seed=16
       - name: Upload dual-process race artifacts
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: l4-b-compensation-dual-race
@@ -476,6 +477,9 @@ jobs:
           cache: 'pnpm'
 
       - run: pnpm install
+
+      - name: Rebuild better-sqlite3 (operations sqlite tests)
+        run: pnpm rebuild better-sqlite3
 
       - name: Install Helm
         uses: azure/setup-helm@v4
