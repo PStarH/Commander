@@ -17,7 +17,8 @@ export interface KernelOpsRuntimeDependencies {
   outbox: OutboxComponent;
   outboxIntervalMs: number;
   outboxBatchSize: number;
-  /** Compensation consumer / probe loop — required for /ready to prove drain health. */
+  /** Compensation consumer loop — required for /ready to prove the loop is alive.
+   *  Probe-only mode proves claimability, NOT that compensation messages are drained. */
   compensation: StartStopComponent & OpsLoopHealth;
 }
 
@@ -41,10 +42,9 @@ export class KernelOpsRuntime {
     this.dependencies.reclaim.start();
     this.dependencies.timer.start();
     this.dependencies.compensation.start();
-    this.outboxTimer = setInterval(
-      () => { void this.publishOutbox(); },
-      this.dependencies.outboxIntervalMs,
-    );
+    this.outboxTimer = setInterval(() => {
+      void this.publishOutbox();
+    }, this.dependencies.outboxIntervalMs);
     void this.kickOutbox(epoch);
   }
 
@@ -97,7 +97,9 @@ export class KernelOpsRuntime {
         }
       })
       .catch(() => undefined)
-      .finally(() => { this.outboxInFlight = undefined; });
+      .finally(() => {
+        this.outboxInFlight = undefined;
+      });
     return this.outboxInFlight;
   }
 }

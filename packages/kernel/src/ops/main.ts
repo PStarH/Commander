@@ -64,6 +64,12 @@ export async function main(): Promise<void> {
         return false;
       }
     },
+    getReadyDetails: () => ({
+      // Explicit honesty: default kernel-ops wiring is probe-only (limit 0).
+      // Ready here means the compensation loop ticks; it does NOT mean outbox drain.
+      compensationMode: compensation.mode(),
+      compensationDraining: compensation.isDraining(),
+    }),
   });
 
   let stopping = false;

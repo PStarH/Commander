@@ -43,7 +43,9 @@ describe('CompensationConsumerDaemon', () => {
 
   it('requires a fresh successful tick after restart', async () => {
     let release!: () => void;
-    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     let probes = 0;
     const daemon = new CompensationConsumerDaemon({
       intervalMs: 60_000,
@@ -63,5 +65,22 @@ describe('CompensationConsumerDaemon', () => {
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(daemon.isHealthy(), true);
     await daemon.stop();
+  });
+
+  it('reports probe vs drain mode honestly (ready≠drain for probe)', () => {
+    const probeOnly = new CompensationConsumerDaemon({
+      intervalMs: 60_000,
+      probe: async () => {},
+    });
+    assert.equal(probeOnly.mode(), 'probe');
+    assert.equal(probeOnly.isDraining(), false);
+
+    const drain = new CompensationConsumerDaemon({
+      intervalMs: 60_000,
+      tick: async () => {},
+      probe: async () => {},
+    });
+    assert.equal(drain.mode(), 'drain');
+    assert.equal(drain.isDraining(), true);
   });
 });
