@@ -17,6 +17,7 @@ import { spawnSync } from 'node:child_process';
 import {
   validateBaseline,
   type BaselineDocument,
+  type EvidenceLevel,
 } from '../packages/core/src/benchmarks/baselineSchema';
 
 export interface CheckResult {
@@ -72,6 +73,11 @@ function loadJson<T>(filePath: string): T | undefined {
   } catch {
     return undefined;
   }
+}
+
+function evidenceOf(doc: BaselineDocument): EvidenceLevel | undefined {
+  if (doc.schemaVersion === 2 && doc.env?.evidence) return doc.env.evidence;
+  return doc.evidenceLevel;
 }
 
 export function checkBaselineFile(
@@ -156,6 +162,43 @@ export function checkBaselineFile(
   }
 
   const validation = validateBaseline(doc, current);
+  const evidence = evidenceOf(doc);
+
+  // Simulated/synthetic fixtures are non-scoring: they must never satisfy
+  // required readiness (residual→100 / merge-blocking). Recommended slots may
+  // surface them as warnings only.
+  if (
+    validation.ok &&
+    (evidence === 'simulated' || evidence === 'synthetic') &&
+    declaredStatus === 'required'
+  ) {
+    return {
+      id,
+      title: `${prefix} baseline`,
+      declaredStatus,
+      evidenceFound: true,
+      evidencePath: latest,
+      passed: false,
+      reason: `${evidence} evidence does not count toward required readiness`,
+    };
+  }
+
+  if (
+    validation.ok &&
+    (evidence === 'simulated' || evidence === 'synthetic') &&
+    declaredStatus === 'recommended'
+  ) {
+    return {
+      id,
+      title: `${prefix} baseline`,
+      declaredStatus,
+      evidenceFound: true,
+      evidencePath: latest,
+      passed: false,
+      reason: `${evidence} evidence is non-scoring (diagnostic only)`,
+    };
+  }
+
   return {
     id,
     title: `${prefix} baseline`,
@@ -172,8 +215,9 @@ export function main(strict: boolean = STRICT): CheckResult[] {
   console.log(`Strict mode: ${strict} (use --non-strict for diagnostics only)`);
 
   const prefixes: { prefix: string; declaredStatus: 'required' | 'recommended' }[] = [
-    // Until live residual→100 baselines exist on master, all slots are recommended
-    // (simulated fixtures do not count toward required readiness).
+    // Live-only required path: simulated fixtures in docs/baselines/* are
+    // non-scoring and must not fill these slots. Until live baselines exist for
+    // a metric, keep it recommended so strict readiness stays honest.
     { prefix: 'tenant-isolation.', declaredStatus: 'recommended' },
     { prefix: 'tenant-concurrency.', declaredStatus: 'recommended' },
     { prefix: 'slo-baseline.', declaredStatus: 'recommended' },
@@ -204,12 +248,21 @@ export function main(strict: boolean = STRICT): CheckResult[] {
   const hasRecommendedFailures = results.some(
     (r) => !r.passed && r.declaredStatus === 'recommended',
   );
+  // residual→100 requires at least one required slot that passed with live evidence.
+  // An empty required set (all recommended / simulated non-scoring) must not be claimed as 100.
+  const requiredSlots = results.filter((r) => r.declaredStatus === 'required');
+  const residual100Claimable = requiredSlots.length > 0 && requiredSlots.every((r) => r.passed);
 
   if (strict && !requiredPassed) {
     console.log('❌ READINESS FAIL');
     process.exit(1);
   } else if (!strict && !requiredPassed) {
     console.log('⚠️  Readiness would fail in strict mode (running with --non-strict)');
+    process.exit(0);
+  } else if (!residual100Claimable) {
+    console.log(
+      '✅ READINESS PASS (no required live baselines — residual→100 NOT claimed; simulated is non-scoring)',
+    );
     process.exit(0);
   } else if (hasRecommendedFailures) {
     console.log('✅ READINESS PASS (required items all pass; recommended items have warnings)');
