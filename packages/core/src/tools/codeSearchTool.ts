@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
+import * as path from 'node:path';
 import type { Tool, ToolDefinition } from '../runtime/types';
-import { getSafeRoot } from './fileSystemTool';
+import { getSafeRoot, isWithinRoot } from './fileSystemTool';
 
 const EXCLUDE_DIRS = ['node_modules', '.git', 'dist', 'build', 'coverage', '.cache', 'target'];
 
@@ -95,8 +96,22 @@ export class CodeSearchTool implements Tool {
       ];
 
       if (filePattern) {
-        // filePattern is user-supplied but passed as a grep arg, not interpolated into shell
-        args.push('-E', grepPattern, filePattern);
+        // filePattern is user-supplied. Absolute paths (and path escapes) must
+        // stay inside the workspace — otherwise `grep -E pattern /etc/passwd`
+        // reads host files even when cwd is the sandbox root.
+        const resolvedTarget = path.isAbsolute(filePattern)
+          ? path.resolve(filePattern)
+          : path.resolve(searchDir, filePattern);
+        if (!isWithinRoot(resolvedTarget, path.resolve(getSafeRoot()))) {
+          return `Error: Access denied: filePattern "${filePattern}" is outside workspace`;
+        }
+        // Prefer relative path under searchDir so grep never sees an absolute
+        // path that could be reinterpreted outside the sandbox.
+        const relativeTarget = path.relative(searchDir, resolvedTarget) || '.';
+        if (relativeTarget.startsWith('..') || path.isAbsolute(relativeTarget)) {
+          return `Error: Access denied: filePattern "${filePattern}" is outside workspace`;
+        }
+        args.push('-E', grepPattern, relativeTarget);
       } else {
         args.push(
           '--include=*.ts',

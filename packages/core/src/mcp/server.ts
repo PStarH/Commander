@@ -53,11 +53,22 @@ export interface MCPPromptRegistration {
  * access and are filtered out in registerCommanderTools unless the caller
  * explicitly opts in via { allowDangerousTools: true }.
  */
+// Keep in sync with createAllTools() surface. Legacy names retained so older
+// clients that still register shell_execute/python_execute stay filtered.
 const DANGEROUS_MCP_TOOLS: ReadonlySet<string> = new Set([
+  // Legacy granular names
   'shell_execute',
   'file_delete',
   'file_write',
   'python_execute',
+  // Consolidated resource / high-risk tools (default createAllTools surface)
+  'exec',
+  'git',
+  'apply_patch',
+  'file', // includes write/edit/delete actions
+  'file_hash_edit',
+  'system',
+  'verify', // spawns host-side package managers (npx)
 ]);
 
 export class MCPServer {
@@ -234,23 +245,20 @@ export class MCPServer {
           }
 
           // ExecPolicy: evaluate shell/python payloads for forbidden commands.
-          if (p.name === 'shell_execute' || p.name === 'python_execute') {
-            const execPolicyEngine = getExecPolicyEngine();
-            const payload =
-              typeof toolArgs.command === 'string'
-                ? toolArgs.command
-                : typeof toolArgs.code === 'string'
-                  ? toolArgs.code
-                  : '';
+          // Covers legacy names and consolidated `exec` resource tool.
+          {
+            const { extractExecPolicyPayload } = await import('../sandbox/execPolicy');
+            const payload = extractExecPolicyPayload(p.name, toolArgs);
             if (payload) {
+              const execPolicyEngine = getExecPolicyEngine();
               const policyResult = execPolicyEngine.evaluate(payload);
-              if (policyResult.decision === 'forbidden') {
+              if (policyResult.decision === 'forbidden' || policyResult.decision === 'prompt') {
                 return {
                   jsonrpc: '2.0',
                   id,
                   error: {
                     code: MCP_ERROR_CODES.INTERNAL_ERROR,
-                    message: `Tool "${p.name}" blocked by ExecPolicyEngine (${policyResult.rule?.id ?? 'forbidden'}): ${policyResult.rule?.justification ?? 'forbidden command'}`,
+                    message: `Tool "${p.name}" blocked by ExecPolicyEngine (${policyResult.rule?.id ?? policyResult.decision}): ${policyResult.rule?.justification ?? 'command requires approval or is forbidden'}`,
                   },
                 };
               }
