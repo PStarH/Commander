@@ -56,9 +56,16 @@ export async function awaitWithAbortTimeout<T>(
       };
 
       timeoutTimer = setTimeout(() => {
+        // Parent abort wins over timer (ABORTED vs TIMEOUT mapping).
+        if (closed || parentSignal.aborted) return;
         timedOut = true;
         if (!local.signal.aborted) local.abort(new Error('timeout'));
         graceTimer = setTimeout(() => {
+          if (closed) return;
+          if (parentSignal.aborted) {
+            close(() => reject(options.abortError()));
+            return;
+          }
           if (!settled) rejectTimeout(false);
         }, abortGraceMs);
       }, timeoutMs);
@@ -66,12 +73,17 @@ export async function awaitWithAbortTimeout<T>(
       void run.then(
         (value) => {
           if (closed) return;
+          // Parent abort takes priority over a racing timeout flag.
+          if (parentSignal.aborted) {
+            close(() => reject(options.abortError()));
+            return;
+          }
           if (timedOut) {
             // Late resolve after timeout: completion unknown — not cooperative cancel.
             rejectTimeout(false);
             return;
           }
-          if (parentSignal.aborted || local.signal.aborted) {
+          if (local.signal.aborted) {
             close(() => reject(options.abortError()));
             return;
           }
@@ -79,11 +91,15 @@ export async function awaitWithAbortTimeout<T>(
         },
         (error) => {
           if (closed) return;
+          if (parentSignal.aborted) {
+            close(() => reject(options.abortError()));
+            return;
+          }
           if (timedOut) {
             rejectTimeout(true);
             return;
           }
-          if (parentSignal.aborted || local.signal.aborted) {
+          if (local.signal.aborted) {
             close(() => reject(options.abortError()));
             return;
           }
