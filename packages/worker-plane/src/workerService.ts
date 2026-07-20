@@ -1,3 +1,4 @@
+import { getGlobalLogger, getGlobalMetrics } from '@commander/core';
 import type {
   ClaimedStep,
   KernelWorkerPort,
@@ -33,11 +34,35 @@ function isSandboxUnavailable(error: unknown): boolean {
 }
 
 /**
+ * Preserve retry intent from WorkerExecutionError and structurally compatible
+ * errors (e.g. core KernelStepExecutorError) that cross package boundaries
+ * without sharing a prototype.
+ */
+function toWorkerExecutionError(error: unknown): WorkerError {
+  if (error instanceof WorkerError) return error;
+  if (error instanceof Error) {
+    const options = (error as Error & { options?: WorkerError['options'] }).options;
+    if (options && typeof options === 'object') {
+      return new WorkerError(error.message, {
+        code: options.code,
+        retryable: options.retryable,
+        retryDelayMs: options.retryDelayMs,
+        details: options.details,
+      }, error);
+    }
+    return new WorkerError(error.message, { code: 'EXECUTOR_FAILED', retryable: false }, error);
+  }
+  return new WorkerError(String(error), { code: 'EXECUTOR_FAILED', retryable: false });
+}
+
+/**
  * Process-local worker loop. It has no HTTP server and no AgentRuntime import:
  * all work is leased from the shared kernel and all lifecycle writes return to it.
  */
 export class WorkerService {
-  private readonly config: Required<Omit<WorkerServiceConfig, 'sandboxReadiness' | 'onRegistered'>> &
+  private readonly config: Required<
+    Omit<WorkerServiceConfig, 'sandboxReadiness' | 'onRegistered'>
+  > &
     Pick<WorkerServiceConfig, 'sandboxReadiness' | 'onRegistered'>;
   private worker: WorkerRecord | null = null;
   private authorization: WorkerAuthorization | null = null;
@@ -91,8 +116,29 @@ export class WorkerService {
   async run(signal?: AbortSignal): Promise<void> {
     await this.start();
     while (this.running && !signal?.aborted) {
-      const claimed = await this.pollOnce();
-      if (!claimed) await sleep(this.config.pollIntervalMs);
+      try {
+        const claimed = await this.pollOnce();
+        if (!claimed) await sleep(this.config.pollIntervalMs);
+      } catch (error) {
+        // Transient kernel/claim failures must not kill the worker process.
+        // Capacity (claimInflight) is released in pollOnce finally; back off and continue.
+        // Fail-closed observability: never swallow silently — operators must see claim failures.
+        const err = error instanceof Error ? error : new Error(String(error));
+        getGlobalLogger().error(
+          'WorkerService',
+          'claim loop swallowed error; backing off',
+          err,
+          {
+            workerId: this.worker?.id,
+            errorName: err.name,
+          },
+        );
+        getGlobalMetrics().incrementCounter('worker.claim_loop.errors', 1, {
+          error_name: err.name,
+        });
+        if (!this.running || signal?.aborted) break;
+        await sleep(this.config.pollIntervalMs);
+      }
     }
     await this.stop();
   }
@@ -119,7 +165,9 @@ export class WorkerService {
       this.claimInflight--;
     }
     if (!step) return false;
-    // stop() raced the claim: release the step back to the kernel so another worker can pick it up.
+    // stop() raced the claim: release the step back without burning the claim attempt.
+    // claimNextStep already did attempt++; default maxAttempts=1 would otherwise terminal-FAIL
+    // even with retryable+retryAt. refundAttempt restores pre-claim attempt so requeue works.
     if (!this.running) {
       await this.kernel.failStep({
         stepId: step.id,
@@ -131,6 +179,8 @@ export class WorkerService {
           message: 'worker stopped during claim',
           retryable: true,
         },
+        retryAt: new Date(),
+        refundAttempt: true,
         actor: this.worker.id,
       });
       return false;
@@ -146,8 +196,10 @@ export class WorkerService {
     this.running = false;
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = null;
-    for (const controller of this.activeControllers)
+    // Abort in-flight steps so drain does not hang on long tools/LLM calls.
+    for (const controller of this.activeControllers) {
       controller.abort(new Error('Worker stopped'));
+    }
     await this.registry.drain(this.worker.id, this.worker.generation);
     await Promise.allSettled([...this.active]);
   }
@@ -204,14 +256,13 @@ export class WorkerService {
     } catch (error) {
       if (!leaseLost) {
         const sandboxUnavailable = isSandboxUnavailable(error);
-        const known =
-          !sandboxUnavailable && error instanceof WorkerError
-            ? error
-            : new WorkerError((error as Error).message, {
-                code: sandboxUnavailable ? 'SANDBOX_UNAVAILABLE' : 'EXECUTOR_FAILED',
-                retryable: false,
-                details: error instanceof WorkerError ? error.options.details : undefined,
-              });
+        const known = sandboxUnavailable
+          ? new WorkerError((error as Error).message, {
+              code: 'SANDBOX_UNAVAILABLE',
+              retryable: false,
+              details: error instanceof WorkerError ? error.options.details : undefined,
+            }, error)
+          : toWorkerExecutionError(error);
         const failed = await this.kernel.failStep({
           stepId: step.id,
           tenantId: step.tenantId,
