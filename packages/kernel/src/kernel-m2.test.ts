@@ -45,9 +45,7 @@ function createRunCommand(): CreateKernelRun {
     workGraphHash: 'b'.repeat(64),
     workGraphVersion: 'v1',
     policySnapshotId: 'ps_test',
-    steps: [
-      { id: 'step-1', kind: 'agent', input: { prompt: 'hello' } },
-    ],
+    steps: [{ id: 'step-1', kind: 'agent', input: { prompt: 'hello' } }],
   };
 }
 
@@ -61,14 +59,17 @@ describe('KernelRepository — Durable Timers', () => {
   it('creates a timer and claims it when expired', async () => {
     const runCmd = createRunCommand();
     await repo.createRun(runCmd, 'tester');
-    const timer = await repo.createTimer({
-      runId: runCmd.id,
-      stepId: 'step-1',
-      tenantId: 'tenant-test',
-      firesAt: new Date(Date.now() + 100),
-      timerType: 'RETRY_DELAY',
-      payload: { reason: 'test' },
-    }, 'tester');
+    const timer = await repo.createTimer(
+      {
+        runId: runCmd.id,
+        stepId: 'step-1',
+        tenantId: 'tenant-test',
+        firesAt: new Date(Date.now() + 100),
+        timerType: 'RETRY_DELAY',
+        payload: { reason: 'test' },
+      },
+      'tester',
+    );
 
     // Not expired yet
     const before = await repo.claimExpiredTimers(new Date(), 10);
@@ -81,19 +82,25 @@ describe('KernelRepository — Durable Timers', () => {
     assert.ok(expired.length >= 1);
     assert.equal(expired[0].state, 'PROCESSING');
     assert.ok(expired[0].claimToken);
-    assert.equal(await repo.acknowledgeTimer(expired[0].id, expired[0].tenantId, expired[0].claimToken!), true);
+    assert.equal(
+      await repo.acknowledgeTimer(expired[0].id, expired[0].tenantId, expired[0].claimToken!),
+      true,
+    );
   });
 
   it('cancels a pending timer', async () => {
     const runCmd = createRunCommand();
     await repo.createRun(runCmd, 'tester');
-    const timer = await repo.createTimer({
-      runId: runCmd.id,
-      stepId: 'step-1',
-      tenantId: 'tenant-test',
-      firesAt: new Date(Date.now() + 1000),
-      timerType: 'INTERACTION_TIMEOUT',
-    }, 'tester');
+    const timer = await repo.createTimer(
+      {
+        runId: runCmd.id,
+        stepId: 'step-1',
+        tenantId: 'tenant-test',
+        firesAt: new Date(Date.now() + 1000),
+        timerType: 'INTERACTION_TIMEOUT',
+      },
+      'tester',
+    );
 
     const cancelled = await repo.cancelTimer(timer.id, 'tenant-test');
     assert.equal(cancelled, true);
@@ -107,13 +114,16 @@ describe('KernelRepository — Durable Timers', () => {
   it('does not cancel timer from wrong tenant', async () => {
     const runCmd = createRunCommand();
     await repo.createRun(runCmd, 'tester');
-    const timer = await repo.createTimer({
-      runId: runCmd.id,
-      stepId: 'step-1',
-      tenantId: 'tenant-test',
-      firesAt: new Date(Date.now() + 1000),
-      timerType: 'STEP_DEADLINE',
-    }, 'tester');
+    const timer = await repo.createTimer(
+      {
+        runId: runCmd.id,
+        stepId: 'step-1',
+        tenantId: 'tenant-test',
+        firesAt: new Date(Date.now() + 1000),
+        timerType: 'STEP_DEADLINE',
+      },
+      'tester',
+    );
 
     const cancelled = await repo.cancelTimer(timer.id, 'wrong-tenant');
     assert.equal(cancelled, false);
@@ -151,18 +161,21 @@ describe('KernelRepository — Interactions', () => {
 
     assert.equal((await repo.getStep('step-1', 'tenant-test'))?.state, 'WAITING_FOR_HUMAN');
     assert.equal((await repo.getStep('step-2', 'tenant-test'))?.state, 'PENDING');
-    assert.deepEqual(await repo.listInteractions(runCmd.id, 'tenant-test'), [{
-      id: 'interaction-approval-1',
-      runId: runCmd.id,
-      stepId: 'step-1',
-      tenantId: 'tenant-test',
-      status: 'pending',
-      prompt: 'Approve deployment?',
-      createdAt: (await repo.getInteraction('interaction-approval-1', 'tenant-test'))!.createdAt,
-      expiresAt: '2030-01-01T00:00:00.000Z',
-    }]);
-    const createdEvent = (await repo.listEvents(runCmd.id, 'tenant-test'))
-      .find((event) => event.type === 'interaction.created');
+    assert.deepEqual(await repo.listInteractions(runCmd.id, 'tenant-test'), [
+      {
+        id: 'interaction-approval-1',
+        runId: runCmd.id,
+        stepId: 'step-1',
+        tenantId: 'tenant-test',
+        status: 'pending',
+        prompt: 'Approve deployment?',
+        createdAt: (await repo.getInteraction('interaction-approval-1', 'tenant-test'))!.createdAt,
+        expiresAt: '2030-01-01T00:00:00.000Z',
+      },
+    ]);
+    const createdEvent = (await repo.listEvents(runCmd.id, 'tenant-test')).find(
+      (event) => event.type === 'interaction.created',
+    );
     assert.deepEqual(createdEvent?.payload, {
       interactionId: 'interaction-approval-1',
       prompt: 'Approve deployment?',
@@ -176,12 +189,14 @@ describe('KernelRepository — Interactions', () => {
     const secondRun = {
       ...createRunCommand(),
       id: 'run-colliding-step',
-      steps: [{
-        id: 'step-1',
-        kind: 'agent',
-        initialState: 'WAITING_FOR_HUMAN' as const,
-        interaction: { id: 'interaction-must-not-exist', prompt: 'Must roll back' },
-      }],
+      steps: [
+        {
+          id: 'step-1',
+          kind: 'agent',
+          initialState: 'WAITING_FOR_HUMAN' as const,
+          interaction: { id: 'interaction-must-not-exist', prompt: 'Must roll back' },
+        },
+      ],
     };
 
     await assert.rejects(
@@ -204,12 +219,14 @@ describe('KernelRepository — Interactions', () => {
     const secondRun = {
       ...createRunCommand(),
       id: 'run-colliding-interaction',
-      steps: [{
-        id: 'step-unique',
-        kind: 'agent',
-        initialState: 'WAITING_FOR_HUMAN' as const,
-        interaction: { id: 'interaction-shared', prompt: 'Second prompt' },
-      }],
+      steps: [
+        {
+          id: 'step-unique',
+          kind: 'agent',
+          initialState: 'WAITING_FOR_HUMAN' as const,
+          interaction: { id: 'interaction-shared', prompt: 'Second prompt' },
+        },
+      ],
     };
 
     await assert.rejects(
@@ -239,26 +256,31 @@ describe('KernelRepository — Interactions', () => {
     await repo.createRun(runCmd, 'tester');
 
     await assert.rejects(
-      () => repo.answerInteraction({
-        interactionId: 'interaction-approval-1',
-        runId: runCmd.id,
-        tenantId: 'wrong-tenant',
-        response: { approved: true },
-        actor: 'attacker',
-      }),
+      () =>
+        repo.answerInteraction({
+          interactionId: 'interaction-approval-1',
+          runId: runCmd.id,
+          tenantId: 'wrong-tenant',
+          response: { approved: true },
+          actor: 'attacker',
+        }),
       (error: any) => error.code === 'INTERACTION_NOT_FOUND',
     );
     await assert.rejects(
-      () => repo.answerInteraction({
-        interactionId: 'interaction-approval-1',
-        runId: 'wrong-run',
-        tenantId: 'tenant-test',
-        response: { approved: true },
-        actor: 'attacker',
-      }),
+      () =>
+        repo.answerInteraction({
+          interactionId: 'interaction-approval-1',
+          runId: 'wrong-run',
+          tenantId: 'tenant-test',
+          response: { approved: true },
+          actor: 'attacker',
+        }),
       (error: any) => error.code === 'INTERACTION_NOT_FOUND',
     );
-    assert.equal((await repo.getInteraction('interaction-approval-1', 'tenant-test'))?.status, 'pending');
+    assert.equal(
+      (await repo.getInteraction('interaction-approval-1', 'tenant-test'))?.status,
+      'pending',
+    );
     assert.equal((await repo.getStep('step-1', 'tenant-test'))?.state, 'WAITING_FOR_HUMAN');
 
     const answered = await repo.answerInteraction({
@@ -272,8 +294,9 @@ describe('KernelRepository — Interactions', () => {
     assert.equal(answered.status, 'answered');
     assert.equal((await repo.getStep('step-1', 'tenant-test'))?.state, 'RETRY_WAIT');
     assert.equal((await repo.getStep('step-2', 'tenant-test'))?.state, 'WAITING_FOR_HUMAN');
-    const answeredEvent = (await repo.listEvents(runCmd.id, 'tenant-test'))
-      .find((event) => event.type === 'interaction.answered');
+    const answeredEvent = (await repo.listEvents(runCmd.id, 'tenant-test')).find(
+      (event) => event.type === 'interaction.answered',
+    );
     assert.deepEqual(answeredEvent?.payload, { response: { approved: true } });
     const claimed = await repo.claimNextStep({
       workerId: 'worker-after-approval',
@@ -289,13 +312,16 @@ describe('KernelRepository — Interactions', () => {
   it('creates and retrieves an interaction', async () => {
     const runCmd = createRunCommand();
     await repo.createRun(runCmd, 'tester');
-    const interaction = await repo.createInteraction({
-      runId: runCmd.id,
-      stepId: 'step-1',
-      tenantId: 'tenant-test',
-      prompt: 'Should I proceed?',
-      expiresAt: new Date(Date.now() + 60000),
-    }, 'tester');
+    const interaction = await repo.createInteraction(
+      {
+        runId: runCmd.id,
+        stepId: 'step-1',
+        tenantId: 'tenant-test',
+        prompt: 'Should I proceed?',
+        expiresAt: new Date(Date.now() + 60000),
+      },
+      'tester',
+    );
 
     assert.ok(interaction.id.startsWith('itr_'));
     assert.equal(interaction.status, 'pending');
@@ -348,13 +374,14 @@ describe('KernelRepository — Interactions', () => {
     });
 
     await assert.rejects(
-      () => repo.answerInteraction({
-        interactionId: interaction.id,
-        runId: runCmd.id,
-        tenantId: 'tenant-test',
-        response: { ok: false },
-        actor: 'human-2',
-      }),
+      () =>
+        repo.answerInteraction({
+          interactionId: interaction.id,
+          runId: runCmd.id,
+          tenantId: 'tenant-test',
+          response: { ok: false },
+          actor: 'human-2',
+        }),
       (err: any) => err.code === 'INTERACTION_NOT_FOUND',
     );
   });
@@ -362,8 +389,14 @@ describe('KernelRepository — Interactions', () => {
   it('lists interactions for a run', async () => {
     const runCmd = createRunCommand();
     await repo.createRun(runCmd, 'tester');
-    await repo.createInteraction({ runId: runCmd.id, stepId: 'step-1', tenantId: 'tenant-test', prompt: 'q1' }, 'tester');
-    await repo.createInteraction({ runId: runCmd.id, stepId: 'step-1', tenantId: 'tenant-test', prompt: 'q2' }, 'tester');
+    await repo.createInteraction(
+      { runId: runCmd.id, stepId: 'step-1', tenantId: 'tenant-test', prompt: 'q1' },
+      'tester',
+    );
+    await repo.createInteraction(
+      { runId: runCmd.id, stepId: 'step-1', tenantId: 'tenant-test', prompt: 'q2' },
+      'tester',
+    );
 
     const list = await repo.listInteractions(runCmd.id, 'tenant-test');
     assert.equal(list.length, 2);
@@ -372,20 +405,26 @@ describe('KernelRepository — Interactions', () => {
   it('expires stale interactions', async () => {
     const runCmd = createRunCommand();
     await repo.createRun(runCmd, 'tester');
-    await repo.createInteraction({
-      runId: runCmd.id,
-      stepId: 'step-1',
-      tenantId: 'tenant-test',
-      prompt: 'expired?',
-      expiresAt: new Date(Date.now() - 1000), // already expired
-    }, 'tester');
-    await repo.createInteraction({
-      runId: runCmd.id,
-      stepId: 'step-1',
-      tenantId: 'tenant-test',
-      prompt: 'fresh?',
-      expiresAt: new Date(Date.now() + 60000),
-    }, 'tester');
+    await repo.createInteraction(
+      {
+        runId: runCmd.id,
+        stepId: 'step-1',
+        tenantId: 'tenant-test',
+        prompt: 'expired?',
+        expiresAt: new Date(Date.now() - 1000), // already expired
+      },
+      'tester',
+    );
+    await repo.createInteraction(
+      {
+        runId: runCmd.id,
+        stepId: 'step-1',
+        tenantId: 'tenant-test',
+        prompt: 'fresh?',
+        expiresAt: new Date(Date.now() + 60000),
+      },
+      'tester',
+    );
 
     const expired = await repo.expireStaleInteractions(new Date(), 10);
     assert.equal(expired.length, 1);
@@ -401,48 +440,57 @@ describe('PostgresKernelRepository — Kernel-native approval release', () => {
       if (sql.includes('INSERT INTO commander_runs')) {
         return {
           rowCount: 1,
-          rows: [{
-            id: 'run-postgres-approval',
-            tenant_id: 'tenant-postgres',
-            intent_hash: 'intent',
-            work_graph_hash: 'graph',
-            work_graph_version: 'v1',
-            policy_snapshot_id: 'policy',
-            state: 'PENDING',
-            version: 1,
-            metadata: {},
-            created_at: createdAt,
-            updated_at: createdAt,
-            paused_at: null,
-            terminal_at: null,
-          }],
+          rows: [
+            {
+              id: 'run-postgres-approval',
+              tenant_id: 'tenant-postgres',
+              intent_hash: 'intent',
+              work_graph_hash: 'graph',
+              work_graph_version: 'v1',
+              policy_snapshot_id: 'policy',
+              state: 'PENDING',
+              version: 1,
+              metadata: {},
+              created_at: createdAt,
+              updated_at: createdAt,
+              paused_at: null,
+              terminal_at: null,
+            },
+          ],
         };
       }
       return emptyResult();
     });
     const repo = new PostgresKernelRepository(pool, { schedulerMode: true });
 
-    await repo.createRun({
-      id: 'run-postgres-approval',
-      tenantId: 'tenant-postgres',
-      intentHash: 'intent',
-      workGraphHash: 'graph',
-      workGraphVersion: 'v1',
-      policySnapshotId: 'policy',
-      steps: [{
-        id: 'step-postgres-approval',
-        kind: 'agent',
-        initialState: 'WAITING_FOR_HUMAN',
-        interaction: {
-          id: 'interaction-postgres-approval',
-          prompt: 'Approve the Postgres action?',
-          expiresAt: '2030-01-01T00:00:00.000Z',
-        },
-      }],
-    }, 'gateway');
+    await repo.createRun(
+      {
+        id: 'run-postgres-approval',
+        tenantId: 'tenant-postgres',
+        intentHash: 'intent',
+        workGraphHash: 'graph',
+        workGraphVersion: 'v1',
+        policySnapshotId: 'policy',
+        steps: [
+          {
+            id: 'step-postgres-approval',
+            kind: 'agent',
+            initialState: 'WAITING_FOR_HUMAN',
+            interaction: {
+              id: 'interaction-postgres-approval',
+              prompt: 'Approve the Postgres action?',
+              expiresAt: '2030-01-01T00:00:00.000Z',
+            },
+          },
+        ],
+      },
+      'gateway',
+    );
 
     const stepInsert = pool.queries.find(({ sql }) => sql.includes('INSERT INTO commander_steps'));
-    const interactionInsert = pool.queries.find(({ sql }) => sql.includes('INSERT INTO commander_interactions'));
+    const interactionInsert = pool.queries.find(({ sql }) =>
+      sql.includes('INSERT INTO commander_interactions'),
+    );
     assert.ok(stepInsert);
     assert.ok(stepInsert.values?.includes('WAITING_FOR_HUMAN'));
     assert.ok(interactionInsert);
@@ -454,8 +502,10 @@ describe('PostgresKernelRepository — Kernel-native approval release', () => {
       'Approve the Postgres action?',
       '2030-01-01T00:00:00.000Z',
     ]);
-    const createdEventInsert = pool.queries.find(({ sql, values }) =>
-      sql.includes('INSERT INTO commander_events') && values?.[4] === 'interaction.created');
+    const createdEventInsert = pool.queries.find(
+      ({ sql, values }) =>
+        sql.includes('INSERT INTO commander_events') && values?.[4] === 'interaction.created',
+    );
     assert.deepEqual(JSON.parse(createdEventInsert?.values?.[11] as string), {
       interactionId: 'interaction-postgres-approval',
       prompt: 'Approve the Postgres action?',
@@ -471,21 +521,23 @@ describe('PostgresKernelRepository — Kernel-native approval release', () => {
       if (sql.includes('INSERT INTO commander_runs')) {
         return {
           rowCount: 1,
-          rows: [{
-            id: 'run-postgres-duplicate-interaction',
-            tenant_id: 'tenant-postgres',
-            intent_hash: 'intent',
-            work_graph_hash: 'graph',
-            work_graph_version: 'v1',
-            policy_snapshot_id: 'policy',
-            state: 'PENDING',
-            version: 1,
-            metadata: {},
-            created_at: createdAt,
-            updated_at: createdAt,
-            paused_at: null,
-            terminal_at: null,
-          }],
+          rows: [
+            {
+              id: 'run-postgres-duplicate-interaction',
+              tenant_id: 'tenant-postgres',
+              intent_hash: 'intent',
+              work_graph_hash: 'graph',
+              work_graph_version: 'v1',
+              policy_snapshot_id: 'policy',
+              state: 'PENDING',
+              version: 1,
+              metadata: {},
+              created_at: createdAt,
+              updated_at: createdAt,
+              paused_at: null,
+              terminal_at: null,
+            },
+          ],
         };
       }
       if (sql.includes('INSERT INTO commander_interactions')) {
@@ -499,20 +551,26 @@ describe('PostgresKernelRepository — Kernel-native approval release', () => {
     const repo = new PostgresKernelRepository(pool, { schedulerMode: true });
 
     await assert.rejects(
-      () => repo.createRun({
-        id: 'run-postgres-duplicate-interaction',
-        tenantId: 'tenant-postgres',
-        intentHash: 'intent',
-        workGraphHash: 'graph',
-        workGraphVersion: 'v1',
-        policySnapshotId: 'policy',
-        steps: [{
-          id: 'step-postgres-unique',
-          kind: 'agent',
-          initialState: 'WAITING_FOR_HUMAN',
-          interaction: { id: 'interaction-existing', prompt: 'Duplicate' },
-        }],
-      }, 'gateway'),
+      () =>
+        repo.createRun(
+          {
+            id: 'run-postgres-duplicate-interaction',
+            tenantId: 'tenant-postgres',
+            intentHash: 'intent',
+            workGraphHash: 'graph',
+            workGraphVersion: 'v1',
+            policySnapshotId: 'policy',
+            steps: [
+              {
+                id: 'step-postgres-unique',
+                kind: 'agent',
+                initialState: 'WAITING_FOR_HUMAN',
+                interaction: { id: 'interaction-existing', prompt: 'Duplicate' },
+              },
+            ],
+          },
+          'gateway',
+        ),
       (error: any) => error.code === 'DUPLICATE_INTERACTION',
     );
     assert.equal(pool.queries.at(-1)?.sql, 'ROLLBACK');
@@ -540,40 +598,44 @@ describe('PostgresKernelRepository — Kernel-native approval release', () => {
       if (sql.includes('UPDATE commander_steps')) {
         return {
           rowCount: 1,
-          rows: [{
-            id: 'step-postgres-approval',
-            run_id: 'run-postgres-approval',
-            tenant_id: 'tenant-postgres',
-            kind: 'agent',
-            state: 'RETRY_WAIT',
-            version: 2,
-            attempt: 0,
-            max_attempts: 1,
-            priority: 0,
-            dependencies: [],
-            input: {},
-            output: null,
-            error: null,
-            scheduled_at: createdAt,
-            created_at: createdAt,
-            updated_at: createdAt,
-            lease_worker_id: null,
-            lease_worker_generation: 0,
-            lease_token: null,
-            fencing_epoch: 0,
-            lease_expires_at: null,
-          }],
+          rows: [
+            {
+              id: 'step-postgres-approval',
+              run_id: 'run-postgres-approval',
+              tenant_id: 'tenant-postgres',
+              kind: 'agent',
+              state: 'RETRY_WAIT',
+              version: 2,
+              attempt: 0,
+              max_attempts: 1,
+              priority: 0,
+              dependencies: [],
+              input: {},
+              output: null,
+              error: null,
+              scheduled_at: createdAt,
+              created_at: createdAt,
+              updated_at: createdAt,
+              lease_worker_id: null,
+              lease_worker_generation: 0,
+              lease_token: null,
+              fencing_epoch: 0,
+              lease_expires_at: null,
+            },
+          ],
         };
       }
       if (sql.includes('UPDATE commander_interactions')) {
         return {
           rowCount: 1,
-          rows: [{
-            ...interactionRow,
-            status: 'answered',
-            response: { approved: true },
-            answered_at: createdAt,
-          }],
+          rows: [
+            {
+              ...interactionRow,
+              status: 'answered',
+              response: { approved: true },
+              answered_at: createdAt,
+            },
+          ],
         };
       }
       return emptyResult();
@@ -589,7 +651,9 @@ describe('PostgresKernelRepository — Kernel-native approval release', () => {
     });
 
     assert.equal(answered.status, 'answered');
-    const lockedInteraction = pool.queries.find(({ sql }) => sql.includes('SELECT i.*') && sql.includes('FOR UPDATE'));
+    const lockedInteraction = pool.queries.find(
+      ({ sql }) => sql.includes('SELECT i.*') && sql.includes('FOR UPDATE'),
+    );
     assert.ok(lockedInteraction);
     assert.deepEqual(lockedInteraction.values, [
       'interaction-postgres-approval',
@@ -601,8 +665,10 @@ describe('PostgresKernelRepository — Kernel-native approval release', () => {
     assert.match(releasedStep.sql, /run_id=\$2/);
     assert.match(releasedStep.sql, /tenant_id=\$3/);
     assert.match(releasedStep.sql, /state='WAITING_FOR_HUMAN'/);
-    const answeredEventInsert = pool.queries.find(({ sql, values }) =>
-      sql.includes('INSERT INTO commander_events') && values?.[4] === 'interaction.answered');
+    const answeredEventInsert = pool.queries.find(
+      ({ sql, values }) =>
+        sql.includes('INSERT INTO commander_events') && values?.[4] === 'interaction.answered',
+    );
     assert.deepEqual(JSON.parse(answeredEventInsert?.values?.[11] as string), {
       response: { approved: true },
     });
@@ -685,7 +751,7 @@ describe('KernelRepository — ObjectStorage', () => {
     const { NullObjectStorage } = await import('./testing/objectStorage.js');
     const storage = new NullObjectStorage();
 
-    const binaryData = Buffer.from([0x00, 0x01, 0x02, 0xFF]);
+    const binaryData = Buffer.from([0x00, 0x01, 0x02, 0xff]);
     const ref = await storage.put({
       data: binaryData,
       contentType: 'application/octet-stream',

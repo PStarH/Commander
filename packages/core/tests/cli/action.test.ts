@@ -25,20 +25,21 @@ describe('commander action kill CLI', () => {
   });
 
   it('lists kill switches via GET /v1/actions/kill-switches', async () => {
-    const fetchMock = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          killSwitches: [
-            {
-              scope: 'tool',
-              value: 'ticket.create',
-              enabled: true,
-              reason: 'maintenance',
-            },
-          ],
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      ),
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            killSwitches: [
+              {
+                scope: 'tool',
+                value: 'ticket.create',
+                enabled: true,
+                reason: 'maintenance',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
     );
     globalThis.fetch = fetchMock as typeof fetch;
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -53,13 +54,14 @@ describe('commander action kill CLI', () => {
   });
 
   it('enables a kill switch via PUT /v1/actions/kill-switches/:scope/:value', async () => {
-    const fetchMock = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          killSwitch: { scope: 'tool', value: 'ticket.create', enabled: true },
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      ),
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            killSwitch: { scope: 'tool', value: 'ticket.create', enabled: true },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
     );
     await cmdAction(
       ['kill', 'enable', 'tool', 'ticket.create', '--reason=maintenance'],
@@ -76,17 +78,22 @@ describe('commander action kill CLI', () => {
   });
 
   it('disables a kill switch via PUT with enabled=false', async () => {
-    const fetchMock = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          killSwitch: { scope: 'tool', value: 'ticket.create', enabled: false },
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      ),
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            killSwitch: { scope: 'tool', value: 'ticket.create', enabled: false },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
     );
-    await cmdAction(['kill', 'disable', 'tool', 'ticket.create'], {}, {
-      fetchImpl: fetchMock as typeof fetch,
-    });
+    await cmdAction(
+      ['kill', 'disable', 'tool', 'ticket.create'],
+      {},
+      {
+        fetchImpl: fetchMock as typeof fetch,
+      },
+    );
     expect(fetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:4000/v1/actions/kill-switches/tool/ticket.create',
       expect.objectContaining({
@@ -102,7 +109,11 @@ describe('commander action kill CLI', () => {
       throw new Error(`exit:${code}`);
     });
     await expect(
-      cmdAction(['kill', 'list'], {}, { fetchImpl: fetchMock as typeof fetch, exit: exit as never }),
+      cmdAction(
+        ['kill', 'list'],
+        {},
+        { fetchImpl: fetchMock as typeof fetch, exit: exit as never },
+      ),
     ).rejects.toThrow('exit:1');
     expect(exit).toHaveBeenCalledWith(1);
   });
