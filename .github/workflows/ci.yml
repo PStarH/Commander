@@ -459,6 +459,112 @@ jobs:
         env:
           P0_TIMEOUT_MS: '120000'
 
+  l4-b-deploy-gates:
+    name: L4-B Deploy Gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - run: pnpm install
+
+      - name: Rebuild better-sqlite3 (adapter-ops / kernel sqlite tests)
+        run: pnpm rebuild better-sqlite3
+
+      - name: Build packages needed by deploy-gates (kernelEnabled + adapter-ops)
+        run: |
+          pnpm --filter @commander/contracts build
+          pnpm --filter @commander/plugin-sdk build
+          pnpm --filter @commander/kernel build
+          pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/action-adapters build
+          pnpm --filter @commander/core build
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      # P1 fail-closed: sole gate command (no parallel subset steps)
+      - name: Deploy gates (pnpm test:deploy-gates)
+        run: pnpm test:deploy-gates
+
+  l4-b-cell-runtime:
+    name: L4-B Cell Runtime
+    runs-on: ubuntu-latest
+    needs: l4-b-deploy-gates
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - run: pnpm install
+
+      - name: Build host packages for cell scripts (C3 imports action-adapters)
+        run: |
+          pnpm --filter @commander/contracts build
+          pnpm --filter @commander/plugin-sdk build
+          pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/kernel build
+          pnpm --filter @commander/action-adapters build
+
+      - name: Generate cell compose secrets
+        run: |
+          echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" >> "$GITHUB_ENV"
+          echo "COMMANDER_API_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "COMMANDER_MASTER_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "COMMANDER_CAPABILITY_TOKEN_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "COMMANDER_INTEGRITY_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "COMMANDER_WORKER_AUTH_TOKEN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Docker build worker image (--no-cache)
+        run: docker build --no-cache -f packages/worker-plane/Dockerfile -t commander-worker-ci .
+
+      - name: Image boot smoke (P6 contracts/schemas in-image)
+        run: pnpm cell:image-boot-smoke -- --image-tag commander-worker-ci --skip-build
+
+      - name: Cell up assert (compose profile)
+        run: pnpm cell:up-assert
+
+      - name: Cell compensation E2E compose (C3)
+        run: pnpm cell:compensation-e2e -- --mode compose --up
+
+      - name: Upload cell up-assert artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: l4-b-cell-up-assert
+          path: artifacts/l4-b-cell-up-assert-*.json
+          if-no-files-found: error
+
+      - name: Upload cell compensation e2e artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: l4-b-cell-compensation-e2e
+          path: artifacts/l4-b-cell-compensation-e2e-*.json
+          if-no-files-found: error
+
+      - name: Upload image boot smoke artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: l4-b-image-boot-smoke
+          path: artifacts/l4-b-image-boot-smoke-*.json
+          if-no-files-found: error
+
   web-gui:
     name: Web GUI Build
     runs-on: ubuntu-latest
