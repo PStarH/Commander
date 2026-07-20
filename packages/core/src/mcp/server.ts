@@ -70,6 +70,9 @@ const DANGEROUS_MCP_TOOLS: ReadonlySet<string> = new Set([
   'file_hash_edit',
   'system',
   'verify', // spawns host-side package managers (npx)
+  // code.refine / refine_code → testCommand → execSandboxed (LocalBackend ExecPolicy gates)
+  'code',
+  'refine_code',
 ]);
 
 export class MCPServer {
