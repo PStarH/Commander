@@ -105,7 +105,13 @@
     "lint:prettier": "pnpm run format:check",
     "prepublish": "cd packages/core && npx tsc -p tsconfig.json",
     "format": "npx prettier --write \"packages/core/src/**/*.ts\" \"packages/core/tests/**/*.ts\" \"apps/api/src/**/*.ts\" \"apps/web/src/**/*.{ts,tsx}\" \"scripts/**/*.ts\"",
-    "format:check": "npx prettier --check \"packages/core/src/**/*.ts\" \"packages/core/tests/**/*.ts\" \"apps/api/src/**/*.ts\" \"apps/web/src/**/*.{ts,tsx}\" \"scripts/**/*.ts\""
+    "format:check": "npx prettier --check \"packages/core/src/**/*.ts\" \"packages/core/tests/**/*.ts\" \"apps/api/src/**/*.ts\" \"apps/web/src/**/*.{ts,tsx}\" \"scripts/**/*.ts\"",
+    "cell:smoke": "pnpm exec tsx scripts/l4-b-cell-smoke.ts",
+    "cell:up-assert": "pnpm exec tsx scripts/l4-b-cell-up-assert.ts",
+    "cell:image-boot-smoke": "pnpm exec tsx scripts/l4-b-image-boot-smoke.ts",
+    "helm:cell-assert": "pnpm run helm:cell-assert:demo && pnpm run helm:cell-assert:enterprise",
+    "helm:cell-assert:demo": "helm template cell-demo deploy/helm/commander -f deploy/helm/commander/values-demo.yaml --set image.tag=test | pnpm exec tsx scripts/helm-cell-assert.ts --profile demo",
+    "helm:cell-assert:enterprise": "helm template cell-enterprise deploy/helm/commander -f deploy/helm/commander/values-enterprise.yaml --set image.tag=test | pnpm exec tsx scripts/helm-cell-assert.ts --profile enterprise"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
