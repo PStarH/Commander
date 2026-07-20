@@ -42,10 +42,7 @@ describe('ops healthServer', () => {
       blocker.listen(port, () => resolve());
     });
     try {
-      await assert.rejects(
-        () => startOpsHealthServer({ port, isReady: () => true }),
-        /EADDRINUSE/,
-      );
+      await assert.rejects(() => startOpsHealthServer({ port, isReady: () => true }), /EADDRINUSE/);
     } finally {
       await new Promise<void>((resolve, reject) => {
         blocker.close((err) => (err ? reject(err) : resolve()));
@@ -59,6 +56,29 @@ describe('ops healthServer', () => {
     try {
       const res = await fetch(`http://127.0.0.1:${port}/ready`);
       assert.equal(res.status, 503);
+    } finally {
+      await health.close();
+    }
+  });
+
+  it('exposes compensationMode on /ready so probe is not mistaken for drain', async () => {
+    const port = await freePort();
+    const health = await startOpsHealthServer({
+      port,
+      isReady: () => true,
+      getReadyDetails: () => ({
+        compensationMode: 'probe',
+        compensationDraining: false,
+      }),
+    });
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/ready`);
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), {
+        status: 'ready',
+        compensationMode: 'probe',
+        compensationDraining: false,
+      });
     } finally {
       await health.close();
     }
