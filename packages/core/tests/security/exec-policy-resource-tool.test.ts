@@ -96,6 +96,113 @@ describe('isExecScriptTool / deny-by-default', () => {
     if (prev === undefined) delete process.env.COMMANDER_ALLOW_EXEC_SCRIPT;
     else process.env.COMMANDER_ALLOW_EXEC_SCRIPT = prev;
   });
+
+  it('treats exec action=execute_script as script surface', () => {
+    assert.equal(isExecScriptTool('exec', { action: 'execute_script' }), true);
+    assert.equal(isExecScriptTool('exec', { action: 'SCRIPT' }), true);
+  });
+});
+
+describe('ExecuteScriptTool defense-in-depth', () => {
+  it('denies direct execute_script when opt-in unset (bypassing ToolExecutionService)', async () => {
+    const prev = process.env.COMMANDER_ALLOW_EXEC_SCRIPT;
+    delete process.env.COMMANDER_ALLOW_EXEC_SCRIPT;
+    const { ExecuteScriptTool } = await import('../../src/tools/scriptTool');
+    const tool = new ExecuteScriptTool();
+    tool.setTools(
+      new Map([
+        ['file', async () => 'ok'],
+        ['exec', async () => 'SHELL_RAN'],
+        ['shell_execute', async () => 'SHELL_RAN'],
+      ]),
+    );
+    const out = await tool.execute({ script: 'console.log(await tools.exec({}))' });
+    assert.match(out, /EXEC_SCRIPT_DENIED/);
+    assert.doesNotMatch(out, /SHELL_RAN/);
+    if (prev === undefined) delete process.env.COMMANDER_ALLOW_EXEC_SCRIPT;
+    else process.env.COMMANDER_ALLOW_EXEC_SCRIPT = prev;
+  });
+
+  it('strips shell-equivalent tools from nested map even when opted in', async () => {
+    const prev = process.env.COMMANDER_ALLOW_EXEC_SCRIPT;
+    process.env.COMMANDER_ALLOW_EXEC_SCRIPT = '1';
+    const { ExecuteScriptTool } = await import('../../src/tools/scriptTool');
+    const tool = new ExecuteScriptTool();
+    let shellCalls = 0;
+    tool.setTools(
+      new Map([
+        ['file', async () => 'FILE_OK'],
+        [
+          'exec',
+          async () => {
+            shellCalls += 1;
+            return 'SHELL_RAN';
+          },
+        ],
+        [
+          'shell_execute',
+          async () => {
+            shellCalls += 1;
+            return 'SHELL_RAN';
+          },
+        ],
+      ]),
+    );
+    const out = await tool.execute({
+      script:
+        'try { await tools.exec({action:"shell",command:"id"}); } catch (e) { console.log("no_exec"); }' +
+        'try { await tools.shell_execute({command:"id"}); } catch (e) { console.log("no_shell"); }' +
+        'console.log(await tools.file({}));',
+      tools: ['file', 'exec', 'shell_execute'],
+    });
+    assert.equal(shellCalls, 0);
+    assert.match(out, /FILE_OK|no_exec|no_shell|Script completed/);
+    assert.doesNotMatch(out, /SHELL_RAN/);
+    if (prev === undefined) delete process.env.COMMANDER_ALLOW_EXEC_SCRIPT;
+    else process.env.COMMANDER_ALLOW_EXEC_SCRIPT = prev;
+  });
+});
+
+describe('ExecResourceTool nested script map', () => {
+  it('denies action=script by default and never injects shell-equivalent tools', async () => {
+    const prev = process.env.COMMANDER_ALLOW_EXEC_SCRIPT;
+    delete process.env.COMMANDER_ALLOW_EXEC_SCRIPT;
+    const { ExecResourceTool } = await import('../../src/tools/resourceTools');
+    const { FileResourceTool } = await import('../../src/tools/resourceTools');
+    const exec = new ExecResourceTool();
+    const file = new FileResourceTool();
+    exec.setTools(
+      new Map([
+        ['file', file],
+        ['exec', exec],
+        [
+          'shell_execute',
+          { execute: async () => 'SHELL', definition: { name: 'shell_execute' } } as never,
+        ],
+      ]),
+    );
+    const denied = await exec.execute({ action: 'script', script: 'console.log(1)' });
+    assert.match(denied, /EXEC_SCRIPT_DENIED/);
+
+    process.env.COMMANDER_ALLOW_EXEC_SCRIPT = '1';
+    // Re-set tools after opt-in; shell-equivalent must still be excluded from nested map.
+    exec.setTools(
+      new Map([
+        ['file', file],
+        ['exec', exec],
+      ]),
+    );
+    const out = await exec.execute({
+      action: 'script',
+      script:
+        'try { await tools.exec({action:"shell",command:"echo hi"}); console.log("NESTED"); }' +
+        ' catch (e) { console.log("blocked"); }',
+      tools: ['exec', 'file'],
+    });
+    assert.doesNotMatch(out, /NESTED/);
+    if (prev === undefined) delete process.env.COMMANDER_ALLOW_EXEC_SCRIPT;
+    else process.env.COMMANDER_ALLOW_EXEC_SCRIPT = prev;
+  });
 });
 
 describe('isShellOrPythonExecTool', () => {
