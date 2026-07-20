@@ -122,6 +122,9 @@ export class WorkerService {
     // stop() raced the claim: release the step back to the kernel so another worker can pick it up.
     // Kernel only requeues when retryable AND retryAt are set; without retryAt the step
     // becomes terminal FAILED (and burns the claim attempt).
+    // Final-attempt burn: claim already did attempt++. If attempt >= maxAttempts, the kernel
+    // still finishes terminal FAILED even with retryAt — WORKER_STOPPED on the last lease can
+    // burn that attempt (existing kernel contract; not waived here).
     if (!this.running) {
       await this.kernel.failStep({
         stepId: step.id,
