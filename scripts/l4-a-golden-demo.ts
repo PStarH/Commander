@@ -222,16 +222,11 @@ async function createDemoWorker(kernel: InMemoryKernelRepository, tickets: InMem
     publicKeys: { 'l4-a-demo': issuer.publicKey },
   });
   const bootstrap = await import('../packages/worker-plane/src/bootstrap.js');
-  const createWorkerEffectExecutor = bootstrap.createWorkerEffectExecutor as (
-    adapter: InMemoryTicketAdapter,
-  ) => {
-    execute: (input: unknown) => Promise<Record<string, unknown>>;
-  };
   const broker = new EffectBroker(
     verifier,
     createWorkerPolicyEvaluator(kernel),
     kernel,
-    createWorkerEffectExecutor(tickets),
+    bootstrap.createWorkerEffectExecutor({ tickets }),
     { append: async () => {} },
     { requireRequestBinding: true, localWorkerId: 'l4-a-demo-worker' },
   );
@@ -406,6 +401,7 @@ async function checkExactApprovalBinding(baseUrl: string, gateway: InMemoryGatew
             actionEnvelope: { ...envelope, args: { title: 'Mutated title' } },
             effectId,
             idempotencyKey: envelope.idempotencyKey,
+            policySnapshotId: 'action-gateway-mvp-v1',
           },
         },
       ],
