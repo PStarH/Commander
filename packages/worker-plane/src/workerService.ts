@@ -1,3 +1,4 @@
+import { getGlobalLogger, getGlobalMetrics } from '@commander/core';
 import type {
   ClaimedStep,
   KernelWorkerPort,
@@ -118,9 +119,23 @@ export class WorkerService {
       try {
         const claimed = await this.pollOnce();
         if (!claimed) await sleep(this.config.pollIntervalMs);
-      } catch {
+      } catch (error) {
         // Transient kernel/claim failures must not kill the worker process.
         // Capacity (claimInflight) is released in pollOnce finally; back off and continue.
+        // Fail-closed observability: never swallow silently — operators must see claim failures.
+        const err = error instanceof Error ? error : new Error(String(error));
+        getGlobalLogger().error(
+          'WorkerService',
+          'claim loop swallowed error; backing off',
+          err,
+          {
+            workerId: this.worker?.id,
+            errorName: err.name,
+          },
+        );
+        getGlobalMetrics().incrementCounter('worker.claim_loop.errors', 1, {
+          error_name: err.name,
+        });
         if (!this.running || signal?.aborted) break;
         await sleep(this.config.pollIntervalMs);
       }
