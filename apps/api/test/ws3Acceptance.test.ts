@@ -6,7 +6,7 @@
  *   §3.2  forged/expired/cross-tenant JWT → fail-closed 401/403
  *   §4.2  /v1/openapi.json matches actually mounted routes
  *   §5    WarRoom cannot trigger execution/state-change in enterprise
- *   §6    /ready 503 when kernel/effectBroker not ready; no fake READY
+ *   §6    /ready 503 when kernel not ready; effectBroker soft/unknown; no fake READY
  *
  * The tests assemble a representative app with the WS3 middleware stack
  * (v1TenantGuard → enterpriseRouteFreeze → legacyHeader → routers) and
@@ -188,13 +188,13 @@ describe('WS3 Phase 3 §11 — acceptance checklist', () => {
       // the old handler returned ready because `store` was always non-null.
       const result = await probeReadiness({
         kernel: () => null,
-        // Soft probe: missing broker is reported fail but does not alone decide
-        // readiness (kernel failure already forces not_ready).
+        // Soft probe: missing broker is unknown (API does not host worker broker)
+        // and does not alone decide readiness (kernel failure already forces not_ready).
         effectBroker: () => null,
       });
       assert.equal(result.status, 'not_ready');
       assert.equal(result.checks.kernel, 'fail');
-      assert.equal(result.checks.effectBroker, 'fail');
+      assert.equal(result.checks.effectBroker, 'unknown');
     });
 
     it('never reports ok for an unprobed dependency', async () => {

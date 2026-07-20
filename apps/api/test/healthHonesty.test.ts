@@ -14,9 +14,10 @@ import {
  * WS3 §6 health check honesty tests.
  *
  * Verifies:
- * - /ready returns 503 when any hard gate (database/kernel/effectBroker) fails.
+ * - /ready returns 503 when any hard gate (database/kernel) fails.
  * - /ready returns 200 only when all hard gates pass.
- * - /ready marks non-gated deps as 'degraded' (not 'ok') when unwired.
+ * - effectBroker is a soft indicator: null → `unknown` (API does not host broker).
+ * - /ready marks non-gated deps as 'degraded'/'unknown' (not 'ok') when unwired.
  * - /ready never returns 'ok' for an unprobed dependency (§6.2 invariant).
  * - /v1/health reflects only /v1 subtree deps (kernel, effectBroker).
  */
@@ -93,9 +94,9 @@ describe('WS3 §6 health probes — individual', () => {
     assert.equal(result, 'ok');
   });
 
-  it('probeEffectBroker returns fail when broker is null', async () => {
+  it('probeEffectBroker returns unknown when broker is null (API does not host worker broker)', async () => {
     const result = await probeEffectBroker(() => null);
-    assert.equal(result, 'fail');
+    assert.equal(result, 'unknown');
   });
 });
 
@@ -136,7 +137,7 @@ describe('WS3 §6 /ready — honesty invariants', () => {
     );
   });
 
-  it('reports effectBroker fail honestly but does NOT gate readiness (soft until real worker broker)', async () => {
+  it('reports effectBroker unknown when unwired and does NOT gate readiness', async () => {
     await withReadyApp(
       {
         database: async () => 'ok',
@@ -145,12 +146,12 @@ describe('WS3 §6 /ready — honesty invariants', () => {
       },
       async (base) => {
         const res = await fetch(`${base}/ready`);
-        // API process does not host the worker-plane broker; presence is
-        // reported honestly but must not hard-gate /ready via a stub.
+        // API process does not host the worker-plane broker; null is expected
+        // and must surface as unknown (not permanent fail).
         assert.equal(res.status, 200);
         const body = (await res.json()) as { status: string; checks: Record<string, string> };
         assert.equal(body.status, 'ready');
-        assert.equal(body.checks.effectBroker, 'fail');
+        assert.equal(body.checks.effectBroker, 'unknown');
       },
     );
   });
