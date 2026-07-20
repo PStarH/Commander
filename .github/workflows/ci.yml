@@ -10,6 +10,7 @@ jobs:
   quality:
     name: Quality Gates (${{ matrix.os }}, Node ${{ matrix.node-version }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

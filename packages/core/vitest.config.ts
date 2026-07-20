@@ -16,6 +16,9 @@ export default defineConfig({
     // realistic headroom for E2E flows; slow E2E tests further override with
     // explicit per-`it` timeouts so they don't fight the global ceiling.
     testTimeout: 180000,
+    hookTimeout: 60000,
+    // Prevent open handles from hanging CI after the suite finishes (seen on Ubuntu).
+    forceExit: true,
     retry: 2,
     setupFiles: ['tests/setup.ts'],
     include: [

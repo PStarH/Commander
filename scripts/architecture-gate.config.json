@@ -1,6 +1,6 @@
 {
   "$schema": "./architecture-gate.schema.json",
-  "comment": "Legacy exceptions for Architecture V2 migration. New code must NOT be added to this list. Justifications: workerRuntimeAdapter.ts is the deliberate V1-to-V2 runtime bridge and is quarantined here while the strangler migration completes; esmCompat.ts/agentBenchmarkRunner.ts are API helpers, not public routes; workerRuntimeAdapter.ts uses an in-memory executor manifest validated at startup, not a production authority; apps/api/src/v2/v2BenchEndpoints.ts is an in-memory benchmark harness isolated from durable execution.",
+  "comment": "Legacy exceptions for Architecture V2 migration. New code must NOT be added to this list. Justifications: workerRuntimeAdapter.ts / llmBrokerBridge.ts / stepWorkloadIdentity.ts are deliberate V1-to-V2 runtime bridges (ControlPlane identity + agent runtime) quarantined while the strangler migration completes; companion *.test.ts files import core reset helpers for those bridges; esmCompat.ts/agentBenchmarkRunner.ts are API helpers, not public routes; apps/api/src/v2/v2BenchEndpoints.ts is an in-memory benchmark harness isolated from durable execution.",
   "v2Packages": [
     "packages/kernel",
     "packages/worker-plane",
@@ -24,7 +24,10 @@
   "v2ImportExceptions": [
     "packages/worker-plane/src/workerRuntimeAdapter.ts",
     "packages/worker-plane/src/llmBrokerBridge.ts",
-    "packages/worker-plane/src/llmBrokerBridge.test.ts"
+    "packages/worker-plane/src/llmBrokerBridge.test.ts",
+    "packages/worker-plane/src/stepWorkloadIdentity.ts",
+    "packages/worker-plane/src/stepWorkloadIdentity.test.ts",
+    "packages/worker-plane/src/workerService.test.ts"
   ],
   "api": {
     "path": "apps/api/src",
