@@ -61,6 +61,7 @@ const DANGEROUS_MCP_TOOLS: ReadonlySet<string> = new Set([
   'file_delete',
   'file_write',
   'python_execute',
+  'execute_script',
   // Consolidated resource / high-risk tools (default createAllTools surface)
   'exec',
   'git',
@@ -246,8 +247,24 @@ export class MCPServer {
 
           // ExecPolicy: evaluate shell/python payloads for forbidden commands.
           // Covers legacy names and consolidated `exec` resource tool.
+          // Script surfaces have no command payload — deny unless explicitly opted in
+          // (nested tools.exec({action:'shell'}) bypasses this MCP gate via tool.execute).
           {
-            const { extractExecPolicyPayload } = await import('../sandbox/execPolicy');
+            const { extractExecPolicyPayload, isExecScriptTool, denyExecScriptUnlessAllowed } =
+              await import('../sandbox/execPolicy');
+            if (isExecScriptTool(p.name, toolArgs as Record<string, unknown>)) {
+              const scriptDeny = denyExecScriptUnlessAllowed();
+              if (scriptDeny) {
+                return {
+                  jsonrpc: '2.0',
+                  id,
+                  error: {
+                    code: MCP_ERROR_CODES.INTERNAL_ERROR,
+                    message: `Tool "${p.name}" blocked: ${scriptDeny}`,
+                  },
+                };
+              }
+            }
             const payload = extractExecPolicyPayload(p.name, toolArgs);
             if (payload) {
               const execPolicyEngine = getExecPolicyEngine();

@@ -2,6 +2,10 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import type { Tool, ToolDefinition } from '../runtime/types';
 import vm from 'vm';
 import { getGlobalLogger } from '../logging';
+import {
+  denyExecScriptUnlessAllowed,
+  SCRIPT_NESTED_SHELL_EQUIVALENT_TOOLS,
+} from '../sandbox/execPolicy';
 
 // ── Security: Try to load isolated-vm for true V8 Isolate isolation ──────────
 // Per Node.js security docs: the `vm` module is NOT a security sandbox.
@@ -92,13 +96,23 @@ export class ExecuteScriptTool implements Tool {
 
   /**
    * Set the available tools for script execution.
-   * Called by AgentRuntime when registering this tool.
+   * Called by AgentRuntime / ExecResourceTool when registering this tool.
+   * Shell-equivalent tools are stripped here as defense-in-depth (nested
+   * calls use tool.execute directly and would bypass ToolExecutionService).
    */
   setTools(tools: Map<string, (args: Record<string, unknown>) => Promise<string>>): void {
-    this.toolMap = tools;
+    this.toolMap = new Map();
+    for (const [name, fn] of tools) {
+      if (SCRIPT_NESTED_SHELL_EQUIVALENT_TOOLS.has(name)) continue;
+      this.toolMap.set(name, fn);
+    }
   }
 
   async execute(args: Record<string, unknown>): Promise<string> {
+    // Defense-in-depth: deny even when callers bypass ToolExecutionService / ExecResourceTool.
+    const denied = denyExecScriptUnlessAllowed();
+    if (denied) return `Error: ${denied}`;
+
     const script = String(args.script ?? '');
     const requestedTools = args.tools as string[] | undefined;
     const timeout = Math.min(Number(args.timeout ?? 30), 120);

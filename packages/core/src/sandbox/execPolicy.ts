@@ -694,7 +694,10 @@ export function extractExecPolicyPayload(
 export function isExecScriptTool(toolName: string, args?: Record<string, unknown>): boolean {
   if (toolName === 'execute_script') return true;
   if (toolName === 'exec') {
-    return String(args?.action ?? '').toLowerCase() === 'script';
+    const action = String(args?.action ?? '').toLowerCase();
+    // Accept both STRAP action=script and accidental aliases that would otherwise
+    // skip the shell/python ExecPolicy payload path.
+    return action === 'script' || action === 'execute_script';
   }
   return false;
 }
