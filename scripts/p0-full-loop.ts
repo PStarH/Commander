@@ -87,6 +87,7 @@ async function main(): Promise<void> {
     COMMANDER_INTEGRITY_KEY:
       process.env.COMMANDER_INTEGRITY_KEY ?? 'dev-integrity-key-32-bytes-minimum!!',
     COMMANDER_KERNEL_ENABLED: '1',
+    COMMANDER_KERNEL_BACKEND: 'postgres',
     DATABASE_URL: DB,
     COMMANDER_KERNEL_DATABASE_URL: DB,
     COMMANDER_DEFAULT_POLICY_SNAPSHOT_ID:
