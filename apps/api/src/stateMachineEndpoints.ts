@@ -28,8 +28,34 @@ import {
 } from './stateMachine';
 import { validateBody } from './validationMiddleware';
 import { stateMachineCreateBody, resumeFromCheckpointBody } from './schemas';
+import { isLegacyExecutionAllowed, legacyExecutionDisabledReason } from './legacyExecutionGuard';
 
 const router: express.Router = express.Router();
+
+function refuseIfLegacyDisabled(res: Response): boolean {
+  if (isLegacyExecutionAllowed()) return false;
+  res.status(410).json({
+    error: {
+      code: 'LEGACY_EXECUTION_DISABLED',
+      message: legacyExecutionDisabledReason(),
+      replacement: 'POST /v1/runs',
+    },
+  });
+  return true;
+}
+
+// In-memory task state machines are not the V2 run/step authority (contracts +
+// kernel). Same choke point as pipelineEndpoints: only local compatibility mode.
+// GOV-3 approve/reject skip this gate so auth fails closed with 401/403 before
+// advertising Gone (410); those handlers call refuseIfLegacyDisabled after auth.
+router.use((req, res, next) => {
+  if (req.method === 'POST' && /^\/[^/]+\/(approve|reject)\/?$/.test(req.path)) {
+    next();
+    return;
+  }
+  if (refuseIfLegacyDisabled(res)) return;
+  next();
+});
 
 // In-memory state machine instances (for demo; production should use proper storage)
 const stateMachines: Map<string, StateMachine> = new Map();
@@ -201,8 +227,10 @@ router.post('/:taskId/transition', async (req, res) => {
  */
 router.post('/:taskId/approve', (req, res) => {
   try {
+    // GOV-3: auth before legacy Gone — unauth/forbidden must not be masked as 410.
     const approver = resolveApprover(req, res);
     if (!approver) return;
+    if (refuseIfLegacyDisabled(res)) return;
 
     const { taskId } = req.params;
     const { checkpointId, comment } = req.body;
@@ -235,8 +263,10 @@ router.post('/:taskId/approve', (req, res) => {
  */
 router.post('/:taskId/reject', (req, res) => {
   try {
+    // GOV-3: auth before legacy Gone — unauth/forbidden must not be masked as 410.
     const approver = resolveApprover(req, res);
     if (!approver) return;
+    if (refuseIfLegacyDisabled(res)) return;
 
     const { taskId } = req.params;
     const { checkpointId, comment } = req.body;
