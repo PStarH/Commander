@@ -48,6 +48,7 @@ import {
   isSpeculativelySafe,
 } from './speculativeExecutor';
 import type { CompensationService } from './compensationService';
+import { formatAbortTimeoutAdviceLines, isAbortOrTimeoutToolError } from './toolResultShape';
 import type { CacheManager } from './cacheManager';
 import type { DeadLetterQueue } from './deadLetterQueue';
 import type { StepTimeoutManager } from './stepTimeoutManager';
@@ -724,7 +725,17 @@ export class ToolExecutionService {
 
       if (!boundaryResult.success) {
         const durationMs = Date.now() - startTime;
-        const errorMsg = boundaryResult.error ?? 'Unknown tool error';
+        let errorMsg = boundaryResult.error ?? 'Unknown tool error';
+        // 主路径不经 Orchestrator：父取消 AbortError 归一为 TOOL_ABORTED，
+        // 避免 advice 仍落「If transient, retry」（跨层 dual-dispatch）。
+        if (
+          !errorMsg.includes('TOOL_TIMEOUT') &&
+          !errorMsg.includes('TOOL_ABORTED') &&
+          isAbortOrTimeoutToolError(errorMsg) &&
+          !/exceeded timeout/i.test(errorMsg)
+        ) {
+          errorMsg = `TOOL_ABORTED: ${errorMsg}`;
+        }
 
         tracer.recordToolExecution(
           runId,
@@ -836,6 +847,10 @@ export class ToolExecutionService {
           }
         }
 
+        // AgentRuntime 主路径：TEH 仅 planExecution，真正执行走本服务。
+        // TIMEOUT/ABORTED advice 与 tip formatError 对齐，禁止「If transient, retry」
+        //（跨层 dual-dispatch）。Orphan 副作用与 #72 同残留——不假关闭。
+        const abortOrTimeout = isAbortOrTimeoutToolError(errorMsg);
         const structuredError = [
           `tool_error: "${toolCall.name}" failed after ${durationMs}ms`,
           `  reason: ${errorMsg}`,
@@ -856,10 +871,14 @@ export class ToolExecutionService {
                 ),
               ]
             : []),
-          `advice: `,
-          `  - If this is a transient error, retry the call`,
-          `  - If the arguments are invalid, correct them and retry`,
-          `  - If the tool is unavailable, try a different approach`,
+          `advice:`,
+          ...(abortOrTimeout
+            ? formatAbortTimeoutAdviceLines(errorMsg)
+            : [
+                `  - If this is a transient error, retry the call`,
+                `  - If the arguments are invalid, correct them and retry`,
+                `  - If the tool is unavailable, try a different approach`,
+              ]),
         ].join('\n');
 
         return {
