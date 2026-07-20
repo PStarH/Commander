@@ -25,18 +25,14 @@ Commander is mid-strangler-migration. Two architectures coexist on disk:
   security guards, SQLite/Postgres drivers, CLI, TUI). This is what the live CLI and most of
   `apps/api` run today. WIRED.
 - **V2** — the plane-separated target: `@commander/contracts` (types) → `@commander/kernel`
-  (durable Postgres authority **and** always-on `packages/kernel/src/ops` binary: reclaim /
-  timer / outbox — deploy as `kernel-ops`) → `@commander/worker-plane` (execution) +
-  `@commander/effect-broker` (capability PEP), fronted by `apps/api` (Gateway).
-  `@commander/operations` was **deleted in WS1** (`b8a8c484`) and is **ABSENT on master**;
-  arch-guard **bans** resurrecting it. Ops live in kernel-ops only. A later **L4-B follow-up**
-  may add deploy unit `@commander/adapter-ops` for EffectBroker-backed compensation / UNKNOWN
+  (durable Postgres authority **and** always-on ops binary under `packages/kernel/src/ops`) →
+  `@commander/worker-plane` (execution) + `@commander/effect-broker` (capability PEP), fronted by
+  `apps/api` (Gateway). `@commander/operations` was **deleted in WS1** (`b8a8c484`) and is
+  **ABSENT on master**; arch-guard **bans** resurrecting it. Ops live in kernel-ops only.
+  Deploy unit `@commander/adapter-ops` owns EffectBroker-backed compensation / UNKNOWN
   reconcile (**not** a fifth plane; **not** a rename/reintroduction of `@commander/operations`).
-  Until that package exists and is default-deployed, **production compensation drain has no
-  package owner** (`consumeCompensationBatch` library exists under kernel ops but no production
-  main wires a real broker). Partially built; durable `/v1` kernel defaults ON in production /
-  V2 mode / when a DSN is set (`isCommanderKernelEnabled`, see §4). Explicit
-  `COMMANDER_KERNEL_ENABLED=0` remains non-prod opt-out.
+  Partially built; durable `/v1` kernel defaults ON in production / V2 mode / when a DSN is set
+  (`isCommanderKernelEnabled`, see §4). Explicit `COMMANDER_KERNEL_ENABLED=0` remains non-prod opt-out.
 
 The principles below define **V2 as the invariant set**. V1 duplication is the debt to retire.
 Every "one canonical X" rule names the current count so consolidation is measurable.
@@ -60,19 +56,18 @@ Every "one canonical X" rule names the current count so consolidation is measura
   the leaf rule; CI runs `pnpm arch:guard:test` and `pnpm arch:guard` (`.github/workflows/ci.yml:257-263`).
 - (2) **VIOLATED, widely.** The core root barrel is imported wholesale by:
   `apps/api` (50 `from '@commander/core'` imports, e.g. `apps/api/src/index.ts:1-19`),
-  `worker-plane` (`workerRuntimeAdapter.ts:1` and sanctioned bridge files), `mcp-server`
-  (`stdioServer.ts:1-11`, 9 symbols), `sdk` (`commanderClient.ts:26,139,381` incl. a sync
-  `require`), and the `apps/memory` writer (`apps/api/src/memoryIndexManager.ts:14`).
-  (`@commander/operations` is banned/ABSENT after WS1; ops = kernel-ops, not a core-barrel importer.)
+  `worker-plane` (`workerRuntimeAdapter.ts:1`), `mcp-server` (`stdioServer.ts:1-11`, 9 symbols),
+  `sdk` (`commanderClient.ts:26,139,381` incl. a sync `require`),
+  and the `apps/memory` writer (`apps/api/src/memoryIndexManager.ts:14`).
+  (`@commander/adapter-ops` does not import the core barrel.)
 - **Enforcement: PARTIAL.** The contracts leaf rule and V2 package dependency graph are
   **ENFORCED** by `scripts/arch-guard.sh` and `.github/workflows/ci.yml`. The broader V1 rule
   against wholesale `@commander/core` imports remains debt; existing compatibility files are
   explicitly listed by the architecture gate and are not silently expanded.
 
 **Gap to close:** retire the documented V1 core-barrel exceptions as the runtime extraction
-proceeds. The WS0 `arch-guard` **ENFORCES** the V2 package graph / deleted-package ban /
-contracts leaf; `worker-plane → core` remains allowlisted only via
-`scripts/architecture-gate.config.json` `v2ImportExceptions` (not silently expanded).
+proceeds. The WS0 guard prevents new V2 boundary violations and the sole
+`worker-plane → core` bridge is `packages/worker-plane/src/workerRuntimeAdapter.ts`.
 
 ---
 
@@ -121,7 +116,7 @@ over the one implementation, not a new class. Count before/after on any change t
 | Orchestrator          | **10** (was 13)                                                                                                                                                    | V1 `UltimateOrchestrator` (`core/src/ultimate/orchestrator.ts:64`); V2 `planWorkGraph` (`core/src/planner/workGraphPlanner.ts:112`) → kernel → worker StepExecutors | DELETED 2026-07-14: `apps/api` dead `Orchestrator` class (file slimmed to the live, tested `runAgentStep`), `AdaptiveOrchestrator`, the whole `@commander/orchestration` package (dead divergent fork). Remaining: 6 wired V1 orchestrators (Ultimate/TELOS/Swarm/Drive/Goal/AgentLoop) + 3 coordinators overlap the V2 planner path. DELETED 2026-07-15: orphan `apps/api/src/deterministicTaskAllocator.ts` (484 LOC; zero importers; was not an Orchestrator count). WS0 keeps the deleted package shell absent via `arch:guard`. |
 | Store / Repository    | **49** classes (was 51; −2 after LockFree + DatasetStore dedupe 2026-07-15)                                                                                        | per-concept: kernel `KernelRepository`, core `MemoryStore`, `apiStore`, `WarRoomStore` (≈4 parallel roots, not 1)                                                   | `EpisodicMemoryStore` defined in **both** `core/src/memory/episodicStore.ts:41` and `apps/api/src/episodicMemoryStore.ts:398`. DELETED 2026-07-15: orphan `LockFreeStateStore` (zero importers; stub remains without class). DatasetStore dual file collapsed to re-export of `observability/dataset.ts` (plugin path no longer declares a second class).                                                                                                                                                                            |
 | Memory system         | **7** (methodology-locked; L3-10a 2026-07-17: −5 non-product internals off allowlist; prior −1 MemorySystem facade; prior −1 apps/api EpisodicMemoryStore Phase B) | `UnifiedMemory` over `ThreeLayerMemory`; product writes via `writeProductMemory` → `MemoryStore` → `MemoryService.store` (MEMORY-001)                               | Product allowlist: Unified/ThreeLayer + MemoryCurator + Conversation/Semantic/Procedural + MemoryIndexManager. Non-product internals (still in tree, not counted): EpisodicMemoryStore (ACT-R), MemoryFederation, MemoryManagerAgent, MemoryQualityGate, CrossModelMemory. Path-walk of `memory/**` helpers is NOT the locked definition. `MemoryStoreTool` FS path is scratch-only; agent-identified calls fail-closed (L3-10a).                                                                                                    |
-| State machine         | **6** (4 `*StateMachine` classes + `RUN_TRANSITIONS` + `STEP_TRANSITIONS`)                                                                                         | `contracts/src/states.ts:49/61` (RUN/STEP lifecycle tables) via `validateRunTransition` / `validateStepTransition`                                                  | Classes: `TaskStateMachine`, `StateMachine`, `PatternStateMachine`, `TopologyStateMachine`. Canonical tables **are** enforced on kernel write paths (`assertRunTransition` / `assertStepTransition` → contracts validators; `kernel/src/postgres.ts` + `transitionValidation.ts`). apps/api `StateMachine` / `PatternStateMachine` remain parallel legacy engines (not contracts-derived).                                                                                                                                           |
+| State machine         | **6** (4 `*StateMachine` classes + `RUN_TRANSITIONS` + `STEP_TRANSITIONS`)                                                                                         | `contracts/src/states.ts:49/61` (RUN/STEP lifecycle tables)                                                                                                         | Classes: `TaskStateMachine`, `StateMachine`, `PatternStateMachine`, `TopologyStateMachine`. Canonical transition tables have **zero call sites** — the kernel enforces transitions in SQL (`kernel/src/postgres.ts:342`) instead; `apps/api/src/stateMachine.ts:245` and `patternStateMachine.ts:214` are two legacy engines with byte-identical interface names                                                                                                                                                                     |
 | Policy decision point | multiple                                                                                                                                                           | `@commander/effect-broker` PEP for external effects (`effect-broker/src/index.ts:294`, fail-closed)                                                                 | `apps/api` middleware chain (`authMiddleware`/`jwtMiddleware`/`tenantContextMiddleware`/`securityMiddleware`); worker-plane default `PolicyEvaluator` is **deny-all** (`createWorkerPolicyEvaluator`; permit only via `COMMANDER_WORKER_EFFECT_POLICY=permit`); core hosts many guards (`GuardianAgent`, `OutboundNetworkPolicy`, `ToolPoisoningGuard`…). No single authz choke point. _(census pending; enumerated from package maps)_                                                                                              |
 
 **Enforcement: ENFORCED (ceilings).** `packages/core/tests/architecture/duplicationCountGuard.test.ts`
@@ -151,15 +146,16 @@ non-product memory classes remain in tree but off allowlist. Remaining specialty
 
 - REAL: kernel Postgres with transactional outbox (`kernel/src/postgres.ts:815-817`), core ATR
   `RunLedger`/idempotency/checkpoint in SQLite-WAL (`atr/runLedger.ts:205`, `atr/checkpointStore.ts:9`),
-  `atomicWrite` fsync-then-rename (`core/src/tools/_utils/atomicWrite.ts:14`; `apps/api/src/atomicWrite.ts:23-45`;
-  legacy `apps/api` StateMachine persist/checkpoint via `atomicWriteFileSync`, fixed 2026-07-20).
+  `atomicWrite` fsync-then-rename (`core/src/tools/_utils/atomicWrite.ts:14`; `apps/api/src/atomicWrite.ts:23-45`).
 - WEAK / FALSE claims:
   - `EventSourcingEngine` constructor defaults `walPath=null` (in-memory). Singleton
     `getGlobalEventSourcingEngine()` defaults to `.commander_state/event-sourcing.wal`
     (or `COMMANDER_EVENT_SOURCING_WAL`). Header + `isDurable()` clarify optional WAL
     (fixed 2026-07-15).
-  - ~~`apps/api` `EpisodicMemoryStore`~~ **DELETED** (zombie removal; `claimHonesty` enforces
-    absence). Core still has ACT-R `memory/episodicStore.ts` as a non-product internal.
+  - `apps/api` `EpisodicMemoryStore` is JSON + in-memory `Map`s (`episodicMemoryStore.ts` —
+    header corrected 2026-07-15; still not SQLite/atomic). Parallel to core `memory/episodicStore.ts`.
+  - `apps/api` `StateMachine` checkpoints use plain non-atomic `fs.writeFileSync`
+    (`stateMachine.ts:169,198`).
 - (2) **HOLDS for `/v1` durable path (as of 2026-07-15):** kernel defaults ON in production,
   under `COMMANDER_V2_MODE=1`, or when a Postgres DSN is set (`isCommanderKernelEnabled`);
   production refuses `COMMANDER_KERNEL_ENABLED=0` and refuses boot without DSN + initialized
@@ -223,19 +219,14 @@ rules. The contracts leaf, V2 package graph, and new package-role ban are ENFORC
 
 ## Change log
 
-- **2026-07-20 (boundary honesty: ops plane + compensation gap)** — Master has **no**
-  `packages/operations` (WS1 fold of timer/outbox into `packages/kernel/src/ops`).
-  Living maps wrongly still described operations as the live outbox/timer plane.
-  Corrected PRINCIPLES §0 + ARCHITECTURE V2 table + contracts effects header.
-  arch-guard **bans** `@commander/operations` reintroduction (no forward-compat hook).
-  `@commander/adapter-ops` is noted as an **L4-B follow-up** only — not present on master,
-  and not an allowedDependencies entry until that package lands on the branch base.
-  **Gap ENFORCED via claimHonesty:** no production main wires
-  `consumeCompensationBatch` + real EffectBroker (library-only under kernel ops).
-  Also closed living-map noise: ARCHITECTURE WS0 no longer says “boundary linter not yet
-  ENFORCED”; it matches the V2 table — `pnpm arch:guard` **ENFORCES** contracts leaf + V2
-  graph + deleted-package ban (V1 wholesale `@commander/core` ban remains PARTIAL /
-  allowlisted).
+- **2026-07-20 (L4-B adapter-ops deploy unit)** — Land `@commander/adapter-ops` as a
+  deploy unit (not a V2 plane; not a resurrected `@commander/operations`). Registry
+  deny-default PEP by default; `COMMANDER_ADAPTER_OPS_DEMO_OPEN=1` switches a real
+  hollow/permit-all PEP (forbidden in production/enterprise). Non-demo cells refuse
+  outbound daemon `start()` until `COMMANDER_ADAPTER_EGRESS_ALLOWLIST` is set; hostname
+  allowlist also gates adapter HTTP fetch. Coordinates with #66 honesty: contracts leaf
+  stays **ENFORCED** via `pnpm arch:guard`; `@commander/operations` remains ABSENT+banned.
+
 - **2026-07-17 (L3-10a: memory ceiling / single write API)** — Preferred product write =
   `writeProductMemory` → `MemoryStore` → `MemoryService.store` (MEMORY-001 ENFORCED).
   Agent-identified `MemoryStoreTool` FS path fail-closed. Product allowlist drops five
@@ -369,11 +360,9 @@ rules. The contracts leaf, V2 package graph, and new package-role ban are ENFORC
 - **2026-07-14** — Initial honest baseline. Written from architecture inventory `wf_db80bc0a-04f`
   (15 package maps + orchestrator/store/memory/state-machine duplication censuses). Records the
   V1→V2 strangler split and the live duplication counts (orchestrator 13, store 51, memory 19,
-  state-machine 6) as the debt the "single canonical" invariants exist to retire. **As of this
-  baseline date**, no principle was enforced beyond the `test:arch` suite; §1/§3/§5 were
-  aspirational pending a boundary linter, count-guard, and naming lint respectively.
-  **Superseded later:** 2026-07-15+ `scripts/arch-guard.sh` ENFORCES contracts leaf + V2 graph;
-  §3 count-guard ENFORCED 2026-07-15 — see later changelog. Naming lint remains PARTIAL.
+  state-machine 6) as the debt the "single canonical" invariants exist to retire. No principle is
+  enforced beyond the `test:arch` suite; §1/§3/§5 are aspirational pending a boundary linter,
+  count-guard, and naming lint respectively.
   Provenance note: the orchestrator/store/memory/state-machine counts in §3 are census-backed; the
   policy-decision-point row (§3) and the §2/§4/§5 conformance findings are reconstructed from the
   15 package maps (each file:line-cited) — the dedicated policy census and the plane/durability/
