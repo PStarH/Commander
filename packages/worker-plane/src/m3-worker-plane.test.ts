@@ -399,6 +399,34 @@ describe('ToolStepExecutor', () => {
     );
     assert.ok(Date.now() - started < 500, 'await path must terminate within bound');
   });
+
+  it('maps parent abort to ABORTED even if timeout timer also fires', async () => {
+    const parent = new AbortController();
+    const mockRegistry = {
+      get: () => ({
+        execute: async (_args: Record<string, unknown>, ctx: { signal: AbortSignal }) => {
+          await new Promise<void>((_resolve, reject) => {
+            ctx.signal.addEventListener('abort', () => reject(new Error('aborted')), {
+              once: true,
+            });
+          });
+          return { never: true };
+        },
+      }),
+    };
+    const executor = new ToolStepExecutor(mockRegistry);
+    const step = createMockStep({ input: { toolName: 'slow', args: {}, timeoutMs: 80 } });
+    const execPromise = executor.execute(step, {
+      signal: parent.signal,
+      worker: createMockWorker(),
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    parent.abort();
+    await assert.rejects(
+      () => execPromise,
+      (err: WorkerExecutionError) => err.options.code === 'ABORTED',
+    );
+  });
 });
 
 // ── EvaluatorStepExecutor tests ──
