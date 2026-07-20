@@ -120,6 +120,8 @@ export class WorkerService {
     }
     if (!step) return false;
     // stop() raced the claim: release the step back to the kernel so another worker can pick it up.
+    // Kernel only requeues when retryable AND retryAt are set; without retryAt the step
+    // becomes terminal FAILED (and burns the claim attempt).
     if (!this.running) {
       await this.kernel.failStep({
         stepId: step.id,
@@ -131,6 +133,7 @@ export class WorkerService {
           message: 'worker stopped during claim',
           retryable: true,
         },
+        retryAt: new Date(),
         actor: this.worker.id,
       });
       return false;
@@ -146,8 +149,10 @@ export class WorkerService {
     this.running = false;
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = null;
-    for (const controller of this.activeControllers)
+    // Abort in-flight steps so drain does not hang on long tools/LLM calls.
+    for (const controller of this.activeControllers) {
       controller.abort(new Error('Worker stopped'));
+    }
     await this.registry.drain(this.worker.id, this.worker.generation);
     await Promise.allSettled([...this.active]);
   }
