@@ -17,8 +17,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { resolve } from 'node:path';
-import { Pool } from 'pg';
 import { runKernelMigrations } from '@commander/kernel';
+import { Pool } from './load-pg.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const PORT = Number(process.env.P0_PORT ?? 4012);
