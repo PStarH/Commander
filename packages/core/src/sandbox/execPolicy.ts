@@ -643,3 +643,51 @@ export function getExecPolicyEngine(): ExecPolicyEngine {
 export function resetExecPolicyEngine(): void {
   defaultExecPolicyInstance = undefined;
 }
+
+/**
+ * Extract a shell/python payload that ExecPolicy should evaluate for a tool call.
+ *
+ * Live tools use the consolidated `exec` resource tool (`action: shell|python`).
+ * Legacy names `shell_execute` / `python_execute` remain supported.
+ * Returns null when the tool is not a shell/python execution surface (e.g. file tools).
+ */
+export function extractExecPolicyPayload(
+  toolName: string,
+  args: Record<string, unknown>,
+): string | null {
+  if (toolName === 'shell_execute') {
+    return typeof args.command === 'string' && args.command ? args.command : null;
+  }
+  if (toolName === 'python_execute') {
+    return typeof args.code === 'string' && args.code ? args.code : null;
+  }
+  if (toolName === 'exec') {
+    const action = String(args.action ?? '').toLowerCase();
+    if (action === 'shell') {
+      return typeof args.command === 'string' && args.command ? args.command : null;
+    }
+    if (action === 'python') {
+      return typeof args.code === 'string' && args.code ? args.code : null;
+    }
+    // script action is JS tooling, not shell — no ExecPolicy command payload
+    return null;
+  }
+  // Fallback: some wrappers pass command/code without the legacy name
+  if (typeof args.command === 'string' && args.command && toolName.includes('shell')) {
+    return args.command;
+  }
+  if (typeof args.code === 'string' && args.code && toolName.includes('python')) {
+    return args.code;
+  }
+  return null;
+}
+
+/** Tools whose execution injects sandbox workload identity metadata. */
+export function isShellOrPythonExecTool(toolName: string, args?: Record<string, unknown>): boolean {
+  if (toolName === 'shell_execute' || toolName === 'python_execute') return true;
+  if (toolName === 'exec') {
+    const action = String(args?.action ?? '').toLowerCase();
+    return action === 'shell' || action === 'python';
+  }
+  return false;
+}
