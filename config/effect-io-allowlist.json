@@ -22,9 +22,9 @@
       "patterns": ["node:http"]
     },
     {
-      "id": "operations-health-server",
-      "path": "packages/operations/src/healthServer.ts",
-      "owner": "@commander/operations",
+      "id": "adapter-ops-health-server",
+      "path": "packages/adapter-ops/src/healthServer.ts",
+      "owner": "@commander/adapter-ops",
       "reason": "K8s liveness/readiness probe HTTP listener only",
       "patterns": ["node:http"]
     }

@@ -8,7 +8,7 @@
       "taskCategory": "code",
       "predictedCostUsd": 0.0009071999999999999,
       "actualCostUsd": 0.0008862,
-      "errorUsd": 0.00002099999999999997,
+      "errorUsd": 2.099999999999997e-05,
       "errorPct": 2.369668246445494,
       "predictedTokens": 3024,
       "actualTokens": 2782
@@ -30,7 +30,7 @@
       "taskCategory": "analysis",
       "predictedCostUsd": 0.0009071999999999999,
       "actualCostUsd": 0.0008716500000000001,
-      "errorUsd": 0.00003554999999999986,
+      "errorUsd": 3.554999999999986e-05,
       "errorPct": 4.0784718637067465,
       "predictedTokens": 3024,
       "actualTokens": 3063
@@ -41,7 +41,7 @@
       "taskCategory": "creative",
       "predictedCostUsd": 0.0009071999999999999,
       "actualCostUsd": 0.0008282999999999999,
-      "errorUsd": 0.00007890000000000002,
+      "errorUsd": 7.890000000000002e-05,
       "errorPct": 9.52553422672945,
       "predictedTokens": 3024,
       "actualTokens": 2765
@@ -63,7 +63,7 @@
       "taskCategory": "general",
       "predictedCostUsd": 0.0009071999999999999,
       "actualCostUsd": 0.0009622499999999999,
-      "errorUsd": 0.000055049999999999956,
+      "errorUsd": 5.5049999999999956e-05,
       "errorPct": 5.720966484801243,
       "predictedTokens": 3024,
       "actualTokens": 3220
@@ -206,7 +206,7 @@
       "taskCategory": "code",
       "predictedCostUsd": 0.0015119999999999999,
       "actualCostUsd": 0.0015267,
-      "errorUsd": 0.000014700000000000086,
+      "errorUsd": 1.4700000000000086e-05,
       "errorPct": 0.962861072902344,
       "predictedTokens": 3024,
       "actualTokens": 2973
@@ -217,7 +217,7 @@
       "taskCategory": "search",
       "predictedCostUsd": 0.0015119999999999999,
       "actualCostUsd": 0.0015657000000000002,
-      "errorUsd": 0.000053700000000000275,
+      "errorUsd": 5.3700000000000275e-05,
       "errorPct": 3.4297758191224545,
       "predictedTokens": 3024,
       "actualTokens": 3115
@@ -239,7 +239,7 @@
       "taskCategory": "creative",
       "predictedCostUsd": 0.0015119999999999999,
       "actualCostUsd": 0.001527,
-      "errorUsd": 0.00001500000000000004,
+      "errorUsd": 1.500000000000004e-05,
       "errorPct": 0.9823182711198454,
       "predictedTokens": 3024,
       "actualTokens": 3158
@@ -250,7 +250,7 @@
       "taskCategory": "structured",
       "predictedCostUsd": 0.0015119999999999999,
       "actualCostUsd": 0.0015168,
-      "errorUsd": 0.000004800000000000117,
+      "errorUsd": 4.800000000000117e-06,
       "errorPct": 0.3164556962025393,
       "predictedTokens": 3024,
       "actualTokens": 3188
@@ -261,7 +261,7 @@
       "taskCategory": "general",
       "predictedCostUsd": 0.0015119999999999999,
       "actualCostUsd": 0.0014892,
-      "errorUsd": 0.000022799999999999904,
+      "errorUsd": 2.2799999999999904e-05,
       "errorPct": 1.5310233682514038,
       "predictedTokens": 3024,
       "actualTokens": 3106
@@ -322,5 +322,6 @@
     },
     "datasetVersion": "cost-prediction-v1"
   },
-  "runAt": "2026-07-20T07:10:50.199Z"
+  "runAt": "2026-07-20T07:10:50.199Z",
+  "note": "CI readiness fixture (simulated evidence; NON-SCORING \u2014 does not count toward required readiness / residual\u2192100)"
 }

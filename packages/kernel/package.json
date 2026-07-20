@@ -33,11 +33,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm --workspace-root exec tsx --test packages/kernel/src/kernel.test.ts packages/kernel/src/transitionValidation.test.ts packages/kernel/src/tenantPause.test.ts packages/kernel/src/ws2-acceptance.test.ts packages/kernel/src/contracts.test.ts packages/kernel/src/kernel-m2.test.ts packages/kernel/src/killSwitch.test.ts packages/kernel/src/repositoryFactory.test.ts packages/kernel/src/sqliteSchema.test.ts packages/kernel/src/sqlite.integration.test.ts packages/kernel/src/testing/repositoryContract.ts packages/kernel/src/testing/kernelTranscript.test.ts packages/kernel/src/ops/compensationConsumer.test.ts packages/kernel/src/ops/compensationConsumerDaemon.test.ts packages/kernel/src/ops/compensationReclaimConsume.test.ts packages/kernel/src/ops/healthServer.test.ts packages/kernel/src/ops/opsRuntime.test.ts packages/kernel/src/ops/reclaimDaemon.test.ts packages/kernel/src/ops/timerWakeupWorker.test.ts packages/kernel/src/ops/outbox/kernelOutboxPublisher.test.ts packages/kernel/src/ops/outbox/outboxDelivery.test.ts packages/kernel/src/ops/outbox/compensationPublisherRace.integration.test.ts",
-    "test:sqlite": "pnpm --workspace-root exec tsx --test packages/kernel/src/sqlite.integration.test.ts packages/kernel/src/testing/repositoryContract.ts",
-    "test:integration": "pnpm --workspace-root exec tsx --test packages/kernel/src/postgres.integration.test.ts packages/kernel/src/postgres.ops.integration.test.ts packages/kernel/src/postgres.dlq.integration.test.ts packages/kernel/src/postgres.reconcile.integration.test.ts packages/kernel/src/ops/outbox/compensationPublisherRace.postgres.integration.test.ts",
-    "test:rls-live-fire": "pnpm --workspace-root exec tsx --test packages/kernel/src/postgres.rls-live-fire.test.ts",
-    "test:pitr-failover": "COMMANDER_ENABLE_PITR_DRILL=1 pnpm --workspace-root exec tsx --test packages/kernel/src/postgres.pitr-failover.test.ts",
+    "test": "tsx --test src/kernel.test.ts src/transitionValidation.test.ts src/tenantPause.test.ts src/ws2-acceptance.test.ts src/contracts.test.ts src/kernel-m2.test.ts src/killSwitch.test.ts src/repositoryFactory.test.ts src/sqliteSchema.test.ts src/sqlite.integration.test.ts src/testing/repositoryContract.ts src/testing/kernelTranscript.test.ts src/ops/compensationConsumer.test.ts src/ops/compensationConsumerDaemon.test.ts src/ops/compensationReclaimConsume.test.ts src/ops/healthServer.test.ts src/ops/opsRuntime.test.ts src/ops/reclaimDaemon.test.ts src/ops/timerWakeupWorker.test.ts src/ops/outbox/kernelOutboxPublisher.test.ts src/ops/outbox/outboxDelivery.test.ts src/ops/outbox/compensationPublisherRace.integration.test.ts",
+    "test:sqlite": "tsx --test src/sqlite.integration.test.ts src/testing/repositoryContract.ts",
+    "test:integration": "tsx --test src/postgres.integration.test.ts src/postgres.ops.integration.test.ts src/postgres.dlq.integration.test.ts src/postgres.reconcile.integration.test.ts src/ops/outbox/compensationPublisherRace.postgres.integration.test.ts",
+    "test:rls-live-fire": "tsx --test src/postgres.rls-live-fire.test.ts",
+    "test:pitr-failover": "COMMANDER_ENABLE_PITR_DRILL=1 tsx --test src/postgres.pitr-failover.test.ts",
     "start:ops": "node dist/ops/main.js",
     "prepublishOnly": "tsc -p tsconfig.json"
   },
@@ -73,6 +73,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/pg": "^8.11.0",
+    "tsx": "^4.23.1",
     "typescript": "^5.0.0"
   }
 }

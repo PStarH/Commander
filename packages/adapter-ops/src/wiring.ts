@@ -4,6 +4,8 @@ import {
   CapabilityTokenIssuer,
   CapabilityTokenVerifier,
   canonicalRequestHash,
+  type AuditSink,
+  type PolicyEvaluator,
 } from '@commander/effect-broker';
 import {
   ActionAdapterRegistry,
@@ -14,6 +16,25 @@ import {
 import { randomUUID } from 'node:crypto';
 import { ReconciliationDaemon } from './reconciliationDaemon.js';
 import { CompensationDaemon } from './compensationDaemon.js';
+
+const POLICY_SNAPSHOT_ID = 'adapter-ops-v1';
+
+function isProductionOrEnterprise(): boolean {
+  return process.env.NODE_ENV === 'production' || process.env.COMMANDER_PROFILE === 'enterprise';
+}
+
+/**
+ * Demo-only hollow PEP is forbidden in production/enterprise.
+ * Set COMMANDER_ADAPTER_OPS_DEMO_OPEN=1 only for local/demo cells.
+ */
+function assertDemoOpenGate(): void {
+  const demoOpen = process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN === '1';
+  if (demoOpen && isProductionOrEnterprise()) {
+    throw new Error(
+      'ADAPTER_OPS_DEMO_OPEN_FORBIDDEN_IN_PRODUCTION: unset COMMANDER_ADAPTER_OPS_DEMO_OPEN for enterprise/production',
+    );
+  }
+}
 
 function createAdapterExecutor(registry: ActionAdapterRegistry) {
   return {
@@ -58,37 +79,70 @@ function createAdapterExecutor(registry: ActionAdapterRegistry) {
   };
 }
 
+/** Fail-closed: only effect types registered in ActionAdapterRegistry may be allowed. */
+function createRegistryPolicy(registry: ActionAdapterRegistry): PolicyEvaluator {
+  return {
+    evaluate: async ({ type }) => {
+      const adapter = registry.resolve(type);
+      if (!adapter) {
+        return {
+          effect: 'deny' as const,
+          decisionId: 'adapter-ops-deny-unregistered',
+          policySnapshotId: POLICY_SNAPSHOT_ID,
+          reason: `unregistered effect type: ${type}`,
+        };
+      }
+      return {
+        effect: 'allow' as const,
+        decisionId: `adapter-ops-allow:${type}`,
+        policySnapshotId: POLICY_SNAPSHOT_ID,
+        reason: `registered adapter ${adapter.descriptor.adapterId}`,
+      };
+    },
+  };
+}
+
+/** Structured audit sink — never a silent no-op. */
+function createStdoutAuditSink(): AuditSink {
+  return {
+    append: async (event) => {
+      console.error(
+        JSON.stringify({
+          channel: 'adapter-ops-audit',
+          ...event,
+        }),
+      );
+    },
+  };
+}
+
 export async function createOperationsWiring(): Promise<{
   reconciliation: ReconciliationDaemon;
   compensation: CompensationDaemon;
   close: () => Promise<void>;
 }> {
+  assertDemoOpenGate();
+
   const handle = await createKernelRepository({ env: process.env });
   const repository = handle.repository;
   const cellTenantId = process.env.COMMANDER_CELL_TENANT_ID?.trim() || 'local';
   const credentials = new EnvAdapterCredentialProvider({ cellTenantId });
   const registry = ActionAdapterRegistry.production(credentials);
   const issuer = CapabilityTokenIssuer.generate({
-    issuer: 'commander-operations',
+    issuer: 'commander-adapter-ops',
     audience: 'commander.effect-broker',
-    keyId: 'operations',
+    keyId: 'adapter-ops',
   });
   const tokens = new CapabilityTokenVerifier({
-    issuer: 'commander-operations',
+    issuer: 'commander-adapter-ops',
     audience: 'commander.effect-broker',
-    publicKeys: { operations: issuer.publicKey },
+    publicKeys: { 'adapter-ops': issuer.publicKey },
   });
-  const policy = {
-    evaluate: async () => ({
-      effect: 'allow' as const,
-      decisionId: 'operations-allow',
-      policySnapshotId: 'operations-v1',
-      reason: 'operations daemon allow',
-    }),
-  };
-  const audit = { append: async () => {} };
+  const policy = createRegistryPolicy(registry);
+  const audit = createStdoutAuditSink();
   const kernelPort = {
-    admitEffect: (input: Parameters<typeof repository.admitEffect>[0]) => repository.admitEffect(input),
+    admitEffect: (input: Parameters<typeof repository.admitEffect>[0]) =>
+      repository.admitEffect(input),
     completeEffect: (
       effectId: string,
       tenantId: string,
@@ -96,30 +150,39 @@ export async function createOperationsWiring(): Promise<{
       response: Record<string, unknown>,
       actor: string,
     ) => repository.completeEffect(effectId, tenantId, lease, response, actor),
-    markEffectCompletionUnknown: (input: Parameters<typeof repository.markEffectCompletionUnknown>[0]) =>
-      repository.markEffectCompletionUnknown(input),
-    failEffect: (input: Parameters<typeof repository.failEffect>[0]) => repository.failEffect(input),
+    markEffectCompletionUnknown: (
+      input: Parameters<typeof repository.markEffectCompletionUnknown>[0],
+    ) => repository.markEffectCompletionUnknown(input),
+    failEffect: (input: Parameters<typeof repository.failEffect>[0]) =>
+      repository.failEffect(input),
     getEffect: (effectId: string, tenantId: string) => repository.getEffect(effectId, tenantId),
     reconcileEffect: (input: Parameters<typeof repository.reconcileEffect>[0]) =>
       repository.reconcileEffect(input),
-    isActionAllowed: async () => true,
+    isActionAllowed: async (_tenantId: string, action: string) => registry.resolve(action) !== null,
   };
   const executor = createAdapterExecutor(registry);
   const workerBroker = new EffectBroker(tokens, policy, kernelPort, executor, audit, {
     audience: 'commander.effect-broker',
-    localWorkerId: 'operations-worker',
+    localWorkerId: 'adapter-ops-worker',
   });
   const reconciliation = new ReconciliationDaemon({
     repository,
     brokerFactory: () =>
-      new EffectBroker(tokens, policy, kernelPort, {
-        execute: async () => {
-          throw new Error('reconcile must not execute writes');
+      new EffectBroker(
+        tokens,
+        policy,
+        kernelPort,
+        {
+          execute: async () => {
+            throw new Error('reconcile must not execute writes');
+          },
         },
-      }, audit, {
-        audience: 'commander.effect-broker',
-        localWorkerId: 'reconciliation-daemon',
-      }),
+        audit,
+        {
+          audience: 'commander.effect-broker',
+          localWorkerId: 'reconciliation-daemon',
+        },
+      ),
     registry,
     pollIntervalMs: Number(process.env.COMMANDER_RECONCILE_INTERVAL_MS ?? 5_000),
     batchSize: Number(process.env.COMMANDER_RECONCILE_BATCH_SIZE ?? 50),
@@ -140,7 +203,7 @@ export async function createOperationsWiring(): Promise<{
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
         requestHash: canonicalRequestHash(request),
         workloadId: 'compensation-daemon',
-        policySnapshotId: 'operations-v1',
+        policySnapshotId: POLICY_SNAPSHOT_ID,
         nonce: randomUUID(),
       });
     },

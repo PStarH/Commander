@@ -7,7 +7,7 @@
     "packages/effect-broker",
     "packages/contracts",
     "packages/action-adapters",
-    "packages/operations"
+    "packages/adapter-ops"
   ],
   "forbiddenCoreImports": [
     "@commander/core",
