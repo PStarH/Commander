@@ -373,4 +373,162 @@ describe('execution kernel semantics', () => {
     assert.equal((await kernel.getStep('step-a', 'tenant-a'))?.state, 'CANCELLED');
     assert.equal((await kernel.getEffect('effect-cancel-orphan', 'tenant-a'))?.state, 'COMPLETION_UNKNOWN');
   });
+
+  it('requests compensation on terminal failStep when completed effects exist', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(createRun([{ id: 'step-a', kind: 'agent', maxAttempts: 1 }]), 'gateway');
+    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
+    assert.ok(claimed?.lease);
+    assert.equal(
+      (
+        await kernel.admitEffect({
+          id: 'effect-done',
+          runId: 'run-1',
+          stepId: claimed!.id,
+          tenantId: 'tenant-a',
+          type: 'http.write',
+          idempotencyKey: 'done-key',
+          policyDecisionId: 'decision-1',
+          request: { target: 'crm' },
+          lease: claimed!.lease!,
+          actor: 'worker-1',
+        })
+      ).admitted,
+      true,
+    );
+    assert.ok(await kernel.completeEffect('effect-done', 'tenant-a', claimed!.lease!, { ok: true }, 'worker-1'));
+
+    const failed = await kernel.failStep({
+      stepId: claimed!.id,
+      tenantId: 'tenant-a',
+      lease: claimed!.lease!,
+      expectedVersion: claimed!.version,
+      error: { code: 'DOWNSTREAM_FAILED', message: 'post-effect failure', retryable: false },
+      actor: 'worker-1',
+    });
+    assert.equal(failed?.state, 'FAILED');
+    assert.equal((await kernel.getRun('run-1', 'tenant-a'))?.state, 'COMPENSATING');
+
+    const messages = await kernel.claimOutbox(100);
+    const compensation = messages.filter(
+      (message) => message.topic === 'commander.kernel.compensation.requested',
+    );
+    assert.equal(compensation.length, 1);
+    assert.deepEqual(compensation[0]?.payload.effectIds, ['effect-done']);
+    assert.equal(
+      (await kernel.listEvents('run-1', 'tenant-a')).some((event) => event.type === 'run.compensating'),
+      true,
+    );
+  });
+
+  it('requests compensation on failStepByTimer when completed effects exist', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(createRun([{ id: 'step-a', kind: 'agent', maxAttempts: 1 }]), 'gateway');
+    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
+    assert.ok(claimed?.lease);
+    assert.equal(
+      (
+        await kernel.admitEffect({
+          id: 'effect-deadline',
+          runId: 'run-1',
+          stepId: claimed!.id,
+          tenantId: 'tenant-a',
+          type: 'http.write',
+          idempotencyKey: 'deadline-key',
+          policyDecisionId: 'decision-1',
+          request: { target: 'crm' },
+          lease: claimed!.lease!,
+          actor: 'worker-1',
+        })
+      ).admitted,
+      true,
+    );
+    assert.ok(
+      await kernel.completeEffect('effect-deadline', 'tenant-a', claimed!.lease!, { ok: true }, 'worker-1'),
+    );
+
+    const failed = await kernel.failStepByTimer(
+      claimed!.id,
+      'tenant-a',
+      { code: 'STEP_DEADLINE_EXCEEDED', message: 'deadline', retryable: false },
+      'kernel.timer',
+    );
+    assert.equal(failed?.state, 'FAILED');
+    assert.equal((await kernel.getRun('run-1', 'tenant-a'))?.state, 'COMPENSATING');
+    const messages = await kernel.claimOutbox(100);
+    assert.equal(
+      messages.some((message) => message.topic === 'commander.kernel.compensation.requested'),
+      true,
+    );
+  });
+
+  it('prefers higher effective priority after aging instead of clamping all steps to 1000', async () => {
+    const kernel = new InMemoryKernelRepository();
+    const base = new Date('2026-01-01T00:00:00.000Z');
+    await kernel.createRun(
+      {
+        ...createRun([
+          {
+            id: 'low-old',
+            kind: 'agent',
+            priority: 0,
+            scheduledAt: new Date(base.getTime() - 10 * 60_000).toISOString(),
+          },
+          {
+            id: 'high-new',
+            kind: 'agent',
+            priority: 100,
+            scheduledAt: base.toISOString(),
+          },
+        ]),
+      },
+      'gateway',
+    );
+
+    const first = await kernel.claimNextStep({
+      workerId: 'worker-1',
+      leaseTtlMs: 60_000,
+      now: base,
+    });
+    assert.equal(first?.id, 'high-new');
+
+    const second = await kernel.claimNextStep({
+      workerId: 'worker-2',
+      leaseTtlMs: 60_000,
+      now: base,
+    });
+    assert.equal(second?.id, 'low-old');
+  });
+
+  it('lets aged low-priority work outrank newer lower-boost peers', async () => {
+    const kernel = new InMemoryKernelRepository();
+    const base = new Date('2026-01-01T00:00:00.000Z');
+    await kernel.createRun(
+      {
+        ...createRun([
+          {
+            id: 'starved',
+            kind: 'agent',
+            priority: 0,
+            scheduledAt: new Date(base.getTime() - 120 * 60_000).toISOString(),
+          },
+          {
+            id: 'fresh',
+            kind: 'agent',
+            priority: 50,
+            scheduledAt: base.toISOString(),
+          },
+        ]),
+      },
+      'gateway',
+    );
+
+    const claimed = await kernel.claimNextStep({
+      workerId: 'worker-1',
+      leaseTtlMs: 60_000,
+      now: base,
+    });
+    assert.equal(claimed?.id, 'starved');
+  });
+
 });
