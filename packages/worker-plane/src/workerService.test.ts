@@ -673,7 +673,7 @@ describe('worker plane', () => {
 
   it('preserves retry intent from structural KernelStepExecutorError-like errors', async () => {
     const kernel = new FakeKernel();
-    kernel.addRun('run-struct', 'tenant-a', [{ id: 'agent-step', kind: 'agent' }]);
+    kernel.addRun('run-struct', 'tenant-a', [{ id: 'agent-step', kind: 'agent', maxAttempts: 2 }]);
     class StructuralExecutorError extends Error {
       readonly options: { code?: string; retryable?: boolean; retryDelayMs?: number };
       constructor(
