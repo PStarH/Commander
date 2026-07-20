@@ -637,12 +637,13 @@ export class InMemoryKernelRepository implements KernelRepository {
     actor: string,
     at = new Date(),
   ): boolean {
+    // 内存实现单线程无竞态；快照仍在进入 COMPENSATING / cancel 之前，对齐 postgres 锁序语义。
+    const run = this.runs.get(step.runId);
+    if (!run) return false;
     const completedEffects = [...this.effects.values()].filter(
       (effect) => effect.runId === step.runId && effect.tenantId === step.tenantId && effect.state === 'COMPLETED',
     );
     if (completedEffects.length === 0) return false;
-    const run = this.runs.get(step.runId);
-    if (!run) return false;
     if (run.state === 'COMPENSATING') {
       this.cancelOpenStepsForTerminalRun(run.id, run.tenantId, actor, 'run_compensating');
       return true;
