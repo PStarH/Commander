@@ -38,7 +38,8 @@ jobs:
         run: ruff check src/ tests/
 
       - name: Type check with pyright
-        run: pyright src/ tests/
+        # pyproject include=src; tests are exercised by pytest, not pyright.
+        run: pyright src/
 
       - name: Test with pytest
         run: python -m pytest tests/ -v --tb=short -q

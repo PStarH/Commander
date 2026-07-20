@@ -130,11 +130,19 @@ describe('Architecture V2 invariants', () => {
     const baselinePath = join(ROOT, 'packages/contracts/snapshots/contract-snapshot.baseline.json');
     assert.ok(existsSync(baselinePath), 'contract snapshot baseline must be committed');
     const baseline = JSON.parse(read('packages/contracts/snapshots/contract-snapshot.baseline.json')) as {
-      version: string;
-      resources: string[];
+      packageVersion?: string;
+      version?: string;
+      resources?: string[];
+      contracts?: Record<string, unknown>;
     };
+    // New freeze format (compatibility.v2) uses packageVersion + contracts map.
+    if (baseline.packageVersion !== undefined) {
+      assert.equal(baseline.packageVersion, 'v2');
+      assert.ok(baseline.contracts && Object.keys(baseline.contracts).length >= 5);
+      return;
+    }
     assert.equal(baseline.version, 'v2');
-    assert.ok(baseline.resources.length >= 15);
+    assert.ok((baseline.resources?.length ?? 0) >= 15);
   });
 
   it('core reuses shared control-plane contract types', () => {

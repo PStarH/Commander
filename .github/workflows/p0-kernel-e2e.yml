@@ -48,6 +48,8 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
       - run: pnpm install
+      - name: Rebuild better-sqlite3 native binding
+        run: pnpm rebuild better-sqlite3
       - name: Build packages
         run: |
           pnpm --filter @commander/contracts build
