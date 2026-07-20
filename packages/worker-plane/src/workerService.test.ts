@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { resetControlPlane } from '@commander/core';
+import { getGlobalLogger, getGlobalMetrics, resetControlPlane } from '@commander/core';
 import { InMemoryWorkerRegistry } from './registry.js';
 import { WorkerService } from './workerService.js';
 import { WorkerExecutionError } from './types.js';
@@ -26,6 +26,7 @@ class FakeKernel implements KernelWorkerPort {
   lastClaimGeneration: number | undefined;
   lastFailureCode: string | undefined;
   lastFailureRetryable: boolean | undefined;
+  lastFailureRetryAt: Date | undefined;
   heartbeatCount = 0;
   claimDelayMs = 0;
   lastHeartbeatActiveSteps: number | undefined;
@@ -40,7 +41,12 @@ class FakeKernel implements KernelWorkerPort {
   addRun(
     id: string,
     tenantId: string,
-    definitions: Array<{ id: string; kind: string; input?: Record<string, unknown> }>,
+    definitions: Array<{
+      id: string;
+      kind: string;
+      input?: Record<string, unknown>;
+      maxAttempts?: number;
+    }>,
   ): void {
     this.runs.set(id, { tenantId, state: 'PENDING' });
     for (const definition of definitions)
@@ -52,7 +58,8 @@ class FakeKernel implements KernelWorkerPort {
         attempt: 0,
         input: definition.input ?? {},
         state: 'PENDING',
-        maxAttempts: 2,
+        // Default matches production (maxAttempts ?? 1). Callers that need retries set explicitly.
+        maxAttempts: definition.maxAttempts ?? 1,
         lease: { workerId: '', token: '', fencingEpoch: 0, expiresAt: '' },
       });
   }
@@ -127,6 +134,7 @@ class FakeKernel implements KernelWorkerPort {
     expectedVersion: number;
     error: { retryable: boolean; code?: string };
     retryAt?: Date;
+    refundAttempt?: boolean;
   }): Promise<unknown | null> {
     const step = this.steps.find((candidate) => candidate.id === request.stepId);
     if (
@@ -138,17 +146,22 @@ class FakeKernel implements KernelWorkerPort {
       return null;
     this.lastFailureCode = request.error.code;
     this.lastFailureRetryable = request.error.retryable;
-    // Non-retryable must leave claimable path as FAILED (not PENDING).
-    // Retryable without retryAt stays PENDING (e.g. WORKER_STOPPED requeue).
-    if (!request.error.retryable) step.state = 'FAILED';
-    else step.state = request.retryAt ? 'RETRY_WAIT' : 'PENDING';
+    this.lastFailureRetryAt = request.retryAt;
+    // Match production kernel: refundAttempt first, then retryable && retryAt && attempt < maxAttempts.
+    if (request.refundAttempt && step.attempt > 0) step.attempt -= 1;
+    const retry =
+      Boolean(request.error.retryable) &&
+      Boolean(request.retryAt) &&
+      step.attempt < step.maxAttempts;
+    step.state = retry ? 'RETRY_WAIT' : 'FAILED';
     return {};
   }
   getRun(id: string): { state: string } | undefined {
     return this.runs.get(id);
   }
-  getStep(id: string): { state: string } | undefined {
-    return this.steps.find((step) => step.id === id);
+  getStep(id: string): { state: string; attempt?: number } | undefined {
+    const step = this.steps.find((candidate) => candidate.id === id);
+    return step ? { state: step.state, attempt: step.attempt } : undefined;
   }
 }
 
@@ -245,7 +258,7 @@ describe('worker plane', () => {
 
   it('rejects unapproved capability declarations and preserves executor retry intent', async () => {
     const kernel = new FakeKernel();
-    kernel.addRun('run-a', 'tenant-a', [{ id: 'agent-step', kind: 'agent' }]);
+    kernel.addRun('run-a', 'tenant-a', [{ id: 'agent-step', kind: 'agent', maxAttempts: 2 }]);
     const denied = new WorkerService(
       { ...definition, capabilities: ['agent', 'tool'] },
       identity,
@@ -407,7 +420,8 @@ describe('worker plane', () => {
   it('returns claimed step without executing when stop races claim', async () => {
     const kernel = new FakeKernel();
     kernel.claimDelayMs = 50;
-    kernel.addRun('run-stop', 'tenant-a', [{ id: 'stop-step', kind: 'agent' }]);
+    // Production default maxAttempts=1: without refundAttempt this would terminal-FAIL after claim++.
+    kernel.addRun('run-stop', 'tenant-a', [{ id: 'stop-step', kind: 'agent', maxAttempts: 1 }]);
     let executed = false;
     const service = new WorkerService(
       definition,
@@ -430,7 +444,52 @@ describe('worker plane', () => {
     assert.equal(await poll, false);
     assert.equal(executed, false);
     assert.equal(kernel.lastFailureCode, 'WORKER_STOPPED');
-    assert.equal(kernel.getStep('stop-step')?.state, 'PENDING');
+    assert.ok(kernel.lastFailureRetryAt instanceof Date, 'retryAt required for kernel requeue');
+    assert.equal(kernel.getStep('stop-step')?.state, 'RETRY_WAIT');
+    assert.equal(
+      kernel.getStep('stop-step')?.attempt,
+      0,
+      'stop-during-claim must refund the claim attempt',
+    );
+  });
+
+  it('aborts in-flight step controllers when stop() is called', async () => {
+    const kernel = new FakeKernel();
+    kernel.addRun('run-abort-stop', 'tenant-a', [{ id: 'abort-stop-step', kind: 'agent' }]);
+    let sawAbort = false;
+    const service = new WorkerService(
+      definition,
+      identity,
+      auth,
+      new InMemoryWorkerRegistry(),
+      kernel,
+      {
+        execute: async (_step, context) => {
+          await new Promise<void>((_resolve, reject) => {
+            if (context.signal.aborted) {
+              sawAbort = true;
+              reject(new Error('already aborted'));
+              return;
+            }
+            context.signal.addEventListener(
+              'abort',
+              () => {
+                sawAbort = true;
+                reject(new Error('Worker stopped'));
+              },
+              { once: true },
+            );
+          });
+          return {};
+        },
+      },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 60_000 },
+    );
+    await service.start();
+    assert.equal(await service.pollOnce(), true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await service.stop();
+    assert.equal(sawAbort, true, 'stop() must abort activeControllers so drain does not hang');
   });
 
   it('counts claimInflight in activeSteps and registry heartbeat', async () => {
@@ -610,5 +669,90 @@ describe('worker plane', () => {
     assert.equal(kernel.lastFailureCode, 'ABORTED');
     assert.equal(kernel.lastFailureRetryable, false);
     assert.equal(kernel.getStep('stop-hang-tool')?.state, 'FAILED');
+  });
+
+  it('preserves retry intent from structural KernelStepExecutorError-like errors', async () => {
+    const kernel = new FakeKernel();
+    kernel.addRun('run-struct', 'tenant-a', [{ id: 'agent-step', kind: 'agent', maxAttempts: 2 }]);
+    class StructuralExecutorError extends Error {
+      readonly options: { code?: string; retryable?: boolean; retryDelayMs?: number };
+      constructor(
+        message: string,
+        options: { code?: string; retryable?: boolean; retryDelayMs?: number },
+      ) {
+        super(message);
+        this.name = 'KernelStepExecutorError';
+        this.options = options;
+      }
+    }
+    const service = new WorkerService(
+      definition,
+      identity,
+      auth,
+      new InMemoryWorkerRegistry(),
+      kernel,
+      {
+        execute: async () => {
+          throw new StructuralExecutorError('Step aborted during execution', {
+            code: 'ABORTED',
+            retryable: true,
+            retryDelayMs: 1000,
+          });
+        },
+      },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 60_000 },
+    );
+    await service.start();
+    await service.pollOnce();
+    await service.waitForIdle();
+    assert.equal(kernel.lastFailureCode, 'ABORTED');
+    assert.equal(kernel.getStep('agent-step')?.state, 'RETRY_WAIT');
+    await service.stop();
+  });
+
+  it('keeps the poll loop alive when claimNextStep throws', async () => {
+    const kernel = new FakeKernel();
+    let claims = 0;
+    const original = kernel.claimNextStep.bind(kernel);
+    kernel.claimNextStep = async (request) => {
+      claims += 1;
+      if (claims === 1) throw new Error('temporary database failure');
+      return original(request);
+    };
+    kernel.addRun('run-resilient', 'tenant-a', [{ id: 'step-ok', kind: 'agent' }]);
+    const logged: Array<{ level: string; message: string }> = [];
+    const onLog = (entry: { component: string; level: string; message: string }) => {
+      if (entry.component === 'WorkerService' && entry.message.includes('claim loop swallowed')) {
+        logged.push({ level: entry.level, message: entry.message });
+      }
+    };
+    getGlobalLogger().onLog(onLog);
+    const before = getGlobalMetrics().getLatest('worker.claim_loop.errors');
+    const service = new WorkerService(
+      definition,
+      identity,
+      auth,
+      new InMemoryWorkerRegistry(),
+      kernel,
+      { execute: async () => ({ ok: true }) },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 60_000, pollIntervalMs: 10 },
+    );
+    const ac = new AbortController();
+    const running = service.run(ac.signal);
+    // Allow first throw + backoff + successful claim
+    await new Promise((r) => setTimeout(r, 80));
+    await service.waitForIdle();
+    ac.abort();
+    await running;
+    getGlobalLogger().offLog(onLog);
+    assert.equal(kernel.getRun('run-resilient')?.state, 'SUCCEEDED');
+    assert.ok(logged.length >= 1, 'claim-loop swallow must emit error-level log');
+    assert.equal(logged[0]?.level, 'error');
+    const after = getGlobalMetrics().getLatest('worker.claim_loop.errors');
+    assert.ok(after, 'claim-loop swallow must increment worker.claim_loop.errors');
+    assert.ok(
+      !before || after.timestamp >= before.timestamp,
+      'metric point must be recorded for swallowed claim error',
+    );
   });
 });
