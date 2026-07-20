@@ -4,8 +4,11 @@
  *
  * This module is the single cross-plane contract type for effects. It is
  * imported by @commander/effect-broker (PEP), @commander/kernel (durable
- * ledger), @commander/worker-plane (callers), and @commander/operations
- * (compensation consumer). No ad-hoc effect shape may cross a plane boundary.
+ * ledger + `ops/compensationConsumer` library), and @commander/worker-plane
+ * (callers). The former `@commander/operations` plane was folded into
+ * kernel-ops (WS1) and must not reappear. An L4-B follow-up may add deploy
+ * unit `@commander/adapter-ops` for production compensation drain (absent on
+ * master). No ad-hoc effect shape may cross a plane boundary.
  *
  * Invariants (enforced by the broker at admit time):
  *   1. The four identity fields (effect_id, tenant_id, run_id, step_id) are
@@ -26,12 +29,7 @@
  * - `replayed`:    idempotency key hit an already-completed effect.
  */
 export type EffectEnvelopeStatus =
-  | 'admitted'
-  | 'executing'
-  | 'completed'
-  | 'failed'
-  | 'rejected'
-  | 'replayed';
+  'admitted' | 'executing' | 'completed' | 'failed' | 'rejected' | 'replayed';
 
 /**
  * Action namespace enum. Actions are dotted strings; the first segment is the
@@ -44,13 +42,7 @@ export type EffectEnvelopeStatus =
  * - `compensate.*`:  compensation (reverse) effects emitted by the outbox.
  * - `tool.*`:        generic tool invocations that touch external state.
  */
-export const EFFECT_ACTION_NAMESPACES = [
-  'http',
-  'llm',
-  'connector',
-  'compensate',
-  'tool',
-] as const;
+export const EFFECT_ACTION_NAMESPACES = ['http', 'llm', 'connector', 'compensate', 'tool'] as const;
 
 export type EffectActionNamespace = (typeof EFFECT_ACTION_NAMESPACES)[number];
 

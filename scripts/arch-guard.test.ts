@@ -162,6 +162,43 @@ test('rejects a reintroduced control-plane package', () => {
   assert.throws(() => runGuard(root), /forbidden package/i);
 });
 
+test('rejects reintroduced operations package (ghost plane banned)', () => {
+  const root = fixture({
+    packages: {
+      contracts: { name: '@commander/contracts' },
+      kernel: {
+        name: '@commander/kernel',
+        deps: { '@commander/contracts': 'workspace:*' },
+      },
+      operations: {
+        name: '@commander/operations',
+        deps: {
+          '@commander/kernel': 'workspace:*',
+          '@commander/contracts': 'workspace:*',
+        },
+      },
+    },
+  });
+  assert.throws(
+    () => runGuard(root),
+    /no dependency policy exists for workspace package @commander\/operations/i,
+  );
+});
+
+test('rejects imports of deleted operations package', () => {
+  const root = fixture({
+    packages: {
+      contracts: { name: '@commander/contracts' },
+      kernel: {
+        name: '@commander/kernel',
+        deps: { '@commander/contracts': 'workspace:*' },
+        source: "import '@commander/operations';\n",
+      },
+    },
+  });
+  assert.throws(() => runGuard(root), /deleted package/i);
+});
+
 test('rejects kernel importing core', () => {
   const root = fixture({
     packages: {
