@@ -859,10 +859,21 @@ export class AgentRuntime implements AgentRuntimeInterface {
         // Prefer a concrete tenant audience. Global '*' tokens are rejected
         // when a tenant-scoped verify runs (CAP-02), so only use '*' when no
         // tenant context exists (single-tenant / local).
+        // availableTools is typed as string[], but some tests pass Tool objects;
+        // canonicalize to names so issue() can encode the claim set.
+        const toolNames = ctx.availableTools
+          .map((t) =>
+            typeof t === 'string'
+              ? t
+              : typeof t === 'object' && t && 'name' in t
+                ? String((t as { name: unknown }).name)
+                : '',
+          )
+          .filter((n) => n.length > 0);
         ctx.capabilityToken = issuer.issue({
           sub: ctx.agentId,
           aud: tenantId && tenantId.length > 0 ? tenantId : '*',
-          tools: ctx.availableTools,
+          tools: toolNames,
           ttlSeconds: 300,
         });
       } catch (capErr) {
