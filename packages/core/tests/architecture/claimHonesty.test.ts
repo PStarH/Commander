@@ -32,4 +32,49 @@ describe('claim honesty', () => {
     const body = readFileSync(path, 'utf8');
     assert.match(body, /isDurable\(\): boolean/, 'must expose isDurable() for callers');
   });
+
+  it('ARCHITECTURE + PRINCIPLES do not claim packages/operations is the timer/outbox plane', () => {
+    const arch = readFileSync(join(ROOT, 'ARCHITECTURE.md'), 'utf8');
+    const principles = readFileSync(join(ROOT, 'PRINCIPLES.md'), 'utf8');
+    const maps = arch + principles;
+    assert.doesNotMatch(
+      arch,
+      /packages\/operations`\s*\|\s*Outbox\/timer mains/i,
+      'ARCHITECTURE must not describe ABSENT operations as outbox/timer',
+    );
+    assert.match(
+      maps,
+      /kernel-ops|packages\/kernel\/src\/ops/i,
+      'maps must name kernel-ops for reclaim/timer/outbox',
+    );
+    assert.match(maps, /compensation/i, 'maps must acknowledge compensation ownership gap');
+    assert.match(
+      maps,
+      /ban(?:s|ned)?[\s*`]*@commander\/operations|ban(?:s|ned)?[\s*`]*resurrect/i,
+      'maps must state arch-guard bans resurrecting @commander/operations',
+    );
+    assert.doesNotMatch(
+      maps,
+      /reintroduce\s+`?@commander\/operations`?\s+as/i,
+      'must not invite resurrecting @commander/operations under another name',
+    );
+    assert.match(
+      maps,
+      /adapter-ops[\s\S]{0,120}L4-B follow-up|L4-B follow-up[\s\S]{0,120}adapter-ops/i,
+      'adapter-ops must be documented as L4-B follow-up only on master',
+    );
+  });
+
+  it('no production kernel-ops main wires consumeCompensationBatch (library-only gap)', () => {
+    const mainPath = join(ROOT, 'packages/kernel/src/ops/main.ts');
+    assert.ok(existsSync(mainPath));
+    const main = readFileSync(mainPath, 'utf8');
+    assert.doesNotMatch(
+      main,
+      /consumeCompensationBatch/,
+      'kernel-ops main must not silently claim compensation drain; library remains for a dedicated owner',
+    );
+    const consumer = join(ROOT, 'packages/kernel/src/ops/compensationConsumer.ts');
+    assert.ok(existsSync(consumer), 'compensation consumer library should still exist');
+  });
 });
