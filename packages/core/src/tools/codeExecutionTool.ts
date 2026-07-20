@@ -72,8 +72,14 @@ export class PythonExecuteTool implements Tool {
 
     try {
       await fs.promises.writeFile(filePath, code, 'utf-8');
+      // Only forward runtime-injected `_` metadata — never LLM-supplied backend
+      // selectors (ssh_host / container) that could escape the local sandbox.
+      const backendArgs: Record<string, unknown> = { backend: 'local' };
+      for (const [k, v] of Object.entries(args)) {
+        if (k.startsWith('_')) backendArgs[k] = v;
+      }
       return formatExecResult(
-        await execSandboxed(`python3 "${filePath}"`, timeout, undefined, args),
+        await execSandboxed(`python3 "${filePath}"`, timeout, undefined, backendArgs),
       );
     } finally {
       try {
@@ -236,7 +242,21 @@ Using specialized tools is REQUIRED because they return hashline-anchored output
       reportSilentFailure(err, 'codeExecutionTool:254');
       return `Error: Access denied: workdir "${workdir}" is outside workspace`;
     }
-    // Pass full args as backendArgs so the router can pick the right backend
-    return formatExecResult(await execSandboxed(command, timeout, resolvedWorkdir, args));
+    // Backend selection: only the schema-declared `backend` enum is honored.
+    // Never forward ssh_host / container / identity file from LLM args — those
+    // would let a prompt-injected agent pivot to operator SSH keys or host
+    // containers outside the sandbox (non-production still allows SSH/Docker
+    // when env-configured, but only via backend=ssh|docker + env defaults).
+    const backend = String(args.backend ?? 'local').toLowerCase();
+    const backendArgs: Record<string, unknown> = {
+      backend: backend === 'ssh' || backend === 'docker' ? backend : 'local',
+    };
+    // Preserve runtime-injected workload metadata (_tenantId, …) only.
+    for (const [k, v] of Object.entries(args)) {
+      if (k.startsWith('_')) backendArgs[k] = v;
+    }
+    return formatExecResult(
+      await execSandboxed(command, timeout, resolvedWorkdir, backendArgs),
+    );
   }
 }
