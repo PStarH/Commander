@@ -56,17 +56,31 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 
 const EXPECTED_MEMORY_DIR = path.join(process.cwd(), '.commander_memory');
 
-/** Windows CI can hit ENOTEMPTY/EBUSY while AV or node still holds files. */
+/** Windows CI can hit ENOTEMPTY/EBUSY/EPERM while AV or node still holds files. */
 async function rmMemoryDirRetry(): Promise<void> {
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 16; i++) {
     try {
-      await fsp.rm(EXPECTED_MEMORY_DIR, { recursive: true, force: true });
+      await fsp.rm(EXPECTED_MEMORY_DIR, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
       return;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== 'ENOTEMPTY' && code !== 'EBUSY' && code !== 'EPERM') throw err;
-      await new Promise((r) => setTimeout(r, 50 * (i + 1)));
+      await new Promise((r) => setTimeout(r, 100 * (i + 1)));
     }
+  }
+  // Best-effort on Windows — do not fail the suite on leftover locked files.
+  if (process.platform === 'win32') {
+    try {
+      await fsp.rm(EXPECTED_MEMORY_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch {
+      /* ignore */
+    }
+    return;
   }
   await fsp.rm(EXPECTED_MEMORY_DIR, { recursive: true, force: true });
 }

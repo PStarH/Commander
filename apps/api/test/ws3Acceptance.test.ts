@@ -6,7 +6,7 @@
  *   §3.2  forged/expired/cross-tenant JWT → fail-closed 401/403
  *   §4.2  /v1/openapi.json matches actually mounted routes
  *   §5    WarRoom cannot trigger execution/state-change in enterprise
- *   §6    /ready 503 when kernel/effectBroker not ready; no fake READY
+ *   §6    /ready 503 when kernel (hard gate) not ready; no fake READY
  *
  * The tests assemble a representative app with the WS3 middleware stack
  * (v1TenantGuard → enterpriseRouteFreeze → legacyHeader → routers) and
