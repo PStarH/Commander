@@ -2,11 +2,18 @@ import assert from 'node:assert/strict';
 import { describe, it, beforeEach } from 'node:test';
 import { ApiKeyWorkerAuthenticator, WorkerAuthError } from './apiKeyAuthenticator.js';
 import { ToolStepExecutor } from './toolStepExecutor.js';
+import { ConnectorStepExecutor } from './connectorStepExecutor.js';
 import { EvaluatorStepExecutor } from './evaluatorStepExecutor.js';
 import { CompositeStepExecutor } from './compositeStepExecutor.js';
 import { InMemoryWorkerRegistry } from './registry.js';
 import { WorkerExecutionError } from './types.js';
-import type { ClaimedStep, StepExecutor, WorkerRecord, WorkerDefinition, WorkerIdentity } from './types.js';
+import type {
+  ClaimedStep,
+  StepExecutor,
+  WorkerRecord,
+  WorkerDefinition,
+  WorkerIdentity,
+} from './types.js';
 
 // ── Helpers ──
 
@@ -36,7 +43,12 @@ function createMockStep(overrides?: Partial<ClaimedStep>): ClaimedStep {
     version: 1,
     attempt: 1,
     input: { toolName: 'echo', args: { message: 'hello' } },
-    lease: { workerId: 'worker-1', token: 'token-1', fencingEpoch: 1, expiresAt: new Date(Date.now() + 30000).toISOString() },
+    lease: {
+      workerId: 'worker-1',
+      token: 'token-1',
+      fencingEpoch: 1,
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+    },
     ...overrides,
   };
 }
@@ -49,7 +61,11 @@ describe('ApiKeyWorkerAuthenticator', () => {
   let authenticator: ApiKeyWorkerAuthenticator;
   const validToken = 'secret-token-12345678901234567890';
   const definition: WorkerDefinition = {
-    id: 'worker-1', kind: 'agent', version: '0.2.0', capabilities: ['agent'], maxConcurrency: 10,
+    id: 'worker-1',
+    kind: 'agent',
+    version: '0.2.0',
+    capabilities: ['agent'],
+    maxConcurrency: 10,
   };
 
   beforeEach(() => {
@@ -152,9 +168,12 @@ describe('ApiKeyWorkerAuthenticator', () => {
 describe('ToolStepExecutor', () => {
   it('executes a tool and returns result', async () => {
     const mockRegistry = {
-      get: (name: string) => name === 'echo' ? {
-        execute: async (args: Record<string, unknown>) => ({ echo: args.message }),
-      } : null,
+      get: (name: string) =>
+        name === 'echo'
+          ? {
+              execute: async (args: Record<string, unknown>) => ({ echo: args.message }),
+            }
+          : null,
     };
     const executor = new ToolStepExecutor(mockRegistry);
     const step = createMockStep();
@@ -185,7 +204,9 @@ describe('ToolStepExecutor', () => {
   it('handles tool execution errors', async () => {
     const mockRegistry = {
       get: () => ({
-        execute: async () => { throw new Error('Connection refused'); },
+        execute: async () => {
+          throw new Error('Connection refused');
+        },
       }),
     };
     const executor = new ToolStepExecutor(mockRegistry);
@@ -198,8 +219,24 @@ describe('ToolStepExecutor', () => {
 
   it('fails closed for external effects when no broker is configured', async () => {
     let invoked = false;
-    const executor = new ToolStepExecutor({ get: () => ({ execute: async () => { invoked = true; return {}; } }) });
-    const step = createMockStep({ input: { toolName: 'http.post', args: {}, hasExternalEffects: true, effectId: 'effect-1', idempotencyKey: 'idem-1', capabilityToken: 'token' } });
+    const executor = new ToolStepExecutor({
+      get: () => ({
+        execute: async () => {
+          invoked = true;
+          return {};
+        },
+      }),
+    });
+    const step = createMockStep({
+      input: {
+        toolName: 'http.post',
+        args: {},
+        hasExternalEffects: true,
+        effectId: 'effect-1',
+        idempotencyKey: 'idem-1',
+        capabilityToken: 'token',
+      },
+    });
     await assert.rejects(
       () => executor.execute(step, { signal: ac.signal, worker: createMockWorker() }),
       (err: WorkerExecutionError) => err.options.code === 'EFFECT_BROKER_UNAVAILABLE',
@@ -211,10 +248,31 @@ describe('ToolStepExecutor', () => {
     let invoked = false;
     let brokerInput: Record<string, unknown> | undefined;
     const executor = new ToolStepExecutor(
-      { get: () => ({ execute: async () => { invoked = true; return {}; } }) },
-      { execute: async (input) => { brokerInput = input as unknown as Record<string, unknown>; return { effectId: input.effectId, replayed: false, response: { accepted: true } }; } },
+      {
+        get: () => ({
+          execute: async () => {
+            invoked = true;
+            return {};
+          },
+        }),
+      },
+      {
+        execute: async (input) => {
+          brokerInput = input as unknown as Record<string, unknown>;
+          return { effectId: input.effectId, replayed: false, response: { accepted: true } };
+        },
+      },
     );
-    const step = createMockStep({ input: { toolName: 'http.post', args: { url: 'https://example.test' }, hasExternalEffects: true, effectId: 'effect-1', idempotencyKey: 'idem-1', capabilityToken: 'cap-token' } });
+    const step = createMockStep({
+      input: {
+        toolName: 'http.post',
+        args: { url: 'https://example.test' },
+        hasExternalEffects: true,
+        effectId: 'effect-1',
+        idempotencyKey: 'idem-1',
+        capabilityToken: 'cap-token',
+      },
+    });
     const result = await executor.execute(step, { signal: ac.signal, worker: createMockWorker() });
     assert.deepEqual((result as any).result, { accepted: true });
     assert.equal(invoked, false);
@@ -249,9 +307,97 @@ describe('ToolStepExecutor', () => {
     const step = createMockStep({ input: { toolName: 'slow', args: {}, timeoutMs: 30 } });
     await assert.rejects(
       () => executor.execute(step, { signal: ac.signal, worker: createMockWorker() }),
-      (err: WorkerExecutionError) => err.options.code === 'TIMEOUT' && err.options.retryable === true,
+      (err: WorkerExecutionError) =>
+        err.options.code === 'TIMEOUT' &&
+        err.options.retryable === true &&
+        err.options.details?.cooperative === true,
     );
     assert.equal(sawAbort, true);
+  });
+
+  it('force-exits non-cooperative tool handlers on timeout without claiming retryable', async () => {
+    const started = Date.now();
+    const mockRegistry = {
+      get: () => ({
+        execute: async () => new Promise(() => {}),
+      }),
+    };
+    const executor = new ToolStepExecutor(mockRegistry);
+    const step = createMockStep({ input: { toolName: 'hang', args: {}, timeoutMs: 30 } });
+    await assert.rejects(
+      () => executor.execute(step, { signal: ac.signal, worker: createMockWorker() }),
+      (err: WorkerExecutionError) =>
+        err.options.code === 'TIMEOUT' &&
+        err.options.retryable === false &&
+        err.options.details?.cooperative === false,
+    );
+    assert.ok(Date.now() - started < 500, 'await path must terminate within bound');
+  });
+
+  it('aborts the connector handler signal on timeout (cooperative)', async () => {
+    let sawAbort = false;
+    const registry = {
+      get: () => ({
+        initialize: async () => {},
+        close: async () => {},
+        execute: async (
+          _op: string,
+          _args: Record<string, unknown>,
+          ctx: { signal: AbortSignal },
+        ) => {
+          await new Promise<void>((_resolve, reject) => {
+            ctx.signal.addEventListener(
+              'abort',
+              () => {
+                sawAbort = true;
+                reject(new Error('aborted'));
+              },
+              { once: true },
+            );
+          });
+          return { never: true };
+        },
+      }),
+      register: () => {},
+    };
+    const executor = new ConnectorStepExecutor(registry);
+    const step = createMockStep({
+      kind: 'connector',
+      input: { connectorName: 'slow', operation: 'query', args: {}, timeoutMs: 30 },
+    });
+    await assert.rejects(
+      () => executor.execute(step, { signal: ac.signal, worker: createMockWorker() }),
+      (err: WorkerExecutionError) =>
+        err.options.code === 'TIMEOUT' &&
+        err.options.retryable === true &&
+        err.options.details?.cooperative === true,
+    );
+    assert.equal(sawAbort, true);
+  });
+
+  it('force-exits non-cooperative connector handlers on timeout without claiming retryable', async () => {
+    const started = Date.now();
+    const registry = {
+      get: () => ({
+        initialize: async () => {},
+        close: async () => {},
+        execute: async () => new Promise(() => {}),
+      }),
+      register: () => {},
+    };
+    const executor = new ConnectorStepExecutor(registry);
+    const step = createMockStep({
+      kind: 'connector',
+      input: { connectorName: 'hang', operation: 'query', args: {}, timeoutMs: 30 },
+    });
+    await assert.rejects(
+      () => executor.execute(step, { signal: ac.signal, worker: createMockWorker() }),
+      (err: WorkerExecutionError) =>
+        err.options.code === 'TIMEOUT' &&
+        err.options.retryable === false &&
+        err.options.details?.cooperative === false,
+    );
+    assert.ok(Date.now() - started < 500, 'await path must terminate within bound');
   });
 });
 
@@ -339,7 +485,13 @@ describe('EvaluatorStepExecutor', () => {
         criteria: {
           rules: [
             { name: 'min-length', path: 'description', check: 'minLength', expected: 5, weight: 1 },
-            { name: 'max-length', path: 'description', check: 'maxLength', expected: 100, weight: 1 },
+            {
+              name: 'max-length',
+              path: 'description',
+              check: 'maxLength',
+              expected: 100,
+              weight: 1,
+            },
           ],
         },
       },
@@ -357,14 +509,19 @@ describe('CompositeStepExecutor', () => {
       get: () => ({ execute: async () => 'tool-result' }),
     });
     const evalExecutor = new EvaluatorStepExecutor();
-    const composite = new CompositeStepExecutor(new Map<string, StepExecutor>([
-      ['tool', toolExecutor],
-      ['evaluator', evalExecutor],
-    ]));
+    const composite = new CompositeStepExecutor(
+      new Map<string, StepExecutor>([
+        ['tool', toolExecutor],
+        ['evaluator', evalExecutor],
+      ]),
+    );
 
     // Tool step
     const toolStep = createMockStep({ kind: 'tool' });
-    const toolResult = await composite.execute(toolStep, { signal: ac.signal, worker: createMockWorker() });
+    const toolResult = await composite.execute(toolStep, {
+      signal: ac.signal,
+      worker: createMockWorker(),
+    });
     assert.ok(toolResult);
 
     // Evaluator step
@@ -372,14 +529,17 @@ describe('CompositeStepExecutor', () => {
       kind: 'evaluator',
       input: { subject: {}, method: 'rules', criteria: { rules: [] } },
     });
-    const evalResult = await composite.execute(evalStep, { signal: ac.signal, worker: createMockWorker() });
+    const evalResult = await composite.execute(evalStep, {
+      signal: ac.signal,
+      worker: createMockWorker(),
+    });
     assert.ok(evalResult);
   });
 
   it('throws on unknown kind', async () => {
-    const composite = new CompositeStepExecutor(new Map<string, StepExecutor>([
-      ['tool', new ToolStepExecutor()],
-    ]));
+    const composite = new CompositeStepExecutor(
+      new Map<string, StepExecutor>([['tool', new ToolStepExecutor()]]),
+    );
     const step = createMockStep({ kind: 'sandbox' });
     await assert.rejects(
       () => composite.execute(step, { signal: ac.signal, worker: createMockWorker() }),
@@ -389,9 +549,12 @@ describe('CompositeStepExecutor', () => {
 
   it('supports runtime registration', async () => {
     const composite = new CompositeStepExecutor(new Map());
-    composite.register('tool', new ToolStepExecutor({
-      get: () => ({ execute: async () => 'ok' }),
-    }));
+    composite.register(
+      'tool',
+      new ToolStepExecutor({
+        get: () => ({ execute: async () => 'ok' }),
+      }),
+    );
     const step = createMockStep({ kind: 'tool' });
     const result = await composite.execute(step, { signal: ac.signal, worker: createMockWorker() });
     assert.ok(result);
