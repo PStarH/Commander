@@ -146,6 +146,8 @@ export class WorkerService {
     this.running = false;
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = null;
+    for (const controller of this.activeControllers)
+      controller.abort(new Error('Worker stopped'));
     await this.registry.drain(this.worker.id, this.worker.generation);
     await Promise.allSettled([...this.active]);
   }
