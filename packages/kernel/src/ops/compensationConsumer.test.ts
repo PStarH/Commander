@@ -103,4 +103,23 @@ describe('WS2 §8 compensation consumer', () => {
     assert.equal(message.acked, false);
     assert.equal(message.errors[0]?.code, 'COMPENSATION_TENANT_MISMATCH');
   });
+
+  it('passes workloadBinding to broker.admit', async () => {
+    const { port } = makeOutbox();
+    let binding: Record<string, unknown> | undefined;
+    const broker = {
+      ...okBroker,
+      admit: async (input: { workloadBinding?: Record<string, unknown> }) => {
+        binding = input.workloadBinding;
+        return { admitted: true, effectId: 'e1', replayed: false };
+      },
+    };
+    await consumeCompensationBatch(port, broker, async () => 'token', { workerId: 'compensation-daemon' });
+    assert.deepEqual(binding, {
+      tenantId: 'tenant-a',
+      runId: 'run-1',
+      stepId: 'step-1',
+      workloadId: 'compensation-daemon',
+    });
+  });
 });
