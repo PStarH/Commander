@@ -15,7 +15,8 @@ export interface AwaitWithAbortTimeoutOptions {
   abortGraceMs?: number;
   /** cooperative=true when handler settled after abort; false after grace hard-cancel. */
   timeoutError: (cooperative: boolean) => Error;
-  abortError: () => Error;
+  /** Same cooperative semantics as timeoutError for parent-abort outcomes. */
+  abortError: (cooperative: boolean) => Error;
 }
 
 export async function awaitWithAbortTimeout<T>(
@@ -52,8 +53,8 @@ export async function awaitWithAbortTimeout<T>(
         close(() => reject(options.timeoutError(cooperative)));
       };
 
-      const rejectAbort = (): void => {
-        close(() => reject(options.abortError()));
+      const rejectAbort = (cooperative: boolean): void => {
+        close(() => reject(options.abortError(cooperative)));
       };
 
       /** Soft-abort already fired; after grace, hard-reject if work ignored it. */
@@ -70,7 +71,7 @@ export async function awaitWithAbortTimeout<T>(
           local.abort(parentSignal.reason ?? new Error('aborted'));
         }
         // Parent abort must hard-exit non-cooperative work (same as timeout path).
-        scheduleHardExit(rejectAbort);
+        scheduleHardExit(() => rejectAbort(false));
       };
 
       if (parentSignal.aborted) onParentAbort();
@@ -80,14 +81,14 @@ export async function awaitWithAbortTimeout<T>(
         if (closed) return;
         // Parent owns ABORTED mapping; still ensure a hard-exit is armed.
         if (parentSignal.aborted) {
-          scheduleHardExit(rejectAbort);
+          scheduleHardExit(() => rejectAbort(false));
           return;
         }
         timedOut = true;
         if (!local.signal.aborted) local.abort(new Error('timeout'));
         scheduleHardExit(() => {
           if (parentSignal.aborted) {
-            rejectAbort();
+            rejectAbort(false);
             return;
           }
           rejectTimeout(false);
@@ -99,7 +100,7 @@ export async function awaitWithAbortTimeout<T>(
           if (closed) return;
           // Parent abort takes priority over a racing timeout flag.
           if (parentSignal.aborted) {
-            rejectAbort();
+            rejectAbort(true);
             return;
           }
           if (timedOut) {
@@ -108,7 +109,7 @@ export async function awaitWithAbortTimeout<T>(
             return;
           }
           if (local.signal.aborted) {
-            rejectAbort();
+            rejectAbort(true);
             return;
           }
           close(() => resolve(value));
@@ -116,7 +117,7 @@ export async function awaitWithAbortTimeout<T>(
         (error) => {
           if (closed) return;
           if (parentSignal.aborted) {
-            rejectAbort();
+            rejectAbort(true);
             return;
           }
           if (timedOut) {
@@ -124,7 +125,7 @@ export async function awaitWithAbortTimeout<T>(
             return;
           }
           if (local.signal.aborted) {
-            rejectAbort();
+            rejectAbort(true);
             return;
           }
           close(() => reject(error));
