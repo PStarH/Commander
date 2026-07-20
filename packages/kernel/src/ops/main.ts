@@ -11,7 +11,7 @@ import { startOpsHealthServer } from './healthServer.js';
 const positiveInteger = (name: string, fallback: number): number => {
   const value = Number(process.env[name] ?? fallback);
   if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer`);
+    throw new Error(name + ' must be a positive integer');
   }
   return value;
 };
@@ -27,7 +27,14 @@ export async function main(): Promise<void> {
 
   // Probe-only compensation loop: proves claim path + DLQ sweep are healthy
   // without pulling EffectBroker into the kernel package. Full drain ticks can
-  // replace `probe` when a broker-backed worker is co-located.
+  // replace probe when a broker-backed worker is co-located.
+  //
+  // Residual (intentional): NODE_ENV=production + probe-only still serves /ready 200
+  // when the loop is healthy. A hard 503 gate would brick default kernel-ops because
+  // drain ownership lives outside this package. /ready exposes compensationMode /
+  // compensationDraining so operators do not mistake probe for drain. Opt into a
+  // hard gate with COMMANDER_READY_REQUIRE_COMPENSATION_DRAIN=1 (K8s httpGet can
+  // then fail closed until a drain tick is wired).
   const compensation = new CompensationConsumerDaemon({
     intervalMs: positiveInteger('COMMANDER_COMPENSATION_INTERVAL_MS', 5_000),
     probe: async () => {
@@ -52,11 +59,14 @@ export async function main(): Promise<void> {
     compensation,
   });
 
+  const requireCompensationDrain = process.env.COMMANDER_READY_REQUIRE_COMPENSATION_DRAIN === '1';
   const healthPort = positiveInteger('COMMANDER_OPS_HEALTH_PORT', 8081);
   const health = await startOpsHealthServer({
     port: healthPort,
     isReady: async () => {
       if (!runtime.isReady()) return false;
+      // Opt-in fail-closed: probe-only must not pass readiness when drain is required.
+      if (requireCompensationDrain && !compensation.isDraining()) return false;
       try {
         await pool.query('SELECT 1');
         return true;
@@ -66,7 +76,7 @@ export async function main(): Promise<void> {
     },
     getReadyDetails: () => ({
       // Explicit honesty: default kernel-ops wiring is probe-only (limit 0).
-      // Ready here means the compensation loop ticks; it does NOT mean outbox drain.
+      // Ready (without REQUIRE_DRAIN) means the compensation loop ticks; NOT outbox drain.
       compensationMode: compensation.mode(),
       compensationDraining: compensation.isDraining(),
     }),
