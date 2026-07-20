@@ -83,7 +83,7 @@ function makeBroker(options?: {
       effect: 'allow',
       decisionId: 'llm-test-allow',
       reason: 'test',
-      policySnapshotId: 'p1',
+      policySnapshotId: 'worker-llm-v1',
     }),
   };
   const kernel: EffectKernelPort = {
@@ -487,7 +487,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
         effect: 'allow',
         decisionId: 'llm-fence-allow',
         reason: 'test',
-        policySnapshotId: 'p1',
+        policySnapshotId: 'worker-llm-v1',
       }),
     };
     const broker = new EffectBroker(
@@ -631,7 +631,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
           effect: 'allow',
           decisionId: 'd',
           reason: 'ok',
-          policySnapshotId: 'p1',
+          policySnapshotId: 'worker-llm-v1',
         }),
       },
       kernel,
@@ -783,7 +783,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
           effect: 'allow',
           decisionId: 'llm-unknown-allow',
           reason: 'test',
-          policySnapshotId: 'p1',
+          policySnapshotId: 'worker-llm-v1',
         }),
       },
       kernel,
