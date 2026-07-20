@@ -813,6 +813,79 @@ describe('execution kernel semantics', () => {
     assert.equal(claimed?.id, 'high-fresh');
   });
 
+  it('parks ADMITTED effects as COMPLETION_UNKNOWN when pauseRun revokes the lease', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(createRun([{ id: 'step-a', kind: 'agent' }]), 'gateway');
+    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
+    assert.ok(claimed?.lease);
+    assert.equal(
+      (
+        await kernel.admitEffect({
+          id: 'effect-pause',
+          runId: 'run-1',
+          stepId: claimed!.id,
+          tenantId: 'tenant-a',
+          type: 'http.write',
+          idempotencyKey: 'pause-key',
+          policyDecisionId: 'decision-1',
+          request: { target: 'crm' },
+          lease: claimed!.lease!,
+          actor: 'worker-1',
+        })
+      ).admitted,
+      true,
+    );
+    assert.equal((await kernel.getEffect('effect-pause', 'tenant-a'))?.state, 'ADMITTED');
+
+    const paused = await kernel.pauseRun('run-1', 'tenant-a', 'control-plane');
+    assert.equal(paused?.state, 'PAUSED');
+    assert.equal((await kernel.getStep(claimed!.id, 'tenant-a'))?.state, 'RETRY_WAIT');
+    assert.equal((await kernel.getEffect('effect-pause', 'tenant-a'))?.state, 'COMPLETION_UNKNOWN');
+    // Stale lease must not complete a parked effect after pause.
+    assert.equal(
+      await kernel.completeEffect('effect-pause', 'tenant-a', claimed!.lease!, { ok: true }, 'worker-1'),
+      null,
+    );
+  });
+
+  it('parks ADMITTED effects as COMPLETION_UNKNOWN when pauseTenant revokes leases', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(createRun([{ id: 'step-a', kind: 'agent' }]), 'gateway');
+    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
+    assert.ok(claimed?.lease);
+    assert.equal(
+      (
+        await kernel.admitEffect({
+          id: 'effect-tenant-pause',
+          runId: 'run-1',
+          stepId: claimed!.id,
+          tenantId: 'tenant-a',
+          type: 'http.write',
+          idempotencyKey: 'tenant-pause-key',
+          policyDecisionId: 'decision-1',
+          request: { target: 'crm' },
+          lease: claimed!.lease!,
+          actor: 'worker-1',
+        })
+      ).admitted,
+      true,
+    );
+
+    await kernel.pauseTenant('tenant-a', 'operator', 'maintenance');
+    assert.equal((await kernel.getStep(claimed!.id, 'tenant-a'))?.state, 'RETRY_WAIT');
+    assert.equal((await kernel.getEffect('effect-tenant-pause', 'tenant-a'))?.state, 'COMPLETION_UNKNOWN');
+    assert.equal(
+      await kernel.completeEffect(
+        'effect-tenant-pause',
+        'tenant-a',
+        claimed!.lease!,
+        { ok: true },
+        'worker-1',
+      ),
+      null,
+    );
+  });
+
   // NOTE: compensation *request* ≠ drain. packages/kernel ops compensation remains
   // probe-only unless a drain owner lands; this PR closes fail→request honesty only.
 });
