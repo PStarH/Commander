@@ -7,9 +7,11 @@
  * `unknown`/`degraded` are surfaced honestly but do not fail the probe.
  *
  * Hard gates (503 if `fail`): database, kernel.
- * Soft indicators (never 503): effectBroker (honest presence probe; API process
- * does not host the worker-plane broker), warRoomStore (`degraded`),
- * memoryHeap (`degraded`).
+ * Soft indicators (never 503): warRoomStore (`degraded`), memoryHeap (`degraded`).
+ *
+ * Effect monopoly lives in worker-plane `@commander/effect-broker`. The API
+ * process does not host it; do not probe `@commander/core/security/effectBroker`
+ * (a process-local registry that is never set on the product path).
  */
 
 /** Outcome of a single dependency probe. */
@@ -24,8 +26,11 @@ export interface ReadinessProbeDeps {
   database?: () => Promise<'ok'>;
   /** Kernel gateway resolver; non-null = ok, null = fail. */
   kernel: () => unknown | null;
-  /** EffectBroker resolver; non-null = ok, null = fail. */
-  effectBroker: () => unknown | null;
+  /**
+   * Optional legacy local registry probe. Prefer omit — API does not host the
+   * worker-plane broker. If provided: non-null = ok, null = fail (soft).
+   */
+  effectBroker?: () => unknown | null;
   /** WarRoom store presence; true = ok, false = degraded (never gates). */
   warRoomStore?: () => boolean;
   /** Heap usage ratio 0..1; >0.8 = degraded (never gates). */
@@ -48,8 +53,12 @@ export function probeKernel(fn: () => unknown | null): ProbeStatus {
   return fn() !== null ? 'ok' : 'fail';
 }
 
-/** Map a null/non-null resolver to ok/fail. */
-export function probeEffectBroker(fn: () => unknown | null): ProbeStatus {
+/**
+ * Map a null/non-null resolver to ok/fail. Unwired (`undefined`) → `unknown`
+ * so callers do not report a permanent `fail` for a registry the API never sets.
+ */
+export function probeEffectBroker(fn: (() => unknown | null) | undefined): ProbeStatus {
+  if (!fn) return 'unknown';
   return fn() !== null ? 'ok' : 'fail';
 }
 
@@ -68,9 +77,8 @@ export function probeMemoryHeap(fn: (() => number) | undefined): ProbeStatus {
 /**
  * Hard gates whose `fail` status forces 503.
  *
- * effectBroker is intentionally NOT a hard gate: the API process does not
- * host the worker-plane `@commander/effect-broker`. Presence is still probed
- * and reported honestly; a throw-on-admit stub must not mint a green hard gate.
+ * effectBroker is intentionally NOT a hard gate and is omitted from the default
+ * product probe path (worker-plane owns the real broker).
  */
 const HARD_GATES = ['database', 'kernel'] as const;
 
@@ -85,15 +93,18 @@ export interface ReadinessResult {
  *
  * - Any hard gate with status `fail` → `not_ready` (503).
  * - `unknown`/`degraded` are honest indicators but never gate (§6.2).
+ * - `effectBroker` is only included in `checks` when a probe is wired.
  */
 export async function probeReadiness(deps: ReadinessProbeDeps): Promise<ReadinessResult> {
   const checks: Record<string, ProbeStatus> = {
     database: await probeDatabase(deps.database),
     kernel: probeKernel(deps.kernel),
-    effectBroker: probeEffectBroker(deps.effectBroker),
     warRoomStore: probeWarRoomStore(deps.warRoomStore),
     memoryHeap: probeMemoryHeap(deps.memoryHeap),
   };
+  if (deps.effectBroker !== undefined) {
+    checks.effectBroker = probeEffectBroker(deps.effectBroker);
+  }
 
   const anyHardGateFailed = HARD_GATES.some((gate) => checks[gate] === 'fail');
   return {

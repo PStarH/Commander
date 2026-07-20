@@ -219,7 +219,7 @@ export function generateOpenApiSpec(options: GenerateOptions): OpenApiDocument {
       tags: ['System'],
       summary: '/v1 subtree health (real dependency probes)',
       description:
-        'Returns the health of /v1 dependencies (kernel, effectBroker). ' +
+        'Returns the health of /v1 dependencies (kernel). ' +
         'Unlike the legacy /ready, this never reports a false READY.',
       responses: {
         '200': { description: 'All /v1 dependencies healthy' },
