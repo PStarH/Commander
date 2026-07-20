@@ -2,17 +2,14 @@
  * EffectBroker — Architecture V2 mandatory registry for external side effects.
  *
  * Any WorkGraph or tool path that triggers an external side effect must be
- * admitted through a registered EffectBroker. Production and V2 mode are
- * fail-closed; a narrow local/test compat mode exists via
- * COMMANDER_EFFECT_BROKER_COMPAT=1.
+ * admitted through a registered EffectBroker. Fail-closed: the former
+ * env-gated compat shim is removed (WS2 §4 / §9) — no production-source
+ * escape hatch remains.
  *
  * Note: this module is the process-local registry (get/set). The full
- * admit/execute monopoly lives in `@commander/effect-broker` (worker-plane).
+ * admit/execute monopoly lives in @commander/effect-broker (worker-plane).
  * Wiring setEffectBroker() here does NOT claim LLM outlet monopoly.
  */
-
-import { getGlobalLogger } from '../logging';
-import { reportSilentFailure } from '../silentFailureReporter';
 
 export interface EffectBroker {
   readonly kind: 'effect_broker';
@@ -30,29 +27,16 @@ export function getEffectBroker(): EffectBroker | null {
 }
 
 /**
- * Returns true only when the explicit compat mode is requested AND the
- * process is running outside production AND outside V2 enforcement mode.
+ * Compat shim removed (WS2 §4). Always false — no env escape hatch in
+ * production source (static gate forbids the former bypass env literal).
  */
 export function isEffectBrokerCompatEnabled(): boolean {
-  if (process.env.NODE_ENV === 'production') return false;
-  if (process.env.COMMANDER_V2_MODE === '1') return false;
-  return process.env.COMMANDER_EFFECT_BROKER_COMPAT === '1';
+  return false;
 }
 
 /**
- * Audit hook invoked whenever the compat bypass is actually used. Always
- * logs a warning and reports a silent failure so that the bypass is visible
- * in logs and telemetry.
+ * Retained for call-site compatibility; no-op now that compat cannot be enabled.
  */
 export function requireEffectBrokerCompatAudit(): void {
-  if (!isEffectBrokerCompatEnabled()) return;
-  getGlobalLogger().warn(
-    'EffectBroker',
-    'COMPAT MODE ENABLED: side effects bypass strict broker enforcement',
-    {
-      nodeEnv: process.env.NODE_ENV,
-      v2Mode: process.env.COMMANDER_V2_MODE,
-    },
-  );
-  reportSilentFailure(new Error('EffectBroker compat mode enabled'), 'effectBroker:compat_audit');
+  // intentionally empty — compat mode removed
 }
