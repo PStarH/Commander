@@ -325,6 +325,50 @@ describe('execution kernel semantics', () => {
     assert.equal((await kernel.getEffect('effect-orphan', 'tenant-a'))?.state, 'COMPLETION_UNKNOWN');
   });
 
+  it('refunds claim attempt on failStep so maxAttempts=1 can still requeue stop-during-claim', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(createRun([{ id: 'step-a', kind: 'agent', maxAttempts: 1 }]), 'gateway');
+    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
+    assert.ok(claimed?.lease);
+    assert.equal(claimed!.attempt, 1);
+
+    const withoutRefund = await kernel.failStep({
+      stepId: claimed!.id,
+      tenantId: 'tenant-a',
+      lease: claimed!.lease!,
+      expectedVersion: claimed!.version,
+      error: { code: 'WORKER_STOPPED', message: 'stopped', retryable: true },
+      retryAt: new Date(),
+      actor: 'worker-1',
+    });
+    assert.equal(withoutRefund?.state, 'FAILED', 'without refundAttempt, attempt=1 >= maxAttempts=1 → FAILED');
+  });
+
+  it('requeues with refundAttempt under default maxAttempts=1 after claim', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(createRun([{ id: 'step-a', kind: 'agent', maxAttempts: 1 }]), 'gateway');
+    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
+    assert.ok(claimed?.lease);
+    assert.equal(claimed!.attempt, 1);
+
+    const released = await kernel.failStep({
+      stepId: claimed!.id,
+      tenantId: 'tenant-a',
+      lease: claimed!.lease!,
+      expectedVersion: claimed!.version,
+      error: { code: 'WORKER_STOPPED', message: 'stopped during claim', retryable: true },
+      retryAt: new Date(),
+      refundAttempt: true,
+      actor: 'worker-1',
+    });
+    assert.equal(released?.state, 'RETRY_WAIT');
+    assert.equal(released?.attempt, 0);
+
+    const reclaimed = await kernel.claimNextStep({ workerId: 'worker-2', leaseTtlMs: 60_000 });
+    assert.equal(reclaimed?.id, 'step-a');
+    assert.equal(reclaimed?.attempt, 1);
+  });
+
   it('rejects createInteraction when step is not bound to the given tenant/run', async () => {
     const kernel = new InMemoryKernelRepository();
     await kernel.createRun(createRun(), 'gateway');
