@@ -22,14 +22,19 @@ export interface AwaitWithAbortTimeoutOptions {
   abortError: (cooperative: boolean) => Error;
 }
 
-/** True when rejection proves the handler honored abort (not ignore-then-throw). */
+/**
+ * 仅当 rejection 与 signal.reason 为同一引用时视为合作取消。
+ *
+ * 本仓库 abort 路径始终写入 reason（timeout→Error('timeout')；
+ * parent→parent.reason ?? Error('aborted')；stop→Error('Worker stopped')），
+ * 合作 handler 应 reject(signal.reason)，与 identity 对齐。
+ *
+ * 置信度缺口（刻意 fail-closed，无法仅凭 identity 消除）：
+ * - ignore 信号做完副作用后仍 throw signal.reason（同一对象）→ 仍会判 coop
+ * - 文案相同的新 Error('aborted') / 伪造 AbortError → 一律非 coop（正确）
+ */
 export function isAbortLinkedRejection(error: unknown, signal: AbortSignal): boolean {
-  if (!signal.aborted) return false;
-  if (error === signal.reason) return true;
-  if (typeof error === 'object' && error !== null && (error as { name?: string }).name === 'AbortError') {
-    return true;
-  }
-  return false;
+  return signal.aborted && error === signal.reason;
 }
 
 export async function awaitWithAbortTimeout<T>(
