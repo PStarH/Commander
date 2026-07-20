@@ -25,7 +25,7 @@ describe('ops healthServer', () => {
     const port = await freePort();
     const health = await startOpsHealthServer({ port, isReady: () => true });
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/health`);
+      const res = await fetch('http://127.0.0.1:' + port + '/health');
       assert.equal(res.status, 200);
       assert.deepEqual(await res.json(), { status: 'ok' });
     } finally {
@@ -54,7 +54,7 @@ describe('ops healthServer', () => {
     const port = await freePort();
     const health = await startOpsHealthServer({ port, isReady: () => false });
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/ready`);
+      const res = await fetch('http://127.0.0.1:' + port + '/ready');
       assert.equal(res.status, 503);
     } finally {
       await health.close();
@@ -72,10 +72,35 @@ describe('ops healthServer', () => {
       }),
     });
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/ready`);
+      const res = await fetch('http://127.0.0.1:' + port + '/ready');
       assert.equal(res.status, 200);
       assert.deepEqual(await res.json(), {
         status: 'ready',
+        compensationMode: 'probe',
+        compensationDraining: false,
+      });
+    } finally {
+      await health.close();
+    }
+  });
+
+  it('supports opt-in drain require: probe-only fails ready while fields stay honest', async () => {
+    // Mirrors COMMANDER_READY_REQUIRE_COMPENSATION_DRAIN=1 + probe wiring in main.
+    // Default (env unset) still returns 200 for probe — residual documented in main.ts.
+    const port = await freePort();
+    const health = await startOpsHealthServer({
+      port,
+      isReady: () => false,
+      getReadyDetails: () => ({
+        compensationMode: 'probe',
+        compensationDraining: false,
+      }),
+    });
+    try {
+      const res = await fetch('http://127.0.0.1:' + port + '/ready');
+      assert.equal(res.status, 503);
+      assert.deepEqual(await res.json(), {
+        status: 'not_ready',
         compensationMode: 'probe',
         compensationDraining: false,
       });
