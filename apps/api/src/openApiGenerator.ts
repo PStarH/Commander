@@ -219,8 +219,13 @@ export function generateOpenApiSpec(options: GenerateOptions): OpenApiDocument {
       tags: ['System'],
       summary: '/v1 subtree health (real dependency probes)',
       description:
-        'Returns the health of /v1 dependencies (kernel, effectBroker). ' +
-        'Unlike the legacy /ready, this never reports a false READY.',
+        'Returns the health of /v1 Gateway dependencies (kernel hard-gate). ' +
+        'Does not report EffectBroker / PEP readiness — that monopoly lives in ' +
+        'worker-plane `@commander/effect-broker` (bootstrap + production assert; ' +
+        'L4-B worker GET /ready). Ops loop readiness is kernel-ops GET /ready ' +
+        '(COMMANDER_OPS_HEALTH_PORT). EffectBroker-backed compensation drain / ' +
+        'UNKNOWN reconcile readiness is the future adapter-ops deploy unit ' +
+        '(absent on master). Unlike a fake READY, unwired deps are omitted or unknown.',
       responses: {
         '200': { description: 'All /v1 dependencies healthy' },
         '503': { description: 'One or more hard-gate dependencies are down' },

@@ -96,7 +96,6 @@ import { createAuditMiddleware } from './auditMiddleware';
 import { createSagaRouter } from './sagaEndpoints';
 import { createHubCorrelationsRouter } from './hubCorrelationsEndpoints';
 import { getUnifiedAuditLog, dlpResponseMiddleware } from '@commander/core/security';
-import { getEffectBroker } from '@commander/core/security/effectBroker';
 import { getGlobalTenantProvider, SimpleTenantProvider } from '@commander/core/runtime';
 import { registerRouter, mountRegisteredRouters, listRegisteredRouters } from './routerRegistry';
 import { generateOpenApiSpec } from './openApiGenerator';
@@ -378,11 +377,14 @@ app.get('/health', (_req, res) => {
 
 // Readiness probe — WS3 §6.1 honesty: real probes replace fake-READY.
 // Hard gates (database/kernel) fail → 503. Soft indicators
-// (effectBroker/warRoomStore/memoryHeap) surface honestly but never gate.
+// (warRoomStore/memoryHeap) surface honestly but never gate.
+// Effect monopoly / PEP is NOT on this surface — observe worker-plane
+// EffectBroker bootstrap/assert, kernel-ops GET /ready (ops loops), and
+// (L4-B) adapter-ops GET /ready for compensation drain. Do not probe the
+// always-null core registry (direction audit 2026-07-20-effect-broker-health-registry).
 app.get('/ready', async (_req, res) => {
   const result = await probeReadiness({
     kernel: () => getV1KernelGateway(),
-    effectBroker: () => getEffectBroker(),
     warRoomStore: () => store !== null,
     memoryHeap: () => {
       const mem = process.memoryUsage();
@@ -393,20 +395,15 @@ app.get('/ready', async (_req, res) => {
   res.status(result.status === 'ready' ? 200 : 503).json(result);
 });
 
-// /v1/health — WS3 §6.1: /v1 subtree deps only (kernel, effectBroker).
-// Database is intentionally omitted here because /v1 run submission depends
-// on the kernel, which itself depends on the DB; a DB failure surfaces via
-// kernel=fail. This keeps /v1/health focused on the /v1 subtree.
+// /v1/health — WS3 §6.1: /v1 subtree deps (kernel). DB failure surfaces via kernel.
 app.get('/v1/health', async (_req, res) => {
   const result = await probeReadiness({
     kernel: () => getV1KernelGateway(),
-    effectBroker: () => getEffectBroker(),
   });
   res.status(result.status === 'ready' ? 200 : 503).json({
     status: result.status,
     checks: {
       kernel: result.checks.kernel,
-      effectBroker: result.checks.effectBroker,
     },
     timestamp: result.timestamp,
   });
