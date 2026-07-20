@@ -110,4 +110,137 @@ describe('PostgreSQL kernel ops durability', () => {
       await pool.end();
     }
   });
+
+  it('locks COMPLETED|ADMITTED effects before compensation snapshot so sibling completeEffect cannot orphan', { skip: !databaseUrl }, async () => {
+    if (!databaseUrl) return;
+    // 并发回归：failStep→COMPENSATING 与 sibling completeEffect 竞态时，
+    // 凡最终 COMPLETED 的 effect 必须落在 compensation.requested.effectIds 内。
+    const pool = new Pool({ connectionString: databaseUrl, max: 12 });
+    const repo = new PostgresKernelRepository(pool, { schedulerMode: true });
+    const rounds = 24;
+    const tenants: string[] = [];
+    const workers: string[] = [];
+    try {
+      await runKernelMigrations(pool);
+      for (let round = 0; round < rounds; round++) {
+        const suffix = `${Date.now()}-${round}-${Math.random().toString(16).slice(2)}`;
+        const tenantId = `comp-race-${suffix}`;
+        const workerA = `comp-race-wa-${suffix}`;
+        const workerB = `comp-race-wb-${suffix}`;
+        const runId = `run-${suffix}`;
+        const stepA = `step-a-${suffix}`;
+        const stepB = `step-b-${suffix}`;
+        const effectA = `effect-a-${suffix}`;
+        const effectB = `effect-b-${suffix}`;
+        tenants.push(tenantId);
+        workers.push(workerA, workerB);
+
+        await pool.query(
+          `INSERT INTO commander_workers
+             (id,kind,version,capabilities,max_concurrency,status,generation,identity_subject,tenant_ids)
+           VALUES ($1,'agent','integration','["agent"]',4,'ACTIVE',1,$1,$3::jsonb),
+                  ($2,'agent','integration','["agent"]',4,'ACTIVE',1,$2,$3::jsonb)`,
+          [workerA, workerB, JSON.stringify([tenantId])],
+        );
+        await repo.createRun({
+          id: runId,
+          tenantId,
+          intentHash: `intent-${runId}`,
+          workGraphHash: `graph-${runId}`,
+          workGraphVersion: 'v1',
+          policySnapshotId: 'policy',
+          steps: [
+            { id: stepA, kind: 'agent', maxAttempts: 1 },
+            { id: stepB, kind: 'agent', maxAttempts: 1 },
+          ],
+        }, 'integration');
+
+        const first = await repo.claimNextStep({
+          tenantId, workerId: workerA, workerGeneration: 1, leaseTtlMs: 60_000,
+        });
+        const second = await repo.claimNextStep({
+          tenantId, workerId: workerB, workerGeneration: 1, leaseTtlMs: 60_000,
+        });
+        assert.ok(first?.lease);
+        assert.ok(second?.lease);
+        const byId = new Map([[first!.id, first!], [second!.id, second!]]);
+        const claimedA = byId.get(stepA);
+        const claimedB = byId.get(stepB);
+        assert.ok(claimedA?.lease, `round ${round}: step-a not claimed`);
+        assert.ok(claimedB?.lease, `round ${round}: step-b not claimed`);
+
+        assert.equal((await repo.admitEffect({
+          id: effectA, runId, stepId: stepA, tenantId, type: 'tool',
+          idempotencyKey: `a-${suffix}`, request: { tool: 'write-a' },
+          policyDecisionId: 'decision-a', lease: claimedA!.lease!, actor: claimedA!.lease!.workerId,
+        })).admitted, true);
+        assert.ok(await repo.completeEffect(
+          effectA, tenantId, claimedA!.lease!, { ok: true }, claimedA!.lease!.workerId,
+        ));
+
+        assert.equal((await repo.admitEffect({
+          id: effectB, runId, stepId: stepB, tenantId, type: 'tool',
+          idempotencyKey: `b-${suffix}`, request: { tool: 'write-b' },
+          policyDecisionId: 'decision-b', lease: claimedB!.lease!, actor: claimedB!.lease!.workerId,
+        })).admitted, true);
+
+        const [failed, siblingComplete] = await Promise.all([
+          repo.failStep({
+            stepId: stepA,
+            tenantId,
+            lease: claimedA!.lease!,
+            expectedVersion: claimedA!.version,
+            error: { code: 'DOWNSTREAM_FAILED', message: 'race fail', retryable: false },
+            actor: claimedA!.lease!.workerId,
+          }),
+          repo.completeEffect(
+            effectB, tenantId, claimedB!.lease!, { ok: true }, claimedB!.lease!.workerId,
+          ),
+        ]);
+        assert.equal(failed?.state, 'FAILED');
+        assert.equal((await repo.getRun(runId, tenantId))?.state, 'COMPENSATING');
+        assert.equal((await repo.getStep(stepB, tenantId))?.state, 'CANCELLED');
+
+        const completedRows = await pool.query<{ id: string }>(
+          `SELECT id FROM commander_effects
+           WHERE run_id=$1 AND tenant_id=$2 AND state='COMPLETED'
+           ORDER BY id`,
+          [runId, tenantId],
+        );
+        const events = await repo.listEvents(runId, tenantId);
+        const compensation = events.find((event) => event.type === 'kernel.compensation.requested');
+        assert.ok(compensation, `round ${round}: compensation.requested missing`);
+        const effectIds = compensation.payload.effectIds;
+        assert.ok(Array.isArray(effectIds), `round ${round}: effectIds missing`);
+        const requested = new Set(effectIds as string[]);
+        for (const row of completedRows.rows) {
+          assert.ok(
+            requested.has(row.id),
+            `round ${round}: COMPLETED ${row.id} orphaned from compensation (siblingComplete=${siblingComplete != null})`,
+          );
+        }
+        const effectBState = (await repo.getEffect(effectB, tenantId))?.state;
+        assert.ok(
+          effectBState === 'COMPLETED' || effectBState === 'COMPLETION_UNKNOWN',
+          `round ${round}: unexpected effect-b state ${effectBState}`,
+        );
+        if (effectBState === 'COMPLETED') {
+          assert.equal(siblingComplete?.id, effectB);
+          assert.ok(requested.has(effectB));
+        } else {
+          assert.equal(siblingComplete, null);
+        }
+      }
+    } finally {
+      if (tenants.length > 0) {
+        await pool.query('DELETE FROM commander_runs WHERE tenant_id = ANY($1::text[])', [tenants]);
+        await pool.query('DELETE FROM commander_tenant_execution_control WHERE tenant_id = ANY($1::text[])', [tenants]);
+        await pool.query('DELETE FROM commander_tenant_execution_usage WHERE tenant_id = ANY($1::text[])', [tenants]);
+      }
+      if (workers.length > 0) {
+        await pool.query('DELETE FROM commander_workers WHERE id = ANY($1::text[])', [workers]);
+      }
+      await pool.end();
+    }
+  });
 });

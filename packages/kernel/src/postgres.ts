@@ -1217,6 +1217,19 @@ export class PostgresKernelRepository implements KernelRepository {
     actor: string,
     now = new Date(),
   ): Promise<boolean> {
+    // 必须先锁 run / steps / COMPLETED|ADMITTED effects，再快照 COMPLETED：
+    // 否则并行 sibling completeEffect（不对 step 做 FOR UPDATE）可在快照后、cancel 前
+    // 把 ADMITTED 标成 COMPLETED，随后 step 被 CANCELLED，副作用脱离补偿 effectIds。
+    const runState = await this.lockRunState(client, step.runId, step.tenantId);
+    if (!runState) return false;
+    await this.lockStepStates(client, step.runId, step.tenantId);
+    await client.query(
+      `SELECT id FROM commander_effects
+       WHERE run_id=$1 AND tenant_id=$2 AND state IN ('COMPLETED','ADMITTED')
+       ORDER BY created_at ASC
+       FOR UPDATE`,
+      [step.runId, step.tenantId],
+    );
     const completed = await client.query<{ id: string }>(
       `SELECT id FROM commander_effects
        WHERE run_id=$1 AND tenant_id=$2 AND state='COMPLETED'
@@ -1224,8 +1237,6 @@ export class PostgresKernelRepository implements KernelRepository {
       [step.runId, step.tenantId],
     );
     if (completed.rows.length === 0) return false;
-    const runState = await this.lockRunState(client, step.runId, step.tenantId);
-    if (!runState) return false;
     if (runState === 'COMPENSATING') {
       await this.cancelOpenStepsForTerminalRun(client, step.runId, step.tenantId, actor, 'run_compensating');
       return true;
