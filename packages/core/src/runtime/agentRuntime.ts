@@ -851,20 +851,37 @@ export class AgentRuntime implements AgentRuntimeInterface {
     // Issue a capability token authorizing the agent's available tools unless
     // the caller already supplied one. The token is scoped to this run and
     // forwarded to the tool execution service for authorization checks.
+    // Fail-closed: if tools are listed but we cannot mint a token, abort the
+    // run rather than executing tools unconstrained (CAP-01).
     if (!ctx.capabilityToken && ctx.availableTools.length > 0) {
       try {
         const issuer = getCapabilityTokenIssuer();
         // Prefer a concrete tenant audience. Global '*' tokens are rejected
         // when a tenant-scoped verify runs (CAP-02), so only use '*' when no
         // tenant context exists (single-tenant / local).
+        // availableTools is typed as string[], but some tests pass Tool objects;
+        // canonicalize to names so issue() can encode the claim set.
+        const toolNames = ctx.availableTools
+          .map((t) => {
+            if (typeof t === 'string') return t;
+            if (typeof t !== 'object' || !t) return '';
+            const direct = (t as { name?: unknown }).name;
+            if (typeof direct === 'string' && direct.length > 0) return direct;
+            const nested = (t as { definition?: { name?: unknown } }).definition?.name;
+            return typeof nested === 'string' ? nested : '';
+          })
+          .filter((n) => n.length > 0);
         ctx.capabilityToken = issuer.issue({
           sub: ctx.agentId,
           aud: tenantId && tenantId.length > 0 ? tenantId : '*',
-          tools: ctx.availableTools,
+          tools: toolNames,
           ttlSeconds: 300,
         });
       } catch (capErr) {
         reportSilentFailure(capErr, 'agentRuntime:issueCapabilityToken');
+        throw new Error(
+          `CAPABILITY_TOKEN_REQUIRED: failed to issue capability token for tools [${ctx.availableTools.join(', ')}]: ${capErr instanceof Error ? capErr.message : String(capErr)}`,
+        );
       }
     }
 
