@@ -304,13 +304,19 @@ describe('startVerifyTimer', () => {
 
 describe('FailClosedPersistor', () => {
   it('throws on write failure in fail-closed mode (does not swallow)', async () => {
-    const persistor = new FailClosedPersistor({
-      persistDir: '/this/path/does/not/exist/and/cannot/be/created/xyz',
-    });
-    await assert.rejects(
-      () => persistor.append({ id: 'x', line: '{"seq":1}' }),
-      /AUDIT_PERSIST_FAILED|fail-closed/i,
-    );
+    // Use a regular file as persistDir so mkdir fails on all platforms
+    // (Unix absolute fake paths can still be created on Windows as D:\...).
+    const blocker = path.join(os.tmpdir(), `audit-persist-block-${Date.now()}`);
+    fs.writeFileSync(blocker, 'not-a-directory');
+    try {
+      const persistor = new FailClosedPersistor({ persistDir: blocker });
+      await assert.rejects(
+        () => persistor.append({ id: 'x', line: '{"seq":1}' }),
+        /AUDIT_PERSIST_FAILED|fail-closed/i,
+      );
+    } finally {
+      fs.rmSync(blocker, { force: true });
+    }
   });
 
   it('appends successfully when the directory is writable', async () => {
