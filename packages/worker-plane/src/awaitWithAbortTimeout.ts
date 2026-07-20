@@ -13,7 +13,10 @@ export interface AwaitWithAbortTimeoutOptions {
   timeoutMs: number;
   /** Grace after abort before hard-failing non-cooperative work (default 50ms). */
   abortGraceMs?: number;
-  /** cooperative=true when handler settled after abort; false after grace hard-cancel. */
+  /**
+   * cooperative=true when handler reject-settled after abort (honored cancel);
+   * false after grace hard-cancel or late success resolve (ignored cancel).
+   */
   timeoutError: (cooperative: boolean) => Error;
   /** Same cooperative semantics as timeoutError for parent-abort outcomes. */
   abortError: (cooperative: boolean) => Error;
@@ -100,7 +103,9 @@ export async function awaitWithAbortTimeout<T>(
           if (closed) return;
           // Parent abort takes priority over a racing timeout flag.
           if (parentSignal.aborted) {
-            rejectAbort(true);
+            // Late success after parent abort: same as timeout late-resolve —
+            // handler ignored cancel intent; do not claim cooperative/retryable.
+            rejectAbort(false);
             return;
           }
           if (timedOut) {
