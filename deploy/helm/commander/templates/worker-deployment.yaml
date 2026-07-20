@@ -2,6 +2,7 @@
 # Commander — Worker Deployment
 # =============================================================================
 {{- if .Values.worker.enabled }}
+{{- include "commander.requireEnterpriseSecrets" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -25,31 +26,44 @@ spec:
       imagePullSecrets: {{ toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "commander.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
       securityContext: {{ toYaml .Values.podSecurityContext | nindent 8 }}
-      automountServiceAccountToken: {{ .Values.serviceAccount.automount | default true }}
       containers:
         - name: worker
           image: "{{ .Values.worker.image.repository | default .Values.image.repository }}:{{ .Values.worker.image.tag | default .Values.image.tag }}"
           imagePullPolicy: {{ .Values.worker.image.pullPolicy | default .Values.image.pullPolicy }}
+          ports:
+            - name: health
+              containerPort: {{ .Values.worker.health.port }}
           env:
             - name: NODE_ENV
               value: {{ .Values.config.nodeEnv | quote }}
-            {{- if .Values.database.enabled }}
+            - name: COMMANDER_KERNEL_ENABLED
+              value: "1"
+            - name: COMMANDER_WORKER_HEALTH_PORT
+              value: {{ .Values.worker.health.port | quote }}
+            {{- if include "commander.postgresBackend" . }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
                   key: {{ include "commander.databaseUrlSecretKey" . | quote }}
+            - name: COMMANDER_KERNEL_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.databaseUrlSecretName" . | quote }}
+                  key: {{ include "commander.databaseUrlSecretKey" . | quote }}
+            - name: COMMANDER_KERNEL_BACKEND
+              value: postgres
             {{- end }}
             - name: COMMANDER_WORKER_BOOTSTRAP
               value: {{ .Values.worker.bootstrap | quote }}
-            {{- if .Values.worker.authTokenSecret }}
             - name: COMMANDER_WORKER_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.worker.authTokenSecret | quote }}
+                  name: {{ include "commander.workerTokenSecretName" . | quote }}
                   key: {{ .Values.worker.authTokenSecretKey | default "token" | quote }}
-            {{- end }}
             - name: COMMANDER_WORKER_AUTH_SUBJECT
               value: {{ .Values.worker.authSubject | quote }}
             - name: COMMANDER_WORKER_KIND
@@ -67,7 +81,26 @@ spec:
             - name: COMMANDER_WORKER_HEARTBEAT_MS
               value: {{ .Values.worker.heartbeatMs | quote }}
           resources: {{ toYaml .Values.worker.resources | nindent 12 }}
-          securityContext: {{ toYaml .Values.securityContext | nindent 12 }}
+          securityContext:
+            {{- include "commander.cellSecurityContext" . | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.worker.health.livenessPath }}
+              port: health
+            initialDelaySeconds: {{ .Values.worker.health.initialDelaySeconds }}
+            periodSeconds: {{ .Values.worker.health.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.worker.health.readinessPath }}
+              port: health
+            initialDelaySeconds: {{ .Values.worker.health.initialDelaySeconds }}
+            periodSeconds: {{ .Values.worker.health.periodSeconds }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{ toYaml . | nindent 8 }}
       {{- end }}
