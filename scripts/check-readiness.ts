@@ -182,7 +182,8 @@ export function main(strict: boolean = STRICT): CheckResult[] {
     { prefix: 'e2e-latency.', declaredStatus: 'required' },
     { prefix: 'cost-prediction.', declaredStatus: 'required' },
     { prefix: 'redteam-baseline.', declaredStatus: 'required' },
-    { prefix: 'bench-v2-live.', declaredStatus: 'required' },
+    // Live evidence cannot match PR HEAD gitSha/node matrix; keep as recommended regression signal.
+    { prefix: 'bench-v2-live.', declaredStatus: 'recommended' },
     { prefix: 'benchmark-', declaredStatus: 'recommended' },
   ];
 
