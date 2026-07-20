@@ -47,9 +47,11 @@ export const TERMINAL_STEP_STATES: ReadonlySet<StepState> = new Set([
 
 /** Valid run state transitions keyed by current state. */
 export const RUN_TRANSITIONS: Readonly<Record<RunState, readonly RunState[]>> = {
-  PENDING: ['RUNNING', 'PAUSED', 'FAILED', 'CANCELLED'],
+  // PENDING/PAUSED may still hold COMPLETED effects (e.g. pause then deadline);
+  // compensation replaces the historical *→FAILED finish path in those cases.
+  PENDING: ['RUNNING', 'PAUSED', 'FAILED', 'CANCELLED', 'COMPENSATING'],
   RUNNING: ['PAUSED', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'COMPENSATING'],
-  PAUSED: ['RUNNING', 'FAILED', 'CANCELLED'],
+  PAUSED: ['RUNNING', 'FAILED', 'CANCELLED', 'COMPENSATING'],
   SUCCEEDED: [],
   FAILED: [],
   CANCELLED: [],

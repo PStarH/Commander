@@ -462,6 +462,59 @@ describe('execution kernel semantics', () => {
     );
   });
 
+  it('requests compensation on failStepByTimer when run is PAUSED with completed effects', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(createRun([{ id: 'step-a', kind: 'agent', maxAttempts: 1 }]), 'gateway');
+    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
+    assert.ok(claimed?.lease);
+    assert.equal(
+      (
+        await kernel.admitEffect({
+          id: 'effect-paused',
+          runId: 'run-1',
+          stepId: claimed!.id,
+          tenantId: 'tenant-a',
+          type: 'http.write',
+          idempotencyKey: 'paused-key',
+          policyDecisionId: 'decision-1',
+          request: { target: 'crm' },
+          lease: claimed!.lease!,
+          actor: 'worker-1',
+        })
+      ).admitted,
+      true,
+    );
+    assert.ok(
+      await kernel.completeEffect('effect-paused', 'tenant-a', claimed!.lease!, { ok: true }, 'worker-1'),
+    );
+
+    const paused = await kernel.pauseRun('run-1', 'tenant-a', 'control-plane');
+    assert.equal(paused?.state, 'PAUSED');
+    // pauseRun parks RUNNING steps into RETRY_WAIT; timer may still fail them.
+    assert.equal((await kernel.getStep(claimed!.id, 'tenant-a'))?.state, 'RETRY_WAIT');
+
+    const failed = await kernel.failStepByTimer(
+      claimed!.id,
+      'tenant-a',
+      { code: 'STEP_DEADLINE_EXCEEDED', message: 'deadline while paused', retryable: false },
+      'kernel.timer',
+    );
+    assert.equal(failed?.state, 'FAILED');
+    assert.equal((await kernel.getRun('run-1', 'tenant-a'))?.state, 'COMPENSATING');
+    assert.equal(validateRunTransition('PAUSED', 'COMPENSATING').ok, true);
+
+    const messages = await kernel.claimOutbox(100);
+    const compensation = messages.filter(
+      (message) => message.topic === 'commander.kernel.compensation.requested',
+    );
+    assert.equal(compensation.length, 1);
+    assert.deepEqual(compensation[0]?.payload.effectIds, ['effect-paused']);
+    assert.equal(
+      (await kernel.listEvents('run-1', 'tenant-a')).some((event) => event.type === 'run.compensating'),
+      true,
+    );
+  });
+
   it('prefers higher effective priority after aging instead of clamping all steps to 1000', async () => {
     const kernel = new InMemoryKernelRepository();
     const base = new Date('2026-01-01T00:00:00.000Z');
