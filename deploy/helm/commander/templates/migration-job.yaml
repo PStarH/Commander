@@ -1,7 +1,8 @@
 # =============================================================================
-# Commander — Database Migration Job (Helm hook)
+# Commander — Database Migration Job (Helm pre-install/pre-upgrade hook)
 # =============================================================================
-{{- if .Values.database.enabled }}
+{{- if include "commander.postgresBackend" . }}
+{{- include "commander.requireEnterpriseSecrets" . }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -11,9 +12,10 @@ metadata:
     app.kubernetes.io/component: migration
   annotations:
     helm.sh/hook: post-install,post-upgrade
-    helm.sh/hook-weight: "0"
+    helm.sh/hook-weight: "-5"
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
+  backoffLimit: 0
   template:
     metadata:
       labels:
@@ -21,11 +23,14 @@ spec:
         app.kubernetes.io/component: migration
     spec:
       restartPolicy: Never
+      terminationGracePeriodSeconds: {{ .Values.migration.terminationGracePeriodSeconds }}
       serviceAccountName: {{ include "commander.serviceAccountName" . }}
+      automountServiceAccountToken: false
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets: {{ toYaml . | nindent 8 }}
       {{- end }}
-      {{- if and .Values.database.enabled (eq .Values.database.backend "postgres") (not .Values.database.connectionString) }}
+      securityContext: {{ toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if include "commander.bundledPostgres" . }}
       initContainers:
         - name: wait-for-postgres
           image: "{{ .Values.database.postgres.image.repository }}:{{ .Values.database.postgres.image.tag }}"
@@ -38,6 +43,8 @@ spec:
                 echo "Waiting for postgres..."
                 sleep 2
               done
+          securityContext:
+            {{- include "commander.cellSecurityContext" . | nindent 12 }}
       {{- end }}
       containers:
         - name: migration
@@ -55,4 +62,12 @@ spec:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
                   key: {{ include "commander.databaseUrlSecretKey" . | quote }}
           resources: {{ toYaml .Values.migration.resources | nindent 12 }}
+          securityContext:
+            {{- include "commander.cellSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
 {{- end }}
