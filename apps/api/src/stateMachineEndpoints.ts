@@ -49,9 +49,7 @@ function resolveApprover(req: Request, res: Response): string | null {
     scopes.includes('admin') ||
     scopes.includes('*');
   if (!canApprove) {
-    res
-      .status(403)
-      .json({ error: 'Approve authority (admin role or approve scope) is required.' });
+    res.status(403).json({ error: 'Approve authority (admin role or approve scope) is required.' });
     return null;
   }
   return principalId;

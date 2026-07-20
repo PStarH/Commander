@@ -56,7 +56,9 @@ function isTenantKnown(tenantId: string): boolean {
   const provider = getGlobalTenantProvider();
   if (provider.getTenantConfig(tenantId)) return true;
   const defaultTenant = process.env.COMMANDER_DEFAULT_TENANT_ID;
-  return typeof defaultTenant === 'string' && defaultTenant.length > 0 && defaultTenant === tenantId;
+  return (
+    typeof defaultTenant === 'string' && defaultTenant.length > 0 && defaultTenant === tenantId
+  );
 }
 
 function reject(res: Response, status: number, code: string, message: string): void {
@@ -95,7 +97,11 @@ export function v1TenantGuard(): RequestHandler {
       }
       // Row 5: X-Tenant-ID may only match, never widen.
       const headerTenant = readHeader(req.headers['x-tenant-id']);
-      if (typeof headerTenant === 'string' && headerTenant.length > 0 && headerTenant !== tenantId) {
+      if (
+        typeof headerTenant === 'string' &&
+        headerTenant.length > 0 &&
+        headerTenant !== tenantId
+      ) {
         return reject(
           res,
           403,
@@ -125,7 +131,11 @@ export function v1TenantGuard(): RequestHandler {
         return reject(res, 403, 'TENANT_NOT_FOUND', `Tenant '${tenantId}' is not provisioned.`);
       }
       const headerTenant = readHeader(req.headers['x-tenant-id']);
-      if (typeof headerTenant === 'string' && headerTenant.length > 0 && headerTenant !== tenantId) {
+      if (
+        typeof headerTenant === 'string' &&
+        headerTenant.length > 0 &&
+        headerTenant !== tenantId
+      ) {
         return reject(
           res,
           403,

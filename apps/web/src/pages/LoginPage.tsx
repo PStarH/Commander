@@ -380,7 +380,6 @@ export function LoginPage() {
                 </button>
               </>
             )}
-
           </>
         )}
       </div>
