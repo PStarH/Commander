@@ -296,4 +296,62 @@ describe('Tier1AgentLoop', () => {
     expect(toolResult?.content.length).toBeLessThan(largeOutput.length);
     expect(toolResult?.content).toContain('[truncated');
   });
+
+  it('forwards abortSignal and real agentContext into tool.execute via orchestrator', async () => {
+    const parent = new AbortController();
+    let receivedAbort: AbortSignal | undefined;
+    let receivedGoal: string | undefined;
+    let receivedTools: string[] | undefined;
+
+    const hangTool = {
+      name: 'hang',
+      description: 'hangs until abort',
+      parameters: { type: 'object', properties: {}, required: [] },
+      definition: {
+        name: 'hang',
+        description: 'hangs until abort',
+        inputSchema: { type: 'object', properties: {} },
+      },
+      execute: vi.fn(async (_args: Record<string, unknown>, ctx?: Record<string, unknown>) => {
+        receivedAbort = ctx?.abortSignal as AbortSignal | undefined;
+        receivedGoal = ctx?.goal as string | undefined;
+        receivedTools = ctx?.availableTools as string[] | undefined;
+        await new Promise<void>((_resolve, reject) => {
+          const signal = ctx?.abortSignal as AbortSignal | undefined;
+          if (!signal) {
+            reject(new Error('missing abortSignal'));
+            return;
+          }
+          signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        });
+        return 'never';
+      }),
+      isConcurrencySafe: true,
+    };
+
+    const toolCalls: ToolCall[] = [{ id: 'call_1', name: 'hang', arguments: {} }];
+    const services = createMockServices({
+      responses: [baseResponse('Calling hang', toolCalls), baseResponse('Done')],
+    });
+    services.getTool = vi.fn(() => hangTool as any);
+
+    const runPromise = loop.run({
+      goal: 'ship the fix',
+      initialMessages: [{ role: 'user', content: 'Hang then cancel' }],
+      availableTools: ['hang'],
+      tokenBudget: 42_000,
+      maxSteps: 5,
+      signal: parent.signal,
+      routing: { modelId: 'test-model', provider: 'test-provider', maxTokens: 1024 },
+      services,
+    });
+
+    await vi.waitFor(() => expect(hangTool.execute).toHaveBeenCalled());
+    parent.abort();
+    await runPromise;
+
+    expect(receivedAbort).toBeInstanceOf(AbortSignal);
+    expect(receivedGoal).toBe('ship the fix');
+    expect(receivedTools).toEqual(['hang']);
+  });
 });

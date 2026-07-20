@@ -385,6 +385,8 @@ export class ToolExecutionHandler {
           : stage.toolCalls;
 
         // Check orchestration plan (circuit breakers, approvals)
+        // 双路径：此处仅 planExecution；实际执行走 deps.executeTool → TES。
+        // TIMEOUT/ABORTED 模型 advice 由 TES（与 Orchestrator.formatError）经 toolResultShape 对齐。
         const planResult = await this.deps
           .getOrchestrator()
           .planExecution(stageCalls, this.deps.getTools(), {
