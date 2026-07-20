@@ -172,11 +172,10 @@ export class MemoryIndexManager {
     const current = await this.readDomain(domain);
     const existing = current?.entries.find(
       (candidate) =>
-        candidate.type === entry.type && candidate.title.toLowerCase().trim() === entry.title.toLowerCase().trim(),
+        candidate.type === entry.type &&
+        candidate.title.toLowerCase().trim() === entry.title.toLowerCase().trim(),
     );
-    const tags = [
-      ...new Set([...(entry.tags ?? []), domainTag(domain), typeTag(entry.type)]),
-    ];
+    const tags = [...new Set([...(entry.tags ?? []), domainTag(domain), typeTag(entry.type)])];
     const priority = Math.round((entry.importance ?? 0.5) * 100);
 
     if (existing) {

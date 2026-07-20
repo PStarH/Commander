@@ -96,7 +96,9 @@ export function pinnedHttpFetch(
   }
 
   const body =
-    typeof init?.body === 'string' || init?.body instanceof Buffer || init?.body instanceof Uint8Array
+    typeof init?.body === 'string' ||
+    init?.body instanceof Buffer ||
+    init?.body instanceof Uint8Array
       ? init.body
       : undefined;
 
@@ -258,10 +260,7 @@ export class OutboundNetworkPolicy {
    * Async check including DNS resolution of the hostname. Lookup failure → deny.
    * On success, `addresses` contains public IPs suitable for connection pinning.
    */
-  async checkAsync(
-    url: string,
-    classification?: DataClassification,
-  ): Promise<OutboundCheckResult> {
+  async checkAsync(url: string, classification?: DataClassification): Promise<OutboundCheckResult> {
     const sync = this.checkWithClassification(url, classification);
     if (!sync.allowed) return sync;
     return this.resolveAddresses(url, sync.domain);
@@ -341,7 +340,11 @@ export class OutboundNetworkPolicy {
         addresses.push(address);
       }
       if (addresses.length === 0) {
-        return { allowed: false, reason: `DNS lookup returned no addresses for: ${domain}`, domain };
+        return {
+          allowed: false,
+          reason: `DNS lookup returned no addresses for: ${domain}`,
+          domain,
+        };
       }
       return { allowed: true, domain, addresses };
     } catch {
@@ -355,10 +358,7 @@ export class OutboundNetworkPolicy {
    * pass BOTH the global allowlist AND the per-classification allowlist
    * (if one is configured for that classification).
    */
-  checkWithClassification(
-    url: string,
-    classification?: DataClassification,
-  ): OutboundCheckResult {
+  checkWithClassification(url: string, classification?: DataClassification): OutboundCheckResult {
     let parsed: URL;
     try {
       parsed = new URL(url);

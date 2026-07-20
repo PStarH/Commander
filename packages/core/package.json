@@ -122,7 +122,7 @@
     "test:vitest:watch": "vitest",
     "prepublishOnly": "tsc -p tsconfig.json",
     "prepack": "tsc -p tsconfig.json",
-    "test:node:pathsec": "npx tsx --test --test-concurrency=1 tests/tools/pathSecurity.test.ts",
+    "test:node:pathsec": "pnpm exec tsx --test --test-concurrency=1 tests/tools/pathSecurity.test.ts",
     "test:security": "npx tsx --test tests/tools-security.test.ts tests/httpServer.test.ts tests/observabilityP1.test.ts tests/observabilityP2P3.test.ts",
     "docs": "typedoc",
     "docs:serve": "typedoc --watch"
