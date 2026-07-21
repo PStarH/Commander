@@ -177,6 +177,48 @@ export function createGitHubPullRequestCreateAdapter(
         });
       }
       const token = await options.credentials.getGitHubToken(input.tenantId, input.destination);
+      const getResponse = await fetchImpl(
+        `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${prNumber}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+          },
+          signal: input.signal,
+        },
+      );
+      await assertOkResponse(getResponse, 'GitHub get PR before compensate');
+      const existing = await readJsonResponse<GitHubPull>(getResponse);
+      const body = existing.body ?? '';
+      // Ownership gate: only close PRs that carry a Commander action marker.
+      // Exact hash needs the forward idempotency key (not the cmp:* key); when
+      // forwardResponse includes it, enforce exact match; otherwise require prefix.
+      const originalIdempotencyKey =
+        typeof input.forwardResponse.idempotencyKey === 'string'
+          ? input.forwardResponse.idempotencyKey
+          : undefined;
+      if (originalIdempotencyKey) {
+        const expected = githubPrBodyMarker(input.tenantId, originalIdempotencyKey);
+        if (!body.includes(expected)) {
+          throw new AdapterExecutionError('Compensation refused: PR marker mismatch', {
+            code: 'GITHUB_COMPENSATE_MARKER_MISMATCH',
+            commitState: 'NOT_COMMITTED',
+            retryMode: 'NEVER',
+            details: { prNumber },
+          });
+        }
+      } else if (!body.includes('<!-- commander-action:')) {
+        throw new AdapterExecutionError('Compensation refused: PR lacks Commander marker', {
+          code: 'GITHUB_COMPENSATE_MARKER_MISSING',
+          commitState: 'NOT_COMMITTED',
+          retryMode: 'NEVER',
+          details: { prNumber },
+        });
+      }
+      if (existing.state === 'closed') {
+        return { prNumber: existing.number, state: existing.state };
+      }
       const response = await fetchImpl(
         `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${prNumber}`,
         {

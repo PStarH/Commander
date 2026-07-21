@@ -20,6 +20,7 @@ const allowedDependencies = {
   '@commander/contracts': [],
   '@commander/kernel': ['@commander/contracts'],
   '@commander/effect-broker': ['@commander/contracts'],
+  // L4 action adapters (GitHub/ServiceNow); leaf package — no kernel/ops.
   '@commander/action-adapters': ['@commander/contracts', '@commander/effect-broker'],
   // Deploy unit for EffectBroker-backed compensation/reconcile — not a V2 plane.
   '@commander/adapter-ops': [
