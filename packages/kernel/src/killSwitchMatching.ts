@@ -40,9 +40,7 @@ export function findMatchingKillSwitchFromRules(
   rules: KillSwitch[],
 ): KillSwitch | null {
   for (const scope of KILL_SWITCH_SCOPE_ORDER) {
-    const match = rules.find(
-      (rule) => rule.scope === scope && killSwitchRuleMatches(rule, tenantId, dims),
-    );
+    const match = rules.find((rule) => rule.scope === scope && killSwitchRuleMatches(rule, tenantId, dims));
     if (match) return match;
   }
   return null;

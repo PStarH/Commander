@@ -27,6 +27,8 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages/contracts/node_modules ./packages/contracts/node_modules
 COPY --from=deps /app/packages/kernel/node_modules ./packages/kernel/node_modules
 COPY --from=build /app/packages/contracts/dist ./packages/contracts/dist
+COPY --from=build /app/packages/contracts/schemas ./packages/contracts/schemas
+COPY --from=build /app/packages/contracts/fixtures ./packages/contracts/fixtures
 COPY --from=build /app/packages/kernel/dist ./packages/kernel/dist
 COPY packages/contracts/package.json ./packages/contracts/package.json
 COPY packages/kernel/package.json ./packages/kernel/package.json
