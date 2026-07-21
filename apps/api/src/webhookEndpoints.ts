@@ -33,6 +33,7 @@ import {
   verifyDingTalkSignature,
   verifyWeComSignature,
 } from './webhookCrypto';
+import { atomicWriteFileSync, readJsonFileSafe } from './atomicWrite';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -55,23 +56,15 @@ export interface IMWebhookConfig {
 const WEBHOOK_FILE = path.join(process.cwd(), '.commander', 'webhooks.json');
 
 function readAllWebhooks(): unknown[] {
-  try {
-    const raw = fs.readFileSync(WEBHOOK_FILE, 'utf-8');
-    const data = JSON.parse(raw);
-    return Array.isArray(data) ? data : [];
-  } catch (err) {
-    reportSilentFailure(err, 'webhookEndpoints:readAllWebhooks');
-    return [];
-  }
+  // REL-4: 损坏或错形均隔离 — 禁止 silent-[] 后下次写入抹掉 webhook 配置。
+  const data = readJsonFileSafe<unknown>(WEBHOOK_FILE, null, Array.isArray);
+  return data === null ? [] : (data as unknown[]);
 }
 
 function writeAllWebhooks(entries: unknown[]): void {
-  const dir = path.dirname(WEBHOOK_FILE);
   try {
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    fs.writeFileSync(WEBHOOK_FILE, JSON.stringify(entries, null, 2), 'utf-8');
+    // REL-3: atomic write so a crash mid-write cannot truncate webhook config.
+    atomicWriteFileSync(WEBHOOK_FILE, JSON.stringify(entries, null, 2));
   } catch (err) {
     reportSilentFailure(err, 'webhookEndpoints:writeAllWebhooks');
   }
