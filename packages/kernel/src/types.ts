@@ -1,6 +1,11 @@
 /** Canonical, versioned execution-kernel domain types. */
 
-import type { KernelErrorDetails, KernelEvent, RunState, StepState } from '@commander/contracts';
+import type {
+  KernelErrorDetails,
+  KernelEvent,
+  RunState,
+  StepState,
+} from '@commander/contracts';
 
 export type { KernelErrorDetails, KernelEvent } from '@commander/contracts';
 
@@ -106,6 +111,12 @@ export interface KernelEffect {
   response?: Record<string, unknown>;
   createdAt: string;
   completedAt?: string;
+  reconcileAttempts: number;
+  reconcileAfter: string | null;
+  reconcileClaimToken: string | null;
+  reconcileClaimExpiresAt: string | null;
+  reconcileLastError: Record<string, unknown> | null;
+  reconcileEscalatedAt: string | null;
 }
 
 export interface CreateKernelRun {
@@ -166,13 +177,6 @@ export interface FailStepRequest {
   expectedVersion: number;
   actor: string;
   retryAt?: Date;
-  /**
-   * Refund the claim attempt before the retry/fail decision.
-   * Use when the worker never started execution (e.g. stop-during-claim):
-   * claim already did attempt++, and without a refund default maxAttempts=1
-   * would terminal-FAIL even with retryable+retryAt.
-   */
-  refundAttempt?: boolean;
 }
 
 export interface AdmitEffectRequest {
@@ -202,6 +206,63 @@ export interface ReconcileEffectRequest {
   state: 'COMPLETED' | 'FAILED';
   response: Record<string, unknown>;
   actor: string;
+}
+
+export interface RequestReconcileInput {
+  effectId: string;
+  tenantId: string;
+  actor: string;
+  reconcileAfter?: string;
+}
+
+export interface ClaimReconcileEffectsInput {
+  limit: number;
+  now?: Date;
+  claimTtlMs?: number;
+}
+
+export interface ClaimedReconcileEffect {
+  effect: KernelEffect;
+  claimToken: string;
+}
+
+export interface RescheduleReconcileInput {
+  effectId: string;
+  tenantId: string;
+  claimToken: string;
+  reconcileAfter: string;
+  lastError?: { code: string; message: string };
+}
+
+export interface EscalateReconcileInput {
+  effectId: string;
+  tenantId: string;
+  claimToken: string;
+  reason: string;
+}
+
+export interface FailEffectRequest {
+  effectId: string;
+  tenantId: string;
+  lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>;
+  error: { code: string; message: string; retryable: boolean; details?: Record<string, unknown> };
+  actor: string;
+}
+
+export interface RequestCompensationInput {
+  tenantId: string;
+  originalRunId: string;
+  originalEffectId?: string;
+  actor: string;
+  adapterVersion: string;
+  compensationEffectType: string;
+}
+
+export interface RequestCompensationResult {
+  compensationRunId: string;
+  originalEffectId: string;
+  originalRunId: string;
+  outboxMessageId?: string;
 }
 
 export type AdmitEffectResult =
@@ -299,7 +360,12 @@ export interface AnswerInteractionRequest {
 // ── Kill switches (L4-04) ───────────────────────────────────────────────────
 
 export type KillSwitchScope =
-  'tenant' | 'package' | 'model' | 'tool' | 'destination' | 'effect-type';
+  | 'tenant'
+  | 'package'
+  | 'model'
+  | 'tool'
+  | 'destination'
+  | 'effect-type';
 
 export interface KillSwitch {
   tenantId: string;
