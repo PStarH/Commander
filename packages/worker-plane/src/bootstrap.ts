@@ -17,6 +17,9 @@
  * - COMMANDER_WORKER_LEASE_TTL_MS: Step lease TTL (default: 30000)
  * - COMMANDER_WORKER_HEARTBEAT_MS: Heartbeat interval (default: 10000)
  * - COMMANDER_WORKER_POLL_MS: Poll interval (default: 250)
+ * - COMMANDER_DEMO_TICKET_ALLOWLIST: Set to `1` to auto-seed demo.ticket.* allowlist
+ *   defaults on worker bootstrap (off by default; production stays fail-closed).
+ *   llm.* defaults still auto-seed via ensureAllowlistDefault (explicit deny wins).
  */
 
 import { randomUUID } from 'node:crypto';
@@ -199,6 +202,54 @@ function denyActionGateway(reason: string) {
   };
 }
 
+/**
+ * Mirrors apps/api `evaluateAction` for policySnapshotId `action-gateway-mvp-v1`.
+ * Worker re-runs this so a sealed metadata.decision alone cannot authorize effects.
+ */
+export function evaluateActionGatewayMvpV1(envelope: Record<string, unknown>): {
+  effect: 'allow' | 'deny' | 'require_approval';
+  decisionId: string;
+  reason: string;
+  policySnapshotId: 'action-gateway-mvp-v1';
+} {
+  const effectType = envelope.effectType;
+  const tool = envelope.tool;
+  const destination = envelope.destination;
+  const isCreate = effectType === 'demo.ticket.create' && tool === 'ticket.create';
+  const isCompensation =
+    effectType === 'compensate.demo.ticket.create' && tool === 'ticket.compensate';
+  if (!isCreate && !isCompensation) {
+    return {
+      effect: 'deny',
+      decisionId: 'action-gateway-deny',
+      reason: `Effect type '${String(effectType)}' is not registered by the Action Gateway.`,
+      policySnapshotId: 'action-gateway-mvp-v1',
+    };
+  }
+  if (destination === 'demo://tickets') {
+    return {
+      effect: 'allow',
+      decisionId: 'action-gateway-allow',
+      reason: 'The registered demo ticket destination is allowed.',
+      policySnapshotId: 'action-gateway-mvp-v1',
+    };
+  }
+  if (destination === 'demo://tickets/approval') {
+    return {
+      effect: 'require_approval',
+      decisionId: 'action-gateway-require_approval',
+      reason: 'The approval demo destination requires a human decision.',
+      policySnapshotId: 'action-gateway-mvp-v1',
+    };
+  }
+  return {
+    effect: 'deny',
+    decisionId: 'action-gateway-deny',
+    reason: `Destination '${String(destination)}' is not registered by the Action Gateway.`,
+    policySnapshotId: 'action-gateway-mvp-v1',
+  };
+}
+
 export function createWorkerPolicyEvaluator(
   kernelOrEnv: ActionGatewayPolicyKernel | NodeJS.ProcessEnv = process.env,
 ): PolicyEvaluator {
@@ -326,6 +377,17 @@ export function createWorkerPolicyEvaluator(
         ) {
           return denyActionGateway('POLICY_SNAPSHOT_DRIFT');
         }
+        // Defense in depth: re-evaluate mvp-v1 against the bound envelope so a
+        // forged or post-create-mutated metadata.decision cannot authorize work.
+        if (metadata.policySnapshotId === 'action-gateway-mvp-v1') {
+          const fresh = evaluateActionGatewayMvpV1(actionEnvelope);
+          if (
+            fresh.effect !== actionDecision.effect ||
+            fresh.decisionId !== actionDecision.decisionId
+          ) {
+            return denyActionGateway('ACTION_GATEWAY_DECISION_REVALIDATION_FAILED');
+          }
+        }
         if (actionDecision.effect === 'allow') {
           if (actionDecision.decisionId !== 'action-gateway-allow') {
             return denyActionGateway('ACTION_GATEWAY_DECISION_INVALID');
@@ -384,8 +446,16 @@ type AllowlistKernel = EffectKernelPort & {
   ensureAllowlistDefault?(tenantId: string, actionPattern: string, allowed: boolean): Promise<void>;
 } & ActionGatewayPolicyKernel;
 
-/** Seed llm.* allowlist defaults without overwriting explicit denies. */
-export function withDefaultLlmAllowlist(kernel: AllowlistKernel): EffectKernelPort {
+/**
+ * Seed llm.* allowlist defaults without overwriting explicit denies.
+ * Demo ticket effects are NOT auto-seeded unless COMMANDER_DEMO_TICKET_ALLOWLIST=1
+ * (golden/e2e helpers should call setAllowlistEntry explicitly instead).
+ */
+export function withDefaultLlmAllowlist(
+  kernel: AllowlistKernel,
+  env: NodeJS.ProcessEnv = process.env,
+): EffectKernelPort {
+  const demoTicketAllowlistOptIn = env.COMMANDER_DEMO_TICKET_ALLOWLIST === '1';
   return {
     admitEffect: (input) => kernel.admitEffect(input),
     completeEffect: (effectId, tenantId, lease, response, actor) =>
@@ -397,17 +467,25 @@ export function withDefaultLlmAllowlist(kernel: AllowlistKernel): EffectKernelPo
       if (action.startsWith('llm.') && kernel.ensureAllowlistDefault) {
         await kernel.ensureAllowlistDefault(tenantId, 'llm.*', true);
       }
-      if (action === 'demo.ticket.create' && kernel.ensureAllowlistDefault) {
+      if (
+        demoTicketAllowlistOptIn &&
+        action === 'demo.ticket.create' &&
+        kernel.ensureAllowlistDefault
+      ) {
         await kernel.ensureAllowlistDefault(tenantId, 'demo.ticket.create', true);
       }
-      if (action === 'compensate.demo.ticket.create' && kernel.ensureAllowlistDefault) {
+      if (
+        demoTicketAllowlistOptIn &&
+        action === 'compensate.demo.ticket.create' &&
+        kernel.ensureAllowlistDefault
+      ) {
         await kernel.ensureAllowlistDefault(tenantId, 'compensate.demo.ticket.create', true);
       }
       if (!kernel.isActionAllowed) {
         return (
           action.startsWith('llm.') ||
-          action === 'demo.ticket.create' ||
-          action === 'compensate.demo.ticket.create'
+          (demoTicketAllowlistOptIn &&
+            (action === 'demo.ticket.create' || action === 'compensate.demo.ticket.create'))
         );
       }
       return kernel.isActionAllowed(tenantId, action);

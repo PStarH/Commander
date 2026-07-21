@@ -55,6 +55,7 @@ jobs:
           pnpm --filter @commander/kernel build
           pnpm --filter @commander/effect-broker build
           pnpm --filter @commander/core build
+          pnpm --filter @commander/action-adapters build
           pnpm --filter @commander/worker-plane build
           pnpm --filter @commander/api build
       - name: Kernel PG integration
