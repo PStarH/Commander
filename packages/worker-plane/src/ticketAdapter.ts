@@ -21,6 +21,7 @@ export class InMemoryTicketAdapter implements EffectOutcomeQuerier {
   private seq = 0;
   /** Counts create() invocations — reconcile must not increment this. */
   createInvocations = 0;
+  compensateInvocations = 0;
 
   private key(tenantId: string, idempotencyKey: string): string {
     return `${tenantId}:${idempotencyKey}`;
@@ -48,6 +49,14 @@ export class InMemoryTicketAdapter implements EffectOutcomeQuerier {
     return { ...record };
   }
 
+  async compensate(input: { tenantId: string; idempotencyKey: string }): Promise<TicketRecord> {
+    this.compensateInvocations += 1;
+    const record = this.byIdempotency.get(this.key(input.tenantId, input.idempotencyKey));
+    if (!record) throw new Error('DEMO_TICKET_NOT_FOUND');
+    record.status = 'closed';
+    return { ...record };
+  }
+
   async queryOutcome(input: {
     effectId: string;
     idempotencyKey: string;
@@ -58,8 +67,14 @@ export class InMemoryTicketAdapter implements EffectOutcomeQuerier {
     const hit = this.byIdempotency.get(this.key(input.tenantId, input.idempotencyKey));
     if (!hit) return { status: 'UNKNOWN' };
     if (hit.status === 'failed') {
-      return { status: 'FAILED', response: { ticketId: hit.ticketId, title: hit.title, status: hit.status } };
+      return {
+        status: 'FAILED',
+        response: { ticketId: hit.ticketId, title: hit.title, status: hit.status },
+      };
     }
-    return { status: 'COMPLETED', response: { ticketId: hit.ticketId, title: hit.title, status: hit.status } };
+    return {
+      status: 'COMPLETED',
+      response: { ticketId: hit.ticketId, title: hit.title, status: hit.status },
+    };
   }
 }

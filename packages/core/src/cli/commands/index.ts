@@ -28,6 +28,7 @@ export { cmdSecurity } from './security';
 export { cmdWorkflow } from './workflow';
 // V2 distributed stack diagnostics
 export { cmdDiagnose } from './diagnose';
+export { cmdAction } from './action';
 
 // Small features
 export {

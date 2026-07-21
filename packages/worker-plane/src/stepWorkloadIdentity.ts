@@ -6,7 +6,7 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
-import { getControlPlane, type WorkloadIdentity } from '@commander/core';
+import { getControlPlane, type WorkloadIdentity } from './workerRuntimeAdapter.js';
 import {
   canonicalRequestHash,
   type CapabilityTokenIssuer,

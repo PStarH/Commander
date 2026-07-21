@@ -24,8 +24,23 @@ export {
   StreamableHTTPClientTransport,
   createMCPClient,
 } from './client';
-export { MCPServer } from './server';
-export type { MCPToolRegistration, MCPResourceRegistration, MCPPromptRegistration } from './server';
+export {
+  MCPServer,
+  LOCAL_MCP_TOOL_NAMES,
+  buildMcpActionEnvelope,
+  createFetchActionGatewayExecutor,
+  toolRequiresActionGateway,
+  shouldRouteToolThroughActionGateway,
+  ActionGatewayPolicyError,
+} from './server';
+export type {
+  MCPToolRegistration,
+  MCPResourceRegistration,
+  MCPPromptRegistration,
+  ActionGatewayProposeInput,
+  ActionGatewayProposeResult,
+  ActionGatewayExecutor,
+} from './server';
 export {
   canTransition,
   AGENT_CARD_WELL_KNOWN_PATH,
