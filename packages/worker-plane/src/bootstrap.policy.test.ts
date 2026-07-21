@@ -96,19 +96,13 @@ describe('withDefaultLlmAllowlist', () => {
     const kernel = new InMemoryKernelRepository();
     const port = withDefaultLlmAllowlist(kernel, {});
     assert.equal(await port.isActionAllowed!('tenant-a', 'demo.ticket.create'), false);
-    assert.equal(
-      await port.isActionAllowed!('tenant-a', 'compensate.demo.ticket.create'),
-      false,
-    );
+    assert.equal(await port.isActionAllowed!('tenant-a', 'compensate.demo.ticket.create'), false);
   });
 
   it('seeds demo.ticket.* only when COMMANDER_DEMO_TICKET_ALLOWLIST=1', async () => {
     const kernel = new InMemoryKernelRepository();
     const port = withDefaultLlmAllowlist(kernel, { COMMANDER_DEMO_TICKET_ALLOWLIST: '1' });
     assert.equal(await port.isActionAllowed!('tenant-a', 'demo.ticket.create'), true);
-    assert.equal(
-      await port.isActionAllowed!('tenant-a', 'compensate.demo.ticket.create'),
-      true,
-    );
+    assert.equal(await port.isActionAllowed!('tenant-a', 'compensate.demo.ticket.create'), true);
   });
 });
