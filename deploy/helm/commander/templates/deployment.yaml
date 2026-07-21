@@ -1,6 +1,7 @@
 # =============================================================================
 # Commander API — Deployment
 # =============================================================================
+{{- include "commander.requireEnterpriseSecrets" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -31,7 +32,8 @@ spec:
       imagePullSecrets: {{ toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "commander.serviceAccountName" . }}
-      automountServiceAccountToken: {{ .Values.serviceAccount.automount | default true }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.api.terminationGracePeriodSeconds }}
       securityContext: {{ toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: api
@@ -52,10 +54,69 @@ spec:
               value: {{ .Values.config.corsOrigins | quote }}
             - name: API_STORE_BACKEND
               value: {{ .Values.database.backend | quote }}
+            {{- if include "commander.postgresBackend" . }}
+            - name: COMMANDER_KERNEL_ENABLED
+              value: "1"
+            - name: COMMANDER_KERNEL_BACKEND
+              value: postgres
+            {{- end }}
             - name: API_RATE_LIMIT
               value: {{ .Values.config.rateLimitPerMinute | quote }}
             - name: TENANT_PROVIDER
               value: {{ .Values.config.tenantProvider | quote }}
+            {{- if .Values.api.secrets.existingSecret }}
+            - name: COMMANDER_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.secrets.existingSecret | quote }}
+                  key: master-key
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.secrets.existingSecret | quote }}
+                  key: jwt-secret
+            - name: COMMANDER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.secrets.existingSecret | quote }}
+                  key: api-key
+            - name: COMMANDER_CAPABILITY_TOKEN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.secrets.existingSecret | quote }}
+                  key: capability-token-key
+            - name: COMMANDER_INTEGRITY_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.secrets.existingSecret | quote }}
+                  key: integrity-key
+            {{- else if and .Values.api.secrets.create (not .Values.api.secrets.existingSecret) (eq .Values.tier "demo") }}
+            - name: COMMANDER_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.apiSecretName" . | quote }}
+                  key: master-key
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.apiSecretName" . | quote }}
+                  key: jwt-secret
+            - name: COMMANDER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.apiSecretName" . | quote }}
+                  key: api-key
+            - name: COMMANDER_CAPABILITY_TOKEN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.apiSecretName" . | quote }}
+                  key: capability-token-key
+            - name: COMMANDER_INTEGRITY_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.apiSecretName" . | quote }}
+                  key: integrity-key
+            {{- else }}
             {{- if .Values.api.secrets.masterKeySecret }}
             - name: COMMANDER_MASTER_KEY
               valueFrom:
@@ -69,6 +130,28 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.api.secrets.jwtSecretSecret | quote }}
                   key: jwt-secret
+            {{- end }}
+            {{- if .Values.api.secrets.apiKeySecret }}
+            - name: COMMANDER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.secrets.apiKeySecret | quote }}
+                  key: api-key
+            {{- end }}
+            {{- if .Values.api.secrets.capabilityTokenKeySecret }}
+            - name: COMMANDER_CAPABILITY_TOKEN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.secrets.capabilityTokenKeySecret | quote }}
+                  key: capability-token-key
+            {{- end }}
+            {{- if .Values.api.secrets.integrityKeySecret }}
+            - name: COMMANDER_INTEGRITY_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.secrets.integrityKeySecret | quote }}
+                  key: integrity-key
+            {{- end }}
             {{- end }}
             {{- if .Values.llm.openaiApiKeySecret }}
             - name: OPENAI_API_KEY
@@ -103,8 +186,13 @@ spec:
             - name: REDIS_URL
               value: redis://{{ include "commander.fullname" . }}-redis:{{ .Values.redis.port }}
             {{- end }}
-            {{- if .Values.database.enabled }}
+            {{- if include "commander.postgresBackend" . }}
             - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.databaseUrlSecretName" . | quote }}
+                  key: {{ include "commander.databaseUrlSecretKey" . | quote }}
+            - name: COMMANDER_KERNEL_DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
@@ -117,7 +205,8 @@ spec:
               value: {{ .Values.observability.otel.serviceName | quote }}
             {{- end }}
           resources: {{ toYaml .Values.api.resources | nindent 12 }}
-          securityContext: {{ toYaml .Values.securityContext | nindent 12 }}
+          securityContext:
+            {{- include "commander.cellSecurityContext" . | nindent 12 }}
           livenessProbe:
             httpGet:
               path: {{ .Values.api.health.livenessPath }}
@@ -131,6 +220,9 @@ spec:
             initialDelaySeconds: {{ .Values.api.health.initialDelaySeconds }}
             periodSeconds: {{ .Values.api.health.periodSeconds }}
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.persistence.enabled }}
             - name: commander-state
               mountPath: /app/.commander_state
             - name: commander-traces
@@ -139,7 +231,11 @@ spec:
               mountPath: /app/.commander_memory
             - name: commander-results
               mountPath: /app/.commander_results
+            {{- end }}
       volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.persistence.enabled }}
         - name: commander-state
           persistentVolumeClaim:
             claimName: {{ include "commander.fullname" . }}-state
@@ -152,6 +248,7 @@ spec:
         - name: commander-results
           persistentVolumeClaim:
             claimName: {{ include "commander.fullname" . }}-results
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{ toYaml . | nindent 8 }}
       {{- end }}

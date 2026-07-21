@@ -324,7 +324,10 @@ jobs:
             apps/api/test/warRoomDemotion.test.ts
 
       - name: Readiness gate (strict)
-        run: pnpm check:readiness
+        # Simulated/synthetic docs/baselines fixtures are non-scoring.
+        # Required slots must use live evidence; until then they are recommended.
+        # residual→100 is refused unless required live baselines pass.
+        run: pnpm exec tsx scripts/check-readiness.ts
 
       - name: Run core tests
         shell: bash
@@ -430,17 +433,37 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
       - run: pnpm install
+      - name: Rebuild better-sqlite3 (repositoryContract SQLite suite)
+        run: pnpm rebuild better-sqlite3
       - name: Build kernel / worker-plane / core / api
         run: |
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/plugin-sdk build
           pnpm --filter @commander/kernel build
           pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/action-adapters build
           pnpm --filter @commander/core build
           pnpm --filter @commander/worker-plane build
           pnpm --filter @commander/api build
       - name: Kernel PostgreSQL integration (fencing + tenant isolation)
         run: pnpm exec tsx --test packages/kernel/src/postgres.integration.test.ts
+      - name: Kernel PostgreSQL ops + compensation race (C4/C5/C2 PG)
+        run: |
+          pnpm exec tsx --test --test-concurrency=1 \
+            packages/kernel/src/postgres.ops.integration.test.ts \
+            packages/kernel/src/ops/outbox/compensationPublisherRace.integration.test.ts \
+            packages/kernel/src/ops/outbox/compensationPublisherRace.postgres.integration.test.ts
+      - name: Assert PG compensation tests did not skip
+        run: bash scripts/l4-b-assert-pg-compensation-tests-ran.sh
+      - name: L4-B compensation dual-process race (C6, PG)
+        run: pnpm cell:compensation-dual-race -- --seed=16
+      - name: Upload dual-process race artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: l4-b-compensation-dual-race
+          path: artifacts/l4-b-compensation-dual-race-*.json
+          if-no-files-found: error
       - name: Worker plane e2e (execute + lease reclaim)
         run: pnpm exec tsx --test --test-force-exit packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts
       - name: Production worker sandbox boot-refuse
@@ -451,6 +474,112 @@ jobs:
         run: pnpm p0:full-loop
         env:
           P0_TIMEOUT_MS: '120000'
+
+  l4-b-deploy-gates:
+    name: L4-B Deploy Gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - run: pnpm install
+
+      - name: Rebuild better-sqlite3 (adapter-ops / kernel sqlite tests)
+        run: pnpm rebuild better-sqlite3
+
+      - name: Build packages needed by deploy-gates (kernelEnabled + adapter-ops)
+        run: |
+          pnpm --filter @commander/contracts build
+          pnpm --filter @commander/plugin-sdk build
+          pnpm --filter @commander/kernel build
+          pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/action-adapters build
+          pnpm --filter @commander/core build
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      # P1 fail-closed: sole gate command (no parallel subset steps)
+      - name: Deploy gates (pnpm test:deploy-gates)
+        run: pnpm test:deploy-gates
+
+  l4-b-cell-runtime:
+    name: L4-B Cell Runtime
+    runs-on: ubuntu-latest
+    needs: l4-b-deploy-gates
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - run: pnpm install
+
+      - name: Build host packages for cell scripts (C3 imports action-adapters)
+        run: |
+          pnpm --filter @commander/contracts build
+          pnpm --filter @commander/plugin-sdk build
+          pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/kernel build
+          pnpm --filter @commander/action-adapters build
+
+      - name: Generate cell compose secrets
+        run: |
+          echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" >> "$GITHUB_ENV"
+          echo "COMMANDER_API_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "COMMANDER_MASTER_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "COMMANDER_CAPABILITY_TOKEN_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "COMMANDER_INTEGRITY_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "COMMANDER_WORKER_AUTH_TOKEN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Docker build worker image (--no-cache)
+        run: docker build --no-cache -f packages/worker-plane/Dockerfile -t commander-worker-ci .
+
+      - name: Image boot smoke (P6 contracts/schemas in-image)
+        run: pnpm cell:image-boot-smoke -- --image-tag commander-worker-ci --skip-build
+
+      - name: Cell up assert (compose profile)
+        run: pnpm cell:up-assert
+
+      - name: Cell compensation E2E compose (C3)
+        run: pnpm cell:compensation-e2e -- --mode compose --up
+
+      - name: Upload cell up-assert artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: l4-b-cell-up-assert
+          path: artifacts/l4-b-cell-up-assert-*.json
+          if-no-files-found: error
+
+      - name: Upload cell compensation e2e artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: l4-b-cell-compensation-e2e
+          path: artifacts/l4-b-cell-compensation-e2e-*.json
+          if-no-files-found: error
+
+      - name: Upload image boot smoke artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: l4-b-image-boot-smoke
+          path: artifacts/l4-b-image-boot-smoke-*.json
+          if-no-files-found: error
 
   web-gui:
     name: Web GUI Build

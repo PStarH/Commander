@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 2,
+  "summary": {
+    "passed": true,
+    "errors": 0,
+    "failed": 0,
+    "skipped": 0
+  },
+  "env": {
+    "evidence": "simulated",
+    "gitSha": "fixture",
+    "nodeVersion": "v22.22.0",
+    "pnpmVersion": "9.15.4",
+    "datasetVersion": "ci-fixture-v1"
+  },
+  "measurements": [],
+  "runAt": "2026-07-20T07:12:46.933Z",
+  "note": "CI readiness fixture (simulated evidence; NON-SCORING — does not count toward required readiness / residual→100)"
+}

@@ -1,0 +1,121 @@
+# =============================================================================
+# Commander — Adapter Operations Deployment
+# =============================================================================
+{{- if .Values.adapterOps.enabled }}
+{{- include "commander.requireEnterpriseSecrets" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "commander.fullname" . }}-adapter-ops
+  labels:
+    {{- include "commander.labels" . | nindent 4 }}
+    app.kubernetes.io/component: adapter-ops
+spec:
+  replicas: {{ .Values.adapterOps.replicas }}
+  selector:
+    matchLabels:
+      {{- include "commander.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: adapter-ops
+  template:
+    metadata:
+      labels:
+        {{- include "commander.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: adapter-ops
+    spec:
+      serviceAccountName: {{ include "commander.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.adapterOps.terminationGracePeriodSeconds }}
+      securityContext: {{ toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: adapter-ops
+          image: "{{ .Values.adapterOps.image.repository | default .Values.image.repository }}:{{ .Values.adapterOps.image.tag | default (printf "%s-adapter-ops" (.Values.image.tag | default .Chart.AppVersion)) }}"
+          imagePullPolicy: {{ .Values.adapterOps.image.pullPolicy | default .Values.image.pullPolicy }}
+          ports:
+            - name: health
+              containerPort: {{ .Values.adapterOps.health.port }}
+          env:
+            - name: NODE_ENV
+              value: {{ .Values.config.nodeEnv | quote }}
+            - name: COMMANDER_ADAPTER_OPS_HEALTH_PORT
+              value: {{ .Values.adapterOps.health.port | quote }}
+            - name: COMMANDER_CELL_TIER
+              value: {{ .Values.tier | quote }}
+            {{- if include "commander.postgresBackend" . }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.databaseUrlSecretName" . | quote }}
+                  key: {{ include "commander.databaseUrlSecretKey" . | quote }}
+            - name: COMMANDER_KERNEL_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.databaseUrlSecretName" . | quote }}
+                  key: {{ include "commander.databaseUrlSecretKey" . | quote }}
+            - name: COMMANDER_KERNEL_BACKEND
+              value: postgres
+            {{- end }}
+            {{- if .Values.adapterOps.secrets.existingSecret }}
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.adapterOps.secrets.existingSecret | quote }}
+                  key: github-token
+                  optional: true
+            - name: SERVICENOW_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.adapterOps.secrets.existingSecret | quote }}
+                  key: servicenow-username
+                  optional: true
+            - name: SERVICENOW_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.adapterOps.secrets.existingSecret | quote }}
+                  key: servicenow-password
+                  optional: true
+            - name: SERVICENOW_INSTANCE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.adapterOps.secrets.existingSecret | quote }}
+                  key: servicenow-instance
+                  optional: true
+            {{- else if .Values.adapterOps.secrets.create }}
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.fullname" . }}-adapter-secrets
+                  key: github-token
+                  optional: true
+            {{- end }}
+            {{- if .Values.adapterOps.egress.allowlist }}
+            - name: COMMANDER_ADAPTER_EGRESS_ALLOWLIST
+              value: {{ join "," .Values.adapterOps.egress.allowlist | quote }}
+            {{- else if .Values.networkPolicy.egress.adapterCidrs }}
+            - name: COMMANDER_ADAPTER_EGRESS_ALLOWLIST
+              value: {{ join "," .Values.networkPolicy.egress.adapterCidrs | quote }}
+            {{- end }}
+          resources: {{ toYaml .Values.adapterOps.resources | nindent 12 }}
+          securityContext:
+            {{- include "commander.cellSecurityContext" . | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.adapterOps.health.livenessPath }}
+              port: health
+            initialDelaySeconds: {{ .Values.adapterOps.health.livenessInitialDelaySeconds }}
+            periodSeconds: {{ .Values.adapterOps.health.livenessPeriodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.adapterOps.health.readinessPath }}
+              port: health
+            initialDelaySeconds: {{ .Values.adapterOps.health.readinessInitialDelaySeconds }}
+            periodSeconds: {{ .Values.adapterOps.health.readinessPeriodSeconds }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}
