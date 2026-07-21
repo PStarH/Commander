@@ -8,6 +8,7 @@ import {
   verify,
   KeyObject,
 } from 'node:crypto';
+import { AdapterExecutionError } from './adapterErrors.js';
 
 export interface CapabilityGrant {
   jti: string;
@@ -111,6 +112,17 @@ export interface EffectKernelPort {
     actor: string,
   ): Promise<unknown | null>;
   markEffectCompletionUnknown?(input: { effectId: string; tenantId: string; reason: string; actor: string }): Promise<unknown | null>;
+  /**
+   * Terminal fail for effects that never committed remotely (AdapterCommitState NOT_COMMITTED).
+   * Distinct from markEffectCompletionUnknown (QUERY_FIRST / UNKNOWN).
+   */
+  failEffect?(input: {
+    effectId: string;
+    tenantId: string;
+    reason: string;
+    actor: string;
+    details?: Record<string, unknown>;
+  }): Promise<unknown | null>;
   /** L3-08a: load ledger effect for UNKNOWN reconcile (no side-effect execute). */
   getEffect?(
     effectId: string,
@@ -626,6 +638,37 @@ export class EffectBroker {
       } finally { clearTimeout(timer); }
     } catch (error) {
       if (!finished && !parked && admission.effectState === 'ADMITTED') {
+        // L4-02: adapter taxonomy — NOT_COMMITTED → failEffect (terminal);
+        // UNKNOWN → park (QUERY_FIRST). Other errors keep fail-closed park.
+        if (error instanceof AdapterExecutionError) {
+          if (error.commitState === 'NOT_COMMITTED') {
+            await this.kernel.failEffect?.({
+              effectId: admission.kernelEffectId,
+              tenantId: admission.grant.tenantId,
+              reason: error.code,
+              actor: admission.actor,
+              details: {
+                message: error.message,
+                retryMode: error.retryMode,
+                ...(error.details ?? {}),
+              },
+            });
+            throw new EffectBrokerError('EFFECT_FAILED', {
+              effectId: admission.kernelEffectId,
+              code: error.code,
+              commitState: error.commitState,
+              retryMode: error.retryMode,
+            });
+          }
+          await this.parkUnfinishedAdmission(admission, error.code);
+          parked = true;
+          throw new EffectBrokerError('COMPLETION_UNKNOWN', {
+            effectId: admission.kernelEffectId,
+            code: error.code,
+            commitState: error.commitState,
+            retryMode: error.retryMode,
+          });
+        }
         await this.parkUnfinishedAdmission(
           admission,
           error instanceof EffectBrokerError ? error.code : 'execute_admitted_failed',
