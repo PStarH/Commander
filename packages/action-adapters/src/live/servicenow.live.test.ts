@@ -10,7 +10,7 @@ import { after, describe, it } from 'node:test';
 import {
   createServiceNowIncidentCreateAdapter,
   EnvAdapterCredentialProvider,
-} from '@commander/action-adapters';
+} from '../index.js';
 
 const tenantId = process.env.COMMANDER_CELL_TENANT_ID ?? '';
 const instance = process.env.SERVICENOW_INSTANCE ?? '';
@@ -39,14 +39,13 @@ describe(
   'L4-02 ServiceNow live adapter',
   { skip: liveEnabled ? false : 'missing LIVE_SERVICENOW creds' },
   () => {
-    const credentials = new EnvAdapterCredentialProvider({ cellTenantId: tenantId });
-    const adapter = createServiceNowIncidentCreateAdapter({ credentials });
-
     after(() => {
       printCleanup();
     });
 
     it('create → queryOutcome → compensate → queryOutcome', async () => {
+      const credentials = new EnvAdapterCredentialProvider({ cellTenantId: tenantId });
+      const adapter = createServiceNowIncidentCreateAdapter({ credentials });
       const signal = AbortSignal.timeout(60_000);
       try {
         const created = await adapter.execute({
