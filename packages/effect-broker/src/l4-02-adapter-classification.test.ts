@@ -12,6 +12,13 @@ import {
 describe('L4-02 adapter execution classification', () => {
   it('NOT_COMMITTED AdapterExecutionError calls failEffect', async () => {
     let failed = false;
+    let failRequest: {
+      effectId: string;
+      tenantId: string;
+      lease: { workerId: string; token: string; fencingEpoch: number };
+      error: { code: string; message: string; retryable: boolean };
+      actor: string;
+    } | null = null;
     const issuer = CapabilityTokenIssuer.generate({
       issuer: 'commander-worker',
       audience: 'commander.effect-broker',
@@ -38,8 +45,9 @@ describe('L4-02 adapter execution classification', () => {
           effect: { id: 'kernel-eff-1', state: 'ADMITTED' },
         }),
         completeEffect: async () => null,
-        failEffect: async () => {
+        failEffect: async (input) => {
           failed = true;
+          failRequest = input;
           return { id: 'kernel-eff-1', state: 'FAILED' };
         },
       },
@@ -83,6 +91,13 @@ describe('L4-02 adapter execution classification', () => {
         error instanceof EffectBrokerError && error.code === 'EFFECT_FAILED',
     );
     assert.equal(failed, true);
+    assert.ok(failRequest);
+    assert.equal(failRequest!.effectId, 'kernel-eff-1');
+    assert.equal(failRequest!.tenantId, 'tenant-a');
+    assert.equal(failRequest!.lease.workerId, 'worker-1');
+    assert.equal(failRequest!.lease.token, 'lease');
+    assert.equal(failRequest!.error.code, 'GITHUB_AUTH_FAILED');
+    assert.equal(failRequest!.error.retryable, false);
   });
 
   it('UNKNOWN AdapterExecutionError parks effect without replaying write', async () => {
