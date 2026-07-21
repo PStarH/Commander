@@ -125,12 +125,20 @@ export interface AdapterEvidenceSummary {
   errorCode?: string;
 }
 
+const GITHUB_DEST_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
 export function parseGitHubDestination(destination: string): { owner: string; repo: string } {
   const match = /^github:\/\/([^/]+)\/([^/]+)\/pulls$/.exec(destination);
   if (!match) {
     throw new Error(`Invalid GitHub destination: ${destination}`);
   }
-  return { owner: match[1]!, repo: match[2]! };
+  const owner = match[1]!;
+  const repo = match[2]!;
+  // Align with findAdapterManifest placeholder charset (fail-closed).
+  if (!GITHUB_DEST_SEGMENT.test(owner) || !GITHUB_DEST_SEGMENT.test(repo)) {
+    throw new Error(`Invalid GitHub destination: ${destination}`);
+  }
+  return { owner, repo };
 }
 
 export function parseServiceNowDestination(destination: string): { instance: string } {

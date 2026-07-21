@@ -61,4 +61,13 @@ describe('GrantV1', () => {
     });
     assert.equal(wrapped.kind, 'grant');
   });
+
+  it('fixture effectTypes align with GitHub production descriptor', async () => {
+    const { GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR } = await import('./actionAdapters.js');
+    const raw = readFileSync(join(__dirname, '../fixtures/grant/v1/minimal.json'), 'utf-8');
+    const envelope = JSON.parse(raw);
+    assert.deepEqual(envelope.payload.effectTypes, [
+      GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR.effectType,
+    ]);
+  });
 });

@@ -12,7 +12,7 @@ import { githubPrBodyMarker } from '@commander/contracts';
 import {
   createGitHubPullRequestCreateAdapter,
   EnvAdapterCredentialProvider,
-} from '@commander/action-adapters';
+} from '../index.js';
 
 const tenantId = process.env.COMMANDER_CELL_TENANT_ID ?? '';
 const owner = process.env.GITHUB_TEST_OWNER ?? '';
@@ -40,14 +40,13 @@ function printCleanup(): void {
 }
 
 describe('L4-02 GitHub live adapter', { skip: liveEnabled ? false : 'missing LIVE_GITHUB creds' }, () => {
-  const credentials = new EnvAdapterCredentialProvider({ cellTenantId: tenantId });
-  const adapter = createGitHubPullRequestCreateAdapter({ credentials });
-
   after(() => {
     printCleanup();
   });
 
   it('create → queryOutcome → compensate → queryCompensationOutcome', async () => {
+    const credentials = new EnvAdapterCredentialProvider({ cellTenantId: tenantId });
+    const adapter = createGitHubPullRequestCreateAdapter({ credentials });
     const marker = githubPrBodyMarker(tenantId, idempotencyKey);
     const signal = AbortSignal.timeout(60_000);
     try {
@@ -83,7 +82,7 @@ describe('L4-02 GitHub live adapter', { skip: liveEnabled ? false : 'missing LIV
         originalEffectId: 'eff-live-gh-1',
         idempotencyKey: `cmp:eff-live-gh-1:1.0.0`,
         destination,
-        forwardResponse: created,
+        forwardResponse: { ...created, idempotencyKey },
         compensationPatch: {},
         signal,
       });
