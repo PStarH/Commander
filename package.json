@@ -94,6 +94,12 @@
     "docker:down": "docker compose down",
     "docker:v2": "docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up -d --build",
     "docker:v2:down": "docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 down",
+    "docker:cell": "docker compose -f docker-compose.yml -f docker-compose.cell.yml --profile cell up -d --build",
+    "docker:cell:down": "docker compose -f docker-compose.yml -f docker-compose.cell.yml --profile cell down -v",
+    "effect:io-guard": "pnpm exec tsx scripts/effect-io-guard.ts",
+    "effect:io-guard:test": "pnpm exec node --import tsx --test scripts/effect-io-guard.test.ts",
+    "test:deploy-gates": "pnpm helm:cell-assert && pnpm --filter @commander/adapter-ops test && pnpm exec tsx --test apps/api/test/kernelEnabled.test.ts && pnpm exec tsx --test scripts/helm-cell-assert.test.ts scripts/l4-b-cell-smoke.test.ts scripts/dr-backup-verify.test.ts && pnpm effect:io-guard:test",
+    "dr:verify": "pnpm exec tsx scripts/dr-backup-verify.ts --full",
     "p0:kernel-e2e": "pnpm exec tsx scripts/p0-kernel-e2e.ts",
     "p0:kernel-pg": "pnpm exec tsx --test --test-force-exit packages/kernel/src/postgres.integration.test.ts packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts",
     "p0:full-loop": "pnpm exec tsx scripts/p0-full-loop.ts",
@@ -105,7 +111,15 @@
     "lint:prettier": "pnpm run format:check",
     "prepublish": "cd packages/core && npx tsc -p tsconfig.json",
     "format": "npx prettier --write \"packages/core/src/**/*.ts\" \"packages/core/tests/**/*.ts\" \"apps/api/src/**/*.ts\" \"apps/web/src/**/*.{ts,tsx}\" \"scripts/**/*.ts\"",
-    "format:check": "npx prettier --check \"packages/core/src/**/*.ts\" \"packages/core/tests/**/*.ts\" \"apps/api/src/**/*.ts\" \"apps/web/src/**/*.{ts,tsx}\" \"scripts/**/*.ts\""
+    "format:check": "npx prettier --check \"packages/core/src/**/*.ts\" \"packages/core/tests/**/*.ts\" \"apps/api/src/**/*.ts\" \"apps/web/src/**/*.{ts,tsx}\" \"scripts/**/*.ts\"",
+    "cell:smoke": "pnpm exec tsx scripts/l4-b-cell-smoke.ts",
+    "cell:compensation-e2e": "pnpm exec tsx scripts/l4-b-cell-compensation-e2e.ts",
+    "cell:compensation-dual-race": "pnpm exec tsx scripts/l4-b-compensation-dual-process-race.ts",
+    "cell:up-assert": "pnpm exec tsx scripts/l4-b-cell-up-assert.ts",
+    "cell:image-boot-smoke": "pnpm exec tsx scripts/l4-b-image-boot-smoke.ts",
+    "helm:cell-assert": "pnpm run helm:cell-assert:demo && pnpm run helm:cell-assert:enterprise",
+    "helm:cell-assert:demo": "helm template cell-demo deploy/helm/commander -f deploy/helm/commander/values-demo.yaml --set image.tag=test | pnpm exec tsx scripts/helm-cell-assert.ts --profile demo",
+    "helm:cell-assert:enterprise": "helm template cell-enterprise deploy/helm/commander -f deploy/helm/commander/values-enterprise.yaml --set image.tag=test | pnpm exec tsx scripts/helm-cell-assert.ts --profile enterprise"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
@@ -117,7 +131,11 @@
     "typescript-eslint": "^8.62.0"
   },
   "dependencies": {
+    "@commander/core": "workspace:*",
+    "@commander/kernel": "workspace:*",
+    "@commander/worker-plane": "workspace:*",
     "js-yaml": "^4.1.1",
+    "pg": "^8.15.0",
     "playwright": "^1.61.1",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"

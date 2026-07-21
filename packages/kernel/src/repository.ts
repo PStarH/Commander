@@ -19,6 +19,14 @@ import type {
   KernelTimer,
   MarkEffectCompletionUnknownRequest,
   ReconcileEffectRequest,
+  RequestReconcileInput,
+  ClaimReconcileEffectsInput,
+  ClaimedReconcileEffect,
+  RescheduleReconcileInput,
+  EscalateReconcileInput,
+  FailEffectRequest,
+  RequestCompensationInput,
+  RequestCompensationResult,
   TenantExecutionControl,
   KillSwitch,
   KillSwitchMatchDims,
@@ -41,6 +49,8 @@ export interface KernelRepository {
   /** Control-plane configured maximum simultaneously running steps for a tenant. */
   setTenantConcurrencyLimit(tenantId: string, maxConcurrentSteps: number): Promise<void>;
   getRun(runId: string, tenantId: string): Promise<KernelRun | null>;
+  /** List runs for a tenant, newest updatedAt first. */
+  listRuns(tenantId: string, options?: { limit?: number }): Promise<KernelRun[]>;
   getStep(stepId: string, tenantId: string): Promise<KernelStep | null>;
   claimNextStep(request: ClaimStepRequest): Promise<KernelStep | null>;
   heartbeatStep(
@@ -56,12 +66,7 @@ export interface KernelRepository {
   /** Wake a step that is waiting for retry so it becomes claimable again. */
   wakeRetryStep(stepId: string, tenantId: string, actor: string): Promise<KernelStep | null>;
   /** Fail a step from a timer/deadline without a worker lease. */
-  failStepByTimer(
-    stepId: string,
-    tenantId: string,
-    error: { code: string; message: string; retryable: boolean; details?: Record<string, unknown> },
-    actor: string,
-  ): Promise<KernelStep | null>;
+  failStepByTimer(stepId: string, tenantId: string, error: { code: string; message: string; retryable: boolean; details?: Record<string, unknown> }, actor: string): Promise<KernelStep | null>;
   /** Pause a run, releasing any active worker leases but keeping scheduled work. */
   pauseRun(runId: string, tenantId: string, actor: string): Promise<KernelRun | null>;
   /** Resume a paused run so that pending steps become claimable again. */
@@ -81,9 +86,7 @@ export interface KernelRepository {
     response: Record<string, unknown>,
     actor: string,
   ): Promise<KernelEffect | null>;
-  markEffectCompletionUnknown(
-    request: MarkEffectCompletionUnknownRequest,
-  ): Promise<KernelEffect | null>;
+  markEffectCompletionUnknown(request: MarkEffectCompletionUnknownRequest): Promise<KernelEffect | null>;
   /** L3-08a: load a single effect for UNKNOWN reconcile. */
   getEffect(effectId: string, tenantId: string): Promise<KernelEffect | null>;
   /**
@@ -91,14 +94,16 @@ export interface KernelRepository {
    * Ops/reconciler path — no worker lease; never re-executes the write.
    */
   reconcileEffect(request: ReconcileEffectRequest): Promise<KernelEffect | null>;
+  requestReconcile(input: RequestReconcileInput): Promise<KernelEffect | null>;
+  claimReconcileEffects(input: ClaimReconcileEffectsInput): Promise<ClaimedReconcileEffect[]>;
+  rescheduleReconcile(input: RescheduleReconcileInput): Promise<boolean>;
+  escalateReconcile(input: EscalateReconcileInput): Promise<boolean>;
+  releaseReconcileClaim(effectId: string, tenantId: string, claimToken: string): Promise<boolean>;
+  failEffect(request: FailEffectRequest): Promise<KernelEffect | null>;
+  requestCompensation(input: RequestCompensationInput): Promise<RequestCompensationResult | null>;
   claimOutbox(limit: number, now?: Date): Promise<KernelOutboxMessage[]>;
   markOutboxPublished(messageId: string, claimToken: string): Promise<boolean>;
-  retryOutbox(
-    messageId: string,
-    claimToken: string,
-    error: { code: string; message: string },
-    now?: Date,
-  ): Promise<boolean>;
+  retryOutbox(messageId: string, claimToken: string, error: { code: string; message: string }, now?: Date): Promise<boolean>;
   listEvents(runId: string, tenantId: string): Promise<KernelEvent[]>;
   /** Effect ledger rows for a run (commander_effects). */
   listEffectsForRun(runId: string, tenantId: string): Promise<KernelEffect[]>;
@@ -135,10 +140,7 @@ export interface KernelRepository {
 
   /** Move outbox messages that exceeded max_attempts to the DLQ.
    *  Applies exponential backoff to messages below the threshold. */
-  sweepOutboxDlq(
-    now?: Date,
-    limit?: number,
-  ): Promise<{ movedToDlq: number; backoffApplied: number }>;
+  sweepOutboxDlq(now?: Date, limit?: number): Promise<{ movedToDlq: number; backoffApplied: number }>;
   /** List DLQ entries for inspection and replay. */
   listDlqEntries(limit?: number, topic?: string): Promise<KernelDlqEntry[]>;
   /** Replay a DLQ entry back into the outbox for re-publishing. */
@@ -154,12 +156,7 @@ export interface KernelRepository {
   isCapabilityRevoked(jti: string): Promise<boolean>;
 
   /** Revoke a capability token by jti. Idempotent. */
-  revokeCapability(input: {
-    jti: string;
-    tenantId: string;
-    expiresAt: string;
-    reason?: string;
-  }): Promise<void>;
+  revokeCapability(input: { jti: string; tenantId: string; expiresAt: string; reason?: string }): Promise<void>;
 
   /** Check whether an action is allowed for a tenant per the allowlist.
    *  Supports wildcard patterns (e.g. `http.*`, `compensate.*`). An empty
@@ -177,19 +174,10 @@ export interface KernelRepository {
 
   /** Increment the daily quota counter for a tenant/action_class. Returns the
    *  updated row so the broker can compare against the configured ceiling. */
-  incrementQuota(input: {
-    tenantId: string;
-    actionClass: string;
-    tokensUsed?: number;
-    now?: Date;
-  }): Promise<{ countUsed: number; tokensUsed: number }>;
+  incrementQuota(input: { tenantId: string; actionClass: string; tokensUsed?: number; now?: Date }): Promise<{ countUsed: number; tokensUsed: number }>;
 
   /** Read the current daily quota row (or zeros if none yet). */
-  getQuota(
-    tenantId: string,
-    actionClass: string,
-    now?: Date,
-  ): Promise<{ countUsed: number; tokensUsed: number }>;
+  getQuota(tenantId: string, actionClass: string, now?: Date): Promise<{ countUsed: number; tokensUsed: number }>;
 
   // ── L4-04 Kill switches ───────────────────────────────────────────────────
 
