@@ -35,6 +35,7 @@ async function createActionRun(
     runId?: string;
     tenantId?: string;
     effect?: 'allow' | 'deny' | 'require_approval';
+    destination?: string;
     actionDigest?: string;
     decisionId?: string;
     metadataEffectId?: string;
@@ -51,7 +52,18 @@ async function createActionRun(
   const effectId = `${runId}-effect`;
   const interactionId = `${runId}-interaction`;
   const effect = options.effect ?? 'allow';
-  const actionEnvelope = { ...envelope, tenantId };
+  const destination =
+    options.destination ??
+    (effect === 'require_approval'
+      ? 'demo://tickets/approval'
+      : effect === 'deny'
+        ? 'demo://tickets/denied'
+        : envelope.destination);
+  const actionEnvelope = {
+    ...envelope,
+    tenantId,
+    destination,
+  };
   const actionDigest = options.actionDigest ?? digest(actionEnvelope);
   const policySnapshotId = options.metadataPolicySnapshotId ?? 'action-gateway-mvp-v1';
   const decisionId = options.decisionId ?? `action-gateway-${effect}`;
@@ -308,6 +320,61 @@ describe('L4-01 Action Gateway worker policy', () => {
     assert.equal(decision.reason, 'ACTION_DIGEST_MISMATCH');
   });
 
+  it('re-validates action-gateway-mvp-v1 and rejects a forged allow decision', async () => {
+    const repository = new InMemoryKernelRepository();
+    // Envelope destination is unregistered (evaluateAction → deny), but sealed
+    // metadata claims allow — worker must fail closed on revalidation.
+    const forged = await createActionRun(repository, {
+      runId: 'run-forged-allow-decision',
+      effect: 'allow',
+      destination: 'demo://tickets/forged',
+    });
+    const decision = await evaluate(repository, {
+      tenantId: 'tenant-a',
+      runId: forged.runId,
+      stepId: forged.stepId,
+      request: forged.actionEnvelope,
+    });
+    assert.equal(decision.effect, 'deny');
+    assert.equal(decision.reason, 'ACTION_GATEWAY_DECISION_REVALIDATION_FAILED');
+  });
+
+  it('does not honor post-create mutation of caller-held run metadata clones', async () => {
+    const repository = new InMemoryKernelRepository();
+    const action = await createActionRun(repository, {
+      runId: 'run-metadata-immutable',
+      effect: 'deny',
+      destination: 'demo://tickets/forged',
+    });
+    const held = await repository.getRun(action.runId, 'tenant-a');
+    assert.ok(held);
+    const gateway = held.metadata.actionGateway as {
+      decision: { effect: string; decisionId: string; reason: string };
+      simulation: { effect: string; decisionId: string; reason: string };
+    };
+    gateway.decision.effect = 'allow';
+    gateway.decision.decisionId = 'action-gateway-allow';
+    gateway.decision.reason = 'allow';
+    gateway.simulation.effect = 'allow';
+    gateway.simulation.decisionId = 'action-gateway-allow';
+    gateway.simulation.reason = 'allow';
+
+    const reloaded = await repository.getRun(action.runId, 'tenant-a');
+    const persisted = reloaded!.metadata.actionGateway as {
+      decision: { effect: string; decisionId: string };
+    };
+    assert.equal(persisted.decision.effect, 'deny');
+    assert.equal(persisted.decision.decisionId, 'action-gateway-deny');
+
+    const decision = await evaluate(repository, {
+      tenantId: 'tenant-a',
+      runId: action.runId,
+      stepId: action.stepId,
+      request: action.actionEnvelope,
+    });
+    assert.equal(decision.effect, 'deny');
+  });
+
   it('rejects a simulation that is not exactly bound to its persisted action', async () => {
     const repository = new InMemoryKernelRepository();
     const action = await createActionRun(repository, {
@@ -510,7 +577,7 @@ describe('L4-04 kill switch worker policy', () => {
     await repository.putKillSwitch({
       tenantId: 'tenant-a',
       scope: 'destination',
-      value: 'demo://tickets',
+      value: 'demo://tickets/approval',
       enabled: true,
       actor: 'ops-a',
     });
