@@ -82,6 +82,39 @@ export {
 } from './compatibility.js';
 export type { ContractSnapshot } from './compatibility.js';
 
+// --- Constitution versioned envelopes + grant (L4 action gateway) ---
+export {
+  CONSTITUTION_CONTRACT_VERSIONS,
+  RUN_CONTRACT_VERSION,
+  EVENT_CONTRACT_VERSION,
+  EFFECT_CONTRACT_VERSION,
+  GRANT_CONTRACT_VERSION,
+  ARTIFACT_CONTRACT_VERSION,
+} from './versioned.js';
+export type { VersionedContract, ConstitutionContractVersion } from './versioned.js';
+
+export { GrantV1, GRANT_CONTRACT_VERSION as GRANT_VERSION, wrapGrantV1 } from './grant.js';
+export type { GrantContractV1 } from './grant.js';
+
+export { upcastLegacyGrantToV1, getLegacyGrantUpcastCount } from './upcasters/index.js';
+export type { LegacyGrantPayload } from './upcasters/index.js';
+
+export {
+  commanderActionMarker,
+  compensationIdempotencyKey,
+  evaluateManifestGatewayEffect,
+  findAdapterManifest,
+  FIXED_ACTION_ADAPTER_MANIFESTS,
+  githubPrBodyMarker,
+  GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR,
+  servicenowCorrelationId,
+  SERVICENOW_INCIDENT_CREATE_DESCRIPTOR,
+} from './actionAdapters.js';
+export type {
+  ActionAdapterDescriptorV1,
+  ActionGatewayEffect,
+} from './actionAdapters.js';
+
 // --- Shared identity, policy, audit, and plugin contracts ---
 export {
   CONTROL_PLANE_API_VERSION,
