@@ -7,11 +7,22 @@ import {
   type NewKernelStep,
 } from '@commander/kernel';
 import {
+  InMemoryWorkerRegistry,
   WorkerService,
   PostgresWorkerRegistry,
   ApiKeyWorkerAuthenticator,
+  ToolStepExecutor,
+  createWorkerPolicyEvaluator,
   type StepExecutor,
 } from '@commander/worker-plane';
+import {
+  CapabilityTokenIssuer,
+  CapabilityTokenVerifier,
+  EffectBroker,
+  canonicalRequestHash,
+} from '@commander/effect-broker';
+import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
+import { InMemoryTicketAdapter } from '../ticketAdapter.js';
 
 const databaseUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
 
@@ -34,6 +45,307 @@ function agentInput(goal: string): Record<string, unknown> {
     providerSnapshot: { provider: 'mock', model: 'mock-model' },
   };
 }
+
+async function createInMemoryActionRun(
+  kernel: InMemoryKernelRepository,
+  input: {
+    runId: string;
+    effect: 'allow' | 'deny' | 'require_approval';
+    destination: string;
+    effectType?: string;
+    tool?: string;
+    args?: Record<string, unknown>;
+    executionArgs?: Record<string, unknown>;
+  },
+) {
+  const tenantId = 'tenant-action-e2e';
+  const stepId = `${input.runId}-step`;
+  const effectId = `${input.runId}-effect`;
+  const interactionId = `${input.runId}-interaction`;
+  const envelope = {
+    tenantId,
+    source: 'e2e-agent',
+    package: 'e2e-package',
+    model: 'e2e-model',
+    tool: input.tool ?? 'ticket.create',
+    destination: input.destination,
+    effectType: input.effectType ?? 'demo.ticket.create',
+    args: input.args ?? { title: `${input.effect} ticket` },
+    idempotencyKey: `${input.runId}-key`,
+  };
+  const actionDigest = canonicalRequestHash(envelope);
+  const simulationId = `${input.runId}-simulation`;
+  const decisionId = `action-gateway-${input.effect}`;
+  const executionEnvelope = {
+    ...envelope,
+    args: input.executionArgs ?? envelope.args,
+  };
+  await kernel.createRun(
+    {
+      id: input.runId,
+      tenantId,
+      intentHash: 'intent-action-e2e',
+      workGraphHash: 'graph-action-e2e',
+      workGraphVersion: 'action-gateway/v1',
+      policySnapshotId: 'action-gateway-mvp-v1',
+      metadata: {
+        actionGateway: {
+          authority: 'commander.action-gateway/v1',
+          stepId,
+          effectId,
+          interactionId: input.effect === 'require_approval' ? interactionId : undefined,
+          actionDigest,
+          policySnapshotId: 'action-gateway-mvp-v1',
+          decision: {
+            effect: input.effect,
+            decisionId,
+            reason: input.effect,
+            policySnapshotId: 'action-gateway-mvp-v1',
+          },
+          simulation: {
+            simulationId,
+            actionDigest,
+            effect: input.effect,
+            decisionId,
+            reason: input.effect,
+            policySnapshotId: 'action-gateway-mvp-v1',
+          },
+          envelope,
+        },
+      },
+      steps: [
+        {
+          id: stepId,
+          kind: 'tool',
+          initialState: input.effect === 'require_approval' ? 'WAITING_FOR_HUMAN' : 'PENDING',
+          interaction:
+            input.effect === 'require_approval'
+              ? { id: interactionId, prompt: 'Approve demo ticket?' }
+              : undefined,
+          input: {
+            toolName: envelope.tool,
+            effectType: envelope.effectType,
+            args: executionEnvelope.args,
+            actionEnvelope: executionEnvelope,
+            effectId,
+            idempotencyKey: envelope.idempotencyKey,
+            // Must match run/decision snapshot — mint defaults to 'policy' otherwise.
+            policySnapshotId: 'action-gateway-mvp-v1',
+          },
+        },
+      ],
+    },
+    'action-gateway',
+  );
+  return {
+    tenantId,
+    stepId,
+    interactionId,
+    envelope,
+    actionDigest,
+    simulationId,
+  };
+}
+
+describe('Action Gateway → Kernel → EffectBroker → demo adapter', () => {
+  it('executes allow and approved actions while denied actions never reach the adapter', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.setAllowlistEntry('tenant-action-e2e', 'demo.ticket.create', true);
+    await kernel.setAllowlistEntry('tenant-action-e2e', 'compensate.demo.ticket.create', true);
+    const issuer = CapabilityTokenIssuer.generate({
+      issuer: 'commander-worker',
+      audience: 'commander.effect-broker',
+      keyId: 'action-e2e',
+    });
+    const verifier = new CapabilityTokenVerifier({
+      issuer: 'commander-worker',
+      audience: 'commander.effect-broker',
+      publicKeys: { 'action-e2e': issuer.publicKey },
+    });
+    const tickets = new InMemoryTicketAdapter();
+    const bootstrap = await import('../bootstrap.js');
+    const createWorkerEffectExecutor = bootstrap.createWorkerEffectExecutor;
+    assert.equal(typeof createWorkerEffectExecutor, 'function');
+    const auditEvents: Array<{ type: string; details: Record<string, unknown> }> = [];
+    const broker = new EffectBroker(
+      verifier,
+      createWorkerPolicyEvaluator(kernel),
+      kernel,
+      // 签名是 (tickets = adapter)，不能传 { tickets } 对象字面量
+      createWorkerEffectExecutor(tickets),
+      {
+        append: async (event) => {
+          auditEvents.push({ type: event.type, details: event.details });
+        },
+      },
+      { requireRequestBinding: true, localWorkerId: 'worker-action-e2e' },
+    );
+    const worker = new WorkerService(
+      {
+        id: 'worker-action-e2e',
+        kind: 'tool',
+        version: 'e2e',
+        capabilities: ['tool'],
+        maxConcurrency: 1,
+      },
+      {
+        subject: 'worker:action-e2e',
+        token: 'worker-action-token',
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+      new ApiKeyWorkerAuthenticator({
+        validTokens: new Set(['worker-action-token']),
+        defaultTenantIds: ['tenant-action-e2e'],
+        defaultCapabilities: ['tool'],
+      }),
+      new InMemoryWorkerRegistry(),
+      kernel,
+      new ToolStepExecutor(undefined, broker, issuer),
+      {
+        leaseTtlMs: 30_000,
+        workerHeartbeatMs: 10_000,
+        pollIntervalMs: 5,
+        onRegistered: (record) => broker.bindLocalWorkerGeneration(record.generation),
+      },
+    );
+
+    const allowed = await createInMemoryActionRun(kernel, {
+      runId: 'run-action-allow',
+      effect: 'allow',
+      destination: 'demo://tickets',
+    });
+    const denied = await createInMemoryActionRun(kernel, {
+      runId: 'run-action-deny',
+      effect: 'deny',
+      destination: 'https://untrusted.example/tickets',
+    });
+    const approval = await createInMemoryActionRun(kernel, {
+      runId: 'run-action-approval',
+      effect: 'require_approval',
+      destination: 'demo://tickets/approval',
+    });
+
+    await worker.start();
+    try {
+      assert.equal(await worker.pollOnce(), true);
+      await worker.waitForIdle();
+      assert.equal((await kernel.getRun('run-action-allow', allowed.tenantId))?.state, 'SUCCEEDED');
+      assert.equal(tickets.createInvocations, 1);
+
+      assert.equal(await worker.pollOnce(), true);
+      await worker.waitForIdle();
+      assert.equal((await kernel.getRun('run-action-deny', denied.tenantId))?.state, 'FAILED');
+      assert.equal(tickets.createInvocations, 1);
+
+      assert.equal(await worker.pollOnce(), false, 'approval step is not claimable before answer');
+      await kernel.answerInteraction({
+        interactionId: approval.interactionId,
+        runId: 'run-action-approval',
+        tenantId: approval.tenantId,
+        response: {
+          approved: true,
+          actionDigest: approval.actionDigest,
+          simulationId: approval.simulationId,
+          policySnapshotId: 'action-gateway-mvp-v1',
+          reviewer: 'reviewer-a',
+          runId: 'run-action-approval',
+          tenantId: approval.tenantId,
+        },
+        actor: 'reviewer-a',
+      });
+      assert.equal(await worker.pollOnce(), true);
+      await worker.waitForIdle();
+      assert.equal(
+        (await kernel.getRun('run-action-approval', approval.tenantId))?.state,
+        'SUCCEEDED',
+      );
+      assert.equal(tickets.createInvocations, 2);
+      assert.equal(
+        (await kernel.listEffectsForRun('run-action-approval', approval.tenantId)).length,
+        1,
+      );
+
+      const mutated = await createInMemoryActionRun(kernel, {
+        runId: 'run-action-mutated-after-approval',
+        effect: 'require_approval',
+        destination: 'demo://tickets/approval',
+        args: { title: 'Approved title' },
+        executionArgs: { title: 'Mutated title' },
+      });
+      await kernel.answerInteraction({
+        interactionId: mutated.interactionId,
+        runId: 'run-action-mutated-after-approval',
+        tenantId: mutated.tenantId,
+        response: {
+          approved: true,
+          actionDigest: mutated.actionDigest,
+          simulationId: mutated.simulationId,
+          policySnapshotId: 'action-gateway-mvp-v1',
+          reviewer: 'reviewer-a',
+          runId: 'run-action-mutated-after-approval',
+          tenantId: mutated.tenantId,
+        },
+        actor: 'reviewer-a',
+      });
+      assert.equal(await worker.pollOnce(), true);
+      await worker.waitForIdle();
+      assert.equal(
+        (await kernel.getRun('run-action-mutated-after-approval', mutated.tenantId))?.state,
+        'FAILED',
+      );
+      assert.equal(tickets.createInvocations, 2, 'mutated action never invokes adapter');
+      assert.equal(
+        (await kernel.listEffectsForRun('run-action-mutated-after-approval', mutated.tenantId))
+          .length,
+        0,
+        'mutated action is rejected before broker admission',
+      );
+
+      const compensation = await createInMemoryActionRun(kernel, {
+        runId: 'run-action-compensate',
+        effect: 'allow',
+        destination: 'demo://tickets',
+        effectType: 'compensate.demo.ticket.create',
+        tool: 'ticket.compensate',
+        args: { targetIdempotencyKey: allowed.envelope.idempotencyKey },
+      });
+      assert.equal(await worker.pollOnce(), true);
+      await worker.waitForIdle();
+      const compensationStep = await kernel.getStep(compensation.stepId, compensation.tenantId);
+      assert.equal(
+        (await kernel.getRun('run-action-compensate', compensation.tenantId))?.state,
+        'SUCCEEDED',
+        JSON.stringify(compensationStep?.error),
+      );
+      const remote = await tickets.queryOutcome({
+        effectId: 'run-action-allow-effect',
+        idempotencyKey: allowed.envelope.idempotencyKey,
+        type: 'demo.ticket.create',
+        request: {},
+        tenantId: allowed.tenantId,
+      });
+      assert.equal(remote.status, 'COMPLETED');
+      assert.equal(remote.response?.status, 'closed');
+      const compensationEffects = await kernel.listEffectsForRun(
+        'run-action-compensate',
+        compensation.tenantId,
+      );
+      assert.equal(compensationEffects.length, 1);
+      assert.equal(compensationEffects[0]?.type, 'compensate.demo.ticket.create');
+      assert.equal(compensationEffects[0]?.state, 'COMPLETED');
+      assert.equal(
+        auditEvents.some(
+          (event) =>
+            event.type === 'effect.completed' &&
+            event.details.effectId === compensationEffects[0]?.id,
+        ),
+        true,
+      );
+    } finally {
+      await worker.stop();
+    }
+  });
+});
 
 describe('Gateway → Kernel → Worker real execution loop', { skip: !databaseUrl }, () => {
   it('executes a default V1 agent run end-to-end in PostgreSQL', async () => {

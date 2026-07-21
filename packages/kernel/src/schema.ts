@@ -297,6 +297,18 @@ CREATE TABLE IF NOT EXISTS commander_capability_revocations (
   reason TEXT
 );
 CREATE INDEX IF NOT EXISTS commander_capability_revocations_exp_idx ON commander_capability_revocations (expires_at);
+
+-- L4-04 six-dimensional kill-switch matrix. enabled=false records intent without blocking.
+CREATE TABLE IF NOT EXISTS commander_action_kill_switches (
+  tenant_id TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  value TEXT NOT NULL,
+  enabled BOOLEAN NOT NULL DEFAULT true,
+  reason TEXT,
+  actor TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, scope, value)
+);
 `;
 
 /**
@@ -325,7 +337,7 @@ BEGIN
     'commander_tenant_execution_usage', 'commander_tenant_execution_control', 'commander_timers',
     'commander_interactions', 'commander_outbox', 'commander_outbox_deliveries', 'commander_outbox_dlq',
     'commander_effect_allowlist', 'commander_effect_quota',
-    'commander_capability_revocations'
+    'commander_capability_revocations', 'commander_action_kill_switches'
   ] LOOP
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', table_name);
     EXECUTE format('DROP POLICY IF EXISTS commander_tenant_isolation ON %I', table_name);

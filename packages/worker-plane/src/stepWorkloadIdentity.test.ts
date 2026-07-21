@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { resetControlPlane } from '@commander/core';
+import { resetControlPlane } from './workerRuntimeAdapter.js';
 import {
   CapabilityTokenIssuer,
   CapabilityTokenVerifier,
@@ -117,7 +117,14 @@ describe('stepWorkloadIdentity (L3-07)', () => {
     });
     const broker = new EffectBroker(
       tokens,
-      { evaluate: async () => ({ effect: 'allow' as const, decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+      {
+        evaluate: async () => ({
+          effect: 'allow' as const,
+          decisionId: 'd1',
+          reason: 'ok',
+          policySnapshotId: 'p1',
+        }),
+      },
       {
         admitEffect: async () => ({ admitted: true, effect: { id: 'e1', state: 'ADMITTED' } }),
         completeEffect: async () => ({}),

@@ -66,6 +66,9 @@ importers:
       '@commander/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@commander/effect-broker':
+        specifier: workspace:*
+        version: link:../../packages/effect-broker
       '@commander/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel

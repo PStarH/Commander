@@ -1,11 +1,6 @@
 /** Canonical, versioned execution-kernel domain types. */
 
-import type {
-  KernelErrorDetails,
-  KernelEvent,
-  RunState,
-  StepState,
-} from '@commander/contracts';
+import type { KernelErrorDetails, KernelEvent, RunState, StepState } from '@commander/contracts';
 
 export type { KernelErrorDetails, KernelEvent } from '@commander/contracts';
 
@@ -127,6 +122,12 @@ export interface CreateKernelRun {
 export interface NewKernelStep {
   id: string;
   kind: string;
+  initialState?: 'PENDING' | 'WAITING_FOR_HUMAN';
+  interaction?: {
+    id: string;
+    prompt: string;
+    expiresAt?: string;
+  };
   input?: Record<string, unknown>;
   dependencies?: string[];
   priority?: number;
@@ -213,6 +214,7 @@ export class KernelInvariantError extends Error {
     readonly code:
       | 'DUPLICATE_RUN'
       | 'DUPLICATE_STEP'
+      | 'DUPLICATE_INTERACTION'
       | 'INVALID_GRAPH'
       | 'LEASE_LOST'
       | 'VERSION_CONFLICT'
@@ -222,7 +224,8 @@ export class KernelInvariantError extends Error {
       | 'TIMER_NOT_FOUND'
       | 'INTERACTION_NOT_FOUND'
       | 'INTERACTION_ALREADY_ANSWERED'
-      | 'STEP_NOT_FOUND',
+      | 'STEP_NOT_FOUND'
+      | 'KILL_SWITCH_LOOKUP_FAILED',
     message: string,
   ) {
     super(message);
@@ -289,6 +292,46 @@ export interface AnswerInteractionRequest {
   tenantId: string;
   response: Record<string, unknown>;
   actor: string;
+  /** When false, answer only; step stays WAITING_FOR_HUMAN. Default true. */
+  releaseStep?: boolean;
+}
+
+// ── Kill switches (L4-04) ───────────────────────────────────────────────────
+
+export type KillSwitchScope =
+  'tenant' | 'package' | 'model' | 'tool' | 'destination' | 'effect-type';
+
+export interface KillSwitch {
+  tenantId: string;
+  scope: KillSwitchScope;
+  value: string;
+  enabled: boolean;
+  reason?: string;
+  actor: string;
+  updatedAt: string;
+}
+
+export interface PutKillSwitchInput {
+  tenantId: string;
+  scope: KillSwitchScope;
+  value: string;
+  enabled: boolean;
+  reason?: string;
+  actor: string;
+}
+
+export interface RemoveKillSwitchInput {
+  tenantId: string;
+  scope: KillSwitchScope;
+  value: string;
+}
+
+export interface KillSwitchMatchDims {
+  package?: string;
+  model?: string;
+  tool?: string;
+  destination?: string;
+  effectType?: string;
 }
 
 // ── Outbox DLQ ──────────────────────────────────────────────────────────────

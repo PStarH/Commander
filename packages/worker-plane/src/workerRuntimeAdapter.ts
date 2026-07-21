@@ -1,6 +1,10 @@
 import { KernelStepExecutor, createAgentRuntimeFactory } from '@commander/core';
 import type { StepExecutor, ClaimedStep, WorkerLease } from './types.js';
-import type { AgentRuntimeFactoryOptions, AgentRuntimeInterface, LLMProvider } from '@commander/core';
+import type {
+  AgentRuntimeFactoryOptions,
+  AgentRuntimeInterface,
+  LLMProvider,
+} from '@commander/core';
 import type { CapabilityTokenIssuer, EffectBroker } from '@commander/effect-broker';
 import {
   createLlmEffectAuth,
@@ -11,11 +15,13 @@ import {
 import { assertEffectBrokerForProduction } from './effectGate.js';
 import { getStepWorkloadBinding } from './stepWorkloadIdentity.js';
 
-export { KernelStepExecutor } from '@commander/core';
-// WS7: SandboxManager is re-exported so sandboxReadiness can consume it via
-// this file — the constitution's single sanctioned worker-plane→core bridge
-// (scripts/arch-guard.sh isWorkerCoreBridge).
-export { SandboxManager } from '@commander/core';
+export {
+  KernelStepExecutor,
+  SandboxManager,
+  getControlPlane,
+  resetControlPlane,
+} from '@commander/core';
+export type { WorkloadIdentity } from '@commander/core';
 
 export type AgentStepExecutorOptions = AgentRuntimeFactoryOptions & {
   defaultMaxSteps?: number;
@@ -90,9 +96,7 @@ export function createAgentStepExecutor(options: AgentStepExecutorOptions = {}):
 
   const baseFactory = createAgentRuntimeFactory({
     ...factoryOptions,
-    providers: broker
-      ? wrapProviders(factoryOptions.providers, broker)
-      : factoryOptions.providers,
+    providers: broker ? wrapProviders(factoryOptions.providers, broker) : factoryOptions.providers,
   });
 
   const runtimeFactory = (tenantId: string) => {
