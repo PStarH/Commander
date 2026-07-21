@@ -121,6 +121,16 @@ CREATE TABLE IF NOT EXISTS commander_effects (
 ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS request_hash TEXT NOT NULL DEFAULT '';
 ALTER TABLE commander_effects DROP CONSTRAINT IF EXISTS commander_effects_state_check;
 ALTER TABLE commander_effects ADD CONSTRAINT commander_effects_state_check CHECK (state IN ('ADMITTED','COMPLETION_UNKNOWN','COMPLETED','FAILED'));
+-- L3-08a / L4 reconcile scheduling (aligned with sqliteSchema)
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_after TIMESTAMPTZ;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_claim_token TEXT;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_claim_expires_at TIMESTAMPTZ;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_last_error TEXT;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_escalated_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS commander_effects_reconcile_ready_idx
+  ON commander_effects (reconcile_after)
+  WHERE state = 'COMPLETION_UNKNOWN';
 
 -- The worker registry is part of the kernel's fencing authority. The worker
 -- plane also creates this table defensively, but kernel claims must validate
