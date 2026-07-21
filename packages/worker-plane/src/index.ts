@@ -95,4 +95,4 @@ export type {
 } from './connectorStepExecutor.js';
 export { InMemoryTicketAdapter } from './ticketAdapter.js';
 export type { TicketRecord } from './ticketAdapter.js';
-export { createWorkerPolicyEvaluator, withDefaultLlmAllowlist } from './bootstrap.js';
+export { createWorkerPolicyEvaluator, withDefaultLlmAllowlist, evaluateActionGatewayMvpV1 } from './bootstrap.js';
