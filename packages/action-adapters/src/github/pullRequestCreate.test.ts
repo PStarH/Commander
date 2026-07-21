@@ -251,4 +251,101 @@ describe('github.pullRequestCreate adapter', () => {
     });
     assert.equal(outcome.status, 'UNKNOWN');
   });
+
+  it('rejects GitHub destinations outside manifest charset', async () => {
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: createMockFetch({ pulls: [], createCount: 0, writeCount: 0 }),
+    });
+    await assert.rejects(
+      () =>
+        adapter.execute({
+          ...baseInput(),
+          destination: 'github://octo/repo with space/pulls',
+        }),
+      /Invalid GitHub destination/,
+    );
+  });
+
+  it('compensate refuses PR without Commander marker', async () => {
+    const state: MockState = {
+      pulls: [
+        {
+          number: 99,
+          html_url: 'https://github.com/octo/repo/pull/99',
+          state: 'open',
+          body: 'unrelated human PR',
+          head: { ref: 'feature' },
+          base: { ref: 'main' },
+        },
+      ],
+      createCount: 0,
+      writeCount: 0,
+    };
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: createMockFetch(state),
+    });
+    await assert.rejects(
+      () =>
+        adapter.compensate({
+          tenantId,
+          effectId: 'eff-cmp-1',
+          originalEffectId: 'eff-1',
+          idempotencyKey: 'cmp:eff-1:1.0.0',
+          destination,
+          forwardResponse: { prNumber: 99 },
+          compensationPatch: {},
+          signal: AbortSignal.timeout(5_000),
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof AdapterExecutionError);
+        assert.equal(error.code, 'GITHUB_COMPENSATE_MARKER_MISSING');
+        assert.equal(error.retryMode, 'NEVER');
+        return true;
+      },
+    );
+    assert.equal(state.pulls[0]!.state, 'open');
+    assert.equal(state.writeCount, 0);
+  });
+
+  it('compensate enforces exact marker when forwardResponse carries idempotencyKey', async () => {
+    const state: MockState = {
+      pulls: [
+        {
+          number: 7,
+          html_url: 'https://github.com/octo/repo/pull/7',
+          state: 'open',
+          body: githubPrBodyMarker(tenantId, 'other-key'),
+          head: { ref: 'feature' },
+          base: { ref: 'main' },
+        },
+      ],
+      createCount: 0,
+      writeCount: 0,
+    };
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: createMockFetch(state),
+    });
+    await assert.rejects(
+      () =>
+        adapter.compensate({
+          tenantId,
+          effectId: 'eff-cmp-1',
+          originalEffectId: 'eff-1',
+          idempotencyKey: 'cmp:eff-1:1.0.0',
+          destination,
+          forwardResponse: { prNumber: 7, idempotencyKey },
+          compensationPatch: {},
+          signal: AbortSignal.timeout(5_000),
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof AdapterExecutionError);
+        assert.equal(error.code, 'GITHUB_COMPENSATE_MARKER_MISMATCH');
+        return true;
+      },
+    );
+    assert.equal(state.pulls[0]!.state, 'open');
+  });
 });
