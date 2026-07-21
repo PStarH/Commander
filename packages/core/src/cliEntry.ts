@@ -57,6 +57,7 @@ import {
   cmdSecurity,
   cmdWorkflow,
   cmdDiagnose,
+  cmdAction,
 } from './cli/commands';
 import { cmdFix } from './cli/commands/convenience';
 import { cmdSandbox } from './cli/commands/sandbox';
@@ -381,6 +382,12 @@ async function main() {
     case 'diagnose':
       await cmdDiagnose(rest);
       break;
+
+    case 'action': {
+      const { positional, flags } = parseFlags(rest);
+      await cmdAction(positional, flags);
+      break;
+    }
 
     // ── Viz (execution topology visualizer) ──
     case 'viz': {

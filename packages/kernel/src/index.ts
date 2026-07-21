@@ -7,7 +7,12 @@
  * boundary.
  */
 
-export { KERNEL_RLS_SQL, KERNEL_ROLES_SQL, KERNEL_SCHEMA_SQL, KERNEL_SCHEMA_VERSION } from './schema.js';
+export {
+  KERNEL_RLS_SQL,
+  KERNEL_ROLES_SQL,
+  KERNEL_SCHEMA_SQL,
+  KERNEL_SCHEMA_VERSION,
+} from './schema.js';
 export { KERNEL_MIGRATIONS, runKernelMigrations } from './migrations.js';
 export { PostgresKernelRepository } from './postgres.js';
 export { assertRunTransition, assertStepTransition } from './transitionValidation.js';
@@ -30,12 +35,14 @@ export type {
   OutboxDeliveryPort,
   OutboxEnvelope,
 } from './ops/outbox/types.js';
-export type { PostgresKernelRepositoryOptions, SqlClient, SqlPool, SqlQueryResult } from './postgres.js';
+export type {
+  PostgresKernelRepositoryOptions,
+  SqlClient,
+  SqlPool,
+  SqlQueryResult,
+} from './postgres.js';
 export type { KernelRepository } from './repository.js';
-export {
-  KERNEL_API_VERSION,
-  KernelInvariantError,
-} from './types.js';
+export { KERNEL_API_VERSION, KernelInvariantError } from './types.js';
 export type {
   AdmitEffectRequest,
   AdmitEffectResult,
@@ -66,6 +73,11 @@ export type {
   TimerState,
   TimerType,
   TenantExecutionControl,
+  KillSwitch,
+  KillSwitchMatchDims,
+  KillSwitchScope,
+  PutKillSwitchInput,
+  RemoveKillSwitchInput,
 } from './types.js';
 
 // Object storage (interface only — implementations are in testing/)
