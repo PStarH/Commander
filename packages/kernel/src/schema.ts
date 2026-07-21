@@ -1,5 +1,5 @@
 /** PostgreSQL schema for the Commander execution kernel. */
-export const KERNEL_SCHEMA_VERSION = '2026-07-21.1';
+export const KERNEL_SCHEMA_VERSION = '2026-07-21.2';
 
 export const KERNEL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS commander_kernel_schema (
@@ -126,7 +126,7 @@ ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_attempts INTEGE
 ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_after TIMESTAMPTZ;
 ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_claim_token TEXT;
 ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_claim_expires_at TIMESTAMPTZ;
-ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_last_error TEXT;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_last_error JSONB;
 ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_escalated_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS commander_effects_reconcile_ready_idx
   ON commander_effects (reconcile_after)
