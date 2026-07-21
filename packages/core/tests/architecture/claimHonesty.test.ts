@@ -47,7 +47,7 @@ describe('claim honesty', () => {
       /kernel-ops|packages\/kernel\/src\/ops/i,
       'maps must name kernel-ops for reclaim/timer/outbox',
     );
-    assert.match(maps, /compensation/i, 'maps must acknowledge compensation ownership gap');
+    assert.match(maps, /compensation/i, 'maps must name compensation ownership');
     assert.match(
       maps,
       /ban(?:s|ned)?[\s*`]*@commander\/operations|ban(?:s|ned)?[\s*`]*resurrect/i,
@@ -58,10 +58,17 @@ describe('claim honesty', () => {
       /reintroduce\s+`?@commander\/operations`?\s+as/i,
       'must not invite resurrecting @commander/operations under another name',
     );
+    // After L4-B land (#105), adapter-ops is the live PARTIAL deploy unit for
+    // compensation/reconcile drain — not a deferred follow-up, not a fifth plane.
     assert.match(
       maps,
-      /adapter-ops[\s\S]{0,120}L4-B follow-up|L4-B follow-up[\s\S]{0,120}adapter-ops/i,
-      'adapter-ops must be documented as L4-B follow-up only on master',
+      /adapter-ops[\s\S]{0,200}(PARTIAL|compensation|reconcile)/i,
+      'adapter-ops must be documented as PARTIAL deploy unit for compensation/reconcile',
+    );
+    assert.doesNotMatch(
+      maps,
+      /adapter-ops[\s\S]{0,80}L4-B follow-up only|L4-B follow-up only[\s\S]{0,80}adapter-ops/i,
+      'must not still claim adapter-ops is follow-up-only after L4-B land',
     );
   });
 

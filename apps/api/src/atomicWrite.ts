@@ -56,9 +56,7 @@ function quarantineAside(filePath: string, reason: 'parse' | 'shape' = 'parse'):
   const aside = `${filePath}.corrupt-${Date.now()}`;
   try {
     fs.renameSync(filePath, aside);
-    process.stderr.write(
-      `[atomicWrite] quarantined ${filePath} → ${aside} (reason=${reason})\n`,
-    );
+    process.stderr.write(`[atomicWrite] quarantined ${filePath} → ${aside} (reason=${reason})\n`);
   } catch {
     /* quarantine is best-effort — never throw from a load path */
   }
