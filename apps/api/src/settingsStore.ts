@@ -1,6 +1,6 @@
 import { reportSilentFailure } from '@commander/core';
-import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { atomicWriteFileSync, readJsonFileSafe, isPlainObjectJson } from './atomicWrite';
 
 /**
  * Global application settings store.
@@ -33,24 +33,13 @@ const SETTINGS_FILE = path.join(SETTINGS_DIR, 'settings.json');
 const LEGACY_CONFIG_FILE = path.resolve(process.cwd(), '.commander.json');
 
 function readJsonFile<T>(filePath: string): T | undefined {
-  try {
-    if (!fs.existsSync(filePath)) return undefined;
-    const raw = fs.readFileSync(filePath, 'utf-8');
-    return JSON.parse(raw) as T;
-  } catch (err) {
-    reportSilentFailure(err, 'settingsStore:readJsonFile');
-    return undefined;
-  }
+  // REL-4: 损坏或错形（非对象）隔离，禁止 silent discard → save 抹掉 settings。
+  return readJsonFileSafe<T | undefined>(filePath, undefined, isPlainObjectJson);
 }
 
 function writeJsonFile(filePath: string, data: unknown): void {
-  const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  const tmp = `${filePath}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8');
-  fs.renameSync(tmp, filePath);
+  // REL-3: fsync-then-rename via shared atomicWrite helper.
+  atomicWriteFileSync(filePath, JSON.stringify(data, null, 2));
 }
 
 function loadLegacySettings(): Partial<AppSettings> {
