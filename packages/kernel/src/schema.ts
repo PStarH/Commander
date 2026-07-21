@@ -1,5 +1,5 @@
 /** PostgreSQL schema for the Commander execution kernel. */
-export const KERNEL_SCHEMA_VERSION = '2026-07-15.1';
+export const KERNEL_SCHEMA_VERSION = '2026-07-21.1';
 
 export const KERNEL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS commander_kernel_schema (
