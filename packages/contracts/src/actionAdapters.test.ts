@@ -71,6 +71,17 @@ describe('actionAdapters contracts', () => {
     );
   });
 
+  it('findAdapterManifest rejects GitHub owner/repo outside opaque charset', () => {
+    assert.equal(
+      findAdapterManifest({
+        effectType: 'connector.github.pull-request.create',
+        toolName: 'github.pull-request.create',
+        destination: 'github://octo/repo with space/pulls',
+      }),
+      null,
+    );
+  });
+
   it('evaluateManifestGatewayEffect denies destination mismatch', () => {
     assert.equal(
       evaluateManifestGatewayEffect(
