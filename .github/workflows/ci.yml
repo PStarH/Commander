@@ -302,6 +302,7 @@ jobs:
           pnpm --filter @commander/plugin-sdk build
           pnpm --filter @commander/kernel build
           pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/action-adapters build
           pnpm --filter @commander/core build
           pnpm --filter @commander/core exec tsx --test \
             tests/sandbox/productionPolicy.test.ts \
@@ -313,7 +314,9 @@ jobs:
             packages/worker-plane/src/stepWorkloadIdentity.test.ts \
             packages/worker-plane/src/l3-03b-gateway-localonly.test.ts \
             packages/worker-plane/src/l3-03a-effect-tool-monopoly.test.ts \
-            packages/worker-plane/src/ticketAdapter.test.ts
+            packages/worker-plane/src/ticketAdapter.test.ts \
+            packages/worker-plane/src/actionGatewayPolicy.test.ts \
+            packages/worker-plane/src/bootstrap.policy.test.ts
           pnpm exec tsx --test \
             apps/api/test/namespacedMemoryEndpoints.test.ts \
             apps/api/test/namespacedMemoryRbac.test.ts \
