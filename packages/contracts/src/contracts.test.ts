@@ -78,6 +78,10 @@ describe('@commander/contracts state machine', () => {
     assert.equal(validateStepTransition('FAILED', 'RUNNING').ok, false);
   });
 
+  it('allows an answered human interaction to release its waiting step', () => {
+    assert.equal(validateStepTransition('WAITING_FOR_HUMAN', 'RETRY_WAIT').ok, true);
+  });
+
   it('allows deadlines to fail runs before execution or while paused', () => {
     assert.equal(validateRunTransition('PENDING', 'FAILED').ok, true);
     assert.equal(validateRunTransition('PAUSED', 'FAILED').ok, true);
@@ -170,7 +174,10 @@ describe('@commander/contracts JSON schemas', () => {
       assert.ok(s.$id, `Schema ${name} missing $id`);
       assert.ok(s.type, `Schema ${name} missing type`);
       assert.ok(Array.isArray(s.required), `Schema ${name} missing required array`);
-      assert.ok(s.properties && typeof s.properties === 'object', `Schema ${name} missing properties`);
+      assert.ok(
+        s.properties && typeof s.properties === 'object',
+        `Schema ${name} missing properties`,
+      );
     }
   });
 
@@ -189,7 +196,15 @@ describe('@commander/contracts JSON schemas', () => {
   it('effect schema has all 7 effect statuses', () => {
     const effectSchema = CONTRACT_SCHEMAS.effect as any;
     const statuses = effectSchema.properties.status.enum;
-    assert.deepStrictEqual(statuses, ['ADMITTED', 'EXECUTING', 'COMPLETION_UNKNOWN', 'COMPLETED', 'FAILED', 'COMPENSATED', 'REJECTED']);
+    assert.deepStrictEqual(statuses, [
+      'ADMITTED',
+      'EXECUTING',
+      'COMPLETION_UNKNOWN',
+      'COMPLETED',
+      'FAILED',
+      'COMPENSATED',
+      'REJECTED',
+    ]);
   });
 
   it('connector schema has data classification enum', () => {
@@ -229,16 +244,28 @@ describe('@commander/contracts OpenAPI V1 spec', () => {
     assert.ok('ApiKeyAuth' in (OPENAPI_V1_SPEC.components as any).securitySchemes);
     const runPost = (OPENAPI_V1_SPEC.paths as any)['/runs'].post;
     const paramNames = runPost.parameters.map((p: any) => p.$ref ?? p.name);
-    assert.ok(paramNames.some((n: string) => n?.includes('IdempotencyKey') || n === 'Idempotency-Key'));
+    assert.ok(
+      paramNames.some((n: string) => n?.includes('IdempotencyKey') || n === 'Idempotency-Key'),
+    );
   });
 
   it('all component schemas are defined', () => {
     const schemas = (OPENAPI_V1_SPEC.components as any).schemas;
     const expected = [
-      'Run', 'Step', 'WorkGraph', 'Interaction', 'Artifact',
-      'PolicyBundle', 'Effect', 'AgentDefinition', 'ToolDefinition',
-      'ConnectorDefinition', 'KernelEvent', 'Error',
-      'CreateRunRequest', 'CreateInteractionResponseRequest',
+      'Run',
+      'Step',
+      'WorkGraph',
+      'Interaction',
+      'Artifact',
+      'PolicyBundle',
+      'Effect',
+      'AgentDefinition',
+      'ToolDefinition',
+      'ConnectorDefinition',
+      'KernelEvent',
+      'Error',
+      'CreateRunRequest',
+      'CreateInteractionResponseRequest',
     ];
     for (const name of expected) {
       assert.ok(name in schemas, `Schema ${name} missing from OpenAPI components`);
@@ -297,17 +324,16 @@ describe('@commander/contracts compatibility', () => {
       dirname(fileURLToPath(import.meta.url)),
       '../snapshots/contract-snapshot.baseline.json',
     );
-    const baseline = JSON.parse(readFileSync(baselinePath, 'utf8')) as ReturnType<typeof snapshotContracts>;
+    const baseline = JSON.parse(readFileSync(baselinePath, 'utf8')) as ReturnType<
+      typeof snapshotContracts
+    >;
     const current = snapshotContracts();
     const changes = detectBreakingChanges(baseline, current);
-    assert.deepStrictEqual(
-      changes,
-      [],
-      `baseline drift detected: ${changes.join('; ')}`,
-    );
+    assert.deepStrictEqual(changes, [], `baseline drift detected: ${changes.join('; ')}`);
   });
 
   it('error codes are stable', () => {
+    assert.ok(KERNEL_ERROR_CODES.includes('DUPLICATE_INTERACTION'));
     assert.ok(KERNEL_ERROR_CODES.includes('LEASE_LOST'));
     assert.ok(KERNEL_ERROR_CODES.includes('VERSION_CONFLICT'));
     assert.ok(KERNEL_ERROR_CODES.includes('POLICY_DENIED'));

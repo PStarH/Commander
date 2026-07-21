@@ -9,6 +9,8 @@ import pytest
 import respx
 
 from commander import CommanderClient
+from commander._gateway_client import CommanderGatewayClient
+from commander._types import ActionApprovalInput, ProposeActionInput
 from commander._exceptions import (
     AuthenticationError,
     ConnectionError,
@@ -106,3 +108,139 @@ class TestClientRequests:
             async with mock_api:
                 with pytest.raises(ConnectionError):
                     await client._request("GET", "/health")
+
+
+ACTION_FIXTURES = {
+    "input": {
+        "source": "sdk-test",
+        "package": "demo.package",
+        "model": "demo-model",
+        "tool": "ticket.create",
+        "destination": "demo://tickets",
+        "effectType": "demo.ticket.create",
+        "args": {"title": "Reset password"},
+        "idempotencyKey": "action-key-0001",
+    },
+    "simulation": {
+        "simulationId": "sim-1",
+        "decisionId": "action-gateway-allow",
+        "effect": "allow",
+        "reason": "allowed",
+        "policySnapshotId": "action-gateway-mvp-v1",
+        "actionDigest": "a" * 64,
+    },
+    "action": {
+        "runId": "run-action-1",
+        "stepId": "step-1",
+        "effectId": "effect-1",
+        "state": "PENDING",
+        "decision": {
+            "effect": "allow",
+            "decisionId": "action-gateway-allow",
+            "reason": "allowed",
+            "policySnapshotId": "action-gateway-mvp-v1",
+        },
+        "simulation": {
+            "simulationId": "sim-1",
+            "decisionId": "action-gateway-allow",
+            "effect": "allow",
+            "reason": "allowed",
+            "policySnapshotId": "action-gateway-mvp-v1",
+            "actionDigest": "a" * 64,
+        },
+        "actionDigest": "a" * 64,
+        "policySnapshotId": "action-gateway-mvp-v1",
+        "createdAt": "2026-07-18T00:00:00.000Z",
+        "updatedAt": "2026-07-18T00:00:00.000Z",
+    },
+}
+
+
+class TestGatewayClient:
+    async def test_simulate_action_posts_envelope(self, mock_api: respx.MockRouter) -> None:
+        route = mock_api.post("/v1/actions/simulate").respond(
+            200, json={"simulation": ACTION_FIXTURES["simulation"]}
+        )
+        async with CommanderGatewayClient(
+            base_url="http://localhost:3001", api_key="test"
+        ) as client:
+            async with mock_api:
+                result = await client.simulate_action(ProposeActionInput(**ACTION_FIXTURES["input"]))
+                assert route.called
+                assert route.calls.last.request.url.path == "/v1/actions/simulate"
+        assert result.simulation_id == "sim-1"
+
+    async def test_propose_action_sends_idempotency_key(self, mock_api: respx.MockRouter) -> None:
+        route = mock_api.post("/v1/actions").respond(
+            202, json={"action": ACTION_FIXTURES["action"], "idempotentReplay": False}
+        )
+        async with CommanderGatewayClient(
+            base_url="http://localhost:3001", api_key="test"
+        ) as client:
+            async with mock_api:
+                action, replay, accepted = await client.propose_action(
+                    ProposeActionInput(**ACTION_FIXTURES["input"])
+                )
+                assert route.calls.last.request.headers["Idempotency-Key"] == "action-key-0001"
+        assert action.run_id == "run-action-1"
+        assert replay is False
+        assert accepted is True
+
+    async def test_get_action_loads_run(self, mock_api: respx.MockRouter) -> None:
+        route = mock_api.get("/v1/actions/run-action-1").respond(
+            200, json={"action": ACTION_FIXTURES["action"]}
+        )
+        async with CommanderGatewayClient(
+            base_url="http://localhost:3001", api_key="test"
+        ) as client:
+            async with mock_api:
+                action = await client.get_action("run-action-1")
+                assert route.called
+        assert action.run_id == "run-action-1"
+
+    async def test_approve_action_posts_bindings(self, mock_api: respx.MockRouter) -> None:
+        route = mock_api.post("/v1/actions/run-action-1/approve").respond(
+            200, json={"action": ACTION_FIXTURES["action"]}
+        )
+        approval = ActionApprovalInput(
+            actionDigest=ACTION_FIXTURES["action"]["actionDigest"],
+            simulationId=ACTION_FIXTURES["action"]["simulation"]["simulationId"],
+            policySnapshotId=ACTION_FIXTURES["action"]["policySnapshotId"],
+        )
+        async with CommanderGatewayClient(
+            base_url="http://localhost:3001", api_key="test"
+        ) as client:
+            async with mock_api:
+                action = await client.approve_action("run-action-1", approval)
+                assert route.called
+        assert action.run_id == "run-action-1"
+
+    async def test_reject_action_posts_reason(self, mock_api: respx.MockRouter) -> None:
+        route = mock_api.post("/v1/actions/run-action-1/reject").respond(
+            200,
+            json={"action": {**ACTION_FIXTURES["action"], "state": "REJECTED"}},
+        )
+        async with CommanderGatewayClient(
+            base_url="http://localhost:3001", api_key="test"
+        ) as client:
+            async with mock_api:
+                action = await client.reject_action("run-action-1", reason="too risky")
+                assert route.called
+        assert action.state == "REJECTED"
+
+    async def test_get_action_evidence(self, mock_api: respx.MockRouter) -> None:
+        route = mock_api.get("/v1/actions/run-action-1/evidence").respond(
+            200,
+            json={
+                "bundle": {"bundleId": "bundle-1", "runId": "run-action-1"},
+                "verification": {"valid": True},
+            },
+        )
+        async with CommanderGatewayClient(
+            base_url="http://localhost:3001", api_key="test"
+        ) as client:
+            async with mock_api:
+                evidence = await client.get_action_evidence("run-action-1")
+                assert route.called
+        assert evidence.bundle["bundleId"] == "bundle-1"
+        assert evidence.verification["valid"] is True
