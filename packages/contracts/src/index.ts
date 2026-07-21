@@ -93,8 +93,8 @@ export {
 } from './versioned.js';
 export type { VersionedContract, ConstitutionContractVersion } from './versioned.js';
 
-export { GrantV1, GRANT_CONTRACT_VERSION as GRANT_VERSION, wrapGrantV1 } from './grant.js';
-export type { GrantContractV1 } from './grant.js';
+export { GRANT_CONTRACT_VERSION as GRANT_VERSION, wrapGrantV1 } from './grant.js';
+export type { GrantV1, GrantContractV1 } from './grant.js';
 
 export { upcastLegacyGrantToV1, getLegacyGrantUpcastCount } from './upcasters/index.js';
 export type { LegacyGrantPayload } from './upcasters/index.js';
