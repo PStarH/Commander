@@ -77,4 +77,17 @@ describe('claim honesty', () => {
     const consumer = join(ROOT, 'packages/kernel/src/ops/compensationConsumer.ts');
     assert.ok(existsSync(consumer), 'compensation consumer library should still exist');
   });
+
+  it('apps/api StateMachine persist/checkpoint uses atomicWriteFileSync (REL-3)', () => {
+    const path = join(ROOT, 'apps/api/src/stateMachine.ts');
+    assert.ok(existsSync(path));
+    const body = readFileSync(path, 'utf8');
+    assert.match(body, /atomicWriteFileSync/, 'must import/use atomicWriteFileSync');
+    assert.match(body, /readJsonFileSafe/, 'must use readJsonFileSafe for load paths');
+    assert.doesNotMatch(
+      body,
+      /fs\.writeFileSync\s*\(/,
+      'non-atomic fs.writeFileSync was fixed 2026-07-20; do not reintroduce',
+    );
+  });
 });
