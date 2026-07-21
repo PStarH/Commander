@@ -78,9 +78,13 @@ export function isPlainObjectJson(value: unknown): value is Record<string, unkno
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function quarantineAside(filePath: string): void {
+function quarantineAside(filePath: string, reason: 'parse' | 'shape' = 'parse'): void {
+  const aside = `${filePath}.corrupt-${Date.now()}`;
   try {
-    fs.renameSync(filePath, `${filePath}.corrupt-${Date.now()}`);
+    fs.renameSync(filePath, aside);
+    process.stderr.write(
+      `[atomicWrite] quarantined ${filePath} → ${aside} (reason=${reason})\n`,
+    );
   } catch {
     /* quarantine is best-effort — never throw from a load path */
   }
@@ -109,12 +113,12 @@ export function readJsonFileSafe<T>(
   try {
     const parsed: unknown = JSON.parse(raw);
     if (isExpectedShape && !isExpectedShape(parsed)) {
-      quarantineAside(filePath);
+      quarantineAside(filePath, 'shape');
       return fallback;
     }
     return parsed as T;
   } catch {
-    quarantineAside(filePath);
+    quarantineAside(filePath, 'parse');
     return fallback;
   }
 }
