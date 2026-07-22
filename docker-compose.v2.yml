@@ -27,7 +27,9 @@ services:
     environment:
       - NODE_ENV=production
       - COMMANDER_KERNEL_ENABLED=1
-      - API_STORE_BACKEND=postgres
+      # Legacy /api stores are not canonical authority and must not run DDL as commander_app.
+      - API_STORE_BACKEND=memory
+      - COMMANDER_MEMORY_STORE=in-memory
       - COMMANDER_KERNEL_BACKEND=postgres
       # Hardcoded role DSNs — block host DATABASE_URL bleed / shared commander login.
       - DATABASE_URL=postgres://commander_app:commander_app@postgres:5432/commander

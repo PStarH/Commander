@@ -394,8 +394,12 @@ jobs:
         run: |
           echo "🔴 Running red team smoke test (5 critical scenarios)..."
           cd packages/core
-          npx tsx src/security/runRedTeamBattery.ts --smoke --json > /tmp/rt-smoke.json 2>&1
+          # Resolve tsx through the workspace installation. `npx tsx` can
+          # resolve a broken nested path on clean Node 20 runners.
+          set +e
+          pnpm exec tsx src/security/runRedTeamBattery.ts --smoke --json > /tmp/rt-smoke.json 2>&1
           EXIT_CODE=$?
+          set -e
           # Parse JSON output for score
           SCORE=$(node -e "try{process.stdin.resume();let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d.trim().split('\\n').find(l=>l.startsWith('{'))||d.trim());console.log(j.securityScore)})}catch(e){console.log(0)}" < /tmp/rt-smoke.json 2>/dev/null || echo "0")
           echo "Red team smoke score: $SCORE/100"

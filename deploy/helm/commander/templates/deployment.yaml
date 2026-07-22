@@ -54,8 +54,11 @@ spec:
             - name: CORS_ORIGINS
               value: {{ .Values.config.corsOrigins | quote }}
             - name: API_STORE_BACKEND
-              value: {{ .Values.database.backend | quote }}
+              value: {{ include "commander.apiStoreBackend" . | quote }}
             {{- if include "commander.postgresBackend" . }}
+            # Legacy stores are non-authoritative; /v1 durability remains in the kernel.
+            - name: COMMANDER_MEMORY_STORE
+              value: in-memory
             - name: COMMANDER_KERNEL_ENABLED
               value: "1"
             - name: COMMANDER_KERNEL_BACKEND
