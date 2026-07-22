@@ -63,6 +63,9 @@ describe('L4-02 operations chaos — worker kill / double compensate', () => {
         forwardResponse: { prNumber: 42 },
         compensationPatch: {},
         destination: 'github://octo/repo/pulls',
+        // Mirrors the real requestCompensation payload shape: fencingEpoch is
+        // always derived from the original effect's lease, never invented.
+        fencingEpoch: 1,
       },
       idempotencyKey: 'cmp:effect-forward:1.0.0',
     };

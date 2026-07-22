@@ -2,6 +2,10 @@
 # DEV ONLY: secrets created by chart for local/kind smoke. Do not use in production.
 tier: demo
 
+# Explicit cell tenant for COMMANDER_CELL_TENANT_ID (matches worker.tenants first entry).
+cell:
+  tenantId: local
+
 web:
   enabled: false
 
@@ -9,15 +13,21 @@ worker:
   enabled: true
   replicas: 2
   authTokenSecret: ''
+  tenants: local
 
 kernelOps:
   enabled: true
 
 adapterOps:
   enabled: true
-  replicas: 2
+  # Single replica until daemon ids are POD_NAME-suffixed (multi-replica stomps claims).
+  replicas: 1
   secrets:
     create: true
+
+# DEV ONLY: chart-created ephemeral Ed25519 materials for local/kind smoke.
+capability:
+  create: true
 
 database:
   enabled: true

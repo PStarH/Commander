@@ -122,6 +122,13 @@
               }
             },
             "required": ["enabled", "secrets"]
+          },
+          "capability": {
+            "properties": {
+              "existingSecret": { "minLength": 1 },
+              "create": { "const": false }
+            },
+            "required": ["existingSecret", "create"]
           }
         }
       }

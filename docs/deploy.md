@@ -119,10 +119,15 @@ the host's (see `packages/core/tests/pluginPermissions.test.ts`).
 
 ## Helm (Kubernetes)
 
-A Helm chart is provided at [deploy/helm/commander](helm/commander) for
+A Helm chart is provided at [deploy/helm/commander](../deploy/helm/commander) for
 Kubernetes deployments with HPA, ingress, network policies, and a Redis
-StatefulSet. Read [deploy/helm/commander/values.yaml](helm/commander/values.yaml)
-for the full configuration surface.
+StatefulSet. Read [deploy/helm/commander/values.yaml](../deploy/helm/commander/values.yaml)
+for the full configuration surface. Do not use the legacy tree at `helm/commander`
+(kept for reference only; worker tenants must be an explicit list, never `*`).
+
+API cells may still set `COMMANDER_CAPABILITY_TOKEN_KEY` (HMAC) for the API
+surface only. Worker and adapter-ops authority uses Ed25519 PEM/JWKS/key id —
+never the HMAC env on those components.
 
 ```bash
 helm install commander deploy/helm/commander \

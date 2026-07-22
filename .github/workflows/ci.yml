@@ -316,7 +316,9 @@ jobs:
             packages/worker-plane/src/l3-03a-effect-tool-monopoly.test.ts \
             packages/worker-plane/src/ticketAdapter.test.ts \
             packages/worker-plane/src/actionGatewayPolicy.test.ts \
-            packages/worker-plane/src/bootstrap.policy.test.ts
+            packages/worker-plane/src/bootstrap.policy.test.ts \
+            packages/worker-plane/src/bootstrap.authority.test.ts \
+            packages/worker-plane/src/registry.rls.test.ts
           pnpm exec tsx --test \
             apps/api/test/namespacedMemoryEndpoints.test.ts \
             apps/api/test/namespacedMemoryRbac.test.ts \

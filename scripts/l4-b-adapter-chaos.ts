@@ -166,6 +166,9 @@ export async function runL4BAdapterChaos(): Promise<L4BChaosResult> {
     effectTypes: ['connector.github.pull-request.create'],
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
     requestHash: canonicalRequestHash(request),
+    // Class A fixtures must carry actionDigest (Task 2 gate — do not weaken broker).
+    actionDigest: 'a'.repeat(64),
+    policySnapshotId: 'chaos-policy',
   });
 
   const originalComplete = kernel.completeEffect.bind(kernel);

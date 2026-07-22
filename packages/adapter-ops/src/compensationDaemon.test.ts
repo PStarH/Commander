@@ -10,7 +10,9 @@ const COMP_PAYLOAD = {
   runId: 'run-cmp',
   stepId: 'step-cmp',
   compensationAction: 'compensate.github.pull-request.create',
-  compensationPayload: { originalEffectId: 'effect-1', forwardResponse: { prNumber: 1 } },
+  // Mirrors the real requestCompensation payload shape: fencingEpoch is always
+  // derived from the original effect's own lease, never invented by the consumer.
+  compensationPayload: { originalEffectId: 'effect-1', forwardResponse: { prNumber: 1 }, fencingEpoch: 1 },
   idempotencyKey: 'cmp:effect-1:1.0.0',
 };
 

@@ -138,17 +138,24 @@ services:
     image: ${COMMANDER_WORKER_IMAGE:-commander-worker:latest}
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgres://commander_app:commander_app@postgres:5432/commander
+      DATABASE_URL: postgres://commander_worker:commander_worker@postgres:5432/commander
       COMMANDER_WORKER_BOOTSTRAP: /app/packages/worker-plane/dist/bootstrap.js
       COMMANDER_WORKER_AUTH_TOKEN: ${COMMANDER_WORKER_AUTH_TOKEN:-bench-token-not-for-production}
       COMMANDER_WORKER_AUTH_SUBJECT: worker:bench
       COMMANDER_WORKER_KIND: agent
       COMMANDER_WORKER_CAPABILITIES: agent
       COMMANDER_WORKER_MAX_CONCURRENCY: "10"
-      COMMANDER_WORKER_TENANTS: "*"
+      # Five-tenant live benchmark default. scripts/bench-v2-live.ts --mode=live
+      # fail-closes when --tenants≠5 unless COMMANDER_WORKER_TENANTS is set.
+      # Workers reject '*' and empty scopes at bootstrap.
+      COMMANDER_WORKER_TENANTS: ${COMMANDER_WORKER_TENANTS:-tenant-0,tenant-1,tenant-2,tenant-3,tenant-4}
       COMMANDER_WORKER_POLL_MS: "250"
       COMMANDER_WORKER_LEASE_TTL_MS: "30000"
       COMMANDER_WORKER_HEARTBEAT_MS: "10000"
+      # Production worker: Ed25519 authority fail-closed (no HMAC capability-token-key).
+      COMMANDER_CAPABILITY_PRIVATE_KEY_PEM: ${COMMANDER_CAPABILITY_PRIVATE_KEY_PEM:?set COMMANDER_CAPABILITY_PRIVATE_KEY_PEM}
+      COMMANDER_CAPABILITY_KEY_ID: ${COMMANDER_CAPABILITY_KEY_ID:?set COMMANDER_CAPABILITY_KEY_ID}
+      COMMANDER_CAPABILITY_JWKS_JSON: ${COMMANDER_CAPABILITY_JWKS_JSON:?set COMMANDER_CAPABILITY_JWKS_JSON}
     depends_on:
       postgres:
         condition: service_healthy
