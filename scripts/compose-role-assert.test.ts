@@ -22,6 +22,8 @@ const CELL_FIXTURE: ComposeConfig = {
     },
     api: {
       environment: {
+        API_STORE_BACKEND: 'memory',
+        COMMANDER_MEMORY_STORE: 'in-memory',
         DATABASE_URL: 'postgres://commander_app:commander_app@postgres:5432/commander',
         COMMANDER_KERNEL_DATABASE_URL:
           'postgres://commander_app:commander_app@postgres:5432/commander',
@@ -65,6 +67,8 @@ const V2_FIXTURE: ComposeConfig = {
     },
     api: {
       environment: {
+        API_STORE_BACKEND: 'memory',
+        COMMANDER_MEMORY_STORE: 'in-memory',
         DATABASE_URL: 'postgres://commander_app:commander_app@postgres:5432/commander',
         COMMANDER_KERNEL_DATABASE_URL:
           'postgres://commander_app:commander_app@postgres:5432/commander',
@@ -98,11 +102,15 @@ const V2_BENCH_FIXTURE: ComposeConfig = {
     },
     'api-1': {
       environment: {
+        API_STORE_BACKEND: 'memory',
+        COMMANDER_MEMORY_STORE: 'in-memory',
         DATABASE_URL: 'postgres://commander_app:commander_app@postgres:5432/commander',
       },
     },
     'api-2': {
       environment: {
+        API_STORE_BACKEND: 'memory',
+        COMMANDER_MEMORY_STORE: 'in-memory',
         DATABASE_URL: 'postgres://commander_app:commander_app@postgres:5432/commander',
       },
     },
@@ -173,6 +181,40 @@ describe('assertComposeRoles', () => {
     assert.doesNotThrow(() => assertComposeRoles(V2_BENCH_FIXTURE, 'v2-bench'));
   });
 
+  it('rejects an app-role API without isolated legacy stores', () => {
+    const bad: ComposeConfig = structuredClone(CELL_FIXTURE);
+    const env = bad.services!.api!.environment as Record<string, string>;
+    delete env.COMMANDER_MEMORY_STORE;
+    assert.throws(
+      () => assertComposeRoles(bad, 'cell'),
+      /API_STORE_BACKEND=memory|COMMANDER_MEMORY_STORE=in-memory/,
+    );
+  });
+
+  it('rejects a v2-bench API replica using PostgreSQL legacy stores', () => {
+    const bad: ComposeConfig = structuredClone(V2_BENCH_FIXTURE);
+    bad.services!['api-1']!.environment = {
+      ...(bad.services!['api-1']!.environment as Record<string, string>),
+      API_STORE_BACKEND: 'postgres',
+      COMMANDER_MEMORY_STORE: 'postgres',
+    };
+    assert.throws(
+      () => assertComposeRoles(bad, 'v2-bench'),
+      /API_STORE_BACKEND=memory|COMMANDER_MEMORY_STORE=in-memory/,
+    );
+  });
+
+  it('accepts a cell tenant override when worker and adapter agree', () => {
+    const override: ComposeConfig = structuredClone(CELL_FIXTURE);
+    for (const name of ['worker', 'adapter-ops']) {
+      override.services![name]!.environment = {
+        ...(override.services![name]!.environment as Record<string, string>),
+        COMMANDER_WORKER_TENANTS: 'cell-smoke-tenant',
+        COMMANDER_CELL_TENANT_ID: 'cell-smoke-tenant',
+      };
+    }
+    assert.doesNotThrow(() => assertComposeRoles(override, 'cell'));
+  });
 
   it('rejects worker COMMANDER_WORKER_TENANTS=*', () => {
     const bad: ComposeConfig = structuredClone(CELL_FIXTURE);
@@ -239,6 +281,8 @@ describe('assertComposeRoles', () => {
         },
         api: {
           environment: [
+            'API_STORE_BACKEND=memory',
+            'COMMANDER_MEMORY_STORE=in-memory',
             'DATABASE_URL=postgres://commander_app:commander_app@postgres:5432/commander',
           ],
         },
@@ -273,6 +317,7 @@ describe('compose source files (static drift guard)', () => {
     const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
     const cell = await readFile(resolve(root, 'docker-compose.cell.yml'), 'utf8');
     const v2 = await readFile(resolve(root, 'docker-compose.v2.yml'), 'utf8');
+    const v2Bench = await readFile(resolve(root, 'deploy/docker/v2-compose.yml'), 'utf8');
 
     for (const [name, text] of [
       ['docker-compose.cell.yml', cell],
@@ -289,7 +334,28 @@ describe('compose source files (static drift guard)', () => {
         /COMMANDER_WORKER_TENANTS\s*[:=]\s*['"]?\*/,
         `${name} must not set COMMANDER_WORKER_TENANTS=*`,
       );
+      assert.match(
+        text,
+        /API_STORE_BACKEND=memory/,
+        `${name} must keep the non-authoritative legacy API store in memory`,
+      );
+      assert.match(
+        text,
+        /COMMANDER_MEMORY_STORE=in-memory/,
+        `${name} must keep the non-authoritative legacy memory store in memory`,
+      );
     }
+
+    assert.equal(
+      v2Bench.match(/API_STORE_BACKEND:\s*memory/g)?.length,
+      2,
+      'deploy/docker/v2-compose.yml must isolate both API legacy stores',
+    );
+    assert.equal(
+      v2Bench.match(/COMMANDER_MEMORY_STORE:\s*in-memory/g)?.length,
+      2,
+      'deploy/docker/v2-compose.yml must isolate both API memory stores',
+    );
 
     const adapterBlock = cell.match(/^\s*adapter-ops:\s*\n(?:^\s{2,}.*\n)*/m)?.[0] ?? '';
     assert.ok(adapterBlock.length > 0, 'docker-compose.cell.yml must define adapter-ops');
