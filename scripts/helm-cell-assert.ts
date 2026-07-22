@@ -174,6 +174,11 @@ function envHasInlineValue(raw: string, envName: string): boolean {
   return new RegExp(`- name:\\s*${envName}\\s*\\n\\s*value:`).test(raw);
 }
 
+function extractInlineEnvValue(raw: string, envName: string): string | null {
+  const match = raw.match(new RegExp(`- name:\\s*${envName}\\s*\\n\\s*value:\\s*(.+)`));
+  return match?.[1]?.trim().replace(/^["']|["']$/g, '') ?? null;
+}
+
 function assertCapabilityAuthorityMounts(
   docs: K8sDoc[],
   profile: HelmCellProfile,
@@ -276,6 +281,18 @@ function assertCapabilityAuthorityMounts(
 function assertRoleDsnSeparation(docs: K8sDoc[], profile: HelmCellProfile, raw: string): void {
   const deployByComponent = indexDeploymentsByComponent(docs);
   const migrationRaw = findMigrationRaw(docs);
+
+  const apiRaw = deployByComponent.get('api') ?? '';
+  assert.equal(
+    extractInlineEnvValue(apiRaw, 'API_STORE_BACKEND'),
+    'memory',
+    'H19: app-role API must use API_STORE_BACKEND=memory for non-authoritative legacy state',
+  );
+  assert.equal(
+    extractInlineEnvValue(apiRaw, 'COMMANDER_MEMORY_STORE'),
+    'in-memory',
+    'H19: app-role API must use COMMANDER_MEMORY_STORE=in-memory for non-authoritative legacy memory',
+  );
 
   // Distinct secret keys per authority mapping
   const seenKeys = new Map<string, string>();

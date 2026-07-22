@@ -10,6 +10,12 @@ const KERNEL_BACKEND_ENV = `
             - name: COMMANDER_KERNEL_BACKEND
               value: postgres`;
 
+const NON_AUTHORITATIVE_STORE_ENV = `
+            - name: API_STORE_BACKEND
+              value: memory
+            - name: COMMANDER_MEMORY_STORE
+              value: in-memory`;
+
 function dsnEnv(key: string): string {
   return `
             - name: DATABASE_URL
@@ -60,7 +66,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: api
-          env:${KERNEL_BACKEND_ENV}${dsnEnv('app-url')}
+          env:${KERNEL_BACKEND_ENV}${NON_AUTHORITATIVE_STORE_ENV}${dsnEnv('app-url')}
           securityContext:
             readOnlyRootFilesystem: true
             capabilities:
@@ -254,6 +260,15 @@ spec:
     const bad = DEMO_SNIPPET.replace(dsnEnv('app-url'), dsnEnv('owner-url'));
     const docs = loadYamlDocuments(bad);
     assert.throws(() => assertHelmCellTopology(docs, 'demo'), /owner-url/);
+  });
+
+  it('rejects an app-role API without isolated legacy stores', () => {
+    const bad = DEMO_SNIPPET.replace(NON_AUTHORITATIVE_STORE_ENV, '');
+    const docs = loadYamlDocuments(bad);
+    assert.throws(
+      () => assertHelmCellTopology(docs, 'demo'),
+      /API_STORE_BACKEND|COMMANDER_MEMORY_STORE|H19/,
+    );
   });
 
   it('rejects WORKER_TENANTS=*', () => {

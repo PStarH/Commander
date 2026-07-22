@@ -75,6 +75,8 @@ services:
     environment:
       NODE_ENV: production
       PORT: "4000"
+      API_STORE_BACKEND: memory
+      COMMANDER_MEMORY_STORE: in-memory
       DATABASE_URL: postgres://commander_app:commander_app@postgres:5432/commander
       COMMANDER_KERNEL_ENABLED: "1"
       COMMANDER_LOG_LEVEL: info
@@ -107,6 +109,8 @@ services:
     environment:
       NODE_ENV: production
       PORT: "4000"
+      API_STORE_BACKEND: memory
+      COMMANDER_MEMORY_STORE: in-memory
       DATABASE_URL: postgres://commander_app:commander_app@postgres:5432/commander
       COMMANDER_KERNEL_ENABLED: "1"
       COMMANDER_LOG_LEVEL: info
