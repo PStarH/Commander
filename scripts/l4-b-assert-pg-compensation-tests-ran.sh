@@ -20,13 +20,14 @@ out="$(
 printf '%s\n' "$out"
 
 # Prefer grep over rg — GitHub-hosted runners do not ship ripgrep by default.
-if ! printf '%s\n' "$out" | grep -Eq '# skipped 0'; then
-  echo "ERROR: expected '# skipped 0' in Node test summary (PG tests must not skip)" >&2
+# Node 22 prefixes summary rows with '#'; newer Node versions use an info glyph.
+if ! printf '%s\n' "$out" | grep -Eq '(^|[[:space:]])skipped 0([[:space:]]|$)'; then
+  echo "ERROR: expected 'skipped 0' in Node test summary (PG tests must not skip)" >&2
   exit 1
 fi
 
-if ! printf '%s\n' "$out" | grep -Eq '# pass [1-9][0-9]*'; then
-  echo "ERROR: expected at least one passing test ('# pass N' with N>=1)" >&2
+if ! printf '%s\n' "$out" | grep -Eq '(^|[[:space:]])pass [1-9][0-9]*([[:space:]]|$)'; then
+  echo "ERROR: expected at least one passing test ('pass N' with N>=1)" >&2
   exit 1
 fi
 

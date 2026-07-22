@@ -7,7 +7,7 @@ import { runKernelMigrations } from './migrations.js';
 import { KernelInvariantError } from './types.js';
 import { runKernelRepositoryContractTests } from './testing/repositoryContract.js';
 import { TENANT_TABLES } from './schema.js';
-import { seedWorkerClaimSecret } from './seedWorkerClaimSecret.js';
+import { seedWorkerAllowedTenants, seedWorkerClaimSecret } from './seedWorkerClaimSecret.js';
 
 const databaseUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
 const workerPassword = process.env.COMMANDER_WORKER_PASSWORD ?? 'commander_worker';
@@ -100,6 +100,54 @@ if (databaseUrl) {
 }
 
 describe('PostgresKernelRepository integration', () => {
+  it('limits commander_worker DML to the execution data path', { skip: !databaseUrl }, async () => {
+    if (!databaseUrl) return;
+    const ownerPool = new Pool({ connectionString: databaseUrl, max: 2 });
+    await runKernelMigrations(ownerPool);
+    try {
+      const forbidden = [
+        'commander_runs',
+        'commander_steps',
+        'commander_workers',
+        'commander_effect_allowlist',
+        'commander_action_kill_switches',
+        'commander_tenant_execution_limits',
+        'commander_tenant_execution_control',
+        'commander_outbox_dlq',
+      ];
+      for (const table of forbidden) {
+        const privileges = await ownerPool.query<{ can_insert: boolean; can_delete: boolean }>(
+          `SELECT
+             has_table_privilege('commander_worker', $1, 'INSERT') AS can_insert,
+             has_table_privilege('commander_worker', $1, 'DELETE') AS can_delete`,
+          [table],
+        );
+        assert.equal(privileges.rows[0]?.can_insert, false, `commander_worker must not INSERT ${table}`);
+        assert.equal(privileges.rows[0]?.can_delete, false, `commander_worker must not DELETE ${table}`);
+      }
+
+      const required = [
+        ['commander_events', 'INSERT'],
+        ['commander_effects', 'INSERT'],
+        ['commander_effects', 'UPDATE'],
+        ['commander_steps', 'UPDATE'],
+        ['commander_runs', 'UPDATE'],
+        ['commander_interactions', 'INSERT'],
+        ['commander_interactions', 'UPDATE'],
+        ['commander_capability_replays', 'INSERT'],
+      ] as const;
+      for (const [table, privilege] of required) {
+        const result = await ownerPool.query<{ allowed: boolean }>(
+          `SELECT has_table_privilege('commander_worker', $1, $2) AS allowed`,
+          [table, privilege],
+        );
+        assert.equal(result.rows[0]?.allowed, true, `commander_worker requires ${privilege} on ${table}`);
+      }
+    } finally {
+      await ownerPool.end();
+    }
+  });
+
   it('runs checksummed migrations, enforces worker generation fencing, and preserves tenant isolation', { skip: !databaseUrl || !workerDatabaseUrl }, async () => {
     if (!databaseUrl || !workerDatabaseUrl) return;
     const pool = new Pool({ connectionString: databaseUrl, max: 8 });
@@ -406,6 +454,7 @@ describe('PostgresKernelRepository integration', () => {
          VALUES ($1,'agent','integration','["agent"]',2,'ACTIVE',1,$1,$2::jsonb)`,
         [workerId, JSON.stringify([tenantAllowed])],
       );
+      await seedWorkerAllowedTenants(ownerPool, [tenantAllowed]);
       const claimSecret = await seedWorkerClaimSecret(ownerPool, workerId, 1);
 
       await appRepo.createRun({
@@ -520,6 +569,7 @@ describe('PostgresKernelRepository integration', () => {
       await ownerPool.query('DELETE FROM commander_runs WHERE tenant_id = ANY($1::text[])', [[tenantAllowed, tenantOutside]]);
       await ownerPool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id LIKE $1', [`${workerId}%`]);
       await ownerPool.query('DELETE FROM commander_workers WHERE id LIKE $1', [`${workerId}%`]);
+      await ownerPool.query('DELETE FROM commander_worker_allowed_tenants WHERE tenant_id=$1', [tenantAllowed]);
       await workerPool.end();
       await appPool.end();
       await ownerPool.end();
@@ -543,6 +593,7 @@ describe('PostgresKernelRepository integration', () => {
     const expiresAt = new Date(Date.now() + 60_000).toISOString();
 
     try {
+      await seedWorkerAllowedTenants(ownerPool, [tenantId]);
       assert.equal(
         await workerRepo.isCapabilityRevoked(jti, tenantId),
         false,
@@ -568,30 +619,52 @@ describe('PostgresKernelRepository integration', () => {
       );
     } finally {
       await ownerPool.query(`DELETE FROM commander_capability_revocations WHERE tenant_id=$1`, [tenantId]);
+      await ownerPool.query('DELETE FROM commander_worker_allowed_tenants WHERE tenant_id=$1', [tenantId]);
       await workerPool.end();
       await appPool.end();
       await ownerPool.end();
     }
   });
 
-  it('worker LOGIN allowlist/quota withTransaction carries tenant scope', { skip: !databaseUrl || !workerDatabaseUrl }, async () => {
+  it('worker LOGIN reads allowlist and updates quota without policy mutation authority', { skip: !databaseUrl || !workerDatabaseUrl }, async () => {
     if (!databaseUrl || !workerDatabaseUrl) return;
     const ownerPool = new Pool({ connectionString: databaseUrl, max: 4 });
     await runKernelMigrations(ownerPool);
+    await ensureRoleLogin(ownerPool, 'commander_app', process.env.COMMANDER_APP_PASSWORD ?? 'commander_app');
     await ensureRoleLogin(ownerPool, 'commander_worker', workerPassword);
 
     const workerPool = createLoginPool(workerDatabaseUrl);
+    const appPool = createRolePool(databaseUrl, 'commander_app');
     const workerRepo = new PostgresKernelRepository(workerPool, { schedulerMode: false });
+    const appRepo = new PostgresKernelRepository(appPool);
     const suffix = `${Date.now()}-${process.pid}`;
     const tenantId = `allow-quota-${suffix}`;
 
     try {
+      await seedWorkerAllowedTenants(ownerPool, [tenantId]);
       assert.equal(await workerRepo.isActionAllowed(tenantId, 'http.post'), false);
-      await workerRepo.setAllowlistEntry(tenantId, 'http.post', true);
+      await appRepo.setAllowlistEntry(tenantId, 'http.post', true);
       assert.equal(await workerRepo.isActionAllowed(tenantId, 'http.post'), true);
 
-      await workerRepo.ensureAllowlistDefault(tenantId, 'llm.*', true);
+      await appRepo.ensureAllowlistDefault(tenantId, 'llm.*', true);
       assert.equal(await workerRepo.isActionAllowed(tenantId, 'llm.openai'), true);
+
+      await assert.rejects(
+        workerRepo.setAllowlistEntry(tenantId, 'worker.must-not-write', true),
+        /permission denied/i,
+        'commander_worker must not mutate policy allowlists',
+      );
+      await assert.rejects(
+        workerRepo.putKillSwitch({
+          tenantId,
+          scope: 'tenant',
+          value: tenantId,
+          enabled: false,
+          actor: 'commander_worker',
+        }),
+        /permission denied/i,
+        'commander_worker must not mutate kill switches',
+      );
 
       const r1 = await workerRepo.incrementQuota({ tenantId, actionClass: 'http' });
       assert.equal(r1.countUsed, 1);
@@ -599,7 +672,10 @@ describe('PostgresKernelRepository integration', () => {
     } finally {
       await ownerPool.query(`DELETE FROM commander_effect_allowlist WHERE tenant_id=$1`, [tenantId]);
       await ownerPool.query(`DELETE FROM commander_effect_quota WHERE tenant_id=$1`, [tenantId]);
+      await ownerPool.query('DELETE FROM commander_action_kill_switches WHERE tenant_id=$1', [tenantId]);
+      await ownerPool.query('DELETE FROM commander_worker_allowed_tenants WHERE tenant_id=$1', [tenantId]);
       await workerPool.end();
+      await appPool.end();
       await ownerPool.end();
     }
   });

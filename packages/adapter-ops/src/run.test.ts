@@ -25,6 +25,7 @@ import {
   assertNonOwnerDatabaseUrl,
   ADAPTER_OPS_COMPENSATION_WORKER_ID,
   ADAPTER_OPS_RECONCILE_WORKER_ID,
+  type AdapterOpsWorkerRegistry,
   ADAPTER_OPS_SCHEDULER_MODE_FORBIDDEN,
   CAPABILITY_DURABLE_STORES_REQUIRED,
   COMMANDER_CELL_TENANT_ID_REQUIRED,
@@ -34,8 +35,8 @@ import {
   OWNER_DATABASE_ROLE_REJECTED,
   productionCapabilityBrokerOptions,
   registerAdapterOpsDaemonWorkers,
+  WORKER_TENANT_SCOPE_REQUIRED,
 } from './wiring.js';
-import { InMemoryWorkerRegistry, WORKER_TENANT_SCOPE_REQUIRED } from '@commander/worker-plane';
 import { canonicalRequestHash } from '@commander/effect-broker';
 
 function ed25519Material(kid: string): {
@@ -74,6 +75,27 @@ function restoreEnv(saved: Record<string, string | undefined>): void {
 
 function clearCapabilityEnv(): void {
   for (const key of CAPABILITY_ENV_KEYS) delete process.env[key];
+}
+
+class InMemoryAdapterOpsWorkerRegistry implements AdapterOpsWorkerRegistry {
+  private readonly records = new Map<string, { id: string; generation: number; claimSecret: string }>();
+
+  async initialize(): Promise<void> {}
+
+  async register(definition: { id: string }): Promise<{ id: string; generation: number; claimSecret: string }> {
+    const generation = (this.records.get(definition.id)?.generation ?? 0) + 1;
+    const record = {
+      id: definition.id,
+      generation,
+      claimSecret: `${definition.id}-claim-${generation}`,
+    };
+    this.records.set(definition.id, record);
+    return record;
+  }
+
+  async get(workerId: string): Promise<{ id: string; generation: number; claimSecret: string } | null> {
+    return this.records.get(workerId) ?? null;
+  }
 }
 
 describe('adapter-ops run wiring', () => {
@@ -571,7 +593,7 @@ describe('adapter-ops P0 worker registry + compensation mint', () => {
     delete process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN;
     clearCapabilityEnv();
 
-    const workerRegistry = new InMemoryWorkerRegistry();
+    const workerRegistry = new InMemoryAdapterOpsWorkerRegistry();
     const registerCalls: string[] = [];
     const originalRegister = workerRegistry.register.bind(workerRegistry);
     workerRegistry.register = async (definition, identitySubject, tenantIds) => {
@@ -626,7 +648,7 @@ describe('adapter-ops P0 worker registry + compensation mint', () => {
     clearCapabilityEnv();
     try {
       await assert.rejects(
-        () => createAdapterOpsWiring({ workerRegistry: new InMemoryWorkerRegistry() }),
+        () => createAdapterOpsWiring({ workerRegistry: new InMemoryAdapterOpsWorkerRegistry() }),
         (err: unknown) =>
           err instanceof Error && err.message.startsWith(WORKER_TENANT_SCOPE_REQUIRED),
       );
@@ -637,7 +659,7 @@ describe('adapter-ops P0 worker registry + compensation mint', () => {
   });
 
   it('registerAdapterOpsDaemonWorkers writes both worker rows', async () => {
-    const registry = new InMemoryWorkerRegistry();
+    const registry = new InMemoryAdapterOpsWorkerRegistry();
     const result = await registerAdapterOpsDaemonWorkers(registry, ['tenant-a']);
     assert.equal(result.reconcile.id, ADAPTER_OPS_RECONCILE_WORKER_ID);
     assert.equal(result.compensation.id, ADAPTER_OPS_COMPENSATION_WORKER_ID);

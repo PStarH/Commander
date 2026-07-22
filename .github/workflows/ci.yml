@@ -483,6 +483,23 @@ jobs:
   l4-b-deploy-gates:
     name: L4-B Deploy Gates
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: commander
+          POSTGRES_PASSWORD: commander
+          POSTGRES_DB: commander
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U commander -d commander"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      OWNER_DSN: postgres://commander:commander@localhost:5432/commander
+      COMMANDER_KERNEL_DATABASE_URL: postgres://commander:commander@localhost:5432/commander
     steps:
       - uses: actions/checkout@v6
 
