@@ -2,12 +2,19 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   applyApiGateToComposeSidecarSteps,
+  assertCapabilityAuthorityOnCellServices,
   assertKernelBackendOnCellServices,
   runCellSmoke,
   runOptionalChaosStep,
 } from './l4-b-cell-smoke.js';
 
 const KERNEL_BACKEND_ENV = { COMMANDER_KERNEL_BACKEND: 'postgres' };
+
+const CAPABILITY_ENV = {
+  COMMANDER_CAPABILITY_PRIVATE_KEY_PEM: '-----BEGIN PRIVATE KEY-----\nM\n-----END PRIVATE KEY-----',
+  COMMANDER_CAPABILITY_KEY_ID: 'test-kid',
+  COMMANDER_CAPABILITY_JWKS_JSON: '{"keys":[{"kty":"OKP","crv":"Ed25519","x":"x","kid":"test-kid"}]}',
+};
 
 describe('l4-b-cell-smoke', () => {
   it('mock mode only asserts chaos step S6 (no fake deploy steps)', async (t) => {
@@ -34,13 +41,22 @@ describe('l4-b-cell-smoke', () => {
 
   it('runOptionalChaosStep omits S7 by default when helper is missing', async () => {
     const steps: Record<string, boolean> = {};
-    await runOptionalChaosStep(steps);
+    await runOptionalChaosStep(steps, {
+      loadChaos: async () => {
+        throw new Error('helper missing');
+      },
+    });
     assert.equal(steps.S7_chaos, undefined);
   });
 
   it('runOptionalChaosStep records S7=false when REQUIRE and helper missing', async () => {
     const steps: Record<string, boolean> = {};
-    await runOptionalChaosStep(steps, { require: true });
+    await runOptionalChaosStep(steps, {
+      require: true,
+      loadChaos: async () => {
+        throw new Error('helper missing');
+      },
+    });
     assert.equal(steps.S7_chaos, false);
   });
 
@@ -118,6 +134,53 @@ describe('l4-b-cell-smoke', () => {
           'adapter-ops': { environment: ['COMMANDER_KERNEL_BACKEND=postgres'] },
         },
       }),
+    );
+  });
+
+  it('assertCapabilityAuthorityOnCellServices requires PEM/JWKS/key id on worker and adapter-ops', () => {
+    assert.doesNotThrow(() =>
+      assertCapabilityAuthorityOnCellServices({
+        services: {
+          worker: { environment: { ...KERNEL_BACKEND_ENV, ...CAPABILITY_ENV } },
+          'adapter-ops': { environment: { ...KERNEL_BACKEND_ENV, ...CAPABILITY_ENV } },
+        },
+      }),
+    );
+  });
+
+  it('assertCapabilityAuthorityOnCellServices rejects missing JWKS', () => {
+    assert.throws(
+      () =>
+        assertCapabilityAuthorityOnCellServices({
+          services: {
+            worker: {
+              environment: {
+                COMMANDER_CAPABILITY_PRIVATE_KEY_PEM: CAPABILITY_ENV.COMMANDER_CAPABILITY_PRIVATE_KEY_PEM,
+                COMMANDER_CAPABILITY_KEY_ID: CAPABILITY_ENV.COMMANDER_CAPABILITY_KEY_ID,
+              },
+            },
+            'adapter-ops': { environment: CAPABILITY_ENV },
+          },
+        }),
+      /COMMANDER_CAPABILITY_JWKS_JSON/,
+    );
+  });
+
+  it('assertCapabilityAuthorityOnCellServices rejects HMAC capability-token-key on worker', () => {
+    assert.throws(
+      () =>
+        assertCapabilityAuthorityOnCellServices({
+          services: {
+            worker: {
+              environment: {
+                ...CAPABILITY_ENV,
+                COMMANDER_CAPABILITY_TOKEN_KEY: 'hmac-not-allowed',
+              },
+            },
+            'adapter-ops': { environment: CAPABILITY_ENV },
+          },
+        }),
+      /CAPABILITY_TOKEN_KEY/,
     );
   });
 });

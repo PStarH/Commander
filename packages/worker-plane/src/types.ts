@@ -34,6 +34,11 @@ export interface WorkerRecord extends WorkerDefinition {
   tenantIds: string[];
   registeredAt: string;
   lastHeartbeatAt: string;
+  /**
+   * Plaintext claim secret returned once from register(). Keep in process memory;
+   * never log or persist. Required for claim_next_step / claim_reconcile_effects.
+   */
+  claimSecret?: string;
 }
 
 export interface WorkerRegistry {
@@ -42,13 +47,15 @@ export interface WorkerRegistry {
     definition: WorkerDefinition,
     identitySubject: string,
     tenantIds: string[],
+    previousClaimSecret?: string,
   ): Promise<WorkerRecord>;
   heartbeat(
     workerId: string,
     generation: number,
     activeSteps: number,
+    claimSecret: string,
   ): Promise<WorkerRecord | null>;
-  drain(workerId: string, generation: number): Promise<boolean>;
+  drain(workerId: string, generation: number, claimSecret: string): Promise<boolean>;
   markStale(before: Date): Promise<number>;
   get(workerId: string): Promise<WorkerRecord | null>;
 }
@@ -85,8 +92,14 @@ export interface KernelWorkerPort {
   claimNextStep(request: {
     workerId: string;
     workerGeneration?: number;
+    /** Unforgeable claim secret from register() — required on worker claim path. */
+    claimSecret?: string;
     leaseTtlMs: number;
-    tenantIds: string[];
+    /**
+     * @deprecated Ignored — claim authz is durable worker registration only.
+     * Callers must not pass tenant scope; Domain D claim RPC drops/hard-denies it.
+     */
+    tenantIds?: string[];
     capabilities: string[];
   }): Promise<ClaimedStep | null>;
   heartbeatStep(
