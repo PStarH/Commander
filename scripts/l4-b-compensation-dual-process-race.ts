@@ -18,11 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { runKernelMigrations } from '../packages/kernel/src/migrations.js';
 import { KERNEL_COMPENSATION_TOPIC } from '../packages/kernel/src/ops/compensationConsumer.js';
-import {
-  CELL_COMPOSE_ENV,
-  COMPOSE_CMD,
-  tryComposeCellUp,
-} from './l4-b-cell-compose.js';
+import { CELL_COMPOSE_ENV, COMPOSE_CMD, tryComposeCellUp } from './l4-b-cell-compose.js';
 import { Pool } from 'pg';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -63,7 +59,8 @@ function parseArgs(argv: string[]): { composeUp: boolean; seed: number; help: bo
   for (const arg of argv) {
     if (arg === '--help' || arg === '-h') help = true;
     else if (arg === '--compose-up') composeUp = true;
-    else if (arg.startsWith('--seed=')) seed = Math.max(1, Number.parseInt(arg.slice('--seed='.length), 10) || 24);
+    else if (arg.startsWith('--seed='))
+      seed = Math.max(1, Number.parseInt(arg.slice('--seed='.length), 10) || 24);
   }
   return { composeUp, seed, help };
 }
@@ -110,6 +107,7 @@ async function seedCompensationRows(pool: Pool, tenantId: string, count: number)
           compensationPayload: {
             originalEffectId: `effect-${i}`,
             forwardResponse: { prNumber: i },
+            fencingEpoch: 1,
           },
           idempotencyKey: `cmp:dual-${i}:1.0.0`,
         }),
@@ -119,7 +117,11 @@ async function seedCompensationRows(pool: Pool, tenantId: string, count: number)
   }
 }
 
-function spawnWorker(role: 'publisher' | 'consumer', databaseUrl: string, stopFile: string): ChildProcess {
+function spawnWorker(
+  role: 'publisher' | 'consumer',
+  databaseUrl: string,
+  stopFile: string,
+): ChildProcess {
   const child = spawn(
     process.execPath,
     [
@@ -152,11 +154,18 @@ function spawnWorker(role: 'publisher' | 'consumer', databaseUrl: string, stopFi
   return child;
 }
 
-async function runWorkerLoop(role: 'publisher' | 'consumer', databaseUrl: string, stopFile: string): Promise<void> {
+async function runWorkerLoop(
+  role: 'publisher' | 'consumer',
+  databaseUrl: string,
+  stopFile: string,
+): Promise<void> {
   const { PostgresKernelRepository } = await import('../packages/kernel/src/postgres.js');
-  const { KernelOutboxPublisher } = await import('../packages/kernel/src/ops/outbox/kernelOutboxPublisher.js');
-  const { PostgresOutboxDeliveryPort } = await import('../packages/kernel/src/ops/outbox/postgresOutboxDeliveryPort.js');
-  const { consumeCompensationBatch } = await import('../packages/kernel/src/ops/compensationConsumer.js');
+  const { KernelOutboxPublisher } =
+    await import('../packages/kernel/src/ops/outbox/kernelOutboxPublisher.js');
+  const { PostgresOutboxDeliveryPort } =
+    await import('../packages/kernel/src/ops/outbox/postgresOutboxDeliveryPort.js');
+  const { consumeCompensationBatch } =
+    await import('../packages/kernel/src/ops/compensationConsumer.js');
 
   const pool = new Pool({ connectionString: databaseUrl, max: 4 });
   const repo = new PostgresKernelRepository(pool, { schedulerMode: true });
@@ -287,10 +296,13 @@ export async function runDualProcessRace(options: {
     );
     publishedCount = Number(published.rows[0]?.count ?? 0);
 
-    const { PostgresOutboxDeliveryPort } = await import('../packages/kernel/src/ops/outbox/postgresOutboxDeliveryPort.js');
+    const { PostgresOutboxDeliveryPort } =
+      await import('../packages/kernel/src/ops/outbox/postgresOutboxDeliveryPort.js');
     const delivery = new PostgresOutboxDeliveryPort(pool, { baseBackoffMs: 1 });
     const ws2 = await delivery.claim(`dual-ws2-${suffix}`, 500);
-    const ws2CompensationDeliveries = ws2.filter((m) => m.topic === KERNEL_COMPENSATION_TOPIC).length;
+    const ws2CompensationDeliveries = ws2.filter(
+      (m) => m.topic === KERNEL_COMPENSATION_TOPIC,
+    ).length;
 
     const pass = !timedOut && publishedCount === options.seed && ws2CompensationDeliveries === 0;
     const artifact: DualProcessRaceArtifact = {
@@ -350,9 +362,7 @@ async function main(): Promise<void> {
     }
     composeDown = true;
     const password = CELL_COMPOSE_ENV.POSTGRES_PASSWORD;
-    databaseUrl =
-      databaseUrl ??
-      `postgres://commander:${password}@127.0.0.1:5432/commander`;
+    databaseUrl = databaseUrl ?? `postgres://commander:${password}@127.0.0.1:5432/commander`;
     databaseUrlSource = 'compose-env';
   }
 
