@@ -618,20 +618,16 @@ export function createWorkerPolicyEvaluator(
   };
 }
 
-type AllowlistKernel = EffectKernelPort & {
-  ensureAllowlistDefault?(tenantId: string, actionPattern: string, allowed: boolean): Promise<void>;
-} & ActionGatewayPolicyKernel;
+type AllowlistKernel = EffectKernelPort & ActionGatewayPolicyKernel;
 
 /**
- * Seed llm.* allowlist defaults without overwriting explicit denies.
- * Demo ticket effects are NOT auto-seeded unless COMMANDER_DEMO_TICKET_ALLOWLIST=1
- * (golden/e2e helpers should call setAllowlistEntry explicitly instead).
+ * Read the durable allowlist without letting a worker process invent policy.
+ * Allowlist defaults belong to the API/migration path; missing policy fails closed.
  */
 export function withDefaultLlmAllowlist(
   kernel: AllowlistKernel,
-  env: NodeJS.ProcessEnv = process.env,
+  _env: NodeJS.ProcessEnv = process.env,
 ): EffectKernelPort {
-  const demoTicketAllowlistOptIn = env.COMMANDER_DEMO_TICKET_ALLOWLIST === '1';
   return {
     admitEffect: (input) => kernel.admitEffect(input),
     completeEffect: (effectId, tenantId, lease, response, actor) =>
@@ -640,30 +636,7 @@ export function withDefaultLlmAllowlist(
     incrementQuota: kernel.incrementQuota?.bind(kernel),
     getQuota: kernel.getQuota?.bind(kernel),
     isActionAllowed: async (tenantId, action) => {
-      if (action.startsWith('llm.') && kernel.ensureAllowlistDefault) {
-        await kernel.ensureAllowlistDefault(tenantId, 'llm.*', true);
-      }
-      if (
-        demoTicketAllowlistOptIn &&
-        action === 'demo.ticket.create' &&
-        kernel.ensureAllowlistDefault
-      ) {
-        await kernel.ensureAllowlistDefault(tenantId, 'demo.ticket.create', true);
-      }
-      if (
-        demoTicketAllowlistOptIn &&
-        action === 'compensate.demo.ticket.create' &&
-        kernel.ensureAllowlistDefault
-      ) {
-        await kernel.ensureAllowlistDefault(tenantId, 'compensate.demo.ticket.create', true);
-      }
-      if (!kernel.isActionAllowed) {
-        return (
-          action.startsWith('llm.') ||
-          (demoTicketAllowlistOptIn &&
-            (action === 'demo.ticket.create' || action === 'compensate.demo.ticket.create'))
-        );
-      }
+      if (!kernel.isActionAllowed) return false;
       return kernel.isActionAllowed(tenantId, action);
     },
   };

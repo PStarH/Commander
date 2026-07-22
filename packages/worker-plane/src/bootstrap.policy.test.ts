@@ -131,9 +131,11 @@ describe('createWorkerPolicyEvaluator', () => {
 });
 
 describe('withDefaultLlmAllowlist', () => {
-  it('seeds llm.* so model actions pass isActionAllowed', async () => {
+  it('requires llm.* to be provisioned by a policy authority', async () => {
     const kernel = new InMemoryKernelRepository();
     const port = withDefaultLlmAllowlist(kernel, {});
+    assert.equal(await port.isActionAllowed!('tenant-a', 'llm.openai'), false);
+    await kernel.setAllowlistEntry('tenant-a', 'llm.*', true);
     assert.equal(await port.isActionAllowed!('tenant-a', 'llm.openai'), true);
     assert.equal(await port.isActionAllowed!('tenant-a', 'crm.write'), false);
   });
@@ -155,13 +157,13 @@ describe('withDefaultLlmAllowlist', () => {
     );
   });
 
-  it('seeds demo.ticket.* only when COMMANDER_DEMO_TICKET_ALLOWLIST=1', async () => {
+  it('does not let worker env mutate demo ticket policy', async () => {
     const kernel = new InMemoryKernelRepository();
     const port = withDefaultLlmAllowlist(kernel, { COMMANDER_DEMO_TICKET_ALLOWLIST: '1' });
-    assert.equal(await port.isActionAllowed!('tenant-a', 'demo.ticket.create'), true);
+    assert.equal(await port.isActionAllowed!('tenant-a', 'demo.ticket.create'), false);
     assert.equal(
       await port.isActionAllowed!('tenant-a', 'compensate.demo.ticket.create'),
-      true,
+      false,
     );
   });
 });

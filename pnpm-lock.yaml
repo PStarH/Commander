@@ -216,9 +216,6 @@ importers:
       '@commander/kernel':
         specifier: workspace:*
         version: link:../kernel
-      '@commander/worker-plane':
-        specifier: workspace:*
-        version: link:../worker-plane
     devDependencies:
       tsx:
         specifier: ^4.23.1

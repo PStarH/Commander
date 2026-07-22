@@ -199,6 +199,8 @@ export interface FailStepRequest {
   expectedVersion: number;
   actor: string;
   retryAt?: Date;
+  /** Return the attempt consumed by claim when a worker stops before execution begins. */
+  refundAttempt?: boolean;
 }
 
 export interface AdmitEffectRequest {
