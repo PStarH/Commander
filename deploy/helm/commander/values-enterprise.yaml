@@ -1,6 +1,10 @@
 # Enterprise cell profile — external Postgres + existingSecrets only.
 tier: enterprise
 
+# Explicit cell tenant for COMMANDER_CELL_TENANT_ID (must match an entry in worker.tenants).
+cell:
+  tenantId: tenant-a
+
 web:
   enabled: false
 
@@ -8,15 +12,23 @@ worker:
   enabled: true
   replicas: 2
   authTokenSecret: cmdr-worker
+  # REQUIRED: replace with this cell's explicit tenant IDs (never '*').
+  tenants: tenant-a,tenant-b
 
 kernelOps:
   enabled: true
 
 adapterOps:
   enabled: true
-  replicas: 2
+  # Single replica until daemon ids are POD_NAME-suffixed (multi-replica stomps claims).
+  replicas: 1
   secrets:
     existingSecret: cmdr-adapters
+
+# Operator-supplied Ed25519 PEM + JWKS (existingSecret refs only; never chart-generated).
+capability:
+  existingSecret: cmdr-capability
+  create: false
 
 database:
   enabled: true

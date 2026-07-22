@@ -4,7 +4,8 @@
  * Mirrors `schema.ts` table semantics. JSON columns use TEXT.
  * Default synchronous mode: NORMAL (WAL + busy_timeout=5000 per repository bootstrap).
  */
-export const SQLITE_KERNEL_SCHEMA_VERSION = '2026-07-19.1';
+/** Align with PG `KERNEL_SCHEMA_VERSION` claim-era label (workers.tenant_ids / durable claim authz). */
+export const SQLITE_KERNEL_SCHEMA_VERSION = '2026-07-21.16';
 
 export const SQLITE_KERNEL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS commander_kernel_schema (
@@ -109,9 +110,15 @@ CREATE TABLE IF NOT EXISTS commander_effects (
   idempotency_key TEXT NOT NULL,
   request_hash TEXT NOT NULL DEFAULT '',
   policy_decision_id TEXT NOT NULL,
-  policy_snapshot_id TEXT NOT NULL DEFAULT '',
-  lease_worker_id TEXT,
-  lease_fencing_epoch INTEGER,
+  -- Task 2: required policy/digest/lease binding (mirrors schema.ts Step 3).
+  -- No empty-string defaults on policy_snapshot_id / action_digest (PG drops them after backfill).
+  policy_snapshot_id TEXT NOT NULL,
+  action_digest TEXT NOT NULL,
+  -- No default on lease_worker_id: new inserts MUST supply real lease values
+  -- (mirrors policy_snapshot_id / action_digest above — never invent a value).
+  lease_worker_id TEXT NOT NULL,
+  lease_worker_generation INTEGER NOT NULL DEFAULT 0,
+  lease_fencing_epoch INTEGER NOT NULL DEFAULT 0,
   state TEXT NOT NULL CHECK (state IN ('ADMITTED','COMPLETION_UNKNOWN','COMPLETED','FAILED')),
   request TEXT NOT NULL DEFAULT '{}',
   response TEXT,
@@ -145,6 +152,13 @@ CREATE TABLE IF NOT EXISTS commander_workers (
   last_heartbeat_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS commander_workers_active_idx ON commander_workers (status, last_heartbeat_at);
+
+CREATE TABLE IF NOT EXISTS commander_worker_claim_secrets (
+  worker_id TEXT PRIMARY KEY,
+  generation INTEGER NOT NULL,
+  secret_hash BLOB NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
 CREATE TABLE IF NOT EXISTS commander_outbox (
   id TEXT PRIMARY KEY,
@@ -254,13 +268,24 @@ CREATE TABLE IF NOT EXISTS commander_effect_quota (
 );
 
 CREATE TABLE IF NOT EXISTS commander_capability_revocations (
-  jti TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
+  jti TEXT NOT NULL,
   revoked_at TEXT NOT NULL DEFAULT (datetime('now')),
   expires_at TEXT NOT NULL,
-  reason TEXT
+  reason TEXT,
+  PRIMARY KEY (tenant_id, jti)
 );
 CREATE INDEX IF NOT EXISTS commander_capability_revocations_exp_idx ON commander_capability_revocations (expires_at);
+
+CREATE TABLE IF NOT EXISTS commander_capability_replays (
+  tenant_id TEXT NOT NULL,
+  jti TEXT NOT NULL,
+  nonce TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (tenant_id, jti, nonce)
+);
+CREATE INDEX IF NOT EXISTS commander_capability_replays_exp_idx ON commander_capability_replays (expires_at);
 
 CREATE TABLE IF NOT EXISTS commander_action_kill_switches (
   tenant_id TEXT NOT NULL,
@@ -285,6 +310,7 @@ export const SQLITE_KERNEL_TABLES = [
   'commander_events',
   'commander_effects',
   'commander_workers',
+  'commander_worker_claim_secrets',
   'commander_outbox',
   'commander_outbox_deliveries',
   'commander_timers',
@@ -293,5 +319,6 @@ export const SQLITE_KERNEL_TABLES = [
   'commander_effect_allowlist',
   'commander_effect_quota',
   'commander_capability_revocations',
+  'commander_capability_replays',
   'commander_action_kill_switches',
 ] as const;

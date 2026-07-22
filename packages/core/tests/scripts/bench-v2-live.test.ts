@@ -1,9 +1,54 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { readFileSync, rmSync } from 'node:fs';
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
-import { run } from '../../../../scripts/bench-v2-live.ts';
+import {
+  run,
+  assertLiveBenchWorkerTenants,
+  defaultWorkerTenantsForCount,
+} from '../../../../scripts/bench-v2-live.ts';
 import { validateBaseline, type BaselineDocument } from '../../src/benchmarks/baselineSchema';
 import { getCurrentBaseline } from '../../../../scripts/check-readiness.ts';
+
+describe('bench-v2-live worker tenant gate', () => {
+  it('allows live mode at the five-tenant default without COMMANDER_WORKER_TENANTS', () => {
+    expect(() =>
+      assertLiveBenchWorkerTenants(5, 'live', {} as NodeJS.ProcessEnv),
+    ).not.toThrow();
+  });
+
+  it('allows simulated mode with any tenant count without COMMANDER_WORKER_TENANTS', () => {
+    expect(() =>
+      assertLiveBenchWorkerTenants(3, 'simulated', {} as NodeJS.ProcessEnv),
+    ).not.toThrow();
+  });
+
+  it('fail-closes live mode when --tenants≠5 and COMMANDER_WORKER_TENANTS is unset', () => {
+    expect(() =>
+      assertLiveBenchWorkerTenants(3, 'live', {} as NodeJS.ProcessEnv),
+    ).toThrow(/COMMANDER_WORKER_TENANTS/);
+  });
+
+  it('fail-closes live mode when COMMANDER_WORKER_TENANTS is empty or *', () => {
+    expect(() =>
+      assertLiveBenchWorkerTenants(3, 'live', {
+        COMMANDER_WORKER_TENANTS: '',
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/COMMANDER_WORKER_TENANTS/);
+    expect(() =>
+      assertLiveBenchWorkerTenants(3, 'live', {
+        COMMANDER_WORKER_TENANTS: '*',
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/COMMANDER_WORKER_TENANTS/);
+  });
+
+  it('allows live mode when COMMANDER_WORKER_TENANTS is explicitly set', () => {
+    expect(() =>
+      assertLiveBenchWorkerTenants(3, 'live', {
+        COMMANDER_WORKER_TENANTS: defaultWorkerTenantsForCount(3),
+      } as NodeJS.ProcessEnv),
+    ).not.toThrow();
+  });
+});
 
 describe('bench-v2-live baseline output', () => {
   it('writes a valid simulated baseline when no live topology is available', async () => {

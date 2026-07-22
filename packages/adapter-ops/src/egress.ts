@@ -12,8 +12,13 @@ export function parseEgressAllowlist(env: NodeJS.ProcessEnv = process.env): stri
     .filter(Boolean);
 }
 
+/**
+ * Fail-closed default: an unset/empty tier must NOT be treated as 'demo' (which
+ * skips the egress allowlist gate below). Demo openness requires an explicit
+ * COMMANDER_CELL_TIER=demo; anything else — including unset — is non-demo.
+ */
 export function cellTier(env: NodeJS.ProcessEnv = process.env): string {
-  return env.COMMANDER_CELL_TIER?.trim() || 'demo';
+  return env.COMMANDER_CELL_TIER?.trim() || 'unspecified';
 }
 
 /** 非 demo 且 allowlist 为空 → 禁止启动 reconciliation/compensation daemon。 */

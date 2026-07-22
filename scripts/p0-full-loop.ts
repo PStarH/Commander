@@ -124,7 +124,7 @@ async function main(): Promise<void> {
         COMMANDER_KERNEL_DATABASE_URL: DB,
         COMMANDER_WORKER_BOOTSTRAP: resolve(ROOT, 'scripts/p0-worker-bootstrap.ts'),
         COMMANDER_WORKER_AUTH_TOKEN: 'worker-token',
-        COMMANDER_WORKER_TENANTS: '*',
+        COMMANDER_WORKER_TENANTS: TENANT,
         COMMANDER_WORKER_CAPABILITIES: 'agent',
         COMMANDER_WORKER_POLL_MS: '100',
         COMMANDER_DEFAULT_PROVIDER: 'mock',

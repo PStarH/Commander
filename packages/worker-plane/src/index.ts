@@ -2,6 +2,11 @@ export {
   PostgresWorkerRegistry,
   InMemoryWorkerRegistry,
   WORKER_PLANE_SCHEMA_SQL,
+  WORKER_OPEN_ENDED_TENANTS_FORBIDDEN,
+  WORKER_CLAIM_SECRET_REGISTER_FAILED,
+  WORKER_TENANT_NOT_ALLOWED,
+  WORKER_REREGISTER_REQUIRES_SECRET,
+  WORKER_REREGISTER_SECRET_MISMATCH,
 } from './registry.js';
 export { WorkerService } from './workerService.js';
 export { WorkerExecutionError } from './types.js';
@@ -22,7 +27,12 @@ export type {
 } from './types.js';
 
 // Production bootstrap
-export { createWorkerEffectExecutor, createWorkerService } from './bootstrap.js';
+export {
+  createWorkerEffectExecutor,
+  createWorkerService,
+  resolveWorkerTenantScope,
+  WORKER_TENANT_SCOPE_REQUIRED,
+} from './bootstrap.js';
 
 // Authentication
 export { ApiKeyWorkerAuthenticator, WorkerAuthError } from './apiKeyAuthenticator.js';

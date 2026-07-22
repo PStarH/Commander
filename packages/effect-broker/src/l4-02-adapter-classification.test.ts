@@ -75,6 +75,9 @@ describe('L4-02 adapter execution classification', () => {
       effectTypes: ['connector.github.pull-request.create'],
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       requestHash: canonicalRequestHash(request),
+      actionDigest: 'a'.repeat(64),
+      workerId: 'worker-1',
+      workerGeneration: 1,
     });
     await assert.rejects(
       () =>
@@ -84,7 +87,7 @@ describe('L4-02 adapter execution classification', () => {
           type: 'connector.github.pull-request.create',
           request,
           idempotencyKey: 'key-1',
-          lease: { workerId: 'worker-1', token: 'lease', fencingEpoch: 1 },
+          lease: { workerId: 'worker-1', workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
           actor: 'worker-1',
         }),
       (error: unknown) =>
@@ -159,6 +162,9 @@ describe('L4-02 adapter execution classification', () => {
       effectTypes: ['connector.github.pull-request.create'],
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       requestHash: canonicalRequestHash(request),
+      actionDigest: 'a'.repeat(64),
+      workerId: 'worker-1',
+      workerGeneration: 1,
     });
     await assert.rejects(
       () =>
@@ -168,7 +174,7 @@ describe('L4-02 adapter execution classification', () => {
           type: 'connector.github.pull-request.create',
           request,
           idempotencyKey: 'key-2',
-          lease: { workerId: 'worker-1', token: 'lease', fencingEpoch: 1 },
+          lease: { workerId: 'worker-1', workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
           actor: 'worker-1',
         }),
       (error: unknown) =>

@@ -11,7 +11,9 @@
  * - COMMANDER_WORKER_KIND: Worker type (default: 'agent')
  * - COMMANDER_WORKER_CAPABILITIES: Comma-separated capability list (default: 'agent')
  * - COMMANDER_WORKER_MAX_CONCURRENCY: Max concurrent steps (default: 10)
- * - COMMANDER_WORKER_TENANTS: Comma-separated tenant IDs, or '*' for all
+ * - COMMANDER_WORKER_TENANTS: Comma-separated explicit tenant IDs (required).
+ *   '*', missing, empty, and comma-only values fail closed with
+ *   WORKER_TENANT_SCOPE_REQUIRED before any database activity.
  * - COMMANDER_WORKER_AUTH_TOKEN: Worker authentication token
  * - COMMANDER_WORKER_AUTH_SUBJECT: Worker identity subject
  * - COMMANDER_WORKER_LEASE_TTL_MS: Step lease TTL (default: 30000)
@@ -39,21 +41,178 @@ import type {
   PolicyEvaluator,
   AuditSink,
   EffectKernelPort,
+  EffectBrokerOptions,
 } from '@commander/effect-broker';
 import {
   EffectBroker,
   CapabilityTokenIssuer,
-  CapabilityTokenVerifier,
   canonicalRequestHash,
 } from '@commander/effect-broker';
-import type { KernelInteraction, KernelRun, KernelStep } from '@commander/kernel';
+import type { KernelInteraction, KernelRun, KernelStep, KernelRepository } from '@commander/kernel';
+import {
+  createCapabilityAuthority,
+  type CapabilityAuthority,
+} from '@commander/kernel';
 import { InMemoryTicketAdapter } from './ticketAdapter.js';
 
 // Lazy import to avoid circular dependency at module load time
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Pool = { connect(): Promise<any>; end(): Promise<void> };
 
+/** Thrown when a worker is not scoped to an explicit, non-empty tenant list. */
+export const WORKER_TENANT_SCOPE_REQUIRED = 'WORKER_TENANT_SCOPE_REQUIRED';
+
+/** Runtime DSN / session uses owner or migration LOGIN — refuse before poll. */
+export const OWNER_DATABASE_ROLE_REJECTED = 'OWNER_DATABASE_ROLE_REJECTED';
+
+/** Durable replay/revocation stores missing from authority or kernel repository. */
+export const CAPABILITY_DURABLE_STORES_REQUIRED = 'CAPABILITY_DURABLE_STORES_REQUIRED';
+
+/** Owner / migration LOGIN role — never accept for worker DATABASE_URL. */
+export const OWNER_MIGRATION_DATABASE_ROLES = new Set(['commander_owner']);
+
+/**
+ * Resolve the worker's durable tenant scope fail-closed.
+ *
+ * A worker is a least-privilege runtime (commander_worker role, no BYPASSRLS)
+ * and must never be granted database authority through tenant configuration.
+ * `*`, missing, empty, and comma-only `COMMANDER_WORKER_TENANTS` all throw
+ * `WORKER_TENANT_SCOPE_REQUIRED` BEFORE any Pool/repository/registration/poll.
+ * `schedulerMode` is always false; cross-tenant claim authority belongs to the
+ * kernel-ops scheduler entrypoint, not to workers.
+ */
+export function resolveWorkerTenantScope(env: NodeJS.ProcessEnv = process.env): {
+  tenantIds: string[];
+  schedulerMode: false;
+} {
+  const tenantIds = (env.COMMANDER_WORKER_TENANTS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (tenantIds.length === 0 || tenantIds.includes('*')) {
+    throw new Error(
+      `${WORKER_TENANT_SCOPE_REQUIRED}: COMMANDER_WORKER_TENANTS must be a non-empty, explicit ` +
+        "tenant list. '*', missing, empty, and comma-only scopes are rejected before any database " +
+        'activity; scheduler-mode cross-tenant claims are only available through kernel-ops.',
+    );
+  }
+  return { tenantIds, schedulerMode: false };
+}
+
+/** Extract LOGIN username from a postgres DSN userinfo (null if not a postgres URL). */
+export function databaseUrlLoginRole(dsn: string): string | null {
+  const m = dsn.match(/^(?:postgres|postgresql):\/\/([^:/?@]+)(?::[^@]*)?@/i);
+  return m?.[1] ? decodeURIComponent(m[1]) : null;
+}
+
+/**
+ * Reject owner/migration credentials in the connection URL userinfo.
+ * Task 1 `worker-url` (`commander_worker`) must pass — no false positive.
+ */
+export function assertNonOwnerDatabaseUrl(dsn: string): void {
+  const role = databaseUrlLoginRole(dsn);
+  if (role === null) return;
+  if (OWNER_MIGRATION_DATABASE_ROLES.has(role)) {
+    throw new Error(
+      `${OWNER_DATABASE_ROLE_REJECTED}: DATABASE_URL userinfo role '${role}' is forbidden ` +
+        '(owner/migration). Workers must use Task 1 worker-url (commander_worker).',
+    );
+  }
+}
+
+/** Reject post-connect `current_user` matching owner/migration. */
+export function assertNonOwnerDatabaseRole(currentUser: string): void {
+  const role = currentUser.trim();
+  if (OWNER_MIGRATION_DATABASE_ROLES.has(role)) {
+    throw new Error(
+      `${OWNER_DATABASE_ROLE_REJECTED}: session current_user '${role}' is forbidden ` +
+        '(owner/migration). Workers must authenticate as commander_worker.',
+    );
+  }
+}
+
+type CapabilityStoreRepository = {
+  consumeCapabilityReplay?: unknown;
+  isCapabilityRevoked?: unknown;
+  revokeCapability?: unknown;
+};
+
+/**
+ * Production EffectBroker options require durable replay + revocations from the
+ * Task 3 factory (non-optional). Also verifies kernel repository methods exist.
+ */
+export function assertDurableCapabilityStores(
+  capability: Pick<CapabilityAuthority, 'revocations' | 'replayForTenant'>,
+  repository: CapabilityStoreRepository,
+): void {
+  if (!capability.revocations) {
+    throw new Error(
+      `${CAPABILITY_DURABLE_STORES_REQUIRED}: createCapabilityAuthority did not provide revocations`,
+    );
+  }
+  if (typeof capability.replayForTenant !== 'function') {
+    throw new Error(
+      `${CAPABILITY_DURABLE_STORES_REQUIRED}: createCapabilityAuthority did not provide replayForTenant`,
+    );
+  }
+  if (
+    typeof capability.revocations.isRevoked !== 'function' ||
+    typeof capability.revocations.revoke !== 'function'
+  ) {
+    throw new Error(
+      `${CAPABILITY_DURABLE_STORES_REQUIRED}: revocations must expose isRevoked/revoke`,
+    );
+  }
+  const replay = capability.replayForTenant('__assert_durable_probe__');
+  if (!replay || typeof replay.consume !== 'function') {
+    throw new Error(
+      `${CAPABILITY_DURABLE_STORES_REQUIRED}: replayForTenant() must return a store with consume()`,
+    );
+  }
+  if (typeof repository.consumeCapabilityReplay !== 'function') {
+    throw new Error(
+      `${CAPABILITY_DURABLE_STORES_REQUIRED}: kernel repository missing consumeCapabilityReplay`,
+    );
+  }
+  if (typeof repository.isCapabilityRevoked !== 'function') {
+    throw new Error(
+      `${CAPABILITY_DURABLE_STORES_REQUIRED}: kernel repository missing isCapabilityRevoked`,
+    );
+  }
+  if (typeof repository.revokeCapability !== 'function') {
+    throw new Error(
+      `${CAPABILITY_DURABLE_STORES_REQUIRED}: kernel repository missing revokeCapability`,
+    );
+  }
+}
+
+/** Build EffectBroker options with durable replay + revocations (non-optional).
+ * Replay is the authority factory (no fixed tenant) — durable consume stays on
+ * capability.verifier via grant.tenantId; options only assert wiring presence.
+ */
+export function productionCapabilityBrokerOptions(
+  capability: CapabilityAuthority,
+  localWorkerId: string,
+): EffectBrokerOptions & {
+  replay: CapabilityAuthority['replayForTenant'];
+  revocations: CapabilityAuthority['revocations'];
+  requireDurableCapabilityStores: true;
+} {
+  return {
+    audience: capability.audience,
+    requireRequestBinding: true,
+    localWorkerId,
+    requireDurableCapabilityStores: true,
+    replay: (tenantId: string) => capability.replayForTenant(tenantId),
+    revocations: capability.revocations,
+  };
+}
+
 export async function createWorkerService(): Promise<WorkerService> {
+  // Fail-closed BEFORE sandbox readiness, DB connect, registration, or polling:
+  // a worker without an explicit tenant scope must not start.
+  const { tenantIds, schedulerMode } = resolveWorkerTenantScope(process.env);
+
   await createProductionWorkerSandboxReadiness().assertReady();
 
   // ── Validate required env vars ──
@@ -61,6 +220,8 @@ export async function createWorkerService(): Promise<WorkerService> {
   if (!dbUrl) {
     throw new Error('DATABASE_URL is required for worker bootstrap');
   }
+  // Owner-DSN gate BEFORE Pool connect / poll (URL userinfo).
+  assertNonOwnerDatabaseUrl(dbUrl);
 
   const authToken = process.env.COMMANDER_WORKER_AUTH_TOKEN;
   if (!authToken) {
@@ -74,7 +235,6 @@ export async function createWorkerService(): Promise<WorkerService> {
     .split(',')
     .map((s) => s.trim());
   const maxConcurrency = parseInt(process.env.COMMANDER_WORKER_MAX_CONCURRENCY ?? '10', 10);
-  const tenantIds = (process.env.COMMANDER_WORKER_TENANTS ?? '*').split(',').map((s) => s.trim());
 
   // ── Build worker identity ──
   const expiresAt = new Date(Date.now() + 3600_000); // 1 hour
@@ -104,17 +264,29 @@ export async function createWorkerService(): Promise<WorkerService> {
   };
   const pool = new PgPool({ connectionString: dbUrl, max: maxConcurrency + 5 });
 
+  // Post-connect owner-role gate (current_user) before kernel/broker/poll.
+  {
+    const client = await pool.connect();
+    try {
+      const identityRows = (await client.query(
+        'SELECT current_user::text AS role_name',
+      )) as { rows: Array<{ role_name?: string }> };
+      assertNonOwnerDatabaseRole(identityRows.rows[0]?.role_name ?? '');
+    } finally {
+      client.release();
+    }
+  }
+
   // ── Create kernel repository adapter ──
   // Lazy dynamic import to avoid circular dependency at module load time.
-  // A worker configured to serve all tenants ('*') acts like a scheduler/recovery
-  // process for cross-tenant claim/heartbeat and must connect as the
-  // commander_scheduler role. Workers scoped to specific tenants use the
-  // commander_app role and carry an explicit tenant scope on every write.
-  const allTenants = tenantIds.includes('*');
+  // Workers always connect with schedulerMode:false (commander_worker role, no
+  // BYPASSRLS) and carry an explicit tenant scope on every write. Tenant
+  // configuration never grants database authority; scheduler mode is reserved
+  // for the kernel-ops entrypoint.
   const { PostgresKernelRepository } = (await import('@commander/kernel')) as unknown as {
     PostgresKernelRepository: new (pool: any, options?: { schedulerMode?: boolean }) => any;
   };
-  const kernel = new PostgresKernelRepository(pool, { schedulerMode: allTenants });
+  const kernel = new PostgresKernelRepository(pool, { schedulerMode });
 
   // ── Create registry ──
   const registry = new PostgresWorkerRegistry(pool);
@@ -127,7 +299,11 @@ export async function createWorkerService(): Promise<WorkerService> {
   });
 
   // ── Create shared Effect Broker for external side effects ──
-  const { broker: effectBroker, issuer: capabilityIssuer } = createEffectBroker(kernel, workerId);
+  // Task 3 factory — never CapabilityTokenIssuer.generate() for production authority.
+  const { broker: effectBroker, issuer: capabilityIssuer } = createEffectBroker(
+    kernel,
+    workerId,
+  );
 
   // ── Create step executor based on worker kind ──
   const executor = await createExecutorForKind(
@@ -569,27 +745,25 @@ export function createWorkerEffectExecutor(tickets = new InMemoryTicketAdapter()
   };
 }
 
-function createEffectBroker(
-  kernel: AllowlistKernel,
+/**
+ * Wire EffectBroker via Task 3 `createCapabilityAuthority` from `@commander/kernel`.
+ * Production / enterprise refuse `CapabilityTokenIssuer.generate()` (factory gate).
+ * Durable `replay` + `revocations` are non-optional on broker options (presence);
+ * EffectBroker ctor fail-closed when requireDurable / production profile.
+ * Token verify still owns durable consume via grant.tenantId (no options double-consume).
+ */
+export function createEffectBroker(
+  kernel: AllowlistKernel & KernelRepository,
   localWorkerId: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): {
   broker: EffectBroker;
   issuer: CapabilityTokenIssuer;
+  capability: CapabilityAuthority;
 } {
-  // WS2 §9: the CapabilityTokenService seed-based facade is removed. The worker
-  // bootstrap now generates a fresh Ed25519 keypair and builds a matching
-  // verifier. In production the verifier should be wired with the issuer's
-  // distributed public keys instead; this dev path keeps local workers working.
-  const issuer = CapabilityTokenIssuer.generate({
-    issuer: 'commander-worker',
-    audience: 'commander.effect-broker',
-    keyId: 'worker-bootstrap',
-  });
-  const tokens = new CapabilityTokenVerifier({
-    issuer: 'commander-worker',
-    audience: 'commander.effect-broker',
-    publicKeys: { 'worker-bootstrap': issuer.publicKey },
-  });
+  const capability = createCapabilityAuthority(env, kernel);
+  assertDurableCapabilityStores(capability, kernel);
+
   const policy = createWorkerPolicyEvaluator(kernel);
   const effectKernel = withDefaultLlmAllowlist(kernel);
   const executor = createWorkerEffectExecutor();
@@ -610,14 +784,21 @@ function createEffectBroker(
     },
   };
 
+  const brokerOptions = productionCapabilityBrokerOptions(capability, localWorkerId);
+
   // WS2 §4: request binding is mandatory. The EffectBroker constructor
   // enforces this in production (throws REQUEST_BINDING_DISABLED_IN_PROD).
-  const broker = new EffectBroker(tokens, policy, effectKernel, executor, audit, {
-    audience: 'commander.effect-broker',
-    requireRequestBinding: true,
-    localWorkerId,
-  });
-  return { broker, issuer };
+  // Verifier already embeds durable tenant-scoped replay + revocations;
+  // options still carry non-optional store handles from the factory.
+  const broker = new EffectBroker(
+    capability.verifier,
+    policy,
+    effectKernel,
+    executor,
+    audit,
+    brokerOptions,
+  );
+  return { broker, issuer: capability.issuer, capability };
 }
 
 /**

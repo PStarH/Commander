@@ -26,6 +26,11 @@ import { KERNEL_COMPENSATION_TOPIC, LEGACY_COMPENSATION_TOPIC } from '../ops/com
 import { KernelInvariantError } from '../types.js';
 import { assertRunTransition, assertStepTransition } from '../transitionValidation.js';
 import { createHash } from 'node:crypto';
+import {
+  generateWorkerClaimSecret,
+  hashWorkerClaimSecret,
+  verifyWorkerClaimSecret,
+} from '../claimSecret.js';
 
 const clone = <T>(value: T): T => structuredClone(value);
 const now = () => new Date().toISOString();
@@ -51,6 +56,21 @@ const reconcileDefaults = (): Pick<
 });
 const TERMINAL_RUN_STATES = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED', 'COMPENSATED']);
 
+export interface InMemoryKernelRepositoryOptions {
+  /**
+   * When false (worker claim path), authorize tenants from durable worker
+   * records only — caller tenantIds cannot widen; empty caller tenantIds ≠ all.
+   * Default true preserves legacy test fixtures that claim without seeding workers.
+   */
+  schedulerMode?: boolean;
+}
+
+type InMemoryWorkerRecord = {
+  tenantIds: string[];
+  status: 'ACTIVE' | 'DRAINING' | 'OFFLINE';
+  generation: number;
+};
+
 export class InMemoryKernelRepository implements KernelRepository {
   private readonly runs = new Map<string, KernelRun>();
   private readonly steps = new Map<string, KernelStep>();
@@ -63,15 +83,25 @@ export class InMemoryKernelRepository implements KernelRepository {
   private readonly tenantControls = new Map<string, TenantExecutionControl>();
   private readonly lastFencingEpoch = new Map<string, number>();
   private readonly interactions = new Map<string, KernelInteraction>();
+  private readonly workers = new Map<string, InMemoryWorkerRecord>();
   // WS2 EffectBroker monopoly state
   private readonly capabilityRevocations = new Map<string, { tenantId: string; expiresAt: number; reason?: string }>();
+  /** Key: `${tenantId}|${jti}|${nonce}` → expiresAt ms */
+  private readonly capabilityReplays = new Map<string, number>();
   private readonly effectAllowlist = new Map<string, Map<string, boolean>>(); // tenantId -> (actionPattern -> allowed)
   private readonly effectQuota = new Map<string, { countUsed: number; tokensUsed: number }>(); // `${tenantId}|${actionClass}|${day}`
   private readonly killSwitches = new Map<string, KillSwitch>(); // `${tenantId}|${scope}|${value}`
+  /** workerId → claim secret hash for worker-mode claims. */
+  private readonly claimSecretHashes = new Map<string, { generation: number; hash: Buffer }>();
   // Outbox DLQ (declared early so claimOutboxByTopic can filter DLQ'd messages)
   private readonly dlq = new Map<string, KernelDlqEntry>();
   /** Test-only: configurable maximum publish attempts before an outbox message is moved to the DLQ. */
   outboxMaxAttempts = 10;
+  private readonly schedulerMode: boolean;
+
+  constructor(options: InMemoryKernelRepositoryOptions = {}) {
+    this.schedulerMode = options.schedulerMode ?? true;
+  }
 
   /** Test-only: enqueue an arbitrary outbox message (used by compensation DLQ proofs). */
   seedOutboxMessage(input: {
@@ -131,6 +161,52 @@ export class InMemoryKernelRepository implements KernelRepository {
   }
 
   async initialize(): Promise<void> { /* explicit no-op for tests */ }
+
+  /** Test helper: durable worker registry used by worker-mode claimNextStep. Returns claim secret. */
+  seedTestWorker(
+    workerId: string,
+    tenantIds: string[],
+    generation = 1,
+    options?: { status?: 'ACTIVE' | 'DRAINING' | 'OFFLINE'; claimSecret?: string },
+  ): string {
+    const claimSecret = options?.claimSecret ?? generateWorkerClaimSecret();
+    this.workers.set(workerId, {
+      tenantIds: [...tenantIds],
+      status: options?.status ?? 'ACTIVE',
+      generation,
+    });
+    this.claimSecretHashes.set(workerId, {
+      generation,
+      hash: hashWorkerClaimSecret(claimSecret),
+    });
+    return claimSecret;
+  }
+
+  private resolveDurableWorkerTenantScope(
+    workerId: string,
+    workerGeneration: number,
+    claimSecret?: string,
+  ): { tenantIds: string[]; openEnded: boolean } | null {
+    if (!claimSecret || claimSecret.length === 0) return null;
+    const stored = this.claimSecretHashes.get(workerId);
+    if (
+      !stored ||
+      stored.generation !== workerGeneration ||
+      !verifyWorkerClaimSecret(claimSecret, stored.hash)
+    ) {
+      return null;
+    }
+    const worker = this.workers.get(workerId);
+    if (!worker || worker.status !== 'ACTIVE' || worker.generation !== workerGeneration) {
+      return null;
+    }
+    const parsed = worker.tenantIds.filter((t) => typeof t === 'string' && t.length > 0);
+    // Product decision: durable '*' fail-closed (parity with claim_* DEFINER / SQLite).
+    if (parsed.includes('*')) return null;
+    if (parsed.length === 0) return null;
+    return { tenantIds: parsed, openEnded: false };
+  }
+
   async createRun(command: CreateKernelRun, actor: string): Promise<KernelRun> {
     if (this.runs.has(command.id)) throw new KernelInvariantError('DUPLICATE_RUN', `Run ${command.id} already exists`);
     const ids = new Set(command.steps.map((step) => step.id));
@@ -187,9 +263,23 @@ export class InMemoryKernelRepository implements KernelRepository {
   async getStep(stepId: string, tenantId: string): Promise<KernelStep | null> { const record = this.steps.get(stepId); return record?.tenantId === tenantId ? clone(record) : null; }
   async claimNextStep(request: ClaimStepRequest): Promise<KernelStep | null> {
     const at = request.now ?? new Date();
-    const tenantIds = request.tenantIds ?? (request.tenantId ? [request.tenantId] : []);
+    const workerGeneration = request.workerGeneration ?? -1;
+    let tenantFilter: string[] | null; // null = open-ended (all tenants)
+    if (!this.schedulerMode) {
+      // Worker path: durable authz only — empty caller tenantIds must not mean all.
+      const scope = this.resolveDurableWorkerTenantScope(
+        request.workerId,
+        workerGeneration,
+        request.claimSecret,
+      );
+      if (!scope) return null;
+      tenantFilter = scope.openEnded ? null : scope.tenantIds;
+    } else {
+      const caller = request.tenantIds ?? (request.tenantId ? [request.tenantId] : []);
+      tenantFilter = caller.length === 0 ? null : caller;
+    }
     const candidate = [...this.steps.values()].filter((step) =>
-      (tenantIds.length === 0 || tenantIds.includes(step.tenantId)) &&
+      (tenantFilter === null || tenantFilter.includes(step.tenantId)) &&
       (!request.capabilities || request.capabilities.length === 0 || request.capabilities.includes(step.kind)) &&
       ['PENDING', 'RETRY_WAIT'].includes(step.state) &&
       !this.tenantControls.get(step.tenantId)?.paused &&
@@ -215,7 +305,13 @@ export class InMemoryKernelRepository implements KernelRepository {
     if (run.state === 'PENDING') assertRunTransition(run.state, 'RUNNING');
     candidate.state = 'RUNNING'; candidate.version++; candidate.attempt++; candidate.updatedAt = at.toISOString();
     const lastEpoch = candidate.lease?.fencingEpoch ?? this.lastFencingEpoch.get(candidate.id) ?? 0;
-    candidate.lease = { workerId: request.workerId, workerGeneration: request.workerGeneration ?? 0, token: randomUUID(), fencingEpoch: lastEpoch + 1, expiresAt: new Date(at.getTime() + request.leaseTtlMs).toISOString() };
+    candidate.lease = {
+      workerId: request.workerId,
+      workerGeneration: request.workerGeneration ?? 0,
+      token: randomUUID(),
+      fencingEpoch: lastEpoch + 1,
+      expiresAt: new Date(at.getTime() + request.leaseTtlMs).toISOString(),
+    };
     this.lastFencingEpoch.delete(candidate.id);
     if (run.state === 'PENDING') { run.state = 'RUNNING'; run.version++; run.updatedAt = at.toISOString(); }
     this.event('step', candidate.id, candidate.version, 'step.claimed', candidate.tenantId, candidate.runId, candidate.id, request.workerId, { fencingEpoch: candidate.lease.fencingEpoch });
@@ -383,6 +479,14 @@ export class InMemoryKernelRepository implements KernelRepository {
     return clone(control ?? { tenantId, paused: false, generation: 0, actor: 'kernel' });
   }
   async admitEffect(request: AdmitEffectRequest): Promise<AdmitEffectResult> {
+    // Fail-closed: never let a blank policySnapshotId / lease.workerId slip
+    // through to storage where it would otherwise coerce to 'legacy-unbound'.
+    if (!request.policySnapshotId || !request.policySnapshotId.trim()) {
+      return { admitted: false, reason: 'POLICY_SNAPSHOT_ID_REQUIRED' };
+    }
+    if (!request.lease.workerId || !request.lease.workerId.trim()) {
+      return { admitted: false, reason: 'LEASE_WORKER_ID_REQUIRED' };
+    }
     const key = `${request.tenantId}:${request.idempotencyKey}`;
     const step = this.steps.get(request.stepId);
     const run = this.runs.get(request.runId);
@@ -400,7 +504,17 @@ export class InMemoryKernelRepository implements KernelRepository {
     }
     const fingerprint = requestHash(request.request); const previous = this.effectsByKey.get(key);
     if (previous) {
-      if (previous.runId !== request.runId || previous.stepId !== request.stepId || previous.type !== request.type || previous.requestHash !== fingerprint || previous.policyDecisionId !== request.policyDecisionId) return { admitted: false, reason: 'IDEMPOTENCY_CONFLICT' };
+      if (
+        previous.runId !== request.runId ||
+        previous.stepId !== request.stepId ||
+        previous.type !== request.type ||
+        previous.requestHash !== fingerprint ||
+        previous.policyDecisionId !== request.policyDecisionId ||
+        previous.policySnapshotId !== request.policySnapshotId ||
+        previous.actionDigest !== request.actionDigest
+      ) {
+        return { admitted: false, reason: 'IDEMPOTENCY_CONFLICT' };
+      }
       return { admitted: true, replayed: true, effect: clone(previous) };
     }
     const effect: KernelEffect = {
@@ -412,12 +526,17 @@ export class InMemoryKernelRepository implements KernelRepository {
       idempotencyKey: request.idempotencyKey,
       requestHash: fingerprint,
       policyDecisionId: request.policyDecisionId,
+      policySnapshotId: request.policySnapshotId,
+      actionDigest: request.actionDigest,
+      leaseWorkerId: request.lease.workerId,
+      leaseWorkerGeneration: request.lease.workerGeneration ?? -1,
+      leaseFencingEpoch: request.lease.fencingEpoch,
       state: 'ADMITTED',
       request: request.request,
       createdAt: now(),
       ...reconcileDefaults(),
     };
-    this.effects.set(effect.id, effect); this.effectsByKey.set(key, effect); this.event('effect', effect.id, 1, 'effect.admitted', effect.tenantId, effect.runId, effect.stepId, request.actor, { type: effect.type }); return { admitted: true, replayed: false, effect: clone(effect) };
+    this.effects.set(effect.id, effect); this.effectsByKey.set(key, effect); this.event('effect', effect.id, 1, 'effect.admitted', effect.tenantId, effect.runId, effect.stepId, request.actor, { type: effect.type, policySnapshotId: effect.policySnapshotId, actionDigest: effect.actionDigest }); return { admitted: true, replayed: false, effect: clone(effect) };
   }
   async completeEffect(effectId: string, tenantId: string, lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>, response: Record<string, unknown>, actor: string): Promise<KernelEffect | null> {
     const effect = this.effects.get(effectId); const step = effect ? this.steps.get(effect.stepId) : undefined;
@@ -494,8 +613,21 @@ export class InMemoryKernelRepository implements KernelRepository {
     const at = input.now ?? new Date();
     const claimTtlMs = input.claimTtlMs ?? 60_000;
     const claimed: ClaimedReconcileEffect[] = [];
+    let tenantFilter: string[] | null = null; // null = open-ended
+    if (!this.schedulerMode) {
+      const workerId = input.workerId?.trim();
+      if (!workerId) return [];
+      const scope = this.resolveDurableWorkerTenantScope(
+        workerId,
+        input.workerGeneration ?? -1,
+        input.claimSecret,
+      );
+      if (!scope) return [];
+      tenantFilter = scope.openEnded ? null : scope.tenantIds;
+    }
     const candidates = [...this.effects.values()]
       .filter((effect) => {
+        if (tenantFilter !== null && !tenantFilter.includes(effect.tenantId)) return false;
         if (effect.state !== 'COMPLETION_UNKNOWN' || effect.reconcileEscalatedAt) return false;
         if (!effect.reconcileAfter || Date.parse(effect.reconcileAfter) > at.getTime()) return false;
         if (
@@ -683,6 +815,9 @@ export class InMemoryKernelRepository implements KernelRepository {
         compensationPayload: {
           originalEffectId: target.id,
           forwardResponse: target.response ?? {},
+          // Derived from the original effect's own lease fencing — never invent
+          // a literal epoch for the compensation consumer's admit lease.
+          fencingEpoch: target.leaseFencingEpoch,
         },
         idempotencyKey,
       },
@@ -713,14 +848,64 @@ export class InMemoryKernelRepository implements KernelRepository {
       return clone(message);
     });
   }
-  async markOutboxPublished(messageId: string, claimToken: string): Promise<boolean> { const message = this.outbox.get(messageId); const claim = this.outboxClaims.get(messageId); if (!message || message.publishedAt || claim?.token !== claimToken) return false; message.publishedAt = now(); message.claimToken = undefined; this.outboxClaims.delete(messageId); return true; }
-  async retryOutbox(messageId: string, claimToken: string, _error: { code: string; message: string }, at = new Date()): Promise<boolean> { const message = this.outbox.get(messageId); const claim = this.outboxClaims.get(messageId); if (!message || message.publishedAt || claim?.token !== claimToken) return false; message.availableAt = new Date(at.getTime() + Math.pow(2, Math.max(0, message.attempts - 1)) * 1000).toISOString(); message.claimToken = undefined; this.outboxClaims.delete(messageId); return true; }
+  async markOutboxPublished(messageId: string, claimToken: string, tenantId?: string): Promise<boolean> {
+    const message = this.outbox.get(messageId);
+    const claim = this.outboxClaims.get(messageId);
+    if (!message || message.publishedAt || claim?.token !== claimToken) return false;
+    if (tenantId && message.tenantId !== tenantId) return false;
+    message.publishedAt = now();
+    message.claimToken = undefined;
+    this.outboxClaims.delete(messageId);
+    return true;
+  }
+  async retryOutbox(
+    messageId: string,
+    claimToken: string,
+    _error: { code: string; message: string },
+    at = new Date(),
+    tenantId?: string,
+  ): Promise<boolean> {
+    const message = this.outbox.get(messageId);
+    const claim = this.outboxClaims.get(messageId);
+    if (!message || message.publishedAt || claim?.token !== claimToken) return false;
+    if (tenantId && message.tenantId !== tenantId) return false;
+    message.availableAt = new Date(at.getTime() + Math.pow(2, Math.max(0, message.attempts - 1)) * 1000).toISOString();
+    message.claimToken = undefined;
+    this.outboxClaims.delete(messageId);
+    return true;
+  }
 
   // ── WS2 EffectBroker monopoly ──
 
-  async claimOutboxByTopic(topic: string, limit: number, at = new Date()): Promise<KernelOutboxMessage[]> {
+  async claimOutboxByTopic(
+    topic: string,
+    limit: number,
+    at = new Date(),
+    authz?: { workerId: string; workerGeneration: number; claimSecret: string },
+  ): Promise<KernelOutboxMessage[]> {
+    let tenantFilter: string[] | null = null;
+    if (!this.schedulerMode) {
+      const workerId = authz?.workerId?.trim();
+      if (!workerId) {
+        throw new Error('claimOutboxByTopic requires workerId on the worker LOGIN path');
+      }
+      if (typeof authz?.workerGeneration !== 'number' || !Number.isFinite(authz.workerGeneration)) {
+        throw new Error('claimOutboxByTopic requires finite workerGeneration on the worker LOGIN path');
+      }
+      if (!authz.claimSecret) {
+        throw new Error('claimOutboxByTopic requires claimSecret on the worker LOGIN path');
+      }
+      const scope = this.resolveDurableWorkerTenantScope(
+        workerId,
+        authz.workerGeneration,
+        authz.claimSecret,
+      );
+      if (!scope) return [];
+      tenantFilter = scope.openEnded ? null : scope.tenantIds;
+    }
     return [...this.outbox.values()].filter((message) => {
       if (message.topic !== topic || message.publishedAt) return false;
+      if (tenantFilter !== null && !tenantFilter.includes(message.tenantId)) return false;
       if ([...this.dlq.values()].some((e) => e.originalId === message.id)) return false;
       if (message.attempts >= this.outboxMaxAttempts) return false;
       const claim = this.outboxClaims.get(message.id);
@@ -734,15 +919,36 @@ export class InMemoryKernelRepository implements KernelRepository {
     });
   }
 
-  async isCapabilityRevoked(jti: string): Promise<boolean> {
-    const entry = this.capabilityRevocations.get(jti);
+  async isCapabilityRevoked(jti: string, tenantId: string): Promise<boolean> {
+    const key = `${tenantId}\0${jti}`;
+    const entry = this.capabilityRevocations.get(key);
     if (!entry) return false;
-    if (entry.expiresAt <= Date.now()) { this.capabilityRevocations.delete(jti); return false; }
+    if (entry.expiresAt <= Date.now()) { this.capabilityRevocations.delete(key); return false; }
     return true;
   }
 
   async revokeCapability(input: { jti: string; tenantId: string; expiresAt: string; reason?: string }): Promise<void> {
-    this.capabilityRevocations.set(input.jti, { tenantId: input.tenantId, expiresAt: Date.parse(input.expiresAt), reason: input.reason });
+    this.capabilityRevocations.set(`${input.tenantId}\0${input.jti}`, {
+      tenantId: input.tenantId,
+      expiresAt: Date.parse(input.expiresAt),
+      reason: input.reason,
+    });
+  }
+
+  async consumeCapabilityReplay(input: {
+    tenantId: string;
+    jti: string;
+    nonce: string;
+    expiresAt: string;
+  }): Promise<boolean> {
+    const now = Date.now();
+    for (const [key, expiry] of this.capabilityReplays) {
+      if (expiry <= now) this.capabilityReplays.delete(key);
+    }
+    const key = `${input.tenantId}|${input.jti}|${input.nonce}`;
+    if (this.capabilityReplays.has(key)) return true;
+    this.capabilityReplays.set(key, Date.parse(input.expiresAt));
+    return false;
   }
 
   async isActionAllowed(tenantId: string, action: string): Promise<boolean> {

@@ -58,8 +58,23 @@ export class ApiKeyWorkerAuthenticator implements WorkerAuthenticator {
       throw new WorkerAuthError('TOKEN_INVALID', 'Worker API key is not recognized');
     }
 
-    // 3. Resolve tenant scope
-    const tenantIds = this.config.tokenTenants?.get(token) ?? this.config.defaultTenantIds;
+    // 3. Resolve tenant scope — tokenTenants may only narrow defaultTenantIds, never widen.
+    const ceiling = this.config.defaultTenantIds;
+    const requested = this.config.tokenTenants?.get(token) ?? ceiling;
+    const ceilingSet = new Set(ceiling);
+    const tenantIds = requested.filter((t) => ceilingSet.has(t));
+    if (tenantIds.length === 0) {
+      throw new WorkerAuthError(
+        'TENANT_SCOPE_DENIED',
+        'Worker token tenants are empty after intersecting with defaultTenantIds ceiling',
+      );
+    }
+    if (requested.some((t) => !ceilingSet.has(t))) {
+      throw new WorkerAuthError(
+        'TENANT_SCOPE_DENIED',
+        `Worker token tenants exceed defaultTenantIds ceiling [${ceiling.join(', ')}]`,
+      );
+    }
 
     // 4. Resolve capability scope
     const allowedCapabilities = this.config.tokenCapabilities?.get(token) ?? this.config.defaultCapabilities;
@@ -85,7 +100,7 @@ export class ApiKeyWorkerAuthenticator implements WorkerAuthenticator {
 
 export class WorkerAuthError extends Error {
   constructor(
-    readonly code: 'TOKEN_EXPIRED' | 'TOKEN_INVALID' | 'CAPABILITY_DENIED',
+    readonly code: 'TOKEN_EXPIRED' | 'TOKEN_INVALID' | 'CAPABILITY_DENIED' | 'TENANT_SCOPE_DENIED',
     message: string,
   ) {
     super(message);

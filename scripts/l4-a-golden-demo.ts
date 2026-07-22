@@ -564,6 +564,8 @@ async function checkEvidenceVerification(baseUrl: string, gateway: InMemoryGatew
   const metadata = run!.metadata.actionGateway as {
     effectId: string;
     envelope: Record<string, unknown>;
+    actionDigest: string;
+    policySnapshotId: string;
   };
   await gateway.repository.admitEffect({
     id: metadata.effectId,
@@ -573,6 +575,8 @@ async function checkEvidenceVerification(baseUrl: string, gateway: InMemoryGatew
     type: 'demo.ticket.create',
     idempotencyKey: 'l4-a-evidence',
     policyDecisionId: 'action-gateway-allow-after-approval',
+    policySnapshotId: metadata.policySnapshotId,
+    actionDigest: metadata.actionDigest,
     request: metadata.envelope,
     lease: claimed.lease,
     actor: 'l4-a-evidence-worker',
@@ -655,6 +659,8 @@ async function checkCompletionUnknown(baseUrl: string, gateway: InMemoryGateway)
   const metadata = run!.metadata.actionGateway as {
     effectId: string;
     envelope: Record<string, unknown>;
+    actionDigest: string;
+    policySnapshotId: string;
   };
   await gateway.repository.admitEffect({
     id: metadata.effectId,
@@ -664,6 +670,8 @@ async function checkCompletionUnknown(baseUrl: string, gateway: InMemoryGateway)
     type: 'demo.ticket.create',
     idempotencyKey: 'l4-a-unknown',
     policyDecisionId: 'action-gateway-allow-after-approval',
+    policySnapshotId: metadata.policySnapshotId,
+    actionDigest: metadata.actionDigest,
     request: metadata.envelope,
     lease: claimed.lease,
     actor: 'l4-a-unknown-worker',
@@ -723,6 +731,8 @@ async function checkReconcile(baseUrl: string, gateway: InMemoryGateway): Promis
   const metadata = run!.metadata.actionGateway as {
     effectId: string;
     envelope: Record<string, unknown>;
+    actionDigest: string;
+    policySnapshotId: string;
   };
   await gateway.repository.admitEffect({
     id: metadata.effectId,
@@ -732,6 +742,8 @@ async function checkReconcile(baseUrl: string, gateway: InMemoryGateway): Promis
     type: 'demo.ticket.create',
     idempotencyKey: 'l4-a-reconcile',
     policyDecisionId: 'action-gateway-allow-after-approval',
+    policySnapshotId: metadata.policySnapshotId,
+    actionDigest: metadata.actionDigest,
     request: metadata.envelope,
     lease: claimed.lease,
     actor: 'l4-a-reconcile-worker',

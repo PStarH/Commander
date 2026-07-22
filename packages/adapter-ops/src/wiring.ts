@@ -1,10 +1,15 @@
-import { createKernelRepository } from '@commander/kernel';
+import {
+  createKernelRepository,
+  createCapabilityAuthority,
+  type CapabilityAuthority,
+} from '@commander/kernel';
 import {
   EffectBroker,
-  CapabilityTokenIssuer,
-  CapabilityTokenVerifier,
   canonicalRequestHash,
+  isClassAEffectType,
   type AuditSink,
+  type CapabilityTokenIssuer,
+  type EffectBrokerOptions,
   type PolicyEvaluator,
 } from '@commander/effect-broker';
 import {
@@ -15,6 +20,11 @@ import {
   type AdapterCompensateInput,
   type AdapterExecuteInput,
 } from '@commander/action-adapters';
+import {
+  PostgresWorkerRegistry,
+  resolveWorkerTenantScope,
+  type WorkerRegistry,
+} from '@commander/worker-plane';
 import { randomUUID } from 'node:crypto';
 import { createEgressGatedFetch, parseEgressAllowlist } from './egress.js';
 import { ReconciliationDaemon } from './reconciliationDaemon.js';
@@ -22,8 +32,293 @@ import { CompensationDaemon } from './compensationDaemon.js';
 
 const POLICY_SNAPSHOT_ID = 'adapter-ops-v1';
 
+/** Durable reconcile claim / broker identity (must exist in commander_workers under PG). */
+export const ADAPTER_OPS_RECONCILE_WORKER_ID = 'reconciliation-daemon';
+
+/** Compensation admit lease / broker affinity / grant workloadId — single identity. */
+export const ADAPTER_OPS_COMPENSATION_WORKER_ID = 'compensation-daemon';
+
+/** Runtime DSN / session uses owner or migration LOGIN — refuse before egress. */
+export const OWNER_DATABASE_ROLE_REJECTED = 'OWNER_DATABASE_ROLE_REJECTED';
+
+/** Durable replay/revocation stores missing from authority or kernel repository. */
+export const CAPABILITY_DURABLE_STORES_REQUIRED = 'CAPABILITY_DURABLE_STORES_REQUIRED';
+
+/** Owner / migration LOGIN role — never accept for adapter-ops DSN. */
+export const OWNER_MIGRATION_DATABASE_ROLES = new Set(['commander_owner']);
+
+/** Scheduler LOGIN bypasses durable worker claim authz — forbidden for adapter-ops. */
+export const SCHEDULER_DATABASE_ROLES = new Set(['commander_scheduler']);
+
+export const ADAPTER_OPS_SCHEDULER_MODE_FORBIDDEN = 'ADAPTER_OPS_SCHEDULER_MODE_FORBIDDEN';
+
+/** No silent "local" fallback — COMMANDER_CELL_TENANT_ID must be explicit for every tier. */
+export const COMMANDER_CELL_TENANT_ID_REQUIRED = 'COMMANDER_CELL_TENANT_ID_REQUIRED';
+
 function isProductionOrEnterprise(): boolean {
-  return process.env.NODE_ENV === 'production' || process.env.COMMANDER_PROFILE === 'enterprise';
+  return (
+    process.env.NODE_ENV === 'production' ||
+    process.env.COMMANDER_PROFILE === 'enterprise' ||
+    process.env.COMMANDER_CELL_TIER === 'enterprise'
+  );
+}
+
+/** Extract LOGIN username from a postgres DSN userinfo (null if not a postgres URL). */
+export function databaseUrlLoginRole(dsn: string): string | null {
+  const m = dsn.match(/^(?:postgres|postgresql):\/\/([^:/?@]+)(?::[^@]*)?@/i);
+  return m?.[1] ? decodeURIComponent(m[1]) : null;
+}
+
+/**
+ * Reject owner/migration credentials in the connection URL userinfo.
+ * Task 1 `worker-url` (`commander_worker`) must pass — no false positive.
+ */
+export function assertNonOwnerDatabaseUrl(dsn: string): void {
+  const role = databaseUrlLoginRole(dsn);
+  if (role === null) return;
+  if (OWNER_MIGRATION_DATABASE_ROLES.has(role)) {
+    throw new Error(
+      `${OWNER_DATABASE_ROLE_REJECTED}: database URL userinfo role '${role}' is forbidden ` +
+        '(owner/migration). Adapter-ops must use Task 1 worker-url (commander_worker).',
+    );
+  }
+  if (SCHEDULER_DATABASE_ROLES.has(role)) {
+    throw new Error(
+      `${OWNER_DATABASE_ROLE_REJECTED}: database URL userinfo role '${role}' is forbidden ` +
+        '(scheduler). Adapter-ops must use commander_worker LOGIN with durable claim authz.',
+    );
+  }
+}
+
+/** Reject post-connect `current_user` matching owner/migration/scheduler. */
+export function assertNonOwnerDatabaseRole(currentUser: string): void {
+  const role = currentUser.trim();
+  if (OWNER_MIGRATION_DATABASE_ROLES.has(role) || SCHEDULER_DATABASE_ROLES.has(role)) {
+    throw new Error(
+      `${OWNER_DATABASE_ROLE_REJECTED}: session current_user '${role}' is forbidden ` +
+        '(owner/migration/scheduler). Adapter-ops must authenticate as commander_worker.',
+    );
+  }
+}
+
+/**
+ * Adapter-ops must never run kernel schedulerMode (BYPASSRLS / skip claim secret).
+ * Fail-closed if COMMANDER_KERNEL_SCHEDULER_MODE=1 is present in the process env.
+ */
+export function assertAdapterOpsSchedulerModeForbidden(
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (env.COMMANDER_KERNEL_SCHEDULER_MODE === '1') {
+    throw new Error(
+      `${ADAPTER_OPS_SCHEDULER_MODE_FORBIDDEN}: COMMANDER_KERNEL_SCHEDULER_MODE=1 is forbidden ` +
+        'for adapter-ops (would bypass durable reconcile claim authz).',
+    );
+  }
+}
+
+type CapabilityStoreRepository = {
+  consumeCapabilityReplay?: unknown;
+  isCapabilityRevoked?: unknown;
+  revokeCapability?: unknown;
+};
+
+/**
+ * Production EffectBroker options require durable replay + revocations from the
+ * Task 3 factory (non-optional). Also verifies kernel repository methods exist.
+ */
+export function assertDurableCapabilityStores(
+  capability: Pick<CapabilityAuthority, 'revocations' | 'replayForTenant'>,
+  repository: CapabilityStoreRepository,
+): void {
+  if (!capability.revocations) {
+    throw new Error(
+      `${CAPABILITY_DURABLE_STORES_REQUIRED}: createCapabilityAuthority did not provide revocations`,
+    );
+  }
+  if (typeof capability.replayForTenant !== 'function') {
+    throw new Error(
+      `${CAPABILITY_DURABLE_STORES_REQUIRED}: createCapabilityAuthority did not provide replayForTenant`,
+    );
+  }
+  if (
+    typeof capability.revocations.isRevoked !== 'function' ||
+    typeof capability.revocations.revoke !== 'function'
+  ) {
+    throw new Error(
+      `${CAPABILITY_DURABLE_STORES_REQUIRED}: revocations must expose isRevoked/revoke`,
+    );
+  }
+  const replay = capability.replayForTenant('__assert_durable_probe__');
+  if (!replay || typeof replay.consume !== 'function') {
+    throw new Error(
+      `${CAPABILITY_DURABLE_STORES_REQUIRED}: replayForTenant() must return a store with consume()`,
+    );
+  }
+  if (typeof repository.consumeCapabilityReplay !== 'function') {
+    throw new Error(
+      `${CAPABILITY_DURABLE_STORES_REQUIRED}: kernel repository missing consumeCapabilityReplay`,
+    );
+  }
+  if (typeof repository.isCapabilityRevoked !== 'function') {
+    throw new Error(
+      `${CAPABILITY_DURABLE_STORES_REQUIRED}: kernel repository missing isCapabilityRevoked`,
+    );
+  }
+  if (typeof repository.revokeCapability !== 'function') {
+    throw new Error(
+      `${CAPABILITY_DURABLE_STORES_REQUIRED}: kernel repository missing revokeCapability`,
+    );
+  }
+}
+
+/** Build EffectBroker options with durable replay + revocations (non-optional).
+ * Replay is the authority factory (no fixed tenant) — durable consume stays on
+ * capability.verifier via grant.tenantId; options only assert wiring presence.
+ */
+export function productionCapabilityBrokerOptions(
+  capability: CapabilityAuthority,
+  localWorkerId: string,
+  localWorkerGeneration?: number,
+): EffectBrokerOptions & {
+  replay: CapabilityAuthority['replayForTenant'];
+  revocations: CapabilityAuthority['revocations'];
+  requireDurableCapabilityStores: true;
+} {
+  return {
+    audience: capability.audience,
+    requireRequestBinding: true,
+    localWorkerId,
+    ...(localWorkerGeneration !== undefined ? { localWorkerGeneration } : {}),
+    requireDurableCapabilityStores: true,
+    replay: (tenantId: string) => capability.replayForTenant(tenantId),
+    revocations: capability.revocations,
+  };
+}
+
+/**
+ * Class A compensation digest: bind effect type + exact compensation patch.
+ * requestHash remains canonicalRequestHash(patch) for admit request binding.
+ */
+export function compensationActionDigest(
+  action: string,
+  payload: Record<string, unknown>,
+): string {
+  return canonicalRequestHash({ type: action, ...payload });
+}
+
+/** Mint a short-lived compensation grant (Class A includes actionDigest). */
+export function issueCompensationCapabilityToken(input: {
+  issuer: CapabilityTokenIssuer;
+  tenantId: string;
+  runId: string;
+  stepId: string;
+  action: string;
+  payload: Record<string, unknown>;
+  workerId?: string;
+  workerGeneration?: number;
+  ttlMs?: number;
+}): string {
+  const workerId = input.workerId ?? ADAPTER_OPS_COMPENSATION_WORKER_ID;
+  const workerGeneration = input.workerGeneration ?? 1;
+  const request = input.payload ?? {};
+  const requestHash = canonicalRequestHash(request);
+  const ttlMs = input.ttlMs ?? 60_000;
+  return input.issuer.issue({
+    jti: randomUUID(),
+    tenantId: input.tenantId,
+    runId: input.runId,
+    stepId: input.stepId,
+    effectTypes: [input.action],
+    expiresAt: new Date(Date.now() + ttlMs).toISOString(),
+    requestHash,
+    ...(isClassAEffectType(input.action)
+      ? { actionDigest: compensationActionDigest(input.action, request) }
+      : {}),
+    workloadId: workerId,
+    workerId,
+    workerGeneration,
+    policySnapshotId: POLICY_SNAPSHOT_ID,
+    nonce: randomUUID(),
+  });
+}
+
+/**
+ * Register reconcile + compensation daemon rows in commander_workers (no DDL).
+ * Uses Task 1 PostgresWorkerRegistry tenant scope (set_config) — required before
+ * claim_reconcile_effects authz can see the worker.
+ */
+export async function registerAdapterOpsDaemonWorkers(
+  registry: WorkerRegistry,
+  tenantIds: string[],
+  opts?: {
+    reconcileWorkerId?: string;
+    compensationWorkerId?: string;
+    /** Prior claim secret when re-registering a still-fresh ACTIVE worker. */
+    reconcilePreviousClaimSecret?: string;
+    compensationPreviousClaimSecret?: string;
+  },
+): Promise<{
+  reconcile: { id: string; generation: number; claimSecret: string };
+  compensation: { id: string; generation: number; claimSecret: string };
+}> {
+  const reconcileWorkerId = opts?.reconcileWorkerId ?? ADAPTER_OPS_RECONCILE_WORKER_ID;
+  const compensationWorkerId =
+    opts?.compensationWorkerId ?? ADAPTER_OPS_COMPENSATION_WORKER_ID;
+  await registry.initialize();
+  const reconcile = await registry.register(
+    {
+      id: reconcileWorkerId,
+      kind: 'tool',
+      version: '1',
+      capabilities: ['effect.reconcile'],
+      maxConcurrency: 1,
+      labels: { role: 'reconciliation-daemon' },
+    },
+    `ops:${reconcileWorkerId}`,
+    tenantIds,
+    opts?.reconcilePreviousClaimSecret,
+  );
+  const compensation = await registry.register(
+    {
+      id: compensationWorkerId,
+      kind: 'tool',
+      version: '1',
+      capabilities: ['effect.compensate'],
+      maxConcurrency: 1,
+      labels: { role: 'compensation-daemon' },
+    },
+    `ops:${compensationWorkerId}`,
+    tenantIds,
+    opts?.compensationPreviousClaimSecret,
+  );
+  if (!reconcile.claimSecret || !compensation.claimSecret) {
+    throw new Error('registerAdapterOpsDaemonWorkers: register must return claimSecret');
+  }
+  return {
+    reconcile: {
+      id: reconcile.id,
+      generation: reconcile.generation,
+      claimSecret: reconcile.claimSecret,
+    },
+    compensation: {
+      id: compensation.id,
+      generation: compensation.generation,
+      claimSecret: compensation.claimSecret,
+    },
+  };
+}
+
+export interface AdapterOpsWiringOptions {
+  /**
+   * Test seam: inject a WorkerRegistry. When set (or postgres pool is present),
+   * both daemon identities are registered before daemons start.
+   */
+  workerRegistry?: WorkerRegistry;
+}
+
+export interface AdapterOpsWorkerIdentities {
+  reconcile: { id: string; generation: number; claimSecret?: string };
+  compensation: { id: string; generation: number; claimSecret?: string };
 }
 
 /**
@@ -143,31 +438,65 @@ function createProductionRegistry(
   ]);
 }
 
-export async function createAdapterOpsWiring(): Promise<{
+export async function createAdapterOpsWiring(
+  options: AdapterOpsWiringOptions = {},
+): Promise<{
   reconciliation: ReconciliationDaemon;
   compensation: CompensationDaemon;
   close: () => Promise<void>;
   /** 供测试断言：当前 PEP 是否为 demo hollow。 */
   demoOpenHollowPep: boolean;
+  /** Registered (or sqlite fallback) daemon worker identities + generations. */
+  workers: AdapterOpsWorkerIdentities;
+  /** When true, /ready must see claimSecret on both daemons (postgres / injected registry). */
+  requiresDurableClaim: boolean;
+  /** Compensation EffectBroker localWorkerId — must equal compensation-daemon. */
+  compensationLocalWorkerId: string;
 }> {
   const demoOpen = assertDemoOpenGate();
   const egressAllowlist = parseEgressAllowlist();
 
-  const handle = await createKernelRepository({ env: process.env });
+  // Owner/scheduler DSN + schedulerMode gates BEFORE kernel connect.
+  assertAdapterOpsSchedulerModeForbidden(process.env);
+  const dsn =
+    process.env.COMMANDER_KERNEL_DATABASE_URL?.trim() ||
+    process.env.DATABASE_URL?.trim() ||
+    '';
+  if (dsn) assertNonOwnerDatabaseUrl(dsn);
+
+  // Force schedulerMode off even if env was mutated after the assert above.
+  const handle = await createKernelRepository({
+    env: { ...process.env, COMMANDER_KERNEL_SCHEDULER_MODE: '0' },
+  });
   const repository = handle.repository;
-  const cellTenantId = process.env.COMMANDER_CELL_TENANT_ID?.trim() || 'local';
+
+  // Post-connect owner-role gate before capability authority / egress registry.
+  if (handle.postgresPool) {
+    const client = await handle.postgresPool.connect();
+    try {
+      const identityRows = await client.query<{ role_name: string }>(
+        'SELECT current_user::text AS role_name',
+      );
+      assertNonOwnerDatabaseRole(identityRows.rows[0]?.role_name ?? '');
+    } finally {
+      client.release();
+    }
+  }
+
+  // Task 3 factory — never CapabilityTokenIssuer.generate() for production authority.
+  const capability = createCapabilityAuthority(process.env, repository);
+  assertDurableCapabilityStores(capability, repository);
+
+  const cellTenantId = process.env.COMMANDER_CELL_TENANT_ID?.trim() ?? '';
+  if (!cellTenantId) {
+    throw new Error(
+      `${COMMANDER_CELL_TENANT_ID_REQUIRED}: set COMMANDER_CELL_TENANT_ID (no silent "local" fallback)`,
+    );
+  }
   const credentials = new EnvAdapterCredentialProvider({ cellTenantId });
   const registry = createProductionRegistry(credentials, egressAllowlist);
-  const issuer = CapabilityTokenIssuer.generate({
-    issuer: 'commander-adapter-ops',
-    audience: 'commander.effect-broker',
-    keyId: 'adapter-ops',
-  });
-  const tokens = new CapabilityTokenVerifier({
-    issuer: 'commander-adapter-ops',
-    audience: 'commander.effect-broker',
-    publicKeys: { 'adapter-ops': issuer.publicKey },
-  });
+  const issuer = capability.issuer;
+  const tokens = capability.verifier;
   const policy = demoOpen ? createHollowDemoPolicy() : createRegistryPolicy(registry);
   const audit = createStdoutAuditSink();
   const kernelPort = {
@@ -192,10 +521,49 @@ export async function createAdapterOpsWiring(): Promise<{
       demoOpen || registry.resolve(action) !== null,
   };
   const executor = createAdapterExecutor(registry);
-  const workerBroker = new EffectBroker(tokens, policy, kernelPort, executor, audit, {
-    audience: 'commander.effect-broker',
-    localWorkerId: 'adapter-ops-worker',
-  });
+
+  const reconcileWorkerId =
+    process.env.COMMANDER_RECONCILE_WORKER_ID?.trim() || ADAPTER_OPS_RECONCILE_WORKER_ID;
+  const compensationWorkerId = ADAPTER_OPS_COMPENSATION_WORKER_ID;
+
+  // P0: register BOTH daemon identities before claim/admit (postgres or injected registry).
+  // Fail-closed tenant scope matches worker-plane (COMMANDER_WORKER_TENANTS).
+  let reconcileGeneration = Number(process.env.COMMANDER_RECONCILE_WORKER_GENERATION ?? 1);
+  let compensationGeneration = 1;
+  let reconcileClaimSecret: string | undefined;
+  let compensationClaimSecret: string | undefined;
+  const mustRegister = Boolean(handle.postgresPool) || Boolean(options.workerRegistry);
+  if (mustRegister) {
+    const { tenantIds } = resolveWorkerTenantScope(process.env);
+    const workerRegistry =
+      options.workerRegistry ?? new PostgresWorkerRegistry(handle.postgresPool!);
+    const registered = await registerAdapterOpsDaemonWorkers(workerRegistry, tenantIds, {
+      reconcileWorkerId,
+      compensationWorkerId,
+      reconcilePreviousClaimSecret:
+        process.env.COMMANDER_RECONCILE_CLAIM_SECRET?.trim() || undefined,
+      compensationPreviousClaimSecret:
+        process.env.COMMANDER_COMPENSATION_CLAIM_SECRET?.trim() || undefined,
+    });
+    reconcileGeneration = registered.reconcile.generation;
+    compensationGeneration = registered.compensation.generation;
+    reconcileClaimSecret = registered.reconcile.claimSecret;
+    compensationClaimSecret = registered.compensation.claimSecret;
+  }
+
+  // Compensation path: broker affinity MUST match admit lease workerId (not adapter-ops-worker).
+  const compensationBroker = new EffectBroker(
+    tokens,
+    policy,
+    kernelPort,
+    executor,
+    audit,
+    productionCapabilityBrokerOptions(
+      capability,
+      compensationWorkerId,
+      compensationGeneration,
+    ),
+  );
   const reconciliation = new ReconciliationDaemon({
     repository,
     brokerFactory: () =>
@@ -209,44 +577,60 @@ export async function createAdapterOpsWiring(): Promise<{
           },
         },
         audit,
-        {
-          audience: 'commander.effect-broker',
-          localWorkerId: 'reconciliation-daemon',
-        },
+        productionCapabilityBrokerOptions(
+          capability,
+          reconcileWorkerId,
+          reconcileGeneration,
+        ),
       ),
     registry,
     pollIntervalMs: Number(process.env.COMMANDER_RECONCILE_INTERVAL_MS ?? 5_000),
     batchSize: Number(process.env.COMMANDER_RECONCILE_BATCH_SIZE ?? 50),
-    actor: 'reconciliation-daemon',
+    actor: reconcileWorkerId,
+    workerId: reconcileWorkerId,
+    workerGeneration: reconcileGeneration,
+    claimSecret: reconcileClaimSecret,
   });
   const compensation = new CompensationDaemon({
     repository,
-    broker: workerBroker,
+    broker: compensationBroker,
     registry,
-    tokenProvider: async ({ tenantId, runId, stepId, action, payload }) => {
-      const request = payload ?? {};
-      return issuer.issue({
-        jti: 'ops-' + Date.now(),
+    tokenProvider: async ({ tenantId, runId, stepId, action, payload }) =>
+      issueCompensationCapabilityToken({
+        issuer,
         tenantId,
         runId,
         stepId,
-        effectTypes: [action],
-        expiresAt: new Date(Date.now() + 60_000).toISOString(),
-        requestHash: canonicalRequestHash(request),
-        workloadId: 'compensation-daemon',
-        policySnapshotId: POLICY_SNAPSHOT_ID,
-        nonce: randomUUID(),
-      });
-    },
+        action,
+        payload: payload ?? {},
+        workerId: compensationWorkerId,
+        workerGeneration: compensationGeneration,
+      }),
     pollIntervalMs: Number(process.env.COMMANDER_COMPENSATION_INTERVAL_MS ?? 5_000),
     batchSize: Number(process.env.COMMANDER_COMPENSATION_BATCH_SIZE ?? 50),
-    workerId: 'compensation-daemon',
+    workerId: compensationWorkerId,
+    workerGeneration: compensationGeneration,
+    claimSecret: compensationClaimSecret,
     audit,
   });
   return {
     reconciliation,
     compensation,
     demoOpenHollowPep: demoOpen,
+    requiresDurableClaim: mustRegister,
+    workers: {
+      reconcile: {
+        id: reconcileWorkerId,
+        generation: reconcileGeneration,
+        ...(reconcileClaimSecret ? { claimSecret: reconcileClaimSecret } : {}),
+      },
+      compensation: {
+        id: compensationWorkerId,
+        generation: compensationGeneration,
+        ...(compensationClaimSecret ? { claimSecret: compensationClaimSecret } : {}),
+      },
+    },
+    compensationLocalWorkerId: compensationWorkerId,
     close: async () => {
       await handle.close();
     },

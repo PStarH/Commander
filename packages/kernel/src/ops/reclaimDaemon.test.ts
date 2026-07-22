@@ -134,7 +134,10 @@ describe('reclaim daemon', () => {
     const admitted = await repository.admitEffect({
       id: 'effect-a', runId: 'run-a', stepId: 'step-a', tenantId: 'tenant-a',
       type: 'tool', idempotencyKey: 'effect-key', request: { tool: 'write' },
-      policyDecisionId: 'decision-a', lease: claimed.lease, actor: 'worker-a',
+      policyDecisionId: 'decision-a',
+      policySnapshotId: 'policy-v1',
+      actionDigest: 'a'.repeat(64),
+      lease: claimed.lease, actor: 'worker-a',
     });
     assert.equal(admitted.admitted, true);
     assert.ok(await repository.completeEffect(
@@ -173,7 +176,10 @@ describe('reclaim daemon', () => {
     assert.equal((await repository.admitEffect({
       id: 'effect-a', runId: 'run-a', stepId: 'step-a', tenantId: 'tenant-a',
       type: 'tool', idempotencyKey: 'effect-key', request: { tool: 'write' },
-      policyDecisionId: 'decision-a', lease: claimed.lease, actor: 'worker-a',
+      policyDecisionId: 'decision-a',
+      policySnapshotId: 'policy-v1',
+      actionDigest: 'a'.repeat(64),
+      lease: claimed.lease, actor: 'worker-a',
     })).admitted, true);
 
     await new ReclaimDaemon(repository).tick(new Date(base.getTime() + 2_000));

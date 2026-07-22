@@ -99,10 +99,12 @@ export class WorkerService {
     const authorization = await this.authenticator.authenticate(this.identity, this.definition);
     this.assertAuthorization(authorization);
     await this.registry.initialize();
+    const previousClaimSecret = process.env.COMMANDER_WORKER_CLAIM_SECRET?.trim() || undefined;
     this.worker = await this.registry.register(
       this.definition,
       this.identity.subject,
       authorization.tenantIds,
+      previousClaimSecret,
     );
     this.authorization = authorization;
     this.config.onRegistered?.(this.worker);
@@ -154,11 +156,14 @@ export class WorkerService {
     this.claimInflight++;
     let step: ClaimedStep | null = null;
     try {
+      // Claim authority is DB-owned (workerId + generation + claim secret). Do not pass
+      // caller tenantIds — durable authz lives on commander_workers; env/request scope
+      // must not widen claim.
       step = await this.kernel.claimNextStep({
         workerId: this.worker.id,
         workerGeneration: this.worker.generation,
+        claimSecret: this.worker.claimSecret,
         leaseTtlMs: this.config.leaseTtlMs,
-        tenantIds: this.authorization.tenantIds.includes('*') ? [] : this.authorization.tenantIds,
         capabilities: this.worker.capabilities,
       });
     } finally {
@@ -200,7 +205,11 @@ export class WorkerService {
     for (const controller of this.activeControllers) {
       controller.abort(new Error('Worker stopped'));
     }
-    await this.registry.drain(this.worker.id, this.worker.generation);
+    await this.registry.drain(
+      this.worker.id,
+      this.worker.generation,
+      this.worker.claimSecret ?? '',
+    );
     await Promise.allSettled([...this.active]);
   }
 
@@ -236,7 +245,7 @@ export class WorkerService {
       Math.max(250, Math.floor(this.config.leaseTtlMs / 3)),
     );
     try {
-      const output = await runWithStepWorkloadIdentity(step, () =>
+      const output = await runWithStepWorkloadIdentity(step, this.worker!, () =>
         this.executor.execute(step, {
           signal: controller.signal,
           worker: this.worker!,
@@ -294,6 +303,7 @@ export class WorkerService {
       this.worker.id,
       this.worker.generation,
       this.active.size + this.claimInflight,
+      this.worker.claimSecret ?? '',
     );
     if (!updated) {
       this.running = false;
@@ -301,7 +311,12 @@ export class WorkerService {
         controller.abort(new Error('Worker generation is no longer active'));
       return;
     }
-    this.worker = updated;
+    // Heartbeat RPC does not re-issue claimSecret — preserve the register-time secret
+    // so durable claim_* continues to authenticate after the first heartbeat (~10s).
+    this.worker = {
+      ...updated,
+      claimSecret: this.worker.claimSecret ?? updated.claimSecret,
+    };
   }
   private assertAuthorization(authorization: WorkerAuthorization): void {
     const allowed = authorization.capabilities;

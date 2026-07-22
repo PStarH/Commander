@@ -16,6 +16,7 @@ import {
   CELL_E2E_TENANT,
   COMPOSE_CMD,
   ensureCellSandboxImage,
+  generateCellCapabilityMaterials,
 } from './l4-b-cell-compose.js';
 
 export const CELL_UP_ASSERT_SERVICES = [
@@ -35,9 +36,13 @@ Options:
   --keep   Skip compose down -v after run (debug only)
   --help   Show this message
 
-Env (optional — generated with openssl rand when unset):
+Env (optional — generated when unset):
   POSTGRES_PASSWORD, COMMANDER_API_KEY, COMMANDER_MASTER_KEY, JWT_SECRET,
-  COMMANDER_CAPABILITY_TOKEN_KEY, COMMANDER_INTEGRITY_KEY, COMMANDER_WORKER_AUTH_TOKEN
+  COMMANDER_CAPABILITY_TOKEN_KEY (API HMAC only — not worker/adapter authority),
+  COMMANDER_INTEGRITY_KEY,
+  COMMANDER_WORKER_AUTH_TOKEN,
+  COMMANDER_CAPABILITY_PRIVATE_KEY_PEM / COMMANDER_CAPABILITY_KEY_ID /
+  COMMANDER_CAPABILITY_JWKS_JSON (worker/adapter Ed25519; openssl/node when unset)
 
 DOCKER_GID is forced to 0 for this harness (adversarial deploy default).
 `;
@@ -56,6 +61,17 @@ export function buildCellUpAssertEnv(): Record<string, string> {
   const integrityKey = process.env.COMMANDER_INTEGRITY_KEY ?? opensslHex(32);
   const workerToken = process.env.COMMANDER_WORKER_AUTH_TOKEN ?? opensslHex(32);
 
+  const capability =
+    process.env.COMMANDER_CAPABILITY_PRIVATE_KEY_PEM &&
+    process.env.COMMANDER_CAPABILITY_KEY_ID &&
+    process.env.COMMANDER_CAPABILITY_JWKS_JSON
+      ? {
+          COMMANDER_CAPABILITY_PRIVATE_KEY_PEM: process.env.COMMANDER_CAPABILITY_PRIVATE_KEY_PEM,
+          COMMANDER_CAPABILITY_KEY_ID: process.env.COMMANDER_CAPABILITY_KEY_ID,
+          COMMANDER_CAPABILITY_JWKS_JSON: process.env.COMMANDER_CAPABILITY_JWKS_JSON,
+        }
+      : generateCellCapabilityMaterials();
+
   return {
     POSTGRES_PASSWORD: postgresPassword,
     COMMANDER_API_KEY: apiKey,
@@ -64,6 +80,7 @@ export function buildCellUpAssertEnv(): Record<string, string> {
     COMMANDER_CAPABILITY_TOKEN_KEY: capabilityKey,
     COMMANDER_INTEGRITY_KEY: integrityKey,
     COMMANDER_WORKER_AUTH_TOKEN: workerToken,
+    ...capability,
     COMMANDER_ENABLE_DEMO_TICKET: '1',
     COMMANDER_CELL_TENANT_ID: CELL_E2E_TENANT,
     COMMANDER_DEFAULT_TENANT_ID: CELL_E2E_TENANT,

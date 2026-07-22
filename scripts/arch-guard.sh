@@ -18,7 +18,9 @@ const deletedPackageImportPattern = /^@commander\/(control-plane|orchestration|o
 
 const allowedDependencies = {
   '@commander/contracts': [],
-  '@commander/kernel': ['@commander/contracts'],
+  // Task 3: createCapabilityAuthority + durable replay/revocation adapters live in
+  // kernel and construct effect-broker issuer/verifier (no reverse dep).
+  '@commander/kernel': ['@commander/contracts', '@commander/effect-broker'],
   '@commander/effect-broker': ['@commander/contracts'],
   // L4 action adapters (GitHub/ServiceNow); leaf package — no kernel/ops.
   '@commander/action-adapters': ['@commander/contracts', '@commander/effect-broker'],

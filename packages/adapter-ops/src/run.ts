@@ -25,11 +25,18 @@ export async function main(): Promise<void> {
   wiring.compensation.start();
 
   const cellTenantId = process.env.COMMANDER_CELL_TENANT_ID?.trim() || '';
+  const daemonsReady =
+    !wiring.requiresDurableClaim ||
+    (Boolean(wiring.workers.reconcile.claimSecret) &&
+      Boolean(wiring.workers.compensation.claimSecret) &&
+      wiring.workers.reconcile.generation > 0 &&
+      wiring.workers.compensation.generation > 0);
 
   const healthPort = positiveInteger('COMMANDER_ADAPTER_OPS_HEALTH_PORT', 8082);
   const health = await startAdapterOpsHealthServer({
     port: healthPort,
     isReady: async () => {
+      if (!daemonsReady) return false;
       if (tier === 'enterprise' && !cellTenantId) return false;
       if (tier !== 'demo' && egressAllowlist.length === 0) return false;
       return true;
