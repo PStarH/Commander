@@ -5,6 +5,7 @@
  * Production deployments must use packages/worker-plane/src/bootstrap.ts with real providers.
  *
  * Env:
+ *   COMMANDER_WORKER_DATABASE_URL (preferred least-privilege worker LOGIN)
  *   DATABASE_URL or COMMANDER_KERNEL_DATABASE_URL (required)
  *   COMMANDER_WORKER_AUTH_TOKEN (default: worker-token)
  *   COMMANDER_WORKER_TENANTS (required explicit list; '*'/empty fail-closed — same as prod)
@@ -38,9 +39,14 @@ class MockProvider implements LLMProvider {
 }
 
 export async function createWorkerService(): Promise<WorkerService> {
-  const dbUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
+  const dbUrl =
+    process.env.COMMANDER_WORKER_DATABASE_URL ??
+    process.env.COMMANDER_KERNEL_DATABASE_URL ??
+    process.env.DATABASE_URL;
   if (!dbUrl) {
-    throw new Error('DATABASE_URL or COMMANDER_KERNEL_DATABASE_URL is required');
+    throw new Error(
+      'COMMANDER_WORKER_DATABASE_URL, COMMANDER_KERNEL_DATABASE_URL, or DATABASE_URL is required',
+    );
   }
 
   // Fail-closed before Pool/register/poll — never infer schedulerMode from '*'.

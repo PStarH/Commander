@@ -18,10 +18,6 @@
     "./testing/repositoryContract": {
       "types": "./src/testing/repositoryContract.ts",
       "default": "./src/testing/repositoryContract.ts"
-    },
-    "./testing/kernelTranscript": {
-      "types": "./src/testing/kernelTranscript.ts",
-      "default": "./src/testing/kernelTranscript.ts"
     }
   },
   "files": [
@@ -35,7 +31,7 @@
     "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
     "typecheck": "tsc --noEmit",
     "pretest": "pnpm --filter @commander/effect-broker build",
-    "test": "tsx --test src/kernel.test.ts src/transitionValidation.test.ts src/tenantPause.test.ts src/ws2-acceptance.test.ts src/contracts.test.ts src/kernel-m2.test.ts src/killSwitch.test.ts src/repositoryFactory.test.ts src/sqliteSchema.test.ts src/claimAuthzParity.test.ts src/capabilityAuthority.test.ts src/postgres.outbox-worker-mode.test.ts src/testing/repositoryContract.ts src/testing/kernelTranscript.test.ts src/ops/compensationConsumer.test.ts src/ops/compensationConsumerDaemon.test.ts src/ops/compensationReclaimConsume.test.ts src/ops/healthServer.test.ts src/ops/opsRuntime.test.ts src/ops/reclaimDaemon.test.ts src/ops/timerWakeupWorker.test.ts src/ops/outbox/kernelOutboxPublisher.test.ts src/ops/outbox/outboxDelivery.test.ts src/ops/outbox/compensationPublisherRace.integration.test.ts",
+    "test": "tsx --test src/kernel.test.ts src/transitionValidation.test.ts src/tenantPause.test.ts src/ws2-acceptance.test.ts src/contracts.test.ts src/kernel-m2.test.ts src/killSwitch.test.ts src/repositoryFactory.test.ts src/sqliteSchema.test.ts src/claimAuthzParity.test.ts src/capabilityAuthority.test.ts src/postgres.outbox-worker-mode.test.ts src/testing/repositoryContract.ts src/ops/compensationConsumer.test.ts src/ops/compensationConsumerDaemon.test.ts src/ops/compensationReclaimConsume.test.ts src/ops/healthServer.test.ts src/ops/opsRuntime.test.ts src/ops/reclaimDaemon.test.ts src/ops/timerWakeupWorker.test.ts src/ops/outbox/kernelOutboxPublisher.test.ts src/ops/outbox/outboxDelivery.test.ts src/ops/outbox/compensationPublisherRace.integration.test.ts",
     "test:sqlite": "tsx --test src/claimAuthzParity.test.ts src/testing/repositoryContract.ts",
     "test:integration": "tsx --test --test-concurrency=1 src/postgres.integration.test.ts src/postgres.ops.integration.test.ts src/postgres.dlq.integration.test.ts src/ops/outbox/compensationPublisherRace.postgres.integration.test.ts",
     "test:rls-live-fire": "tsx --test src/postgres.rls-live-fire.test.ts",
