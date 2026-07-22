@@ -21,7 +21,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
     "typecheck": "tsc --noEmit",
-    "pretest": "pnpm --filter @commander/contracts build && pnpm --filter @commander/effect-broker build && pnpm --filter @commander/kernel build && pnpm --filter @commander/action-adapters build && pnpm --filter @commander/worker-plane build",
+    "pretest": "pnpm --filter @commander/contracts build && pnpm --filter @commander/effect-broker build && pnpm --filter @commander/kernel build && pnpm --filter @commander/action-adapters build",
     "test": "tsx --test src/compensationDaemon.test.ts src/reconciliationDaemon.test.ts src/healthServer.test.ts src/run.test.ts src/chaos/timeoutAfterCommit.test.ts src/chaos/workerKillRestart.test.ts",
     "start": "node dist/run.js",
     "prepublishOnly": "tsc -p tsconfig.json"
@@ -31,8 +31,7 @@
     "@commander/action-adapters": "workspace:*",
     "@commander/contracts": "workspace:*",
     "@commander/effect-broker": "workspace:*",
-    "@commander/kernel": "workspace:*",
-    "@commander/worker-plane": "workspace:*"
+    "@commander/kernel": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.23.1",
