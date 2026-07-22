@@ -1,25 +1,26 @@
 /**
- * L3-07 — step-scoped short-lived workload identity.
+ * L3-07 / Task 3 — step-scoped workload binding from live claim + worker registration.
  *
- * Tenant/run/step for capability mint and EffectBroker admission come from
- * kernel-claimed step context + ControlPlane-issued identity, never ambient env.
+ * Tenant/run/step and worker fencing come from the kernel-claimed step lease and
+ * the registered WorkerRecord — never ambient env or process-local ControlPlane maps.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
-import { getControlPlane, type WorkloadIdentity } from './workerRuntimeAdapter.js';
 import {
   canonicalRequestHash,
+  isClassAEffectType,
   type CapabilityTokenIssuer,
   type WorkloadBinding,
 } from '@commander/effect-broker';
-import type { ClaimedStep } from './types.js';
+import type { ClaimedStep, WorkerRecord } from './types.js';
 
 export interface StepWorkloadBinding extends WorkloadBinding {
   workloadId: string;
+  workerId: string;
+  workerGeneration: number;
 }
 
 export interface StepWorkloadContext {
-  identity: WorkloadIdentity;
   binding: StepWorkloadBinding;
 }
 
@@ -33,19 +34,33 @@ function isProductionProfile(): boolean {
   );
 }
 
-export function runWithStepWorkloadIdentity<T>(step: ClaimedStep, fn: () => T): T {
-  const identity = getControlPlane().issueStepIdentity({
+/**
+ * Bind ALS to the claimed step + registered worker.
+ * Lease workerId/generation must match the live WorkerRecord or fail closed.
+ */
+export function runWithStepWorkloadIdentity<T>(
+  step: ClaimedStep,
+  worker: WorkerRecord,
+  fn: () => T,
+): T {
+  const leaseGen = step.lease.workerGeneration;
+  if (
+    step.lease.workerId !== worker.id ||
+    typeof leaseGen !== 'number' ||
+    !Number.isFinite(leaseGen) ||
+    leaseGen !== worker.generation
+  ) {
+    throw new Error('WORKLOAD_LEASE_BINDING_MISMATCH');
+  }
+  const binding: StepWorkloadBinding = {
     tenantId: step.tenantId,
     runId: step.runId,
     stepId: step.id,
-  });
-  const binding: StepWorkloadBinding = {
-    tenantId: identity.tenantId,
-    runId: step.runId,
-    stepId: step.id,
-    workloadId: identity.workloadId,
+    workloadId: `${worker.id}:${worker.generation}`,
+    workerId: worker.id,
+    workerGeneration: worker.generation,
   };
-  return stepWorkloadStorage.run({ identity, binding }, fn);
+  return stepWorkloadStorage.run({ binding }, fn);
 }
 
 export function getStepWorkloadContext(): StepWorkloadContext | undefined {
@@ -56,7 +71,7 @@ export function getStepWorkloadBinding(): StepWorkloadBinding | undefined {
   return stepWorkloadStorage.getStore()?.binding;
 }
 
-/** Fail-closed when production profile requires step identity but ALS is empty. */
+/** Fail-closed when production profile requires step binding but ALS is empty. */
 export function requireStepWorkloadBinding(): StepWorkloadBinding {
   const ctx = stepWorkloadStorage.getStore();
   if (!ctx) {
@@ -67,33 +82,38 @@ export function requireStepWorkloadBinding(): StepWorkloadBinding {
     }
     throw new Error('WORKLOAD_IDENTITY_REQUIRED: step-scoped identity missing');
   }
-  if (Date.parse(ctx.identity.expiresAt) <= Date.now()) {
-    throw new Error('WORKLOAD_IDENTITY_EXPIRED: step-scoped identity expired');
-  }
-  const verified = getControlPlane().verifyIdentityByToken(ctx.identity.token);
-  if (!verified) {
-    throw new Error('WORKLOAD_IDENTITY_INVALID: step-scoped identity revoked or expired');
-  }
   return ctx.binding;
 }
 
-/** Mint a capability grant bound to the active step identity (tenant from identity only). */
+/** Mint a capability grant bound to the active step identity (tenant from binding only). */
 export function mintStepCapabilityToken(input: {
   issuer: CapabilityTokenIssuer;
   effectType: string;
   request: Record<string, unknown>;
   ttlMs?: number;
+  /** Optional override; Class A defaults to canonicalRequestHash(request). */
+  actionDigest?: string;
 }): string {
   const binding = requireStepWorkloadBinding();
   const ttlMs = input.ttlMs ?? 5 * 60_000;
+  const requestHash = canonicalRequestHash(input.request);
   return input.issuer.issue({
     jti: randomUUID(),
     tenantId: binding.tenantId,
     runId: binding.runId,
     stepId: binding.stepId,
     workloadId: binding.workloadId,
+    // Live WorkerRecord / ALS fence — admit must match lease workerId/generation.
+    workerId: binding.workerId,
+    workerGeneration: binding.workerGeneration,
     effectTypes: [input.effectType],
     expiresAt: new Date(Date.now() + ttlMs).toISOString(),
-    requestHash: canonicalRequestHash(input.request),
+    requestHash,
+    // Class A admit requires grant.actionDigest — mint must carry it.
+    ...(isClassAEffectType(input.effectType)
+      ? { actionDigest: input.actionDigest ?? requestHash }
+      : input.actionDigest
+        ? { actionDigest: input.actionDigest }
+        : {}),
   });
 }

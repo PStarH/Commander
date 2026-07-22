@@ -42,6 +42,9 @@ const baseGrant: CapabilityGrant = {
   effectTypes: ['crm.write'],
   expiresAt: '2099-01-01T00:00:00.000Z',
   requestHash: canonicalRequestHash({}),
+  actionDigest: 'a'.repeat(64),
+  workerId: 'w',
+  workerGeneration: 1,
 } as unknown as CapabilityGrant;
 
 function makeBroker(tokens: CapabilityTokenVerifier) {
@@ -71,7 +74,7 @@ describe('L3-07 workload binding', () => {
         type: 'crm.write',
         request: {},
         idempotencyKey: 'idem-1',
-        lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+        lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
         actor: 'w',
       });
       assert.equal(admission.admitted, false);
@@ -95,7 +98,7 @@ describe('L3-07 workload binding', () => {
       type: 'crm.write',
       request: {},
       idempotencyKey: 'idem-2',
-      lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
       actor: 'w',
       workloadBinding: binding,
     });
@@ -112,7 +115,7 @@ describe('L3-07 workload binding', () => {
       type: 'crm.write',
       request: {},
       idempotencyKey: 'idem-3',
-      lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
       actor: 'w',
       workloadBinding: binding,
     });
@@ -125,7 +128,7 @@ describe('L3-07 workload binding', () => {
       type: 'crm.write',
       request: {},
       idempotencyKey: 'idem-4',
-      lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
       actor: 'w',
       workloadBinding: binding,
     });
@@ -147,7 +150,7 @@ describe('L3-07 workload binding', () => {
         type: 'crm.write',
         request: {},
         idempotencyKey: 'idem-ent',
-        lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+        lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
         actor: 'w',
       });
       assert.equal(admission.admitted, false);
@@ -168,7 +171,7 @@ describe('L3-07 workload binding', () => {
       type: 'crm.write',
       request: {},
       idempotencyKey: 'idem-wl-diff',
-      lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
       actor: 'w',
       workloadBinding: { ...binding, workloadId: 'wl_other' },
     });
@@ -185,7 +188,7 @@ describe('L3-07 workload binding', () => {
       type: 'crm.write',
       request: {},
       idempotencyKey: 'idem-5',
-      lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
       actor: 'w',
       workloadBinding: binding,
     });
@@ -201,7 +204,7 @@ describe('L3-07 workload binding', () => {
       type: 'crm.write',
       request: {},
       idempotencyKey: 'idem-wl',
-      lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
       actor: 'w',
       workloadBinding: {
         tenantId: binding.tenantId,
@@ -223,12 +226,74 @@ describe('L3-07 workload binding', () => {
       type: 'crm.write',
       request: {},
       idempotencyKey: 'idem-wl-reverse',
-      lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
       actor: 'w',
       workloadBinding: binding,
     });
     assert.equal(admission.admitted, false);
     assert.equal(admission.reason, 'WORKLOAD_MISMATCH');
+  });
+
+  it('rejects WORKLOAD_MISMATCH when both grant and binding omit workloadId (empty-empty fail-closed)', async () => {
+    const { iss, ver } = makeTokens();
+    const broker = makeBroker(ver);
+    const { workloadId: _omit, ...grantWithoutWorkload } = baseGrant;
+    const admission = await broker.admit({
+      effectId: 'eff-wl-empty-empty',
+      token: iss.issue({ ...grantWithoutWorkload, requestHash: canonicalRequestHash({}) }),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem-wl-empty-empty',
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
+      actor: 'w',
+      workloadBinding: {
+        tenantId: binding.tenantId,
+        runId: binding.runId,
+        stepId: binding.stepId,
+      },
+    });
+    assert.equal(admission.admitted, false);
+    assert.equal(admission.reason, 'WORKLOAD_MISMATCH');
+  });
+
+  it('rejects WORKER_FENCE_MISMATCH when grant workerId/generation diverge from lease', async () => {
+    const { iss, ver } = makeTokens();
+    const broker = makeBroker(ver);
+    const admission = await broker.admit({
+      effectId: 'eff-fence',
+      token: iss.issue({
+        ...baseGrant,
+        workerId: 'w',
+        workerGeneration: 1,
+        requestHash: canonicalRequestHash({}),
+      }),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem-fence',
+      lease: { workerId: 'w', workerGeneration: 2, token: 'l', fencingEpoch: 1 },
+      actor: 'w',
+      workloadBinding: binding,
+    });
+    assert.equal(admission.admitted, false);
+    assert.equal(admission.reason, 'WORKER_FENCE_MISMATCH');
+  });
+
+  it('rejects WORKER_FENCE_MISMATCH when grant omits worker fence (fail-closed)', async () => {
+    const { iss, ver } = makeTokens();
+    const broker = makeBroker(ver);
+    const { workerId: _w, workerGeneration: _g, ...grantWithoutFence } = baseGrant;
+    const admission = await broker.admit({
+      effectId: 'eff-no-fence',
+      token: iss.issue({ ...grantWithoutFence, requestHash: canonicalRequestHash({}) }),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem-no-fence',
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
+      actor: 'w',
+      workloadBinding: binding,
+    });
+    assert.equal(admission.admitted, false);
+    assert.equal(admission.reason, 'WORKER_FENCE_MISMATCH');
   });
 
   it('rejects expired capability token before binding check matters', async () => {
@@ -246,7 +311,7 @@ describe('L3-07 workload binding', () => {
         type: 'crm.write',
         request: {},
         idempotencyKey: 'idem-exp',
-        lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+        lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
         actor: 'w',
         workloadBinding: binding,
       }),

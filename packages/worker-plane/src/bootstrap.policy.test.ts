@@ -1,7 +1,60 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
-import { createWorkerPolicyEvaluator, withDefaultLlmAllowlist } from './bootstrap.js';
+import {
+  createWorkerPolicyEvaluator,
+  resolveWorkerTenantScope,
+  withDefaultLlmAllowlist,
+  WORKER_TENANT_SCOPE_REQUIRED,
+} from './bootstrap.js';
+
+describe('resolveWorkerTenantScope (fail-closed tenant authority)', () => {
+  it("rejects '*' before any database activity", () => {
+    assert.throws(
+      () => resolveWorkerTenantScope({ COMMANDER_WORKER_TENANTS: '*' } as NodeJS.ProcessEnv),
+      (err: unknown) => err instanceof Error && err.message.includes(WORKER_TENANT_SCOPE_REQUIRED),
+    );
+  });
+
+  it('rejects a missing tenant scope', () => {
+    assert.throws(
+      () => resolveWorkerTenantScope({} as NodeJS.ProcessEnv),
+      (err: unknown) => err instanceof Error && err.message.includes(WORKER_TENANT_SCOPE_REQUIRED),
+    );
+  });
+
+  it('rejects an empty tenant scope', () => {
+    assert.throws(
+      () => resolveWorkerTenantScope({ COMMANDER_WORKER_TENANTS: '' } as NodeJS.ProcessEnv),
+      (err: unknown) => err instanceof Error && err.message.includes(WORKER_TENANT_SCOPE_REQUIRED),
+    );
+  });
+
+  it('rejects a comma-only tenant scope', () => {
+    assert.throws(
+      () => resolveWorkerTenantScope({ COMMANDER_WORKER_TENANTS: ',,' } as NodeJS.ProcessEnv),
+      (err: unknown) => err instanceof Error && err.message.includes(WORKER_TENANT_SCOPE_REQUIRED),
+    );
+  });
+
+  it('rejects a scope that contains the wildcard alongside real tenants', () => {
+    assert.throws(
+      () =>
+        resolveWorkerTenantScope({
+          COMMANDER_WORKER_TENANTS: 'tenant-a,*',
+        } as NodeJS.ProcessEnv),
+      (err: unknown) => err instanceof Error && err.message.includes(WORKER_TENANT_SCOPE_REQUIRED),
+    );
+  });
+
+  it('accepts an explicit list and always sets schedulerMode false', () => {
+    const scope = resolveWorkerTenantScope({
+      COMMANDER_WORKER_TENANTS: 'tenant-a, tenant-b',
+    } as NodeJS.ProcessEnv);
+    assert.deepEqual(scope.tenantIds, ['tenant-a', 'tenant-b']);
+    assert.equal(scope.schedulerMode, false);
+  });
+});
 
 describe('createWorkerPolicyEvaluator', () => {
   it('allows llm.* model calls by default (agent can invoke providers)', async () => {

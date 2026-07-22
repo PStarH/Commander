@@ -46,6 +46,7 @@ spec:
           env:
             - name: NODE_ENV
               value: {{ .Values.config.nodeEnv | quote }}
+            {{- include "commander.profileTierEnv" . | nindent 12 }}
             - name: PORT
               value: {{ .Values.api.port | quote }}
             - name: LOG_LEVEL
@@ -191,12 +192,12 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
-                  key: {{ include "commander.databaseUrlSecretKey" . | quote }}
+                  key: {{ include "commander.databaseAppSecretKey" . | quote }}
             - name: COMMANDER_KERNEL_DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
-                  key: {{ include "commander.databaseUrlSecretKey" . | quote }}
+                  key: {{ include "commander.databaseAppSecretKey" . | quote }}
             {{- end }}
             {{- if .Values.observability.otel.enabled }}
             - name: OTEL_EXPORTER_ENDPOINT

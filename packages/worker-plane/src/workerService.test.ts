@@ -66,20 +66,23 @@ class FakeKernel implements KernelWorkerPort {
   setLimit(tenantId: string, value: number): void {
     this.limits.set(tenantId, value);
   }
+  lastClaimTenantIds: string[] | undefined;
   async claimNextStep(request: {
     workerId: string;
     workerGeneration?: number;
     leaseTtlMs: number;
-    tenantIds: string[];
+    tenantIds?: string[];
     capabilities: string[];
   }): Promise<ClaimedStep | null> {
     this.lastClaimGeneration = request.workerGeneration;
+    this.lastClaimTenantIds = request.tenantIds;
     if (this.claimDelayMs > 0)
       await new Promise((resolve) => setTimeout(resolve, this.claimDelayMs));
+    // Caller tenantIds are ignored (durable authz). Tests still filter by auth registry
+    // via worker capabilities only — mirrors claim_next_step without request scope.
     const step = this.steps.find(
       (candidate) =>
         ['PENDING', 'RETRY_WAIT'].includes(candidate.state) &&
-        (request.tenantIds.length === 0 || request.tenantIds.includes(candidate.tenantId)) &&
         request.capabilities.includes(candidate.kind) &&
         this.steps.filter(
           (other) => other.tenantId === candidate.tenantId && other.state === 'RUNNING',
@@ -167,7 +170,6 @@ class FakeKernel implements KernelWorkerPort {
 
 describe('worker plane', () => {
   it('wraps each claimed step with step-scoped workload identity ALS', async () => {
-    resetControlPlane();
     const kernel = new FakeKernel();
     kernel.addRun('run-wrapped', 'tenant-a', [{ id: 'wrapped-step', kind: 'agent' }]);
     let seenBinding: ReturnType<typeof getStepWorkloadBinding>;
@@ -178,12 +180,15 @@ describe('worker plane', () => {
       new InMemoryWorkerRegistry(),
       kernel,
       {
-        execute: async (step) => {
+        execute: async (step, context) => {
           seenBinding = getStepWorkloadBinding();
           assert.ok(seenBinding);
           assert.equal(seenBinding.tenantId, step.tenantId);
           assert.equal(seenBinding.runId, step.runId);
           assert.equal(seenBinding.stepId, step.id);
+          assert.equal(seenBinding.workerId, context.worker.id);
+          assert.equal(seenBinding.workerGeneration, context.worker.generation);
+          assert.equal(seenBinding.workloadId, `${context.worker.id}:${context.worker.generation}`);
           return { ok: true };
         },
       },
@@ -191,6 +196,7 @@ describe('worker plane', () => {
     );
     await service.start();
     assert.equal(await service.pollOnce(), true);
+    assert.equal(kernel.lastClaimTenantIds, undefined);
     await service.waitForIdle();
     assert.ok(seenBinding);
     assert.equal(getStepWorkloadBinding(), undefined);
@@ -618,7 +624,12 @@ describe('worker plane', () => {
     const started = Date.now();
     assert.equal(await service.pollOnce(), true);
     // Bump generation so worker heartbeat aborts active step controllers (parent abort).
-    await registry.register(toolDef, 'spiffe://commander/worker/tool-abort-worker', ['tenant-a']);
+    await registry.register(
+      toolDef,
+      'spiffe://commander/worker/tool-abort-worker',
+      ['tenant-a'],
+      service.record?.claimSecret,
+    );
     await service.waitForIdle();
     assert.ok(Date.now() - started < boundMs, 'parent-abort step must leave RUNNING within bound');
     assert.notEqual(kernel.getStep('abort-hang-tool')?.state, 'RUNNING');
@@ -707,6 +718,32 @@ describe('worker plane', () => {
     await service.waitForIdle();
     assert.equal(kernel.lastFailureCode, 'ABORTED');
     assert.equal(kernel.getStep('agent-step')?.state, 'RETRY_WAIT');
+    await service.stop();
+  });
+
+  it('preserves claimSecret across heartbeat (InMemory strips secret like Postgres)', async () => {
+    const kernel = new FakeKernel();
+    const registry = new InMemoryWorkerRegistry();
+    const service = new WorkerService(
+      definition,
+      identity,
+      auth,
+      registry,
+      kernel,
+      { execute: async () => ({ ok: true }) },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 60_000 },
+    );
+    const registered = await service.start();
+    assert.ok(registered.claimSecret, 'register must return claimSecret');
+    const secret = registered.claimSecret;
+    // Drive one heartbeat via registry semantics used by WorkerService.heartbeat
+    const hb = await registry.heartbeat(registered.id, registered.generation, 0, registered.claimSecret!);
+    assert.ok(hb);
+    assert.equal(hb.claimSecret, undefined, 'heartbeat must not re-issue claimSecret');
+    // Service-internal preserve path: pollOnce needs secret after heartbeat timer would have run
+    await (service as unknown as { heartbeat: () => Promise<void> }).heartbeat();
+    const worker = (service as unknown as { worker: { claimSecret?: string } }).worker;
+    assert.equal(worker.claimSecret, secret, 'WorkerService must preserve claimSecret after heartbeat');
     await service.stop();
   });
 

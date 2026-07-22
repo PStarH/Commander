@@ -43,6 +43,26 @@ spec:
               value: {{ .Values.database.postgres.database | quote }}
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
+            - name: COMMANDER_OWNER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.databaseUrlSecretName" . | quote }}
+                  key: owner-password
+            - name: COMMANDER_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.databaseUrlSecretName" . | quote }}
+                  key: app-password
+            - name: COMMANDER_SCHEDULER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.databaseUrlSecretName" . | quote }}
+                  key: scheduler-password
+            - name: COMMANDER_WORKER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.databaseUrlSecretName" . | quote }}
+                  key: worker-password
           resources: {{ toYaml .Values.database.postgres.resources | nindent 12 }}
           livenessProbe:
             exec:
@@ -67,6 +87,14 @@ spec:
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
+            - name: database-init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+      volumes:
+        - name: database-init
+          configMap:
+            name: {{ include "commander.fullname" . }}-database-init
+            defaultMode: 0755
   {{- if .Values.database.postgres.persistence.enabled }}
   volumeClaimTemplates:
     - metadata:
@@ -81,7 +109,6 @@ spec:
         storageClassName: {{ .Values.database.postgres.persistence.storageClass }}
         {{- end }}
   {{- else }}
-      volumes:
         - name: postgres-data
           emptyDir: {}
   {{- end }}

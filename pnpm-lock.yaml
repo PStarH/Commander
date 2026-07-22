@@ -28,6 +28,9 @@ importers:
       '@commander/core':
         specifier: workspace:*
         version: link:packages/core
+      '@commander/effect-broker':
+        specifier: workspace:*
+        version: link:packages/effect-broker
       '@commander/kernel':
         specifier: workspace:*
         version: link:packages/kernel
@@ -213,6 +216,9 @@ importers:
       '@commander/kernel':
         specifier: workspace:*
         version: link:../kernel
+      '@commander/worker-plane':
+        specifier: workspace:*
+        version: link:../worker-plane
     devDependencies:
       tsx:
         specifier: ^4.23.1
@@ -306,6 +312,9 @@ importers:
       '@commander/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@commander/effect-broker':
+        specifier: workspace:*
+        version: link:../effect-broker
       better-sqlite3:
         specifier: ^12.11.1
         version: 12.11.1
