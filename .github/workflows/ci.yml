@@ -300,8 +300,8 @@ jobs:
           # API + worker-plane tests import workspace packages from dist.
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/plugin-sdk build
-          pnpm --filter @commander/kernel build
           pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/kernel build
           pnpm --filter @commander/action-adapters build
           pnpm --filter @commander/core build
           pnpm --filter @commander/core exec tsx --test \
@@ -444,8 +444,8 @@ jobs:
         run: |
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/plugin-sdk build
-          pnpm --filter @commander/kernel build
           pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/kernel build
           pnpm --filter @commander/action-adapters build
           pnpm --filter @commander/core build
           pnpm --filter @commander/worker-plane build
@@ -502,8 +502,8 @@ jobs:
         run: |
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/plugin-sdk build
-          pnpm --filter @commander/kernel build
           pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/kernel build
           pnpm --filter @commander/action-adapters build
           pnpm --filter @commander/core build
 
