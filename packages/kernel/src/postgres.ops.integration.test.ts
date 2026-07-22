@@ -170,14 +170,14 @@ describe('PostgreSQL kernel ops durability', () => {
         occurredAt: new Date().toISOString(), payload: { runId: stepC.runId },
       });
       const firstClaim = (await delivery.claim(
-        'ws2-before-restart', 100, new Date(Date.now() + 1_000),
+        'ws2-before-restart', 10_000, new Date(Date.now() + 1_000),
       )).find(
         (message) => message.eventId === durableEventId,
       );
       assert.ok(firstClaim);
       const restartedAdapter = new PostgresOutboxDeliveryPort(pool, { baseBackoffMs: 1 });
       const redelivered = (await restartedAdapter.claim(
-        'ws2-after-restart', 100, new Date(Date.now() + 61_000),
+        'ws2-after-restart', 10_000, new Date(Date.now() + 61_000),
       )).find((message) => message.eventId === durableEventId);
       assert.ok(redelivered);
       assert.notEqual(redelivered.claimToken, firstClaim.claimToken);
@@ -191,11 +191,8 @@ describe('PostgreSQL kernel ops durability', () => {
     }
   });
 
-  // Pre-existing gap (not Task-1): failStep/finishRunIfTerminal still go to FAILED;
-  // InMemory unit tests for failStep→COMPENSATING fail the same way. Skip until
-  // compensation-on-terminal-fail lands; do not block Postgres authority gate.
   it('locks COMPLETED|ADMITTED effects before compensation snapshot so sibling completeEffect cannot orphan', {
-    skip: !databaseUrl || 'failStep→COMPENSATING unimplemented (parity with failing kernel.test.ts)',
+    skip: !databaseUrl,
   }, async () => {
     if (!databaseUrl) return;
     // 并发回归：failStep→COMPENSATING 与 sibling completeEffect 竞态时，

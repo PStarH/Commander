@@ -583,21 +583,54 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO commander_scheduler;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO commander_scheduler;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO commander_scheduler;
 
--- Worker role: least-privilege DML only, subject to RLS. Used by workers and
--- adapter-ops for claims, effects, heartbeats, and interactions. It must never
--- bypass RLS, own tables, manage roles, or run migrations.
--- Durable worker authz rows are mutated only via SECURITY DEFINER RPCs
--- (register_worker / heartbeat_worker / drain_worker) — not direct DML.
+-- Worker role: least-privilege execution-path DML, subject to RLS. Policy,
+-- admission, tenant-control, worker-registry, and DLQ authority stay with app/
+-- scheduler/owner roles. Durable worker authz rows are mutated only via
+-- SECURITY DEFINER RPCs (register_worker / heartbeat_worker / drain_worker).
 GRANT USAGE ON SCHEMA public TO commander_worker;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO commander_worker;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM commander_worker;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO commander_worker;
+
+GRANT INSERT ON TABLE
+  commander_events,
+  commander_effects,
+  commander_tenant_execution_usage,
+  commander_timers,
+  commander_interactions,
+  commander_outbox,
+  commander_outbox_deliveries,
+  commander_effect_quota,
+  commander_capability_revocations,
+  commander_capability_replays
+TO commander_worker;
+
+GRANT UPDATE ON TABLE
+  commander_runs,
+  commander_steps,
+  commander_effects,
+  commander_tenant_execution_usage,
+  commander_timers,
+  commander_interactions,
+  commander_outbox,
+  commander_outbox_deliveries,
+  commander_effect_quota,
+  commander_capability_revocations
+TO commander_worker;
+
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO commander_worker;
--- Future tables: no blind DELETE (narrow default write surface).
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE ON TABLES TO commander_worker;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL PRIVILEGES ON TABLES FROM commander_worker;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO commander_worker;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO commander_worker;
 
--- P0: worker LOGIN must not self-mint durable claim authority.
+-- P0: worker LOGIN must not self-mint durable claim or policy authority.
 REVOKE INSERT, UPDATE, DELETE ON TABLE commander_workers FROM commander_worker;
--- Keep SELECT for RLS-scoped reads (get); writes go through DEFINER RPCs.
+REVOKE INSERT, UPDATE, DELETE ON TABLE commander_effect_allowlist FROM commander_worker;
+REVOKE INSERT, UPDATE, DELETE ON TABLE commander_action_kill_switches FROM commander_worker;
+REVOKE INSERT, UPDATE, DELETE ON TABLE commander_tenant_execution_limits FROM commander_worker;
+REVOKE INSERT, UPDATE, DELETE ON TABLE commander_tenant_execution_control FROM commander_worker;
+REVOKE INSERT, UPDATE, DELETE ON TABLE commander_outbox_dlq FROM commander_worker;
+REVOKE INSERT ON TABLE commander_runs FROM commander_worker;
+REVOKE INSERT ON TABLE commander_steps FROM commander_worker;
 
 -- Capability revoke/replay — no DELETE (tombstones via INSERT only).
 REVOKE DELETE ON TABLE commander_capability_revocations FROM commander_worker;
@@ -612,12 +645,8 @@ REVOKE DELETE ON TABLE commander_interactions FROM commander_worker;
 REVOKE DELETE ON TABLE commander_outbox FROM commander_worker;
 REVOKE DELETE ON TABLE commander_outbox_deliveries FROM commander_worker;
 REVOKE DELETE ON TABLE commander_outbox_dlq FROM commander_worker;
-REVOKE DELETE ON TABLE commander_effect_allowlist FROM commander_worker;
 REVOKE DELETE ON TABLE commander_effect_quota FROM commander_worker;
-REVOKE DELETE ON TABLE commander_action_kill_switches FROM commander_worker;
-REVOKE DELETE ON TABLE commander_tenant_execution_control FROM commander_worker;
 REVOKE DELETE ON TABLE commander_tenant_execution_usage FROM commander_worker;
-REVOKE DELETE ON TABLE commander_tenant_execution_limits FROM commander_worker;
 `;
 
 /**
@@ -1199,7 +1228,7 @@ BEGIN
           WHERE prerequisite.state NOT IN ('SUCCEEDED', 'SKIPPED')
         )
       ORDER BY u.running_steps ASC,
-               GREATEST(s.priority + FLOOR(EXTRACT(EPOCH FROM (v_now - s.scheduled_at)) / 60), 1000) DESC,
+               LEAST(s.priority + FLOOR(EXTRACT(EPOCH FROM (v_now - s.scheduled_at)) / 60), 1000) DESC,
                s.scheduled_at ASC,
                s.created_at ASC
       FOR UPDATE OF s, u, c SKIP LOCKED

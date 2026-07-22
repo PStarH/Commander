@@ -31,7 +31,11 @@ const TENANT_B = 'tenant-globex';
 
 function createRunCommand(
   tenantId: string,
-  steps: Array<{ kind: string; input?: Record<string, unknown> }>,
+  steps: Array<{
+    kind: string;
+    input?: Record<string, unknown>;
+    initialState?: 'PENDING' | 'WAITING_FOR_HUMAN';
+  }>,
 ) {
   const runId = randomUUID();
   return {
@@ -45,6 +49,7 @@ function createRunCommand(
       id: `${runId}-step-${i}`,
       kind: s.kind,
       input: s.input ?? { goal: `Execute ${s.kind}`, agentId: 'test-agent' },
+      initialState: s.initialState,
     })),
   };
 }
@@ -201,7 +206,9 @@ describe('V2 Cross-Tenant Live-Fire — Kernel Tenant Isolation', () => {
   // ── 7. Cross-tenant interaction hijack (TENANT-001: data access) ──
 
   it('rejects cross-tenant interaction: tenant B cannot answer tenant A interaction', async () => {
-    const cmd = createRunCommand(TENANT_A, [{ kind: 'agent' }]);
+    const cmd = createRunCommand(TENANT_A, [
+      { kind: 'agent', initialState: 'WAITING_FOR_HUMAN' },
+    ]);
     const run = await kernel.createRun(cmd, 'gateway');
     const stepId = cmd.steps[0]!.id;
 

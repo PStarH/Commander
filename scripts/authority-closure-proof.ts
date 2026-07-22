@@ -1306,12 +1306,17 @@ async function checkWorkerDsnThreat(input: {
       claimSecret: peerSecret,
     });
 
-    const reconcileNo = await workerRepo.claimReconcileEffects({
-      workerId: peerId,
-      workerGeneration: 1,
-      limit: 5,
-      claimSecret: '',
-    });
+    let reconcileNo: unknown[] = [];
+    try {
+      reconcileNo = await workerRepo.claimReconcileEffects({
+        workerId: peerId,
+        workerGeneration: 1,
+        limit: 5,
+        claimSecret: '',
+      });
+    } catch {
+      reconcileNo = [];
+    }
     const reconcileWrong = await workerRepo.claimReconcileEffects({
       workerId: peerId,
       workerGeneration: 1,

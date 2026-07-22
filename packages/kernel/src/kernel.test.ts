@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { validateRunTransition } from '@commander/contracts';
 import { InMemoryKernelRepository } from './testing/inMemoryRepository.js';
+import { KERNEL_COMPENSATION_TOPIC } from './ops/compensationConsumer.js';
 import type { KernelRun, NewKernelStep } from './types.js';
 
 const createRun = (steps: NewKernelStep[] = [{ id: 'step-a', kind: 'agent' }]) => ({
@@ -787,7 +788,7 @@ describe('execution kernel semantics', () => {
     assert.equal(failed?.state, 'FAILED');
     assert.equal((await kernel.getRun('run-1', 'tenant-a'))?.state, 'COMPENSATING');
 
-    const messages = await kernel.claimOutbox(100);
+    const messages = await kernel.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 100);
     const compensation = messages.filter(
       (message) => message.topic === 'commander.kernel.compensation.requested',
     );
@@ -843,7 +844,7 @@ describe('execution kernel semantics', () => {
     );
     assert.equal(failed?.state, 'FAILED');
     assert.equal((await kernel.getRun('run-1', 'tenant-a'))?.state, 'COMPENSATING');
-    const messages = await kernel.claimOutbox(100);
+    const messages = await kernel.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 100);
     assert.equal(
       messages.some((message) => message.topic === 'commander.kernel.compensation.requested'),
       true,
@@ -899,7 +900,7 @@ describe('execution kernel semantics', () => {
     assert.equal((await kernel.getRun('run-1', 'tenant-a'))?.state, 'COMPENSATING');
     assert.equal(validateRunTransition('PAUSED', 'COMPENSATING').ok, true);
 
-    const messages = await kernel.claimOutbox(100);
+    const messages = await kernel.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 100);
     const compensation = messages.filter(
       (message) => message.topic === 'commander.kernel.compensation.requested',
     );

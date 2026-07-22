@@ -20,11 +20,6 @@ import {
   type AdapterCompensateInput,
   type AdapterExecuteInput,
 } from '@commander/action-adapters';
-import {
-  PostgresWorkerRegistry,
-  resolveWorkerTenantScope,
-  type WorkerRegistry,
-} from '@commander/worker-plane';
 import { randomUUID } from 'node:crypto';
 import { createEgressGatedFetch, parseEgressAllowlist } from './egress.js';
 import { ReconciliationDaemon } from './reconciliationDaemon.js';
@@ -54,6 +49,119 @@ export const ADAPTER_OPS_SCHEDULER_MODE_FORBIDDEN = 'ADAPTER_OPS_SCHEDULER_MODE_
 
 /** No silent "local" fallback — COMMANDER_CELL_TENANT_ID must be explicit for every tier. */
 export const COMMANDER_CELL_TENANT_ID_REQUIRED = 'COMMANDER_CELL_TENANT_ID_REQUIRED';
+
+export const WORKER_TENANT_SCOPE_REQUIRED = 'WORKER_TENANT_SCOPE_REQUIRED';
+
+type AdapterOpsWorkerDefinition = {
+  id: string;
+  kind: 'tool';
+  version: string;
+  capabilities: string[];
+  maxConcurrency: number;
+  labels?: Record<string, string>;
+};
+
+type AdapterOpsWorkerRegistration = {
+  id: string;
+  generation: number;
+  claimSecret?: string;
+};
+
+export interface AdapterOpsWorkerRegistry {
+  initialize(): Promise<void>;
+  register(
+    definition: AdapterOpsWorkerDefinition,
+    identitySubject: string,
+    tenantIds: string[],
+    previousClaimSecret?: string,
+  ): Promise<AdapterOpsWorkerRegistration>;
+}
+
+type AdapterOpsRegistryPool = {
+  connect(): Promise<{
+    query<T = Record<string, unknown>>(
+      sql: string,
+      values?: readonly unknown[],
+    ): Promise<{ rows: T[] }>;
+    release(): void;
+  }>;
+};
+
+export function resolveAdapterOpsTenantScope(
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const tenantIds = (env.COMMANDER_WORKER_TENANTS ?? '')
+    .split(',')
+    .map((tenantId) => tenantId.trim())
+    .filter(Boolean);
+  if (tenantIds.length === 0 || tenantIds.includes('*')) {
+    throw new Error(
+      `${WORKER_TENANT_SCOPE_REQUIRED}: COMMANDER_WORKER_TENANTS must be a non-empty, explicit tenant list`,
+    );
+  }
+  return tenantIds;
+}
+
+class PostgresAdapterOpsWorkerRegistry implements AdapterOpsWorkerRegistry {
+  constructor(private readonly pool: AdapterOpsRegistryPool) {}
+
+  async initialize(): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query<{ ok: string | null }>(
+        `SELECT to_regclass('public.commander_workers')::text AS ok`,
+      );
+      if (!result.rows[0]?.ok) {
+        throw new Error('commander_workers table is missing; run kernel migrations before adapter-ops');
+      }
+    } finally {
+      client.release();
+    }
+  }
+
+  async register(
+    definition: AdapterOpsWorkerDefinition,
+    identitySubject: string,
+    tenantIds: string[],
+    previousClaimSecret?: string,
+  ): Promise<AdapterOpsWorkerRegistration> {
+    if (tenantIds.length === 0 || tenantIds.includes('*')) {
+      throw new Error(`${WORKER_TENANT_SCOPE_REQUIRED}: daemon registration requires explicit tenantIds`);
+    }
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query<{
+        register_worker: { id: string; generation: number | string; claim_secret?: string } | null;
+      }>(
+        `SELECT register_worker(
+           $1::text, $2::text, $3::text, $4::jsonb, $5::jsonb, $6::integer, $7::text, $8::jsonb, $9::text
+         ) AS register_worker`,
+        [
+          definition.id,
+          definition.kind,
+          definition.version,
+          JSON.stringify(definition.capabilities),
+          JSON.stringify(definition.labels ?? {}),
+          definition.maxConcurrency,
+          identitySubject,
+          JSON.stringify(tenantIds),
+          previousClaimSecret ?? null,
+        ],
+      );
+      const registered = result.rows[0]?.register_worker;
+      if (!registered?.claim_secret) {
+        throw new Error(`WORKER_CLAIM_SECRET_REGISTER_FAILED: id=${definition.id}`);
+      }
+      return {
+        id: registered.id,
+        generation: Number(registered.generation),
+        claimSecret: registered.claim_secret,
+      };
+    } finally {
+      client.release();
+    }
+  }
+}
 
 function isProductionOrEnterprise(): boolean {
   return (
@@ -244,11 +352,11 @@ export function issueCompensationCapabilityToken(input: {
 
 /**
  * Register reconcile + compensation daemon rows in commander_workers (no DDL).
- * Uses Task 1 PostgresWorkerRegistry tenant scope (set_config) — required before
- * claim_reconcile_effects authz can see the worker.
+ * The default adapter is a narrow client of the kernel-owned register_worker
+ * SECURITY DEFINER RPC; adapter-ops does not depend on worker-plane runtime.
  */
 export async function registerAdapterOpsDaemonWorkers(
-  registry: WorkerRegistry,
+  registry: AdapterOpsWorkerRegistry,
   tenantIds: string[],
   opts?: {
     reconcileWorkerId?: string;
@@ -310,10 +418,10 @@ export async function registerAdapterOpsDaemonWorkers(
 
 export interface AdapterOpsWiringOptions {
   /**
-   * Test seam: inject a WorkerRegistry. When set (or postgres pool is present),
+   * Test seam: inject the narrow worker-registration port. When set (or postgres pool is present),
    * both daemon identities are registered before daemons start.
    */
-  workerRegistry?: WorkerRegistry;
+  workerRegistry?: AdapterOpsWorkerRegistry;
 }
 
 export interface AdapterOpsWorkerIdentities {
@@ -534,9 +642,9 @@ export async function createAdapterOpsWiring(
   let compensationClaimSecret: string | undefined;
   const mustRegister = Boolean(handle.postgresPool) || Boolean(options.workerRegistry);
   if (mustRegister) {
-    const { tenantIds } = resolveWorkerTenantScope(process.env);
+    const tenantIds = resolveAdapterOpsTenantScope(process.env);
     const workerRegistry =
-      options.workerRegistry ?? new PostgresWorkerRegistry(handle.postgresPool!);
+      options.workerRegistry ?? new PostgresAdapterOpsWorkerRegistry(handle.postgresPool!);
     const registered = await registerAdapterOpsDaemonWorkers(workerRegistry, tenantIds, {
       reconcileWorkerId,
       compensationWorkerId,

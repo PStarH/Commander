@@ -345,7 +345,7 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
     }
   });
 
-  it('worker LOGIN allowlist + claim_reconcile_effects; app cannot EXECUTE reconcile RPC', async () => {
+  it('worker LOGIN reads app-managed allowlist + claims reconcile effects; app cannot claim', async () => {
     const suffix = `${Date.now()}`;
     const allowTenant = `allow-${suffix}`;
     const reconWorker = `recon-w-${suffix}`;
@@ -362,9 +362,9 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
 
     try {
       assert.equal(await workerRepo.isActionAllowed(allowTenant, 'http.post'), false);
-      await workerRepo.setAllowlistEntry(allowTenant, 'http.post', true);
+      await repoA.setAllowlistEntry(allowTenant, 'http.post', true);
       assert.equal(await workerRepo.isActionAllowed(allowTenant, 'http.post'), true);
-      await workerRepo.ensureAllowlistDefault(allowTenant, 'llm.*', true);
+      await repoA.ensureAllowlistDefault(allowTenant, 'llm.*', true);
       assert.equal(await workerRepo.isActionAllowed(allowTenant, 'llm.openai'), true);
       await workerRepo.incrementQuota({ tenantId: allowTenant, actionClass: 'http' });
       assert.equal((await workerRepo.getQuota(allowTenant, 'http')).countUsed, 1);
