@@ -112,8 +112,6 @@ COPY packages/core/package.json ./packages/core/package.json
 COPY packages/kernel/package.json ./packages/kernel/package.json
 COPY packages/effect-broker/package.json ./packages/effect-broker/package.json
 COPY apps/api/package.json ./apps/api/package.json
-COPY .env.example ./.env.example
-COPY config/deprecated-authorities.json ./config/deprecated-authorities.json
 
 RUN chown -R commander:commander /app
 
