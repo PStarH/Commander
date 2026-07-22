@@ -32,19 +32,26 @@ services:
       # Hardcoded role DSNs — block host DATABASE_URL / COMMANDER_KERNEL_DATABASE_URL bleed.
       - DATABASE_URL=postgres://commander_owner:commander_owner@postgres:5432/commander
       - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_owner:commander_owner@postgres:5432/commander
+      # The owner migration is also responsible for seeding the explicit worker
+      # tenant allowlist before worker/adapter LOGINs register.
+      - COMMANDER_WORKER_TENANTS=${COMMANDER_WORKER_TENANTS:-${COMMANDER_CELL_TENANT_ID:-local}}
+      - COMMANDER_WORKER_ALLOWED_TENANTS=${COMMANDER_WORKER_ALLOWED_TENANTS:-${COMMANDER_WORKER_TENANTS:-${COMMANDER_CELL_TENANT_ID:-local}}}
 
   api:
     profiles:
       - cell
     environment:
-      - API_STORE_BACKEND=postgres
+      # Legacy /api stores are frozen presentation compatibility, not /v1 authority.
+      # Keep their runtime DDL away from the least-privilege commander_app role.
+      - API_STORE_BACKEND=memory
+      - COMMANDER_MEMORY_STORE=in-memory
       - COMMANDER_KERNEL_ENABLED=1
       - COMMANDER_KERNEL_BACKEND=postgres
       - COMMANDER_ENABLE_DEMO_TICKET=${COMMANDER_ENABLE_DEMO_TICKET:-}
       - API_KEYS=${API_KEYS:-}
       - TENANT_API_KEYS=${TENANT_API_KEYS:-}
-      - COMMANDER_CELL_TENANT_ID=${COMMANDER_CELL_TENANT_ID:-}
-      - COMMANDER_DEFAULT_TENANT_ID=${COMMANDER_DEFAULT_TENANT_ID:-${COMMANDER_CELL_TENANT_ID:-}}
+      - COMMANDER_CELL_TENANT_ID=${COMMANDER_CELL_TENANT_ID:-local}
+      - COMMANDER_DEFAULT_TENANT_ID=${COMMANDER_DEFAULT_TENANT_ID:-${COMMANDER_CELL_TENANT_ID:-local}}
       - DATABASE_URL=postgres://commander_app:commander_app@postgres:5432/commander
       - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_app:commander_app@postgres:5432/commander
       - COMMANDER_MASTER_KEY=${COMMANDER_MASTER_KEY:?set COMMANDER_MASTER_KEY}
@@ -70,12 +77,12 @@ services:
       - DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander
       - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander
       # Cell / Helm demo tenant scope (explicit; never '*').
-      - COMMANDER_WORKER_TENANTS=${COMMANDER_WORKER_TENANTS:-local}
+      - COMMANDER_WORKER_TENANTS=${COMMANDER_WORKER_TENANTS:-${COMMANDER_CELL_TENANT_ID:-local}}
       - COMMANDER_WORKER_AUTH_TOKEN=${COMMANDER_WORKER_AUTH_TOKEN:?set COMMANDER_WORKER_AUTH_TOKEN}
       - COMMANDER_WORKER_HEALTH_PORT=8083
       - COMMANDER_KERNEL_BACKEND=postgres
       - COMMANDER_ENABLE_DEMO_TICKET=${COMMANDER_ENABLE_DEMO_TICKET:-}
-      - COMMANDER_CELL_TENANT_ID=${COMMANDER_CELL_TENANT_ID:-}
+      - COMMANDER_CELL_TENANT_ID=${COMMANDER_CELL_TENANT_ID:-local}
       - COMMANDER_SANDBOX_ISOLATION=docker
       - DOCKER_HOST=unix:///var/run/docker.sock
       # Worker authority: Ed25519 PEM + JWKS (fail-closed; no HMAC capability-token-key).
@@ -112,7 +119,7 @@ services:
       - DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander
       - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander
       # Same fail-closed tenant scope as worker (resolveWorkerTenantScope on postgres path).
-      - COMMANDER_WORKER_TENANTS=${COMMANDER_WORKER_TENANTS:-local}
+      - COMMANDER_WORKER_TENANTS=${COMMANDER_WORKER_TENANTS:-${COMMANDER_CELL_TENANT_ID:-local}}
       - COMMANDER_ADAPTER_OPS_HEALTH_PORT=8082
       - COMMANDER_CELL_TIER=demo
       - COMMANDER_CELL_TENANT_ID=${COMMANDER_CELL_TENANT_ID:-local}

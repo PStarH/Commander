@@ -60,6 +60,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if and .Values.database.enabled (eq .Values.database.backend "postgres") -}}true{{- end -}}
 {{- end -}}
 
+{{- define "commander.apiStoreBackend" -}}
+{{- if include "commander.postgresBackend" . -}}memory{{- else -}}{{ .Values.database.backend }}{{- end -}}
+{{- end -}}
+
 {{- define "commander.requireEnterpriseSecrets" -}}
 {{- if eq .Values.tier "enterprise" -}}
 {{- if not .Values.database.postgres.existingSecret -}}{{- fail "enterprise tier requires database.postgres.existingSecret" -}}{{- end -}}

@@ -30,6 +30,12 @@ export const SERVICE_ROLE_MAP: Readonly<Record<string, string>> = {
 
 const OWNER_ROLE = 'commander_owner';
 const MIGRATION_SERVICES = new Set(['kernel-migrate', 'migrate']);
+const APP_ROLE_APIS = new Set(['api', 'api-1', 'api-2']);
+const ISOLATED_LEGACY_STORE_PROFILES = new Set<ComposeRoleProfile>([
+  'cell',
+  'v2',
+  'v2-bench',
+]);
 
 /** Default COMMANDER_WORKER_TENANTS expected per topology. */
 export const EXPECTED_WORKER_TENANTS: Readonly<Record<ComposeRoleProfile, string>> = {
@@ -178,6 +184,19 @@ export function assertComposeRoles(
       );
     }
 
+    if (APP_ROLE_APIS.has(name) && ISOLATED_LEGACY_STORE_PROFILES.has(profile)) {
+      assert.equal(
+        env.API_STORE_BACKEND,
+        'memory',
+        `${name}: expected API_STORE_BACKEND=memory; PostgreSQL legacy stores perform runtime DDL outside commander_app authority`,
+      );
+      assert.equal(
+        env.COMMANDER_MEMORY_STORE,
+        'in-memory',
+        `${name}: expected COMMANDER_MEMORY_STORE=in-memory; PostgreSQL legacy memory is not canonical /v1 authority`,
+      );
+    }
+
     if (name === 'worker' || name === 'adapter-ops') {
       // Same fail-closed tenant scope as worker-plane resolveWorkerTenantScope.
       const tenants = env.COMMANDER_WORKER_TENANTS;
@@ -195,7 +214,10 @@ export function assertComposeRoles(
         `${name}: COMMANDER_WORKER_TENANTS must not contain *`,
       );
 
-      const expectedTenants = EXPECTED_WORKER_TENANTS[profile];
+      const expectedTenants =
+        profile === 'cell'
+          ? env.COMMANDER_CELL_TENANT_ID?.trim() || EXPECTED_WORKER_TENANTS[profile]
+          : EXPECTED_WORKER_TENANTS[profile];
       assert.ok(
         tenantListsEqual(tenants, expectedTenants),
         `${name}: expected COMMANDER_WORKER_TENANTS=${expectedTenants}, got ${tenants}`,

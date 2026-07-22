@@ -38,6 +38,8 @@ export const COMPOSE_CONFIG_ENV: Record<string, string> = {
   COMMANDER_CAPABILITY_TOKEN_KEY: 'ci-cell-smoke-capability-key',
   COMMANDER_INTEGRITY_KEY: 'ci-cell-smoke-integrity-key',
   COMMANDER_WORKER_AUTH_TOKEN: 'ci-cell-smoke-worker-token',
+  COMMANDER_WORKER_TENANTS: CELL_E2E_TENANT,
+  COMMANDER_WORKER_ALLOWED_TENANTS: CELL_E2E_TENANT,
   ...CELL_CAPABILITY_MATERIALS,
 };
 
