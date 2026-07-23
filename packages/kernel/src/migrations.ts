@@ -1,5 +1,13 @@
 import { createHash } from 'node:crypto';
-import { KERNEL_RLS_SQL, KERNEL_ROLES_SQL, KERNEL_SCHEMA_SQL, KERNEL_SCHEMA_VERSION } from './schema.js';
+import {
+  KERNEL_CLAIM_SQL,
+  KERNEL_CLAIM_RECONCILE_SQL,
+  KERNEL_CLAIM_SECRET_SQL,
+  KERNEL_RLS_SQL,
+  KERNEL_ROLES_SQL,
+  KERNEL_SCHEMA_SQL,
+  KERNEL_SCHEMA_VERSION,
+} from './schema.js';
 import type { SqlPool } from './postgres.js';
 
 export interface KernelMigration {
@@ -14,6 +22,17 @@ export const KERNEL_MIGRATIONS: readonly KernelMigration[] = [
   { id: `${KERNEL_SCHEMA_VERSION}.schema`, sql: KERNEL_SCHEMA_SQL, checksum: checksum(KERNEL_SCHEMA_SQL) },
   { id: `${KERNEL_SCHEMA_VERSION}.rls`, sql: KERNEL_RLS_SQL, checksum: checksum(KERNEL_RLS_SQL) },
   { id: `${KERNEL_SCHEMA_VERSION}.roles`, sql: KERNEL_ROLES_SQL, checksum: checksum(KERNEL_ROLES_SQL) },
+  {
+    id: `${KERNEL_SCHEMA_VERSION}.claim_secret`,
+    sql: KERNEL_CLAIM_SECRET_SQL,
+    checksum: checksum(KERNEL_CLAIM_SECRET_SQL),
+  },
+  { id: `${KERNEL_SCHEMA_VERSION}.claim`, sql: KERNEL_CLAIM_SQL, checksum: checksum(KERNEL_CLAIM_SQL) },
+  {
+    id: `${KERNEL_SCHEMA_VERSION}.claim_reconcile`,
+    sql: KERNEL_CLAIM_RECONCILE_SQL,
+    checksum: checksum(KERNEL_CLAIM_RECONCILE_SQL),
+  },
 ];
 
 export interface MigrationRunOptions {

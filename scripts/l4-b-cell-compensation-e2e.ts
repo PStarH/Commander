@@ -296,6 +296,7 @@ async function main(): Promise<void> {
   await mkdir(outDir, { recursive: true });
   const outPath = join(outDir, `l4-b-cell-compensation-e2e-${Date.now()}.json`);
   await writeFile(outPath, JSON.stringify(result, null, 2));
+  console.log(`Cell compensation E2E steps: ${JSON.stringify(result.steps)}`);
   console.log(`Cell compensation E2E ${result.verdict} ${result.passed ? 'PASS' : 'FAIL'} → ${outPath}`);
   if (!result.passed) process.exit(1);
 }

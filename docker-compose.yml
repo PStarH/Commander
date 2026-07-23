@@ -53,13 +53,14 @@ services:
       # tracing profile is active. No-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset.
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       # Database backend: sqlite (default) | postgres. When postgres is selected,
-      # DATABASE_URL must point at a running PostgreSQL instance (see `database` profile).
+      # API uses commander_app (see `database` / worker / v2 profiles). Hardcoded
+      # role DSN blocks host DATABASE_URL / owner credential bleed (cell-style).
       - API_STORE_BACKEND=${API_STORE_BACKEND:-sqlite}
-      - DATABASE_URL=${DATABASE_URL:-}
+      - DATABASE_URL=postgres://commander_app:commander_app@postgres:5432/commander
       # Architecture V2 shared execution kernel (Postgres-backed)
-      # Empty = auto (ON in production / when DATABASE_URL set). Set 0 to force off.
+      # Empty = auto (ON in production / when DSN set). Set 0 to force off.
       - COMMANDER_KERNEL_ENABLED=${COMMANDER_KERNEL_ENABLED:-}
-      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-}}
+      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_app:commander_app@postgres:5432/commander
       - COMMANDER_KERNEL_BACKEND=${COMMANDER_KERNEL_BACKEND:-postgres}
       # -------------------------------------------------------------------------
       # SECURITY: The values below are DEV-ONLY defaults. They let you run
@@ -96,19 +97,25 @@ services:
         - NODE_ENV=production
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander}
-      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander}}
+      # Worker/adapter authority: commander_worker (RLS-enforced, no BYPASSRLS).
+      - DATABASE_URL=${COMMANDER_WORKER_DATABASE_URL:-postgres://commander_worker:commander_worker@postgres:5432/commander}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_WORKER_DATABASE_URL:-postgres://commander_worker:commander_worker@postgres:5432/commander}
       - COMMANDER_KERNEL_BACKEND=postgres
       - COMMANDER_WORKER_BOOTSTRAP=/app/packages/worker-plane/dist/bootstrap.js
       - COMMANDER_WORKER_AUTH_TOKEN=${COMMANDER_WORKER_AUTH_TOKEN:-worker-token}
       - COMMANDER_WORKER_AUTH_SUBJECT=${COMMANDER_WORKER_AUTH_SUBJECT:-worker}
       - COMMANDER_WORKER_CAPABILITIES=${COMMANDER_WORKER_CAPABILITIES:-agent,tool,connector}
       - COMMANDER_WORKER_MAX_CONCURRENCY=${COMMANDER_WORKER_MAX_CONCURRENCY:-10}
-      - COMMANDER_WORKER_TENANTS=${COMMANDER_WORKER_TENANTS:-*}
+      # Explicit tenant scope (required). Workers reject '*'/empty at bootstrap.
+      - COMMANDER_WORKER_TENANTS=${COMMANDER_WORKER_TENANTS:-tenant-local}
       - COMMANDER_WORKER_LEASE_TTL_MS=${COMMANDER_WORKER_LEASE_TTL_MS:-30000}
       - COMMANDER_WORKER_HEARTBEAT_MS=${COMMANDER_WORKER_HEARTBEAT_MS:-10000}
       - COMMANDER_WORKER_POLL_MS=${COMMANDER_WORKER_POLL_MS:-250}
       - COMMANDER_EFFECT_BROKER_SEED=${COMMANDER_EFFECT_BROKER_SEED:-}
+      # Production worker: Ed25519 authority fail-closed (no HMAC capability-token-key).
+      - COMMANDER_CAPABILITY_PRIVATE_KEY_PEM=${COMMANDER_CAPABILITY_PRIVATE_KEY_PEM:?set COMMANDER_CAPABILITY_PRIVATE_KEY_PEM}
+      - COMMANDER_CAPABILITY_KEY_ID=${COMMANDER_CAPABILITY_KEY_ID:?set COMMANDER_CAPABILITY_KEY_ID}
+      - COMMANDER_CAPABILITY_JWKS_JSON=${COMMANDER_CAPABILITY_JWKS_JSON:?set COMMANDER_CAPABILITY_JWKS_JSON}
     depends_on:
       postgres:
         condition: service_healthy
@@ -124,8 +131,9 @@ services:
     entrypoint: ["node", "packages/kernel/dist/migrate.js"]
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander}
-      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander}}
+      # Migration owner authority (owns schema, runs migrations, BYPASSRLS).
+      - DATABASE_URL=${COMMANDER_OWNER_DATABASE_URL:-postgres://commander_owner:commander_owner@postgres:5432/commander}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_OWNER_DATABASE_URL:-postgres://commander_owner:commander_owner@postgres:5432/commander}
       - COMMANDER_KERNEL_BACKEND=postgres
     depends_on:
       postgres:
@@ -143,8 +151,9 @@ services:
       dockerfile: packages/kernel/Dockerfile.ops
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander}
-      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander}}
+      # Scheduler/recovery authority: commander_scheduler (BYPASSRLS, no CREATEROLE).
+      - DATABASE_URL=${COMMANDER_SCHEDULER_DATABASE_URL:-postgres://commander_scheduler:commander_scheduler@postgres:5432/commander}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_SCHEDULER_DATABASE_URL:-postgres://commander_scheduler:commander_scheduler@postgres:5432/commander}
       - COMMANDER_KERNEL_BACKEND=postgres
       - COMMANDER_RECLAIM_INTERVAL_MS=${COMMANDER_RECLAIM_INTERVAL_MS:-5000}
       - COMMANDER_RECLAIM_BATCH_SIZE=${COMMANDER_RECLAIM_BATCH_SIZE:-100}
@@ -211,6 +220,8 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-commander}
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      # Bench/dev role bootstrap (owner/app/scheduler/worker). First init only.
+      - ./deploy/docker/postgres-init.bench.sql:/docker-entrypoint-initdb.d/01-commander-roles.sql:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-commander} -d ${POSTGRES_DB:-commander}']
       interval: 10s
