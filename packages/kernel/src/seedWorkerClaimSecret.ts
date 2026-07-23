@@ -1,11 +1,36 @@
 /**
- * Owner/migration helpers for worker allowlist + claim-secret seeding.
+ * Owner/migration helpers for worker admission, demo policy, and claim-secret seeding.
  * Worker LOGIN cannot INSERT into these tables.
  */
 import { generateWorkerClaimSecret, hashWorkerClaimSecret } from './claimSecret.js';
 
 export interface ClaimSecretSeedClient {
   query(sql: string, values?: readonly unknown[]): Promise<unknown>;
+}
+
+const DEMO_TICKET_ACTIONS = ['demo.ticket.create', 'compensate.demo.ticket.create'] as const;
+
+/** Seed the opt-in Cell demo policy from the owner/migration path only. */
+export async function seedDemoTicketAllowlist(
+  client: ClaimSecretSeedClient,
+  tenantIds: readonly string[],
+): Promise<void> {
+  const tenants = tenantIds.map((tenantId) => tenantId.trim());
+  for (const tenantId of tenants) {
+    if (!tenantId || tenantId === '*') {
+      throw new Error(`WORKER_ALLOWED_TENANT_INVALID: refusing to seed '${tenantId}'`);
+    }
+  }
+  for (const tenantId of tenants) {
+    for (const action of DEMO_TICKET_ACTIONS) {
+      await client.query(
+        `INSERT INTO commander_effect_allowlist (tenant_id, action_pattern, allowed)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (tenant_id, action_pattern) DO NOTHING`,
+        [tenantId, action, true],
+      );
+    }
+  }
 }
 
 /** Seed cell tenants into commander_worker_allowed_tenants (owner/migration only). */

@@ -361,5 +361,13 @@ describe('compose source files (static drift guard)', () => {
     assert.ok(adapterBlock.length > 0, 'docker-compose.cell.yml must define adapter-ops');
     assert.match(adapterBlock, /commander_worker/, 'cell adapter-ops must use worker DSN');
     assert.doesNotMatch(adapterBlock, /commander_owner/, 'cell adapter-ops must not use owner DSN');
+
+    const migrationBlock = cell.match(/^  kernel-migrate:\s*\n([\s\S]*?)(?=^  api:)/m)?.[0] ?? '';
+    assert.ok(migrationBlock.length > 0, 'docker-compose.cell.yml must define kernel-migrate');
+    assert.match(
+      migrationBlock,
+      /COMMANDER_ENABLE_DEMO_TICKET/,
+      'cell migration must receive the explicit demo policy opt-in',
+    );
   });
 });
