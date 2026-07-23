@@ -32,7 +32,7 @@ import { TopologyExecutionRunner } from './topologyExecutionLoops';
 import { CheckpointManager } from './checkpointManager';
 import { EvolutionRunner } from './evolutionRunner';
 import { MetricsHelper } from './metricsHelper';
-import { AgentFileCollector, extractOutputFilePath } from './agentFileCollector';
+import { AgentFileCollector, writeSynthesisOutput } from './agentFileCollector';
 import { QualityGateFixer } from './qualityGateFixer';
 import {
   countNodes,
@@ -160,6 +160,7 @@ export class UltimateOrchestrator {
     effortLevel?: EffortLevel;
     topology?: OrchestrationTopology;
     tenantId?: string;
+    ownerId?: string;
     onProgress?: (phase: string, detail: string) => void;
   }): Promise<UltimateExecutionResult> {
     const execId = generateExecId(this.executionCounter);
@@ -425,6 +426,8 @@ export class UltimateOrchestrator {
             // (expects WorkItem IDs, not node IDs).
             tokenBudget: sub.context.estimatedTokens ?? 50000,
             priority: sub.dependencies?.length === 0 ? 80 : 50,
+            tenantId: params.tenantId,
+            ownerId: params.ownerId,
           })),
         );
         reasoning.push(
@@ -737,17 +740,8 @@ export class UltimateOrchestrator {
       // Write synthesis output to target file if the goal specifies one.
       // Always write to ensure the file has the full synthesized content.
       try {
-        const fileIntent = extractOutputFilePath(params.goal);
-        if (fileIntent) {
-          const fs = await import('fs');
-          const path = await import('path');
-          const resolvedPath =
-            fileIntent.startsWith('/') || fileIntent.startsWith('~')
-              ? fileIntent
-              : `${process.cwd()}/${fileIntent}`;
-          const dir = path.dirname(resolvedPath);
-          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-          fs.writeFileSync(resolvedPath, finalOutput, 'utf-8');
+        const resolvedPath = await writeSynthesisOutput(params.goal, finalOutput);
+        if (resolvedPath) {
           reasoning.push(`Wrote synthesis output (${finalOutput.length} bytes) to ${resolvedPath}`);
         }
       } catch (e) {

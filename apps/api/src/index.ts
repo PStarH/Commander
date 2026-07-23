@@ -592,7 +592,7 @@ registerRouter({
 registerRouter({
   name: 'memory-index',
   mountPath: '/',
-  factory: () => createMemoryIndexRouter(memoryIndexManager!),
+  factory: () => createMemoryIndexRouter(memoryIndexManager!, store),
 });
 registerRouter({ name: 'conflict', mountPath: '/', factory: () => createConflictRouter(store) });
 registerRouter({ name: 'security', mountPath: '/', factory: () => createSecurityRouter() });
@@ -656,7 +656,14 @@ registerRouter({
   mountPath: '/mcp/client',
   factory: () => createMCPClientRouter(),
 });
-registerRouter({ name: 'stream', mountPath: '/', factory: () => createStreamRouter() });
+registerRouter({
+  name: 'stream',
+  mountPath: '/',
+  factory: () =>
+    createStreamRouter({
+      resolveProject: (projectId) => store.getProjectSnapshot(projectId)?.project,
+    }),
+});
 // ── Legacy execution routes ─────────────────────────────────────────────────
 // These routes create AgentRuntime directly in the Gateway process, which
 // violates the V2 execution separation principle (WP3). They are disabled
@@ -675,7 +682,7 @@ if (isLegacyExecutionAllowed()) {
 }
 registerRouter({ name: 'cost', mountPath: '/', factory: () => createCostRouter() });
 registerRouter({ name: 'replay', mountPath: '/', factory: () => createReplayRouter() });
-registerRouter({ name: 'team', mountPath: '/api', factory: () => createTeamRouter() });
+registerRouter({ name: 'team', mountPath: '/', factory: () => createTeamRouter() });
 
 registerRouter({ name: 'dlq', mountPath: '/', factory: () => createDlqRouter() });
 registerRouter({
@@ -928,16 +935,7 @@ async function startServer(): Promise<void> {
     throw err;
   }
 
-  memoryIndexManager = new MemoryIndexManager(PROJECT_ID, projectMemoryAdapter);
-
-  // Initialize default memory domains on startup
-  DEFAULT_DOMAINS.forEach(({ domain, description }) => {
-    try {
-      memoryIndexManager!.addDomain(domain, description);
-    } catch (e) {
-      process.stderr.write(`[MemoryIndex] Domain already exists: ${domain}\n`);
-    }
-  });
+  memoryIndexManager = new MemoryIndexManager(PROJECT_ID, projectMemoryAdapter, DEFAULT_DOMAINS);
 
   // Built-in plugins before listen: IM providers must be resolvable for webhooks.
   getIMProviderRegistry().reset();

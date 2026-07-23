@@ -10,6 +10,11 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { mkdirSync, existsSync } from 'node:fs';
+import {
+  assertSameTenant,
+  getCurrentTenantId,
+  validateTenantId,
+} from '../../../runtime/tenantContext';
 
 // ============================================================================
 // Types
@@ -74,6 +79,7 @@ export interface ExportResult {
 export class DatasetVersionManager {
   private datasets: Map<string, VersionedDataset> = new Map();
   private versionCases: Map<string, DatasetCase[]> = new Map(); // versionId → cases
+  private datasetTenants: Map<string, string> = new Map();
   private dbPath: string | null;
 
   constructor(options?: { dbPath?: string; persistenceDir?: string }) {
@@ -93,7 +99,8 @@ export class DatasetVersionManager {
   /**
    * Create a new versioned dataset with initial cases.
    */
-  create(input: CreateDatasetInput): VersionedDataset {
+  create(input: CreateDatasetInput, tenantId?: string): VersionedDataset {
+    const ownerTenant = this.resolveTenant(tenantId);
     const datasetId = randomUUID();
     const now = new Date().toISOString();
     const versionId = randomUUID();
@@ -118,6 +125,7 @@ export class DatasetVersionManager {
     };
 
     this.datasets.set(datasetId, dataset);
+    this.datasetTenants.set(datasetId, ownerTenant);
     this.versionCases.set(versionId, [...input.cases]);
     this.saveToDisk();
 
@@ -128,9 +136,10 @@ export class DatasetVersionManager {
    * Add cases to a dataset, creating a new version.
    * Old version is preserved for rollback.
    */
-  addCases(input: AddCasesInput): VersionedDataset {
+  addCases(input: AddCasesInput, tenantId?: string): VersionedDataset {
+    const ownerTenant = this.resolveTenant(tenantId);
     const dataset = this.datasets.get(input.datasetId);
-    if (!dataset) {
+    if (!dataset || this.datasetTenants.get(input.datasetId) !== ownerTenant) {
       throw new Error(`Dataset not found: ${input.datasetId}`);
     }
 
@@ -166,9 +175,10 @@ export class DatasetVersionManager {
    * Rollback to a specific version. Creates a new version that
    * copies the cases from the target version (forward-only rollback).
    */
-  rollback(datasetId: string, targetVersion: number): VersionedDataset {
+  rollback(datasetId: string, targetVersion: number, tenantId?: string): VersionedDataset {
+    const ownerTenant = this.resolveTenant(tenantId);
     const dataset = this.datasets.get(datasetId);
-    if (!dataset) {
+    if (!dataset || this.datasetTenants.get(datasetId) !== ownerTenant) {
       throw new Error(`Dataset not found: ${datasetId}`);
     }
 
@@ -204,9 +214,10 @@ export class DatasetVersionManager {
   /**
    * Get a dataset by ID, with the current version's cases loaded.
    */
-  get(datasetId: string): VersionedDataset | undefined {
+  get(datasetId: string, tenantId?: string): VersionedDataset | undefined {
+    const ownerTenant = this.resolveTenant(tenantId);
     const dataset = this.datasets.get(datasetId);
-    if (!dataset) return undefined;
+    if (!dataset || this.datasetTenants.get(datasetId) !== ownerTenant) return undefined;
 
     // Load current version cases
     const currentVersion = dataset.versions[dataset.versions.length - 1];
@@ -221,9 +232,10 @@ export class DatasetVersionManager {
   /**
    * Get cases for a specific version of a dataset.
    */
-  getCases(datasetId: string, versionNumber?: number): DatasetCase[] {
+  getCases(datasetId: string, versionNumber?: number, tenantId?: string): DatasetCase[] {
+    const ownerTenant = this.resolveTenant(tenantId);
     const dataset = this.datasets.get(datasetId);
-    if (!dataset) return [];
+    if (!dataset || this.datasetTenants.get(datasetId) !== ownerTenant) return [];
 
     const version = versionNumber
       ? dataset.versions.find((v) => v.versionNumber === versionNumber)
@@ -236,22 +248,27 @@ export class DatasetVersionManager {
   /**
    * List all datasets (without loading cases).
    */
-  list(): VersionedDataset[] {
-    return [...this.datasets.values()];
+  list(tenantId?: string): VersionedDataset[] {
+    const ownerTenant = this.resolveTenant(tenantId);
+    return [...this.datasets.entries()]
+      .filter(([datasetId]) => this.datasetTenants.get(datasetId) === ownerTenant)
+      .map(([, dataset]) => dataset);
   }
 
   /**
    * Delete a dataset and all its versions.
    */
-  delete(datasetId: string): boolean {
+  delete(datasetId: string, tenantId?: string): boolean {
+    const ownerTenant = this.resolveTenant(tenantId);
     const dataset = this.datasets.get(datasetId);
-    if (!dataset) return false;
+    if (!dataset || this.datasetTenants.get(datasetId) !== ownerTenant) return false;
 
     // Clean up version cases
     for (const version of dataset.versions) {
       this.versionCases.delete(version.versionId);
     }
     this.datasets.delete(datasetId);
+    this.datasetTenants.delete(datasetId);
     this.saveToDisk();
     return true;
   }
@@ -260,9 +277,10 @@ export class DatasetVersionManager {
    * Export a dataset version to JSON Lines format
    * (compatible with Langfuse dataset import).
    */
-  export(datasetId: string, versionNumber?: number): ExportResult {
+  export(datasetId: string, versionNumber?: number, tenantId?: string): ExportResult {
+    const ownerTenant = this.resolveTenant(tenantId);
     const dataset = this.datasets.get(datasetId);
-    if (!dataset) {
+    if (!dataset || this.datasetTenants.get(datasetId) !== ownerTenant) {
       throw new Error(`Dataset not found: ${datasetId}`);
     }
 
@@ -295,22 +313,29 @@ export class DatasetVersionManager {
     name: string,
     cases: DatasetCase[],
     options?: { description?: string; datasetId?: string },
+    tenantId?: string,
   ): VersionedDataset {
     if (options?.datasetId) {
       // Add to existing dataset
-      return this.addCases({
-        datasetId: options.datasetId,
-        cases,
-        changeDescription: `Imported ${cases.length} case(s)`,
-      });
+      return this.addCases(
+        {
+          datasetId: options.datasetId,
+          cases,
+          changeDescription: `Imported ${cases.length} case(s)`,
+        },
+        tenantId,
+      );
     }
 
     // Create new dataset
-    return this.create({
-      name,
-      description: options?.description,
-      cases,
-    });
+    return this.create(
+      {
+        name,
+        description: options?.description,
+        cases,
+      },
+      tenantId,
+    );
   }
 
   // ── Persistence ──────────────────────────────────────────────────────
@@ -322,6 +347,7 @@ export class DatasetVersionManager {
       const data = {
         datasets: [...this.datasets.values()],
         versionCases: Object.fromEntries(this.versionCases),
+        datasetTenants: Object.fromEntries(this.datasetTenants),
       };
       const fs = require('node:fs');
       const tmp = this.dbPath + '.tmp';
@@ -342,6 +368,8 @@ export class DatasetVersionManager {
 
       for (const dataset of data.datasets ?? []) {
         this.datasets.set(dataset.id, dataset);
+        const ownerTenant = data.datasetTenants?.[dataset.id] ?? '__default__';
+        this.datasetTenants.set(dataset.id, ownerTenant);
       }
       for (const [versionId, cases] of Object.entries(data.versionCases ?? {})) {
         this.versionCases.set(versionId, cases as DatasetCase[]);
@@ -349,6 +377,15 @@ export class DatasetVersionManager {
     } catch {
       // Corrupt or missing — start fresh
     }
+  }
+
+  private resolveTenant(explicitTenantId?: string): string {
+    if (explicitTenantId) {
+      validateTenantId(explicitTenantId);
+      assertSameTenant(explicitTenantId);
+      return explicitTenantId;
+    }
+    return getCurrentTenantId() ?? '__default__';
   }
 }
 

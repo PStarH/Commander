@@ -1,8 +1,10 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as selfsigned from 'selfsigned';
+import * as http from 'node:http';
 import * as https from 'node:https';
 import { A2AServer } from '../../src/mcp/a2aServer';
 import type { AgentRuntimeInterface } from '../../src/runtime';
+import { pinnedHttpFetch } from '../../src/security/outboundNetworkPolicy';
 
 // Starting/stopping HTTPS servers per-test races for local ports under
 // concurrent execution. Force sequential execution inside this file.
@@ -147,6 +149,26 @@ describe('A2AServer mTLS', () => {
     expect(port).toBeGreaterThan(0);
   });
 
+  it('rejects protocol-mismatched agents before opening a pinned connection', () => {
+    const httpAgent = new http.Agent();
+    const httpsAgent = new https.Agent();
+    try {
+      expect(() =>
+        pinnedHttpFetch('https://public.example.test/', '203.0.113.1', {
+          agent: httpAgent,
+        } as RequestInit & { agent: http.Agent }),
+      ).toThrow(/requires a HTTPS agent/);
+      expect(() =>
+        pinnedHttpFetch('http://public.example.test/', '203.0.113.1', {
+          agent: httpsAgent,
+        } as RequestInit & { agent: https.Agent }),
+      ).toThrow(/requires a HTTP agent/);
+    } finally {
+      httpAgent.destroy();
+      httpsAgent.destroy();
+    }
+  });
+
   it('starts in HTTPS mode when tls config is provided', async () => {
     const certs = await generateTestCerts();
     server = new A2AServer(
@@ -235,5 +257,44 @@ describe('A2AServer mTLS', () => {
     // properly test the server's mTLS handshake.
     const card = await fetchAgentCardMtls(port, certs);
     expect(card.name).toBe('test');
+  });
+
+  it('preserves the configured HTTPS agent through the pinned transport', async () => {
+    const certs = await generateTestCerts();
+    server = new A2AServer(
+      {
+        port: 0,
+        host: '127.0.0.1',
+        agentCard: { name: 'pinned-mtls', version: '1.0', capabilities: {} } as any,
+        authToken: AUTH_TOKEN,
+        tls: {
+          cert: certs.serverCert,
+          key: certs.serverKey,
+          ca: certs.ca,
+          requestCert: true,
+          rejectUnauthorized: true,
+        },
+      },
+      stubRuntime,
+    );
+    await server.start();
+    const agent = new https.Agent({
+      cert: certs.clientCert,
+      key: certs.clientKey,
+      ca: certs.ca,
+      rejectUnauthorized: true,
+    });
+
+    try {
+      const response = await pinnedHttpFetch(
+        `https://localhost:${server.getPort()}/.well-known/agent-card.json`,
+        '127.0.0.1',
+        { agent } as RequestInit & { agent: https.Agent },
+      );
+      expect(response.status).toBe(200);
+      expect((await response.json()) as { name: string }).toMatchObject({ name: 'pinned-mtls' });
+    } finally {
+      agent.destroy();
+    }
   });
 });

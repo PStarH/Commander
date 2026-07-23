@@ -1,6 +1,46 @@
-import { Router } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { HallucinationDetector } from '@commander/core';
-import { getConsistencyMonitorManager } from './consistencyMonitor';
+import { tenantKey } from '@commander/core/runtime/tenantContext';
+import { getConsistencyMonitorManager, type ConsistencyReport } from './consistencyMonitor';
+import { hasRole } from './userStore';
+
+function requestTenant(req: Request): string | undefined {
+  const bound = req.tenantId;
+  const claim = req.user?.tenantId;
+  if (bound && claim && bound !== claim) return undefined;
+  return bound ?? claim;
+}
+
+function requireConsistencyTenant(req: Request, res: Response, next: NextFunction): void {
+  if ((!req.user && !req.apiKeyId) || !requestTenant(req)) {
+    res
+      .status(req.user || req.apiKeyId ? 403 : 401)
+      .json({ error: 'Tenant-bound identity required' });
+    return;
+  }
+  next();
+}
+
+function requireConsistencyWriter(req: Request, res: Response, next: NextFunction): void {
+  const role = req.user?.role;
+  const scopes = req.apiScopes ?? req.user?.scopes ?? [];
+  const authorized =
+    (!!role && hasRole(role, 'operator')) ||
+    scopes.includes('quality:write') ||
+    scopes.includes('admin') ||
+    scopes.includes('*');
+  if (!authorized) {
+    res.status(403).json({ error: 'Consistency write authority is required' });
+    return;
+  }
+  next();
+}
+
+function scopedMission(req: Request, missionId: string): string {
+  const tenantId = requestTenant(req);
+  if (!tenantId) throw new Error('Tenant context required');
+  return tenantKey(tenantId, missionId);
+}
 
 export function createQualityRouter(): Router {
   const router = Router();
@@ -106,33 +146,40 @@ export function createQualityRouter(): Router {
     });
   });
 
-  router.post('/api/consistency/record', (req, res) => {
-    const { missionId, agentId, outputType, content } = req.body ?? {};
-    if (!agentId || !content) {
-      return res.status(400).json({ error: 'agentId and content are required' });
-    }
-    const manager = getConsistencyMonitorManager();
-    manager.recordOutput(missionId ?? 'global', {
-      agentId,
-      type: outputType ?? 'analysis',
-      content,
-      timestamp: Date.now(),
-    });
-    res.json({ status: 'recorded' });
-  });
+  router.post(
+    '/api/consistency/record',
+    requireConsistencyTenant,
+    requireConsistencyWriter,
+    (req, res) => {
+      const { missionId, agentId, outputType, content } = req.body ?? {};
+      if (!agentId || !content) {
+        return res.status(400).json({ error: 'agentId and content are required' });
+      }
+      const manager = getConsistencyMonitorManager();
+      manager.recordOutput(scopedMission(req, missionId ?? 'global'), {
+        agentId,
+        type: outputType ?? 'analysis',
+        content,
+        timestamp: Date.now(),
+      });
+      res.json({ status: 'recorded' });
+    },
+  );
 
-  router.get('/api/consistency/check/:missionId', (req, res) => {
+  router.get('/api/consistency/check/:missionId', requireConsistencyTenant, (req, res) => {
     const manager = getConsistencyMonitorManager();
-    const report = manager.checkConsistency(req.params.missionId);
+    const report = manager.checkConsistency(scopedMission(req, String(req.params.missionId)));
     res.json(report);
   });
 
-  router.get('/api/consistency/status', (_req, res) => {
+  router.get('/api/consistency/status', requireConsistencyTenant, (req, res) => {
     const manager = getConsistencyMonitorManager();
     const all = manager.getAllConsistencyStatus();
-    const result: Record<string, any> = {};
-    all.forEach((report, missionId) => {
-      result[missionId] = report;
+    const result: Record<string, ConsistencyReport> = {};
+    const tenantId = requestTenant(req)!;
+    const prefix = `${tenantKey(tenantId, '')}`;
+    all.forEach((report, scopedId) => {
+      if (scopedId.startsWith(prefix)) result[scopedId.slice(prefix.length)] = report;
     });
     res.json(result);
   });

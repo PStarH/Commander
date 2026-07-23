@@ -20,13 +20,14 @@
  * Missing log files yield empty arrays — they never raise errors, so a fresh
  * install with no audit activity yet returns a valid empty result.
  */
-import { Router, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { z } from 'zod';
 import { toErrorMessage } from './routeHelpers';
 import { getDirname, getRequire } from './esmCompat';
+import { hasRole } from './userStore';
 const __dirname = getDirname(import.meta.url);
 const require = getRequire(import.meta.url);
 
@@ -50,6 +51,7 @@ export interface AuditLogEntry {
   eventType: string;
   severity: AuditSeverity;
   userId?: string;
+  tenantId?: string;
   message: string;
   details?: Record<string, unknown>;
 }
@@ -76,6 +78,7 @@ interface AuditQuery {
   startTime?: string;
   endTime?: string;
   userId?: string;
+  tenantId?: string;
   limit: number;
   offset: number;
 }
@@ -243,6 +246,7 @@ async function readSecurityLogs(): Promise<AuditLogEntry[]> {
         eventType: e.type ?? e.event ?? 'security_event',
         severity: mapSecuritySeverity(e.severity),
         userId: e.context?.userId,
+        tenantId: e.context?.tenantId,
         message: e.message ?? e.type ?? 'Security event',
         details: {
           ...e.details,
@@ -268,6 +272,8 @@ interface RawApprovalEntry {
   reason?: string;
   message?: string;
   riskLevel?: string;
+  tenantId?: string;
+  context?: { tenantId?: string };
 }
 
 function toApprovalEntry(e: RawApprovalEntry, fallbackIdx: number): AuditLogEntry {
@@ -279,6 +285,7 @@ function toApprovalEntry(e: RawApprovalEntry, fallbackIdx: number): AuditLogEntr
     eventType: e.eventType ?? e.event ?? 'approval_decision',
     severity: mapApprovalSeverity(e.decision),
     userId: e.userId ?? e.user,
+    tenantId: e.tenantId ?? e.context?.tenantId,
     message:
       e.message ??
       e.reason ??
@@ -327,6 +334,8 @@ interface RawActionRationale {
   projectId?: string;
   missionId?: string;
   agentId?: string;
+  tenantId?: string;
+  context?: { tenantId?: string };
   actionType?: string;
   rationale?: string;
   confidence?: { score?: number; level?: string };
@@ -346,6 +355,7 @@ function toActionEntry(e: RawActionRationale, id: string): AuditLogEntry {
     eventType: e.actionType ?? 'action',
     severity: 'info',
     userId: e.agentId,
+    tenantId: e.tenantId ?? e.context?.tenantId,
     message: e.rationale ?? e.goalContext ?? `Action ${e.actionType ?? ''}`.trim(),
     details: {
       projectId: e.projectId,
@@ -459,6 +469,9 @@ function applyFilters(entries: AuditLogEntry[], q: AuditQuery): AuditLogEntry[] 
   if (q.endTime) {
     out = out.filter((e) => e.timestamp <= q.endTime!);
   }
+  if (q.tenantId) {
+    out = out.filter((e) => e.tenantId === q.tenantId);
+  }
   // Sort by timestamp descending (newest first). ISO string comparison is
   // valid for same-timezone UTC timestamps — see actionRationale.ts.
   out = out.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
@@ -525,6 +538,32 @@ function parseQuery(req: Request): ParsedQuery {
   };
 }
 
+function requestTenant(req: Request): string | undefined {
+  const bound = req.tenantId;
+  const claim = req.user?.tenantId;
+  if (bound && claim && bound !== claim) return undefined;
+  return bound ?? claim;
+}
+
+/** Audit data is sensitive: require an audit-capable role and an authenticated tenant. */
+function requireAuditReader(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user && !req.apiKeyId) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  const tenantId = requestTenant(req);
+  const role = req.user?.role;
+  const scopes = req.apiScopes ?? req.user?.scopes ?? [];
+  const roleAllowed = !!role && hasRole(role, 'auditor');
+  const scopeAllowed =
+    scopes.includes('audit:read') || scopes.includes('admin') || scopes.includes('*');
+  if (!tenantId || (!roleAllowed && !scopeAllowed)) {
+    res.status(403).json({ error: 'Tenant-bound audit authority is required' });
+    return;
+  }
+  next();
+}
+
 function isValidationError(q: ParsedQuery): q is { error: string; details: unknown } {
   return typeof (q as { error?: unknown }).error === 'string';
 }
@@ -572,6 +611,7 @@ function parseUnifiedFilters(req: Request): AuditQueryFilters {
   const category = parseStringArray(q.category) as UnifiedAuditCategory[] | undefined;
   const severity = parseStringArray(q.severity) as UnifiedAuditSeverity[] | undefined;
   return {
+    tenantId: requestTenant(req),
     timeRange,
     category,
     eventType: parseStringArray(q.eventType),
@@ -589,6 +629,7 @@ function parseUnifiedFilters(req: Request): AuditQueryFilters {
 
 export function createAuditLogRouter(): Router {
   const router = Router();
+  router.use(requireAuditReader);
 
   // GET /api/audit/logs — unified query (filter + paginate)
   router.get('/api/audit/logs', async (req: Request, res: Response) => {
@@ -597,11 +638,12 @@ export function createAuditLogRouter(): Router {
       if (isValidationError(q)) {
         return res.status(400).json(q);
       }
+      q.tenantId = requestTenant(req);
       const all = await loadAllLogsCached();
       const filtered = applyFilters(all, q);
       const total = filtered.length;
       const logs = filtered.slice(q.offset, q.offset + q.limit);
-      const sourcesPresent = Array.from(new Set(all.map((e) => e.source))) as AuditSource[];
+      const sourcesPresent = Array.from(new Set(filtered.map((e) => e.source))) as AuditSource[];
       const response: LogsResponse = { logs, total, sources: sourcesPresent };
       res.json(response);
     } catch (error) {
@@ -616,6 +658,7 @@ export function createAuditLogRouter(): Router {
       if (isValidationError(q)) {
         return res.status(400).json(q);
       }
+      q.tenantId = requestTenant(req);
       const all = await loadAllLogsCached();
       const filtered = applyFilters(all, q);
       // Export ignores pagination but caps total volume to protect clients.
@@ -642,9 +685,9 @@ export function createAuditLogRouter(): Router {
   });
 
   // GET /api/audit/stats — aggregate counts
-  router.get('/api/audit/stats', async (_req: Request, res: Response) => {
+  router.get('/api/audit/stats', async (req: Request, res: Response) => {
     try {
-      const all = await loadAllLogsCached();
+      const all = (await loadAllLogsCached()).filter((e) => e.tenantId === requestTenant(req));
       res.json(computeStats(all));
     } catch (error) {
       res.status(500).json({ error: toErrorMessage(error) });
@@ -652,9 +695,9 @@ export function createAuditLogRouter(): Router {
   });
 
   // GET /api/audit/sources — per-source availability + recency
-  router.get('/api/audit/sources', async (_req: Request, res: Response) => {
+  router.get('/api/audit/sources', async (req: Request, res: Response) => {
     try {
-      const all = await loadAllLogsCached();
+      const all = (await loadAllLogsCached()).filter((e) => e.tenantId === requestTenant(req));
       const sources: AuditSource[] = ['security', 'approval', 'action'];
       const result: AuditSourceInfo[] = sources.map((src) => {
         const subset = all.filter((e) => e.source === src);
@@ -687,9 +730,9 @@ export function createAuditLogRouter(): Router {
   const auditLog = getUnifiedAuditLog();
 
   // GET /api/audit-logs/categories — catalog for the frontend filter UI.
-  router.get('/api/audit-logs/categories', async (_req: Request, res: Response) => {
+  router.get('/api/audit-logs/categories', async (req: Request, res: Response) => {
     try {
-      const catalog = await auditLog.getCatalog();
+      const catalog = await auditLog.getCatalog(requestTenant(req));
       res.json(catalog);
     } catch (error) {
       res.status(500).json({ error: toErrorMessage(error) });
@@ -701,7 +744,7 @@ export function createAuditLogRouter(): Router {
     try {
       const startTime = optionalString(req.query.startTime);
       const endTime = optionalString(req.query.endTime);
-      const stats = await auditLog.getStats({ start: startTime, end: endTime });
+      const stats = await auditLog.getStats({ start: startTime, end: endTime }, requestTenant(req));
       res.json(stats);
     } catch (error) {
       res.status(500).json({ error: toErrorMessage(error) });

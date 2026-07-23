@@ -1,8 +1,16 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { AgentFileCollector, extractOutputFilePath } from '../../src/ultimate/agentFileCollector';
+import { afterEach, describe, it, expect, beforeEach, vi } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import {
+  AgentFileCollector,
+  extractOutputFilePath,
+  writeSynthesisOutput,
+} from '../../src/ultimate/agentFileCollector';
 import type { TaskTreeNode } from '../../src/ultimate/types';
 import type { ArtifactReference } from '../../src/shared/types';
 import type { AgentRuntimeInterface } from '../../src/runtime';
+import { OrchestratorOutputCollector } from '../../src/ultimate/orchestratorOutput';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -100,6 +108,52 @@ describe('extractOutputFilePath', () => {
   it('extracts absolute path at end of sentence', () => {
     const result = extractOutputFilePath('The output is at /var/log/output.md.');
     expect(result).toBe('/var/log/output.md');
+  });
+});
+
+describe('writeSynthesisOutput', () => {
+  const originalWorkspace = process.env.COMMANDER_WORKSPACE;
+  let workspace: string;
+
+  beforeEach(() => {
+    workspace = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'commander-output-path-')));
+    process.env.COMMANDER_WORKSPACE = workspace;
+  });
+
+  afterEach(() => {
+    if (originalWorkspace === undefined) delete process.env.COMMANDER_WORKSPACE;
+    else process.env.COMMANDER_WORKSPACE = originalWorkspace;
+    fs.rmSync(workspace, { recursive: true, force: true });
+  });
+
+  it('writes a relative output beneath the workspace', async () => {
+    const writtenPath = await writeSynthesisOutput('Write the report to ./reports/result.md', 'ok');
+
+    expect(writtenPath).toBe(path.join(workspace, 'reports', 'result.md'));
+    expect(fs.readFileSync(writtenPath!, 'utf-8')).toBe('ok');
+  });
+
+  it('rejects traversal and absolute output paths outside the workspace', async () => {
+    const outside = path.join(path.dirname(workspace), `${path.basename(workspace)}-outside.md`);
+
+    await expect(writeSynthesisOutput(`Write the report to ${outside}`, 'blocked')).rejects.toThrow(
+      /outside workspace/,
+    );
+    await expect(
+      writeSynthesisOutput('Write the report to ../outside.md', 'blocked'),
+    ).rejects.toThrow(/outside workspace/);
+    expect(fs.existsSync(outside)).toBe(false);
+  });
+
+  it('keeps the legacy output collector inside the same workspace root', async () => {
+    const outside = path.join(path.dirname(workspace), `${path.basename(workspace)}-legacy.md`);
+    const reasoning: string[] = [];
+    const collector = new OrchestratorOutputCollector(makeRuntime());
+
+    await collector.writeTargetFile(`Write the report to ${outside}`, 'blocked', reasoning);
+
+    expect(fs.existsSync(outside)).toBe(false);
+    expect(reasoning).toEqual([expect.stringMatching(/outside workspace/)]);
   });
 });
 

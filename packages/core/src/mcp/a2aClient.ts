@@ -28,6 +28,7 @@ import {
   A2A_INTERRUPTED_STATES,
 } from './a2aCompliance';
 import { getGlobalLogger } from '../logging';
+import { getOutboundNetworkPolicy } from '../security/outboundNetworkPolicy';
 
 // ── Security: SSRF prevention ────────────────────────────────────────────────
 // Per OWASP SSRF Prevention Cheat Sheet: validate scheme, reject private IPs.
@@ -259,12 +260,17 @@ export class A2AClient {
       // Security: Apply mTLS agent if configured for transport-level authentication.
       const fetchOptions: RequestInit & { agent?: unknown } = {
         ...options,
+        redirect: 'manual',
         signal: controller.signal,
       };
       if (this.mtlsAgent) {
         (fetchOptions as Record<string, unknown>).agent = this.mtlsAgent;
       }
-      const response = await fetch(url, fetchOptions);
+      const response = await getOutboundNetworkPolicy().ssrfCheckedFetch(url, fetchOptions);
+      if (response.status >= 300 && response.status < 400) {
+        await response.body?.cancel().catch(() => {});
+        throw new Error('A2A redirects are not allowed');
+      }
       return response;
     } finally {
       clearTimeout(timer);

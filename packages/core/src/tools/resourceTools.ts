@@ -205,17 +205,20 @@ export class MemoryResourceTool implements Tool {
         key: { type: 'string', description: 'Key to store under' },
         value: { type: 'string', description: 'Value to store' },
       },
-      handler: async (args) => normalizeToolResult(await new MemoryStoreTool().execute(args)),
+      handler: async (args, ctx) =>
+        normalizeToolResult(await new MemoryStoreTool().execute(args, ctx)),
     },
     recall: {
       description: 'Recall a value from persistent memory by key',
       params: { key: { type: 'string', description: 'Key to look up' } },
-      handler: async (args) => normalizeToolResult(await new MemoryRecallTool().execute(args)),
+      handler: async (args, ctx) =>
+        normalizeToolResult(await new MemoryRecallTool().execute(args, ctx)),
     },
     list: {
       description: 'List all keys in persistent memory',
       params: {},
-      handler: async (_args) => normalizeToolResult(await new MemoryListTool().execute()),
+      handler: async (args, ctx) =>
+        normalizeToolResult(await new MemoryListTool().execute(args, ctx)),
     },
   };
 
@@ -230,8 +233,8 @@ export class MemoryResourceTool implements Tool {
     };
   }
 
-  async execute(args: Record<string, unknown>): Promise<string> {
-    return executeResourceAction(this.actions, args);
+  async execute(args: Record<string, unknown>, ctx?: AgentExecutionContext): Promise<string> {
+    return executeResourceAction(this.actions, args, ctx);
   }
 }
 

@@ -19,6 +19,8 @@ import * as http from 'node:http';
 import * as https from 'node:https';
 import { getGlobalLogger } from '../logging';
 
+const MAX_PINNED_RESPONSE_BYTES = 5 * 1024 * 1024;
+
 // ──────────────────────────────────────────────────────────────────────────
 // Types
 // ──────────────────────────────────────────────────────────────────────────
@@ -85,7 +87,20 @@ export function pinnedHttpFetch(
   const isHttps = parsed.protocol === 'https:';
   const client = isHttps ? https : http;
   const method = (init?.method ?? 'GET').toUpperCase();
-  const headers: Record<string, string> = { Host: parsed.hostname };
+  const headers: Record<string, string> = { Host: parsed.host };
+  const configuredAgent = (init as (RequestInit & { agent?: unknown }) | undefined)?.agent;
+  let transportAgent: http.Agent | https.Agent | undefined;
+  if (configuredAgent !== undefined) {
+    const validAgent = isHttps
+      ? configuredAgent instanceof https.Agent
+      : configuredAgent instanceof http.Agent && !(configuredAgent instanceof https.Agent);
+    if (!validAgent) {
+      throw new TypeError(
+        `Pinned HTTP request requires a ${isHttps ? 'HTTPS' : 'HTTP'} agent for ${parsed.protocol}`,
+      );
+    }
+    transportAgent = configuredAgent as http.Agent | https.Agent;
+  }
 
   if (init?.headers) {
     const h = new Headers(init.headers);
@@ -103,6 +118,17 @@ export function pinnedHttpFetch(
       : undefined;
 
   return new Promise<Response>((resolve, reject) => {
+    let settled = false;
+    const finishReject = (error: Error): void => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    const abortError = (): Error => {
+      const error = new Error('Pinned HTTP request aborted');
+      error.name = 'AbortError';
+      return error;
+    };
     const req = client.request(
       {
         hostname: address,
@@ -111,11 +137,33 @@ export function pinnedHttpFetch(
         method,
         headers,
         servername: isHttps ? parsed.hostname : undefined,
+        agent: transportAgent,
       },
       (res) => {
+        const declaredLength = Number(res.headers['content-length']);
+        if (Number.isFinite(declaredLength) && declaredLength > MAX_PINNED_RESPONSE_BYTES) {
+          res.destroy();
+          finishReject(
+            new Error(`Pinned HTTP response body exceeds ${MAX_PINNED_RESPONSE_BYTES} bytes`),
+          );
+          return;
+        }
         const chunks: Buffer[] = [];
-        res.on('data', (c: Buffer) => chunks.push(c));
+        let bytes = 0;
+        res.on('data', (chunk: Buffer | string) => {
+          const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          bytes += value.length;
+          if (bytes > MAX_PINNED_RESPONSE_BYTES) {
+            res.destroy();
+            finishReject(
+              new Error(`Pinned HTTP response body exceeds ${MAX_PINNED_RESPONSE_BYTES} bytes`),
+            );
+            return;
+          }
+          chunks.push(value);
+        });
         res.on('end', () => {
+          if (settled) return;
           const status = res.statusCode ?? 0;
           const responseHeaders = new Headers();
           for (const [k, v] of Object.entries(res.headers)) {
@@ -126,6 +174,7 @@ export function pinnedHttpFetch(
               responseHeaders.set(k, v);
             }
           }
+          settled = true;
           resolve(
             new Response(Buffer.concat(chunks), {
               status,
@@ -134,9 +183,20 @@ export function pinnedHttpFetch(
             }),
           );
         });
+        res.on('error', finishReject);
       },
     );
-    req.on('error', reject);
+    const signal = init?.signal;
+    const onAbort = (): void => {
+      req.destroy(abortError());
+    };
+    if (signal?.aborted) {
+      req.destroy(abortError());
+    } else {
+      signal?.addEventListener('abort', onAbort, { once: true });
+    }
+    req.on('error', finishReject);
+    req.on('close', () => signal?.removeEventListener('abort', onAbort));
     if (body !== undefined) req.write(body);
     req.end();
   });
@@ -210,19 +270,115 @@ function normalizeHostname(hostname: string): string {
   return h;
 }
 
+function parseIpv4Octets(hostname: string): [number, number, number, number] | null {
+  const parts = hostname.split('.');
+  if (parts.length !== 4 || parts.some((part) => !/^\d+$/.test(part))) return null;
+  const octets = parts.map(Number);
+  if (octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return null;
+  return octets as [number, number, number, number];
+}
+
+/** Parse an IPv6 literal into its canonical 128-bit integer representation. */
+function parseIpv6Value(hostname: string): bigint | null {
+  const h = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (!h.includes(':')) return null;
+  const halves = h.split('::');
+  if (halves.length > 2) return null;
+
+  const parseHextets = (part: string): number[] | null => {
+    if (!part) return [];
+    const tokens = part.split(':');
+    const hextets: number[] = [];
+    for (const token of tokens) {
+      if (token.includes('.')) {
+        const octets = parseIpv4Octets(token);
+        if (!octets || token !== tokens[tokens.length - 1]) return null;
+        hextets.push((octets[0] << 8) | octets[1], (octets[2] << 8) | octets[3]);
+      } else if (/^[0-9a-f]{1,4}$/.test(token)) {
+        hextets.push(Number.parseInt(token, 16));
+      } else {
+        return null;
+      }
+    }
+    return hextets;
+  };
+
+  const left = parseHextets(halves[0] ?? '');
+  const right = parseHextets(halves[1] ?? '');
+  if (!left || !right) return null;
+  const hextets =
+    halves.length === 2
+      ? [...left, ...Array.from({ length: 8 - left.length - right.length }, () => 0), ...right]
+      : left;
+  if (hextets.length !== 8) return null;
+  return hextets.reduce((value, hextet) => (value << 16n) | BigInt(hextet), 0n);
+}
+
+function hasPrefix(value: bigint, prefix: bigint, bits: number): boolean {
+  return value >> BigInt(128 - bits) === prefix;
+}
+
+/** Return true for addresses that are not globally routable. */
+function isNonGlobalAddress(hostname: string): boolean {
+  const h = normalizeHostname(hostname);
+  const ipv4 = parseIpv4Octets(h);
+  if (ipv4) {
+    const [a, b, c] = ipv4;
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 0 && c === 0) ||
+      (a === 192 && b === 0 && c === 2) ||
+      (a === 192 && b === 88 && c === 99) ||
+      (a === 192 && b === 168) ||
+      (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100))) ||
+      (a === 203 && b === 0 && c === 113) ||
+      a >= 224
+    );
+  }
+
+  const ipv6 = parseIpv6Value(h);
+  if (ipv6 === null) return false;
+  if (ipv6 === 0n || ipv6 === 1n) return true;
+  if (hasPrefix(ipv6, 0xffn, 8)) return true; // multicast ff00::/8
+  if (hasPrefix(ipv6, 0x7en, 7)) return true; // ULA fc00::/7
+  if (hasPrefix(ipv6, 0x3fan, 10)) return true; // link-local fe80::/10
+  if (hasPrefix(ipv6, 0x3f9n, 10)) return true; // deprecated site-local fec0::/10
+
+  // IPv4-mapped and deprecated IPv4-compatible IPv6 addresses inherit the
+  // routability of their embedded IPv4 address.
+  const embeddedIpv4Prefix = ipv6 >> 32n;
+  if (embeddedIpv4Prefix === 0xffffn || embeddedIpv4Prefix === 0n) {
+    const embedded = Number(ipv6 & 0xffffffffn);
+    const octets: [number, number, number, number] = [
+      (embedded >>> 24) & 0xff,
+      (embedded >>> 16) & 0xff,
+      (embedded >>> 8) & 0xff,
+      embedded & 0xff,
+    ];
+    return isNonGlobalAddress(octets.join('.'));
+  }
+
+  // Currently allocated global-unicast space is 2000::/3. Keep IETF protocol,
+  // documentation, and deprecated transition prefixes inside that space out of
+  // the outbound trust boundary as well.
+  if (!hasPrefix(ipv6, 0x1n, 3)) return true;
+  if (hasPrefix(ipv6, 0x100080n, 23)) return true; // 2001::/23 protocol assignments
+  if (hasPrefix(ipv6, 0x20010db8n, 32)) return true; // documentation 2001:db8::/32
+  if (hasPrefix(ipv6, 0x2002n, 16)) return true; // deprecated 6to4 2002::/16
+  if (hasPrefix(ipv6, 0x3fff0n, 20)) return true; // documentation 3fff::/20
+  return false;
+}
+
 function isPrivateOrBlockedHost(hostname: string): boolean {
   const h = normalizeHostname(hostname);
   if (BLOCKED_HOSTNAMES.has(h)) return true;
   if (h.endsWith('.localhost')) return true;
-  if (h === '::1' || h === '0:0:0:0:0:0:0:1') return true;
-  // IPv6 ULA fc00::/7 and link-local fe80::/10
-  if (/^fc[0-9a-f]{2}:/i.test(h) || /^fd[0-9a-f]{2}:/i.test(h) || /^fe80:/i.test(h)) {
-    return true;
-  }
-  for (const pattern of PRIVATE_IP_PATTERNS) {
-    if (pattern.test(h)) return true;
-  }
-  return false;
+  return isNonGlobalAddress(h) || PRIVATE_IP_PATTERNS.some((pattern) => pattern.test(h));
 }
 
 // ──────────────────────────────────────────────────────────────────────────

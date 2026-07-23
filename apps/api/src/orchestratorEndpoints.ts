@@ -118,6 +118,8 @@ export function createOrchestratorRouter(): Router {
           governanceProfile: { riskLevel: 'LOW' },
         },
         effortLevel: effortLevel || undefined,
+        tenantId: req.user?.tenantId ?? req.tenantId,
+        ownerId: req.user?.id,
       });
       res.json(result);
     } catch (err) {

@@ -4,18 +4,26 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { OIDCAuthPlugin, createOIDCPluginFromEnv, type AuthRole } from '@commander/core';
+import {
+  OIDCAuthPlugin,
+  createOIDCPluginFromEnv,
+  type AuthPluginResult,
+  type AuthRole,
+} from '@commander/core';
 import {
   findUserByEmail,
+  findUserByOidcIdentity,
   createUser,
+  bindUserToOidcIdentity,
   updateLastLogin,
   updateUser,
   toSafeUserPublic,
   hasRole,
   type UserRole,
 } from './userStore';
-import { signAccessToken, signRefreshToken, resolveAccessTenantId } from './jwtMiddleware';
+import { signAccessToken, signRefreshToken } from './jwtMiddleware';
 import { atomicWriteFileSync, readJsonFileSafe, isPlainObjectJson } from './atomicWrite';
+import { isMultiTenantEnabled, validateTenantId } from '@commander/core/runtime/tenantContext';
 
 function requireAuth(req: Request, res: Response, next: NextFunction): void {
   if (!req.user) {
@@ -73,6 +81,8 @@ export interface OIDCRuntimeConfig {
   roleClaim: string;
   adminRoles: string[];
   operatorRoles: string[];
+  tenantClaim: string;
+  defaultTenantId?: string;
   redirectUri: string;
 }
 
@@ -129,6 +139,11 @@ export function getOIDCConfig(): OIDCRuntimeConfig | null {
     operatorRoles: process.env.OIDC_OPERATOR_ROLES
       ? process.env.OIDC_OPERATOR_ROLES.split(',').map((s) => s.trim())
       : (effective.operatorRoles ?? ['operator', 'developer']),
+    tenantClaim: process.env.OIDC_TENANT_CLAIM ?? effective.tenantClaim ?? 'tenant_id',
+    defaultTenantId:
+      process.env.OIDC_DEFAULT_TENANT_ID ??
+      process.env.COMMANDER_DEFAULT_TENANT_ID ??
+      effective.defaultTenantId,
     redirectUri: effective.redirectUri ?? buildWebOrigin() + '/login',
   };
 }
@@ -141,7 +156,15 @@ function buildPublicConfig(config: OIDCRuntimeConfig) {
     roleClaim: config.roleClaim,
     adminRoles: config.adminRoles,
     operatorRoles: config.operatorRoles,
+    tenantClaim: config.tenantClaim,
     redirectUri: config.redirectUri,
+  };
+}
+
+function buildSettingsConfig(config: OIDCRuntimeConfig) {
+  return {
+    ...buildPublicConfig(config),
+    defaultTenantId: config.defaultTenantId,
   };
 }
 
@@ -169,14 +192,45 @@ const settingsSchema = z.object({
   roleClaim: z.string().min(1).max(128).default('roles'),
   adminRoles: z.array(z.string().min(1)).default(['admin']),
   operatorRoles: z.array(z.string().min(1)).default(['operator', 'developer']),
+  tenantClaim: z.string().min(1).max(128).default('tenant_id'),
+  defaultTenantId: z
+    .string()
+    .min(1)
+    .max(128)
+    .superRefine((tenantId, ctx) => {
+      try {
+        validateTenantId(tenantId);
+      } catch {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'defaultTenantId is invalid' });
+      }
+    })
+    .optional(),
   redirectUri: z.string().min(1).max(512),
 });
+
+function resolveOIDCTenantId(
+  result: AuthPluginResult,
+  config: OIDCRuntimeConfig,
+): string | undefined {
+  const claimedTenant = result.claims?.[config.tenantClaim];
+  if (claimedTenant !== undefined) {
+    return typeof claimedTenant === 'string' && claimedTenant.length > 0
+      ? claimedTenant
+      : undefined;
+  }
+  if (isMultiTenantEnabled()) return undefined;
+  return config.defaultTenantId;
+}
 
 // ============================================================================
 // Router
 // ============================================================================
 
-export function createOIDCAuthRouter(): Router {
+export interface OIDCAuthRouterOptions {
+  authenticate?: (idToken: string, config: OIDCRuntimeConfig) => Promise<AuthPluginResult | null>;
+}
+
+export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Router {
   const router = Router();
 
   /**
@@ -213,17 +267,20 @@ export function createOIDCAuthRouter(): Router {
       return;
     }
 
-    const plugin = new OIDCAuthPlugin({
-      issuer: config.issuer,
-      clientId: config.clientId,
-      roleClaim: config.roleClaim,
-      adminRoles: config.adminRoles,
-      operatorRoles: config.operatorRoles,
-    });
-
     let result;
     try {
-      result = await plugin.authenticate(parsed.data.idToken);
+      if (options.authenticate) {
+        result = await options.authenticate(parsed.data.idToken, config);
+      } else {
+        const plugin = new OIDCAuthPlugin({
+          issuer: config.issuer,
+          clientId: config.clientId,
+          roleClaim: config.roleClaim,
+          adminRoles: config.adminRoles,
+          operatorRoles: config.operatorRoles,
+        });
+        result = await plugin.authenticate(parsed.data.idToken);
+      }
     } catch (err) {
       process.stderr.write('[oidcAuthEndpoints] OIDC exchange error: ' + String(err) + '\n');
       res.status(401).json({ error: 'OIDC token validation failed' });
@@ -235,28 +292,72 @@ export function createOIDCAuthRouter(): Router {
       return;
     }
 
-    // Find or provision a local user. The local account stores the OIDC email
-    // so future logins map to the same user record.
-    let localUser = findUserByEmail(result.username);
+    const issuer = result.claims?.iss;
+    const subject = result.userId;
+    const claimedSubject = result.claims?.sub;
+    if (
+      typeof issuer !== 'string' ||
+      issuer !== config.issuer ||
+      !subject ||
+      claimedSubject !== subject
+    ) {
+      res.status(401).json({ error: 'OIDC identity claims are invalid' });
+      return;
+    }
+
+    const tenantId = resolveOIDCTenantId(result, config);
+    try {
+      if (!tenantId || tenantId === '__default__') throw new Error('missing or reserved tenant id');
+      validateTenantId(tenantId);
+    } catch {
+      res.status(401).json({ error: 'OIDC tenant claim is invalid' });
+      return;
+    }
+
+    // Resolve by the durable IdP identity. A verified email may bootstrap a
+    // one-time link for an existing local account, but is never the login key.
+    let localUser = findUserByOidcIdentity(issuer, subject);
     if (!localUser) {
-      const created = createUser({
-        username: result.username,
-        email: result.username,
-        // Random local password; authentication always happens via OIDC.
-        password: randomUUID(),
-        role: result.role as UserRole,
-      });
-      if ('error' in created) {
-        res.status(409).json({ error: created.error });
-        return;
+      const oidcEmail = result.claims?.email;
+      const emailVerified = result.claims?.email_verified === true;
+      const emailUser =
+        typeof oidcEmail === 'string' && oidcEmail.length > 0
+          ? findUserByEmail(oidcEmail)
+          : undefined;
+
+      if (emailUser) {
+        if (!emailVerified) {
+          res.status(409).json({ error: 'OIDC email must be verified before account linking' });
+          return;
+        }
+        const linked = bindUserToOidcIdentity(emailUser.id, issuer, subject);
+        if ('error' in linked) {
+          res.status(409).json({ error: linked.error });
+          return;
+        }
+        localUser = findUserByOidcIdentity(issuer, subject);
+      } else {
+        const created = createUser({
+          username: result.username,
+          email: result.username,
+          // Random local password; authentication always happens via OIDC.
+          password: randomUUID(),
+          role: result.role as UserRole,
+          oidcIssuer: issuer,
+          oidcSubject: subject,
+        });
+        if ('error' in created) {
+          res.status(409).json({ error: created.error });
+          return;
+        }
+        localUser = findUserByOidcIdentity(issuer, subject);
       }
-      localUser = findUserByEmail(result.username);
-    } else {
-      // If the OIDC provider changed the user's role, keep it in sync.
-      if (localUser.role !== result.role) {
-        updateUser(localUser.id, { role: result.role as UserRole });
-        localUser = findUserByEmail(result.username);
-      }
+    }
+
+    // If the OIDC provider changed the linked user's role, keep it in sync.
+    if (localUser && localUser.role !== result.role) {
+      updateUser(localUser.id, { role: result.role as UserRole });
+      localUser = findUserByOidcIdentity(issuer, subject);
     }
 
     if (!localUser) {
@@ -270,7 +371,7 @@ export function createOIDCAuthRouter(): Router {
       id: localUser.id,
       username: localUser.username,
       role: localUser.role as AuthRole,
-      tenantId: resolveAccessTenantId(),
+      tenantId,
     };
 
     res.json({
@@ -299,11 +400,12 @@ export function createOIDCAuthRouter(): Router {
           roleClaim: 'roles',
           adminRoles: ['admin'],
           operatorRoles: ['operator', 'developer'],
+          tenantClaim: 'tenant_id',
           redirectUri: buildWebOrigin() + '/login',
         });
         return;
       }
-      res.json(buildPublicConfig(config));
+      res.json(buildSettingsConfig(config));
     },
   );
 
@@ -334,7 +436,7 @@ export function createOIDCAuthRouter(): Router {
       }
 
       saveConfigToFile(toSave);
-      res.json({ status: 'saved', config: buildPublicConfig(toSave) });
+      res.json({ status: 'saved', config: buildSettingsConfig(toSave) });
     },
   );
 

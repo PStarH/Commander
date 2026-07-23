@@ -721,6 +721,7 @@ export class AgentLoopOrchestrator {
           );
           bus.publish('agent.completed', ctx.agentId, {
             runId,
+            projectId: ctx.projectId,
             status: 'success',
             summary: safeContent.slice(0, RESULT_CONTENT_MAX_CHARS),
             tokenUsage: totalTokens,

@@ -103,6 +103,10 @@ export async function handleSecurityRoutes(
   if (sub === 'compliance-audit' && method === 'GET') {
     const tenantId = deps.requireTenant(req, res);
     if (res.writableEnded) return true;
+    const authCtx = resolveHttpAuthContext(req, deps.tenantApiKeyHashes);
+    if (!requireMinRole(res, authCtx, 'auditor', 'GET /api/v1/security/compliance-audit')) {
+      return true;
+    }
     const report = await runWithTenant(tenantId, async () =>
       getComplianceAuditManager().generateFullReport(),
     );
@@ -113,6 +117,10 @@ export async function handleSecurityRoutes(
   if (sub === 'eu-ai-act' && method === 'GET') {
     const tenantId = deps.requireTenant(req, res);
     if (res.writableEnded) return true;
+    const authCtx = resolveHttpAuthContext(req, deps.tenantApiKeyHashes);
+    if (!requireMinRole(res, authCtx, 'auditor', 'GET /api/v1/security/eu-ai-act')) {
+      return true;
+    }
     const report = await runWithTenant(tenantId, async () =>
       getEuAiActComplianceReporter().generateReport(),
     );

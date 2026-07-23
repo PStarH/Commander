@@ -1,5 +1,6 @@
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { isUrlSafe } from './_utils/urlSafety';
+import { getOutboundNetworkPolicy } from '../security/outboundNetworkPolicy';
 
 interface StealthPlaywright {
   launch(opts: Record<string, unknown>): Promise<StealthBrowser>;
@@ -12,7 +13,23 @@ interface StealthPage {
   goto(url: string, opts: Record<string, unknown>): Promise<void>;
   waitForTimeout(ms: number): Promise<void>;
   evaluate<T, A>(fn: (arg: A) => T, arg: A): Promise<T>;
+  route(pattern: string, handler: (route: StealthRoute) => Promise<void> | void): Promise<void>;
   close(): Promise<void>;
+}
+interface StealthRoute {
+  request(): {
+    url(): string;
+    method(): string;
+    headers(): Record<string, string>;
+    postData(): string | null;
+  };
+  continue(): Promise<void>;
+  abort(errorCode?: string): Promise<void>;
+  fulfill(response: {
+    status: number;
+    headers: Record<string, string>;
+    body: Buffer;
+  }): Promise<void>;
 }
 
 let stealthBrowser: StealthPlaywright | null = null;
@@ -114,6 +131,43 @@ async function fetchPage(url: string): Promise<string> {
   if (!safety.safe) throw new Error(`Blocked: ${url} (${safety.reason})`);
 
   return withBrowserPage(async (page) => {
+    // Navigation can issue follow-up requests after redirects and page scripts
+    // can issue arbitrary requests. Check each HTTP request immediately before
+    // Chromium is allowed to connect, including a fresh DNS resolution.
+    await page.route('**/*', async (route) => {
+      const requestUrl = route.request().url();
+      if (!requestUrl.startsWith('http://') && !requestUrl.startsWith('https://')) {
+        await route.continue();
+        return;
+      }
+      const syntax = isUrlSafe(requestUrl);
+      if (!syntax.safe) {
+        await route.abort('blockedbyclient');
+        return;
+      }
+      const request = route.request();
+      try {
+        const headers = request.headers();
+        delete headers['accept-encoding'];
+        const response = await getOutboundNetworkPolicy().ssrfCheckedFetch(requestUrl, {
+          method: request.method(),
+          headers,
+          body: request.postData() ?? undefined,
+          redirect: 'manual',
+        });
+        const responseHeaders: Record<string, string> = {};
+        response.headers.forEach((value, key) => {
+          responseHeaders[key] = value;
+        });
+        await route.fulfill({
+          status: response.status,
+          headers: responseHeaders,
+          body: Buffer.from(await response.arrayBuffer()),
+        });
+      } catch {
+        await route.abort('blockedbyclient');
+      }
+    });
     await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
     await page.waitForTimeout(1000);
     return page.evaluate(() => {

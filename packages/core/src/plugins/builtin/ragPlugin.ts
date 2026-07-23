@@ -15,8 +15,9 @@
 import type { CommanderPlugin, BeforeLLMCallContext } from '../../pluginManager';
 import type { LLMRequest, LLMMessage } from '../../runtime/types';
 import {
-  KnowledgeBaseStore,
+  configureSharedKnowledgeBaseStore,
   getSharedKnowledgeBaseStore,
+  saveSharedKnowledgeBaseStores,
   setSharedKnowledgeBaseStore,
 } from './knowledgeBaseStore';
 import { getGlobalLogger } from '../../logging';
@@ -33,9 +34,6 @@ import { getGlobalLogger } from '../../logging';
  * thread the plugin object through Express).
  */
 export function createRagPlugin(): CommanderPlugin {
-  // The store is created during onLoad once config is available; this closure
-  // variable tracks the live instance for the hook + tool handlers.
-  let store: KnowledgeBaseStore | null = null;
   let autoInject = false;
   let maxResults = 5;
 
@@ -88,15 +86,16 @@ export function createRagPlugin(): CommanderPlugin {
       autoInject = Boolean(cfg.autoInject);
       maxResults = Number(cfg.maxResults) || 5;
 
-      store = new KnowledgeBaseStore({
+      configureSharedKnowledgeBaseStore({
         kbPath: cfg.kbPath as string,
         embeddingModel: cfg.embeddingModel as string,
         chunkSize: cfg.chunkSize as number,
         chunkOverlap: cfg.chunkOverlap as number,
         maxResults,
       });
-      // Publish the instance so the API endpoints share it.
-      setSharedKnowledgeBaseStore(store);
+      // Initialize the legacy root for local/plugin compatibility. HTTP
+      // callers always pass an explicit tenant to the shared-store accessor.
+      const store = getSharedKnowledgeBaseStore();
       await store.init();
       getGlobalLogger().info(
         'RagPlugin',
@@ -105,19 +104,16 @@ export function createRagPlugin(): CommanderPlugin {
     },
 
     onUnload: async () => {
-      if (store) {
-        try {
-          await store.save();
-          getGlobalLogger().info('RagPlugin', 'Knowledge base persisted on unload');
-        } catch (err) {
-          getGlobalLogger().warn(
-            'RagPlugin',
-            `Failed to persist knowledge base on unload: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
+      try {
+        await saveSharedKnowledgeBaseStores();
+        getGlobalLogger().info('RagPlugin', 'Knowledge base persisted on unload');
+      } catch (err) {
+        getGlobalLogger().warn(
+          'RagPlugin',
+          `Failed to persist knowledge base on unload: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
       setSharedKnowledgeBaseStore(null);
-      store = null;
     },
 
     // ── Declarative tools (host wires these into the ToolRegistry) ──────────
@@ -146,7 +142,7 @@ export function createRagPlugin(): CommanderPlugin {
           required: ['query'],
         },
         execute: async (args) => {
-          const kb = store ?? getSharedKnowledgeBaseStore();
+          const kb = getSharedKnowledgeBaseStore();
           const query = String(args.query ?? '').trim();
           if (!query) {
             return JSON.stringify({ error: 'query is required', results: [] });
@@ -161,7 +157,7 @@ export function createRagPlugin(): CommanderPlugin {
     // ── beforeLLMCall hook (auto-inject retrieved context) ──────────────────
 
     beforeLLMCall: async (ctx: BeforeLLMCallContext): Promise<LLMRequest> => {
-      if (!autoInject || !store) return ctx.request;
+      if (!autoInject) return ctx.request;
 
       const request = ctx.request;
       const messages = request.messages ?? [];
@@ -181,7 +177,7 @@ export function createRagPlugin(): CommanderPlugin {
       if (query.length === 0) return request;
 
       try {
-        const results = await store.search(query, maxResults);
+        const results = await getSharedKnowledgeBaseStore().search(query, maxResults);
         if (results.length === 0) return request;
 
         // Assemble a system message with the retrieved context.

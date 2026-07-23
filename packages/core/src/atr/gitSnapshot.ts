@@ -12,7 +12,7 @@
  * This is a safety net that complements (not replaces) the per-file
  * `.atr-snapshot` mechanism.
  */
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
@@ -89,7 +89,23 @@ loadSnapshots();
  */
 function isGitRepo(cwd: string = process.cwd()): boolean {
   try {
-    execSync('git rev-parse --git-dir', {
+    execFileSync('git', ['rev-parse', '--git-dir'], {
+      stdio: 'pipe',
+      timeout: 5000,
+      cwd,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const GIT_OBJECT_ID_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i;
+
+function isValidCommitObject(value: unknown, cwd: string): value is string {
+  if (typeof value !== 'string' || !GIT_OBJECT_ID_RE.test(value)) return false;
+  try {
+    execFileSync('git', ['cat-file', '-e', `${value}^{commit}`], {
       stdio: 'pipe',
       timeout: 5000,
       cwd,
@@ -126,7 +142,7 @@ export function createGitSnapshot(runId: string, cwd: string = process.cwd()): G
 
   try {
     // Get current HEAD commit SHA
-    const baseSha = execSync('git rev-parse HEAD', {
+    const baseSha = execFileSync('git', ['rev-parse', 'HEAD'], {
       stdio: 'pipe',
       timeout: 5000,
       cwd,
@@ -135,7 +151,7 @@ export function createGitSnapshot(runId: string, cwd: string = process.cwd()): G
       .trim();
 
     // Check if working tree is clean
-    const status = execSync('git status --porcelain', {
+    const status = execFileSync('git', ['status', '--porcelain'], {
       stdio: 'pipe',
       timeout: 5000,
       cwd,
@@ -152,7 +168,7 @@ export function createGitSnapshot(runId: string, cwd: string = process.cwd()): G
       // `git stash create` creates a stash commit without removing changes from
       // the working tree, and without adding to the stash list.
       // Use --include-untracked to capture newly created files too.
-      const stashSha = execSync('git stash create --include-untracked', {
+      const stashSha = execFileSync('git', ['stash', 'create', '--include-untracked'], {
         stdio: 'pipe',
         timeout: 10000,
         cwd,
@@ -219,7 +235,21 @@ export function restoreGitSnapshot(runId: string, cwd: string = process.cwd()): 
 
   try {
     // Hard reset to the base commit — this discards all changes made during the run
-    execSync(`git reset --hard ${snapshot.baseCommitSha}`, {
+    if (!isValidCommitObject(snapshot.baseCommitSha, cwd)) {
+      getGlobalLogger().warn('GitSnapshot', `Invalid base commit for run ${runId}`, { runId });
+      return false;
+    }
+    if (
+      !snapshot.wasClean &&
+      snapshot.ref &&
+      snapshot.ref !== snapshot.baseCommitSha &&
+      !isValidCommitObject(snapshot.ref, cwd)
+    ) {
+      getGlobalLogger().warn('GitSnapshot', `Invalid stash ref for run ${runId}`, { runId });
+      return false;
+    }
+
+    execFileSync('git', ['reset', '--hard', snapshot.baseCommitSha], {
       stdio: 'pipe',
       timeout: 15000,
       cwd,
@@ -228,7 +258,7 @@ export function restoreGitSnapshot(runId: string, cwd: string = process.cwd()): 
     // If there was a dirty working tree before the run, restore the stash
     if (!snapshot.wasClean && snapshot.ref && snapshot.ref !== snapshot.baseCommitSha) {
       try {
-        execSync(`git stash apply ${snapshot.ref}`, {
+        execFileSync('git', ['stash', 'apply', snapshot.ref], {
           stdio: 'pipe',
           timeout: 10000,
           cwd,

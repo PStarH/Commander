@@ -323,9 +323,23 @@ export class AgentCardRegistry {
     if (!validation.valid) {
       throw new Error(`Invalid Agent Card: ${validation.errors.join(', ')}`);
     }
-    if (!card.tenantId) {
-      card.tenantId = resolveCurrentTenantId();
+
+    const owner = resolveCurrentTenantId();
+    if (card.tenantId !== undefined && card.tenantId !== owner) {
+      throw new TenantIsolationError(
+        `Cross-tenant registration blocked: card tenant=${card.tenantId}, current=${owner}`,
+      );
     }
+
+    const existing = this.cards.get(card.id);
+    const existingOwner = existing?.tenantId ?? DEFAULT_AGENT_CARD_TENANT_ID;
+    if (existing && existingOwner !== owner) {
+      throw new TenantIsolationError(
+        `Cross-tenant card overwrite blocked: card tenant=${existingOwner}, current=${owner}`,
+      );
+    }
+
+    card.tenantId = owner;
     this.cards.set(card.id, card);
   }
 

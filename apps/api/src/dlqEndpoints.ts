@@ -12,9 +12,11 @@
  * decoupled from the core runtime package.
  */
 import { Router, type Request, type Response } from 'express';
+import type { NextFunction } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { toErrorMessage } from './routeHelpers';
+import { hasRole } from './userStore';
 
 const DLQ_DIR = path.join(process.cwd(), '.commander_dlq');
 
@@ -63,6 +65,42 @@ interface DlqEntry {
   compensated: boolean;
   recovered: boolean;
   tags: string[];
+  tenantId?: string;
+  ownerId?: string;
+}
+
+function requireAuth(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user && !req.apiKeyId) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  next();
+}
+
+function canAccessEntry(req: Request, entry: DlqEntry): boolean {
+  if (req.user && hasRole(req.user.role, 'super_admin')) return true;
+  const principal = req.user?.id ?? req.apiKeyId;
+  const tenant = req.user?.tenantId ?? req.tenantId;
+  if (!principal || !tenant) return false;
+  const entryTenant = entry.tenantId ?? process.env.COMMANDER_DEFAULT_TENANT_ID ?? 'local';
+  return (
+    entryTenant === tenant &&
+    (req.user?.role === 'admin' ||
+      !entry.ownerId ||
+      entry.ownerId === principal ||
+      entry.agentId === principal)
+  );
+}
+
+function canReplayEntry(req: Request, entry: DlqEntry): boolean {
+  if (req.user && hasRole(req.user.role, 'super_admin')) return true;
+  const authorized =
+    (req.user && hasRole(req.user.role, 'admin')) ||
+    req.apiScopes?.some((scope) => scope === 'replay' || scope === 'admin' || scope === '*');
+  if (!authorized) return false;
+  const tenant = req.user?.tenantId ?? req.tenantId;
+  const entryTenant = entry.tenantId ?? process.env.COMMANDER_DEFAULT_TENANT_ID ?? 'local';
+  return !!tenant && entryTenant === tenant;
 }
 
 interface CategoryStat {
@@ -140,7 +178,7 @@ function getAllCategoryEntries(): Array<{ category: string; entry: DlqEntry }> {
   return result;
 }
 
-function buildStats(): DlqStats {
+function buildStats(req?: Request): DlqStats {
   const all = getAllCategoryEntries();
   const categoryMap = new Map<string, CategoryStat>();
   for (const category of DLQ_CATEGORIES) {
@@ -151,6 +189,7 @@ function buildStats(): DlqStats {
   let totalUnrecovered = 0;
 
   for (const { category, entry } of all) {
+    if (req && !canAccessEntry(req, entry)) continue;
     const stat = categoryMap.get(category);
     if (!stat) continue;
     stat.count++;
@@ -170,49 +209,51 @@ function buildStats(): DlqStats {
 }
 
 /**
- * Mark an entry as recovered by rewriting its line on disk.
- * Cross-category search mirrors the core DeadLetterQueue.markRecovered logic.
+ * Mark an authorized entry as recovered by rewriting its line on disk.
  */
-function markEntryRecovered(entryId: string): boolean {
+function markEntryRecovered(
+  category: string,
+  entryId: string,
+  canAccess: (entry: DlqEntry) => boolean,
+): boolean {
   ensureDlqDir();
-  for (const category of DLQ_CATEGORIES) {
-    const filePath = path.join(DLQ_DIR, `${category}.ndjson`);
-    if (!fs.existsSync(filePath)) continue;
-    const raw = fs.readFileSync(filePath, 'utf-8').trim();
-    if (!raw) continue;
-    const lines = raw.split('\n');
-    let found = false;
-    for (let i = 0; i < lines.length; i++) {
-      try {
-        const parsed = JSON.parse(lines[i]) as DlqEntry;
-        if (parsed.id === entryId) {
-          parsed.recovered = true;
-          parsed.tags = [...(parsed.tags ?? []), 'replayed'];
-          lines[i] = JSON.stringify(parsed);
-          found = true;
-          break;
-        }
-      } catch {
-        // Skip corrupt lines.
+  const filePath = path.join(DLQ_DIR, `${category}.ndjson`);
+  if (!fs.existsSync(filePath)) return false;
+  const raw = fs.readFileSync(filePath, 'utf-8').trim();
+  if (!raw) return false;
+  const lines = raw.split('\n');
+  let found = false;
+  for (let i = 0; i < lines.length; i++) {
+    try {
+      const parsed = JSON.parse(lines[i]) as DlqEntry;
+      if (parsed.id === entryId && canAccess(parsed)) {
+        parsed.recovered = true;
+        parsed.tags = [...(parsed.tags ?? []), 'replayed'];
+        lines[i] = JSON.stringify(parsed);
+        found = true;
+        break;
       }
+    } catch {
+      // Skip corrupt lines.
     }
-    if (found) {
-      const tmpPath = `${filePath}.tmp`;
-      fs.writeFileSync(tmpPath, lines.join('\n') + '\n', 'utf-8');
-      fs.renameSync(tmpPath, filePath);
-      return true;
-    }
+  }
+  if (found) {
+    const tmpPath = `${filePath}.tmp`;
+    fs.writeFileSync(tmpPath, lines.join('\n') + '\n', 'utf-8');
+    fs.renameSync(tmpPath, filePath);
+    return true;
   }
   return false;
 }
 
 export function createDlqRouter(): Router {
   const router = Router();
+  router.use(requireAuth);
 
   // ── GET /api/dlq/stats — aggregate counts ───────────────────────────
-  router.get('/api/dlq/stats', (_req: Request, res: Response) => {
+  router.get('/api/dlq/stats', (req: Request, res: Response) => {
     try {
-      const stats = buildStats();
+      const stats = buildStats(req);
       res.json(stats);
     } catch (error) {
       res.status(500).json({ error: toErrorMessage(error) });
@@ -220,9 +261,9 @@ export function createDlqRouter(): Router {
   });
 
   // ── GET /api/dlq/categories — all categories with counts ───────────
-  router.get('/api/dlq/categories', (_req: Request, res: Response) => {
+  router.get('/api/dlq/categories', (req: Request, res: Response) => {
     try {
-      const stats = buildStats();
+      const stats = buildStats(req);
       res.json(stats.categories.map((c) => ({ category: c.category, count: c.count })));
     } catch (error) {
       res.status(500).json({ error: toErrorMessage(error) });
@@ -244,6 +285,7 @@ export function createDlqRouter(): Router {
         }
         const catEntries = readCategoryEntries(category);
         for (const entry of catEntries) {
+          if (!canAccessEntry(req, entry)) continue;
           if (entry.recovered) continue;
           entries.push({ ...entry, failureMode: extractFailureMode(entry.tags) });
           if (entries.length >= limit) break;
@@ -264,7 +306,18 @@ export function createDlqRouter(): Router {
       if (!entryId || entryId.length === 0) {
         return res.status(400).json({ error: 'entryId is required' });
       }
-      const ok = markEntryRecovered(entryId);
+      const found = getAllCategoryEntries().find(
+        ({ entry: candidate }) => candidate.id === entryId && canReplayEntry(req, candidate),
+      );
+      if (!found) {
+        const visible = getAllCategoryEntries().some(
+          ({ entry }) => entry.id === entryId && canAccessEntry(req, entry),
+        );
+        return res
+          .status(visible ? 403 : 404)
+          .json({ error: visible ? 'Replay authority required' : 'Entry not found', entryId });
+      }
+      const ok = markEntryRecovered(found.category, entryId, (entry) => canReplayEntry(req, entry));
       if (!ok) {
         return res.status(404).json({ error: 'Entry not found', entryId });
       }

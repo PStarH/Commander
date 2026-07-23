@@ -9,6 +9,7 @@ import {
 import { resetSecurityAuditLogger } from '../../src/security/securityAuditLogger';
 import { createOIDCPluginFromEnv } from '../../src/runtime/oidcAuthPlugin';
 import { resetGlobalThreeLayerMemory } from '../../src/threeLayerMemory';
+import { getAuthManager, resetAuthManager } from '../../src/runtime/authManager';
 
 function listen(server: CommanderHttpServer): Promise<number> {
   return new Promise((resolve) => {
@@ -276,6 +277,8 @@ describe('/api/v1 multi-tenant gate (apiKey present, tenant map not matching)', 
   // access logs.
   const cases: Array<[string, string, unknown]> = [
     ['GET', '/api/v1/security/owasp-agentic-ai-top10', undefined],
+    ['GET', '/api/v1/security/compliance-audit', undefined],
+    ['GET', '/api/v1/security/eu-ai-act', undefined],
     [
       'POST',
       '/api/v1/security/owasp-agentic-ai-top10',
@@ -307,6 +310,76 @@ describe('/api/v1 multi-tenant gate (apiKey present, tenant map not matching)', 
       expect(errMsg).toMatch(new RegExp(escaped));
     });
   }
+});
+
+describe('security report RBAC parity', () => {
+  let server: CommanderHttpServer;
+  let port: number;
+  let previousRbac: string | undefined;
+  let viewerKey: string;
+  let auditorKey: string;
+  let adminKey: string;
+  const usernames = ['report-viewer-test', 'report-auditor-test', 'report-admin-test'];
+  const reportPaths = [
+    '/api/v1/security/owasp-agentic-ai-top10',
+    '/api/v1/security/compliance-audit',
+    '/api/v1/security/eu-ai-act',
+  ];
+
+  beforeEach(async () => {
+    previousRbac = process.env.COMMANDER_RBAC_ENABLED;
+    process.env.COMMANDER_RBAC_ENABLED = '1';
+    resetAuthManager();
+    const auth = getAuthManager();
+    for (const username of usernames) auth.deleteUser(username);
+    auth.createUser(usernames[0], 'viewer');
+    auth.createUser(usernames[1], 'auditor');
+    auth.createUser(usernames[2], 'admin');
+    viewerKey = auth.generateApiKey(usernames[0], 'report-viewer').rawKey;
+    auditorKey = auth.generateApiKey(usernames[1], 'report-auditor').rawKey;
+    adminKey = auth.generateApiKey(usernames[2], 'report-admin').rawKey;
+
+    server = await newServer({ authDisabled: true });
+    port = await listen(server);
+  });
+
+  afterEach(async () => {
+    await server.stop();
+    const auth = getAuthManager();
+    for (const username of usernames) auth.deleteUser(username);
+    resetAuthManager();
+    if (previousRbac === undefined) delete process.env.COMMANDER_RBAC_ENABLED;
+    else process.env.COMMANDER_RBAC_ENABLED = previousRbac;
+  });
+
+  it('denies viewer and unknown API keys for all security reports', async () => {
+    for (const path of reportPaths) {
+      const viewer = await jsonReq(port, 'GET', path, undefined, {
+        authorization: `Bearer ${viewerKey}`,
+      });
+      expect(viewer.status, `${path} viewer status`).toBe(403);
+      expect((viewer.body as { error?: string }).error).toContain('Required role: auditor');
+
+      const unknown = await jsonReq(port, 'GET', path, undefined, {
+        authorization: 'Bearer unknown-report-key',
+      });
+      expect(unknown.status, `${path} unknown-key status`).toBe(403);
+    }
+  });
+
+  it('preserves auditor and admin access for all security reports', async () => {
+    for (const path of reportPaths) {
+      const auditor = await jsonReq(port, 'GET', path, undefined, {
+        authorization: `Bearer ${auditorKey}`,
+      });
+      expect(auditor.status, `${path} auditor status`).toBe(200);
+
+      const admin = await jsonReq(port, 'GET', path, undefined, {
+        authorization: `Bearer ${adminKey}`,
+      });
+      expect(admin.status, `${path} admin status`).toBe(200);
+    }
+  });
 });
 
 describe('/api/v1 multi-tenant isolation (apiKey === tenant key)', () => {

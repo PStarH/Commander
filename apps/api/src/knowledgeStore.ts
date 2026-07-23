@@ -24,6 +24,7 @@
  *   privacy concerns of sending internal docs to an external API.
  */
 import { reportSilentFailure } from '@commander/core';
+import { tenantPathSegment, validateTenantId } from '@commander/core/runtime/tenantContext';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -768,13 +769,29 @@ export class KnowledgeStore {
 // ── Singleton accessor (mirrors other stores in the API) ─────────────────
 
 let singleton: KnowledgeStore | null = null;
+const tenantStores = new Map<string, KnowledgeStore>();
 
-/** Return the process-wide KnowledgeStore singleton. */
-export function getKnowledgeStore(): KnowledgeStore {
-  if (!singleton) {
-    singleton = new KnowledgeStore();
+/**
+ * Return a single-tenant store when no id is supplied, or an isolated store
+ * rooted below the requested tenant when called at an authenticated boundary.
+ */
+export function getKnowledgeStore(tenantId?: string): KnowledgeStore {
+  if (tenantId === undefined) {
+    if (!singleton) singleton = new KnowledgeStore();
+    return singleton;
   }
-  return singleton;
+
+  validateTenantId(tenantId);
+  const existing = tenantStores.get(tenantId);
+  if (existing) return existing;
+
+  const baseDir = path.join(
+    path.resolve(process.cwd(), '.commander', 'knowledge-base'),
+    tenantPathSegment(tenantId),
+  );
+  const store = new KnowledgeStore(baseDir);
+  tenantStores.set(tenantId, store);
+  return store;
 }
 
 // Export helpers for unit testing / reuse by the endpoints module.
@@ -784,4 +801,5 @@ export { LocalEmbeddingFunction };
 // the singleton; construct `new KnowledgeStore(dir)` directly to override.
 export function _resetKnowledgeStoreSingletonForTests(): void {
   singleton = null;
+  tenantStores.clear();
 }

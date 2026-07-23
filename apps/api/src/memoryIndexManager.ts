@@ -17,6 +17,11 @@ export interface MemoryPointer {
   lastUpdated: string;
 }
 
+export interface MemoryDomainDefinition {
+  domain: string;
+  description: string;
+}
+
 export interface MemoryIndex {
   version: string;
   projectId: string;
@@ -123,12 +128,26 @@ function toDomainMemory(domain: string, items: ProjectMemoryItem[]): DomainMemor
 
 export class MemoryIndexManager {
   private readonly index: MemoryIndex;
+  private readonly bootstrapDomains: ReadonlyArray<Readonly<MemoryDomainDefinition>>;
 
   constructor(
-    private readonly projectId: string,
+    readonly projectId: string,
     private readonly projectMemoryAdapter: ProjectMemoryStoreAdapter,
+    bootstrapDomains: readonly MemoryDomainDefinition[] = [],
   ) {
+    this.bootstrapDomains = Object.freeze(
+      bootstrapDomains.map((definition) => Object.freeze({ ...definition })),
+    );
     this.index = { version: '2.0', projectId, pointers: [] };
+    for (const { domain, description } of this.bootstrapDomains) {
+      this.addDomain(domain, description);
+    }
+  }
+
+  forProject(projectId: string): MemoryIndexManager {
+    if (projectId === this.projectId) return this;
+
+    return new MemoryIndexManager(projectId, this.projectMemoryAdapter, this.bootstrapDomains);
   }
 
   addDomain(domain: string, description: string): MemoryPointer {

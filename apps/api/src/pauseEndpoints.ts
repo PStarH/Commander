@@ -1,4 +1,9 @@
-import { Router } from 'express';
+import {
+  assertSameTenant,
+  getCurrentTenantId,
+  tenantPathSegment,
+} from '@commander/core/runtime/tenantContext';
+import { Router, type Request, type Response } from 'express';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { getSharedRuntime } from './sharedRuntime';
@@ -25,8 +30,29 @@ interface CheckpointData {
   timestamp: string;
 }
 
-async function readCheckpoint(runId: string): Promise<CheckpointData | null> {
-  const stateDir = path.join(process.cwd(), '.commander_state');
+function requireTenant(req: Request, res: Response): string | null {
+  const active = getCurrentTenantId();
+  const requested = req.tenantId;
+  if (active && requested && active !== requested) {
+    res.status(403).json({ error: 'Tenant context mismatch' });
+    return null;
+  }
+  const tenantId = active ?? requested;
+  if (!tenantId) {
+    res.status(401).json({ error: 'Authenticated tenant context required' });
+    return null;
+  }
+  try {
+    if (active && requested) assertSameTenant(requested);
+    return tenantId;
+  } catch {
+    res.status(403).json({ error: 'Tenant context mismatch' });
+    return null;
+  }
+}
+
+async function readCheckpoint(tenantId: string, runId: string): Promise<CheckpointData | null> {
+  const stateDir = path.join(process.cwd(), '.commander_state', tenantPathSegment(tenantId));
   // Try completed checkpoint first, then in-flight
   const candidates = [
     path.join(stateDir, 'completed', `${runId}.json`),
@@ -63,17 +89,26 @@ function sanitizeInstructions(input: unknown): string | null {
   return input.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
 }
 
-export function createPauseRouter(): Router {
+export function createPauseRouter(
+  resolveRuntime: typeof getSharedRuntime = getSharedRuntime,
+): Router {
   const router = Router();
 
   // ── Pause a running execution ──────────────────────────────────────────
-  router.post('/runtime/pause', (req, res) => {
+  router.post('/runtime/pause', async (req, res) => {
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
     const { runId } = req.body ?? {};
     if (!isValidRunId(runId)) {
       return res.status(400).json({ error: 'runId is required and must be alphanumeric' });
     }
 
-    const runtime = getSharedRuntime();
+    const checkpoint = await readCheckpoint(tenantId, runId);
+    if (!checkpoint) {
+      return res.status(404).json({ error: 'Run not found or already completed' });
+    }
+
+    const runtime = resolveRuntime();
     const paused = runtime.pauseRun(runId);
     if (!paused) {
       return res.status(404).json({ error: 'Run not found or already completed' });
@@ -87,20 +122,28 @@ export function createPauseRouter(): Router {
 
   // ── Resume a paused execution ──────────────────────────────────────────
   router.post('/runtime/resume', async (req, res) => {
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
     const { runId, userInstructions } = req.body ?? {};
     if (!isValidRunId(runId)) {
       return res.status(400).json({ error: 'runId is required and must be alphanumeric' });
     }
 
+    const checkpoint = await readCheckpoint(tenantId, runId);
+    if (!checkpoint) {
+      return res.status(404).json({ error: 'No checkpoint found for this run' });
+    }
+
     // Per-run cooldown to prevent rapid resume abuse
     const now = Date.now();
-    const lastResume = resumeCooldowns.get(runId) ?? 0;
+    const cooldownKey = `${tenantId}:${runId}`;
+    const lastResume = resumeCooldowns.get(cooldownKey) ?? 0;
     if (now - lastResume < RESUME_COOLDOWN_MS) {
       return res.status(429).json({
         error: `Please wait ${Math.ceil((RESUME_COOLDOWN_MS - (now - lastResume)) / 1000)}s before resuming again`,
       });
     }
-    resumeCooldowns.set(runId, now);
+    resumeCooldowns.set(cooldownKey, now);
 
     // Clean old cooldowns periodically
     if (resumeCooldowns.size > 1000) {
@@ -109,18 +152,13 @@ export function createPauseRouter(): Router {
       }
     }
 
-    const runtime = getSharedRuntime();
-    const recovery = await runtime.resume(runId);
-
-    if (!recovery || recovery.status !== 'recovered' || !recovery.state) {
-      return res.status(404).json({ error: 'No checkpoint found for this run' });
-    }
+    const runtime = resolveRuntime();
 
     // Flatten the CheckpointState into the shape the test suite + downstream
     // callers expect (projectId/goal/availableTools/tokenBudget on a `context`
     // bag, plus a top-level `messages` array). Optional fields are coerced to
     // safe defaults so the resume path never crashes on a partial recovery.
-    const checkpoint = recovery.state as unknown as {
+    const recoveredCheckpoint = checkpoint as unknown as {
       agentId: string;
       missionId?: string;
       phase: string;
@@ -141,7 +179,7 @@ export function createPauseRouter(): Router {
     // Sanitize and inject user instructions
     const sanitized = sanitizeInstructions(userInstructions);
     if (sanitized) {
-      checkpoint.messages.push({
+      recoveredCheckpoint.messages.push({
         role: 'user',
         content: `[User instructions on resume]: ${sanitized}`,
       });
@@ -150,14 +188,15 @@ export function createPauseRouter(): Router {
     // Re-execute from checkpoint
     try {
       const ctx = {
-        agentId: checkpoint.agentId,
-        projectId: checkpoint.context.projectId,
-        missionId: checkpoint.missionId,
-        goal: checkpoint.context.goal,
+        agentId: recoveredCheckpoint.agentId,
+        projectId: recoveredCheckpoint.context.projectId,
+        missionId: recoveredCheckpoint.missionId,
+        goal: recoveredCheckpoint.context.goal,
         contextData: {},
-        availableTools: checkpoint.context.availableTools,
-        tokenBudget: checkpoint.context.tokenBudget,
+        availableTools: recoveredCheckpoint.context.availableTools,
+        tokenBudget: recoveredCheckpoint.context.tokenBudget,
         maxSteps: 50,
+        tenantId,
       };
       runtime.unpauseRun(runId);
 
@@ -169,8 +208,8 @@ export function createPauseRouter(): Router {
       res.json({
         status: 'resumed',
         message: 'Execution resumed from checkpoint',
-        fromPhase: checkpoint.phase,
-        stepNumber: checkpoint.stepNumber,
+        fromPhase: recoveredCheckpoint.phase,
+        stepNumber: recoveredCheckpoint.stepNumber,
         injectedInstructions: !!sanitized,
       });
     } catch (err) {
@@ -185,6 +224,8 @@ export function createPauseRouter(): Router {
   // unlike resume which requires a paused run). Correction instructions are
   // injected as a user message so the agent adjusts its behavior from that step.
   router.post('/runtime/rollback', async (req, res) => {
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
     const { runId, stepNumber, userInstructions } = req.body ?? {};
     if (!isValidRunId(runId)) {
       return res.status(400).json({ error: 'runId is required and must be alphanumeric' });
@@ -193,7 +234,7 @@ export function createPauseRouter(): Router {
       return res.status(400).json({ error: 'stepNumber must be a non-negative integer' });
     }
 
-    const checkpoint = await readCheckpoint(runId);
+    const checkpoint = await readCheckpoint(tenantId, runId);
     if (!checkpoint) {
       return res.status(404).json({ error: 'No checkpoint found for this run' });
     }
@@ -210,7 +251,7 @@ export function createPauseRouter(): Router {
     const goalSuffix = sanitized ? `\n\n[User correction at step ${stepNumber}]: ${sanitized}` : '';
 
     try {
-      const runtime = getSharedRuntime();
+      const runtime = resolveRuntime();
       const ctx = {
         agentId: checkpoint.agentId,
         projectId: checkpoint.context.projectId,
@@ -220,6 +261,7 @@ export function createPauseRouter(): Router {
         availableTools: checkpoint.context.availableTools,
         tokenBudget: checkpoint.context.tokenBudget,
         maxSteps: 50,
+        tenantId,
       };
 
       // Run asynchronously — don't block the response.
@@ -243,9 +285,15 @@ export function createPauseRouter(): Router {
   });
 
   // ── List active runs ───────────────────────────────────────────────────
-  router.get('/runtime/active', (_req, res) => {
-    const runtime = getSharedRuntime();
-    const runs = runtime.getActiveRuns();
+  router.get('/runtime/active', async (req, res) => {
+    const tenantId = requireTenant(req, res);
+    if (!tenantId) return;
+    const runtime = resolveRuntime();
+    const activeRuns = runtime.getActiveRuns();
+    const owned = await Promise.all(
+      activeRuns.map(async (run) => ((await readCheckpoint(tenantId, run.runId)) ? run : null)),
+    );
+    const runs = owned.filter((run): run is NonNullable<typeof run> => run !== null);
     res.json({ runs, total: runs.length });
   });
 
