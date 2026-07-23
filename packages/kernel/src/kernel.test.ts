@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { validateRunTransition } from '@commander/contracts';
 import { InMemoryKernelRepository } from './testing/inMemoryRepository.js';
+import { KERNEL_COMPENSATION_TOPIC } from './ops/compensationConsumer.js';
 import type { KernelRun, NewKernelStep } from './types.js';
 
 const createRun = (steps: NewKernelStep[] = [{ id: 'step-a', kind: 'agent' }]) => ({
@@ -61,6 +62,8 @@ describe('execution kernel semantics', () => {
       type: 'http.write',
       idempotencyKey: 'key-1',
       policyDecisionId: 'decision-1',
+      policySnapshotId: 'policy-v1',
+      actionDigest: 'a'.repeat(64),
       request: { target: 'x' },
       lease: first!.lease!,
       actor: 'worker-1',
@@ -74,6 +77,8 @@ describe('execution kernel semantics', () => {
       type: 'http.write',
       idempotencyKey: 'key-1',
       policyDecisionId: 'decision-1',
+      policySnapshotId: 'policy-v1',
+      actionDigest: 'a'.repeat(64),
       request: { target: 'x' },
       lease: first!.lease!,
       actor: 'worker-1',
@@ -87,6 +92,8 @@ describe('execution kernel semantics', () => {
       type: 'http.write',
       idempotencyKey: 'key-1',
       policyDecisionId: 'decision-1',
+      policySnapshotId: 'policy-v1',
+      actionDigest: 'a'.repeat(64),
       request: { target: 'different' },
       lease: first!.lease!,
       actor: 'worker-1',
@@ -101,6 +108,8 @@ describe('execution kernel semantics', () => {
       type: 'http.write',
       idempotencyKey: 'key-unknown',
       policyDecisionId: 'decision-1',
+      policySnapshotId: 'policy-v1',
+      actionDigest: 'a'.repeat(64),
       request: { target: 'unknown' },
       lease: first!.lease!,
       actor: 'worker-1',
@@ -143,6 +152,112 @@ describe('execution kernel semantics', () => {
     );
   });
 
+  it('pins policySnapshotId/actionDigest/lease fields and rejects IDEMPOTENCY_CONFLICT on snapshot or digest mismatch', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(createRun([{ id: 'step-a', kind: 'agent' }]), 'gateway');
+    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', workerGeneration: 1, leaseTtlMs: 60_000 });
+    assert.ok(claimed?.lease);
+    const lease = claimed!.lease!;
+    const digest = 'a'.repeat(64);
+    const admitted = await kernel.admitEffect({
+      id: 'effect-pin',
+      runId: 'run-1',
+      stepId: 'step-a',
+      tenantId: 'tenant-a',
+      type: 'http.write',
+      idempotencyKey: 'pin-key',
+      policyDecisionId: 'decision-1',
+      policySnapshotId: 'policy-v1',
+      actionDigest: digest,
+      request: { target: 'x' },
+      lease,
+      actor: 'worker-1',
+    });
+    assert.equal(admitted.admitted, true);
+    if (!admitted.admitted) return;
+    assert.equal(admitted.effect.policySnapshotId, 'policy-v1');
+    assert.equal(admitted.effect.actionDigest, digest);
+    assert.equal(admitted.effect.leaseWorkerId, lease.workerId);
+    assert.equal(admitted.effect.leaseWorkerGeneration, lease.workerGeneration ?? 0);
+    assert.equal(admitted.effect.leaseFencingEpoch, lease.fencingEpoch);
+
+    const snapshotConflict = await kernel.admitEffect({
+      id: 'effect-pin-snap',
+      runId: 'run-1',
+      stepId: 'step-a',
+      tenantId: 'tenant-a',
+      type: 'http.write',
+      idempotencyKey: 'pin-key',
+      policyDecisionId: 'decision-1',
+      policySnapshotId: 'policy-v2',
+      actionDigest: digest,
+      request: { target: 'x' },
+      lease,
+      actor: 'worker-1',
+    });
+    assert.equal(snapshotConflict.admitted, false);
+    if (!snapshotConflict.admitted) assert.equal(snapshotConflict.reason, 'IDEMPOTENCY_CONFLICT');
+
+    const digestConflict = await kernel.admitEffect({
+      id: 'effect-pin-digest',
+      runId: 'run-1',
+      stepId: 'step-a',
+      tenantId: 'tenant-a',
+      type: 'http.write',
+      idempotencyKey: 'pin-key',
+      policyDecisionId: 'decision-1',
+      policySnapshotId: 'policy-v1',
+      actionDigest: 'b'.repeat(64),
+      request: { target: 'x' },
+      lease,
+      actor: 'worker-1',
+    });
+    assert.equal(digestConflict.admitted, false);
+    if (!digestConflict.admitted) assert.equal(digestConflict.reason, 'IDEMPOTENCY_CONFLICT');
+  });
+
+  it('admitEffect fails closed on blank policySnapshotId / lease.workerId (never coerces to legacy-unbound)', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(createRun([{ id: 'step-a', kind: 'agent' }]), 'gateway');
+    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', workerGeneration: 1, leaseTtlMs: 60_000 });
+    assert.ok(claimed?.lease);
+    const lease = claimed!.lease!;
+
+    const blankSnapshot = await kernel.admitEffect({
+      id: 'effect-blank-snapshot',
+      runId: 'run-1',
+      stepId: 'step-a',
+      tenantId: 'tenant-a',
+      type: 'http.write',
+      idempotencyKey: 'blank-snapshot-key',
+      policyDecisionId: 'decision-1',
+      policySnapshotId: '   ',
+      actionDigest: 'c'.repeat(64),
+      request: { target: 'x' },
+      lease,
+      actor: 'worker-1',
+    });
+    assert.equal(blankSnapshot.admitted, false);
+    if (!blankSnapshot.admitted) assert.equal(blankSnapshot.reason, 'POLICY_SNAPSHOT_ID_REQUIRED');
+
+    const blankWorker = await kernel.admitEffect({
+      id: 'effect-blank-worker',
+      runId: 'run-1',
+      stepId: 'step-a',
+      tenantId: 'tenant-a',
+      type: 'http.write',
+      idempotencyKey: 'blank-worker-key',
+      policyDecisionId: 'decision-1',
+      policySnapshotId: 'policy-v1',
+      actionDigest: 'd'.repeat(64),
+      request: { target: 'x' },
+      lease: { ...lease, workerId: '   ' },
+      actor: 'worker-1',
+    });
+    assert.equal(blankWorker.admitted, false);
+    if (!blankWorker.admitted) assert.equal(blankWorker.reason, 'LEASE_WORKER_ID_REQUIRED');
+  });
+
   it('listEffectsForRun returns ledger rows scoped by runId and tenantId', async () => {
     const kernel = new InMemoryKernelRepository();
     await kernel.createRun(createRun([{ id: 'step-a', kind: 'agent' }]), 'gateway');
@@ -176,6 +291,8 @@ describe('execution kernel semantics', () => {
           type: 'http.write',
           idempotencyKey: 'k-a',
           policyDecisionId: 'pd-a',
+          policySnapshotId: 'policy-v1',
+          actionDigest: 'a'.repeat(64),
           request: { target: 'a' },
           lease: stepA.lease,
           actor: 'worker-1',
@@ -193,6 +310,8 @@ describe('execution kernel semantics', () => {
           type: 'http.write',
           idempotencyKey: 'k-b',
           policyDecisionId: 'pd-b',
+          policySnapshotId: 'policy-v1',
+          actionDigest: 'a'.repeat(64),
           request: { target: 'b' },
           lease: stepB.lease,
           actor: 'worker-2',
@@ -431,6 +550,8 @@ describe('execution kernel semantics', () => {
       type: 'ticket.create',
       idempotencyKey: 'idem-recon',
       policyDecisionId: 'decision-1',
+      policySnapshotId: 'policy-v1',
+      actionDigest: 'a'.repeat(64),
       request: { title: 't' },
       lease: claimed!.lease!,
       actor: 'worker-1',
@@ -498,6 +619,8 @@ describe('execution kernel semantics', () => {
           type: 'http.write',
           idempotencyKey: 'orphan-key',
           policyDecisionId: 'decision-1',
+          policySnapshotId: 'policy-v1',
+          actionDigest: 'a'.repeat(64),
           request: { target: 'x' },
           lease: claimed!.lease!,
           actor: 'worker-1',
@@ -602,6 +725,8 @@ describe('execution kernel semantics', () => {
           type: 'http.write',
           idempotencyKey: 'cancel-orphan-key',
           policyDecisionId: 'decision-1',
+          policySnapshotId: 'policy-v1',
+          actionDigest: 'a'.repeat(64),
           request: { target: 'z' },
           lease: claimed!.lease!,
           actor: 'worker-1',
@@ -633,6 +758,8 @@ describe('execution kernel semantics', () => {
           type: 'http.write',
           idempotencyKey: 'done-key',
           policyDecisionId: 'decision-1',
+          policySnapshotId: 'policy-v1',
+          actionDigest: 'a'.repeat(64),
           request: { target: 'crm' },
           lease: claimed!.lease!,
           actor: 'worker-1',
@@ -661,7 +788,7 @@ describe('execution kernel semantics', () => {
     assert.equal(failed?.state, 'FAILED');
     assert.equal((await kernel.getRun('run-1', 'tenant-a'))?.state, 'COMPENSATING');
 
-    const messages = await kernel.claimOutbox(100);
+    const messages = await kernel.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 100);
     const compensation = messages.filter(
       (message) => message.topic === 'commander.kernel.compensation.requested',
     );
@@ -690,6 +817,8 @@ describe('execution kernel semantics', () => {
           type: 'http.write',
           idempotencyKey: 'deadline-key',
           policyDecisionId: 'decision-1',
+          policySnapshotId: 'policy-v1',
+          actionDigest: 'a'.repeat(64),
           request: { target: 'crm' },
           lease: claimed!.lease!,
           actor: 'worker-1',
@@ -715,7 +844,7 @@ describe('execution kernel semantics', () => {
     );
     assert.equal(failed?.state, 'FAILED');
     assert.equal((await kernel.getRun('run-1', 'tenant-a'))?.state, 'COMPENSATING');
-    const messages = await kernel.claimOutbox(100);
+    const messages = await kernel.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 100);
     assert.equal(
       messages.some((message) => message.topic === 'commander.kernel.compensation.requested'),
       true,
@@ -737,6 +866,8 @@ describe('execution kernel semantics', () => {
           type: 'http.write',
           idempotencyKey: 'paused-key',
           policyDecisionId: 'decision-1',
+          policySnapshotId: 'policy-v1',
+          actionDigest: 'a'.repeat(64),
           request: { target: 'crm' },
           lease: claimed!.lease!,
           actor: 'worker-1',
@@ -769,7 +900,7 @@ describe('execution kernel semantics', () => {
     assert.equal((await kernel.getRun('run-1', 'tenant-a'))?.state, 'COMPENSATING');
     assert.equal(validateRunTransition('PAUSED', 'COMPENSATING').ok, true);
 
-    const messages = await kernel.claimOutbox(100);
+    const messages = await kernel.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 100);
     const compensation = messages.filter(
       (message) => message.topic === 'commander.kernel.compensation.requested',
     );
@@ -872,6 +1003,8 @@ describe('execution kernel semantics', () => {
           type: 'http.write',
           idempotencyKey: 'pause-key',
           policyDecisionId: 'decision-1',
+          policySnapshotId: 'policy-v1',
+          actionDigest: 'a'.repeat(64),
           request: { target: 'crm' },
           lease: claimed!.lease!,
           actor: 'worker-1',
@@ -907,6 +1040,8 @@ describe('execution kernel semantics', () => {
           type: 'http.write',
           idempotencyKey: 'tenant-pause-key',
           policyDecisionId: 'decision-1',
+          policySnapshotId: 'policy-v1',
+          actionDigest: 'a'.repeat(64),
           request: { target: 'crm' },
           lease: claimed!.lease!,
           actor: 'worker-1',
@@ -981,6 +1116,8 @@ describe('execution kernel semantics', () => {
           type: 'http.write',
           idempotencyKey: 'sibling-key',
           policyDecisionId: 'decision-1',
+          policySnapshotId: 'policy-v1',
+          actionDigest: 'a'.repeat(64),
           request: { target: 'crm' },
           lease: claimed!.lease!,
           actor: 'worker-1',

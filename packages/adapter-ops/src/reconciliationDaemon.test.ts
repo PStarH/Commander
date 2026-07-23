@@ -30,6 +30,8 @@ describe('ReconciliationDaemon', () => {
       type: 'connector.unknown.effect',
       idempotencyKey: 'recon-key',
       policyDecisionId: 'policy',
+      policySnapshotId: 'policy',
+      actionDigest: 'a'.repeat(64),
       request: {},
       lease: step.lease,
       actor: 'worker-1',

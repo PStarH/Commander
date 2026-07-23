@@ -58,6 +58,7 @@ function createMockStep(overrides?: Partial<ClaimedStep>): ClaimedStep {
     input: { toolName: 'echo', args: { message: 'hello' } },
     lease: {
       workerId: 'worker-1',
+      workerGeneration: 1,
       token: 'token-1',
       fencingEpoch: 1,
       expiresAt: new Date(Date.now() + 30_000).toISOString(),
@@ -260,6 +261,8 @@ describe('L3-03a ToolStepExecutor production monopoly', () => {
       tenantId: 'tenant-a',
       runId: 'run-1',
       stepId: 'step-1',
+      workerId: 'worker-1',
+      workerGeneration: 1,
       effectTypes: ['crm.write'],
       expiresAt: '2099-01-01T00:00:00.000Z',
       policySnapshotId: decision.policySnapshotId,
@@ -305,6 +308,8 @@ describe('L3-03a ToolStepExecutor production monopoly', () => {
       tenantId: 'tenant-a',
       runId: 'run-1',
       stepId: 'step-1',
+      workerId: 'worker-1',
+      workerGeneration: 1,
       effectTypes: ['http.post'],
       expiresAt: '2099-01-01T00:00:00.000Z',
       policySnapshotId: 'p1',
@@ -326,15 +331,28 @@ describe('L3-03a ToolStepExecutor production monopoly', () => {
       (err: unknown) =>
         err instanceof WorkerExecutionError && err.message === 'ACTION_NOT_ALLOWLISTED',
     );
+    // Direct broker path: grant fence must match the lease used at admit.
+    const directToken = issuer.issue({
+      jti: 'jti-http-direct',
+      tenantId: 'tenant-a',
+      runId: 'run-1',
+      stepId: 'step-1',
+      workerId: 'w',
+      workerGeneration: 1,
+      effectTypes: ['http.post'],
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      policySnapshotId: 'p1',
+      requestHash: canonicalRequestHash(request),
+    });
     await assert.rejects(
       () =>
         broker.execute({
           effectId: 'eff-direct',
-          token,
+          token: directToken,
           type: 'http.post',
           request,
           idempotencyKey: 'idem-direct',
-          lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+          lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
           actor: 'w',
         }),
       (err: unknown) => err instanceof EffectBrokerError && err.code === 'ACTION_NOT_ALLOWLISTED',

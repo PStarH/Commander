@@ -5,6 +5,11 @@
 # Deployment tier: demo | team | enterprise
 tier: 'team'
 
+# Optional explicit cell tenant for COMMANDER_CELL_TENANT_ID.
+# When empty, templates use the first entry of worker.tenants.
+cell:
+  tenantId: ''
+
 image:
   repository: commander
   tag: latest
@@ -87,7 +92,9 @@ worker:
   kind: agent
   capabilities: 'agent,tool,connector'
   maxConcurrency: 10
-  tenants: '*'
+  # Explicit comma-separated tenant IDs only. Never '*'. Demo sets 'local';
+  # enterprise requires an operator-supplied list.
+  tenants: ''
   pollMs: 250
   leaseTtlMs: 30000
   heartbeatMs: 10000
@@ -126,7 +133,9 @@ kernelOps:
 
 adapterOps:
   enabled: false
-  replicas: 2
+  # Single replica: fixed daemon worker ids (reconciliation-daemon / compensation-daemon)
+  # stomping under multi-replica. Multi-replica needs POD_NAME-suffixed ids (follow-up).
+  replicas: 1
   terminationGracePeriodSeconds: 60
   image:
     repository: ''
@@ -152,6 +161,16 @@ adapterOps:
     create: false
   egress:
     allowlist: []
+
+# Worker/adapter EffectBroker authority (Ed25519 PEM + JWKS). Never HMAC.
+# Deployments mount via secretKeyRef only — never inline PEM/JWKS in env values.
+capability:
+  existingSecret: ''
+  # Demo only: chart may create an ephemeral Secret. Enterprise must be false.
+  create: false
+  privateKeyPemKey: private-key-pem
+  keyIdKey: key-id
+  jwksJsonKey: jwks-json
 
 sandboxd:
   enabled: false
@@ -205,7 +224,13 @@ database:
     password: ''
     database: commander
     existingSecret: ''
+    # Legacy single-key name (unused by role-separated workloads).
     existingSecretKey: url
+    # Four distinct DSN secret keys (enterprise existingSecret must include all).
+    ownerSecretKey: owner-url
+    appSecretKey: app-url
+    schedulerSecretKey: scheduler-url
+    workerSecretKey: worker-url
     resources:
       requests:
         cpu: 100m

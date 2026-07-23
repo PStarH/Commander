@@ -4,11 +4,20 @@
 #   export COMMANDER_API_KEY="$(openssl rand -hex 32)"
 #   export POSTGRES_PASSWORD="$(openssl rand -hex 16)"
 #   export COMMANDER_MASTER_KEY=… JWT_SECRET=… COMMANDER_CAPABILITY_TOKEN_KEY=…
+#   export COMMANDER_CAPABILITY_PRIVATE_KEY_PEM=… COMMANDER_CAPABILITY_KEY_ID=…
+#   export COMMANDER_CAPABILITY_JWKS_JSON=…   # worker/adapter Ed25519 authority
 #   export COMMANDER_INTEGRITY_KEY=… COMMANDER_WORKER_AUTH_TOKEN=…
 #   # Optional: DOCKER_GID — worker entrypoint auto-aligns to docker.sock GID.
 #   # Override only if you need compose group_add without rebuilding the image:
 #   #   export DOCKER_GID=$(docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine stat -c %g /var/run/docker.sock)
 #   docker compose -f docker-compose.yml -f docker-compose.cell.yml --profile cell up -d --build
+#
+# Authority mapping (bench role passwords; see deploy/docker/postgres-init.bench.sql):
+#   kernel-migrate → commander_owner
+#   api            → commander_app
+#   kernel-ops     → commander_scheduler
+#   worker / adapter-ops → commander_worker
+# Worker tenant default for cell: local (override via COMMANDER_WORKER_TENANTS).
 # =============================================================================
 
 services:
@@ -19,23 +28,37 @@ services:
   kernel-migrate:
     profiles:
       - cell
+    environment:
+      # Hardcoded role DSNs — block host DATABASE_URL / COMMANDER_KERNEL_DATABASE_URL bleed.
+      - DATABASE_URL=postgres://commander_owner:commander_owner@postgres:5432/commander
+      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_owner:commander_owner@postgres:5432/commander
+      # The owner migration is also responsible for seeding the explicit worker
+      # tenant allowlist before worker/adapter LOGINs register.
+      - COMMANDER_WORKER_TENANTS=${COMMANDER_WORKER_TENANTS:-${COMMANDER_CELL_TENANT_ID:-local}}
+      - COMMANDER_WORKER_ALLOWED_TENANTS=${COMMANDER_WORKER_ALLOWED_TENANTS:-${COMMANDER_WORKER_TENANTS:-${COMMANDER_CELL_TENANT_ID:-local}}}
+      # Owner-only policy seed for the explicit demo adapter; worker remains read-only.
+      - COMMANDER_ENABLE_DEMO_TICKET=${COMMANDER_ENABLE_DEMO_TICKET:-}
 
   api:
     profiles:
       - cell
     environment:
-      - API_STORE_BACKEND=postgres
+      # Legacy /api stores are frozen presentation compatibility, not /v1 authority.
+      # Keep their runtime DDL away from the least-privilege commander_app role.
+      - API_STORE_BACKEND=memory
+      - COMMANDER_MEMORY_STORE=in-memory
       - COMMANDER_KERNEL_ENABLED=1
       - COMMANDER_KERNEL_BACKEND=postgres
       - COMMANDER_ENABLE_DEMO_TICKET=${COMMANDER_ENABLE_DEMO_TICKET:-}
       - API_KEYS=${API_KEYS:-}
       - TENANT_API_KEYS=${TENANT_API_KEYS:-}
-      - COMMANDER_CELL_TENANT_ID=${COMMANDER_CELL_TENANT_ID:-}
-      - COMMANDER_DEFAULT_TENANT_ID=${COMMANDER_DEFAULT_TENANT_ID:-${COMMANDER_CELL_TENANT_ID:-}}
-      - DATABASE_URL=postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander
-      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander
+      - COMMANDER_CELL_TENANT_ID=${COMMANDER_CELL_TENANT_ID:-local}
+      - COMMANDER_DEFAULT_TENANT_ID=${COMMANDER_DEFAULT_TENANT_ID:-${COMMANDER_CELL_TENANT_ID:-local}}
+      - DATABASE_URL=postgres://commander_app:commander_app@postgres:5432/commander
+      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_app:commander_app@postgres:5432/commander
       - COMMANDER_MASTER_KEY=${COMMANDER_MASTER_KEY:?set COMMANDER_MASTER_KEY}
       - JWT_SECRET=${JWT_SECRET:?set JWT_SECRET}
+      # API legacy HMAC path (not worker/adapter authority).
       - COMMANDER_CAPABILITY_TOKEN_KEY=${COMMANDER_CAPABILITY_TOKEN_KEY:?set COMMANDER_CAPABILITY_TOKEN_KEY}
       - COMMANDER_INTEGRITY_KEY=${COMMANDER_INTEGRITY_KEY:?set COMMANDER_INTEGRITY_KEY}
     depends_on:
@@ -53,20 +76,28 @@ services:
       - ${DOCKER_GID:-0}
     user: '0:0'
     environment:
+      - DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander
+      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander
+      # Cell / Helm demo tenant scope (explicit; never '*').
+      - COMMANDER_WORKER_TENANTS=${COMMANDER_WORKER_TENANTS:-${COMMANDER_CELL_TENANT_ID:-local}}
       - COMMANDER_WORKER_AUTH_TOKEN=${COMMANDER_WORKER_AUTH_TOKEN:?set COMMANDER_WORKER_AUTH_TOKEN}
       - COMMANDER_WORKER_HEALTH_PORT=8083
       - COMMANDER_KERNEL_BACKEND=postgres
       - COMMANDER_ENABLE_DEMO_TICKET=${COMMANDER_ENABLE_DEMO_TICKET:-}
-      - COMMANDER_CELL_TENANT_ID=${COMMANDER_CELL_TENANT_ID:-}
+      - COMMANDER_CELL_TENANT_ID=${COMMANDER_CELL_TENANT_ID:-local}
       - COMMANDER_SANDBOX_ISOLATION=docker
       - DOCKER_HOST=unix:///var/run/docker.sock
+      # Worker authority: Ed25519 PEM + JWKS (fail-closed; no HMAC capability-token-key).
+      - COMMANDER_CAPABILITY_PRIVATE_KEY_PEM=${COMMANDER_CAPABILITY_PRIVATE_KEY_PEM:?set COMMANDER_CAPABILITY_PRIVATE_KEY_PEM}
+      - COMMANDER_CAPABILITY_KEY_ID=${COMMANDER_CAPABILITY_KEY_ID:?set COMMANDER_CAPABILITY_KEY_ID}
+      - COMMANDER_CAPABILITY_JWKS_JSON=${COMMANDER_CAPABILITY_JWKS_JSON:?set COMMANDER_CAPABILITY_JWKS_JSON}
     healthcheck:
       test:
         [
           'CMD',
           'node',
           '-e',
-          "fetch('http://127.0.0.1:8083/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+          "fetch('http://127.0.0.1:8083/ready').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
         ]
       interval: 15s
       timeout: 5s
@@ -76,6 +107,9 @@ services:
   kernel-ops:
     profiles:
       - cell
+    environment:
+      - DATABASE_URL=postgres://commander_scheduler:commander_scheduler@postgres:5432/commander
+      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_scheduler:commander_scheduler@postgres:5432/commander
 
   adapter-ops:
     build:
@@ -84,13 +118,19 @@ services:
     environment:
       - NODE_ENV=production
       - COMMANDER_KERNEL_BACKEND=postgres
-      - DATABASE_URL=postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander
-      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/commander
+      - DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander
+      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander
+      # Same fail-closed tenant scope as worker (resolveWorkerTenantScope on postgres path).
+      - COMMANDER_WORKER_TENANTS=${COMMANDER_WORKER_TENANTS:-${COMMANDER_CELL_TENANT_ID:-local}}
       - COMMANDER_ADAPTER_OPS_HEALTH_PORT=8082
       - COMMANDER_CELL_TIER=demo
       - COMMANDER_CELL_TENANT_ID=${COMMANDER_CELL_TENANT_ID:-local}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - COMMANDER_ADAPTER_EGRESS_ALLOWLIST=10.0.0.0/8
+      # Adapter authority: same Ed25519 contract as worker (fail-closed).
+      - COMMANDER_CAPABILITY_PRIVATE_KEY_PEM=${COMMANDER_CAPABILITY_PRIVATE_KEY_PEM:?set COMMANDER_CAPABILITY_PRIVATE_KEY_PEM}
+      - COMMANDER_CAPABILITY_KEY_ID=${COMMANDER_CAPABILITY_KEY_ID:?set COMMANDER_CAPABILITY_KEY_ID}
+      - COMMANDER_CAPABILITY_JWKS_JSON=${COMMANDER_CAPABILITY_JWKS_JSON:?set COMMANDER_CAPABILITY_JWKS_JSON}
     expose:
       - '8082'
     healthcheck:

@@ -117,7 +117,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
       runId: 'r1',
       stepId: 's1',
       actor: 'worker-1',
-      lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
+      lease: { workerId: DEFAULT_WORKER_ID, workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
       issuer,
     });
     const response = await runWithLlmEffectAuth(auth, () =>
@@ -147,7 +147,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
       runId: 'r1',
       stepId: 's1',
       actor: 'worker-1',
-      lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
+      lease: { workerId: DEFAULT_WORKER_ID, workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
       issuer,
     });
     const authPlain = createLlmEffectAuth({
@@ -155,7 +155,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
       runId: 'r2',
       stepId: 's2',
       actor: 'worker-1',
-      lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
+      lease: { workerId: DEFAULT_WORKER_ID, workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
       issuer,
     });
     const [r1, r2] = await Promise.all([
@@ -192,7 +192,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
       runId: 'r1',
       stepId: 's1',
       actor: 'worker-1',
-      lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
+      lease: { workerId: DEFAULT_WORKER_ID, workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
       issuer,
     });
     await assert.rejects(
@@ -226,7 +226,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
       runId: 'r1',
       stepId: 's1',
       actor: 'worker-1',
-      lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
+      lease: { workerId: DEFAULT_WORKER_ID, workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
       issuer,
     });
     await assert.rejects(
@@ -257,7 +257,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
       runId: 'r1',
       stepId: 's1',
       actor: 'worker-1',
-      lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
+      lease: { workerId: DEFAULT_WORKER_ID, workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
       issuer,
     });
     await runWithLlmEffectAuth(auth, () =>
@@ -351,7 +351,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
           runId: `run-${tenantId}`,
           stepId: 's1',
           actor: 'worker-1',
-          lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
+          lease: { workerId: DEFAULT_WORKER_ID, workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
           issuer,
         });
         return runWithLlmEffectAuth(auth, () =>
@@ -382,7 +382,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
             runId: 'r1',
             stepId: 's1',
             actor: 'worker-1',
-            lease: { workerId: 'w1', token: 'lease', fencingEpoch: 1 },
+            lease: { workerId: 'w1', workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
             issuer,
           }),
         /WORKLOAD_IDENTITY_REQUIRED/,
@@ -393,7 +393,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
         runId: 'r1',
         stepId: 's1',
         actor: 'worker-1',
-        lease: { workerId: 'w1' as const, token: 'lease', fencingEpoch: 1 },
+        lease: { workerId: 'w1' as const, workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
         mintCapabilityToken: () =>
           issuer.issue({
             jti: 'x',
@@ -423,16 +423,20 @@ describe('llmBrokerBridge (WS2 §1)', () => {
       runId: 'r1',
       stepId: 's1',
       actor: 'worker-1',
-      lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
+      lease: { workerId: DEFAULT_WORKER_ID, workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
       issuer,
     });
     // Sabotage: mint against a different body than the broker receives.
+    // Fence fields must still match lease so admit reaches REQUEST_HASH_MISMATCH.
     auth.mintCapabilityToken = () =>
       issuer.issue({
         jti: 'bad',
         tenantId: 't1',
         runId: 'r1',
         stepId: 's1',
+        workloadId: auth.workloadId,
+        workerId: DEFAULT_WORKER_ID,
+        workerGeneration: 1,
         effectTypes: ['llm.openai'],
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
         requestHash: canonicalRequestHash({ wrong: true }),
@@ -512,8 +516,8 @@ describe('llmBrokerBridge (WS2 §1)', () => {
             runId: 'r1',
             stepId: 's1',
             actor: 'worker-1',
-            // Bug shape: omit workerGeneration → ?? -1 → kernel LEASE_LOST
-            lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
+            // Grant↔lease fence matches; kernel claimed generation differs → LEASE_LOST
+            lease: { workerId: DEFAULT_WORKER_ID, workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
             issuer,
           }),
           () => wrapped.call({ model: 'gpt', messages: [{ role: 'user', content: 'x' }] }),
@@ -692,7 +696,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
       runId: 'r1',
       stepId: 's1',
       actor: 'worker-1',
-      lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
+      lease: { workerId: DEFAULT_WORKER_ID, workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
       issuer,
     });
     await assert.rejects(
@@ -733,7 +737,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
       runId: 'r1',
       stepId: 's1',
       actor: 'worker-1',
-      lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
+      lease: { workerId: DEFAULT_WORKER_ID, workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
       issuer,
     });
     await assert.rejects(
@@ -818,7 +822,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
       runId: 'r1',
       stepId: 's1',
       actor: 'worker-1',
-      lease: { workerId: DEFAULT_WORKER_ID, token: 'lease', fencingEpoch: 1 },
+      lease: { workerId: DEFAULT_WORKER_ID, workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
       issuer,
     });
 
@@ -876,7 +880,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
             runId: 'r1',
             stepId: 's1',
             actor: 'worker-1',
-            lease: { workerId: 'w1', token: 'lease', fencingEpoch: 1 },
+            lease: { workerId: 'w1', workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
             issuer,
           }),
         /WORKLOAD_IDENTITY_REQUIRED/,
@@ -887,7 +891,6 @@ describe('llmBrokerBridge (WS2 §1)', () => {
   });
 
   it('mints from verified step identity, not caller tenant override', async () => {
-    resetControlPlane();
     const { broker, issuer } = makeBroker();
     const wrapped = wrapProviderWithEffectBroker(mockProvider('openai'), broker);
     const step: ClaimedStep = {
@@ -900,12 +903,27 @@ describe('llmBrokerBridge (WS2 §1)', () => {
       input: {},
       lease: {
         workerId: 'w1',
+        workerGeneration: 1,
         token: 'lease',
         fencingEpoch: 1,
         expiresAt: '2099-01-01T00:00:00.000Z',
       },
     };
-    await runWithStepWorkloadIdentity(step, async () => {
+    const worker = {
+      id: 'w1',
+      kind: 'agent' as const,
+      version: 'v1',
+      capabilities: ['agent'],
+      maxConcurrency: 2,
+      status: 'ACTIVE' as const,
+      generation: 1,
+      activeSteps: 0,
+      identitySubject: 'spiffe://commander/worker/w1',
+      tenantIds: ['tenant-from-identity'],
+      registeredAt: '2099-01-01T00:00:00.000Z',
+      lastHeartbeatAt: '2099-01-01T00:00:00.000Z',
+    };
+    await runWithStepWorkloadIdentity(step, worker, async () => {
       const auth = createLlmEffectAuth({
         tenantId: 'attacker-override',
         runId: 'run-1',

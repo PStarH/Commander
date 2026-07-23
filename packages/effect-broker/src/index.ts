@@ -28,9 +28,65 @@ export interface CapabilityGrant {
   policySnapshotId?: string;
   /** Canonical hash of the exact external request allowed by the grant. */
   requestHash?: string;
+  /**
+   * Immutable digest of the governed action bound to this grant.
+   * Required at admit for Class A (external mutation) effect types.
+   */
+  actionDigest?: string;
   /** Step-scoped workload identity that authorized the mint. */
   workloadId?: string;
+  /** Live claim worker id bound at mint (Task 3 authority closure). */
+  workerId?: string;
+  /** Live claim worker generation bound at mint (Task 3 authority closure). */
+  workerGeneration?: number;
   nonce?: string;
+}
+
+/**
+ * Class A family segments. Any dotted path segment matching one of these
+ * marks the whole effect type Class A, regardless of the leading segment —
+ * this closes the `local.crm.write` / `local.connector.x` bypass where a
+ * Class C/B prefix (`local.`) was used to smuggle an external-mutation
+ * family past the actionDigest gate.
+ */
+const CLASS_A_FAMILY_SEGMENTS = new Set([
+  'crm',
+  'connector',
+  'compensate',
+  'http',
+  'saas',
+  'write',
+  'mutate',
+  'egress',
+]);
+
+/**
+ * Class A — External mutation
+ * Normative: `.internal/docs/architecture/authority-model.md` § Class A.
+ * Fail-closed: unknown effect-type families are treated as Class A, and any
+ * Class A family segment anywhere in the dotted path wins over a leading
+ * Class B/C prefix.
+ */
+export function isClassAEffectType(type: string): boolean {
+  const normalized = type.trim().toLowerCase();
+  if (normalized.split('.').some((segment) => CLASS_A_FAMILY_SEGMENTS.has(segment))) {
+    return true;
+  }
+  // Class B — disclosure / material spend
+  if (
+    normalized.startsWith('llm.') ||
+    normalized.startsWith('retrieve.') ||
+    normalized.startsWith('read.') ||
+    normalized.startsWith('budget.')
+  ) {
+    return false;
+  }
+  // Class C — pure local computation
+  if (normalized.startsWith('local.') || normalized.startsWith('compute.')) {
+    return false;
+  }
+  // Class A — external mutation (connector/SaaS/CRM/compensate/http writes/etc.)
+  return true;
 }
 
 /** Kernel-claimed step context required for production effect admission. */
@@ -43,7 +99,8 @@ export interface WorkloadBinding {
 
 export interface CapabilityRevocationStore {
   revoke(jti: string, expiresAt: string): void | Promise<void>;
-  isRevoked(jti: string): boolean | Promise<boolean>;
+  /** tenantId required so durable PG observe can set app.tenant_scope under RLS. */
+  isRevoked(jti: string, tenantId: string): boolean | Promise<boolean>;
 }
 
 export interface CapabilityReplayStore {
@@ -54,7 +111,7 @@ export interface CapabilityReplayStore {
 export class InMemoryCapabilityRevocationStore implements CapabilityRevocationStore {
   private readonly revoked = new Map<string, number>();
   revoke(jti: string, expiresAt: string): void { this.revoked.set(jti, Date.parse(expiresAt)); }
-  isRevoked(jti: string): boolean {
+  isRevoked(jti: string, _tenantId: string): boolean {
     const expiry = this.revoked.get(jti);
     if (!expiry) return false;
     if (expiry <= Date.now()) { this.revoked.delete(jti); return false; }
@@ -100,6 +157,8 @@ export interface EffectKernelPort {
     type: string;
     idempotencyKey: string;
     policyDecisionId: string;
+    policySnapshotId: string;
+    actionDigest: string;
     request: Record<string, unknown>;
     lease: { workerId: string; workerGeneration?: number; token: string; fencingEpoch: number };
     actor: string;
@@ -327,7 +386,7 @@ export class CapabilityTokenVerifier {
     const notBefore = Date.parse(grant.notBefore ?? grant.issuedAt ?? '');
     const expiresAt = Date.parse(grant.expiresAt);
     if (![issuedAt, notBefore, expiresAt].every(Number.isFinite) || issuedAt - this.clockSkewMs > time || notBefore - this.clockSkewMs > time || expiresAt + this.clockSkewMs <= time) throw new Error('Expired or not-yet-valid capability grant');
-    if (await this.options.revocations?.isRevoked(grant.jti)) throw new Error('Capability grant revoked');
+    if (await this.options.revocations?.isRevoked(grant.jti, grant.tenantId)) throw new Error('Capability grant revoked');
     if (grant.nonce && await this.options.replay?.consume(`${grant.jti}:${grant.nonce}`, grant.expiresAt)) throw new Error('Capability grant replayed');
     return grant;
   }
@@ -351,6 +410,16 @@ export interface CapabilityTokenPort {
   revoke?(grant: CapabilityGrant): void | Promise<void>;
 }
 
+/**
+ * Replay wiring on EffectBroker options.
+ * - Store: test doubles / single-tenant demos.
+ * - Factory: production presence from createCapabilityAuthority.replayForTenant
+ *   (no fixed tenant — durable consume stays on the verifier via grant.tenantId).
+ */
+export type EffectBrokerReplayOption =
+  | CapabilityReplayStore
+  | ((tenantId: string) => CapabilityReplayStore);
+
 export interface EffectBrokerOptions {
   audience?: string;
   approval?: ApprovalInteractionPort;
@@ -363,6 +432,68 @@ export interface EffectBrokerOptions {
   /** Local worker identity for executeAdmitted affinity checks (C-α). */
   localWorkerId?: string;
   localWorkerGeneration?: number;
+  /**
+   * Durable replay handle (store or tenant factory). Required when
+   * `requireDurableCapabilityStores` or production profile is active.
+   * EffectBroker does **not** consume this in verify — that stays on the
+   * CapabilityTokenPort from createCapabilityAuthority (avoids double-consume).
+   * `assertEffectBrokerDurableStores` rejects `InMemoryCapabilityReplayStore`
+   * outright — presence alone is not enough to prove durability.
+   */
+  replay?: EffectBrokerReplayOption;
+  /**
+   * Durable revocation store. Same non-in-memory contract as `replay`.
+   * Revocation checks remain on the verifier.
+   */
+  revocations?: CapabilityRevocationStore;
+  /**
+   * When true, constructor fail-closed unless both `replay` and `revocations`
+   * are present AND are not the in-memory (non-durable) store classes.
+   * Also forced by production/enterprise/`COMMANDER_REQUIRE_WORKLOAD_BINDING`
+   * profile.
+   */
+  requireDurableCapabilityStores?: boolean;
+}
+
+/** EffectBroker ctor reject when durable replay/revocations wiring is missing. */
+export const DURABLE_CAPABILITY_STORES_REQUIRED = 'DURABLE_CAPABILITY_STORES_REQUIRED';
+
+/**
+ * Assert options carry durable replay + revocations. Presence alone is not
+ * sufficient — a wired-up `InMemoryCapabilityReplayStore` / process-local
+ * `InMemoryCapabilityRevocationStore` satisfies presence but loses state on
+ * every worker restart, so it is rejected outright. `replay` may be a
+ * tenant-scoped factory (no fixed store instance to brand-check) or a store
+ * with a real `consume` function; `revocations` must expose `isRevoked`.
+ */
+export function assertEffectBrokerDurableStores(
+  options: Pick<EffectBrokerOptions, 'replay' | 'revocations'>,
+): void {
+  const { replay, revocations } = options;
+  if (replay == null || revocations == null) {
+    throw new EffectBrokerError(DURABLE_CAPABILITY_STORES_REQUIRED);
+  }
+  if (typeof replay === 'function') {
+    // Probe the factory — presence of a function alone is not durability.
+    const probed = replay('__commander_durable_probe__');
+    if (
+      probed instanceof InMemoryCapabilityReplayStore ||
+      typeof (probed as CapabilityReplayStore | null)?.consume !== 'function'
+    ) {
+      throw new EffectBrokerError(DURABLE_CAPABILITY_STORES_REQUIRED);
+    }
+  } else if (
+    replay instanceof InMemoryCapabilityReplayStore ||
+    typeof (replay as CapabilityReplayStore).consume !== 'function'
+  ) {
+    throw new EffectBrokerError(DURABLE_CAPABILITY_STORES_REQUIRED);
+  }
+  if (
+    revocations instanceof InMemoryCapabilityRevocationStore ||
+    typeof revocations.isRevoked !== 'function'
+  ) {
+    throw new EffectBrokerError(DURABLE_CAPABILITY_STORES_REQUIRED);
+  }
 }
 
 /**
@@ -427,16 +558,49 @@ function bindingMismatch(
   if (grant.tenantId !== binding.tenantId) return 'TENANT_MISMATCH';
   if (grant.runId !== binding.runId) return 'RUN_MISMATCH';
   if (grant.stepId !== binding.stepId) return 'STEP_MISMATCH';
-  // Symmetric: either side pinning workloadId must match (prevents token/binding split).
-  if (grant.workloadId !== binding.workloadId) {
+  // Fail-closed: both sides must pin a non-empty workloadId and match.
+  // Empty-empty (undefined/undefined or '') must not pass.
+  const grantWl = typeof grant.workloadId === 'string' ? grant.workloadId.trim() : '';
+  const bindWl = typeof binding.workloadId === 'string' ? binding.workloadId.trim() : '';
+  if (!grantWl || !bindWl || grantWl !== bindWl) {
     return 'WORKLOAD_MISMATCH';
+  }
+  return null;
+}
+
+/**
+ * Fail-closed grant↔lease worker fence (Task 3 / P1-2).
+ * Mint stamps live WorkerRecord id+generation; admit rejects missing or divergent fences.
+ */
+function workerFenceMismatch(
+  grant: CapabilityGrant,
+  lease: { workerId: string; workerGeneration?: number },
+): string | null {
+  if (typeof grant.workerId !== 'string' || grant.workerId.trim().length === 0) {
+    return 'WORKER_FENCE_MISMATCH';
+  }
+  if (typeof lease.workerId !== 'string' || lease.workerId.trim().length === 0) {
+    return 'WORKER_FENCE_MISMATCH';
+  }
+  if (grant.workerId !== lease.workerId) return 'WORKER_FENCE_MISMATCH';
+  if (typeof grant.workerGeneration !== 'number' || !Number.isFinite(grant.workerGeneration)) {
+    return 'WORKER_FENCE_MISMATCH';
+  }
+  // Fail-closed: a missing/non-finite lease generation must never be coerced
+  // to a sentinel (previously -1) that could accidentally match a real grant
+  // generation. Missing lease generation is always a mismatch.
+  if (typeof lease.workerGeneration !== 'number' || !Number.isFinite(lease.workerGeneration)) {
+    return 'WORKER_FENCE_MISMATCH';
+  }
+  if (grant.workerGeneration !== lease.workerGeneration) {
+    return 'WORKER_FENCE_MISMATCH';
   }
   return null;
 }
 
 /** The only supported path for an external write in Architecture V2. */
 export class EffectBroker {
-  private readonly options: Required<Pick<EffectBrokerOptions, 'audience' | 'requireRequestBinding'>> & Pick<EffectBrokerOptions, 'approval' | 'quotaLimits' | 'localWorkerId' | 'localWorkerGeneration'>;
+  private readonly options: Required<Pick<EffectBrokerOptions, 'audience' | 'requireRequestBinding'>> & Pick<EffectBrokerOptions, 'approval' | 'quotaLimits' | 'localWorkerId' | 'localWorkerGeneration' | 'replay' | 'revocations' | 'requireDurableCapabilityStores'>;
   private readonly admissionStore: AdmissionStore;
 
   constructor(
@@ -448,18 +612,44 @@ export class EffectBroker {
     options: EffectBrokerOptions = {},
   ) {
     const production = process.env.NODE_ENV === 'production';
-    const enterprise = process.env.COMMANDER_PROFILE === 'enterprise';
+    const productionProfile = isProductionProfile();
     const requireRequestBinding = options.requireRequestBinding ?? true;
     // WS2 §4 runtime gate: production must not disable request binding.
     if (production && !requireRequestBinding) {
       throw new EffectBrokerError('REQUEST_BINDING_DISABLED_IN_PROD');
     }
-    // Production/enterprise workers must pin affinity — unset localWorkerId
-    // silently skips fencing and allows cross-worker execute of admitted effects.
-    if ((production || enterprise) && !options.localWorkerId) {
+    // Production/enterprise/COMMANDER_REQUIRE_WORKLOAD_BINDING=1 workers must
+    // pin affinity — unset localWorkerId silently skips fencing and allows
+    // cross-worker execute of admitted effects. This MUST use the exact same
+    // predicate (isProductionProfile()) as the durable-store gate below —
+    // they previously diverged (affinity only checked NODE_ENV/COMMANDER_PROFILE,
+    // durable stores also checked COMMANDER_REQUIRE_WORKLOAD_BINDING), which let
+    // that env var require durable stores while silently skipping affinity.
+    const localWorkerId = typeof options.localWorkerId === 'string' ? options.localWorkerId.trim() : '';
+    if (productionProfile && !localWorkerId) {
       throw new EffectBrokerError('WORKER_AFFINITY_REQUIRED_IN_PROD');
     }
-    this.options = { audience: options.audience ?? 'commander.effect-broker', requireRequestBinding, approval: options.approval, quotaLimits: options.quotaLimits, localWorkerId: options.localWorkerId, localWorkerGeneration: options.localWorkerGeneration };
+    // Production / enterprise / COMMANDER_REQUIRE_WORKLOAD_BINDING / explicit
+    // flag: fail-closed unless durable, non-in-memory stores are wired on
+    // options. Durable verify/consume remains on the token port
+    // (createCapabilityAuthority); options.replay/revocations only prove
+    // wiring cannot forget or silently downgrade to in-memory stores.
+    const requireDurable =
+      options.requireDurableCapabilityStores === true || productionProfile;
+    if (requireDurable) {
+      assertEffectBrokerDurableStores(options);
+    }
+    this.options = {
+      audience: options.audience ?? 'commander.effect-broker',
+      requireRequestBinding,
+      approval: options.approval,
+      quotaLimits: options.quotaLimits,
+      localWorkerId: options.localWorkerId,
+      localWorkerGeneration: options.localWorkerGeneration,
+      replay: options.replay,
+      revocations: options.revocations,
+      requireDurableCapabilityStores: requireDurable,
+    };
     this.admissionStore = new InMemoryAdmissionStore();
   }
 
@@ -493,6 +683,15 @@ export class EffectBroker {
       const mismatch = bindingMismatch(grant, input.workloadBinding);
       if (mismatch) return this.rejectAdmit(grant, mismatch, { binding: input.workloadBinding });
     }
+    const fenceMismatch = workerFenceMismatch(grant, input.lease);
+    if (fenceMismatch) {
+      return this.rejectAdmit(grant, fenceMismatch, {
+        grantWorkerId: grant.workerId,
+        grantWorkerGeneration: grant.workerGeneration,
+        leaseWorkerId: input.lease.workerId,
+        leaseWorkerGeneration: input.lease.workerGeneration,
+      });
+    }
     if (grant.audience !== this.options.audience) return this.rejectAdmit(grant, 'AUDIENCE_MISMATCH', {});
     if (!grant.effectTypes.includes(input.type)) return this.rejectAdmit(grant, 'CAPABILITY_DENIED', { type: input.type });
     if (this.options.requireRequestBinding && grant.requestHash !== canonicalRequestHash(input.request)) return this.rejectAdmit(grant, 'REQUEST_HASH_MISMATCH', {});
@@ -522,7 +721,29 @@ export class EffectBroker {
         return this.rejectAdmit(grant, 'QUOTA_EXCEEDED', { actionClass, countUsed: current.countUsed, limit: maxCount });
       }
     }
-    const admitted = await this.kernel.admitEffect({ id: input.effectId, runId: grant.runId, stepId: grant.stepId, tenantId: grant.tenantId, type: input.type, idempotencyKey: input.idempotencyKey, policyDecisionId: decision.decisionId, request: input.request, lease: input.lease, actor: input.actor });
+    // Class A: actionDigest is mandatory on the grant before kernel admission.
+    if (isClassAEffectType(input.type)) {
+      if (typeof grant.actionDigest !== 'string' || grant.actionDigest.trim().length === 0) {
+        return this.rejectAdmit(grant, 'ACTION_DIGEST_REQUIRED', { type: input.type });
+      }
+    }
+    const actionDigest = isClassAEffectType(input.type)
+      ? grant.actionDigest!
+      : (grant.actionDigest ?? canonicalRequestHash(input.request));
+    const admitted = await this.kernel.admitEffect({
+      id: input.effectId,
+      runId: grant.runId,
+      stepId: grant.stepId,
+      tenantId: grant.tenantId,
+      type: input.type,
+      idempotencyKey: input.idempotencyKey,
+      policyDecisionId: decision.decisionId,
+      policySnapshotId: decision.policySnapshotId,
+      actionDigest,
+      request: input.request,
+      lease: input.lease,
+      actor: input.actor,
+    });
     if (!admitted.admitted || !admitted.effect) return this.rejectAdmit(grant, 'EFFECT_ADMISSION_REJECTED', { reason: admitted.reason ?? 'unknown' });
     // Charge only successful new admissions. LEASE_LOST / conflict never reach here;
     // idempotent replays must not double-count.
@@ -829,11 +1050,12 @@ export class EffectBroker {
         actualWorkerId: admission.lease.workerId,
       });
     }
-    // Align with kernel live(): missing generation coerces to -1.
+    // Fail-closed: a missing/non-finite lease generation must never be
+    // coerced to a sentinel (previously -1) — it always fails the check.
     const localGen = this.options.localWorkerGeneration;
     if (localGen !== undefined) {
-      const leaseGen = admission.lease.workerGeneration ?? -1;
-      if (leaseGen !== localGen) {
+      const leaseGen = admission.lease.workerGeneration;
+      if (typeof leaseGen !== 'number' || !Number.isFinite(leaseGen) || leaseGen !== localGen) {
         throw new EffectBrokerError('WORKER_AFFINITY_VIOLATION', {
           effectId: admission.effectId,
           expectedWorkerGeneration: localGen,
