@@ -37,6 +37,7 @@ before(async () => {
   app.get('/context', (req: Request, res: Response) => {
     res.json({
       apiKeyId: req.apiKeyId,
+      apiScopes: req.apiScopes,
       tenantId: req.tenantId,
     });
   });
@@ -98,6 +99,20 @@ test('TENANT_API_KEYS multiple keys per tenant', async () => {
   assert.equal(res2.status, 200);
   const body2 = (await res2.json()) as { tenantId: string };
   assert.equal(body2.tenantId, 'globex');
+});
+
+test('tenant binding preserves explicit API key scopes with colon names', async () => {
+  process.env.API_KEYS = 'shared-key:cell-e2e:admin;actions:approve';
+  process.env.TENANT_API_KEYS = 'cell-tenant:shared-key';
+  resetApiKeyStore();
+
+  const res = await request('/context', {
+    headers: { 'X-API-Key': 'shared-key' },
+  });
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as { apiScopes: string[]; tenantId: string };
+  assert.equal(body.tenantId, 'cell-tenant');
+  assert.deepEqual(body.apiScopes, ['admin', 'actions:approve']);
 });
 
 test('persistent API key with tenantId sets req.tenantId', async () => {
