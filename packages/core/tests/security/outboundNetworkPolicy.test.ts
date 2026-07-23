@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   OutboundNetworkPolicy,
   resetOutboundNetworkPolicy,
@@ -88,6 +88,12 @@ describe('OutboundNetworkPolicy', () => {
       expect(p.check('http://192.168.1.1/admin').allowed).toBe(false);
       expect(p.check('http://172.16.0.1/admin').allowed).toBe(false);
       expect(p.check('http://169.254.169.254/latest/meta-data').allowed).toBe(false);
+      expect(p.check('http://100.64.0.1/internal').allowed).toBe(false);
+      expect(p.check('http://[fe90::1]/internal').allowed).toBe(false);
+      expect(p.check('http://[::]/internal').allowed).toBe(false);
+      expect(p.check('http://[ff02::1]/internal').allowed).toBe(false);
+      expect(p.check('http://[2001:db8::1]/internal').allowed).toBe(false);
+      expect(p.check('http://224.0.0.1/internal').allowed).toBe(false);
     });
 
     it('blocks private IPs even when explicitly in allowlist', () => {
@@ -138,6 +144,79 @@ describe('OutboundNetworkPolicy', () => {
         const result = await p.checkAsync('https://evil.example.com/x');
         expect(result.allowed).toBe(false);
         expect(result.reason).toMatch(/private IP|DNS/);
+      } finally {
+        dns.promises.lookup = original;
+      }
+    });
+
+    it('checkAsync denies compressed, expanded, and dotted IPv4-mapped private DNS answers', async () => {
+      const dns = await import('node:dns');
+      const original = dns.promises.lookup;
+      const answers = ['::ffff:127.0.0.1', '::ffff:7f00:1', '0:0:0:0:0:ffff:7f00:1'];
+      try {
+        const p = new OutboundNetworkPolicy({
+          enabled: true,
+          allowlist: ['rebind.example.com'],
+          blocklist: [],
+          blockPrivateIPs: true,
+        });
+        for (const address of answers) {
+          dns.promises.lookup = (async () => [
+            { address, family: 6 },
+          ]) as typeof dns.promises.lookup;
+          const result = await p.checkSsrfAsync('https://rebind.example.com/x');
+          expect(result.allowed, address).toBe(false);
+        }
+      } finally {
+        dns.promises.lookup = original;
+      }
+    });
+
+    it('checkSsrfAsync denies non-global IPv6 DNS answers', async () => {
+      const dns = await import('node:dns');
+      const original = dns.promises.lookup;
+      const answers = ['::', 'ff02::1', '100::1', '64:ff9b:1::1', '2001:db8::1', '3fff::1'];
+      try {
+        const p = new OutboundNetworkPolicy({ enabled: true, blockPrivateIPs: true });
+        for (const address of answers) {
+          dns.promises.lookup = (async () => [
+            { address, family: 6 },
+          ]) as typeof dns.promises.lookup;
+          const result = await p.checkSsrfAsync('https://dns-rebind.example.com/x');
+          expect(result.allowed, address).toBe(false);
+        }
+      } finally {
+        dns.promises.lookup = original;
+      }
+    });
+
+    it('checkSsrfAsync preserves a globally routable IPv6 DNS answer', async () => {
+      const dns = await import('node:dns');
+      const original = dns.promises.lookup;
+      dns.promises.lookup = (async () => [
+        { address: '2001:4860:4860::8888', family: 6 },
+      ]) as typeof dns.promises.lookup;
+      try {
+        const p = new OutboundNetworkPolicy({ enabled: true, blockPrivateIPs: true });
+        const result = await p.checkSsrfAsync('https://public-v6.example.com/x');
+        expect(result.allowed).toBe(true);
+        expect(result.addresses).toEqual(['2001:4860:4860::8888']);
+      } finally {
+        dns.promises.lookup = original;
+      }
+    });
+
+    it('ssrfCheckedFetch rejects a private DNS answer before connecting', async () => {
+      const dns = await import('node:dns');
+      const original = dns.promises.lookup;
+      dns.promises.lookup = (async () => [
+        { address: '127.0.0.1', family: 4 },
+      ]) as typeof dns.promises.lookup;
+      try {
+        const p = new OutboundNetworkPolicy({ enabled: true, blockPrivateIPs: true });
+        await expect(p.ssrfCheckedFetch('https://rebind.example.com/secret')).rejects.toThrow(
+          /OUTBOUND_BLOCKED.*private IP/,
+        );
       } finally {
         dns.promises.lookup = original;
       }
@@ -216,15 +295,27 @@ describe('OutboundNetworkPolicy', () => {
     });
 
     it('allows fetch to allowlisted domains', async () => {
-      policy.install();
-      // We can't actually make a real HTTP call in tests, but we can verify
-      // that the policy doesn't reject the URL
+      const url = 'https://api.openai.com/v1/models';
+      const originalFetch = globalThis.fetch;
+      const upstreamResponse = new Response('{}', { status: 200 });
+      const upstreamFetch = vi.fn(async () => upstreamResponse);
+      globalThis.fetch = upstreamFetch as typeof globalThis.fetch;
+
       try {
-        await fetch('https://api.openai.com/v1/models');
-      } catch (err) {
-        // The fetch may fail for network reasons, but it should NOT be
-        // an OutboundNetworkPolicyError
-        expect((err as Error).name).not.toBe('OutboundNetworkPolicyError');
+        expect(policy.check(url).allowed).toBe(true);
+        // DNS/private-address enforcement and pinning have dedicated tests above.
+        // This case isolates the install wrapper and allowed-request forwarding.
+        const checkAsync = vi
+          .spyOn(policy, 'checkAsync')
+          .mockResolvedValue({ allowed: true, domain: 'api.openai.com' });
+        policy.install();
+
+        await expect(fetch(url)).resolves.toBe(upstreamResponse);
+        expect(checkAsync).toHaveBeenCalledWith(url);
+        expect(upstreamFetch).toHaveBeenCalledOnce();
+      } finally {
+        policy.uninstall();
+        globalThis.fetch = originalFetch;
       }
     });
 

@@ -383,7 +383,10 @@ export const runtimeExecuteBody = z.object({
 
 // POST /api/state-machine/create
 export const stateMachineCreateBody = z.object({
-  taskId: z.string().min(1).max(200).optional(),
+  taskId: z
+    .string()
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/, 'Invalid taskId format')
+    .optional(),
   projectId: z.string().min(1).max(200).optional(),
   agentId: z.string().min(1).max(200).optional(),
   type: z.enum(['standard', 'saga', 'pipeline']).default('standard'),

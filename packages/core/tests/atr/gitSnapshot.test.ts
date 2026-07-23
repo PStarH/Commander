@@ -110,6 +110,16 @@ describe('gitSnapshot', () => {
       // The tracked file should be restored to pre-run state
       expect(fs.readFileSync(path.join(tempDir, 'README.md'), 'utf-8')).toBe('before run');
     });
+
+    it('rejects injected persisted object ids without executing shell commands', () => {
+      createGitSnapshot(testRunId, tempDir);
+      const marker = path.join(tempDir, 'command-injection-marker');
+      const snapshot = getGitSnapshot(testRunId)!;
+      snapshot.baseCommitSha = `${snapshot.baseCommitSha}; touch ${marker}`;
+
+      expect(restoreGitSnapshot(testRunId, tempDir)).toBe(false);
+      expect(fs.existsSync(marker)).toBe(false);
+    });
   });
 
   describe('clearGitSnapshot', () => {

@@ -2,6 +2,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import { randomUUID } from 'node:crypto';
 import { getMessageBus } from '../runtime/messageBus';
 import { getGlobalLogger } from '../logging';
+import { getCurrentTenantId } from '../runtime/tenantContext';
 import type { WorkQueueStore } from './workQueueStore';
 import { InMemoryWorkQueueStore } from './inMemoryWorkQueueStore';
 
@@ -27,6 +28,10 @@ export interface WorkItem {
   createdAt: string;
   leaseToken?: string;
   fencingEpoch?: number;
+  /** Authoritative tenant captured when the work item is created. */
+  tenantId?: string;
+  /** Authenticated principal that owns the run containing this work item. */
+  ownerId?: string;
 }
 
 export type WorkEvent =
@@ -49,6 +54,8 @@ export interface EnqueueInput {
   maxAttempts?: number;
   tokenBudget?: number;
   priority?: number;
+  tenantId?: string;
+  ownerId?: string;
 }
 
 export interface ClaimFilter {
@@ -126,6 +133,17 @@ export class WorkCoordinator {
     const out: WorkItem[] = [];
     const now = new Date().toISOString();
     for (const i of inputs) {
+      const existingRunItem = Array.from(this.items.values()).find(
+        (candidate) => candidate.runId === i.runId,
+      );
+      const tenantId = i.tenantId ?? existingRunItem?.tenantId ?? getCurrentTenantId();
+      const ownerId = i.ownerId ?? existingRunItem?.ownerId;
+      if (
+        (existingRunItem?.tenantId && tenantId && existingRunItem.tenantId !== tenantId) ||
+        (existingRunItem?.ownerId && ownerId && existingRunItem.ownerId !== ownerId)
+      ) {
+        throw new Error(`Run ownership mismatch for ${i.runId}`);
+      }
       const id = this.generateId();
       const item: WorkItem = {
         id,
@@ -140,6 +158,8 @@ export class WorkCoordinator {
         tokenBudget: i.tokenBudget ?? DEFAULT_TOKEN_BUDGET,
         priority: i.priority ?? DEFAULT_PRIORITY,
         createdAt: now,
+        tenantId,
+        ownerId,
       };
       this.items.set(id, item);
       this.store.enqueue(item);

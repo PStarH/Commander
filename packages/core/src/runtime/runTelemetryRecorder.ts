@@ -127,6 +127,7 @@ export class RunTelemetryRecorder {
     );
     bus.publish('agent.completed', ctx.agentId, {
       runId,
+      projectId: ctx.projectId,
       missionId: ctx.missionId,
       summary: result.summary,
       tokenUsage: totalTokens,
@@ -370,6 +371,7 @@ export class RunTelemetryRecorder {
     );
     bus.publish('agent.failed', ctx.agentId, {
       runId,
+      projectId: ctx.projectId,
       missionId: ctx.missionId,
       error: lastError,
     });

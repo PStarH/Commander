@@ -61,7 +61,11 @@ describe('cost dashboard tenant filtering', () => {
     }
   });
 
-  function makeLLMCallEvent(tenantId: string | undefined, promptTokens: number, completionTokens: number): TraceEvent {
+  function makeLLMCallEvent(
+    tenantId: string | undefined,
+    promptTokens: number,
+    completionTokens: number,
+  ): TraceEvent {
     return {
       id: 'evt-1',
       spanId: 'span-1',
@@ -93,6 +97,7 @@ describe('cost dashboard tenant filtering', () => {
     writeEvents([
       makeLLMCallEvent('tenant-a', 1000, 200),
       makeLLMCallEvent('tenant-b', 500, 100),
+      makeLLMCallEvent(undefined, 900, 100),
     ]);
 
     const resA = await fetch(`${baseUrl}/api/cost/dashboard`, {
@@ -113,10 +118,7 @@ describe('cost dashboard tenant filtering', () => {
   });
 
   it('falls back to single-tenant mode without a tenant header', async () => {
-    writeEvents([
-      makeLLMCallEvent(undefined, 300, 50),
-      makeLLMCallEvent(undefined, 700, 150),
-    ]);
+    writeEvents([makeLLMCallEvent(undefined, 300, 50), makeLLMCallEvent(undefined, 700, 150)]);
 
     const res = await fetch(`${baseUrl}/api/cost/dashboard`);
     assert.equal(res.status, 200);

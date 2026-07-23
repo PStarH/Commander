@@ -7,6 +7,11 @@ import * as http from 'http';
 
 import { isUrlSafe } from '../src/tools/_utils/urlSafety';
 import { safeFetch, performFetch, SafeFetchError } from '../src/tools/_utils/httpClient';
+import {
+  getOutboundNetworkPolicy,
+  pinnedHttpFetch,
+  resetOutboundNetworkPolicy,
+} from '../src/security/outboundNetworkPolicy';
 import { atomicWriteFile } from '../src/tools/_utils/atomicWrite';
 
 describe('isUrlSafe', () => {
@@ -177,6 +182,71 @@ describe('safeFetch', () => {
     }
   });
 
+  it('propagates an AbortSignal to the pinned request and aborts a slow response', async () => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.write('partial');
+      setTimeout(() => res.end('late'), 500);
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+    const controller = new AbortController();
+    const request = pinnedHttpFetch(`http://127.0.0.1:${port}/`, '127.0.0.1', {
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(), 25).unref();
+
+    try {
+      await assert.rejects(request, (error: unknown) => {
+        return error instanceof Error && error.name === 'AbortError';
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  it('rejects an oversized chunked pinned response before buffering it in full', async () => {
+    const chunk = Buffer.alloc(1024 * 1024, 0x78);
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Transfer-Encoding': 'chunked' });
+      for (let index = 0; index < 6; index += 1) res.write(chunk);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+
+    try {
+      await assert.rejects(
+        () => pinnedHttpFetch(`http://127.0.0.1:${port}/`, '127.0.0.1'),
+        /response body exceeds 5242880 bytes/,
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  it('preserves the original non-default port in the pinned Host header', async () => {
+    let receivedHost: string | undefined;
+    const server = http.createServer((req, res) => {
+      receivedHost = req.headers.host;
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('ok');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+
+    try {
+      const response = await pinnedHttpFetch(
+        `http://public.example.test:${port}/resource`,
+        '127.0.0.1',
+      );
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(receivedHost, `public.example.test:${port}`);
+    } finally {
+      server.close();
+    }
+  });
+
   it('returns ok=false for non-2xx responses without throwing', async () => {
     const server = http.createServer((req, res) => {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
@@ -191,6 +261,59 @@ describe('safeFetch', () => {
       assert.strictEqual(result.body, 'not found');
     } finally {
       server.close();
+    }
+  });
+
+  it('rejects a redirect to a private address before opening the next request', async () => {
+    const policy = getOutboundNetworkPolicy({ enabled: true });
+    const original = policy.ssrfCheckedFetch;
+    const requested: string[] = [];
+    policy.ssrfCheckedFetch = async (url: string) => {
+      requested.push(url);
+      return new Response('', {
+        status: 302,
+        headers: { location: 'http://127.0.0.1:8080/admin' },
+      });
+    };
+    try {
+      await assert.rejects(
+        () => safeFetch('https://public.example.test/start'),
+        (err: unknown) => err instanceof SafeFetchError && err.code === 'unsafe_url',
+      );
+      assert.deepStrictEqual(requested, ['https://public.example.test/start']);
+    } finally {
+      policy.ssrfCheckedFetch = original;
+      resetOutboundNetworkPolicy();
+    }
+  });
+
+  it('follows a public redirect while validating each hop', async () => {
+    const policy = getOutboundNetworkPolicy({ enabled: true });
+    const original = policy.ssrfCheckedFetch;
+    const requested: string[] = [];
+    policy.ssrfCheckedFetch = async (url: string) => {
+      requested.push(url);
+      if (url.endsWith('/start')) {
+        return new Response('', {
+          status: 302,
+          headers: { location: '/article' },
+        });
+      }
+      return new Response('public content', {
+        status: 200,
+        headers: { 'content-type': 'text/plain' },
+      });
+    };
+    try {
+      const result = await safeFetch('https://public.example.test/start');
+      assert.strictEqual(result.body, 'public content');
+      assert.deepStrictEqual(requested, [
+        'https://public.example.test/start',
+        'https://public.example.test/article',
+      ]);
+    } finally {
+      policy.ssrfCheckedFetch = original;
+      resetOutboundNetworkPolicy();
     }
   });
 });

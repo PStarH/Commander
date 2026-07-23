@@ -60,6 +60,7 @@ import { getGlobalExplorationEventLog } from '../ultimate/topologyStores';
 import { PersistentTraceStore } from './traceStore';
 import { LeaseManager } from '../atr/leaseManager';
 import type { AuthPlugin } from './authPlugin';
+import { ROLE_HIERARCHY, type AuthRole } from './authManager';
 import type { SAMLAuthPlugin } from './samlAuthPlugin';
 import type { SIEMForwarder } from './siemForwarder';
 import type { SecurityEvent } from '../security/securityAuditLogger';
@@ -716,9 +717,15 @@ export class CommanderHttpServer {
     });
   }
 
-  /** Full auth gate (API key + OIDC). Returns true if allowed; sends 401 and returns false otherwise. */
-  private async authenticateRequest(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  /** Full auth gate (API key + OIDC). Returns true if allowed; sends an error otherwise. */
+  private async authenticateRequest(
+    req: IncomingMessage,
+    res: ServerResponse,
+    requiredRole?: AuthRole,
+  ): Promise<boolean> {
     const authResult = authenticate(req, this.authDisabled, this.apiKeyHash, this.authPlugins);
+    // The configured server API key is the embedded server's owner credential.
+    // Explicit auth-disabled mode remains the local-development escape hatch.
     if (authResult.success) return true;
 
     // If auth plugins are registered, try async OIDC authentication
@@ -728,7 +735,14 @@ export class CommanderHttpServer {
         for (const plugin of this.authPlugins) {
           try {
             const result = await plugin.authenticate(bearerToken);
-            if (result) return true;
+            if (result) {
+              if (requiredRole && ROLE_HIERARCHY[result.role] < ROLE_HIERARCHY[requiredRole]) {
+                res.writeHead(403, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Insufficient privileges.' }));
+                return false;
+              }
+              return true;
+            }
           } catch (err) {
             reportSilentFailure(err, 'httpServer:558');
             continue;
@@ -809,7 +823,8 @@ export class CommanderHttpServer {
       (segments[0] === 'slo' || segments[0] === 'alerts' || segments[0] === 'incidents') &&
       segments.length >= 1
     ) {
-      if (protectHealth && !(await this.authenticateRequest(req, res))) return;
+      const requiredRole = req.method === 'GET' ? undefined : 'operator';
+      if (!(await this.authenticateRequest(req, res, requiredRole))) return;
       let reqBody: string | undefined;
       if (req.method === 'POST' || req.method === 'PUT') {
         reqBody = await this.readRequestBody(req);
@@ -829,7 +844,8 @@ export class CommanderHttpServer {
       (segments[0] === 'slo' || segments[0] === 'alerts' || segments[0] === 'incidents') &&
       segments.length >= 1
     ) {
-      if (protectHealth && !(await this.authenticateRequest(req, res))) return;
+      const requiredRole = req.method === 'GET' ? undefined : 'operator';
+      if (!(await this.authenticateRequest(req, res, requiredRole))) return;
       let reqBody: string | undefined;
       if (req.method === 'POST' || req.method === 'PUT') {
         reqBody = await this.readRequestBody(req);
@@ -861,7 +877,7 @@ export class CommanderHttpServer {
       return;
     }
 
-    // SOP dashboard (HTML page — bypasses auth for local dev)
+    // SOP dashboard (HTML page — authenticated unless auth is explicitly disabled)
     //
     // Async migration: renderSOPDashboardHtmlAsync uses fs.promises under
     // the hood, so the response can be prepared in the background while
@@ -869,6 +885,7 @@ export class CommanderHttpServer {
     // version did readdirSync + readFileSync + statSync per SOP file,
     // which lagged the event loop for the entire render.
     if (segments[0] === 'dashboard' && segments[1] === 'sop' && (req.method ?? 'GET') === 'GET') {
+      if (!(await this.authenticateRequest(req, res))) return;
       try {
         const html = await renderSOPDashboardHtmlAsync();
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });

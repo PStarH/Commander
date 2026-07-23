@@ -44,6 +44,7 @@ export interface GovernanceCheckpoint {
   taskId: string;
   type: CheckpointType;
   status: CheckpointStatus;
+  tenantId?: string;
 
   /** Risk assessment */
   riskScore: number; // 0-100
@@ -200,6 +201,7 @@ export class CheckpointManager {
     riskFactors: RiskFactor[],
     approvers: string[],
     timeout?: number,
+    tenantId?: string,
   ): GovernanceCheckpoint {
     const config = this.configs.get(missionId) ?? DEFAULT_CHECKPOINT_CONFIGS[governanceMode];
     const type = this.determineCheckpointType(governanceMode, riskScore, config.riskThreshold);
@@ -212,6 +214,7 @@ export class CheckpointManager {
       taskId,
       type,
       status: type === 'automatic' ? 'approved' : 'pending',
+      tenantId,
       riskScore,
       riskLevel,
       requiredApprovals: type === 'automatic' ? [] : approvers,
@@ -252,10 +255,11 @@ export class CheckpointManager {
   /**
    * Get pending checkpoints for an approver
    */
-  getPendingForApprover(approverId: string): GovernanceCheckpoint[] {
+  getPendingForApprover(approverId: string, tenantId?: string): GovernanceCheckpoint[] {
     return Array.from(this.checkpoints.values()).filter(
       (c) =>
         c.status === 'pending' &&
+        (!tenantId || c.tenantId === tenantId) &&
         c.requiredApprovals.includes(approverId) &&
         !c.currentApprovals.some((a) => a.reviewerId === approverId),
     );
@@ -361,12 +365,13 @@ export class CheckpointManager {
   /**
    * Check for expired checkpoints and apply fallback
    */
-  checkExpirations(): GovernanceCheckpoint[] {
+  checkExpirations(tenantId?: string): GovernanceCheckpoint[] {
     const now = new Date();
     const expired: GovernanceCheckpoint[] = [];
 
     for (const checkpoint of this.checkpoints.values()) {
       if (
+        (!tenantId || checkpoint.tenantId === tenantId) &&
         checkpoint.status === 'pending' &&
         checkpoint.expiresAt &&
         new Date(checkpoint.expiresAt) < now
@@ -409,10 +414,12 @@ export class CheckpointManager {
   /**
    * Get checkpoint statistics
    */
-  getStats(missionId?: string): CheckpointStats {
-    const checkpoints = missionId
-      ? Array.from(this.checkpoints.values()).filter((c) => c.missionId === missionId)
-      : Array.from(this.checkpoints.values());
+  getStats(missionId?: string, tenantId?: string): CheckpointStats {
+    const checkpoints = Array.from(this.checkpoints.values()).filter(
+      (checkpoint) =>
+        (!missionId || checkpoint.missionId === missionId) &&
+        (!tenantId || checkpoint.tenantId === tenantId),
+    );
 
     return {
       total: checkpoints.length,

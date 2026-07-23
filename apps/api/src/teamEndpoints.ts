@@ -1,5 +1,7 @@
 import { Router } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import { getWorkCoordinator, type TeamStatus, type WorkItem } from '@commander/core';
+import { hasRole } from './userStore';
 
 const RUN_ID_PATTERN = /^[a-zA-Z0-9_.-]+$/;
 
@@ -12,16 +14,54 @@ function isValidRunId(runId: unknown): runId is string {
   );
 }
 
+function requireAuth(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user && !req.apiKeyId) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  next();
+}
+
+function canAccessRun(req: Request, items: WorkItem[]): boolean {
+  const principal = req.user?.id ?? req.apiKeyId;
+  const tenant = req.user?.tenantId ?? req.tenantId;
+  if (!principal || !tenant || items.length === 0) return false;
+  return items.every((item) => {
+    return (
+      item.tenantId === tenant &&
+      typeof item.ownerId === 'string' &&
+      item.ownerId.length > 0 &&
+      ((!!req.user && hasRole(req.user.role, 'admin')) || item.ownerId === principal)
+    );
+  });
+}
+
+function runItems(req: Request, res: Response): WorkItem[] | undefined {
+  const runId = req.params.runId;
+  if (!isValidRunId(runId)) {
+    res.status(400).json({ error: 'runId is required and must be alphanumeric' });
+    return undefined;
+  }
+  const items = getWorkCoordinator().list({ runId });
+  if (!canAccessRun(req, items)) {
+    res.status(404).json({ error: 'Team run not found' });
+    return undefined;
+  }
+  return items;
+}
+
 export function createTeamRouter(): Router {
   const router = Router();
+  router.use(requireAuth);
 
   router.get('/api/teams/:runId/status', (req, res) => {
     const { runId } = req.params;
     if (!isValidRunId(runId)) {
       return res.status(400).json({ error: 'runId is required and must be alphanumeric' });
     }
-    const coord = getWorkCoordinator();
-    const status: TeamStatus = coord.getTeamStatus(runId);
+    const items = runItems(req, res);
+    if (!items) return;
+    const status: TeamStatus = getWorkCoordinator().getTeamStatus(runId);
     res.json(status);
   });
 
@@ -30,8 +70,8 @@ export function createTeamRouter(): Router {
     if (!isValidRunId(runId)) {
       return res.status(400).json({ error: 'runId is required and must be alphanumeric' });
     }
-    const coord = getWorkCoordinator();
-    const items: WorkItem[] = coord.list({ runId });
+    const items = runItems(req, res);
+    if (!items) return;
     res.json({ runId, items, total: items.length });
   });
 
@@ -40,8 +80,8 @@ export function createTeamRouter(): Router {
     if (!isValidRunId(runId)) {
       return res.status(400).json({ error: 'runId is required and must be alphanumeric' });
     }
-    const coord = getWorkCoordinator();
-    const items = coord.list({ runId });
+    const items = runItems(req, res);
+    if (!items) return;
     const byAgent = new Map<
       string,
       { claimed: number; completed: number; failed: number; pending: number; totalTokens: number }
@@ -83,7 +123,13 @@ export function createTeamRouter(): Router {
     if (typeof workId !== 'string' || workId.length === 0) {
       return res.status(400).json({ error: 'workId is required' });
     }
+    const items = runItems(req, res);
+    if (!items) return;
     const coord = getWorkCoordinator();
+    const item = items.find((candidate) => candidate.id === workId);
+    if (!item) {
+      return res.status(404).json({ error: 'Work item not found or not in reassignable state' });
+    }
     const reassigned = coord.reassign(workId, 'manual reassign from API');
     if (!reassigned) {
       return res.status(404).json({ error: 'Work item not found or not in reassignable state' });

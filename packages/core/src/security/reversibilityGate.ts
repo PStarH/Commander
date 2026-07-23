@@ -56,6 +56,7 @@ const HARDCODED_IRREVERSIBLE: readonly string[] = [
   'python_execute', // arbitrary code execution
   'web_fetch', // makes external network request (data exfiltration)
   'browser_search', // external network
+  'browser_fetch', // external network request (data exfiltration)
   'mcp__', // all MCP tools are treated as irreversible by default
   // AgentDojo / external-agent toolset — these actions cannot be undone by
   // any compensation/rollback mechanism and are the canonical attack targets
@@ -81,12 +82,20 @@ const HARDCODED_IRREVERSIBLE: readonly string[] = [
  */
 const HARDCODED_REVERSIBLE: readonly string[] = [
   'file_read',
+  'file_search',
+  'file_list',
+  'glob',
   'web_search', // search queries are side-effect-free
   'memory_recall',
   'memory_list',
   'memory_search',
+  'code_search',
   'file_hash',
-  'checkpoint',
+  'checkpoint_list',
+  'handoff_check',
+  'vision_analyze',
+  'pdf_extract',
+  'request_tool',
   'verify_answer',
   'verify',
 ];

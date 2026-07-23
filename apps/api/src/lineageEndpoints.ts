@@ -17,6 +17,7 @@ import { reportSilentFailure } from '@commander/core';
 import { Router } from 'express';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
+import { tenantPathSegment } from '@commander/core/runtime/tenantContext';
 import { toErrorMessage } from './routeHelpers';
 
 // ── Types ─────────────────────────────────────────────────────────────────
@@ -62,8 +63,9 @@ interface TraceEvent {
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-function findTracesDir(): string {
-  return path.join(process.cwd(), '.commander_traces');
+function findTracesDir(tenantId?: string): string {
+  const baseDir = path.join(process.cwd(), '.commander_traces');
+  return tenantId ? path.join(baseDir, tenantPathSegment(tenantId)) : baseDir;
 }
 
 async function readNdjsonFile(filePath: string): Promise<TraceEvent[]> {
@@ -383,7 +385,8 @@ export function createLineageRouter(): Router {
         return res.status(400).json({ error: 'Invalid runId format' });
       }
 
-      const tracesDir = findTracesDir();
+      const tenantId = (req as typeof req & { tenantId?: string }).tenantId;
+      const tracesDir = findTracesDir(tenantId);
       const events = await readNdjsonFile(path.join(tracesDir, `${runId}.ndjson`));
       const summary = buildLineageSummary(runId, events);
       res.json(summary);

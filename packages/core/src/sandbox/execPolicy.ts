@@ -82,11 +82,10 @@ export class ExecPolicyEngine {
       'git stash list',
       'git rev-parse',
     ];
-    const SAFE_DEV = [
+    const DEVELOPMENT_TOOLS_REQUIRING_APPROVAL = [
       'npm',
       'pnpm',
       'yarn',
-      // npx forbidden — download-on-execute supply-chain risk (align with MCP whitelist)
       'tsc',
       'eslint',
       'prettier',
@@ -99,7 +98,6 @@ export class ExecPolicyEngine {
       'cargo',
       'go',
     ];
-
     this.rules.push(
       // Safe: read-only commands (priority 1 — lowest, easily overridden)
       {
@@ -117,20 +115,19 @@ export class ExecPolicyEngine {
         priority: 2,
       },
       {
-        id: 'allow-dev',
-        pattern: SAFE_DEV,
-        decision: 'allow',
-        justification: 'Development tooling',
-        priority: 2,
+        id: 'prompt-dev-execution',
+        pattern: DEVELOPMENT_TOOLS_REQUIRING_APPROVAL,
+        decision: 'prompt',
+        justification: 'Development tools can execute project-controlled code and require approval',
+        priority: ExecPolicyEngine.IMMUTABLE_RESTRICTIVE_FLOOR,
       },
-
       // Network: prompt required
       {
         id: 'default-deny-network',
         pattern: ['curl', 'wget', 'nc', 'telnet', 'ssh', 'sftp'],
         decision: 'prompt',
         justification: 'Network access requires approval',
-        priority: 10,
+        priority: ExecPolicyEngine.IMMUTABLE_RESTRICTIVE_FLOOR,
       },
 
       // Catastrophic destructive: always forbidden (can never be approved)
@@ -174,7 +171,7 @@ export class ExecPolicyEngine {
         ],
         decision: 'prompt',
         justification: 'Destructive operation requires approval',
-        priority: 30,
+        priority: ExecPolicyEngine.IMMUTABLE_RESTRICTIVE_FLOOR,
       },
 
       // Dangerous: prompt with strong warning
@@ -183,7 +180,7 @@ export class ExecPolicyEngine {
         pattern: ['chmod 777', 'git push --force', 'git push -f'],
         decision: 'prompt',
         justification: 'Potentially dangerous operations',
-        priority: 40,
+        priority: ExecPolicyEngine.IMMUTABLE_RESTRICTIVE_FLOOR,
       },
 
       // Banned prefixes (from Codex CLI) — inline code execution never auto-approved
@@ -202,7 +199,7 @@ export class ExecPolicyEngine {
         ],
         decision: 'prompt',
         justification: 'Inline code execution requires approval (Codex banned prefix)',
-        priority: 50,
+        priority: ExecPolicyEngine.IMMUTABLE_RESTRICTIVE_FLOOR,
       },
 
       // Forbidden: always blocked
@@ -266,12 +263,13 @@ export class ExecPolicyEngine {
   }
 
   // SBX-3: the highest priority a repo/home-supplied user rule may take. Kept
-  // strictly below the built-in `prompt` (50) and `forbidden` (100) rules so a
-  // caller-supplied policy can never override a built-in denial.
+  // strictly below the immutable restrictive floor so a caller-supplied policy
+  // can never downgrade a built-in prompt or forbidden decision.
   private static readonly MAX_USER_RULE_PRIORITY = 49;
+  private static readonly IMMUTABLE_RESTRICTIVE_FLOOR = 50;
 
   // Process wrapper prefixes to strip before matching (from Claude Code's permission system)
-  // e.g., "timeout 30 npm test" should match the "npm" rule
+  // e.g., "timeout 30 cat package.json" should match the "cat" rule
   private static readonly WRAPPER_PREFIXES = ['timeout', 'time', 'nice', 'nohup', 'stdbuf', 'env'];
 
   evaluate(command: string): {
@@ -306,8 +304,8 @@ export class ExecPolicyEngine {
     const sorted = [...this.rules].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
 
     // SECURITY: Check for command substitution ($(...) or backticks) BEFORE rule matching.
-    // Commands like `npm run build $(rm -rf /)` contain `npm` and would otherwise match
-    // the `allow-dev` rule and bypass the substitution check entirely.
+    // Commands like `echo $(rm -rf /)` contain an allowed command and would otherwise
+    // bypass the substitution check entirely.
     if (this.hasCommandSubstitution(normalized)) {
       return {
         decision: 'prompt',

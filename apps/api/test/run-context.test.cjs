@@ -1,12 +1,35 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const jwt = require('jsonwebtoken');
 const { startServer, stopServer } = require('./_helpers/spawnServer');
+
+const TEST_JWT_SECRET = 'run-context-test-secret';
+const originalJwtSecret = process.env.JWT_SECRET;
 
 let serverContext;
 let baseUrl;
+let accessToken;
+
+function request(route, init = {}) {
+  const headers = new Headers(init.headers);
+  headers.set('Authorization', `Bearer ${accessToken}`);
+  return fetch(`${baseUrl}${route}`, { ...init, headers });
+}
 
 test.before(async () => {
+  process.env.JWT_SECRET = TEST_JWT_SECRET;
+  accessToken = jwt.sign(
+    {
+      id: 'run-context-admin',
+      username: 'run-context-admin',
+      role: 'admin',
+      type: 'access',
+      tenant_id: 'test-tenant',
+    },
+    TEST_JWT_SECRET,
+    { algorithm: 'HS256', expiresIn: '5m' },
+  );
   serverContext = await startServer(path.resolve(__dirname, '..'));
   baseUrl = serverContext.baseUrl;
 });
@@ -15,11 +38,16 @@ test.after(async () => {
   if (serverContext) {
     await stopServer(serverContext);
   }
+  if (originalJwtSecret === undefined) {
+    delete process.env.JWT_SECRET;
+  } else {
+    process.env.JWT_SECRET = originalJwtSecret;
+  }
 });
 
 test('run-context returns guidance for manual approval missions', async () => {
-  const response = await fetch(
-    `${baseUrl}/projects/project-war-room/run-context?agentId=agent-builder&missionId=mission-api-spine&intent=EXECUTE&memoryLimit=8`,
+  const response = await request(
+    '/projects/project-war-room/run-context?agentId=agent-builder&missionId=mission-api-spine&intent=EXECUTE&memoryLimit=8',
   );
   assert.equal(response.status, 200);
 
@@ -35,8 +63,8 @@ test('run-context returns guidance for manual approval missions', async () => {
 });
 
 test('run-context returns guarded execution guidance for guarded missions', async () => {
-  const response = await fetch(
-    `${baseUrl}/projects/project-war-room/run-context?agentId=agent-scout&missionId=mission-dashboard&intent=EXECUTE&memoryLimit=8`,
+  const response = await request(
+    '/projects/project-war-room/run-context?agentId=agent-scout&missionId=mission-dashboard&intent=EXECUTE&memoryLimit=8',
   );
   assert.equal(response.status, 200);
 
@@ -51,8 +79,8 @@ test('run-context returns guarded execution guidance for guarded missions', asyn
 });
 
 test('run-context falls back to single-agent guidance when no mission is focused', async () => {
-  const response = await fetch(
-    `${baseUrl}/projects/project-war-room/run-context?agentId=agent-builder&intent=PLAN&memoryLimit=5`,
+  const response = await request(
+    '/projects/project-war-room/run-context?agentId=agent-builder&intent=PLAN&memoryLimit=5',
   );
   assert.equal(response.status, 200);
 
@@ -68,7 +96,7 @@ test('run-context falls back to single-agent guidance when no mission is focused
 });
 
 test('run-context mission-scopes recommendedMemory when matching memory exists', async () => {
-  const createResponse = await fetch(`${baseUrl}/projects/project-war-room/memory`, {
+  const createResponse = await request('/projects/project-war-room/memory', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -82,8 +110,8 @@ test('run-context mission-scopes recommendedMemory when matching memory exists',
   });
   assert.equal(createResponse.status, 201);
 
-  const response = await fetch(
-    `${baseUrl}/projects/project-war-room/run-context?agentId=agent-builder&missionId=mission-api-spine&intent=EXECUTE&memoryLimit=8`,
+  const response = await request(
+    '/projects/project-war-room/run-context?agentId=agent-builder&missionId=mission-api-spine&intent=EXECUTE&memoryLimit=8',
   );
   assert.equal(response.status, 200);
 
@@ -95,8 +123,8 @@ test('run-context mission-scopes recommendedMemory when matching memory exists',
 });
 
 test('run-context falls back to recent recommendedMemory when mission-scoped memory is absent', async () => {
-  const response = await fetch(
-    `${baseUrl}/projects/project-war-room/run-context?agentId=agent-builder&missionId=mission-dashboard&intent=EXECUTE&memoryLimit=8`,
+  const response = await request(
+    '/projects/project-war-room/run-context?agentId=agent-builder&missionId=mission-dashboard&intent=EXECUTE&memoryLimit=8',
   );
   assert.equal(response.status, 200);
 
@@ -107,8 +135,8 @@ test('run-context falls back to recent recommendedMemory when mission-scoped mem
 });
 
 test('run-context exposes a stable guidance + snapshot contract for manual-approval missions', async () => {
-  const response = await fetch(
-    `${baseUrl}/projects/project-war-room/run-context?agentId=agent-builder&missionId=mission-api-spine&intent=EXECUTE&memoryLimit=8`,
+  const response = await request(
+    '/projects/project-war-room/run-context?agentId=agent-builder&missionId=mission-api-spine&intent=EXECUTE&memoryLimit=8',
   );
   assert.equal(response.status, 200);
 

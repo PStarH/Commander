@@ -260,6 +260,45 @@ describe('AgentInbox', () => {
     inbox2.dispose();
   });
 
+  it('rejects agent ids that could escape the inbox root', () => {
+    const escapedFile = path.join(path.dirname(TEST_INBOX_DIR), 'escaped-inbox.ndjson');
+
+    expect(() =>
+      inbox.send({
+        id: 'escape-1',
+        from: 'a',
+        to: '../escaped-inbox',
+        subject: 'Escape',
+        body: 'blocked',
+        priority: 'normal',
+        tags: [],
+      }),
+    ).toThrow(/Invalid agent id/);
+    inbox.dispose();
+    expect(fs.existsSync(escapedFile)).toBe(false);
+  });
+
+  it('rejects path separators across inbox read and mutation methods', () => {
+    for (const agentId of ['../agent', 'nested/agent', 'nested\\agent']) {
+      expect(() => inbox.getMessages(agentId)).toThrow(/Invalid agent id/);
+      expect(() => inbox.pollInbox(agentId)).toThrow(/Invalid agent id/);
+      expect(() => inbox.acknowledge(agentId, 'message')).toThrow(/Invalid agent id/);
+      expect(() => inbox.deleteMessage(agentId, 'message')).toThrow(/Invalid agent id/);
+    }
+  });
+
+  it('does not load an inbox through a symlink', () => {
+    const outside = path.join(path.dirname(TEST_INBOX_DIR), 'outside-inbox.ndjson');
+    fs.writeFileSync(outside, '{"body":"secret"}\n');
+    fs.symlinkSync(outside, path.join(TEST_INBOX_DIR, 'linked-agent.ndjson'));
+
+    try {
+      expect(() => inbox.getMessages('linked-agent')).toThrow(/symbolic links are not allowed/);
+    } finally {
+      fs.rmSync(outside, { force: true });
+    }
+  });
+
   it('handles priority levels correctly', () => {
     inbox.send({
       id: 'low',
