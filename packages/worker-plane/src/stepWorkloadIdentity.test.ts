@@ -1,20 +1,33 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { resetControlPlane } from './workerRuntimeAdapter.js';
 import {
   CapabilityTokenIssuer,
   CapabilityTokenVerifier,
   EffectBroker,
   canonicalRequestHash,
 } from '@commander/effect-broker';
-import type { ClaimedStep } from './types.js';
+import type { ClaimedStep, WorkerRecord } from './types.js';
 import {
   getStepWorkloadBinding,
-  getStepWorkloadContext,
   mintStepCapabilityToken,
   requireStepWorkloadBinding,
   runWithStepWorkloadIdentity,
 } from './stepWorkloadIdentity.js';
+
+const worker: WorkerRecord = {
+  id: 'w1',
+  kind: 'agent',
+  version: 'v1',
+  capabilities: ['agent'],
+  maxConcurrency: 2,
+  status: 'ACTIVE',
+  generation: 1,
+  activeSteps: 0,
+  identitySubject: 'spiffe://commander/worker/w1',
+  tenantIds: ['tenant-a'],
+  registeredAt: '2099-01-01T00:00:00.000Z',
+  lastHeartbeatAt: '2099-01-01T00:00:00.000Z',
+};
 
 const step: ClaimedStep = {
   id: 'step-1',
@@ -26,36 +39,63 @@ const step: ClaimedStep = {
   input: {},
   lease: {
     workerId: 'w1',
+    workerGeneration: 1,
     token: 'lease',
     fencingEpoch: 1,
     expiresAt: '2099-01-01T00:00:00.000Z',
   },
 };
 
-describe('stepWorkloadIdentity (L3-07)', () => {
-  it('issues step-scoped identity and exposes binding via ALS', () => {
-    resetControlPlane();
-    runWithStepWorkloadIdentity(step, () => {
+describe('stepWorkloadIdentity (L3-07 / Task 3)', () => {
+  it('derives binding from claim + worker registration via ALS', () => {
+    runWithStepWorkloadIdentity(step, worker, () => {
       const binding = getStepWorkloadBinding();
       assert.ok(binding);
       assert.equal(binding.tenantId, 'tenant-a');
       assert.equal(binding.runId, 'run-1');
       assert.equal(binding.stepId, 'step-1');
-      assert.match(binding.workloadId, /^wl_run-1_step-1_/);
+      assert.equal(binding.workloadId, 'w1:1');
+      assert.equal(binding.workerId, 'w1');
+      assert.equal(binding.workerGeneration, 1);
     });
     assert.equal(getStepWorkloadBinding(), undefined);
   });
 
-  it('mintStepCapabilityToken uses identity tenant/run/step/workloadId only', async () => {
-    resetControlPlane();
+  it('throws WORKLOAD_LEASE_BINDING_MISMATCH when lease workerId/generation diverge', () => {
+    const staleGen: ClaimedStep = {
+      ...step,
+      lease: { ...step.lease, workerGeneration: 0 },
+    };
+    assert.throws(
+      () => runWithStepWorkloadIdentity(staleGen, worker, () => undefined),
+      /WORKLOAD_LEASE_BINDING_MISMATCH/,
+    );
+    const wrongWorker: ClaimedStep = {
+      ...step,
+      lease: { ...step.lease, workerId: 'other' },
+    };
+    assert.throws(
+      () => runWithStepWorkloadIdentity(wrongWorker, worker, () => undefined),
+      /WORKLOAD_LEASE_BINDING_MISMATCH/,
+    );
+    const missingGen: ClaimedStep = {
+      ...step,
+      lease: { workerId: 'w1', token: 'lease', fencingEpoch: 1, expiresAt: step.lease.expiresAt },
+    };
+    assert.throws(
+      () => runWithStepWorkloadIdentity(missingGen, worker, () => undefined),
+      /WORKLOAD_LEASE_BINDING_MISMATCH/,
+    );
+  });
+
+  it('mintStepCapabilityToken uses binding tenant/run/step/workloadId only', async () => {
     const issuer = CapabilityTokenIssuer.generate({
       issuer: 'commander-worker',
       audience: 'commander.effect-broker',
       keyId: 'k1',
     });
-    await runWithStepWorkloadIdentity(step, async () => {
+    await runWithStepWorkloadIdentity(step, worker, async () => {
       const binding = requireStepWorkloadBinding();
-      // mint API has no tenantId/runId/stepId fields — grant must mirror ALS binding only.
       const token = mintStepCapabilityToken({
         issuer,
         effectType: 'crm.write',
@@ -71,40 +111,22 @@ describe('stepWorkloadIdentity (L3-07)', () => {
       assert.equal(grant.runId, binding.runId);
       assert.equal(grant.stepId, binding.stepId);
       assert.equal(grant.workloadId, binding.workloadId);
+      assert.equal(grant.workerId, binding.workerId);
+      assert.equal(grant.workerGeneration, binding.workerGeneration);
       assert.equal(grant.requestHash, canonicalRequestHash({ action: 'x' }));
-    });
-  });
-
-  it('requireStepWorkloadBinding fails outside ALS', () => {
-    resetControlPlane();
-    assert.throws(() => requireStepWorkloadBinding(), /WORKLOAD_IDENTITY_REQUIRED/);
-  });
-
-  it('requireStepWorkloadBinding fails closed when step identity expired', () => {
-    resetControlPlane();
-    runWithStepWorkloadIdentity(step, () => {
-      const ctx = getStepWorkloadContext();
-      assert.ok(ctx);
-      ctx.identity.expiresAt = '2020-01-01T00:00:00.000Z';
-      assert.throws(() => requireStepWorkloadBinding(), /WORKLOAD_IDENTITY_EXPIRED/);
-      assert.throws(
-        () =>
-          mintStepCapabilityToken({
-            issuer: CapabilityTokenIssuer.generate({
-              issuer: 'commander-worker',
-              audience: 'commander.effect-broker',
-              keyId: 'k1',
-            }),
-            effectType: 'crm.write',
-            request: {},
-          }),
-        /WORKLOAD_IDENTITY_EXPIRED/,
+      assert.equal(
+        grant.actionDigest,
+        canonicalRequestHash({ action: 'x' }),
+        'Class A mint must include actionDigest',
       );
     });
   });
 
+  it('requireStepWorkloadBinding fails outside ALS', () => {
+    assert.throws(() => requireStepWorkloadBinding(), /WORKLOAD_IDENTITY_REQUIRED/);
+  });
+
   it('routes broker admit with binding and rejects cross-tenant mint', async () => {
-    resetControlPlane();
     const issuer = CapabilityTokenIssuer.generate({
       issuer: 'commander-worker',
       audience: 'commander.effect-broker',
@@ -134,7 +156,7 @@ describe('stepWorkloadIdentity (L3-07)', () => {
       { audience: 'commander.effect-broker', requireRequestBinding: true },
     );
 
-    await runWithStepWorkloadIdentity(step, async () => {
+    await runWithStepWorkloadIdentity(step, worker, async () => {
       const binding = requireStepWorkloadBinding();
       const good = mintStepCapabilityToken({
         issuer,
@@ -147,7 +169,7 @@ describe('stepWorkloadIdentity (L3-07)', () => {
         type: 'crm.write',
         request: {},
         idempotencyKey: 'idem-1',
-        lease: { workerId: 'w1', token: 'lease', fencingEpoch: 1 },
+        lease: { workerId: 'w1', workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
         actor: 'w1',
         workloadBinding: binding,
       });
@@ -161,6 +183,8 @@ describe('stepWorkloadIdentity (L3-07)', () => {
         effectTypes: ['crm.write'],
         expiresAt: '2099-01-01T00:00:00.000Z',
         requestHash: canonicalRequestHash({}),
+        workerId: 'w1',
+        workerGeneration: 1,
       });
       const rejected = await broker.admit({
         effectId: 'eff-2',
@@ -168,7 +192,7 @@ describe('stepWorkloadIdentity (L3-07)', () => {
         type: 'crm.write',
         request: {},
         idempotencyKey: 'idem-2',
-        lease: { workerId: 'w1', token: 'lease', fencingEpoch: 1 },
+        lease: { workerId: 'w1', workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
         actor: 'w1',
         workloadBinding: binding,
       });
@@ -177,19 +201,82 @@ describe('stepWorkloadIdentity (L3-07)', () => {
     });
   });
 
+  it('rejects WORKER_FENCE_MISMATCH when grant worker diverges from lease', async () => {
+    const issuer = CapabilityTokenIssuer.generate({
+      issuer: 'commander-worker',
+      audience: 'commander.effect-broker',
+      keyId: 'k1',
+    });
+    const tokens = new CapabilityTokenVerifier({
+      issuer: 'commander-worker',
+      audience: 'commander.effect-broker',
+      publicKeys: { k1: issuer.publicKey },
+    });
+    const broker = new EffectBroker(
+      tokens,
+      {
+        evaluate: async () => ({
+          effect: 'allow' as const,
+          decisionId: 'd1',
+          reason: 'ok',
+          policySnapshotId: 'p1',
+        }),
+      },
+      {
+        admitEffect: async () => ({ admitted: true, effect: { id: 'e1', state: 'ADMITTED' } }),
+        completeEffect: async () => ({}),
+      },
+      { execute: async () => ({ ok: true }) },
+      { append: async () => undefined },
+      { audience: 'commander.effect-broker', requireRequestBinding: true },
+    );
+
+    await runWithStepWorkloadIdentity(step, worker, async () => {
+      const binding = requireStepWorkloadBinding();
+      const token = mintStepCapabilityToken({
+        issuer,
+        effectType: 'crm.write',
+        request: {},
+      });
+      const rejected = await broker.admit({
+        effectId: 'eff-fence',
+        token,
+        type: 'crm.write',
+        request: {},
+        idempotencyKey: 'idem-fence',
+        lease: { workerId: 'w1', workerGeneration: 99, token: 'lease', fencingEpoch: 1 },
+        actor: 'w1',
+        workloadBinding: binding,
+      });
+      assert.equal(rejected.admitted, false);
+      assert.equal(rejected.reason, 'WORKER_FENCE_MISMATCH');
+    });
+  });
+
   it('isolates ALS binding across concurrent steps (no cross-step reuse)', async () => {
-    resetControlPlane();
-    const stepA: ClaimedStep = { ...step, id: 'step-a', runId: 'run-a' };
-    const stepB: ClaimedStep = { ...step, id: 'step-b', runId: 'run-b', tenantId: 'tenant-b' };
+    const workerB: WorkerRecord = { ...worker, id: 'w2', generation: 2, tenantIds: ['tenant-b'] };
+    const stepA: ClaimedStep = {
+      ...step,
+      id: 'step-a',
+      runId: 'run-a',
+      lease: { ...step.lease, workerId: 'w1', workerGeneration: 1 },
+    };
+    const stepB: ClaimedStep = {
+      ...step,
+      id: 'step-b',
+      runId: 'run-b',
+      tenantId: 'tenant-b',
+      lease: { ...step.lease, workerId: 'w2', workerGeneration: 2 },
+    };
     const seen: Array<{ stepId: string; tenantId: string; workloadId: string }> = [];
 
     await Promise.all([
-      runWithStepWorkloadIdentity(stepA, async () => {
+      runWithStepWorkloadIdentity(stepA, worker, async () => {
         await new Promise((r) => setTimeout(r, 20));
         const b = requireStepWorkloadBinding();
         seen.push({ stepId: b.stepId, tenantId: b.tenantId, workloadId: b.workloadId });
       }),
-      runWithStepWorkloadIdentity(stepB, async () => {
+      runWithStepWorkloadIdentity(stepB, workerB, async () => {
         await new Promise((r) => setTimeout(r, 5));
         const b = requireStepWorkloadBinding();
         seen.push({ stepId: b.stepId, tenantId: b.tenantId, workloadId: b.workloadId });
@@ -200,6 +287,7 @@ describe('stepWorkloadIdentity (L3-07)', () => {
     const byStep = Object.fromEntries(seen.map((s) => [s.stepId, s]));
     assert.equal(byStep['step-a']?.tenantId, 'tenant-a');
     assert.equal(byStep['step-b']?.tenantId, 'tenant-b');
-    assert.notEqual(byStep['step-a']?.workloadId, byStep['step-b']?.workloadId);
+    assert.equal(byStep['step-a']?.workloadId, 'w1:1');
+    assert.equal(byStep['step-b']?.workloadId, 'w2:2');
   });
 });

@@ -39,6 +39,7 @@ spec:
           env:
             - name: NODE_ENV
               value: {{ .Values.config.nodeEnv | quote }}
+            {{- include "commander.profileTierEnv" . | nindent 12 }}
             - name: COMMANDER_KERNEL_ENABLED
               value: "1"
             - name: COMMANDER_WORKER_HEALTH_PORT
@@ -48,12 +49,12 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
-                  key: {{ include "commander.databaseUrlSecretKey" . | quote }}
+                  key: {{ include "commander.databaseWorkerSecretKey" . | quote }}
             - name: COMMANDER_KERNEL_DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
-                  key: {{ include "commander.databaseUrlSecretKey" . | quote }}
+                  key: {{ include "commander.databaseWorkerSecretKey" . | quote }}
             - name: COMMANDER_KERNEL_BACKEND
               value: postgres
             {{- end }}
@@ -74,12 +75,15 @@ spec:
               value: {{ .Values.worker.maxConcurrency | quote }}
             - name: COMMANDER_WORKER_TENANTS
               value: {{ .Values.worker.tenants | quote }}
+            - name: COMMANDER_CELL_TENANT_ID
+              value: {{ include "commander.cellTenantId" . | quote }}
             - name: COMMANDER_WORKER_POLL_MS
               value: {{ .Values.worker.pollMs | quote }}
             - name: COMMANDER_WORKER_LEASE_TTL_MS
               value: {{ .Values.worker.leaseTtlMs | quote }}
             - name: COMMANDER_WORKER_HEARTBEAT_MS
               value: {{ .Values.worker.heartbeatMs | quote }}
+            {{- include "commander.capabilityEnv" . | nindent 12 }}
           resources: {{ toYaml .Values.worker.resources | nindent 12 }}
           securityContext:
             {{- include "commander.cellSecurityContext" . | nindent 12 }}

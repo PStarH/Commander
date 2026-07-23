@@ -45,7 +45,9 @@ worker:
     COMMANDER_WORKER_AUTH_SUBJECT: worker
     COMMANDER_WORKER_CAPABILITIES: "agent,tool,connector"
     COMMANDER_WORKER_MAX_CONCURRENCY: "10"
-    COMMANDER_WORKER_TENANTS: "*"
+    # Explicit tenant list required. '*' / empty fail-closed at worker bootstrap.
+    # Canonical chart: deploy/helm/commander (values-demo: local; enterprise: operator list).
+    COMMANDER_WORKER_TENANTS: "local"
     COMMANDER_WORKER_LEASE_TTL_MS: "30000"
     COMMANDER_WORKER_HEARTBEAT_MS: "10000"
     COMMANDER_WORKER_POLL_MS: "250"

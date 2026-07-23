@@ -146,7 +146,23 @@ describe('ApiKeyWorkerAuthenticator', () => {
     assert.deepEqual(auth.capabilities, ['*']);
   });
 
-  it('supports per-token tenant override', async () => {
+  it('supports per-token tenant narrowing within defaultTenantIds ceiling', async () => {
+    const auth = new ApiKeyWorkerAuthenticator({
+      validTokens: new Set([validToken]),
+      defaultTenantIds: ['custom-tenant-1', 'custom-tenant-2', 'extra'],
+      defaultCapabilities: ['*'],
+      tokenTenants: new Map([[validToken, ['custom-tenant-1', 'custom-tenant-2']]]),
+    });
+    const identity: WorkerIdentity = {
+      subject: 'worker:worker-1',
+      token: validToken,
+      expiresAt: new Date(Date.now() + 3600000).toISOString(),
+    };
+    const result = await auth.authenticate(identity, definition);
+    assert.deepEqual(result.tenantIds, ['custom-tenant-1', 'custom-tenant-2']);
+  });
+
+  it('rejects per-token tenants that widen beyond defaultTenantIds', async () => {
     const auth = new ApiKeyWorkerAuthenticator({
       validTokens: new Set([validToken]),
       defaultTenantIds: ['default-tenant'],
@@ -158,8 +174,10 @@ describe('ApiKeyWorkerAuthenticator', () => {
       token: validToken,
       expiresAt: new Date(Date.now() + 3600000).toISOString(),
     };
-    const result = await auth.authenticate(identity, definition);
-    assert.deepEqual(result.tenantIds, ['custom-tenant-1', 'custom-tenant-2']);
+    await assert.rejects(
+      () => auth.authenticate(identity, definition),
+      (err: unknown) => err instanceof WorkerAuthError && err.code === 'TENANT_SCOPE_DENIED',
+    );
   });
 });
 

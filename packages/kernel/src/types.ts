@@ -106,6 +106,16 @@ export interface KernelEffect {
   idempotencyKey: string;
   requestHash: string;
   policyDecisionId: string;
+  /** Immutable policy snapshot pinned at admit. */
+  policySnapshotId: string;
+  /** Canonical digest of the authorized external action. */
+  actionDigest: string;
+  /** Worker id from the admit lease (never null after Task 2 backfill). */
+  leaseWorkerId: string;
+  /** Worker registry generation from the admit lease (required, never nullable). */
+  leaseWorkerGeneration: number;
+  /** Fencing epoch from the admit lease. */
+  leaseFencingEpoch: number;
   state: 'ADMITTED' | 'COMPLETION_UNKNOWN' | 'COMPLETED' | 'FAILED';
   request: Record<string, unknown>;
   response?: Record<string, unknown>;
@@ -150,10 +160,22 @@ export interface ClaimStepRequest {
   workerId: string;
   /** Durable worker-registry generation. Required by production Postgres claims. */
   workerGeneration?: number;
+  /**
+   * Unforgeable claim secret from register() (process memory only).
+   * Required on the worker (non-scheduler) claim path.
+   */
+  claimSecret?: string;
   leaseTtlMs: number;
-  /** Preferred singular tenant scope for a claim. */
+  /**
+   * @deprecated Ignored on the worker (non-scheduler) claim path. Tenant authorization
+   * comes only from durable `commander_workers.tenant_ids` via `claim_next_step`.
+   * Scheduler-mode repositories may still use this as an optional filter.
+   */
   tenantId?: string;
-  /** Allowed tenant set for a workload identity; empty means all tenants. */
+  /**
+   * @deprecated Ignored on the worker (non-scheduler) claim path — callers cannot
+   * widen or select tenant scope. Drop from new call sites; durable authz only.
+   */
   tenantIds?: string[];
   /** Step kinds this worker is authorized and able to execute. */
   capabilities?: string[];
@@ -177,6 +199,8 @@ export interface FailStepRequest {
   expectedVersion: number;
   actor: string;
   retryAt?: Date;
+  /** Return the attempt consumed by claim when a worker stops before execution begins. */
+  refundAttempt?: boolean;
 }
 
 export interface AdmitEffectRequest {
@@ -187,6 +211,10 @@ export interface AdmitEffectRequest {
   type: string;
   idempotencyKey: string;
   policyDecisionId: string;
+  /** Immutable policy snapshot that authorized this admit. */
+  policySnapshotId: string;
+  /** Canonical digest of the authorized external action. */
+  actionDigest: string;
   request: Record<string, unknown>;
   lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>;
   actor: string;
@@ -219,6 +247,19 @@ export interface ClaimReconcileEffectsInput {
   limit: number;
   now?: Date;
   claimTtlMs?: number;
+  /**
+   * Required on the worker (non-scheduler) path. Tenant authorization comes only
+   * from durable `commander_workers.tenant_ids` via `claim_reconcile_effects`.
+   * Scheduler-mode repositories may omit this and scan under BYPASSRLS.
+   */
+  workerId?: string;
+  /** Durable worker-registry generation. Required with workerId on the worker path. */
+  workerGeneration?: number;
+  /**
+   * Unforgeable claim secret from register() (process memory only).
+   * Required on the worker (non-scheduler) path with workerId.
+   */
+  claimSecret?: string;
 }
 
 export interface ClaimedReconcileEffect {
@@ -268,7 +309,15 @@ export interface RequestCompensationResult {
 export type AdmitEffectResult =
   | { admitted: true; replayed: false; effect: KernelEffect }
   | { admitted: true; replayed: true; effect: KernelEffect }
-  | { admitted: false; reason: 'LEASE_LOST' | 'STEP_NOT_RUNNING' | 'IDEMPOTENCY_CONFLICT' };
+  | {
+      admitted: false;
+      reason:
+        | 'LEASE_LOST'
+        | 'STEP_NOT_RUNNING'
+        | 'IDEMPOTENCY_CONFLICT'
+        | 'POLICY_SNAPSHOT_ID_REQUIRED'
+        | 'LEASE_WORKER_ID_REQUIRED';
+    };
 
 export class KernelInvariantError extends Error {
   constructor(

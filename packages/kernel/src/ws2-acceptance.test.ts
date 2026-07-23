@@ -90,14 +90,60 @@ describe('WS2 §5 tenant quota', () => {
 describe('WS2 §6/§7 capability revocation lifecycle', () => {
   it('isCapabilityRevoked returns false for a non-revoked jti', async () => {
     const kernel = new InMemoryKernelRepository();
-    assert.equal(await kernel.isCapabilityRevoked('jti-active'), false);
+    assert.equal(await kernel.isCapabilityRevoked('jti-active', 'tenant-a'), false);
   });
 
   it('revokeCapability marks a jti as revoked', async () => {
     const kernel = new InMemoryKernelRepository();
     await kernel.revokeCapability({ jti: 'jti-1', tenantId: 'tenant-a', expiresAt: '2099-01-01T00:00:00.000Z', reason: 'rotated' });
-    assert.equal(await kernel.isCapabilityRevoked('jti-1'), true);
-    assert.equal(await kernel.isCapabilityRevoked('jti-2'), false);
+    assert.equal(await kernel.isCapabilityRevoked('jti-1', 'tenant-a'), true);
+    assert.equal(await kernel.isCapabilityRevoked('jti-1', 'tenant-b'), false);
+    assert.equal(await kernel.isCapabilityRevoked('jti-2', 'tenant-a'), false);
+  });
+});
+
+describe('WS2 capability replay consumption', () => {
+  it('consumeCapabilityReplay is false on first insert and true on replay', async () => {
+    const kernel = new InMemoryKernelRepository();
+    const input = {
+      tenantId: 'tenant-a',
+      jti: 'jti-replay',
+      nonce: 'nonce-1',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+    };
+    assert.equal(await kernel.consumeCapabilityReplay(input), false);
+    assert.equal(await kernel.consumeCapabilityReplay(input), true);
+  });
+
+  it('consumeCapabilityReplay isolates tenants and nonces', async () => {
+    const kernel = new InMemoryKernelRepository();
+    assert.equal(
+      await kernel.consumeCapabilityReplay({
+        tenantId: 'tenant-a',
+        jti: 'jti-x',
+        nonce: 'n1',
+        expiresAt: '2099-01-01T00:00:00.000Z',
+      }),
+      false,
+    );
+    assert.equal(
+      await kernel.consumeCapabilityReplay({
+        tenantId: 'tenant-b',
+        jti: 'jti-x',
+        nonce: 'n1',
+        expiresAt: '2099-01-01T00:00:00.000Z',
+      }),
+      false,
+    );
+    assert.equal(
+      await kernel.consumeCapabilityReplay({
+        tenantId: 'tenant-a',
+        jti: 'jti-x',
+        nonce: 'n2',
+        expiresAt: '2099-01-01T00:00:00.000Z',
+      }),
+      false,
+    );
   });
 });
 
@@ -196,5 +242,40 @@ describe('WS2 §8 compensation outbox claiming', () => {
         `${name} SQL must filter DLQ and max_attempts`,
       );
     }
+  });
+
+  it('Postgres capability revoke/isRevoked pass tenant scope into withTransaction (source ENFORCED)', () => {
+    const src = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), 'postgres.ts'),
+      'utf8',
+    );
+    const isRevoked = src.match(
+      /async isCapabilityRevoked\([\s\S]*?^  async revokeCapability/m,
+    );
+    const revoke = src.match(
+      /async revokeCapability\([\s\S]*?^  async consumeCapabilityReplay/m,
+    );
+    assert.ok(isRevoked, 'isCapabilityRevoked not found');
+    assert.ok(revoke, 'revokeCapability not found');
+    assert.match(
+      isRevoked![0],
+      /\}, \[tenantId\]\);/,
+      'isCapabilityRevoked must pass [tenantId] to withTransaction',
+    );
+    assert.match(
+      isRevoked![0],
+      /tenant_id=\$2/,
+      'isCapabilityRevoked SQL must filter by tenant_id',
+    );
+    assert.match(
+      revoke![0],
+      /\}, \[input\.tenantId\]\);/,
+      'revokeCapability must pass [input.tenantId] to withTransaction',
+    );
+    assert.match(
+      revoke![0],
+      /ON CONFLICT \(tenant_id, jti\)/,
+      'revokeCapability upsert must use tenant-scoped PK',
+    );
   });
 });

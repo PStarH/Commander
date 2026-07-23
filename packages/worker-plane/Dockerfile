@@ -75,8 +75,8 @@ COPY packages/worker-plane ./packages/worker-plane
 RUN cd packages/contracts && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/plugin-sdk && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/core && pnpm exec tsc --noEmit && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
-RUN cd packages/kernel && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/effect-broker && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
+RUN cd packages/kernel && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/action-adapters && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/worker-plane && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 
