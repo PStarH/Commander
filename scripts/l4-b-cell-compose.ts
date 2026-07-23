@@ -3,18 +3,44 @@
  * Kept separate so cell-smoke and compensation-e2e do not import each other.
  */
 
+import { generateKeyPairSync } from 'node:crypto';
 import { execSync } from 'node:child_process';
 
 export const CELL_E2E_TENANT = 'cell-smoke-tenant';
+
+/** Ephemeral Ed25519 materials for cell worker/adapter authority (fail-closed compose). */
+export function generateCellCapabilityMaterials(): {
+  COMMANDER_CAPABILITY_PRIVATE_KEY_PEM: string;
+  COMMANDER_CAPABILITY_KEY_ID: string;
+  COMMANDER_CAPABILITY_JWKS_JSON: string;
+} {
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+  const jwk = publicKey.export({ format: 'jwk' }) as { kty: string; crv: string; x: string };
+  const keyId = `cell-${Date.now().toString(36)}`;
+  return {
+    COMMANDER_CAPABILITY_PRIVATE_KEY_PEM: pem,
+    COMMANDER_CAPABILITY_KEY_ID: keyId,
+    COMMANDER_CAPABILITY_JWKS_JSON: JSON.stringify({
+      keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: keyId }],
+    }),
+  };
+}
+
+const CELL_CAPABILITY_MATERIALS = generateCellCapabilityMaterials();
 
 export const COMPOSE_CONFIG_ENV: Record<string, string> = {
   POSTGRES_PASSWORD: 'ci-cell-smoke',
   COMMANDER_API_KEY: 'ci-cell-smoke-api-key',
   COMMANDER_MASTER_KEY: 'ci-cell-smoke-master-key-32chars!!',
   JWT_SECRET: 'ci-cell-smoke-jwt-secret',
+  // API legacy HMAC only — not worker/adapter authority.
   COMMANDER_CAPABILITY_TOKEN_KEY: 'ci-cell-smoke-capability-key',
   COMMANDER_INTEGRITY_KEY: 'ci-cell-smoke-integrity-key',
   COMMANDER_WORKER_AUTH_TOKEN: 'ci-cell-smoke-worker-token',
+  COMMANDER_WORKER_TENANTS: CELL_E2E_TENANT,
+  COMMANDER_WORKER_ALLOWED_TENANTS: CELL_E2E_TENANT,
+  ...CELL_CAPABILITY_MATERIALS,
 };
 
 /** GID of docker.sock as seen inside a container (Colima often uses 991). */

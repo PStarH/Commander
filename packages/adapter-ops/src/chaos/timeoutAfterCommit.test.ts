@@ -166,6 +166,12 @@ describe('L4-02 operations chaos — timeout after commit', () => {
       effectTypes: ['connector.github.pull-request.create'],
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       requestHash: canonicalRequestHash(request),
+      // Class A fixtures must carry actionDigest (Task 2 gate — do not weaken broker).
+      actionDigest: 'a'.repeat(64),
+      policySnapshotId: 'policy',
+      // Grant↔lease worker fence (Task 3) — must match claimNextStep lease.
+      workerId: step.lease!.workerId,
+      workerGeneration: step.lease!.workerGeneration ?? 0,
     });
 
     const originalComplete = kernel.completeEffect.bind(kernel);

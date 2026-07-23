@@ -8,6 +8,7 @@
  */
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
+import { startWorkerHealthServer } from './healthServer.js';
 import type { WorkerService } from './workerService.js';
 
 interface WorkerBootstrap {
@@ -15,23 +16,47 @@ interface WorkerBootstrap {
 }
 
 async function main(): Promise<void> {
-  const source = process.env.COMMANDER_WORKER_BOOTSTRAP;
-  if (!source) {
-    throw new Error('COMMANDER_WORKER_BOOTSTRAP is required; refusing to start an unconfigured worker');
+  let ready = false;
+  const healthPortRaw = process.env.COMMANDER_WORKER_HEALTH_PORT?.trim();
+  const healthPort = healthPortRaw ? Number(healthPortRaw) : null;
+  if (
+    healthPort !== null &&
+    (!Number.isInteger(healthPort) || healthPort < 1 || healthPort > 65535)
+  ) {
+    throw new Error('COMMANDER_WORKER_HEALTH_PORT must be an integer between 1 and 65535');
   }
-  const url = source.startsWith('file:') || source.startsWith('data:')
-    ? source
-    : pathToFileURL(resolve(process.cwd(), source)).href;
-  const loaded = await import(url) as Partial<WorkerBootstrap>;
-  if (typeof loaded.createWorkerService !== 'function') {
-    throw new Error('Worker bootstrap must export createWorkerService()');
+  const health =
+    healthPort === null
+      ? null
+      : await startWorkerHealthServer({ port: healthPort, isReady: () => ready });
+
+  try {
+    const source = process.env.COMMANDER_WORKER_BOOTSTRAP;
+    if (!source) {
+      throw new Error(
+        'COMMANDER_WORKER_BOOTSTRAP is required; refusing to start an unconfigured worker',
+      );
+    }
+    const url =
+      source.startsWith('file:') || source.startsWith('data:')
+        ? source
+        : pathToFileURL(resolve(process.cwd(), source)).href;
+    const loaded = (await import(url)) as Partial<WorkerBootstrap>;
+    if (typeof loaded.createWorkerService !== 'function') {
+      throw new Error('Worker bootstrap must export createWorkerService()');
+    }
+    const service = await loaded.createWorkerService();
+    const controller = new AbortController();
+    const shutdown = () => controller.abort();
+    process.once('SIGTERM', shutdown);
+    process.once('SIGINT', shutdown);
+    await service.start();
+    ready = true;
+    await service.run(controller.signal);
+  } finally {
+    ready = false;
+    await health?.close();
   }
-  const service = await loaded.createWorkerService();
-  const controller = new AbortController();
-  const shutdown = () => controller.abort();
-  process.once('SIGTERM', shutdown);
-  process.once('SIGINT', shutdown);
-  await service.run(controller.signal);
 }
 
 void main().catch((error) => {

@@ -34,6 +34,9 @@ const baseGrant: CapabilityGrant = {
   expiresAt: '2099-01-01T00:00:00.000Z',
   policySnapshotId: 'p1',
   requestHash: canonicalRequestHash({}),
+  actionDigest: 'a'.repeat(64),
+  workerId: 'w',
+  workerGeneration: 1,
 } as unknown as CapabilityGrant;
 
 function makeBroker({
@@ -76,7 +79,7 @@ describe('WS2 §3 admit/execute separation', () => {
       type: 'crm.write',
       request: {},
       idempotencyKey: 'idem-1',
-      lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
       actor: 'w',
     });
     assert.equal(admission.admitted, true);
@@ -96,7 +99,7 @@ describe('WS2 §3 admit/execute separation', () => {
       type: 'crm.write',
       request: {},
       idempotencyKey: 'idem-2',
-      lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
       actor: 'w',
     });
     assert.equal(admission.admitted, true);
@@ -133,7 +136,7 @@ describe('WS2 §4 production runtime gates', () => {
       type: 'crm.write',
       request: {},
       idempotencyKey: 'idem-pd',
-      lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
       actor: 'w',
     });
     assert.equal(admission.admitted, false);
@@ -157,7 +160,7 @@ describe('WS2 §6 capability token lifecycle', () => {
         type: 'crm.write',
         request: {},
         idempotencyKey: 'idem-forge',
-        lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+        lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
         actor: 'w',
       }),
       /signature/i,
@@ -176,7 +179,7 @@ describe('WS2 §6 capability token lifecycle', () => {
         type: 'crm.write',
         request: {},
         idempotencyKey: 'idem-exp',
-        lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+        lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
         actor: 'w',
       }),
     );
@@ -192,7 +195,7 @@ describe('WS2 §6 capability token lifecycle', () => {
       type: 'crm.write',
       request: { tampered: true },
       idempotencyKey: 'idem-rh',
-      lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
       actor: 'w',
     });
     assert.equal(admission.admitted, false);
@@ -209,7 +212,7 @@ describe('WS2 §6 capability token lifecycle', () => {
       type: 'crm.write',
       request: {},
       idempotencyKey: 'idem-cap',
-      lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
       actor: 'w',
     });
     assert.equal(admission.admitted, false);
@@ -223,7 +226,7 @@ describe('WS2 §6 capability token lifecycle', () => {
       issuer: 'commander-issuer',
       audience: 'commander.effect-broker',
       publicKeys: { k1: iss.publicKey },
-      revocations: { isRevoked: async (jti: string) => revokedJtis.has(jti) },
+      revocations: { isRevoked: async (jti: string, _tenantId: string) => revokedJtis.has(jti) },
     });
     const token = iss.issue({ ...baseGrant, jti: 'revoked-jti', requestHash: canonicalRequestHash({}) });
     revokedJtis.add('revoked-jti');
@@ -235,7 +238,7 @@ describe('WS2 §6 capability token lifecycle', () => {
         type: 'crm.write',
         request: {},
         idempotencyKey: 'idem-rev',
-        lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+        lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
         actor: 'w',
       }),
       /revoked/i,
@@ -250,7 +253,7 @@ describe('WS2 §5 three-layer policy engine called by admit()', () => {
     type: 'crm.write',
     request: {},
     idempotencyKey: `idem-${effectId}`,
-    lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+    lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
     actor: 'w',
   });
 

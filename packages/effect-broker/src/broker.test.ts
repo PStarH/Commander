@@ -5,7 +5,12 @@ import {
   CapabilityTokenVerifier,
   EffectBroker,
   EffectBrokerError,
+  DURABLE_CAPABILITY_STORES_REQUIRED,
+  InMemoryCapabilityReplayStore,
+  InMemoryCapabilityRevocationStore,
+  assertEffectBrokerDurableStores,
   canonicalRequestHash,
+  isClassAEffectType,
   type CapabilityGrant,
 } from './index.js';
 
@@ -18,6 +23,9 @@ const grant: CapabilityGrant = {
   expiresAt: '2099-01-01T00:00:00.000Z',
   policySnapshotId: 'p1',
   requestHash: canonicalRequestHash({}),
+  actionDigest: 'a'.repeat(64),
+  workerId: 'w',
+  workerGeneration: 1,
 } as unknown as CapabilityGrant;
 
 /**
@@ -81,7 +89,7 @@ describe('EffectBroker', () => {
     const tokens = makeTokens();
     let completed = false;
     const broker = new EffectBroker(tokens, { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) }, { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => { completed = true; return {}; } }, { execute: async () => ({ ok: true }) }, { append: async () => {} });
-    const result = await broker.execute({ effectId: 'effect', token: tokens.issue(grant), type: 'crm.write', request: {}, idempotencyKey: 'idem', lease: { workerId: 'w', token: 'l', fencingEpoch: 1 }, actor: 'w' });
+    const result = await broker.execute({ effectId: 'effect', token: tokens.issue(grant), type: 'crm.write', request: {}, idempotencyKey: 'idem', lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 }, actor: 'w' });
     assert.equal(result.response?.ok, true);
     assert.equal(completed, true);
   });
@@ -90,7 +98,7 @@ describe('EffectBroker', () => {
     const tokens = makeTokens();
     let invoked = false;
     const broker = new EffectBroker(tokens, { evaluate: async () => ({ effect: 'deny', decisionId: 'd1', reason: 'no', policySnapshotId: 'p1' }) }, { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => null }, { execute: async () => { invoked = true; return {}; } }, { append: async () => {} });
-    await assert.rejects(broker.execute({ effectId: 'effect', token: tokens.issue(grant), type: 'crm.write', request: {}, idempotencyKey: 'idem', lease: { workerId: 'w', token: 'l', fencingEpoch: 1 }, actor: 'w' }), (error: unknown) => error instanceof EffectBrokerError && error.code === 'POLICY_DENIED');
+    await assert.rejects(broker.execute({ effectId: 'effect', token: tokens.issue(grant), type: 'crm.write', request: {}, idempotencyKey: 'idem', lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 }, actor: 'w' }), (error: unknown) => error instanceof EffectBrokerError && error.code === 'POLICY_DENIED');
     assert.equal(invoked, false);
   });
 
@@ -98,7 +106,7 @@ describe('EffectBroker', () => {
     const tokens = makeTokens();
     let invoked = false;
     const broker = new EffectBroker(tokens, { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) }, { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => ({}) }, { execute: async () => { invoked = true; return {}; } }, { append: async () => {} });
-    await assert.rejects(broker.execute({ effectId: 'effect', token: tokens.issue(grant), type: 'crm.write', request: { changed: true }, idempotencyKey: 'idem', lease: { workerId: 'w', token: 'l', fencingEpoch: 1 }, actor: 'w' }), (error: unknown) => error instanceof EffectBrokerError && error.code === 'REQUEST_HASH_MISMATCH');
+    await assert.rejects(broker.execute({ effectId: 'effect', token: tokens.issue(grant), type: 'crm.write', request: { changed: true }, idempotencyKey: 'idem', lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 }, actor: 'w' }), (error: unknown) => error instanceof EffectBrokerError && error.code === 'REQUEST_HASH_MISMATCH');
     assert.equal(invoked, false);
   });
 
@@ -107,7 +115,7 @@ describe('EffectBroker', () => {
     let interactionId = '';
     let invoked = false;
     const broker = new EffectBroker(tokens, { evaluate: async () => ({ effect: 'require_approval', decisionId: 'd-approval', reason: 'high risk', policySnapshotId: 'p1' }) }, { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => ({}) }, { execute: async () => { invoked = true; return {}; } }, { append: async () => {} }, { approval: { createApprovalInteraction: async () => { interactionId = 'interaction-1'; return { interactionId, status: 'pending' }; } } });
-    await assert.rejects(broker.execute({ effectId: 'effect', token: tokens.issue(grant), type: 'crm.write', request: {}, idempotencyKey: 'idem', lease: { workerId: 'w', token: 'l', fencingEpoch: 1 }, actor: 'w' }), (error: unknown) => error instanceof EffectBrokerError && error.code === 'APPROVAL_REQUIRED' && error.details.interactionId === 'interaction-1');
+    await assert.rejects(broker.execute({ effectId: 'effect', token: tokens.issue(grant), type: 'crm.write', request: {}, idempotencyKey: 'idem', lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 }, actor: 'w' }), (error: unknown) => error instanceof EffectBrokerError && error.code === 'APPROVAL_REQUIRED' && error.details.interactionId === 'interaction-1');
     assert.equal(interactionId, 'interaction-1');
     assert.equal(invoked, false);
   });
@@ -141,7 +149,7 @@ describe('EffectBroker', () => {
         type: 'crm.write',
         request: {},
         idempotencyKey: 'idem',
-        lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+        lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
         actor: 'w',
       }),
       (error: unknown) => error instanceof EffectBrokerError && error.code === 'COMPLETION_UNKNOWN',
@@ -178,7 +186,7 @@ describe('EffectBroker', () => {
         type: 'crm.write',
         request: {},
         idempotencyKey: 'idem',
-        lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+        lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
         actor: 'w',
       }),
       /connector timeout/,
@@ -209,7 +217,7 @@ describe('EffectBroker', () => {
       type: 'crm.write',
       request: {},
       idempotencyKey: 'idem',
-      lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
       actor: 'w',
     });
     assert.equal(result.replayed, true);
@@ -240,7 +248,7 @@ describe('EffectBroker', () => {
         type: 'crm.write',
         request: {},
         idempotencyKey: 'idem',
-        lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+        lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
         actor: 'w',
       }),
       (error: unknown) => error instanceof EffectBrokerError && error.code === 'COMPLETION_UNKNOWN',
@@ -272,7 +280,7 @@ describe('ENFORCED approval binding (args / policy / audience)', () => {
         type: 'crm.write',
         request: { ...approvedRequest, amount: 999 },
         idempotencyKey: 'idem',
-        lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+        lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
         actor: 'w',
       }),
       (error: unknown) => error instanceof EffectBrokerError && error.code === 'REQUEST_HASH_MISMATCH',
@@ -297,7 +305,7 @@ describe('ENFORCED approval binding (args / policy / audience)', () => {
         type: 'crm.write',
         request: {},
         idempotencyKey: 'idem',
-        lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+        lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
         actor: 'w',
       }),
       (error: unknown) => error instanceof EffectBrokerError && error.code === 'POLICY_SNAPSHOT_MISMATCH',
@@ -323,7 +331,7 @@ describe('ENFORCED approval binding (args / policy / audience)', () => {
         type: 'crm.write',
         request: {},
         idempotencyKey: 'idem',
-        lease: { workerId: 'w', token: 'l', fencingEpoch: 1 },
+        lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
         actor: 'w',
       }),
       (error: unknown) => error instanceof EffectBrokerError && error.code === 'AUDIENCE_MISMATCH',
@@ -333,7 +341,8 @@ describe('ENFORCED approval binding (args / policy / audience)', () => {
 });
 
 describe('executeAdmitted worker affinity (C-α)', () => {
-  const leaseW1 = { workerId: 'w1', token: 'l', fencingEpoch: 1 };
+  const leaseW1 = { workerId: 'w1', workerGeneration: 1, token: 'l', fencingEpoch: 1 };
+  const grantW1: CapabilityGrant = { ...grant, workerId: 'w1', workerGeneration: 1 };
 
   function makeAffinityBroker(
     executor: (input: Parameters<import('./index.js').EffectExecutor['execute']>[0]) => Promise<Record<string, unknown>>,
@@ -363,7 +372,7 @@ describe('executeAdmitted worker affinity (C-α)', () => {
     });
     const admission = await broker.admit({
       effectId: 'eff-aff-ok',
-      token: tokens.issue(grant),
+      token: tokens.issue(grantW1),
       type: 'crm.write',
       request: {},
       idempotencyKey: 'idem',
@@ -377,6 +386,7 @@ describe('executeAdmitted worker affinity (C-α)', () => {
     assert.deepEqual(receivedContext, {
       tenantId: 'tenant',
       workerId: 'w1',
+      workerGeneration: 1,
       fencingEpoch: 1,
       leaseToken: 'l',
       effectId: 'eff-aff-ok',
@@ -391,11 +401,11 @@ describe('executeAdmitted worker affinity (C-α)', () => {
     });
     const admission = await broker.admit({
       effectId: 'eff-aff-bad',
-      token: tokens.issue(grant),
+      token: tokens.issue({ ...grant, workerId: 'w2', workerGeneration: 1 }),
       type: 'crm.write',
       request: {},
       idempotencyKey: 'idem',
-      lease: { workerId: 'w2', token: 'l', fencingEpoch: 1 },
+      lease: { workerId: 'w2', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
       actor: 'w2',
     });
     assert.equal(admission.admitted, true);
@@ -422,7 +432,7 @@ describe('executeAdmitted worker affinity (C-α)', () => {
     );
     const admission = await broker.admit({
       effectId: 'eff-gen-bad',
-      token: tokens.issue(grant),
+      token: tokens.issue(grantW1),
       type: 'crm.write',
       request: {},
       idempotencyKey: 'idem',
@@ -437,35 +447,116 @@ describe('executeAdmitted worker affinity (C-α)', () => {
     assert.equal(invoked, false);
   });
 
-  it('throws WORKER_AFFINITY_VIOLATION when localWorkerGeneration set but lease omits generation', async () => {
+  it('rejects WORKER_FENCE_MISMATCH when lease omits generation but grant pins one', async () => {
     const { tokens, broker } = makeAffinityBroker(async () => ({}), {
       localWorkerId: 'w1',
       localWorkerGeneration: 1,
     });
-    await broker.admit({
+    const admission = await broker.admit({
       effectId: 'eff-gen-missing',
-      token: tokens.issue(grant),
+      token: tokens.issue(grantW1),
       type: 'crm.write',
       request: {},
       idempotencyKey: 'idem',
       lease: { workerId: 'w1', token: 'l', fencingEpoch: 1 },
       actor: 'w1',
     });
-    await assert.rejects(
-      broker.executeAdmitted({ effectId: 'eff-gen-missing' }),
-      (error: unknown) => error instanceof EffectBrokerError && error.code === 'WORKER_AFFINITY_VIOLATION',
+    assert.equal(admission.admitted, false);
+    assert.equal(admission.reason, 'WORKER_FENCE_MISMATCH');
+  });
+
+  it('rejects WORKER_FENCE_MISMATCH when grant.workerId is whitespace-only', async () => {
+    const { tokens, broker } = makeAffinityBroker(async () => ({}), {
+      localWorkerId: 'w1',
+      localWorkerGeneration: 1,
+    });
+    const admission = await broker.admit({
+      effectId: 'eff-blank-worker',
+      token: tokens.issue({ ...grantW1, workerId: '   ' }),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem',
+      lease: { workerId: 'w1', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
+      actor: 'w1',
+    });
+    assert.equal(admission.admitted, false);
+    assert.equal(admission.reason, 'WORKER_FENCE_MISMATCH');
+  });
+
+  it('rejects WORKER_FENCE_MISMATCH when lease.workerId is whitespace-only', async () => {
+    const { tokens, broker } = makeAffinityBroker(async () => ({}), {
+      localWorkerId: 'w1',
+      localWorkerGeneration: 1,
+    });
+    const admission = await broker.admit({
+      effectId: 'eff-blank-lease-worker',
+      token: tokens.issue(grantW1),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem',
+      lease: { workerId: '   ', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
+      actor: 'w1',
+    });
+    assert.equal(admission.admitted, false);
+    assert.equal(admission.reason, 'WORKER_FENCE_MISMATCH');
+  });
+
+  it('rejects WORKER_FENCE_MISMATCH when lease omits generation even if grant claims the former -1 sentinel', async () => {
+    // Regression for the removed `lease.workerGeneration ?? -1` coercion: a
+    // grant claiming workerGeneration -1 must never match a lease that
+    // simply omits the field.
+    const { tokens, broker } = makeAffinityBroker(async () => ({}), { localWorkerId: 'w1' });
+    const admission = await broker.admit({
+      effectId: 'eff-gen-sentinel',
+      token: tokens.issue({ ...grant, workerId: 'w1', workerGeneration: -1 }),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem',
+      lease: { workerId: 'w1', token: 'l', fencingEpoch: 1 },
+      actor: 'w1',
+    });
+    assert.equal(admission.admitted, false);
+    assert.equal(admission.reason, 'WORKER_FENCE_MISMATCH');
+  });
+
+  it('throws WORKER_AFFINITY_VIOLATION when localWorkerGeneration is the former -1 sentinel and lease omits generation', async () => {
+    // Regression for the removed `admission.lease.workerGeneration ?? -1`
+    // coercion in assertWorkerAffinity: a broker pinned to generation -1
+    // must never accept a lease that omits the field.
+    let invoked = false;
+    const { tokens, broker } = makeAffinityBroker(
+      async () => {
+        invoked = true;
+        return {};
+      },
+      { localWorkerId: 'w1', localWorkerGeneration: -1 },
     );
+    const admission = await broker.admit({
+      effectId: 'eff-local-gen-sentinel',
+      token: tokens.issue({ ...grant, workerId: 'w1', workerGeneration: -1 }),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem',
+      lease: { workerId: 'w1', token: 'l', fencingEpoch: 1 },
+      actor: 'w1',
+    });
+    // admit() already fails closed at the fence check before this can reach
+    // executeAdmitted — asserting that here too, so the two layers stay
+    // consistent and neither one alone is load-bearing.
+    assert.equal(admission.admitted, false);
+    assert.equal(admission.reason, 'WORKER_FENCE_MISMATCH');
+    assert.equal(invoked, false);
   });
 
   it('throws WORKER_AFFINITY_VIOLATION when lease token or fencingEpoch is invalid', async () => {
     const { tokens, broker } = makeAffinityBroker(async () => ({}));
     await broker.admit({
       effectId: 'eff-no-token',
-      token: tokens.issue(grant),
+      token: tokens.issue(grantW1),
       type: 'crm.write',
       request: {},
       idempotencyKey: 'idem',
-      lease: { workerId: 'w1', token: '', fencingEpoch: 1 },
+      lease: { workerId: 'w1', workerGeneration: 1, token: '', fencingEpoch: 1 },
       actor: 'w1',
     });
     await assert.rejects(
@@ -476,11 +567,11 @@ describe('executeAdmitted worker affinity (C-α)', () => {
     const { tokens: tokens2, broker: broker2 } = makeAffinityBroker(async () => ({}));
     await broker2.admit({
       effectId: 'eff-bad-epoch',
-      token: tokens2.issue(grant),
+      token: tokens2.issue(grantW1),
       type: 'crm.write',
       request: {},
       idempotencyKey: 'idem2',
-      lease: { workerId: 'w1', token: 'l', fencingEpoch: Number.NaN },
+      lease: { workerId: 'w1', workerGeneration: 1, token: 'l', fencingEpoch: Number.NaN },
       actor: 'w1',
     });
     await assert.rejects(
@@ -498,7 +589,7 @@ describe('executeAdmitted worker affinity (C-α)', () => {
     broker.bindLocalWorkerGeneration(3);
     await broker.admit({
       effectId: 'eff-bind-gen',
-      token: tokens.issue(grant),
+      token: tokens.issue({ ...grant, workerId: 'w1', workerGeneration: 3 }),
       type: 'crm.write',
       request: {},
       idempotencyKey: 'idem',
@@ -517,11 +608,11 @@ describe('executeAdmitted worker affinity (C-α)', () => {
     }, {});
     const admission = await broker.admit({
       effectId: 'eff-no-local',
-      token: tokens.issue(grant),
+      token: tokens.issue({ ...grant, workerId: 'w2', workerGeneration: 1 }),
       type: 'crm.write',
       request: {},
       idempotencyKey: 'idem',
-      lease: { workerId: 'w2', token: 'l', fencingEpoch: 1 },
+      lease: { workerId: 'w2', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
       actor: 'w2',
     });
     assert.equal(admission.admitted, true);
@@ -541,6 +632,503 @@ describe('executeAdmitted worker affinity (C-α)', () => {
     } finally {
       if (prev === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = prev;
+    }
+  });
+});
+
+describe('Task 2 actionDigest / Class A gate', () => {
+  it('classifies connector/compensate/crm/http as Class A and llm/local as not', () => {
+    assert.equal(isClassAEffectType('connector.github.create_issue'), true);
+    assert.equal(isClassAEffectType('compensate.rollback'), true);
+    assert.equal(isClassAEffectType('crm.write'), true);
+    assert.equal(isClassAEffectType('http.post'), true);
+    assert.equal(isClassAEffectType('unknown.family'), true);
+    assert.equal(isClassAEffectType('llm.chat'), false);
+    assert.equal(isClassAEffectType('retrieve.search'), false);
+    assert.equal(isClassAEffectType('local.hash'), false);
+    assert.equal(isClassAEffectType('compute.fold'), false);
+  });
+
+  it('fail-closed: a Class A family segment anywhere in the path wins over a local./llm. prefix', () => {
+    // P1: `local.crm.write` / `local.connector.x` previously bypassed the
+    // actionDigest gate because the leading `local.` segment classified the
+    // whole type as Class C.
+    assert.equal(isClassAEffectType('local.crm.write'), true);
+    assert.equal(isClassAEffectType('local.connector.x'), true);
+    assert.equal(isClassAEffectType('local.saas.mutate'), true);
+    assert.equal(isClassAEffectType('llm.egress.post'), true);
+    // Non-Class-A local/llm/retrieve/read/budget/compute types stay non-A.
+    assert.equal(isClassAEffectType('local.hash'), false);
+    assert.equal(isClassAEffectType('llm.chat'), false);
+    assert.equal(isClassAEffectType('retrieve.search'), false);
+    assert.equal(isClassAEffectType('read.record'), false);
+    assert.equal(isClassAEffectType('budget.check'), false);
+    assert.equal(isClassAEffectType('compute.fold'), false);
+  });
+
+  it('fail-closed: mixed-case segments cannot bypass the Class A gate', () => {
+    // P1: `read.Write` / `llm.CRM.x` / `CRM.write` previously skipped
+    // ACTION_DIGEST_REQUIRED because segment/prefix checks were case-sensitive.
+    assert.equal(isClassAEffectType('read.Write'), true);
+    assert.equal(isClassAEffectType('llm.CRM.x'), true);
+    assert.equal(isClassAEffectType('CRM.write'), true);
+    // Non-Class-A types stay non-A regardless of case.
+    assert.equal(isClassAEffectType('llm.chat'), false);
+    assert.equal(isClassAEffectType('LLM.CHAT'), false);
+    assert.equal(isClassAEffectType('read.foo'), false);
+    assert.equal(isClassAEffectType('READ.FOO'), false);
+  });
+
+  it('requires actionDigest for a local.-prefixed effect type carrying a Class A family segment', async () => {
+    const tokens = makeTokens();
+    let admitCalled = false;
+    const broker = new EffectBroker(
+      tokens,
+      { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+      {
+        admitEffect: async () => {
+          admitCalled = true;
+          return { admitted: true, effect: { id: 'effect', state: 'ADMITTED' } };
+        },
+        completeEffect: async () => ({}),
+      },
+      { execute: async () => ({ ok: true }) },
+      { append: async () => {} },
+    );
+    const { actionDigest: _omit, ...withoutDigest } = grant;
+    const admission = await broker.admit({
+      effectId: 'eff-local-crm-write',
+      token: tokens.issue({ ...withoutDigest, effectTypes: ['local.crm.write'] } as CapabilityGrant),
+      type: 'local.crm.write',
+      request: {},
+      idempotencyKey: 'idem',
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
+      actor: 'w',
+    });
+    assert.equal(admission.admitted, false);
+    assert.equal(admission.reason, 'ACTION_DIGEST_REQUIRED');
+    assert.equal(admitCalled, false);
+  });
+
+  it('rejects Class A admit when grant.actionDigest is missing', async () => {
+    const tokens = makeTokens();
+    let admitCalled = false;
+    const broker = new EffectBroker(
+      tokens,
+      { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+      {
+        admitEffect: async () => {
+          admitCalled = true;
+          return { admitted: true, effect: { id: 'effect', state: 'ADMITTED' } };
+        },
+        completeEffect: async () => ({}),
+      },
+      { execute: async () => ({ ok: true }) },
+      { append: async () => {} },
+    );
+    const { actionDigest: _omit, ...withoutDigest } = grant;
+    const admission = await broker.admit({
+      effectId: 'eff-no-digest',
+      token: tokens.issue(withoutDigest as CapabilityGrant),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'idem',
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
+      actor: 'w',
+    });
+    assert.equal(admission.admitted, false);
+    assert.equal(admission.reason, 'ACTION_DIGEST_REQUIRED');
+    assert.equal(admitCalled, false);
+  });
+
+  it('rejects Class A admit when grant.actionDigest is empty', async () => {
+    const tokens = makeTokens();
+    const broker = new EffectBroker(
+      tokens,
+      { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+      { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => ({}) },
+      { execute: async () => ({ ok: true }) },
+      { append: async () => {} },
+    );
+    const admission = await broker.admit({
+      effectId: 'eff-empty-digest',
+      token: tokens.issue({ ...grant, effectTypes: ['connector.saas.write'], actionDigest: '' }),
+      type: 'connector.saas.write',
+      request: {},
+      idempotencyKey: 'idem',
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
+      actor: 'w',
+    });
+    assert.equal(admission.admitted, false);
+    assert.equal(admission.reason, 'ACTION_DIGEST_REQUIRED');
+  });
+
+  it('rejects Class A admit when grant.actionDigest is whitespace-only', async () => {
+    const tokens = makeTokens();
+    const broker = new EffectBroker(
+      tokens,
+      { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+      { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => ({}) },
+      { execute: async () => ({ ok: true }) },
+      { append: async () => {} },
+    );
+    const admission = await broker.admit({
+      effectId: 'eff-blank-digest',
+      token: tokens.issue({ ...grant, effectTypes: ['connector.saas.write'], actionDigest: '   ' }),
+      type: 'connector.saas.write',
+      request: {},
+      idempotencyKey: 'idem',
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
+      actor: 'w',
+    });
+    assert.equal(admission.admitted, false);
+    assert.equal(admission.reason, 'ACTION_DIGEST_REQUIRED');
+  });
+
+  it('passes policySnapshotId and grant actionDigest to kernel for Class A', async () => {
+    const tokens = makeTokens();
+    let captured: { policySnapshotId?: string; actionDigest?: string } = {};
+    const broker = new EffectBroker(
+      tokens,
+      { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'snap-42' }) },
+      {
+        admitEffect: async (input) => {
+          captured = { policySnapshotId: input.policySnapshotId, actionDigest: input.actionDigest };
+          return { admitted: true, effect: { id: 'effect', state: 'ADMITTED' } };
+        },
+        completeEffect: async () => ({}),
+      },
+      { execute: async () => ({ ok: true }) },
+      { append: async () => {} },
+    );
+    const digest = 'b'.repeat(64);
+    const admission = await broker.admit({
+      effectId: 'eff-pass-digest',
+      token: tokens.issue({
+        ...grant,
+        effectTypes: ['http.put'],
+        policySnapshotId: 'snap-42',
+        actionDigest: digest,
+      }),
+      type: 'http.put',
+      request: {},
+      idempotencyKey: 'idem',
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
+      actor: 'w',
+    });
+    assert.equal(admission.admitted, true);
+    assert.equal(captured.policySnapshotId, 'snap-42');
+    assert.equal(captured.actionDigest, digest);
+  });
+
+  it('allows Class B admit without grant actionDigest and falls back to request hash', async () => {
+    const tokens = makeTokens();
+    let capturedDigest = '';
+    const request = { prompt: 'hi' };
+    const broker = new EffectBroker(
+      tokens,
+      { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+      {
+        admitEffect: async (input) => {
+          capturedDigest = input.actionDigest;
+          return { admitted: true, effect: { id: 'effect', state: 'ADMITTED' } };
+        },
+        completeEffect: async () => ({}),
+      },
+      { execute: async () => ({ ok: true }) },
+      { append: async () => {} },
+    );
+    const { actionDigest: _omit, ...withoutDigest } = grant;
+    const admission = await broker.admit({
+      effectId: 'eff-class-b',
+      token: tokens.issue({
+        ...withoutDigest,
+        effectTypes: ['llm.chat'],
+        requestHash: canonicalRequestHash(request),
+      } as CapabilityGrant),
+      type: 'llm.chat',
+      request,
+      idempotencyKey: 'idem',
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
+      actor: 'w',
+    });
+    assert.equal(admission.admitted, true);
+    assert.equal(capturedDigest, canonicalRequestHash(request));
+  });
+
+  it('allows Class C admit without grant actionDigest', async () => {
+    const tokens = makeTokens();
+    let admitCalled = false;
+    const request = { value: 1 };
+    const broker = new EffectBroker(
+      tokens,
+      { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+      {
+        admitEffect: async () => {
+          admitCalled = true;
+          return { admitted: true, effect: { id: 'effect', state: 'ADMITTED' } };
+        },
+        completeEffect: async () => ({}),
+      },
+      { execute: async () => ({ ok: true }) },
+      { append: async () => {} },
+    );
+    const { actionDigest: _omit, ...withoutDigest } = grant;
+    const admission = await broker.admit({
+      effectId: 'eff-class-c',
+      token: tokens.issue({
+        ...withoutDigest,
+        effectTypes: ['local.hash'],
+        requestHash: canonicalRequestHash(request),
+      } as CapabilityGrant),
+      type: 'local.hash',
+      request,
+      idempotencyKey: 'idem',
+      lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
+      actor: 'w',
+    });
+    assert.equal(admission.admitted, true);
+    assert.equal(admitCalled, true);
+  });
+
+  it('fail-closed when requireDurableCapabilityStores without replay/revocations', () => {
+    const tokens = makeTokens();
+    assert.throws(
+      () =>
+        new EffectBroker(
+          tokens,
+          { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+          { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => ({}) },
+          { execute: async () => ({}) },
+          { append: async () => {} },
+          { requireDurableCapabilityStores: true, localWorkerId: 'w1' },
+        ),
+      (err: unknown) => err instanceof EffectBrokerError && err.code === DURABLE_CAPABILITY_STORES_REQUIRED,
+    );
+  });
+
+  it('fail-closed under production profile without durable stores (localWorkerId set)', () => {
+    const tokens = makeTokens();
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      assert.throws(
+        () =>
+          new EffectBroker(
+            tokens,
+            { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+            { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => ({}) },
+            { execute: async () => ({}) },
+            { append: async () => {} },
+            { localWorkerId: 'w1' },
+          ),
+        (err: unknown) => err instanceof EffectBrokerError && err.code === DURABLE_CAPABILITY_STORES_REQUIRED,
+      );
+    } finally {
+      if (prev === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prev;
+    }
+  });
+
+  it('constructs when requireDurableCapabilityStores with replay + revocations present', () => {
+    const tokens = makeTokens();
+    const broker = new EffectBroker(
+      tokens,
+      { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+      { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => ({}) },
+      { execute: async () => ({}) },
+      { append: async () => {} },
+      {
+        requireDurableCapabilityStores: true,
+        localWorkerId: 'w1',
+        replay: { consume: () => false },
+        revocations: { revoke: () => undefined, isRevoked: () => false },
+      },
+    );
+    assert.ok(broker);
+  });
+
+  it('constructs when requireDurableCapabilityStores with a replay tenant factory', () => {
+    const tokens = makeTokens();
+    const broker = new EffectBroker(
+      tokens,
+      { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+      { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => ({}) },
+      { execute: async () => ({}) },
+      { append: async () => {} },
+      {
+        requireDurableCapabilityStores: true,
+        localWorkerId: 'w1',
+        replay: (_tenantId: string) => ({ consume: () => false }),
+        revocations: { revoke: () => undefined, isRevoked: () => false },
+      },
+    );
+    assert.ok(broker);
+  });
+});
+
+describe('P1: durable stores must reject InMemory classes (presence != durability)', () => {
+  it('assertEffectBrokerDurableStores throws when replay is InMemoryCapabilityReplayStore', () => {
+    assert.throws(
+      () =>
+        assertEffectBrokerDurableStores({
+          replay: new InMemoryCapabilityReplayStore(),
+          revocations: { revoke: () => undefined, isRevoked: () => false },
+        }),
+      (err: unknown) => err instanceof EffectBrokerError && err.code === DURABLE_CAPABILITY_STORES_REQUIRED,
+    );
+  });
+
+  it('assertEffectBrokerDurableStores throws when revocations is InMemoryCapabilityRevocationStore', () => {
+    assert.throws(
+      () =>
+        assertEffectBrokerDurableStores({
+          replay: { consume: () => false },
+          revocations: new InMemoryCapabilityRevocationStore(),
+        }),
+      (err: unknown) => err instanceof EffectBrokerError && err.code === DURABLE_CAPABILITY_STORES_REQUIRED,
+    );
+  });
+
+  it('assertEffectBrokerDurableStores throws when replay/revocations lack consume/isRevoked', () => {
+    assert.throws(
+      () =>
+        assertEffectBrokerDurableStores({
+          replay: {} as unknown as { consume: () => boolean },
+          revocations: { revoke: () => undefined, isRevoked: () => false },
+        }),
+      (err: unknown) => err instanceof EffectBrokerError && err.code === DURABLE_CAPABILITY_STORES_REQUIRED,
+    );
+    assert.throws(
+      () =>
+        assertEffectBrokerDurableStores({
+          replay: { consume: () => false },
+          revocations: {} as unknown as { isRevoked: () => boolean },
+        }),
+      (err: unknown) => err instanceof EffectBrokerError && err.code === DURABLE_CAPABILITY_STORES_REQUIRED,
+    );
+  });
+
+  it('assertEffectBrokerDurableStores passes a plain structural store with consume/isRevoked', () => {
+    assert.doesNotThrow(() =>
+      assertEffectBrokerDurableStores({
+        replay: { consume: () => false },
+        revocations: { revoke: () => undefined, isRevoked: () => false },
+      }),
+    );
+  });
+
+  it('assertEffectBrokerDurableStores passes a tenant-scoped replay factory', () => {
+    assert.doesNotThrow(() =>
+      assertEffectBrokerDurableStores({
+        replay: (_tenantId: string) => ({ consume: () => false }),
+        revocations: { revoke: () => undefined, isRevoked: () => false },
+      }),
+    );
+  });
+
+  it('assertEffectBrokerDurableStores rejects a factory that returns InMemoryCapabilityReplayStore', () => {
+    assert.throws(
+      () =>
+        assertEffectBrokerDurableStores({
+          replay: (_tenantId: string) => new InMemoryCapabilityReplayStore(),
+          revocations: { revoke: () => undefined, isRevoked: () => false },
+        }),
+      (err: unknown) => err instanceof EffectBrokerError && err.code === DURABLE_CAPABILITY_STORES_REQUIRED,
+    );
+  });
+
+  it('EffectBroker constructor rejects an InMemoryCapabilityReplayStore under requireDurableCapabilityStores', () => {
+    const tokens = makeTokens();
+    assert.throws(
+      () =>
+        new EffectBroker(
+          tokens,
+          { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+          { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => ({}) },
+          { execute: async () => ({}) },
+          { append: async () => {} },
+          {
+            requireDurableCapabilityStores: true,
+            localWorkerId: 'w1',
+            replay: new InMemoryCapabilityReplayStore(),
+            revocations: { revoke: () => undefined, isRevoked: () => false },
+          },
+        ),
+      (err: unknown) => err instanceof EffectBrokerError && err.code === DURABLE_CAPABILITY_STORES_REQUIRED,
+    );
+  });
+
+  it('EffectBroker constructor rejects an InMemoryCapabilityRevocationStore under requireDurableCapabilityStores', () => {
+    const tokens = makeTokens();
+    assert.throws(
+      () =>
+        new EffectBroker(
+          tokens,
+          { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+          { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => ({}) },
+          { execute: async () => ({}) },
+          { append: async () => {} },
+          {
+            requireDurableCapabilityStores: true,
+            localWorkerId: 'w1',
+            replay: { consume: () => false },
+            revocations: new InMemoryCapabilityRevocationStore(),
+          },
+        ),
+      (err: unknown) => err instanceof EffectBrokerError && err.code === DURABLE_CAPABILITY_STORES_REQUIRED,
+    );
+  });
+});
+
+describe('P1: COMMANDER_REQUIRE_WORKLOAD_BINDING must gate affinity the same as durable stores', () => {
+  it('refuses to construct without localWorkerId when only COMMANDER_REQUIRE_WORKLOAD_BINDING=1 is set', () => {
+    const tokens = makeTokens();
+    const prev = process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING;
+    process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING = '1';
+    try {
+      assert.throws(
+        () =>
+          new EffectBroker(
+            tokens,
+            { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+            { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => ({}) },
+            { execute: async () => ({}) },
+            { append: async () => {} },
+            {
+              replay: { consume: () => false },
+              revocations: { revoke: () => undefined, isRevoked: () => false },
+            },
+          ),
+        (err: unknown) => err instanceof EffectBrokerError && err.code === 'WORKER_AFFINITY_REQUIRED_IN_PROD',
+      );
+    } finally {
+      if (prev === undefined) delete process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING;
+      else process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING = prev;
+    }
+  });
+
+  it('constructs when COMMANDER_REQUIRE_WORKLOAD_BINDING=1 with localWorkerId + durable stores', () => {
+    const tokens = makeTokens();
+    const prev = process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING;
+    process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING = '1';
+    try {
+      const broker = new EffectBroker(
+        tokens,
+        { evaluate: async () => ({ effect: 'allow', decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+        { admitEffect: async () => ({ admitted: true, effect: { id: 'effect', state: 'ADMITTED' } }), completeEffect: async () => ({}) },
+        { execute: async () => ({}) },
+        { append: async () => {} },
+        {
+          localWorkerId: 'w1',
+          replay: { consume: () => false },
+          revocations: { revoke: () => undefined, isRevoked: () => false },
+        },
+      );
+      assert.ok(broker);
+    } finally {
+      if (prev === undefined) delete process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING;
+      else process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING = prev;
     }
   });
 });

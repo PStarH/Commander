@@ -69,7 +69,10 @@ describe('PostgreSQL kernel ops durability', () => {
       const admitted = await repo.admitEffect({
         id: `effect-${suffix}`, runId: stepC.runId, stepId: stepC.id, tenantId: tenantC,
         type: 'tool', idempotencyKey: `effect-key-${suffix}`, request: { tool: 'write' },
-        policyDecisionId: 'decision', lease: stepC.lease, actor: workerId,
+        policyDecisionId: 'decision',
+        policySnapshotId: 'policy',
+        actionDigest: 'a'.repeat(64),
+        lease: stepC.lease, actor: workerId,
       });
       assert.equal(admitted.admitted, true);
       assert.ok(await repo.completeEffect(
@@ -122,8 +125,11 @@ describe('PostgreSQL kernel ops durability', () => {
               idempotencyKey: input.idempotencyKey,
               request: input.request,
               policyDecisionId: 'cmp-decision',
+              policySnapshotId: 'policy',
+              actionDigest: 'a'.repeat(64),
               lease: {
                 workerId: input.lease.workerId,
+                workerGeneration: input.lease.workerGeneration,
                 token: input.lease.token,
                 fencingEpoch: input.lease.fencingEpoch,
               },
@@ -164,14 +170,14 @@ describe('PostgreSQL kernel ops durability', () => {
         occurredAt: new Date().toISOString(), payload: { runId: stepC.runId },
       });
       const firstClaim = (await delivery.claim(
-        'ws2-before-restart', 100, new Date(Date.now() + 1_000),
+        'ws2-before-restart', 10_000, new Date(Date.now() + 1_000),
       )).find(
         (message) => message.eventId === durableEventId,
       );
       assert.ok(firstClaim);
       const restartedAdapter = new PostgresOutboxDeliveryPort(pool, { baseBackoffMs: 1 });
       const redelivered = (await restartedAdapter.claim(
-        'ws2-after-restart', 100, new Date(Date.now() + 61_000),
+        'ws2-after-restart', 10_000, new Date(Date.now() + 61_000),
       )).find((message) => message.eventId === durableEventId);
       assert.ok(redelivered);
       assert.notEqual(redelivered.claimToken, firstClaim.claimToken);
@@ -185,7 +191,9 @@ describe('PostgreSQL kernel ops durability', () => {
     }
   });
 
-  it('locks COMPLETED|ADMITTED effects before compensation snapshot so sibling completeEffect cannot orphan', { skip: !databaseUrl }, async () => {
+  it('locks COMPLETED|ADMITTED effects before compensation snapshot so sibling completeEffect cannot orphan', {
+    skip: !databaseUrl,
+  }, async () => {
     if (!databaseUrl) return;
     // 并发回归：failStep→COMPENSATING 与 sibling completeEffect 竞态时，
     // 凡最终 COMPLETED 的 effect 必须落在 compensation.requested.effectIds 内。
@@ -246,7 +254,10 @@ describe('PostgreSQL kernel ops durability', () => {
         assert.equal((await repo.admitEffect({
           id: effectA, runId, stepId: stepA, tenantId, type: 'tool',
           idempotencyKey: `a-${suffix}`, request: { tool: 'write-a' },
-          policyDecisionId: 'decision-a', lease: claimedA!.lease!, actor: claimedA!.lease!.workerId,
+          policyDecisionId: 'decision-a',
+          policySnapshotId: 'policy',
+          actionDigest: 'a'.repeat(64),
+          lease: claimedA!.lease!, actor: claimedA!.lease!.workerId,
         })).admitted, true);
         assert.ok(await repo.completeEffect(
           effectA, tenantId, claimedA!.lease!, { ok: true }, claimedA!.lease!.workerId,
@@ -255,7 +266,10 @@ describe('PostgreSQL kernel ops durability', () => {
         assert.equal((await repo.admitEffect({
           id: effectB, runId, stepId: stepB, tenantId, type: 'tool',
           idempotencyKey: `b-${suffix}`, request: { tool: 'write-b' },
-          policyDecisionId: 'decision-b', lease: claimedB!.lease!, actor: claimedB!.lease!.workerId,
+          policyDecisionId: 'decision-b',
+          policySnapshotId: 'policy',
+          actionDigest: 'a'.repeat(64),
+          lease: claimedB!.lease!, actor: claimedB!.lease!.workerId,
         })).admitted, true);
 
         const [failed, siblingComplete] = await Promise.all([

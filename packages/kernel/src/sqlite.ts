@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import Database from 'better-sqlite3';
 import type { SqlClient } from './postgres.js';
 import { PostgresKernelRepository } from './postgres.js';
+import { generateWorkerClaimSecret, hashWorkerClaimSecret, verifyWorkerClaimSecret } from './claimSecret.js';
 import type { ClaimStepRequest, KernelStep, KernelStepState } from './types.js';
 import { assertRunTransition, assertStepTransition } from './transitionValidation.js';
 import { SQLITE_KERNEL_SCHEMA_SQL, SQLITE_KERNEL_SCHEMA_VERSION } from './sqliteSchema.js';
@@ -60,6 +61,12 @@ function fromStepAdapter(row: Record<string, unknown>): KernelStep {
 /** SQLite implementation of KernelRepository — single-writer, BEGIN IMMEDIATE claims. */
 export class SqliteKernelRepository extends PostgresKernelRepository {
   private readonly db: Database.Database;
+  /**
+   * Claim-path scheduler flag. Distinct from parent `options.schedulerMode`, which
+   * must stay true so Postgres `enforceAppRole` (session_user::text) is never
+   * applied to the SQLite pool.
+   */
+  private readonly claimSchedulerMode: boolean;
 
   constructor(private readonly sqliteOptions: SqliteKernelRepositoryOptions) {
     if (sqliteOptions.path === ':memory:' && !sqliteOptions.allowMemory) {
@@ -70,8 +77,11 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
       mkdirSync(parentDir, { recursive: true, mode: 0o700 });
     }
     const db = new Database(sqliteOptions.path);
-    super(createSqlitePool(db), { schedulerMode: sqliteOptions.schedulerMode ?? true });
+    const claimSchedulerMode = sqliteOptions.schedulerMode ?? true;
+    // Always pass schedulerMode:true to parent — enforceAppRole is PG-LOGIN only.
+    super(createSqlitePool(db), { schedulerMode: true });
     this.db = db;
+    this.claimSchedulerMode = claimSchedulerMode;
   }
 
   async initialize(): Promise<void> {
@@ -85,6 +95,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
     this.db.pragma(`busy_timeout = ${busyTimeoutMs}`);
     this.db.pragma(`synchronous = ${synchronous}`);
     this.db.exec(SQLITE_KERNEL_SCHEMA_SQL);
+    this.migrateCapabilityRevocationsPk();
     this.db.prepare(
       `INSERT OR IGNORE INTO commander_kernel_schema (version) VALUES (?)`,
     ).run(SQLITE_KERNEL_SCHEMA_VERSION);
@@ -99,31 +110,87 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
     this.db.close();
   }
 
-  /** Test helper: register a worker row for claim/fencing contract tests. */
-  seedTestWorker(workerId: string, tenantIds: string[], generation = 1): void {
-    const existing = this.db.prepare('SELECT id FROM commander_workers WHERE id = ?').get(workerId);
-    if (existing) return;
+  /**
+   * Rebuild capability revocations when legacy global-jti PRIMARY KEY is present.
+   * New installs already use PRIMARY KEY (tenant_id, jti) from SQLITE_KERNEL_SCHEMA_SQL.
+   */
+  private migrateCapabilityRevocationsPk(): void {
+    const cols = this.db.prepare(`PRAGMA table_info(commander_capability_revocations)`).all() as Array<{
+      name: string;
+      pk: number;
+    }>;
+    if (cols.length === 0) return;
+    const pkCols = cols
+      .filter((c) => c.pk > 0)
+      .sort((a, b) => a.pk - b.pk)
+      .map((c) => c.name);
+    if (!(pkCols.length === 1 && pkCols[0] === 'jti')) return;
+    this.db.exec(`
+      CREATE TABLE commander_capability_revocations_new (
+        tenant_id TEXT NOT NULL,
+        jti TEXT NOT NULL,
+        revoked_at TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at TEXT NOT NULL,
+        reason TEXT,
+        PRIMARY KEY (tenant_id, jti)
+      );
+      INSERT OR IGNORE INTO commander_capability_revocations_new (tenant_id, jti, revoked_at, expires_at, reason)
+        SELECT tenant_id, jti, revoked_at, expires_at, reason FROM commander_capability_revocations;
+      DROP TABLE commander_capability_revocations;
+      ALTER TABLE commander_capability_revocations_new RENAME TO commander_capability_revocations;
+      CREATE INDEX IF NOT EXISTS commander_capability_revocations_exp_idx
+        ON commander_capability_revocations (expires_at);
+    `);
+  }
+
+  /**
+   * Test helper: register/replace a worker row for claim/fencing contract tests.
+   * `tenantIds` is the durable authz set read by worker-mode `claimNextStep`.
+   * Returns the plaintext claim secret (required on worker-mode claims).
+   */
+  seedTestWorker(
+    workerId: string,
+    tenantIds: string[],
+    generation = 1,
+    options?: { status?: 'ACTIVE' | 'DRAINING' | 'OFFLINE'; claimSecret?: string },
+  ): string {
+    const status = options?.status ?? 'ACTIVE';
+    const claimSecret = options?.claimSecret ?? generateWorkerClaimSecret();
     this.db.prepare(
       `INSERT INTO commander_workers (id,kind,version,capabilities,max_concurrency,status,generation,active_steps,identity_subject,tenant_ids)
-       VALUES (?,?,?,?,?,?,?,0,?,?)`,
+       VALUES (?,?,?,?,?,?,?,0,?,?)
+       ON CONFLICT(id) DO UPDATE SET
+         status=excluded.status,
+         generation=excluded.generation,
+         tenant_ids=excluded.tenant_ids,
+         last_heartbeat_at=datetime('now')`,
     ).run(
       workerId,
       'agent',
       'test',
       JSON.stringify(['agent', 'tool']),
       10,
-      'ACTIVE',
+      status,
       generation,
       workerId,
       JSON.stringify(tenantIds),
     );
+    this.db.prepare(
+      `INSERT INTO commander_worker_claim_secrets (worker_id, generation, secret_hash, updated_at)
+       VALUES (?,?,?,datetime('now'))
+       ON CONFLICT(worker_id) DO UPDATE SET
+         generation=excluded.generation,
+         secret_hash=excluded.secret_hash,
+         updated_at=datetime('now')`,
+    ).run(workerId, generation, hashWorkerClaimSecret(claimSecret));
+    return claimSecret;
   }
 
   protected override async withTransaction<T>(
     fn: (client: SqlClient) => Promise<T>,
     tenantIds: string[] = [],
   ): Promise<T> {
-    if (tenantIds.length === 0 && !this.options.schedulerMode) {
+    if (tenantIds.length === 0 && !this.claimSchedulerMode) {
       throw new Error('Kernel write must explicitly carry tenant scope (or use a scheduler-mode repository)');
     }
     this.db.prepare('BEGIN IMMEDIATE').run();
@@ -140,17 +207,92 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
     }
   }
 
+  /**
+   * Resolve durable worker tenant scope (PG claim_next_step parity).
+   * Returns null when fail-closed (missing/inactive/stale/empty/`*` authz).
+   * Open-ended durable `*` is forbidden — do not expand.
+   */
+  private resolveDurableWorkerTenantScope(
+    workerId: string,
+    workerGeneration: number,
+    claimSecret?: string,
+  ): { tenantIds: string[]; openEnded: boolean } | null {
+    if (!claimSecret || claimSecret.length === 0) return null;
+    const secretRow = this.db.prepare(
+      `SELECT secret_hash FROM commander_worker_claim_secrets WHERE worker_id = ? AND generation = ?`,
+    ).get(workerId, workerGeneration) as { secret_hash: Buffer | Uint8Array } | undefined;
+    if (!secretRow || !verifyWorkerClaimSecret(claimSecret, Buffer.from(secretRow.secret_hash))) {
+      return null;
+    }
+    const worker = this.db.prepare(
+      `SELECT tenant_ids, status, generation FROM commander_workers WHERE id = ?`,
+    ).get(workerId) as { tenant_ids: string; status: string; generation: number } | undefined;
+    if (
+      !worker ||
+      worker.status !== 'ACTIVE' ||
+      Number(worker.generation) !== workerGeneration
+    ) {
+      return null;
+    }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(worker.tenant_ids || '[]');
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(raw)) return null;
+    const parsed = raw.filter((t): t is string => typeof t === 'string' && t.length > 0);
+    // Product decision: durable '*' fail-closed (parity with claim_* DEFINER).
+    if (parsed.includes('*')) return null;
+    if (parsed.length === 0) return null;
+    return { tenantIds: parsed, openEnded: false };
+  }
+
   override async claimNextStep(request: ClaimStepRequest): Promise<KernelStep | null> {
     const now = request.now ?? new Date();
     const expiry = new Date(now.getTime() + request.leaseTtlMs);
     const token = randomUUID();
     const workerGeneration = request.workerGeneration ?? -1;
-    const tenantIds = request.tenantIds ?? (request.tenantId ? [request.tenantId] : []);
     const capabilities = request.capabilities ?? [];
     const capsJson = JSON.stringify(capabilities);
 
+    // Worker path (PG claim_next_step parity): ignore caller tenantIds/tenantId;
+    // authorize solely from durable commander_workers.tenant_ids.
+    let tenantIds: string[];
+    let openEnded: boolean;
+    if (!this.claimSchedulerMode) {
+      const scope = this.resolveDurableWorkerTenantScope(
+        request.workerId,
+        workerGeneration,
+        request.claimSecret,
+      );
+      if (!scope) return null;
+      tenantIds = scope.tenantIds;
+      openEnded = scope.openEnded;
+    } else {
+      tenantIds = request.tenantIds ?? (request.tenantId ? [request.tenantId] : []);
+      openEnded = tenantIds.length === 0;
+    }
+
+    const txScope = openEnded ? ['*'] : tenantIds;
     return this.withTransaction(async (client) => {
-      const tenantClause = tenantIds.length === 0 ? '' : ` AND s.tenant_id IN (${tenantIds.map(() => '?').join(',')})`;
+      // Re-check durable authz inside the transaction (worker-mode).
+      if (!this.claimSchedulerMode) {
+        const scope = this.resolveDurableWorkerTenantScope(
+          request.workerId,
+          workerGeneration,
+          request.claimSecret,
+        );
+        if (!scope) return null;
+        if (!scope.openEnded && scope.tenantIds.length === 0) return null;
+        tenantIds = scope.tenantIds;
+        openEnded = scope.openEnded;
+      }
+
+      const filterTenants = openEnded ? [] : tenantIds;
+      const tenantClause = filterTenants.length === 0
+        ? ''
+        : ` AND s.tenant_id IN (${filterTenants.map(() => '?').join(',')})`;
       const selectSql = `SELECT s.id, s.state AS previous_state FROM commander_steps s JOIN commander_runs r ON r.id=s.run_id AND r.tenant_id=s.tenant_id
            JOIN commander_workers w ON w.id=? AND w.generation=? AND w.status='ACTIVE'
            JOIN commander_tenant_execution_usage u ON u.tenant_id=s.tenant_id
@@ -174,7 +316,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         request.workerId,
         workerGeneration,
         now.toISOString(),
-        ...tenantIds,
+        ...filterTenants,
         capsJson,
         capsJson,
         now.toISOString(),
@@ -216,7 +358,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         payload: { attempt: step.attempt, fencingEpoch: step.lease!.fencingEpoch },
       });
       return step;
-    }, tenantIds.length > 0 ? tenantIds : ['*']);
+    }, txScope);
   }
 
   override async claimOutbox(limit: number, now = new Date()): Promise<import('./types.js').KernelOutboxMessage[]> {
@@ -254,16 +396,56 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
     });
   }
 
-  override async claimOutboxByTopic(topic: string, limit: number, now = new Date()): Promise<import('./types.js').KernelOutboxMessage[]> {
+  override async claimOutboxByTopic(
+    topic: string,
+    limit: number,
+    now = new Date(),
+    authz?: { workerId: string; workerGeneration: number; claimSecret: string },
+  ): Promise<import('./types.js').KernelOutboxMessage[]> {
     const token = randomUUID();
     const staleBefore = new Date(now.getTime() - 60_000).toISOString();
+
+    let tenantFilter: string[] | null = null;
+    let txScope: string[];
+    if (!this.claimSchedulerMode) {
+      const workerId = authz?.workerId?.trim();
+      if (!workerId) {
+        throw new Error('claimOutboxByTopic requires workerId on the worker LOGIN path');
+      }
+      if (typeof authz?.workerGeneration !== 'number' || !Number.isFinite(authz.workerGeneration)) {
+        throw new Error('claimOutboxByTopic requires finite workerGeneration on the worker LOGIN path');
+      }
+      if (!authz.claimSecret) {
+        throw new Error('claimOutboxByTopic requires claimSecret on the worker LOGIN path');
+      }
+      const scope = this.resolveDurableWorkerTenantScope(
+        workerId,
+        authz.workerGeneration,
+        authz.claimSecret,
+      );
+      if (!scope) return [];
+      tenantFilter = scope.openEnded ? null : scope.tenantIds;
+      if (tenantFilter !== null && tenantFilter.length === 0) return [];
+      txScope = scope.openEnded ? ['*'] : scope.tenantIds;
+    } else {
+      txScope = ['*'];
+    }
+
     return this.withTransaction(async (client) => {
       const candidates = await client.query<{ id: string }>(
-        `SELECT id FROM commander_outbox
-         WHERE topic=? AND published_at IS NULL AND moved_to_dlq_at IS NULL AND attempts < max_attempts
-           AND available_at <= ? AND (claimed_at IS NULL OR claimed_at < ?)
-         ORDER BY created_at LIMIT ?`,
-        [topic, now.toISOString(), staleBefore, limit],
+        tenantFilter === null
+          ? `SELECT id FROM commander_outbox
+             WHERE topic=? AND published_at IS NULL AND moved_to_dlq_at IS NULL AND attempts < max_attempts
+               AND available_at <= ? AND (claimed_at IS NULL OR claimed_at < ?)
+             ORDER BY created_at LIMIT ?`
+          : `SELECT id FROM commander_outbox
+             WHERE topic=? AND published_at IS NULL AND moved_to_dlq_at IS NULL AND attempts < max_attempts
+               AND available_at <= ? AND (claimed_at IS NULL OR claimed_at < ?)
+               AND tenant_id IN (${tenantFilter.map(() => '?').join(',')})
+             ORDER BY created_at LIMIT ?`,
+        tenantFilter === null
+          ? [topic, now.toISOString(), staleBefore, limit]
+          : [topic, now.toISOString(), staleBefore, ...tenantFilter, limit],
       );
       if (candidates.rows.length === 0) return [];
       const ids = candidates.rows.map((r) => r.id);
@@ -286,7 +468,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         claimToken: token,
         createdAt: String(row.created_at),
       }));
-    });
+    }, txScope);
   }
 
   override async claimReconcileEffects(input: import('./types.js').ClaimReconcileEffectsInput): Promise<import('./types.js').ClaimedReconcileEffect[]> {
@@ -294,14 +476,54 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
     const claimTtlMs = input.claimTtlMs ?? 60_000;
     const claimToken = randomUUID();
     const claimExpiresAt = new Date(at.getTime() + claimTtlMs).toISOString();
+    const workerGeneration = input.workerGeneration ?? -1;
+
+    // Worker path (PG claim_reconcile_effects parity): authorize solely from
+    // durable commander_workers.tenant_ids — fail-closed when missing/empty/stale.
+    let tenantFilter: string[] | null = null; // null = open-ended (*)
+    let txScope: string[];
+    if (!this.claimSchedulerMode) {
+      const workerId = input.workerId?.trim();
+      if (!workerId) {
+        throw new Error('claimReconcileEffects requires workerId on the worker LOGIN path');
+      }
+      const scope = this.resolveDurableWorkerTenantScope(
+        workerId,
+        workerGeneration,
+        input.claimSecret,
+      );
+      if (!scope) return [];
+      tenantFilter = scope.openEnded ? null : scope.tenantIds;
+      if (tenantFilter !== null && tenantFilter.length === 0) return [];
+      txScope = scope.openEnded ? ['*'] : scope.tenantIds;
+    } else {
+      txScope = ['*'];
+    }
+
     return this.withTransaction(async (client) => {
+      if (!this.claimSchedulerMode) {
+        const workerId = input.workerId!.trim();
+        const scope = this.resolveDurableWorkerTenantScope(
+          workerId,
+          workerGeneration,
+          input.claimSecret,
+        );
+        if (!scope) return [];
+        tenantFilter = scope.openEnded ? null : scope.tenantIds;
+        if (tenantFilter !== null && tenantFilter.length === 0) return [];
+      }
+
+      const filterTenants = tenantFilter ?? [];
+      const tenantClause = tenantFilter === null
+        ? ''
+        : ` AND tenant_id IN (${filterTenants.map(() => '?').join(',')})`;
       const candidates = await client.query<{ id: string }>(
         `SELECT id FROM commander_effects
          WHERE state='COMPLETION_UNKNOWN' AND reconcile_escalated_at IS NULL
            AND reconcile_after IS NOT NULL AND reconcile_after <= ?
-           AND (reconcile_claim_expires_at IS NULL OR reconcile_claim_expires_at < ?)
+           AND (reconcile_claim_expires_at IS NULL OR reconcile_claim_expires_at < ?)${tenantClause}
          ORDER BY reconcile_after ASC LIMIT ?`,
-        [at.toISOString(), at.toISOString(), input.limit],
+        [at.toISOString(), at.toISOString(), ...filterTenants, input.limit],
       );
       if (candidates.rows.length === 0) return [];
       const ids = candidates.rows.map((r) => r.id);
@@ -320,6 +542,11 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
           type: row.type as string,
           idempotencyKey: row.idempotency_key as string,
           policyDecisionId: row.policy_decision_id as string,
+          policySnapshotId: (row.policy_snapshot_id as string) || 'legacy-unbound',
+          actionDigest: (row.action_digest as string) || (row.request_hash as string),
+          leaseWorkerId: (row.lease_worker_id as string) || 'legacy-unbound',
+          leaseWorkerGeneration: Number(row.lease_worker_generation ?? 0),
+          leaseFencingEpoch: Number(row.lease_fencing_epoch ?? 0),
           state: row.state as import('./types.js').KernelEffect['state'],
           requestHash: row.request_hash as string,
           request: typeof row.request === 'string' ? JSON.parse(row.request) : row.request as Record<string, unknown>,
@@ -335,7 +562,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         },
         claimToken,
       }));
-    });
+    }, txScope);
   }
 
   override async claimExpiredTimers(now: Date = new Date(), limit: number = 100): Promise<import('./types.js').KernelTimer[]> {
