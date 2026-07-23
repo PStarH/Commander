@@ -16,6 +16,7 @@ declare global {
 
 const PUBLIC_PATHS = new Set([
   '/health',
+  '/ready',
   '/system/status',
   '/api/openapi.json',
   '/a2a/.well-known/agent-card',
