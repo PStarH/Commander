@@ -4,7 +4,8 @@ import {
   getMessageBus,
   type MessageBusTopic,
 } from '@commander/core';
-import { Router } from 'express';
+import { assertSameTenant, getCurrentTenantId } from '@commander/core/runtime/tenantContext';
+import { Router, type Request, type Response } from 'express';
 import { join } from 'path';
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import {
@@ -21,8 +22,19 @@ import {
   type SagaStateSnapshot,
   type SagaEvent,
 } from '@commander/core/saga';
+import { hasRole } from './userStore';
 
 const DATA_DIR = process.env.COMMANDER_SAGA_DATA ?? join(process.cwd(), '.commander', 'sagas');
+const RUN_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+function isValidRunId(runId: unknown): runId is string {
+  return (
+    typeof runId === 'string' &&
+    runId.length > 0 &&
+    runId.length < 128 &&
+    RUN_ID_PATTERN.test(runId)
+  );
+}
 
 function buildSagaRuntime() {
   const store = new FileSagaStore({ baseDir: DATA_DIR });
@@ -52,6 +64,91 @@ function lookupSagaGraph(sagaName: string): SagaGraph | undefined {
   return example.build();
 }
 
+interface SagaPrincipal {
+  id: string;
+  tenantId: string;
+  isAdmin: boolean;
+  canOperate: boolean;
+}
+
+type OwnedSagaSnapshot = SagaStateSnapshot & { ownerId?: string };
+
+function requireSagaPrincipal(req: Request, res: Response): SagaPrincipal | null {
+  const id = req.user?.id ?? req.apiKeyId;
+  if (!id) {
+    res.status(401).json({ error: 'Authentication required' });
+    return null;
+  }
+  const active = getCurrentTenantId();
+  const bound = req.tenantId;
+  const claim = req.user?.tenantId;
+  if (req.user && (!claim || (bound && bound !== claim))) {
+    res.status(403).json({ error: 'Tenant context mismatch' });
+    return null;
+  }
+  const requested = req.user ? claim : bound;
+  if (active && requested && active !== requested) {
+    res.status(403).json({ error: 'Tenant context mismatch' });
+    return null;
+  }
+  const tenantId = active ?? requested;
+  if (!tenantId) {
+    res.status(401).json({ error: 'Authenticated tenant context required' });
+    return null;
+  }
+  try {
+    if (active && requested) assertSameTenant(requested);
+    const role = req.user?.role;
+    const scopes = [...(req.apiScopes ?? []), ...(req.user?.scopes ?? [])];
+    const isAdmin = !!role && hasRole(role, 'admin');
+    return {
+      id,
+      tenantId,
+      isAdmin,
+      canOperate:
+        isAdmin ||
+        scopes.includes('saga:operate') ||
+        scopes.includes('saga:admin') ||
+        scopes.includes('admin') ||
+        scopes.includes('*'),
+    };
+  } catch {
+    res.status(403).json({ error: 'Tenant context mismatch' });
+    return null;
+  }
+}
+
+function isSameTenant(snapshot: SagaStateSnapshot, tenantId: string): boolean {
+  if (snapshot.tenantId !== tenantId) return false;
+  try {
+    if (getCurrentTenantId()) assertSameTenant(snapshot.tenantId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function canReadSnapshot(snapshot: OwnedSagaSnapshot, principal: SagaPrincipal): boolean {
+  return (
+    isSameTenant(snapshot, principal.tenantId) &&
+    (principal.isAdmin || (!!snapshot.ownerId && snapshot.ownerId === principal.id))
+  );
+}
+
+function authorizeMutation(
+  snapshot: OwnedSagaSnapshot,
+  principal: SagaPrincipal,
+  res: Response,
+): boolean {
+  if (!isSameTenant(snapshot, principal.tenantId)) {
+    res.status(404).json({ error: 'Run not found' });
+    return false;
+  }
+  if (snapshot.ownerId === principal.id || principal.canOperate) return true;
+  res.status(403).json({ error: 'Saga owner or operator authority required' });
+  return false;
+}
+
 function buildTimeline(snapshot: SagaStateSnapshot, events: SagaEvent[]) {
   return events.map((ev) => ({
     kind: ev.kind,
@@ -67,7 +164,9 @@ function buildTimeline(snapshot: SagaStateSnapshot, events: SagaEvent[]) {
 export function createSagaRouter(): Router {
   const router = Router();
 
-  router.get('/api/saga/runs', async (_req, res) => {
+  router.get('/api/saga/runs', async (req, res) => {
+    const principal = requireSagaPrincipal(req, res);
+    if (!principal) return;
     if (!existsSync(DATA_DIR)) {
       return res.json({ runs: [] });
     }
@@ -75,7 +174,7 @@ export function createSagaRouter(): Router {
       .filter((e) => e.isDirectory())
       .map((e) => {
         const snap = readSnapshot(e.name);
-        if (!snap) return { runId: e.name, state: 'UNKNOWN', sagaName: undefined, updatedAt: '' };
+        if (!snap || !canReadSnapshot(snap, principal)) return null;
         // `sagaName` is not part of the core SagaStateSnapshot type but is
         // persisted on disk by older saga writers. Read it as an optional
         // bag-of-record field via a narrow cast — keeps the endpoint
@@ -87,15 +186,21 @@ export function createSagaRouter(): Router {
           sagaName: enriched.sagaName,
           updatedAt: snap.updatedAt,
         };
-      });
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
     res.json({ runs: entries });
   });
 
   router.get('/api/saga/runs/:runId', async (req, res) => {
+    const principal = requireSagaPrincipal(req, res);
+    if (!principal) return;
     const { runId } = req.params;
+    if (!isValidRunId(runId)) return res.status(400).json({ error: 'Invalid runId format' });
     const runtime = buildSagaRuntime();
     const recovered = await runtime.checkpoint.recover(runId);
-    if (!recovered) return res.status(404).json({ error: 'Run not found' });
+    if (!recovered || !canReadSnapshot(recovered.snapshot, principal)) {
+      return res.status(404).json({ error: 'Run not found' });
+    }
     res.json({
       runId,
       snapshot: recovered.snapshot,
@@ -105,10 +210,15 @@ export function createSagaRouter(): Router {
   });
 
   router.get('/api/saga/runs/:runId/timeline', async (req, res) => {
+    const principal = requireSagaPrincipal(req, res);
+    if (!principal) return;
     const { runId } = req.params;
+    if (!isValidRunId(runId)) return res.status(400).json({ error: 'Invalid runId format' });
     const runtime = buildSagaRuntime();
     const recovered = await runtime.checkpoint.recover(runId);
-    if (!recovered) return res.status(404).json({ error: 'Run not found' });
+    if (!recovered || !canReadSnapshot(recovered.snapshot, principal)) {
+      return res.status(404).json({ error: 'Run not found' });
+    }
     res.json({
       runId,
       snapshot: recovered.snapshot,
@@ -117,10 +227,16 @@ export function createSagaRouter(): Router {
   });
 
   router.post('/api/saga/runs/:runId/resume', async (req, res) => {
+    const principal = requireSagaPrincipal(req, res);
+    if (!principal) return;
     const { runId } = req.params;
+    if (!isValidRunId(runId)) return res.status(400).json({ error: 'Invalid runId format' });
     const runtime = buildSagaRuntime();
     const recovered = await runtime.checkpoint.recover(runId);
-    if (!recovered) return res.status(404).json({ error: 'Run not found' });
+    if (!recovered) {
+      return res.status(404).json({ error: 'Run not found' });
+    }
+    if (!authorizeMutation(recovered.snapshot, principal, res)) return;
 
     const sagaName = (recovered.snapshot as { sagaName?: string }).sagaName;
     if (!sagaName) return res.status(400).json({ error: 'Snapshot missing sagaName' });
@@ -128,23 +244,13 @@ export function createSagaRouter(): Router {
     const graph = lookupSagaGraph(sagaName);
     if (!graph) return res.status(400).json({ error: `Unknown saga: ${sagaName}` });
 
-    const coord = await (
-      SagaCoordinator as unknown as {
-        resumeFrom: (
-          graph: SagaGraph,
-          recovered: unknown,
-          checkpoint: unknown,
-          approval: unknown,
-          runtime: unknown,
-        ) => Promise<unknown>;
-      }
-    ).resumeFrom(graph, recovered, runtime.checkpoint, runtime.approval, runtime);
-
-    const coordinator = coord as unknown as {
-      resume: () => Promise<{ status: string }>;
-      run: () => Promise<{ status: string }>;
-      state: unknown;
-    };
+    const coordinator = SagaCoordinator.resumeFrom(
+      graph,
+      recovered,
+      runtime.checkpoint,
+      runtime.approval,
+      { ...runtime, ownerId: recovered.snapshot.ownerId ?? principal.id },
+    );
 
     const resultPromise = coordinator.resume();
     res.json({ runId, status: 'resuming', state: coordinator.state });
@@ -168,13 +274,19 @@ export function createSagaRouter(): Router {
   });
 
   router.post('/api/saga/runs/:runId/fork', async (req, res) => {
+    const principal = requireSagaPrincipal(req, res);
+    if (!principal) return;
     const { runId } = req.params;
+    if (!isValidRunId(runId)) return res.status(400).json({ error: 'Invalid runId format' });
     const { nodeId, input } = req.body as { nodeId?: string; input?: Record<string, unknown> };
     if (!nodeId) return res.status(400).json({ error: 'nodeId required' });
 
     const runtime = buildSagaRuntime();
     const recovered = await runtime.checkpoint.recover(runId);
-    if (!recovered) return res.status(404).json({ error: 'Run not found' });
+    if (!recovered) {
+      return res.status(404).json({ error: 'Run not found' });
+    }
+    if (!authorizeMutation(recovered.snapshot, principal, res)) return;
 
     const sagaName = (recovered.snapshot as { sagaName?: string }).sagaName;
     if (!sagaName) return res.status(400).json({ error: 'Snapshot missing sagaName' });
@@ -182,17 +294,16 @@ export function createSagaRouter(): Router {
     const graph = lookupSagaGraph(sagaName);
     if (!graph) return res.status(400).json({ error: `Unknown saga: ${sagaName}` });
 
-    const { coordinator: coord, newRunId } = await (
-      SagaCoordinator as unknown as {
-        forkFrom: (...args: unknown[]) => Promise<{ coordinator: unknown; newRunId: string }>;
-      }
-    ).forkFrom(graph, runId, nodeId, runtime.checkpoint, runtime.approval, { ...runtime, input });
+    const { coordinator: forked, newRunId } = await SagaCoordinator.forkFrom(
+      graph,
+      runId,
+      nodeId,
+      runtime.checkpoint,
+      runtime.approval,
+      { ...runtime, input, ownerId: recovered.snapshot.ownerId ?? principal.id },
+    );
 
-    const forked = coord as unknown as {
-      run: () => Promise<{ status: string }>;
-    };
-
-    const resultPromise = forked.run();
+    const resultPromise = forked.runFrom(nodeId);
     res.json({ parentRunId: runId, newRunId, forkNodeId: nodeId, status: 'forked' });
 
     const bus = getMessageBus();
@@ -214,7 +325,14 @@ export function createSagaRouter(): Router {
   });
 
   router.get('/api/saga/stream/:runId', async (req, res) => {
+    const principal = requireSagaPrincipal(req, res);
+    if (!principal) return;
     const { runId } = req.params;
+    if (!isValidRunId(runId)) return res.status(400).json({ error: 'Invalid runId format' });
+    const snapshot = readSnapshot(runId);
+    if (!snapshot || !canReadSnapshot(snapshot, principal)) {
+      return res.status(404).json({ error: 'Run not found' });
+    }
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',

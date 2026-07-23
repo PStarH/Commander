@@ -14,11 +14,12 @@
  * imports directly from @commander/core. This router adds plugin
  * lifecycle control + a convenience render endpoint.
  */
-import { Router, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { toErrorMessage } from './routeHelpers';
 import { validateBody } from './validationMiddleware';
 import { getHookManager, getHTMLReportRenderer, createWarRoomHTMLReport } from '@commander/core';
+import { hasRole } from './userStore';
 
 const REPORTING_PLUGIN_NAME = 'builtin-reporting';
 
@@ -51,6 +52,25 @@ const renderSchema = z.object({
 export function createReportingRouter(): Router {
   const router = Router();
 
+  function requireReportingAdmin(req: Request, res: Response, next: NextFunction): void {
+    if (!req.user && !req.apiKeyId) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    const role = req.user?.role;
+    const scopes = req.apiScopes ?? req.user?.scopes ?? [];
+    if (
+      (role && hasRole(role, 'admin')) ||
+      scopes.includes('reporting:admin') ||
+      scopes.includes('admin') ||
+      scopes.includes('*')
+    ) {
+      next();
+      return;
+    }
+    res.status(403).json({ error: 'Reporting administration authority is required' });
+  }
+
   // ── Control plane ────────────────────────────────────────────────────
 
   router.get('/api/reporting/status', (_req: Request, res: Response) => {
@@ -68,7 +88,7 @@ export function createReportingRouter(): Router {
     }
   });
 
-  router.post('/api/reporting/enable', (_req: Request, res: Response) => {
+  router.post('/api/reporting/enable', requireReportingAdmin, (_req: Request, res: Response) => {
     try {
       const hm = getHookManager();
       if (!hm.hasPlugin(REPORTING_PLUGIN_NAME)) {
@@ -82,7 +102,7 @@ export function createReportingRouter(): Router {
     }
   });
 
-  router.post('/api/reporting/disable', (_req: Request, res: Response) => {
+  router.post('/api/reporting/disable', requireReportingAdmin, (_req: Request, res: Response) => {
     try {
       const hm = getHookManager();
       if (!hm.hasPlugin(REPORTING_PLUGIN_NAME)) {

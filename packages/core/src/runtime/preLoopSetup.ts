@@ -127,7 +127,7 @@ export class PreLoopSetup {
     ) {
       const msg = `BUDGET_EXCEEDED: requested ${ctx.tokenBudget} > hard cap ${this.deps.getConfig().budgetHardCapTokens}`;
       tracer.recordDecision(runId, msg, 0);
-      bus.publish('agent.failed', ctx.agentId, { runId, error: msg });
+      bus.publish('agent.failed', ctx.agentId, { runId, projectId: ctx.projectId, error: msg });
       return {
         runId,
         agentId: ctx.agentId,
@@ -219,6 +219,7 @@ export class PreLoopSetup {
     // 3. Emit started event
     bus.publish('agent.started', ctx.agentId, {
       runId,
+      projectId: ctx.projectId,
       missionId: ctx.missionId,
       model: routing.modelId,
       goal: ctx.goal,
@@ -264,7 +265,7 @@ export class PreLoopSetup {
     if (!this.deps.getCircuitBreaker().isAvailable()) {
       const msg = 'CIRCUIT_OPEN: Too many recent failures. Cooling down.';
       tracer.recordDecision(runId, msg, 0);
-      bus.publish('agent.failed', ctx.agentId, { runId, error: msg });
+      bus.publish('agent.failed', ctx.agentId, { runId, projectId: ctx.projectId, error: msg });
       return {
         runId,
         agentId: ctx.agentId,

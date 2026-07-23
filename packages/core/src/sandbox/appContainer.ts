@@ -33,6 +33,8 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import * as fsp from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import { execSync, spawn } from 'node:child_process';
 import type { PlatformSandbox, SandboxProfile, SandboxExecutionResult } from './types';
 import { getGlobalLogger } from '../logging';
@@ -46,11 +48,126 @@ import { getGlobalLogger } from '../logging';
 // AppContainerSB
 // ============================================================================
 
+type AppContainerAclPath = { path: string; access: 'read' | 'readwrite' };
+
+function validateContainerName(containerName: string): void {
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(containerName)) {
+    throw new Error('Invalid AppContainer container name');
+  }
+}
+
+function validateAclPaths(paths: ReadonlyArray<AppContainerAclPath>): void {
+  for (const entry of paths) {
+    if (
+      typeof entry.path !== 'string' ||
+      entry.path.length === 0 ||
+      /[\0\r\n]/.test(entry.path) ||
+      (entry.access !== 'read' && entry.access !== 'readwrite')
+    ) {
+      throw new Error('Invalid AppContainer ACL path');
+    }
+  }
+}
+
+function normalizeAclPaths(paths: ReadonlyArray<AppContainerAclPath>): AppContainerAclPath[] {
+  validateAclPaths(paths);
+  const normalized = new Map<string, AppContainerAclPath>();
+  for (const entry of paths) {
+    const existing = normalized.get(entry.path);
+    if (!existing || entry.access === 'readwrite') normalized.set(entry.path, { ...entry });
+  }
+  return Array.from(normalized.values());
+}
+
+function encodePowerShellPayload(payload: unknown): string {
+  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
+}
+
+export function buildAppContainerAclGrantScript(
+  containerName: string,
+  paths: ReadonlyArray<AppContainerAclPath>,
+): string {
+  validateContainerName(containerName);
+  const normalizedPaths = normalizeAclPaths(paths);
+  const payload = encodePowerShellPayload({ containerName, paths: normalizedPaths });
+
+  return [
+    `$ErrorActionPreference = "Stop"`,
+    `$payloadJson = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payload}'))`,
+    `$payload = $payloadJson | ConvertFrom-Json`,
+    `$container = Get-AppContainerProfile -Name ([string]$payload.containerName) -ErrorAction Stop`,
+    `if (-not $container -or -not $container.Sid) { throw "AppContainer SID not found" }`,
+    `$appContainerSid = [string]$container.Sid`,
+    `$ErrorActionPreference = "SilentlyContinue"`,
+    `$aclFailed = $false`,
+    `foreach ($entry in @($payload.paths)) {`,
+    `  $perm = if ([string]$entry.access -eq 'readwrite') { '(OI)(CI)(RX,W)' } else { '(OI)(CI)(RX)' }`,
+    `  $identity = '*' + $appContainerSid + ':' + $perm`,
+    `  & icacls.exe ([string]$entry.path) /grant $identity /T /C /Q 2>$null`,
+    `  if ($LASTEXITCODE -ne 0) { $aclFailed = $true }`,
+    `}`,
+    `if ($aclFailed) { Write-Error "One or more AppContainer ACL grants failed"; exit 1 }`,
+    `Write-Host "ACCESS_GRANTED"`,
+  ].join('; ');
+}
+
+export function buildAppContainerAclRollbackScript(
+  sid: string,
+  paths: ReadonlyArray<AppContainerAclPath>,
+): string {
+  if (!/^S-\d+(?:-\d+)+$/i.test(sid)) {
+    throw new Error('Invalid AppContainer SID');
+  }
+  const normalizedPaths = normalizeAclPaths(paths).sort(
+    (left, right) => right.path.length - left.path.length,
+  );
+  const payload = encodePowerShellPayload({ sid, paths: normalizedPaths });
+  return [
+    `$ErrorActionPreference = "SilentlyContinue"`,
+    `$payloadJson = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payload}'))`,
+    `$payload = $payloadJson | ConvertFrom-Json`,
+    `$identity = '*' + [string]$payload.sid`,
+    `$aclFailed = $false`,
+    `foreach ($entry in @($payload.paths)) {`,
+    `  & icacls.exe ([string]$entry.path) /remove $identity /T /C /Q 2>$null`,
+    `  if ($LASTEXITCODE -ne 0) { $aclFailed = $true }`,
+    `}`,
+    `if ($aclFailed) { Write-Error "One or more AppContainer ACL rollbacks failed"; exit 1 }`,
+    `Write-Host "ACL_ROLLED_BACK"`,
+  ].join('; ');
+}
+
+interface AppContainerAclRecord {
+  containerName: string;
+  sid: string;
+  paths: AppContainerAclPath[];
+}
+
+interface AppContainerAclJournal {
+  version: 1;
+  records: AppContainerAclRecord[];
+}
+
+export interface AppContainerSBOptions {
+  /** Operator-owned state outside the workspace. */
+  aclJournalDir?: string;
+}
+
 export class AppContainerSB implements PlatformSandbox {
   readonly name = 'appcontainer' as const;
   readonly available: boolean;
+  private readonly aclJournalPath: string;
+  private lifecycleQueue: Promise<void> = Promise.resolve();
+  private journalQueue: Promise<void> = Promise.resolve();
+  private aclRecovery?: Promise<void>;
+  private aclCleanupRetryNeeded = false;
 
-  constructor() {
+  constructor(options: AppContainerSBOptions = {}) {
+    const operatorStateDir =
+      options.aclJournalDir ??
+      process.env.COMMANDER_OPERATOR_STATE_DIR ??
+      path.join(os.homedir(), '.commander', 'operator-state');
+    this.aclJournalPath = path.join(operatorStateDir, 'appcontainer-acl-cleanup.json');
     this.available = this.checkAvailability();
   }
 
@@ -97,11 +214,32 @@ export class AppContainerSB implements PlatformSandbox {
     profile: SandboxProfile,
     workdir?: string,
   ): Promise<SandboxExecutionResult> {
+    const result = this.lifecycleQueue.then(
+      () => this.executeLifecycle(cmd, profile, workdir),
+      () => this.executeLifecycle(cmd, profile, workdir),
+    );
+    this.lifecycleQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  private async executeLifecycle(
+    cmd: string,
+    profile: SandboxProfile,
+    workdir?: string,
+  ): Promise<SandboxExecutionResult> {
     const start = Date.now();
     const cwd = workdir ?? process.cwd();
-    const containerName = `Commander-${this.sanitizeName(cwd)}`;
+    const containerName = this.createContainerName(cwd);
 
     try {
+      // Recover durable cleanup work left by a prior crash/SIGKILL before
+      // granting any new host filesystem access. This promise is intentionally
+      // sticky: a failed recovery blocks later lifecycles on this instance.
+      await this.prepareAclJournalForLifecycle();
+
       // Step 1: Create AppContainer profile
       await this.createContainer(containerName, profile);
 
@@ -122,9 +260,16 @@ export class AppContainerSB implements PlatformSandbox {
         sandboxMechanism: 'appcontainer',
       };
     } finally {
-      // Step 4: Clean up the container (best-effort)
+      // Step 4: Delete the profile, then remove its precise SID ACEs. The SID
+      // remains usable after profile deletion, so rollback must not depend on
+      // looking the profile up again.
       await this.deleteContainer(containerName).catch(() => {
-        /* ignore cleanup errors */
+        /* still attempt ACL rollback when profile deletion fails */
+      });
+      await this.withJournalLock(() => this.cleanupAclForContainer(containerName)).catch((err) => {
+        // Keep the durable record for the next process/execution retry.
+        this.aclCleanupRetryNeeded = true;
+        reportSilentFailure(err, 'appContainer:aclRollback');
       });
     }
   }
@@ -132,6 +277,7 @@ export class AppContainerSB implements PlatformSandbox {
   // ── Container Lifecycle ───────────────────────────────────────────
 
   private async createContainer(name: string, profile: SandboxProfile): Promise<void> {
+    validateContainerName(name);
     const caps: string[] = [];
 
     // Network capabilities
@@ -145,12 +291,14 @@ export class AppContainerSB implements PlatformSandbox {
       caps.push('documentsLibrary');
     }
 
-    // Build PowerShell commands
-    const capArgs = caps.map((c) => `-CapabilityName "${c}"`).join(' ');
+    const payload = encodePowerShellPayload({ name, capabilities: caps });
     const psCommand = [
-      `$name = "${name}"`,
-      `$displayName = "Commander Sandbox: ${name}"`,
-      `New-AppContainerProfile -Name $name -DisplayName $displayName ${capArgs} -ErrorAction SilentlyContinue`,
+      `$payloadJson = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payload}'))`,
+      `$payload = $payloadJson | ConvertFrom-Json`,
+      `$name = [string]$payload.name`,
+      `$params = @{ Name = $name; DisplayName = ('Commander Sandbox: ' + $name); ErrorAction = 'SilentlyContinue' }`,
+      `if (@($payload.capabilities).Count -gt 0) { $params.CapabilityName = @($payload.capabilities) }`,
+      `New-AppContainerProfile @params`,
       `Write-Host "CONTAINER_CREATED"`,
     ].join('; ');
 
@@ -181,22 +329,37 @@ export class AppContainerSB implements PlatformSandbox {
     // Grant temp directory access
     paths.push({ path: path.resolve(os.tmpdir()), access: 'readwrite' });
 
-    // Use icacls to grant AppContainer SID access to each path
-    const appContainerSid = `S-1-15-2-1`; // ALL_APP_PACKAGES base
-    const grantOps = paths.map((p) => {
-      const perm = p.access === 'readwrite' ? '(OI)(CI)(RX,W)' : '(OI)(CI)(RX)';
-      return `icacls "${p.path}" /grant "*${appContainerSid}":${perm} /T /C /Q 2>$null`;
-    });
-
-    if (grantOps.length > 0) {
-      const psCommand = [
-        `$ErrorActionPreference = "SilentlyContinue"`,
-        ...grantOps,
-        `Write-Host "ACCESS_GRANTED"`,
-      ].join('; ');
-
-      await this.runPowerShell(psCommand);
+    if (paths.length > 0) {
+      const sid = await this.resolveContainerSid(containerName);
+      const normalizedPaths = normalizeAclPaths(paths);
+      await this.withJournalLock(() =>
+        this.appendAclRecord({ containerName, sid, paths: normalizedPaths }),
+      );
+      await this.runPowerShell(buildAppContainerAclGrantScript(containerName, normalizedPaths));
     }
+  }
+
+  private async resolveContainerSid(containerName: string): Promise<string> {
+    validateContainerName(containerName);
+    const payload = encodePowerShellPayload({ containerName });
+    const output = await this.runPowerShell(
+      [
+        `$ErrorActionPreference = "Stop"`,
+        `$payloadJson = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payload}'))`,
+        `$payload = $payloadJson | ConvertFrom-Json`,
+        `$container = Get-AppContainerProfile -Name ([string]$payload.containerName) -ErrorAction Stop`,
+        `if (-not $container -or -not $container.Sid) { throw "AppContainer SID not found" }`,
+        `Write-Output "APP_CONTAINER_SID=$([string]$container.Sid)"`,
+      ].join('; '),
+    );
+    const sid = output.match(/APP_CONTAINER_SID=(S-\d+(?:-\d+)+)/i)?.[1];
+    if (!sid) throw new Error('PowerShell did not return the AppContainer SID');
+    return sid;
+  }
+
+  private async rollbackFileAccess(acl: AppContainerAclRecord): Promise<void> {
+    if (acl.paths.length === 0) return;
+    await this.runPowerShell(buildAppContainerAclRollbackScript(acl.sid, acl.paths));
   }
 
   private async executeInContainer(
@@ -213,14 +376,18 @@ export class AppContainerSB implements PlatformSandbox {
     // Fallback: use START /APPCONTAINER.
     // Base64-encode the command so PowerShell metacharacters cannot break out
     // of the ScriptBlock argument list.
+    validateContainerName(containerName);
     const b64Cmd = Buffer.from(cmd, 'utf-8').toString('base64');
+    const payload = encodePowerShellPayload({ containerName, command: b64Cmd });
 
     const psScript = [
-      `$container = Get-AppContainerProfile -Name "${containerName}" -ErrorAction SilentlyContinue`,
+      `$payloadJson = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payload}'))`,
+      `$payload = $payloadJson | ConvertFrom-Json`,
+      `$container = Get-AppContainerProfile -Name ([string]$payload.containerName) -ErrorAction SilentlyContinue`,
       `if (-not $container) { Write-Error "Container not found"; exit 1 }`,
       `$sid = $container.Sid`,
       // Use Invoke-CommandInAppContainer (Win10 1809+)
-      `$result = Invoke-CommandInAppContainer -AppContainerSid $sid -ArgumentList "${b64Cmd}" -ScriptBlock {`,
+      `$result = Invoke-CommandInAppContainer -AppContainerSid $sid -ArgumentList ([string]$payload.command) -ScriptBlock {`,
       `  param($b64CmdStr)`,
       `  $ErrorActionPreference = "Continue"`,
       `  try {`,
@@ -237,9 +404,13 @@ export class AppContainerSB implements PlatformSandbox {
 
     // Write PowerShell script to temp file
     const tmpDir = this.getTempDir();
-    const scriptPath = path.join(tmpDir, `cmd-${Date.now()}.ps1`);
+    const scriptPath = path.join(tmpDir, `cmd-${randomBytes(16).toString('hex')}.ps1`);
     const fs = await import('fs');
-    await fs.promises.writeFile(scriptPath, psScript, 'utf-8');
+    await fs.promises.writeFile(scriptPath, psScript, {
+      encoding: 'utf8',
+      mode: 0o600,
+      flag: 'wx',
+    });
 
     return new Promise((resolve) => {
       let child: ReturnType<typeof spawn> | undefined;
@@ -338,13 +509,119 @@ export class AppContainerSB implements PlatformSandbox {
   }
 
   private async deleteContainer(name: string): Promise<void> {
+    validateContainerName(name);
+    const payload = encodePowerShellPayload({ name });
     const psCommand = [
       `$ErrorActionPreference = "SilentlyContinue"`,
-      `Remove-AppContainerProfile -Name "${name}" -Confirm:$false -ErrorAction SilentlyContinue`,
+      `$payloadJson = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payload}'))`,
+      `$payload = $payloadJson | ConvertFrom-Json`,
+      `Remove-AppContainerProfile -Name ([string]$payload.name) -Confirm:$false -ErrorAction SilentlyContinue`,
       `Write-Host "CONTAINER_DELETED"`,
     ].join('; ');
 
     await this.runPowerShell(psCommand);
+  }
+
+  private withJournalLock<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.journalQueue.then(operation, operation);
+    this.journalQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  private recoverPendingAclGrantsOnce(): Promise<void> {
+    this.aclRecovery ??= this.withJournalLock(() => this.recoverPendingAclGrants());
+    return this.aclRecovery;
+  }
+
+  private async prepareAclJournalForLifecycle(): Promise<void> {
+    await this.recoverPendingAclGrantsOnce();
+    if (!this.aclCleanupRetryNeeded) return;
+    await this.withJournalLock(() => this.recoverPendingAclGrants());
+    this.aclCleanupRetryNeeded = false;
+  }
+
+  private async readAclJournal(): Promise<AppContainerAclJournal> {
+    let raw: string;
+    try {
+      raw = await fsp.readFile(this.aclJournalPath, 'utf8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { version: 1, records: [] };
+      throw err;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error('Invalid AppContainer ACL cleanup journal; refusing new ACL grants');
+    }
+    const candidate = parsed as Partial<AppContainerAclJournal>;
+    if (candidate.version !== 1 || !Array.isArray(candidate.records)) {
+      throw new Error('Invalid AppContainer ACL cleanup journal; refusing new ACL grants');
+    }
+    for (const record of candidate.records) {
+      validateContainerName(record.containerName);
+      if (!/^S-\d+(?:-\d+)+$/i.test(record.sid)) {
+        throw new Error('Invalid AppContainer ACL cleanup journal SID');
+      }
+      if (!Array.isArray(record.paths)) {
+        throw new Error('Invalid AppContainer ACL cleanup journal paths');
+      }
+      validateAclPaths(record.paths);
+    }
+    return { version: 1, records: candidate.records };
+  }
+
+  private async writeAclJournal(journal: AppContainerAclJournal): Promise<void> {
+    const dir = path.dirname(this.aclJournalPath);
+    await fsp.mkdir(dir, { recursive: true, mode: 0o700 });
+    const tmpPath = `${this.aclJournalPath}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
+    let tmpFile: fsp.FileHandle | undefined;
+    try {
+      tmpFile = await fsp.open(tmpPath, 'wx', 0o600);
+      await tmpFile.writeFile(JSON.stringify(journal), 'utf8');
+      await tmpFile.sync();
+      await tmpFile.close();
+      tmpFile = undefined;
+      await fsp.rename(tmpPath, this.aclJournalPath);
+      if (journal.records.length === 0) {
+        await fsp.unlink(this.aclJournalPath);
+      }
+    } catch (err) {
+      await tmpFile?.close().catch(() => undefined);
+      await fsp.unlink(tmpPath).catch(() => undefined);
+      throw err;
+    }
+  }
+
+  private async appendAclRecord(record: AppContainerAclRecord): Promise<void> {
+    const journal = await this.readAclJournal();
+    if (journal.records.some((existing) => existing.containerName === record.containerName)) {
+      throw new Error('Duplicate AppContainer ACL cleanup journal record');
+    }
+    journal.records.push(record);
+    await this.writeAclJournal(journal);
+  }
+
+  private async recoverPendingAclGrants(): Promise<void> {
+    const journal = await this.readAclJournal();
+    while (journal.records.length > 0) {
+      const record = journal.records[0]!;
+      await this.rollbackFileAccess(record);
+      journal.records.shift();
+      await this.writeAclJournal(journal);
+    }
+  }
+
+  private async cleanupAclForContainer(containerName: string): Promise<void> {
+    const journal = await this.readAclJournal();
+    const record = journal.records.find((candidate) => candidate.containerName === containerName);
+    if (!record) return;
+    await this.rollbackFileAccess(record);
+    journal.records = journal.records.filter((candidate) => candidate !== record);
+    await this.writeAclJournal(journal);
   }
 
   // ── Helpers ────────────────────────────────────────────────────────
@@ -400,10 +677,15 @@ export class AppContainerSB implements PlatformSandbox {
   }
 
   private sanitizeName(cwd: string): string {
-    return path
+    const sanitized = path
       .basename(cwd)
       .replace(/[^a-zA-Z0-9_-]/g, '_')
-      .slice(0, 30);
+      .slice(0, 25);
+    return sanitized || 'workspace';
+  }
+
+  private createContainerName(cwd: string): string {
+    return `Commander-${this.sanitizeName(cwd)}-${randomBytes(12).toString('hex')}`;
   }
 
   private getTempDir(): string {

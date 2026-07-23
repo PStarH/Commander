@@ -15,10 +15,11 @@
  *   POST /api/eval/compare-ab      — run A/B comparison
  *   POST /api/eval/wilcoxon        — pure Wilcoxon signed-rank test
  */
-import { Router, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { toErrorMessage } from './routeHelpers';
 import { validateBody } from './validationMiddleware';
+import { hasRole } from './userStore';
 import {
   getHookManager,
   getSharedJudgeEngine,
@@ -33,6 +34,35 @@ import {
 } from '@commander/core';
 
 const EVAL_PLUGIN_NAME = 'builtin-eval';
+
+function requireEvalAdmin(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user && !req.apiKeyId) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+
+  const scopes = [...(req.apiScopes ?? []), ...(req.user?.scopes ?? [])];
+  const authorized =
+    (!!req.user?.role && hasRole(req.user.role, 'admin')) ||
+    scopes.includes('eval:admin') ||
+    scopes.includes('admin') ||
+    scopes.includes('*');
+  if (!authorized) {
+    res.status(403).json({
+      error: 'Evaluation administration requires an admin role or eval:admin scope',
+    });
+    return;
+  }
+  next();
+}
+
+function requireEvalTenant(req: Request, res: Response, next: NextFunction): void {
+  if (!req.tenantId) {
+    res.status(403).json({ error: 'Tenant-bound authenticated identity required' });
+    return;
+  }
+  next();
+}
 
 // ── Validation schemas ───────────────────────────────────────────────────
 
@@ -85,7 +115,7 @@ export function createEvalRouter(): Router {
 
   // ── Control plane ────────────────────────────────────────────────────
 
-  router.get('/api/eval/status', (_req: Request, res: Response) => {
+  router.get('/api/eval/status', (req: Request, res: Response) => {
     try {
       const hm = getHookManager();
       const registered = hm.hasPlugin(EVAL_PLUGIN_NAME);
@@ -98,7 +128,7 @@ export function createEvalRouter(): Router {
         registered,
         enabled,
         judgeStats: judgeEngine?.getStats() ?? null,
-        datasetCount: datasetManager?.list().length ?? 0,
+        datasetCount: datasetManager?.list(req.tenantId).length ?? 0,
         abResultCount: abComparator?.listResults().length ?? 0,
       });
     } catch (error) {
@@ -106,7 +136,7 @@ export function createEvalRouter(): Router {
     }
   });
 
-  router.post('/api/eval/enable', (_req: Request, res: Response) => {
+  router.post('/api/eval/enable', requireEvalAdmin, (_req: Request, res: Response) => {
     try {
       const hm = getHookManager();
       if (!hm.hasPlugin(EVAL_PLUGIN_NAME)) {
@@ -120,7 +150,7 @@ export function createEvalRouter(): Router {
     }
   });
 
-  router.post('/api/eval/disable', (_req: Request, res: Response) => {
+  router.post('/api/eval/disable', requireEvalAdmin, (_req: Request, res: Response) => {
     try {
       const hm = getHookManager();
       if (!hm.hasPlugin(EVAL_PLUGIN_NAME)) {
@@ -156,14 +186,14 @@ export function createEvalRouter(): Router {
     }
   });
 
-  router.get('/api/eval/datasets', (_req: Request, res: Response) => {
+  router.get('/api/eval/datasets', requireEvalTenant, (req: Request, res: Response) => {
     try {
       const dm = getSharedDatasetManager() ?? getGlobalDatasetManager();
       if (!dm) {
         res.status(503).json({ error: 'DatasetManager not initialized' });
         return;
       }
-      res.json({ datasets: dm.list() });
+      res.json({ datasets: dm.list(req.tenantId) });
     } catch (error) {
       res.status(500).json({ error: toErrorMessage(error) });
     }
@@ -171,6 +201,7 @@ export function createEvalRouter(): Router {
 
   router.post(
     '/api/eval/datasets',
+    requireEvalTenant,
     validateBody(createDatasetSchema),
     (req: Request, res: Response) => {
       try {
@@ -179,10 +210,13 @@ export function createEvalRouter(): Router {
           res.status(503).json({ error: 'DatasetManager not initialized' });
           return;
         }
-        const dataset = dm.create({
-          name: req.body.name,
-          cases: req.body.cases,
-        });
+        const dataset = dm.create(
+          {
+            name: req.body.name,
+            cases: req.body.cases,
+          },
+          req.tenantId,
+        );
         res.status(201).json(dataset);
       } catch (error) {
         res.status(500).json({ error: toErrorMessage(error) });

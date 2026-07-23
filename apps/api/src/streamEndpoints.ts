@@ -20,6 +20,7 @@ import { Router, Request, Response } from 'express';
 import { getMessageBus } from '@commander/core';
 import type { MessageBusTopic, BusMessage } from '@commander/core';
 import { verifyToken } from './jwtMiddleware';
+import { hasRole } from './userStore';
 
 const DEFAULT_TOPICS: MessageBusTopic[] = [
   'agent.started',
@@ -48,7 +49,41 @@ const MAX_BUFFERED_BYTES =
 
 let activeConnections = 0;
 
-export function createStreamRouter(): Router {
+export interface CreateStreamRouterOptions {
+  resolveProject?: (projectId: string) => unknown;
+}
+
+function canAccessProject(req: Request, project: unknown): boolean {
+  if (req.user && hasRole(req.user.role, 'super_admin')) return true;
+  if (!project || typeof project !== 'object') return false;
+  const metadata = project as { tenantId?: unknown; ownerId?: unknown };
+  const tenant = req.user?.tenantId ?? req.tenantId;
+  const principal = req.user?.id ?? req.apiKeyId;
+  if (!principal || !tenant) return false;
+  const projectTenant =
+    typeof metadata.tenantId === 'string'
+      ? metadata.tenantId
+      : (process.env.COMMANDER_DEFAULT_TENANT_ID ?? 'local');
+  return (
+    projectTenant === tenant &&
+    ((!!req.user && hasRole(req.user.role, 'admin')) ||
+      metadata.ownerId === undefined ||
+      metadata.ownerId === principal)
+  );
+}
+
+function messageProjectId(message: BusMessage): string | undefined {
+  if (!message.payload || typeof message.payload !== 'object') return undefined;
+  const projectId = (message.payload as Record<string, unknown>).projectId;
+  return typeof projectId === 'string' ? projectId : undefined;
+}
+
+function canAccessTenantWideStream(req: Request): boolean {
+  if (!req.user || !hasRole(req.user.role, 'admin')) return false;
+  return hasRole(req.user.role, 'super_admin') || !!(req.user.tenantId ?? req.tenantId);
+}
+
+export function createStreamRouter(options: CreateStreamRouterOptions = {}): Router {
   const router = Router();
 
   const handleStream = (req: Request, res: Response): void => {
@@ -105,6 +140,8 @@ export function createStreamRouter(): Router {
             id: decoded.id,
             username: decoded.username,
             role: decoded.role,
+            tenantId: decoded.tenant_id,
+            scopes: decoded.scopes,
           };
         }
       }
@@ -115,6 +152,24 @@ export function createStreamRouter(): Router {
     // Require JWT user or API-key identity before opening an SSE stream.
     if (!req.user && !req.apiKeyId) {
       res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    const projectId = typeof req.params.projectId === 'string' ? req.params.projectId : undefined;
+    if (projectId) {
+      if (!options.resolveProject) {
+        res.status(404).json({ error: 'Project not found' });
+        return;
+      }
+      const project = options.resolveProject(projectId);
+      if (!project || !canAccessProject(req, project)) {
+        res.status(404).json({ error: 'Project not found' });
+        return;
+      }
+    } else if (!canAccessTenantWideStream(req)) {
+      // Unscoped aliases expose every event on the tenant bus. Project-limited
+      // users must use /projects/:projectId/events so object auth can be applied.
+      res.status(403).json({ error: 'Tenant administrator access required' });
       return;
     }
 
@@ -162,6 +217,9 @@ export function createStreamRouter(): Router {
     //    heap, and disconnect once the buffer stays saturated. Silence is safe
     //    for an SSE feed; unbounded buffering is not.
     const handleBusMessage = (message: BusMessage): void => {
+      // A project-scoped stream only forwards messages that carry the same
+      // authoritative project id. Missing metadata is not treated as ambient.
+      if (projectId && messageProjectId(message) !== projectId) return;
       const buffered = (res as unknown as { writableLength?: number }).writableLength ?? 0;
       if (buffered > MAX_BUFFERED_BYTES) {
         droppedFrames += 1;

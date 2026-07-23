@@ -5,6 +5,7 @@ import { getGlobalLogger } from '../logging';
 import { walCheckpoint } from '../storage/walCheckpoint';
 import type { WorkQueueStore } from './workQueueStore';
 import type { WorkItem, WorkStatus } from './workCoordinator';
+import { getCurrentTenantId } from '../runtime/tenantContext';
 
 export interface SqliteWorkQueueStoreConfig {
   filePath: string;
@@ -49,6 +50,7 @@ interface WorkRow {
   priority: number;
   created_at: string;
   tenant_id: string | null;
+  owner_id: string | null;
   lease_token: string | null;
   fencing_epoch: number;
 }
@@ -74,6 +76,8 @@ function rowToItem(row: WorkRow): WorkItem {
     createdAt: row.created_at,
     leaseToken: row.lease_token ?? undefined,
     fencingEpoch: row.fencing_epoch,
+    tenantId: row.tenant_id ?? undefined,
+    ownerId: row.owner_id ?? undefined,
   };
 }
 
@@ -96,7 +100,8 @@ function itemToParams(item: WorkItem, tenantId: string | null = null): unknown[]
     item.tokenBudget,
     item.priority,
     item.createdAt,
-    tenantId,
+    tenantId ?? item.tenantId ?? getCurrentTenantId() ?? null,
+    item.ownerId ?? null,
     item.leaseToken ?? null,
     item.fencingEpoch ?? 0,
   ];
@@ -152,6 +157,7 @@ export class SqliteWorkQueueStore implements WorkQueueStore {
         priority INTEGER NOT NULL,
         created_at TEXT NOT NULL,
         tenant_id TEXT,
+        owner_id TEXT,
         lease_token TEXT,
         fencing_epoch INTEGER NOT NULL DEFAULT 0
       );
@@ -175,6 +181,9 @@ export class SqliteWorkQueueStore implements WorkQueueStore {
     if (!cols.includes('fencing_epoch')) {
       this.db.exec(`ALTER TABLE work_items ADD COLUMN fencing_epoch INTEGER NOT NULL DEFAULT 0`);
     }
+    if (!cols.includes('owner_id')) {
+      this.db.exec(`ALTER TABLE work_items ADD COLUMN owner_id TEXT`);
+    }
     this.stmtColumnExists = null;
   }
 
@@ -184,7 +193,7 @@ export class SqliteWorkQueueStore implements WorkQueueStore {
       SELECT id, run_id, parent_node_id, goal, tools_json, depends_on_json,
              status, claimed_by, claimed_at, completed_at, failed_at,
              attempts, max_attempts, last_error, token_budget, priority,
-             created_at, tenant_id, lease_token, fencing_epoch
+             created_at, tenant_id, owner_id, lease_token, fencing_epoch
       FROM work_items
     `);
     this.stmtEnqueue = this.db.prepare(`
@@ -192,8 +201,8 @@ export class SqliteWorkQueueStore implements WorkQueueStore {
         (id, run_id, parent_node_id, goal, tools_json, depends_on_json,
          status, claimed_by, claimed_at, completed_at, failed_at,
          attempts, max_attempts, last_error, token_budget, priority,
-         created_at, tenant_id, lease_token, fencing_epoch)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         created_at, tenant_id, owner_id, lease_token, fencing_epoch)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     this.stmtUpdate = this.db.prepare(`
       UPDATE work_items SET
@@ -235,7 +244,7 @@ export class SqliteWorkQueueStore implements WorkQueueStore {
     if (!this.db || !this.stmtEnqueue) {
       throw new Error('SqliteWorkQueueStore not initialized');
     }
-    this.stmtEnqueue.run(...itemToParams(item));
+    this.stmtEnqueue.run(...itemToParams(item, item.tenantId ?? getCurrentTenantId() ?? null));
   }
 
   update(item: WorkItem): void {

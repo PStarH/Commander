@@ -1,4 +1,5 @@
 import { isUrlSafe } from './urlSafety';
+import { getOutboundNetworkPolicy } from '../../security/outboundNetworkPolicy';
 
 export interface SafeFetchOptions {
   timeoutMs?: number;
@@ -17,6 +18,10 @@ export interface SafeFetchResult {
   finalUrl: string;
 }
 
+interface ReadResponseResult extends SafeFetchResult {
+  redirectLocation?: string;
+}
+
 export class SafeFetchError extends Error {
   readonly name = 'SafeFetchError';
   constructor(
@@ -30,11 +35,16 @@ export class SafeFetchError extends Error {
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
+const MAX_REDIRECTS = 10;
 
-export async function performFetch(
+type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
+
+async function readResponse(
   url: string,
-  options: SafeFetchOptions = {},
-): Promise<SafeFetchResult> {
+  options: SafeFetchOptions,
+  fetcher: Fetcher,
+  redirect: RequestRedirect,
+): Promise<ReadResponseResult> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const controller = new AbortController();
@@ -48,11 +58,11 @@ export async function performFetch(
 
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await fetcher(url, {
       method: options.method ?? 'GET',
       headers: options.headers,
       signal: controller.signal,
-      redirect: 'follow',
+      redirect,
     });
   } catch (err) {
     clearTimeout(timer);
@@ -67,15 +77,18 @@ export async function performFetch(
 
   if (options.method === 'HEAD' || !response.body) {
     clearTimeout(timer);
-    return {
+    const result: ReadResponseResult = {
       ok: response.ok,
       status: response.status,
       body: '',
       bytes: 0,
       truncated: false,
       contentType: response.headers.get('content-type') ?? '',
-      finalUrl: response.url,
+      finalUrl: response.url || url,
     };
+    const location = response.headers.get('location');
+    if (location) result.redirectLocation = location;
+    return result;
   }
 
   const reader = response.body.getReader();
@@ -113,24 +126,55 @@ export async function performFetch(
   }
 
   chunks.push(decoder.decode());
-  return {
+  const result: ReadResponseResult = {
     ok: response.ok,
     status: response.status,
     body: chunks.join(''),
     bytes,
     truncated,
     contentType: response.headers.get('content-type') ?? '',
-    finalUrl: response.url,
+    finalUrl: response.url || url,
   };
+  const location = response.headers.get('location');
+  if (location) result.redirectLocation = location;
+  return result;
+}
+
+export async function performFetch(
+  url: string,
+  options: SafeFetchOptions = {},
+): Promise<SafeFetchResult> {
+  return readResponse(url, options, (requestUrl, init) => fetch(requestUrl, init), 'follow');
 }
 
 export async function safeFetch(
   url: string,
   options: SafeFetchOptions = {},
 ): Promise<SafeFetchResult> {
-  const safety = isUrlSafe(url);
-  if (!safety.safe) {
-    throw new SafeFetchError('unsafe_url', `URL blocked: ${safety.reason}`);
+  let currentUrl = url;
+  for (let redirects = 0; ; redirects++) {
+    const safety = isUrlSafe(currentUrl);
+    if (!safety.safe) {
+      throw new SafeFetchError('unsafe_url', `URL blocked: ${safety.reason}`);
+    }
+
+    const response = await readResponse(
+      currentUrl,
+      options,
+      (requestUrl, init) => getOutboundNetworkPolicy().ssrfCheckedFetch(requestUrl, init),
+      'manual',
+    );
+    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+
+    const location = response.redirectLocation;
+    if (!location) return response;
+    if (redirects >= MAX_REDIRECTS) {
+      throw new SafeFetchError('network', `Too many redirects while fetching ${url}`);
+    }
+    try {
+      currentUrl = new URL(location, currentUrl).href;
+    } catch {
+      throw new SafeFetchError('unsafe_url', `Invalid redirect location from ${currentUrl}`);
+    }
   }
-  return performFetch(url, options);
 }

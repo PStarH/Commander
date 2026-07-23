@@ -64,11 +64,22 @@ async function withApp(
   process.env.COMMANDER_PROFILE = profile;
   try {
     const store = createWarRoomStore();
-    const memoryStore = new ProjectMemoryStoreAdapter(new MemoryStoreFacade(new InMemoryMemoryService(), 'tenant-demotion-test'));
+    const memoryStore = new ProjectMemoryStoreAdapter(
+      new MemoryStoreFacade(new InMemoryMemoryService(), 'tenant-demotion-test'),
+    );
     const agentStateStore = new AgentStateStore();
 
     const app = express();
     app.use(express.json());
+    app.use((req, _res, next) => {
+      req.user = {
+        id: 'warroom-test-user',
+        username: 'warroom-test-user',
+        role: 'admin',
+        tenantId: 'local',
+      };
+      next();
+    });
     // Middleware order mirrors index.ts startServer() wiring.
     app.use(enterpriseRouteFreeze());
     app.use(legacyHeader());
@@ -124,9 +135,8 @@ describe('WS3 §5 WarRoom demotion — enterprise profile', () => {
       // Spec §5.1: WarRoom write endpoints are removed, not migrated.
       // /v1 must not carry POST/PATCH missions/approve/logs/agent-state/memory.
       for (const [method, url, body] of LEGACY_WRITE_ENDPOINTS) {
-        const v1Url = url.startsWith('/projects/') || url.startsWith('/missions/')
-          ? `/v1${url}`
-          : `/v1${url}`;
+        const v1Url =
+          url.startsWith('/projects/') || url.startsWith('/missions/') ? `/v1${url}` : `/v1${url}`;
         const res = await request(base, method, v1Url, body);
         assert.equal(
           res.status,

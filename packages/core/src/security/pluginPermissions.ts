@@ -16,6 +16,7 @@
 // - env: string[] — allowlist of env var names (default: empty)
 // - hooks: string[] — which lifecycle hooks the plugin can register
 // - tools: string[] — which tools the plugin can register
+// - hostModuleImport: boolean — package requirement for in-process module initialization
 // - maxExecutionTimeMs: number — hook execution timeout (default 5000)
 // - maxMemoryMB: number — memory budget for plugin (default 64)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -46,6 +47,12 @@ export interface PluginPermissions {
   hooks: string[];
   /** Tools the plugin is allowed to register */
   tools: string[];
+  /**
+   * In-process module initialization is ambient host execution. It cannot be
+   * mediated by the API sandbox context. This declares a package requirement;
+   * authorization must come from separate operator-owned state.
+   */
+  hostModuleImport?: boolean;
   /** Maximum execution time for a single hook call (ms) */
   maxExecutionTimeMs?: number;
   /** Maximum memory the plugin can allocate (MB) */
@@ -77,6 +84,7 @@ export const DEFAULT_PLUGIN_PERMISSIONS: Required<PluginPermissions> = {
   env: [],
   hooks: [],
   tools: [],
+  hostModuleImport: false,
   maxExecutionTimeMs: 5000,
   maxMemoryMB: 64,
 };
@@ -113,6 +121,7 @@ export class PluginPermissionEnforcer {
       env: permissions?.env ?? [],
       hooks: permissions?.hooks ?? [],
       tools: permissions?.tools ?? [],
+      hostModuleImport: permissions?.hostModuleImport ?? false,
       maxExecutionTimeMs: permissions?.maxExecutionTimeMs ?? 5000,
       maxMemoryMB: permissions?.maxMemoryMB ?? 64,
     };
@@ -235,6 +244,11 @@ export class PluginPermissionEnforcer {
   /** Get memory budget */
   get maxMemoryMB(): number {
     return this.permissions.maxMemoryMB;
+  }
+
+  /** Whether the package declares that it requires ambient in-process module init. */
+  get requiresHostModuleImport(): boolean {
+    return this.permissions.hostModuleImport;
   }
 
   /** Get all declared permissions (for audit/display) */

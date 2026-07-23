@@ -37,11 +37,55 @@ import {
 import { hasRole, type UserRole } from './userStore';
 
 function requireAuth(req: Request, res: Response, next: NextFunction): void {
-  if (!req.user) {
+  if (!req.user && !req.apiKeyId) {
     res.status(401).json({ error: 'Authentication required' });
     return;
   }
   next();
+}
+
+type OwnedResource = { tenantId?: string; ownerId?: string };
+
+function principalId(req: Request): string | undefined {
+  return req.user?.id ?? req.apiKeyId;
+}
+
+function principalTenant(req: Request): string | undefined {
+  return req.user?.tenantId ?? req.tenantId;
+}
+
+function hasAdminRole(req: Request): boolean {
+  return !!req.user && hasRole(req.user.role, 'admin');
+}
+
+function isSuperAdmin(req: Request): boolean {
+  return !!req.user && hasRole(req.user.role, 'super_admin');
+}
+
+function resourceOwnership(value: unknown): OwnedResource {
+  if (!value || typeof value !== 'object') return {};
+  const record = value as Record<string, unknown>;
+  return {
+    tenantId: typeof record.tenantId === 'string' ? record.tenantId : undefined,
+    ownerId: typeof record.ownerId === 'string' ? record.ownerId : undefined,
+  };
+}
+
+export function canAccessProject(req: Request, project: unknown): boolean {
+  if (isSuperAdmin(req)) return true;
+  const principal = principalId(req);
+  const tenant = principalTenant(req);
+  if (!principal || !tenant) return false;
+  const ownership = resourceOwnership(project);
+  // Legacy WarRoom projects predate tenant metadata; bind them to the configured
+  // local tenant instead of exposing them to every authenticated tenant.
+  const projectTenant = ownership.tenantId ?? process.env.COMMANDER_DEFAULT_TENANT_ID ?? 'local';
+  return projectTenant === tenant && (hasAdminRole(req) || ownership.ownerId === principal);
+}
+
+function projectFromSnapshot(snapshot: unknown): unknown {
+  if (!snapshot || typeof snapshot !== 'object') return undefined;
+  return (snapshot as Record<string, unknown>).project;
 }
 
 function requireRole(requiredRole: UserRole = 'admin') {
@@ -72,14 +116,19 @@ export function createProjectRouter(
 ): Router {
   const readOnly = options?.readOnly ?? false;
   const router = Router();
+  router.use(requireAuth);
 
-  router.get('/projects', (_req, res) => {
-    res.json(store.listProjects());
+  router.get('/projects', (req, res) => {
+    const projects = store.listProjects().filter((project) => canAccessProject(req, project));
+    res.json(projects);
   });
 
   router.get('/projects/:projectId/agents', (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
     if (!snapshot) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    if (!canAccessProject(req, projectFromSnapshot(snapshot))) {
       return res.status(404).json({ error: 'Project not found' });
     }
     res.json(store.listAgents(req.params.projectId));
@@ -88,6 +137,9 @@ export function createProjectRouter(
   router.get('/projects/:projectId/agents/:agentId/state', (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
     if (!snapshot) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    if (!canAccessProject(req, projectFromSnapshot(snapshot))) {
       return res.status(404).json({ error: 'Project not found' });
     }
     const agent = snapshot.agents.find((a) => a.agentId === req.params.agentId);
@@ -105,6 +157,9 @@ export function createProjectRouter(
     router.patch('/projects/:projectId/agents/:agentId/state', (req, res) => {
       const snapshot = store.getProjectSnapshot(req.params.projectId);
       if (!snapshot) {
+        return res.status(404).json({ error: 'Project not found' });
+      }
+      if (!canAccessProject(req, projectFromSnapshot(snapshot))) {
         return res.status(404).json({ error: 'Project not found' });
       }
       const agent = snapshot.agents.find((a) => a.agentId === req.params.agentId);
@@ -136,12 +191,18 @@ export function createProjectRouter(
     if (!snapshot) {
       return res.status(404).json({ error: 'Project not found' });
     }
+    if (!canAccessProject(req, projectFromSnapshot(snapshot))) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
     res.json(snapshot);
   });
 
   router.get('/projects/:projectId/run-context', async (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
     if (!snapshot) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    if (!canAccessProject(req, projectFromSnapshot(snapshot))) {
       return res.status(404).json({ error: 'Project not found' });
     }
     const {
@@ -263,6 +324,9 @@ export function createProjectRouter(
   router.get('/projects/:projectId/memory', async (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
     if (!snapshot) return res.status(404).json({ error: 'Project not found' });
+    if (!canAccessProject(req, projectFromSnapshot(snapshot))) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
     const limit = req.query.limit ? Number(req.query.limit) : 24;
     try {
       res.json(await memoryStore.list(req.params.projectId, limit));
@@ -274,6 +338,9 @@ export function createProjectRouter(
   router.get('/projects/:projectId/memory/overview', async (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
     if (!snapshot) return res.status(404).json({ error: 'Project not found' });
+    if (!canAccessProject(req, projectFromSnapshot(snapshot))) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
     try {
       res.json(await memoryStore.overview(req.params.projectId));
     } catch (error) {
@@ -284,6 +351,9 @@ export function createProjectRouter(
   router.get('/projects/:projectId/memory/search', async (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
     if (!snapshot) return res.status(404).json({ error: 'Project not found' });
+    if (!canAccessProject(req, projectFromSnapshot(snapshot))) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
     const { kind, tags, q, limit } = req.query as {
       kind?: string;
       tags?: string;
@@ -313,6 +383,10 @@ export function createProjectRouter(
 
   if (!readOnly) {
     router.post('/projects/:projectId/missions', (req, res) => {
+      const snapshot = store.getProjectSnapshot(req.params.projectId);
+      if (!snapshot || !canAccessProject(req, projectFromSnapshot(snapshot))) {
+        return res.status(404).json({ error: 'Project not found' });
+      }
       const { title, objective, assignedAgentId, priority, riskLevel, governanceMode } =
         req.body as Record<string, string | undefined>;
       if (!title?.trim()) return res.status(400).json({ error: 'title is required' });
@@ -355,6 +429,18 @@ export function createProjectRouter(
       if (governanceMode && !isMissionGovernanceMode(governanceMode))
         return res.status(400).json({ error: 'Invalid governanceMode' });
       try {
+        const existing = store.getProjectSnapshot(
+          store
+            .listProjects()
+            .find((project) =>
+              store
+                .getProjectSnapshot(project.id)
+                ?.missions.some((mission) => mission.id === req.params.missionId),
+            )?.id ?? '',
+        );
+        if (!existing || !canAccessProject(req, projectFromSnapshot(existing))) {
+          return res.status(404).json({ error: 'Mission not found' });
+        }
         const mission = store.updateMission(req.params.missionId, {
           status: status as MissionStatus | undefined,
           priority: priority as MissionPriority | undefined,
@@ -417,6 +503,13 @@ export function createProjectRouter(
           return;
         }
         try {
+          const snapshot = store
+            .listProjects()
+            .map((project) => store.getProjectSnapshot(project.id))
+            .find((candidate) => candidate?.missions.some((mission) => mission.id === missionId));
+          if (!snapshot || !canAccessProject(req, projectFromSnapshot(snapshot))) {
+            return res.status(404).json({ error: 'Mission not found' });
+          }
           const mission = store.updateMission(
             missionId,
             { status: 'DONE' },
@@ -460,6 +553,9 @@ export function createProjectRouter(
     router.post('/projects/:projectId/memory', async (req, res) => {
       const snapshot = store.getProjectSnapshot(req.params.projectId);
       if (!snapshot) return res.status(404).json({ error: 'Project not found' });
+      if (!canAccessProject(req, projectFromSnapshot(snapshot))) {
+        return res.status(404).json({ error: 'Project not found' });
+      }
       const { title, content, kind, missionId, agentId, tags } = req.body as {
         title?: string;
         content?: string;
@@ -470,6 +566,15 @@ export function createProjectRouter(
       };
       if (!title?.trim()) return res.status(400).json({ error: 'title is required' });
       if (!content?.trim()) return res.status(400).json({ error: 'content is required' });
+      if (
+        missionId !== undefined &&
+        !snapshot.missions.some((mission) => mission.id === missionId)
+      ) {
+        return res.status(404).json({ error: 'Mission not found' });
+      }
+      if (agentId !== undefined && !snapshot.agents.some((agent) => agent.agentId === agentId)) {
+        return res.status(404).json({ error: 'Agent not found' });
+      }
       const memoryKind: ProjectMemoryKind = isProjectMemoryKind(kind || 'SUMMARY')
         ? ((kind || 'SUMMARY') as ProjectMemoryKind)
         : 'SUMMARY';
@@ -499,6 +604,17 @@ export function createProjectRouter(
       const nextLevel = level ?? 'INFO';
       if (!isLogLevel(nextLevel)) return res.status(400).json({ error: 'Invalid log level' });
       try {
+        const project = store
+          .listProjects()
+          .find((candidate) =>
+            store
+              .getProjectSnapshot(candidate.id)
+              ?.missions.some((mission) => mission.id === req.params.missionId),
+          );
+        const snapshot = project ? store.getProjectSnapshot(project.id) : undefined;
+        if (!snapshot || !canAccessProject(req, projectFromSnapshot(snapshot))) {
+          return res.status(404).json({ error: 'Mission not found' });
+        }
         const log = store.createLog({
           missionId: req.params.missionId,
           message: message.trim(),
@@ -514,6 +630,9 @@ export function createProjectRouter(
   router.get('/projects/:projectId/governance/stats', (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
     if (!snapshot) return res.status(404).json({ error: 'Project not found' });
+    if (!canAccessProject(req, projectFromSnapshot(snapshot))) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
     // Mission has a richer schema than `Record<string, unknown>` accepts;
     // widen through an unknown cast at the call site.
     res.json(
@@ -527,6 +646,9 @@ export function createProjectRouter(
   router.get('/projects/:projectId/governance/alerts', (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
     if (!snapshot) return res.status(404).json({ error: 'Project not found' });
+    if (!canAccessProject(req, projectFromSnapshot(snapshot))) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
     const stats = calculateGovernanceStats(
       snapshot.missions as unknown as Record<string, unknown>[],
       snapshot.agents as unknown as Record<string, unknown>[],
@@ -537,6 +659,9 @@ export function createProjectRouter(
   router.get('/projects/:projectId/governance/weekly-report', (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
     if (!snapshot) return res.status(404).json({ error: 'Project not found' });
+    if (!canAccessProject(req, projectFromSnapshot(snapshot))) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
     // Mission has a richer schema than `Record<string, unknown>` accepts;
     // widen through an unknown cast at the call site.
     const stats = calculateGovernanceStats(

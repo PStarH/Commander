@@ -26,6 +26,38 @@ describe('WorkCoordinator — GAP-M1', () => {
     expect(items[0].maxAttempts).toBe(2);
   });
 
+  it('preserves run ownership and rejects conflicting enqueue metadata', () => {
+    const first = coordinator.enqueue({
+      runId: 'owned-run',
+      parentNodeId: 'node-1',
+      goal: 'first',
+      tools: [],
+      tenantId: 'tenant-a',
+      ownerId: 'owner-a',
+    })[0];
+    const inherited = coordinator.enqueue({
+      runId: 'owned-run',
+      parentNodeId: 'node-2',
+      goal: 'second',
+      tools: [],
+    })[0];
+
+    expect(first.tenantId).toBe('tenant-a');
+    expect(first.ownerId).toBe('owner-a');
+    expect(inherited.tenantId).toBe('tenant-a');
+    expect(inherited.ownerId).toBe('owner-a');
+    expect(() =>
+      coordinator.enqueue({
+        runId: 'owned-run',
+        parentNodeId: 'node-3',
+        goal: 'foreign',
+        tools: [],
+        tenantId: 'tenant-b',
+        ownerId: 'owner-b',
+      }),
+    ).toThrow(/Run ownership mismatch/);
+  });
+
   it('claims highest-priority PENDING item whose deps are met', () => {
     const a = coordinator.enqueue({
       runId: 'r',

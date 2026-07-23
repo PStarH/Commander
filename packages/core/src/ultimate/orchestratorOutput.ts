@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import type { AgentRuntimeInterface } from '../runtime';
 import type { ArtifactReference, TaskTreeNode } from './types';
 import { collectCompletedNodes, flattenTree } from './taskTreeUtils';
+import { safePath } from '../tools/fileSystemTool';
 
 /** Minimum ratio of agent-written content to synthesis to prefer agent output */
 const AGENT_CONTENT_PREF_RATIO = 1.2;
@@ -195,14 +196,7 @@ export class OrchestratorOutputCollector {
       const fileIntent = extractOutputFilePath(goal);
       if (!fileIntent) return;
 
-      const resolvedPath = resolveOutputPath(fileIntent, process.cwd());
-      if (!isPathSandboxed(resolvedPath)) {
-        reasoning.push(
-          `File write blocked: path "${resolvedPath}" is outside allowed sandbox directories`,
-        );
-        return;
-      }
-
+      const resolvedPath = await safePath(fileIntent);
       const dir = path.dirname(resolvedPath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(resolvedPath, finalOutput, 'utf-8');

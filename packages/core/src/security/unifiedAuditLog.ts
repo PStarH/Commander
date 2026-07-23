@@ -35,6 +35,7 @@ import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
+import { getCurrentTenantId } from '../runtime/tenantContext';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GOV-15: GDPR Art.17 read-time masking.
@@ -146,6 +147,8 @@ export interface UnifiedAuditEntry {
 }
 
 export interface AuditQueryFilters {
+  /** Tenant scope. When set, only entries explicitly belonging to this tenant match. */
+  tenantId?: string;
   /** Inclusive time range (ISO strings). */
   timeRange?: { start?: string; end?: string };
   /** Category allow-list. */
@@ -400,6 +403,12 @@ export class UnifiedAuditLog {
     entry: Omit<UnifiedAuditEntry, 'id' | 'timestamp'> &
       Partial<Pick<UnifiedAuditEntry, 'timestamp'>>,
   ): Promise<UnifiedAuditEntry> {
+    let tenantId = entry.tenantId;
+    if (!tenantId) {
+      // API middleware runs inside tenantContextMiddleware; preserve that
+      // authenticated binding even when a producer omits the field.
+      tenantId = getCurrentTenantId();
+    }
     const full: UnifiedAuditEntry = {
       id: `ua_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`,
       timestamp: entry.timestamp ?? new Date().toISOString(),
@@ -407,7 +416,7 @@ export class UnifiedAuditLog {
       eventType: entry.eventType,
       severity: entry.severity,
       userId: entry.userId,
-      tenantId: entry.tenantId,
+      tenantId,
       runId: entry.runId,
       agentId: entry.agentId,
       toolName: entry.toolName,
@@ -440,13 +449,17 @@ export class UnifiedAuditLog {
   /**
    * Aggregate statistics over entries within `timeRange` (optional).
    */
-  async getStats(timeRange?: { start?: string; end?: string }): Promise<AuditStats> {
+  async getStats(
+    timeRange?: { start?: string; end?: string },
+    tenantId?: string,
+  ): Promise<AuditStats> {
     const all = await this.loadAll();
     // GOV-15: mask erased subjects before aggregation so topUsers cannot leak an
     // erased user's identifier.
     const entries = maskErasedSubjects(
       this.applyFilters(all, {
         timeRange,
+        tenantId,
       }),
     );
 
@@ -504,7 +517,7 @@ export class UnifiedAuditLog {
     format: AuditExportFormat = 'json',
   ): Promise<string> {
     const all = await this.loadAll();
-    const filtered = this.applyFilters(all, filters);
+    const filtered = maskErasedSubjects(this.applyFilters(all, filters));
     if (format === 'csv') {
       return toCsv(filtered);
     }
@@ -516,15 +529,16 @@ export class UnifiedAuditLog {
    * the corpus, plus the static catalog of known categories. Used to power
    * the frontend filter UI.
    */
-  async getCatalog(): Promise<{
+  async getCatalog(tenantId?: string): Promise<{
     categories: { value: UnifiedAuditCategory; label: string }[];
     severities: { value: UnifiedAuditSeverity; label: string }[];
     eventTypes: { category: UnifiedAuditCategory; eventType: string }[];
   }> {
     const all = await this.loadAll();
+    const scoped = tenantId ? this.applyFilters(all, { tenantId }) : all;
     const seen = new Set<string>();
     const eventTypes: { category: UnifiedAuditCategory; eventType: string }[] = [];
-    for (const e of all) {
+    for (const e of scoped) {
       const key = `${e.category}::${e.eventType}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -551,6 +565,10 @@ export class UnifiedAuditLog {
 
   private applyFilters(entries: UnifiedAuditEntry[], f: AuditQueryFilters): UnifiedAuditEntry[] {
     let out = entries;
+    if (f.tenantId) {
+      // Tenant-scoped callers must never receive unscoped or another tenant's entries.
+      out = out.filter((e) => e.tenantId === f.tenantId);
+    }
     if (f.timeRange?.start) {
       out = out.filter((e) => e.timestamp >= f.timeRange!.start!);
     }
@@ -732,6 +750,7 @@ export class UnifiedAuditLog {
       eventType: e.eventType ?? e.event ?? 'approval_decision',
       severity: mapApprovalSeverity(e.decision),
       userId: e.userId ?? e.user,
+      tenantId: e.tenantId ?? e.context?.tenantId,
       message:
         e.message ??
         e.reason ??
@@ -773,6 +792,7 @@ export class UnifiedAuditLog {
           eventType: e.type ?? e.event ?? 'execution_event',
           severity: mapExecutionSeverity(e.level ?? e.severity, e.outcome ?? e.status),
           runId: runId,
+          tenantId: e.tenantId ?? e.context?.tenantId,
           agentId: e.agentId ?? e.agent_id,
           toolName: e.toolName ?? e.tool_name ?? e.tool,
           message: e.message ?? e.name ?? `${e.type ?? 'execution event'}`,
@@ -862,6 +882,8 @@ interface RawApprovalEntry {
   reason?: string;
   message?: string;
   riskLevel?: string;
+  tenantId?: string;
+  context?: { tenantId?: string };
 }
 
 interface RawTraceEvent {
@@ -887,6 +909,8 @@ interface RawTraceEvent {
   status?: string;
   error?: string;
   durationMs?: number;
+  tenantId?: string;
+  context?: { tenantId?: string };
 }
 
 // ============================================================================

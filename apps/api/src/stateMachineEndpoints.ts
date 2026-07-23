@@ -19,6 +19,9 @@
  */
 
 import express, { type Request, type Response } from 'express';
+import fs from 'node:fs';
+import path from 'node:path';
+import { hasRole } from './userStore';
 import { v4 as uuidv4 } from 'uuid';
 import {
   StateMachine,
@@ -29,8 +32,12 @@ import {
 import { validateBody } from './validationMiddleware';
 import { stateMachineCreateBody, resumeFromCheckpointBody } from './schemas';
 import { isLegacyExecutionAllowed, legacyExecutionDisabledReason } from './legacyExecutionGuard';
+import { readJsonFileSafe } from './atomicWrite';
+import { getDirname } from './esmCompat';
 
 const router: express.Router = express.Router();
+const STATE_MACHINE_DIR = path.resolve(getDirname(import.meta.url), '../data/state-machines');
+const TASK_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
 
 function refuseIfLegacyDisabled(res: Response): boolean {
   if (isLegacyExecutionAllowed()) return false;
@@ -58,7 +65,64 @@ router.use((req, res, next) => {
 });
 
 // In-memory state machine instances (for demo; production should use proper storage)
-const stateMachines: Map<string, StateMachine> = new Map();
+type StateMachineEntry = { machine: StateMachine; tenantId?: string; ownerId?: string };
+const stateMachines: Map<string, StateMachineEntry> = new Map();
+
+function principalId(req: Request): string | undefined {
+  return req.user?.id ?? req.apiKeyId;
+}
+
+function principalTenant(req: Request): string | undefined {
+  return req.user?.tenantId ?? req.tenantId;
+}
+
+function canAccessMachine(
+  req: Request,
+  entry: Pick<StateMachineEntry, 'tenantId' | 'ownerId'>,
+): boolean {
+  if (req.user && hasRole(req.user.role, 'super_admin')) return true;
+  const principal = principalId(req);
+  const tenant = principalTenant(req);
+  if (!principal || !tenant || !entry.tenantId) return false;
+  return (
+    entry.tenantId === tenant &&
+    ((!!req.user && hasRole(req.user.role, 'admin')) || entry.ownerId === principal)
+  );
+}
+
+function getMachine(req: Request, res: Response): StateMachine | null {
+  const entry = stateMachines.get(String(req.params.taskId));
+  if (!entry || !canAccessMachine(req, entry)) {
+    res.status(404).json({ error: 'State machine not found' });
+    return null;
+  }
+  return entry.machine;
+}
+
+function refuseDuplicateDestination(req: Request, res: Response, taskId: string): boolean {
+  if (!TASK_ID_RE.test(taskId)) {
+    res.status(400).json({ error: 'Invalid taskId format' });
+    return true;
+  }
+  const inMemory = stateMachines.get(taskId);
+  const stateFile = path.resolve(STATE_MACHINE_DIR, `${taskId}.json`);
+  const persisted =
+    !inMemory && fs.existsSync(stateFile)
+      ? readJsonFileSafe<AgentState | null>(stateFile, null)
+      : null;
+  const existing =
+    inMemory ??
+    (persisted
+      ? { tenantId: persisted.ownership?.tenantId, ownerId: persisted.ownership?.ownerId }
+      : undefined);
+  if (!existing) return false;
+  if (!canAccessMachine(req, existing)) {
+    res.status(404).json({ error: 'State machine not found' });
+  } else {
+    res.status(409).json({ error: 'State machine already exists' });
+  }
+  return true;
+}
 
 function resolveApprover(req: Request, res: Response): string | null {
   const principalId = req.user?.id ?? req.apiKeyId;
@@ -95,11 +159,23 @@ router.post('/create', validateBody(stateMachineCreateBody), (req, res) => {
         error: 'Missing required fields: taskId, projectId, agentId',
       });
     }
+    if (refuseDuplicateDestination(req, res, taskId)) return;
 
     const sm = StateMachineFactory.create(type as 'standard' | 'research');
-    const state = sm.initialize(taskId, projectId, agentId);
+    const tenantId = principalTenant(req);
+    const ownerId = principalId(req);
+    const state = sm.initialize(
+      taskId,
+      projectId,
+      agentId,
+      tenantId ? { tenantId, ownerId } : undefined,
+    );
 
-    stateMachines.set(taskId, sm);
+    stateMachines.set(taskId, {
+      machine: sm,
+      tenantId,
+      ownerId,
+    });
 
     res.json({
       success: true,
@@ -125,11 +201,8 @@ router.post('/create', validateBody(stateMachineCreateBody), (req, res) => {
 router.get('/:taskId', (req, res) => {
   try {
     const { taskId } = req.params;
-    const sm = stateMachines.get(taskId);
-
-    if (!sm) {
-      return res.status(404).json({ error: 'State machine not found' });
-    }
+    const sm = getMachine(req, res);
+    if (!sm) return;
 
     const state = sm.getState();
     res.json({
@@ -170,10 +243,8 @@ router.post('/:taskId/transition', async (req, res) => {
     const { taskId } = req.params;
     const { toState, context } = req.body;
 
-    const sm = stateMachines.get(taskId);
-    if (!sm) {
-      return res.status(404).json({ error: 'State machine not found' });
-    }
+    const sm = getMachine(req, res);
+    if (!sm) return;
 
     if (!toState) {
       return res.status(400).json({ error: 'Missing required field: toState' });
@@ -235,10 +306,8 @@ router.post('/:taskId/approve', (req, res) => {
     const { taskId } = req.params;
     const { checkpointId, comment } = req.body;
 
-    const sm = stateMachines.get(taskId);
-    if (!sm) {
-      return res.status(404).json({ error: 'State machine not found' });
-    }
+    const sm = getMachine(req, res);
+    if (!sm) return;
 
     if (!checkpointId) {
       return res.status(400).json({ error: 'Missing required field: checkpointId' });
@@ -271,10 +340,8 @@ router.post('/:taskId/reject', (req, res) => {
     const { taskId } = req.params;
     const { checkpointId, comment } = req.body;
 
-    const sm = stateMachines.get(taskId);
-    if (!sm) {
-      return res.status(404).json({ error: 'State machine not found' });
-    }
+    const sm = getMachine(req, res);
+    if (!sm) return;
 
     if (!checkpointId) {
       return res.status(400).json({ error: 'Missing required field: checkpointId' });
@@ -302,10 +369,8 @@ router.get('/:taskId/memory', (req, res) => {
     const { taskId } = req.params;
     const { type } = req.query;
 
-    const sm = stateMachines.get(taskId);
-    if (!sm) {
-      return res.status(404).json({ error: 'State machine not found' });
-    }
+    const sm = getMachine(req, res);
+    if (!sm) return;
 
     const state = sm.getState();
     if (!state) {
@@ -345,13 +410,10 @@ router.get('/:taskId/memory', (req, res) => {
  */
 router.post('/:taskId/memory', (req, res) => {
   try {
-    const { taskId } = req.params;
     const { type, content, metadata } = req.body;
 
-    const sm = stateMachines.get(taskId);
-    if (!sm) {
-      return res.status(404).json({ error: 'State machine not found' });
-    }
+    const sm = getMachine(req, res);
+    if (!sm) return;
 
     if (!type || !content) {
       return res.status(400).json({ error: 'Missing required fields: type, content' });
@@ -380,18 +442,28 @@ router.post('/:taskId/resume', validateBody(resumeFromCheckpointBody), (req, res
   try {
     const taskId = String(req.params.taskId);
     const { checkpointId } = req.body;
+    if (refuseDuplicateDestination(req, res, taskId)) return;
 
     // checkpointId format already validated by Zod schema (resumeFromCheckpointBody)
 
     // Create new state machine and resume
     const sm = StateMachineFactory.create('standard');
-    const state = sm.resumeFromCheckpoint(checkpointId);
+    const state = sm.resumeFromCheckpoint(checkpointId, (candidate) =>
+      canAccessMachine(req, {
+        tenantId: candidate.ownership?.tenantId,
+        ownerId: candidate.ownership?.ownerId,
+      }),
+    );
 
     if (!state) {
       return res.status(404).json({ error: 'Checkpoint not found' });
     }
 
-    stateMachines.set(taskId, sm);
+    stateMachines.set(taskId, {
+      machine: sm,
+      tenantId: state.ownership?.tenantId,
+      ownerId: state.ownership?.ownerId,
+    });
 
     res.json({
       success: true,
@@ -427,12 +499,8 @@ router.get('/types', (req, res) => {
  */
 router.get('/:taskId/summary', (req, res) => {
   try {
-    const { taskId } = req.params;
-    const sm = stateMachines.get(taskId);
-
-    if (!sm) {
-      return res.status(404).json({ error: 'State machine not found' });
-    }
+    const sm = getMachine(req, res);
+    if (!sm) return;
 
     res.json({
       success: true,

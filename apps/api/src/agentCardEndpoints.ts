@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { TenantIsolationError } from '@commander/core/runtime/tenantContext';
 import { AgentCardRegistry } from './agentCard';
 
 export function createAgentCardRouter(registry?: AgentCardRegistry): Router {
@@ -20,8 +21,17 @@ export function createAgentCardRouter(registry?: AgentCardRegistry): Router {
     if (!card?.id || !card?.name) {
       return res.status(400).json({ error: 'id and name are required' });
     }
-    reg.register(card);
-    res.status(201).json(card);
+    try {
+      reg.register(card);
+      res.status(201).json(card);
+    } catch (error) {
+      if (error instanceof TenantIsolationError) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+      return res
+        .status(400)
+        .json({ error: error instanceof Error ? error.message : String(error) });
+    }
   });
 
   return router;

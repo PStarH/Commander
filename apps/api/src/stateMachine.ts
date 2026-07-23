@@ -42,6 +42,12 @@ export interface AgentState {
   memory: EpisodeMemory;
   governanceMode: GovernanceMode;
   metadata: StateMetadata;
+  ownership?: StateOwnership;
+}
+
+export interface StateOwnership {
+  tenantId: string;
+  ownerId?: string;
 }
 
 /**
@@ -156,6 +162,17 @@ export interface PersistenceConfig {
 
 const STATE_MACHINE_DIR = path.resolve(__dirname, '../data/state-machines');
 const CHECKPOINTS_DIR = path.resolve(__dirname, '../data/checkpoints');
+const TASK_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
+
+function stateFilePath(taskId: string, stateDir: string): string {
+  if (!TASK_ID_RE.test(taskId)) throw new Error('Invalid taskId format');
+  const root = path.resolve(stateDir);
+  const resolved = path.resolve(root, `${taskId}.json`);
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+    throw new Error('State path is outside the persistence root');
+  }
+  return resolved;
+}
 
 /**
  * Persist state to disk
@@ -163,11 +180,11 @@ const CHECKPOINTS_DIR = path.resolve(__dirname, '../data/checkpoints');
 function persistState(state: AgentState, config: PersistenceConfig): void {
   if (!config.enabled) return;
 
-  const stateDir = path.join(config.path);
+  const stateDir = path.resolve(config.path);
   fs.mkdirSync(stateDir, { recursive: true });
 
   // REL-3: atomic write so a crash mid-write cannot truncate the state file.
-  const stateFile = path.join(stateDir, `${state.memory.taskId}.json`);
+  const stateFile = stateFilePath(state.memory.taskId, stateDir);
   atomicWriteFileSync(stateFile, JSON.stringify(state, null, 2));
 }
 
@@ -177,7 +194,7 @@ function persistState(state: AgentState, config: PersistenceConfig): void {
 function loadState(taskId: string, config: PersistenceConfig): AgentState | null {
   if (!config.enabled) return null;
 
-  const stateFile = path.join(config.path, `${taskId}.json`);
+  const stateFile = stateFilePath(taskId, config.path);
   // REL-4: quarantine corrupt files instead of throwing / silently failing parse.
   return readJsonFileSafe<AgentState | null>(stateFile, null);
 }
@@ -256,7 +273,13 @@ export class StateMachine {
   /**
    * Initialize state machine with a new task
    */
-  initialize(taskId: string, projectId: string, agentId: string): AgentState {
+  initialize(
+    taskId: string,
+    projectId: string,
+    agentId: string,
+    ownership?: StateOwnership,
+  ): AgentState {
+    if (this.config.persistence.enabled) stateFilePath(taskId, this.config.persistence.path);
     const now = new Date().toISOString();
 
     const state: AgentState = {
@@ -276,6 +299,7 @@ export class StateMachine {
         updatedAt: now,
         version: 1,
       },
+      ownership,
     };
 
     this.currentState = state;
@@ -287,14 +311,18 @@ export class StateMachine {
   /**
    * Resume from a checkpoint
    */
-  resumeFromCheckpoint(checkpointId: string): AgentState | null {
+  resumeFromCheckpoint(
+    checkpointId: string,
+    authorize?: (state: AgentState) => boolean,
+  ): AgentState | null {
     const state = loadCheckpoint(checkpointId);
-    if (state) {
+    if (state && (!authorize || authorize(state))) {
       this.currentState = state;
       // Add memory entry about resume
       this.addMemoryEntry('observation', `Resumed from checkpoint ${checkpointId}`);
+      return state;
     }
-    return state;
+    return null;
   }
 
   /**

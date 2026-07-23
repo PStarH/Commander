@@ -24,13 +24,18 @@ function ledgerEntryToCostRecord(entry: CostLedgerEntry): CostRecord {
 /**
  * Match a ledger entry to the requesting tenant.
  *
- * Entries without an explicit tenantId are treated as belonging to the
- * current tenant context. This preserves backward compatibility with
- * single-tenant deployments while also supporting tenant-scoped singletons
- * where the ledger itself is already isolated.
+ * Entries without an explicit tenantId belong only to the legacy/default
+ * context. This preserves single-tenant compatibility without projecting a
+ * legacy row into every authenticated tenant.
  */
-function entryMatchesTenant(entry: CostLedgerEntry, tenantId: string): boolean {
-  if (!entry.tenantId) return true;
+export function entryMatchesTenant(entry: CostLedgerEntry, tenantId: string | undefined): boolean {
+  // Untagged legacy entries belong only to the single-tenant/default context.
+  // Never project them into every authenticated tenant.
+  if (!entry.tenantId) {
+    return (
+      tenantId === undefined || tenantId === (process.env.COMMANDER_DEFAULT_TENANT_ID ?? 'local')
+    );
+  }
   return entry.tenantId === tenantId;
 }
 
@@ -39,7 +44,7 @@ export function createCostRouter(): Router {
 
   // ── Cost summary (total, per-model, per-agent) ─────────────────────────
   router.get('/api/cost/summary', (_req, res) => {
-    const tenantId = getCurrentTenantId() ?? 'default';
+    const tenantId = getCurrentTenantId();
     const uca = getUnifiedCostAuthority();
     const ledger = uca.readLedger().filter((e) => entryMatchesTenant(e, tenantId));
     const summary: CostSummary = {
@@ -73,7 +78,7 @@ export function createCostRouter(): Router {
 
   // ── Cost records (recent LLM calls) ────────────────────────────────────
   router.get('/api/cost/records', (req, res) => {
-    const tenantId = getCurrentTenantId() ?? 'default';
+    const tenantId = getCurrentTenantId();
     const uca = getUnifiedCostAuthority();
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 500);
     const rawRunId = req.query.runId as string | undefined;
@@ -94,7 +99,7 @@ export function createCostRouter(): Router {
 
   // ── Budget status (monthly usage + alerts) ─────────────────────────────
   router.get('/api/cost/budget', (_req, res) => {
-    const tenantId = getCurrentTenantId() ?? 'default';
+    const tenantId = getCurrentTenantId();
     const uca = getUnifiedCostAuthority();
     const snapshot = uca.getSnapshot('cost-api', tenantId);
     const monthlyUsed = snapshot.perTenantMonthly.used;

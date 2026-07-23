@@ -67,6 +67,11 @@ export class CheckpointManager {
     childRunIds?: string[];
     error?: string;
     tenantId?: string;
+    ownerId?: string;
+    sagaName?: string;
+    input?: Record<string, unknown>;
+    results?: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
     idempotencyKey?: string;
     previous?: SagaStateSnapshot;
   }): SagaStateSnapshot {

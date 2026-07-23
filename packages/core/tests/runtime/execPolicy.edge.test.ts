@@ -70,7 +70,7 @@ describe('D3 hardening — ExecPolicyEngine edge cases', () => {
       // extractCommandSubstitutions regex /\$\(([^()]*)\)/ matches only the
       // innermost no-inner-parens $(). After extraction queue = [original,
       // 'my-custom-script']; candidates.commandNames = {'unknown-app',
-      // 'my-custom-script'}; neither is in SAFE_READONLY/SAFE_GIT/SAFE_DEV.
+      // 'my-custom-script'}; neither matches a built-in rule.
       // No rule matches, then hasCommandSubstitution → 'prompt' rule id
       // 'implicit-command-substitution'.
       const r = engine.evaluate('unknown-app $(cat $(my-custom-script))');

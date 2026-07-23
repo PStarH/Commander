@@ -3,6 +3,8 @@ import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { atomicWriteFileSync, readJsonFileSafe } from './atomicWrite';
+import type { Request, Response, NextFunction } from 'express';
+import { hasRole } from './userStore';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -31,6 +33,8 @@ export interface WorkflowDefinition {
   edges: WorkflowEdge[];
   createdAt: string;
   updatedAt: string;
+  tenantId?: string;
+  ownerId?: string;
 }
 
 // ── Persistence ─────────────────────────────────────────────────────────────
@@ -102,6 +106,48 @@ function findWorkflow(id: string): WorkflowDefinition | undefined {
   return getWorkflows().find((w) => w.id === id);
 }
 
+function requireAuth(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user && !req.apiKeyId) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  next();
+}
+
+function principalId(req: Request): string | undefined {
+  return req.user?.id ?? req.apiKeyId;
+}
+
+function principalTenant(req: Request): string | undefined {
+  return req.user?.tenantId ?? req.tenantId;
+}
+
+function canAccessWorkflow(req: Request, workflow: WorkflowDefinition): boolean {
+  if (req.user && hasRole(req.user.role, 'super_admin')) return true;
+  const principal = principalId(req);
+  const tenant = principalTenant(req);
+  if (!principal || !tenant) return false;
+  const workflowTenant = workflow.tenantId ?? process.env.COMMANDER_DEFAULT_TENANT_ID ?? 'local';
+  return (
+    workflowTenant === tenant &&
+    (req.user?.role === 'admin' || !workflow.ownerId || workflow.ownerId === principal)
+  );
+}
+
+function workflowForRequest(req: Request, res: Response): WorkflowDefinition | undefined {
+  const workflow = findWorkflow(String(req.params.id));
+  if (!workflow) {
+    res.status(404).json({ error: 'Workflow not found' });
+    return undefined;
+  }
+  if (!canAccessWorkflow(req, workflow)) {
+    // Avoid leaking whether another tenant owns the workflow.
+    res.status(404).json({ error: 'Workflow not found' });
+    return undefined;
+  }
+  return workflow;
+}
+
 /**
  * Topologically sort agent/tool nodes using edges. Falls back to node order
  * if the graph contains cycles.
@@ -156,19 +202,27 @@ function buildExecutionOrder(workflow: WorkflowDefinition): string[] {
 
 export function createWorkflowRouter(): Router {
   const router = Router();
+  router.use(requireAuth);
 
   // GET /api/workflows
-  router.get('/api/workflows', (_req, res) => {
-    const workflows = getWorkflows().map(({ nodes, edges, ...meta }) => ({
-      ...meta,
-      nodeCount: nodes.length,
-      edgeCount: edges.length,
-    }));
+  router.get('/api/workflows', (req, res) => {
+    const workflows = getWorkflows()
+      .filter((workflow) => canAccessWorkflow(req, workflow))
+      .map(({ nodes, edges, ...meta }) => ({
+        ...meta,
+        nodeCount: nodes.length,
+        edgeCount: edges.length,
+      }));
     res.json({ workflows });
   });
 
   // POST /api/workflows
   router.post('/api/workflows', (req, res) => {
+    const tenantId = principalTenant(req);
+    if (!tenantId) {
+      res.status(403).json({ error: 'Tenant-bound identity required' });
+      return;
+    }
     const parsed = workflowBodySchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -184,6 +238,8 @@ export function createWorkflowRouter(): Router {
       ...parsed.data,
       createdAt: now,
       updatedAt: now,
+      tenantId,
+      ownerId: principalId(req),
     };
 
     const workflows = getWorkflows();
@@ -194,11 +250,8 @@ export function createWorkflowRouter(): Router {
 
   // GET /api/workflows/:id
   router.get('/api/workflows/:id', (req, res) => {
-    const workflow = findWorkflow(String(req.params.id));
-    if (!workflow) {
-      res.status(404).json({ error: 'Workflow not found' });
-      return;
-    }
+    const workflow = workflowForRequest(req, res);
+    if (!workflow) return;
     res.json({ workflow });
   });
 
@@ -213,6 +266,8 @@ export function createWorkflowRouter(): Router {
       return;
     }
 
+    const workflow = workflowForRequest(req, res);
+    if (!workflow) return;
     const workflows = getWorkflows();
     const index = workflows.findIndex((w) => w.id === req.params.id);
     if (index === -1) {
@@ -233,7 +288,7 @@ export function createWorkflowRouter(): Router {
   router.delete('/api/workflows/:id', (req, res) => {
     const workflows = getWorkflows();
     const index = workflows.findIndex((w) => w.id === req.params.id);
-    if (index === -1) {
+    if (index === -1 || !canAccessWorkflow(req, workflows[index])) {
       res.status(404).json({ error: 'Workflow not found' });
       return;
     }
@@ -244,11 +299,8 @@ export function createWorkflowRouter(): Router {
 
   // POST /api/workflows/:id/execute
   router.post('/api/workflows/:id/execute', (req, res) => {
-    const workflow = findWorkflow(String(req.params.id));
-    if (!workflow) {
-      res.status(404).json({ error: 'Workflow not found' });
-      return;
-    }
+    const workflow = workflowForRequest(req, res);
+    if (!workflow) return;
 
     const order = buildExecutionOrder(workflow);
     const nodeById = new Map(workflow.nodes.map((n) => [n.id, n]));

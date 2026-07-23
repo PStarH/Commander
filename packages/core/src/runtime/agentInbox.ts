@@ -1,10 +1,19 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { getGlobalLogger } from '../logging';
 import { injectTraceContext, type InboxTraceContext } from '../observability/traceContextBridge';
 
 export type MessageStatus = 'unread' | 'read' | 'acknowledged';
+
+const AGENT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
+
+function assertAgentId(agentId: string): void {
+  if (!AGENT_ID_RE.test(agentId)) {
+    throw new Error('Invalid agent id: must contain only letters, numbers, ., _, or -');
+  }
+}
 
 export interface InboxMessage {
   id: string;
@@ -158,7 +167,8 @@ export class AgentInbox {
     const fromDisk = fs
       .readdirSync(this.baseDir)
       .filter((f) => f.endsWith('.ndjson'))
-      .map((f) => f.replace('.ndjson', ''));
+      .map((f) => f.replace('.ndjson', ''))
+      .filter((agentId) => AGENT_ID_RE.test(agentId));
     const fromMem = Array.from(this.inboxes.keys());
     return Array.from(new Set([...fromDisk, ...fromMem]));
   }
@@ -166,11 +176,22 @@ export class AgentInbox {
   // ── Persistence ──
 
   private getOrCreateInbox(agentId: string): InboxMessage[] {
+    assertAgentId(agentId);
     let inbox = this.inboxes.get(agentId);
     if (inbox) return inbox;
     inbox = this.loadFromDisk(agentId);
     this.inboxes.set(agentId, inbox);
     return inbox;
+  }
+
+  private inboxFilePath(agentId: string): string {
+    assertAgentId(agentId);
+    const root = path.resolve(this.baseDir);
+    const filePath = path.resolve(root, `${agentId}.ndjson`);
+    if (!filePath.startsWith(`${root}${path.sep}`)) {
+      throw new Error('Invalid agent id: inbox path is outside the inbox root');
+    }
+    return filePath;
   }
 
   /** Auto-prune acknowledged/expired messages from an inbox if it exceeds the threshold */
@@ -192,8 +213,11 @@ export class AgentInbox {
   }
 
   private loadFromDisk(agentId: string): InboxMessage[] {
-    const filePath = path.join(this.baseDir, `${agentId}.ndjson`);
+    const filePath = this.inboxFilePath(agentId);
     if (!fs.existsSync(filePath)) return [];
+    if (fs.lstatSync(filePath).isSymbolicLink()) {
+      throw new Error('Invalid inbox path: symbolic links are not allowed');
+    }
     try {
       const raw = fs.readFileSync(filePath, 'utf-8').trim();
       if (!raw) return [];
@@ -227,13 +251,16 @@ export class AgentInbox {
   }
 
   private flushAgent(agentId: string, inbox: InboxMessage[]): void {
-    const filePath = path.join(this.baseDir, `${agentId}.ndjson`);
-    const tmpPath = filePath + '.tmp';
+    const filePath = this.inboxFilePath(agentId);
+    const tmpPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+    let tempCreated = false;
     try {
       const content = inbox.map((m) => JSON.stringify(m)).join('\n') + '\n';
-      fs.writeFileSync(tmpPath, content, 'utf-8');
+      fs.writeFileSync(tmpPath, content, { encoding: 'utf-8', flag: 'wx', mode: 0o600 });
+      tempCreated = true;
       fs.renameSync(tmpPath, filePath);
     } catch (e) {
+      if (tempCreated) fs.rmSync(tmpPath, { force: true });
       getGlobalLogger().warn('AgentInbox', 'Failed to flush inbox', {
         error: (e as Error)?.message,
         agentId,
