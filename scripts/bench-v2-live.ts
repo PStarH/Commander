@@ -68,6 +68,40 @@ interface BenchMeasurements {
   failures: string[];
 }
 
+/** Five-tenant live benchmark default (matches deploy/docker/v2-compose.yml). */
+export const DEFAULT_LIVE_BENCH_TENANTS = 5;
+
+/** Build explicit tenant-0..tenant-(N-1) list for worker scope. */
+export function defaultWorkerTenantsForCount(tenants: number): string {
+  return Array.from({ length: tenants }, (_, i) => `tenant-${i}`).join(',');
+}
+
+/**
+ * Plan Step 5: live bench must require COMMANDER_WORKER_TENANTS when --tenants
+ * differs from the five-tenant compose default. Fail closed (do not silently
+ * run against workers still scoped to tenant-0..4).
+ */
+export function assertLiveBenchWorkerTenants(
+  tenants: number,
+  mode: BenchOptions['mode'],
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (mode !== 'live') return;
+  if (tenants === DEFAULT_LIVE_BENCH_TENANTS) return;
+
+  const raw = env.COMMANDER_WORKER_TENANTS;
+  if (raw !== undefined && raw.trim() !== '' && raw.trim() !== '*') {
+    return;
+  }
+
+  const suggested = defaultWorkerTenantsForCount(tenants);
+  throw new Error(
+    `live bench --tenants=${tenants} requires COMMANDER_WORKER_TENANTS ` +
+      `(compose/v2-bench default is ${DEFAULT_LIVE_BENCH_TENANTS} tenants). ` +
+      `Set COMMANDER_WORKER_TENANTS=${suggested} and restart workers before re-running.`,
+  );
+}
+
 function parseArgs(argv: string[]): BenchOptions {
   const imageArg = argv.find((a) => a.startsWith('--image='));
   const baseUrlArg = argv.find((a) => a.startsWith('--base-url='));
@@ -466,6 +500,7 @@ export async function run(
   argv: string[],
 ): Promise<{ report: Record<string, unknown>; baselinePath: string; passed: boolean }> {
   const opts = parseArgs(argv);
+  assertLiveBenchWorkerTenants(opts.tenants, opts.mode);
   const startedAt = Date.now();
 
   process.env.COMMANDER_IMAGE = opts.image;

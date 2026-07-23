@@ -56,21 +56,46 @@ export interface SqlPool {
 }
 
 /**
- * Wrap a pool so every non-scheduler connection is downgraded to the
- * least-privilege `commander_app` role. This guarantees that application
- * queries are evaluated against the tenant isolation policies even when the
- * connection string still authenticates as the migration owner.
+ * Wrap a pool so privileged connections (migration owner / superuser) are
+ * downgraded to the least-privilege `commander_app` role. This guarantees that
+ * application queries are evaluated against the tenant isolation policies even
+ * when the connection string still authenticates as the migration owner.
+ *
+ * When the connection is already a least-privilege runtime LOGIN
+ * (`commander_app` or `commander_worker`), keep that identity — do NOT
+ * `SET ROLE commander_app`. Workers authenticate as `commander_worker` and are
+ * not members of `commander_app`; forcing SET ROLE would fail in real deploys.
  *
  * If the `commander_app` role does not exist (legacy / test environments) the
- * wrapper logs a warning once and continues without downgrading.
+ * wrapper logs a warning once and continues without downgrading (privileged
+ * connections only).
  */
 function enforceAppRole(pool: SqlPool): SqlPool {
   let state: 'unchecked' | 'exists' | 'missing' = 'unchecked';
   let warned = false;
 
+  /** Runtime roles that must keep their LOGIN identity (NOBYPASSRLS). */
+  const KEEP_IDENTITY = new Set(['commander_app', 'commander_worker']);
+
   return {
     connect: async () => {
       const client = await pool.connect();
+
+      // Prefer session_user (LOGIN identity). Alias as login_role — never AS current_user /
+      // AS session_user: node-pg row field names can collide with SQL keyword accessors.
+      const identity = await client.query<{ login_role: string }>(
+        'SELECT session_user::text AS login_role',
+      );
+      const loginRole = identity.rows[0]?.login_role;
+      if (loginRole && KEEP_IDENTITY.has(loginRole)) {
+        // Already least-privilege LOGIN (worker/app) — do not SET ROLE.
+        return {
+          query: client.query.bind(client),
+          release: async () => {
+            client.release();
+          },
+        };
+      }
 
       if (state === 'unchecked') {
         try {
@@ -167,6 +192,11 @@ type DbEffect = Omit<
   | 'tenantId'
   | 'idempotencyKey'
   | 'policyDecisionId'
+  | 'policySnapshotId'
+  | 'actionDigest'
+  | 'leaseWorkerId'
+  | 'leaseWorkerGeneration'
+  | 'leaseFencingEpoch'
   | 'createdAt'
   | 'completedAt'
   | 'reconcileAfter'
@@ -181,6 +211,11 @@ type DbEffect = Omit<
   idempotency_key: string;
   request_hash: string;
   policy_decision_id: string;
+  policy_snapshot_id: string;
+  action_digest: string;
+  lease_worker_id: string;
+  lease_worker_generation: number | string;
+  lease_fencing_epoch: number | string;
   created_at: string | Date;
   completed_at: string | Date | null;
   reconcile_attempts: number | string;
@@ -243,6 +278,11 @@ function fromEffect(row: DbEffect): KernelEffect {
     type: row.type,
     idempotencyKey: row.idempotency_key,
     policyDecisionId: row.policy_decision_id,
+    policySnapshotId: row.policy_snapshot_id || 'legacy-unbound',
+    actionDigest: row.action_digest || row.request_hash,
+    leaseWorkerId: row.lease_worker_id || 'legacy-unbound',
+    leaseWorkerGeneration: Number(row.lease_worker_generation ?? 0),
+    leaseFencingEpoch: Number(row.lease_fencing_epoch ?? 0),
     state: row.state,
     requestHash: row.request_hash,
     request: row.request ?? {},
@@ -279,8 +319,9 @@ export class PostgresKernelRepository implements KernelRepository {
     protected readonly options: PostgresKernelRepositoryOptions = {},
   ) {
     // Scheduler/recovery pools are assumed to authenticate as commander_scheduler
-    // (BYPASSRLS). All other pools are downgraded to commander_app so that every
-    // application query is subject to tenant isolation policies.
+    // (BYPASSRLS). Non-scheduler pools: privileged LOGINs are downgraded to
+    // commander_app; connections already logged in as commander_app/worker keep
+    // that identity (workers are not members of commander_app).
     this.pool = options.schedulerMode ? pool : enforceAppRole(pool);
   }
 
@@ -318,7 +359,7 @@ export class PostgresKernelRepository implements KernelRepository {
           await client.query(
             `INSERT INTO commander_steps (id, run_id, tenant_id, kind, state, max_attempts, priority, dependencies, input, scheduled_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10)`,
-            [step.id, command.id, command.tenantId, step.kind, step.initialState ?? 'PENDING', step.maxAttempts ?? 1, step.priority ?? 0, json(step.dependencies ?? []), json(step.input), step.scheduledAt ?? new Date().toISOString()],
+            [step.id, command.id, command.tenantId, step.kind, step.initialState ?? 'PENDING', step.maxAttempts ?? 1, step.priority ?? 0, json(step.dependencies ?? []), json(step.input), step.scheduledAt ?? new Date(Date.now() - 1_000).toISOString()],
           );
           if (step.interaction) {
             await client.query(
@@ -402,6 +443,12 @@ export class PostgresKernelRepository implements KernelRepository {
   }
 
   async claimNextStep(request: ClaimStepRequest): Promise<KernelStep | null> {
+    // Worker / least-privilege path: DB-atomic SECURITY DEFINER RPC. Caller
+    // tenantIds/tenantId are ignored — durable commander_workers.tenant_ids only.
+    if (!this.options.schedulerMode) {
+      return this.claimNextStepViaRpc(request);
+    }
+
     const now = request.now ?? new Date();
     const expiry = new Date(now.getTime() + request.leaseTtlMs);
     const token = randomUUID();
@@ -429,7 +476,7 @@ export class PostgresKernelRepository implements KernelRepository {
                     -- Aging: boost priority by +1 per minute of waiting, capped at 1000.
                     -- This prevents starvation: even a priority=-1000 step will eventually
                     -- outrank new steps after enough time.
-                    GREATEST(s.priority + FLOOR(EXTRACT(EPOCH FROM ($1::timestamptz - s.scheduled_at)) / 60), 1000) DESC,
+                    LEAST(s.priority + FLOOR(EXTRACT(EPOCH FROM ($1::timestamptz - s.scheduled_at)) / 60), 1000) DESC,
                     s.scheduled_at ASC, s.created_at ASC FOR UPDATE OF s, u, c SKIP LOCKED LIMIT 1
          ), claimed AS (
            UPDATE commander_steps s SET state='RUNNING', attempt=s.attempt+1, version=s.version+1,
@@ -449,6 +496,45 @@ export class PostgresKernelRepository implements KernelRepository {
       await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: 'step.claimed', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor: request.workerId, payload: { attempt: step.attempt, fencingEpoch: step.lease!.fencingEpoch } });
       return step;
     }, tenantIds);
+  }
+
+  /**
+   * Worker claim via SECURITY DEFINER claim_next_step. Does not set
+   * app.tenant_scope='*' and does not accept caller tenant scope.
+   */
+  private async claimNextStepViaRpc(request: ClaimStepRequest): Promise<KernelStep | null> {
+    if (
+      typeof request.workerGeneration !== 'number' ||
+      !Number.isFinite(request.workerGeneration)
+    ) {
+      return null;
+    }
+    const workerGeneration = request.workerGeneration;
+    const claimSecret = request.claimSecret ?? '';
+    if (!claimSecret) return null;
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query<{ claim_next_step: DbStep | null }>(
+        'SELECT claim_next_step($1::text, $2::bigint, $3::integer, $4::text, $5::jsonb) AS claim_next_step',
+        [
+          request.workerId,
+          workerGeneration,
+          request.leaseTtlMs,
+          claimSecret,
+          JSON.stringify(request.capabilities ?? []),
+        ],
+      );
+      await client.query('COMMIT');
+      const row = result.rows[0]?.claim_next_step;
+      if (row == null) return null;
+      return fromStep(row);
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch { /* preserve claim error */ }
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async heartbeatStep(stepId: string, tenantId: string, lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>, leaseTtlMs: number): Promise<KernelStep | null> {
@@ -485,41 +571,15 @@ export class PostgresKernelRepository implements KernelRepository {
         await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: retryable ? 'step.lease_expired_requeued' : 'step.lease_expired_failed', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor: 'kernel.recovery', payload: { attempt: step.attempt } });
         await this.parkOrphanAdmittedEffects(client, step, 'lease_expired', 'kernel.recovery');
         if (!retryable) {
-          const completed = await client.query<{ id: string }>(
-            `SELECT id FROM commander_effects
-             WHERE run_id=$1 AND tenant_id=$2 AND state='COMPLETED'
-             ORDER BY created_at DESC`,
-            [step.runId, step.tenantId],
+          const source = result.rows.find((row) => row.id === step.id);
+          const compensated = await this.requestCompensationIfNeeded(
+            client,
+            step,
+            Number(source?.fencing_epoch ?? 0),
+            'kernel.recovery',
+            now,
           );
-          if (completed.rows.length > 0) {
-            const runState = await this.lockRunState(client, step.runId, step.tenantId);
-            if (runState && runState !== 'COMPENSATING') {
-              assertRunTransition(runState, 'COMPENSATING');
-              const updated = await client.query<DbRun>(
-                `UPDATE commander_runs SET state='COMPENSATING', version=version+1, updated_at=$1
-                 WHERE id=$2 AND tenant_id=$3 RETURNING *`,
-                [now.toISOString(), step.runId, step.tenantId],
-              );
-              const run = fromRun(updated.rows[0]!);
-              const source = result.rows.find((row) => row.id === step.id);
-              await this.appendEvent(client, {
-                aggregateType: 'run', aggregateId: run.id, sequence: run.version,
-                type: 'run.compensating', tenantId: run.tenantId,
-                runId: run.id, stepId: step.id, actor: 'kernel.recovery',
-                payload: { fencingEpoch: Number(source?.fencing_epoch ?? 0) },
-              });
-              const compensationKey = `${run.tenantId}/${run.id}/${Number(source?.fencing_epoch ?? 0)}`;
-              await this.appendEvent(client, {
-                aggregateType: 'effect', aggregateId: `compensation:${compensationKey}`, sequence: 1,
-                type: 'kernel.compensation.requested', tenantId: run.tenantId,
-                runId: run.id, stepId: step.id, actor: 'kernel.recovery',
-                payload: {
-                  effectIds: completed.rows.map((effect) => effect.id),
-                  fencingEpoch: Number(source?.fencing_epoch ?? 0),
-                },
-              }, compensationKey);
-            }
-          } else {
+          if (!compensated) {
             await this.finishRunIfTerminal(client, step.runId, step.tenantId, 'kernel.recovery');
           }
         }
@@ -551,22 +611,33 @@ export class PostgresKernelRepository implements KernelRepository {
     return this.withTransaction(async (client) => {
       const result = await client.query<DbStep>(
         `UPDATE commander_steps SET
-           state=CASE WHEN $1::boolean AND attempt < max_attempts THEN 'RETRY_WAIT' ELSE 'FAILED' END,
+           attempt=CASE WHEN $11::boolean THEN GREATEST(0, attempt - 1) ELSE attempt END,
+           state=CASE WHEN $1::boolean AND (CASE WHEN $11::boolean THEN GREATEST(0, attempt - 1) ELSE attempt END) < max_attempts THEN 'RETRY_WAIT' ELSE 'FAILED' END,
            error=$2::jsonb,
-           scheduled_at=CASE WHEN $1::boolean AND attempt < max_attempts THEN $3 ELSE scheduled_at END,
+           scheduled_at=CASE WHEN $1::boolean AND (CASE WHEN $11::boolean THEN GREATEST(0, attempt - 1) ELSE attempt END) < max_attempts THEN $3 ELSE scheduled_at END,
            version=version+1, updated_at=now(), lease_worker_id=NULL, lease_token=NULL, lease_expires_at=NULL
          WHERE id=$4 AND tenant_id=$5 AND state='RUNNING' AND version=$6 AND lease_worker_id=$7 AND lease_worker_generation=$8 AND lease_token=$9 AND fencing_epoch=$10 AND lease_expires_at > now()
            AND EXISTS (SELECT 1 FROM commander_workers w WHERE w.id=$7 AND w.generation=$8)
          RETURNING *`,
-        [request.error.retryable && Boolean(request.retryAt), json(request.error), request.retryAt?.toISOString() ?? null, request.stepId, request.tenantId, request.expectedVersion, request.lease.workerId, request.lease.workerGeneration ?? -1, request.lease.token, request.lease.fencingEpoch]);
+        [request.error.retryable && Boolean(request.retryAt), json(request.error), request.retryAt?.toISOString() ?? null, request.stepId, request.tenantId, request.expectedVersion, request.lease.workerId, request.lease.workerGeneration ?? -1, request.lease.token, request.lease.fencingEpoch, Boolean(request.refundAttempt)]);
       if (!result.rows[0]) return null;
       const step = fromStep(result.rows[0]);
       assertStepTransition('RUNNING', step.state);
       await this.releaseTenantSlot(client, step.tenantId);
-      await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: step.state === 'RETRY_WAIT' ? 'step.retry_scheduled' : 'step.failed', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor: request.actor, payload: { error: request.error } });
+      await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: step.state === 'RETRY_WAIT' ? 'step.retry_scheduled' : 'step.failed', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor: request.actor, payload: { error: request.error, refundAttempt: Boolean(request.refundAttempt) } });
       // Broker-external fail must park ADMITTED effects (same as lease reclaim).
       await this.parkOrphanAdmittedEffects(client, step, 'step_failed', request.actor);
-      if (step.state === 'FAILED') await this.finishRunIfTerminal(client, step.runId, step.tenantId, request.actor);
+      if (step.state === 'FAILED') {
+        const compensated = await this.requestCompensationIfNeeded(
+          client,
+          step,
+          Number(result.rows[0]?.fencing_epoch ?? 0),
+          request.actor,
+        );
+        if (!compensated) {
+          await this.finishRunIfTerminal(client, step.runId, step.tenantId, request.actor);
+        }
+      }
       return step;
     }, [request.tenantId]);
   }
@@ -607,7 +678,15 @@ export class PostgresKernelRepository implements KernelRepository {
       if (previousState === 'RUNNING') await this.releaseTenantSlot(client, step.tenantId);
       await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: 'step.failed', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor, payload: { error } });
       if (previousState === 'RUNNING') await this.parkOrphanAdmittedEffects(client, step, 'step_failed', actor);
-      await this.finishRunIfTerminal(client, step.runId, step.tenantId, actor);
+      const compensated = await this.requestCompensationIfNeeded(
+        client,
+        step,
+        Number(result.rows[0]?.fencing_epoch ?? 0),
+        actor,
+      );
+      if (!compensated) {
+        await this.finishRunIfTerminal(client, step.runId, step.tenantId, actor);
+      }
       return step;
     }, [tenantId]);
   }
@@ -634,6 +713,7 @@ export class PostgresKernelRepository implements KernelRepository {
       for (const row of pausedSteps.rows) {
         const step = fromStep(row);
         await this.releaseTenantSlot(client, step.tenantId);
+        await this.parkOrphanAdmittedEffects(client, step, 'run_paused', actor);
         await this.appendEvent(client, { aggregateType: 'step', aggregateId: step.id, sequence: step.version, type: 'step.paused', tenantId: step.tenantId, runId: step.runId, stepId: step.id, actor, payload: { previousState: 'RUNNING' } });
       }
       await this.appendEvent(client, { aggregateType: 'run', aggregateId: run.id, sequence: run.version, type: 'run.paused', tenantId, runId, actor, payload: {} });
@@ -730,6 +810,7 @@ export class PostgresKernelRepository implements KernelRepository {
       }
       for (const row of affected.rows) {
         const step = fromStep(row);
+        await this.parkOrphanAdmittedEffects(client, step, 'tenant_paused', actor);
         await this.appendEvent(client, {
           aggregateType: 'step', aggregateId: step.id, sequence: step.version,
           type: 'step.tenant_paused', tenantId, runId: step.runId, stepId: step.id,
@@ -784,6 +865,14 @@ export class PostgresKernelRepository implements KernelRepository {
   }
 
   async admitEffect(request: AdmitEffectRequest): Promise<AdmitEffectResult> {
+    // Fail-closed: never let a blank policySnapshotId / lease.workerId slip
+    // through to storage where it would otherwise coerce to 'legacy-unbound'.
+    if (!request.policySnapshotId || !request.policySnapshotId.trim()) {
+      return { admitted: false, reason: 'POLICY_SNAPSHOT_ID_REQUIRED' };
+    }
+    if (!request.lease.workerId || !request.lease.workerId.trim()) {
+      return { admitted: false, reason: 'LEASE_WORKER_ID_REQUIRED' };
+    }
     return this.withTransaction(async (client) => {
       let step = await client.query<DbStep>(
         `SELECT * FROM commander_steps WHERE id=$1 AND run_id=$2 AND tenant_id=$3 AND state='RUNNING' AND lease_worker_id=$4 AND lease_worker_generation=$5 AND lease_token=$6 AND fencing_epoch=$7 AND lease_expires_at > now()
@@ -808,17 +897,48 @@ export class PostgresKernelRepository implements KernelRepository {
       const existing = await client.query<DbEffect>('SELECT * FROM commander_effects WHERE tenant_id=$1 AND idempotency_key=$2', [request.tenantId, request.idempotencyKey]);
       if (existing.rows[0]) {
         const prior = existing.rows[0];
-        if (prior.run_id !== request.runId || prior.step_id !== request.stepId || prior.type !== request.type || prior.request_hash !== fingerprint || prior.policy_decision_id !== request.policyDecisionId) {
+        if (
+          prior.run_id !== request.runId ||
+          prior.step_id !== request.stepId ||
+          prior.type !== request.type ||
+          prior.request_hash !== fingerprint ||
+          prior.policy_decision_id !== request.policyDecisionId ||
+          prior.policy_snapshot_id !== request.policySnapshotId ||
+          prior.action_digest !== request.actionDigest
+        ) {
           return { admitted: false, reason: 'IDEMPOTENCY_CONFLICT' };
         }
         return { admitted: true, replayed: true, effect: fromEffect(prior) };
       }
+      const leaseWorkerGeneration = request.lease.workerGeneration ?? -1;
       const inserted = await client.query<DbEffect>(
-        `INSERT INTO commander_effects (id,run_id,step_id,tenant_id,type,idempotency_key,request_hash,policy_decision_id,state,request)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'ADMITTED',$9::jsonb) RETURNING *`,
-        [request.id, request.runId, request.stepId, request.tenantId, request.type, request.idempotencyKey, fingerprint, request.policyDecisionId, json(request.request)]);
+        `INSERT INTO commander_effects (
+           id, run_id, step_id, tenant_id, type, idempotency_key, request_hash,
+           policy_decision_id, policy_snapshot_id, action_digest,
+           lease_worker_id, lease_worker_generation, lease_fencing_epoch,
+           state, request
+         ) VALUES (
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'ADMITTED',$14::jsonb
+         ) RETURNING *`,
+        [
+          request.id,
+          request.runId,
+          request.stepId,
+          request.tenantId,
+          request.type,
+          request.idempotencyKey,
+          fingerprint,
+          request.policyDecisionId,
+          request.policySnapshotId,
+          request.actionDigest,
+          request.lease.workerId,
+          leaseWorkerGeneration,
+          request.lease.fencingEpoch,
+          json(request.request),
+        ],
+      );
       const effect = fromEffect(inserted.rows[0]!);
-      await this.appendEvent(client, { aggregateType: 'effect', aggregateId: effect.id, sequence: 1, type: 'effect.admitted', tenantId: effect.tenantId, runId: effect.runId, stepId: effect.stepId, actor: request.actor, payload: { type: effect.type, policyDecisionId: effect.policyDecisionId } });
+      await this.appendEvent(client, { aggregateType: 'effect', aggregateId: effect.id, sequence: 1, type: 'effect.admitted', tenantId: effect.tenantId, runId: effect.runId, stepId: effect.stepId, actor: request.actor, payload: { type: effect.type, policyDecisionId: effect.policyDecisionId, policySnapshotId: effect.policySnapshotId, actionDigest: effect.actionDigest } });
       return { admitted: true, replayed: false, effect };
     }, [request.tenantId]);
   }
@@ -917,6 +1037,12 @@ export class PostgresKernelRepository implements KernelRepository {
   }
 
   async claimReconcileEffects(input: ClaimReconcileEffectsInput): Promise<ClaimedReconcileEffect[]> {
+    // Worker / least-privilege path: DB-atomic SECURITY DEFINER RPC. Caller
+    // cannot pass tenant scope — durable commander_workers.tenant_ids only.
+    if (!this.options.schedulerMode) {
+      return this.claimReconcileEffectsViaRpc(input);
+    }
+
     const at = input.now ?? new Date();
     const claimTtlMs = input.claimTtlMs ?? 60_000;
     return this.withTransaction(async (client) => {
@@ -947,6 +1073,54 @@ export class PostgresKernelRepository implements KernelRepository {
         claimToken,
       }));
     });
+  }
+
+  /**
+   * Worker reconcile claim via SECURITY DEFINER claim_reconcile_effects.
+   * Does not set app.tenant_scope='*' and does not accept caller tenant scope.
+   */
+  private async claimReconcileEffectsViaRpc(
+    input: ClaimReconcileEffectsInput,
+  ): Promise<ClaimedReconcileEffect[]> {
+    const workerId = input.workerId?.trim();
+    if (!workerId) {
+      throw new Error('claimReconcileEffects requires workerId on the worker LOGIN path');
+    }
+    const workerGeneration = input.workerGeneration;
+    if (typeof workerGeneration !== 'number' || !Number.isFinite(workerGeneration)) {
+      throw new Error('claimReconcileEffects requires finite workerGeneration on the worker LOGIN path');
+    }
+    const claimSecret = input.claimSecret ?? '';
+    if (!claimSecret) {
+      throw new Error('claimReconcileEffects requires claimSecret on the worker LOGIN path');
+    }
+    const at = input.now ?? new Date();
+    const claimTtlMs = input.claimTtlMs ?? 60_000;
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query<{ claim_reconcile_effects: unknown }>(
+        'SELECT claim_reconcile_effects($1::text, $2::bigint, $3::integer, $4::timestamptz, $5::integer, $6::text) AS claim_reconcile_effects',
+        [workerId, workerGeneration, input.limit, at.toISOString(), claimTtlMs, claimSecret],
+      );
+      await client.query('COMMIT');
+      const raw = result.rows[0]?.claim_reconcile_effects;
+      if (raw == null) return [];
+      const rows = (typeof raw === 'string' ? JSON.parse(raw) : raw) as Array<{
+        effect: DbEffect;
+        claimToken: string;
+      }>;
+      if (!Array.isArray(rows)) return [];
+      return rows.map((entry) => ({
+        effect: fromEffect(entry.effect),
+        claimToken: entry.claimToken,
+      }));
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch { /* preserve claim error */ }
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async rescheduleReconcile(input: RescheduleReconcileInput): Promise<boolean> {
@@ -1155,6 +1329,9 @@ export class PostgresKernelRepository implements KernelRepository {
             compensationPayload: {
               originalEffectId: targetEffect.id,
               forwardResponse: targetEffect.response ?? {},
+              // Derived from the original effect's own lease fencing — never invent
+              // a literal epoch for the compensation consumer's admit lease.
+              fencingEpoch: targetEffect.leaseFencingEpoch,
             },
             idempotencyKey,
           },
@@ -1170,6 +1347,11 @@ export class PostgresKernelRepository implements KernelRepository {
   }
 
   async claimOutbox(limit: number, now = new Date()): Promise<KernelOutboxMessage[]> {
+    if (!this.options.schedulerMode) {
+      throw new Error(
+        'claimOutbox requires schedulerMode repository; worker LOGIN must use claimOutboxByTopic with claim authz',
+      );
+    }
     return this.withTransaction(async (client) => {
       const token = randomUUID();
       const result = await client.query<{ id: string; event_id: string; tenant_id: string; topic: string; key: string; payload: Record<string, unknown>; attempts: number; available_at: Date | string; published_at: Date | string | null; created_at: Date | string }>(
@@ -1179,14 +1361,22 @@ export class PostgresKernelRepository implements KernelRepository {
       return result.rows.map((row) => ({ id: row.id, eventId: row.event_id, tenantId: row.tenant_id, topic: row.topic, key: row.key, payload: row.payload ?? {}, attempts: Number(row.attempts), availableAt: iso(row.available_at), publishedAt: row.published_at ? iso(row.published_at) : undefined, claimToken: token, createdAt: iso(row.created_at) }));
     });
   }
-  async markOutboxPublished(messageId: string, claimToken: string): Promise<boolean> {
+  async markOutboxPublished(messageId: string, claimToken: string, tenantId?: string): Promise<boolean> {
+    const scope = this.resolveOutboxMutationScope(tenantId);
     return this.withTransaction(async (client) => {
       const result = await client.query(`UPDATE commander_outbox SET published_at=now(), claim_token=NULL, claimed_at=NULL WHERE id=$1 AND claim_token=$2 AND published_at IS NULL`, [messageId, claimToken]);
       return (result.rowCount ?? 0) === 1;
-    });
+    }, scope);
   }
 
-  async retryOutbox(messageId: string, claimToken: string, error: { code: string; message: string }, now = new Date()): Promise<boolean> {
+  async retryOutbox(
+    messageId: string,
+    claimToken: string,
+    error: { code: string; message: string },
+    now = new Date(),
+    tenantId?: string,
+  ): Promise<boolean> {
+    const scope = this.resolveOutboxMutationScope(tenantId);
     return this.withTransaction(async (client) => {
       const result = await client.query(
         `UPDATE commander_outbox SET
@@ -1196,12 +1386,20 @@ export class PostgresKernelRepository implements KernelRepository {
         [now.toISOString(), json(error), messageId, claimToken],
       );
       return (result.rowCount ?? 0) === 1;
-    });
+    }, scope);
   }
 
   // ── WS2 EffectBroker monopoly ─────────────────────────────────────────────
 
-  async claimOutboxByTopic(topic: string, limit: number, now = new Date()): Promise<KernelOutboxMessage[]> {
+  async claimOutboxByTopic(
+    topic: string,
+    limit: number,
+    now = new Date(),
+    authz?: { workerId: string; workerGeneration: number; claimSecret: string },
+  ): Promise<KernelOutboxMessage[]> {
+    if (!this.options.schedulerMode) {
+      return this.claimOutboxByTopicViaRpc(topic, limit, now, authz);
+    }
     return this.withTransaction(async (client) => {
       const token = randomUUID();
       const result = await client.query<{ id: string; event_id: string; tenant_id: string; topic: string; key: string; payload: Record<string, unknown>; attempts: number; available_at: Date | string; published_at: Date | string | null; created_at: Date | string }>(
@@ -1212,21 +1410,113 @@ export class PostgresKernelRepository implements KernelRepository {
     });
   }
 
-  async isCapabilityRevoked(jti: string): Promise<boolean> {
+  /** Worker LOGIN outbox claim via SECURITY DEFINER claim_outbox_by_topic. */
+  private async claimOutboxByTopicViaRpc(
+    topic: string,
+    limit: number,
+    now: Date,
+    authz?: { workerId: string; workerGeneration: number; claimSecret: string },
+  ): Promise<KernelOutboxMessage[]> {
+    const workerId = authz?.workerId?.trim();
+    const claimSecret = authz?.claimSecret ?? '';
+    const workerGeneration = authz?.workerGeneration;
+    if (!workerId) {
+      throw new Error('claimOutboxByTopic requires workerId on the worker LOGIN path');
+    }
+    if (typeof workerGeneration !== 'number' || !Number.isFinite(workerGeneration)) {
+      throw new Error('claimOutboxByTopic requires finite workerGeneration on the worker LOGIN path');
+    }
+    if (!claimSecret) {
+      throw new Error('claimOutboxByTopic requires claimSecret on the worker LOGIN path');
+    }
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query<{ claim_outbox_by_topic: unknown }>(
+        'SELECT claim_outbox_by_topic($1::text, $2::bigint, $3::text, $4::integer, $5::timestamptz, $6::text) AS claim_outbox_by_topic',
+        [workerId, workerGeneration, topic, limit, now.toISOString(), claimSecret],
+      );
+      await client.query('COMMIT');
+      const raw = result.rows[0]?.claim_outbox_by_topic;
+      if (raw == null) return [];
+      const payload = (typeof raw === 'string' ? JSON.parse(raw) : raw) as {
+        claimToken?: string;
+        rows?: Array<Record<string, unknown>>;
+      };
+      const token = typeof payload.claimToken === 'string' ? payload.claimToken : '';
+      const rows = Array.isArray(payload.rows) ? payload.rows : [];
+      return rows.map((row) => ({
+        id: String(row.id),
+        eventId: String(row.event_id),
+        tenantId: String(row.tenant_id),
+        topic: String(row.topic),
+        key: String(row.key),
+        payload: (row.payload as Record<string, unknown>) ?? {},
+        attempts: Number(row.attempts),
+        availableAt: iso(row.available_at as Date | string),
+        publishedAt: row.published_at ? iso(row.published_at as Date | string) : undefined,
+        claimToken: token,
+        createdAt: iso(row.created_at as Date | string),
+      }));
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch { /* preserve claim error */ }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /** Worker mutations need an explicit tenant; scheduler may use empty → '*'. */
+  private resolveOutboxMutationScope(tenantId?: string): string[] {
+    if (this.options.schedulerMode) {
+      return tenantId?.trim() ? [tenantId.trim()] : [];
+    }
+    const tid = tenantId?.trim();
+    if (!tid) {
+      throw new Error(
+        'Outbox mark/retry requires tenantId on the worker LOGIN path (message.tenantId)',
+      );
+    }
+    return [tid];
+  }
+
+  async isCapabilityRevoked(jti: string, tenantId: string): Promise<boolean> {
     return this.withTransaction(async (client) => {
-      const result = await client.query(`SELECT 1 FROM commander_capability_revocations WHERE jti=$1 AND expires_at > now()`, [jti]);
+      const result = await client.query(
+        `SELECT 1 FROM commander_capability_revocations WHERE jti=$1 AND tenant_id=$2 AND expires_at > now()`,
+        [jti, tenantId],
+      );
       return (result.rowCount ?? 0) > 0;
-    });
+    }, [tenantId]);
   }
 
   async revokeCapability(input: { jti: string; tenantId: string; expiresAt: string; reason?: string }): Promise<void> {
     await this.withTransaction(async (client) => {
       await client.query(
         `INSERT INTO commander_capability_revocations (jti, tenant_id, expires_at, reason) VALUES ($1, $2, $3, $4)
-         ON CONFLICT (jti) DO UPDATE SET expires_at = EXCLUDED.expires_at, reason = EXCLUDED.reason`,
+         ON CONFLICT (tenant_id, jti) DO UPDATE SET expires_at = EXCLUDED.expires_at, reason = EXCLUDED.reason`,
         [input.jti, input.tenantId, input.expiresAt, input.reason ?? null],
       );
-    });
+    }, [input.tenantId]);
+  }
+
+  async consumeCapabilityReplay(input: {
+    tenantId: string;
+    jti: string;
+    nonce: string;
+    expiresAt: string;
+  }): Promise<boolean> {
+    return this.withTransaction(async (client) => {
+      const result = await client.query<{ jti: string }>(
+        `INSERT INTO commander_capability_replays (tenant_id, jti, nonce, expires_at)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT DO NOTHING
+         RETURNING jti`,
+        [input.tenantId, input.jti, input.nonce, input.expiresAt],
+      );
+      // Empty RETURNING ⇒ conflict ⇒ already consumed (replay).
+      return (result.rowCount ?? 0) === 0;
+    }, [input.tenantId]);
   }
 
   async isActionAllowed(tenantId: string, action: string): Promise<boolean> {
@@ -1242,7 +1532,7 @@ export class PostgresKernelRepository implements KernelRepository {
       );
       if (!result.rows[0]) return false;
       return result.rows[0].allowed;
-    });
+    }, [tenantId]);
   }
 
   async setAllowlistEntry(tenantId: string, actionPattern: string, allowed: boolean): Promise<void> {
@@ -1252,7 +1542,7 @@ export class PostgresKernelRepository implements KernelRepository {
          ON CONFLICT (tenant_id, action_pattern) DO UPDATE SET allowed = EXCLUDED.allowed`,
         [tenantId, actionPattern, allowed],
       );
-    });
+    }, [tenantId]);
   }
 
   async ensureAllowlistDefault(tenantId: string, actionPattern: string, allowed: boolean): Promise<void> {
@@ -1262,7 +1552,7 @@ export class PostgresKernelRepository implements KernelRepository {
          ON CONFLICT (tenant_id, action_pattern) DO NOTHING`,
         [tenantId, actionPattern, allowed],
       );
-    });
+    }, [tenantId]);
   }
 
   async incrementQuota(input: { tenantId: string; actionClass: string; tokensUsed?: number; now?: Date }): Promise<{ countUsed: number; tokensUsed: number }> {
@@ -1276,7 +1566,7 @@ export class PostgresKernelRepository implements KernelRepository {
         [input.tenantId, input.actionClass, day, tokens],
       );
       return { countUsed: result.rows[0]!.count_used, tokensUsed: Number(result.rows[0]!.tokens_used) };
-    });
+    }, [input.tenantId]);
   }
 
   async getQuota(tenantId: string, actionClass: string, now?: Date): Promise<{ countUsed: number; tokensUsed: number }> {
@@ -1288,7 +1578,7 @@ export class PostgresKernelRepository implements KernelRepository {
       );
       if (!result.rows[0]) return { countUsed: 0, tokensUsed: 0 };
       return { countUsed: result.rows[0].count_used, tokensUsed: Number(result.rows[0].tokens_used) };
-    });
+    }, [tenantId]);
   }
 
   async putKillSwitch(input: PutKillSwitchInput): Promise<KillSwitch> {
@@ -1691,6 +1981,107 @@ export class PostgresKernelRepository implements KernelRepository {
     return result.rows;
   }
 
+  private async requestCompensationIfNeeded(
+    client: SqlClient,
+    step: Pick<KernelStep, 'id' | 'tenantId' | 'runId'>,
+    fencingEpoch: number,
+    actor: string,
+    at = new Date(),
+  ): Promise<boolean> {
+    const effectSnapshot = await client.query<{ id: string; state: 'ADMITTED' | 'COMPLETED' }>(
+      `SELECT id, state FROM commander_effects
+       WHERE run_id=$1 AND tenant_id=$2 AND state IN ('COMPLETED','ADMITTED')
+       ORDER BY created_at ASC
+       FOR UPDATE`,
+      [step.runId, step.tenantId],
+    );
+    const completedEffectIds = effectSnapshot.rows
+      .filter((effect) => effect.state === 'COMPLETED')
+      .map((effect) => effect.id);
+    if (completedEffectIds.length === 0) return false;
+
+    const previousState = await this.lockRunState(client, step.runId, step.tenantId);
+    if (!previousState) return false;
+    if (previousState === 'COMPENSATING') {
+      await this.cancelOpenStepsForTerminalRun(
+        client,
+        step.runId,
+        step.tenantId,
+        actor,
+        'run_compensating',
+      );
+      return true;
+    }
+    assertRunTransition(previousState, 'COMPENSATING');
+    const updated = await client.query<DbRun>(
+      `UPDATE commander_runs
+       SET state='COMPENSATING', version=version+1, updated_at=$1
+       WHERE id=$2 AND tenant_id=$3 AND state=$4
+       RETURNING *`,
+      [at.toISOString(), step.runId, step.tenantId, previousState],
+    );
+    if (!updated.rows[0]) return false;
+    const run = fromRun(updated.rows[0]);
+    await this.appendEvent(client, {
+      aggregateType: 'run', aggregateId: run.id, sequence: run.version,
+      type: 'run.compensating', tenantId: run.tenantId, runId: run.id,
+      stepId: step.id, actor, payload: { fencingEpoch },
+    });
+    const compensationKey = `${run.tenantId}/${run.id}/${fencingEpoch}`;
+    await this.appendEvent(client, {
+      aggregateType: 'effect', aggregateId: `compensation:${compensationKey}`, sequence: 1,
+      type: 'kernel.compensation.requested', tenantId: run.tenantId, runId: run.id,
+      stepId: step.id, actor,
+      payload: { effectIds: completedEffectIds, fencingEpoch },
+    }, compensationKey);
+    await this.cancelOpenStepsForTerminalRun(
+      client,
+      run.id,
+      run.tenantId,
+      actor,
+      'run_compensating',
+    );
+    return true;
+  }
+
+  private async cancelOpenStepsForTerminalRun(
+    client: SqlClient,
+    runId: string,
+    tenantId: string,
+    actor: string,
+    reason: string,
+  ): Promise<void> {
+    const previousSteps = await this.lockStepStates(client, runId, tenantId);
+    const previousStates = new Map(previousSteps.map((step) => [step.id, step.state]));
+    for (const step of previousSteps) {
+      if (!['SUCCEEDED', 'FAILED', 'CANCELLED', 'SKIPPED'].includes(step.state)) {
+        assertStepTransition(step.state, 'CANCELLED');
+      }
+    }
+    const cancelled = await client.query<DbStep>(
+      `UPDATE commander_steps
+       SET state='CANCELLED',
+           error=jsonb_build_object('code','RUN_TERMINAL','message',$1::text,'retryable',false),
+           version=version+1, updated_at=now(),
+           lease_worker_id=NULL, lease_token=NULL, lease_expires_at=NULL
+       WHERE run_id=$2 AND tenant_id=$3
+         AND state NOT IN ('SUCCEEDED','FAILED','CANCELLED','SKIPPED')
+       RETURNING *`,
+      [reason, runId, tenantId],
+    );
+    for (const row of cancelled.rows) {
+      const step = fromStep(row);
+      const previousState = previousStates.get(step.id);
+      if (previousState === 'RUNNING') await this.releaseTenantSlot(client, tenantId);
+      await this.parkOrphanAdmittedEffects(client, step, reason, actor);
+      await this.appendEvent(client, {
+        aggregateType: 'step', aggregateId: step.id, sequence: step.version,
+        type: 'step.cancelled', tenantId, runId, stepId: step.id, actor,
+        payload: { reason, previousState },
+      });
+    }
+  }
+
   private async finishRunIfTerminal(client: SqlClient, runId: string, tenantId: string, actor: string): Promise<void> {
     const previousState = await this.lockRunState(client, runId, tenantId);
     if (!previousState) return;
@@ -1698,6 +2089,7 @@ export class PostgresKernelRepository implements KernelRepository {
     if (states.rows.some((row) => row.state === 'FAILED')) {
       if (previousState === 'FAILED') return;
       assertRunTransition(previousState, 'FAILED');
+      await this.cancelOpenStepsForTerminalRun(client, runId, tenantId, actor, 'run_failed');
       const updated = await client.query<DbRun>(`UPDATE commander_runs SET state='FAILED', version=version+1, updated_at=now(), terminal_at=now() WHERE id=$1 AND tenant_id=$2 AND state NOT IN ('FAILED','SUCCEEDED') RETURNING *`, [runId, tenantId]);
       if (updated.rows[0]) await this.appendEvent(client, { aggregateType: 'run', aggregateId: runId, sequence: Number(updated.rows[0].version), type: 'run.failed', tenantId, runId, actor, payload: {} });
     } else if (states.rows.length > 0 && states.rows.every((row) => ['SUCCEEDED', 'SKIPPED'].includes(row.state))) {

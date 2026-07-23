@@ -30,6 +30,9 @@ const grantBase = {
   audience: 'commander.effect-broker',
   keyId: 'k1',
   nonce: 'n1',
+  actionDigest: 'a'.repeat(64),
+  workerId: 'w1',
+  workerGeneration: 1,
 };
 
 function makeTokens() {
@@ -185,7 +188,7 @@ describe('L3-08a UNKNOWN reconcile', () => {
           type: 'ticket.create',
           request,
           idempotencyKey: 'idem-ticket-1',
-          lease: { workerId: 'w1', token: 'lease', fencingEpoch: 1 },
+          lease: { workerId: 'w1', workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
           actor: 'w1',
         }),
       (err: unknown) => err instanceof EffectBrokerError && err.code === 'COMPLETION_UNCONFIRMED',

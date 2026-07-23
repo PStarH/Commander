@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { InMemoryKernelRepository } from '../testing/inMemoryRepository.js';
+import { KERNEL_COMPENSATION_TOPIC } from './compensationConsumer.js';
 import { ReclaimDaemon } from './reclaimDaemon.js';
 
 describe('reclaim daemon', () => {
@@ -134,7 +135,10 @@ describe('reclaim daemon', () => {
     const admitted = await repository.admitEffect({
       id: 'effect-a', runId: 'run-a', stepId: 'step-a', tenantId: 'tenant-a',
       type: 'tool', idempotencyKey: 'effect-key', request: { tool: 'write' },
-      policyDecisionId: 'decision-a', lease: claimed.lease, actor: 'worker-a',
+      policyDecisionId: 'decision-a',
+      policySnapshotId: 'policy-v1',
+      actionDigest: 'a'.repeat(64),
+      lease: claimed.lease, actor: 'worker-a',
     });
     assert.equal(admitted.admitted, true);
     assert.ok(await repository.completeEffect(
@@ -144,7 +148,11 @@ describe('reclaim daemon', () => {
     await new ReclaimDaemon(repository).tick(new Date(base.getTime() + 2_000));
 
     assert.equal((await repository.getRun('run-a', 'tenant-a'))?.state, 'COMPENSATING');
-    const messages = await repository.claimOutbox(100, new Date(base.getTime() + 3_000));
+    const messages = await repository.claimOutboxByTopic(
+      KERNEL_COMPENSATION_TOPIC,
+      100,
+      new Date(base.getTime() + 3_000),
+    );
     const compensation = messages.filter(
       (message) => message.topic === 'commander.kernel.compensation.requested',
     );
@@ -173,7 +181,10 @@ describe('reclaim daemon', () => {
     assert.equal((await repository.admitEffect({
       id: 'effect-a', runId: 'run-a', stepId: 'step-a', tenantId: 'tenant-a',
       type: 'tool', idempotencyKey: 'effect-key', request: { tool: 'write' },
-      policyDecisionId: 'decision-a', lease: claimed.lease, actor: 'worker-a',
+      policyDecisionId: 'decision-a',
+      policySnapshotId: 'policy-v1',
+      actionDigest: 'a'.repeat(64),
+      lease: claimed.lease, actor: 'worker-a',
     })).admitted, true);
 
     await new ReclaimDaemon(repository).tick(new Date(base.getTime() + 2_000));

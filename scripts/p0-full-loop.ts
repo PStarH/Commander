@@ -18,7 +18,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { resolve } from 'node:path';
 import { Pool } from 'pg';
-import { runKernelMigrations } from '@commander/kernel';
+import { runKernelMigrations, seedWorkerAllowedTenants } from '@commander/kernel';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const PORT = Number(process.env.P0_PORT ?? 4012);
@@ -66,11 +66,22 @@ async function waitHealth(ms: number): Promise<void> {
 async function main(): Promise<void> {
   log('migrate kernel schema');
   const pool = new Pool({ connectionString: DB, max: 2 });
+  const appPassword = `p0-${randomUUID()}`;
+  const workerPassword = `p0-${randomUUID()}`;
   try {
     await runKernelMigrations(pool);
+    await seedWorkerAllowedTenants(pool, [TENANT]);
+    await pool.query(`ALTER ROLE commander_app WITH LOGIN PASSWORD '${appPassword}'`);
+    await pool.query(`ALTER ROLE commander_worker WITH LOGIN PASSWORD '${workerPassword}'`);
   } finally {
     await pool.end();
   }
+  const appDatabaseUrl = new URL(DB);
+  appDatabaseUrl.username = 'commander_app';
+  appDatabaseUrl.password = appPassword;
+  const workerDatabaseUrl = new URL(DB);
+  workerDatabaseUrl.username = 'commander_worker';
+  workerDatabaseUrl.password = workerPassword;
 
   const apiEnv = {
     ...process.env,
@@ -87,13 +98,14 @@ async function main(): Promise<void> {
     COMMANDER_INTEGRITY_KEY:
       process.env.COMMANDER_INTEGRITY_KEY ?? 'dev-integrity-key-32-bytes-minimum!!',
     COMMANDER_KERNEL_ENABLED: '1',
-    DATABASE_URL: DB,
-    COMMANDER_KERNEL_DATABASE_URL: DB,
+    DATABASE_URL: appDatabaseUrl.toString(),
+    COMMANDER_KERNEL_DATABASE_URL: appDatabaseUrl.toString(),
     COMMANDER_DEFAULT_POLICY_SNAPSHOT_ID:
       process.env.COMMANDER_DEFAULT_POLICY_SNAPSHOT_ID ?? 'policy-default-v1',
     COMMANDER_DEFAULT_TENANT_ID: TENANT,
     COMMANDER_DEFAULT_PROVIDER: 'mock',
     COMMANDER_DEFAULT_MODEL: 'mock-model',
+    COMMANDER_MEMORY_STORE: 'in-memory',
     API_STORE_BACKEND: 'memory',
   };
 
@@ -120,11 +132,12 @@ async function main(): Promise<void> {
       cwd: ROOT,
       env: {
         ...process.env,
-        DATABASE_URL: DB,
-        COMMANDER_KERNEL_DATABASE_URL: DB,
+        DATABASE_URL: workerDatabaseUrl.toString(),
+        COMMANDER_KERNEL_DATABASE_URL: workerDatabaseUrl.toString(),
+        COMMANDER_WORKER_DATABASE_URL: workerDatabaseUrl.toString(),
         COMMANDER_WORKER_BOOTSTRAP: resolve(ROOT, 'scripts/p0-worker-bootstrap.ts'),
         COMMANDER_WORKER_AUTH_TOKEN: 'worker-token',
-        COMMANDER_WORKER_TENANTS: '*',
+        COMMANDER_WORKER_TENANTS: TENANT,
         COMMANDER_WORKER_CAPABILITIES: 'agent',
         COMMANDER_WORKER_POLL_MS: '100',
         COMMANDER_DEFAULT_PROVIDER: 'mock',
