@@ -71,10 +71,13 @@ export async function createKernelRepository(
     if (!path) {
       throw new KernelBackendMissingError('COMMANDER_KERNEL_SQLITE_PATH is required for sqlite backend');
     }
+    const schedulerMode = env.COMMANDER_KERNEL_SCHEDULER_MODE === '1';
     const repository = new SqliteKernelRepository({
       path,
       allowMemory: path === ':memory:',
       wal: env.COMMANDER_KERNEL_SQLITE_WAL !== '0',
+      // Match Postgres factory: default worker/durable claim authz unless scheduler mode.
+      schedulerMode,
     });
     await repository.initialize();
     return {

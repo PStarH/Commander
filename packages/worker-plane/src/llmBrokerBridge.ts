@@ -73,6 +73,8 @@ export interface LlmEffectAuth {
   tenantId: string;
   runId: string;
   stepId: string;
+  /** Non-empty workload pin — must match grant.workloadId on admit (fail-closed). */
+  workloadId: string;
   actor: string;
   lease: {
     workerId: string;
@@ -111,6 +113,7 @@ function resolveAdmitWorkloadBinding(auth: LlmEffectAuth) {
     tenantId: auth.tenantId,
     runId: auth.runId,
     stepId: auth.stepId,
+    workloadId: auth.workloadId,
   };
 }
 
@@ -136,11 +139,15 @@ export function createLlmEffectAuth(input: {
   const tenantId = live?.tenantId ?? input.tenantId;
   const runId = live?.runId ?? input.runId;
   const stepId = live?.stepId ?? input.stepId;
-  const workloadId = live?.workloadId ?? input.workloadId;
+  const workloadId =
+    (typeof live?.workloadId === 'string' && live.workloadId.trim()) ||
+    (typeof input.workloadId === 'string' && input.workloadId.trim()) ||
+    `llm:${runId}:${stepId}`;
   return {
     tenantId,
     runId,
     stepId,
+    workloadId,
     actor: input.actor,
     lease: input.lease,
     capabilityTtlMs: ttlMs,
@@ -154,12 +161,16 @@ export function createLlmEffectAuth(input: {
           ttlMs,
         });
       }
+      // Non-ALS (test/dev): stamp grant↔lease fence from the execute lease.
+      // Admit fail-closes when workerId/workerGeneration are missing or diverge.
       return input.issuer.issue({
         jti: randomUUID(),
         tenantId,
         runId,
         stepId,
         workloadId,
+        workerId: input.lease.workerId,
+        workerGeneration: input.lease.workerGeneration,
         effectTypes: [effectType],
         expiresAt: new Date(Date.now() + ttlMs).toISOString(),
         requestHash: canonicalRequestHash(request),

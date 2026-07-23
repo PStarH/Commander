@@ -46,12 +46,12 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
-                  key: {{ include "commander.databaseUrlSecretKey" . | quote }}
+                  key: {{ include "commander.databaseSchedulerSecretKey" . | quote }}
             - name: COMMANDER_KERNEL_DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
-                  key: {{ include "commander.databaseUrlSecretKey" . | quote }}
+                  key: {{ include "commander.databaseSchedulerSecretKey" . | quote }}
             - name: COMMANDER_KERNEL_BACKEND
               value: postgres
             {{- end }}

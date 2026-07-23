@@ -5,9 +5,10 @@
  * Production deployments must use packages/worker-plane/src/bootstrap.ts with real providers.
  *
  * Env:
+ *   COMMANDER_WORKER_DATABASE_URL (preferred least-privilege worker LOGIN)
  *   DATABASE_URL or COMMANDER_KERNEL_DATABASE_URL (required)
  *   COMMANDER_WORKER_AUTH_TOKEN (default: worker-token)
- *   COMMANDER_WORKER_TENANTS (default: * for scheduler-style claim)
+ *   COMMANDER_WORKER_TENANTS (required explicit list; '*'/empty fail-closed — same as prod)
  *   COMMANDER_WORKER_CAPABILITIES (default: agent)
  */
 import { randomUUID } from 'node:crypto';
@@ -20,6 +21,7 @@ import {
   PostgresWorkerRegistry,
   ApiKeyWorkerAuthenticator,
   createAgentStepExecutor,
+  resolveWorkerTenantScope,
   type WorkerDefinition,
   type WorkerIdentity,
 } from '@commander/worker-plane';
@@ -37,10 +39,18 @@ class MockProvider implements LLMProvider {
 }
 
 export async function createWorkerService(): Promise<WorkerService> {
-  const dbUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
+  const dbUrl =
+    process.env.COMMANDER_WORKER_DATABASE_URL ??
+    process.env.COMMANDER_KERNEL_DATABASE_URL ??
+    process.env.DATABASE_URL;
   if (!dbUrl) {
-    throw new Error('DATABASE_URL or COMMANDER_KERNEL_DATABASE_URL is required');
+    throw new Error(
+      'COMMANDER_WORKER_DATABASE_URL, COMMANDER_KERNEL_DATABASE_URL, or DATABASE_URL is required',
+    );
   }
+
+  // Fail-closed before Pool/register/poll — never infer schedulerMode from '*'.
+  const { tenantIds, schedulerMode } = resolveWorkerTenantScope(process.env);
 
   const authToken = process.env.COMMANDER_WORKER_AUTH_TOKEN ?? 'worker-token';
   const workerId = process.env.COMMANDER_WORKER_ID ?? `p0-worker-${randomUUID().slice(0, 8)}`;
@@ -48,15 +58,10 @@ export async function createWorkerService(): Promise<WorkerService> {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
-  const tenantIds = (process.env.COMMANDER_WORKER_TENANTS ?? '*')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
   const maxConcurrency = Number(process.env.COMMANDER_WORKER_MAX_CONCURRENCY ?? 4);
 
   const pool = new Pool({ connectionString: dbUrl, max: maxConcurrency + 4 });
-  const allTenants = tenantIds.includes('*');
-  const kernel = new PostgresKernelRepository(pool, { schedulerMode: allTenants });
+  const kernel = new PostgresKernelRepository(pool, { schedulerMode });
   await kernel.initialize();
 
   const registry = new PostgresWorkerRegistry(pool);

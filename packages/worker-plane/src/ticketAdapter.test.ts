@@ -18,6 +18,8 @@ const grantBase = {
   tenantId: 'tenant',
   runId: 'run',
   stepId: 'step',
+  workerId: 'w1',
+  workerGeneration: 1,
   effectTypes: ['ticket.create'],
   issuedAt: new Date(Date.now() - 1_000).toISOString(),
   notBefore: new Date(Date.now() - 1_000).toISOString(),
@@ -160,15 +162,21 @@ describe('L3-08a InMemoryTicketAdapter chaos', () => {
     );
 
     const request = { title: 'Seat change', idempotencyKey: 'idem-seat-1' };
+    // Class A (ticket.create): grant must carry actionDigest — do not weaken broker gate.
+    const requestHash = canonicalRequestHash(request);
     await assert.rejects(
       () =>
         broker.execute({
           effectId: 'eff-ticket',
-          token: issuer.issue({ ...grantBase, requestHash: canonicalRequestHash(request) }),
+          token: issuer.issue({
+            ...grantBase,
+            requestHash,
+            actionDigest: requestHash,
+          }),
           type: 'ticket.create',
           request,
           idempotencyKey: 'idem-seat-1',
-          lease: { workerId: 'w1', token: 'lease', fencingEpoch: 1 },
+          lease: { workerId: 'w1', workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
           actor: 'w1',
         }),
       (err: unknown) => err instanceof EffectBrokerError && err.code === 'COMPLETION_UNCONFIRMED',

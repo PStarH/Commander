@@ -16,6 +16,7 @@ declare global {
 
 const PUBLIC_PATHS = new Set([
   '/health',
+  '/ready',
   '/system/status',
   '/api/openapi.json',
   '/a2a/.well-known/agent-card',
@@ -78,11 +79,11 @@ function parseApiKeys(raw: string | undefined): Map<string, StoredKey> {
   const keys = new Map<string, StoredKey>();
   if (!raw) return keys;
   for (const entry of raw.split(',')) {
-    const parts = entry.trim().split(':');
-    if (parts.length >= 1 && parts[0]) {
-      const rawKey = parts[0];
-      const name = parts[1] ?? rawKey.slice(0, 8);
-      const scopes = parts[2]?.split(';') ?? ['read', 'write'];
+    const [rawKey, configuredName, ...scopeParts] = entry.trim().split(':');
+    if (rawKey) {
+      const name = configuredName || rawKey.slice(0, 8);
+      const scopeSpec = scopeParts.join(':');
+      const scopes = scopeSpec ? scopeSpec.split(';').filter(Boolean) : ['read', 'write'];
       // Store only the hash — plaintext key is discarded after hashing
       keys.set(sha256(rawKey).toString('hex'), { hash: sha256(rawKey), name, scopes });
     }
@@ -136,8 +137,12 @@ function getCachedKeys(): Map<string, StoredKey> {
     cachedApiKeysRaw = raw;
     cachedTenantApiKeysRaw = tenantRaw;
     cachedApiKeys = parseApiKeys(raw);
-    for (const [hash, stored] of parseTenantApiKeys(tenantRaw)) {
-      cachedApiKeys.set(hash, stored);
+    for (const [hash, tenantBinding] of parseTenantApiKeys(tenantRaw)) {
+      const configured = cachedApiKeys.get(hash);
+      cachedApiKeys.set(
+        hash,
+        configured ? { ...configured, tenantId: tenantBinding.tenantId } : tenantBinding,
+      );
     }
   }
   return cachedApiKeys;

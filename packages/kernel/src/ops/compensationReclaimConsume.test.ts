@@ -70,6 +70,8 @@ describe('reclaim → compensation consume (integration)', () => {
           idempotencyKey: 'effect-key',
           request: { tool: 'write' },
           policyDecisionId: 'decision-a',
+          policySnapshotId: 'policy-v1',
+          actionDigest: 'a'.repeat(64),
           lease: claimed.lease,
           actor: 'worker-a',
         })
@@ -107,8 +109,11 @@ describe('reclaim → compensation consume (integration)', () => {
             idempotencyKey: input.idempotencyKey,
             request: input.request,
             policyDecisionId: 'cmp-decision',
+            policySnapshotId: 'policy-v1',
+            actionDigest: 'a'.repeat(64),
             lease: {
               workerId: input.lease.workerId,
+              workerGeneration: input.lease.workerGeneration,
               token: input.lease.token,
               fencingEpoch: input.lease.fencingEpoch,
             },

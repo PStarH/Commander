@@ -48,6 +48,15 @@ async function assertHelmCellTemplate(): Promise<boolean> {
 
 export const CELL_KERNEL_SERVICES = ['api', 'worker', 'kernel-ops', 'adapter-ops'] as const;
 
+/** Worker/adapter must fail-closed on Ed25519 PEM/JWKS/key id (not HMAC). */
+export const CELL_CAPABILITY_SERVICES = ['worker', 'adapter-ops'] as const;
+
+const CAPABILITY_ENV_REQUIRED = [
+  'COMMANDER_CAPABILITY_PRIVATE_KEY_PEM',
+  'COMMANDER_CAPABILITY_KEY_ID',
+  'COMMANDER_CAPABILITY_JWKS_JSON',
+] as const;
+
 type ComposeServiceEnv = Record<string, string | number | null> | string[];
 
 function envMapFromCompose(environment: ComposeServiceEnv | undefined): Map<string, string> {
@@ -85,6 +94,25 @@ export function assertKernelBackendOnCellServices(composeConfig: {
   }
 }
 
+export function assertCapabilityAuthorityOnCellServices(composeConfig: {
+  services?: Record<string, { environment?: ComposeServiceEnv }>;
+}): void {
+  for (const service of CELL_CAPABILITY_SERVICES) {
+    const env = envMapFromCompose(composeConfig.services?.[service]?.environment);
+    for (const key of CAPABILITY_ENV_REQUIRED) {
+      const value = env.get(key);
+      if (!value || value.trim() === '') {
+        throw new Error(`${service}: ${key} must be present (PEM/JWKS/key id contract)`);
+      }
+    }
+    if (env.has('COMMANDER_CAPABILITY_TOKEN_KEY')) {
+      throw new Error(
+        `${service}: must not set COMMANDER_CAPABILITY_TOKEN_KEY (HMAC path retired for worker/adapter)`,
+      );
+    }
+  }
+}
+
 export { COMPOSE_CONFIG_ENV };
 
 /** When API probes fail, sidecar health from compose exec must not read as true (R10). */
@@ -96,18 +124,25 @@ export function applyApiGateToComposeSidecarSteps(steps: Record<string, boolean>
   }
 }
 
+type ChaosModule = {
+  runL4BAdapterChaos: () => Promise<{ passed: boolean; remoteCreateCount: number }>;
+};
+
 /**
  * 可选 chaos 步：默认路径不依赖尚未合入的 l4-b-adapter-chaos。
  * require=true 或 CELL_SMOKE_REQUIRE_CHAOS=1 时，缺失/失败记 S7_chaos=false。
+ * loadChaos 仅供单测注入「helper 缺失」路径。
  */
 export async function runOptionalChaosStep(
   steps: Record<string, boolean>,
-  options?: { require?: boolean },
+  options?: { require?: boolean; loadChaos?: () => Promise<ChaosModule> },
 ): Promise<void> {
   const requireChaos =
     options?.require === true || process.env.CELL_SMOKE_REQUIRE_CHAOS === '1';
   try {
-    const { runL4BAdapterChaos } = await import('./l4-b-adapter-chaos.js');
+    const { runL4BAdapterChaos } = options?.loadChaos
+      ? await options.loadChaos()
+      : await import('./l4-b-adapter-chaos.js');
     const chaos = await runL4BAdapterChaos();
     steps.S7_chaos = chaos.passed && chaos.remoteCreateCount === 1;
   } catch {
@@ -124,6 +159,7 @@ function assertComposeKernelBackend(): boolean {
   );
   const config = JSON.parse(json) as { services?: Record<string, { environment?: ComposeServiceEnv }> };
   assertKernelBackendOnCellServices(config);
+  assertCapabilityAuthorityOnCellServices(config);
   return true;
 }
 

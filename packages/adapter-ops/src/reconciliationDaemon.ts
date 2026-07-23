@@ -12,6 +12,11 @@ export interface ReconciliationDaemonOptions {
   pollIntervalMs: number;
   batchSize: number;
   actor: string;
+  /** Durable worker id for claim_reconcile_effects under worker LOGIN. */
+  workerId?: string;
+  workerGeneration?: number;
+  /** Unforgeable claim secret from register() — required on worker LOGIN path. */
+  claimSecret?: string;
 }
 
 export class ReconciliationDaemon {
@@ -52,6 +57,9 @@ export class ReconciliationDaemon {
       claimed = await this.options.repository.claimReconcileEffects({
         limit: this.options.batchSize,
         now: new Date(),
+        workerId: this.options.workerId ?? 'reconciliation-daemon',
+        workerGeneration: this.options.workerGeneration ?? 1,
+        claimSecret: this.options.claimSecret,
       });
     } catch (err) {
       console.error('[reconciliation-daemon] tick failed:', err);
