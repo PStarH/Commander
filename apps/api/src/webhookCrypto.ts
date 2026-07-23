@@ -81,3 +81,37 @@ export function verifyWeComSignature(
     return false;
   }
 }
+
+/** Decrypt a WeCom callback payload using the protocol EncodingAESKey. */
+export function decryptWeComMessage(
+  encodingAESKey: string,
+  encrypted: string,
+  expectedReceiveId?: string,
+): string | null {
+  try {
+    const key = Buffer.from(`${encodingAESKey}=`, 'base64');
+    if (key.length !== 32) return null;
+    const decipher = crypto.createDecipheriv('aes-256-cbc', key, key.subarray(0, 16));
+    decipher.setAutoPadding(false);
+    const padded = Buffer.concat([
+      decipher.update(Buffer.from(encrypted, 'base64')),
+      decipher.final(),
+    ]);
+    if (padded.length < 21) return null;
+    const padding = padded[padded.length - 1];
+    if (padding < 1 || padding > 32) return null;
+    for (let i = padded.length - padding; i < padded.length; i++) {
+      if (padded[i] !== padding) return null;
+    }
+    const plain = padded.subarray(0, padded.length - padding);
+    const messageLength = plain.readUInt32BE(16);
+    const messageEnd = 20 + messageLength;
+    if (messageLength < 1 || messageEnd > plain.length) return null;
+    const receiveId = plain.subarray(messageEnd).toString('utf8');
+    if (expectedReceiveId && !timingSafeEqualString(receiveId, expectedReceiveId)) return null;
+    return plain.subarray(20, messageEnd).toString('utf8');
+  } catch (err) {
+    reportSilentFailure(err, 'webhookCrypto:decryptWeComMessage');
+    return null;
+  }
+}

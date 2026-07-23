@@ -7,6 +7,49 @@ import express, { Request, Response, Router } from 'express';
 import { CheckpointManager, RiskScoreCalculator } from './governanceCheckpoint';
 import type { GovernanceCheckpoint, CheckpointStats, RiskFactor } from './governanceCheckpoint';
 import { MissionGovernanceMode, MissionRiskLevel } from '@commander/core';
+import { hasRole } from './userStore';
+
+function requestTenant(req: Request): string | undefined {
+  const bound = req.tenantId;
+  const claim = req.user?.tenantId;
+  if (req.user) {
+    if (!claim || (bound && bound !== claim)) return undefined;
+    return claim;
+  }
+  return req.apiKeyId ? bound : undefined;
+}
+
+function canCreateCheckpoint(req: Request): boolean {
+  const role = req.user?.role;
+  const scopes = req.apiScopes ?? req.user?.scopes ?? [];
+  return (
+    (!!role && hasRole(role, 'operator')) ||
+    scopes.includes('governance:create') ||
+    scopes.includes('admin') ||
+    scopes.includes('*')
+  );
+}
+
+function requireGovernanceOperator(req: Request, res: Response): string | null {
+  const principal = req.user?.id ?? req.apiKeyId;
+  if (!principal) {
+    res.status(401).json({ error: 'Authentication required.' });
+    return null;
+  }
+  const tenantId = requestTenant(req);
+  const role = req.user?.role;
+  const scopes = req.apiScopes ?? req.user?.scopes ?? [];
+  const allowed =
+    (!!role && hasRole(role, 'operator')) ||
+    scopes.includes('governance:admin') ||
+    scopes.includes('admin') ||
+    scopes.includes('*');
+  if (!tenantId || !allowed) {
+    res.status(403).json({ error: 'Tenant-bound governance operator authority is required.' });
+    return null;
+  }
+  return tenantId;
+}
 
 /**
  * Create Governance Checkpoint Router
@@ -25,11 +68,14 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
       res.status(401).json({ error: 'Authentication required to approve or reject.' });
       return null;
     }
-    const scopes = req.apiScopes ?? [];
+    if (!requestTenant(req)) {
+      res.status(403).json({ error: 'Tenant-bound identity required.' });
+      return null;
+    }
+    const scopes = req.apiScopes ?? req.user?.scopes ?? [];
     const role = req.user?.role;
     const canApprove =
-      role === 'admin' ||
-      role === 'super_admin' ||
+      (!!role && hasRole(role, 'admin')) ||
       scopes.includes('approve') ||
       scopes.includes('admin') ||
       scopes.includes('*');
@@ -49,14 +95,23 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
       res.status(401).json({ error: 'Authentication required.' });
       return null;
     }
+    if (!requestTenant(req)) {
+      res.status(403).json({ error: 'Tenant-bound identity required.' });
+      return null;
+    }
     return principalId;
   }
 
-  function canViewCheckpoint(checkpoint: GovernanceCheckpoint, principalId: string): boolean {
+  function canViewCheckpoint(
+    checkpoint: GovernanceCheckpoint,
+    principalId: string,
+    tenantId: string,
+  ): boolean {
     return (
-      checkpoint.requiredApprovals.includes(principalId) ||
-      checkpoint.context.agentId === principalId ||
-      checkpoint.currentApprovals.some((a) => a.reviewerId === principalId)
+      checkpoint.tenantId === tenantId &&
+      (checkpoint.requiredApprovals.includes(principalId) ||
+        checkpoint.context.agentId === principalId ||
+        checkpoint.currentApprovals.some((a) => a.reviewerId === principalId))
     );
   }
 
@@ -83,6 +138,14 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
       return res.status(400).json({
         error: 'Missing required fields: missionId, taskId, agentId, taskDescription',
       });
+    }
+    const principal = resolvePrincipalForInbox(req, res);
+    const tenantId = requestTenant(req);
+    if (!principal || !tenantId) return;
+    if (!canCreateCheckpoint(req)) {
+      return res
+        .status(403)
+        .json({ error: 'Not authorized to create a checkpoint for this agent.' });
     }
 
     // GOV-4: never let client-supplied inputs drive auto-approval. Reject unknown
@@ -117,6 +180,7 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
         riskFactors || [],
         approvers || [],
         timeout,
+        tenantId,
       );
 
       res.status(201).json(checkpoint);
@@ -137,7 +201,11 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
     if (!checkpoint) {
       return res.status(404).json({ error: 'Checkpoint not found' });
     }
-    if (!canViewCheckpoint(checkpoint, principal)) {
+    const tenantId = requestTenant(req);
+    if (!tenantId || checkpoint.tenantId !== tenantId) {
+      return res.status(404).json({ error: 'Checkpoint not found' });
+    }
+    if (!canViewCheckpoint(checkpoint, principal, tenantId)) {
       return res.status(403).json({ error: 'Not authorized to view this checkpoint.' });
     }
     res.json(checkpoint);
@@ -161,7 +229,7 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
     }
 
     // Never expose getAll / cross-mission pending — inbox is principal-scoped (GOV-3).
-    let checkpoints = checkpointManager.getPendingForApprover(principal);
+    let checkpoints = checkpointManager.getPendingForApprover(principal, requestTenant(req));
     if (missionId) {
       checkpoints = checkpoints.filter((c) => c.missionId === String(missionId));
     }
@@ -186,6 +254,9 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
     try {
       const existing = checkpointManager.get(String(req.params.id));
       if (!existing) {
+        return res.status(404).json({ error: 'Checkpoint not found' });
+      }
+      if (existing.tenantId !== requestTenant(req)) {
         return res.status(404).json({ error: 'Checkpoint not found' });
       }
       if (existing.context.agentId === approver) {
@@ -228,6 +299,12 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
       if (!existing) {
         return res.status(404).json({ error: 'Checkpoint not found' });
       }
+      if (existing.tenantId !== requestTenant(req)) {
+        return res.status(404).json({ error: 'Checkpoint not found' });
+      }
+      if (existing.context.agentId === approver) {
+        return res.status(403).json({ error: 'You cannot reject your own checkpoint.' });
+      }
       // GOV-4: same binding as approve — admin role alone is not enough.
       if (existing.requiredApprovals.length > 0 && !existing.requiredApprovals.includes(approver)) {
         return res.status(403).json({
@@ -263,7 +340,11 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
       if (!existing) {
         return res.status(404).json({ error: 'Checkpoint not found' });
       }
-      if (!canViewCheckpoint(existing, principal)) {
+      const tenantId = requestTenant(req);
+      if (!tenantId || existing.tenantId !== tenantId) {
+        return res.status(404).json({ error: 'Checkpoint not found' });
+      }
+      if (!canViewCheckpoint(existing, principal, tenantId)) {
         return res
           .status(403)
           .json({ error: 'Not authorized to add evidence to this checkpoint.' });
@@ -285,7 +366,9 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
    * Check and process expired checkpoints
    */
   router.post('/checkpoints/check-expirations', (req: Request, res: Response) => {
-    const expired = checkpointManager.checkExpirations();
+    const tenantId = requireGovernanceOperator(req, res);
+    if (!tenantId) return;
+    const expired = checkpointManager.checkExpirations(tenantId);
     res.json({
       message: `Processed ${expired.length} expired checkpoints`,
       expired,
@@ -297,8 +380,10 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
    * Get checkpoint statistics
    */
   router.get('/checkpoints/stats', (req: Request, res: Response) => {
+    const principal = resolvePrincipalForInbox(req, res);
+    if (!principal) return;
     const { missionId } = req.query;
-    const stats = checkpointManager.getStats(missionId as string);
+    const stats = checkpointManager.getStats(missionId as string, requestTenant(req));
     res.json(stats);
   });
 
@@ -349,7 +434,7 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
       });
     }
 
-    const pending = checkpointManager.getPendingForApprover(principal);
+    const pending = checkpointManager.getPendingForApprover(principal, requestTenant(req));
     res.json({ pending, count: pending.length });
   });
 

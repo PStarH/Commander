@@ -132,8 +132,11 @@ export function signRefreshToken(user: AuthUser): string {
     type: 'refresh',
     jti,
   };
-  // Refresh tokens do not carry tenant/scopes — they only mint new access
-  // tokens, which are the tokens that authorize /v1 resource access.
+  // Preserve the authenticated tenant across rotation; otherwise an OIDC
+  // session would silently fall back to the deployment default tenant.
+  if (typeof user.tenantId === 'string' && user.tenantId.length > 0) {
+    payload.tenant_id = user.tenantId;
+  }
   const token = jwt.sign(payload, JWT_SECRET, {
     expiresIn: REFRESH_TOKEN_EXPIRES_IN,
     algorithm: 'HS256',

@@ -1,6 +1,7 @@
 import { reportSilentFailure } from '../../silentFailureReporter';
 import type { Tool, ToolDefinition } from '../../runtime/types';
 import { isUrlSafe } from '../_utils/urlSafety';
+import { getOutboundNetworkPolicy } from '../../security/outboundNetworkPolicy';
 import { promises as dnsPromises } from 'node:dns';
 
 /**
@@ -138,6 +139,42 @@ export class ScreenshotCaptureTool implements Tool {
       const launchArgs = process.env.COMMANDER_CHROMIUM_NO_SANDBOX === '1' ? ['--no-sandbox'] : [];
       const browser = await chromium.launch({ headless: true, args: launchArgs });
       const page = await browser.newPage({ viewport: { width: opts.width, height: opts.height } });
+      // Route every browser request through the pinned outbound policy. This
+      // rechecks redirects and subresources immediately before connection.
+      await page.route('**/*', async (route) => {
+        const requestUrl = route.request().url();
+        if (!requestUrl.startsWith('http://') && !requestUrl.startsWith('https://')) {
+          await route.continue();
+          return;
+        }
+        const syntax = isUrlSafe(requestUrl);
+        if (!syntax.safe) {
+          await route.abort('blockedbyclient');
+          return;
+        }
+        const request = route.request();
+        try {
+          const headers = request.headers();
+          delete headers['accept-encoding'];
+          const response = await getOutboundNetworkPolicy().ssrfCheckedFetch(requestUrl, {
+            method: request.method(),
+            headers,
+            body: request.postData() ?? undefined,
+            redirect: 'manual',
+          });
+          const responseHeaders: Record<string, string> = {};
+          response.headers.forEach((value, key) => {
+            responseHeaders[key] = value;
+          });
+          await route.fulfill({
+            status: response.status,
+            headers: responseHeaders,
+            body: Buffer.from(await response.arrayBuffer()),
+          });
+        } catch {
+          await route.abort('blockedbyclient');
+        }
+      });
       await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
       if (opts.selector) {
         const el = await page.$(opts.selector);

@@ -51,16 +51,27 @@ import {
   type AgentAnomalyReport,
 } from './consensus';
 import { getGlobalLogger } from '../../logging';
+import { createTenantAwareSingleton } from '../../runtime/tenantAwareSingleton';
+import { assertSameTenant } from '../../runtime/tenantContext';
 
 // ============================================================================
 // Shared store handles
 // ============================================================================
 
-let sharedAdaptiveStopping: AdaptiveStoppingController | null = null;
+const adaptiveStoppingSingleton = createTenantAwareSingleton(
+  () => new AdaptiveStoppingController(DEFAULT_ADAPTIVE_STOPPING_CONFIG),
+  { componentName: 'AdaptiveStoppingController' },
+);
+let adaptiveStoppingLoaded = false;
 let sharedCourtEval: CourtEvalEngine | null = null;
 
-export function getSharedAdaptiveStopping(): AdaptiveStoppingController | null {
-  return sharedAdaptiveStopping;
+export function getSharedAdaptiveStopping(tenantId?: string): AdaptiveStoppingController | null {
+  if (!adaptiveStoppingLoaded) return null;
+  if (tenantId) {
+    assertSameTenant(tenantId);
+    return adaptiveStoppingSingleton.getForTenant(tenantId);
+  }
+  return adaptiveStoppingSingleton.get();
 }
 export function getSharedCourtEval(): CourtEvalEngine | null {
   return sharedCourtEval;
@@ -122,7 +133,8 @@ export function createConsensusPlugin(): CommanderPlugin {
         // constructor argument — see tool consensus_topology_force for runtime ops.
       }
 
-      sharedAdaptiveStopping = new AdaptiveStoppingController(DEFAULT_ADAPTIVE_STOPPING_CONFIG);
+      adaptiveStoppingLoaded = true;
+      adaptiveStoppingSingleton.get();
       sharedCourtEval = new CourtEvalEngine(DEFAULT_COURT_EVAL_CONFIG);
 
       // Trigger singleton init for BPD and SAC.
@@ -136,7 +148,8 @@ export function createConsensusPlugin(): CommanderPlugin {
     },
 
     onUnload: async () => {
-      sharedAdaptiveStopping = null;
+      adaptiveStoppingLoaded = false;
+      adaptiveStoppingSingleton.reset();
       sharedCourtEval = null;
       resetBPDDetector();
       resetTopologyStateMachine();
@@ -295,7 +308,7 @@ export function createConsensusPlugin(): CommanderPlugin {
           required: ['round'],
         },
         execute: async (args) => {
-          const controller = sharedAdaptiveStopping ?? new AdaptiveStoppingController();
+          const controller = getSharedAdaptiveStopping() ?? new AdaptiveStoppingController();
           const result = controller.recordRound(args.round as DebateRound);
           return JSON.stringify(result);
         },
@@ -306,7 +319,7 @@ export function createConsensusPlugin(): CommanderPlugin {
           'Get the adaptive stopping summary (rounds recorded, novelty probability, distinct count).',
         inputSchema: { type: 'object', properties: {} },
         execute: async () => {
-          const controller = sharedAdaptiveStopping ?? new AdaptiveStoppingController();
+          const controller = getSharedAdaptiveStopping() ?? new AdaptiveStoppingController();
           return JSON.stringify(controller.getSummary());
         },
       },

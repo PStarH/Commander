@@ -11,6 +11,9 @@ import type { ArtifactReference } from '../shared/types';
 import type { AgentRuntimeInterface } from '../runtime';
 import { collectCompletedNodes, flattenTree } from './taskTreeUtils';
 import { reportSilentFailure } from '../silentFailureReporter';
+import * as fsSync from 'node:fs';
+import * as pathSync from 'node:path';
+import { safePath } from '../tools/fileSystemTool';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -71,6 +74,20 @@ export function extractOutputFilePath(goal: string): string | null {
   if (pathMatch) return pathMatch[1];
 
   return null;
+}
+
+/**
+ * Write synthesis output only inside the active workspace. The same safePath
+ * boundary used by filesystem tools also resolves symlinks and tenant roots.
+ */
+export async function writeSynthesisOutput(goal: string, content: string): Promise<string | null> {
+  const fileIntent = extractOutputFilePath(goal);
+  if (!fileIntent) return null;
+
+  const resolvedPath = await safePath(fileIntent);
+  await fsSync.promises.mkdir(pathSync.dirname(resolvedPath), { recursive: true });
+  await fsSync.promises.writeFile(resolvedPath, content, 'utf-8');
+  return resolvedPath;
 }
 
 // ── AgentFileCollector ───────────────────────────────────────────────────────

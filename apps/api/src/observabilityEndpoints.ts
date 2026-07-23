@@ -16,13 +16,25 @@ import {
 } from '@commander/core/observability';
 import { getTraceRecorder, PersistentTraceStore } from '@commander/core/runtime';
 
-const traceStore = new PersistentTraceStore(path.join(process.cwd(), '.commander_traces'));
+const tracesDir = path.join(process.cwd(), '.commander_traces');
+const traceStore = new PersistentTraceStore(tracesDir);
+const tenantTraceStores = new Map<string, PersistentTraceStore>();
 // In-memory recorder is empty in a pure observability process; the handler
 // falls back to reading the on-disk NDJSON via PersistentTraceStore.
 const recorder = getTraceRecorder(traceStore);
-const resolveTenant = (_req: IncomingMessage): string | undefined => undefined;
+const resolveTenant = (req: IncomingMessage): string | undefined =>
+  (req as IncomingMessage & { tenantId?: string }).tenantId;
+const resolveTraceStore = (tenantId: string | undefined): PersistentTraceStore => {
+  if (!tenantId) return traceStore;
+  let store = tenantTraceStores.get(tenantId);
+  if (!store) {
+    store = new PersistentTraceStore(tracesDir, tenantId);
+    tenantTraceStores.set(tenantId, store);
+  }
+  return store;
+};
 
-const deps: ObservabilityDeps = { recorder, traceStore, resolveTenant };
+const deps: ObservabilityDeps = { recorder, traceStore, resolveTenant, resolveTraceStore };
 
 const RUN_ID_PATTERN = /^[a-zA-Z0-9_.-]+$/;
 function isValidRunId(runId: string): boolean {

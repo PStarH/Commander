@@ -14,13 +14,14 @@
  *   DELETE /api/approval/policy/:pattern — remove a tool policy
  *   GET  /api/approval/audit-log      — recent approval decisions audit log
  */
-import { Router, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { z } from 'zod';
 import { toErrorMessage } from './routeHelpers';
 import { validateBody } from './validationMiddleware';
 import { atomicWriteFileSync, readJsonFileSafe, isPlainObjectJson } from './atomicWrite';
+import { hasRole } from './userStore';
 
 const APPROVAL_MODE_FILE = path.join(process.cwd(), '.commander', 'approval-mode.json');
 const AUDIT_LOG_FILE = path.join(process.cwd(), '.commander', 'security-audit.jsonl');
@@ -197,9 +198,37 @@ interface AuditEntry {
   decision?: string;
   reason?: string;
   riskLevel?: string;
+  tenantId?: string;
 }
 
-function readAuditLog(limit: number): AuditEntry[] {
+function requestTenant(req: Request): string | undefined {
+  const bound = req.tenantId;
+  const claim = req.user?.tenantId;
+  if (bound && claim && bound !== claim) return undefined;
+  return bound ?? claim;
+}
+
+function requireApprovalAuditReader(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user && !req.apiKeyId) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  const tenantId = requestTenant(req);
+  const scopes = req.apiScopes ?? req.user?.scopes ?? [];
+  const allowed =
+    (!!req.user?.role && hasRole(req.user.role, 'auditor')) ||
+    scopes.includes('audit:read') ||
+    scopes.includes('approve') ||
+    scopes.includes('admin') ||
+    scopes.includes('*');
+  if (!tenantId || !allowed) {
+    res.status(403).json({ error: 'Tenant-bound approval audit authority is required' });
+    return;
+  }
+  next();
+}
+
+function readAuditLog(limit: number, tenantId: string): AuditEntry[] {
   try {
     const raw = fs.readFileSync(AUDIT_LOG_FILE, 'utf-8');
     const lines = raw.trim().split('\n').filter(Boolean);
@@ -207,7 +236,10 @@ function readAuditLog(limit: number): AuditEntry[] {
     for (const line of lines) {
       try {
         const parsed = JSON.parse(line) as AuditEntry;
-        if (parsed.event?.includes('approval') || parsed.decision) {
+        if (
+          parsed.tenantId === tenantId &&
+          (parsed.event?.includes('approval') || parsed.decision)
+        ) {
           entries.push(parsed);
         }
       } catch {
@@ -279,6 +311,7 @@ export function createApprovalConfigRouter(): Router {
         type: 'config_change',
         action,
         actor,
+        tenantId: requestTenant(req),
         ip: req.ip,
         detail,
       };
@@ -438,15 +471,21 @@ export function createApprovalConfigRouter(): Router {
   );
 
   // GET /api/approval/audit-log — recent approval decisions
-  router.get('/api/approval/audit-log', (req: Request, res: Response) => {
-    try {
-      const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
-      const entries = readAuditLog(limit);
-      res.json({ entries, total: entries.length });
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  });
+  router.get(
+    '/api/approval/audit-log',
+    requireApprovalAuditReader,
+    (req: Request, res: Response) => {
+      try {
+        const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+        const tenantId = requestTenant(req);
+        if (!tenantId) return res.status(403).json({ error: 'Tenant binding required' });
+        const entries = readAuditLog(limit, tenantId);
+        res.json({ entries, total: entries.length });
+      } catch (error) {
+        res.status(500).json({ error: toErrorMessage(error) });
+      }
+    },
+  );
 
   return router;
 }
