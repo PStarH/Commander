@@ -19,13 +19,24 @@ import type { EffectEnvelope } from '@commander/contracts';
 
 /** Outbox port scoped to a single topic (WS2 adds claimOutboxByTopic). */
 export interface CompensationOutboxPort {
-  claimOutboxByTopic(topic: string, limit: number, now?: Date): Promise<CompensationOutboxMessage[]>;
-  markOutboxPublished(messageId: string, claimToken: string): Promise<boolean>;
+  claimOutboxByTopic(
+    topic: string,
+    limit: number,
+    now?: Date,
+    authz?: { workerId: string; workerGeneration: number; claimSecret: string },
+  ): Promise<CompensationOutboxMessage[]>;
+  markOutboxPublished(messageId: string, claimToken: string, tenantId?: string): Promise<boolean>;
   /** Release a failed claim immediately with exponential backoff + recorded
    *  error, instead of waiting for the 60s claim expiry. Messages whose
    *  attempts reach max_attempts are moved to the DLQ by sweepOutboxDlq
    *  (scheduled every kernel-ops timer cycle) — no infinite retry. */
-  retryOutbox(messageId: string, claimToken: string, error: { code: string; message: string }, now?: Date): Promise<boolean>;
+  retryOutbox(
+    messageId: string,
+    claimToken: string,
+    error: { code: string; message: string },
+    now?: Date,
+    tenantId?: string,
+  ): Promise<boolean>;
 }
 
 export interface CompensationOutboxMessage {
@@ -84,7 +95,17 @@ export interface CompensationConsumerOptions {
   timeoutMs?: number;
   /** Worker identity for the lease field. */
   workerId: string;
-  /** Fencing epoch for the lease. Defaults to 1. */
+  /** Durable registry generation for lease / broker affinity. Defaults to 1. */
+  workerGeneration?: number;
+  /** Register-time claim secret — required for worker LOGIN outbox claim RPC. */
+  claimSecret?: string;
+  /**
+   * Fallback fencing epoch used only when a message's payload does not carry
+   * one (e.g. explicit compensationAction messages, not kernel-reclaim ones).
+   * Kernel-reclaim messages always carry the originating lease's fencingEpoch
+   * in payload.compensationPayload.fencingEpoch and that value always wins —
+   * this option must never be used to invent an epoch for those.
+   */
   fencingEpoch?: number;
   /** Optional adapter registry — unregistered `compensate.*` actions are retried, not executed. */
   registry?: { resolve(action: string): unknown };
@@ -173,9 +194,13 @@ export async function consumeCompensationBatch(
   const topic = options.topic ?? DEFAULT_TOPIC;
   const limit = options.limit ?? 50;
   const timeoutMs = options.timeoutMs ?? 30_000;
-  const fencingEpoch = options.fencingEpoch ?? 1;
+  const workerGeneration = options.workerGeneration ?? 1;
 
-  const messages = await outbox.claimOutboxByTopic(topic, limit);
+  const messages = await outbox.claimOutboxByTopic(topic, limit, undefined, {
+    workerId: options.workerId,
+    workerGeneration,
+    claimSecret: options.claimSecret ?? '',
+  });
   let succeeded = 0;
   let failed = 0;
   let replayed = 0;
@@ -189,7 +214,7 @@ export async function consumeCompensationBatch(
         await outbox.retryOutbox(message.id, message.claimToken, {
           code: 'COMPENSATION_PAYLOAD_MALFORMED',
           message: 'compensation outbox payload missing tenantId/runId/stepId/action',
-        });
+        }, undefined, message.tenantId);
       } catch { /* claim may have expired */ }
       failed++;
       continue;
@@ -200,7 +225,7 @@ export async function consumeCompensationBatch(
         await outbox.retryOutbox(message.id, message.claimToken, {
           code: 'COMPENSATION_TENANT_MISMATCH',
           message: 'compensation payload.tenantId diverged from outbox tenant_id',
-        });
+        }, undefined, message.tenantId);
       } catch { /* claim may have expired */ }
       failed++;
       continue;
@@ -216,7 +241,7 @@ export async function consumeCompensationBatch(
         await outbox.retryOutbox(message.id, message.claimToken, {
           code: 'COMPENSATION_ADAPTER_UNREGISTERED',
           message: `No adapter registered for ${compensationAction}`,
-        });
+        }, undefined, message.tenantId);
       } catch { /* claim may have expired */ }
       await options.onAdapterUnregistered?.({
         tenantId: message.tenantId,
@@ -232,6 +257,26 @@ export async function consumeCompensationBatch(
     const effectId = `cmp_${randomUUID()}`;
     const idempotencyKey = payload.idempotencyKey ?? `cmp:${message.id}`;
 
+    // Fail-closed: never invent a fencing epoch. Prefer the epoch the reclaim
+    // daemon stamped on the outbox payload from the actual failed lease; only
+    // fall back to the caller-supplied default for non-reclaim (explicit
+    // compensationAction) messages that have no such lease to derive from.
+    const payloadFencingEpoch = payload.compensationPayload?.fencingEpoch;
+    const fencingEpoch =
+      typeof payloadFencingEpoch === 'number' && Number.isFinite(payloadFencingEpoch)
+        ? payloadFencingEpoch
+        : options.fencingEpoch;
+    if (typeof fencingEpoch !== 'number' || !Number.isFinite(fencingEpoch)) {
+      try {
+        await outbox.retryOutbox(message.id, message.claimToken, {
+          code: 'COMPENSATION_FENCING_EPOCH_MISSING',
+          message: 'no fencingEpoch on payload and no caller-supplied default',
+        }, undefined, message.tenantId);
+      } catch { /* claim may have expired */ }
+      failed++;
+      continue;
+    }
+
     try {
       const token = await tokenProvider({
         tenantId: message.tenantId,
@@ -242,7 +287,13 @@ export async function consumeCompensationBatch(
       });
       if (!token) {
         // Token provider refused — record and back off (DLQ once max_attempts).
-        await outbox.retryOutbox(message.id, message.claimToken!, { code: 'COMPENSATION_TOKEN_REFUSED', message: 'token provider returned null' });
+        await outbox.retryOutbox(
+          message.id,
+          message.claimToken!,
+          { code: 'COMPENSATION_TOKEN_REFUSED', message: 'token provider returned null' },
+          undefined,
+          message.tenantId,
+        );
         failed++;
         continue;
       }
@@ -254,7 +305,12 @@ export async function consumeCompensationBatch(
         type: payload.compensationAction,
         request: compensationRequest,
         idempotencyKey,
-        lease: { workerId: options.workerId, token: `cmp-lease:${message.id}`, fencingEpoch },
+        lease: {
+          workerId: options.workerId,
+          workerGeneration,
+          token: `cmp-lease:${message.id}`,
+          fencingEpoch,
+        },
         actor: `compensation-consumer:${options.workerId}`,
         workloadBinding: {
           tenantId: message.tenantId,
@@ -264,7 +320,13 @@ export async function consumeCompensationBatch(
         },
       });
       if (!admission.admitted) {
-        await outbox.retryOutbox(message.id, message.claimToken!, { code: 'COMPENSATION_ADMIT_REJECTED', message: admission.reason ?? 'unknown' });
+        await outbox.retryOutbox(
+          message.id,
+          message.claimToken!,
+          { code: 'COMPENSATION_ADMIT_REJECTED', message: admission.reason ?? 'unknown' },
+          undefined,
+          message.tenantId,
+        );
         failed++;
         continue;
       }
@@ -272,7 +334,11 @@ export async function consumeCompensationBatch(
 
       const result = await broker.executeAdmitted({ effectId, timeoutMs });
       // Ack the outbox message only after the effect committed in the kernel.
-      const acked = await outbox.markOutboxPublished(message.id, message.claimToken!);
+      const acked = await outbox.markOutboxPublished(
+        message.id,
+        message.claimToken!,
+        message.tenantId,
+      );
       if (acked) succeeded++;
       else failed++;
       // Reference result so unused-var lint stays quiet; the audit trail lives
@@ -282,7 +348,16 @@ export async function consumeCompensationBatch(
       // Executor threw or completion unconfirmed — record + back off; the
       // sweeper moves the message to DLQ once attempts >= max_attempts.
       try {
-        await outbox.retryOutbox(message.id, message.claimToken!, { code: 'COMPENSATION_EXECUTE_FAILED', message: error instanceof Error ? error.message : String(error) });
+        await outbox.retryOutbox(
+          message.id,
+          message.claimToken!,
+          {
+            code: 'COMPENSATION_EXECUTE_FAILED',
+            message: error instanceof Error ? error.message : String(error),
+          },
+          undefined,
+          message.tenantId,
+        );
       } catch { /* claim may have expired; sweeper backoff still applies */ }
       failed++;
     }

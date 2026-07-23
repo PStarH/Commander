@@ -15,6 +15,10 @@ export interface CompensationDaemonOptions {
   pollIntervalMs: number;
   batchSize?: number;
   workerId?: string;
+  /** Durable registry generation — must match broker localWorkerGeneration. */
+  workerGeneration?: number;
+  /** Register-time claim secret for worker LOGIN outbox DEFINER RPC. */
+  claimSecret?: string;
   audit?: {
     append(event: {
       type: string;
@@ -68,6 +72,8 @@ export class CompensationDaemon {
           topic: KERNEL_COMPENSATION_TOPIC,
           limit: this.options.batchSize ?? 50,
           workerId: this.options.workerId ?? 'compensation-daemon',
+          workerGeneration: this.options.workerGeneration ?? 1,
+          claimSecret: this.options.claimSecret,
           registry: this.options.registry,
           onAdapterUnregistered: this.options.audit
             ? async (info) => {

@@ -1,7 +1,60 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
-import { createWorkerPolicyEvaluator, withDefaultLlmAllowlist } from './bootstrap.js';
+import {
+  createWorkerPolicyEvaluator,
+  resolveWorkerTenantScope,
+  withDefaultLlmAllowlist,
+  WORKER_TENANT_SCOPE_REQUIRED,
+} from './bootstrap.js';
+
+describe('resolveWorkerTenantScope (fail-closed tenant authority)', () => {
+  it("rejects '*' before any database activity", () => {
+    assert.throws(
+      () => resolveWorkerTenantScope({ COMMANDER_WORKER_TENANTS: '*' } as NodeJS.ProcessEnv),
+      (err: unknown) => err instanceof Error && err.message.includes(WORKER_TENANT_SCOPE_REQUIRED),
+    );
+  });
+
+  it('rejects a missing tenant scope', () => {
+    assert.throws(
+      () => resolveWorkerTenantScope({} as NodeJS.ProcessEnv),
+      (err: unknown) => err instanceof Error && err.message.includes(WORKER_TENANT_SCOPE_REQUIRED),
+    );
+  });
+
+  it('rejects an empty tenant scope', () => {
+    assert.throws(
+      () => resolveWorkerTenantScope({ COMMANDER_WORKER_TENANTS: '' } as NodeJS.ProcessEnv),
+      (err: unknown) => err instanceof Error && err.message.includes(WORKER_TENANT_SCOPE_REQUIRED),
+    );
+  });
+
+  it('rejects a comma-only tenant scope', () => {
+    assert.throws(
+      () => resolveWorkerTenantScope({ COMMANDER_WORKER_TENANTS: ',,' } as NodeJS.ProcessEnv),
+      (err: unknown) => err instanceof Error && err.message.includes(WORKER_TENANT_SCOPE_REQUIRED),
+    );
+  });
+
+  it('rejects a scope that contains the wildcard alongside real tenants', () => {
+    assert.throws(
+      () =>
+        resolveWorkerTenantScope({
+          COMMANDER_WORKER_TENANTS: 'tenant-a,*',
+        } as NodeJS.ProcessEnv),
+      (err: unknown) => err instanceof Error && err.message.includes(WORKER_TENANT_SCOPE_REQUIRED),
+    );
+  });
+
+  it('accepts an explicit list and always sets schedulerMode false', () => {
+    const scope = resolveWorkerTenantScope({
+      COMMANDER_WORKER_TENANTS: 'tenant-a, tenant-b',
+    } as NodeJS.ProcessEnv);
+    assert.deepEqual(scope.tenantIds, ['tenant-a', 'tenant-b']);
+    assert.equal(scope.schedulerMode, false);
+  });
+});
 
 describe('createWorkerPolicyEvaluator', () => {
   it('allows llm.* model calls by default (agent can invoke providers)', async () => {
@@ -78,9 +131,11 @@ describe('createWorkerPolicyEvaluator', () => {
 });
 
 describe('withDefaultLlmAllowlist', () => {
-  it('seeds llm.* so model actions pass isActionAllowed', async () => {
+  it('requires llm.* to be provisioned by a policy authority', async () => {
     const kernel = new InMemoryKernelRepository();
     const port = withDefaultLlmAllowlist(kernel, {});
+    assert.equal(await port.isActionAllowed!('tenant-a', 'llm.openai'), false);
+    await kernel.setAllowlistEntry('tenant-a', 'llm.*', true);
     assert.equal(await port.isActionAllowed!('tenant-a', 'llm.openai'), true);
     assert.equal(await port.isActionAllowed!('tenant-a', 'crm.write'), false);
   });
@@ -102,13 +157,13 @@ describe('withDefaultLlmAllowlist', () => {
     );
   });
 
-  it('seeds demo.ticket.* only when COMMANDER_DEMO_TICKET_ALLOWLIST=1', async () => {
+  it('does not let worker env mutate demo ticket policy', async () => {
     const kernel = new InMemoryKernelRepository();
     const port = withDefaultLlmAllowlist(kernel, { COMMANDER_DEMO_TICKET_ALLOWLIST: '1' });
-    assert.equal(await port.isActionAllowed!('tenant-a', 'demo.ticket.create'), true);
+    assert.equal(await port.isActionAllowed!('tenant-a', 'demo.ticket.create'), false);
     assert.equal(
       await port.isActionAllowed!('tenant-a', 'compensate.demo.ticket.create'),
-      true,
+      false,
     );
   });
 });

@@ -8,12 +8,22 @@
  */
 
 export {
+  KERNEL_CLAIM_SQL,
+  KERNEL_CLAIM_RECONCILE_SQL,
+  KERNEL_CLAIM_SECRET_SQL,
   KERNEL_RLS_SQL,
   KERNEL_ROLES_SQL,
   KERNEL_SCHEMA_SQL,
   KERNEL_SCHEMA_VERSION,
 } from './schema.js';
 export { KERNEL_MIGRATIONS, runKernelMigrations } from './migrations.js';
+export {
+  generateWorkerClaimSecret,
+  hashWorkerClaimSecret,
+  verifyWorkerClaimSecret,
+} from './claimSecret.js';
+export { seedWorkerClaimSecret, seedWorkerAllowedTenants } from './seedWorkerClaimSecret.js';
+export type { ClaimSecretSeedClient } from './seedWorkerClaimSecret.js';
 export { PostgresKernelRepository } from './postgres.js';
 export { SqliteKernelRepository } from './sqlite.js';
 export {
@@ -66,6 +76,29 @@ export type {
   SqlQueryResult,
 } from './postgres.js';
 export type { KernelRepository } from './repository.js';
+export {
+  KernelCapabilityReplayStore,
+  KernelCapabilityRevocationStore,
+  createDurableCapabilityReplayConsume,
+} from './capabilityStores.js';
+export type {
+  CapabilityReplayRepository,
+  CapabilityRevocationRepository,
+} from './capabilityStores.js';
+export {
+  CAPABILITY_AUTHORITY_REQUIRED,
+  CAPABILITY_AUDIENCE_ENV,
+  CAPABILITY_ISSUER_ENV,
+  CAPABILITY_JWKS_JSON_ENV,
+  CAPABILITY_KEY_ID_ENV,
+  CAPABILITY_PRIVATE_KEY_PEM_ENV,
+  createCapabilityAuthority,
+} from './capabilityAuthority.js';
+export type {
+  CapabilityAuthority,
+  CapabilityAuthorityEnv,
+  CreateCapabilityAuthorityOptions,
+} from './capabilityAuthority.js';
 export { KERNEL_API_VERSION, KernelInvariantError } from './types.js';
 export type {
   AdmitEffectRequest,

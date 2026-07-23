@@ -4,6 +4,7 @@ import { Pool } from 'pg';
 import {
   PostgresKernelRepository,
   runKernelMigrations,
+  seedWorkerAllowedTenants,
   type NewKernelStep,
 } from '@commander/kernel';
 import {
@@ -25,6 +26,14 @@ import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepo
 import { InMemoryTicketAdapter } from '../ticketAdapter.js';
 
 const databaseUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
+const workerPassword = process.env.COMMANDER_WORKER_PASSWORD ?? 'commander_worker';
+
+function deriveWorkerDatabaseUrl(baseUrl: string): string {
+  const url = new URL(baseUrl);
+  url.username = 'commander_worker';
+  url.password = workerPassword;
+  return url.toString();
+}
 
 /** Deterministic executor — proves worker↔kernel claim/complete without AgentRuntime/LLM. */
 const deterministicExecutor: StepExecutor = {
@@ -355,11 +364,17 @@ describe('Gateway → Kernel → Worker real execution loop', { skip: !databaseU
     const workerId = `e2e-worker-${Date.now()}`;
 
     await runKernelMigrations(pool);
+    const escapedWorkerPassword = workerPassword.replace(/'/g, "''");
+    await pool.query(`ALTER ROLE commander_worker WITH LOGIN PASSWORD '${escapedWorkerPassword}'`);
+    await seedWorkerAllowedTenants(pool, [tenantId]);
+    const workerPool = new Pool({ connectionString: deriveWorkerDatabaseUrl(databaseUrl), max: 4 });
 
-    const kernel = new PostgresKernelRepository(pool);
-    await kernel.initialize();
+    const appKernel = new PostgresKernelRepository(pool);
+    const workerKernel = new PostgresKernelRepository(workerPool);
+    await appKernel.initialize();
+    await workerKernel.initialize();
 
-    const registry = new PostgresWorkerRegistry(pool);
+    const registry = new PostgresWorkerRegistry(workerPool);
     await registry.initialize();
 
     const authenticator = new ApiKeyWorkerAuthenticator({
@@ -383,7 +398,7 @@ describe('Gateway → Kernel → Worker real execution loop', { skip: !databaseU
       },
       authenticator,
       registry,
-      kernel,
+      workerKernel,
       deterministicExecutor,
       { leaseTtlMs: 5000, workerHeartbeatMs: 1000, pollIntervalMs: 50 },
     );
@@ -397,7 +412,7 @@ describe('Gateway → Kernel → Worker real execution loop', { skip: !databaseU
       maxAttempts: 1,
     };
 
-    const run = await kernel.createRun(
+    const run = await appKernel.createRun(
       {
         id: `run-${tenantId}`,
         tenantId,
@@ -414,7 +429,7 @@ describe('Gateway → Kernel → Worker real execution loop', { skip: !databaseU
       for (let i = 0; i < 200; i++) {
         const claimed = await worker.pollOnce();
         if (!claimed) {
-          const current = await kernel.getRun(run.id, tenantId);
+          const current = await appKernel.getRun(run.id, tenantId);
           if (current?.state === 'SUCCEEDED' || current?.state === 'FAILED') break;
         }
         await new Promise((r) => setTimeout(r, 50));
@@ -422,9 +437,9 @@ describe('Gateway → Kernel → Worker real execution loop', { skip: !databaseU
 
       await worker.waitForIdle();
 
-      const finalRun = await kernel.getRun(run.id, tenantId);
-      const finalStep = await kernel.getStep(step.id, tenantId);
-      const events = await kernel.listEvents(run.id, tenantId);
+      const finalRun = await appKernel.getRun(run.id, tenantId);
+      const finalStep = await appKernel.getStep(step.id, tenantId);
+      const events = await appKernel.listEvents(run.id, tenantId);
       assert.equal(
         finalRun?.state,
         'SUCCEEDED',
@@ -447,7 +462,10 @@ describe('Gateway → Kernel → Worker real execution loop', { skip: !databaseU
       await pool.query('DELETE FROM commander_runs WHERE tenant_id=$1', [tenantId]);
       await pool.query('DELETE FROM commander_events WHERE tenant_id=$1', [tenantId]);
       await pool.query('DELETE FROM commander_outbox WHERE tenant_id=$1', [tenantId]);
+      await pool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id=$1', [workerId]);
       await pool.query('DELETE FROM commander_workers WHERE id=$1', [workerId]);
+      await pool.query('DELETE FROM commander_worker_allowed_tenants WHERE tenant_id=$1', [tenantId]);
+      await workerPool.end();
       await pool.end();
     }
   });

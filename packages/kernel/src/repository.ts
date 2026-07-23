@@ -52,6 +52,11 @@ export interface KernelRepository {
   /** List runs for a tenant, newest updatedAt first. */
   listRuns(tenantId: string, options?: { limit?: number }): Promise<KernelRun[]>;
   getStep(stepId: string, tenantId: string): Promise<KernelStep | null>;
+  /**
+   * Claim the next eligible step. Worker/Postgres (non-scheduler) path uses
+   * DB-atomic `claim_next_step` — `request.tenantIds` / `tenantId` are ignored;
+   * authz is durable `commander_workers.tenant_ids` for the worker generation.
+   */
   claimNextStep(request: ClaimStepRequest): Promise<KernelStep | null>;
   heartbeatStep(
     stepId: string,
@@ -102,8 +107,16 @@ export interface KernelRepository {
   failEffect(request: FailEffectRequest): Promise<KernelEffect | null>;
   requestCompensation(input: RequestCompensationInput): Promise<RequestCompensationResult | null>;
   claimOutbox(limit: number, now?: Date): Promise<KernelOutboxMessage[]>;
-  markOutboxPublished(messageId: string, claimToken: string): Promise<boolean>;
-  retryOutbox(messageId: string, claimToken: string, error: { code: string; message: string }, now?: Date): Promise<boolean>;
+  /** Worker LOGIN requires tenantId so RLS can scope the UPDATE. */
+  markOutboxPublished(messageId: string, claimToken: string, tenantId?: string): Promise<boolean>;
+  /** Worker LOGIN requires tenantId so RLS can scope the UPDATE. */
+  retryOutbox(
+    messageId: string,
+    claimToken: string,
+    error: { code: string; message: string },
+    now?: Date,
+    tenantId?: string,
+  ): Promise<boolean>;
   listEvents(runId: string, tenantId: string): Promise<KernelEvent[]>;
   /** Effect ledger rows for a run (commander_effects). */
   listEffectsForRun(runId: string, tenantId: string): Promise<KernelEffect[]>;
@@ -149,14 +162,40 @@ export interface KernelRepository {
   // ── WS2 EffectBroker monopoly: capability, allowlist, quota, compensation ──
 
   /** Claim outbox messages filtered by topic. Used by the compensation
-   *  consumer to claim only `commander.compensation` messages. */
-  claimOutboxByTopic(topic: string, limit: number, now?: Date): Promise<KernelOutboxMessage[]>;
+   *  consumer to claim only `commander.compensation` messages.
+   *  Worker LOGIN (`schedulerMode: false`) requires durable claim authz
+   *  (workerId + generation + claimSecret); tenants come from the worker row. */
+  claimOutboxByTopic(
+    topic: string,
+    limit: number,
+    now?: Date,
+    authz?: {
+      workerId: string;
+      workerGeneration: number;
+      claimSecret: string;
+    },
+  ): Promise<KernelOutboxMessage[]>;
 
-  /** Returns true iff the capability token (by jti) has been revoked. */
-  isCapabilityRevoked(jti: string): Promise<boolean>;
+  /**
+   * Returns true iff the capability token (by jti) has been revoked under
+   * the given tenant. Callers must supply tenantId so worker repos
+   * (`schedulerMode: false`) can set `app.tenant_scope` under RLS.
+   */
+  isCapabilityRevoked(jti: string, tenantId: string): Promise<boolean>;
 
-  /** Revoke a capability token by jti. Idempotent. */
+  /** Revoke a capability token by jti. Idempotent. Tenant-scoped write. */
   revokeCapability(input: { jti: string; tenantId: string; expiresAt: string; reason?: string }): Promise<void>;
+
+  /**
+   * Atomically consume a capability (jti, nonce) under tenant scope.
+   * Returns true when the row already existed (replay); false on first insert.
+   */
+  consumeCapabilityReplay(input: {
+    tenantId: string;
+    jti: string;
+    nonce: string;
+    expiresAt: string;
+  }): Promise<boolean>;
 
   /** Check whether an action is allowed for a tenant per the allowlist.
    *  Supports wildcard patterns (e.g. `http.*`, `compensate.*`). An empty

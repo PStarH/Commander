@@ -300,8 +300,8 @@ jobs:
           # API + worker-plane tests import workspace packages from dist.
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/plugin-sdk build
-          pnpm --filter @commander/kernel build
           pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/kernel build
           pnpm --filter @commander/action-adapters build
           pnpm --filter @commander/core build
           pnpm --filter @commander/core exec tsx --test \
@@ -316,7 +316,9 @@ jobs:
             packages/worker-plane/src/l3-03a-effect-tool-monopoly.test.ts \
             packages/worker-plane/src/ticketAdapter.test.ts \
             packages/worker-plane/src/actionGatewayPolicy.test.ts \
-            packages/worker-plane/src/bootstrap.policy.test.ts
+            packages/worker-plane/src/bootstrap.policy.test.ts \
+            packages/worker-plane/src/bootstrap.authority.test.ts \
+            packages/worker-plane/src/registry.rls.test.ts
           pnpm exec tsx --test \
             apps/api/test/namespacedMemoryEndpoints.test.ts \
             apps/api/test/namespacedMemoryRbac.test.ts \
@@ -392,8 +394,12 @@ jobs:
         run: |
           echo "🔴 Running red team smoke test (5 critical scenarios)..."
           cd packages/core
-          npx tsx src/security/runRedTeamBattery.ts --smoke --json > /tmp/rt-smoke.json 2>&1
+          # Resolve tsx through the workspace installation. `npx tsx` can
+          # resolve a broken nested path on clean Node 20 runners.
+          set +e
+          pnpm exec tsx src/security/runRedTeamBattery.ts --smoke --json > /tmp/rt-smoke.json 2>&1
           EXIT_CODE=$?
+          set -e
           # Parse JSON output for score
           SCORE=$(node -e "try{process.stdin.resume();let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d.trim().split('\\n').find(l=>l.startsWith('{'))||d.trim());console.log(j.securityScore)})}catch(e){console.log(0)}" < /tmp/rt-smoke.json 2>/dev/null || echo "0")
           echo "Red team smoke score: $SCORE/100"
@@ -442,8 +448,8 @@ jobs:
         run: |
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/plugin-sdk build
-          pnpm --filter @commander/kernel build
           pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/kernel build
           pnpm --filter @commander/action-adapters build
           pnpm --filter @commander/core build
           pnpm --filter @commander/worker-plane build
@@ -481,6 +487,23 @@ jobs:
   l4-b-deploy-gates:
     name: L4-B Deploy Gates
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: commander
+          POSTGRES_PASSWORD: commander
+          POSTGRES_DB: commander
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U commander -d commander"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      OWNER_DSN: postgres://commander:commander@localhost:5432/commander
+      COMMANDER_KERNEL_DATABASE_URL: postgres://commander:commander@localhost:5432/commander
     steps:
       - uses: actions/checkout@v6
 
@@ -500,8 +523,8 @@ jobs:
         run: |
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/plugin-sdk build
-          pnpm --filter @commander/kernel build
           pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/kernel build
           pnpm --filter @commander/action-adapters build
           pnpm --filter @commander/core build
 

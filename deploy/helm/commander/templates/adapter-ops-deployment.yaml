@@ -39,24 +39,29 @@ spec:
           env:
             - name: NODE_ENV
               value: {{ .Values.config.nodeEnv | quote }}
+            {{- include "commander.profileTierEnv" . | nindent 12 }}
             - name: COMMANDER_ADAPTER_OPS_HEALTH_PORT
               value: {{ .Values.adapterOps.health.port | quote }}
-            - name: COMMANDER_CELL_TIER
-              value: {{ .Values.tier | quote }}
             {{- if include "commander.postgresBackend" . }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
-                  key: {{ include "commander.databaseUrlSecretKey" . | quote }}
+                  key: {{ include "commander.databaseWorkerSecretKey" . | quote }}
             - name: COMMANDER_KERNEL_DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
-                  key: {{ include "commander.databaseUrlSecretKey" . | quote }}
+                  key: {{ include "commander.databaseWorkerSecretKey" . | quote }}
             - name: COMMANDER_KERNEL_BACKEND
               value: postgres
             {{- end }}
+            # Same tenant scope as worker — postgres path calls resolveWorkerTenantScope.
+            - name: COMMANDER_WORKER_TENANTS
+              value: {{ .Values.worker.tenants | quote }}
+            # Explicit cell tenant — avoid silent "local" fallback on enterprise.
+            - name: COMMANDER_CELL_TENANT_ID
+              value: {{ include "commander.cellTenantId" . | quote }}
             {{- if .Values.adapterOps.secrets.existingSecret }}
             - name: GITHUB_TOKEN
               valueFrom:
@@ -97,6 +102,7 @@ spec:
             - name: COMMANDER_ADAPTER_EGRESS_ALLOWLIST
               value: {{ join "," .Values.networkPolicy.egress.adapterCidrs | quote }}
             {{- end }}
+            {{- include "commander.capabilityEnv" . | nindent 12 }}
           resources: {{ toYaml .Values.adapterOps.resources | nindent 12 }}
           securityContext:
             {{- include "commander.cellSecurityContext" . | nindent 12 }}

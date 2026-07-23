@@ -46,6 +46,7 @@ spec:
           env:
             - name: NODE_ENV
               value: {{ .Values.config.nodeEnv | quote }}
+            {{- include "commander.profileTierEnv" . | nindent 12 }}
             - name: PORT
               value: {{ .Values.api.port | quote }}
             - name: LOG_LEVEL
@@ -53,8 +54,11 @@ spec:
             - name: CORS_ORIGINS
               value: {{ .Values.config.corsOrigins | quote }}
             - name: API_STORE_BACKEND
-              value: {{ .Values.database.backend | quote }}
+              value: {{ include "commander.apiStoreBackend" . | quote }}
             {{- if include "commander.postgresBackend" . }}
+            # Legacy stores are non-authoritative; /v1 durability remains in the kernel.
+            - name: COMMANDER_MEMORY_STORE
+              value: in-memory
             - name: COMMANDER_KERNEL_ENABLED
               value: "1"
             - name: COMMANDER_KERNEL_BACKEND
@@ -191,12 +195,12 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
-                  key: {{ include "commander.databaseUrlSecretKey" . | quote }}
+                  key: {{ include "commander.databaseAppSecretKey" . | quote }}
             - name: COMMANDER_KERNEL_DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
-                  key: {{ include "commander.databaseUrlSecretKey" . | quote }}
+                  key: {{ include "commander.databaseAppSecretKey" . | quote }}
             {{- end }}
             {{- if .Values.observability.otel.enabled }}
             - name: OTEL_EXPORTER_ENDPOINT
