@@ -36,6 +36,87 @@ function setup() {
 }
 
 describe('SagaCoordinator — sequential', () => {
+  it('persists the creator ownerId in every run snapshot', async () => {
+    const graph = createSaga('owned-saga')
+      .step('a', async () => 42)
+      .build();
+    const { store, checkpoint, approval, pool, compensation } = setup();
+    const ctx = Object.assign(makeContext(), { tenantId: 'tenant-a', ownerId: 'alice' });
+    await runSaga(graph, ctx, checkpoint, approval, {
+      checkpoint,
+      approval,
+      compensation,
+      workerPool: pool,
+    });
+
+    const snapshot = (await store.readSnapshot(ctx.runId)) as
+      ({ ownerId?: string; tenantId?: string } & Record<string, unknown>) | undefined;
+    assert.strictEqual(snapshot?.tenantId, 'tenant-a');
+    assert.strictEqual(snapshot?.ownerId, 'alice');
+  });
+
+  it('forks from the requested node without re-executing earlier steps', async () => {
+    let beforeForkExecutions = 0;
+    let forkPointExecutions = 0;
+    const graph = createSaga('fork-saga')
+      .step(
+        'before-fork',
+        async () => {
+          beforeForkExecutions++;
+          return 'before';
+        },
+        { id: 'before-fork' },
+      )
+      .step(
+        'fork-point',
+        async () => {
+          forkPointExecutions++;
+          return 'forked';
+        },
+        { id: 'fork-point' },
+      )
+      .build();
+    const { store, checkpoint, approval, pool, compensation } = setup();
+    const now = new Date().toISOString();
+    await checkpoint.saveSnapshot({
+      runId: 'parent-run',
+      state: 'PAUSED',
+      intentHash: 'intent',
+      fencingEpoch: 1,
+      nodeStates: { 'before-fork': 'completed', 'fork-point': 'paused' },
+      childRunIds: [],
+      createdAt: now,
+      updatedAt: now,
+      checkpointVersion: 1,
+      tenantId: 'tenant-a',
+      ownerId: 'alice',
+      sagaName: 'fork-saga',
+      input: {},
+    });
+
+    const { coordinator, newRunId } = await SagaCoordinator.forkFrom(
+      graph,
+      'parent-run',
+      'fork-point',
+      checkpoint,
+      approval,
+      {
+        compensation,
+        workerPool: pool,
+        newRunId: 'child-run',
+      },
+    );
+    const result = await coordinator.runFrom('fork-point');
+    const child = await store.readSnapshot(newRunId);
+
+    assert.strictEqual(result.status, 'committed');
+    assert.strictEqual(beforeForkExecutions, 0);
+    assert.strictEqual(forkPointExecutions, 1);
+    assert.strictEqual(child?.parentRunId, 'parent-run');
+    assert.strictEqual(child?.tenantId, 'tenant-a');
+    assert.strictEqual(child?.ownerId, 'alice');
+  });
+
   it('runs a single step to completion', async () => {
     const graph = createSaga('s')
       .step('a', async () => 42)

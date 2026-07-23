@@ -267,7 +267,7 @@ export function createUserAuthRouter(): Router {
       id: user.id,
       username: user.username,
       role: user.role,
-      tenantId: resolveAccessTenantId(),
+      tenantId: decoded.tenant_id ?? resolveAccessTenantId(),
     };
     res.json(buildAuthResponse(authUser));
   });

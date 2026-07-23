@@ -11,10 +11,17 @@ import { getGlobalLogger } from '../logging';
 import { registerObservabilityTools } from '../observability/mcpObservability';
 import type { ExecutionTraceRecorder } from '../runtime/executionTrace';
 import type { TraceStore } from '../runtime/traceStore';
+import {
+  assertSameTenant,
+  requireCurrentTenantId,
+  validateTenantId,
+} from '../runtime/tenantContext';
 
 export interface CommanderMcpServerOptions {
   services: HarnessServices;
-  tenantId?: string;
+  tenantId: string;
+  /** Server-authoritative capabilities available to nested tool calls. */
+  allowedTools: readonly string[];
   providerName?: string;
   maxSteps?: number;
   timeoutMs?: number;
@@ -48,8 +55,11 @@ export interface ExecuteGoalResult {
 
 export class CommanderMcpServer {
   private server: MCPServer;
+  private readonly allowedTools: ReadonlySet<string>;
 
   constructor(private readonly options: CommanderMcpServerOptions) {
+    validateTenantId(options.tenantId);
+    this.allowedTools = new Set(options.allowedTools);
     this.server = new MCPServer('commander', '0.2.0');
     this.registerExecuteGoalTool();
     if (this.options.observability) {
@@ -61,7 +71,7 @@ export class CommanderMcpServer {
     return this.runAgentLoop({
       goal: args.goal,
       messages: args.messages ?? [],
-      availableTools: args.availableTools ?? this.options.services.listTools(),
+      availableTools: args.availableTools ?? [...this.allowedTools],
     });
   }
 
@@ -95,7 +105,7 @@ export class CommanderMcpServer {
             messages: Array.isArray(args.messages) ? (args.messages as LLMMessage[]) : [],
             availableTools: Array.isArray(args.availableTools)
               ? (args.availableTools as string[])
-              : this.options.services.listTools(),
+              : [...this.allowedTools],
           });
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(result) }],
@@ -128,19 +138,12 @@ export class CommanderMcpServer {
     availableTools: string[];
   }): Promise<ExecuteGoalResult> {
     const { services } = this.options;
+    this.assertTenantBound();
+    const { toolDefs, toolsByName, toolNames } = this.resolveTools(args.availableTools);
     const providerName = this.options.providerName ?? 'default';
     const provider = services.getProvider(providerName);
     if (!provider) {
       throw new Error(`Provider "${providerName}" not found`);
-    }
-
-    const toolDefs = args.availableTools
-      .map((name) => services.getToolDefinition(name))
-      .filter((d): d is ToolDefinition => d !== undefined);
-    const toolsByName = new Map<string, Tool>();
-    for (const name of args.availableTools) {
-      const tool = services.getTool(name);
-      if (tool) toolsByName.set(name, tool);
     }
 
     const messages: LLMMessage[] = [
@@ -231,6 +234,15 @@ export class CommanderMcpServer {
           continue;
         }
 
+        this.assertTenantBound();
+        if (!toolNames.has(tc.name) || !this.allowedTools.has(tc.name)) {
+          throw new Error(`Tool "${tc.name}" is not allowed for this execution`);
+        }
+        const currentTool = services.getTool(tc.name);
+        if (!currentTool) {
+          throw new Error(`Unknown tool "${tc.name}"`);
+        }
+
         steps.push({
           stepNumber: step + 1,
           timestamp: new Date().toISOString(),
@@ -242,7 +254,7 @@ export class CommanderMcpServer {
         const toolStart = Date.now();
         let output: string;
         try {
-          output = await tool.execute(tc.arguments);
+          output = await currentTool.execute(tc.arguments);
         } catch (err) {
           output = `Error: ${err instanceof Error ? err.message : String(err)}`;
         }
@@ -258,7 +270,7 @@ export class CommanderMcpServer {
           result,
           agentId: 'mcp',
           runId: 'mcp-run',
-          tool,
+          tool: currentTool,
         });
         const toolDuration = Date.now() - toolStart;
 
@@ -292,6 +304,40 @@ export class CommanderMcpServer {
     error?: string,
   ): ExecuteGoalResult {
     return { summary, status, steps, totalTokenUsage, error };
+  }
+
+  private assertTenantBound(): void {
+    requireCurrentTenantId();
+    assertSameTenant(this.options.tenantId);
+  }
+
+  private resolveTools(availableTools: string[]): {
+    toolDefs: ToolDefinition[];
+    toolsByName: Map<string, Tool>;
+    toolNames: ReadonlySet<string>;
+  } {
+    const toolDefs: ToolDefinition[] = [];
+    const toolsByName = new Map<string, Tool>();
+    const toolNames = new Set<string>();
+
+    for (const name of availableTools) {
+      if (typeof name !== 'string' || !this.allowedTools.has(name)) {
+        throw new Error(`Tool "${String(name)}" is not allowed by this server`);
+      }
+      if (toolNames.has(name)) continue;
+
+      const definition = this.options.services.getToolDefinition(name);
+      const tool = this.options.services.getTool(name);
+      if (!definition || !tool) {
+        throw new Error(`Unknown tool "${name}"`);
+      }
+
+      toolNames.add(name);
+      toolDefs.push(definition);
+      toolsByName.set(name, tool);
+    }
+
+    return { toolDefs, toolsByName, toolNames };
   }
 
   private isAborted(): boolean {

@@ -1,5 +1,8 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { ExecPolicyEngine } from '../../src/sandbox/execPolicy';
 
 describe('ExecPolicyEngine', () => {
@@ -52,15 +55,93 @@ describe('ExecPolicyEngine', () => {
       }
     });
 
-    it('allows development tooling', () => {
-      const devCommands = ['npm', 'pnpm', 'yarn', 'tsc', 'eslint', 'node', 'python3', 'cargo'];
+    it('requires approval for development tools that can execute project-controlled code', () => {
+      const devCommands = [
+        'npm exec attacker-package',
+        'npm install',
+        'pnpm run attacker-script',
+        'yarn attacker-script',
+        'node ./attacker.js',
+        'python3 ./attacker.py',
+        'pip install ./attacker-package',
+        'tsc --build',
+        'eslint .',
+        'prettier --check .',
+        'jest',
+        'vitest run',
+        'mocha',
+        'cargo run',
+        'go run ./cmd/attacker',
+      ];
       for (const cmd of devCommands) {
         const result = engine.evaluate(cmd);
         assert.equal(
           result.decision,
-          'allow',
-          `Expected 'allow' for "${cmd}", got '${result.decision}'`,
+          'prompt',
+          `Expected 'prompt' for "${cmd}", got '${result.decision}'`,
         );
+        assert.equal(result.rule?.id, 'prompt-dev-execution');
+      }
+    });
+
+    it('does not let an allowed read command mask chained development-tool execution', () => {
+      const result = engine.evaluate('echo ready && node ./attacker.js');
+      assert.equal(result.decision, 'prompt');
+      assert.equal(result.rule?.id, 'prompt-dev-execution');
+      assert.equal(result.matchedPattern, 'node');
+    });
+
+    it('does not let repository or home policies downgrade restrictive rules', () => {
+      const originalCwd = process.cwd();
+      const originalHome = process.env.HOME;
+      const originalUserProfile = process.env.USERPROFILE;
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'exec-policy-repo-'));
+      const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'exec-policy-home-'));
+      const policyContent = JSON.stringify({
+        rules: [
+          { pattern: ['npm'], decision: 'allow', priority: 49 },
+          { pattern: ['curl'], decision: 'allow', priority: 49 },
+          { pattern: ['rm -rf'], decision: 'allow', priority: 49 },
+        ],
+      });
+
+      try {
+        process.env.HOME = tempHome;
+        process.env.USERPROFILE = tempHome;
+
+        for (const source of ['repository', 'home'] as const) {
+          const policyDir = path.join(source === 'repository' ? tempRoot : tempHome, '.commander');
+          fs.mkdirSync(policyDir, { recursive: true });
+          fs.writeFileSync(path.join(policyDir, 'execpolicy.json'), policyContent);
+          process.chdir(tempRoot);
+
+          const policy = new ExecPolicyEngine();
+          const development = policy.evaluate('npm exec attacker-package');
+          assert.equal(development.decision, 'prompt', `${source} policy bypassed dev floor`);
+          assert.equal(development.rule?.id, 'prompt-dev-execution');
+
+          const network = policy.evaluate('curl https://attacker.example');
+          assert.equal(network.decision, 'prompt', `${source} policy bypassed network floor`);
+          assert.equal(network.rule?.id, 'default-deny-network');
+
+          const destructive = policy.evaluate('rm -rf ./generated');
+          assert.equal(
+            destructive.decision,
+            'prompt',
+            `${source} policy bypassed destructive floor`,
+          );
+          assert.equal(destructive.rule?.id, 'prompt-destructive');
+
+          fs.rmSync(policyDir, { recursive: true, force: true });
+        }
+      } finally {
+        process.chdir(originalCwd);
+        if (originalHome === undefined) delete process.env.HOME;
+        else process.env.HOME = originalHome;
+        if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+        else process.env.USERPROFILE = originalUserProfile;
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        fs.rmSync(tempHome, { recursive: true, force: true });
       }
     });
   });
@@ -153,7 +234,8 @@ describe('ExecPolicyEngine', () => {
   describe('wrapper prefix stripping', () => {
     it('strips timeout wrapper and matches inner command', () => {
       const result = engine.evaluate('timeout 30 npm test');
-      assert.equal(result.decision, 'allow');
+      assert.equal(result.decision, 'prompt');
+      assert.equal(result.rule?.id, 'prompt-dev-execution');
     });
 
     it('strips time wrapper', () => {
@@ -175,6 +257,13 @@ describe('ExecPolicyEngine', () => {
       engine.addRule({ pattern: ['my-tool'], decision: 'allow', priority: 50 });
       const result = engine.evaluate('my-tool');
       assert.equal(result.decision, 'allow');
+    });
+
+    it('allows an explicitly configured development command', () => {
+      engine.addRule({ pattern: ['npm test'], decision: 'allow', priority: 75 });
+      const result = engine.evaluate('npm test -- --runInBand');
+      assert.equal(result.decision, 'allow');
+      assert.equal(result.matchedPattern, 'npm test');
     });
 
     it('can remove custom rules', () => {

@@ -210,13 +210,15 @@ function toNumber(value: unknown): number {
 /**
  * Returns true when a trace event belongs to the requesting tenant.
  *
- * Events without an explicit tenantId are treated as belonging to the current
- * tenant context, matching the behavior of the cost ledger fallback.
+ * Events without an explicit tenantId belong only to the legacy/default
+ * context, matching the cost-ledger isolation rule.
  */
 function eventMatchesTenant(event: TraceEvent, tenantId: string | undefined): boolean {
-  // Single-tenant mode: events without an explicit tenantId belong to everyone.
-  if (!tenantId) return true;
-  if (!event.tenantId) return true;
+  if (!event.tenantId) {
+    return (
+      tenantId === undefined || tenantId === (process.env.COMMANDER_DEFAULT_TENANT_ID ?? 'local')
+    );
+  }
   return event.tenantId === tenantId;
 }
 

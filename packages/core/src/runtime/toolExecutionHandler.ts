@@ -191,6 +191,17 @@ export interface ToolExecutionStepResult {
   largestFileWriteContent: string;
 }
 
+export function trackExecutedMutation(
+  executedMutations: PlannedToolCall[],
+  toolCall: Pick<ToolCall, 'name' | 'arguments'>,
+): void {
+  if (!isMutationTool(toolCall.name, toolCall.arguments)) return;
+  executedMutations.push({
+    toolName: toolCall.name,
+    args: toolCall.arguments as Record<string, unknown>,
+  });
+}
+
 export class ToolExecutionHandler {
   constructor(private readonly deps: ToolExecutionHandlerDeps) {}
 
@@ -568,12 +579,7 @@ export class ToolExecutionHandler {
               if (!toolResult.error) {
                 this.deps.getCacheManager().getToolCache().set(tc, toolResult, tenantId);
                 this.deps.invalidateMutationCache(tc.name);
-                if (isMutationTool(tc.name)) {
-                  executedMutations.push({
-                    toolName: tc.name,
-                    args: tc.arguments as Record<string, unknown>,
-                  });
-                }
+                trackExecutedMutation(executedMutations, tc);
               }
               // Capture file_write content for artifact propagation
               if (tc.name === 'file_write' && !toolResult.error) {
@@ -728,12 +734,7 @@ export class ToolExecutionHandler {
           if (!toolResult.error) {
             this.deps.getCacheManager().getToolCache().set(tc, toolResult, tenantId);
             this.deps.invalidateMutationCache(tc.name);
-            if (isMutationTool(tc.name)) {
-              executedMutations.push({
-                toolName: tc.name,
-                args: tc.arguments as Record<string, unknown>,
-              });
-            }
+            trackExecutedMutation(executedMutations, tc);
           }
           // Capture file_write content for artifact propagation
           if (tc.name === 'file_write' && !toolResult.error) {

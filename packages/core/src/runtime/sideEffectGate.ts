@@ -13,7 +13,12 @@
  */
 
 import { createHash } from 'node:crypto';
-import { getExecutionScheduler, type RunHandle, type ScheduleActionResult } from '../atr/scheduler';
+import {
+  getExecutionScheduler,
+  type ExecutionScheduler,
+  type RunHandle,
+  type ScheduleActionResult,
+} from '../atr/scheduler';
 import {
   PolicyHook,
   buildPolicyInput,
@@ -21,7 +26,9 @@ import {
   decisionRequiresApproval,
   type PolicyDecision,
   type PolicyHookOptions,
+  type PolicyInput,
 } from '../atr/policy';
+import type { ToolEffectClassification } from './runtimeHelpers';
 import {
   SqliteInteractionStore,
   generateInteractionId,
@@ -55,7 +62,7 @@ export interface SideEffectRequest {
   args: Record<string, unknown>;
   /** Tool call / step id for idempotency. */
   stepId: string;
-  compensable: boolean;
+  effect: ToolEffectClassification;
   tenantId?: string;
   tags?: string[];
   description?: string;
@@ -76,6 +83,28 @@ export interface SideEffectGateOptions {
   failClosed?: boolean;
   /** Durable store for approval interactions. Defaults to an in-memory SQLite store. */
   interactionStore?: DurableInteractionStore;
+}
+
+export function buildSideEffectPolicyInput(
+  req: SideEffectRequest & { runHandle: RunHandle },
+  scheduler: ExecutionScheduler,
+): PolicyInput {
+  return buildPolicyInput({
+    scheduler,
+    runId: req.runHandle.runId,
+    phase: 'tool',
+    callSite: 'agent',
+    tool: {
+      name: req.toolName,
+      externalSystem: req.externalSystem,
+      riskLevel: req.effect.riskLevel,
+      destructive: req.effect.destructive,
+      isReadOnly: req.effect.isReadOnly,
+      isIdempotent: true,
+      category: req.effect.category,
+    },
+    args: req.args,
+  });
 }
 
 export class SideEffectGate {
@@ -119,22 +148,7 @@ export class SideEffectGate {
       )
       .digest('hex');
 
-    const input = buildPolicyInput({
-      scheduler,
-      runId: handle.runId,
-      phase: 'tool',
-      callSite: 'agent',
-      tool: {
-        name: req.toolName,
-        externalSystem: req.externalSystem,
-        riskLevel: req.compensable ? 'high' : 'medium',
-        destructive: req.compensable,
-        isReadOnly: !req.compensable,
-        isIdempotent: true,
-        category: 'unknown',
-      },
-      args: req.args,
-    });
+    const input = buildSideEffectPolicyInput({ ...req, runHandle: handle }, scheduler);
 
     const decision = this.policy.evaluate(input);
     const id = decision.decisionId;
@@ -177,7 +191,7 @@ export class SideEffectGate {
         externalSystem: req.externalSystem,
         args: req.args,
         idempotencyKey,
-        compensable: req.compensable,
+        compensable: req.effect.compensable,
         tags: [...(req.tags ?? []), 'side_effect_gate', `decision:${id}`],
         description: req.description,
         tenantId: req.tenantId ?? handle.tenantId,

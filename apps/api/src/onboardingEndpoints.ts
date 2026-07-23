@@ -22,7 +22,7 @@
  *   - apiKey 只写入 .commander.json，不设置进程环境变量（安全考虑）
  */
 import { reportSilentFailure } from '@commander/core';
-import { Router, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import * as fsp from 'fs/promises';
 import * as fsSync from 'fs';
 import * as path from 'path';
@@ -446,10 +446,33 @@ const completeBody = z.object({
   steps: z.array(z.string().max(64)).max(16).optional(),
 });
 
+function requireOnboardingConfigAdmin(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user && !req.apiKeyId) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  const role = req.user?.role;
+  const scopes = req.apiScopes ?? [];
+  const authorized =
+    role === 'admin' || role === 'super_admin' || scopes.includes('admin') || scopes.includes('*');
+  if (!authorized) {
+    res.status(403).json({
+      error: 'Administrator privileges are required to change provider configuration.',
+    });
+    return;
+  }
+  next();
+}
+
 // ── Router ─────────────────────────────────────────────────────────────────
 
-export function createOnboardingRouter(): Router {
+export interface OnboardingRouterDeps {
+  writeConfig?: (updates: Record<string, unknown>) => Promise<void>;
+}
+
+export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router {
   const router = Router();
+  const persistConfig = deps.writeConfig ?? writeCommanderConfig;
 
   // ── GET /api/onboarding/status ──────────────────────────────────────────
   router.get('/api/onboarding/status', async (_req: Request, res: Response) => {
@@ -572,6 +595,7 @@ export function createOnboardingRouter(): Router {
   // ── POST /api/onboarding/save-config ────────────────────────────────────
   router.post(
     '/api/onboarding/save-config',
+    requireOnboardingConfigAdmin,
     validateBody(saveConfigBody),
     async (req: Request, res: Response) => {
       try {
@@ -584,7 +608,7 @@ export function createOnboardingRouter(): Router {
         if (body.apiKey) {
           updates.apiKey = body.apiKey;
         }
-        await writeCommanderConfig(updates);
+        await persistConfig(updates);
         res.json({ success: true });
       } catch (error) {
         res.status(500).json({ error: toErrorMessage(error) });

@@ -94,6 +94,7 @@ export interface SagaContext {
   attempts: Map<string, number>;
   metadata: Record<string, unknown>;
   tenantId?: string;
+  ownerId?: string;
   signal: AbortSignal;
 }
 
@@ -122,6 +123,11 @@ export interface SagaStateSnapshot {
   checkpointVersion: number;
   error?: string;
   tenantId?: string;
+  ownerId?: string;
+  sagaName?: string;
+  input?: Record<string, unknown>;
+  results?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   /** Business-level idempotency key for cross-request dedup. */
   idempotencyKey?: string;
 }

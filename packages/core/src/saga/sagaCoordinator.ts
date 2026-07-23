@@ -17,7 +17,7 @@ import type {
 } from './types';
 import { DEFAULT_RETRY_POLICY } from './types';
 import { ExecutionGraph } from './executionGraph';
-import { CheckpointManager } from './checkpointManager';
+import { CheckpointManager, type RecoveredState } from './checkpointManager';
 import {
   CompensationScheduler,
   type CompensableStep,
@@ -38,6 +38,15 @@ export interface SagaCoordinatorOptions {
   idGenerator?: () => string;
 }
 
+export interface SagaResumeOptions extends Partial<SagaCoordinatorOptions> {
+  ownerId?: string;
+}
+
+export interface SagaForkOptions extends SagaResumeOptions {
+  input?: Record<string, unknown>;
+  newRunId?: string;
+}
+
 export class SagaCoordinator {
   private readonly graph: ExecutionGraph;
   private readonly nodeStates: Map<string, NodeState> = new Map();
@@ -50,6 +59,7 @@ export class SagaCoordinator {
   private createdAt: string;
   private updatedAt: string;
   private tenantId?: string;
+  private ownerId?: string;
   private parentRunId?: string;
   private cancelController = new AbortController();
   private compensation: CompensationScheduler;
@@ -76,6 +86,7 @@ export class SagaCoordinator {
     this.clock = options.clock ?? (() => new Date());
     this.idGenerator = options.idGenerator ?? (() => randomUUID());
     this.tenantId = ctx.tenantId;
+    this.ownerId = ctx.ownerId;
     this.parentRunId = ctx.parentRunId;
 
     // Global saga timeout — if set, AbortSignal.timeout cancels the
@@ -95,6 +106,75 @@ export class SagaCoordinator {
     this.createdAt = now;
     this.updatedAt = now;
     this.graph.walk((n) => this.nodeStates.set(n.id, 'pending'));
+  }
+
+  static resumeFrom(
+    graph: SagaGraph,
+    recovered: RecoveredState,
+    checkpoint: CheckpointManager,
+    approval: ApprovalManager,
+    options: SagaResumeOptions = {},
+  ): SagaCoordinator {
+    const snapshot = recovered.snapshot;
+    const context: SagaContext = {
+      runId: snapshot.runId,
+      parentRunId: snapshot.parentRunId,
+      input: snapshot.input ?? {},
+      results: new Map(Object.entries(snapshot.results ?? {})),
+      attempts: new Map(),
+      metadata: snapshot.metadata ?? {},
+      tenantId: snapshot.tenantId,
+      ownerId: snapshot.ownerId ?? options.ownerId,
+      signal: new AbortController().signal,
+    };
+    const coordinator = new SagaCoordinator(
+      new ExecutionGraph(graph),
+      context,
+      checkpoint,
+      approval,
+      { checkpoint, approval, ...options },
+    );
+    coordinator.restore(snapshot);
+    return coordinator;
+  }
+
+  static async forkFrom(
+    graph: SagaGraph,
+    parentRunId: string,
+    nodeId: string,
+    checkpoint: CheckpointManager,
+    approval: ApprovalManager,
+    options: SagaForkOptions = {},
+  ): Promise<{ coordinator: SagaCoordinator; newRunId: string }> {
+    const recovered = await checkpoint.recover(parentRunId);
+    if (!recovered) throw new SagaCoordinatorError(`Parent run not found: ${parentRunId}`);
+    const executionGraph = new ExecutionGraph(graph);
+    executionGraph.requireNode(nodeId);
+    const parent = recovered.snapshot;
+    const newRunId = options.newRunId ?? options.idGenerator?.() ?? randomUUID();
+    const context: SagaContext = {
+      runId: newRunId,
+      parentRunId,
+      input: options.input ?? parent.input ?? {},
+      results: new Map(Object.entries(parent.results ?? {})),
+      attempts: new Map(),
+      metadata: parent.metadata ?? {},
+      tenantId: parent.tenantId,
+      ownerId: parent.ownerId ?? options.ownerId,
+      signal: new AbortController().signal,
+    };
+    const coordinator = new SagaCoordinator(executionGraph, context, checkpoint, approval, {
+      checkpoint,
+      approval,
+      ...options,
+    });
+    await checkpoint.saveSnapshot({
+      ...parent,
+      childRunIds: Array.from(new Set([...parent.childRunIds, newRunId])),
+      updatedAt: new Date().toISOString(),
+      checkpointVersion: parent.checkpointVersion + 1,
+    });
+    return { coordinator, newRunId };
   }
 
   get state(): RunState {
@@ -121,6 +201,11 @@ export class SagaCoordinator {
       checkpointVersion: this.checkpointVersion,
       error: this.error,
       tenantId: this.tenantId,
+      ownerId: this.ownerId,
+      sagaName: this.graph.name,
+      input: this.ctx.input,
+      results: this.serializeResults(),
+      metadata: this.ctx.metadata,
     };
   }
 
@@ -170,6 +255,74 @@ export class SagaCoordinator {
     } catch (err) {
       return await this.handleFailure(err, options);
     }
+  }
+
+  async resume(options: SagaRunOptions = {}): Promise<SagaResult> {
+    if (
+      this.sagaState === 'COMMITTED' ||
+      this.sagaState === 'ABORTED' ||
+      this.sagaState === 'COMPENSATED'
+    ) {
+      throw new SagaCoordinatorError(`Cannot resume terminal saga in state ${this.sagaState}`);
+    }
+    const start = this.graph.nodes.find((node) => {
+      const state = this.nodeStates.get(node.id);
+      return state !== 'completed' && state !== 'compensated';
+    });
+    return this.executeFrom(start?.id, options, 'resume');
+  }
+
+  async runFrom(nodeId: string, options: SagaRunOptions = {}): Promise<SagaResult> {
+    this.graph.requireNode(nodeId);
+    const topLevelIndex = this.graph.nodes.findIndex((node) => node.id === nodeId);
+    if (topLevelIndex >= 0) {
+      for (const node of this.graph.nodes.slice(0, topLevelIndex)) {
+        this.nodeStates.set(node.id, 'completed');
+      }
+    }
+    return this.executeFrom(nodeId, options, 'begin');
+  }
+
+  private async executeFrom(
+    startNodeId: string | undefined,
+    options: SagaRunOptions,
+    eventKind: 'begin' | 'resume',
+  ): Promise<SagaResult> {
+    this.sagaState = 'EXECUTING';
+    await this.appendEvent(this.eventFor(eventKind, {}));
+    await this.persist();
+    try {
+      if (startNodeId) await this.executeSequence(startNodeId);
+      this.sagaState = 'VERIFYING';
+      await this.persist();
+      this.sagaState = 'COMMITTED';
+      await this.appendEvent(this.eventFor('commit', {}));
+      await this.persist();
+      return this.makeResult('committed', options);
+    } catch (err) {
+      return this.handleFailure(err, options);
+    }
+  }
+
+  private restore(snapshot: SagaStateSnapshot): void {
+    this.sagaState = snapshot.state;
+    this.intentHash = snapshot.intentHash;
+    this.fencingEpoch = snapshot.fencingEpoch;
+    this.checkpointVersion = snapshot.checkpointVersion;
+    this.createdAt = snapshot.createdAt;
+    this.updatedAt = snapshot.updatedAt;
+    this.error = snapshot.error;
+    this.tenantId = snapshot.tenantId;
+    this.ownerId = snapshot.ownerId;
+    this.parentRunId = snapshot.parentRunId;
+    this.childRunIds.clear();
+    for (const childRunId of snapshot.childRunIds) this.childRunIds.add(childRunId);
+    for (const [nodeId, state] of Object.entries(snapshot.nodeStates)) {
+      if (this.graph.hasNode(nodeId)) this.nodeStates.set(nodeId, state);
+    }
+    this.results = new Map(Object.entries(snapshot.results ?? {}));
+    this.ctx.results.clear();
+    for (const [key, value] of this.results) this.ctx.results.set(key, value);
   }
 
   private async recoverFromSnapshot(
@@ -507,6 +660,11 @@ export class SagaCoordinator {
       childRunIds: Array.from(this.childRunIds),
       error: this.error,
       tenantId: this.tenantId,
+      ownerId: this.ownerId,
+      sagaName: this.graph.name,
+      input: this.ctx.input,
+      results: this.serializeResults(),
+      metadata: this.ctx.metadata,
       idempotencyKey,
       previous:
         this.checkpointVersion > 0
@@ -522,6 +680,10 @@ export class SagaCoordinator {
     const out: Record<string, NodeState> = {};
     for (const [k, v] of this.nodeStates) out[k] = v;
     return out;
+  }
+
+  private serializeResults(): Record<string, unknown> {
+    return Object.fromEntries(this.ctx.results);
   }
 
   private async appendEvent(event: SagaEvent): Promise<void> {

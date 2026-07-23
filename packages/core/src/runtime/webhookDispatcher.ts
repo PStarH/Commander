@@ -12,6 +12,7 @@ import { getGlobalLogger } from '../logging';
 import { getMessageBus } from './messageBus';
 import { ResourceGovernor } from '../security/securityPrimitives';
 import { getOutboundNetworkPolicy } from '../security/outboundNetworkPolicy';
+import { getCurrentTenantId, tenantPathSegment } from './tenantContext';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -53,7 +54,8 @@ export interface WebhookDelivery {
 
 // ── Constants ──────────────────────────────────────────────────────
 
-const WEBHOOKS_FILE = path.join(process.cwd(), '.commander', 'webhooks.json');
+const WEBHOOKS_DIR = path.join(process.cwd(), '.commander');
+const LEGACY_WEBHOOKS_FILE = path.join(WEBHOOKS_DIR, 'webhooks.json');
 const DEFAULT_RETRY_MAX = 3;
 const RETRY_DELAYS_MS = [1000, 5000, 15000]; // exponential backoff
 
@@ -129,14 +131,23 @@ function isSafeWebhookUrl(urlStr: string): boolean {
 
 // ── Dispatcher ─────────────────────────────────────────────────────
 
+const startedDispatchers = new Set<WebhookDispatcher>();
+
 export class WebhookDispatcher {
   private webhooks: Map<string, WebhookConfig> = new Map();
   private unsubscribers: Array<() => void> = [];
   private started = false;
   private deliveryLog: WebhookDelivery[] = [];
   private maxDeliveryLog = 1000;
+  private readonly tenantId: string;
+  private readonly storageFile: string;
 
-  constructor() {
+  constructor(tenantId = getCurrentTenantId() ?? '__default__') {
+    this.tenantId = tenantId;
+    this.storageFile =
+      tenantId === '__default__'
+        ? LEGACY_WEBHOOKS_FILE
+        : path.join(WEBHOOKS_DIR, tenantPathSegment(tenantId), 'webhooks.json');
     this.load();
   }
 
@@ -146,6 +157,7 @@ export class WebhookDispatcher {
   start(): void {
     if (this.started) return;
     this.started = true;
+    startedDispatchers.add(this);
     const bus = getMessageBus();
     // Subscribe to ALL topics — filter at dispatch time
     const unsub = bus.subscribe('*', (msg) => {
@@ -158,6 +170,16 @@ export class WebhookDispatcher {
 
   /** Stop listening and clean up. */
   stop(): void {
+    if (this.tenantId === '__default__') {
+      for (const dispatcher of Array.from(startedDispatchers)) {
+        dispatcher.stopSelf();
+      }
+      return;
+    }
+    this.stopSelf();
+  }
+
+  private stopSelf(): void {
     for (const unsub of this.unsubscribers) {
       try {
         unsub();
@@ -169,6 +191,7 @@ export class WebhookDispatcher {
     }
     this.unsubscribers = [];
     this.started = false;
+    startedDispatchers.delete(this);
     getGlobalLogger().info('WebhookDispatcher', 'Stopped');
   }
 
@@ -370,6 +393,7 @@ export class WebhookDispatcher {
     if (this.deliveryLog.length > this.maxDeliveryLog) {
       this.deliveryLog.splice(0, this.deliveryLog.length - this.maxDeliveryLog);
     }
+    this.save();
   }
 
   // ── Test fixture management ──────────────────────────────────────
@@ -391,11 +415,23 @@ export class WebhookDispatcher {
 
   private save(): void {
     try {
-      const dir = path.dirname(WEBHOOKS_FILE);
+      const dir = path.dirname(this.storageFile);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      const tmpPath = `${WEBHOOKS_FILE}.tmp`;
-      fs.writeFileSync(tmpPath, JSON.stringify(Array.from(this.webhooks.values()), null, 2));
-      fs.renameSync(tmpPath, WEBHOOKS_FILE);
+      const tmpPath = `${this.storageFile}.tmp`;
+      fs.writeFileSync(
+        tmpPath,
+        JSON.stringify(
+          {
+            version: 1,
+            tenantId: this.tenantId === '__default__' ? undefined : this.tenantId,
+            webhooks: Array.from(this.webhooks.values()),
+            deliveryLog: this.deliveryLog,
+          },
+          null,
+          2,
+        ),
+      );
+      fs.renameSync(tmpPath, this.storageFile);
     } catch (err) {
       getGlobalLogger().error('WebhookDispatcher', 'Failed to save webhooks', err as Error);
     }
@@ -403,11 +439,25 @@ export class WebhookDispatcher {
 
   private load(): void {
     try {
-      if (!fs.existsSync(WEBHOOKS_FILE)) return;
-      const data = JSON.parse(fs.readFileSync(WEBHOOKS_FILE, 'utf-8'));
-      if (Array.isArray(data)) {
-        for (const wh of data) {
-          this.webhooks.set(wh.id, wh);
+      if (!fs.existsSync(this.storageFile)) return;
+      const data = JSON.parse(fs.readFileSync(this.storageFile, 'utf-8')) as unknown;
+      const persistedWebhooks = Array.isArray(data)
+        ? data
+        : data &&
+            typeof data === 'object' &&
+            Array.isArray((data as Record<string, unknown>).webhooks)
+          ? ((data as Record<string, unknown>).webhooks as unknown[])
+          : [];
+      for (const wh of persistedWebhooks) {
+        if (wh && typeof wh === 'object' && typeof (wh as WebhookConfig).id === 'string') {
+          const webhook = wh as WebhookConfig;
+          this.webhooks.set(webhook.id, webhook);
+        }
+      }
+      if (data && typeof data === 'object') {
+        const persistedDeliveries = (data as Record<string, unknown>).deliveryLog;
+        if (Array.isArray(persistedDeliveries)) {
+          this.deliveryLog = persistedDeliveries.slice(-this.maxDeliveryLog) as WebhookDelivery[];
         }
       }
     } catch (err) {
@@ -433,8 +483,22 @@ export function resetWebhookDispatcher(): void {
   // Wipe persisted webhooks so the next constructed instance starts clean.
   // This prevents stale test fixtures from leaking between runs.
   try {
-    if (fs.existsSync(WEBHOOKS_FILE)) {
-      fs.unlinkSync(WEBHOOKS_FILE);
+    if (fs.existsSync(LEGACY_WEBHOOKS_FILE)) {
+      fs.unlinkSync(LEGACY_WEBHOOKS_FILE);
+    }
+    if (fs.existsSync(WEBHOOKS_DIR)) {
+      for (const entry of fs.readdirSync(WEBHOOKS_DIR, { withFileTypes: true })) {
+        if (!entry.isDirectory() || !entry.name.startsWith('tenant_')) continue;
+        const tenantFile = path.join(WEBHOOKS_DIR, entry.name, 'webhooks.json');
+        if (fs.existsSync(tenantFile)) fs.unlinkSync(tenantFile);
+        const tenantTmpFile = `${tenantFile}.tmp`;
+        if (fs.existsSync(tenantTmpFile)) fs.unlinkSync(tenantTmpFile);
+        try {
+          fs.rmdirSync(path.dirname(tenantFile));
+        } catch {
+          // Preserve tenant directories containing other tenant-scoped state.
+        }
+      }
     }
   } catch {
     // Ignore permission/race errors — the next load() will simply see no file.

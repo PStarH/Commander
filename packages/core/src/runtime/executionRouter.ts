@@ -197,7 +197,11 @@ export class ExecutionRouter {
       if (decision.blocked) {
         const summary = `PRIVACY_BLOCKED: ${decision.reason}`;
         tracer.recordDecision(runId, summary, 0);
-        bus.publish('agent.failed', ctx.agentId, { runId, error: summary });
+        bus.publish('agent.failed', ctx.agentId, {
+          runId,
+          projectId: ctx.projectId,
+          error: summary,
+        });
         try {
           getMetricsCollector().incrementCounter('privacy_blocks_total', 'Privacy blocks', 1, []);
         } catch (err) {

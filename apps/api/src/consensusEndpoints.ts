@@ -15,10 +15,11 @@
  *   POST /api/consensus/stopping/record   — record debate round for adaptive stopping
  *   GET  /api/consensus/stopping/summary  — get adaptive stopping summary
  */
-import { Router, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { toErrorMessage } from './routeHelpers';
 import { validateBody } from './validationMiddleware';
+import { hasRole } from './userStore';
 import {
   getHookManager,
   getTopologyStateMachine,
@@ -45,6 +46,35 @@ const stoppingRecordSchema = z.object({
   round: z.object({}).passthrough(),
 });
 
+/** Disabling process-global consensus requires an authenticated administrator. */
+function requireConsensusAdmin(req: Request, res: Response, next: NextFunction): void {
+  const principal = req.user?.id ?? req.apiKeyId;
+  if (!principal) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+
+  const role = req.user?.role;
+  const scopes = [...(req.apiScopes ?? []), ...(req.user?.scopes ?? [])];
+  const hasConsensusScope =
+    scopes.includes('consensus:admin') || scopes.includes('admin') || scopes.includes('*');
+  if (!((role && hasRole(role, 'admin')) || hasConsensusScope)) {
+    res.status(403).json({
+      error: 'Consensus administration requires an admin role or consensus:admin scope',
+    });
+    return;
+  }
+  next();
+}
+
+function requireConsensusTenant(req: Request, res: Response, next: NextFunction): void {
+  if (!req.tenantId) {
+    res.status(403).json({ error: 'Tenant-bound authenticated identity required' });
+    return;
+  }
+  next();
+}
+
 export function createConsensusRouter(): Router {
   const router = Router();
 
@@ -68,7 +98,7 @@ export function createConsensusRouter(): Router {
     }
   });
 
-  router.post('/api/consensus/enable', (_req: Request, res: Response) => {
+  router.post('/api/consensus/enable', requireConsensusAdmin, (_req: Request, res: Response) => {
     try {
       const hm = getHookManager();
       if (!hm.hasPlugin(CONSENSUS_PLUGIN_NAME)) {
@@ -82,7 +112,7 @@ export function createConsensusRouter(): Router {
     }
   });
 
-  router.post('/api/consensus/disable', (_req: Request, res: Response) => {
+  router.post('/api/consensus/disable', requireConsensusAdmin, (_req: Request, res: Response) => {
     try {
       const hm = getHookManager();
       if (!hm.hasPlugin(CONSENSUS_PLUGIN_NAME)) {
@@ -109,6 +139,7 @@ export function createConsensusRouter(): Router {
 
   router.post(
     '/api/consensus/topology/force',
+    requireConsensusAdmin,
     validateBody(forceStateSchema),
     (req: Request, res: Response) => {
       try {
@@ -157,10 +188,11 @@ export function createConsensusRouter(): Router {
 
   router.post(
     '/api/consensus/stopping/record',
+    requireConsensusTenant,
     validateBody(stoppingRecordSchema),
     (req: Request, res: Response) => {
       try {
-        const controller = getSharedAdaptiveStopping();
+        const controller = getSharedAdaptiveStopping(req.tenantId);
         if (!controller) {
           res.status(503).json({ error: 'AdaptiveStopping controller not initialized' });
           return;
@@ -173,18 +205,22 @@ export function createConsensusRouter(): Router {
     },
   );
 
-  router.get('/api/consensus/stopping/summary', (_req: Request, res: Response) => {
-    try {
-      const controller = getSharedAdaptiveStopping();
-      if (!controller) {
-        res.status(503).json({ error: 'AdaptiveStopping controller not initialized' });
-        return;
+  router.get(
+    '/api/consensus/stopping/summary',
+    requireConsensusTenant,
+    (req: Request, res: Response) => {
+      try {
+        const controller = getSharedAdaptiveStopping(req.tenantId);
+        if (!controller) {
+          res.status(503).json({ error: 'AdaptiveStopping controller not initialized' });
+          return;
+        }
+        res.json(controller.getSummary());
+      } catch (error) {
+        res.status(500).json({ error: toErrorMessage(error) });
       }
-      res.json(controller.getSummary());
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  });
+    },
+  );
 
   return router;
 }

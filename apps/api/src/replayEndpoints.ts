@@ -1,5 +1,10 @@
 import { reportSilentFailure } from '@commander/core';
-import { Router } from 'express';
+import {
+  assertSameTenant,
+  getCurrentTenantId,
+  tenantPathSegment,
+} from '@commander/core/runtime/tenantContext';
+import { Router, type Request } from 'express';
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
@@ -37,13 +42,59 @@ interface TraceEvent {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function findBaseDirs(): { stateDir: string; tracesDir: string; samplesDir: string } {
+interface ReplayDir {
+  stateDir: string;
+  tracesDir: string;
+  samplesDir: string;
+}
+
+interface LocatedCheckpoint {
+  checkpoint: any;
+  dirs: ReplayDir;
+}
+
+function requireTenant(req: Request): string | null {
+  const active = getCurrentTenantId();
+  const requested = req.tenantId;
+  if (active && requested && active !== requested) return null;
+  const tenantId = active ?? requested;
+  if (!tenantId) return null;
+  try {
+    if (active && requested) assertSameTenant(requested);
+    return tenantId;
+  } catch {
+    return null;
+  }
+}
+
+function findBaseDirs(req: Request): ReplayDir[] {
   const cwd = process.cwd();
-  return {
+  const root = {
     stateDir: path.join(cwd, '.commander_state'),
     tracesDir: path.join(cwd, '.commander_traces'),
     samplesDir: path.join(cwd, '.commander_samples'),
   };
+  const tenantId = requireTenant(req);
+  if (!tenantId) return [];
+
+  const segment = tenantPathSegment(tenantId);
+  return [
+    {
+      stateDir: path.join(root.stateDir, segment),
+      tracesDir: path.join(root.tracesDir, segment),
+      samplesDir: path.join(root.samplesDir, segment),
+    },
+  ];
+}
+
+function requireTenantResponse(req: Request, res: { status: (code: number) => any }): boolean {
+  if (requireTenant(req)) return true;
+  const active = getCurrentTenantId();
+  const mismatched = active && req.tenantId && active !== req.tenantId;
+  res.status(mismatched ? 403 : 401).json({
+    error: mismatched ? 'Tenant context mismatch' : 'Authenticated tenant context required',
+  });
+  return false;
 }
 
 async function readJsonFile<T>(filePath: string): Promise<T | null> {
@@ -77,6 +128,21 @@ async function readNdjsonFile(filePath: string): Promise<TraceEvent[]> {
   }
 }
 
+async function locateCheckpoint(req: Request, runId: string): Promise<LocatedCheckpoint | null> {
+  for (const dirs of findBaseDirs(req)) {
+    for (const filePath of [
+      path.join(dirs.stateDir, 'completed', `${runId}.json`),
+      path.join(dirs.stateDir, `${runId}.checkpoint`),
+    ]) {
+      const checkpoint = await readJsonFile<any>(filePath);
+      if (checkpoint) {
+        return { checkpoint, dirs };
+      }
+    }
+  }
+  return null;
+}
+
 // ── Validation ─────────────────────────────────────────────────────────────
 
 const RUN_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
@@ -95,96 +161,98 @@ export function createReplayRouter(): Router {
   const router = Router();
 
   // ── List all completed runs ────────────────────────────────────────────
-  router.get('/api/replay/runs', async (_req, res) => {
-    const { stateDir, tracesDir, samplesDir } = findBaseDirs();
-    const completedDir = path.join(stateDir, 'completed');
-
+  router.get('/api/replay/runs', async (req, res) => {
+    if (!requireTenantResponse(req, res)) return;
     const runs: ReplayRunSummary[] = [];
 
-    // Scan completed checkpoints
-    try {
-      let files: string[] = [];
+    for (const dirs of findBaseDirs(req)) {
+      // Scan completed checkpoints
       try {
-        files = (await fsp.readdir(completedDir)).filter((f) => f.endsWith('.json'));
+        let files: string[] = [];
+        const completedDir = path.join(dirs.stateDir, 'completed');
+        try {
+          files = (await fsp.readdir(completedDir)).filter((f) => f.endsWith('.json'));
+        } catch (err) {
+          reportSilentFailure(err, 'replayEndpoints:109');
+          /* dir may not exist */
+        }
+        for (const file of files) {
+          const runId = file.replace(/\.json$/, '');
+          if (runs.some((run) => run.runId === runId)) continue;
+          const checkpoint = await readJsonFile<any>(path.join(completedDir, file));
+          if (!checkpoint) continue;
+
+          const [events, manifest] = await Promise.all([
+            readNdjsonFile(path.join(dirs.tracesDir, `${runId}.ndjson`)),
+            readJsonFile<any>(path.join(dirs.samplesDir, 'runs', `${runId}.json`)),
+          ]);
+
+          const totalTokens = events.reduce((sum, event) => {
+            const usage = event.data?.tokenUsage as any;
+            return sum + (usage?.totalTokens ?? 0);
+          }, 0);
+
+          runs.push({
+            runId,
+            agentId: checkpoint.agentId ?? manifest?.agentId ?? 'unknown',
+            missionId: checkpoint.missionId ?? manifest?.missionId,
+            goal: checkpoint.context?.goal ?? manifest?.goal,
+            model: manifest?.model,
+            status: checkpoint.phase === 'completed' ? 'completed' : 'failed',
+            phase: checkpoint.phase,
+            startedAt: manifest?.timestamp ?? checkpoint.timestamp,
+            completedAt:
+              checkpoint.phase === 'completed' || checkpoint.phase === 'failed'
+                ? checkpoint.timestamp
+                : undefined,
+            totalEvents: events.length,
+            totalTokens,
+            durationMs: checkpoint.totalDurationMs ?? 0,
+            stepCount: checkpoint.stepNumber ?? 0,
+          });
+        }
       } catch (err) {
-        reportSilentFailure(err, 'replayEndpoints:109');
-        /* dir may not exist */
+        reportSilentFailure(err, 'replayEndpoints:147');
+        /* ignore scan errors */
       }
-      for (const file of files) {
-        const runId = file.replace(/\.json$/, '');
-        const checkpoint = await readJsonFile<any>(path.join(completedDir, file));
-        if (!checkpoint) continue;
 
-        const [events, manifest] = await Promise.all([
-          readNdjsonFile(path.join(tracesDir, `${runId}.ndjson`)),
-          readJsonFile<any>(path.join(samplesDir, 'runs', `${runId}.json`)),
-        ]);
-
-        const totalTokens = events.reduce((sum, e) => {
-          const usage = e.data?.tokenUsage as any;
-          return sum + (usage?.totalTokens ?? 0);
-        }, 0);
-
-        runs.push({
-          runId,
-          agentId: checkpoint.agentId ?? manifest?.agentId ?? 'unknown',
-          missionId: checkpoint.missionId ?? manifest?.missionId,
-          goal: checkpoint.context?.goal ?? manifest?.goal,
-          model: manifest?.model,
-          status: checkpoint.phase === 'completed' ? 'completed' : 'failed',
-          phase: checkpoint.phase,
-          startedAt: manifest?.timestamp ?? checkpoint.timestamp,
-          completedAt:
-            checkpoint.phase === 'completed' || checkpoint.phase === 'failed'
-              ? checkpoint.timestamp
-              : undefined,
-          totalEvents: events.length,
-          totalTokens,
-          durationMs: checkpoint.totalDurationMs ?? 0,
-          stepCount: checkpoint.stepNumber ?? 0,
-        });
-      }
-    } catch (err) {
-      reportSilentFailure(err, 'replayEndpoints:147');
-      /* ignore scan errors */
-    }
-
-    // Also scan in-flight checkpoints (not yet completed)
-    try {
-      let files: string[] = [];
+      // Also scan in-flight checkpoints (not yet completed)
       try {
-        files = (await fsp.readdir(stateDir)).filter((f) => f.endsWith('.checkpoint'));
+        let files: string[] = [];
+        try {
+          files = (await fsp.readdir(dirs.stateDir)).filter((f) => f.endsWith('.checkpoint'));
+        } catch (err) {
+          reportSilentFailure(err, 'replayEndpoints:157');
+          /* dir may not exist */
+        }
+        for (const file of files) {
+          const runId = file.replace(/\.checkpoint$/, '');
+          if (runs.some((run) => run.runId === runId)) continue;
+
+          const [checkpoint, events] = await Promise.all([
+            readJsonFile<any>(path.join(dirs.stateDir, file)),
+            readNdjsonFile(path.join(dirs.tracesDir, `${runId}.ndjson`)),
+          ]);
+          if (!checkpoint) continue;
+
+          runs.push({
+            runId,
+            agentId: checkpoint.agentId ?? 'unknown',
+            missionId: checkpoint.missionId,
+            goal: checkpoint.context?.goal,
+            status: checkpoint.phase === 'failed' ? 'failed' : 'completed',
+            phase: checkpoint.phase,
+            startedAt: checkpoint.timestamp,
+            totalEvents: events.length,
+            totalTokens: 0,
+            durationMs: checkpoint.totalDurationMs ?? 0,
+            stepCount: checkpoint.stepNumber ?? 0,
+          });
+        }
       } catch (err) {
-        reportSilentFailure(err, 'replayEndpoints:157');
-        /* dir may not exist */
+        reportSilentFailure(err, 'replayEndpoints:185');
+        /* ignore */
       }
-      for (const file of files) {
-        const runId = file.replace(/\.checkpoint$/, '');
-        if (runs.some((r) => r.runId === runId)) continue;
-
-        const [checkpoint, events] = await Promise.all([
-          readJsonFile<any>(path.join(stateDir, file)),
-          readNdjsonFile(path.join(tracesDir, `${runId}.ndjson`)),
-        ]);
-        if (!checkpoint) continue;
-
-        runs.push({
-          runId,
-          agentId: checkpoint.agentId ?? 'unknown',
-          missionId: checkpoint.missionId,
-          goal: checkpoint.context?.goal,
-          status: checkpoint.phase === 'failed' ? 'failed' : 'completed',
-          phase: checkpoint.phase,
-          startedAt: checkpoint.timestamp,
-          totalEvents: events.length,
-          totalTokens: 0,
-          durationMs: checkpoint.totalDurationMs ?? 0,
-          stepCount: checkpoint.stepNumber ?? 0,
-        });
-      }
-    } catch (err) {
-      reportSilentFailure(err, 'replayEndpoints:185');
-      /* ignore */
     }
 
     // Sort by timestamp descending
@@ -195,17 +263,13 @@ export function createReplayRouter(): Router {
 
   // ── Get single run detail ──────────────────────────────────────────────
   router.get('/api/replay/runs/:runId', async (req, res) => {
-    const { stateDir, tracesDir, samplesDir } = findBaseDirs();
+    if (!requireTenantResponse(req, res)) return;
     const { runId } = req.params;
     if (!isValidRunId(runId)) return res.status(400).json({ error: 'Invalid runId format' });
 
-    // Try completed checkpoint first, then in-flight
-    let checkpoint = await readJsonFile<any>(path.join(stateDir, 'completed', `${runId}.json`));
+    const located = await locateCheckpoint(req, runId);
+    const checkpoint = located?.checkpoint;
     let status: 'completed' | 'failed' = 'completed';
-    if (!checkpoint) {
-      checkpoint = await readJsonFile<any>(path.join(stateDir, `${runId}.checkpoint`));
-      status = 'completed'; // in-flight
-    }
     if (checkpoint && checkpoint.phase === 'failed') status = 'failed';
 
     if (!checkpoint) {
@@ -213,8 +277,8 @@ export function createReplayRouter(): Router {
     }
 
     const [manifest, events] = await Promise.all([
-      readJsonFile<any>(path.join(samplesDir, 'runs', `${runId}.json`)),
-      readNdjsonFile(path.join(tracesDir, `${runId}.ndjson`)),
+      readJsonFile<any>(path.join(located!.dirs.samplesDir, 'runs', `${runId}.json`)),
+      readNdjsonFile(path.join(located!.dirs.tracesDir, `${runId}.ndjson`)),
     ]);
 
     const totalTokens = events.reduce((sum, e) => {
@@ -246,11 +310,13 @@ export function createReplayRouter(): Router {
 
   // ── Get trace events for a run ─────────────────────────────────────────
   router.get('/api/replay/runs/:runId/events', async (req, res) => {
-    const { tracesDir } = findBaseDirs();
+    if (!requireTenantResponse(req, res)) return;
     const { runId } = req.params;
     if (!isValidRunId(runId)) return res.status(400).json({ error: 'Invalid runId format' });
 
-    const events = await readNdjsonFile(path.join(tracesDir, `${runId}.ndjson`));
+    const located = await locateCheckpoint(req, runId);
+    if (!located) return res.status(404).json({ error: 'Run not found' });
+    const events = await readNdjsonFile(path.join(located.dirs.tracesDir, `${runId}.ndjson`));
 
     const typeFilter = req.query.type as string | undefined;
     const filtered = typeFilter ? events.filter((e) => e.type === typeFilter) : events;
@@ -260,14 +326,12 @@ export function createReplayRouter(): Router {
 
   // ── Get checkpoint (full conversation history) ─────────────────────────
   router.get('/api/replay/runs/:runId/checkpoint', async (req, res) => {
-    const { stateDir } = findBaseDirs();
+    if (!requireTenantResponse(req, res)) return;
     const { runId } = req.params;
     if (!isValidRunId(runId)) return res.status(400).json({ error: 'Invalid runId format' });
 
-    let checkpoint = await readJsonFile<any>(path.join(stateDir, 'completed', `${runId}.json`));
-    if (!checkpoint) {
-      checkpoint = await readJsonFile<any>(path.join(stateDir, `${runId}.checkpoint`));
-    }
+    const located = await locateCheckpoint(req, runId);
+    const checkpoint = located?.checkpoint;
 
     if (!checkpoint) {
       return res.status(404).json({ error: 'Checkpoint not found' });

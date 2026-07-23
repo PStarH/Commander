@@ -33,9 +33,226 @@ import {
   getSideEffectGate,
   resetSideEffectGate,
   setSideEffectGate,
+  buildSideEffectPolicyInput,
   type SideEffectRequest,
 } from '../../src/runtime/sideEffectGate';
 import type { RunHandle } from '../../src/atr/scheduler';
+import { classifyToolEffect, isMutationTool } from '../../src/runtime/runtimeHelpers';
+import { ToolExecutionService } from '../../src/runtime/toolExecutionService';
+import { trackExecutedMutation } from '../../src/runtime/toolExecutionHandler';
+import { ReversibilityGate } from '../../src/security/reversibilityGate';
+
+const CONSOLIDATED_EFFECT_CASES = [
+  ['file', 'write', true, true, 'file_write', 'file_write', 'file_write'],
+  ['file', 'edit', true, true, 'file_write', 'file_edit', 'file_edit'],
+  ['file', 'read', false, false, 'file_read', 'file_read', undefined],
+  ['file', 'search', false, false, 'file_read', 'file_search', undefined],
+  ['file', 'list', false, false, 'file_read', 'file_list', undefined],
+  ['file', 'glob', false, false, 'file_read', 'glob', undefined],
+  ['memory', 'store', true, true, 'destructive', 'memory_store', 'memory_store'],
+  ['memory', 'recall', false, false, 'api', 'memory_recall', undefined],
+  ['memory', 'list', false, false, 'api', 'memory_list', undefined],
+  ['web', 'search', false, false, 'network', 'web_search', undefined],
+  ['web', 'fetch', false, false, 'network', 'web_fetch', undefined],
+  ['browser', 'search', false, false, 'network', 'browser_search', undefined],
+  ['browser', 'fetch', false, false, 'network', 'browser_fetch', undefined],
+  ['code', 'refine', true, true, 'file_write', 'refine_code', 'code_refiner'],
+  ['code', 'fix', true, true, 'file_write', 'fix_code', 'code_fixer'],
+  ['code', 'search', false, false, 'compute', 'code_search', undefined],
+  ['checkpoint', 'save', true, false, 'destructive', 'checkpoint_save', undefined],
+  ['checkpoint', 'rewind', true, false, 'destructive', 'checkpoint_rewind', undefined],
+  ['checkpoint', 'collapse', true, false, 'destructive', 'checkpoint_collapse', undefined],
+  ['checkpoint', 'list', false, false, 'api', 'checkpoint_list', undefined],
+  ['handoff', 'send', true, false, 'api', 'handoff', undefined],
+  ['handoff', 'check', false, false, 'api', 'handoff_check', undefined],
+  ['exec', 'shell', true, false, 'shell', 'shell_execute', undefined],
+  ['exec', 'python', true, false, 'shell', 'python_execute', undefined],
+  ['exec', 'script', true, false, 'shell', 'execute_script', undefined],
+  ['media', 'screenshot', true, false, 'file_write', 'screenshot_capture', undefined],
+  ['media', 'analyze_image', false, false, 'compute', 'vision_analyze', undefined],
+  ['media', 'extract_pdf', false, false, 'compute', 'pdf_extract', undefined],
+  ['system', 'human_input', true, false, 'api', 'request_human_input', undefined],
+  ['system', 'tool_schema', false, false, 'api', 'request_tool', undefined],
+  ['file', 'unknown_action', true, false, 'unknown', 'file', undefined],
+  ['unknown_tool', 'read', true, false, 'unknown', 'unknown_tool', undefined],
+] as const;
+
+describe('consolidated tool effect classification', () => {
+  const scheduler = {
+    getRun: () => ({
+      state: 'EXECUTING',
+      fencingEpoch: 1,
+      intentHash: 'intent-1',
+      tenantId: 'tenant-A',
+      createdAt: new Date().toISOString(),
+      actions: [],
+      metadata: {},
+    }),
+  } as never;
+
+  it.each(CONSOLIDATED_EFFECT_CASES)(
+    'maps %s action=%s into its policy and compensation effect',
+    (name, action, destructive, compensable, category, semanticToolName, compensationToolName) => {
+      const args = { action };
+      const effect = classifyToolEffect(name, args);
+      expect(isMutationTool(name, args)).toBe(destructive);
+      expect(effect.compensable).toBe(compensable);
+      expect(effect.semanticToolName).toBe(semanticToolName);
+      expect(effect.compensationToolName).toBe(compensationToolName);
+
+      const input = buildSideEffectPolicyInput(
+        {
+          ...baseRequest({ toolName: name, args, effect }),
+          runHandle: _fakeHandle,
+        },
+        scheduler,
+      );
+      expect(input.tool).toMatchObject({
+        destructive,
+        isReadOnly: !destructive,
+        category,
+        riskLevel: destructive ? 'high' : 'medium',
+      });
+    },
+  );
+
+  it.each(CONSOLIDATED_EFFECT_CASES)(
+    'passes %s action=%s through ToolExecutionService',
+    async (
+      name,
+      action,
+      destructive,
+      recordsCompensation,
+      _category,
+      semanticToolName,
+      compensationToolName,
+    ) => {
+      const args = { action };
+      let captured: SideEffectRequest | undefined;
+      setSideEffectGate({
+        admit: async (request: SideEffectRequest) => {
+          captured = request;
+          throw new SideEffectGateError('POLICY_DENIED', 'captured for test');
+        },
+      } as never);
+
+      const recordAction = vi.fn();
+      const assessReversibility = vi.fn(() => 'partially_reversible');
+      const evaluateReversibility = vi.fn(async () => ({
+        allowed: true,
+        reversibility: 'reversible',
+        reason: 'test',
+        requiresHumanApproval: false,
+      }));
+      const service = new ToolExecutionService({
+        tools: new Map([
+          [
+            name,
+            {
+              definition: { name, description: 'effect fixture', inputSchema: {} },
+              execute: async () => 'not reached',
+            },
+          ],
+        ]) as never,
+        compensationService: {
+          getRegistry: () => ({
+            assessReversibility,
+            recordAction,
+            compensate: async () => ({ success: true }),
+          }),
+          handleMutationToolFailure: async () => undefined,
+        } as never,
+        cacheManager: {} as never,
+        dlq: {} as never,
+        getRunHandle: () => null,
+        config: { timeoutMs: 1000, observationMaskWindow: 4 } as never,
+        reflexionGenerator: {} as never,
+        stepTimeout: {} as never,
+        getPromotedTools: () => new Set(),
+        generateActionId: () => `action-${name}-${String(args.action)}`,
+        getBreakerRegistry: () => ({ get: () => null }) as never,
+        reversibilityGate: { evaluate: evaluateReversibility } as never,
+      });
+
+      try {
+        await service.execute(
+          'run-effect',
+          { id: `call-${name}-${String(args.action)}`, name, arguments: { ...args } },
+          'agent-effect',
+        );
+      } finally {
+        resetSideEffectGate();
+      }
+
+      const expectedEffect = classifyToolEffect(name, args);
+      expect(captured?.effect).toEqual(expectedEffect);
+      expect(captured?.effect.destructive).toBe(destructive);
+      if (destructive) {
+        expect(assessReversibility).toHaveBeenCalledWith(semanticToolName);
+      } else {
+        expect(assessReversibility).not.toHaveBeenCalled();
+      }
+      expect(evaluateReversibility).toHaveBeenCalledWith(
+        semanticToolName,
+        args,
+        expect.objectContaining({ runId: 'run-effect', agentId: 'agent-effect' }),
+      );
+      expect(recordAction).toHaveBeenCalledTimes(recordsCompensation ? 1 : 0);
+      if (recordsCompensation) {
+        expect(recordAction).toHaveBeenCalledWith(
+          expect.objectContaining({ toolName: compensationToolName }),
+        );
+      }
+    },
+  );
+
+  it.each(CONSOLIDATED_EFFECT_CASES)(
+    'tracks %s action=%s through ToolExecutionHandler',
+    (name, action, destructive) => {
+      const executedMutations: Array<{ toolName: string; args: Record<string, unknown> }> = [];
+
+      trackExecutedMutation(executedMutations, {
+        name,
+        arguments: { action },
+      });
+
+      expect(executedMutations).toEqual(destructive ? [{ toolName: name, args: { action } }] : []);
+    },
+  );
+
+  it.each([
+    ['file_read', { path: 'README.md' }],
+    ['memory_recall', { key: 'decision' }],
+  ])('keeps the local semantic read control %s reversible', async (toolName, args) => {
+    const decision = await new ReversibilityGate().evaluate(toolName, args);
+    expect(decision).toMatchObject({ allowed: true, reversibility: 'reversible' });
+  });
+
+  it.each([
+    ['web_fetch', { url: 'https://example.test' }],
+    ['browser_search', { query: 'security boundary' }],
+    ['browser_fetch', { url: 'https://example.test' }],
+  ])('keeps the external network control %s irreversible', async (toolName, args) => {
+    const decision = await new ReversibilityGate().evaluate(toolName, args);
+    expect(decision).toMatchObject({
+      allowed: false,
+      reversibility: 'irreversible',
+      requiresHumanApproval: true,
+    });
+  });
+
+  it.each(['checkpoint_save', 'checkpoint_rewind', 'checkpoint_collapse'])(
+    'does not let the checkpoint prefix mark %s reversible',
+    async (toolName) => {
+      const decision = await new ReversibilityGate().evaluate(toolName, {});
+      expect(decision).toMatchObject({
+        allowed: false,
+        reversibility: 'irreversible',
+        requiresHumanApproval: true,
+      });
+    },
+  );
+});
 
 const baseRequest = (overrides: Partial<SideEffectRequest> = {}): SideEffectRequest => ({
   runHandle: null,
@@ -43,7 +260,7 @@ const baseRequest = (overrides: Partial<SideEffectRequest> = {}): SideEffectRequ
   externalSystem: 'os.shell',
   args: { command: 'ls' },
   stepId: 'step-1',
-  compensable: true,
+  effect: classifyToolEffect('shell_execute', { command: 'ls' }),
   tenantId: 'tenant-A',
   ...overrides,
 });

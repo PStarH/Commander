@@ -29,6 +29,12 @@ import {
 } from '../../runtime/embedding';
 import { HNSWIndex } from '../../memory/hnswIndex';
 import { getGlobalLogger } from '../../logging';
+import {
+  assertSameTenant,
+  getCurrentTenantId,
+  tenantPathSegment,
+  validateTenantId,
+} from '../../runtime/tenantContext';
 
 // ============================================================================
 // Types
@@ -58,6 +64,14 @@ export interface KbSearchResult {
 export interface KbIngestResult {
   documentId: string;
   chunksIndexed: number;
+}
+
+export interface KnowledgeBaseStoreConfig {
+  kbPath?: string;
+  embeddingModel?: string;
+  chunkSize?: number;
+  chunkOverlap?: number;
+  maxResults?: number;
 }
 
 interface KbChunk {
@@ -112,15 +126,7 @@ export class KnowledgeBaseStore {
   private readonly maxResults: number;
   private initPromise: Promise<void> | null = null;
 
-  constructor(
-    config: {
-      kbPath?: string;
-      embeddingModel?: string;
-      chunkSize?: number;
-      chunkOverlap?: number;
-      maxResults?: number;
-    } = {},
-  ) {
+  constructor(config: KnowledgeBaseStoreConfig = {}) {
     const rawPath = config.kbPath ?? '.commander/knowledge-base';
     this.baseDir = path.isAbsolute(rawPath) ? rawPath : path.resolve(process.cwd(), rawPath);
     this.embedder = createKbEmbeddingFunction(config.embeddingModel);
@@ -373,19 +379,61 @@ export class KnowledgeBaseStore {
 }
 
 // ============================================================================
-// Process-wide singleton (used by the API endpoints to share the store with
-// the plugin instance without re-creating it on every request).
+// Tenant-aware shared stores. HTTP callers pass their authoritative tenant id;
+// plugin hooks/tools resolve the active async tenant implicitly. The legacy
+// root is retained only for non-HTTP local/single-tenant compatibility.
 // ============================================================================
 
-let sharedStore: KnowledgeBaseStore | null = null;
+let sharedStoreConfig: KnowledgeBaseStoreConfig = {};
+let legacySharedStore: KnowledgeBaseStore | null = null;
+const tenantSharedStores = new Map<string, KnowledgeBaseStore>();
 
-export function getSharedKnowledgeBaseStore(): KnowledgeBaseStore {
-  if (!sharedStore) {
-    sharedStore = new KnowledgeBaseStore();
+function resolvedKbPath(config: KnowledgeBaseStoreConfig): string {
+  const rawPath = config.kbPath ?? '.commander/knowledge-base';
+  return path.isAbsolute(rawPath) ? rawPath : path.resolve(process.cwd(), rawPath);
+}
+
+function createTenantStore(tenantId: string): KnowledgeBaseStore {
+  validateTenantId(tenantId);
+  return new KnowledgeBaseStore({
+    ...sharedStoreConfig,
+    kbPath: path.join(resolvedKbPath(sharedStoreConfig), tenantPathSegment(tenantId)),
+  });
+}
+
+/** Configure the store factory used by subsequent tenant and legacy lookups. */
+export function configureSharedKnowledgeBaseStore(config: KnowledgeBaseStoreConfig): void {
+  sharedStoreConfig = { ...config };
+  legacySharedStore = null;
+  tenantSharedStores.clear();
+}
+
+export function getSharedKnowledgeBaseStore(tenantId?: string): KnowledgeBaseStore {
+  const effectiveTenant = tenantId ?? getCurrentTenantId();
+  if (effectiveTenant !== undefined) {
+    validateTenantId(effectiveTenant);
+    assertSameTenant(effectiveTenant);
+    const existing = tenantSharedStores.get(effectiveTenant);
+    if (existing) return existing;
+    const store = createTenantStore(effectiveTenant);
+    tenantSharedStores.set(effectiveTenant, store);
+    return store;
   }
-  return sharedStore;
+
+  if (!legacySharedStore) {
+    legacySharedStore = new KnowledgeBaseStore(sharedStoreConfig);
+  }
+  return legacySharedStore;
 }
 
 export function setSharedKnowledgeBaseStore(store: KnowledgeBaseStore | null): void {
-  sharedStore = store;
+  legacySharedStore = store;
+  tenantSharedStores.clear();
+}
+
+/** Persist every instantiated store before plugin unload. */
+export async function saveSharedKnowledgeBaseStores(): Promise<void> {
+  const stores = new Set(tenantSharedStores.values());
+  if (legacySharedStore) stores.add(legacySharedStore);
+  await Promise.all(Array.from(stores, (store) => store.save()));
 }

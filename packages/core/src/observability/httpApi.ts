@@ -25,6 +25,8 @@ export interface ObservabilityDeps {
   recorder: ExecutionTraceRecorder;
   traceStore: TraceStore;
   resolveTenant: (req: IncomingMessage) => string | undefined;
+  /** Returns a store whose backing data is already scoped to tenantId. */
+  resolveTraceStore?: (tenantId: string | undefined) => TraceStore;
   liveReplayContext?: LiveReplayContext;
   // P-obs-3: dataset eval system
   datasetStore?: DatasetStore;
@@ -49,12 +51,21 @@ function loadTrace(
   recorder: ExecutionTraceRecorder,
   runId: string,
   store: TraceStore,
+  tenantId?: string,
+  storeTenantId?: string,
 ): ExecutionTrace | null {
   const fromRecorder = recorder.getTrace(runId);
-  if (fromRecorder && fromRecorder.events.length > 0) return fromRecorder;
+  if (
+    fromRecorder &&
+    fromRecorder.events.length > 0 &&
+    (!tenantId || fromRecorder.tenantId === tenantId)
+  ) {
+    return fromRecorder;
+  }
   const fromStore = (store as PersistentTraceStore).readTrace?.(runId) ?? [];
   if (fromStore.length === 0) return null;
-  return traceFromEvents(runId, fromStore);
+  const trace = traceFromEvents(runId, fromStore);
+  return !tenantId || trace.tenantId === tenantId || storeTenantId === tenantId ? trace : null;
 }
 
 function traceFromEvents(runId: string, events: TraceEvent[]): ExecutionTrace {
@@ -256,6 +267,8 @@ export async function handleObservabilityRequest(
   }
 
   const tenantId = deps.resolveTenant(req);
+  const traceStore = deps.resolveTraceStore?.(tenantId) ?? deps.traceStore;
+  const storeTenantId = deps.resolveTraceStore && tenantId ? tenantId : undefined;
   const q = new URLSearchParams(queryStr);
 
   try {
@@ -272,7 +285,7 @@ export async function handleObservabilityRequest(
       const action = segments[2];
 
       if (method === 'GET' && !action) {
-        const trace = loadTrace(deps.recorder, runId, deps.traceStore);
+        const trace = loadTrace(deps.recorder, runId, traceStore, tenantId, storeTenantId);
         if (!trace) {
           return makeResult(404, { error: 'Run not found' });
         }
@@ -280,7 +293,7 @@ export async function handleObservabilityRequest(
       }
 
       if (method === 'GET' && action === 'timeline') {
-        const trace = loadTrace(deps.recorder, runId, deps.traceStore);
+        const trace = loadTrace(deps.recorder, runId, traceStore, tenantId, storeTenantId);
         if (!trace) {
           return makeResult(404, { error: 'Run not found' });
         }
@@ -288,7 +301,7 @@ export async function handleObservabilityRequest(
       }
 
       if (method === 'GET' && action === 'tree') {
-        const trace = loadTrace(deps.recorder, runId, deps.traceStore);
+        const trace = loadTrace(deps.recorder, runId, traceStore, tenantId, storeTenantId);
         if (!trace) {
           return makeResult(404, { error: 'Run not found' });
         }
@@ -296,7 +309,7 @@ export async function handleObservabilityRequest(
       }
 
       if (method === 'GET' && action === 'cost') {
-        const trace = loadTrace(deps.recorder, runId, deps.traceStore);
+        const trace = loadTrace(deps.recorder, runId, traceStore, tenantId, storeTenantId);
         if (!trace) {
           return makeResult(404, { error: 'Run not found' });
         }
@@ -304,7 +317,7 @@ export async function handleObservabilityRequest(
       }
 
       if (method === 'GET' && action === 'decisions') {
-        const trace = loadTrace(deps.recorder, runId, deps.traceStore);
+        const trace = loadTrace(deps.recorder, runId, traceStore, tenantId, storeTenantId);
         if (!trace) {
           return makeResult(404, { error: 'Run not found' });
         }
@@ -313,7 +326,7 @@ export async function handleObservabilityRequest(
       }
 
       if (method === 'GET' && action === 'summary') {
-        const trace = loadTrace(deps.recorder, runId, deps.traceStore);
+        const trace = loadTrace(deps.recorder, runId, traceStore, tenantId, storeTenantId);
         if (!trace) {
           return makeResult(404, { error: 'Run not found' });
         }
@@ -322,7 +335,7 @@ export async function handleObservabilityRequest(
 
       if (method === 'POST' && action === 'replay') {
         const body = await readBody(req);
-        const trace = loadTrace(deps.recorder, runId, deps.traceStore);
+        const trace = loadTrace(deps.recorder, runId, traceStore, tenantId, storeTenantId);
         if (!trace) {
           return makeResult(404, { error: 'Run not found' });
         }
@@ -440,7 +453,7 @@ export async function handleObservabilityRequest(
       const runId = segments[1]!;
       const body = await readFeedbackBody(req);
       const trace = deps.recorder.getTrace(runId);
-      if (!trace) {
+      if (!trace || (tenantId !== undefined && trace.tenantId !== tenantId)) {
         return makeResult(404, { error: 'Run not found' });
       }
       deps.recorder.recordEvent(runId, {
@@ -472,8 +485,8 @@ export async function handleObservabilityRequest(
     if (segments[0] === 'compare' && segments.length === 3 && method === 'GET') {
       const runIdA = segments[1]!;
       const runIdB = segments[2]!;
-      const traceA = loadTrace(deps.recorder, runIdA, deps.traceStore);
-      const traceB = loadTrace(deps.recorder, runIdB, deps.traceStore);
+      const traceA = loadTrace(deps.recorder, runIdA, traceStore, tenantId, storeTenantId);
+      const traceB = loadTrace(deps.recorder, runIdB, traceStore, tenantId, storeTenantId);
       if (!traceA) {
         return makeResult(404, { error: `Run ${runIdA} not found` });
       }
