@@ -40,6 +40,9 @@ before(async () => {
       tenantId: req.tenantId,
     });
   });
+  app.get('/ready', (_req: Request, res: Response) => {
+    res.json({ status: 'ready' });
+  });
 
   await new Promise<void>((resolve) => {
     server = app.listen(0, '127.0.0.1', () => {
@@ -149,6 +152,16 @@ test('invalid API key is rejected regardless of tenant mapping', async () => {
     headers: { 'X-API-Key': 'invalid-key' },
   });
   assert.equal(res.status, 401);
+});
+
+test('/ready stays public when API keys are configured', async () => {
+  process.env.API_KEYS = 'configured-api-key:cell-e2e';
+  delete process.env.TENANT_API_KEYS;
+  resetApiKeyStore();
+
+  const res = await request('/ready');
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { status: 'ready' });
 });
 
 test('tenant-scoped persistent key does not leak tenant to other keys', async () => {
