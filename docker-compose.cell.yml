@@ -36,6 +36,8 @@ services:
       # tenant allowlist before worker/adapter LOGINs register.
       - COMMANDER_WORKER_TENANTS=${COMMANDER_WORKER_TENANTS:-${COMMANDER_CELL_TENANT_ID:-local}}
       - COMMANDER_WORKER_ALLOWED_TENANTS=${COMMANDER_WORKER_ALLOWED_TENANTS:-${COMMANDER_WORKER_TENANTS:-${COMMANDER_CELL_TENANT_ID:-local}}}
+      # Owner-only policy seed for the explicit demo adapter; worker remains read-only.
+      - COMMANDER_ENABLE_DEMO_TICKET=${COMMANDER_ENABLE_DEMO_TICKET:-}
 
   api:
     profiles:

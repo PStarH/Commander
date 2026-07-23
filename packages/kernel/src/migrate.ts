@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 import { runKernelMigrations } from './migrations.js';
-import { seedWorkerAllowedTenants } from './seedWorkerClaimSecret.js';
+import { seedDemoTicketAllowlist, seedWorkerAllowedTenants } from './seedWorkerClaimSecret.js';
 
 /** Parse comma-separated tenant list; reject empty and '*'. */
 export function parseAllowedTenantsEnv(raw: string | undefined): string[] {
@@ -29,6 +29,10 @@ async function main() {
     if (tenants.length > 0) {
       await seedWorkerAllowedTenants(pool, tenants);
       console.log(`Seeded commander_worker_allowed_tenants: ${tenants.join(',')}`);
+      if (process.env.COMMANDER_ENABLE_DEMO_TICKET === '1') {
+        await seedDemoTicketAllowlist(pool, tenants);
+        console.log(`Seeded demo ticket effect policy: ${tenants.join(',')}`);
+      }
     }
     console.log('Kernel migrations applied successfully');
   } catch (err) {
