@@ -20,7 +20,9 @@
  * through toErrorMessage so internal details are never leaked to clients.
  */
 import { Router, type Request, type Response } from 'express';
+import type { NextFunction } from 'express';
 import { z } from 'zod';
+import { hasRole } from './userStore';
 import { toErrorMessage } from './routeHelpers';
 import { validateBody, validateQuery } from './validationMiddleware';
 import {
@@ -33,6 +35,7 @@ import {
   type KnowledgeStats,
   type KnowledgeListResult,
   type SupportedContentType,
+  type KnowledgeStore,
 } from './knowledgeStore';
 // RAG plugin integration (core layer) — plugin enable/disable + shared KB store
 import {
@@ -100,6 +103,75 @@ function paramToString(value: string | string[] | undefined): string | undefined
   return value && value.length > 0 ? value : undefined;
 }
 
+/** Knowledge data is tenant-scoped; never fall back to a process-wide store at the HTTP boundary. */
+function requireKnowledgeTenant(req: Request, res: Response, next: NextFunction): void {
+  if (!req.tenantId) {
+    res.status(403).json({
+      error: 'Tenant-bound authenticated identity required',
+    });
+    return;
+  }
+  next();
+}
+
+function requestTenantId(req: Request): string {
+  if (!req.tenantId) {
+    throw new Error('Tenant-bound authenticated identity required');
+  }
+  return req.tenantId;
+}
+
+function requestKnowledgeStore(req: Request): KnowledgeStore {
+  return getKnowledgeStore(requestTenantId(req));
+}
+
+/** Preserve JWT behavior while enforcing explicit write authority for API-key mutations. */
+function requireKnowledgeWriter(req: Request, res: Response, next: NextFunction): void {
+  if (req.user) {
+    next();
+    return;
+  }
+  if (!req.apiKeyId) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+
+  const scopes = req.apiScopes ?? [];
+  const authorized =
+    scopes.includes('knowledge:write') ||
+    scopes.includes('write') ||
+    scopes.includes('knowledge:admin') ||
+    scopes.includes('admin') ||
+    scopes.includes('*');
+  if (!authorized) {
+    res.status(403).json({ error: 'Knowledge-base write authority is required' });
+    return;
+  }
+  next();
+}
+
+/** Global plugin controls require an admin JWT role or an equivalent API-key scope. */
+function requireKnowledgeAdmin(req: Request, res: Response, next: NextFunction): void {
+  if (req.user) {
+    if (hasRole(req.user.role, 'admin')) {
+      next();
+      return;
+    }
+    res.status(403).json({ error: 'Insufficient privileges' });
+    return;
+  }
+
+  const scopes = req.apiScopes ?? [];
+  if (
+    req.apiKeyId &&
+    (scopes.includes('knowledge:admin') || scopes.includes('admin') || scopes.includes('*'))
+  ) {
+    next();
+    return;
+  }
+  res.status(401).json({ error: 'Authentication required' });
+}
+
 // ── Router factory ───────────────────────────────────────────────────────
 
 /**
@@ -112,11 +184,12 @@ function paramToString(value: string | string[] | undefined): string | undefined
  */
 export function createKnowledgeBaseRouter(): Router {
   const router = Router();
-  const store = getKnowledgeStore();
+  router.use(requireKnowledgeTenant);
 
   // ── POST /api/knowledge/documents — upload + index a document ─────────
   router.post(
     '/api/knowledge/documents',
+    requireKnowledgeWriter,
     validateBody(uploadDocumentSchema),
     async (req: Request, res: Response) => {
       try {
@@ -127,7 +200,12 @@ export function createKnowledgeBaseRouter(): Router {
           tags?: string[];
         };
         const normalizedType = normalizeContentType(type) as SupportedContentType;
-        const doc = await store.addDocument({ name, type: normalizedType, content, tags });
+        const doc = await requestKnowledgeStore(req).addDocument({
+          name,
+          type: normalizedType,
+          content,
+          tags,
+        });
         const statusCode = doc.status === 'failed' ? 422 : 201;
         res.status(statusCode).json({ document: doc });
       } catch (error) {
@@ -144,7 +222,7 @@ export function createKnowledgeBaseRouter(): Router {
       try {
         const query = (req as unknown as { validatedQuery: { page: number; limit: number } })
           .validatedQuery;
-        const result: KnowledgeListResult = await store.listDocuments({
+        const result: KnowledgeListResult = await requestKnowledgeStore(req).listDocuments({
           page: query.page,
           limit: query.limit,
         });
@@ -163,7 +241,7 @@ export function createKnowledgeBaseRouter(): Router {
         res.status(400).json({ error: 'Document id is required' });
         return;
       }
-      const doc: KnowledgeDocument | null = await store.getDocument(id);
+      const doc: KnowledgeDocument | null = await requestKnowledgeStore(req).getDocument(id);
       if (!doc) {
         res.status(404).json({ error: 'Document not found' });
         return;
@@ -175,23 +253,27 @@ export function createKnowledgeBaseRouter(): Router {
   });
 
   // ── DELETE /api/knowledge/documents/:id — delete a document ──────────
-  router.delete('/api/knowledge/documents/:id', async (req: Request, res: Response) => {
-    try {
-      const id = paramToString(req.params.id);
-      if (!id) {
-        res.status(400).json({ error: 'Document id is required' });
-        return;
+  router.delete(
+    '/api/knowledge/documents/:id',
+    requireKnowledgeWriter,
+    async (req: Request, res: Response) => {
+      try {
+        const id = paramToString(req.params.id);
+        if (!id) {
+          res.status(400).json({ error: 'Document id is required' });
+          return;
+        }
+        const deleted = await requestKnowledgeStore(req).deleteDocument(id);
+        if (!deleted) {
+          res.status(404).json({ error: 'Document not found' });
+          return;
+        }
+        res.json({ status: 'deleted', id });
+      } catch (error) {
+        res.status(500).json({ error: toErrorMessage(error) });
       }
-      const deleted = await store.deleteDocument(id);
-      if (!deleted) {
-        res.status(404).json({ error: 'Document not found' });
-        return;
-      }
-      res.json({ status: 'deleted', id });
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  });
+    },
+  );
 
   // ── POST /api/knowledge/search — semantic search ─────────────────────
   router.post(
@@ -204,7 +286,7 @@ export function createKnowledgeBaseRouter(): Router {
           topK?: number;
           docIds?: string[];
         };
-        const results: KnowledgeSearchResult[] = await store.search({
+        const results: KnowledgeSearchResult[] = await requestKnowledgeStore(req).search({
           query,
           topK,
           docIds,
@@ -227,7 +309,11 @@ export function createKnowledgeBaseRouter(): Router {
           topK?: number;
           docIds?: string[];
         };
-        const rag: KnowledgeRagContext = await store.query({ query, topK, docIds });
+        const rag: KnowledgeRagContext = await requestKnowledgeStore(req).query({
+          query,
+          topK,
+          docIds,
+        });
         res.json(rag);
       } catch (error) {
         res.status(500).json({ error: toErrorMessage(error) });
@@ -236,9 +322,9 @@ export function createKnowledgeBaseRouter(): Router {
   );
 
   // ── GET /api/knowledge/stats — aggregate statistics ──────────────────
-  router.get('/api/knowledge/stats', async (_req: Request, res: Response) => {
+  router.get('/api/knowledge/stats', async (req: Request, res: Response) => {
     try {
-      const stats: KnowledgeStats = await store.stats();
+      const stats: KnowledgeStats = await requestKnowledgeStore(req).stats();
       res.json(stats);
     } catch (error) {
       res.status(500).json({ error: toErrorMessage(error) });
@@ -262,12 +348,12 @@ export function createKnowledgeBaseRouter(): Router {
   // ==========================================================================
 
   // ── GET /api/knowledge-base/status — plugin + store status ───────────
-  router.get('/api/knowledge-base/status', async (_req: Request, res: Response) => {
+  router.get('/api/knowledge-base/status', async (req: Request, res: Response) => {
     try {
       const hm = getHookManager();
       const registered = hm.hasPlugin(RAG_PLUGIN_NAME);
       const enabled = hm.isEnabled(RAG_PLUGIN_NAME);
-      const store = getSharedKnowledgeBaseStore();
+      const store = getSharedKnowledgeBaseStore(requestTenantId(req));
       // Ensure the store has loaded any persisted index so counts are accurate.
       await store.init();
       res.json({
@@ -286,38 +372,47 @@ export function createKnowledgeBaseRouter(): Router {
   });
 
   // ── POST /api/knowledge-base/enable — enable the RAG plugin ──────────
-  router.post('/api/knowledge-base/enable', async (_req: Request, res: Response) => {
-    try {
-      const hm = getHookManager();
-      if (!hm.hasPlugin(RAG_PLUGIN_NAME)) {
-        res.status(404).json({ error: 'RAG plugin is not registered' });
-        return;
+  router.post(
+    '/api/knowledge-base/enable',
+    requireKnowledgeAdmin,
+    async (_req: Request, res: Response) => {
+      try {
+        const hm = getHookManager();
+        if (!hm.hasPlugin(RAG_PLUGIN_NAME)) {
+          res.status(404).json({ error: 'RAG plugin is not registered' });
+          return;
+        }
+        const ok = hm.enable(RAG_PLUGIN_NAME);
+        res.json({ plugin: RAG_PLUGIN_NAME, enabled: true, ok });
+      } catch (error) {
+        res.status(500).json({ error: toErrorMessage(error) });
       }
-      const ok = hm.enable(RAG_PLUGIN_NAME);
-      res.json({ plugin: RAG_PLUGIN_NAME, enabled: true, ok });
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  });
+    },
+  );
 
   // ── POST /api/knowledge-base/disable — disable the RAG plugin ────────
-  router.post('/api/knowledge-base/disable', async (_req: Request, res: Response) => {
-    try {
-      const hm = getHookManager();
-      if (!hm.hasPlugin(RAG_PLUGIN_NAME)) {
-        res.status(404).json({ error: 'RAG plugin is not registered' });
-        return;
+  router.post(
+    '/api/knowledge-base/disable',
+    requireKnowledgeAdmin,
+    async (_req: Request, res: Response) => {
+      try {
+        const hm = getHookManager();
+        if (!hm.hasPlugin(RAG_PLUGIN_NAME)) {
+          res.status(404).json({ error: 'RAG plugin is not registered' });
+          return;
+        }
+        const ok = hm.disable(RAG_PLUGIN_NAME);
+        res.json({ plugin: RAG_PLUGIN_NAME, enabled: false, ok });
+      } catch (error) {
+        res.status(500).json({ error: toErrorMessage(error) });
       }
-      const ok = hm.disable(RAG_PLUGIN_NAME);
-      res.json({ plugin: RAG_PLUGIN_NAME, enabled: false, ok });
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  });
+    },
+  );
 
   // ── POST /api/knowledge-base/upload — ingest a document into the KB ──
   router.post(
     '/api/knowledge-base/upload',
+    requireKnowledgeWriter,
     validateBody(kbUploadSchema),
     async (req: Request, res: Response) => {
       try {
@@ -326,7 +421,7 @@ export function createKnowledgeBaseRouter(): Router {
           content: string;
           source?: string;
         };
-        const store = getSharedKnowledgeBaseStore();
+        const store = getSharedKnowledgeBaseStore(requestTenantId(req));
         const result = await store.ingestDocument(filename, content, source);
         res.status(201).json({
           documentId: result.documentId,
@@ -339,9 +434,9 @@ export function createKnowledgeBaseRouter(): Router {
   );
 
   // ── GET /api/knowledge-base/documents — list KB documents ────────────
-  router.get('/api/knowledge-base/documents', async (_req: Request, res: Response) => {
+  router.get('/api/knowledge-base/documents', async (req: Request, res: Response) => {
     try {
-      const store = getSharedKnowledgeBaseStore();
+      const store = getSharedKnowledgeBaseStore(requestTenantId(req));
       await store.init();
       const documents: KbDocumentMeta[] = store.listDocuments();
       res.json({ documents, count: documents.length });
@@ -351,24 +446,28 @@ export function createKnowledgeBaseRouter(): Router {
   });
 
   // ── DELETE /api/knowledge-base/documents/:id — delete a KB document ─
-  router.delete('/api/knowledge-base/documents/:id', async (req: Request, res: Response) => {
-    try {
-      const id = paramToString(req.params.id);
-      if (!id) {
-        res.status(400).json({ error: 'Document id is required' });
-        return;
+  router.delete(
+    '/api/knowledge-base/documents/:id',
+    requireKnowledgeWriter,
+    async (req: Request, res: Response) => {
+      try {
+        const id = paramToString(req.params.id);
+        if (!id) {
+          res.status(400).json({ error: 'Document id is required' });
+          return;
+        }
+        const store = getSharedKnowledgeBaseStore(requestTenantId(req));
+        const deleted = await store.deleteDocument(id);
+        if (!deleted) {
+          res.status(404).json({ error: 'Document not found' });
+          return;
+        }
+        res.json({ status: 'deleted', id });
+      } catch (error) {
+        res.status(500).json({ error: toErrorMessage(error) });
       }
-      const store = getSharedKnowledgeBaseStore();
-      const deleted = await store.deleteDocument(id);
-      if (!deleted) {
-        res.status(404).json({ error: 'Document not found' });
-        return;
-      }
-      res.json({ status: 'deleted', id });
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  });
+    },
+  );
 
   // ── POST /api/knowledge-base/search — manual retrieval test ──────────
   router.post(
@@ -377,7 +476,7 @@ export function createKnowledgeBaseRouter(): Router {
     async (req: Request, res: Response) => {
       try {
         const { query, topK } = req.body as { query: string; topK?: number };
-        const store = getSharedKnowledgeBaseStore();
+        const store = getSharedKnowledgeBaseStore(requestTenantId(req));
         const results: KbSearchResult[] = await store.search(query, topK);
         res.json({ query, results, count: results.length });
       } catch (error) {

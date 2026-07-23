@@ -36,6 +36,9 @@ export interface User {
   email: string;
   passwordHash: string;
   role: UserRole;
+  /** Durable external identity binding for OIDC-provisioned users. */
+  oidcIssuer?: string;
+  oidcSubject?: string;
   createdAt: string;
   lastLoginAt: string | null;
 }
@@ -43,10 +46,15 @@ export interface User {
 /**
  * The user object returned to clients — never includes the password hash.
  */
-export type SafeUser = Omit<User, 'passwordHash'>;
+export type SafeUser = Omit<User, 'passwordHash' | 'oidcIssuer' | 'oidcSubject'>;
 
 function toSafeUser(user: User): SafeUser {
-  const { passwordHash: _passwordHash, ...safe } = user;
+  const {
+    passwordHash: _passwordHash,
+    oidcIssuer: _oidcIssuer,
+    oidcSubject: _oidcSubject,
+    ...safe
+  } = user;
   return safe;
 }
 
@@ -159,6 +167,10 @@ export function findUserByEmail(email: string): User | undefined {
   return getUsers().find((u) => u.email.toLowerCase() === lower);
 }
 
+export function findUserByOidcIdentity(issuer: string, subject: string): User | undefined {
+  return getUsers().find((u) => u.oidcIssuer === issuer && u.oidcSubject === subject);
+}
+
 export function listUsers(): SafeUser[] {
   return getUsers().map(toSafeUser);
 }
@@ -168,14 +180,26 @@ export function createUser(args: {
   email: string;
   password: string;
   role?: UserRole;
+  oidcIssuer?: string;
+  oidcSubject?: string;
 }): { user: SafeUser } | { error: string } {
   const users = getUsers();
+
+  if ((args.oidcIssuer === undefined) !== (args.oidcSubject === undefined)) {
+    return { error: 'OIDC issuer and subject must be provided together' };
+  }
 
   if (users.some((u) => u.username.toLowerCase() === args.username.toLowerCase())) {
     return { error: 'Username already exists' };
   }
   if (users.some((u) => u.email.toLowerCase() === args.email.toLowerCase())) {
     return { error: 'Email already registered' };
+  }
+  if (
+    args.oidcIssuer !== undefined &&
+    users.some((u) => u.oidcIssuer === args.oidcIssuer && u.oidcSubject === args.oidcSubject)
+  ) {
+    return { error: 'OIDC identity already registered' };
   }
 
   const now = new Date().toISOString();
@@ -185,12 +209,44 @@ export function createUser(args: {
     email: args.email,
     passwordHash: hashSync(args.password, 10),
     role: args.role ?? 'viewer',
+    oidcIssuer: args.oidcIssuer,
+    oidcSubject: args.oidcSubject,
     createdAt: now,
     lastLoginAt: null,
   };
   users.push(user);
   persist(users);
   return { user: toSafeUser(user) };
+}
+
+export function bindUserToOidcIdentity(
+  userId: string,
+  issuer: string,
+  subject: string,
+): SafeUser | { error: string } {
+  const users = getUsers();
+  const user = users.find((candidate) => candidate.id === userId);
+  if (!user) return { error: 'User not found' };
+
+  const conflict = users.find(
+    (candidate) =>
+      candidate.id !== userId &&
+      candidate.oidcIssuer === issuer &&
+      candidate.oidcSubject === subject,
+  );
+  if (conflict) return { error: 'OIDC identity already registered' };
+
+  if (user.oidcIssuer !== undefined || user.oidcSubject !== undefined) {
+    if (user.oidcIssuer !== issuer || user.oidcSubject !== subject) {
+      return { error: 'User is already linked to a different OIDC identity' };
+    }
+    return toSafeUser(user);
+  }
+
+  user.oidcIssuer = issuer;
+  user.oidcSubject = subject;
+  persist(users);
+  return toSafeUser(user);
 }
 
 export function updateLastLogin(userId: string): void {

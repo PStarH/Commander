@@ -10,10 +10,10 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 import { getHookManager, type CommanderPlugin } from './pluginManager';
 import { getGlobalLogger } from './logging';
 import { getIMProviderRegistry } from './im';
-import type { IMProvider } from './im';
 import { getSupplyChainScanner } from './security/supplyChainScanner';
 import {
   getGlobalPluginPermissionRegistry,
@@ -46,6 +46,20 @@ interface PluginManifest {
   contentScannerRules?: PluginContentScannerRules;
 }
 
+export interface PluginImportGrant {
+  pluginName: string;
+  digest: string;
+}
+
+export interface PluginLoaderOptions {
+  /** Operator-owned grants injected by a trusted bootstrapper or test harness. */
+  importGrants?: readonly PluginImportGrant[];
+  /** Operator-owned grant file; defaults outside discovered plugin directories. */
+  importGrantFile?: string;
+  /** Workspace trust boundary; defaults to process.cwd(). */
+  workspaceRoot?: string;
+}
+
 interface PluginPackage {
   manifest: PluginManifest;
   directory: string;
@@ -57,9 +71,18 @@ export class PluginLoader {
   private watchDirs: string[] = [];
   /** Persisted enable/disable map. Absent key = enabled (default). */
   private enabledState: Map<string, boolean> | null = null;
+  private readonly importGrants?: readonly PluginImportGrant[];
+  private readonly importGrantFile: string;
+  private readonly workspaceRoot: string;
 
-  constructor() {
+  constructor(options: PluginLoaderOptions = {}) {
+    this.workspaceRoot = path.resolve(options.workspaceRoot ?? process.cwd());
     this.watchDirs = this.getDefaultWatchDirs();
+    this.importGrants = options.importGrants;
+    this.importGrantFile =
+      options.importGrantFile ??
+      process.env.COMMANDER_PLUGIN_IMPORT_GRANTS ??
+      path.join(os.homedir(), '.commander', 'operator', 'plugin-import-grants.json');
   }
 
   // ── Enabled-state persistence ──────────────────────────────────────────
@@ -122,7 +145,7 @@ export class PluginLoader {
 
   private getDefaultWatchDirs(): string[] {
     return [
-      path.join(process.cwd(), '.commander', 'plugins'),
+      path.join(this.workspaceRoot, '.commander', 'plugins'),
       path.join(os.homedir(), '.commander', 'plugins'),
     ];
   }
@@ -174,140 +197,193 @@ export class PluginLoader {
       getGlobalLogger().warn('PluginLoader', `Plugin "${manifest.name}" already loaded, skipping`);
       return this.loaded.get(manifest.name)!;
     }
+    const hookManager = getHookManager();
+    const permissionRegistry = getGlobalPluginPermissionRegistry();
+    if (
+      hookManager.hasPlugin(manifest.name) ||
+      permissionRegistry.get(manifest.name) ||
+      DefaultContentScanner.listRulePacks().includes(manifest.name)
+    ) {
+      throw new Error(`Plugin "${manifest.name}" conflicts with existing global plugin state`);
+    }
 
     // SECURITY: supply-chain scan before loading any plugin code.
     // P-SEC: Scan ALL .js/.ts/.mjs files in the plugin directory, not just
     // the entry file. The previous scan only inspected the main file, leaving
     // transitive dependencies and bundled code unchecked — a bypassable gate.
     const mainFile = manifest.main ?? 'index.js';
-    const mainPath = path.join(resolvedDir, mainFile);
+    const mainPath = resolvePluginPackagePath(resolvedDir, mainFile, 'main');
     let pluginInstance: CommanderPlugin;
+    let permissionRegistered = false;
+    let rulePackRegistered = false;
 
-    if (fs.existsSync(mainPath)) {
-      // Scan the entry file + all other JS files in the plugin directory
-      const filesToScan = [mainPath];
-      try {
-        const allFiles = fs.readdirSync(resolvedDir, { recursive: true }) as string[];
-        for (const f of allFiles) {
-          const fullPath = path.join(resolvedDir, f);
-          if (
-            fullPath !== mainPath &&
-            /\.(js|mjs|cjs|ts|mts|cts)$/.test(f) &&
-            !f.includes('node_modules')
-          ) {
-            filesToScan.push(fullPath);
-          }
-        }
-      } catch {
-        // Non-critical — fall back to scanning just the entry file
-      }
-
-      // Scan each file and aggregate results
-      let scanBlocked = false;
-      let blockReason = '';
-      for (const filePath of filesToScan) {
+    try {
+      if (fs.existsSync(mainPath)) {
+        // Scan the entry file + all other JS files in the plugin directory
+        const filesToScan = [mainPath];
         try {
-          const fileContent = fs.readFileSync(filePath, 'utf-8');
-          const scanResult = getSupplyChainScanner().scan({
-            name: manifest.name,
-            content: fileContent,
-            tools: manifest.tools ?? [],
-            provenance: {
-              source: 'local',
-              author: manifest.name,
-            },
-          });
-          if (!scanResult.passed) {
-            scanBlocked = true;
-            blockReason = `${path.basename(filePath)}: ${scanResult.recommendation} (risk=${scanResult.riskScore})`;
-            break;
+          const allFiles = fs.readdirSync(resolvedDir, { recursive: true }) as string[];
+          for (const f of allFiles) {
+            const fullPath = path.join(resolvedDir, f);
+            if (
+              fullPath !== mainPath &&
+              /\.(js|mjs|cjs|ts|mts|cts)$/.test(f) &&
+              !f.includes('node_modules')
+            ) {
+              filesToScan.push(fullPath);
+            }
           }
         } catch {
-          // If we can't read a file, skip it — non-critical
+          // Non-critical — fall back to scanning just the entry file
         }
-      }
 
-      if (scanBlocked) {
-        throw new Error(`Supply chain scan blocked plugin "${manifest.name}": ${blockReason}`);
-      }
+        // Scan each file and aggregate results
+        let scanBlocked = false;
+        let blockReason = '';
+        for (const filePath of filesToScan) {
+          try {
+            const fileContent = fs.readFileSync(filePath, 'utf-8');
+            const scanResult = getSupplyChainScanner().scan({
+              name: manifest.name,
+              content: fileContent,
+              tools: manifest.tools ?? [],
+              provenance: {
+                source: 'local',
+                author: manifest.name,
+              },
+            });
+            if (!scanResult.passed) {
+              scanBlocked = true;
+              blockReason = `${path.basename(filePath)}: ${scanResult.recommendation} (risk=${scanResult.riskScore})`;
+              break;
+            }
+          } catch {
+            // If we can't read a file, skip it — non-critical
+          }
+        }
 
-      // P-SEC: Register permission enforcer BEFORE importing plugin code.
-      // This ensures the enforcer is active when the plugin's onLoad runs.
-      const enforcer = getGlobalPluginPermissionRegistry().register(
-        manifest.name,
-        manifest.permissions,
-      );
+        if (scanBlocked) {
+          throw new Error(`Supply chain scan blocked plugin "${manifest.name}": ${blockReason}`);
+        }
 
-      // Log declared permissions for audit trail
-      const declaredPerms = enforcer.getDeclaredPermissions();
-      getGlobalLogger().info('PluginLoader', 'Plugin permission envelope', {
-        plugin: manifest.name,
-        filesystem: {
-          read: declaredPerms.filesystem.read.length,
-          write: declaredPerms.filesystem.write.length,
-        },
-        network: { domains: declaredPerms.network.allowedDomains.length },
-        process: declaredPerms.process,
-        env: declaredPerms.env.length,
-        hooks: declaredPerms.hooks.length,
-        tools: declaredPerms.tools.length,
-      });
+        const pluginDigest = computePluginImportDigest(resolvedDir);
 
-      // Register manifest-declared content scanner rules before plugin onLoad runs.
-      if (manifest.contentScannerRules) {
-        const rules = await resolveContentScannerRules(manifest, resolvedDir);
-        if (rules.length > 0) {
-          DefaultContentScanner.registerRulePack(manifest.name, rules);
-          getGlobalLogger().info(
-            'PluginLoader',
-            `Registered ${rules.length} content scanner rules`,
-            {
-              plugin: manifest.name,
-            },
+        // P-SEC: Register permission enforcer BEFORE importing plugin code.
+        // This ensures the enforcer is active when the plugin's onLoad runs.
+        const enforcer = getGlobalPluginPermissionRegistry().register(
+          manifest.name,
+          manifest.permissions,
+        );
+        permissionRegistered = true;
+
+        // A dynamic import executes all module top-level code with the
+        // Commander process' ambient privileges. The sandbox context is only
+        // created later by HookManager.onLoad and cannot mediate that code.
+        // Fail closed unless the operator explicitly grants this authority.
+        if (
+          !enforcer.requiresHostModuleImport ||
+          !this.hasOperatorImportGrant(manifest.name, pluginDigest, resolvedDir)
+        ) {
+          getGlobalPluginPermissionRegistry().unregister(manifest.name);
+          throw new Error(
+            `Plugin "${manifest.name}" blocked: module initialization requires an operator-owned digest-bound grant`,
           );
         }
-      }
 
-      try {
-        const mod = await import(mainPath);
-        pluginInstance = mod.default ?? mod.plugin ?? mod;
-        if (!pluginInstance.name) {
-          pluginInstance.name = manifest.name;
+        // Log declared permissions for audit trail
+        const declaredPerms = enforcer.getDeclaredPermissions();
+        getGlobalLogger().info('PluginLoader', 'Plugin permission envelope', {
+          plugin: manifest.name,
+          filesystem: {
+            read: declaredPerms.filesystem.read.length,
+            write: declaredPerms.filesystem.write.length,
+          },
+          network: { domains: declaredPerms.network.allowedDomains.length },
+          process: declaredPerms.process,
+          env: declaredPerms.env.length,
+          hostModuleImportRequested: declaredPerms.hostModuleImport,
+          importDigest: pluginDigest,
+          hooks: declaredPerms.hooks.length,
+          tools: declaredPerms.tools.length,
+        });
+
+        // Register manifest-declared content scanner rules before plugin onLoad runs.
+        if (manifest.contentScannerRules) {
+          const rules = await resolveContentScannerRules(manifest, resolvedDir);
+          if (rules.length > 0) {
+            DefaultContentScanner.registerRulePack(manifest.name, rules);
+            rulePackRegistered = true;
+            getGlobalLogger().info(
+              'PluginLoader',
+              `Registered ${rules.length} content scanner rules`,
+              {
+                plugin: manifest.name,
+              },
+            );
+          }
         }
-      } catch (err: unknown) {
-        // Clean up permission registration on load failure
-        getGlobalPluginPermissionRegistry().unregister(manifest.name);
-        throw new Error(
-          `Failed to load plugin "${manifest.name}" from ${mainPath}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+
+        try {
+          const mod = await import(mainPath);
+          pluginInstance = mod.default ?? mod.plugin ?? mod;
+          if (!pluginInstance.name) {
+            pluginInstance.name = manifest.name;
+          }
+          if (pluginInstance.name !== manifest.name) {
+            throw new Error(
+              `Plugin module name "${pluginInstance.name}" does not match manifest name "${manifest.name}"`,
+            );
+          }
+        } catch (err: unknown) {
+          throw new Error(
+            `Failed to load plugin "${manifest.name}" from ${mainPath}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      } else {
+        pluginInstance = {
+          name: manifest.name,
+          version: manifest.version,
+          description: manifest.description,
+        };
       }
-    } else {
-      pluginInstance = {
-        name: manifest.name,
-        version: manifest.version,
-        description: manifest.description,
-      };
-    }
 
-    const pkg: PluginPackage = { manifest, directory: resolvedDir, instance: pluginInstance };
-    this.loaded.set(manifest.name, pkg);
-    await getHookManager().register(pluginInstance);
+      if (pluginInstance.provides) {
+        for (const declaration of pluginInstance.provides) {
+          if (declaration.service !== 'im.provider') continue;
+          const implementation = declaration.implementation as { id?: unknown } | undefined;
+          if (!implementation || typeof implementation.id !== 'string' || !implementation.id) {
+            continue;
+          }
+          const existing = getIMProviderRegistry().resolve(implementation.id);
+          if (existing) {
+            throw new Error(
+              `Plugin "${manifest.name}" IM provider "${implementation.id}" conflicts with existing global state`,
+            );
+          }
+        }
+      }
 
-    // Register any IM providers declared by the plugin.
-    if (pluginInstance.provides) {
-      for (const decl of pluginInstance.provides) {
-        if (decl.service === 'im.provider' && decl.implementation) {
-          getIMProviderRegistry().register(decl.implementation as IMProvider);
-          getGlobalLogger().info('PluginLoader', 'Registered IM provider', {
-            plugin: manifest.name,
-            providerId: (decl.implementation as IMProvider).id,
+      const pkg: PluginPackage = { manifest, directory: resolvedDir, instance: pluginInstance };
+      await hookManager.register(pluginInstance);
+      this.loaded.set(manifest.name, pkg);
+
+      getGlobalLogger().debug('PluginLoader', `Loaded: ${manifest.name}@${manifest.version}`);
+      return pkg;
+    } catch (error) {
+      this.loaded.delete(manifest.name);
+      if (hookManager.getPlugin(manifest.name) === pluginInstance!) {
+        try {
+          await hookManager.unregister(manifest.name);
+        } catch (cleanupError) {
+          getGlobalLogger().warn('PluginLoader', `Failed to roll back plugin "${manifest.name}"`, {
+            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
           });
         }
       }
+      if (rulePackRegistered) DefaultContentScanner.unregisterRulePack(manifest.name);
+      if (permissionRegistered) getGlobalPluginPermissionRegistry().unregister(manifest.name);
+      throw error;
     }
-
-    getGlobalLogger().debug('PluginLoader', `Loaded: ${manifest.name}@${manifest.version}`);
-    return pkg;
   }
 
   async loadAll(): Promise<PluginPackage[]> {
@@ -398,22 +474,25 @@ export class PluginLoader {
     const pkg = this.loaded.get(name);
     if (!pkg) return false;
 
-    // Unregister any IM providers provided by this plugin.
-    if (pkg.instance.provides) {
-      for (const decl of pkg.instance.provides) {
-        if (decl.service === 'im.provider' && decl.implementation) {
-          getIMProviderRegistry().unregister((decl.implementation as IMProvider).id);
-        }
-      }
-    }
-
     await getHookManager().unregister(name);
+    DefaultContentScanner.unregisterRulePack(name);
     this.loaded.delete(name);
     return true;
   }
 
   getLoadedPlugins(): PluginPackage[] {
     return Array.from(this.loaded.values());
+  }
+
+  private hasOperatorImportGrant(pluginName: string, digest: string, pluginDir: string): boolean {
+    const grants =
+      this.importGrants ??
+      readOperatorImportGrants(this.importGrantFile, [
+        this.workspaceRoot,
+        ...this.watchDirs,
+        pluginDir,
+      ]);
+    return grants.some((grant) => grant.pluginName === pluginName && grant.digest === digest);
   }
 
   isLoaded(name: string): boolean {
@@ -476,7 +555,17 @@ async function resolveContentScannerRules(
   }
 
   if (declaration.export) {
-    const modulePath = path.resolve(pluginDir, declaration.export.module);
+    const enforcer = getGlobalPluginPermissionRegistry().get(manifest.name);
+    if (!enforcer?.requiresHostModuleImport) {
+      throw new Error(
+        `Plugin "${manifest.name}" blocked: content scanner module initialization requires the explicit "permissions.hostModuleImport" grant`,
+      );
+    }
+    const modulePath = resolvePluginPackagePath(
+      pluginDir,
+      declaration.export.module,
+      'content scanner export',
+    );
     const mod = await import(modulePath);
     const exported = mod[declaration.export.name];
     if (!Array.isArray(exported)) {
@@ -496,6 +585,100 @@ async function resolveContentScannerRules(
   }
 
   return [];
+}
+
+/** Compute the package digest an operator must bind before host import. */
+export function computePluginImportDigest(pluginDir: string): string {
+  const resolvedDir = path.resolve(pluginDir);
+  const packageFiles = collectPluginPackageFiles(resolvedDir);
+  const hash = crypto.createHash('sha256');
+  hash.update('commander-plugin-package-v1\0');
+  for (const filePath of packageFiles.sort()) {
+    const relative = path.relative(resolvedDir, filePath).split(path.sep).join('/');
+    hash.update(`\0${relative}\0`);
+    hash.update(fs.readFileSync(filePath));
+  }
+  return hash.digest('hex');
+}
+
+function collectPluginPackageFiles(pluginDir: string): string[] {
+  const files: string[] = [];
+  const rootStat = fs.lstatSync(pluginDir);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new Error('Plugin package root must be a real directory');
+  }
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const filePath = path.join(dir, entry.name);
+      const stat = fs.lstatSync(filePath);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`Plugin package contains forbidden symbolic link: ${filePath}`);
+      }
+      if (stat.isDirectory()) walk(filePath);
+      else if (stat.isFile()) files.push(filePath);
+      else throw new Error(`Plugin package contains forbidden special file: ${filePath}`);
+    }
+  };
+  walk(pluginDir);
+  return files;
+}
+
+function resolvePluginPackagePath(pluginDir: string, candidate: string, label: string): string {
+  const root = path.resolve(pluginDir);
+  const resolved = path.resolve(root, candidate);
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+    throw new Error(`Plugin ${label} path must stay inside the package directory`);
+  }
+  return resolved;
+}
+
+function isWithinAnyRoot(candidate: string, roots: readonly string[]): boolean {
+  return roots.some((root) => {
+    const resolvedRoot = path.resolve(root);
+    return candidate === resolvedRoot || candidate.startsWith(`${resolvedRoot}${path.sep}`);
+  });
+}
+
+function readOperatorImportGrants(
+  filePath: string,
+  forbiddenRoots: readonly string[],
+): PluginImportGrant[] {
+  const resolvedGrantFile = path.resolve(filePath);
+  if (isWithinAnyRoot(resolvedGrantFile, forbiddenRoots)) {
+    throw new Error('Plugin import grant file must be outside workspace and plugin watched roots');
+  }
+  if (!fs.existsSync(resolvedGrantFile)) return [];
+
+  const stat = fs.lstatSync(resolvedGrantFile);
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new Error('Plugin import grant path must be a regular file, not a link or special file');
+  }
+  const realGrantFile = fs.realpathSync(resolvedGrantFile);
+  if (isWithinAnyRoot(realGrantFile, forbiddenRoots)) {
+    throw new Error('Plugin import grant file must be outside workspace and plugin watched roots');
+  }
+  if (process.platform !== 'win32') {
+    if ((stat.mode & 0o022) !== 0) {
+      throw new Error('Plugin import grant file must not be group/world writable');
+    }
+    if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) {
+      throw new Error('Plugin import grant file must be owned by the current operator');
+    }
+  }
+
+  const parsed: unknown = JSON.parse(fs.readFileSync(realGrantFile, 'utf8'));
+  const rows = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === 'object' && Array.isArray((parsed as { grants?: unknown }).grants)
+      ? (parsed as { grants: unknown[] }).grants
+      : [];
+  return rows.filter(
+    (row): row is PluginImportGrant =>
+      !!row &&
+      typeof row === 'object' &&
+      typeof (row as PluginImportGrant).pluginName === 'string' &&
+      /^[a-f0-9]{64}$/i.test((row as PluginImportGrant).digest),
+  );
 }
 
 import * as os from 'node:os';

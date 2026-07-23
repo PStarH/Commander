@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 
-import { createCostRouter } from '../src/costEndpoints';
+import { createCostRouter, entryMatchesTenant } from '../src/costEndpoints';
+import type { CostLedgerEntry } from '@commander/core';
 import { tenantContextMiddleware } from '../src/tenantContextMiddleware';
 import { getUnifiedCostAuthority, resetUnifiedCostAuthority } from '@commander/core';
 import { runWithTenant } from '@commander/core/runtime/tenantContext';
@@ -24,7 +25,9 @@ describe('cost endpoints tenant isolation', () => {
   });
 
   after(async () => {
-    await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve())),
+    );
   });
 
   beforeEach(() => {
@@ -43,6 +46,21 @@ describe('cost endpoints tenant isolation', () => {
       );
     });
   }
+
+  it('does not assign an untagged legacy ledger entry to every tenant', () => {
+    const entry: CostLedgerEntry = {
+      timestamp: new Date().toISOString(),
+      runId: 'legacy-run',
+      kind: 'llm',
+      modelOrTool: 'gpt-4o',
+      predictedCostUsd: 1,
+      actualCostUsd: 1,
+    };
+
+    assert.equal(entryMatchesTenant(entry, 'tenant-a'), false);
+    assert.equal(entryMatchesTenant(entry, 'local'), true);
+    assert.equal(entryMatchesTenant(entry, undefined), true);
+  });
 
   it('returns only the current tenant summary', async () => {
     recordForTenant('tenant-a', 10.5);
@@ -107,10 +125,7 @@ describe('cost endpoints tenant isolation', () => {
 
   it('falls back to default tenant without a tenant header', async () => {
     // Single-tenant callers do not wrap requests in a tenant context.
-    getUnifiedCostAuthority().postCall(
-      { runId: 'run-default', model: 'gpt-4o' },
-      { costUsd: 3.0 },
-    );
+    getUnifiedCostAuthority().postCall({ runId: 'run-default', model: 'gpt-4o' }, { costUsd: 3.0 });
 
     const res = await fetch(`${baseUrl}/api/cost/summary`);
     assert.equal(res.status, 200);

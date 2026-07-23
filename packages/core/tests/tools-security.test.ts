@@ -268,10 +268,11 @@ describe('ExecPolicy Security', () => {
   });
 
   describe('process wrapper stripping (from Claude Code)', () => {
-    it('should strip timeout prefix and match inner command', () => {
+    it('should strip timeout prefix and preserve inner command approval requirements', () => {
       const engine = new ExecPolicyEngine();
       const result = engine.evaluate('timeout 30 npm test');
-      assert.strictEqual(result.decision, 'allow');
+      assert.strictEqual(result.decision, 'prompt');
+      assert.strictEqual(result.rule?.id, 'prompt-dev-execution');
     });
 
     it('should strip nice prefix and match inner command', () => {

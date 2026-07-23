@@ -136,12 +136,12 @@ describe('ExecPolicy fail-safe defaults', () => {
     );
   });
 
-  it('still allows known safe commands', () => {
+  it('allows read-only commands but prompts for development-tool execution', () => {
     const policy = new ExecPolicyEngine();
 
     assert.strictEqual(policy.evaluate('ls -la').decision, 'allow');
     assert.strictEqual(policy.evaluate('git status').decision, 'allow');
-    assert.strictEqual(policy.evaluate('npm install').decision, 'allow');
+    assert.strictEqual(policy.evaluate('npm install').decision, 'prompt');
   });
 
   it('still forbids dangerous commands', () => {

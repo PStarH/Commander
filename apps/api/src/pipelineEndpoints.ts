@@ -1,8 +1,13 @@
 import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
+import { randomUUID } from 'node:crypto';
 import { SequentialPipeline } from '@commander/core';
 import { PatternStateMachineFactory, PatternStateMachine } from './patternStateMachine';
-import { SequentialExecutor, createRealAgentExecutor } from './sequentialExecutor';
+import {
+  SequentialExecutor,
+  createRealAgentExecutor,
+  type AgentExecutor,
+} from './sequentialExecutor';
 import { legacyExecutionDisabledReason, isLegacyExecutionAllowed } from './legacyExecutionGuard';
 import { hasRole, type UserRole } from './userStore';
 
@@ -24,7 +29,36 @@ function requireRole(requiredRole: UserRole = 'admin') {
   };
 }
 
-export function createPipelineRouter(): Router {
+type OwnedResource<T> = { resource: T; tenantId?: string; ownerId?: string };
+
+function principalId(req: Request): string | undefined {
+  return req.user?.id ?? req.apiKeyId;
+}
+
+function principalTenant(req: Request): string | undefined {
+  return req.user?.tenantId ?? req.tenantId;
+}
+
+function isSuperAdmin(req: Request): boolean {
+  return !!req.user && hasRole(req.user.role, 'super_admin');
+}
+
+function canAccessResource(req: Request, resource: OwnedResource<unknown>): boolean {
+  if (isSuperAdmin(req)) return true;
+  const principal = principalId(req);
+  const tenant = principalTenant(req);
+  if (!principal || !tenant || !resource.tenantId) return false;
+  return (
+    resource.tenantId === tenant &&
+    ((!!req.user && hasRole(req.user.role, 'admin')) || resource.ownerId === principal)
+  );
+}
+
+export interface CreatePipelineRouterOptions {
+  agentExecutor?: AgentExecutor;
+}
+
+export function createPipelineRouter(options: CreatePipelineRouterOptions = {}): Router {
   const router = Router();
 
   // The old pipeline and in-memory state-machine routes are not a second
@@ -45,7 +79,7 @@ export function createPipelineRouter(): Router {
   });
 
   // Pattern State Machine
-  const activeMachines = new Map<string, PatternStateMachine>();
+  const activeMachines = new Map<string, OwnedResource<PatternStateMachine>>();
 
   router.post('/api/state-machine/create', (req, res) => {
     const { pattern } = req.body ?? {};
@@ -56,8 +90,12 @@ export function createPipelineRouter(): Router {
     }
     try {
       const machine = PatternStateMachineFactory.create(pattern);
-      const machineId = `sm-${Date.now()}`;
-      activeMachines.set(machineId, machine);
+      const machineId = `sm-${randomUUID()}`;
+      activeMachines.set(machineId, {
+        resource: machine,
+        tenantId: principalTenant(req),
+        ownerId: principalId(req),
+      });
       res.json({
         machineId,
         pattern,
@@ -71,10 +109,11 @@ export function createPipelineRouter(): Router {
   router.post('/api/state-machine/:machineId/transition', async (req, res) => {
     const { machineId } = req.params;
     const { targetState } = req.body ?? {};
-    const machine = activeMachines.get(machineId);
-    if (!machine) {
+    const entry = activeMachines.get(machineId);
+    if (!entry || !canAccessResource(req, entry)) {
       return res.status(404).json({ error: 'Machine not found' });
     }
+    const machine = entry.resource;
     if (!targetState) {
       return res.status(400).json({ error: 'targetState is required' });
     }
@@ -88,17 +127,17 @@ export function createPipelineRouter(): Router {
 
   router.get('/api/state-machine/:machineId', (req, res) => {
     const { machineId } = req.params;
-    const machine = activeMachines.get(machineId);
-    if (!machine) {
+    const entry = activeMachines.get(machineId);
+    if (!entry || !canAccessResource(req, entry)) {
       return res.status(404).json({ error: 'Machine not found' });
     }
-    res.json({ machineId, currentState: machine.getCurrentState() });
+    res.json({ machineId, currentState: entry.resource.getCurrentState() });
   });
 
   // Sequential Executor
-  const pipelineRuns = new Map<string, any>();
+  const pipelineRuns = new Map<string, OwnedResource<any>>();
   const sequentialExecutor = new SequentialExecutor({
-    agentExecutor: createRealAgentExecutor(),
+    agentExecutor: options.agentExecutor ?? createRealAgentExecutor(),
     runContextProvider: async (ctx: { projectId?: string }) => ({
       projectId: ctx?.projectId ?? 'default',
       run: { runId: 'run', issuedAt: new Date().toISOString() },
@@ -153,7 +192,11 @@ export function createPipelineRouter(): Router {
       const run = await sequentialExecutor.execute(pipeline as unknown as SequentialPipeline, {
         input,
       });
-      pipelineRuns.set(run.id, run);
+      pipelineRuns.set(run.id, {
+        resource: run,
+        tenantId: principalTenant(req),
+        ownerId: principalId(req),
+      });
       res.json(run);
     } catch (err: unknown) {
       process.stderr.write(
@@ -163,14 +206,19 @@ export function createPipelineRouter(): Router {
     }
   });
 
-  router.get('/api/pipeline/runs/:runId', (req, res) => {
-    const run = pipelineRuns.get(req.params.runId);
-    if (!run) return res.status(404).json({ error: 'Run not found' });
-    res.json(run);
+  router.get('/api/pipeline/runs/:runId', requireAuth, requireRole('admin'), (req, res) => {
+    const entry = pipelineRuns.get(String(req.params.runId));
+    if (!entry || !canAccessResource(req, entry))
+      return res.status(404).json({ error: 'Run not found' });
+    res.json(entry.resource);
   });
 
-  router.get('/api/pipeline/runs', (_req, res) => {
-    res.json(Array.from(pipelineRuns.values()));
+  router.get('/api/pipeline/runs', requireAuth, requireRole('admin'), (req, res) => {
+    res.json(
+      Array.from(pipelineRuns.values())
+        .filter((entry) => canAccessResource(req, entry))
+        .map((entry) => entry.resource),
+    );
   });
 
   return router;

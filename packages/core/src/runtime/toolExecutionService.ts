@@ -33,7 +33,7 @@ import {
   formatValidationErrors,
   formatValidationErrorsJson,
 } from './toolCallValidator';
-import { isMutationTool } from './runtimeHelpers';
+import { classifyToolEffect } from './runtimeHelpers';
 import { getSideEffectGate, SideEffectGateError } from './sideEffectGate';
 import { getCapabilityTokenVerifier } from '../security/capabilityToken';
 import { createSandboxWorkloadContext, toRuntimeWorkloadMetadata } from '../sandbox/workload';
@@ -191,9 +191,13 @@ export class ToolExecutionService {
         };
       }
 
-      const reversibility = this.runtime.compensationService
-        .getRegistry()
-        .assessReversibility(toolCall.name);
+      const effect = classifyToolEffect(toolCall.name, toolCall.arguments);
+      const compensationToolName = effect.compensationToolName ?? effect.semanticToolName;
+      const reversibility = effect.isReadOnly
+        ? 'reversible'
+        : this.runtime.compensationService
+            .getRegistry()
+            .assessReversibility(effect.semanticToolName);
       if (reversibility === 'non_reversible') {
         bus.publish('system.alert', 'runtime', {
           type: 'non_reversible_tool',
@@ -206,7 +210,7 @@ export class ToolExecutionService {
       // ── Layer 2 ReversibilityGate: block irreversible actions without approval ──
       if (this.runtime.reversibilityGate) {
         const gateDecision = await this.runtime.reversibilityGate.evaluate(
-          toolCall.name,
+          effect.semanticToolName,
           toolCall.arguments as Record<string, unknown>,
           { runId, agentId },
         );
@@ -320,13 +324,11 @@ export class ToolExecutionService {
         };
       }
 
-      // Record compensable action for mutation tools before execution
-      const isMutation = isMutationTool(toolCall.name);
       const actionId = this.runtime.generateActionId();
-      if (isMutation) {
+      if (effect.compensable) {
         this.runtime.compensationService.getRegistry().recordAction({
           actionId,
-          toolName: toolCall.name,
+          toolName: compensationToolName,
           args: toolCall.arguments as Record<string, unknown>,
           description: `${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 200)})`,
           tags: ['tool', toolCall.name],
@@ -406,7 +408,7 @@ export class ToolExecutionService {
           externalSystem: tool.externalSystem ?? toolCall.name,
           args: validatedArgs as Record<string, unknown>,
           stepId: toolCall.id ?? actionId,
-          compensable: isMutation,
+          effect,
           tags: ['tool_execution', toolCall.name],
           description: `${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 200)})`,
           tenantId,
@@ -826,7 +828,7 @@ export class ToolExecutionService {
         }
 
         // Fire handleMutationToolFailure for mutation tools (generates rollback plan, publishes event, auto-executes safe plans)
-        if (isMutationTool(toolCall.name) && executedMutations) {
+        if (effect.destructive && executedMutations) {
           try {
             await this.runtime.compensationService.handleMutationToolFailure(
               toolCall.name,

@@ -1,11 +1,72 @@
 import { reportSilentFailure } from '../silentFailureReporter';
+import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
-import type { Tool, ToolDefinition } from '../runtime/types';
+import { randomUUID } from 'node:crypto';
+import type { AgentExecutionContext, Tool, ToolDefinition } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
-import { pathExists } from './_utils/pathExists';
+import {
+  assertSameTenant,
+  getCurrentTenantId,
+  isMultiTenantEnabled,
+  tenantPathSegment,
+  TenantIsolationError,
+} from '../runtime/tenantContext';
 
 const MEMORY_DIR = path.join(process.cwd(), '.commander_memory');
+const NO_FOLLOW = fs.constants.O_NOFOLLOW ?? 0;
+
+function unsafeMemoryPath(target: string): TenantIsolationError {
+  return new TenantIsolationError(
+    `Unsafe memory path: symbolic link or reparse point at ${target}`,
+  );
+}
+
+function isWithinRoot(target: string, root: string): boolean {
+  return target === root || target.startsWith(`${root}${path.sep}`);
+}
+
+async function lstatIfExists(target: string): Promise<fs.Stats | undefined> {
+  try {
+    return await fsp.lstat(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
+function assertDirectoryComponent(target: string, stat: fs.Stats): void {
+  if (stat.isSymbolicLink()) throw unsafeMemoryPath(target);
+  if (!stat.isDirectory()) {
+    throw new TenantIsolationError(`Unsafe memory path: expected directory at ${target}`);
+  }
+}
+
+/** Validate every existing component and ensure its real path remains below MEMORY_DIR. */
+async function validateExistingDirectory(target: string): Promise<boolean> {
+  const root = path.resolve(MEMORY_DIR);
+  const resolved = path.resolve(target);
+  if (!isWithinRoot(resolved, root)) {
+    throw new TenantIsolationError('Memory path escapes storage root');
+  }
+
+  const rootStat = await lstatIfExists(root);
+  if (!rootStat) return false;
+  assertDirectoryComponent(root, rootStat);
+  const realRoot = await fsp.realpath(root);
+
+  let current = root;
+  const relative = path.relative(root, resolved);
+  for (const segment of relative ? relative.split(path.sep) : []) {
+    current = path.join(current, segment);
+    const stat = await lstatIfExists(current);
+    if (!stat) return false;
+    assertDirectoryComponent(current, stat);
+    const realCurrent = await fsp.realpath(current);
+    if (!isWithinRoot(realCurrent, realRoot)) throw unsafeMemoryPath(current);
+  }
+  return true;
+}
 
 /**
  * Lazy async init for the memory directory.
@@ -16,7 +77,7 @@ const MEMORY_DIR = path.join(process.cwd(), '.commander_memory');
  * once per process, and is idempotent under {@link fsp.mkdir} `{recursive:true}`.
  */
 let ensureMemoryDirOnce: Promise<void> | undefined;
-function ensureMemoryDir(): Promise<void> {
+async function ensureMemoryDir(): Promise<void> {
   if (!ensureMemoryDirOnce) {
     ensureMemoryDirOnce = fsp.mkdir(MEMORY_DIR, { recursive: true }).then(() => undefined);
     // Reset the cached promise if mkdir fails so a later retry can re-attempt
@@ -26,14 +87,150 @@ function ensureMemoryDir(): Promise<void> {
       ensureMemoryDirOnce = undefined;
     });
   }
-  return ensureMemoryDirOnce;
+  await ensureMemoryDirOnce;
+  if (!(await validateExistingDirectory(MEMORY_DIR))) {
+    ensureMemoryDirOnce = undefined;
+    return ensureMemoryDir();
+  }
 }
 
-/** Lazy async init for a namespace subdirectory. Idempotent. */
-function ensureNamespace(nsDir: string): Promise<void> {
-  // fsp.mkdir resolves to the first directory created (or undefined). We
-  // explicitly discard the value so callers receive a clean Promise<void>.
-  return fsp.mkdir(nsDir, { recursive: true }).then(() => undefined);
+/** Create tenant/namespace directories one component at a time without following links. */
+async function ensureNamespace(nsDir: string): Promise<void> {
+  await ensureMemoryDir();
+  const root = path.resolve(MEMORY_DIR);
+  const resolved = path.resolve(nsDir);
+  if (!isWithinRoot(resolved, root)) {
+    throw new TenantIsolationError('Memory namespace escapes storage root');
+  }
+
+  let current = root;
+  for (const segment of path.relative(root, resolved).split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment);
+    try {
+      await fsp.mkdir(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+    const stat = await fsp.lstat(current);
+    assertDirectoryComponent(current, stat);
+  }
+  if (!(await validateExistingDirectory(resolved))) {
+    throw new TenantIsolationError(`Unsafe memory path: missing namespace ${resolved}`);
+  }
+}
+
+async function assertSafeFile(filePath: string): Promise<fs.Stats | undefined> {
+  const stat = await lstatIfExists(filePath);
+  if (!stat) return undefined;
+  if (stat.isSymbolicLink()) throw unsafeMemoryPath(filePath);
+  if (!stat.isFile()) {
+    throw new TenantIsolationError(`Unsafe memory path: expected file at ${filePath}`);
+  }
+  if (stat.nlink !== 1) {
+    throw new TenantIsolationError(`Unsafe memory path: hard link at ${filePath}`);
+  }
+  return stat;
+}
+
+async function readMemoryFile(filePath: string): Promise<string> {
+  const beforeOpen = await assertSafeFile(filePath);
+  if (!beforeOpen) {
+    const error = new Error(`Memory file not found: ${filePath}`) as NodeJS.ErrnoException;
+    error.code = 'ENOENT';
+    throw error;
+  }
+  let handle: fsp.FileHandle | undefined;
+  try {
+    handle = await fsp.open(filePath, fs.constants.O_RDONLY | NO_FOLLOW);
+    const opened = await handle.stat();
+    if (
+      !opened.isFile() ||
+      opened.nlink !== 1 ||
+      opened.dev !== beforeOpen.dev ||
+      opened.ino !== beforeOpen.ino
+    ) {
+      throw unsafeMemoryPath(filePath);
+    }
+    return await handle.readFile('utf-8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ELOOP') throw unsafeMemoryPath(filePath);
+    throw error;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+async function writeMemoryFileAtomic(filePath: string, data: string): Promise<void> {
+  const nsDir = path.dirname(filePath);
+  if (!(await validateExistingDirectory(nsDir))) {
+    throw new TenantIsolationError(`Unsafe memory path: missing namespace ${nsDir}`);
+  }
+  await assertSafeFile(filePath);
+
+  const tmpPath = path.join(
+    nsDir,
+    `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`,
+  );
+  let handle: fsp.FileHandle | undefined;
+  try {
+    handle = await fsp.open(
+      tmpPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | NO_FOLLOW,
+      0o600,
+    );
+    const opened = await handle.stat();
+    if (!opened.isFile() || opened.nlink !== 1) throw unsafeMemoryPath(tmpPath);
+    await handle.writeFile(data, 'utf-8');
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+
+    if (!(await validateExistingDirectory(nsDir))) throw unsafeMemoryPath(nsDir);
+    await assertSafeFile(filePath);
+    await fsp.rename(tmpPath, filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ELOOP') throw unsafeMemoryPath(filePath);
+    throw error;
+  } finally {
+    await handle?.close().catch(() => {});
+    await fsp.unlink(tmpPath).catch(() => {});
+  }
+}
+
+function resolveTenantMemoryRoot(ctx?: AgentExecutionContext): string {
+  const authenticatedTenant = ctx?.tenantId;
+  const activeTenant = getCurrentTenantId();
+
+  if (activeTenant && !authenticatedTenant) {
+    throw new TenantIsolationError('Authenticated tenant is required for memory access');
+  }
+  if (isMultiTenantEnabled() && !authenticatedTenant) {
+    throw new TenantIsolationError('Tenant-scoped memory access requires an authenticated tenant');
+  }
+  if (!authenticatedTenant) return MEMORY_DIR;
+
+  assertSameTenant(authenticatedTenant);
+  return path.join(MEMORY_DIR, tenantPathSegment(authenticatedTenant));
+}
+
+function resolveNamespaceDir(memoryRoot: string, namespace: string): string {
+  if (
+    !namespace ||
+    namespace.includes('\0') ||
+    path.isAbsolute(namespace) ||
+    namespace
+      .split(/[\\/]/)
+      .some((segment) => segment === '' || segment === '.' || segment === '..')
+  ) {
+    throw new TenantIsolationError('Invalid memory namespace');
+  }
+
+  const resolved = path.resolve(memoryRoot, namespace);
+  const root = path.resolve(memoryRoot);
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+    throw new TenantIsolationError('Memory namespace escapes tenant storage');
+  }
+  return resolved;
 }
 
 /**
@@ -73,7 +270,7 @@ export class MemoryStoreTool implements Tool {
     category: 'memory',
   };
 
-  async execute(args: Record<string, unknown>): Promise<string> {
+  async execute(args: Record<string, unknown>, ctx?: AgentExecutionContext): Promise<string> {
     const key = String(args.key ?? '');
     const value = String(args.value ?? '');
     const namespace = String(args.namespace ?? 'default');
@@ -86,13 +283,13 @@ export class MemoryStoreTool implements Tool {
       );
     }
 
-    await ensureMemoryDir();
-    const nsDir = path.join(MEMORY_DIR, namespace);
+    const memoryRoot = resolveTenantMemoryRoot(ctx);
+    const nsDir = resolveNamespaceDir(memoryRoot, namespace);
     await ensureNamespace(nsDir);
     const safeKey = key.replace(/[^a-zA-Z0-9_-]/g, '_');
     const filePath = path.join(nsDir, `${safeKey}.json`);
     const data = JSON.stringify({ key, value, timestamp: new Date().toISOString() }, null, 2);
-    await fsp.writeFile(filePath, data, 'utf-8');
+    await writeMemoryFileAtomic(filePath, data);
     return `Stored "${key}" in "${namespace}" (${value.length} chars)`;
   }
 }
@@ -121,23 +318,25 @@ export class MemoryRecallTool implements Tool {
     category: 'memory',
   };
 
-  async execute(args: Record<string, unknown>): Promise<string> {
+  async execute(args: Record<string, unknown>, ctx?: AgentExecutionContext): Promise<string> {
     const key = args.key ? String(args.key) : null;
     const namespace = String(args.namespace ?? 'default');
     const search = args.search ? String(args.search).toLowerCase() : null;
     const limit = Math.min(Number(args.limit ?? 10), 100);
-    const nsDir = path.join(MEMORY_DIR, namespace);
-    if (!(await pathExists(nsDir))) return `No memories in "${namespace}"`;
+    const memoryRoot = resolveTenantMemoryRoot(ctx);
+    const nsDir = resolveNamespaceDir(memoryRoot, namespace);
+    if (!(await validateExistingDirectory(nsDir))) return `No memories in "${namespace}"`;
 
     if (key) {
       const safeKey = key.replace(/[^a-zA-Z0-9_-]/g, '_');
       const filePath = path.join(nsDir, `${safeKey}.json`);
-      if (!(await pathExists(filePath))) return `No memory for "${key}"`;
+      if (!(await assertSafeFile(filePath))) return `No memory for "${key}"`;
       let d: { key?: string; value?: string; timestamp?: string } = {};
       try {
-        const raw = await fsp.readFile(filePath, 'utf-8');
+        const raw = await readMemoryFile(filePath);
         d = JSON.parse(raw);
       } catch (e) {
+        if (e instanceof TenantIsolationError) throw e;
         getGlobalLogger().warn('MemoryRecallTool', 'Failed to parse memory file', {
           error: (e as Error)?.message,
         });
@@ -147,16 +346,20 @@ export class MemoryRecallTool implements Tool {
 
     // Sequential awaits instead of Promise.all so each parse failure is
     // logged individually (matches the original per-file try/catch semantics).
-    const entries = await fsp.readdir(nsDir);
-    const files = entries.filter((f) => f.endsWith('.json'));
+    const entries = await fsp.readdir(nsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) throw unsafeMemoryPath(path.join(nsDir, entry.name));
+    }
+    const files = entries.filter((entry) => entry.isFile() && entry.name.endsWith('.json'));
     const results: Array<{ key: string; value: string; timestamp: string }> = [];
     for (const file of files) {
       try {
         let d: { key?: string; value?: string; timestamp?: string } = {};
         try {
-          const raw = await fsp.readFile(path.join(nsDir, file), 'utf-8');
+          const raw = await readMemoryFile(path.join(nsDir, file.name));
           d = JSON.parse(raw);
         } catch (err) {
+          if (err instanceof TenantIsolationError) throw err;
           reportSilentFailure(err, 'persistenceTool:read');
           d = {};
         }
@@ -167,6 +370,7 @@ export class MemoryRecallTool implements Tool {
           results.push({ key: dk, value: dv, timestamp: dt });
         }
       } catch (e) {
+        if (e instanceof TenantIsolationError) throw e;
         getGlobalLogger().warn('MemoryRecallTool', 'Failed to read memory entry', {
           error: (e as Error)?.message,
         });
@@ -194,32 +398,48 @@ export class MemoryListTool implements Tool {
     category: 'memory',
   };
 
-  async execute(): Promise<string> {
-    if (!(await pathExists(MEMORY_DIR))) return 'No memory directory found';
-    const allEntries = await fsp.readdir(MEMORY_DIR);
+  async execute(_args: Record<string, unknown> = {}, ctx?: AgentExecutionContext): Promise<string> {
+    const memoryRoot = resolveTenantMemoryRoot(ctx);
+    if (!(await validateExistingDirectory(memoryRoot))) return 'No memory directory found';
+    const allEntries = await fsp.readdir(memoryRoot, { withFileTypes: true });
     const namespaces: string[] = [];
-    for (const f of allEntries) {
+    for (const entry of allEntries) {
       try {
-        const stat = await fsp.stat(path.join(MEMORY_DIR, f));
-        if (stat.isDirectory()) namespaces.push(f);
+        const namespacePath = path.join(memoryRoot, entry.name);
+        if (entry.isSymbolicLink()) throw unsafeMemoryPath(namespacePath);
+        if (entry.isDirectory()) {
+          if (!(await validateExistingDirectory(namespacePath)))
+            throw unsafeMemoryPath(namespacePath);
+          namespaces.push(entry.name);
+        }
       } catch (e) {
         getGlobalLogger().warn('MemoryListTool', 'Failed to stat namespace', {
           error: (e as Error)?.message,
         });
+        throw e;
       }
     }
     if (namespaces.length === 0) return 'No memories stored';
     const parts: string[] = [];
     for (const ns of namespaces) {
       try {
-        const entries = await fsp.readdir(path.join(MEMORY_DIR, ns));
-        const count = entries.filter((f) => f.endsWith('.json')).length;
+        const namespacePath = path.join(memoryRoot, ns);
+        if (!(await validateExistingDirectory(namespacePath)))
+          throw unsafeMemoryPath(namespacePath);
+        const entries = await fsp.readdir(namespacePath, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isSymbolicLink()) throw unsafeMemoryPath(path.join(namespacePath, entry.name));
+        }
+        const count = entries.filter(
+          (entry) => entry.isFile() && entry.name.endsWith('.json'),
+        ).length;
         parts.push(`${ns}: ${count} entries`);
       } catch (e) {
         getGlobalLogger().warn('MemoryListTool', 'Failed to count namespace entries', {
           namespace: ns,
           error: (e as Error)?.message,
         });
+        throw e;
       }
     }
     return parts.join('\n');

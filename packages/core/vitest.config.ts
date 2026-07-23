@@ -236,6 +236,7 @@ export default defineConfig({
       'tests/security/agentdojoDefense.test.ts',
       'tests/security/outboundNetworkPolicy.test.ts',
       'tests/security/pluginSupply.test.ts',
+      'tests/security/pluginImportPermission.test.ts',
       'tests/security/raspExtensionsPlugin.test.ts',
       'tests/security/securityResponseEngine.integration.test.ts',
       'tests/security/securityInvariantVerifier.test.ts',
@@ -357,6 +358,7 @@ export default defineConfig({
       'tests/security/a2aMtls.test.ts',
       'tests/security/a2aAuth.test.ts',
       'tests/security/memoryIsolation.test.ts',
+      'tests/security/memoryToolTenantIsolation.test.ts',
       'tests/security/postgresRLS.test.ts',
       // WS9 live-fire cross-tenant isolation tests
       // (DATA/EXEC/NET/RATE/AUDIT/TAMPER/KEY per spec/ws9-tenant-livefire-compliance.md)
