@@ -62,7 +62,9 @@ const authFailureStore = getAuthFailureStore();
 
 // Cleanup old entries every 5 minutes
 setInterval(() => {
-  authFailureStore.cleanup(Date.now(), AUTH_FAILURE_WINDOW_MS);
+  authFailureStore.cleanup(Date.now(), AUTH_FAILURE_WINDOW_MS).catch((err) => {
+    process.stderr.write(`[Auth] Failed to cleanup auth failure entries: ${String(err)}\n`);
+  });
 }, 300_000).unref();
 
 function sha256(input: string): Buffer {
@@ -143,14 +145,13 @@ function getCachedKeys(): Map<string, StoredKey> {
 }
 
 /**
- * Timing-safe key lookup. Hashes the provided token once and looks up the
- * stored key by its hex hash in O(1). The actual comparison is delegated to
- * crypto.timingSafeEqual against the stored hash, preserving timing safety
- * without scanning the entire key map on every request.
+ * Timing-safe key lookup. Hashes the provided token once, then performs an
+ * O(1) Map lookup by hex digest. The matched candidate is verified with
+ * crypto.timingSafeEqual to guard against timing side-channels.
  */
 function findKey(token: string, storedKeys: Map<string, StoredKey>): StoredKey | null {
   const tokenHash = sha256(token);
-  // O(1) lookup by hex digest; timing of the Map.get is independent of the key content.
+  // O(1) lookup by hex digest; timing of Map.get is independent of token content.
   const stored = storedKeys.get(tokenHash.toString('hex'));
   if (stored) {
     try {
@@ -189,35 +190,48 @@ function getClientIp(req: Request): string {
   return req.ip ?? req.socket.remoteAddress ?? 'unknown';
 }
 
-function recordAuthFailure(ip: string): void {
-  const now = Date.now();
-  let entry = authFailureStore.get(ip);
-  if (!entry || entry.lastFailureAt < now - AUTH_FAILURE_WINDOW_MS) {
-    entry = { count: 0, firstFailureAt: now, lastFailureAt: now, lockedUntil: 0 };
-  }
-  entry.count++;
-  entry.lastFailureAt = now;
-  if (entry.count >= MAX_AUTH_FAILURES && entry.lockedUntil === 0) {
-    entry.lockedUntil = now + LOCKOUT_DURATION_MS;
-    try {
-      getGlobalLogger().warn('AuthMiddleware', `IP ${ip} locked out after ${entry.count} failures`, {
-        ip,
-        count: entry.count,
-        lockoutDurationSeconds: LOCKOUT_DURATION_MS / 1000,
-      });
-    } catch {
-      process.stderr.write(
-        `[Auth] IP ${ip} locked out after ${entry.count} failures for ${LOCKOUT_DURATION_MS / 1000}s\n`,
-      );
+async function recordAuthFailure(ip: string): Promise<void> {
+  try {
+    const now = Date.now();
+    let entry = await authFailureStore.get(ip);
+    if (!entry || entry.lastFailureAt < now - AUTH_FAILURE_WINDOW_MS) {
+      entry = { count: 0, firstFailureAt: now, lastFailureAt: now, lockedUntil: 0 };
     }
+    entry.count++;
+    entry.lastFailureAt = now;
+    if (entry.count >= MAX_AUTH_FAILURES && entry.lockedUntil === 0) {
+      entry.lockedUntil = now + LOCKOUT_DURATION_MS;
+      try {
+        getGlobalLogger().warn(
+          'AuthMiddleware',
+          `IP ${ip} locked out after ${entry.count} failures`,
+          {
+            ip,
+            count: entry.count,
+            lockoutDurationSeconds: LOCKOUT_DURATION_MS / 1000,
+          },
+        );
+      } catch {
+        process.stderr.write(
+          `[Auth] IP ${ip} locked out after ${entry.count} failures for ${LOCKOUT_DURATION_MS / 1000}s\n`,
+        );
+      }
+    }
+    await authFailureStore.set(ip, entry);
+  } catch (err) {
+    process.stderr.write(`[Auth] Failed to record auth failure: ${String(err)}\n`);
   }
-  authFailureStore.set(ip, entry);
 }
 
-function isLockedOut(ip: string): boolean {
-  const entry = authFailureStore.get(ip);
-  if (!entry) return false;
-  return entry.lockedUntil > Date.now();
+async function isLockedOut(ip: string): Promise<boolean> {
+  try {
+    const entry = await authFailureStore.get(ip);
+    if (!entry) return false;
+    return entry.lockedUntil > Date.now();
+  } catch (err) {
+    process.stderr.write(`[Auth] Failed to check lockout status: ${String(err)}\n`);
+    return false;
+  }
 }
 
 // Module-load one-shot warning if AUTH_DISABLED=true in production.
@@ -228,7 +242,7 @@ function isLockedOut(ip: string): boolean {
 let _warnedAuthDisabledInProd = false;
 if (isProductionEnv() && process.env.AUTH_DISABLED === 'true' && !_warnedAuthDisabledInProd) {
   _warnedAuthDisabledInProd = true;
-    try {
+  try {
     getGlobalLogger().warn(
       'AuthMiddleware',
       'AUTH_DISABLED=true in production — admin endpoints are publicly accessible. This is a security risk; remove the env var before deployment.',
@@ -242,7 +256,18 @@ if (isProductionEnv() && process.env.AUTH_DISABLED === 'true' && !_warnedAuthDis
   }
 }
 
-export function authMiddleware(req: Request, res: Response, next: NextFunction) {
+export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
+  try {
+    await authMiddlewareInternal(req, res, next);
+  } catch (err) {
+    process.stderr.write(`[Auth] Unhandled error in auth middleware: ${String(err)}\n`);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+}
+
+async function authMiddlewareInternal(req: Request, res: Response, next: NextFunction) {
   // Security: In production, AUTH_DISABLED must never be honored.
   // Per security best practice: authentication bypass is a critical risk;
   // fail hard rather than silently allowing unauthenticated access.
@@ -299,15 +324,24 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
   const clientIp = getClientIp(req);
 
   // Check lockout BEFORE processing auth — fail fast for locked IPs
-  if (isLockedOut(clientIp)) {
-    const entry = authFailureStore.get(clientIp)!;
-    const retryAfter = Math.ceil((entry.lockedUntil - Date.now()) / 1000);
-    res.setHeader('Retry-After', String(retryAfter));
-    res.status(429).json({
-      error: 'Too many authentication failures. Try again later.',
-      retryAfter,
-    });
-    return;
+  if (await isLockedOut(clientIp)) {
+    try {
+      const entry = await authFailureStore.get(clientIp);
+      const lockedUntil = entry?.lockedUntil ?? 0;
+      const retryAfter = Math.max(0, Math.ceil((lockedUntil - Date.now()) / 1000));
+      res.setHeader('Retry-After', String(retryAfter));
+      res.status(429).json({
+        error: 'Too many authentication failures. Try again later.',
+        retryAfter,
+      });
+      return;
+    } catch (err) {
+      process.stderr.write(`[Auth] Failed to read lockout entry: ${String(err)}\n`);
+      res.status(429).json({
+        error: 'Too many authentication failures. Try again later.',
+      });
+      return;
+    }
   }
 
   const apiKeys = getCachedKeys();
@@ -321,8 +355,12 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
   if (apiKeyHeader) {
     const matched = findKey(apiKeyHeader, apiKeys);
     if (!matched) {
-      recordAuthFailure(clientIp);
-      process.stderr.write(`[Auth] Invalid API key from IP=${clientIp} path=${path}\n`);
+      await recordAuthFailure(clientIp);
+      try {
+        getGlobalLogger().warn('AuthMiddleware', 'Invalid API key', { ip: clientIp, path });
+      } catch {
+        process.stderr.write(`[Auth] Invalid API key from IP=${clientIp} path=${path}\n`);
+      }
       res.status(401).json({ error: 'Invalid API key' });
       return;
     }
@@ -333,8 +371,12 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
     const token = authHeader.slice(7);
     const matched = findKey(token, apiKeys);
     if (!matched) {
-      recordAuthFailure(clientIp);
-      process.stderr.write(`[Auth] Invalid bearer token from IP=${clientIp} path=${path}\n`);
+      await recordAuthFailure(clientIp);
+      try {
+        getGlobalLogger().warn('AuthMiddleware', 'Invalid bearer token', { ip: clientIp, path });
+      } catch {
+        process.stderr.write(`[Auth] Invalid bearer token from IP=${clientIp} path=${path}\n`);
+      }
       res.status(401).json({ error: 'Invalid bearer token' });
       return;
     }
