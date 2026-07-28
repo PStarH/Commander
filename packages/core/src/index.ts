@@ -20,6 +20,7 @@
 // ============================================================================
 export * from './models';
 export { reportSilentFailure } from './silentFailureReporter';
+export { optionalImport, optionalRequire } from './optionalImport';
 
 // Orchestration exports
 export {
