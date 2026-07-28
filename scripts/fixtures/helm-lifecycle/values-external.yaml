@@ -1,0 +1,48 @@
+# Enterprise cell profile with external PostgreSQL.
+# The harness creates the referenced Secrets before installing the chart.
+tier: enterprise
+web: { enabled: false }
+worker:
+  enabled: true
+  tenants: external
+  authTokenSecret: external-worker-token
+  image:
+    repository: commander-lifecycle-noop
+    tag: latest
+    pullPolicy: IfNotPresent
+kernelOps:
+  enabled: true
+  image:
+    repository: commander-lifecycle-noop
+    tag: latest
+    pullPolicy: IfNotPresent
+adapterOps:
+  enabled: true
+  replicas: 1
+  secrets: { existingSecret: external-adapter-secrets }
+  image:
+    repository: commander-lifecycle-noop
+    tag: latest
+    pullPolicy: IfNotPresent
+capability: { create: false, existingSecret: external-capability }
+api: { secrets: { existingSecret: external-api-secrets } }
+
+image:
+  repository: commander-lifecycle-noop
+  tag: latest
+  pullPolicy: IfNotPresent
+
+tenantAuthority:
+  configurationSha256: '0000000000000000000000000000000000000000000000000000000000000000'
+  apiProof:
+    publicSecret: commander-lifecycle-api-proof-public
+    caKey: ca.crt
+    certKey: tls.crt
+  cutoverPhase: enforce
+
+database:
+  enabled: true
+  backend: postgres
+  postgres:
+    bundled: false
+    existingSecret: external-database-urls

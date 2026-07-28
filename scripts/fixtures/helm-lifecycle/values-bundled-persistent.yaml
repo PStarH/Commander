@@ -1,0 +1,59 @@
+# Demo cell profile with bundled persistent Postgres.
+# Used by the Kind lifecycle harness for the expand->enforce upgrade scenario.
+tier: demo
+web: { enabled: false }
+worker:
+  enabled: true
+  tenants: local
+  image:
+    repository: commander-lifecycle-noop
+    tag: latest
+    pullPolicy: IfNotPresent
+kernelOps:
+  enabled: true
+  image:
+    repository: commander-lifecycle-noop
+    tag: latest
+    pullPolicy: IfNotPresent
+adapterOps:
+  enabled: true
+  replicas: 1
+  secrets: { create: true }
+  image:
+    repository: commander-lifecycle-noop
+    tag: latest
+    pullPolicy: IfNotPresent
+capability: { create: true }
+api:
+  secrets: { create: true }
+  replicas: 2
+persistence:
+  enabled: true
+  stateSize: 1Gi
+  tracesSize: 1Gi
+  memorySize: 1Gi
+  resultsSize: 1Gi
+
+image:
+  repository: commander-lifecycle-noop
+  tag: latest
+  pullPolicy: IfNotPresent
+
+tenantAuthority:
+  configurationSha256: '0000000000000000000000000000000000000000000000000000000000000000'
+  apiProof:
+    publicSecret: commander-lifecycle-api-proof-public
+    caKey: ca.crt
+    certKey: tls.crt
+  # cutoverPhase is supplied/overridden at install/upgrade time by the harness.
+
+database:
+  enabled: true
+  backend: postgres
+  postgres:
+    bundled: true
+    existingSecret: lifecycle-database
+    persistence: { enabled: true, size: 1Gi }
+    tls:
+      publicSecret: commander-lifecycle-database-public-ca
+      publicCaKey: ca.crt
