@@ -5,7 +5,12 @@
  * Returns issuer + durable verifier port (tenant-bound replay after signature verify).
  */
 
-import { createPrivateKey, createPublicKey, generateKeyPairSync, type KeyObject } from 'node:crypto';
+import {
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+  type KeyObject,
+} from 'node:crypto';
 import {
   CapabilityTokenIssuer,
   CapabilityTokenVerifier,
@@ -83,7 +88,9 @@ const PLACEHOLDER_PATTERN = /replace_me|changeme|demo_only/i;
 
 function assertNoPlaceholderContent(name: string, value: string): void {
   if (PLACEHOLDER_PATTERN.test(value)) {
-    throw requiredError(`${name} contains placeholder content (REPLACE_ME/changeme/DEMO_ONLY) — set real key material`);
+    throw requiredError(
+      `${name} contains placeholder content (REPLACE_ME/changeme/DEMO_ONLY) — set real key material`,
+    );
   }
 }
 
@@ -229,8 +236,7 @@ export function createCapabilityAuthority(
   repository: KernelRepository,
   options: CreateCapabilityAuthorityOptions = {},
 ): CapabilityAuthority {
-  const issuerName =
-    options.issuer ?? env[CAPABILITY_ISSUER_ENV]?.trim() ?? 'commander';
+  const issuerName = options.issuer ?? env[CAPABILITY_ISSUER_ENV]?.trim() ?? 'commander';
   const audience =
     options.audience ?? env[CAPABILITY_AUDIENCE_ENV]?.trim() ?? 'commander.effect-broker';
   const strict = isProductionOrEnterprise(env);

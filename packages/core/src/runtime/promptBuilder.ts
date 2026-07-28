@@ -245,7 +245,7 @@ function buildQualitySection(taskType: TaskType): string {
       '- Use existing patterns, utilities, and helpers from the codebase rather than reimplementing.',
       '- Add appropriate error handling. Do not silently swallow errors.',
       "- Follow the project's existing testing patterns when adding or modifying functionality.",
-      "- Ensure type safety: avoid 'as any' casts and @ts-ignore comments.",
+      "- Follow the project's existing TypeScript conventions.",
       '- Clean up after yourself: remove unused imports, variables, and dead code.',
       '</quality>',
     ].join('\n');

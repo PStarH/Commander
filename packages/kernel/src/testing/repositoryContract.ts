@@ -50,7 +50,12 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
         const stale = await kernel.completeStep({
           stepId: 'step-a',
           tenantId: claimed!.tenantId,
-          lease: { workerId: claimed!.lease!.workerId, token: 'wrong', fencingEpoch: claimed!.lease!.fencingEpoch, workerGeneration: claimed!.lease!.workerGeneration },
+          lease: {
+            workerId: claimed!.lease!.workerId,
+            token: 'wrong',
+            fencingEpoch: claimed!.lease!.fencingEpoch,
+            workerGeneration: claimed!.lease!.workerGeneration,
+          },
           expectedVersion: claimed!.version,
           actor: 'worker-1',
         });
@@ -73,27 +78,59 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
     it('enforces graph dependencies and effect idempotency within a tenant', async () => {
       const kernel = await ctx.create();
       try {
-        await kernel.createRun(createRun([{ id: 'first', kind: 'agent' }, { id: 'second', kind: 'tool', dependencies: ['first'] }]), 'gateway');
+        await kernel.createRun(
+          createRun([
+            { id: 'first', kind: 'agent' },
+            { id: 'second', kind: 'tool', dependencies: ['first'] },
+          ]),
+          'gateway',
+        );
         const first = await claim(kernel, ctx, { capabilities: ['agent'] });
         assert.equal(first?.id, 'first');
         const admitted = await kernel.admitEffect({
-          id: 'effect-1', runId: 'run-1', stepId: 'first', tenantId: 'tenant-a',
-          type: 'http.write', idempotencyKey: 'key-1', policyDecisionId: 'decision-1',
+          id: 'effect-1',
+          runId: 'run-1',
+          stepId: 'first',
+          tenantId: 'tenant-a',
+          type: 'http.write',
+          idempotencyKey: 'key-1',
+          policyDecisionId: 'decision-1',
           policySnapshotId: 'policy-v1',
           actionDigest: 'a'.repeat(64),
-          request: { target: 'x' }, lease: first!.lease!, actor: 'worker-1',
+          request: { target: 'x' },
+          lease: first!.lease!,
+          actor: 'worker-1',
         });
         assert.equal(admitted.admitted, true);
         const replay = await kernel.admitEffect({
-          id: 'effect-2', runId: 'run-1', stepId: 'first', tenantId: 'tenant-a',
-          type: 'http.write', idempotencyKey: 'key-1', policyDecisionId: 'decision-1',
+          id: 'effect-2',
+          runId: 'run-1',
+          stepId: 'first',
+          tenantId: 'tenant-a',
+          type: 'http.write',
+          idempotencyKey: 'key-1',
+          policyDecisionId: 'decision-1',
           policySnapshotId: 'policy-v1',
           actionDigest: 'a'.repeat(64),
-          request: { target: 'x' }, lease: first!.lease!, actor: 'worker-1',
+          request: { target: 'x' },
+          lease: first!.lease!,
+          actor: 'worker-1',
         });
         assert.equal(replay.admitted && replay.replayed, true);
-        await kernel.completeEffect('effect-1', 'tenant-a', first!.lease!, { ok: true }, 'worker-1');
-        await kernel.completeStep({ stepId: 'first', tenantId: first!.tenantId, lease: first!.lease!, expectedVersion: first!.version, actor: 'worker-1' });
+        await kernel.completeEffect(
+          'effect-1',
+          'tenant-a',
+          first!.lease!,
+          { ok: true },
+          'worker-1',
+        );
+        await kernel.completeStep({
+          stepId: 'first',
+          tenantId: first!.tenantId,
+          lease: first!.lease!,
+          expectedVersion: first!.version,
+          actor: 'worker-1',
+        });
         assert.equal((await claim(kernel, ctx, { capabilities: ['tool'] }))?.id, 'second');
       } finally {
         await ctx.destroy(kernel);
@@ -154,7 +191,8 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
           actor: 'worker-1',
         });
         assert.equal(snapshotConflict.admitted, false);
-        if (!snapshotConflict.admitted) assert.equal(snapshotConflict.reason, 'IDEMPOTENCY_CONFLICT');
+        if (!snapshotConflict.admitted)
+          assert.equal(snapshotConflict.reason, 'IDEMPOTENCY_CONFLICT');
 
         const digestConflict = await kernel.admitEffect({
           id: 'effect-bind-digest',
@@ -200,7 +238,8 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
           actor: 'worker-1',
         });
         assert.equal(blankSnapshot.admitted, false);
-        if (!blankSnapshot.admitted) assert.equal(blankSnapshot.reason, 'POLICY_SNAPSHOT_ID_REQUIRED');
+        if (!blankSnapshot.admitted)
+          assert.equal(blankSnapshot.reason, 'POLICY_SNAPSHOT_ID_REQUIRED');
 
         const blankWorker = await kernel.admitEffect({
           id: 'effect-blank-worker',
@@ -230,7 +269,10 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
         const messages = await kernel.claimOutbox(10);
         assert.equal(messages.length, 1);
         assert.equal(messages[0]?.topic, 'commander.run.created');
-        assert.equal(await kernel.markOutboxPublished(messages[0]!.id, messages[0]!.claimToken!), true);
+        assert.equal(
+          await kernel.markOutboxPublished(messages[0]!.id, messages[0]!.claimToken!),
+          true,
+        );
         assert.equal((await kernel.claimOutbox(10)).length, 0);
       } finally {
         await ctx.destroy(kernel);
@@ -259,17 +301,37 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
         await kernel.createRun(createRun(), 'gateway');
         const claimed = await claim(kernel, ctx);
         await kernel.admitEffect({
-          id: 'effect-recon', runId: 'run-1', stepId: claimed!.id, tenantId: 'tenant-a',
-          type: 'ticket.create', idempotencyKey: 'idem-recon', policyDecisionId: 'decision-1',
+          id: 'effect-recon',
+          runId: 'run-1',
+          stepId: claimed!.id,
+          tenantId: 'tenant-a',
+          type: 'ticket.create',
+          idempotencyKey: 'idem-recon',
+          policyDecisionId: 'decision-1',
           policySnapshotId: 'policy-v1',
           actionDigest: 'a'.repeat(64),
-          request: { title: 't' }, lease: claimed!.lease!, actor: 'worker-1',
+          request: { title: 't' },
+          lease: claimed!.lease!,
+          actor: 'worker-1',
         });
-        await kernel.markEffectCompletionUnknown({ effectId: 'effect-recon', tenantId: 'tenant-a', reason: 'timeout', actor: 'worker-1' });
-        assert.equal((await kernel.reconcileEffect({
-          effectId: 'effect-recon', tenantId: 'tenant-a', state: 'COMPLETED',
-          response: { ticketId: 'T-1' }, actor: 'reconciler',
-        }))?.state, 'COMPLETED');
+        await kernel.markEffectCompletionUnknown({
+          effectId: 'effect-recon',
+          tenantId: 'tenant-a',
+          reason: 'timeout',
+          actor: 'worker-1',
+        });
+        assert.equal(
+          (
+            await kernel.reconcileEffect({
+              effectId: 'effect-recon',
+              tenantId: 'tenant-a',
+              state: 'COMPLETED',
+              response: { ticketId: 'T-1' },
+              actor: 'reconciler',
+            })
+          )?.state,
+          'COMPLETED',
+        );
       } finally {
         await ctx.destroy(kernel);
       }
@@ -281,18 +343,37 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
         await kernel.createRun(createRun(), 'gateway');
         const claimed = await claim(kernel, ctx);
         await kernel.admitEffect({
-          id: 'effect-claim', runId: 'run-1', stepId: claimed!.id, tenantId: 'tenant-a',
-          type: 'connector.github.pull-request.create', idempotencyKey: 'claim-key',
+          id: 'effect-claim',
+          runId: 'run-1',
+          stepId: claimed!.id,
+          tenantId: 'tenant-a',
+          type: 'connector.github.pull-request.create',
+          idempotencyKey: 'claim-key',
           policyDecisionId: 'decision-1',
           policySnapshotId: 'policy-v1',
           actionDigest: 'a'.repeat(64),
-          request: {}, lease: claimed!.lease!, actor: 'worker-1',
+          request: {},
+          lease: claimed!.lease!,
+          actor: 'worker-1',
         });
-        await kernel.markEffectCompletionUnknown({ effectId: 'effect-claim', tenantId: 'tenant-a', reason: 'timeout', actor: 'worker-1' });
+        await kernel.markEffectCompletionUnknown({
+          effectId: 'effect-claim',
+          tenantId: 'tenant-a',
+          reason: 'timeout',
+          actor: 'worker-1',
+        });
         const future = new Date(Date.now() + 120_000).toISOString();
-        await kernel.requestReconcile({ effectId: 'effect-claim', tenantId: 'tenant-a', actor: 'api', reconcileAfter: future });
+        await kernel.requestReconcile({
+          effectId: 'effect-claim',
+          tenantId: 'tenant-a',
+          actor: 'api',
+          reconcileAfter: future,
+        });
         assert.equal((await kernel.claimReconcileEffects({ limit: 5, now: new Date() })).length, 0);
-        const claimedEffects = await kernel.claimReconcileEffects({ limit: 5, now: new Date(Date.parse(future) + 1) });
+        const claimedEffects = await kernel.claimReconcileEffects({
+          limit: 5,
+          now: new Date(Date.parse(future) + 1),
+        });
         assert.equal(claimedEffects.length, 1);
       } finally {
         await ctx.destroy(kernel);
@@ -305,16 +386,25 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
         await kernel.createRun(createRun(), 'gateway');
         const claimed = await claim(kernel, ctx);
         await kernel.admitEffect({
-          id: 'effect-fail', runId: 'run-1', stepId: claimed!.id, tenantId: 'tenant-a',
-          type: 'connector.github.pull-request.create', idempotencyKey: 'fail-key',
+          id: 'effect-fail',
+          runId: 'run-1',
+          stepId: claimed!.id,
+          tenantId: 'tenant-a',
+          type: 'connector.github.pull-request.create',
+          idempotencyKey: 'fail-key',
           policyDecisionId: 'decision-1',
           policySnapshotId: 'policy-v1',
           actionDigest: 'a'.repeat(64),
-          request: {}, lease: claimed!.lease!, actor: 'worker-1',
+          request: {},
+          lease: claimed!.lease!,
+          actor: 'worker-1',
         });
         const failed = await kernel.failEffect({
-          effectId: 'effect-fail', tenantId: 'tenant-a', lease: claimed!.lease!,
-          error: { code: 'AUTH_FAILED', message: '401', retryable: false }, actor: 'worker-1',
+          effectId: 'effect-fail',
+          tenantId: 'tenant-a',
+          lease: claimed!.lease!,
+          error: { code: 'AUTH_FAILED', message: '401', retryable: false },
+          actor: 'worker-1',
         });
         assert.equal(failed?.state, 'FAILED');
       } finally {
@@ -326,11 +416,16 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
       const kernel = await ctx.create();
       try {
         await kernel.putKillSwitch({
-          tenantId: 'tenant-a', scope: 'tool', value: 'ticket.create',
-          enabled: true, actor: 'ops', reason: 'block',
+          tenantId: 'tenant-a',
+          scope: 'tool',
+          value: 'ticket.create',
+          enabled: true,
+          actor: 'ops',
+          reason: 'block',
         });
         const match = await kernel.findMatchingKillSwitch('tenant-a', {
-          tool: 'ticket.create', effectType: 'demo.ticket.create',
+          tool: 'ticket.create',
+          effectType: 'demo.ticket.create',
         });
         assert.ok(match);
         assert.equal(match.scope, 'tool');
@@ -368,12 +463,21 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
           createRun([{ id: 'step-human', kind: 'tool', initialState: 'WAITING_FOR_HUMAN' }]),
           'gateway',
         );
-        const interaction = await kernel.createInteraction({
-          runId: 'run-1', stepId: 'step-human', tenantId: 'tenant-a', prompt: 'Approve now?',
-        }, 'gateway');
+        const interaction = await kernel.createInteraction(
+          {
+            runId: 'run-1',
+            stepId: 'step-human',
+            tenantId: 'tenant-a',
+            prompt: 'Approve now?',
+          },
+          'gateway',
+        );
         const answered = await kernel.answerInteraction({
-          interactionId: interaction.id, runId: 'run-1', tenantId: 'tenant-a',
-          response: { approved: true }, actor: 'human',
+          interactionId: interaction.id,
+          runId: 'run-1',
+          tenantId: 'tenant-a',
+          response: { approved: true },
+          actor: 'human',
         });
         assert.equal(answered.status, 'answered');
       } finally {
@@ -386,10 +490,17 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
       try {
         await kernel.createRun(createRun(), 'gateway');
         const firesAt = new Date(Date.now() - 1000);
-        const timer = await kernel.createTimer({
-          runId: 'run-1', stepId: 'step-a', tenantId: 'tenant-a',
-          firesAt, timerType: 'STEP_DEADLINE', payload: {},
-        }, 'test');
+        const timer = await kernel.createTimer(
+          {
+            runId: 'run-1',
+            stepId: 'step-a',
+            tenantId: 'tenant-a',
+            firesAt,
+            timerType: 'STEP_DEADLINE',
+            payload: {},
+          },
+          'test',
+        );
         const fired = await kernel.claimExpiredTimers(new Date(), 10);
         assert.ok(fired.some((t) => t.id === timer.id));
         const token = fired.find((t) => t.id === timer.id)?.claimToken;

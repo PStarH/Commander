@@ -53,104 +53,105 @@ async function seedOutboxRow(
 }
 
 describe('compensationPublisherRace (postgres)', () => {
-  it('publisher never steals compensation topics across 100 interleaved rounds', { skip: !databaseUrl }, async () => {
-    if (!databaseUrl) return;
-    const pool = new Pool({ connectionString: databaseUrl, max: 8 });
-    const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const tenantId = `race-pg-${suffix}`;
-    const repo = new PostgresKernelRepository(pool, { schedulerMode: true });
-    const delivery = new PostgresOutboxDeliveryPort(pool, { baseBackoffMs: 1 });
-    const publisher = new KernelOutboxPublisher(repo, delivery);
+  it(
+    'publisher never steals compensation topics across 100 interleaved rounds',
+    { skip: !databaseUrl },
+    async () => {
+      if (!databaseUrl) return;
+      const pool = new Pool({ connectionString: databaseUrl, max: 8 });
+      const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const tenantId = `race-pg-${suffix}`;
+      const repo = new PostgresKernelRepository(pool, { schedulerMode: true });
+      const delivery = new PostgresOutboxDeliveryPort(pool, { baseBackoffMs: 1 });
+      const publisher = new KernelOutboxPublisher(repo, delivery);
 
-    let legacySeeded = 0;
-    try {
-      await runKernelMigrations(pool);
-      for (let i = 0; i < 40; i++) {
-        await seedOutboxRow(pool, {
-          tenantId,
-          topic: KERNEL_COMPENSATION_TOPIC,
-          key: `${tenantId}/run-race/cmp-${i}`,
-          payload: {
-            type: 'kernel.compensation.requested',
-            tenantId,
-            runId: 'run-race',
-            stepId: 'step-race',
-            compensationAction: 'compensate.github.pull-request.create',
-            compensationPayload: {
-              originalEffectId: `effect-${i}`,
-              forwardResponse: { prNumber: i },
-              destination: 'github://octo/repo/pulls',
-            },
-            idempotencyKey: `cmp:effect-${i}:1.0.0`,
-          },
-        });
-        if (i % 3 === 0) {
+      let legacySeeded = 0;
+      try {
+        await runKernelMigrations(pool);
+        for (let i = 0; i < 40; i++) {
           await seedOutboxRow(pool, {
             tenantId,
-            topic: LEGACY_COMPENSATION_TOPIC,
-            key: `${tenantId}/run-race/legacy-${i}`,
-            payload: { type: 'compensation.requested', tenantId },
-          });
-          legacySeeded++;
-        }
-      }
-      for (let i = 0; i < 20; i++) {
-        await seedOutboxRow(pool, {
-          tenantId,
-          topic: 'kernel.effect.completed',
-          key: `${tenantId}/run-race/noise-${i}`,
-          payload: { type: 'kernel.effect.completed', effectId: `noise-${i}` },
-        });
-      }
-
-      const deliveredCompensationTopics: string[] = [];
-      for (let round = 0; round < 100; round++) {
-        const [pub] = await Promise.all([
-          publisher.publish(5),
-          consumeCompensationBatch(
-            repo,
-            {
-              admit: async () => ({ admitted: true, effectId: `eff-${round}`, replayed: false }),
-              executeAdmitted: async () => ({
-                effectId: `eff-${round}`,
-                replayed: false,
-                response: { ok: true },
-              }),
+            topic: KERNEL_COMPENSATION_TOPIC,
+            key: `${tenantId}/run-race/cmp-${i}`,
+            payload: {
+              type: 'kernel.compensation.requested',
+              tenantId,
+              runId: 'run-race',
+              stepId: 'step-race',
+              compensationAction: 'compensate.github.pull-request.create',
+              compensationPayload: {
+                originalEffectId: `effect-${i}`,
+                forwardResponse: { prNumber: i },
+                destination: 'github://octo/repo/pulls',
+              },
+              idempotencyKey: `cmp:effect-${i}:1.0.0`,
             },
-            async () => 'race-token',
-            { workerId: 'race-consumer', limit: 5, topic: KERNEL_COMPENSATION_TOPIC },
-          ),
-        ]);
-        assert.ok(pub.published + pub.duplicates + pub.retried + pub.failed >= 0);
-      }
-
-      const claimed = await delivery.claim('ws2-race', 500);
-      for (const msg of claimed) {
-        if (
-          msg.topic === KERNEL_COMPENSATION_TOPIC ||
-          msg.topic === LEGACY_COMPENSATION_TOPIC
-        ) {
-          deliveredCompensationTopics.push(msg.topic);
+          });
+          if (i % 3 === 0) {
+            await seedOutboxRow(pool, {
+              tenantId,
+              topic: LEGACY_COMPENSATION_TOPIC,
+              key: `${tenantId}/run-race/legacy-${i}`,
+              payload: { type: 'compensation.requested', tenantId },
+            });
+            legacySeeded++;
+          }
         }
-      }
-      assert.deepEqual(
-        deliveredCompensationTopics,
-        [],
-        'kernel-ops publisher must not deliver compensation topics under interleaved load',
-      );
+        for (let i = 0; i < 20; i++) {
+          await seedOutboxRow(pool, {
+            tenantId,
+            topic: 'kernel.effect.completed',
+            key: `${tenantId}/run-race/noise-${i}`,
+            payload: { type: 'kernel.effect.completed', effectId: `noise-${i}` },
+          });
+        }
 
-      const remainingLegacy = await repo.claimOutboxByTopic(LEGACY_COMPENSATION_TOPIC, 100);
-      assert.equal(remainingLegacy.length, legacySeeded);
-      assert.equal(
-        (await repo.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 100)).length,
-        0,
-        'all kernel compensation rows should be consumed or claimed-through by consumer',
-      );
-    } finally {
-      await pool.query('DELETE FROM commander_outbox_deliveries WHERE tenant_id=$1', [tenantId]);
-      await pool.query('DELETE FROM commander_outbox WHERE tenant_id=$1', [tenantId]);
-      await pool.query('DELETE FROM commander_events WHERE tenant_id=$1', [tenantId]);
-      await pool.end();
-    }
-  });
+        const deliveredCompensationTopics: string[] = [];
+        for (let round = 0; round < 100; round++) {
+          const [pub] = await Promise.all([
+            publisher.publish(5),
+            consumeCompensationBatch(
+              repo,
+              {
+                admit: async () => ({ admitted: true, effectId: `eff-${round}`, replayed: false }),
+                executeAdmitted: async () => ({
+                  effectId: `eff-${round}`,
+                  replayed: false,
+                  response: { ok: true },
+                }),
+              },
+              async () => 'race-token',
+              { workerId: 'race-consumer', limit: 5, topic: KERNEL_COMPENSATION_TOPIC },
+            ),
+          ]);
+          assert.ok(pub.published + pub.duplicates + pub.retried + pub.failed >= 0);
+        }
+
+        const claimed = await delivery.claim('ws2-race', 500);
+        for (const msg of claimed) {
+          if (msg.topic === KERNEL_COMPENSATION_TOPIC || msg.topic === LEGACY_COMPENSATION_TOPIC) {
+            deliveredCompensationTopics.push(msg.topic);
+          }
+        }
+        assert.deepEqual(
+          deliveredCompensationTopics,
+          [],
+          'kernel-ops publisher must not deliver compensation topics under interleaved load',
+        );
+
+        const remainingLegacy = await repo.claimOutboxByTopic(LEGACY_COMPENSATION_TOPIC, 100);
+        assert.equal(remainingLegacy.length, legacySeeded);
+        assert.equal(
+          (await repo.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 100)).length,
+          0,
+          'all kernel compensation rows should be consumed or claimed-through by consumer',
+        );
+      } finally {
+        await pool.query('DELETE FROM commander_outbox_deliveries WHERE tenant_id=$1', [tenantId]);
+        await pool.query('DELETE FROM commander_outbox WHERE tenant_id=$1', [tenantId]);
+        await pool.query('DELETE FROM commander_events WHERE tenant_id=$1', [tenantId]);
+        await pool.end();
+      }
+    },
+  );
 });

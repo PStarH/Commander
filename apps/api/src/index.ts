@@ -1,5 +1,6 @@
 import {
   reportSilentFailure,
+  getGlobalLogger,
   getMetricsCollector,
   HealthCollector,
   buildHealthSources,
@@ -153,22 +154,18 @@ function validateEnvironment(): void {
         console.error(message);
         missingCritical.push(name);
       } else {
-        console.warn(
-          `${message} Using development fallback. Set ${name} before deploying to production.`,
-        );
+        getGlobalLogger().warn('Startup', message, { envVar: name });
       }
     }
   }
 
   if (missingCritical.length > 0) {
-    console.error(
-      `[env] Aborting startup: the following required environment variables are missing: ${missingCritical.join(', ')}`,
-    );
+    getGlobalLogger().error('Startup', `Aborting startup: missing ${missingCritical.join(', ')}`);
     process.exit(1);
   }
 
   if (!process.env.CORS_ORIGINS) {
-    console.warn(
+    getGlobalLogger().warn('Startup',
       `[env] CORS_ORIGINS not set — only localhost origins are allowed. ` +
         `For production/browser access from other hosts, set CORS_ORIGINS=https://your-ui-host.example.com`,
     );
@@ -176,9 +173,9 @@ function validateEnvironment(): void {
 
   const storeBackend = process.env.API_STORE_BACKEND;
   if (!storeBackend && !process.env.DATABASE_URL) {
-    console.warn(
-      `[env] Neither API_STORE_BACKEND nor DATABASE_URL is set. The API will fall back to an in-memory store, ` +
-        `which is ephemeral and only suitable for single-node development/testing. Set DATABASE_URL for production persistence.`,
+    getGlobalLogger().warn(
+      'Startup',
+      'Neither API_STORE_BACKEND nor DATABASE_URL is set. The API will fall back to an in-memory store, which is ephemeral and only suitable for single-node development/testing. Set DATABASE_URL for production persistence.',
     );
   }
 }
@@ -255,9 +252,9 @@ const ALLOWED_ORIGINS = new Set([
 // Local-first default: only localhost origins are allowed when CORS_ORIGINS
 // is unset. Surface this at startup so production deployments know to set it.
 if (!process.env.CORS_ORIGINS) {
-  console.warn(
-    `[commander] CORS_ORIGINS not set — only localhost origins are allowed. ` +
-      `For production/browser access from other hosts, set CORS_ORIGINS=https://your-ui-host.example.com`,
+  getGlobalLogger().warn(
+    'Startup',
+    'CORS_ORIGINS not set — only localhost origins are allowed. For production/browser access from other hosts, set CORS_ORIGINS=https://your-ui-host.example.com',
   );
 }
 
@@ -741,7 +738,7 @@ getPluginLoader()
   .loadAll()
   .then((loaded) => {
     if (loaded.length > 0) {
-      console.log(`[commander] Loaded ${loaded.length} external plugin(s)`);
+      getGlobalLogger().info('PluginLoader', `Loaded ${loaded.length} external plugin(s)`);
     }
   })
   .catch((err: unknown) => reportSilentFailure(err, 'index:pluginLoader.loadAll'));
@@ -962,9 +959,10 @@ async function startServer(): Promise<void> {
   }
 
   // Mount routers after shared state (including memoryIndexManager) is initialized.
-  console.log(
-    '[mount] registered routers:',
-    listRegisteredRouters().map((r) => `${r.name}@${r.mountPath}`),
+  getGlobalLogger().info(
+    'Mount',
+    'registered routers',
+    { routers: listRegisteredRouters().map((r) => `${r.name}@${r.mountPath}`) },
   );
 
   // WS3 §2/§3/§8 — Enterprise gateway middleware (mounted BEFORE product

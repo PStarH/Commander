@@ -155,7 +155,11 @@ describe('execution kernel semantics', () => {
   it('pins policySnapshotId/actionDigest/lease fields and rejects IDEMPOTENCY_CONFLICT on snapshot or digest mismatch', async () => {
     const kernel = new InMemoryKernelRepository();
     await kernel.createRun(createRun([{ id: 'step-a', kind: 'agent' }]), 'gateway');
-    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', workerGeneration: 1, leaseTtlMs: 60_000 });
+    const claimed = await kernel.claimNextStep({
+      workerId: 'worker-1',
+      workerGeneration: 1,
+      leaseTtlMs: 60_000,
+    });
     assert.ok(claimed?.lease);
     const lease = claimed!.lease!;
     const digest = 'a'.repeat(64);
@@ -219,7 +223,11 @@ describe('execution kernel semantics', () => {
   it('admitEffect fails closed on blank policySnapshotId / lease.workerId (never coerces to legacy-unbound)', async () => {
     const kernel = new InMemoryKernelRepository();
     await kernel.createRun(createRun([{ id: 'step-a', kind: 'agent' }]), 'gateway');
-    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', workerGeneration: 1, leaseTtlMs: 60_000 });
+    const claimed = await kernel.claimNextStep({
+      workerId: 'worker-1',
+      workerGeneration: 1,
+      leaseTtlMs: 60_000,
+    });
     assert.ok(claimed?.lease);
     const lease = claimed!.lease!;
 
@@ -659,7 +667,11 @@ describe('execution kernel semantics', () => {
       retryAt: new Date(),
       actor: 'worker-1',
     });
-    assert.equal(withoutRefund?.state, 'FAILED', 'without refundAttempt, attempt=1 >= maxAttempts=1 → FAILED');
+    assert.equal(
+      withoutRefund?.state,
+      'FAILED',
+      'without refundAttempt, attempt=1 >= maxAttempts=1 → FAILED',
+    );
   });
 
   it('requeues with refundAttempt under default maxAttempts=1 after claim', async () => {
@@ -1020,7 +1032,13 @@ describe('execution kernel semantics', () => {
     assert.equal((await kernel.getEffect('effect-pause', 'tenant-a'))?.state, 'COMPLETION_UNKNOWN');
     // Stale lease must not complete a parked effect after pause.
     assert.equal(
-      await kernel.completeEffect('effect-pause', 'tenant-a', claimed!.lease!, { ok: true }, 'worker-1'),
+      await kernel.completeEffect(
+        'effect-pause',
+        'tenant-a',
+        claimed!.lease!,
+        { ok: true },
+        'worker-1',
+      ),
       null,
     );
   });
@@ -1052,7 +1070,10 @@ describe('execution kernel semantics', () => {
 
     await kernel.pauseTenant('tenant-a', 'operator', 'maintenance');
     assert.equal((await kernel.getStep(claimed!.id, 'tenant-a'))?.state, 'RETRY_WAIT');
-    assert.equal((await kernel.getEffect('effect-tenant-pause', 'tenant-a'))?.state, 'COMPLETION_UNKNOWN');
+    assert.equal(
+      (await kernel.getEffect('effect-tenant-pause', 'tenant-a'))?.state,
+      'COMPLETION_UNKNOWN',
+    );
     assert.equal(
       await kernel.completeEffect(
         'effect-tenant-pause',
@@ -1089,10 +1110,7 @@ describe('execution kernel semantics', () => {
     assert.equal(failed?.state, 'FAILED');
     assert.equal((await kernel.getRun('run-1', 'tenant-a'))?.state, 'FAILED');
     assert.equal((await kernel.getStep('step-b', 'tenant-a'))?.state, 'CANCELLED');
-    assert.equal(
-      await kernel.claimNextStep({ workerId: 'worker-2', leaseTtlMs: 60_000 }),
-      null,
-    );
+    assert.equal(await kernel.claimNextStep({ workerId: 'worker-2', leaseTtlMs: 60_000 }), null);
   });
 
   it('cancels open sibling steps when terminal fail enters COMPENSATING', async () => {
@@ -1126,7 +1144,13 @@ describe('execution kernel semantics', () => {
       true,
     );
     assert.ok(
-      await kernel.completeEffect('effect-sibling', 'tenant-a', claimed!.lease!, { ok: true }, 'worker-1'),
+      await kernel.completeEffect(
+        'effect-sibling',
+        'tenant-a',
+        claimed!.lease!,
+        { ok: true },
+        'worker-1',
+      ),
     );
 
     const failed = await kernel.failStep({

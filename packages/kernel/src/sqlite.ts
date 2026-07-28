@@ -4,12 +4,33 @@ import { randomUUID } from 'node:crypto';
 import Database from 'better-sqlite3';
 import type { SqlClient } from './postgres.js';
 import { PostgresKernelRepository } from './postgres.js';
-import { generateWorkerClaimSecret, hashWorkerClaimSecret, verifyWorkerClaimSecret } from './claimSecret.js';
+import {
+  generateWorkerClaimSecret,
+  hashWorkerClaimSecret,
+  verifyWorkerClaimSecret,
+} from './claimSecret.js';
 import type { ClaimStepRequest, KernelStep, KernelStepState } from './types.js';
 import { assertRunTransition, assertStepTransition } from './transitionValidation.js';
 import { SQLITE_KERNEL_SCHEMA_SQL, SQLITE_KERNEL_SCHEMA_VERSION } from './sqliteSchema.js';
 import { createSqlitePool } from './sqlitePool.js';
-import { KERNEL_COMPENSATION_TOPIC, LEGACY_COMPENSATION_TOPIC } from './ops/compensationConsumer.js';
+import {
+  KERNEL_COMPENSATION_TOPIC,
+  LEGACY_COMPENSATION_TOPIC,
+} from './ops/compensationConsumer.js';
+import {
+  EFFECT_STATES,
+  reqEnum,
+  reqInteger,
+  reqJsonObject,
+  reqOptionalInteger,
+  reqOptionalJsonObject,
+  reqOptionalString,
+  reqString,
+  reqStringArray,
+  STEP_STATES,
+  TIMER_STATES,
+  TIMER_TYPES,
+} from './sqliteRowGuards.js';
 
 export interface SqliteKernelRepositoryOptions {
   /** File path; :memory: only in tests when allowMemory=true */
@@ -22,39 +43,36 @@ export interface SqliteKernelRepositoryOptions {
 }
 
 function fromStepAdapter(row: Record<string, unknown>): KernelStep {
-  const lease = row.lease_token && row.lease_worker_id && row.lease_expires_at
-    ? {
-        workerId: row.lease_worker_id as string,
-        workerGeneration: Number(row.lease_worker_generation ?? 0),
-        token: row.lease_token as string,
-        fencingEpoch: Number(row.fencing_epoch),
-        expiresAt: String(row.lease_expires_at),
-      }
-    : undefined;
-  const parseJson = (v: unknown) => {
-    if (typeof v === 'string') {
-      try { return JSON.parse(v); } catch { return {}; }
-    }
-    return v ?? {};
-  };
+  const lease =
+    row.lease_token && row.lease_worker_id && row.lease_expires_at
+      ? {
+          workerId: reqString('commander_steps', row, 'lease_worker_id'),
+          workerGeneration:
+            reqOptionalInteger('commander_steps', row, 'lease_worker_generation') ?? 0,
+          token: reqString('commander_steps', row, 'lease_token'),
+          fencingEpoch: reqInteger('commander_steps', row, 'fencing_epoch'),
+          expiresAt: reqString('commander_steps', row, 'lease_expires_at'),
+        }
+      : undefined;
   return {
-    id: row.id as string,
-    runId: row.run_id as string,
-    tenantId: row.tenant_id as string,
-    kind: row.kind as string,
-    state: row.state as KernelStep['state'],
-    version: Number(row.version),
-    attempt: Number(row.attempt),
-    maxAttempts: Number(row.max_attempts),
-    priority: Number(row.priority),
-    dependencies: parseJson(row.dependencies) as string[],
-    input: parseJson(row.input) as Record<string, unknown>,
-    output: row.output ? parseJson(row.output) as Record<string, unknown> : undefined,
-    error: row.error ? parseJson(row.error) as KernelStep['error'] : undefined,
-    scheduledAt: String(row.scheduled_at),
+    id: reqString('commander_steps', row, 'id'),
+    runId: reqString('commander_steps', row, 'run_id'),
+    tenantId: reqString('commander_steps', row, 'tenant_id'),
+    kind: reqString('commander_steps', row, 'kind'),
+    state: reqEnum('commander_steps', row, 'state', STEP_STATES),
+    version: reqInteger('commander_steps', row, 'version'),
+    attempt: reqInteger('commander_steps', row, 'attempt'),
+    maxAttempts: reqInteger('commander_steps', row, 'max_attempts'),
+    priority: reqInteger('commander_steps', row, 'priority'),
+    dependencies: reqStringArray('commander_steps', row, 'dependencies'),
+    input: reqJsonObject('commander_steps', row, 'input'),
+    output: reqOptionalJsonObject('commander_steps', row, 'output'),
+    error: reqOptionalJsonObject('commander_steps', row, 'error') as
+      KernelStep['error'] | undefined,
+    scheduledAt: reqString('commander_steps', row, 'scheduled_at'),
     lease,
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
+    createdAt: reqString('commander_steps', row, 'created_at'),
+    updatedAt: reqString('commander_steps', row, 'updated_at'),
   };
 }
 
@@ -96,9 +114,9 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
     this.db.pragma(`synchronous = ${synchronous}`);
     this.db.exec(SQLITE_KERNEL_SCHEMA_SQL);
     this.migrateCapabilityRevocationsPk();
-    this.db.prepare(
-      `INSERT OR IGNORE INTO commander_kernel_schema (version) VALUES (?)`,
-    ).run(SQLITE_KERNEL_SCHEMA_VERSION);
+    this.db
+      .prepare(`INSERT OR IGNORE INTO commander_kernel_schema (version) VALUES (?)`)
+      .run(SQLITE_KERNEL_SCHEMA_VERSION);
     if (this.sqliteOptions.path !== ':memory:' && existsSync(this.sqliteOptions.path)) {
       chmodSync(this.sqliteOptions.path, 0o600);
       const dir = dirname(this.sqliteOptions.path);
@@ -115,7 +133,9 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
    * New installs already use PRIMARY KEY (tenant_id, jti) from SQLITE_KERNEL_SCHEMA_SQL.
    */
   private migrateCapabilityRevocationsPk(): void {
-    const cols = this.db.prepare(`PRAGMA table_info(commander_capability_revocations)`).all() as Array<{
+    const cols = this.db
+      .prepare(`PRAGMA table_info(commander_capability_revocations)`)
+      .all() as Array<{
       name: string;
       pk: number;
     }>;
@@ -156,33 +176,37 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
   ): string {
     const status = options?.status ?? 'ACTIVE';
     const claimSecret = options?.claimSecret ?? generateWorkerClaimSecret();
-    this.db.prepare(
-      `INSERT INTO commander_workers (id,kind,version,capabilities,max_concurrency,status,generation,active_steps,identity_subject,tenant_ids)
+    this.db
+      .prepare(
+        `INSERT INTO commander_workers (id,kind,version,capabilities,max_concurrency,status,generation,active_steps,identity_subject,tenant_ids)
        VALUES (?,?,?,?,?,?,?,0,?,?)
        ON CONFLICT(id) DO UPDATE SET
          status=excluded.status,
          generation=excluded.generation,
          tenant_ids=excluded.tenant_ids,
          last_heartbeat_at=datetime('now')`,
-    ).run(
-      workerId,
-      'agent',
-      'test',
-      JSON.stringify(['agent', 'tool']),
-      10,
-      status,
-      generation,
-      workerId,
-      JSON.stringify(tenantIds),
-    );
-    this.db.prepare(
-      `INSERT INTO commander_worker_claim_secrets (worker_id, generation, secret_hash, updated_at)
+      )
+      .run(
+        workerId,
+        'agent',
+        'test',
+        JSON.stringify(['agent', 'tool']),
+        10,
+        status,
+        generation,
+        workerId,
+        JSON.stringify(tenantIds),
+      );
+    this.db
+      .prepare(
+        `INSERT INTO commander_worker_claim_secrets (worker_id, generation, secret_hash, updated_at)
        VALUES (?,?,?,datetime('now'))
        ON CONFLICT(worker_id) DO UPDATE SET
          generation=excluded.generation,
          secret_hash=excluded.secret_hash,
          updated_at=datetime('now')`,
-    ).run(workerId, generation, hashWorkerClaimSecret(claimSecret));
+      )
+      .run(workerId, generation, hashWorkerClaimSecret(claimSecret));
     return claimSecret;
   }
 
@@ -191,7 +215,9 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
     tenantIds: string[] = [],
   ): Promise<T> {
     if (tenantIds.length === 0 && !this.claimSchedulerMode) {
-      throw new Error('Kernel write must explicitly carry tenant scope (or use a scheduler-mode repository)');
+      throw new Error(
+        'Kernel write must explicitly carry tenant scope (or use a scheduler-mode repository)',
+      );
     }
     this.db.prepare('BEGIN IMMEDIATE').run();
     const client = await this.pool.connect();
@@ -200,7 +226,11 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
       this.db.prepare('COMMIT').run();
       return value;
     } catch (error) {
-      try { this.db.prepare('ROLLBACK').run(); } catch { /* preserve root cause */ }
+      try {
+        this.db.prepare('ROLLBACK').run();
+      } catch {
+        /* preserve root cause */
+      }
       throw error;
     } finally {
       client.release();
@@ -218,20 +248,18 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
     claimSecret?: string,
   ): { tenantIds: string[]; openEnded: boolean } | null {
     if (!claimSecret || claimSecret.length === 0) return null;
-    const secretRow = this.db.prepare(
-      `SELECT secret_hash FROM commander_worker_claim_secrets WHERE worker_id = ? AND generation = ?`,
-    ).get(workerId, workerGeneration) as { secret_hash: Buffer | Uint8Array } | undefined;
+    const secretRow = this.db
+      .prepare(
+        `SELECT secret_hash FROM commander_worker_claim_secrets WHERE worker_id = ? AND generation = ?`,
+      )
+      .get(workerId, workerGeneration) as { secret_hash: Buffer | Uint8Array } | undefined;
     if (!secretRow || !verifyWorkerClaimSecret(claimSecret, Buffer.from(secretRow.secret_hash))) {
       return null;
     }
-    const worker = this.db.prepare(
-      `SELECT tenant_ids, status, generation FROM commander_workers WHERE id = ?`,
-    ).get(workerId) as { tenant_ids: string; status: string; generation: number } | undefined;
-    if (
-      !worker ||
-      worker.status !== 'ACTIVE' ||
-      Number(worker.generation) !== workerGeneration
-    ) {
+    const worker = this.db
+      .prepare(`SELECT tenant_ids, status, generation FROM commander_workers WHERE id = ?`)
+      .get(workerId) as { tenant_ids: string; status: string; generation: number } | undefined;
+    if (!worker || worker.status !== 'ACTIVE' || Number(worker.generation) !== workerGeneration) {
       return null;
     }
     let raw: unknown;
@@ -290,9 +318,10 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
       }
 
       const filterTenants = openEnded ? [] : tenantIds;
-      const tenantClause = filterTenants.length === 0
-        ? ''
-        : ` AND s.tenant_id IN (${filterTenants.map(() => '?').join(',')})`;
+      const tenantClause =
+        filterTenants.length === 0
+          ? ''
+          : ` AND s.tenant_id IN (${filterTenants.map(() => '?').join(',')})`;
       const selectSql = `SELECT s.id, s.state AS previous_state FROM commander_steps s JOIN commander_runs r ON r.id=s.run_id AND r.tenant_id=s.tenant_id
            JOIN commander_workers w ON w.id=? AND w.generation=? AND w.status='ACTIVE'
            JOIN commander_tenant_execution_usage u ON u.tenant_id=s.tenant_id
@@ -322,7 +351,10 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         now.toISOString(),
       ];
 
-      const candidate = await client.query<{ id: string; previous_state: KernelStepState }>(selectSql, selectValues);
+      const candidate = await client.query<{ id: string; previous_state: KernelStepState }>(
+        selectSql,
+        selectValues,
+      );
       if (!candidate.rows[0]) return null;
       const previousState = candidate.rows[0].previous_state;
       const stepId = candidate.rows[0].id;
@@ -331,7 +363,14 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         `UPDATE commander_steps SET state='RUNNING', attempt=attempt+1, version=version+1,
            lease_worker_id=?, lease_worker_generation=?, lease_token=?, fencing_epoch=fencing_epoch+1, lease_expires_at=?, updated_at=?
          WHERE id=? AND state IN ('PENDING','RETRY_WAIT') RETURNING *`,
-        [request.workerId, workerGeneration, token, expiry.toISOString(), now.toISOString(), stepId],
+        [
+          request.workerId,
+          workerGeneration,
+          token,
+          expiry.toISOString(),
+          now.toISOString(),
+          stepId,
+        ],
       );
       const row = updateResult.rows[0];
       if (!row) return null;
@@ -361,7 +400,10 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
     }, txScope);
   }
 
-  override async claimOutbox(limit: number, now = new Date()): Promise<import('./types.js').KernelOutboxMessage[]> {
+  override async claimOutbox(
+    limit: number,
+    now = new Date(),
+  ): Promise<import('./types.js').KernelOutboxMessage[]> {
     const token = randomUUID();
     const staleBefore = new Date(now.getTime() - 60_000).toISOString();
     return this.withTransaction(async (client) => {
@@ -370,7 +412,13 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
          WHERE published_at IS NULL AND moved_to_dlq_at IS NULL AND attempts < max_attempts
            AND topic NOT IN (?, ?) AND available_at <= ? AND (claimed_at IS NULL OR claimed_at < ?)
          ORDER BY created_at LIMIT ?`,
-        [KERNEL_COMPENSATION_TOPIC, LEGACY_COMPENSATION_TOPIC, now.toISOString(), staleBefore, limit],
+        [
+          KERNEL_COMPENSATION_TOPIC,
+          LEGACY_COMPENSATION_TOPIC,
+          now.toISOString(),
+          staleBefore,
+          limit,
+        ],
       );
       if (candidates.rows.length === 0) return [];
       const ids = candidates.rows.map((r) => r.id);
@@ -381,17 +429,17 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         [now.toISOString(), token, ...ids],
       );
       return result.rows.map((row) => ({
-        id: row.id as string,
-        eventId: row.event_id as string,
-        tenantId: row.tenant_id as string,
-        topic: row.topic as string,
-        key: row.key as string,
-        payload: typeof row.payload === 'string' ? JSON.parse(row.payload) : (row.payload as Record<string, unknown>) ?? {},
-        attempts: Number(row.attempts),
-        availableAt: String(row.available_at),
-        publishedAt: row.published_at ? String(row.published_at) : undefined,
+        id: reqString('commander_outbox', row, 'id'),
+        eventId: reqString('commander_outbox', row, 'event_id'),
+        tenantId: reqString('commander_outbox', row, 'tenant_id'),
+        topic: reqString('commander_outbox', row, 'topic'),
+        key: reqString('commander_outbox', row, 'key'),
+        payload: reqJsonObject('commander_outbox', row, 'payload'),
+        attempts: reqInteger('commander_outbox', row, 'attempts'),
+        availableAt: reqString('commander_outbox', row, 'available_at'),
+        publishedAt: reqOptionalString('commander_outbox', row, 'published_at'),
         claimToken: token,
-        createdAt: String(row.created_at),
+        createdAt: reqString('commander_outbox', row, 'created_at'),
       }));
     });
   }
@@ -413,7 +461,9 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         throw new Error('claimOutboxByTopic requires workerId on the worker LOGIN path');
       }
       if (typeof authz?.workerGeneration !== 'number' || !Number.isFinite(authz.workerGeneration)) {
-        throw new Error('claimOutboxByTopic requires finite workerGeneration on the worker LOGIN path');
+        throw new Error(
+          'claimOutboxByTopic requires finite workerGeneration on the worker LOGIN path',
+        );
       }
       if (!authz.claimSecret) {
         throw new Error('claimOutboxByTopic requires claimSecret on the worker LOGIN path');
@@ -456,22 +506,24 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         [now.toISOString(), token, ...ids],
       );
       return result.rows.map((row) => ({
-        id: row.id as string,
-        eventId: row.event_id as string,
-        tenantId: row.tenant_id as string,
-        topic: row.topic as string,
-        key: row.key as string,
-        payload: typeof row.payload === 'string' ? JSON.parse(row.payload) : (row.payload as Record<string, unknown>) ?? {},
-        attempts: Number(row.attempts),
-        availableAt: String(row.available_at),
-        publishedAt: row.published_at ? String(row.published_at) : undefined,
+        id: reqString('commander_outbox', row, 'id'),
+        eventId: reqString('commander_outbox', row, 'event_id'),
+        tenantId: reqString('commander_outbox', row, 'tenant_id'),
+        topic: reqString('commander_outbox', row, 'topic'),
+        key: reqString('commander_outbox', row, 'key'),
+        payload: reqJsonObject('commander_outbox', row, 'payload'),
+        attempts: reqInteger('commander_outbox', row, 'attempts'),
+        availableAt: reqString('commander_outbox', row, 'available_at'),
+        publishedAt: reqOptionalString('commander_outbox', row, 'published_at'),
         claimToken: token,
-        createdAt: String(row.created_at),
+        createdAt: reqString('commander_outbox', row, 'created_at'),
       }));
     }, txScope);
   }
 
-  override async claimReconcileEffects(input: import('./types.js').ClaimReconcileEffectsInput): Promise<import('./types.js').ClaimedReconcileEffect[]> {
+  override async claimReconcileEffects(
+    input: import('./types.js').ClaimReconcileEffectsInput,
+  ): Promise<import('./types.js').ClaimedReconcileEffect[]> {
     const at = input.now ?? new Date();
     const claimTtlMs = input.claimTtlMs ?? 60_000;
     const claimToken = randomUUID();
@@ -514,9 +566,10 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
       }
 
       const filterTenants = tenantFilter ?? [];
-      const tenantClause = tenantFilter === null
-        ? ''
-        : ` AND tenant_id IN (${filterTenants.map(() => '?').join(',')})`;
+      const tenantClause =
+        tenantFilter === null
+          ? ''
+          : ` AND tenant_id IN (${filterTenants.map(() => '?').join(',')})`;
       const candidates = await client.query<{ id: string }>(
         `SELECT id FROM commander_effects
          WHERE state='COMPLETION_UNKNOWN' AND reconcile_escalated_at IS NULL
@@ -535,37 +588,50 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
       );
       return result.rows.map((row) => ({
         effect: {
-          id: row.id as string,
-          runId: row.run_id as string,
-          stepId: row.step_id as string,
-          tenantId: row.tenant_id as string,
-          type: row.type as string,
-          idempotencyKey: row.idempotency_key as string,
-          policyDecisionId: row.policy_decision_id as string,
-          policySnapshotId: (row.policy_snapshot_id as string) || 'legacy-unbound',
-          actionDigest: (row.action_digest as string) || (row.request_hash as string),
-          leaseWorkerId: (row.lease_worker_id as string) || 'legacy-unbound',
-          leaseWorkerGeneration: Number(row.lease_worker_generation ?? 0),
-          leaseFencingEpoch: Number(row.lease_fencing_epoch ?? 0),
-          state: row.state as import('./types.js').KernelEffect['state'],
-          requestHash: row.request_hash as string,
-          request: typeof row.request === 'string' ? JSON.parse(row.request) : row.request as Record<string, unknown>,
-          response: row.response ? (typeof row.response === 'string' ? JSON.parse(row.response) : row.response as Record<string, unknown>) : undefined,
-          createdAt: String(row.created_at),
-          completedAt: row.completed_at ? String(row.completed_at) : undefined,
-          reconcileAttempts: Number(row.reconcile_attempts ?? 0),
-          reconcileAfter: row.reconcile_after ? String(row.reconcile_after) : null,
-          reconcileClaimToken: (row.reconcile_claim_token as string | null) ?? null,
-          reconcileClaimExpiresAt: row.reconcile_claim_expires_at ? String(row.reconcile_claim_expires_at) : null,
-          reconcileLastError: row.reconcile_last_error ? (typeof row.reconcile_last_error === 'string' ? JSON.parse(row.reconcile_last_error) : row.reconcile_last_error as Record<string, unknown>) : null,
-          reconcileEscalatedAt: row.reconcile_escalated_at ? String(row.reconcile_escalated_at) : null,
+          id: reqString('commander_effects', row, 'id'),
+          runId: reqString('commander_effects', row, 'run_id'),
+          stepId: reqString('commander_effects', row, 'step_id'),
+          tenantId: reqString('commander_effects', row, 'tenant_id'),
+          type: reqString('commander_effects', row, 'type'),
+          idempotencyKey: reqString('commander_effects', row, 'idempotency_key'),
+          policyDecisionId: reqString('commander_effects', row, 'policy_decision_id'),
+          policySnapshotId:
+            reqOptionalString('commander_effects', row, 'policy_snapshot_id') ?? 'legacy-unbound',
+          actionDigest:
+            reqOptionalString('commander_effects', row, 'action_digest') ??
+            reqString('commander_effects', row, 'request_hash'),
+          leaseWorkerId:
+            reqOptionalString('commander_effects', row, 'lease_worker_id') ?? 'legacy-unbound',
+          leaseWorkerGeneration:
+            reqOptionalInteger('commander_effects', row, 'lease_worker_generation') ?? 0,
+          leaseFencingEpoch:
+            reqOptionalInteger('commander_effects', row, 'lease_fencing_epoch') ?? 0,
+          state: reqEnum('commander_effects', row, 'state', EFFECT_STATES),
+          requestHash: reqString('commander_effects', row, 'request_hash'),
+          request: reqJsonObject('commander_effects', row, 'request'),
+          response: reqOptionalJsonObject('commander_effects', row, 'response'),
+          createdAt: reqString('commander_effects', row, 'created_at'),
+          completedAt: reqOptionalString('commander_effects', row, 'completed_at'),
+          reconcileAttempts: reqInteger('commander_effects', row, 'reconcile_attempts'),
+          reconcileAfter: reqOptionalString('commander_effects', row, 'reconcile_after') ?? null,
+          reconcileClaimToken:
+            reqOptionalString('commander_effects', row, 'reconcile_claim_token') ?? null,
+          reconcileClaimExpiresAt:
+            reqOptionalString('commander_effects', row, 'reconcile_claim_expires_at') ?? null,
+          reconcileLastError:
+            reqOptionalJsonObject('commander_effects', row, 'reconcile_last_error') ?? null,
+          reconcileEscalatedAt:
+            reqOptionalString('commander_effects', row, 'reconcile_escalated_at') ?? null,
         },
         claimToken,
       }));
     }, txScope);
   }
 
-  override async claimExpiredTimers(now: Date = new Date(), limit: number = 100): Promise<import('./types.js').KernelTimer[]> {
+  override async claimExpiredTimers(
+    now: Date = new Date(),
+    limit: number = 100,
+  ): Promise<import('./types.js').KernelTimer[]> {
     const claimToken = randomUUID();
     const staleBefore = new Date(now.getTime() - 60_000).toISOString();
     return this.withTransaction(async (client) => {
@@ -584,17 +650,17 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         [claimToken, now.toISOString(), ...ids],
       );
       return result.rows.map((row) => ({
-        id: row.id as string,
-        runId: row.run_id as string,
-        stepId: row.step_id as string,
-        tenantId: row.tenant_id as string,
-        firesAt: String(row.fires_at),
-        timerType: row.timer_type as import('./types.js').KernelTimer['timerType'],
-        state: row.state as import('./types.js').KernelTimer['state'],
-        payload: typeof row.payload === 'string' ? JSON.parse(row.payload) : (row.payload as Record<string, unknown>) ?? {},
-        createdAt: String(row.created_at),
-        firedAt: row.fired_at ? String(row.fired_at) : undefined,
-        claimToken: row.claim_token as string | undefined,
+        id: reqString('commander_timers', row, 'id'),
+        runId: reqString('commander_timers', row, 'run_id'),
+        stepId: reqString('commander_timers', row, 'step_id'),
+        tenantId: reqString('commander_timers', row, 'tenant_id'),
+        firesAt: reqString('commander_timers', row, 'fires_at'),
+        timerType: reqEnum('commander_timers', row, 'timer_type', TIMER_TYPES),
+        state: reqEnum('commander_timers', row, 'state', TIMER_STATES),
+        payload: reqJsonObject('commander_timers', row, 'payload'),
+        createdAt: reqString('commander_timers', row, 'created_at'),
+        firedAt: reqOptionalString('commander_timers', row, 'fired_at'),
+        claimToken: reqOptionalString('commander_timers', row, 'claim_token'),
       }));
     });
   }

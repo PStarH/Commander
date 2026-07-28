@@ -41,11 +41,6 @@ import type {
 } from '../../security/securityResponseEngine';
 import { getSecurityAuditLogger } from '../../security/securityAuditLogger';
 
-// safe-regex ships no TypeScript declarations and @types/safe-regex does not
-// exist. Suppress the untyped-module import error and cast to the minimal
-// shape we rely on. (A project-wide .d.ts shim would also work; this keeps
-// the change to a single file.)
-// @ts-expect-error — safe-regex has no bundled type declarations
 import safeRegexFn from 'safe-regex';
 
 const safeRegex = safeRegexFn as unknown as (

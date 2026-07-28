@@ -44,10 +44,7 @@ export function resolveKernelBackend(env: NodeJS.ProcessEnv = process.env): Kern
 }
 
 function refusesSqlite(env: NodeJS.ProcessEnv): boolean {
-  return (
-    env.NODE_ENV === 'production' ||
-    env.COMMANDER_PROFILE === 'enterprise'
-  );
+  return env.NODE_ENV === 'production' || env.COMMANDER_PROFILE === 'enterprise';
 }
 
 export async function createKernelRepository(
@@ -69,7 +66,9 @@ export async function createKernelRepository(
     }
     const path = options.sqlitePath ?? env.COMMANDER_KERNEL_SQLITE_PATH?.trim();
     if (!path) {
-      throw new KernelBackendMissingError('COMMANDER_KERNEL_SQLITE_PATH is required for sqlite backend');
+      throw new KernelBackendMissingError(
+        'COMMANDER_KERNEL_SQLITE_PATH is required for sqlite backend',
+      );
     }
     const schedulerMode = env.COMMANDER_KERNEL_SCHEDULER_MODE === '1';
     const repository = new SqliteKernelRepository({
@@ -87,9 +86,7 @@ export async function createKernelRepository(
     };
   }
 
-  const databaseUrl =
-    env.COMMANDER_KERNEL_DATABASE_URL?.trim() ??
-    env.DATABASE_URL?.trim();
+  const databaseUrl = env.COMMANDER_KERNEL_DATABASE_URL?.trim() ?? env.DATABASE_URL?.trim();
   if (!databaseUrl) {
     throw new KernelBackendMissingError('DATABASE_URL is required for postgres backend');
   }
