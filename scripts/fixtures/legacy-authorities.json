@@ -1,0 +1,786 @@
+[
+  {
+    "path": "apps/api/src/actionGatewayEndpoints.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "apps/api/src/agentRuntimeRegistry.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "POST /v1/runs + worker-plane",
+    "disposition": "migrate-and-delete"
+  },
+  {
+    "path": "apps/api/src/legacyExecutionGuard.ts",
+    "authorityKind": "temporary-gate",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "remove"
+  },
+  {
+    "path": "apps/api/src/mcpEndpoints.ts",
+    "authorityKind": "read-only-legacy",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "apps/api/src/orchestratorEndpoints.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "POST /v1/runs with WorkGraph",
+    "disposition": "migrate-and-delete"
+  },
+  {
+    "path": "apps/api/src/sequentialExecutor.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "POST /v1/runs",
+    "disposition": "migrate-and-delete"
+  },
+  {
+    "path": "apps/api/src/sharedRuntime.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "POST /v1/runs",
+    "disposition": "migrate-and-delete"
+  },
+  {
+    "path": "apps/api/src/store.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "kernel projections",
+    "disposition": "migrate-and-delete"
+  },
+  {
+    "path": "apps/api/src/tenantMetricsExporter.ts",
+    "authorityKind": "read-only-legacy",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "apps/api/src/v1GatewayEndpoints.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "apps/web/src/api.ts",
+    "authorityKind": "read-only-legacy",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "apps/web/src/hooks/useWarRoom.ts",
+    "authorityKind": "read-only-legacy",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": "kernel read projections",
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "packages/core/src/agentLoop.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "worker-plane agent loop",
+    "disposition": "migrate-and-delete"
+  },
+  {
+    "path": "packages/core/src/atr/runLedger.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "kernel run repository",
+    "disposition": "migrate-and-delete"
+  },
+  {
+    "path": "packages/core/src/atr/taskQueue.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "kernel task queue",
+    "disposition": "migrate-and-delete"
+  },
+  {
+    "path": "packages/core/src/cli/commands/_shared.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "local CLI helpers only",
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "packages/core/src/cli/commands/core.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "local CLI only; no enterprise writes",
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "packages/core/src/cli/commands/manage.ts",
+    "authorityKind": "read-only-legacy",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "packages/core/src/cli/commands/small-features.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "local CLI only; no enterprise writes",
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "packages/core/src/cli/commands/up.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "local CLI only; no enterprise writes",
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "packages/core/src/cli/commands/workflow.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "local CLI only; no enterprise writes",
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "packages/core/src/cliEntry.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "local CLI only; no enterprise writes",
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "packages/core/src/commander/factory.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "local runtime factory only",
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "packages/core/src/config/commanderConfig.ts",
+    "authorityKind": "read-only-legacy",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "packages/core/src/config/index.ts",
+    "authorityKind": "read-only-legacy",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "packages/core/src/controlPlane/index.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "distributed identity from authority closure",
+    "disposition": "migrate-and-delete"
+  },
+  {
+    "path": "packages/core/src/mcp/server.ts",
+    "authorityKind": "read-only-legacy",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "packages/core/src/runtime/contractLlmRouter.ts",
+    "authorityKind": "read-only-legacy",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "packages/core/src/runtime/httpServer.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "local runtime HTTP server only",
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "packages/core/src/runtime/mcpRemoteRuntime.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "ActionGatewayClient",
+    "disposition": "migrate-and-delete"
+  },
+  {
+    "path": "packages/core/src/runtime/modelRouter.ts",
+    "authorityKind": "read-only-legacy",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "packages/core/src/runtime/openapi.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "ActionGatewayClient",
+    "disposition": "migrate-and-delete"
+  },
+  {
+    "path": "packages/core/src/runtime/providers/ollamaProvider.ts",
+    "authorityKind": "read-only-legacy",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "packages/core/src/runtime/providers/vllmProvider.ts",
+    "authorityKind": "read-only-legacy",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "packages/core/src/runtime/runtimeFactory.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "worker-plane runtime factory",
+    "disposition": "migrate-and-delete"
+  },
+  {
+    "path": "packages/core/src/runtime/smartModelRouter.ts",
+    "authorityKind": "read-only-legacy",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "packages/core/src/telos/providerPool.ts",
+    "authorityKind": "read-only-legacy",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "packages/core/src/ultimate/metricsHelper.ts",
+    "authorityKind": "read-only-legacy",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "migrate-to-readonly"
+  },
+  {
+    "path": "packages/effect-broker/src/index.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/capabilityAuthority.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/capabilityStores.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/claimSecret.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/disasterRecovery.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/drillWorkload.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/index.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/killSwitchMatching.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/migrate.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/migrations.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/ops/compensationConsumer.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/ops/compensationConsumerDaemon.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/ops/healthServer.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/ops/main.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/ops/opsRuntime.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/ops/outbox/compatibilityPublisher.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/ops/outbox/inMemoryOutboxDeliveryPort.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/ops/outbox/kernelOutboxPublisher.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/ops/outbox/postgresOutboxDeliveryPort.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/ops/outbox/types.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/ops/reclaimDaemon.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/ops/timerWakeupWorker.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/postgres.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/repository.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/repositoryFactory.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/schema.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/seedWorkerClaimSecret.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/sqlite.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/sqlitePool.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/sqliteSchema.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/testing/inMemoryRepository.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/testing/objectStorage.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/testing/repositoryContract.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/transitionValidation.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/kernel/src/types.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/mcp-server/src/stdioServer.ts",
+    "authorityKind": "write-capable-legacy",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": "MCP execute_agent → ActionGatewayClient",
+    "disposition": "migrate-and-delete"
+  },
+  {
+    "path": "packages/worker-plane/src/actionAdapterExecutor.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/apiKeyAuthenticator.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/awaitWithAbortTimeout.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/bootstrap.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/compositeStepExecutor.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/connectorStepExecutor.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/effectGate.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/evaluatorStepExecutor.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/healthServer.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/index.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/llmBrokerBridge.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/m3-worker-plane.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": true,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/main.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/registry.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/sandboxReadiness.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/stepWorkloadIdentity.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/ticketAdapter.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/toolEffectCatalog.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/toolStepExecutor.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/types.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/workerRuntimeAdapter.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "packages/worker-plane/src/workerService.ts",
+    "authorityKind": "canonical",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "retain"
+  },
+  {
+    "path": "scripts/architecture-gate.ts",
+    "authorityKind": "temporary-gate",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "remove"
+  },
+  {
+    "path": "scripts/legacy-authority-inventory.ts",
+    "authorityKind": "temporary-gate",
+    "callers": [],
+    "writesExternally": false,
+    "canonicalReplacement": null,
+    "disposition": "remove"
+  }
+]
