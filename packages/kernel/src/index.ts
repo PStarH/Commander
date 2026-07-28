@@ -37,7 +37,11 @@ export type {
   KernelRepositoryFactoryOptions,
   KernelRepositoryHandle,
 } from './repositoryFactory.js';
-export { SQLITE_KERNEL_SCHEMA_SQL, SQLITE_KERNEL_SCHEMA_VERSION, SQLITE_KERNEL_TABLES } from './sqliteSchema.js';
+export {
+  SQLITE_KERNEL_SCHEMA_SQL,
+  SQLITE_KERNEL_SCHEMA_VERSION,
+  SQLITE_KERNEL_TABLES,
+} from './sqliteSchema.js';
 export { assertRunTransition, assertStepTransition } from './transitionValidation.js';
 export { InMemoryOutboxDeliveryPort } from './ops/outbox/inMemoryOutboxDeliveryPort.js';
 export { PostgresOutboxDeliveryPort } from './ops/outbox/postgresOutboxDeliveryPort.js';
@@ -46,10 +50,7 @@ export type { KernelOutboxPublishResult } from './ops/outbox/kernelOutboxPublish
 export { OutboxPublisher } from './ops/outbox/compatibilityPublisher.js';
 export type { EventPublisher } from './ops/outbox/compatibilityPublisher.js';
 export { ReclaimDaemon } from './ops/reclaimDaemon.js';
-export {
-  consumeCompensationBatch,
-  KERNEL_COMPENSATION_TOPIC,
-} from './ops/compensationConsumer.js';
+export { consumeCompensationBatch, KERNEL_COMPENSATION_TOPIC } from './ops/compensationConsumer.js';
 export type {
   CompensationConsumeResult,
   CompensationConsumerOptions,

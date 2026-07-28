@@ -7,24 +7,29 @@ import { describe, it } from 'node:test';
 import { PostgresKernelRepository } from './postgres.js';
 import type { SqlClient, SqlPool, SqlQueryResult } from './postgres.js';
 
-function ok<T extends Record<string, unknown>>(rows: T[] = [], rowCount = rows.length): SqlQueryResult<T> {
+function ok(
+  rows: Record<string, unknown>[] = [],
+  rowCount = rows.length,
+): SqlQueryResult<Record<string, unknown>> {
   return { rows, rowCount };
 }
 
-function createWorkerFakePool(onQuery: (sql: string, params?: unknown[]) => SqlQueryResult | Promise<SqlQueryResult>): SqlPool {
+function createWorkerFakePool(
+  onQuery: (sql: string, params?: unknown[]) => SqlQueryResult | Promise<SqlQueryResult>,
+): SqlPool {
   return {
     connect: async (): Promise<SqlClient> => ({
-      query: async <T extends Record<string, unknown> = Record<string, unknown>>(
+      query: async <T = Record<string, unknown>>(
         sql: string,
         params?: unknown[],
       ): Promise<SqlQueryResult<T>> => {
         if (/session_user/i.test(sql)) {
-          return ok([{ login_role: 'commander_worker' }]) as SqlQueryResult<T>;
+          return ok([{ login_role: 'commander_worker' }]) as unknown as SqlQueryResult<T>;
         }
         if (/^BEGIN/i.test(sql) || /^COMMIT/i.test(sql) || /^ROLLBACK/i.test(sql)) {
-          return ok() as SqlQueryResult<T>;
+          return ok() as unknown as SqlQueryResult<T>;
         }
-        return (await onQuery(sql, params)) as SqlQueryResult<T>;
+        return (await onQuery(sql, params)) as unknown as SqlQueryResult<T>;
       },
       release: async () => undefined,
     }),
@@ -33,19 +38,22 @@ function createWorkerFakePool(onQuery: (sql: string, params?: unknown[]) => SqlQ
 
 describe('PostgresKernelRepository worker-mode outbox (P0 mute regression)', () => {
   it('claimOutbox throws on worker LOGIN (must use claimOutboxByTopic)', async () => {
-    const repo = new PostgresKernelRepository(createWorkerFakePool(() => ok()), {
-      schedulerMode: false,
-    });
-    await assert.rejects(
-      () => repo.claimOutbox(10),
-      /claimOutbox requires schedulerMode/,
+    const repo = new PostgresKernelRepository(
+      createWorkerFakePool(() => ok()),
+      {
+        schedulerMode: false,
+      },
     );
+    await assert.rejects(() => repo.claimOutbox(10), /claimOutbox requires schedulerMode/);
   });
 
   it('markOutboxPublished / retryOutbox without tenantId throw tenant scope error', async () => {
-    const repo = new PostgresKernelRepository(createWorkerFakePool(() => ok()), {
-      schedulerMode: false,
-    });
+    const repo = new PostgresKernelRepository(
+      createWorkerFakePool(() => ok()),
+      {
+        schedulerMode: false,
+      },
+    );
     await assert.rejects(
       () => repo.markOutboxPublished('msg-1', 'tok'),
       /Outbox mark\/retry requires tenantId|Kernel write must explicitly carry tenant scope/,
@@ -57,9 +65,12 @@ describe('PostgresKernelRepository worker-mode outbox (P0 mute regression)', () 
   });
 
   it('claimOutboxByTopic without authz throws (does not mute via empty withTransaction)', async () => {
-    const repo = new PostgresKernelRepository(createWorkerFakePool(() => ok()), {
-      schedulerMode: false,
-    });
+    const repo = new PostgresKernelRepository(
+      createWorkerFakePool(() => ok()),
+      {
+        schedulerMode: false,
+      },
+    );
     await assert.rejects(
       () => repo.claimOutboxByTopic('commander.compensation', 10),
       /claimOutboxByTopic requires workerId/,

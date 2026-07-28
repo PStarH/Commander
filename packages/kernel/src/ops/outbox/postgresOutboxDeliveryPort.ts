@@ -29,7 +29,10 @@ const iso = (value: Date | string): string =>
 export class PostgresOutboxDeliveryPort implements OutboxDeliveryPort {
   private readonly options: OutboxDeliveryOptions;
 
-  constructor(private readonly pool: SqlPool, options: Partial<OutboxDeliveryOptions> = {}) {
+  constructor(
+    private readonly pool: SqlPool,
+    options: Partial<OutboxDeliveryOptions> = {},
+  ) {
     this.options = { ...DEFAULT_OUTBOX_DELIVERY_OPTIONS, ...options };
   }
 
@@ -43,8 +46,16 @@ export class PostgresOutboxDeliveryPort implements OutboxDeliveryPort {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)
          ON CONFLICT (event_id) DO NOTHING
          RETURNING id`,
-        [id, envelope.eventId, envelope.schemaVersion, envelope.tenantId, envelope.topic,
-          envelope.key, envelope.occurredAt, JSON.stringify(envelope.payload)],
+        [
+          id,
+          envelope.eventId,
+          envelope.schemaVersion,
+          envelope.tenantId,
+          envelope.topic,
+          envelope.key,
+          envelope.occurredAt,
+          JSON.stringify(envelope.payload),
+        ],
       );
       if (inserted.rows[0]) return { deliveryId: inserted.rows[0].id, duplicate: false };
       const existing = await client.query<{ id: string }>(
@@ -56,7 +67,11 @@ export class PostgresOutboxDeliveryPort implements OutboxDeliveryPort {
     });
   }
 
-  async claim(consumerId: string, limit: number, now = new Date()): Promise<ClaimedOutboxDelivery[]> {
+  async claim(
+    consumerId: string,
+    limit: number,
+    now = new Date(),
+  ): Promise<ClaimedOutboxDelivery[]> {
     return this.transaction(async (client) => {
       const token = randomUUID();
       const result = await client.query<DeliveryRow>(
@@ -101,7 +116,12 @@ export class PostgresOutboxDeliveryPort implements OutboxDeliveryPort {
     });
   }
 
-  async retry(deliveryId: string, claimToken: string, error: OutboxDeliveryError, now = new Date()): Promise<boolean> {
+  async retry(
+    deliveryId: string,
+    claimToken: string,
+    error: OutboxDeliveryError,
+    now = new Date(),
+  ): Promise<boolean> {
     return this.transaction(async (client) => {
       const locked = await client.query<{ attempts: number }>(
         `SELECT attempts FROM commander_outbox_deliveries
@@ -130,7 +150,12 @@ export class PostgresOutboxDeliveryPort implements OutboxDeliveryPort {
            available_at=$1, last_error=$2::jsonb,
            consumer_id=NULL, claim_token=NULL, claimed_at=NULL
          WHERE id=$3 AND claim_token=$4`,
-        [new Date(now.getTime() + backoff).toISOString(), JSON.stringify(error), deliveryId, claimToken],
+        [
+          new Date(now.getTime() + backoff).toISOString(),
+          JSON.stringify(error),
+          deliveryId,
+          claimToken,
+        ],
       );
       return (result.rowCount ?? 0) === 1;
     });

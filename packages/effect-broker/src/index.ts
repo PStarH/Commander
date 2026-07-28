@@ -355,9 +355,21 @@ export class CapabilityTokenIssuer {
     return `${signingInput}.${sign(null, Buffer.from(signingInput), this.privateKey).toString('base64url')}`;
   }
 
-  static generate(options: Omit<CapabilityTokenIssuerOptions, 'privateKey' | 'keyId'> & { keyId?: string }): CapabilityTokenIssuer {
+  /**
+   * Generate an ephemeral Ed25519 issuer for tests or demos.
+   * Production code should load real PEM/JWKS material instead.
+   */
+  static generateForTesting(options: Omit<CapabilityTokenIssuerOptions, 'privateKey' | 'keyId'> & { keyId?: string }): CapabilityTokenIssuer {
     const { privateKey } = generateKeyPairSync('ed25519');
     return new CapabilityTokenIssuer({ ...options, keyId: options.keyId ?? 'generated', privateKey });
+  }
+
+  /**
+   * @deprecated Use {@link CapabilityTokenIssuer.generateForTesting} instead.
+   * Kept for backward compatibility; calls generateForTesting().
+   */
+  static generate(options: Omit<CapabilityTokenIssuerOptions, 'privateKey' | 'keyId'> & { keyId?: string }): CapabilityTokenIssuer {
+    return CapabilityTokenIssuer.generateForTesting(options);
   }
 }
 

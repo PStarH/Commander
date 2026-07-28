@@ -1177,8 +1177,7 @@ export class SubAgentExecutor {
       coder: [
         'You are a TypeScript Engineer focused on correctness and type safety.',
         'Read files completely before editing. Follow existing patterns and conventions.',
-        'Never use `as any` casts or `@ts-ignore` comments. Add proper error handling.',
-        'Write production-quality code matching the project style.',
+        'Add proper error handling.',
         'Clean up unused imports, variables, and dead code after your changes.',
       ].join(' '),
       reviewer: [

@@ -32,7 +32,13 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 function createRunCommand(
   tenantId: string,
-  steps: Array<{ kind: string; input?: Record<string, unknown>; dependencies?: string[]; maxAttempts?: number; priority?: number }>,
+  steps: Array<{
+    kind: string;
+    input?: Record<string, unknown>;
+    dependencies?: string[];
+    maxAttempts?: number;
+    priority?: number;
+  }>,
 ) {
   const runId = `run_${randomUUID().slice(0, 8)}`;
   const stepDefs = steps.map((s, i) => ({
@@ -58,14 +64,21 @@ describe('V2 Distributed Fault — Worker Kill & Lease Expiry', () => {
   let kernel: InMemoryKernelRepository;
   const tenantId = 'tenant-fault';
 
-  beforeEach(() => { kernel = new InMemoryKernelRepository(); });
+  beforeEach(() => {
+    kernel = new InMemoryKernelRepository();
+  });
 
   it('survives worker crash: lease expires → step requeued → new worker completes', async () => {
     const cmd = createRunCommand(tenantId, [{ kind: 'agent', maxAttempts: 3 }]);
     await kernel.createRun(cmd, 'gateway');
 
     // Worker-1 claims with short lease, then "crashes"
-    const claimed = await kernel.claimNextStep({ workerId: 'w1', leaseTtlMs: 50, tenantIds: [], capabilities: [] });
+    const claimed = await kernel.claimNextStep({
+      workerId: 'w1',
+      leaseTtlMs: 50,
+      tenantIds: [],
+      capabilities: [],
+    });
     assert.ok(claimed);
     assert.equal(claimed!.attempt, 1);
 
@@ -76,14 +89,23 @@ describe('V2 Distributed Fault — Worker Kill & Lease Expiry', () => {
     assert.equal(reclaimed[0].state, 'RETRY_WAIT');
 
     // Worker-2 picks up the requeued step
-    const reclaimed_step = await kernel.claimNextStep({ workerId: 'w2', leaseTtlMs: 30_000, tenantIds: [], capabilities: [] });
+    const reclaimed_step = await kernel.claimNextStep({
+      workerId: 'w2',
+      leaseTtlMs: 30_000,
+      tenantIds: [],
+      capabilities: [],
+    });
     assert.ok(reclaimed_step);
     assert.equal(reclaimed_step!.attempt, 2);
 
     // Worker-2 completes successfully
     const completed = await kernel.completeStep({
-      stepId: reclaimed_step!.id, tenantId: reclaimed_step!.tenantId, lease: reclaimed_step!.lease!,
-      expectedVersion: reclaimed_step!.version, output: { status: 'ok' }, actor: 'w2',
+      stepId: reclaimed_step!.id,
+      tenantId: reclaimed_step!.tenantId,
+      lease: reclaimed_step!.lease!,
+      expectedVersion: reclaimed_step!.version,
+      output: { status: 'ok' },
+      actor: 'w2',
     });
     assert.ok(completed);
     assert.equal(completed!.state, 'SUCCEEDED');
@@ -95,20 +117,34 @@ describe('V2 Distributed Fault — Worker Kill & Lease Expiry', () => {
 
     // Simulate 3 crashes followed by success
     for (let crash = 0; crash < 3; crash++) {
-      const claimed = await kernel.claimNextStep({ workerId: `w-${crash}`, leaseTtlMs: 30, tenantIds: [], capabilities: [] });
+      const claimed = await kernel.claimNextStep({
+        workerId: `w-${crash}`,
+        leaseTtlMs: 30,
+        tenantIds: [],
+        capabilities: [],
+      });
       assert.ok(claimed, `crash ${crash}: should claim step`);
       await sleep(40); // lease expires
       await kernel.reclaimExpiredLeases(new Date(), 100);
     }
 
     // 4th worker succeeds
-    const claimed = await kernel.claimNextStep({ workerId: 'w-success', leaseTtlMs: 30_000, tenantIds: [], capabilities: [] });
+    const claimed = await kernel.claimNextStep({
+      workerId: 'w-success',
+      leaseTtlMs: 30_000,
+      tenantIds: [],
+      capabilities: [],
+    });
     assert.ok(claimed);
     assert.equal(claimed!.attempt, 4);
 
     const completed = await kernel.completeStep({
-      stepId: claimed!.id, tenantId: claimed!.tenantId, lease: claimed!.lease!,
-      expectedVersion: claimed!.version, output: { status: 'ok' }, actor: 'w-success',
+      stepId: claimed!.id,
+      tenantId: claimed!.tenantId,
+      lease: claimed!.lease!,
+      expectedVersion: claimed!.version,
+      output: { status: 'ok' },
+      actor: 'w-success',
     });
     assert.equal(completed!.state, 'SUCCEEDED');
   });
@@ -118,14 +154,21 @@ describe('V2 Distributed Fault — Fencing & Duplicate Delivery', () => {
   let kernel: InMemoryKernelRepository;
   const tenantId = 'tenant-fencing';
 
-  beforeEach(() => { kernel = new InMemoryKernelRepository(); });
+  beforeEach(() => {
+    kernel = new InMemoryKernelRepository();
+  });
 
   it('rejects stale worker completion via fencing token', async () => {
     const cmd = createRunCommand(tenantId, [{ kind: 'agent', maxAttempts: 3 }]);
     await kernel.createRun(cmd, 'gateway');
 
     // Worker-1 claims
-    const w1Step = await kernel.claimNextStep({ workerId: 'w1', leaseTtlMs: 30, tenantIds: [], capabilities: [] });
+    const w1Step = await kernel.claimNextStep({
+      workerId: 'w1',
+      leaseTtlMs: 30,
+      tenantIds: [],
+      capabilities: [],
+    });
     assert.ok(w1Step);
     const w1Lease = w1Step!.lease!;
     const w1Version = w1Step!.version;
@@ -135,21 +178,34 @@ describe('V2 Distributed Fault — Fencing & Duplicate Delivery', () => {
     await kernel.reclaimExpiredLeases(new Date(), 100);
 
     // Worker-2 claims with new lease
-    const w2Step = await kernel.claimNextStep({ workerId: 'w2', leaseTtlMs: 30_000, tenantIds: [], capabilities: [] });
+    const w2Step = await kernel.claimNextStep({
+      workerId: 'w2',
+      leaseTtlMs: 30_000,
+      tenantIds: [],
+      capabilities: [],
+    });
     assert.ok(w2Step);
     assert.notEqual(w2Step!.lease!.fencingEpoch, w1Lease.fencingEpoch, 'Fencing epoch must differ');
 
     // Worker-2 completes successfully
     const completed = await kernel.completeStep({
-      stepId: w2Step!.id, tenantId: w2Step!.tenantId, lease: w2Step!.lease!,
-      expectedVersion: w2Step!.version, output: { status: 'ok' }, actor: 'w2',
+      stepId: w2Step!.id,
+      tenantId: w2Step!.tenantId,
+      lease: w2Step!.lease!,
+      expectedVersion: w2Step!.version,
+      output: { status: 'ok' },
+      actor: 'w2',
     });
     assert.ok(completed);
 
     // Worker-1 (zombie) tries to complete with stale lease — must fail
     const staleComplete = await kernel.completeStep({
-      stepId: w1Step!.id, tenantId: w1Step!.tenantId, lease: w1Lease,
-      expectedVersion: w1Version, output: { status: 'zombie' }, actor: 'w1',
+      stepId: w1Step!.id,
+      tenantId: w1Step!.tenantId,
+      lease: w1Lease,
+      expectedVersion: w1Version,
+      output: { status: 'zombie' },
+      actor: 'w1',
     });
     assert.equal(staleComplete, null, 'Zombie worker must not be able to complete');
   });
@@ -158,20 +214,33 @@ describe('V2 Distributed Fault — Fencing & Duplicate Delivery', () => {
     const cmd = createRunCommand(tenantId, [{ kind: 'agent', maxAttempts: 3 }]);
     await kernel.createRun(cmd, 'gateway');
 
-    const claimed = await kernel.claimNextStep({ workerId: 'w1', leaseTtlMs: 30_000, tenantIds: [], capabilities: [] });
+    const claimed = await kernel.claimNextStep({
+      workerId: 'w1',
+      leaseTtlMs: 30_000,
+      tenantIds: [],
+      capabilities: [],
+    });
     assert.ok(claimed);
 
     // First completion succeeds
     const first = await kernel.completeStep({
-      stepId: claimed!.id, tenantId: claimed!.tenantId, lease: claimed!.lease!,
-      expectedVersion: claimed!.version, output: { status: 'ok' }, actor: 'w1',
+      stepId: claimed!.id,
+      tenantId: claimed!.tenantId,
+      lease: claimed!.lease!,
+      expectedVersion: claimed!.version,
+      output: { status: 'ok' },
+      actor: 'w1',
     });
     assert.ok(first);
 
     // Second completion with same version fails (duplicate delivery)
     const second = await kernel.completeStep({
-      stepId: claimed!.id, tenantId: claimed!.tenantId, lease: claimed!.lease!,
-      expectedVersion: claimed!.version, output: { status: 'dup' }, actor: 'w1',
+      stepId: claimed!.id,
+      tenantId: claimed!.tenantId,
+      lease: claimed!.lease!,
+      expectedVersion: claimed!.version,
+      output: { status: 'dup' },
+      actor: 'w1',
     });
     assert.equal(second, null, 'Duplicate completion must be rejected');
   });
@@ -181,7 +250,9 @@ describe('V2 Distributed Fault — Concurrent Claim Race', () => {
   let kernel: InMemoryKernelRepository;
   const tenantId = 'tenant-race';
 
-  beforeEach(() => { kernel = new InMemoryKernelRepository(); });
+  beforeEach(() => {
+    kernel = new InMemoryKernelRepository();
+  });
 
   it('only one worker claims a step when multiple race (in-memory)', async () => {
     const cmd = createRunCommand(tenantId, [{ kind: 'agent' }]);
@@ -227,7 +298,9 @@ describe('V2 Distributed Fault — Multi-Attempt Terminal Failure', () => {
   let kernel: InMemoryKernelRepository;
   const tenantId = 'tenant-terminal';
 
-  beforeEach(() => { kernel = new InMemoryKernelRepository(); });
+  beforeEach(() => {
+    kernel = new InMemoryKernelRepository();
+  });
 
   it('terminally fails step after maxAttempts exhausted', async () => {
     const cmd = createRunCommand(tenantId, [{ kind: 'agent', maxAttempts: 3 }]);
@@ -235,12 +308,19 @@ describe('V2 Distributed Fault — Multi-Attempt Terminal Failure', () => {
 
     // Attempts 1-2: retryable failures
     for (let attempt = 1; attempt <= 2; attempt++) {
-      const claimed = await kernel.claimNextStep({ workerId: `w-${attempt}`, leaseTtlMs: 30_000, tenantIds: [], capabilities: [] });
+      const claimed = await kernel.claimNextStep({
+        workerId: `w-${attempt}`,
+        leaseTtlMs: 30_000,
+        tenantIds: [],
+        capabilities: [],
+      });
       assert.ok(claimed);
       assert.equal(claimed!.attempt, attempt);
 
       await kernel.failStep({
-        stepId: claimed!.id, tenantId: claimed!.tenantId, lease: claimed!.lease!,
+        stepId: claimed!.id,
+        tenantId: claimed!.tenantId,
+        lease: claimed!.lease!,
         expectedVersion: claimed!.version,
         error: { code: 'TRANSIENT', message: `Attempt ${attempt} failed`, retryable: true },
         retryAt: new Date(),
@@ -249,19 +329,31 @@ describe('V2 Distributed Fault — Multi-Attempt Terminal Failure', () => {
     }
 
     // Attempt 3: terminal failure (retryable=false)
-    const claimed = await kernel.claimNextStep({ workerId: 'w-3', leaseTtlMs: 30_000, tenantIds: [], capabilities: [] });
+    const claimed = await kernel.claimNextStep({
+      workerId: 'w-3',
+      leaseTtlMs: 30_000,
+      tenantIds: [],
+      capabilities: [],
+    });
     assert.ok(claimed);
     assert.equal(claimed!.attempt, 3);
 
     await kernel.failStep({
-      stepId: claimed!.id, tenantId: claimed!.tenantId, lease: claimed!.lease!,
+      stepId: claimed!.id,
+      tenantId: claimed!.tenantId,
+      lease: claimed!.lease!,
       expectedVersion: claimed!.version,
       error: { code: 'PERMANENT_FAIL', message: 'Max attempts exhausted', retryable: false },
       actor: 'w-3',
     });
 
     // Step should be terminally FAILED, not claimable
-    const noStep = await kernel.claimNextStep({ workerId: 'w-final', leaseTtlMs: 30_000, tenantIds: [], capabilities: [] });
+    const noStep = await kernel.claimNextStep({
+      workerId: 'w-final',
+      leaseTtlMs: 30_000,
+      tenantIds: [],
+      capabilities: [],
+    });
     assert.equal(noStep, null, 'No step should be claimable after terminal failure');
 
     // Verify step state
@@ -275,22 +367,39 @@ describe('V2 Distributed Fault — Multi-Attempt Terminal Failure', () => {
     await kernel.createRun(cmd, 'gateway');
 
     // Attempt 1: transient failure
-    const c1 = await kernel.claimNextStep({ workerId: 'w1', leaseTtlMs: 30_000, tenantIds: [], capabilities: [] });
+    const c1 = await kernel.claimNextStep({
+      workerId: 'w1',
+      leaseTtlMs: 30_000,
+      tenantIds: [],
+      capabilities: [],
+    });
     await kernel.failStep({
-      stepId: c1!.id, tenantId: c1!.tenantId, lease: c1!.lease!, expectedVersion: c1!.version,
+      stepId: c1!.id,
+      tenantId: c1!.tenantId,
+      lease: c1!.lease!,
+      expectedVersion: c1!.version,
       error: { code: 'TIMEOUT', message: 'LLM timed out', retryable: true },
       retryAt: new Date(),
       actor: 'w1',
     });
 
     // Attempt 2: success
-    const c2 = await kernel.claimNextStep({ workerId: 'w2', leaseTtlMs: 30_000, tenantIds: [], capabilities: [] });
+    const c2 = await kernel.claimNextStep({
+      workerId: 'w2',
+      leaseTtlMs: 30_000,
+      tenantIds: [],
+      capabilities: [],
+    });
     assert.ok(c2);
     assert.equal(c2!.attempt, 2);
 
     const completed = await kernel.completeStep({
-      stepId: c2!.id, tenantId: c2!.tenantId, lease: c2!.lease!, expectedVersion: c2!.version,
-      output: { status: 'ok' }, actor: 'w2',
+      stepId: c2!.id,
+      tenantId: c2!.tenantId,
+      lease: c2!.lease!,
+      expectedVersion: c2!.version,
+      output: { status: 'ok' },
+      actor: 'w2',
     });
     assert.equal(completed!.state, 'SUCCEEDED');
   });
@@ -300,7 +409,9 @@ describe('V2 Distributed Fault — Run Lifecycle & Cancel', () => {
   let kernel: InMemoryKernelRepository;
   const tenantId = 'tenant-lifecycle';
 
-  beforeEach(() => { kernel = new InMemoryKernelRepository(); });
+  beforeEach(() => {
+    kernel = new InMemoryKernelRepository();
+  });
 
   it('cancels run and marks all non-terminal steps CANCELLED', async () => {
     const cmd = createRunCommand(tenantId, [
@@ -317,7 +428,12 @@ describe('V2 Distributed Fault — Run Lifecycle & Cancel', () => {
     assert.equal(cancelled!.state, 'CANCELLED');
 
     // Verify no steps are claimable
-    const noStep = await kernel.claimNextStep({ workerId: 'w1', leaseTtlMs: 30_000, tenantIds: [], capabilities: [] });
+    const noStep = await kernel.claimNextStep({
+      workerId: 'w1',
+      leaseTtlMs: 30_000,
+      tenantIds: [],
+      capabilities: [],
+    });
     assert.equal(noStep, null);
   });
 
@@ -341,7 +457,9 @@ describe('V2 Distributed Fault — Outbox At-Least-Once', () => {
   let kernel: InMemoryKernelRepository;
   const tenantId = 'tenant-outbox';
 
-  beforeEach(() => { kernel = new InMemoryKernelRepository(); });
+  beforeEach(() => {
+    kernel = new InMemoryKernelRepository();
+  });
 
   it('publishes outbox messages and marks them published', async () => {
     const cmd = createRunCommand(tenantId, [{ kind: 'agent' }]);
@@ -385,20 +503,25 @@ describe('V2 Distributed Fault — Timer & Interaction Recovery', () => {
   let kernel: InMemoryKernelRepository;
   const tenantId = 'tenant-timer';
 
-  beforeEach(() => { kernel = new InMemoryKernelRepository(); });
+  beforeEach(() => {
+    kernel = new InMemoryKernelRepository();
+  });
 
   it('timer fires after delay and transitions to FIRED state', async () => {
     const cmd = createRunCommand(tenantId, [{ kind: 'agent' }]);
     await kernel.createRun(cmd, 'gateway');
 
-    const timer = await kernel.createTimer({
-      runId: cmd.id,
-      stepId: cmd.steps[0]!.id,
-      tenantId,
-      firesAt: new Date(Date.now() + 50),
-      timerType: 'RETRY_DELAY',
-      payload: { reason: 'test' },
-    }, 'test');
+    const timer = await kernel.createTimer(
+      {
+        runId: cmd.id,
+        stepId: cmd.steps[0]!.id,
+        tenantId,
+        firesAt: new Date(Date.now() + 50),
+        timerType: 'RETRY_DELAY',
+        payload: { reason: 'test' },
+      },
+      'test',
+    );
 
     assert.equal(timer.state, 'PENDING');
 
@@ -412,20 +535,26 @@ describe('V2 Distributed Fault — Timer & Interaction Recovery', () => {
     const expired = await kernel.claimExpiredTimers(new Date(), 10);
     assert.equal(expired.length, 1);
     assert.equal(expired[0]!.state, 'PROCESSING');
-    assert.equal(await kernel.acknowledgeTimer(expired[0]!.id, tenantId, expired[0]!.claimToken!), true);
+    assert.equal(
+      await kernel.acknowledgeTimer(expired[0]!.id, tenantId, expired[0]!.claimToken!),
+      true,
+    );
   });
 
   it('interaction lifecycle: create → answer → verify', async () => {
     const cmd = createRunCommand(tenantId, [{ kind: 'agent' }]);
     await kernel.createRun(cmd, 'gateway');
 
-    const interaction = await kernel.createInteraction({
-      runId: cmd.id,
-      stepId: cmd.steps[0]!.id,
-      tenantId,
-      prompt: 'Approve deployment to production?',
-      expiresAt: new Date(Date.now() + 60_000),
-    }, 'test');
+    const interaction = await kernel.createInteraction(
+      {
+        runId: cmd.id,
+        stepId: cmd.steps[0]!.id,
+        tenantId,
+        prompt: 'Approve deployment to production?',
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+      'test',
+    );
 
     assert.equal(interaction.status, 'pending');
 
@@ -447,13 +576,16 @@ describe('V2 Distributed Fault — Timer & Interaction Recovery', () => {
     const cmd = createRunCommand(tenantId, [{ kind: 'agent' }]);
     await kernel.createRun(cmd, 'gateway');
 
-    const interaction = await kernel.createInteraction({
-      runId: cmd.id,
-      stepId: cmd.steps[0]!.id,
-      tenantId,
-      prompt: 'Quick question',
-      expiresAt: new Date(Date.now() - 1000), // Already expired
-    }, 'test');
+    const interaction = await kernel.createInteraction(
+      {
+        runId: cmd.id,
+        stepId: cmd.steps[0]!.id,
+        tenantId,
+        prompt: 'Quick question',
+        expiresAt: new Date(Date.now() - 1000), // Already expired
+      },
+      'test',
+    );
 
     const expired = await kernel.expireStaleInteractions(new Date(), 10);
     assert.equal(expired.length, 1);
@@ -465,7 +597,9 @@ describe('V2 Distributed Fault — DB Failover Simulation', () => {
   let kernel: InMemoryKernelRepository;
   const tenantId = 'tenant-failover';
 
-  beforeEach(() => { kernel = new InMemoryKernelRepository(); });
+  beforeEach(() => {
+    kernel = new InMemoryKernelRepository();
+  });
 
   it('recovers state from journal: events are immutable and ordered', async () => {
     const cmd = createRunCommand(tenantId, [{ kind: 'agent' }]);
@@ -478,8 +612,8 @@ describe('V2 Distributed Fault — DB Failover Simulation', () => {
     // Events should be immutable (same query returns same results)
     const events2 = await kernel.listEvents(cmd.id, tenantId);
     assert.deepEqual(
-      events.map((e) => ({ id: e.id, type: e.type, sequence: e.sequence })),
-      events2.map((e) => ({ id: e.id, type: e.type, sequence: e.sequence })),
+      events.map((e) => ({ eventId: e.eventId, type: e.type, sequence: e.sequence })),
+      events2.map((e) => ({ eventId: e.eventId, type: e.type, sequence: e.sequence })),
       'Events must be immutable across reads',
     );
   });
@@ -489,10 +623,19 @@ describe('V2 Distributed Fault — DB Failover Simulation', () => {
     await kernel.createRun(cmd, 'gateway');
 
     // Complete the step
-    const claimed = await kernel.claimNextStep({ workerId: 'w1', leaseTtlMs: 30_000, tenantIds: [], capabilities: [] });
+    const claimed = await kernel.claimNextStep({
+      workerId: 'w1',
+      leaseTtlMs: 30_000,
+      tenantIds: [],
+      capabilities: [],
+    });
     await kernel.completeStep({
-      stepId: claimed!.id, tenantId: claimed!.tenantId, lease: claimed!.lease!, expectedVersion: claimed!.version,
-      output: { status: 'ok' }, actor: 'w1',
+      stepId: claimed!.id,
+      tenantId: claimed!.tenantId,
+      lease: claimed!.lease!,
+      expectedVersion: claimed!.version,
+      output: { status: 'ok' },
+      actor: 'w1',
     });
 
     // Simulate process restart: new kernel instance reads same state
@@ -506,8 +649,10 @@ describe('V2 Distributed Fault — DB Failover Simulation', () => {
     // Here we verify the journal exists and is complete.
     const events = await kernel.listEvents(cmd.id, tenantId);
     const eventTypes = events.map((e) => e.type);
-    assert.ok(eventTypes.includes('run.created') || eventTypes.includes('step.scheduled'),
-      'Journal should contain run/step creation events');
+    assert.ok(
+      eventTypes.includes('run.created') || eventTypes.includes('step.scheduled'),
+      'Journal should contain run/step creation events',
+    );
   });
 
   it('handles concurrent pause + cancel without corruption', async () => {
@@ -521,12 +666,19 @@ describe('V2 Distributed Fault — DB Failover Simulation', () => {
     ]);
 
     // One should succeed, the other may fail — but state should be consistent
-    const finalState = (paused?.state ?? cancelled?.state);
-    assert.ok(finalState === 'PAUSED' || finalState === 'CANCELLED',
-      `State should be PAUSED or CANCELLED, got: ${finalState}`);
+    const finalState = paused?.state ?? cancelled?.state;
+    assert.ok(
+      finalState === 'PAUSED' || finalState === 'CANCELLED',
+      `State should be PAUSED or CANCELLED, got: ${finalState}`,
+    );
 
     // Verify no steps are claimable (both PAUSE and CANCEL prevent claiming)
-    const noStep = await kernel.claimNextStep({ workerId: 'w1', leaseTtlMs: 30_000, tenantIds: [], capabilities: [] });
+    const noStep = await kernel.claimNextStep({
+      workerId: 'w1',
+      leaseTtlMs: 30_000,
+      tenantIds: [],
+      capabilities: [],
+    });
     assert.equal(noStep, null, 'No step should be claimable after pause/cancel');
   });
 });

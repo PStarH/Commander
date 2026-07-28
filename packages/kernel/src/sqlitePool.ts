@@ -2,8 +2,19 @@ import type Database from 'better-sqlite3';
 import type { SqlClient, SqlPool, SqlQueryResult } from './postgres.js';
 
 const JSON_COLUMNS = new Set([
-  'metadata', 'dependencies', 'input', 'output', 'error', 'request', 'response',
-  'payload', 'capabilities', 'labels', 'tenant_ids', 'reconcile_last_error', 'last_error',
+  'metadata',
+  'dependencies',
+  'input',
+  'output',
+  'error',
+  'request',
+  'response',
+  'payload',
+  'capabilities',
+  'labels',
+  'tenant_ids',
+  'reconcile_last_error',
+  'last_error',
 ]);
 
 function parseJsonFields<T extends Record<string, unknown>>(row: T): T {
@@ -15,7 +26,9 @@ function parseJsonFields<T extends Record<string, unknown>>(row: T): T {
       try {
         (out as Record<string, unknown>)[key] = JSON.parse(value);
       } catch {
-        /* keep string */
+        process.stderr.write(
+          `[kernel:sqlite] JSON parse error in column ${key}: corrupted data, keeping string\n`,
+        );
       }
     }
   }
@@ -32,7 +45,10 @@ function parseJsonFields<T extends Record<string, unknown>>(row: T): T {
 }
 
 /** Translate Postgres parameter placeholders and dialect to SQLite. */
-export function adaptPostgresSqlToSqlite(sql: string, values: readonly unknown[] = []): { sql: string; values: unknown[] } {
+export function adaptPostgresSqlToSqlite(
+  sql: string,
+  values: readonly unknown[] = [],
+): { sql: string; values: unknown[] } {
   const expanded: unknown[] = [];
   let out = sql;
   out = out.replace(/\s+FOR UPDATE(\s+OF\s+[\w,\s]+)?(\s+SKIP LOCKED)?/gi, '');
@@ -99,12 +115,12 @@ function runQuery<T = Record<string, unknown>>(
   const stmt = db.prepare(adaptedSql);
   const trimmed = adaptedSql.trimStart().toUpperCase();
   const returnsRows =
-    trimmed.startsWith('SELECT') ||
-    trimmed.startsWith('WITH') ||
-    /RETURNING/i.test(adaptedSql);
+    trimmed.startsWith('SELECT') || trimmed.startsWith('WITH') || /RETURNING/i.test(adaptedSql);
 
   if (returnsRows) {
-    const rows = stmt.all(...bound).map((row) => parseJsonFields(row as Record<string, unknown>) as T);
+    const rows = stmt
+      .all(...bound)
+      .map((row) => parseJsonFields(row as Record<string, unknown>) as T);
     return { rows, rowCount: rows.length };
   }
   const info = stmt.run(...bound);

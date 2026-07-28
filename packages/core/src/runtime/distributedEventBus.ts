@@ -47,17 +47,6 @@ interface RedisLike {
   quit(): Promise<void>;
 }
 
-/** Minimal facade for the optional `redis` package so we don't need its types. */
-interface RedisModule {
-  createClient(options: { url: string }): {
-    connect(): Promise<void>;
-    publish(channel: string, message: string): Promise<number>;
-    subscribe(channel: string, listener: (message: string) => void): Promise<void>;
-    unsubscribe(channel: string): Promise<void>;
-    quit(): Promise<void>;
-  };
-}
-
 // ============================================================================
 // DistributedEventBus Implementation
 // ============================================================================
@@ -99,7 +88,7 @@ export class DistributedEventBus extends ContractEventBus {
    * Dynamically imports the `redis` package (optional dependency).
    */
   private async initRedis(redisUrl: string): Promise<void> {
-    const redis = await optionalImport<RedisModule>('redis');
+    const redis = await optionalImport<typeof import('redis')>('redis');
     if (!redis) {
       getGlobalLogger().info(
         'DistributedEventBus',
@@ -134,14 +123,11 @@ export class DistributedEventBus extends ContractEventBus {
       getGlobalLogger().info('DistributedEventBus', 'Redis backend connected', {
         url: redisUrl.replace(/:[^:@]+@/, ':****@'),
       });
-    } catch {
-      // redis package not installed — that's OK, fall back to memory
-      getGlobalLogger().info(
+    } catch (err) {
+      getGlobalLogger().warn(
         'DistributedEventBus',
-        'Redis package not available — using in-memory',
-        {
-          hint: 'Install redis package: npm install redis',
-        },
+        'Redis connection failed — falling back to in-memory',
+        { error: (err as Error).message },
       );
       this.backend = 'memory';
     }

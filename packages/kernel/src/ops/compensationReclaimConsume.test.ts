@@ -119,12 +119,10 @@ describe('reclaim → compensation consume (integration)', () => {
             },
             actor: input.actor,
           });
-          return {
-            admitted: admitted.admitted,
-            effectId: input.effectId,
-            replayed: !!admitted.replayed,
-            reason: admitted.reason,
-          };
+          if (!admitted.admitted) {
+            return { admitted: false, effectId: input.effectId, replayed: false, reason: admitted.reason };
+          }
+          return { admitted: true, effectId: input.effectId, replayed: admitted.replayed };
         },
         async executeAdmitted(input) {
           executed += 1;

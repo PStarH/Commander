@@ -3,6 +3,8 @@ import { z } from 'zod';
 import {
   buildRunEvidenceBundle,
   verifyEvidenceBundle,
+  type EffectOutcomeQuerier,
+  type EffectRemoteOutcome,
   type EvidenceAuditSource,
   type EvidenceEffectSource,
 } from '@commander/effect-broker';
@@ -403,7 +405,10 @@ function evidenceAuditDetails(event: KernelEvent): Record<string, unknown> {
   return event.payload;
 }
 
-export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway | null): Router {
+export function createActionGatewayRouter(
+  resolveKernel: () => V1KernelGateway | null,
+  resolveOutcomeQuerier: (effectType: string) => EffectOutcomeQuerier | null = () => null,
+): Router {
   const router = express.Router();
 
   router.get('/kill-switches', async (req, res) => {
@@ -809,16 +814,55 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
     const effects = await kernel.listEffects(loaded.run.id, tenantId);
     const unknown = effects.find((effect) => effect.state === 'COMPLETION_UNKNOWN');
     if (!unknown) {
-      return res.status(409).json({
+      return res.status(404).json({
         error: { code: 'NO_RECONCILABLE_EFFECT', message: 'No completion-unknown effect exists.' },
       });
     }
-    return res.status(501).json({
-      error: {
-        code: 'RECONCILER_NOT_CONFIGURED',
-        message: 'The adapter reconciler is not configured on this API process.',
-      },
+    const querier: EffectOutcomeQuerier | null = resolveOutcomeQuerier(unknown.type);
+    if (!querier) {
+      return res.status(503).json({
+        error: {
+          code: 'RECONCILER_NOT_CONFIGURED',
+          message: 'No outcome querier is registered for this effect type.',
+        },
+        effectId: unknown.id,
+        effectType: unknown.type,
+      });
+    }
+    const outcome: EffectRemoteOutcome = await querier.queryOutcome({
       effectId: unknown.id,
+      idempotencyKey: unknown.idempotencyKey,
+      type: unknown.type,
+      request: unknown.request,
+      tenantId,
+    });
+    if (outcome.status === 'UNKNOWN') {
+      return res.status(202).json({
+        effectId: unknown.id,
+        status: 'ESCALATED',
+        reason: 'Remote outcome could not be determined; manual review required.',
+      });
+    }
+    const reconciled = await kernel.reconcileEffect(
+      unknown.id,
+      tenantId,
+      outcome.status,
+      outcome.response,
+      req.user?.id ?? 'reconciler',
+    );
+    if (!reconciled) {
+      return res.status(409).json({
+        error: {
+          code: 'EFFECT_NOT_RECONCILABLE',
+          message: 'Effect is no longer in COMPLETION_UNKNOWN state or was not found.',
+        },
+        effectId: unknown.id,
+      });
+    }
+    return res.json({
+      effectId: reconciled.id,
+      status: reconciled.state,
+      response: reconciled.response ?? null,
     });
   });
 
