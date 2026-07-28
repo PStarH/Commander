@@ -15,6 +15,7 @@
  */
 
 import { getGlobalLogger } from '../logging';
+import { optionalImport } from '../optionalImport';
 import { reportSilentFailure } from '../silentFailureReporter';
 import { ContractEventBus } from './contractEventBus';
 
@@ -44,6 +45,17 @@ interface RedisLike {
   subscribe(channel: string, handler: (message: string) => void): Promise<void>;
   unsubscribe(channel: string): Promise<void>;
   quit(): Promise<void>;
+}
+
+/** Minimal facade for the optional `redis` package so we don't need its types. */
+interface RedisModule {
+  createClient(options: { url: string }): {
+    connect(): Promise<void>;
+    publish(channel: string, message: string): Promise<number>;
+    subscribe(channel: string, listener: (message: string) => void): Promise<void>;
+    unsubscribe(channel: string): Promise<void>;
+    quit(): Promise<void>;
+  };
 }
 
 // ============================================================================
@@ -87,9 +99,19 @@ export class DistributedEventBus extends ContractEventBus {
    * Dynamically imports the `redis` package (optional dependency).
    */
   private async initRedis(redisUrl: string): Promise<void> {
+    const redis = await optionalImport<RedisModule>('redis');
+    if (!redis) {
+      getGlobalLogger().info(
+        'DistributedEventBus',
+        'Redis package not available — using in-memory',
+        {
+          hint: 'Install redis package: npm install redis',
+        },
+      );
+      this.backend = 'memory';
+      return;
+    }
     try {
-      // @ts-ignore — redis is an optional dependency
-      const redis = await import('redis');
       const client = redis.createClient({ url: redisUrl });
       await client.connect();
 
@@ -112,7 +134,7 @@ export class DistributedEventBus extends ContractEventBus {
       getGlobalLogger().info('DistributedEventBus', 'Redis backend connected', {
         url: redisUrl.replace(/:[^:@]+@/, ':****@'),
       });
-    } catch (err) {
+    } catch {
       // redis package not installed — that's OK, fall back to memory
       getGlobalLogger().info(
         'DistributedEventBus',

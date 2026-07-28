@@ -76,14 +76,27 @@ function writeRecords(records: ApiKeyRecord[]): void {
 
 export class ApiKeyStore {
   private records: ApiKeyRecord[] = [];
+  /** O(1) index keyed by SHA-256 hash for authentication lookups. */
+  private hashIndex: Map<string, ApiKeyRecord> = new Map();
 
   constructor() {
     this.records = readRecords();
+    this.rebuildIndex();
+  }
+
+  private rebuildIndex(): void {
+    this.hashIndex = new Map();
+    for (const record of this.records) {
+      if (record.enabled) {
+        this.hashIndex.set(record.hash, record);
+      }
+    }
   }
 
   /** Reload from disk — useful after external rotation. */
   reload(): void {
     this.records = readRecords();
+    this.rebuildIndex();
   }
 
   list(): Omit<ApiKeyRecord, 'hash'>[] {
@@ -91,7 +104,7 @@ export class ApiKeyStore {
   }
 
   findByHash(hash: string): ApiKeyRecord | undefined {
-    return this.records.find((r) => r.enabled && r.hash === hash);
+    return this.hashIndex.get(hash);
   }
 
   create(
@@ -111,6 +124,7 @@ export class ApiKeyStore {
       createdAt: new Date().toISOString(),
     };
     this.records.push(record);
+    this.hashIndex.set(record.hash, record);
     writeRecords(this.records);
     return { record, key };
   }
@@ -120,6 +134,7 @@ export class ApiKeyStore {
     if (!record || !record.enabled) return undefined;
     record.enabled = false;
     record.revokedAt = new Date().toISOString();
+    this.hashIndex.delete(record.hash);
     writeRecords(this.records);
     return record;
   }
@@ -128,6 +143,7 @@ export class ApiKeyStore {
     const initial = this.records.length;
     this.records = this.records.filter((r) => r.id !== id);
     if (this.records.length !== initial) {
+      this.rebuildIndex();
       writeRecords(this.records);
       return true;
     }
