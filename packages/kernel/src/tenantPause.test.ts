@@ -21,10 +21,14 @@ describe('tenant execution pause', () => {
     await kernel.createRun(run('tenant-a', 'run-a', 'step-a'), 'gateway');
     await kernel.createRun(run('tenant-b', 'run-b', 'step-b'), 'gateway');
     const stepA = await kernel.claimNextStep({
-      tenantId: 'tenant-a', workerId: 'worker-a', leaseTtlMs: 60_000,
+      tenantId: 'tenant-a',
+      workerId: 'worker-a',
+      leaseTtlMs: 60_000,
     });
     const stepB = await kernel.claimNextStep({
-      tenantId: 'tenant-b', workerId: 'worker-b', leaseTtlMs: 60_000,
+      tenantId: 'tenant-b',
+      workerId: 'worker-b',
+      leaseTtlMs: 60_000,
     });
     assert.ok(stepA?.lease);
     assert.ok(stepB?.lease);
@@ -36,9 +40,14 @@ describe('tenant execution pause', () => {
     assert.equal((await kernel.getStep('step-a', 'tenant-a'))?.state, 'RETRY_WAIT');
     assert.equal(await kernel.heartbeatStep('step-a', 'tenant-a', stepA.lease, 60_000), null);
     assert.notEqual(await kernel.heartbeatStep('step-b', 'tenant-b', stepB.lease, 60_000), null);
-    assert.equal(await kernel.claimNextStep({
-      tenantId: 'tenant-a', workerId: 'worker-a', leaseTtlMs: 60_000,
-    }), null);
+    assert.equal(
+      await kernel.claimNextStep({
+        tenantId: 'tenant-a',
+        workerId: 'worker-a',
+        leaseTtlMs: 60_000,
+      }),
+      null,
+    );
   });
 
   it('resumes the tenant gate without resuming individually paused runs', async () => {
@@ -51,8 +60,13 @@ describe('tenant execution pause', () => {
 
     assert.equal(control.paused, false);
     assert.equal((await kernel.getRun('run-a', 'tenant-a'))?.state, 'PAUSED');
-    assert.equal(await kernel.claimNextStep({
-      tenantId: 'tenant-a', workerId: 'worker-a', leaseTtlMs: 60_000,
-    }), null);
+    assert.equal(
+      await kernel.claimNextStep({
+        tenantId: 'tenant-a',
+        workerId: 'worker-a',
+        leaseTtlMs: 60_000,
+      }),
+      null,
+    );
   });
 });

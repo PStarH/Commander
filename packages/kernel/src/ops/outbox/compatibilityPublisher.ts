@@ -1,11 +1,7 @@
 import type { KernelRepository } from '../../repository.js';
 
 export interface EventPublisher {
-  publish(message: {
-    topic: string;
-    key: string;
-    payload: Record<string, unknown>;
-  }): Promise<void>;
+  publish(message: { topic: string; key: string; payload: Record<string, unknown> }): Promise<void>;
 }
 
 /** Compatibility surface for existing publisher consumers during the package merge. */
@@ -29,7 +25,7 @@ export class OutboxPublisher {
           key: message.key,
           payload: message.payload,
         });
-        await this.outbox.markOutboxPublished(message.id, message.claimToken)
+        (await this.outbox.markOutboxPublished(message.id, message.claimToken))
           ? published++
           : failed++;
       } catch (error) {

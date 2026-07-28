@@ -44,14 +44,19 @@ export class InMemoryOutboxDeliveryPort implements OutboxDeliveryPort {
     return { deliveryId: record.deliveryId, duplicate: false };
   }
 
-  async claim(consumerId: string, limit: number, now = new Date()): Promise<ClaimedOutboxDelivery[]> {
+  async claim(
+    consumerId: string,
+    limit: number,
+    now = new Date(),
+  ): Promise<ClaimedOutboxDelivery[]> {
     const at = now.getTime();
     return [...this.byDeliveryId.values()]
-      .filter((record) =>
-        !record.acknowledgedAt &&
-        !record.movedToDlqAt &&
-        record.availableAt <= at &&
-        (!record.claimedAt || record.claimedAt + this.options.claimTtlMs <= at),
+      .filter(
+        (record) =>
+          !record.acknowledgedAt &&
+          !record.movedToDlqAt &&
+          record.availableAt <= at &&
+          (!record.claimedAt || record.claimedAt + this.options.claimTtlMs <= at),
       )
       .sort((a, b) => a.availableAt - b.availableAt)
       .slice(0, limit)
@@ -79,7 +84,12 @@ export class InMemoryOutboxDeliveryPort implements OutboxDeliveryPort {
     return true;
   }
 
-  async retry(deliveryId: string, claimToken: string, error: OutboxDeliveryError, now = new Date()): Promise<boolean> {
+  async retry(
+    deliveryId: string,
+    claimToken: string,
+    error: OutboxDeliveryError,
+    now = new Date(),
+  ): Promise<boolean> {
     const record = this.byDeliveryId.get(deliveryId);
     if (!record || record.acknowledgedAt || record.claimToken !== claimToken) return false;
     record.lastError = structuredClone(error);

@@ -52,7 +52,9 @@ export class ReclaimDaemon {
     this.healthEpoch += 1;
     const epoch = this.healthEpoch;
     this.lastOkAt = 0;
-    this.timer = setInterval(() => { void this.tick().catch(() => undefined); }, this.config.pollIntervalMs);
+    this.timer = setInterval(() => {
+      void this.tick().catch(() => undefined);
+    }, this.config.pollIntervalMs);
     void this.kick(epoch);
   }
 
@@ -74,7 +76,9 @@ export class ReclaimDaemon {
 
   async tick(now = new Date()): Promise<ReclaimStats> {
     if (!this.inFlight) {
-      this.inFlight = this.runTick(now).finally(() => { this.inFlight = undefined; });
+      this.inFlight = this.runTick(now).finally(() => {
+        this.inFlight = undefined;
+      });
     }
     await this.inFlight;
     return this.getStats();

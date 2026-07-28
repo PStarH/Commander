@@ -11,6 +11,10 @@ import * as path from 'path';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
+interface TokenUsage {
+  totalTokens: number;
+}
+
 interface ReplayRunSummary {
   runId: string;
   agentId: string;

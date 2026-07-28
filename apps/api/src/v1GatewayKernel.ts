@@ -46,6 +46,11 @@ export interface V1KernelGateway {
   listEffects(runId: string, tenantId: string): Promise<KernelEffect[]>;
   getEffect(effectId: string, tenantId: string): Promise<KernelEffect | null>;
   /**
+   * L3-08a: advance COMPLETION_UNKNOWN → COMPLETED|FAILED after remote query.
+   * Ops/reconciler path — no worker lease; never re-executes the write.
+   */
+  reconcileEffect(effectId: string, tenantId: string, state: 'COMPLETED' | 'FAILED', response: Record<string, unknown>, actor: string): Promise<KernelEffect | null>;
+  /**
    * Pause a run, releasing any active worker leases but keeping scheduled work.
    * Returns null when the run was not found or is not in a pausable state.
    */
@@ -230,6 +235,15 @@ class RepositoryV1KernelGateway implements V1KernelGateway {
   }
   getEffect(effectId: string, tenantId: string): Promise<KernelEffect | null> {
     return this.repository.getEffect(effectId, tenantId);
+  }
+  reconcileEffect(
+    effectId: string,
+    tenantId: string,
+    state: 'COMPLETED' | 'FAILED',
+    response: Record<string, unknown>,
+    actor: string,
+  ): Promise<KernelEffect | null> {
+    return this.repository.reconcileEffect({ effectId, tenantId, state, response, actor });
   }
   pauseRun(runId: string, tenantId: string, actor: string): Promise<KernelRun | null> {
     return this.repository.pauseRun(runId, tenantId, actor);
