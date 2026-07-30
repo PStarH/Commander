@@ -9,6 +9,7 @@ import {
   assertDistinctRestoreTarget,
   refuseSourceDestructiveRestore,
   sanitizeError,
+  assessRestoredEvidence,
   type DsnParts,
 } from './dr-backup-verify.js';
 
@@ -98,5 +99,47 @@ describe('dr-backup-verify honesty', () => {
     const cleaned = sanitizeError(err, [secret]);
     assert.ok(!cleaned.includes(secret));
     assert.ok(!cleaned.includes('postgres://'));
+  });
+
+  it('attests restored signed receipts, anchors, and identity/outcome accounting', () => {
+    const dsn: DsnParts = {
+      host: 'restore.example.invalid',
+      port: 5433,
+      database: 'commander_dr',
+      user: 'verifier',
+      password: 'not-retained',
+    };
+    const values = ['t', '3', '3', '3'];
+    assert.deepEqual(
+      assessRestoredEvidence(dsn, () => values.shift() ?? ''),
+      {
+        evidenceReceiptsRestored: true,
+        evidenceAnchorsRestored: true,
+        identityOutcomeAccountingPreserved: true,
+        evidenceReceiptCount: 3,
+        anchoredEvidenceReceiptCount: 3,
+      },
+    );
+  });
+
+  it('fails closed when restored receipts are missing, unanchored, or malformed', () => {
+    const dsn: DsnParts = {
+      host: 'restore.example.invalid',
+      port: 5433,
+      database: 'commander_dr',
+      user: 'verifier',
+      password: 'not-retained',
+    };
+    const values = ['t', '2', '1', '1'];
+    assert.deepEqual(
+      assessRestoredEvidence(dsn, () => values.shift() ?? ''),
+      {
+        evidenceReceiptsRestored: true,
+        evidenceAnchorsRestored: false,
+        identityOutcomeAccountingPreserved: false,
+        evidenceReceiptCount: 2,
+        anchoredEvidenceReceiptCount: 1,
+      },
+    );
   });
 });

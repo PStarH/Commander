@@ -1,129 +1,161 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
+import { consumeCompensationBatch, type CompensationOutboxPort } from '@commander/kernel';
 import {
-  consumeCompensationBatch,
-  KERNEL_COMPENSATION_TOPIC,
-} from '@commander/kernel';
-import {
-  ActionAdapterRegistry,
-  createGitHubPullRequestCreateAdapter,
-} from '@commander/action-adapters';
+  sealGovernedCompensationAuthorization,
+  type GovernedCompensationAuthorizationInput,
+} from '../../../kernel/src/ops/compensationAuthority.js';
 
-describe('L4-02 operations chaos — worker kill / double compensate', () => {
-  it('duplicate compensation outbox messages produce one remote state change', async () => {
-    let compensateCount = 0;
-    const pulls = [
-      {
-        number: 42,
-        html_url: 'https://github.com/octo/repo/pull/42',
-        state: 'open',
-        body: '<!-- commander-action:abc -->',
-        head: { ref: 'feature' },
-        base: { ref: 'main' },
+const WORKER_ID = 'compensation:chaos-pod';
+
+type ClaimedCompensationWork = Awaited<
+  ReturnType<CompensationOutboxPort['claimCompensationWork']>
+>[number];
+
+function authorityInput(): GovernedCompensationAuthorizationInput {
+  return {
+    schema: 'commander.compensation/v1',
+    authorizationId: 'authorization-chaos',
+    requestId: 'request-chaos',
+    tenantId: 'tenant-chaos',
+    originalRunId: 'run-forward',
+    originalEffectId: 'effect-forward',
+    originalRunStateAtRequest: 'COMPENSATING',
+    compensationRunId: 'run-compensation',
+    compensationStepId: 'step-compensation',
+    compensationEffectId: 'effect-compensation-stable',
+    compensationEffectType: 'compensate.github.pull-request.create',
+    compensationRequest: {
+      originalEffectId: 'effect-forward',
+      destination: 'github://octo/repo/pulls',
+      forwardResponse: { prNumber: 42 },
+      compensationPatch: {},
+    },
+    idempotencyKey: 'cmp:effect-forward:1.0.0',
+    forwardReceipt: { prNumber: 42, state: 'open' },
+    adapterVersion: '1.0.0',
+    policyDecisionId: 'decision-chaos',
+    policySnapshotId: 'policy-chaos',
+    decisionEffect: 'allow',
+    authorizationExpiresAt: '2099-07-29T11:00:00.000Z',
+    approvalBinding: null,
+  };
+}
+
+function workForGeneration(workerGeneration: number): ClaimedCompensationWork {
+  const authorization = sealGovernedCompensationAuthorization(authorityInput());
+  return {
+    messageId: 'outbox-compensation-stable',
+    tenantId: authorization.tenantId,
+    claimToken: `outbox-claim-generation-${workerGeneration}`,
+    authorization,
+    lease: {
+      workerId: WORKER_ID,
+      workerGeneration,
+      token: `step-lease-generation-${workerGeneration}`,
+      fencingEpoch: workerGeneration,
+    },
+  };
+}
+
+describe('L4-02 operations chaos - compensation worker kill/restart', () => {
+  it('reclaims with a new generation and replays one stable effect without a second remote write', async () => {
+    const claims: Array<{ workerId: string; workerGeneration: number; claimSecret: string }> = [];
+    let completeCalls = 0;
+    const port: CompensationOutboxPort = {
+      async claimCompensationWork(input) {
+        claims.push(input);
+        return [workForGeneration(input.workerGeneration)];
       },
-    ];
-    const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      const url = String(input);
-      const method = init?.method ?? 'GET';
-      if (method === 'PATCH' && url.endsWith('/pulls/42')) {
-        const pull = pulls[0]!;
-        if (pull.state !== 'closed') {
-          compensateCount += 1;
-          pull.state = 'closed';
+      async completeCompensationWork() {
+        completeCalls += 1;
+        if (completeCalls === 1) {
+          throw Object.assign(new Error('worker died after remote commit'), {
+            code: 'DB_CONNECTION_LOST',
+          });
         }
-        return new Response(JSON.stringify(pull), { status: 200 });
-      }
-      if (method === 'GET' && url.endsWith('/pulls/42')) {
-        return new Response(JSON.stringify(pulls[0]), { status: 200 });
-      }
-      return new Response('unexpected', { status: 500 });
-    };
-    const adapter = createGitHubPullRequestCreateAdapter({
-      credentials: {
-        async getGitHubToken() {
-          return 'token';
-        },
-        async getServiceNowCredentials() {
-          throw new Error('not used');
-        },
+        return { applied: true, disposition: 'COMPLETED' };
       },
-      fetch: fetchImpl,
-    });
-    const registry = new ActionAdapterRegistry([adapter]);
-    const kernel = new InMemoryKernelRepository();
-    const payload = {
-      type: 'kernel.compensation.requested',
-      tenantId: 'tenant-a',
-      runId: 'run-cmp-chaos',
-      stepId: 'step-cmp-chaos',
-      compensationAction: 'compensate.github.pull-request.create',
-      compensationPayload: {
-        originalEffectId: 'effect-forward',
-        forwardResponse: { prNumber: 42 },
-        compensationPatch: {},
-        destination: 'github://octo/repo/pulls',
-        // Mirrors the real requestCompensation payload shape: fencingEpoch is
-        // always derived from the original effect's lease, never invented.
-        fencingEpoch: 1,
+      async handoffCompensationUnknown() {
+        throw new Error('known committed response must not be handed off');
       },
-      idempotencyKey: 'cmp:effect-forward:1.0.0',
+      async escalateCompensationWork() {
+        throw new Error('valid governed work must not be escalated');
+      },
     };
-    kernel.seedOutboxMessage({
-      topic: KERNEL_COMPENSATION_TOPIC,
-      tenantId: 'tenant-a',
-      key: 'tenant-a/run-cmp-chaos/effect-forward-1',
-      payload,
-    });
-    kernel.seedOutboxMessage({
-      topic: KERNEL_COMPENSATION_TOPIC,
-      tenantId: 'tenant-a',
-      key: 'tenant-a/run-cmp-chaos/effect-forward-2',
-      payload,
-    });
 
-    const admitKeys = new Set<string>();
+    let remoteWrites = 0;
+    let remotelyCommitted = false;
+    const admittedEffectIds: string[] = [];
     const broker = {
-      admit: async (input: {
-        effectId: string;
-        idempotencyKey: string;
-        type: string;
-      }) => {
-        if (admitKeys.has(input.idempotencyKey)) {
-          return { admitted: true, effectId: input.effectId, replayed: true };
-        }
-        admitKeys.add(input.idempotencyKey);
-        return { admitted: true, effectId: input.effectId, replayed: false };
-      },
-      executeAdmitted: async (input: { effectId: string }) => {
-        const resolved = registry.resolve('compensate.github.pull-request.create');
-        assert.ok(resolved);
-        const response = await resolved.compensate({
-          tenantId: 'tenant-a',
+      async admit(input: { effectId: string }) {
+        admittedEffectIds.push(input.effectId);
+        return {
+          admitted: true,
           effectId: input.effectId,
-          originalEffectId: 'effect-forward',
-          idempotencyKey: 'cmp:effect-forward:1.0.0',
-          destination: 'github://octo/repo/pulls',
-          forwardResponse: { prNumber: 42 },
-          compensationPatch: {},
-          signal: AbortSignal.timeout(5_000),
-        });
-        return { effectId: input.effectId, replayed: false, response };
+          replayed: remotelyCommitted,
+        };
+      },
+      async executeAdmitted(input: { effectId: string }) {
+        const replayed = remotelyCommitted;
+        if (!remotelyCommitted) {
+          remoteWrites += 1;
+          remotelyCommitted = true;
+        }
+        return {
+          effectId: input.effectId,
+          replayed,
+          response: { prNumber: 42, state: 'closed' },
+        };
       },
     };
+    const registry = {
+      resolve: (effectType: string) =>
+        effectType === 'compensate.github.pull-request.create'
+          ? { descriptor: { adapterVersion: '1.0.0' } }
+          : null,
+    };
 
-    await consumeCompensationBatch(kernel, broker, async () => 'token', {
-      workerId: 'compensation-chaos',
-      topic: KERNEL_COMPENSATION_TOPIC,
-      limit: 10,
-    });
-    await consumeCompensationBatch(kernel, broker, async () => 'token', {
-      workerId: 'compensation-chaos',
-      topic: KERNEL_COMPENSATION_TOPIC,
-      limit: 10,
+    await assert.rejects(
+      () =>
+        consumeCompensationBatch(port, broker, async () => 'token-generation-4', {
+          workerId: WORKER_ID,
+          workerGeneration: 4,
+          claimSecret: 'secret-generation-4',
+          registry,
+        }),
+      { code: 'DB_CONNECTION_LOST' },
+    );
+
+    const replay = await consumeCompensationBatch(port, broker, async () => 'token-generation-5', {
+      workerId: WORKER_ID,
+      workerGeneration: 5,
+      claimSecret: 'secret-generation-5',
+      registry,
     });
 
-    assert.equal(compensateCount, 1);
-    assert.equal(pulls[0]!.state, 'closed');
+    assert.equal(replay.succeeded, 1);
+    assert.equal(remoteWrites, 1);
+    assert.equal(completeCalls, 2);
+    assert.deepEqual(admittedEffectIds, [
+      'effect-compensation-stable',
+      'effect-compensation-stable',
+    ]);
+    assert.deepEqual(claims, [
+      {
+        workerId: WORKER_ID,
+        workerGeneration: 4,
+        claimSecret: 'secret-generation-4',
+        topic: 'commander.kernel.compensation.requested',
+        limit: 50,
+      },
+      {
+        workerId: WORKER_ID,
+        workerGeneration: 5,
+        claimSecret: 'secret-generation-5',
+        topic: 'commander.kernel.compensation.requested',
+        limit: 50,
+      },
+    ]);
   });
 });

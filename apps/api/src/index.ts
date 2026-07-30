@@ -105,6 +105,7 @@ import { v1TenantGuard } from './v1TenantGuard';
 import { probeReadiness } from './healthProbes';
 import { createV1GatewayRouter } from './v1GatewayEndpoints';
 import {
+  closeV1KernelGateway,
   getKernelDatabaseUrl,
   getV1KernelGateway,
   initializeV1KernelGateway,
@@ -113,6 +114,7 @@ import {
 } from './v1GatewayKernel';
 import { isLegacyExecutionAllowed } from './legacyExecutionGuard';
 import { isEnterpriseProfile } from './profileSignal';
+import { startTask1ReadinessService, type Task1ReadinessService } from './task1ReadinessRuntime';
 
 import { getDirname, getRequire } from './esmCompat';
 const __dirname = getDirname(import.meta.url);
@@ -858,6 +860,13 @@ const port = Number(process.env.PORT || 4000);
 // mitigation this persistence layer was added for). Server reference is
 // captured so gracefulShutdown can drain it.
 let httpServer: { close: (cb?: () => void) => void } | null = null;
+let task1ReadinessService: Task1ReadinessService | undefined;
+
+async function closeTask1ReadinessService(): Promise<void> {
+  const service = task1ReadinessService;
+  task1ReadinessService = undefined;
+  await service?.close();
+}
 
 async function startServer(): Promise<void> {
   // Load tenant configuration before any routers or shared singletons are
@@ -868,6 +877,10 @@ async function startServer(): Promise<void> {
   // Auto-on when production / V2 mode / DSN present (see isCommanderKernelEnabled).
   // /v1 never falls back to WarRoomStore; missing kernel → KERNEL_UNAVAILABLE.
   await initializeV1KernelGateway();
+
+  // Context-aware releases expose compatibility proof on a separate TLS 1.3
+  // listener. The request never traverses generic API middleware.
+  task1ReadinessService = await startTask1ReadinessService();
 
   if (process.env.NODE_ENV === 'production') {
     // Fail closed at startup rather than booting a production replica that would
@@ -1028,65 +1041,96 @@ async function startServer(): Promise<void> {
   });
 }
 
-startServer().catch((err: Error) => {
+startServer().catch(async (err: Error) => {
   process.stderr.write(`[startup] Failed to start API server: ${err.message}\n`);
+  try {
+    await closeTask1ReadinessService();
+  } catch (closeErr) {
+    process.stderr.write(`[startup] Failed to close tenant-authority proof service: ${closeErr}\n`);
+  }
+  try {
+    await closeV1KernelGateway();
+  } catch (closeErr) {
+    process.stderr.write(`[startup] Failed to close kernel gateway: ${closeErr}\n`);
+  }
   process.exit(1);
 });
 
 // P1: Graceful shutdown — drain connections, flush state, then exit
 let shuttingDown = false;
+async function finishGracefulShutdown(): Promise<void> {
+  try {
+    getWebhookDispatcher().stop();
+  } catch (dispatcherErr) {
+    process.stderr.write(`[shutdown] Failed to stop webhook dispatcher: ${dispatcherErr}\n`);
+  }
+
+  try {
+    await closeTask1ReadinessService();
+  } catch (closeErr) {
+    process.stderr.write(
+      `[shutdown] Failed to close tenant-authority proof service: ${closeErr}\n`,
+    );
+  }
+
+  try {
+    await closeV1KernelGateway();
+  } catch (closeErr) {
+    process.stderr.write(`[shutdown] Failed to close kernel gateway: ${closeErr}\n`);
+  }
+
+  // Close database connections (no-op for JSON store)
+  try {
+    store.close();
+  } catch (closeErr) {
+    process.stderr.write(`[shutdown] Failed to close store: ${closeErr}\n`);
+  }
+
+  // Close the A2A API store (PostgresPool-backed when API_STORE_BACKEND=postgres)
+  try {
+    await apiStoreInstance.close();
+  } catch (closeErr) {
+    process.stderr.write(`[shutdown] Failed to close API store: ${closeErr}\n`);
+  }
+
+  // Close the rate-limit persistent store (audit MED item 3 follow-up).
+  // Idempotent — safe even if init failed.
+  closeRateLimitStore();
+
+  // Close the optional memory-index adapter store (sqlite/json backend).
+  try {
+    await projectMemoryAdapter?.close();
+  } catch (closeErr) {
+    process.stderr.write(`[shutdown] Failed to close memory-index adapter: ${closeErr}\n`);
+  }
+
+  // Log loaded tenant count for multi-tenant deployments.
+  const tenantProvider = getGlobalTenantProvider();
+  if (tenantProvider instanceof SimpleTenantProvider) {
+    const tenantCount = tenantProvider.getKnownTenants().length;
+    process.stdout.write(`[shutdown] Loaded ${tenantCount} tenant(s)\n`);
+  }
+
+  process.stdout.write('[shutdown] Complete\n');
+  process.exit(0);
+}
+
 function gracefulShutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   process.stdout.write(`\n[${signal}] Shutting down gracefully...\n`);
 
-  // Stop accepting new connections.
-  httpServer?.close(async () => {
-    process.stdout.write('[shutdown] HTTP server closed\n');
-
-    // Stop the outgoing webhook dispatcher to prevent in-flight retries
-    // from keeping the process alive after shutdown is requested.
-    try {
-      getWebhookDispatcher().stop();
-    } catch (dispatcherErr) {
-      process.stderr.write(`[shutdown] Failed to stop webhook dispatcher: ${dispatcherErr}\n`);
-    }
-
-    // Close database connections (no-op for JSON store)
-    try {
-      store.close();
-    } catch (closeErr) {
-      process.stderr.write(`[shutdown] Failed to close store: ${closeErr}\n`);
-    }
-
-    // Close the A2A API store (PostgresPool-backed when API_STORE_BACKEND=postgres)
-    try {
-      await apiStoreInstance.close();
-    } catch (closeErr) {
-      process.stderr.write(`[shutdown] Failed to close API store: ${closeErr}\n`);
-    }
-
-    // Close the rate-limit persistent store (audit MED item 3 follow-up).
-    // Idempotent — safe even if init failed.
-    closeRateLimitStore();
-
-    // Close the optional memory-index adapter store (sqlite/json backend).
-    try {
-      await projectMemoryAdapter?.close();
-    } catch (closeErr) {
-      process.stderr.write(`[shutdown] Failed to close memory-index adapter: ${closeErr}\n`);
-    }
-
-    // Log loaded tenant count for multi-tenant deployments.
-    const tenantProvider = getGlobalTenantProvider();
-    if (tenantProvider instanceof SimpleTenantProvider) {
-      const tenantCount = tenantProvider.getKnownTenants().length;
-      process.stdout.write(`[shutdown] Loaded ${tenantCount} tenant(s)\n`);
-    }
-
-    process.stdout.write('[shutdown] Complete\n');
-    process.exit(0);
-  });
+  const finish = (): void => {
+    void finishGracefulShutdown();
+  };
+  if (httpServer) {
+    httpServer.close(() => {
+      process.stdout.write('[shutdown] HTTP server closed\n');
+      finish();
+    });
+  } else {
+    finish();
+  }
 
   // Force exit after 10s if graceful shutdown hangs
   setTimeout(() => {

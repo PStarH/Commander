@@ -133,7 +133,7 @@ ACTION_FIXTURES = {
         "runId": "run-action-1",
         "stepId": "step-1",
         "effectId": "effect-1",
-        "state": "PENDING",
+        "state": "PROPOSED",
         "decision": {
             "effect": "allow",
             "decisionId": "action-gateway-allow",
@@ -211,29 +211,46 @@ class TestGatewayClient:
             base_url="http://localhost:3001", api_key="test"
         ) as client:
             async with mock_api:
-                action = await client.approve_action("run-action-1", approval)
+                action = await client.approve_action(
+                    "run-action-1", approval, idempotency_key="approve-action-0001"
+                )
                 assert route.called
+                assert (
+                    route.calls.last.request.headers["Idempotency-Key"]
+                    == "approve-action-0001"
+                )
         assert action.run_id == "run-action-1"
 
     async def test_reject_action_posts_reason(self, mock_api: respx.MockRouter) -> None:
         route = mock_api.post("/v1/actions/run-action-1/reject").respond(
             200,
-            json={"action": {**ACTION_FIXTURES["action"], "state": "REJECTED"}},
+            json={"action": {**ACTION_FIXTURES["action"], "state": "FAILED"}},
         )
         async with CommanderGatewayClient(
             base_url="http://localhost:3001", api_key="test"
         ) as client:
             async with mock_api:
-                action = await client.reject_action("run-action-1", reason="too risky")
+                action = await client.reject_action(
+                    "run-action-1",
+                    reason="too risky",
+                    idempotency_key="reject-action-0001",
+                )
                 assert route.called
-        assert action.state == "REJECTED"
+                assert (
+                    route.calls.last.request.headers["Idempotency-Key"]
+                    == "reject-action-0001"
+                )
+        assert action.state == "FAILED"
 
     async def test_get_action_evidence(self, mock_api: respx.MockRouter) -> None:
         route = mock_api.get("/v1/actions/run-action-1/evidence").respond(
             200,
             json={
-                "bundle": {"bundleId": "bundle-1", "runId": "run-action-1"},
-                "verification": {"valid": True},
+                "receipt": {
+                    "bundleId": "bundle-1",
+                    "scope": {"runId": "run-action-1"},
+                },
+                "verification": {"ok": True},
             },
         )
         async with CommanderGatewayClient(
@@ -242,5 +259,5 @@ class TestGatewayClient:
             async with mock_api:
                 evidence = await client.get_action_evidence("run-action-1")
                 assert route.called
-        assert evidence.bundle["bundleId"] == "bundle-1"
-        assert evidence.verification["valid"] is True
+        assert evidence.receipt["bundleId"] == "bundle-1"
+        assert evidence.verification.ok is True

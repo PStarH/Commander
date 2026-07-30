@@ -1,0 +1,38 @@
+image:
+  digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+tenantAuthority:
+  cutoverPhase: expand
+  configurationSha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  platformBinding:
+    chartContentSha256: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+  apiProof:
+    publicSecret: release-a-api-proof-public
+    publicCertificateSpkiSha256: dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+    serviceName: release-a-api-proof
+    servicePort: 9443
+    targetPort: 9443
+    podSelector:
+      app.kubernetes.io/component: api
+      app.kubernetes.io/instance: release-a
+    dnsSan: release-a-api-proof.commander.svc.cluster.local
+
+networkPolicy:
+  enabled: true
+  clusterDomain: cluster.local
+  migrationOperator:
+    subject: system:serviceaccount:commander-ops:migration-operator
+  clusterDns:
+    namespace: kube-system
+    podSelector:
+      k8s-app: kube-dns
+  databaseEndpoints:
+    - roles: [owner, app, tenant-authority, scheduler, worker, adapter-ops]
+      service:
+        namespace: commander
+        name: postgres
+        servicePort: 5432
+        targetPort: 5432
+        podSelector:
+          app.kubernetes.io/component: postgres
+          app.kubernetes.io/instance: release-a

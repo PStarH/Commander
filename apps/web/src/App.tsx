@@ -25,6 +25,7 @@ import { OIDCSettingsPage } from './pages/OIDCSettingsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { WorkflowsPage } from './pages/WorkflowsPage';
 import { POCPage } from './pages/POCPage';
+import { ActionsPage } from './pages/ActionsPage';
 import { useWarRoom } from './hooks/useWarRoom';
 import { useAuth } from './hooks/useAuth';
 import { fetchOnboardingStatus } from './api';
@@ -33,19 +34,8 @@ export default function App() {
   const auth = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const {
-    snapshot,
-    memoryItems,
-    memoryOverview,
-    loading,
-    error,
-    dismissError,
-    createMission,
-    updateMissionStatus,
-    approveMission,
-    createLog,
-    searchMemory,
-  } = useWarRoom();
+  const { snapshot, memoryItems, memoryOverview, loading, error, dismissError, searchMemory } =
+    useWarRoom();
 
   const agentNameById = useMemo(() => {
     return new Map((snapshot?.agents ?? []).map((a) => [a.agentId, a.agentName]));
@@ -122,10 +112,6 @@ export default function App() {
                   memoryOverview={memoryOverview}
                   loading={loading}
                   agentNameById={agentNameById}
-                  onStatusChange={updateMissionStatus}
-                  onApprove={approveMission}
-                  onCreateMission={createMission}
-                  onCreateLog={createLog}
                   onSearchMemory={searchMemory}
                 />
               }
@@ -133,16 +119,7 @@ export default function App() {
             <Route path="/agents" element={<AgentsPage agents={snapshot.agents} />} />
             <Route
               path="/missions"
-              element={
-                <MissionsPage
-                  missions={snapshot.missions}
-                  agents={snapshot.agents}
-                  agentNameById={agentNameById}
-                  onStatusChange={updateMissionStatus}
-                  onApprove={approveMission}
-                  onCreateMission={createMission}
-                />
-              }
+              element={<MissionsPage missions={snapshot.missions} agentNameById={agentNameById} />}
             />
             <Route
               path="/execution"
@@ -151,7 +128,6 @@ export default function App() {
                   logs={snapshot.latestLogs}
                   missions={snapshot.missions}
                   agentNameById={agentNameById}
-                  onCreateLog={createLog}
                 />
               }
             />
@@ -164,12 +140,7 @@ export default function App() {
             <Route
               path="/governance"
               element={
-                <GovernancePage
-                  missions={snapshot.missions}
-                  battleReport={snapshot.battleReport}
-                  onApprove={approveMission}
-                  onStatusChange={updateMissionStatus}
-                />
+                <GovernancePage missions={snapshot.missions} battleReport={snapshot.battleReport} />
               }
             />
           </Routes>
@@ -189,6 +160,7 @@ export default function App() {
           <Route path="/settings/sso" element={<OIDCSettingsPage />} />
           <Route path="/workflows" element={<WorkflowsPage />} />
           <Route path="/poc" element={<POCPage />} />
+          <Route path="/actions" element={<ActionsPage token={auth.token!} />} />
         </Routes>
       </main>
     </div>

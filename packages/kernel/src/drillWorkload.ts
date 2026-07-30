@@ -6,7 +6,7 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
-import { Pool } from 'pg';
+import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import { PostgresKernelRepository } from './postgres.js';
 import { runKernelMigrations } from './migrations.js';
 
@@ -16,7 +16,7 @@ export interface CreatedRun {
 }
 
 export async function createDrillRun(databaseUrl: string): Promise<CreatedRun> {
-  const pool = new Pool({ connectionString: databaseUrl });
+  const pool = createVerifiedPostgresPool({ connectionString: databaseUrl });
   try {
     await runKernelMigrations(pool);
     const repo = new PostgresKernelRepository(pool);

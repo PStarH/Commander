@@ -16,7 +16,10 @@
 #   kernel-migrate → commander_owner
 #   api            → commander_app
 #   kernel-ops     → commander_scheduler
-#   worker / adapter-ops → commander_worker
+#   worker → commander_worker; adapter-ops → commander_adapter_ops
+
+volumes:
+  adapter-ops-claim-secrets:
 # Worker tenant default for cell: local (override via COMMANDER_WORKER_TENANTS).
 # =============================================================================
 
@@ -36,6 +39,7 @@ services:
       # tenant allowlist before worker/adapter LOGINs register.
       - COMMANDER_WORKER_TENANTS=${COMMANDER_WORKER_TENANTS:-${COMMANDER_CELL_TENANT_ID:-local}}
       - COMMANDER_WORKER_ALLOWED_TENANTS=${COMMANDER_WORKER_ALLOWED_TENANTS:-${COMMANDER_WORKER_TENANTS:-${COMMANDER_CELL_TENANT_ID:-local}}}
+      - COMMANDER_ADAPTER_OPS_PASSWORD=${COMMANDER_ADAPTER_OPS_PASSWORD:-commander_adapter_ops}
       # Owner-only policy seed for the explicit demo adapter; worker remains read-only.
       - COMMANDER_ENABLE_DEMO_TICKET=${COMMANDER_ENABLE_DEMO_TICKET:-}
 
@@ -76,8 +80,8 @@ services:
       - ${DOCKER_GID:-0}
     user: '0:0'
     environment:
-      - DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander
-      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander
+      - DATABASE_URL=${COMMANDER_WORKER_DATABASE_URL:-postgres://commander_worker:commander_worker@postgres:5432/commander}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_WORKER_DATABASE_URL:-postgres://commander_worker:commander_worker@postgres:5432/commander}
       # Cell / Helm demo tenant scope (explicit; never '*').
       - COMMANDER_WORKER_TENANTS=${COMMANDER_WORKER_TENANTS:-${COMMANDER_CELL_TENANT_ID:-local}}
       - COMMANDER_WORKER_AUTH_TOKEN=${COMMANDER_WORKER_AUTH_TOKEN:?set COMMANDER_WORKER_AUTH_TOKEN}
@@ -91,6 +95,8 @@ services:
       - COMMANDER_CAPABILITY_PRIVATE_KEY_PEM=${COMMANDER_CAPABILITY_PRIVATE_KEY_PEM:?set COMMANDER_CAPABILITY_PRIVATE_KEY_PEM}
       - COMMANDER_CAPABILITY_KEY_ID=${COMMANDER_CAPABILITY_KEY_ID:?set COMMANDER_CAPABILITY_KEY_ID}
       - COMMANDER_CAPABILITY_JWKS_JSON=${COMMANDER_CAPABILITY_JWKS_JSON:?set COMMANDER_CAPABILITY_JWKS_JSON}
+      - COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM=${COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM:?set COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM}
+      - COMMANDER_EVIDENCE_SIGNING_KEY_ID=${COMMANDER_EVIDENCE_SIGNING_KEY_ID:?set COMMANDER_EVIDENCE_SIGNING_KEY_ID}
     healthcheck:
       test:
         [
@@ -118,21 +124,30 @@ services:
     environment:
       - NODE_ENV=production
       - COMMANDER_KERNEL_BACKEND=postgres
-      - DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander
-      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander
+      - DATABASE_URL=${COMMANDER_ADAPTER_OPS_DATABASE_URL:-postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_ADAPTER_OPS_DATABASE_URL:-postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander}
+      - COMMANDER_ADAPTER_OPS_INSTANCE_ID=${COMMANDER_ADAPTER_OPS_INSTANCE_ID:-local}
+      - COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR=/var/run/commander/adapter-ops
       # Same fail-closed tenant scope as worker (resolveWorkerTenantScope on postgres path).
       - COMMANDER_WORKER_TENANTS=${COMMANDER_WORKER_TENANTS:-${COMMANDER_CELL_TENANT_ID:-local}}
       - COMMANDER_ADAPTER_OPS_HEALTH_PORT=8082
       - COMMANDER_CELL_TIER=demo
       - COMMANDER_CELL_TENANT_ID=${COMMANDER_CELL_TENANT_ID:-local}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-      - COMMANDER_ADAPTER_EGRESS_ALLOWLIST=10.0.0.0/8
+      - COMMANDER_ADAPTER_EGRESS_ALLOWLIST=${COMMANDER_ADAPTER_EGRESS_ALLOWLIST:-api.github.com}
+      - COMMANDER_KUBERNETES_CLUSTER=${COMMANDER_KUBERNETES_CLUSTER:-}
+      - COMMANDER_KUBERNETES_SERVER=${COMMANDER_KUBERNETES_SERVER:-}
+      - COMMANDER_KUBERNETES_TOKEN_ENV=${COMMANDER_KUBERNETES_TOKEN_ENV:-}
+      - COMMANDER_KUBERNETES_NAMESPACES=${COMMANDER_KUBERNETES_NAMESPACES:-}
+      - COMMANDER_KUBERNETES_BEARER_TOKEN=${COMMANDER_KUBERNETES_BEARER_TOKEN:-}
       # Adapter authority: same Ed25519 contract as worker (fail-closed).
       - COMMANDER_CAPABILITY_PRIVATE_KEY_PEM=${COMMANDER_CAPABILITY_PRIVATE_KEY_PEM:?set COMMANDER_CAPABILITY_PRIVATE_KEY_PEM}
       - COMMANDER_CAPABILITY_KEY_ID=${COMMANDER_CAPABILITY_KEY_ID:?set COMMANDER_CAPABILITY_KEY_ID}
       - COMMANDER_CAPABILITY_JWKS_JSON=${COMMANDER_CAPABILITY_JWKS_JSON:?set COMMANDER_CAPABILITY_JWKS_JSON}
     expose:
       - '8082'
+    volumes:
+      - adapter-ops-claim-secrets:/var/run/commander/adapter-ops
     healthcheck:
       test:
         [

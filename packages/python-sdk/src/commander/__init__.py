@@ -1,7 +1,7 @@
 """Commander Python SDK — multi-agent orchestration via HTTP."""
 
 from ._client import Agent, CommanderClient
-from ._gateway_client import CommanderGatewayClient
+from ._gateway_client import CommanderGatewayClient, verify_action_evidence
 from ._exceptions import (
     AuthenticationError,
     CommanderError,
@@ -88,6 +88,17 @@ from ._types import (
     ProposeActionInput,
     ActionApprovalInput,
     ActionEvidenceBundle,
+    ActionEvidenceJwk,
+    ActionEvidenceJwks,
+    ActionEvidenceVerification,
+    GatewayErrorDetail,
+    GatewayErrorResponse,
+    GovernedActionState,
+    KillSwitch,
+    KillSwitchScope,
+    KillSwitchUpdateInput,
+    ProposeActionResult,
+    RequestReconcileResult,
     ExecutionEvent,
     ExecutionEventType,
     ExecutionResult,
@@ -202,6 +213,7 @@ from .security import (
 __all__ = [
     "CommanderClient",
     "CommanderGatewayClient",
+    "verify_action_evidence",
     "CommanderClientSync",
     "Agent",
     "CommanderModel",
@@ -339,6 +351,17 @@ __all__ = [
     "ProposeActionInput",
     "ActionApprovalInput",
     "ActionEvidenceBundle",
+    "ActionEvidenceJwk",
+    "ActionEvidenceJwks",
+    "ActionEvidenceVerification",
+    "GatewayErrorDetail",
+    "GatewayErrorResponse",
+    "GovernedActionState",
+    "KillSwitch",
+    "KillSwitchScope",
+    "KillSwitchUpdateInput",
+    "ProposeActionResult",
+    "RequestReconcileResult",
     "User",
     "UserList",
     "AuthTokens",

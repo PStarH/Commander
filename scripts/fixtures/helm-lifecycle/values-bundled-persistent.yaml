@@ -54,6 +54,7 @@ database:
     bundled: true
     existingSecret: lifecycle-database
     persistence: { enabled: true, size: 1Gi }
-    tls:
-      publicSecret: commander-lifecycle-database-public-ca
-      publicCaKey: ca.crt
+
+databaseTls:
+  existingSecret: commander-lifecycle-database-tls
+  expectedServerSpkiSha256: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
