@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -30,21 +30,6 @@ function snapshot(runId: string, tenantId: string, ownerId: string) {
     sagaName: 'order-fulfillment',
     input: { orderId: runId, amount: 10 },
   };
-}
-
-async function waitForSnapshot(
-  runId: string,
-  expectedState?: string,
-): Promise<Record<string, unknown>> {
-  const snapshotPath = join(dataDir, runId, 'snapshot.json');
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (existsSync(snapshotPath)) {
-      const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf8')) as Record<string, unknown>;
-      if (!expectedState || snapshot.state === expectedState) return snapshot;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error(`snapshot ${runId} was not persisted`);
 }
 
 function writeRun(runId: string, tenantId: string, ownerId: string): void {
@@ -165,83 +150,35 @@ describe('CMD-SAGA-CONTROL-001 owner authorization', () => {
     );
   });
 
-  it('blocks same-tenant non-owners from resume and fork before mutation', async () => {
-    assert.equal(
-      (
-        await fetch(`${server.baseUrl}/api/saga/runs/run-alice/resume`, {
-          method: 'POST',
-          headers: headers('bob', 'tenant-a'),
-        })
-      ).status,
-      403,
-    );
-    assert.equal(
-      (
-        await fetch(`${server.baseUrl}/api/saga/runs/run-foreign/resume`, {
-          method: 'POST',
-          headers: headers('admin-a', 'tenant-a', { role: 'admin' }),
-        })
-      ).status,
-      404,
-    );
-    assert.equal(
-      (
-        await fetch(`${server.baseUrl}/api/saga/runs/run-alice/fork`, {
-          method: 'POST',
-          headers: headers('bob', 'tenant-a'),
-          body: JSON.stringify({ nodeId: 'step-a', input: { forged: true } }),
-        })
-      ).status,
-      403,
-    );
-  });
-
-  it('allows the owner, tenant admin, and explicitly scoped operator to resume', async () => {
+  it('keeps resume and fork removed for owners, admins, operators, and foreign callers', async () => {
     const requests = [
-      fetch(`${server.baseUrl}/api/saga/runs/run-admin/resume`, {
+      ['run-alice/resume', headers('alice', 'tenant-a'), undefined],
+      ['run-alice/resume', headers('bob', 'tenant-a'), undefined],
+      ['run-admin/resume', headers('admin-a', 'tenant-a', { role: 'admin' }), undefined],
+      [
+        'run-operator/resume',
+        headers('operator-key', 'tenant-a', { apiKey: true, scopes: ['saga:operate'] }),
+        undefined,
+      ],
+      ['run-foreign/resume', headers('admin-a', 'tenant-a', { role: 'admin' }), undefined],
+      [
+        'run-fork/fork',
+        headers('alice', 'tenant-a'),
+        { nodeId: 'validate-cart', input: { orderId: 'forked-order', amount: 5 } },
+      ],
+    ] as const;
+    for (const [path, requestHeaders, body] of requests) {
+      const response = await fetch(`${server.baseUrl}/api/saga/runs/${path}`, {
         method: 'POST',
-        headers: headers('alice', 'tenant-a'),
-      }),
-      fetch(`${server.baseUrl}/api/saga/runs/run-operator/resume`, {
-        method: 'POST',
-        headers: headers('admin-a', 'tenant-a', { role: 'admin' }),
-      }),
-      fetch(`${server.baseUrl}/api/saga/runs/run-alice/resume`, {
-        method: 'POST',
-        headers: headers('operator-key', 'tenant-a', {
-          apiKey: true,
-          scopes: ['saga:operate'],
-        }),
-      }),
-    ];
-    for (const response of await Promise.all(requests)) {
-      assert.equal(response.status, 200);
-      assert.equal(((await response.json()) as { status: string }).status, 'resuming');
+        headers: requestHeaders,
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      assert.equal(response.status, 410, path);
+      const payload = (await response.json()) as {
+        error?: { code?: string; replacement?: string };
+      };
+      assert.equal(payload.error?.code, 'LEGACY_EXECUTION_DISABLED');
+      assert.equal(payload.error?.replacement, 'POST /v1/runs');
     }
-    for (const runId of ['run-alice', 'run-admin', 'run-operator']) {
-      const resumed = await waitForSnapshot(runId, 'COMMITTED');
-      assert.equal(resumed.tenantId, 'tenant-a');
-      assert.equal(resumed.ownerId, 'alice');
-    }
-  });
-
-  it('forks through the real coordinator sink and persists inherited ownership', async () => {
-    const response = await fetch(`${server.baseUrl}/api/saga/runs/run-fork/fork`, {
-      method: 'POST',
-      headers: headers('alice', 'tenant-a'),
-      body: JSON.stringify({
-        nodeId: 'validate-cart',
-        input: { orderId: 'forked-order', amount: 5 },
-      }),
-    });
-    assert.equal(response.status, 200);
-    const body = (await response.json()) as { newRunId: string; status: string };
-    assert.equal(body.status, 'forked');
-    const child = await waitForSnapshot(body.newRunId, 'COMMITTED');
-    assert.equal(child.tenantId, 'tenant-a');
-    assert.equal(child.ownerId, 'alice');
-    assert.equal(child.parentRunId, 'run-fork');
-    const parent = await waitForSnapshot('run-fork');
-    assert.ok((parent.childRunIds as string[]).includes(body.newRunId));
   });
 });

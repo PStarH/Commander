@@ -47,6 +47,16 @@ interface RedisLike {
   quit(): Promise<void>;
 }
 
+interface RedisModule {
+  createClient(options: { url: string }): {
+    connect(): Promise<void>;
+    publish(channel: string, message: string): Promise<number>;
+    subscribe(channel: string, listener: (message: string) => void): Promise<void>;
+    unsubscribe(channel: string): Promise<void>;
+    quit(): Promise<void>;
+  };
+}
+
 // ============================================================================
 // DistributedEventBus Implementation
 // ============================================================================
@@ -88,7 +98,7 @@ export class DistributedEventBus extends ContractEventBus {
    * Dynamically imports the `redis` package (optional dependency).
    */
   private async initRedis(redisUrl: string): Promise<void> {
-    const redis = await optionalImport<typeof import('redis')>('redis');
+    const redis = await optionalImport<RedisModule>('redis');
     if (!redis) {
       getGlobalLogger().info(
         'DistributedEventBus',

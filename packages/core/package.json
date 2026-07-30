@@ -133,6 +133,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/blessed": "^0.1.27",
     "@types/node": "^26.1.1",
+    "@types/safe-regex": "^1.1.6",
     "@vitest/coverage-v8": "^4.1.10",
     "fast-check": "^4.9.0",
     "selfsigned": "^5.5.0",
@@ -143,10 +144,10 @@
   },
   "dependencies": {
     "@commander/contracts": "workspace:*",
-    "@commander/postgres-runtime": "workspace:*",
     "@commander/plugin-sdk": "workspace:*",
-    "blessed": "^0.1.81",
+    "@commander/postgres-runtime": "workspace:*",
     "better-sqlite3": "^12.11.1",
+    "blessed": "^0.1.81",
     "safe-regex": "^2.1.1"
   },
   "optionalDependencies": {
