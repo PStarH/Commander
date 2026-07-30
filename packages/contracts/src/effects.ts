@@ -104,3 +104,209 @@ export function isValidEffectEnvelopeIdentity(envelope: {
     EFFECT_ID_PATTERN.test(envelope.step_id)
   );
 }
+
+// ---------------------------------------------------------------------------
+// Governed Action Gateway V1
+// ---------------------------------------------------------------------------
+
+export const ACTION_STATES_V1 = [
+  'PROPOSED',
+  'AWAITING_APPROVAL',
+  'ADMITTED',
+  'RUNNING',
+  'SUCCEEDED',
+  'FAILED',
+  'COMPLETION_UNKNOWN',
+  'ESCALATED',
+] as const;
+
+export type ActionStateV1 = (typeof ACTION_STATES_V1)[number];
+export type ActionEffectV1 = 'allow' | 'deny' | 'require_approval';
+
+export interface ActionProposeRequestV1 {
+  source: string;
+  package: string;
+  model: string;
+  tool: string;
+  destination: string;
+  effectType: string;
+  args: Record<string, unknown>;
+  idempotencyKey: string;
+}
+
+export interface ActionDecisionV1 {
+  effect: ActionEffectV1;
+  decisionId: string;
+  reason: string;
+  policySnapshotId: string;
+}
+
+export interface ActionSimulationV1 extends ActionDecisionV1 {
+  simulationId: string;
+  actionDigest: string;
+}
+
+export interface GovernedActionV1 {
+  runId: string;
+  stepId: string;
+  effectId: string;
+  state: ActionStateV1;
+  decision: ActionDecisionV1;
+  simulation: ActionSimulationV1;
+  actionDigest: string;
+  policySnapshotId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ActionApprovalRequestV1 {
+  actionDigest: string;
+  simulationId: string;
+  policySnapshotId: string;
+}
+
+export interface ActionRejectionRequestV1 {
+  reason?: string;
+}
+
+export interface ActionSimulationResponseV1 {
+  simulation: ActionSimulationV1;
+}
+
+export interface ActionResponseV1 {
+  action: GovernedActionV1;
+}
+
+export interface ActionProposeResponseV1 extends ActionResponseV1 {
+  idempotentReplay: boolean;
+}
+
+export interface ActionReconcileAcceptedV1 {
+  scheduled: true;
+  effectId: string;
+  state: 'COMPLETION_UNKNOWN';
+  reconcileAfter: string;
+  alreadyScheduled: boolean;
+}
+
+export interface ActionEvidenceSignatureV1 {
+  algorithm: 'Ed25519';
+  keyId: string;
+  signedAt: string;
+  value: string;
+}
+
+export interface ActionEvidenceEffectV1 {
+  effectId: string;
+  stepId: string;
+  type: string;
+  state: string;
+  policyDecisionId: string;
+  requestHash: string;
+  approvalInteractionId?: string;
+  responseSummary?: Record<string, unknown>;
+  createdAt: string;
+  completedAt?: string;
+  entryHash: string;
+  prevEntryHash: string;
+}
+
+export interface ActionEvidenceAuditEventV1 {
+  type: string;
+  at: string;
+  severity: string;
+  stepId?: string;
+  details: Record<string, unknown>;
+  entryHash: string;
+  prevEntryHash: string;
+}
+
+export interface ActionEvidenceReceiptV1 {
+  schemaVersion: 'l3-11.v0';
+  bodyVersion: 'commander.evidence-body/v1';
+  bundleId: string;
+  exportedAt: string;
+  actionDigest: string;
+  terminalDisposition: 'SUCCEEDED' | 'FAILED' | 'ESCALATED';
+  scope: {
+    tenantId: string;
+    runId: string;
+    effectId?: string;
+  };
+  identity: {
+    intentHash?: string;
+    workGraphHash?: string;
+    capabilityGrant?: {
+      jti: string;
+      issuer?: string;
+      audience?: string;
+      requestHash?: string;
+      policySnapshotId?: string;
+    };
+  };
+  versions: {
+    policySnapshotId: string;
+    workGraphVersion?: string;
+    kernelApiVersion?: string;
+  };
+  effects: ActionEvidenceEffectV1[];
+  auditEvents: ActionEvidenceAuditEventV1[];
+  contentHash: string;
+  signature: ActionEvidenceSignatureV1;
+}
+
+export interface ActionEvidenceVerificationV1 {
+  ok: boolean;
+  reason?: string;
+  brokenAt?: 'effects' | 'auditEvents' | 'contentHash' | 'dlp';
+  index?: number;
+}
+
+export interface ActionEvidenceV1 {
+  receipt: ActionEvidenceReceiptV1;
+  verification: ActionEvidenceVerificationV1;
+}
+
+export interface ActionErrorDetailV1 {
+  code: string;
+  message?: string;
+  details?: unknown;
+}
+
+export interface ActionErrorV1 {
+  error: ActionErrorDetailV1;
+}
+
+export const ACTION_KILL_SWITCH_SCOPES_V1 = [
+  'tenant',
+  'package',
+  'model',
+  'tool',
+  'destination',
+  'effect-type',
+] as const;
+
+export type ActionKillSwitchScopeV1 = (typeof ACTION_KILL_SWITCH_SCOPES_V1)[number];
+
+export interface ActionKillSwitchV1 {
+  tenantId: string;
+  scope: ActionKillSwitchScopeV1;
+  value: string;
+  enabled: boolean;
+  reason?: string;
+  actor: string;
+  updatedAt: string;
+}
+
+export interface ActionKillSwitchUpdateV1 {
+  enabled: boolean;
+  reason?: string;
+}
+
+export interface ActionKillSwitchListResponseV1 {
+  killSwitches: ActionKillSwitchV1[];
+}
+
+export interface ActionKillSwitchResponseV1 {
+  killSwitch: ActionKillSwitchV1;
+}

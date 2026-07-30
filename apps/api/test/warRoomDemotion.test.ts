@@ -126,6 +126,8 @@ describe('WS3 §5 WarRoom demotion — enterprise profile', () => {
         const res = await request(base, method, url);
         assert.equal(res.status, 200, `${method} ${url} must be reachable under /v1`);
         assert.equal(res.headers.get('x-legacy'), null, `${url} must not carry x-legacy`);
+        assert.equal(res.headers.get('x-commander-projection'), 'war-room');
+        assert.equal(res.headers.get('x-commander-canonical-authority'), 'kernel');
       }
     });
   });

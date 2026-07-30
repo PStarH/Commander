@@ -15,6 +15,37 @@ const endpoints: TlsFixtureEndpoints = {
 };
 
 describe('Task 1 PostgreSQL TLS fixture contract', () => {
+  it('accepts a fragmented PostgreSQL SSLRequest and rejects trailing bytes', async () => {
+    const { createPostgresSslRequestReader } =
+      await import('../deploy/testing/postgres-tls/fixture-proxies.mjs');
+    let accepted = 0;
+    let rejected = 0;
+    const reader = createPostgresSslRequestReader(
+      () => {
+        accepted += 1;
+      },
+      () => {
+        rejected += 1;
+      },
+    );
+    reader(Buffer.from('000000', 'hex'));
+    assert.equal(accepted, 0);
+    reader(Buffer.from('0804d2162f', 'hex'));
+    assert.equal(accepted, 1);
+    assert.equal(rejected, 0);
+
+    const invalid = createPostgresSslRequestReader(
+      () => {
+        accepted += 1;
+      },
+      () => {
+        rejected += 1;
+      },
+    );
+    invalid(Buffer.from('0000000804d2162f00', 'hex'));
+    assert.equal(rejected, 1);
+  });
+
   it('covers every service role through direct and L4 TLS plus each fail-closed boundary', () => {
     const cases = buildTlsFixtureCases(endpoints, {
       caFile: '/fixture/ca.crt',
@@ -60,7 +91,18 @@ describe('Task 1 PostgreSQL TLS fixture contract', () => {
         ['terminating proxy', 'spki-rejection'],
       ],
     );
-    assert.match(successful[0]!.connectionString, /postgres:\/\/fixture_owner:/);
+    assert.deepEqual(
+      Object.fromEntries(successful.map(({ role, databaseRole }) => [role, databaseRole])),
+      {
+        owner: 'commander_owner',
+        app: 'commander_app',
+        'tenant-authority': 'commander_tenant_authority',
+        scheduler: 'commander_scheduler',
+        worker: 'commander_worker',
+        'adapter-ops': 'commander_adapter_ops',
+      },
+    );
+    assert.match(successful[0]!.connectionString, /postgres:\/\/commander_owner:/);
     assert.match(successful[0]!.connectionString, /@localhost:55432\//);
     assert.match(successful[1]!.connectionString, /@localhost:55433\//);
   });
@@ -75,7 +117,7 @@ describe('Task 1 PostgreSQL TLS fixture contract', () => {
           (role) => [
             {
               role,
-              databaseRole: `fixture_${role.replace('-', '_')}`,
+              databaseRole: `commander_${role.replace('-', '_')}`,
               route: 'direct' as const,
               databaseOid: '12345',
               databaseName: 'fixture',
@@ -85,7 +127,7 @@ describe('Task 1 PostgreSQL TLS fixture contract', () => {
             },
             {
               role,
-              databaseRole: `fixture_${role.replace('-', '_')}`,
+              databaseRole: `commander_${role.replace('-', '_')}`,
               route: 'l4-passthrough' as const,
               databaseOid: '12345',
               databaseName: 'fixture',

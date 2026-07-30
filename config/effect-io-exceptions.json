@@ -1,5 +1,5 @@
 {
-  "baselineCount": 95,
+  "baselineCount": 76,
   "exceptions": [
     {
       "id": "api-onboarding-fetch",
@@ -76,29 +76,6 @@
       "expiresAt": "2026-12-31",
       "patterns": [
         "child_process"
-      ]
-    },
-    {
-      "id": "core-cli-commands-dev",
-      "path": "packages/core/src/cli/commands/dev.ts",
-      "owner": "@commander/core",
-      "reason": "CLI subprocess/HTTP — migrate to action-adapters",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "fetch(",
-        "child_process"
-      ]
-    },
-    {
-      "id": "core-cli-commands-history",
-      "path": "packages/core/src/cli/commands/history.ts",
-      "owner": "@commander/core",
-      "reason": "CLI subprocess/HTTP — migrate to action-adapters",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "fetch("
       ]
     },
     {
@@ -192,18 +169,6 @@
       ]
     },
     {
-      "id": "core-harness-harnessInfrastructure",
-      "path": "packages/core/src/harness/harnessInfrastructure.ts",
-      "owner": "@commander/core",
-      "reason": "Legacy packages/core external I/O — migrate to action-adapters",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "child_process",
-        "spawn("
-      ]
-    },
-    {
       "id": "core-infrastructure-background",
       "path": "packages/core/src/infrastructure/background.ts",
       "owner": "@commander/core",
@@ -257,18 +222,6 @@
       "expiresAt": "2026-12-31",
       "patterns": [
         "fetch(",
-        "node:https"
-      ]
-    },
-    {
-      "id": "core-mcp-a2aServer",
-      "path": "packages/core/src/mcp/a2aServer.ts",
-      "owner": "@commander/core",
-      "reason": "MCP/A2A protocol I/O — core protocol surface",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "node:http",
         "node:https"
       ]
     },
@@ -427,18 +380,6 @@
       ]
     },
     {
-      "id": "core-runtime-httpServer",
-      "path": "packages/core/src/runtime/httpServer.ts",
-      "owner": "@commander/core",
-      "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "node:http",
-        "node:https"
-      ]
-    },
-    {
       "id": "core-runtime-keychain",
       "path": "packages/core/src/runtime/keychain.ts",
       "owner": "@commander/core",
@@ -472,17 +413,6 @@
       ]
     },
     {
-      "id": "core-runtime-mtlsRuntimeServer",
-      "path": "packages/core/src/runtime/mtlsRuntimeServer.ts",
-      "owner": "@commander/core",
-      "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "node:https"
-      ]
-    },
-    {
       "id": "core-runtime-oidcAuthPlugin",
       "path": "packages/core/src/runtime/oidcAuthPlugin.ts",
       "owner": "@commander/core",
@@ -494,31 +424,8 @@
       ]
     },
     {
-      "id": "core-runtime-openTelemetryExporter",
-      "path": "packages/core/src/runtime/openTelemetryExporter.ts",
-      "owner": "@commander/core",
-      "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "node:http",
-        "node:https"
-      ]
-    },
-    {
       "id": "core-runtime-pluginSandboxContext",
       "path": "packages/core/src/runtime/pluginSandboxContext.ts",
-      "owner": "@commander/core",
-      "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "fetch("
-      ]
-    },
-    {
-      "id": "core-runtime-privacyRouter",
-      "path": "packages/core/src/runtime/privacyRouter.ts",
       "owner": "@commander/core",
       "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
       "replacement": "packages/action-adapters/* (future)",
@@ -671,19 +578,6 @@
       ]
     },
     {
-      "id": "core-runtime-siemForwarder",
-      "path": "packages/core/src/runtime/siemForwarder.ts",
-      "owner": "@commander/core",
-      "reason": "Runtime HTTP/subprocess — telemetry, OIDC, or local integration",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "node:http",
-        "node:https",
-        "from 'net'"
-      ]
-    },
-    {
       "id": "core-sandbox-appContainer",
       "path": "packages/core/src/sandbox/appContainer.ts",
       "owner": "@commander/core",
@@ -739,28 +633,6 @@
       ]
     },
     {
-      "id": "core-sandbox-resourceAttenuator",
-      "path": "packages/core/src/sandbox/resourceAttenuator.ts",
-      "owner": "@commander/core",
-      "reason": "Sandbox execution subprocess — bounded local/docker/ssh backends",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "child_process"
-      ]
-    },
-    {
-      "id": "core-sandbox-scheduler",
-      "path": "packages/core/src/sandbox/scheduler.ts",
-      "owner": "@commander/core",
-      "reason": "Sandbox execution subprocess — bounded local/docker/ssh backends",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "child_process"
-      ]
-    },
-    {
       "id": "core-sandbox-teeEnclave",
       "path": "packages/core/src/sandbox/teeEnclave.ts",
       "owner": "@commander/core",
@@ -791,17 +663,6 @@
       "expiresAt": "2026-12-31",
       "patterns": [
         "fetch("
-      ]
-    },
-    {
-      "id": "core-security-cveDatabaseIntegration",
-      "path": "packages/core/src/security/cveDatabaseIntegration.ts",
-      "owner": "@commander/core",
-      "reason": "Security tooling network/subprocess — gateway-scoped; migrate adapters",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "WebSocket"
       ]
     },
     {
@@ -838,29 +699,6 @@
       ]
     },
     {
-      "id": "core-security-outboundNetworkPolicy",
-      "path": "packages/core/src/security/outboundNetworkPolicy.ts",
-      "owner": "@commander/core",
-      "reason": "Security tooling network/subprocess — gateway-scoped; migrate adapters",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "node:http",
-        "node:https"
-      ]
-    },
-    {
-      "id": "core-security-pluginSupplyChainScenarios",
-      "path": "packages/core/src/security/pluginSupplyChainScenarios.ts",
-      "owner": "@commander/core",
-      "reason": "Security tooling network/subprocess — gateway-scoped; migrate adapters",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "fetch("
-      ]
-    },
-    {
       "id": "core-security-rotationSignoffVerifier",
       "path": "packages/core/src/security/rotationSignoffVerifier.ts",
       "owner": "@commander/core",
@@ -881,29 +719,6 @@
       "patterns": [
         "axios",
         "undici",
-        "child_process"
-      ]
-    },
-    {
-      "id": "core-security-securityPrimitives",
-      "path": "packages/core/src/security/securityPrimitives.ts",
-      "owner": "@commander/core",
-      "reason": "Security tooling network/subprocess — gateway-scoped; migrate adapters",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "fetch("
-      ]
-    },
-    {
-      "id": "core-security-semanticFirewall",
-      "path": "packages/core/src/security/semanticFirewall.ts",
-      "owner": "@commander/core",
-      "reason": "Security tooling network/subprocess — gateway-scoped; migrate adapters",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "axios",
         "child_process"
       ]
     },
@@ -964,28 +779,6 @@
       ]
     },
     {
-      "id": "core-skills-skillSecurityScanner",
-      "path": "packages/core/src/skills/skillSecurityScanner.ts",
-      "owner": "@commander/core",
-      "reason": "Skill install/scan subprocess",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "child_process"
-      ]
-    },
-    {
-      "id": "core-smoke-attackPoCs",
-      "path": "packages/core/src/smoke/attackPoCs.ts",
-      "owner": "@commander/core",
-      "reason": "Legacy packages/core external I/O — migrate to action-adapters",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "fetch("
-      ]
-    },
-    {
       "id": "core-tools--utils-httpClient",
       "path": "packages/core/src/tools/_utils/httpClient.ts",
       "owner": "@commander/core",
@@ -1043,17 +836,6 @@
     {
       "id": "core-tools-patchTool",
       "path": "packages/core/src/tools/patchTool.ts",
-      "owner": "@commander/core",
-      "reason": "Agent tools subprocess/HTTP — migrate to registered tool adapters",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "child_process"
-      ]
-    },
-    {
-      "id": "core-tools-verificationTool",
-      "path": "packages/core/src/tools/verificationTool.ts",
       "owner": "@commander/core",
       "reason": "Agent tools subprocess/HTTP — migrate to registered tool adapters",
       "replacement": "packages/action-adapters/* (future)",

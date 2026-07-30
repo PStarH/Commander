@@ -4,6 +4,8 @@ description: Commander Multi-Agent Orchestration System — production-grade Hel
 type: application
 version: 0.4.0
 appVersion: '0.4.0'
+annotations:
+  commander.io/content-sha256: 1bb84ff0e4bc8a5135d348d48d7c488a4e9150876c6d5608f83fdec6eadffd92
 keywords:
   - agent
   - orchestration

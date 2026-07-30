@@ -1,5 +1,5 @@
 import { Shield, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
-import { Card, Badge, Button, MetricCard } from '../components/ui';
+import { Card, Badge, MetricCard } from '../components/ui';
 import { ApprovalConfigPanel } from '../components/ApprovalConfigPanel';
 import { WebhookConfigPanel } from '../components/WebhookConfigPanel';
 import type { Mission, BattleReport } from '../types';
@@ -8,16 +8,9 @@ import { formatTimestamp, isMissionHighRisk } from '../types';
 interface GovernancePageProps {
   missions: Mission[];
   battleReport: BattleReport | null;
-  onApprove: (missionId: string) => void;
-  onStatusChange: (missionId: string, status: string) => void;
 }
 
-export function GovernancePage({
-  missions,
-  battleReport,
-  onApprove,
-  onStatusChange,
-}: GovernancePageProps) {
+export function GovernancePage({ missions, battleReport }: GovernancePageProps) {
   const manualMissions = missions.filter((m) => m.governanceMode === 'MANUAL');
   const highRiskMissions = missions.filter((m) => isMissionHighRisk(m));
   const pendingApproval = missions.filter(
@@ -82,15 +75,6 @@ export function GovernancePage({
                 Risk: <strong>{mission.riskLevel}</strong>
               </span>
               <span>Updated: {formatTimestamp(mission.updatedAt)}</span>
-            </div>
-            <div className="gov-card-acts">
-              <Button variant="primary" onClick={() => onApprove(mission.id)}>
-                <CheckCircle size={14} />
-                Approve
-              </Button>
-              <Button variant="ghost" onClick={() => onStatusChange(mission.id, 'BLOCKED')}>
-                Block
-              </Button>
             </div>
           </Card>
         ))}

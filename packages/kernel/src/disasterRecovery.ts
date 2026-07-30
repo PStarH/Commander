@@ -5,7 +5,7 @@
  * kernel data is present or absent after PITR/failover.
  */
 
-import { Pool } from 'pg';
+import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import { PostgresKernelRepository } from './postgres.js';
 
 export interface DrilledRun {
@@ -14,7 +14,7 @@ export interface DrilledRun {
 }
 
 export async function verifyRunExists(databaseUrl: string, run: DrilledRun): Promise<boolean> {
-  const pool = new Pool({ connectionString: databaseUrl });
+  const pool = createVerifiedPostgresPool({ connectionString: databaseUrl });
   try {
     const repo = new PostgresKernelRepository(pool);
     const found = await repo.getRun(run.id, run.tenantId);

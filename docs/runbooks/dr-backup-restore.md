@@ -6,12 +6,14 @@ Architecture V2 operational runbook for Commander kernel + control-plane data.
 
 | Asset | Default location | Notes |
 |---|---|---|
-| ATR RunLedger | `.commander/atr_ledger.db` (+ `-wal`/`-shm`) | Source of truth for run state / actions |
+| Kernel PostgreSQL | configured kernel database | Source of truth for run, step, effect, interaction, and compensation state |
+| Evidence receipts and anchors | kernel evidence tables plus retained public JWKS | Terminal proof; restore and independently verify |
+| ATR RunLedger | `.commander/atr_ledger.db` (+ `-wal`/`-shm`) | Legacy local-only state; never enterprise authority |
 | State checkpoints | `.commander_state/` | Agent-loop snapshots |
 | Event sourcing WAL | configured OTel / event store path | Replay / audit |
 | Memory stores | `.commander_memory/` or Postgres | Tenant-scoped |
 | Secrets vault | encrypted vault file | Never back up plaintext keys |
-| API store | sqlite/postgres per `API_STORE_BACKEND` | War Room / projects |
+| API store | sqlite/postgres per `API_STORE_BACKEND` | Non-authoritative presentation data |
 
 ## Backup (SQLite)
 
@@ -42,7 +44,10 @@ pg_basebackup -D /backup/commander-base -Fp -Xs -P
 5. Run `RecoveryBootstrapper` (automatic on boot) and verify:
    - No unexpected ABORTED zombies that should have been PAUSED.
    - `claimRunnableRun` only wakes eligible `resume_at` rows.
-6. Record restore in the audit chain / incident ticket.
+6. Verify every restored terminal receipt, evidence anchor, action digest,
+   policy snapshot, effect disposition, and compensation link against the
+   retained public JWKS.
+7. Record measured RPO/RTO and the restore in the audit chain / incident ticket.
 
 ## Verification checklist
 
@@ -50,6 +55,8 @@ pg_basebackup -D /backup/commander-base -Fp -Xs -P
 - [ ] Sample run resume from `waiting_for_human` succeeds
 - [ ] Cross-tenant fuzz / isolation smoke passes
 - [ ] OTel traces resume with prior `traceId` correlation where applicable
+- [ ] Restored signed receipts and anchors verify independently
+- [ ] Active and terminal actions retain identity and outcome accounting
 
 ## RPO / RTO targets (enterprise default)
 
@@ -125,4 +132,3 @@ fresh replica, and assert that (a) in-flight runs resume from the kernel, (b) no
 duplicate external effects execute (kernel idempotency), and (c) no pending
 approval is lost. Record the measured edge RPO/RTO; never claim 0 without this
 drill passing.
-

@@ -8,7 +8,7 @@
  *
  * Design rules:
  * - All V1 paths are under `/v1`.
- * - All write operations return 202 + Location header (async).
+ * - Accepted action proposals and reconciliations return 202; reviews are synchronous.
  * - All operations require `Idempotency-Key` for writes.
  * - Authentication is API-key based; tenant is derived from the key, never
  *   from a raw header.
@@ -17,6 +17,26 @@
 
 import { RUN_STATES, STEP_STATES } from './states.js';
 import { KERNEL_ERROR_CODES } from './errors.js';
+import {
+  actionApprovalRequestSchema,
+  actionCompensationRequestSchema,
+  actionCompensationApprovalRequestSchema,
+  actionDecisionSchema,
+  actionErrorSchema,
+  actionEvidenceSchema,
+  actionKillSwitchListResponseSchema,
+  actionKillSwitchResponseSchema,
+  actionKillSwitchSchema,
+  actionKillSwitchUpdateSchema,
+  actionProposeRequestSchema,
+  actionProposeResponseSchema,
+  actionReconcileAcceptedSchema,
+  actionRejectionRequestSchema,
+  actionResponseSchema,
+  actionSimulationResponseSchema,
+  actionSimulationSchema,
+  governedActionSchema,
+} from './schemas.js';
 
 const COMPONENTS = {
   securitySchemes: {
@@ -299,6 +319,25 @@ const COMPONENTS = {
         response: { description: 'The interaction response payload.' },
       },
     },
+    // --- Governed Action Gateway V1 ---
+    ActionProposeRequest: actionProposeRequestSchema,
+    ActionDecision: actionDecisionSchema,
+    ActionSimulation: actionSimulationSchema,
+    GovernedAction: governedActionSchema,
+    ActionApprovalRequest: actionApprovalRequestSchema,
+    ActionCompensationRequest: actionCompensationRequestSchema,
+    ActionCompensationApprovalRequest: actionCompensationApprovalRequestSchema,
+    ActionRejectionRequest: actionRejectionRequestSchema,
+    ActionSimulationResponse: actionSimulationResponseSchema,
+    ActionResponse: actionResponseSchema,
+    ActionProposeResponse: actionProposeResponseSchema,
+    ActionReconcileAccepted: actionReconcileAcceptedSchema,
+    ActionEvidence: actionEvidenceSchema,
+    ActionError: actionErrorSchema,
+    ActionKillSwitch: actionKillSwitchSchema,
+    ActionKillSwitchUpdate: actionKillSwitchUpdateSchema,
+    ActionKillSwitchListResponse: actionKillSwitchListResponseSchema,
+    ActionKillSwitchResponse: actionKillSwitchResponseSchema,
   },
   parameters: {
     RunId: { name: 'runId', in: 'path', required: true, schema: { type: 'string' } },
@@ -309,6 +348,21 @@ const COMPONENTS = {
     AgentId: { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
     ToolId: { name: 'toolId', in: 'path', required: true, schema: { type: 'string' } },
     ConnectorId: { name: 'connectorId', in: 'path', required: true, schema: { type: 'string' } },
+    KillSwitchScope: {
+      name: 'scope',
+      in: 'path',
+      required: true,
+      schema: {
+        type: 'string',
+        enum: ['tenant', 'package', 'model', 'tool', 'destination', 'effect-type'],
+      },
+    },
+    KillSwitchValue: {
+      name: 'value',
+      in: 'path',
+      required: true,
+      schema: { type: 'string', minLength: 1, maxLength: 512 },
+    },
     IdempotencyKey: {
       name: 'Idempotency-Key',
       in: 'header',
@@ -344,12 +398,103 @@ const COMPONENTS = {
       description: 'Execution kernel is not configured.',
       content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } },
     },
+    ActionBadRequest: {
+      description: 'Action request validation failed.',
+      content: { 'application/json': { schema: { $ref: '#/components/schemas/ActionError' } } },
+    },
+    ActionUnauthorized: {
+      description: 'An authenticated, tenant-bound principal is required.',
+      content: { 'application/json': { schema: { $ref: '#/components/schemas/ActionError' } } },
+    },
+    ActionForbidden: {
+      description: 'The action was denied by policy or the principal lacks authority.',
+      content: { 'application/json': { schema: { $ref: '#/components/schemas/ActionError' } } },
+    },
+    ActionNotFound: {
+      description: 'The governed action was not found.',
+      content: { 'application/json': { schema: { $ref: '#/components/schemas/ActionError' } } },
+    },
+    ActionConflict: {
+      description: 'The action state, approval binding, or idempotency key conflicts.',
+      content: { 'application/json': { schema: { $ref: '#/components/schemas/ActionError' } } },
+    },
+    ActionGone: {
+      description: 'The reconciliation deadline has expired.',
+      content: { 'application/json': { schema: { $ref: '#/components/schemas/ActionError' } } },
+    },
+    ActionServiceUnavailable: {
+      description: 'The action gateway dependency or requested evidence is unavailable.',
+      content: { 'application/json': { schema: { $ref: '#/components/schemas/ActionError' } } },
+    },
+    ActionSimulationOk: {
+      description: 'The action simulation completed.',
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/ActionSimulationResponse' },
+        },
+      },
+    },
+    ActionProposalAccepted: {
+      description: 'The governed action was accepted.',
+      headers: {
+        Location: {
+          schema: { type: 'string' },
+          description: 'URL of the governed action.',
+        },
+      },
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/ActionProposeResponse' },
+        },
+      },
+    },
+    ActionProposalReplay: {
+      description: 'The existing governed action was returned for an idempotent replay.',
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/ActionProposeResponse' },
+        },
+      },
+    },
+    ActionOk: {
+      description: 'The governed action was returned.',
+      content: { 'application/json': { schema: { $ref: '#/components/schemas/ActionResponse' } } },
+    },
+    ActionReconcileAcceptedResponse: {
+      description: 'Reconciliation was scheduled or expedited.',
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/ActionReconcileAccepted' },
+        },
+      },
+    },
+    ActionEvidenceOk: {
+      description: 'Signed action evidence and its integrity result.',
+      content: { 'application/json': { schema: { $ref: '#/components/schemas/ActionEvidence' } } },
+    },
+    ActionKillSwitchListOk: {
+      description: 'The tenant kill switches were returned.',
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/ActionKillSwitchListResponse' },
+        },
+      },
+    },
+    ActionKillSwitchOk: {
+      description: 'The kill switch was updated.',
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/ActionKillSwitchResponse' },
+        },
+      },
+    },
   },
 };
 
 const SECURITY = [{ ApiKeyAuth: [] }];
 
 const TAGS = [
+  { name: 'Actions', description: 'Governed enterprise action lifecycle and evidence.' },
   { name: 'Runs', description: 'Durable run lifecycle management.' },
   { name: 'Steps', description: 'Step-level execution state and effects.' },
   { name: 'WorkGraphs', description: 'Canonical work graph inspection.' },
@@ -368,7 +513,7 @@ export const OPENAPI_V1_SPEC = {
   info: {
     title: 'Commander V1 Resource API',
     version: '1.0.0',
-    description: 'Versioned control-plane API for Commander Architecture V2. All write operations are asynchronous (202 + Location). Tenant identity is derived from authenticated API keys, never from raw headers.',
+    description: 'Versioned control-plane API for Commander Architecture V2. Accepted action proposals and reconciliations return 202; synchronous action reviews return 200. Tenant identity is derived from authenticated API keys, never from raw headers.',
     contact: { name: 'Commander', url: 'https://commander.dev' },
     license: { name: 'MIT' },
   },
@@ -378,6 +523,265 @@ export const OPENAPI_V1_SPEC = {
   tags: TAGS,
   security: SECURITY,
   paths: {
+    // --- Governed Action Gateway ---
+    '/actions/simulate': {
+      post: {
+        tags: ['Actions'],
+        summary: 'Simulate a governed action',
+        operationId: 'simulateAction',
+        security: SECURITY,
+        parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/ActionProposeRequest' },
+            },
+          },
+        },
+        responses: {
+          200: { $ref: '#/components/responses/ActionSimulationOk' },
+          400: { $ref: '#/components/responses/ActionBadRequest' },
+          401: { $ref: '#/components/responses/ActionUnauthorized' },
+          403: { $ref: '#/components/responses/ActionForbidden' },
+          503: { $ref: '#/components/responses/ActionServiceUnavailable' },
+        },
+      },
+    },
+    '/actions': {
+      post: {
+        tags: ['Actions'],
+        summary: 'Propose a governed action',
+        operationId: 'proposeAction',
+        security: SECURITY,
+        parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/ActionProposeRequest' },
+            },
+          },
+        },
+        responses: {
+          200: { $ref: '#/components/responses/ActionProposalReplay' },
+          202: { $ref: '#/components/responses/ActionProposalAccepted' },
+          400: { $ref: '#/components/responses/ActionBadRequest' },
+          401: { $ref: '#/components/responses/ActionUnauthorized' },
+          403: { $ref: '#/components/responses/ActionForbidden' },
+          409: { $ref: '#/components/responses/ActionConflict' },
+          503: { $ref: '#/components/responses/ActionServiceUnavailable' },
+        },
+      },
+    },
+    '/actions/{runId}': {
+      parameters: [{ $ref: '#/components/parameters/RunId' }],
+      get: {
+        tags: ['Actions'],
+        summary: 'Get a governed action',
+        operationId: 'getAction',
+        security: SECURITY,
+        responses: {
+          200: { $ref: '#/components/responses/ActionOk' },
+          401: { $ref: '#/components/responses/ActionUnauthorized' },
+          404: { $ref: '#/components/responses/ActionNotFound' },
+          503: { $ref: '#/components/responses/ActionServiceUnavailable' },
+        },
+      },
+    },
+    '/actions/{runId}/approve': {
+      parameters: [{ $ref: '#/components/parameters/RunId' }],
+      post: {
+        tags: ['Actions'],
+        summary: 'Approve a governed action',
+        operationId: 'approveAction',
+        security: SECURITY,
+        parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/ActionApprovalRequest' },
+            },
+          },
+        },
+        responses: {
+          200: { $ref: '#/components/responses/ActionOk' },
+          400: { $ref: '#/components/responses/ActionBadRequest' },
+          401: { $ref: '#/components/responses/ActionUnauthorized' },
+          403: { $ref: '#/components/responses/ActionForbidden' },
+          404: { $ref: '#/components/responses/ActionNotFound' },
+          409: { $ref: '#/components/responses/ActionConflict' },
+          503: { $ref: '#/components/responses/ActionServiceUnavailable' },
+        },
+      },
+    },
+    '/actions/{runId}/reject': {
+      parameters: [{ $ref: '#/components/parameters/RunId' }],
+      post: {
+        tags: ['Actions'],
+        summary: 'Reject a governed action',
+        operationId: 'rejectAction',
+        security: SECURITY,
+        parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/ActionRejectionRequest' },
+            },
+          },
+        },
+        responses: {
+          200: { $ref: '#/components/responses/ActionOk' },
+          400: { $ref: '#/components/responses/ActionBadRequest' },
+          401: { $ref: '#/components/responses/ActionUnauthorized' },
+          403: { $ref: '#/components/responses/ActionForbidden' },
+          404: { $ref: '#/components/responses/ActionNotFound' },
+          409: { $ref: '#/components/responses/ActionConflict' },
+          503: { $ref: '#/components/responses/ActionServiceUnavailable' },
+        },
+      },
+    },
+    '/actions/{runId}/compensations': {
+      parameters: [{ $ref: '#/components/parameters/RunId' }],
+      post: {
+        tags: ['Actions'],
+        summary: 'Authorize and request compensation',
+        operationId: 'requestActionCompensation',
+        security: SECURITY,
+        parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { $ref: '#/components/schemas/ActionCompensationRequest' } } },
+        },
+        responses: {
+          202: { description: 'Compensation was authorized or is awaiting bound approval.' },
+          400: { $ref: '#/components/responses/ActionBadRequest' },
+          401: { $ref: '#/components/responses/ActionUnauthorized' },
+          403: { $ref: '#/components/responses/ActionForbidden' },
+          404: { $ref: '#/components/responses/ActionNotFound' },
+          409: { $ref: '#/components/responses/ActionConflict' },
+          503: { $ref: '#/components/responses/ActionServiceUnavailable' },
+        },
+      },
+    },
+    '/actions/{runId}/compensations/{authorizationId}/approve': {
+      parameters: [
+        { $ref: '#/components/parameters/RunId' },
+        { name: 'authorizationId', in: 'path', required: true, schema: { type: 'string' } },
+      ],
+      post: {
+        tags: ['Actions'],
+        summary: 'Approve a bound compensation authorization',
+        operationId: 'approveActionCompensation',
+        security: SECURITY,
+        parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { $ref: '#/components/schemas/ActionCompensationApprovalRequest' } } },
+        },
+        responses: {
+          202: { description: 'The approved compensation request was accepted.' },
+          400: { $ref: '#/components/responses/ActionBadRequest' },
+          401: { $ref: '#/components/responses/ActionUnauthorized' },
+          403: { $ref: '#/components/responses/ActionForbidden' },
+          404: { $ref: '#/components/responses/ActionNotFound' },
+          409: { $ref: '#/components/responses/ActionConflict' },
+          503: { $ref: '#/components/responses/ActionServiceUnavailable' },
+        },
+      },
+    },
+    '/actions/{runId}/reconcile': {
+      parameters: [{ $ref: '#/components/parameters/RunId' }],
+      post: {
+        tags: ['Actions'],
+        summary: 'Request action reconciliation',
+        operationId: 'reconcileAction',
+        security: SECURITY,
+        parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }],
+        responses: {
+          202: { $ref: '#/components/responses/ActionReconcileAcceptedResponse' },
+          401: { $ref: '#/components/responses/ActionUnauthorized' },
+          403: { $ref: '#/components/responses/ActionForbidden' },
+          404: { $ref: '#/components/responses/ActionNotFound' },
+          409: { $ref: '#/components/responses/ActionConflict' },
+          410: { $ref: '#/components/responses/ActionGone' },
+          503: { $ref: '#/components/responses/ActionServiceUnavailable' },
+        },
+      },
+    },
+    '/actions/{runId}/evidence': {
+      parameters: [{ $ref: '#/components/parameters/RunId' }],
+      get: {
+        tags: ['Actions'],
+        summary: 'Get signed action evidence',
+        operationId: 'getActionEvidence',
+        security: SECURITY,
+        responses: {
+          200: { $ref: '#/components/responses/ActionEvidenceOk' },
+          401: { $ref: '#/components/responses/ActionUnauthorized' },
+          404: { $ref: '#/components/responses/ActionNotFound' },
+          503: { $ref: '#/components/responses/ActionServiceUnavailable' },
+        },
+      },
+    },
+    '/actions/kill-switches': {
+      get: {
+        tags: ['Actions'],
+        summary: 'List action kill switches',
+        operationId: 'listActionKillSwitches',
+        security: SECURITY,
+        responses: {
+          200: { $ref: '#/components/responses/ActionKillSwitchListOk' },
+          401: { $ref: '#/components/responses/ActionUnauthorized' },
+          403: { $ref: '#/components/responses/ActionForbidden' },
+          503: { $ref: '#/components/responses/ActionServiceUnavailable' },
+        },
+      },
+    },
+    '/actions/kill-switches/{scope}/{value}': {
+      parameters: [
+        { $ref: '#/components/parameters/KillSwitchScope' },
+        { $ref: '#/components/parameters/KillSwitchValue' },
+      ],
+      put: {
+        tags: ['Actions'],
+        summary: 'Create or update an action kill switch',
+        operationId: 'putActionKillSwitch',
+        security: SECURITY,
+        parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/ActionKillSwitchUpdate' },
+            },
+          },
+        },
+        responses: {
+          200: { $ref: '#/components/responses/ActionKillSwitchOk' },
+          400: { $ref: '#/components/responses/ActionBadRequest' },
+          401: { $ref: '#/components/responses/ActionUnauthorized' },
+          403: { $ref: '#/components/responses/ActionForbidden' },
+          503: { $ref: '#/components/responses/ActionServiceUnavailable' },
+        },
+      },
+      delete: {
+        tags: ['Actions'],
+        summary: 'Delete an action kill switch',
+        operationId: 'deleteActionKillSwitch',
+        security: SECURITY,
+        parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }],
+        responses: {
+          204: { description: 'The kill switch was deleted.' },
+          400: { $ref: '#/components/responses/ActionBadRequest' },
+          401: { $ref: '#/components/responses/ActionUnauthorized' },
+          403: { $ref: '#/components/responses/ActionForbidden' },
+          503: { $ref: '#/components/responses/ActionServiceUnavailable' },
+        },
+      },
+    },
     // --- Runs ---
     '/runs': {
       post: {

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import { reportSilentFailure } from '../silentFailureReporter';
 import type {
   ForgetMemoryInput,
@@ -115,8 +116,7 @@ export class PostgresMemoryService
     if (!options.connectionString) {
       throw new Error('PostgresMemoryService requires connectionString or pool');
     }
-    const Pool = require('pg').Pool as new (options: { connectionString: string }) => PostgresPool;
-    this.pool = new Pool({ connectionString: options.connectionString });
+    this.pool = createVerifiedPostgresPool({ connectionString: options.connectionString });
     this.ownsPool = true;
   }
 

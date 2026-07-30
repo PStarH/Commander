@@ -135,3 +135,30 @@ helm install commander deploy/helm/commander \
   --set ingress.enabled=true \
   --set ingress.hosts[0].host=commander.example.com
 ```
+
+### Tenant-authority Helm lifecycle
+
+The PostgreSQL tenant-authority path is a staged lifecycle, not a raw `helm
+rollback` workflow. Pre-create all six role DSNs under their final Secret keys,
+the public database CA/SPKI material, and the API proof certificate material.
+Persistent bundled PostgreSQL also requires an externally managed stable
+database Secret before Helm starts; chart-generated credentials are restricted
+to disposable bundled storage.
+
+Before `expand`, a cluster administrator creates the network admission
+prerequisite. The deployment operator then performs its read-only verification
+stage. After a fully Ready context-aware expand release, the cluster
+administrator creates the workload admission prerequisite and the operator
+again verifies it read-only. Kubernetes 1.33 operators must not create or
+update admission policies or bindings.
+
+Use the tenant cutover entrypoint supplied by the lifecycle integration rather
+than direct release commands. Its Helm invocation is cluster-connected and
+always uses `--atomic --wait --wait-for-jobs --timeout 10m`; a native
+`helm rollback` is unsupported. The required integration-owner package script
+entries are `helm:stamp-chart-content-digest`, `helm:tenant-cutover`,
+`helm:render-tenant-authority-workload-guard`,
+`helm:install-tenant-authority-admission-prerequisites`,
+`helm:prepare-tenant-authority-prerequisites`, `helm:recover-tenant-authority`,
+`helm:adopt-database-secret`, `test:helm:lifecycle:static`, and
+`test:helm:lifecycle:kind`.

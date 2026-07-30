@@ -31,6 +31,7 @@
     "PENDING",
     "RUNNING",
     "WAITING_FOR_HUMAN",
+    "WAITING_FOR_RECONCILIATION",
     "RETRY_WAIT",
     "SUCCEEDED",
     "FAILED",
@@ -77,6 +78,22 @@
     "toolDefinition",
     "connectorDefinition",
     "kernelEvent",
-    "kernelError"
+    "kernelError",
+    "actionProposeRequest",
+    "actionDecision",
+    "actionSimulation",
+    "governedAction",
+    "actionApprovalRequest",
+    "actionRejectionRequest",
+    "actionSimulationResponse",
+    "actionResponse",
+    "actionProposeResponse",
+    "actionReconcileAccepted",
+    "actionEvidence",
+    "actionError",
+    "actionKillSwitch",
+    "actionKillSwitchUpdate",
+    "actionKillSwitchListResponse",
+    "actionKillSwitchResponse"
   ]
 }

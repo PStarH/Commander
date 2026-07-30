@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from commander import (
+    ActionApprovalInput,
+    ActionEvidenceBundle,
     ExecutionResult,
+    GovernedAction,
     HealthStatus,
     MemoryEntry,
     MemoryQueryResult,
@@ -14,6 +17,7 @@ from commander import (
     StepSummary,
     SystemStatus,
 )
+from commander._types import GatewayErrorResponse, KillSwitch, RequestReconcileResult
 
 
 def test_execution_result_defaults() -> None:
@@ -156,3 +160,88 @@ def test_memory_stats() -> None:
     )
     assert stats.total_entries == 100
     assert stats.by_layer["episodic"] == 60
+
+
+def test_action_contract_fixtures_round_trip_without_field_drift() -> None:
+    fixtures = [
+        (
+            GovernedAction,
+            {
+                "runId": "run-action-1",
+                "stepId": "step-1",
+                "effectId": "effect-1",
+                "state": "PROPOSED",
+                "decision": {
+                    "effect": "allow",
+                    "decisionId": "action-gateway-allow",
+                    "reason": "allowed",
+                    "policySnapshotId": "action-gateway-mvp-v1",
+                },
+                "simulation": {
+                    "effect": "allow",
+                    "decisionId": "action-gateway-allow",
+                    "reason": "allowed",
+                    "policySnapshotId": "action-gateway-mvp-v1",
+                    "simulationId": "sim-1",
+                    "actionDigest": "a" * 64,
+                },
+                "actionDigest": "a" * 64,
+                "policySnapshotId": "action-gateway-mvp-v1",
+                "createdAt": "2026-07-29T08:00:00.000Z",
+                "updatedAt": "2026-07-29T08:00:00.000Z",
+            },
+        ),
+        (
+            ActionApprovalInput,
+            {
+                "actionDigest": "a" * 64,
+                "simulationId": "sim-1",
+                "policySnapshotId": "action-gateway-mvp-v1",
+            },
+        ),
+        (
+            RequestReconcileResult,
+            {
+                "scheduled": True,
+                "effectId": "effect-1",
+                "state": "COMPLETION_UNKNOWN",
+                "reconcileAfter": "2026-07-29T08:30:00.000Z",
+                "alreadyScheduled": True,
+            },
+        ),
+        (
+            ActionEvidenceBundle,
+            {
+                "receipt": {
+                    "bundleId": "bundle-1",
+                    "scope": {"runId": "run-action-1"},
+                },
+                "verification": {"ok": True},
+            },
+        ),
+        (
+            GatewayErrorResponse,
+            {
+                "error": {
+                    "code": "NO_RECONCILABLE_EFFECT",
+                    "message": "No pending effect.",
+                }
+            },
+        ),
+        (
+            KillSwitch,
+            {
+                "tenantId": "tenant-a",
+                "scope": "tool",
+                "value": "ticket.create",
+                "enabled": True,
+                "reason": "incident response",
+                "actor": "operator-1",
+                "updatedAt": "2026-07-29T08:00:00.000Z",
+            },
+        ),
+    ]
+
+    for model, fixture in fixtures:
+        parsed = model(**fixture)
+        assert parsed.model_dump(by_alias=True, exclude_none=True) == fixture

@@ -18,13 +18,17 @@ kernelOps:
     pullPolicy: IfNotPresent
 adapterOps:
   enabled: true
-  replicas: 1
+  replicas: 2
   secrets: { existingSecret: external-adapter-secrets }
+  egress:
+    allowlist:
+      - api.github.com
   image:
     repository: commander-lifecycle-noop
     tag: latest
     pullPolicy: IfNotPresent
-capability: { create: false, existingSecret: external-capability }
+capability: { create: false, existingSecret: cmdr-capability }
+evidenceSigning: { create: false, existingSecret: cmdr-evidence-signing }
 api: { secrets: { existingSecret: external-api-secrets } }
 
 image:
@@ -33,6 +37,7 @@ image:
   pullPolicy: IfNotPresent
 
 tenantAuthority:
+  bootstrapAuthoritySecret: external-bootstrap-authority
   configurationSha256: '0000000000000000000000000000000000000000000000000000000000000000'
   apiProof:
     publicSecret: commander-lifecycle-api-proof-public
@@ -46,3 +51,7 @@ database:
   postgres:
     bundled: false
     existingSecret: external-database-urls
+
+databaseTls:
+  caSecret: commander-lifecycle-database-public-ca
+  expectedServerSpkiSha256: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
