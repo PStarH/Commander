@@ -21,12 +21,33 @@ spec:
       labels:
         {{- include "commander.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: postgres
+      annotations:
+        commander.io/database-transport-content-sha256: {{ printf "%s\000%s\000%s\000%s\000%s\0000440\000ssl=on\000ssl_ca_file=/run/commander/database-tls/ca.crt\000ssl_cert_file=/run/commander/database-tls/tls.crt\000ssl_key_file=/run/commander/database-tls/tls.key\000postgres-data:/var/lib/postgresql/data" .Values.databaseTls.existingSecret .Values.databaseTls.caKey .Values.databaseTls.certKey .Values.databaseTls.keyKey (ternary "pvc" "emptyDir" .Values.database.postgres.persistence.enabled) | sha256sum | quote }}
     spec:
-      securityContext: {{ toYaml .Values.podSecurityContext | nindent 8 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: postgres
           image: "{{ .Values.database.postgres.image.repository }}:{{ .Values.database.postgres.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - -c
+            - ssl=on
+            - -c
+            - ssl_ca_file=/run/commander/database-tls/ca.crt
+            - -c
+            - ssl_cert_file=/run/commander/database-tls/tls.crt
+            - -c
+            - ssl_key_file=/run/commander/database-tls/tls.key
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: postgres
               containerPort: {{ .Values.database.postgres.port }}
@@ -53,6 +74,11 @@ spec:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
                   key: app-password
+            - name: COMMANDER_TENANT_AUTHORITY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.databaseUrlSecretName" . | quote }}
+                  key: tenant-authority-password
             - name: COMMANDER_SCHEDULER_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -63,6 +89,11 @@ spec:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
                   key: worker-password
+            - name: COMMANDER_ADAPTER_OPS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.databaseUrlSecretName" . | quote }}
+                  key: adapter-ops-password
           resources: {{ toYaml .Values.database.postgres.resources | nindent 12 }}
           livenessProbe:
             exec:
@@ -90,11 +121,25 @@ spec:
             - name: database-init
               mountPath: /docker-entrypoint-initdb.d
               readOnly: true
+            - name: database-tls
+              mountPath: /run/commander/database-tls
+              readOnly: true
       volumes:
         - name: database-init
           configMap:
             name: {{ include "commander.fullname" . }}-database-init
-            defaultMode: 0755
+            defaultMode: 493
+        - name: database-tls
+          secret:
+            secretName: {{ .Values.databaseTls.existingSecret | quote }}
+            defaultMode: 288
+            items:
+              - key: {{ .Values.databaseTls.caKey | quote }}
+                path: ca.crt
+              - key: {{ .Values.databaseTls.certKey | quote }}
+                path: tls.crt
+              - key: {{ .Values.databaseTls.keyKey | quote }}
+                path: tls.key
   {{- if .Values.database.postgres.persistence.enabled }}
   volumeClaimTemplates:
     - metadata:

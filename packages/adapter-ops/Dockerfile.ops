@@ -39,7 +39,9 @@ RUN cd packages/adapter-ops && pnpm exec tsc -p tsconfig.json && node ../../scri
 
 FROM base AS production
 RUN addgroup -g 1001 commander \
-    && adduser -u 1001 -G commander -s /bin/sh -D commander
+    && adduser -u 1001 -G commander -s /bin/sh -D commander \
+    && mkdir -p /var/run/commander/adapter-ops \
+    && chown -R commander:commander /var/run/commander/adapter-ops
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages/contracts/node_modules ./packages/contracts/node_modules
 COPY --from=deps /app/packages/effect-broker/node_modules ./packages/effect-broker/node_modules

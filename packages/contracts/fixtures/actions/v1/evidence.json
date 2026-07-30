@@ -1,0 +1,52 @@
+{
+  "receipt": {
+    "schemaVersion": "l3-11.v0",
+    "bodyVersion": "commander.evidence-body/v1",
+    "bundleId": "bundle_action_01",
+    "exportedAt": "2026-07-21T00:10:00.000Z",
+    "actionDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "terminalDisposition": "SUCCEEDED",
+    "scope": {
+      "tenantId": "tenant_01",
+      "runId": "run_action_01",
+      "effectId": "effect_action_01"
+    },
+    "identity": {
+      "intentHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "workGraphHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "versions": {
+      "policySnapshotId": "policy_action_v1",
+      "workGraphVersion": "action-gateway/v1",
+      "kernelApiVersion": "v1"
+    },
+    "effects": [
+      {
+        "effectId": "effect_action_01",
+        "stepId": "step_action_01",
+        "type": "demo.ticket.create",
+        "state": "COMPLETED",
+        "policyDecisionId": "decision_action_01",
+        "requestHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "responseSummary": {
+          "status": "ok"
+        },
+        "createdAt": "2026-07-21T00:02:00.000Z",
+        "completedAt": "2026-07-21T00:03:00.000Z",
+        "entryHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "prevEntryHash": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    ],
+    "auditEvents": [],
+    "contentHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "signature": {
+      "algorithm": "Ed25519",
+      "keyId": "cell_key_01",
+      "signedAt": "2026-07-21T00:10:01.000Z",
+      "value": "c2lnbmF0dXJl"
+    }
+  },
+  "verification": {
+    "ok": true
+  }
+}

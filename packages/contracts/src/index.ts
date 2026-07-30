@@ -46,25 +46,71 @@ export type { AggregateType, KernelEvent } from './events.js';
 
 // --- WS2 Effect Envelope (unified external side-effect contract) ---
 export {
+  ACTION_KILL_SWITCH_SCOPES_V1,
+  ACTION_STATES_V1,
   EFFECT_ACTION_NAMESPACES,
   EFFECT_ID_PATTERN,
   actionNamespace,
   isValidEffectEnvelopeIdentity,
 } from './effects.js';
 export type {
+  ActionApprovalRequestV1,
+  ActionDecisionV1,
+  ActionEffectV1,
+  ActionErrorDetailV1,
+  ActionErrorV1,
+  ActionEvidenceAuditEventV1,
+  ActionEvidenceEffectV1,
+  ActionEvidenceReceiptV1,
+  ActionEvidenceSignatureV1,
+  ActionEvidenceV1,
+  ActionEvidenceVerificationV1,
+  ActionKillSwitchListResponseV1,
+  ActionKillSwitchResponseV1,
+  ActionKillSwitchScopeV1,
+  ActionKillSwitchUpdateV1,
+  ActionKillSwitchV1,
+  ActionProposeRequestV1,
+  ActionProposeResponseV1,
+  ActionReconcileAcceptedV1,
+  ActionRejectionRequestV1,
+  ActionResponseV1,
+  ActionSimulationResponseV1,
+  ActionSimulationV1,
+  ActionStateV1,
   EffectActionNamespace,
   EffectEnvelope,
   EffectEnvelopeStatus,
+  GovernedActionV1,
 } from './effects.js';
 
 export { KERNEL_ERROR_CODES } from './errors.js';
 export type { KernelErrorCode, KernelErrorDetails } from './errors.js';
+export { isClassAEffectType } from './effectClassification.js';
 
 export { validateRunTransition, validateStepTransition } from './transitions.js';
 export type { TransitionResult } from './transitions.js';
 
 // --- JSON Schema definitions ---
-export { CONTRACT_SCHEMAS } from './schemas.js';
+export {
+  CONTRACT_SCHEMAS,
+  actionApprovalRequestSchema,
+  actionDecisionSchema,
+  actionErrorSchema,
+  actionEvidenceSchema,
+  actionKillSwitchListResponseSchema,
+  actionKillSwitchResponseSchema,
+  actionKillSwitchSchema,
+  actionKillSwitchUpdateSchema,
+  actionProposeRequestSchema,
+  actionProposeResponseSchema,
+  actionReconcileAcceptedSchema,
+  actionRejectionRequestSchema,
+  actionResponseSchema,
+  actionSimulationResponseSchema,
+  actionSimulationSchema,
+  governedActionSchema,
+} from './schemas.js';
 export type { ContractSchemaName } from './schemas.js';
 
 // --- OpenAPI V1 specification ---
@@ -107,19 +153,14 @@ export {
   FIXED_ACTION_ADAPTER_MANIFESTS,
   githubPrBodyMarker,
   GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR,
+  KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
   servicenowCorrelationId,
   SERVICENOW_INCIDENT_CREATE_DESCRIPTOR,
 } from './actionAdapters.js';
-export type {
-  ActionAdapterDescriptorV1,
-  ActionGatewayEffect,
-} from './actionAdapters.js';
+export type { ActionAdapterDescriptorV1, ActionGatewayEffect } from './actionAdapters.js';
 
 // --- Shared identity, policy, audit, and plugin contracts ---
-export {
-  CONTROL_PLANE_API_VERSION,
-  CONTROL_PLANE_RESOURCES,
-} from './controlPlane.js';
+export { CONTROL_PLANE_API_VERSION, CONTROL_PLANE_RESOURCES } from './controlPlane.js';
 export type {
   AuditEventV2,
   ControlPlaneResource,

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  assertEnterpriseAdapterOpsTiming,
   assertHelmCellTopology,
   extractKernelDatabaseSecretKey,
   loadYamlDocuments,
@@ -29,6 +30,13 @@ function dsnEnv(key: string): string {
                   name: cell-database
                   key: ${key}`;
 }
+
+const TENANT_AUTHORITY_DSN_ENV = `
+            - name: COMMANDER_TENANT_AUTHORITY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: cell-database
+                  key: tenant-authority-url`;
 
 function capabilityEnv(): string {
   return `
@@ -66,7 +74,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: api
-          env:${KERNEL_BACKEND_ENV}${NON_AUTHORITATIVE_STORE_ENV}${dsnEnv('app-url')}
+          env:${KERNEL_BACKEND_ENV}${NON_AUTHORITATIVE_STORE_ENV}${dsnEnv('app-url')}${TENANT_AUTHORITY_DSN_ENV}
           securityContext:
             readOnlyRootFilesystem: true
             capabilities:
@@ -119,11 +127,21 @@ spec:
     spec:
       containers:
         - name: adapter-ops
-          env:${KERNEL_BACKEND_ENV}${dsnEnv('worker-url')}${capabilityEnv()}
+          env:${KERNEL_BACKEND_ENV}${dsnEnv('adapter-ops-url')}${capabilityEnv()}
+            - name: COMMANDER_ADAPTER_OPS_INSTANCE_ID
+              value: cell-adapter-ops
+            - name: COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR
+              value: /var/run/commander/adapter-ops
             - name: COMMANDER_WORKER_TENANTS
               value: local
             - name: COMMANDER_CELL_TENANT_ID
               value: local
+          volumeMounts:
+            - name: claim-secrets
+              mountPath: /var/run/commander/adapter-ops
+      volumes:
+        - name: claim-secrets
+          emptyDir: {}
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -149,6 +167,11 @@ spec:
                 secretKeyRef:
                   name: cell-database
                   key: app-password
+            - name: COMMANDER_TENANT_AUTHORITY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cell-database
+                  key: tenant-authority-password
             - name: COMMANDER_SCHEDULER_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -159,6 +182,11 @@ spec:
                 secretKeyRef:
                   name: cell-database
                   key: worker-password
+            - name: COMMANDER_ADAPTER_OPS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cell-database
+                  key: adapter-ops-password
           volumeMounts:
             - name: database-init
               mountPath: /docker-entrypoint-initdb.d
@@ -175,8 +203,10 @@ data:
   01-commander-roles.sh: |
     CREATE ROLE commander_owner WITH LOGIN PASSWORD '\${COMMANDER_OWNER_PASSWORD}' BYPASSRLS CREATEROLE;
     CREATE ROLE commander_app WITH LOGIN PASSWORD '\${COMMANDER_APP_PASSWORD}' NOBYPASSRLS NOCREATEROLE;
+    CREATE ROLE commander_tenant_authority WITH LOGIN PASSWORD '\${COMMANDER_TENANT_AUTHORITY_PASSWORD}' NOBYPASSRLS NOCREATEROLE;
     CREATE ROLE commander_scheduler WITH LOGIN PASSWORD '\${COMMANDER_SCHEDULER_PASSWORD}' BYPASSRLS NOCREATEROLE;
     CREATE ROLE commander_worker WITH LOGIN PASSWORD '\${COMMANDER_WORKER_PASSWORD}' NOBYPASSRLS NOCREATEROLE;
+    CREATE ROLE commander_adapter_ops WITH LOGIN PASSWORD '\${COMMANDER_ADAPTER_OPS_PASSWORD}' NOBYPASSRLS NOCREATEROLE;
 ---
 apiVersion: v1
 kind: Secret
@@ -185,12 +215,16 @@ metadata:
 data:
   owner-url: YQ==
   app-url: YQ==
+  tenant-authority-url: YQ==
   scheduler-url: YQ==
   worker-url: YQ==
+  adapter-ops-url: YQ==
   owner-password: YQ==
   app-password: YQ==
+  tenant-authority-password: YQ==
   scheduler-password: YQ==
   worker-password: YQ==
+  adapter-ops-password: YQ==
 ---
 apiVersion: v1
 kind: Secret
@@ -208,8 +242,6 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: cell-migration
-  annotations:
-    helm.sh/hook: post-install,post-upgrade
   labels:
     app.kubernetes.io/component: migration
 spec:
@@ -229,6 +261,25 @@ metadata:
 `;
 
 describe('helm-cell-assert', () => {
+  it('requires both exact enterprise ten-second intervals on the adapter-ops Deployment', () => {
+    const deployment = DEMO_SNIPPET.match(
+      /apiVersion: apps\/v1\nkind: Deployment\nmetadata:\n  name: cell-adapter-ops[\s\S]*?(?=\n---)/,
+    )?.[0] ?? '';
+    assert.throws(
+      () => assertEnterpriseAdapterOpsTiming(loadYamlDocuments(deployment)),
+      /COMMANDER_RECONCILE_INTERVAL_MS/,
+    );
+    const rendered = deployment.replace(
+      '          env:',
+      `          env:
+            - name: COMMANDER_RECONCILE_INTERVAL_MS
+              value: "10000"
+            - name: COMMANDER_COMPENSATION_INTERVAL_MS
+              value: "10000"`,
+    );
+    assert.doesNotThrow(() => assertEnterpriseAdapterOpsTiming(loadYamlDocuments(rendered)));
+  });
+
   it('passes demo profile fixture', () => {
     const docs = loadYamlDocuments(DEMO_SNIPPET);
     assert.doesNotThrow(() => assertHelmCellTopology(docs, 'demo'));
@@ -254,6 +305,7 @@ spec:
   it('extracts kernel database secret keys', () => {
     assert.equal(extractKernelDatabaseSecretKey(dsnEnv('app-url')), 'app-url');
     assert.equal(extractKernelDatabaseSecretKey(dsnEnv('owner-url')), 'owner-url');
+    assert.equal(extractKernelDatabaseSecretKey(dsnEnv('adapter-ops-url')), 'adapter-ops-url');
   });
 
   it('rejects runtime owner-url', () => {
@@ -293,6 +345,22 @@ spec:
     );
     const docs = loadYamlDocuments(bad);
     assert.throws(() => assertHelmCellTopology(docs, 'demo'), /adapter-ops replicas|H10/);
+  });
+
+  it('rejects adapter-ops sharing the worker DSN', () => {
+    const bad = DEMO_SNIPPET.replace(dsnEnv('adapter-ops-url'), dsnEnv('worker-url'));
+    assert.throws(
+      () => assertHelmCellTopology(loadYamlDocuments(bad), 'demo'),
+      /adapter-ops-url|H12/,
+    );
+  });
+
+  it('rejects adapter-ops without its persisted claim-secret mount', () => {
+    const bad = DEMO_SNIPPET.replace(/\n\s*volumeMounts:\n\s*- name: claim-secrets\n\s*mountPath: \/var\/run\/commander\/adapter-ops\n\s*volumes:\n\s*- name: claim-secrets\n\s*emptyDir: \{\}/, '');
+    assert.throws(
+      () => assertHelmCellTopology(loadYamlDocuments(bad), 'demo'),
+      /claim.secret|mount|H20/i,
+    );
   });
 
   it('rejects missing CREATE ROLE LOGIN', () => {

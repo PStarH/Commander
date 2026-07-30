@@ -21,29 +21,59 @@ import type {
   KernelStep,
   KernelTimer,
   MarkEffectCompletionUnknownRequest,
+  ParkEffectCompletionUnknownInput,
+  ParkEffectCompletionUnknownResult,
   ReconcileEffectRequest,
   RequestReconcileInput,
+  RequestReconcileResult,
   ClaimReconcileEffectsInput,
   ClaimedReconcileEffect,
   RescheduleReconcileInput,
   EscalateReconcileInput,
+  ReconcileClaimAuth,
+  ReconcileMutationReceipt,
+  ReconcileMutationResult,
+  ReconcileQueryError,
   FailEffectRequest,
   RequestCompensationInput,
   RequestCompensationResult,
+  CompensationAuthorizationRecord,
+  KernelCompensationRequest,
+  ClaimCompensationRequestInput,
+  ClaimedCompensationRequest,
+  FinalizeCompensationInput,
+  ParkCompensationUnknownInput as ParkCompensationRequestUnknownInput,
+  CompensationMutationResult,
   TenantExecutionControl,
   KillSwitch,
   KillSwitchMatchDims,
   PutKillSwitchInput,
   RemoveKillSwitchInput,
+  OperationsReadiness,
 } from '../types.js';
+import { OPERATIONS_HEARTBEAT_TTL_MS } from '../types.js';
+import { isClassAEffectType } from '@commander/contracts';
 import { findMatchingKillSwitchWithLookup } from '../killSwitchMatching.js';
 import {
   KERNEL_COMPENSATION_TOPIC,
   LEGACY_COMPENSATION_TOPIC,
+  normalizeCompensationPayload,
+  type ClaimedCompensationWork,
+  type CompensationClaimAuth,
+  type CompensationWorkDispositionResult,
 } from '../ops/compensationConsumer.js';
+import {
+  canonicalCompensationHash,
+  type GovernedCompensationAuthorization,
+} from '../ops/compensationAuthority.js';
 import { KernelInvariantError } from '../types.js';
+import { createReconcilePolicy, nextReconcileAfter } from '../reconcilePolicy.js';
 import { assertRunTransition, assertStepTransition } from '../transitionValidation.js';
 import { createHash } from 'node:crypto';
+import {
+  assertEvidenceRecordBoundToEffect,
+  type KernelEvidenceRecord,
+} from '../evidenceRepository.js';
 import {
   generateWorkerClaimSecret,
   hashWorkerClaimSecret,
@@ -80,18 +110,34 @@ const requestHash = (value: Record<string, unknown>): string =>
 const reconcileDefaults = (): Pick<
   KernelEffect,
   | 'reconcileAttempts'
+  | 'governedActionDeadlineAt'
+  | 'reconcilePolicy'
+  | 'reconcileDisposition'
   | 'reconcileAfter'
+  | 'reconcileObservedAt'
   | 'reconcileClaimToken'
   | 'reconcileClaimExpiresAt'
+  | 'reconcileClaimedAt'
+  | 'reconcileClaimWorkerId'
+  | 'reconcileClaimWorkerGeneration'
   | 'reconcileLastError'
   | 'reconcileEscalatedAt'
+  | 'reconcileEscalationCode'
 > => ({
   reconcileAttempts: 0,
+  governedActionDeadlineAt: null,
+  reconcilePolicy: null,
+  reconcileDisposition: null,
   reconcileAfter: null,
+  reconcileObservedAt: null,
   reconcileClaimToken: null,
   reconcileClaimExpiresAt: null,
+  reconcileClaimedAt: null,
+  reconcileClaimWorkerId: null,
+  reconcileClaimWorkerGeneration: null,
   reconcileLastError: null,
   reconcileEscalatedAt: null,
+  reconcileEscalationCode: null,
 });
 const TERMINAL_RUN_STATES = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED', 'COMPENSATED']);
 
@@ -108,6 +154,10 @@ type InMemoryWorkerRecord = {
   tenantIds: string[];
   status: 'ACTIVE' | 'DRAINING' | 'OFFLINE';
   generation: number;
+  capabilities: string[];
+  registeredAt: string;
+  lastHeartbeatAt: string;
+  identitySubject: string;
 };
 
 export class InMemoryKernelRepository implements KernelRepository {
@@ -135,6 +185,35 @@ export class InMemoryKernelRepository implements KernelRepository {
   private readonly killSwitches = new Map<string, KillSwitch>(); // `${tenantId}|${scope}|${value}`
   /** workerId → claim secret hash for worker-mode claims. */
   private readonly claimSecretHashes = new Map<string, { generation: number; hash: Buffer }>();
+  private readonly reconcileReceipts = new Map<
+    string,
+    {
+      workerId: string;
+      workerGeneration: number;
+      claimTokenHash: string;
+      requestFingerprint: string;
+      result: Extract<ReconcileMutationResult, { applied: true }>;
+    }
+  >();
+  private readonly compensationReceipts = new Map<
+    string,
+    {
+      claimTokenHash: string;
+      effectId: string;
+      fingerprint: string;
+      result: Extract<CompensationWorkDispositionResult, { applied: true }>;
+    }
+  >();
+  private readonly compensationAuthorizations = new Map<string, CompensationAuthorizationRecord>();
+  private readonly compensationRequests = new Map<string, KernelCompensationRequest>();
+  private readonly compensationMutationReceipts = new Map<
+    string,
+    {
+      fingerprint: string;
+      result: Extract<CompensationMutationResult, { applied: true }>;
+    }
+  >();
+  private readonly evidence = new Map<string, KernelEvidenceRecord>();
   // Outbox DLQ (declared early so claimOutboxByTopic can filter DLQ'd messages)
   private readonly dlq = new Map<string, KernelDlqEntry>();
   /** Test-only: configurable maximum publish attempts before an outbox message is moved to the DLQ. */
@@ -143,6 +222,31 @@ export class InMemoryKernelRepository implements KernelRepository {
 
   constructor(options: InMemoryKernelRepositoryOptions = {}) {
     this.schedulerMode = options.schedulerMode ?? true;
+  }
+
+  async appendEvidence(record: KernelEvidenceRecord): Promise<{ inserted: boolean }> {
+    const key = `${record.tenantId}\u0000${record.bundleId}`;
+    const existing = this.evidence.get(key);
+    if (existing) {
+      if (canonical(existing) !== canonical(record)) throw new Error('EVIDENCE_CONFLICT');
+      return { inserted: false };
+    }
+    this.evidence.set(key, clone(record));
+    return { inserted: true };
+  }
+
+  async getEvidence(runId: string, tenantId: string): Promise<KernelEvidenceRecord | null> {
+    const record = [...this.evidence.values()]
+      .filter((candidate) => candidate.tenantId === tenantId && candidate.runId === runId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+    return record ? clone(record) : null;
+  }
+
+  async listEvidence(tenantId: string): Promise<KernelEvidenceRecord[]> {
+    return [...this.evidence.values()]
+      .filter((record) => record.tenantId === tenantId)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map(clone);
   }
 
   /** Test-only: enqueue an arbitrary outbox message (used by compensation DLQ proofs). */
@@ -227,13 +331,24 @@ export class InMemoryKernelRepository implements KernelRepository {
     workerId: string,
     tenantIds: string[],
     generation = 1,
-    options?: { status?: 'ACTIVE' | 'DRAINING' | 'OFFLINE'; claimSecret?: string },
+    options?: {
+      status?: 'ACTIVE' | 'DRAINING' | 'OFFLINE';
+      claimSecret?: string;
+      capabilities?: string[];
+      registeredAt?: Date;
+      lastHeartbeatAt?: Date;
+      identitySubject?: string;
+    },
   ): string {
     const claimSecret = options?.claimSecret ?? generateWorkerClaimSecret();
     this.workers.set(workerId, {
       tenantIds: [...tenantIds],
       status: options?.status ?? 'ACTIVE',
       generation,
+      capabilities: [...(options?.capabilities ?? ['agent', 'tool'])],
+      registeredAt: (options?.registeredAt ?? new Date()).toISOString(),
+      lastHeartbeatAt: (options?.lastHeartbeatAt ?? new Date()).toISOString(),
+      identitySubject: options?.identitySubject ?? workerId,
     });
     this.claimSecretHashes.set(workerId, {
       generation,
@@ -830,6 +945,33 @@ export class InMemoryKernelRepository implements KernelRepository {
     const control = this.tenantControls.get(tenantId);
     return clone(control ?? { tenantId, paused: false, generation: 0, actor: 'kernel' });
   }
+  async getOperationsReadiness(tenantId: string, at = new Date()): Promise<OperationsReadiness> {
+    const threshold = at.getTime() - OPERATIONS_HEARTBEAT_TTL_MS;
+    const count = (capability: string) =>
+      [...this.workers.values()].filter(
+        (worker) =>
+          worker.status === 'ACTIVE' &&
+          worker.identitySubject === 'db:commander_adapter_ops' &&
+          worker.tenantIds.includes(tenantId) &&
+          worker.capabilities.length === 1 &&
+          worker.capabilities[0] === capability &&
+          Date.parse(worker.lastHeartbeatAt) > Date.parse(worker.registeredAt) &&
+          Date.parse(worker.lastHeartbeatAt) >= threshold,
+      ).length;
+    const reconciliationWorkers = count('effect.reconcile');
+    const compensationWorkers = count('effect.compensate');
+    return {
+      ready: reconciliationWorkers > 0 && compensationWorkers > 0,
+      ...(reconciliationWorkers === 0
+        ? { reason: 'RECONCILIATION_DRAIN_UNAVAILABLE' as const }
+        : compensationWorkers === 0
+          ? { reason: 'COMPENSATION_DRAIN_UNAVAILABLE' as const }
+          : {}),
+      reconciliationWorkers,
+      compensationWorkers,
+      checkedAt: at.toISOString(),
+    };
+  }
   async admitEffect(request: AdmitEffectRequest): Promise<AdmitEffectResult> {
     // Fail-closed: never let a blank policySnapshotId / lease.workerId slip
     // through to storage where it would otherwise coerce to 'legacy-unbound'.
@@ -839,25 +981,58 @@ export class InMemoryKernelRepository implements KernelRepository {
     if (!request.lease.workerId || !request.lease.workerId.trim()) {
       return { admitted: false, reason: 'LEASE_WORKER_ID_REQUIRED' };
     }
+    const isCompensation = request.type.toLowerCase().startsWith('compensate.');
     const key = `${request.tenantId}:${request.idempotencyKey}`;
     const step = this.steps.get(request.stepId);
-    const run = this.runs.get(request.runId);
-    const compensationAdmit =
-      request.type.startsWith('compensate.') &&
-      !!run &&
-      run.state === 'COMPENSATING' &&
-      !!step &&
-      step.runId === request.runId &&
-      step.tenantId === request.tenantId;
-    if (!compensationAdmit) {
+    if (
+      !step ||
+      step.runId !== request.runId ||
+      step.tenantId !== request.tenantId ||
+      step.state !== 'RUNNING' ||
+      !live(step.lease, request.lease)
+    ) {
+      return { admitted: false, reason: 'LEASE_LOST' };
+    }
+    if (isCompensation) {
+      const run = this.runs.get(request.runId);
+      const authorization = run ? this.compensationAuthorization(run) : null;
+      const stepAuthorization = (step.input as { authorization?: unknown }).authorization;
+      const binding = request.compensationBinding;
+      const worker = this.workers.get(request.lease.workerId);
+      const outboxMessage = authorization
+        ? [...this.outbox.values()].find(
+            (message) =>
+              !message.publishedAt &&
+              message.topic === KERNEL_COMPENSATION_TOPIC &&
+              message.payload.authorizationId === authorization.authorizationId,
+          )
+        : undefined;
+      const outboxClaim = outboxMessage ? this.outboxClaims.get(outboxMessage.id) : undefined;
       if (
-        !step ||
-        step.runId !== request.runId ||
-        step.tenantId !== request.tenantId ||
-        step.state !== 'RUNNING' ||
-        !live(step.lease, request.lease)
+        !authorization ||
+        canonical(stepAuthorization) !== canonical(authorization) ||
+        !binding ||
+        binding.authorizationId !== authorization.authorizationId ||
+        binding.requestId !== authorization.requestId ||
+        binding.claimToken !== request.lease.token ||
+        authorization.compensationEffectId !== request.id ||
+        authorization.compensationEffectType !== request.type ||
+        authorization.compensationRunId !== request.runId ||
+        authorization.compensationStepId !== request.stepId ||
+        authorization.idempotencyKey !== request.idempotencyKey ||
+        authorization.policyDecisionId !== request.policyDecisionId ||
+        authorization.policySnapshotId !== request.policySnapshotId ||
+        authorization.actionDigest !== request.actionDigest ||
+        canonical(authorization.compensationRequest) !== canonical(request.request) ||
+        outboxClaim?.token !== binding.claimToken ||
+        worker?.identitySubject !== 'db:commander_adapter_ops' ||
+        worker.generation !== request.lease.workerGeneration ||
+        worker.status !== 'ACTIVE' ||
+        worker.capabilities.length !== 1 ||
+        worker.capabilities[0] !== 'effect.compensate' ||
+        !worker.tenantIds.includes(request.tenantId)
       ) {
-        return { admitted: false, reason: 'LEASE_LOST' };
+        return { admitted: false, reason: 'COMPENSATION_ADMISSION_UNAVAILABLE' };
       }
     }
     const fingerprint = requestHash(request.request);
@@ -874,7 +1049,22 @@ export class InMemoryKernelRepository implements KernelRepository {
       ) {
         return { admitted: false, reason: 'IDEMPOTENCY_CONFLICT' };
       }
+      if (
+        isClassAEffectType(request.type) &&
+        !isCompensation &&
+        previous.state !== 'COMPLETED' &&
+        !(await this.getOperationsReadiness(request.tenantId)).ready
+      ) {
+        return { admitted: false, reason: 'OPERATIONS_NOT_READY' };
+      }
       return { admitted: true, replayed: true, effect: clone(previous) };
+    }
+    if (
+      isClassAEffectType(request.type) &&
+      !isCompensation &&
+      !(await this.getOperationsReadiness(request.tenantId)).ready
+    ) {
+      return { admitted: false, reason: 'OPERATIONS_NOT_READY' };
     }
     const effect: KernelEffect = {
       id: request.id,
@@ -923,6 +1113,41 @@ export class InMemoryKernelRepository implements KernelRepository {
   ): Promise<KernelEffect | null> {
     const effect = this.effects.get(effectId);
     const step = effect ? this.steps.get(effect.stepId) : undefined;
+    if (
+      !effect ||
+      !step ||
+      effect.tenantId !== tenantId ||
+      effect.state !== 'ADMITTED' ||
+      step.state !== 'RUNNING' ||
+      !live(step.lease, lease)
+    )
+      return null;
+    effect.state = 'COMPLETED';
+    effect.response = response;
+    effect.completedAt = now();
+    this.event(
+      'effect',
+      effect.id,
+      2,
+      'effect.completed',
+      tenantId,
+      effect.runId,
+      effect.stepId,
+      actor,
+      {},
+    );
+    return clone(effect);
+  }
+  async completeEffectWithEvidence(
+    effectId: string,
+    tenantId: string,
+    lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>,
+    response: Record<string, unknown>,
+    actor: string,
+    evidence: KernelEvidenceRecord,
+  ): Promise<KernelEffect | null> {
+    const effect = this.effects.get(effectId);
+    const step = effect ? this.steps.get(effect.stepId) : undefined;
     const run = effect ? this.runs.get(effect.runId) : undefined;
     const compensationComplete =
       !!effect &&
@@ -943,9 +1168,16 @@ export class InMemoryKernelRepository implements KernelRepository {
       )
         return null;
     }
+    assertEvidenceRecordBoundToEffect(evidence, { ...effect, state: 'COMPLETED' });
+    const evidenceKey = `${evidence.tenantId}\u0000${evidence.bundleId}`;
+    const existing = this.evidence.get(evidenceKey);
+    if (existing && canonical(existing) !== canonical(evidence))
+      throw new Error('EVIDENCE_CONFLICT');
+
     effect.state = 'COMPLETED';
     effect.response = response;
     effect.completedAt = now();
+    if (!existing) this.evidence.set(evidenceKey, clone(evidence));
     this.event(
       'effect',
       effect.id,
@@ -959,15 +1191,71 @@ export class InMemoryKernelRepository implements KernelRepository {
     );
     return clone(effect);
   }
+  async failEffectWithEvidence(
+    request: FailEffectRequest & { evidence: KernelEvidenceRecord },
+  ): Promise<KernelEffect | null> {
+    const effect = this.effects.get(request.effectId);
+    const step = effect ? this.steps.get(effect.stepId) : undefined;
+    if (
+      !effect ||
+      !step ||
+      effect.tenantId !== request.tenantId ||
+      effect.state !== 'ADMITTED' ||
+      step.state !== 'RUNNING' ||
+      !live(step.lease, request.lease)
+    ) {
+      return null;
+    }
+    const projected = { ...effect, state: 'FAILED' as const };
+    assertEvidenceRecordBoundToEffect(request.evidence, projected);
+    const evidenceKey = `${request.evidence.tenantId}\u0000${request.evidence.bundleId}`;
+    const existing = this.evidence.get(evidenceKey);
+    if (existing && canonical(existing) !== canonical(request.evidence)) {
+      throw new Error('EVIDENCE_CONFLICT');
+    }
+    effect.state = 'FAILED';
+    effect.response = clone(request.error);
+    effect.completedAt = now();
+    if (!existing) this.evidence.set(evidenceKey, clone(request.evidence));
+    this.event(
+      'effect', effect.id, 2, 'effect.failed', request.tenantId, effect.runId,
+      effect.stepId, request.actor, { error: request.error },
+    );
+    return clone(effect);
+  }
   async markEffectCompletionUnknown(
     request: MarkEffectCompletionUnknownRequest,
   ): Promise<KernelEffect | null> {
     const effect = this.effects.get(request.effectId);
-    if (!effect || effect.tenantId !== request.tenantId || effect.state !== 'ADMITTED') return null;
+    const step = effect ? this.steps.get(effect.stepId) : undefined;
+    const run = effect ? this.runs.get(effect.runId) : undefined;
+    if (
+      !effect ||
+      !step ||
+      !run ||
+      effect.tenantId !== request.tenantId ||
+      effect.state !== 'ADMITTED' ||
+      step.state !== 'RUNNING' ||
+      run.state !== 'RUNNING' ||
+      (request.lease !== undefined && !live(step.lease, request.lease))
+    )
+      return null;
+    const unknownAt = now();
     effect.state = 'COMPLETION_UNKNOWN';
     effect.response = { completionUnknownReason: request.reason };
-    effect.reconcileAfter = now();
+    effect.governedActionDeadlineAt = request.governedActionDeadlineAt ?? null;
+    effect.reconcilePolicy = createReconcilePolicy({
+      unknownAt,
+      governedActionDeadlineAt: request.governedActionDeadlineAt,
+    });
+    effect.reconcileDisposition = 'PENDING';
+    effect.reconcileAfter = unknownAt;
     effect.reconcileAttempts = 0;
+    step.state = 'WAITING_FOR_RECONCILIATION';
+    step.version += 1;
+    if (step.lease) this.lastFencingEpoch.set(step.id, step.lease.fencingEpoch);
+    step.lease = undefined;
+    step.updatedAt = unknownAt;
     this.event(
       'effect',
       effect.id,
@@ -981,6 +1269,94 @@ export class InMemoryKernelRepository implements KernelRepository {
     );
     return clone(effect);
   }
+  async parkEffectCompletionUnknown(
+    input: ParkEffectCompletionUnknownInput,
+  ): Promise<ParkEffectCompletionUnknownResult> {
+    const effect = this.effects.get(input.effectId);
+    if (!effect || effect.tenantId !== input.tenantId) {
+      return { parked: false, reason: 'NOT_FOUND' };
+    }
+    const step = this.steps.get(effect.stepId);
+    const run = this.runs.get(effect.runId);
+    if (!step || !run) return { parked: false, reason: 'NOT_FOUND' };
+    const scope = this.resolveDurableWorkerTenantScope(
+      input.workerId,
+      input.workerGeneration,
+      input.claimSecret,
+    );
+    const worker = this.workers.get(input.workerId);
+    if (
+      !scope?.tenantIds.includes(input.tenantId) ||
+      (!worker?.capabilities.includes('effect.execute') && !worker?.capabilities.includes('tool'))
+    ) {
+      return { parked: false, reason: 'LEASE_FENCED' };
+    }
+    const fingerprint = requestHash({
+      tenantId: input.tenantId,
+      effectId: input.effectId,
+      workerId: input.workerId,
+      workerGeneration: input.workerGeneration,
+      leaseTokenHash: createHash('sha256').update(input.leaseToken).digest('hex'),
+      fencingEpoch: input.fencingEpoch,
+    });
+    const prior = (effect.response as { completionUnknownFingerprint?: string } | undefined)
+      ?.completionUnknownFingerprint;
+    if (effect.state === 'COMPLETION_UNKNOWN') {
+      return prior === fingerprint
+        ? { parked: true, replayed: true, effect: clone(effect) }
+        : { parked: false, reason: 'ADMISSION_BINDING_MISMATCH' };
+    }
+    if (effect.state !== 'ADMITTED') {
+      return { parked: false, reason: 'NOT_ADMITTED_OR_UNKNOWN' };
+    }
+    if (['SUCCEEDED', 'FAILED', 'CANCELLED', 'SKIPPED'].includes(step.state)) {
+      return { parked: false, reason: 'STEP_TERMINAL_RACE' };
+    }
+    if (
+      step.state !== 'RUNNING' ||
+      !step.lease ||
+      step.lease.workerId !== input.workerId ||
+      step.lease.workerGeneration !== input.workerGeneration ||
+      step.lease.token !== input.leaseToken ||
+      step.lease.fencingEpoch !== input.fencingEpoch ||
+      effect.leaseWorkerId !== input.workerId ||
+      effect.leaseWorkerGeneration !== input.workerGeneration ||
+      effect.leaseFencingEpoch !== input.fencingEpoch
+    ) {
+      return { parked: false, reason: 'ADMISSION_BINDING_MISMATCH' };
+    }
+    const unknownAt = now();
+    effect.state = 'COMPLETION_UNKNOWN';
+    effect.response = {
+      completionUnknownError: clone(input.error),
+      completionUnknownFingerprint: fingerprint,
+    };
+    effect.governedActionDeadlineAt = input.governedActionDeadlineAt ?? null;
+    effect.reconcilePolicy = createReconcilePolicy({
+      unknownAt,
+      governedActionDeadlineAt: input.governedActionDeadlineAt,
+    });
+    effect.reconcileDisposition = 'PENDING';
+    effect.reconcileAfter = unknownAt;
+    effect.reconcileAttempts = 0;
+    effect.reconcileLastError = { ...input.error };
+    step.state = 'WAITING_FOR_RECONCILIATION';
+    step.version += 1;
+    step.lease = undefined;
+    step.updatedAt = unknownAt;
+    this.event(
+      'effect',
+      effect.id,
+      2,
+      'effect.completion_unknown',
+      effect.tenantId,
+      effect.runId,
+      effect.stepId,
+      input.workerId,
+      { error: input.error },
+    );
+    return { parked: true, replayed: false, effect: clone(effect) };
+  }
   private parkOrphanAdmittedEffects(
     step: Pick<KernelStep, 'id' | 'tenantId' | 'runId'>,
     reason: string,
@@ -992,10 +1368,20 @@ export class InMemoryKernelRepository implements KernelRepository {
         effect.tenantId === step.tenantId &&
         effect.state === 'ADMITTED'
       ) {
+        const unknownAt = now();
         effect.state = 'COMPLETION_UNKNOWN';
         effect.response = { completionUnknownReason: reason };
-        effect.reconcileAfter = now();
+        effect.reconcilePolicy = createReconcilePolicy({ unknownAt });
+        effect.reconcileDisposition = 'PENDING';
+        effect.reconcileAfter = unknownAt;
         effect.reconcileAttempts = 0;
+        const linked = this.steps.get(effect.stepId);
+        if (linked && linked.state === 'RUNNING') {
+          linked.state = 'WAITING_FOR_RECONCILIATION';
+          linked.version += 1;
+          linked.lease = undefined;
+          linked.updatedAt = unknownAt;
+        }
         this.event(
           'effect',
           effect.id,
@@ -1022,7 +1408,7 @@ export class InMemoryKernelRepository implements KernelRepository {
     effect.state = request.state;
     effect.response = request.response;
     effect.completedAt = now();
-    this.event(
+    const eventId = this.event(
       'effect',
       effect.id,
       3,
@@ -1035,12 +1421,46 @@ export class InMemoryKernelRepository implements KernelRepository {
     );
     return clone(effect);
   }
-  async requestReconcile(input: RequestReconcileInput): Promise<KernelEffect | null> {
+  async requestReconcile(input: RequestReconcileInput): Promise<RequestReconcileResult> {
     const effect = this.effects.get(input.effectId);
-    if (!effect || effect.tenantId !== input.tenantId || effect.state !== 'COMPLETION_UNKNOWN')
-      return null;
-    effect.reconcileAfter = input.reconcileAfter ?? now();
-    return clone(effect);
+    const requestedAt = now();
+    if (!effect || effect.tenantId !== input.tenantId) {
+      return { scheduled: false, reason: 'NOT_FOUND' };
+    }
+    if (effect.state !== 'COMPLETION_UNKNOWN') {
+      return { scheduled: false, reason: 'NOT_UNKNOWN' };
+    }
+    if (effect.reconcileDisposition === 'ESCALATED' || effect.reconcileEscalatedAt) {
+      return { scheduled: false, reason: 'ESCALATED' };
+    }
+    if (
+      !effect.reconcilePolicy ||
+      Date.parse(effect.reconcilePolicy.deadlineAt) <= Date.parse(requestedAt)
+    ) {
+      return { scheduled: false, reason: 'DEADLINE_EXPIRED' };
+    }
+    const prior = effect.reconcileAfter ?? requestedAt;
+    effect.reconcileAfter = new Date(
+      Math.min(Date.parse(prior), Date.parse(requestedAt)),
+    ).toISOString();
+    this.event(
+      'effect',
+      effect.id,
+      effect.reconcileAttempts + 3,
+      'effect.reconcile_requested',
+      effect.tenantId,
+      effect.runId,
+      effect.stepId,
+      input.actor,
+      { reconcileAfter: effect.reconcileAfter },
+    );
+    return {
+      scheduled: true,
+      effectId: effect.id,
+      state: 'COMPLETION_UNKNOWN',
+      reconcileAfter: effect.reconcileAfter,
+      alreadyScheduled: Date.parse(prior) <= Date.parse(requestedAt),
+    };
   }
   async claimReconcileEffects(
     input: ClaimReconcileEffectsInput,
@@ -1063,7 +1483,14 @@ export class InMemoryKernelRepository implements KernelRepository {
     const candidates = [...this.effects.values()]
       .filter((effect) => {
         if (tenantFilter !== null && !tenantFilter.includes(effect.tenantId)) return false;
-        if (effect.state !== 'COMPLETION_UNKNOWN' || effect.reconcileEscalatedAt) return false;
+        if (
+          effect.state !== 'COMPLETION_UNKNOWN' ||
+          effect.reconcileDisposition !== 'PENDING' ||
+          effect.reconcileEscalatedAt ||
+          !effect.reconcilePolicy ||
+          Date.parse(effect.reconcilePolicy.deadlineAt) <= at.getTime()
+        )
+          return false;
         if (!effect.reconcileAfter || Date.parse(effect.reconcileAfter) > at.getTime())
           return false;
         if (
@@ -1076,12 +1503,266 @@ export class InMemoryKernelRepository implements KernelRepository {
       })
       .sort((a, b) => Date.parse(a.reconcileAfter ?? '') - Date.parse(b.reconcileAfter ?? ''));
     for (const effect of candidates.slice(0, input.limit)) {
+      this.reconcileReceipts.delete(effect.id);
       const claimToken = randomUUID();
       effect.reconcileClaimToken = claimToken;
       effect.reconcileClaimExpiresAt = new Date(at.getTime() + claimTtlMs).toISOString();
+      effect.reconcileClaimedAt = at.toISOString();
+      effect.reconcileClaimWorkerId = input.workerId ?? 'scheduler';
+      effect.reconcileClaimWorkerGeneration = input.workerGeneration ?? 1;
       claimed.push({ effect: clone(effect), claimToken });
     }
     return claimed;
+  }
+  async completeReconcileEffect(
+    input: ReconcileClaimAuth & { response: Record<string, unknown> },
+  ): Promise<ReconcileMutationResult> {
+    return this.applyReconcileMutation(input, 'COMPLETE', input.response);
+  }
+  async confirmEffectNotApplied(
+    input: ReconcileClaimAuth & { response: Record<string, unknown> },
+  ): Promise<ReconcileMutationResult> {
+    return this.applyReconcileMutation(input, 'CONFIRM_NOT_APPLIED', input.response);
+  }
+  async rescheduleReconcileEffect(
+    input: ReconcileClaimAuth & { lastError: ReconcileQueryError },
+  ): Promise<ReconcileMutationResult> {
+    return this.applyReconcileMutation(input, 'RESCHEDULE', input.lastError);
+  }
+  async escalateReconcileEffect(
+    input: ReconcileClaimAuth & {
+      reason:
+        | 'RECONCILE_ADAPTER_NOT_FOUND'
+        | 'RECONCILE_QUERY_UNSUPPORTED'
+        | 'COMPENSATION_QUERY_UNSUPPORTED'
+        | 'RECONCILE_POLICY_BACKFILL_REVIEW_REQUIRED';
+    },
+  ): Promise<ReconcileMutationResult> {
+    return this.applyReconcileMutation(input, 'ESCALATE', input.reason);
+  }
+  private async applyReconcileMutation(
+    input: ReconcileClaimAuth,
+    mutation: 'COMPLETE' | 'CONFIRM_NOT_APPLIED' | 'RESCHEDULE' | 'ESCALATE',
+    payload: Record<string, unknown> | ReconcileQueryError | string,
+  ): Promise<ReconcileMutationResult> {
+    const effect = this.effects.get(input.effectId);
+    if (!effect || effect.tenantId !== input.tenantId) {
+      return { applied: false, reason: 'NOT_FOUND' };
+    }
+    const scope = this.resolveDurableWorkerTenantScope(
+      input.workerId,
+      input.workerGeneration,
+      input.claimSecret,
+    );
+    const worker = this.workers.get(input.workerId);
+    if (
+      !scope?.tenantIds.includes(input.tenantId) ||
+      !worker?.capabilities.includes('effect.reconcile')
+    ) {
+      return { applied: false, reason: 'WORKER_FENCED' };
+    }
+    const step = this.steps.get(effect.stepId);
+    const run = this.runs.get(effect.runId);
+    if (!step || !run) return { applied: false, reason: 'NOT_FOUND' };
+    const claimTokenHash = createHash('sha256').update(input.claimToken).digest('hex');
+    const requestFingerprint = requestHash({
+      mutation,
+      tenantId: input.tenantId,
+      effectId: input.effectId,
+      payload,
+      evidenceContentHash: input.evidence?.contentHash ?? null,
+    });
+    const currentClaimMatches =
+      effect.reconcileClaimToken === input.claimToken &&
+      effect.reconcileClaimWorkerId === input.workerId &&
+      effect.reconcileClaimWorkerGeneration === input.workerGeneration;
+    if (!effect.reconcileClaimToken) {
+      const prior = this.reconcileReceipts.get(effect.id);
+      if (
+        prior &&
+        prior.workerId === input.workerId &&
+        prior.workerGeneration === input.workerGeneration &&
+        prior.claimTokenHash === claimTokenHash
+      ) {
+        return prior.requestFingerprint === requestFingerprint
+          ? { ...clone(prior.result), replayed: true }
+          : { applied: false, reason: 'CLAIM_REPLAY_CONFLICT' };
+      }
+      return { applied: false, reason: 'CLAIM_NOT_OWNED' };
+    }
+    if (!currentClaimMatches) return { applied: false, reason: 'CLAIM_NOT_OWNED' };
+    if (
+      !effect.reconcileClaimExpiresAt ||
+      Date.parse(effect.reconcileClaimExpiresAt) <= Date.now()
+    ) {
+      return { applied: false, reason: 'CLAIM_EXPIRED' };
+    }
+    if (effect.state !== 'COMPLETION_UNKNOWN') {
+      return { applied: false, reason: 'NOT_COMPLETION_UNKNOWN' };
+    }
+    if (['SUCCEEDED', 'FAILED', 'CANCELLED', 'SKIPPED'].includes(step.state)) {
+      return {
+        applied: false,
+        reason: 'STEP_TERMINAL_RACE',
+        stepState: step.state as 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'SKIPPED',
+      };
+    }
+    if (TERMINAL_RUN_STATES.has(run.state)) {
+      return {
+        applied: false,
+        reason: 'RUN_TERMINAL_RACE',
+        runState: run.state as 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'COMPENSATED',
+      };
+    }
+    const observedAt = now();
+    const policy = effect.reconcilePolicy;
+    const nextAttempt = effect.reconcileAttempts + 1;
+    const nextAfter = policy ? nextReconcileAfter(policy, nextAttempt, observedAt) : null;
+    const rescheduleEscalates =
+      mutation === 'RESCHEDULE' &&
+      !!policy &&
+      (policy.maxAttempts === 0 ||
+        !nextAfter ||
+        Date.parse(nextAfter) >= Date.parse(policy.deadlineAt) ||
+        nextAttempt >= policy.maxAttempts);
+    const projectedState =
+      mutation === 'COMPLETE'
+        ? 'COMPLETED' as const
+        : mutation === 'CONFIRM_NOT_APPLIED'
+          ? 'CONFIRMED_NOT_APPLIED' as const
+          : mutation === 'ESCALATE' || rescheduleEscalates
+            ? 'COMPLETION_UNKNOWN' as const
+            : null;
+    let evidenceEntry: { key: string; record: KernelEvidenceRecord } | null = null;
+    if (projectedState) {
+      if (!input.evidence) {
+        return { applied: false, reason: 'TERMINAL_EVIDENCE_REQUIRED' };
+      }
+      assertEvidenceRecordBoundToEffect(input.evidence, { ...effect, state: projectedState });
+      const key = `${input.evidence.tenantId}\u0000${input.evidence.bundleId}`;
+      const existing = this.evidence.get(key);
+      if (existing && canonical(existing) !== canonical(input.evidence)) {
+        throw new Error('EVIDENCE_CONFLICT');
+      }
+      evidenceEntry = { key, record: input.evidence };
+    }
+    let disposition: Extract<ReconcileMutationResult, { applied: true }>['disposition'];
+    let eventType: string;
+    if (mutation === 'COMPLETE') {
+      effect.state = 'COMPLETED';
+      effect.response = clone(payload as Record<string, unknown>);
+      effect.completedAt = observedAt;
+      effect.reconcileDisposition = 'CONFIRMED_APPLIED';
+      effect.reconcileObservedAt = observedAt;
+      step.state = 'SUCCEEDED';
+      step.version += 1;
+      step.output = clone(payload as Record<string, unknown>);
+      step.updatedAt = observedAt;
+      disposition = 'COMPLETED';
+      eventType = 'effect.reconciled_completed';
+    } else if (mutation === 'CONFIRM_NOT_APPLIED') {
+      effect.state = 'CONFIRMED_NOT_APPLIED';
+      effect.response = clone(payload as Record<string, unknown>);
+      effect.completedAt = observedAt;
+      effect.reconcileDisposition = 'CONFIRMED_NOT_APPLIED';
+      effect.reconcileObservedAt = observedAt;
+      step.state = 'FAILED';
+      step.version += 1;
+      step.error = {
+        code: 'REMOTE_NOT_APPLIED',
+        message: 'Remote outcome confirmed the action was not applied',
+        retryable: false,
+      };
+      step.updatedAt = observedAt;
+      disposition = 'CONFIRMED_NOT_APPLIED';
+      eventType = 'effect.confirmed_not_applied';
+    } else if (mutation === 'RESCHEDULE') {
+      if (!policy) return { applied: false, reason: 'NOT_COMPLETION_UNKNOWN' };
+      effect.reconcileAttempts = nextAttempt;
+      effect.reconcileObservedAt = observedAt;
+      effect.reconcileLastError = clone(payload as ReconcileQueryError);
+      if (
+        policy.maxAttempts === 0 ||
+        Date.parse(nextAfter!) >= Date.parse(policy.deadlineAt) ||
+        nextAttempt >= policy.maxAttempts
+      ) {
+        effect.reconcileDisposition = 'ESCALATED';
+        effect.reconcileEscalatedAt = observedAt;
+        effect.reconcileEscalationCode =
+          policy.maxAttempts === 0
+            ? 'RECONCILE_POLICY_BACKFILL_REVIEW_REQUIRED'
+            : Date.parse(nextAfter!) >= Date.parse(policy.deadlineAt)
+              ? 'RECONCILE_DEADLINE_EXPIRED'
+              : 'RECONCILE_MAX_ATTEMPTS_EXHAUSTED';
+        step.state = 'WAITING_FOR_HUMAN';
+        step.version += 1;
+        step.updatedAt = observedAt;
+        disposition = 'ESCALATED';
+        eventType = 'effect.reconcile_escalated';
+      } else {
+        effect.reconcileAfter = nextAfter!;
+        disposition = 'RESCHEDULED';
+        eventType = 'effect.reconcile_rescheduled';
+      }
+    } else {
+      effect.reconcileDisposition = 'ESCALATED';
+      effect.reconcileEscalatedAt = observedAt;
+      effect.reconcileEscalationCode = payload as
+        | 'RECONCILE_ADAPTER_NOT_FOUND'
+        | 'RECONCILE_QUERY_UNSUPPORTED'
+        | 'COMPENSATION_QUERY_UNSUPPORTED'
+        | 'RECONCILE_POLICY_BACKFILL_REVIEW_REQUIRED';
+      step.state = 'WAITING_FOR_HUMAN';
+      step.version += 1;
+      step.updatedAt = observedAt;
+      disposition = 'ESCALATED';
+      eventType = 'effect.reconcile_escalated';
+    }
+    effect.reconcileClaimToken = null;
+    effect.reconcileClaimExpiresAt = null;
+    effect.reconcileClaimedAt = null;
+    effect.reconcileClaimWorkerId = null;
+    effect.reconcileClaimWorkerGeneration = null;
+    const eventId = this.event(
+      'effect',
+      effect.id,
+      effect.reconcileAttempts + 3,
+      eventType,
+      effect.tenantId,
+      effect.runId,
+      effect.stepId,
+      input.workerId,
+      { disposition, requestFingerprint },
+    );
+    if (evidenceEntry && !this.evidence.has(evidenceEntry.key)) {
+      this.evidence.set(evidenceEntry.key, clone(evidenceEntry.record));
+    }
+    const receipt: ReconcileMutationReceipt = {
+      effectId: effect.id,
+      requestFingerprint,
+      effectState: effect.state,
+      reconcileAttempts: effect.reconcileAttempts,
+      reconcileAfter: effect.reconcileAfter,
+      reconcileEscalatedAt: effect.reconcileEscalatedAt,
+      eventId,
+    };
+    const result: Extract<ReconcileMutationResult, { applied: true }> = {
+      applied: true,
+      replayed: false,
+      disposition,
+      receipt,
+    };
+    this.reconcileReceipts.set(effect.id, {
+      workerId: input.workerId,
+      workerGeneration: input.workerGeneration,
+      claimTokenHash,
+      requestFingerprint,
+      result: clone(result),
+    });
+    if (mutation === 'COMPLETE' || mutation === 'CONFIRM_NOT_APPLIED') {
+      this.finish(effect.runId, input.workerId);
+    }
+    return result;
   }
   async rescheduleReconcile(input: RescheduleReconcileInput): Promise<boolean> {
     const effect = this.effects.get(input.effectId);
@@ -1089,14 +1770,25 @@ export class InMemoryKernelRepository implements KernelRepository {
       !effect ||
       effect.tenantId !== input.tenantId ||
       effect.state !== 'COMPLETION_UNKNOWN' ||
+      effect.reconcileDisposition !== 'PENDING' ||
+      !effect.reconcilePolicy ||
       effect.reconcileClaimToken !== input.claimToken
     ) {
       return false;
     }
+    const observedAt = now();
     effect.reconcileAttempts += 1;
-    effect.reconcileAfter = input.reconcileAfter;
+    effect.reconcileObservedAt = observedAt;
+    effect.reconcileAfter = nextReconcileAfter(
+      effect.reconcilePolicy,
+      effect.reconcileAttempts,
+      observedAt,
+    );
     effect.reconcileClaimToken = null;
     effect.reconcileClaimExpiresAt = null;
+    effect.reconcileClaimedAt = null;
+    effect.reconcileClaimWorkerId = null;
+    effect.reconcileClaimWorkerGeneration = null;
     if (input.lastError) {
       effect.reconcileLastError = input.lastError;
     }
@@ -1113,9 +1805,15 @@ export class InMemoryKernelRepository implements KernelRepository {
       return false;
     }
     effect.reconcileEscalatedAt = now();
+    effect.reconcileDisposition = 'ESCALATED';
+    effect.reconcileEscalationCode = input.code ?? 'RECONCILE_QUERY_PERMANENT_FAILURE';
     effect.reconcileClaimToken = null;
     effect.reconcileClaimExpiresAt = null;
-    effect.reconcileLastError = { code: 'RECONCILE_ESCALATED', message: input.reason };
+    effect.reconcileLastError = {
+      category: 'PERMANENT',
+      code: 'RECONCILE_QUERY_UNCLASSIFIED',
+      message: input.reason,
+    };
     this.event(
       'effect',
       effect.id,
@@ -1171,106 +1869,209 @@ export class InMemoryKernelRepository implements KernelRepository {
     );
     return clone(effect);
   }
-  async requestCompensation(
-    input: RequestCompensationInput,
-  ): Promise<RequestCompensationResult | null> {
-    const originalRun = this.runs.get(input.originalRunId);
-    if (!originalRun || originalRun.tenantId !== input.tenantId) return null;
-    if (!TERMINAL_RUN_STATES.has(originalRun.state)) return null;
-    const forwardEffects = [...this.effects.values()].filter(
-      (effect) =>
-        effect.runId === input.originalRunId &&
-        effect.tenantId === input.tenantId &&
-        effect.state === 'COMPLETED' &&
-        !effect.type.startsWith('compensate.'),
-    );
-    if (forwardEffects.length === 0) return null;
-    const target =
-      (input.originalEffectId
-        ? forwardEffects.find((effect) => effect.id === input.originalEffectId)
-        : forwardEffects[forwardEffects.length - 1]) ?? null;
-    if (!target) return null;
-    const idempotencyKey = `cmp:${target.id}:${input.adapterVersion}`;
-    const compensationRunId = `run_${createHash('sha256')
-      .update(`${input.tenantId}:compensation:${idempotencyKey}`)
-      .digest('hex')
-      .slice(0, 40)}`;
-    const existingRun = this.runs.get(compensationRunId);
-    if (existingRun) {
-      return {
-        compensationRunId,
-        originalEffectId: target.id,
-        originalRunId: input.originalRunId,
-      };
+  async createCompensationAuthorization(
+    authorization: CompensationAuthorizationRecord,
+  ): Promise<{ authorization: CompensationAuthorizationRecord; replayed: boolean }> {
+    const existing = this.compensationAuthorizations.get(authorization.id);
+    if (existing) {
+      if (canonical(existing) !== canonical(authorization)) {
+        throw new KernelInvariantError(
+          'IDEMPOTENCY_CONFLICT',
+          'Compensation authorization inputs differ',
+        );
+      }
+      return { authorization: clone(existing), replayed: true };
     }
-    const stepId = `step_${createHash('sha256').update(`${compensationRunId}:tool`).digest('hex').slice(0, 32)}`;
+    const effect = this.effects.get(authorization.originalEffectId);
+    if (
+      !effect ||
+      effect.tenantId !== authorization.tenantId ||
+      effect.runId !== authorization.originalRunId ||
+      effect.state !== 'COMPLETED' ||
+      effect.type.startsWith('compensate.')
+    ) {
+      throw new KernelInvariantError(
+        'IDEMPOTENCY_CONFLICT',
+        'Completed forward effect was not found',
+      );
+    }
+    this.compensationAuthorizations.set(authorization.id, clone(authorization));
+    return { authorization: clone(authorization), replayed: false };
+  }
+
+  async getCompensationAuthorization(
+    authorizationId: string,
+    tenantId: string,
+  ): Promise<CompensationAuthorizationRecord | null> {
+    const authorization = this.compensationAuthorizations.get(authorizationId);
+    return authorization?.tenantId === tenantId ? clone(authorization) : null;
+  }
+
+  private compensationRequestId(authorization: CompensationAuthorizationRecord): string {
+    return `request_${canonicalCompensationHash({
+      tenantId: authorization.tenantId,
+      originalEffectId: authorization.originalEffectId,
+      adapterVersion: authorization.adapterVersion,
+      actionDigest: authorization.actionDigest,
+    }).slice(0, 40)}`;
+  }
+
+  async requestCompensation(input: RequestCompensationInput): Promise<RequestCompensationResult> {
+    const authorizationId =
+      typeof input.authorizationId === 'string' ? input.authorizationId.trim() : '';
+    const missingRequestId = `request_${canonicalCompensationHash({
+      tenantId: input.tenantId,
+      authorizationId,
+    }).slice(0, 40)}`;
+    if (!authorizationId) {
+      return { accepted: false, requestId: missingRequestId, reason: 'AUTHORIZATION_NOT_FOUND' };
+    }
+    const authorization = this.compensationAuthorizations.get(authorizationId);
+    if (!authorization || authorization.tenantId !== input.tenantId) {
+      return { accepted: false, requestId: missingRequestId, reason: 'AUTHORIZATION_NOT_FOUND' };
+    }
+    const requestId = this.compensationRequestId(authorization);
+    const existing = this.compensationRequests.get(requestId);
+    if (existing) {
+      if (existing.authorizationId !== authorization.id) {
+        return { accepted: false, requestId, reason: 'ACTION_DIGEST_MISMATCH' };
+      }
+      return { accepted: true, request: clone(existing), replayed: true };
+    }
+    const originalEffect = this.effects.get(authorization.originalEffectId);
+    if (
+      !originalEffect ||
+      originalEffect.tenantId !== input.tenantId ||
+      originalEffect.runId !== authorization.originalRunId ||
+      originalEffect.state !== 'COMPLETED' ||
+      originalEffect.type.startsWith('compensate.')
+    ) {
+      return { accepted: false, requestId, reason: 'FORWARD_EFFECT_NOT_FOUND' };
+    }
+    const forwardResponse = originalEffect.response ?? {};
+    if (canonicalCompensationHash(forwardResponse) !== authorization.forwardReceiptHash) {
+      return { accepted: false, requestId, reason: 'FORWARD_RECEIPT_MISMATCH' };
+    }
+    const expectedDigest = canonicalCompensationHash({
+      type: authorization.compensationEffectType,
+      originalEffectId: authorization.originalEffectId,
+      adapterVersion: authorization.adapterVersion,
+      forwardResponse,
+      compensationPatch: authorization.compensationPatch,
+    });
+    if (expectedDigest !== authorization.actionDigest) {
+      return { accepted: false, requestId, reason: 'ACTION_DIGEST_MISMATCH' };
+    }
+    if (authorization.decision === 'deny') {
+      return { accepted: false, requestId, reason: 'POLICY_DENIED' };
+    }
+    if (
+      !Number.isFinite(Date.parse(authorization.expiresAt)) ||
+      Date.parse(authorization.expiresAt) <= Date.now()
+    ) {
+      return { accepted: false, requestId, reason: 'AUTHORIZATION_EXPIRED' };
+    }
+    if (authorization.decision === 'require_approval') {
+      if (!authorization.approvalInteractionId) {
+        return { accepted: false, requestId, reason: 'APPROVAL_REQUIRED' };
+      }
+      const approval = this.interactions.get(authorization.approvalInteractionId);
+      const response = approval?.response ?? {};
+      if (
+        !approval ||
+        approval.tenantId !== input.tenantId ||
+        approval.runId !== authorization.originalRunId ||
+        approval.status !== 'answered' ||
+        response.approved !== true ||
+        response.authorizationId !== authorization.id ||
+        response.actionDigest !== authorization.actionDigest ||
+        response.policyDecisionId !== authorization.policyDecisionId ||
+        response.policySnapshotId !== authorization.policySnapshotId ||
+        Date.parse(approval.expiresAt ?? '') <= Date.now()
+      ) {
+        return { accepted: false, requestId, reason: 'APPROVAL_BINDING_MISMATCH' };
+      }
+    }
+    const compensationRunId = `run_${canonicalCompensationHash({ requestId, purpose: 'compensation' }).slice(0, 40)}`;
+    const compensationStepId = `step_${canonicalCompensationHash({ requestId, purpose: 'compensation' }).slice(0, 32)}`;
+    const request: KernelCompensationRequest = {
+      id: requestId,
+      tenantId: input.tenantId,
+      originalRunId: authorization.originalRunId,
+      originalEffectId: authorization.originalEffectId,
+      compensationRunId,
+      compensationStepId,
+      adapterVersion: authorization.adapterVersion,
+      compensationEffectType: authorization.compensationEffectType,
+      compensationPatch: clone(authorization.compensationPatch),
+      forwardReceiptHash: authorization.forwardReceiptHash,
+      authorizationId: authorization.id,
+      reconcilePolicy: createReconcilePolicy({ unknownAt: now() }),
+      state: 'AUTHORIZED',
+    };
     await this.createRun(
       {
         id: compensationRunId,
         tenantId: input.tenantId,
-        intentHash: createHash('sha256').update(`compensate:${target.id}`).digest('hex'),
-        workGraphHash: createHash('sha256').update(stepId).digest('hex'),
-        workGraphVersion: 'action-gateway-compensation/v1',
-        policySnapshotId: 'compensation-enqueue-v1',
-        metadata: {
-          compensation: {
-            originalRunId: input.originalRunId,
-            originalEffectId: target.id,
-            adapterVersion: input.adapterVersion,
-          },
-        },
-        steps: [
-          {
-            id: stepId,
-            kind: 'tool',
-            input: {
-              effectType: input.compensationEffectType,
-              originalEffectId: target.id,
-              idempotencyKey,
-            },
-          },
-        ],
+        intentHash: canonicalCompensationHash({ requestId, purpose: 'intent' }),
+        workGraphHash: canonicalCompensationHash({ compensationStepId }),
+        workGraphVersion: 'action-gateway-compensation/v2',
+        policySnapshotId: authorization.policySnapshotId,
+        metadata: { compensationRequestId: requestId, authorizationId: authorization.id },
+        steps: [{ id: compensationStepId, kind: 'tool', input: { requestId } }],
       },
       input.actor,
     );
-    const compensationKey = `${input.tenantId}/${compensationRunId}/${target.id}`;
-    this.event(
-      'effect',
-      `compensation:${compensationKey}`,
-      1,
-      'kernel.compensation.requested',
-      input.tenantId,
-      compensationRunId,
-      stepId,
-      input.actor,
-      {
-        type: 'kernel.compensation.requested',
+    this.compensationRequests.set(requestId, clone(request));
+    const eventId = randomUUID();
+    const occurredAt = now();
+    this.events.push({
+      eventId,
+      aggregateType: 'effect',
+      aggregateId: requestId,
+      sequence: 1,
+      type: 'kernel.compensation.requested',
+      tenantId: input.tenantId,
+      runId: compensationRunId,
+      stepId: compensationStepId,
+      actor: input.actor,
+      schemaVersion: 'v2',
+      payload: {
+        requestId,
+        authorizationId: authorization.id,
+        actionDigest: authorization.actionDigest,
+      },
+      occurredAt,
+    });
+    const outboxId = randomUUID();
+    this.outbox.set(outboxId, {
+      id: outboxId,
+      eventId,
+      tenantId: input.tenantId,
+      topic: KERNEL_COMPENSATION_TOPIC,
+      key: requestId,
+      payload: {
+        requestId,
+        authorizationId: authorization.id,
         tenantId: input.tenantId,
-        runId: compensationRunId,
-        stepId,
-        originalEffectId: target.id,
-        compensationAction: input.compensationEffectType,
-        compensationPayload: {
-          originalEffectId: target.id,
-          forwardResponse: target.response ?? {},
-          // Derived from the original effect's own lease fencing — never invent
-          // a literal epoch for the compensation consumer's admit lease.
-          fencingEpoch: target.leaseFencingEpoch,
-        },
-        idempotencyKey,
+        actionDigest: authorization.actionDigest,
       },
-      compensationKey,
-    );
-    const outboxMessage = [...this.outbox.values()].find(
-      (message) => message.key === compensationKey,
-    );
-    return {
-      compensationRunId,
-      originalEffectId: target.id,
-      originalRunId: input.originalRunId,
-      outboxMessageId: outboxMessage?.id,
-    };
+      attempts: 0,
+      availableAt: occurredAt,
+      createdAt: occurredAt,
+    });
+    return { accepted: true, request: clone(request), replayed: false };
   }
+
+  private compensationAuthorization(run: KernelRun): GovernedCompensationAuthorization | null {
+    const compensation = run.metadata.compensation;
+    if (typeof compensation !== 'object' || compensation === null) return null;
+    const authorization = (compensation as Record<string, unknown>).authorization;
+    return typeof authorization === 'object' && authorization !== null
+      ? (authorization as GovernedCompensationAuthorization)
+      : null;
+  }
+
   async claimOutbox(
     limit: number,
     at = new Date(),
@@ -1333,6 +2134,608 @@ export class InMemoryKernelRepository implements KernelRepository {
     message.claimToken = undefined;
     this.outboxClaims.delete(messageId);
     return true;
+  }
+
+  async claimCompensationRequest(
+    input: ClaimCompensationRequestInput,
+  ): Promise<ClaimedCompensationRequest | null> {
+    const scope = this.resolveDurableWorkerTenantScope(
+      input.workerId,
+      input.workerGeneration,
+      input.claimSecret,
+    );
+    const worker = this.workers.get(input.workerId);
+    const request = this.compensationRequests.get(input.requestId);
+    const message = this.outbox.get(input.outboxMessageId);
+    if (
+      !scope ||
+      !worker ||
+      worker.identitySubject !== 'db:commander_adapter_ops' ||
+      canonical(worker.capabilities) !== canonical(['effect.compensate']) ||
+      !request ||
+      !scope.tenantIds.includes(request.tenantId) ||
+      !message ||
+      message.tenantId !== request.tenantId ||
+      message.topic !== KERNEL_COMPENSATION_TOPIC ||
+      message.publishedAt ||
+      message.payload.requestId !== request.id ||
+      message.payload.authorizationId !== request.authorizationId
+    ) {
+      return null;
+    }
+    const authorization = this.compensationAuthorizations.get(request.authorizationId);
+    const originalEffect = this.effects.get(request.originalEffectId);
+    if (
+      !authorization ||
+      authorization.tenantId !== request.tenantId ||
+      message.payload.actionDigest !== authorization.actionDigest ||
+      !originalEffect?.response ||
+      canonicalCompensationHash(originalEffect.response) !== authorization.forwardReceiptHash
+    ) {
+      return null;
+    }
+    const at = input.now ?? new Date();
+    if (
+      request.state === 'CLAIMED' &&
+      request.claimExpiresAt &&
+      Date.parse(request.claimExpiresAt) > at.getTime() &&
+      request.claimWorkerId !== input.workerId
+    ) {
+      return null;
+    }
+    if (request.state !== 'AUTHORIZED' && request.state !== 'CLAIMED') return null;
+    const run = this.runs.get(request.compensationRunId);
+    const step = this.steps.get(request.compensationStepId);
+    if (
+      !run ||
+      !step ||
+      !['PENDING', 'COMPENSATING'].includes(run.state) ||
+      !['PENDING', 'RUNNING'].includes(step.state)
+    ) {
+      return null;
+    }
+    const outboxClaimToken = randomUUID();
+    const leaseTtlMs = input.leaseTtlMs ?? 60_000;
+    const fencingEpoch = (this.lastFencingEpoch.get(step.id) ?? 0) + 1;
+    this.lastFencingEpoch.set(step.id, fencingEpoch);
+    const expiresAt = new Date(at.getTime() + leaseTtlMs).toISOString();
+    request.state = 'CLAIMED';
+    request.claimWorkerId = input.workerId;
+    request.claimWorkerGeneration = input.workerGeneration;
+    request.claimToken = outboxClaimToken;
+    request.claimExpiresAt = expiresAt;
+    request.compensationEffectId ??= `effect_${canonicalCompensationHash({
+      requestId: request.id,
+      originalEffectId: request.originalEffectId,
+    }).slice(0, 40)}`;
+    run.state = 'COMPENSATING';
+    run.updatedAt = at.toISOString();
+    step.state = 'RUNNING';
+    step.version += 1;
+    step.updatedAt = at.toISOString();
+    step.lease = {
+      workerId: input.workerId,
+      workerGeneration: input.workerGeneration,
+      token: outboxClaimToken,
+      fencingEpoch,
+      expiresAt,
+    };
+    message.claimToken = outboxClaimToken;
+    this.outboxClaims.set(message.id, {
+      token: outboxClaimToken,
+      expiresAt: at.getTime() + leaseTtlMs,
+    });
+    return {
+      request: clone(request),
+      authorization: clone(authorization),
+      forwardResponse: clone(originalEffect.response),
+      lease: clone(step.lease),
+      outboxMessageId: message.id,
+      outboxClaimToken,
+    };
+  }
+
+  async admitCompensationEffect(
+    input: AdmitEffectRequest & {
+      requestId: string;
+      outboxMessageId: string;
+      outboxClaimToken: string;
+    },
+  ): Promise<AdmitEffectResult> {
+    const request = this.compensationRequests.get(input.requestId);
+    const authorization = request
+      ? this.compensationAuthorizations.get(request.authorizationId)
+      : undefined;
+    const originalEffect = request ? this.effects.get(request.originalEffectId) : undefined;
+    if (
+      !request ||
+      !authorization ||
+      !originalEffect?.response ||
+      request.state !== 'CLAIMED' ||
+      request.compensationEffectId !== input.id ||
+      request.compensationRunId !== input.runId ||
+      request.compensationStepId !== input.stepId ||
+      request.tenantId !== input.tenantId ||
+      request.claimToken !== input.outboxClaimToken ||
+      input.outboxMessageId !==
+        [...this.outbox.values()].find((m) => m.id === input.outboxMessageId)?.id ||
+      input.type !== authorization.compensationEffectType ||
+      input.policyDecisionId !== authorization.policyDecisionId ||
+      input.policySnapshotId !== authorization.policySnapshotId ||
+      input.actionDigest !== authorization.actionDigest ||
+      canonical(input.request) !==
+        canonical({
+          originalEffectId: request.originalEffectId,
+          forwardResponse: originalEffect.response,
+          compensationPatch: authorization.compensationPatch,
+        })
+    ) {
+      return { admitted: false, reason: 'COMPENSATION_ADMISSION_UNAVAILABLE' };
+    }
+    return this.admitEffect(input);
+  }
+
+  private compensationMutation(
+    input: FinalizeCompensationInput | ParkCompensationRequestUnknownInput,
+    disposition: import('../types.js').CompensationDisposition,
+    payload: unknown,
+  ):
+    | {
+        request: KernelCompensationRequest;
+        message: KernelOutboxMessage;
+        replay?: CompensationMutationResult;
+      }
+    | { rejection: CompensationMutationResult } {
+    const fingerprint = canonical({ input, disposition, payload });
+    const receipt = this.compensationMutationReceipts.get(input.outboxMessageId);
+    if (receipt) {
+      return receipt.fingerprint === fingerprint
+        ? { rejection: { ...receipt.result, replayed: true } }
+        : { rejection: { applied: false, reason: 'CLAIM_REPLAY_CONFLICT' } };
+    }
+    const request = this.compensationRequests.get(input.requestId);
+    const message = this.outbox.get(input.outboxMessageId);
+    const scope = this.resolveDurableWorkerTenantScope(
+      input.workerId,
+      input.workerGeneration,
+      input.claimSecret,
+    );
+    if (
+      !scope ||
+      !scope.tenantIds.includes(input.tenantId) ||
+      !request ||
+      request.tenantId !== input.tenantId ||
+      request.compensationEffectId !== input.effectId ||
+      request.claimWorkerId !== input.workerId ||
+      request.claimWorkerGeneration !== input.workerGeneration ||
+      request.claimToken !== input.outboxClaimToken ||
+      !message ||
+      message.publishedAt ||
+      message.claimToken !== input.outboxClaimToken
+    ) {
+      return { rejection: { applied: false, reason: 'CLAIM_NOT_OWNED' } };
+    }
+    return { request, message };
+  }
+
+  private acknowledgeCompensationMutation(
+    input: FinalizeCompensationInput | ParkCompensationRequestUnknownInput,
+    disposition: import('../types.js').CompensationDisposition,
+    payload: unknown,
+    message: KernelOutboxMessage,
+  ): CompensationMutationResult {
+    message.publishedAt = now();
+    message.claimToken = undefined;
+    this.outboxClaims.delete(message.id);
+    const result = { applied: true as const, disposition, replayed: false };
+    this.compensationMutationReceipts.set(message.id, {
+      fingerprint: canonical({ input, disposition, payload }),
+      result,
+    });
+    return result;
+  }
+
+  async parkCompensationUnknown(
+    input: ParkCompensationRequestUnknownInput,
+  ): Promise<CompensationMutationResult> {
+    const checked = this.compensationMutation(input, 'COMPLETION_UNKNOWN', input.error);
+    if ('rejection' in checked) return checked.rejection;
+    const { request, message } = checked;
+    const effect = this.effects.get(input.effectId);
+    const step = this.steps.get(request.compensationStepId);
+    const run = this.runs.get(request.compensationRunId);
+    if (!effect || !step || !run || !['ADMITTED', 'COMPLETION_UNKNOWN'].includes(effect.state)) {
+      return { applied: false, reason: 'EFFECT_NOT_ADMITTED_OR_UNKNOWN' };
+    }
+    effect.state = 'COMPLETION_UNKNOWN';
+    effect.response = clone(input.error);
+    effect.reconcilePolicy = clone(request.reconcilePolicy);
+    effect.reconcileDisposition = 'PENDING';
+    effect.reconcileAfter = now();
+    request.state = 'COMPLETION_UNKNOWN';
+    step.state = 'WAITING_FOR_RECONCILIATION';
+    step.lease = undefined;
+    run.state = 'COMPENSATING';
+    return this.acknowledgeCompensationMutation(input, 'COMPLETION_UNKNOWN', input.error, message);
+  }
+
+  async finalizeCompensation(
+    input: FinalizeCompensationInput,
+  ): Promise<CompensationMutationResult> {
+    const checked = this.compensationMutation(input, input.disposition, input.response ?? {});
+    if ('rejection' in checked) return checked.rejection;
+    const { request, message } = checked;
+    const effect = this.effects.get(input.effectId);
+    const step = this.steps.get(request.compensationStepId);
+    const run = this.runs.get(request.compensationRunId);
+    const originalRun = this.runs.get(request.originalRunId);
+    if (!step || !run || !originalRun) return { applied: false, reason: 'NOT_FOUND' };
+    if (!effect) {
+      if (input.disposition !== 'ESCALATED' || input.evidence) {
+        return { applied: false, reason: 'PRE_ADMISSION_ESCALATION_ONLY' };
+      }
+      request.state = 'ESCALATED';
+      step.state = 'WAITING_FOR_HUMAN';
+      step.lease = undefined;
+      run.state = 'COMPENSATING';
+      return this.acknowledgeCompensationMutation(
+        input,
+        'ESCALATED',
+        input.response ?? {},
+        message,
+      );
+    }
+    const projectedEffect = {
+      ...effect,
+      state:
+        input.disposition === 'COMPLETED'
+          ? effect.state
+          : input.disposition === 'CONFIRMED_NOT_APPLIED'
+            ? 'CONFIRMED_NOT_APPLIED' as const
+            : 'COMPLETION_UNKNOWN' as const,
+    };
+    if (!input.evidence) {
+      return { applied: false, reason: 'TERMINAL_EVIDENCE_REQUIRED' };
+    }
+    if (input.disposition === 'COMPLETED' && effect.state !== 'COMPLETED') {
+      return { applied: false, reason: 'EFFECT_NOT_COMPLETED' };
+    }
+    if (
+      input.disposition === 'CONFIRMED_NOT_APPLIED' &&
+      effect.state !== 'COMPLETION_UNKNOWN' &&
+      effect.state !== 'CONFIRMED_NOT_APPLIED'
+    ) {
+      return { applied: false, reason: 'EFFECT_NOT_UNKNOWN' };
+    }
+    if (input.disposition === 'ESCALATED' && effect.state !== 'COMPLETION_UNKNOWN') {
+      return { applied: false, reason: 'EFFECT_NOT_UNKNOWN' };
+    }
+    assertEvidenceRecordBoundToEffect(input.evidence, projectedEffect);
+    await this.appendEvidence(input.evidence);
+    if (input.disposition === 'COMPLETED') {
+      request.state = 'COMPLETED';
+      step.state = 'SUCCEEDED';
+      step.output = clone(input.response ?? {});
+      run.state = 'SUCCEEDED';
+      run.terminalAt = now();
+      if (originalRun.state === 'COMPENSATING') originalRun.state = 'COMPENSATED';
+    } else if (input.disposition === 'CONFIRMED_NOT_APPLIED') {
+      effect.state = 'CONFIRMED_NOT_APPLIED';
+      effect.response = clone(input.response ?? {});
+      request.state = 'CONFIRMED_NOT_APPLIED';
+      step.state = 'FAILED';
+      run.state = 'FAILED';
+      run.terminalAt = now();
+    } else {
+      request.state = 'ESCALATED';
+      step.state = 'WAITING_FOR_HUMAN';
+      run.state = 'COMPENSATING';
+    }
+    if (input.disposition === 'ESCALATED') {
+      effect.reconcileDisposition = 'ESCALATED';
+      effect.reconcileEscalatedAt = now();
+      effect.reconcileEscalationCode = 'COMPENSATION_QUERY_UNSUPPORTED';
+      effect.reconcileAfter = null;
+    }
+    step.lease = undefined;
+    return this.acknowledgeCompensationMutation(
+      input,
+      input.disposition,
+      input.response ?? {},
+      message,
+    );
+  }
+
+  async claimCompensationWork(
+    input: CompensationClaimAuth & { topic: typeof KERNEL_COMPENSATION_TOPIC; limit: number },
+  ): Promise<ClaimedCompensationWork[]> {
+    const worker = this.workers.get(input.workerId);
+    if (
+      worker?.identitySubject !== 'db:commander_adapter_ops' ||
+      worker.capabilities.length !== 1 ||
+      worker.capabilities[0] !== 'effect.compensate'
+    ) {
+      return [];
+    }
+    const messages = await this.claimOutboxByTopic(input.topic, input.limit, new Date(), input);
+    const claimed: ClaimedCompensationWork[] = [];
+    for (const message of messages) {
+      const authorization = normalizeCompensationPayload(message.payload);
+      const claimToken = message.claimToken ?? '';
+      if (!authorization || authorization.tenantId !== message.tenantId || !claimToken) {
+        await this.markOutboxPublished(message.id, claimToken, message.tenantId);
+        this.event(
+          'effect',
+          `compensation:${message.id}`,
+          1,
+          'compensation.authorization_required',
+          message.tenantId,
+          String(message.payload.runId ?? `compensation:${message.id}`),
+          typeof message.payload.stepId === 'string' ? message.payload.stepId : undefined,
+          input.workerId,
+          { reason: 'COMPENSATION_AUTHORIZATION_REQUIRED', messageId: message.id },
+        );
+        continue;
+      }
+      const step = this.steps.get(authorization.compensationStepId);
+      const run = this.runs.get(authorization.compensationRunId);
+      const persistedAuthorization = run ? this.compensationAuthorization(run) : null;
+      if (
+        !step ||
+        !run ||
+        step.tenantId !== message.tenantId ||
+        run.tenantId !== message.tenantId ||
+        step.state !== 'PENDING' ||
+        run.state !== 'PENDING' ||
+        canonical(persistedAuthorization) !== canonical(authorization) ||
+        canonical((step.input as { authorization?: unknown }).authorization) !==
+          canonical(authorization)
+      ) {
+        await this.markOutboxPublished(message.id, claimToken, message.tenantId);
+        continue;
+      }
+      const fencingEpoch =
+        (this.lastFencingEpoch.get(step.id) ?? step.lease?.fencingEpoch ?? 0) + 1;
+      if (run.state === 'PENDING') run.state = 'RUNNING';
+      step.state = 'RUNNING';
+      step.version += 1;
+      step.lease = {
+        workerId: input.workerId,
+        workerGeneration: input.workerGeneration,
+        token: claimToken,
+        fencingEpoch,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      };
+      step.updatedAt = now();
+      claimed.push({
+        messageId: message.id,
+        tenantId: message.tenantId,
+        claimToken,
+        authorization,
+        lease: {
+          workerId: input.workerId,
+          workerGeneration: input.workerGeneration,
+          token: claimToken,
+          fencingEpoch,
+        },
+      });
+    }
+    return claimed;
+  }
+
+  private compensationContext(
+    compensationEffectId: string,
+    tenantId: string,
+  ): {
+    authorization: GovernedCompensationAuthorization;
+    run: KernelRun;
+    step: KernelStep;
+    originalRun: KernelRun;
+    effect: KernelEffect | undefined;
+  } | null {
+    for (const run of this.runs.values()) {
+      if (run.tenantId !== tenantId) continue;
+      const authorization = this.compensationAuthorization(run);
+      if (!authorization || authorization.compensationEffectId !== compensationEffectId) continue;
+      const step = this.steps.get(authorization.compensationStepId);
+      const originalRun = this.runs.get(authorization.originalRunId);
+      if (!step || !originalRun || originalRun.tenantId !== tenantId) return null;
+      return {
+        authorization,
+        run,
+        step,
+        originalRun,
+        effect: this.effects.get(compensationEffectId),
+      };
+    }
+    return null;
+  }
+
+  private applyCompensationReceipt(
+    input: CompensationClaimAuth & {
+      tenantId: string;
+      messageId: string;
+      outboxClaimToken: string;
+      compensationEffectId: string;
+    },
+    disposition: 'COMPLETED' | 'HANDOFF_UNKNOWN' | 'ESCALATED',
+    payload: unknown,
+  ):
+    | { replay: Extract<CompensationWorkDispositionResult, { applied: true }> }
+    | {
+        context: NonNullable<ReturnType<InMemoryKernelRepository['compensationContext']>>;
+        message: KernelOutboxMessage;
+      }
+    | { rejection: CompensationWorkDispositionResult } {
+    const claimTokenHash = createHash('sha256').update(input.outboxClaimToken).digest('hex');
+    const fingerprint = requestHash({ disposition, payload });
+    const previous = this.compensationReceipts.get(input.messageId);
+    if (previous) {
+      if (
+        previous.claimTokenHash === claimTokenHash &&
+        previous.effectId === input.compensationEffectId &&
+        previous.fingerprint === fingerprint &&
+        previous.result.disposition === disposition
+      ) {
+        return { replay: { ...previous.result, replayed: true } };
+      }
+      return { rejection: { applied: false, reason: 'CLAIM_REPLAY_CONFLICT' } };
+    }
+    const worker = this.workers.get(input.workerId);
+    const context = this.compensationContext(input.compensationEffectId, input.tenantId);
+    const message = this.outbox.get(input.messageId);
+    const claim = this.outboxClaims.get(input.messageId);
+    if (!context || !message) return { rejection: { applied: false, reason: 'NOT_FOUND' } };
+    if (
+      worker?.identitySubject !== 'db:commander_adapter_ops' ||
+      worker.status !== 'ACTIVE' ||
+      worker.generation !== input.workerGeneration ||
+      worker.capabilities.length !== 1 ||
+      worker.capabilities[0] !== 'effect.compensate' ||
+      !worker.tenantIds.includes(input.tenantId)
+    ) {
+      return { rejection: { applied: false, reason: 'WORKER_FENCED' } };
+    }
+    const activeStepLease =
+      context.step.lease?.workerId === input.workerId &&
+      context.step.lease.workerGeneration === input.workerGeneration &&
+      context.step.lease.token === input.outboxClaimToken &&
+      Date.parse(context.step.lease.expiresAt) > Date.now();
+    const effectOwnsClaim =
+      context.effect?.leaseWorkerId === input.workerId &&
+      context.effect.leaseWorkerGeneration === input.workerGeneration &&
+      context.effect.leaseFencingEpoch === this.lastFencingEpoch.get(context.step.id);
+    if (
+      message.tenantId !== input.tenantId ||
+      message.publishedAt ||
+      claim?.token !== input.outboxClaimToken ||
+      (!activeStepLease && !effectOwnsClaim)
+    ) {
+      return { rejection: { applied: false, reason: 'CLAIM_NOT_OWNED' } };
+    }
+    return { context, message };
+  }
+
+  private finalizeCompensationReceipt(
+    message: KernelOutboxMessage,
+    input: {
+      messageId: string;
+      outboxClaimToken: string;
+      compensationEffectId: string;
+    },
+    disposition: 'COMPLETED' | 'HANDOFF_UNKNOWN' | 'ESCALATED',
+    payload: unknown,
+  ): Extract<CompensationWorkDispositionResult, { applied: true }> {
+    message.publishedAt = now();
+    message.claimToken = undefined;
+    this.outboxClaims.delete(input.messageId);
+    const result = { applied: true as const, disposition };
+    this.compensationReceipts.set(input.messageId, {
+      claimTokenHash: createHash('sha256').update(input.outboxClaimToken).digest('hex'),
+      effectId: input.compensationEffectId,
+      fingerprint: requestHash({ disposition, payload }),
+      result,
+    });
+    return result;
+  }
+
+  async completeCompensationWork(
+    input: CompensationClaimAuth & {
+      tenantId: string;
+      messageId: string;
+      outboxClaimToken: string;
+      compensationEffectId: string;
+      response: Record<string, unknown>;
+    },
+  ): Promise<CompensationWorkDispositionResult> {
+    const checked = this.applyCompensationReceipt(input, 'COMPLETED', input.response);
+    if ('replay' in checked) return checked.replay;
+    if ('rejection' in checked) return checked.rejection;
+    const { context, message } = checked;
+    if (!context.effect || context.effect.state !== 'COMPLETED') {
+      return { applied: false, reason: 'EFFECT_NOT_COMPLETED' };
+    }
+    context.step.state = 'SUCCEEDED';
+    context.step.output = clone(input.response);
+    context.step.lease = undefined;
+    context.step.version += 1;
+    context.step.updatedAt = now();
+    context.run.state = 'SUCCEEDED';
+    context.run.version += 1;
+    context.run.updatedAt = now();
+    context.run.terminalAt = context.run.updatedAt;
+    (context.run.metadata.compensation as Record<string, unknown>).disposition = 'COMPLETED';
+    if (context.originalRun.state === 'COMPENSATING') {
+      context.originalRun.state = 'COMPENSATED';
+      context.originalRun.version += 1;
+      context.originalRun.updatedAt = now();
+      context.originalRun.terminalAt = context.originalRun.updatedAt;
+    }
+    return this.finalizeCompensationReceipt(message, input, 'COMPLETED', input.response);
+  }
+
+  async handoffCompensationUnknown(
+    input: CompensationClaimAuth & {
+      tenantId: string;
+      messageId: string;
+      outboxClaimToken: string;
+      compensationEffectId: string;
+      error: { code: string; message: string };
+    },
+  ): Promise<CompensationWorkDispositionResult> {
+    const checked = this.applyCompensationReceipt(input, 'HANDOFF_UNKNOWN', input.error);
+    if ('replay' in checked) return checked.replay;
+    if ('rejection' in checked) return checked.rejection;
+    const { context, message } = checked;
+    if (!context.effect || context.effect.state !== 'COMPLETION_UNKNOWN') {
+      return { applied: false, reason: 'EFFECT_NOT_UNKNOWN' };
+    }
+    context.effect.reconcileDisposition = 'PENDING';
+    context.effect.reconcileAfter ??= now();
+    context.step.state = 'WAITING_FOR_RECONCILIATION';
+    context.step.lease = undefined;
+    context.step.version += 1;
+    context.step.updatedAt = now();
+    (context.run.metadata.compensation as Record<string, unknown>).disposition = 'HANDOFF_UNKNOWN';
+    return this.finalizeCompensationReceipt(message, input, 'HANDOFF_UNKNOWN', input.error);
+  }
+
+  async escalateCompensationWork(
+    input: CompensationClaimAuth & {
+      tenantId: string;
+      messageId: string;
+      outboxClaimToken: string;
+      compensationEffectId: string;
+      reason: string;
+    },
+  ): Promise<CompensationWorkDispositionResult> {
+    const checked = this.applyCompensationReceipt(input, 'ESCALATED', input.reason);
+    if ('replay' in checked) return checked.replay;
+    if ('rejection' in checked) return checked.rejection;
+    const { context, message } = checked;
+    context.step.state = 'FAILED';
+    context.step.error = {
+      code: input.reason,
+      message: 'Governed compensation was escalated',
+      retryable: false,
+    };
+    context.step.lease = undefined;
+    context.step.version += 1;
+    context.step.updatedAt = now();
+    context.run.state = 'FAILED';
+    context.run.version += 1;
+    context.run.updatedAt = now();
+    context.run.terminalAt = context.run.updatedAt;
+    const compensation = context.run.metadata.compensation as Record<string, unknown>;
+    compensation.disposition = 'ESCALATED';
+    compensation.escalationReason = input.reason;
+    if (context.originalRun.state === 'COMPENSATING') {
+      context.originalRun.state = 'FAILED';
+      context.originalRun.version += 1;
+      context.originalRun.updatedAt = now();
+      context.originalRun.terminalAt = context.originalRun.updatedAt;
+    }
+    return this.finalizeCompensationReceipt(message, input, 'ESCALATED', input.reason);
   }
 
   // ── WS2 EffectBroker monopoly ──
@@ -1630,7 +3033,7 @@ export class InMemoryKernelRepository implements KernelRepository {
       );
     }
     const interaction: KernelInteraction = {
-      id: `itr_${randomUUID()}`,
+      id: request.id ?? `itr_${randomUUID()}`,
       runId: request.runId,
       stepId: request.stepId,
       tenantId: request.tenantId,
@@ -1675,7 +3078,7 @@ export class InMemoryKernelRepository implements KernelRepository {
       !step ||
       step.runId !== request.runId ||
       step.tenantId !== request.tenantId ||
-      step.state !== 'WAITING_FOR_HUMAN'
+      (request.releaseStep !== false && step.state !== 'WAITING_FOR_HUMAN')
     ) {
       throw new KernelInvariantError(
         'INTERACTION_NOT_FOUND',
@@ -1820,43 +3223,25 @@ export class InMemoryKernelRepository implements KernelRepository {
     if (completedEffects.length === 0) return false;
     const run = this.runs.get(step.runId);
     if (!run) return false;
-    if (run.state === 'COMPENSATING') {
-      this.cancelOpenStepsForTerminalRun(run.id, run.tenantId, actor, 'run_compensating');
-      return true;
-    }
-    assertRunTransition(run.state, 'COMPENSATING');
-    run.state = 'COMPENSATING';
-    run.version++;
-    run.updatedAt = at.toISOString();
-    this.event(
-      'run',
-      run.id,
-      run.version,
-      'run.compensating',
-      run.tenantId,
-      run.id,
-      step.id,
-      actor,
-      { fencingEpoch },
-    );
     const compensationKey = `${run.tenantId}/${run.id}/${fencingEpoch}`;
     this.event(
       'effect',
       `compensation:${compensationKey}`,
       1,
-      'kernel.compensation.requested',
+      'compensation.authorization_required',
       run.tenantId,
       run.id,
       step.id,
       actor,
       {
-        effectIds: completedEffects.map((effect) => effect.id),
+        reason: 'COMPENSATION_AUTHORIZATION_REQUIRED',
+        originalRunId: run.id,
+        originalEffectIds: completedEffects.map((effect) => effect.id),
         fencingEpoch,
       },
       compensationKey,
     );
-    this.cancelOpenStepsForTerminalRun(run.id, run.tenantId, actor, 'run_compensating');
-    return true;
+    return false;
   }
 
   private cancelOpenStepsForTerminalRun(
@@ -1902,7 +3287,7 @@ export class InMemoryKernelRepository implements KernelRepository {
     actor: string,
     payload: Record<string, unknown>,
     outboxKey = runId,
-  ): void {
+  ): string {
     const event: KernelEvent = {
       eventId: randomUUID(),
       aggregateType,
@@ -1937,10 +3322,15 @@ export class InMemoryKernelRepository implements KernelRepository {
       createdAt: event.occurredAt,
     };
     this.outbox.set(message.id, message);
+    return event.eventId;
   }
   private finish(runId: string, actor: string): void {
     const run = this.runs.get(runId)!;
     const steps = [...this.steps.values()].filter((step) => step.runId === runId);
+    const terminalCandidate =
+      steps.some((step) => step.state === 'FAILED') ||
+      (steps.length > 0 && steps.every((step) => ['SUCCEEDED', 'SKIPPED'].includes(step.state)));
+    if (terminalCandidate && this.hasUnreceiptedConsequentialEffect(runId, run.tenantId)) return;
     if (steps.some((step) => step.state === 'FAILED')) {
       assertRunTransition(run.state, 'FAILED');
       this.cancelOpenStepsForTerminalRun(runId, run.tenantId, actor, 'run_failed');
@@ -1980,5 +3370,41 @@ export class InMemoryKernelRepository implements KernelRepository {
         {},
       );
     }
+  }
+  private hasUnreceiptedConsequentialEffect(runId: string, tenantId: string): boolean {
+    return [...this.effects.values()].some((effect) => {
+      if (effect.runId !== runId || effect.tenantId !== tenantId || !isClassAEffectType(effect.type)) {
+        return false;
+      }
+      return !this.hasEvidenceForEffect(effect);
+    });
+  }
+  private hasEvidenceForEffect(effect: KernelEffect): boolean {
+    const receipt = this.evidence.get(`${effect.tenantId}\u0000evidence_${effect.id}`);
+    if (!receipt) return false;
+    try {
+      assertEvidenceRecordBoundToEffect(receipt, effect);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+export function seedFreshOperationsDrains(
+  repository: InMemoryKernelRepository,
+  tenantId: string,
+  at = new Date(),
+): void {
+  for (const [role, capability] of [
+    ['reconcile', 'effect.reconcile'],
+    ['compensation', 'effect.compensate'],
+  ] as const) {
+    repository.seedTestWorker(`${role}:${tenantId}`, [tenantId], 1, {
+      capabilities: [capability],
+      identitySubject: 'db:commander_adapter_ops',
+      registeredAt: new Date(at.getTime() - 10_000),
+      lastHeartbeatAt: new Date(at.getTime() - 1_000),
+    });
   }
 }

@@ -41,6 +41,9 @@
   "publishConfig": {
     "access": "public"
   },
+  "dependencies": {
+    "@commander/contracts": "workspace:*"
+  },
   "devDependencies": {
     "typescript": "^5.0.0"
   }

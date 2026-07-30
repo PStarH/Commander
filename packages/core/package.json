@@ -103,8 +103,10 @@
     "access": "public"
   },
   "scripts": {
+    "prebuild": "pnpm --filter @commander/postgres-runtime build",
     "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
     "build:production": "tsx ../../scripts/check-production-sandbox.ts && tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
+    "pretest": "pnpm --filter @commander/postgres-runtime build",
     "test": "vitest run --no-cache",
     "test:quick": "vitest run --no-cache tests/ultimate/deliberation.test.ts tests/tools/pathSecurity.test.ts tests/security/",
     "test:algorithmic": "vitest run --no-cache tests/benchmarks/algorithmicEffectiveness",
@@ -141,6 +143,7 @@
   },
   "dependencies": {
     "@commander/contracts": "workspace:*",
+    "@commander/postgres-runtime": "workspace:*",
     "@commander/plugin-sdk": "workspace:*",
     "blessed": "^0.1.81",
     "better-sqlite3": "^12.11.1",

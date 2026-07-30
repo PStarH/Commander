@@ -14,9 +14,9 @@ import {
   resetTenantManager,
 } from '@commander/core/runtime';
 import {
-  recordRuntimeUsage,
-  resetRuntimeRegistry,
-} from '../src/agentRuntimeRegistry';
+  recordTenantMetricUsage,
+  resetTenantMetricsStore,
+} from '../src/tenantMetricsStore';
 import { exportTenantMetrics } from '../src/tenantMetricsExporter';
 
 describe('/metrics tenant label control', () => {
@@ -50,14 +50,14 @@ describe('/metrics tenant label control', () => {
     process.env.COMMANDER_LEGACY_EXECUTION = '1';
     delete process.env.METRICS_TENANT_LABELS;
     getMetricsCollector().reset();
-    resetRuntimeRegistry();
+    resetTenantMetricsStore();
     resetTokenGovernor();
     resetTenantFairnessMonitor();
     resetTenantManager();
   });
 
   function seedTenant(tenantId: string, runs: number, tokens: number, durationMs: number) {
-    recordRuntimeUsage(tenantId, { totalRuns: runs, durationMs });
+    recordTenantMetricUsage(tenantId, { totalRuns: runs, durationMs });
     runWithTenant(tenantId, () => {
       getTokenGovernor().reportUsage(tokens);
     });

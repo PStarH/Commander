@@ -1,144 +1,222 @@
-# =============================================================================
-# Commander — Production Docker Compose Overrides
-# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-# =============================================================================
-
 services:
+  postgres-init-materialize:
+    image: '${COMMANDER_MIGRATOR_IMAGE:?}'
+    user: '0:0'
+    network_mode: none
+    read_only: true
+    restart: 'no'
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    security_opt: [no-new-privileges:true]
+    entrypoint: ['/bin/sh', '-euc']
+    command:
+      - |
+        chown 70:70 /runtime
+        chmod 0700 /runtime
+        exec node packages/kernel/dist/task1PostgresInitMaterialize.js
+    environment:
+      COMMANDER_OWNER_DATABASE_URL: '${COMMANDER_OWNER_DATABASE_URL:?}'
+      COMMANDER_APP_DATABASE_URL: '${COMMANDER_API_DATABASE_URL:?}'
+      COMMANDER_TENANT_AUTHORITY_DATABASE_URL: '${COMMANDER_TENANT_AUTHORITY_DATABASE_URL:?}'
+      COMMANDER_SCHEDULER_DATABASE_URL: '${COMMANDER_SCHEDULER_DATABASE_URL:?}'
+      COMMANDER_WORKER_DATABASE_URL: '${COMMANDER_WORKER_DATABASE_URL:?}'
+      COMMANDER_ADAPTER_OPS_DATABASE_URL: '${COMMANDER_ADAPTER_OPS_DATABASE_URL:?}'
+    volumes:
+      - ./deploy/docker/postgres-init.sql:/source/postgres-init.sql:ro
+      - postgres-init-runtime:/runtime
+
+  tls-materialize:
+    image: '${COMMANDER_POSTGRES_IMAGE:?}'
+    user: '0:0'
+    network_mode: none
+    read_only: true
+    restart: 'no'
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: [no-new-privileges:true]
+    entrypoint: ['/bin/sh', '-euc']
+    command:
+      - |
+        umask 077
+        install -d -o 70 -g 70 -m 0700 /runtime/postgres
+        install -o 70 -g 70 -m 0444 /source/postgres/ca.crt /runtime/postgres/ca.crt
+        install -o 70 -g 70 -m 0444 /source/postgres/tls.crt /runtime/postgres/tls.crt
+        install -o 70 -g 70 -m 0400 /source/postgres/tls.key /runtime/postgres/tls.key
+        install -d -o 0 -g 0 -m 0755 /runtime/database-ca
+        install -o 0 -g 0 -m 0444 /source/postgres/ca.crt /runtime/database-ca/ca.crt
+        install -d -o 1001 -g 1001 -m 0700 /runtime/api-proof
+        install -o 1001 -g 1001 -m 0444 /source/api-proof/ca.crt /runtime/api-proof/ca.crt
+        install -o 1001 -g 1001 -m 0444 /source/api-proof/tls.crt /runtime/api-proof/tls.crt
+        install -o 1001 -g 1001 -m 0400 /source/api-proof/tls.key /runtime/api-proof/tls.key
+        cmp -s /source/postgres/ca.crt /runtime/postgres/ca.crt
+        cmp -s /source/postgres/tls.crt /runtime/postgres/tls.crt
+        cmp -s /source/postgres/tls.key /runtime/postgres/tls.key
+        cmp -s /source/postgres/ca.crt /runtime/database-ca/ca.crt
+        cmp -s /source/api-proof/ca.crt /runtime/api-proof/ca.crt
+        cmp -s /source/api-proof/tls.crt /runtime/api-proof/tls.crt
+        cmp -s /source/api-proof/tls.key /runtime/api-proof/tls.key
+    volumes:
+      - '${COMMANDER_POSTGRES_TLS_CA_HOST_FILE:?}:/source/postgres/ca.crt:ro'
+      - '${COMMANDER_POSTGRES_TLS_CERT_HOST_FILE:?}:/source/postgres/tls.crt:ro'
+      - '${COMMANDER_POSTGRES_TLS_KEY_HOST_FILE:?}:/source/postgres/tls.key:ro'
+      - '${COMMANDER_API_PROOF_CA_HOST_FILE:?}:/source/api-proof/ca.crt:ro'
+      - '${COMMANDER_API_PROOF_CERT_HOST_FILE:?}:/source/api-proof/tls.crt:ro'
+      - '${COMMANDER_API_PROOF_KEY_HOST_FILE:?}:/source/api-proof/tls.key:ro'
+      - postgres-tls-runtime:/runtime/postgres
+      - database-ca-runtime:/runtime/database-ca
+      - api-proof-tls-runtime:/runtime/api-proof
+
+  postgres:
+    image: '${COMMANDER_POSTGRES_IMAGE:?}'
+    command:
+      - -c
+      - ssl=on
+      - -c
+      - ssl_ca_file=/run/commander/postgres-tls/ca.crt
+      - -c
+      - ssl_cert_file=/run/commander/postgres-tls/tls.crt
+      - -c
+      - ssl_key_file=/run/commander/postgres-tls/tls.key
+    environment:
+      POSTGRES_DB: commander
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: '${COMMANDER_POSTGRES_SUPERUSER_PASSWORD:?}'
+    depends_on:
+      tls-materialize:
+        condition: service_completed_successfully
+      postgres-init-materialize:
+        condition: service_completed_successfully
+    expose: ['5432/tcp']
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - postgres-tls-runtime:/run/commander/postgres-tls:ro
+      - postgres-init-runtime:/run/commander/postgres-init
+      - ./deploy/docker/postgres-init-runtime.sh:/docker-entrypoint-initdb.d/10-commander.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U postgres -d commander']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
   kernel-migrate:
-    profiles: !reset []
+    image: '${COMMANDER_MIGRATOR_IMAGE:?}'
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?err}@postgres:5432/commander}
-
-  kernel-ops:
-    profiles: !reset []
-    restart: always
-    environment:
-      - NODE_ENV=production
-      - DATABASE_URL=${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?err}@postgres:5432/commander}
-      - COMMANDER_RECLAIM_INTERVAL_MS=${COMMANDER_RECLAIM_INTERVAL_MS:-5000}
-      - COMMANDER_RECLAIM_BATCH_SIZE=${COMMANDER_RECLAIM_BATCH_SIZE:-100}
-      - COMMANDER_TIMER_POLL_MS=${COMMANDER_TIMER_POLL_MS:-5000}
-      - COMMANDER_TIMER_BATCH_SIZE=${COMMANDER_TIMER_BATCH_SIZE:-100}
-      - COMMANDER_OUTBOX_INTERVAL_MS=${COMMANDER_OUTBOX_INTERVAL_MS:-1000}
-      - COMMANDER_OUTBOX_BATCH_SIZE=${COMMANDER_OUTBOX_BATCH_SIZE:-100}
-      - COMMANDER_OUTBOX_MAX_ATTEMPTS=${COMMANDER_OUTBOX_MAX_ATTEMPTS:-10}
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 1G
-        reservations:
-          cpus: '0.1'
-          memory: 128M
-
-  api:
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile
-      args:
-        - NODE_ENV=production
-    # Resource limits
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 4G
-        reservations:
-          cpus: '0.5'
-          memory: 1G
-    # Production logging — structured JSON to stdout
-    logging:
-      driver: 'json-file'
-      options:
-        max-size: '10m'
-        max-file: '3'
-    # Restart more aggressively
-    restart: always
-    # Production env overrides
-    environment:
-      - NODE_ENV=production
-      - LOG_LEVEL=info
-      - CORS_ORIGINS=${CORS_ORIGINS:-https://app.commander.com}
-      - COMMANDER_API_KEY=${COMMANDER_API_KEY:?err}
-      # Required production secrets. Set these in .env before deploying.
-      - COMMANDER_MASTER_KEY=${COMMANDER_MASTER_KEY:?err}
-      - JWT_SECRET=${JWT_SECRET:?err}
-      # Rate limiting
-      - RATE_LIMIT_WINDOW_MS=${RATE_LIMIT_WINDOW_MS:-60000}
-      - RATE_LIMIT_MAX_REQUESTS=${RATE_LIMIT_MAX_REQUESTS:-100}
-      # Multi-tenant settings
-      - TENANT_PROVIDER=${TENANT_PROVIDER:-simple}
-      - TENANT_CONFIG_PATH=${TENANT_CONFIG_PATH:-/app/config/tenants.json}
-      # Production database: PostgreSQL is the default for multi-replica deployments
-      - API_STORE_BACKEND=${API_STORE_BACKEND:-postgres}
-      - DATABASE_URL=${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?err}@postgres:5432/commander}
-      # Architecture V2: production API refuses to start without kernel (apps/api).
-      - COMMANDER_KERNEL_ENABLED=${COMMANDER_KERNEL_ENABLED:-1}
-      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_KERNEL_DATABASE_URL:-${DATABASE_URL:-postgres://commander:${POSTGRES_PASSWORD:?err}@postgres:5432/commander}}
-      - COMMANDER_DEFAULT_POLICY_SNAPSHOT_ID=${COMMANDER_DEFAULT_POLICY_SNAPSHOT_ID:-policy-default-v1}
-      - COMMANDER_DEFAULT_TENANT_ID=${COMMANDER_DEFAULT_TENANT_ID:-}
+      COMMANDER_OWNER_DATABASE_URL: '${COMMANDER_OWNER_DATABASE_URL:?}'
+      COMMANDER_APP_DATABASE_URL: '${COMMANDER_API_DATABASE_URL:?}'
+      COMMANDER_TENANT_AUTHORITY_DATABASE_URL: '${COMMANDER_TENANT_AUTHORITY_DATABASE_URL:?}'
+      COMMANDER_SCHEDULER_DATABASE_URL: '${COMMANDER_SCHEDULER_DATABASE_URL:?}'
+      COMMANDER_WORKER_DATABASE_URL: '${COMMANDER_WORKER_DATABASE_URL:?}'
+      COMMANDER_ADAPTER_OPS_DATABASE_URL: '${COMMANDER_ADAPTER_OPS_DATABASE_URL:?}'
+      COMMANDER_DATABASE_TLS_CA_FILE: /run/commander/database-tls/ca.crt
+      COMMANDER_DATABASE_TLS_CA_MOUNT_IDENTITY: compose-volume/database-ca-runtime:ca.crt
+      COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: '${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?}'
+      COMMANDER_TENANT_AUTHORITY_PROOF_PUBLIC_CERT_FILE: /run/commander/api-proof/tls.crt
+      COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE: '${COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE:?}'
+      COMMANDER_ALLOWED_TENANTS: '${COMMANDER_ALLOWED_TENANTS:?}'
     depends_on:
       postgres:
         condition: service_healthy
+    restart: 'no'
     volumes:
-      - commander_state:/app/.commander_state
-      - commander_traces:/app/.commander_traces
-      - commander_memory:/app/.commander_memory
-      - commander_results:/app/.commander_results
-      - ./config:/app/config:ro
-    healthcheck:
-      test: ['CMD', 'wget', '-qO-', 'http://localhost:4000/health']
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
+      - database-ca-runtime:/run/commander/database-tls:ro
+      - '${COMMANDER_API_PROOF_CA_HOST_FILE:?}:/run/commander/api-proof/ca.crt:ro'
+      - '${COMMANDER_API_PROOF_CERT_HOST_FILE:?}:/run/commander/api-proof/tls.crt:ro'
 
-  web:
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-        reservations:
-          cpus: '0.1'
-          memory: 128M
-    logging:
-      driver: 'json-file'
-      options:
-        max-size: '10m'
-        max-file: '3'
-    restart: always
-
-  postgres:
-    profiles: !reset []
-    image: postgres:16-alpine
-    container_name: commander-postgres
-    # SECURITY: never publish 5432 on the host in production — compose-network only.
-    # Do not add `ports:` here. Local debugging: bind "127.0.0.1:5432:5432" temporarily.
-    expose:
-      - '5432'
+  api:
+    image: '${COMMANDER_API_IMAGE:?}'
+    user: '1001:1001'
     environment:
-      - POSTGRES_USER=${POSTGRES_USER:-commander}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB:-commander}
+      NODE_ENV: production
+      DATABASE_URL: '${COMMANDER_API_DATABASE_URL:?}'
+      COMMANDER_KERNEL_DATABASE_URL: '${COMMANDER_API_DATABASE_URL:?}'
+      COMMANDER_TENANT_AUTHORITY_DATABASE_URL: '${COMMANDER_TENANT_AUTHORITY_DATABASE_URL:?}'
+      COMMANDER_DATABASE_TLS_CA_FILE: /run/commander/database-tls/ca.crt
+      COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: '${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?}'
+      COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE: '${COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE:?}'
+      COMMANDER_TENANT_CONTEXT_PHASE: '${COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE:?}'
+      COMMANDER_ALLOWED_TENANTS: '${COMMANDER_ALLOWED_TENANTS:?}'
+      COMMANDER_TENANT_AUTHORITY_PROOF_PORT: '9443'
+      COMMANDER_TENANT_AUTHORITY_PROOF_CERT_FILE: /run/commander/api-proof/tls.crt
+      COMMANDER_TENANT_AUTHORITY_PROOF_KEY_FILE: /run/commander/api-proof/tls.key
+      COMMANDER_TENANT_AUTHORITY_PROOF_DNS_NAME: api
+      COMMANDER_TENANT_AUTHORITY_IMAGE_DIGEST: '${COMMANDER_TENANT_AUTHORITY_IMAGE_DIGEST:?}'
+      COMMANDER_TENANT_AUTHORITY_CONFIGURATION_SHA256: '${COMMANDER_TENANT_AUTHORITY_CONFIGURATION_SHA256:?}'
+    depends_on:
+      kernel-migrate:
+        condition: service_completed_successfully
+    expose: ['9443/tcp']
+    restart: unless-stopped
     volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-commander} -d ${POSTGRES_DB:-commander}']
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    restart: always
+      - database-ca-runtime:/run/commander/database-tls:ro
+      - api-proof-tls-runtime:/run/commander/api-proof:ro
+
+  kernel-ops:
+    image: '${COMMANDER_KERNEL_OPS_IMAGE:?}'
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: '${COMMANDER_SCHEDULER_DATABASE_URL:?}'
+      COMMANDER_KERNEL_DATABASE_URL: '${COMMANDER_SCHEDULER_DATABASE_URL:?}'
+      COMMANDER_DATABASE_TLS_CA_FILE: /run/commander/database-tls/ca.crt
+      COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: '${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?}'
+      COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE: '${COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE:?}'
+      COMMANDER_ALLOWED_TENANTS: '${COMMANDER_ALLOWED_TENANTS:?}'
+    depends_on:
+      kernel-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    volumes:
+      - database-ca-runtime:/run/commander/database-tls:ro
+
+  worker:
+    image: '${COMMANDER_WORKER_IMAGE:?}'
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: '${COMMANDER_WORKER_DATABASE_URL:?}'
+      COMMANDER_KERNEL_DATABASE_URL: '${COMMANDER_WORKER_DATABASE_URL:?}'
+      COMMANDER_DATABASE_TLS_CA_FILE: /run/commander/database-tls/ca.crt
+      COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: '${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?}'
+      COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE: '${COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE:?}'
+      COMMANDER_WORKER_TENANTS: '${COMMANDER_ALLOWED_TENANTS:?}'
+      COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM: '${COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM:?}'
+      COMMANDER_EVIDENCE_SIGNING_KEY_ID: '${COMMANDER_EVIDENCE_SIGNING_KEY_ID:?}'
+    depends_on:
+      kernel-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    volumes:
+      - database-ca-runtime:/run/commander/database-tls:ro
+
+  adapter-ops:
+    image: '${COMMANDER_ADAPTER_OPS_IMAGE:?}'
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: '${COMMANDER_ADAPTER_OPS_DATABASE_URL:?}'
+      COMMANDER_KERNEL_DATABASE_URL: '${COMMANDER_ADAPTER_OPS_DATABASE_URL:?}'
+      COMMANDER_DATABASE_TLS_CA_FILE: /run/commander/database-tls/ca.crt
+      COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: '${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?}'
+      COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE: '${COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE:?}'
+      COMMANDER_WORKER_TENANTS: '${COMMANDER_ALLOWED_TENANTS:?}'
+      COMMANDER_KUBERNETES_CLUSTER: '${COMMANDER_KUBERNETES_CLUSTER:-}'
+      COMMANDER_KUBERNETES_SERVER: '${COMMANDER_KUBERNETES_SERVER:-}'
+      COMMANDER_KUBERNETES_TOKEN_ENV: '${COMMANDER_KUBERNETES_TOKEN_ENV:-}'
+      COMMANDER_KUBERNETES_BEARER_TOKEN: '${COMMANDER_KUBERNETES_BEARER_TOKEN:-}'
+      COMMANDER_ADAPTER_OPS_INSTANCE_ID: compose-prod
+      COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR: /run/commander/adapter-ops
+      COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM: '${COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM:?}'
+      COMMANDER_EVIDENCE_SIGNING_KEY_ID: '${COMMANDER_EVIDENCE_SIGNING_KEY_ID:?}'
+    depends_on:
+      kernel-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    volumes:
+      - database-ca-runtime:/run/commander/database-tls:ro
+      - adapter-ops-claim-secrets:/run/commander/adapter-ops:ro
 
 volumes:
-  commander_state:
-    driver: local
-  commander_traces:
-    driver: local
-  commander_memory:
-    driver: local
-  commander_results:
-    driver: local
+  postgres-init-runtime:
   postgres-data:
-    driver: local
+  postgres-tls-runtime:
+  database-ca-runtime:
+  api-proof-tls-runtime:
+  adapter-ops-claim-secrets:

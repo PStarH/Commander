@@ -323,9 +323,10 @@ describe('Action Gateway → Kernel → EffectBroker → demo adapter', () => {
       const compensationStep = await kernel.getStep(compensation.stepId, compensation.tenantId);
       assert.equal(
         (await kernel.getRun('run-action-compensate', compensation.tenantId))?.state,
-        'SUCCEEDED',
+        'FAILED',
         JSON.stringify(compensationStep?.error),
       );
+      assert.equal(tickets.compensateInvocations, 0, 'Task 1 must fail closed before adapter compensation');
       const remote = await tickets.queryOutcome({
         effectId: 'run-action-allow-effect',
         idempotencyKey: allowed.envelope.idempotencyKey,
@@ -333,22 +334,20 @@ describe('Action Gateway → Kernel → EffectBroker → demo adapter', () => {
         request: {},
         tenantId: allowed.tenantId,
       });
-      assert.equal(remote.status, 'COMPLETED');
-      assert.equal(remote.response?.status, 'closed');
+      assert.equal(remote.status, 'APPLIED');
+      assert.equal(remote.response?.status, 'open');
       const compensationEffects = await kernel.listEffectsForRun(
         'run-action-compensate',
         compensation.tenantId,
       );
-      assert.equal(compensationEffects.length, 1);
-      assert.equal(compensationEffects[0]?.type, 'compensate.demo.ticket.create');
-      assert.equal(compensationEffects[0]?.state, 'COMPLETED');
+      assert.equal(compensationEffects.length, 0, 'Task 3 admission RPC is not available yet');
       assert.equal(
         auditEvents.some(
           (event) =>
             event.type === 'effect.completed' &&
-            event.details.effectId === compensationEffects[0]?.id,
+            event.details.runId === 'run-action-compensate',
         ),
-        true,
+        false,
       );
     } finally {
       await worker.stop();

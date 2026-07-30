@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { EnvAdapterCredentialProvider } from './types.js';
+import { EnvAdapterCredentialProvider, parseKubernetesDeploymentDestination } from './types.js';
 
 describe('EnvAdapterCredentialProvider', () => {
   it('requires cell tenant id at construction', () => {
-    assert.throws(() => new EnvAdapterCredentialProvider({ cellTenantId: '' }), /COMMANDER_CELL_TENANT_ID/);
+    assert.throws(
+      () => new EnvAdapterCredentialProvider({ cellTenantId: '' }),
+      /COMMANDER_CELL_TENANT_ID/,
+    );
   });
 
   it('rejects tenant id mismatch fail-closed', async () => {
@@ -59,6 +62,66 @@ describe('EnvAdapterCredentialProvider', () => {
         if (value === undefined) delete process.env[envKey];
         else process.env[envKey] = value;
       }
+    }
+  });
+
+  it('parses strict Kubernetes deployment destinations', () => {
+    assert.deepEqual(parseKubernetesDeploymentDestination('k8s://kind/commander/deployments/api'), {
+      cluster: 'kind',
+      namespace: 'commander',
+      name: 'api',
+    });
+    assert.throws(
+      () => parseKubernetesDeploymentDestination('k8s://kind/other%2Ftenant/deployments/api'),
+      /Invalid Kubernetes deployment destination/,
+    );
+    assert.throws(
+      () => parseKubernetesDeploymentDestination('k8s://Kind/commander/deployments/api'),
+      /Invalid Kubernetes deployment destination/,
+    );
+  });
+
+  it('isolates Kubernetes tokens by tenant and registered cluster', async () => {
+    const previous = process.env.KIND_BEARER_TOKEN;
+    process.env.KIND_BEARER_TOKEN = 'kind-secret-token';
+    try {
+      const provider = new EnvAdapterCredentialProvider({
+        cellTenantId: 'tenant-a',
+        kubernetesClusters: {
+          kind: {
+            server: 'https://127.0.0.1:6443',
+            tokenEnv: 'KIND_BEARER_TOKEN',
+            namespaces: ['commander'],
+          },
+        },
+      });
+      assert.equal(
+        await provider.getToken('tenant-a', 'kind', 'commander'),
+        'kind-secret-token',
+      );
+      assert.equal(
+        provider.getServer('tenant-a', 'kind', 'commander').href,
+        'https://127.0.0.1:6443/',
+      );
+      await assert.rejects(
+        () => provider.getToken('tenant-b', 'kind', 'commander'),
+        /Tenant credential isolation/,
+      );
+      await assert.rejects(
+        () => provider.getToken('tenant-a', 'other', 'commander'),
+        /Kubernetes cluster is not registered/,
+      );
+      await assert.rejects(
+        () => provider.getToken('tenant-a', 'kind', 'other'),
+        /Kubernetes namespace is not authorized/,
+      );
+      assert.throws(
+        () => provider.getServer('tenant-a', 'kind', 'other'),
+        /Kubernetes namespace is not authorized/,
+      );
+    } finally {
+      if (previous === undefined) delete process.env.KIND_BEARER_TOKEN;
+      else process.env.KIND_BEARER_TOKEN = previous;
     }
   });
 });

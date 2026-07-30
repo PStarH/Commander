@@ -3,17 +3,14 @@ import { createHash, randomUUID, X509Certificate } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { createVerifiedPostgresPool } from './task1-postgres-tls-fixture-pool.js';
+import { createVerifiedPostgresPool } from '../packages/postgres-runtime/src/index.js';
+import { observeTask1DatabasePeers } from '../packages/kernel/src/task1DatabasePeer.js';
+import { canonicalBootstrapJson } from '../packages/kernel/src/canonicalBootstrap.js';
 
 export type TlsFailureExpectation = 'ca-rejection' | 'hostname-rejection' | 'spki-rejection';
 export type TlsExpectation = 'success' | TlsFailureExpectation;
 export type TlsFixtureRole =
-  | 'owner'
-  | 'app'
-  | 'tenant-authority'
-  | 'scheduler'
-  | 'worker'
-  | 'adapter-ops';
+  'owner' | 'app' | 'tenant-authority' | 'scheduler' | 'worker' | 'adapter-ops';
 export type TlsFixtureRoute = 'direct' | 'l4-passthrough' | 'terminating-proxy';
 
 export interface TlsFixtureEndpoints {
@@ -47,22 +44,26 @@ export interface FixtureRoleDefinition {
 }
 
 export const FIXTURE_ROLES: readonly FixtureRoleDefinition[] = [
-  { role: 'owner', databaseRole: 'fixture_owner', passwordEnvironment: 'FIXTURE_OWNER_PASSWORD' },
-  { role: 'app', databaseRole: 'fixture_app', passwordEnvironment: 'FIXTURE_APP_PASSWORD' },
+  { role: 'owner', databaseRole: 'commander_owner', passwordEnvironment: 'FIXTURE_OWNER_PASSWORD' },
+  { role: 'app', databaseRole: 'commander_app', passwordEnvironment: 'FIXTURE_APP_PASSWORD' },
   {
     role: 'tenant-authority',
-    databaseRole: 'fixture_tenant_authority',
+    databaseRole: 'commander_tenant_authority',
     passwordEnvironment: 'FIXTURE_TENANT_AUTHORITY_PASSWORD',
   },
   {
     role: 'scheduler',
-    databaseRole: 'fixture_scheduler',
+    databaseRole: 'commander_scheduler',
     passwordEnvironment: 'FIXTURE_SCHEDULER_PASSWORD',
   },
-  { role: 'worker', databaseRole: 'fixture_worker', passwordEnvironment: 'FIXTURE_WORKER_PASSWORD' },
+  {
+    role: 'worker',
+    databaseRole: 'commander_worker',
+    passwordEnvironment: 'FIXTURE_WORKER_PASSWORD',
+  },
   {
     role: 'adapter-ops',
-    databaseRole: 'fixture_adapter_ops',
+    databaseRole: 'commander_adapter_ops',
     passwordEnvironment: 'FIXTURE_ADAPTER_OPS_PASSWORD',
   },
 ];
@@ -222,16 +223,16 @@ export function assertSanitizedTlsEvidence(
     'TLS_FIXTURE_EVIDENCE_NEGATIVE_CHECKS_INVALID',
   );
 
-  const challenge = new Set<string>();
+  const challenges = new Set<string>();
   const identities = new Set<string>();
   for (const proof of value.proofs) {
     assert.equal(proof.tlsActive, true, 'TLS_FIXTURE_EVIDENCE_TLS_INACTIVE');
     assert.equal(proof.serverSpkiSha256, value.serverSpkiSha256, 'TLS_FIXTURE_EVIDENCE_SPKI_DRIFT');
     assert.ok(
-      proof.challenge && !challenge.has(proof.challenge),
+      proof.challenge && !challenges.has(proof.challenge),
       'TLS_FIXTURE_EVIDENCE_CHALLENGE_NOT_FRESH',
     );
-    challenge.add(proof.challenge);
+    challenges.add(proof.challenge);
     identities.add(
       `${proof.databaseOid}\u0000${proof.databaseName}\u0000${proof.serverSpkiSha256}`,
     );
@@ -382,6 +383,34 @@ export async function runTlsFixtureMatrix(
     material.expectedSpkiSha256,
     'terminating proxy must present a different public key',
   );
+
+  const observerEnvironment = (port: number): NodeJS.ProcessEnv => ({
+    COMMANDER_DATABASE_TLS_CA_FILE: material.caFile,
+    COMMANDER_DATABASE_TLS_CA_MOUNT_IDENTITY: 'task1-postgres-tls-fixture/v1',
+    COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: material.expectedSpkiSha256,
+    ...Object.fromEntries(
+      FIXTURE_ROLES.map(({ role, databaseRole }) => [
+        `COMMANDER_${role.toUpperCase().replace('-', '_')}_DATABASE_URL`,
+        fixtureDsn(databaseRole, material.rolePasswords[role], 'localhost', port),
+      ]),
+    ),
+  });
+  const [directObservation, l4Observation] = await Promise.all([
+    observeTask1DatabasePeers(observerEnvironment(endpoints.directPort)),
+    observeTask1DatabasePeers(observerEnvironment(endpoints.l4Port)),
+  ]);
+  assert.equal(
+    canonicalBootstrapJson(directObservation.binding),
+    canonicalBootstrapJson({
+      ...l4Observation.binding,
+      roles: l4Observation.binding.roles.map((role) => ({
+        ...role,
+        port: endpoints.directPort,
+      })),
+    }),
+    'production peer observer direct/L4 identity drift',
+  );
+  process.stdout.write('PASS production six-role peer observer: direct and L4\n');
 
   const proofs: TlsFixtureProof[] = [];
   const negativeChecks: TlsFixtureEvidence['negativeChecks'] = [];

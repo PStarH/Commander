@@ -1,19 +1,20 @@
 /**
- * JSON Schema definitions for all V2 contract resources, events, and errors.
+ * JSON Schema definitions for V2 resources and the governed Action Gateway V1.
  *
  * These schemas are the machine-readable counterpart to the TypeScript types
  * in `resources.ts`, `events.ts`, `states.ts`, and `errors.ts`. They enable
  * runtime validation, consumer-driven contract testing, and CI compatibility
  * checks without requiring a heavy validation library at import time.
  *
- * Each schema uses Draft 2020-12. The `$id` follows the pattern
- * `https://commander.dev/contracts/{version}/{name}.json`.
+ * Each schema uses Draft 2020-12 and has a versioned commander.dev `$id`.
  */
 
 import { RUN_STATES, STEP_STATES } from './states.js';
 import { KERNEL_ERROR_CODES } from './errors.js';
+import { ACTION_KILL_SWITCH_SCOPES_V1, ACTION_STATES_V1 } from './effects.js';
 
 const BASE = 'https://commander.dev/contracts/v2';
+const ACTION_BASE = 'https://commander.dev/contracts/actions/v1';
 
 // ---------------------------------------------------------------------------
 // Reusable fragments
@@ -388,6 +389,463 @@ export const kernelErrorSchema = {
 };
 
 // ---------------------------------------------------------------------------
+// Governed Action Gateway V1 schemas
+// ---------------------------------------------------------------------------
+
+const actionDigestSchema = { type: 'string', pattern: '^[a-f0-9]{64}$' };
+const actionIdentifierSchema = { type: 'string', minLength: 1, maxLength: 256 };
+
+const actionDecisionProperties = {
+  effect: { type: 'string', enum: ['allow', 'deny', 'require_approval'] },
+  decisionId: actionIdentifierSchema,
+  reason: { type: 'string' },
+  policySnapshotId: actionIdentifierSchema,
+};
+
+const actionSimulationProperties = {
+  ...actionDecisionProperties,
+  simulationId: actionIdentifierSchema,
+  actionDigest: actionDigestSchema,
+};
+
+export const actionProposeRequestSchema = {
+  $id: `${ACTION_BASE}/action-propose-request.json`,
+  type: 'object',
+  required: [
+    'source',
+    'package',
+    'model',
+    'tool',
+    'destination',
+    'effectType',
+    'args',
+    'idempotencyKey',
+  ],
+  properties: {
+    source: { type: 'string', minLength: 1, maxLength: 128 },
+    package: { type: 'string', minLength: 1, maxLength: 128 },
+    model: { type: 'string', minLength: 1, maxLength: 128 },
+    tool: { type: 'string', minLength: 1, maxLength: 128 },
+    destination: { type: 'string', minLength: 1, maxLength: 512 },
+    effectType: { type: 'string', pattern: '^[a-zA-Z0-9._:-]{1,128}$' },
+    args: { type: 'object', additionalProperties: true },
+    idempotencyKey: {
+      type: 'string',
+      pattern: '^[A-Za-z0-9._:-]{8,256}$',
+    },
+  },
+  additionalProperties: false,
+};
+
+export const actionDecisionSchema = {
+  $id: `${ACTION_BASE}/action-decision.json`,
+  type: 'object',
+  required: ['effect', 'decisionId', 'reason', 'policySnapshotId'],
+  properties: actionDecisionProperties,
+  additionalProperties: false,
+};
+
+export const actionSimulationSchema = {
+  $id: `${ACTION_BASE}/action-simulation.json`,
+  type: 'object',
+  required: [
+    'effect',
+    'decisionId',
+    'reason',
+    'policySnapshotId',
+    'simulationId',
+    'actionDigest',
+  ],
+  properties: actionSimulationProperties,
+  additionalProperties: false,
+};
+
+export const governedActionSchema = {
+  $id: `${ACTION_BASE}/governed-action.json`,
+  type: 'object',
+  required: [
+    'runId',
+    'stepId',
+    'effectId',
+    'state',
+    'decision',
+    'simulation',
+    'actionDigest',
+    'policySnapshotId',
+    'createdAt',
+    'updatedAt',
+  ],
+  properties: {
+    runId: actionIdentifierSchema,
+    stepId: actionIdentifierSchema,
+    effectId: actionIdentifierSchema,
+    state: { type: 'string', enum: [...ACTION_STATES_V1] },
+    decision: {
+      type: 'object',
+      required: ['effect', 'decisionId', 'reason', 'policySnapshotId'],
+      properties: actionDecisionProperties,
+      additionalProperties: false,
+    },
+    simulation: {
+      type: 'object',
+      required: [
+        'effect',
+        'decisionId',
+        'reason',
+        'policySnapshotId',
+        'simulationId',
+        'actionDigest',
+      ],
+      properties: actionSimulationProperties,
+      additionalProperties: false,
+    },
+    actionDigest: actionDigestSchema,
+    policySnapshotId: actionIdentifierSchema,
+    createdAt: isoTimestamp,
+    updatedAt: isoTimestamp,
+  },
+  additionalProperties: false,
+};
+
+export const actionApprovalRequestSchema = {
+  $id: `${ACTION_BASE}/action-approval-request.json`,
+  type: 'object',
+  required: ['actionDigest', 'simulationId', 'policySnapshotId'],
+  properties: {
+    actionDigest: actionDigestSchema,
+    simulationId: actionIdentifierSchema,
+    policySnapshotId: actionIdentifierSchema,
+  },
+  additionalProperties: false,
+};
+
+export const actionCompensationRequestSchema = {
+  $id: `${ACTION_BASE}/action-compensation-request.json`,
+  type: 'object',
+  required: [
+    'originalEffectId',
+    'adapterVersion',
+    'compensationEffectType',
+    'compensationPatch',
+    'forwardReceiptHash',
+  ],
+  properties: {
+    originalEffectId: actionIdentifierSchema,
+    adapterVersion: actionIdentifierSchema,
+    compensationEffectType: { type: 'string', pattern: '^compensate\\.[a-zA-Z0-9._:-]{1,117}$' },
+    compensationPatch: { type: 'object', additionalProperties: true },
+    forwardReceiptHash: actionDigestSchema,
+  },
+  additionalProperties: false,
+};
+
+export const actionCompensationApprovalRequestSchema = {
+  $id: `${ACTION_BASE}/action-compensation-approval-request.json`,
+  type: 'object',
+  required: ['actionDigest', 'policySnapshotId'],
+  properties: {
+    actionDigest: actionDigestSchema,
+    policySnapshotId: actionIdentifierSchema,
+  },
+  additionalProperties: false,
+};
+
+export const actionRejectionRequestSchema = {
+  $id: `${ACTION_BASE}/action-rejection-request.json`,
+  type: 'object',
+  required: [],
+  properties: {
+    reason: { type: 'string', minLength: 1, maxLength: 2_000 },
+  },
+  additionalProperties: false,
+};
+
+export const actionSimulationResponseSchema = {
+  $id: `${ACTION_BASE}/action-simulation-response.json`,
+  type: 'object',
+  required: ['simulation'],
+  properties: {
+    simulation: {
+      type: 'object',
+      required: [
+        'effect',
+        'decisionId',
+        'reason',
+        'policySnapshotId',
+        'simulationId',
+        'actionDigest',
+      ],
+      properties: actionSimulationProperties,
+      additionalProperties: false,
+    },
+  },
+  additionalProperties: false,
+};
+
+export const actionResponseSchema = {
+  $id: `${ACTION_BASE}/action-response.json`,
+  type: 'object',
+  required: ['action'],
+  properties: {
+    action: {
+      type: 'object',
+      required: governedActionSchema.required,
+      properties: governedActionSchema.properties,
+      additionalProperties: false,
+    },
+  },
+  additionalProperties: false,
+};
+
+export const actionProposeResponseSchema = {
+  $id: `${ACTION_BASE}/action-propose-response.json`,
+  type: 'object',
+  required: ['action', 'idempotentReplay'],
+  properties: {
+    action: actionResponseSchema.properties.action,
+    idempotentReplay: { type: 'boolean' },
+  },
+  additionalProperties: false,
+};
+
+export const actionReconcileAcceptedSchema = {
+  $id: `${ACTION_BASE}/action-reconcile-accepted.json`,
+  type: 'object',
+  required: ['scheduled', 'effectId', 'state', 'reconcileAfter', 'alreadyScheduled'],
+  properties: {
+    scheduled: { type: 'boolean', const: true },
+    effectId: actionIdentifierSchema,
+    state: { type: 'string', const: 'COMPLETION_UNKNOWN' },
+    reconcileAfter: isoTimestamp,
+    alreadyScheduled: { type: 'boolean' },
+  },
+  additionalProperties: false,
+};
+
+const evidenceHashSchema = { type: 'string', pattern: '^[a-f0-9]{64}$' };
+
+const actionEvidenceSignatureSchema = {
+  type: 'object',
+  required: ['algorithm', 'keyId', 'signedAt', 'value'],
+  properties: {
+    algorithm: { type: 'string', const: 'Ed25519' },
+    keyId: actionIdentifierSchema,
+    signedAt: isoTimestamp,
+    value: { type: 'string', minLength: 1 },
+  },
+  additionalProperties: false,
+};
+
+const actionEvidenceEffectSchema = {
+  type: 'object',
+  required: [
+    'effectId',
+    'stepId',
+    'type',
+    'state',
+    'policyDecisionId',
+    'requestHash',
+    'createdAt',
+    'entryHash',
+    'prevEntryHash',
+  ],
+  properties: {
+    effectId: actionIdentifierSchema,
+    stepId: actionIdentifierSchema,
+    type: { type: 'string', minLength: 1 },
+    state: { type: 'string', minLength: 1 },
+    policyDecisionId: actionIdentifierSchema,
+    requestHash: evidenceHashSchema,
+    approvalInteractionId: actionIdentifierSchema,
+    responseSummary: { type: 'object', additionalProperties: true },
+    createdAt: isoTimestamp,
+    completedAt: isoTimestamp,
+    entryHash: evidenceHashSchema,
+    prevEntryHash: evidenceHashSchema,
+  },
+  additionalProperties: false,
+};
+
+const actionEvidenceAuditEventSchema = {
+  type: 'object',
+  required: ['type', 'at', 'severity', 'details', 'entryHash', 'prevEntryHash'],
+  properties: {
+    type: { type: 'string', minLength: 1 },
+    at: isoTimestamp,
+    severity: { type: 'string', minLength: 1 },
+    stepId: actionIdentifierSchema,
+    details: { type: 'object', additionalProperties: true },
+    entryHash: evidenceHashSchema,
+    prevEntryHash: evidenceHashSchema,
+  },
+  additionalProperties: false,
+};
+
+export const actionEvidenceSchema = {
+  $id: `${ACTION_BASE}/action-evidence.json`,
+  type: 'object',
+  required: ['receipt', 'verification'],
+  properties: {
+    receipt: {
+      type: 'object',
+      required: [
+        'schemaVersion',
+        'bodyVersion',
+        'bundleId',
+        'exportedAt',
+        'actionDigest',
+        'terminalDisposition',
+        'scope',
+        'identity',
+        'versions',
+        'effects',
+        'auditEvents',
+        'contentHash',
+        'signature',
+      ],
+      properties: {
+        schemaVersion: { type: 'string', const: 'l3-11.v0' },
+        bodyVersion: { type: 'string', const: 'commander.evidence-body/v1' },
+        bundleId: actionIdentifierSchema,
+        exportedAt: isoTimestamp,
+        actionDigest: actionDigestSchema,
+        terminalDisposition: {
+          type: 'string',
+          enum: ['SUCCEEDED', 'FAILED', 'ESCALATED'],
+        },
+        scope: {
+          type: 'object',
+          required: ['tenantId', 'runId'],
+          properties: {
+            tenantId: tenantIdSchema,
+            runId: actionIdentifierSchema,
+            effectId: actionIdentifierSchema,
+          },
+          additionalProperties: false,
+        },
+        identity: {
+          type: 'object',
+          required: [],
+          properties: {
+            intentHash: evidenceHashSchema,
+            workGraphHash: evidenceHashSchema,
+            capabilityGrant: {
+              type: 'object',
+              required: ['jti'],
+              properties: {
+                jti: actionIdentifierSchema,
+                issuer: { type: 'string' },
+                audience: { type: 'string' },
+                requestHash: evidenceHashSchema,
+                policySnapshotId: actionIdentifierSchema,
+              },
+              additionalProperties: false,
+            },
+          },
+          additionalProperties: false,
+        },
+        versions: {
+          type: 'object',
+          required: ['policySnapshotId'],
+          properties: {
+            policySnapshotId: actionIdentifierSchema,
+            workGraphVersion: { type: 'string' },
+            kernelApiVersion: { type: 'string' },
+          },
+          additionalProperties: false,
+        },
+        effects: { type: 'array', items: actionEvidenceEffectSchema },
+        auditEvents: { type: 'array', items: actionEvidenceAuditEventSchema },
+        contentHash: evidenceHashSchema,
+        signature: actionEvidenceSignatureSchema,
+      },
+      additionalProperties: false,
+    },
+    verification: {
+      type: 'object',
+      required: ['ok'],
+      properties: {
+        ok: { type: 'boolean' },
+        reason: { type: 'string' },
+        brokenAt: {
+          type: 'string',
+          enum: ['effects', 'auditEvents', 'contentHash', 'dlp'],
+        },
+        index: { type: 'integer', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
+  },
+  additionalProperties: false,
+};
+
+export const actionErrorSchema = {
+  $id: `${ACTION_BASE}/action-error.json`,
+  type: 'object',
+  required: ['error'],
+  properties: {
+    error: {
+      type: 'object',
+      required: ['code'],
+      properties: {
+        code: { type: 'string', minLength: 1, maxLength: 128 },
+        message: { type: 'string' },
+        details: {},
+      },
+      additionalProperties: false,
+    },
+  },
+  additionalProperties: false,
+};
+
+export const actionKillSwitchSchema = {
+  $id: `${ACTION_BASE}/action-kill-switch.json`,
+  type: 'object',
+  required: ['tenantId', 'scope', 'value', 'enabled', 'actor', 'updatedAt'],
+  properties: {
+    tenantId: tenantIdSchema,
+    scope: { type: 'string', enum: [...ACTION_KILL_SWITCH_SCOPES_V1] },
+    value: { type: 'string', minLength: 1, maxLength: 512 },
+    enabled: { type: 'boolean' },
+    reason: { type: 'string', minLength: 1, maxLength: 2_000 },
+    actor: actionIdentifierSchema,
+    updatedAt: isoTimestamp,
+  },
+  additionalProperties: false,
+};
+
+export const actionKillSwitchUpdateSchema = {
+  $id: `${ACTION_BASE}/action-kill-switch-update.json`,
+  type: 'object',
+  required: ['enabled'],
+  properties: {
+    enabled: { type: 'boolean' },
+    reason: { type: 'string', minLength: 1, maxLength: 2_000 },
+  },
+  additionalProperties: false,
+};
+
+export const actionKillSwitchListResponseSchema = {
+  $id: `${ACTION_BASE}/action-kill-switch-list-response.json`,
+  type: 'object',
+  required: ['killSwitches'],
+  properties: {
+    killSwitches: { type: 'array', items: actionKillSwitchSchema },
+  },
+  additionalProperties: false,
+};
+
+export const actionKillSwitchResponseSchema = {
+  $id: `${ACTION_BASE}/action-kill-switch-response.json`,
+  type: 'object',
+  required: ['killSwitch'],
+  properties: {
+    killSwitch: actionKillSwitchSchema,
+  },
+  additionalProperties: false,
+};
+
+// ---------------------------------------------------------------------------
 // Schema registry
 // ---------------------------------------------------------------------------
 
@@ -409,6 +867,24 @@ export const CONTRACT_SCHEMAS = {
   connectorDefinition: connectorDefinitionSchema,
   kernelEvent: kernelEventSchema,
   kernelError: kernelErrorSchema,
+  actionProposeRequest: actionProposeRequestSchema,
+  actionDecision: actionDecisionSchema,
+  actionSimulation: actionSimulationSchema,
+  governedAction: governedActionSchema,
+  actionApprovalRequest: actionApprovalRequestSchema,
+  actionCompensationRequest: actionCompensationRequestSchema,
+  actionCompensationApprovalRequest: actionCompensationApprovalRequestSchema,
+  actionRejectionRequest: actionRejectionRequestSchema,
+  actionSimulationResponse: actionSimulationResponseSchema,
+  actionResponse: actionResponseSchema,
+  actionProposeResponse: actionProposeResponseSchema,
+  actionReconcileAccepted: actionReconcileAcceptedSchema,
+  actionEvidence: actionEvidenceSchema,
+  actionError: actionErrorSchema,
+  actionKillSwitch: actionKillSwitchSchema,
+  actionKillSwitchUpdate: actionKillSwitchUpdateSchema,
+  actionKillSwitchListResponse: actionKillSwitchListResponseSchema,
+  actionKillSwitchResponse: actionKillSwitchResponseSchema,
 } as const;
 
 export type ContractSchemaName = keyof typeof CONTRACT_SCHEMAS;

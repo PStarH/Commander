@@ -44,21 +44,37 @@ export const COMPOSE_CONFIG_ENV: Record<string, string> = {
 };
 
 /** GID of docker.sock as seen inside a container (Colima often uses 991). */
-export function resolveDockerGid(): string {
-  if (process.env.DOCKER_GID && /^\d+$/.test(process.env.DOCKER_GID)) {
-    return process.env.DOCKER_GID;
+export function resolveDockerGid(
+  options: {
+    env?: NodeJS.ProcessEnv;
+    platform?: NodeJS.Platform;
+    execute?: (command: string) => string;
+  } = {},
+): string {
+  const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const execute =
+    options.execute ??
+    ((command: string) =>
+      execSync(command, {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim());
+  if (env.DOCKER_GID && /^\d+$/.test(env.DOCKER_GID)) {
+    return env.DOCKER_GID;
   }
   try {
-    const out = execSync(
+    const out = execute(
       'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine stat -c %g /var/run/docker.sock',
-      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] },
     ).trim();
     if (/^\d+$/.test(out)) return out;
   } catch {
     /* fall through */
   }
+  const statCommand =
+    platform === 'darwin' ? 'stat -f %g /var/run/docker.sock' : 'stat -c %g /var/run/docker.sock';
   try {
-    const out = execSync('stat -c %g /var/run/docker.sock', { encoding: 'utf-8' }).trim();
+    const out = execute(statCommand).trim();
     if (/^\d+$/.test(out)) return out;
   } catch {
     /* fall through */

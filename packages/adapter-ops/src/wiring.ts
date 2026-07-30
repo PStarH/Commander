@@ -2,42 +2,70 @@ import {
   createKernelRepository,
   createCapabilityAuthority,
   type CapabilityAuthority,
+  type CompensationOutboxPort,
+  type CompensationTokenProvider,
+  type CompensationTokenContext,
+  type OperationsReadiness,
 } from '@commander/kernel';
 import {
   EffectBroker,
   canonicalRequestHash,
+  createEvidenceSigner,
   isClassAEffectType,
   type AuditSink,
   type CapabilityTokenIssuer,
+  type ConfiguredEvidenceSigner,
+  type EffectKernelPort,
   type EffectBrokerOptions,
+  type EvidenceRecord,
   type PolicyEvaluator,
 } from '@commander/effect-broker';
 import {
   ActionAdapterRegistry,
   EnvAdapterCredentialProvider,
   createGitHubPullRequestCreateAdapter,
+  createKubernetesDeploymentRollbackAdapter,
   createServiceNowIncidentCreateAdapter,
   type AdapterCompensateInput,
   type AdapterExecuteInput,
 } from '@commander/action-adapters';
 import { randomUUID } from 'node:crypto';
+import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { createEgressGatedFetch, parseEgressAllowlist } from './egress.js';
 import { ReconciliationDaemon } from './reconciliationDaemon.js';
 import { CompensationDaemon } from './compensationDaemon.js';
 
-const POLICY_SNAPSHOT_ID = 'adapter-ops-v1';
+const ADAPTER_ROUTING_POLICY_SNAPSHOT_ID = 'adapter-ops-v1';
 
-/** Durable reconcile claim / broker identity (must exist in commander_workers under PG). */
-export const ADAPTER_OPS_RECONCILE_WORKER_ID = 'reconciliation-daemon';
+export type AdapterOpsLogicalRole = 'reconcile' | 'compensation';
 
-/** Compensation admit lease / broker affinity / grant workloadId — single identity. */
-export const ADAPTER_OPS_COMPENSATION_WORKER_ID = 'compensation-daemon';
+/** Demo fallback identities. Production identities are derived from the instance id. */
+export const ADAPTER_OPS_RECONCILE_WORKER_ID = 'reconcile:local';
+
+export const ADAPTER_OPS_COMPENSATION_WORKER_ID = 'compensation:local';
 
 /** Runtime DSN / session uses owner or migration LOGIN — refuse before egress. */
 export const OWNER_DATABASE_ROLE_REJECTED = 'OWNER_DATABASE_ROLE_REJECTED';
 
 /** Durable replay/revocation stores missing from authority or kernel repository. */
 export const CAPABILITY_DURABLE_STORES_REQUIRED = 'CAPABILITY_DURABLE_STORES_REQUIRED';
+
+export const EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV = 'COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM';
+
+export const EVIDENCE_SIGNING_KEY_ID_ENV = 'COMMANDER_EVIDENCE_SIGNING_KEY_ID';
+
+export function createAdapterOpsEvidenceSigner(
+  env: NodeJS.ProcessEnv = process.env,
+): ConfiguredEvidenceSigner | null {
+  const privateKeyPem = env[EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV]?.trim() ?? '';
+  const keyId = env[EVIDENCE_SIGNING_KEY_ID_ENV]?.trim() ?? '';
+  if (!privateKeyPem || !keyId) {
+    if (env.NODE_ENV === 'production') throw new Error('EVIDENCE_SIGNING_KEY_REQUIRED');
+    return null;
+  }
+  return createEvidenceSigner({ privateKeyPem, keyId });
+}
 
 /** Owner / migration LOGIN role — never accept for adapter-ops DSN. */
 export const OWNER_MIGRATION_DATABASE_ROLES = new Set(['commander_owner']);
@@ -52,14 +80,13 @@ export const COMMANDER_CELL_TENANT_ID_REQUIRED = 'COMMANDER_CELL_TENANT_ID_REQUI
 
 export const WORKER_TENANT_SCOPE_REQUIRED = 'WORKER_TENANT_SCOPE_REQUIRED';
 
-type AdapterOpsWorkerDefinition = {
-  id: string;
-  kind: 'tool';
-  version: string;
-  capabilities: string[];
-  maxConcurrency: number;
-  labels?: Record<string, string>;
-};
+export const ADAPTER_OPS_INSTANCE_ID_REQUIRED = 'ADAPTER_OPS_INSTANCE_ID_REQUIRED';
+
+export const CLAIM_SECRET_DIR_REQUIRED = 'CLAIM_SECRET_DIR_REQUIRED';
+
+export const CLAIM_SECRET_FILE_INVALID = 'CLAIM_SECRET_FILE_INVALID';
+
+export const ADAPTER_OPS_WORKER_ID_MISMATCH = 'ADAPTER_OPS_WORKER_ID_MISMATCH';
 
 type AdapterOpsWorkerRegistration = {
   id: string;
@@ -70,11 +97,13 @@ type AdapterOpsWorkerRegistration = {
 export interface AdapterOpsWorkerRegistry {
   initialize(): Promise<void>;
   register(
-    definition: AdapterOpsWorkerDefinition,
-    identitySubject: string,
+    role: AdapterOpsLogicalRole,
+    instanceId: string,
     tenantIds: string[],
     previousClaimSecret?: string,
   ): Promise<AdapterOpsWorkerRegistration>;
+  heartbeat(workerId: string, generation: number, claimSecret: string): Promise<void>;
+  drain(workerId: string, generation: number, claimSecret: string): Promise<void>;
 }
 
 type AdapterOpsRegistryPool = {
@@ -87,9 +116,7 @@ type AdapterOpsRegistryPool = {
   }>;
 };
 
-export function resolveAdapterOpsTenantScope(
-  env: NodeJS.ProcessEnv = process.env,
-): string[] {
+export function resolveAdapterOpsTenantScope(env: NodeJS.ProcessEnv = process.env): string[] {
   const tenantIds = (env.COMMANDER_WORKER_TENANTS ?? '')
     .split(',')
     .map((tenantId) => tenantId.trim())
@@ -105,52 +132,36 @@ export function resolveAdapterOpsTenantScope(
 class PostgresAdapterOpsWorkerRegistry implements AdapterOpsWorkerRegistry {
   constructor(private readonly pool: AdapterOpsRegistryPool) {}
 
-  async initialize(): Promise<void> {
-    const client = await this.pool.connect();
-    try {
-      const result = await client.query<{ ok: string | null }>(
-        `SELECT to_regclass('public.commander_workers')::text AS ok`,
-      );
-      if (!result.rows[0]?.ok) {
-        throw new Error('commander_workers table is missing; run kernel migrations before adapter-ops');
-      }
-    } finally {
-      client.release();
-    }
-  }
+  async initialize(): Promise<void> {}
 
   async register(
-    definition: AdapterOpsWorkerDefinition,
-    identitySubject: string,
+    role: AdapterOpsLogicalRole,
+    instanceId: string,
     tenantIds: string[],
     previousClaimSecret?: string,
   ): Promise<AdapterOpsWorkerRegistration> {
     if (tenantIds.length === 0 || tenantIds.includes('*')) {
-      throw new Error(`${WORKER_TENANT_SCOPE_REQUIRED}: daemon registration requires explicit tenantIds`);
+      throw new Error(
+        `${WORKER_TENANT_SCOPE_REQUIRED}: daemon registration requires explicit tenantIds`,
+      );
     }
     const client = await this.pool.connect();
     try {
       const result = await client.query<{
-        register_worker: { id: string; generation: number | string; claim_secret?: string } | null;
+        register_adapter_ops_worker: {
+          id: string;
+          generation: number | string;
+          claim_secret?: string;
+        } | null;
       }>(
-        `SELECT register_worker(
-           $1::text, $2::text, $3::text, $4::jsonb, $5::jsonb, $6::integer, $7::text, $8::jsonb, $9::text
-         ) AS register_worker`,
-        [
-          definition.id,
-          definition.kind,
-          definition.version,
-          JSON.stringify(definition.capabilities),
-          JSON.stringify(definition.labels ?? {}),
-          definition.maxConcurrency,
-          identitySubject,
-          JSON.stringify(tenantIds),
-          previousClaimSecret ?? null,
-        ],
+        `SELECT register_adapter_ops_worker(
+           $1::text, $2::text, $3::jsonb, $4::text
+         ) AS register_adapter_ops_worker`,
+        [role, instanceId, JSON.stringify(tenantIds), previousClaimSecret ?? null],
       );
-      const registered = result.rows[0]?.register_worker;
+      const registered = result.rows[0]?.register_adapter_ops_worker;
       if (!registered?.claim_secret) {
-        throw new Error(`WORKER_CLAIM_SECRET_REGISTER_FAILED: id=${definition.id}`);
+        throw new Error(`WORKER_CLAIM_SECRET_REGISTER_FAILED: role=${role}`);
       }
       return {
         id: registered.id,
@@ -160,6 +171,112 @@ class PostgresAdapterOpsWorkerRegistry implements AdapterOpsWorkerRegistry {
     } finally {
       client.release();
     }
+  }
+
+  async heartbeat(workerId: string, generation: number, claimSecret: string): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query<{ heartbeat_adapter_ops_worker: unknown | null }>(
+        `SELECT heartbeat_adapter_ops_worker($1::text, $2::bigint, $3::text)
+           AS heartbeat_adapter_ops_worker`,
+        [workerId, generation, claimSecret],
+      );
+      if (result.rows[0]?.heartbeat_adapter_ops_worker == null) {
+        throw Object.assign(new Error('adapter-ops heartbeat was rejected'), {
+          code: 'ADAPTER_OPS_HEARTBEAT_REJECTED',
+        });
+      }
+    } finally {
+      client.release();
+    }
+  }
+
+  async drain(workerId: string, generation: number, claimSecret: string): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query<{ drain_adapter_ops_worker: boolean }>(
+        `SELECT drain_adapter_ops_worker($1::text, $2::bigint, $3::text)
+           AS drain_adapter_ops_worker`,
+        [workerId, generation, claimSecret],
+      );
+      if (result.rows[0]?.drain_adapter_ops_worker !== true) {
+        throw Object.assign(new Error('adapter-ops drain was rejected'), {
+          code: 'ADAPTER_OPS_DRAIN_REJECTED',
+        });
+      }
+    } finally {
+      client.release();
+    }
+  }
+}
+
+export function resolveAdapterOpsInstanceId(env: NodeJS.ProcessEnv = process.env): string {
+  const instanceId = env.COMMANDER_ADAPTER_OPS_INSTANCE_ID?.trim();
+  if (instanceId) {
+    if (!/^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$/.test(instanceId)) {
+      throw new Error(`${ADAPTER_OPS_INSTANCE_ID_REQUIRED}: invalid instance id`);
+    }
+    return instanceId;
+  }
+  if (
+    env.COMMANDER_CELL_TIER === 'demo' ||
+    (!env.COMMANDER_CELL_TIER && env.COMMANDER_KERNEL_BACKEND === 'sqlite')
+  ) {
+    return 'local';
+  }
+  throw new Error(`${ADAPTER_OPS_INSTANCE_ID_REQUIRED}: set COMMANDER_ADAPTER_OPS_INSTANCE_ID`);
+}
+
+function adapterOpsWorkerId(role: AdapterOpsLogicalRole, instanceId: string): string {
+  return `${role}:${instanceId}`;
+}
+
+function claimSecretPath(directory: string, workerId: string): string {
+  return join(directory, `${encodeURIComponent(workerId)}.claim-secret`);
+}
+
+async function readPersistedClaimSecret(
+  directory: string,
+  workerId: string,
+): Promise<string | undefined> {
+  const path = claimSecretPath(directory, workerId);
+  try {
+    const metadata = await stat(path);
+    if (!metadata.isFile() || (metadata.mode & 0o777) !== 0o600) {
+      throw new Error(`${CLAIM_SECRET_FILE_INVALID}: ${workerId}`);
+    }
+    const raw = await readFile(path, 'utf8');
+    const secret = raw.trim();
+    if (raw !== secret || !/^[A-Za-z0-9_-]{32,256}$/.test(secret)) {
+      throw new Error(`${CLAIM_SECRET_FILE_INVALID}: ${workerId}`);
+    }
+    return secret;
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+async function persistClaimSecret(
+  directory: string,
+  workerId: string,
+  claimSecret: string,
+): Promise<void> {
+  if (!/^[A-Za-z0-9_-]{32,256}$/.test(claimSecret)) {
+    throw new Error(`${CLAIM_SECRET_FILE_INVALID}: ${workerId}`);
+  }
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const path = claimSecretPath(directory, workerId);
+  const temporaryPath = `${path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporaryPath, claimSecret, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    await chmod(temporaryPath, 0o600);
+    await rename(temporaryPath, path);
+    await chmod(path, 0o600);
+  } finally {
+    await rm(temporaryPath, { force: true });
   }
 }
 
@@ -184,27 +301,21 @@ export function databaseUrlLoginRole(dsn: string): string | null {
 export function assertNonOwnerDatabaseUrl(dsn: string): void {
   const role = databaseUrlLoginRole(dsn);
   if (role === null) return;
-  if (OWNER_MIGRATION_DATABASE_ROLES.has(role)) {
+  if (role !== 'commander_adapter_ops') {
     throw new Error(
       `${OWNER_DATABASE_ROLE_REJECTED}: database URL userinfo role '${role}' is forbidden ` +
-        '(owner/migration). Adapter-ops must use Task 1 worker-url (commander_worker).',
-    );
-  }
-  if (SCHEDULER_DATABASE_ROLES.has(role)) {
-    throw new Error(
-      `${OWNER_DATABASE_ROLE_REJECTED}: database URL userinfo role '${role}' is forbidden ` +
-        '(scheduler). Adapter-ops must use commander_worker LOGIN with durable claim authz.',
+        '(adapter-ops must use commander_adapter_ops LOGIN).',
     );
   }
 }
 
-/** Reject post-connect `current_user` matching owner/migration/scheduler. */
+/** Reject any post-connect role other than the dedicated adapter-ops LOGIN. */
 export function assertNonOwnerDatabaseRole(currentUser: string): void {
   const role = currentUser.trim();
-  if (OWNER_MIGRATION_DATABASE_ROLES.has(role) || SCHEDULER_DATABASE_ROLES.has(role)) {
+  if (role !== 'commander_adapter_ops') {
     throw new Error(
       `${OWNER_DATABASE_ROLE_REJECTED}: session current_user '${role}' is forbidden ` +
-        '(owner/migration/scheduler). Adapter-ops must authenticate as commander_worker.',
+        '(adapter-ops must authenticate as commander_adapter_ops).',
     );
   }
 }
@@ -213,9 +324,7 @@ export function assertNonOwnerDatabaseRole(currentUser: string): void {
  * Adapter-ops must never run kernel schedulerMode (BYPASSRLS / skip claim secret).
  * Fail-closed if COMMANDER_KERNEL_SCHEDULER_MODE=1 is present in the process env.
  */
-export function assertAdapterOpsSchedulerModeForbidden(
-  env: NodeJS.ProcessEnv = process.env,
-): void {
+export function assertAdapterOpsSchedulerModeForbidden(env: NodeJS.ProcessEnv = process.env): void {
   if (env.COMMANDER_KERNEL_SCHEDULER_MODE === '1') {
     throw new Error(
       `${ADAPTER_OPS_SCHEDULER_MODE_FORBIDDEN}: COMMANDER_KERNEL_SCHEDULER_MODE=1 is forbidden ` +
@@ -291,6 +400,7 @@ export function productionCapabilityBrokerOptions(
   replay: CapabilityAuthority['replayForTenant'];
   revocations: CapabilityAuthority['revocations'];
   requireDurableCapabilityStores: true;
+  requireOperationsReadiness: true;
 } {
   return {
     audience: capability.audience,
@@ -298,56 +408,97 @@ export function productionCapabilityBrokerOptions(
     localWorkerId,
     ...(localWorkerGeneration !== undefined ? { localWorkerGeneration } : {}),
     requireDurableCapabilityStores: true,
+    requireOperationsReadiness: true,
     replay: (tenantId: string) => capability.replayForTenant(tenantId),
     revocations: capability.revocations,
   };
 }
 
-/**
- * Class A compensation digest: bind effect type + exact compensation patch.
- * requestHash remains canonicalRequestHash(patch) for admit request binding.
- */
-export function compensationActionDigest(
-  action: string,
-  payload: Record<string, unknown>,
-): string {
-  return canonicalRequestHash({ type: action, ...payload });
+type GovernedCompensationAuthorization = Parameters<CompensationTokenProvider>[0];
+type DurableCompensationTokenContext = Extract<
+  CompensationTokenContext,
+  { authorization: object }
+>;
+type LegacyCompensationTokenContext = Exclude<
+  CompensationTokenContext,
+  DurableCompensationTokenContext
+>;
+
+function isDurableCompensationTokenContext(
+  value: CompensationTokenContext,
+): value is DurableCompensationTokenContext {
+  return 'authorization' in value && 'request' in value && 'forwardResponse' in value;
 }
 
-/** Mint a short-lived compensation grant (Class A includes actionDigest). */
+/** Mint a short-lived grant only from a validated persisted compensation authorization. */
 export function issueCompensationCapabilityToken(input: {
   issuer: CapabilityTokenIssuer;
-  tenantId: string;
-  runId: string;
-  stepId: string;
-  action: string;
-  payload: Record<string, unknown>;
-  workerId?: string;
-  workerGeneration?: number;
+  authorization: GovernedCompensationAuthorization;
+  workerId: string;
+  workerGeneration: number;
+  now?: Date;
   ttlMs?: number;
 }): string {
-  const workerId = input.workerId ?? ADAPTER_OPS_COMPENSATION_WORKER_ID;
-  const workerGeneration = input.workerGeneration ?? 1;
-  const request = input.payload ?? {};
-  const requestHash = canonicalRequestHash(request);
+  const source = input.authorization;
+  const durable = isDurableCompensationTokenContext(source) ? source : null;
+  const authorization = durable?.authorization;
+  const legacy: LegacyCompensationTokenContext | null = durable
+    ? null
+    : (source as LegacyCompensationTokenContext);
+  const requestPayload = durable
+    ? {
+        originalEffectId: durable.request.originalEffectId,
+        forwardResponse: durable.forwardResponse,
+        compensationPatch: durable.authorization.compensationPatch,
+      }
+    : legacy!.compensationRequest;
+  const requestHash = canonicalRequestHash(requestPayload);
+  const compensationEffectType = durable
+    ? durable.authorization.compensationEffectType
+    : legacy!.compensationEffectType;
+  if (!isClassAEffectType(compensationEffectType)) {
+    throw new Error('COMPENSATION_EFFECT_TYPE_INVALID');
+  }
+  if (legacy && requestHash !== legacy.requestHash) {
+    throw new Error('COMPENSATION_REQUEST_HASH_MISMATCH');
+  }
+  const actionDigest = durable ? durable.authorization.actionDigest : legacy!.actionDigest;
+  if (!/^[a-f0-9]{64}$/.test(actionDigest)) {
+    throw new Error('COMPENSATION_ACTION_DIGEST_INVALID');
+  }
   const ttlMs = input.ttlMs ?? 60_000;
-  return input.issuer.issue({
+  if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) {
+    throw new Error('COMPENSATION_CAPABILITY_TTL_INVALID');
+  }
+  const now = input.now ?? new Date();
+  const authorizationExpiry = Date.parse(
+    durable ? durable.authorization.expiresAt : legacy!.authorizationExpiresAt,
+  );
+  if (!Number.isFinite(authorizationExpiry) || authorizationExpiry <= now.getTime()) {
+    throw new Error('COMPENSATION_AUTHORIZATION_EXPIRED');
+  }
+  const grant = {
     jti: randomUUID(),
-    tenantId: input.tenantId,
-    runId: input.runId,
-    stepId: input.stepId,
-    effectTypes: [input.action],
-    expiresAt: new Date(Date.now() + ttlMs).toISOString(),
+    tenantId: durable ? durable.authorization.tenantId : legacy!.tenantId,
+    runId: durable ? durable.request.compensationRunId : legacy!.compensationRunId,
+    stepId: durable ? durable.request.compensationStepId : legacy!.compensationStepId,
+    effectTypes: [compensationEffectType],
+    expiresAt: new Date(Math.min(authorizationExpiry, now.getTime() + ttlMs)).toISOString(),
     requestHash,
-    ...(isClassAEffectType(input.action)
-      ? { actionDigest: compensationActionDigest(input.action, request) }
-      : {}),
-    workloadId: workerId,
-    workerId,
-    workerGeneration,
-    policySnapshotId: POLICY_SNAPSHOT_ID,
+    actionDigest,
+    workloadId: input.workerId,
+    workerId: input.workerId,
+    workerGeneration: input.workerGeneration,
+    policySnapshotId: durable ? durable.authorization.policySnapshotId : legacy!.policySnapshotId,
+    policyDecisionId: durable ? durable.authorization.policyDecisionId : legacy!.policyDecisionId,
+    authorizationId: durable ? durable.authorization.id : legacy!.authorizationId,
+    requestId: durable ? durable.request.id : legacy!.requestId,
+    adapterVersion: durable ? durable.authorization.adapterVersion : legacy!.adapterVersion,
+    decisionEffect: durable ? durable.authorization.decision : legacy!.decisionEffect,
+    ...(legacy ? { approvalBinding: legacy.approvalBinding } : {}),
     nonce: randomUUID(),
-  });
+  };
+  return input.issuer.issue(grant);
 }
 
 /**
@@ -358,62 +509,88 @@ export function issueCompensationCapabilityToken(input: {
 export async function registerAdapterOpsDaemonWorkers(
   registry: AdapterOpsWorkerRegistry,
   tenantIds: string[],
-  opts?: {
-    reconcileWorkerId?: string;
-    compensationWorkerId?: string;
-    /** Prior claim secret when re-registering a still-fresh ACTIVE worker. */
-    reconcilePreviousClaimSecret?: string;
-    compensationPreviousClaimSecret?: string;
+  opts: {
+    instanceId: string;
+    claimSecretDir: string;
   },
 ): Promise<{
   reconcile: { id: string; generation: number; claimSecret: string };
   compensation: { id: string; generation: number; claimSecret: string };
 }> {
-  const reconcileWorkerId = opts?.reconcileWorkerId ?? ADAPTER_OPS_RECONCILE_WORKER_ID;
-  const compensationWorkerId =
-    opts?.compensationWorkerId ?? ADAPTER_OPS_COMPENSATION_WORKER_ID;
+  const reconcileWorkerId = adapterOpsWorkerId('reconcile', opts.instanceId);
+  const compensationWorkerId = adapterOpsWorkerId('compensation', opts.instanceId);
+  const reconcilePreviousClaimSecret = await readPersistedClaimSecret(
+    opts.claimSecretDir,
+    reconcileWorkerId,
+  );
+  const compensationPreviousClaimSecret = await readPersistedClaimSecret(
+    opts.claimSecretDir,
+    compensationWorkerId,
+  );
   await registry.initialize();
-  const reconcile = await registry.register(
-    {
-      id: reconcileWorkerId,
-      kind: 'tool',
-      version: '1',
-      capabilities: ['effect.reconcile'],
-      maxConcurrency: 1,
-      labels: { role: 'reconciliation-daemon' },
-    },
-    `ops:${reconcileWorkerId}`,
-    tenantIds,
-    opts?.reconcilePreviousClaimSecret,
-  );
-  const compensation = await registry.register(
-    {
-      id: compensationWorkerId,
-      kind: 'tool',
-      version: '1',
-      capabilities: ['effect.compensate'],
-      maxConcurrency: 1,
-      labels: { role: 'compensation-daemon' },
-    },
-    `ops:${compensationWorkerId}`,
-    tenantIds,
-    opts?.compensationPreviousClaimSecret,
-  );
-  if (!reconcile.claimSecret || !compensation.claimSecret) {
-    throw new Error('registerAdapterOpsDaemonWorkers: register must return claimSecret');
+  let reconcile: AdapterOpsWorkerRegistration | undefined;
+  let compensation: AdapterOpsWorkerRegistration | undefined;
+  try {
+    reconcile = await registry.register(
+      'reconcile',
+      opts.instanceId,
+      tenantIds,
+      reconcilePreviousClaimSecret,
+    );
+    if (reconcile.id !== reconcileWorkerId) {
+      throw new Error(
+        `${ADAPTER_OPS_WORKER_ID_MISMATCH}: expected ${reconcileWorkerId}, received ${reconcile.id}`,
+      );
+    }
+    if (!reconcile.claimSecret) {
+      throw new Error('registerAdapterOpsDaemonWorkers: register must return claimSecret');
+    }
+    await persistClaimSecret(opts.claimSecretDir, reconcileWorkerId, reconcile.claimSecret);
+    compensation = await registry.register(
+      'compensation',
+      opts.instanceId,
+      tenantIds,
+      compensationPreviousClaimSecret,
+    );
+    if (compensation.id !== compensationWorkerId) {
+      throw new Error(
+        `${ADAPTER_OPS_WORKER_ID_MISMATCH}: expected ${compensationWorkerId}, received ${compensation.id}`,
+      );
+    }
+    if (!compensation.claimSecret) {
+      throw new Error('registerAdapterOpsDaemonWorkers: register must return claimSecret');
+    }
+    await persistClaimSecret(opts.claimSecretDir, compensationWorkerId, compensation.claimSecret);
+    return {
+      reconcile: {
+        id: reconcile.id,
+        generation: reconcile.generation,
+        claimSecret: reconcile.claimSecret,
+      },
+      compensation: {
+        id: compensation.id,
+        generation: compensation.generation,
+        claimSecret: compensation.claimSecret,
+      },
+    };
+  } catch (error) {
+    const cleanupErrors: unknown[] = [];
+    for (const registered of [reconcile, compensation]) {
+      if (!registered?.claimSecret) continue;
+      try {
+        await registry.drain(registered.id, registered.generation, registered.claimSecret);
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError);
+      }
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(
+        [error, ...cleanupErrors],
+        'adapter-ops registration failed and partial identity cleanup was incomplete',
+      );
+    }
+    throw error;
   }
-  return {
-    reconcile: {
-      id: reconcile.id,
-      generation: reconcile.generation,
-      claimSecret: reconcile.claimSecret,
-    },
-    compensation: {
-      id: compensation.id,
-      generation: compensation.generation,
-      claimSecret: compensation.claimSecret,
-    },
-  };
 }
 
 export interface AdapterOpsWiringOptions {
@@ -422,6 +599,8 @@ export interface AdapterOpsWiringOptions {
    * both daemon identities are registered before daemons start.
    */
   workerRegistry?: AdapterOpsWorkerRegistry;
+  /** Test/integration seam until KernelRepository exposes the governed Task 3 atomic port. */
+  compensationAuthority?: CompensationOutboxPort;
 }
 
 export interface AdapterOpsWorkerIdentities {
@@ -495,15 +674,48 @@ function createRegistryPolicy(registry: ActionAdapterRegistry): PolicyEvaluator 
         return {
           effect: 'deny' as const,
           decisionId: 'adapter-ops-deny-unregistered',
-          policySnapshotId: POLICY_SNAPSHOT_ID,
+          policySnapshotId: ADAPTER_ROUTING_POLICY_SNAPSHOT_ID,
           reason: 'unregistered effect type: ' + type,
         };
       }
       return {
         effect: 'allow' as const,
         decisionId: 'adapter-ops-allow:' + type,
-        policySnapshotId: POLICY_SNAPSHOT_ID,
+        policySnapshotId: ADAPTER_ROUTING_POLICY_SNAPSHOT_ID,
         reason: 'registered adapter ' + adapter.descriptor.adapterId,
+      };
+    },
+  };
+}
+
+function createGovernedCompensationPolicy(registry: ActionAdapterRegistry): PolicyEvaluator {
+  return {
+    evaluate: async ({ type, token }) => {
+      const governed = token as typeof token & {
+        policyDecisionId?: string;
+        decisionEffect?: 'allow' | 'deny' | 'require_approval';
+      };
+      const adapter = registry.resolve(type);
+      if (
+        !adapter ||
+        typeof governed.policyDecisionId !== 'string' ||
+        governed.policyDecisionId.length === 0 ||
+        typeof governed.policySnapshotId !== 'string' ||
+        governed.policySnapshotId.length === 0 ||
+        !['allow', 'deny', 'require_approval'].includes(String(governed.decisionEffect))
+      ) {
+        return {
+          effect: 'deny' as const,
+          decisionId: 'governed-compensation-invalid',
+          policySnapshotId: governed.policySnapshotId ?? 'governed-compensation-invalid',
+          reason: 'signed governed compensation fields are missing or invalid',
+        };
+      }
+      return {
+        effect: governed.decisionEffect === 'deny' ? ('deny' as const) : ('allow' as const),
+        decisionId: governed.policyDecisionId,
+        policySnapshotId: governed.policySnapshotId,
+        reason: `persisted compensation authorization ${adapter.descriptor.adapterId}`,
       };
     },
   };
@@ -515,7 +727,7 @@ function createHollowDemoPolicy(): PolicyEvaluator {
     evaluate: async ({ type }) => ({
       effect: 'allow' as const,
       decisionId: 'adapter-ops-demo-open:' + type,
-      policySnapshotId: POLICY_SNAPSHOT_ID,
+      policySnapshotId: ADAPTER_ROUTING_POLICY_SNAPSHOT_ID,
       reason: 'COMMANDER_ADAPTER_OPS_DEMO_OPEN hollow PEP',
     }),
   };
@@ -535,6 +747,15 @@ function createStdoutAuditSink(): AuditSink {
   };
 }
 
+function emitOpsLoopTelemetry(event: {
+  type: 'ops_loop_tick_failed';
+  loop: 'reconciliation' | 'compensation';
+  errorCode: string;
+  at: string;
+}): void {
+  console.error(JSON.stringify({ channel: 'adapter-ops-telemetry', ...event }));
+}
+
 function createProductionRegistry(
   credentials: EnvAdapterCredentialProvider,
   egressAllowlist: readonly string[],
@@ -542,15 +763,59 @@ function createProductionRegistry(
   const fetchImpl = createEgressGatedFetch(egressAllowlist);
   return new ActionAdapterRegistry([
     createGitHubPullRequestCreateAdapter({ credentials, fetch: fetchImpl }),
+    createKubernetesDeploymentRollbackAdapter({ credentials, fetch: fetchImpl }),
     createServiceNowIncidentCreateAdapter({ credentials, fetch: fetchImpl }),
   ]);
 }
 
-export async function createAdapterOpsWiring(
-  options: AdapterOpsWiringOptions = {},
-): Promise<{
+export const COMPENSATION_AUTHORITY_UNAVAILABLE = 'COMPENSATION_AUTHORITY_UNAVAILABLE';
+
+const COMPENSATION_AUTHORITY_METHODS = [
+  'claimCompensationWork',
+  'completeCompensationWork',
+  'handoffCompensationUnknown',
+  'escalateCompensationWork',
+  'parkCompensationUnknown',
+  'finalizeCompensation',
+] as const;
+
+export function requireCompensationAuthority(value: unknown): CompensationOutboxPort {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    COMPENSATION_AUTHORITY_METHODS.some(
+      (method) => typeof (value as Record<string, unknown>)[method] !== 'function',
+    )
+  ) {
+    throw new Error(
+      `${COMPENSATION_AUTHORITY_UNAVAILABLE}: kernel repository must expose governed compensation claim and atomic disposition methods`,
+    );
+  }
+  return value as CompensationOutboxPort;
+}
+
+function unavailableCompensationAuthority(): CompensationOutboxPort {
+  const unavailable = async (): Promise<never> => {
+    throw Object.assign(new Error(COMPENSATION_AUTHORITY_UNAVAILABLE), {
+      code: COMPENSATION_AUTHORITY_UNAVAILABLE,
+    });
+  };
+  return {
+    claimCompensationWork: unavailable,
+    completeCompensationWork: unavailable,
+    handoffCompensationUnknown: unavailable,
+    escalateCompensationWork: unavailable,
+    parkCompensationUnknown: unavailable,
+    finalizeCompensation: unavailable,
+  };
+}
+
+export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = {}): Promise<{
   reconciliation: ReconciliationDaemon;
   compensation: CompensationDaemon;
+  ping: () => Promise<boolean>;
+  operationsReadiness: () => Promise<OperationsReadiness>;
+  safeStop: (reason: string) => Promise<void>;
   close: () => Promise<void>;
   /** 供测试断言：当前 PEP 是否为 demo hollow。 */
   demoOpenHollowPep: boolean;
@@ -563,184 +828,343 @@ export async function createAdapterOpsWiring(
 }> {
   const demoOpen = assertDemoOpenGate();
   const egressAllowlist = parseEgressAllowlist();
+  const evidenceSigner = createAdapterOpsEvidenceSigner(process.env);
 
   // Owner/scheduler DSN + schedulerMode gates BEFORE kernel connect.
   assertAdapterOpsSchedulerModeForbidden(process.env);
   const dsn =
-    process.env.COMMANDER_KERNEL_DATABASE_URL?.trim() ||
-    process.env.DATABASE_URL?.trim() ||
-    '';
+    process.env.COMMANDER_KERNEL_DATABASE_URL?.trim() || process.env.DATABASE_URL?.trim() || '';
   if (dsn) assertNonOwnerDatabaseUrl(dsn);
+  const instanceId = resolveAdapterOpsInstanceId(process.env);
 
   // Force schedulerMode off even if env was mutated after the assert above.
   const handle = await createKernelRepository({
     env: { ...process.env, COMMANDER_KERNEL_SCHEDULER_MODE: '0' },
+    adapterOpsMode: true,
   });
   const repository = handle.repository;
-
-  // Post-connect owner-role gate before capability authority / egress registry.
-  if (handle.postgresPool) {
-    const client = await handle.postgresPool.connect();
+  try {
+    let compensationRepository: CompensationOutboxPort;
     try {
-      const identityRows = await client.query<{ role_name: string }>(
-        'SELECT current_user::text AS role_name',
-      );
-      assertNonOwnerDatabaseRole(identityRows.rows[0]?.role_name ?? '');
-    } finally {
-      client.release();
+      compensationRepository =
+        options.compensationAuthority ?? requireCompensationAuthority(repository);
+    } catch (error) {
+      if (handle.postgresPool) throw error;
+      compensationRepository = unavailableCompensationAuthority();
     }
-  }
 
-  // Task 3 factory — never CapabilityTokenIssuer.generate() for production authority.
-  const capability = createCapabilityAuthority(process.env, repository);
-  assertDurableCapabilityStores(capability, repository);
+    // Post-connect owner-role gate before capability authority / egress registry.
+    if (handle.postgresPool) {
+      const client = await handle.postgresPool.connect();
+      try {
+        const identityRows = await client.query<{ role_name: string }>(
+          'SELECT current_user::text AS role_name',
+        );
+        assertNonOwnerDatabaseRole(identityRows.rows[0]?.role_name ?? '');
+      } finally {
+        client.release();
+      }
+    }
 
-  const cellTenantId = process.env.COMMANDER_CELL_TENANT_ID?.trim() ?? '';
-  if (!cellTenantId) {
-    throw new Error(
-      `${COMMANDER_CELL_TENANT_ID_REQUIRED}: set COMMANDER_CELL_TENANT_ID (no silent "local" fallback)`,
-    );
-  }
-  const credentials = new EnvAdapterCredentialProvider({ cellTenantId });
-  const registry = createProductionRegistry(credentials, egressAllowlist);
-  const issuer = capability.issuer;
-  const tokens = capability.verifier;
-  const policy = demoOpen ? createHollowDemoPolicy() : createRegistryPolicy(registry);
-  const audit = createStdoutAuditSink();
-  const kernelPort = {
-    admitEffect: (input: Parameters<typeof repository.admitEffect>[0]) =>
-      repository.admitEffect(input),
-    completeEffect: (
-      effectId: string,
-      tenantId: string,
-      lease: Parameters<typeof repository.completeEffect>[2],
-      response: Record<string, unknown>,
-      actor: string,
-    ) => repository.completeEffect(effectId, tenantId, lease, response, actor),
-    markEffectCompletionUnknown: (
-      input: Parameters<typeof repository.markEffectCompletionUnknown>[0],
-    ) => repository.markEffectCompletionUnknown(input),
-    failEffect: (input: Parameters<typeof repository.failEffect>[0]) =>
-      repository.failEffect(input),
-    getEffect: (effectId: string, tenantId: string) => repository.getEffect(effectId, tenantId),
-    reconcileEffect: (input: Parameters<typeof repository.reconcileEffect>[0]) =>
-      repository.reconcileEffect(input),
-    isActionAllowed: async (_tenantId: string, action: string) =>
-      demoOpen || registry.resolve(action) !== null,
-  };
-  const executor = createAdapterExecutor(registry);
+    // Task 3 factory — never CapabilityTokenIssuer.generate() for production authority.
+    const capability = createCapabilityAuthority(process.env, repository);
+    assertDurableCapabilityStores(capability, repository);
 
-  const reconcileWorkerId =
-    process.env.COMMANDER_RECONCILE_WORKER_ID?.trim() || ADAPTER_OPS_RECONCILE_WORKER_ID;
-  const compensationWorkerId = ADAPTER_OPS_COMPENSATION_WORKER_ID;
-
-  // P0: register BOTH daemon identities before claim/admit (postgres or injected registry).
-  // Fail-closed tenant scope matches worker-plane (COMMANDER_WORKER_TENANTS).
-  let reconcileGeneration = Number(process.env.COMMANDER_RECONCILE_WORKER_GENERATION ?? 1);
-  let compensationGeneration = 1;
-  let reconcileClaimSecret: string | undefined;
-  let compensationClaimSecret: string | undefined;
-  const mustRegister = Boolean(handle.postgresPool) || Boolean(options.workerRegistry);
-  if (mustRegister) {
-    const tenantIds = resolveAdapterOpsTenantScope(process.env);
-    const workerRegistry =
-      options.workerRegistry ?? new PostgresAdapterOpsWorkerRegistry(handle.postgresPool!);
-    const registered = await registerAdapterOpsDaemonWorkers(workerRegistry, tenantIds, {
-      reconcileWorkerId,
-      compensationWorkerId,
-      reconcilePreviousClaimSecret:
-        process.env.COMMANDER_RECONCILE_CLAIM_SECRET?.trim() || undefined,
-      compensationPreviousClaimSecret:
-        process.env.COMMANDER_COMPENSATION_CLAIM_SECRET?.trim() || undefined,
-    });
-    reconcileGeneration = registered.reconcile.generation;
-    compensationGeneration = registered.compensation.generation;
-    reconcileClaimSecret = registered.reconcile.claimSecret;
-    compensationClaimSecret = registered.compensation.claimSecret;
-  }
-
-  // Compensation path: broker affinity MUST match admit lease workerId (not adapter-ops-worker).
-  const compensationBroker = new EffectBroker(
-    tokens,
-    policy,
-    kernelPort,
-    executor,
-    audit,
-    productionCapabilityBrokerOptions(
-      capability,
-      compensationWorkerId,
-      compensationGeneration,
-    ),
-  );
-  const reconciliation = new ReconciliationDaemon({
-    repository,
-    brokerFactory: () =>
-      new EffectBroker(
-        tokens,
-        policy,
-        kernelPort,
-        {
-          execute: async () => {
-            throw new Error('reconcile must not execute writes');
-          },
-        },
-        audit,
-        productionCapabilityBrokerOptions(
-          capability,
-          reconcileWorkerId,
-          reconcileGeneration,
+    const cellTenantId = process.env.COMMANDER_CELL_TENANT_ID?.trim() ?? '';
+    if (!cellTenantId) {
+      throw new Error(
+        `${COMMANDER_CELL_TENANT_ID_REQUIRED}: set COMMANDER_CELL_TENANT_ID (no silent "local" fallback)`,
+      );
+    }
+    const credentials = EnvAdapterCredentialProvider.fromProcessEnv();
+    const registry = createProductionRegistry(credentials, egressAllowlist);
+    const issuer = capability.issuer;
+    const tokens = capability.verifier;
+    const policy = demoOpen ? createHollowDemoPolicy() : createRegistryPolicy(registry);
+    const audit = createStdoutAuditSink();
+    const kernelPort = {
+      admitEffect: (input: Parameters<typeof repository.admitEffect>[0]) =>
+        repository.admitEffect(input),
+      completeEffect: (
+        effectId: string,
+        tenantId: string,
+        lease: Parameters<typeof repository.completeEffect>[2],
+        response: Record<string, unknown>,
+        actor: string,
+      ) => repository.completeEffect(effectId, tenantId, lease, response, actor),
+      completeEffectWithEvidence: (
+        effectId: string,
+        tenantId: string,
+        lease: Parameters<typeof repository.completeEffectWithEvidence>[2],
+        response: Record<string, unknown>,
+        actor: string,
+        evidence: EvidenceRecord,
+      ) =>
+        repository.completeEffectWithEvidence(
+          effectId,
+          tenantId,
+          lease,
+          response,
+          actor,
+          { ...evidence, body: Object.fromEntries(Object.entries(evidence.body)) },
         ),
-      ),
-    registry,
-    pollIntervalMs: Number(process.env.COMMANDER_RECONCILE_INTERVAL_MS ?? 5_000),
-    batchSize: Number(process.env.COMMANDER_RECONCILE_BATCH_SIZE ?? 50),
-    actor: reconcileWorkerId,
-    workerId: reconcileWorkerId,
-    workerGeneration: reconcileGeneration,
-    claimSecret: reconcileClaimSecret,
-  });
-  const compensation = new CompensationDaemon({
-    repository,
-    broker: compensationBroker,
-    registry,
-    tokenProvider: async ({ tenantId, runId, stepId, action, payload }) =>
-      issueCompensationCapabilityToken({
-        issuer,
-        tenantId,
-        runId,
-        stepId,
-        action,
-        payload: payload ?? {},
-        workerId: compensationWorkerId,
-        workerGeneration: compensationGeneration,
-      }),
-    pollIntervalMs: Number(process.env.COMMANDER_COMPENSATION_INTERVAL_MS ?? 5_000),
-    batchSize: Number(process.env.COMMANDER_COMPENSATION_BATCH_SIZE ?? 50),
-    workerId: compensationWorkerId,
-    workerGeneration: compensationGeneration,
-    claimSecret: compensationClaimSecret,
-    audit,
-  });
-  return {
-    reconciliation,
-    compensation,
-    demoOpenHollowPep: demoOpen,
-    requiresDurableClaim: mustRegister,
-    workers: {
-      reconcile: {
-        id: reconcileWorkerId,
-        generation: reconcileGeneration,
-        ...(reconcileClaimSecret ? { claimSecret: reconcileClaimSecret } : {}),
+      failEffectWithEvidence: (
+        input: Parameters<NonNullable<EffectKernelPort['failEffectWithEvidence']>>[0],
+      ) =>
+        repository.failEffectWithEvidence({
+          ...input,
+          evidence: {
+            ...input.evidence,
+            body: Object.fromEntries(Object.entries(input.evidence.body)),
+          },
+        }),
+      markEffectCompletionUnknown: (
+        input: Parameters<typeof repository.markEffectCompletionUnknown>[0],
+      ) => repository.markEffectCompletionUnknown(input),
+      failEffect: (input: Parameters<typeof repository.failEffect>[0]) =>
+        repository.failEffect(input),
+      getEffect: (effectId: string, tenantId: string) => repository.getEffect(effectId, tenantId),
+      listEffectsForRun: (runId: string, tenantId: string) =>
+        repository.listEffectsForRun(runId, tenantId),
+      listEvents: (runId: string, tenantId: string) => repository.listEvents(runId, tenantId),
+      reconcileEffect: (input: Parameters<typeof repository.reconcileEffect>[0]) =>
+        repository.reconcileEffect(input),
+      getOperationsReadiness: (tenantId: string) => repository.getOperationsReadiness(tenantId),
+      isActionAllowed: async (_tenantId: string, action: string) =>
+        demoOpen || registry.resolve(action) !== null,
+    };
+    const executor = createAdapterExecutor(registry);
+
+    const reconcileWorkerId = adapterOpsWorkerId('reconcile', instanceId);
+    const compensationWorkerId = adapterOpsWorkerId('compensation', instanceId);
+
+    // P0: register BOTH daemon identities before claim/admit (postgres or injected registry).
+    // Fail-closed tenant scope matches worker-plane (COMMANDER_WORKER_TENANTS).
+    let reconcileGeneration = Number(process.env.COMMANDER_RECONCILE_WORKER_GENERATION ?? 1);
+    let compensationGeneration = 1;
+    let reconcileClaimSecret: string = randomUUID();
+    let compensationClaimSecret: string = randomUUID();
+    let lifecycleRegistry: AdapterOpsWorkerRegistry | undefined;
+    const mustRegister = Boolean(handle.postgresPool) || Boolean(options.workerRegistry);
+    if (mustRegister) {
+      const tenantIds = resolveAdapterOpsTenantScope(process.env);
+      const claimSecretDir = process.env.COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR?.trim();
+      if (!claimSecretDir) {
+        throw new Error(`${CLAIM_SECRET_DIR_REQUIRED}: set COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR`);
+      }
+      lifecycleRegistry =
+        options.workerRegistry ?? new PostgresAdapterOpsWorkerRegistry(handle.postgresPool!);
+      const registered = await registerAdapterOpsDaemonWorkers(lifecycleRegistry, tenantIds, {
+        instanceId,
+        claimSecretDir,
+      });
+      reconcileGeneration = registered.reconcile.generation;
+      compensationGeneration = registered.compensation.generation;
+      reconcileClaimSecret = registered.reconcile.claimSecret;
+      compensationClaimSecret = registered.compensation.claimSecret;
+    }
+
+    const compensationKernelPort = {
+      ...kernelPort,
+      admitEffect: (input: Parameters<typeof repository.admitEffect>[0]) =>
+        input.compensationBinding
+          ? repository.admitCompensationEffect({
+              ...input,
+              requestId: input.compensationBinding.requestId,
+              outboxMessageId: '',
+              outboxClaimToken: input.compensationBinding.claimToken,
+            })
+          : repository.admitEffect(input),
+    };
+
+    // Compensation path: broker affinity MUST match admit lease workerId (not adapter-ops-worker).
+    const compensationBroker = new EffectBroker(
+      tokens,
+      createGovernedCompensationPolicy(registry),
+      compensationKernelPort,
+      executor,
+      audit,
+      {
+        ...productionCapabilityBrokerOptions(
+          capability,
+          compensationWorkerId,
+          compensationGeneration,
+        ),
+        ...(evidenceSigner
+          ? { evidenceSigner, requireEvidencePersistence: true as const }
+          : {}),
       },
-      compensation: {
-        id: compensationWorkerId,
-        generation: compensationGeneration,
-        ...(compensationClaimSecret ? { claimSecret: compensationClaimSecret } : {}),
+    );
+    const reconciliation = new ReconciliationDaemon({
+      repository,
+      brokerFactory: () =>
+        new EffectBroker(
+          tokens,
+          policy,
+          kernelPort,
+          {
+            execute: async () => {
+              throw new Error('reconcile must not execute writes');
+            },
+          },
+          audit,
+          productionCapabilityBrokerOptions(capability, reconcileWorkerId, reconcileGeneration),
+        ),
+      registry,
+      pollIntervalMs: Number(process.env.COMMANDER_RECONCILE_INTERVAL_MS ?? 5_000),
+      batchSize: Number(process.env.COMMANDER_RECONCILE_BATCH_SIZE ?? 50),
+      workerId: reconcileWorkerId,
+      workerGeneration: reconcileGeneration,
+      claimSecret: reconcileClaimSecret,
+      ...(evidenceSigner ? { evidenceSigner } : {}),
+      heartbeat:
+        lifecycleRegistry && reconcileClaimSecret
+          ? () =>
+              lifecycleRegistry!.heartbeat(
+                reconcileWorkerId,
+                reconcileGeneration,
+                reconcileClaimSecret,
+              )
+          : undefined,
+      drain:
+        lifecycleRegistry && reconcileClaimSecret
+          ? () =>
+              lifecycleRegistry!.drain(reconcileWorkerId, reconcileGeneration, reconcileClaimSecret)
+          : undefined,
+      telemetry: emitOpsLoopTelemetry,
+    });
+    const compensation = new CompensationDaemon({
+      repository: compensationRepository,
+      evidenceRepository: repository,
+      broker: compensationBroker,
+      registry,
+      tokenProvider: async (authorization) =>
+        issueCompensationCapabilityToken({
+          issuer,
+          authorization,
+          workerId: compensationWorkerId,
+          workerGeneration: compensationGeneration,
+        }),
+      pollIntervalMs: Number(process.env.COMMANDER_COMPENSATION_INTERVAL_MS ?? 5_000),
+      batchSize: Number(process.env.COMMANDER_COMPENSATION_BATCH_SIZE ?? 50),
+      workerId: compensationWorkerId,
+      workerGeneration: compensationGeneration,
+      claimSecret: compensationClaimSecret,
+      ...(evidenceSigner ? { evidenceSigner } : {}),
+      heartbeat:
+        lifecycleRegistry && compensationClaimSecret
+          ? () =>
+              lifecycleRegistry!.heartbeat(
+                compensationWorkerId,
+                compensationGeneration,
+                compensationClaimSecret,
+              )
+          : undefined,
+      drain:
+        lifecycleRegistry && compensationClaimSecret
+          ? () =>
+              lifecycleRegistry!.drain(
+                compensationWorkerId,
+                compensationGeneration,
+                compensationClaimSecret,
+              )
+          : undefined,
+      onFatalInvariant: lifecycleRegistry
+        ? async () => {
+            const drained = await Promise.allSettled([
+              lifecycleRegistry!.drain(
+                reconcileWorkerId,
+                reconcileGeneration,
+                reconcileClaimSecret,
+              ),
+              lifecycleRegistry!.drain(
+                compensationWorkerId,
+                compensationGeneration,
+                compensationClaimSecret,
+              ),
+            ]);
+            const failures = drained.flatMap((result) =>
+              result.status === 'rejected' ? [result.reason] : [],
+            );
+            if (failures.length > 0) {
+              throw new AggregateError(failures, 'adapter-ops authority drain failed');
+            }
+          }
+        : undefined,
+      audit,
+      telemetry: emitOpsLoopTelemetry,
+    });
+    let safeStopPromise: Promise<void> | undefined;
+    const safeStop = (reason: string): Promise<void> => {
+      safeStopPromise ??= (async () => {
+        const errors: unknown[] = [];
+        if (lifecycleRegistry && reconcileClaimSecret && compensationClaimSecret) {
+          const drained = await Promise.allSettled([
+            lifecycleRegistry.drain(reconcileWorkerId, reconcileGeneration, reconcileClaimSecret),
+            lifecycleRegistry.drain(
+              compensationWorkerId,
+              compensationGeneration,
+              compensationClaimSecret,
+            ),
+          ]);
+          for (const result of drained) {
+            if (result.status === 'rejected') errors.push(result.reason);
+          }
+        }
+        const stopped = await Promise.allSettled([
+          reconciliation.stop({ drain: false }),
+          compensation.stop({ drain: false }),
+        ]);
+        for (const result of stopped) {
+          if (result.status === 'rejected') errors.push(result.reason);
+        }
+        if (errors.length > 0) {
+          throw new AggregateError(errors, `adapter-ops safe stop failed: ${reason}`);
+        }
+      })();
+      return safeStopPromise;
+    };
+    return {
+      reconciliation,
+      compensation,
+      ping: async () => {
+        if (handle.postgresPool) {
+          await handle.postgresPool.query('SELECT 1');
+        } else {
+          await repository.getOperationsReadiness(cellTenantId);
+        }
+        return true;
       },
-    },
-    compensationLocalWorkerId: compensationWorkerId,
-    close: async () => {
+      operationsReadiness: () => repository.getOperationsReadiness(cellTenantId),
+      safeStop,
+      demoOpenHollowPep: demoOpen,
+      requiresDurableClaim: mustRegister,
+      workers: {
+        reconcile: {
+          id: reconcileWorkerId,
+          generation: reconcileGeneration,
+          ...(reconcileClaimSecret ? { claimSecret: reconcileClaimSecret } : {}),
+        },
+        compensation: {
+          id: compensationWorkerId,
+          generation: compensationGeneration,
+          ...(compensationClaimSecret ? { claimSecret: compensationClaimSecret } : {}),
+        },
+      },
+      compensationLocalWorkerId: compensationWorkerId,
+      close: async () => {
+        await handle.close();
+      },
+    };
+  } catch (error) {
+    try {
       await handle.close();
-    },
-  };
+    } catch (closeError) {
+      throw new AggregateError(
+        [error, closeError],
+        'adapter-ops startup failed and repository cleanup was incomplete',
+      );
+    }
+    throw error;
+  }
 }

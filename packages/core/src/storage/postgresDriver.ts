@@ -13,6 +13,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import { reportSilentFailure } from '../silentFailureReporter';
 import type {
   DriverDescription,
@@ -374,9 +375,7 @@ export class PostgresDriver implements PersistentDriver {
     }
     this.connectionString = config.path;
     this.namespace = config.namespace;
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const Pool = require('pg').Pool as new (opts: { connectionString: string }) => PgPool;
-    this.pool = new Pool({ connectionString: this.connectionString });
+    this.pool = createVerifiedPostgresPool({ connectionString: this.connectionString });
   }
 
   getTable<T extends { id: string }>(name: string, schema: TableSchema<T>): PersistentTable<T> {

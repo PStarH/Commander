@@ -86,19 +86,19 @@ export function createGitHubPullRequestCreateAdapter(
       base,
     );
     if (pulls.length === 0) {
-      return { pulls, outcome: { status: 'UNKNOWN' } };
+      return { pulls, outcome: { status: 'UNKNOWN', error: { code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE', message: 'Remote outcome is not yet provable' } } };
     }
     if (pulls.length > 1) {
       return {
         pulls,
-        outcome: { status: 'UNKNOWN' },
+        outcome: { status: 'UNKNOWN', error: { code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE', message: 'Remote outcome is not yet provable' } },
       };
     }
     const pull = pulls[0]!;
     return {
       pulls,
       outcome: {
-        status: 'COMPLETED',
+        status: 'APPLIED',
         response: {
           prNumber: pull.number,
           url: pull.html_url,
@@ -163,7 +163,7 @@ export function createGitHubPullRequestCreateAdapter(
     async queryOutcome(input: AdapterQueryInput): Promise<EffectRemoteOutcome> {
       const marker = githubPrBodyMarker(input.tenantId, input.idempotencyKey);
       const result = await findByMarker(input, marker);
-      return result.outcome ?? { status: 'UNKNOWN' };
+      return result.outcome ?? { status: 'UNKNOWN', error: { code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE', message: 'Remote outcome is not yet provable' } };
     },
 
     async compensate(input: AdapterCompensateInput): Promise<Record<string, unknown>> {
@@ -246,7 +246,7 @@ export function createGitHubPullRequestCreateAdapter(
         input.compensationResponse?.prNumber ?? input.request.prNumber,
       );
       if (!Number.isFinite(prNumber)) {
-        return { status: 'UNKNOWN' };
+        return { status: 'UNKNOWN', error: { code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE', message: 'Remote outcome is not yet provable' } };
       }
       const token = await options.credentials.getGitHubToken(input.tenantId, input.destination);
       const response = await fetchImpl(
@@ -264,11 +264,11 @@ export function createGitHubPullRequestCreateAdapter(
       const pull = await readJsonResponse<GitHubPull>(response);
       if (pull.state === 'closed') {
         return {
-          status: 'COMPLETED',
+          status: 'APPLIED',
           response: { prNumber: pull.number, state: pull.state },
         };
       }
-      return { status: 'UNKNOWN' };
+      return { status: 'UNKNOWN', error: { code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE', message: 'Remote outcome is not yet provable' } };
     },
   };
 }

@@ -1,5 +1,34 @@
 /** PostgreSQL schema for the Commander execution kernel. */
-export const KERNEL_SCHEMA_VERSION = '2026-07-21.16';
+export const KERNEL_SCHEMA_VERSION = '2026-07-24.18';
+/** Forward-only Task 1 final-review migration; the applied 2026-07-23.17 bodies stay immutable. */
+export const KERNEL_TASK1_FINAL_SCHEMA_VERSION = '2026-07-25.1';
+/** Forward-only correction: only completed Class A receipts bypass readiness. */
+export const KERNEL_TASK1_REPLAY_GATE_SCHEMA_VERSION = '2026-07-26.1';
+
+/** Forward-only Task 1 role closure layered on top of the immutable 2026-07-21.16 baseline. */
+export const KERNEL_TASK1_ROLE_CLOSURE_SQL = `
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_adapter_ops') THEN
+    CREATE ROLE commander_adapter_ops NOLOGIN NOBYPASSRLS NOCREATEROLE;
+  ELSE
+    ALTER ROLE commander_adapter_ops NOBYPASSRLS NOCREATEROLE;
+  END IF;
+END $$;
+
+GRANT commander_adapter_ops TO commander_owner;
+GRANT USAGE ON SCHEMA public TO commander_adapter_ops;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM commander_adapter_ops;
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM commander_adapter_ops;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL PRIVILEGES ON TABLES FROM commander_adapter_ops;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL PRIVILEGES ON SEQUENCES FROM commander_adapter_ops;
+
+-- Runtime roles must use owner-owned RPCs for worker registration and effect admission.
+REVOKE INSERT, UPDATE, DELETE ON TABLE commander_workers FROM commander_app;
+REVOKE INSERT, UPDATE, DELETE ON TABLE commander_workers FROM commander_worker;
+REVOKE INSERT ON TABLE commander_effects FROM commander_app;
+REVOKE INSERT ON TABLE commander_effects FROM commander_worker;
+`;
 
 export const KERNEL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS commander_kernel_schema (
@@ -59,7 +88,7 @@ CREATE TABLE IF NOT EXISTS commander_steps (
   run_id TEXT NOT NULL REFERENCES commander_runs(id) ON DELETE CASCADE,
   tenant_id TEXT NOT NULL,
   kind TEXT NOT NULL,
-  state TEXT NOT NULL CHECK (state IN ('PENDING','RUNNING','WAITING_FOR_HUMAN','RETRY_WAIT','SUCCEEDED','FAILED','CANCELLED','SKIPPED')),
+  state TEXT NOT NULL CHECK (state IN ('PENDING','RUNNING','WAITING_FOR_HUMAN','WAITING_FOR_RECONCILIATION','RETRY_WAIT','SUCCEEDED','FAILED','CANCELLED','SKIPPED')),
   version BIGINT NOT NULL DEFAULT 1,
   attempt INTEGER NOT NULL DEFAULT 0,
   max_attempts INTEGER NOT NULL DEFAULT 1,
@@ -111,7 +140,7 @@ CREATE TABLE IF NOT EXISTS commander_effects (
   idempotency_key TEXT NOT NULL,
   request_hash TEXT NOT NULL DEFAULT '',
   policy_decision_id TEXT NOT NULL,
-  state TEXT NOT NULL CHECK (state IN ('ADMITTED','COMPLETION_UNKNOWN','COMPLETED','FAILED')),
+  state TEXT NOT NULL CHECK (state IN ('ADMITTED','COMPLETION_UNKNOWN','CONFIRMED_NOT_APPLIED','COMPLETED','FAILED')),
   request JSONB NOT NULL DEFAULT '{}'::jsonb,
   response JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -120,14 +149,34 @@ CREATE TABLE IF NOT EXISTS commander_effects (
 );
 ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS request_hash TEXT NOT NULL DEFAULT '';
 ALTER TABLE commander_effects DROP CONSTRAINT IF EXISTS commander_effects_state_check;
-ALTER TABLE commander_effects ADD CONSTRAINT commander_effects_state_check CHECK (state IN ('ADMITTED','COMPLETION_UNKNOWN','COMPLETED','FAILED'));
+ALTER TABLE commander_effects ADD CONSTRAINT commander_effects_state_check CHECK (state IN ('ADMITTED','COMPLETION_UNKNOWN','CONFIRMED_NOT_APPLIED','COMPLETED','FAILED'));
 -- L3-08a / L4 reconcile scheduling (aligned with sqliteSchema)
 ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS governed_action_deadline_at TIMESTAMPTZ;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_max_attempts INTEGER;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_initial_delay_ms INTEGER;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_max_delay_ms INTEGER;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_deadline_at TIMESTAMPTZ;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_disposition TEXT;
 ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_after TIMESTAMPTZ;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_observed_at TIMESTAMPTZ;
 ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_claim_token TEXT;
 ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_claim_expires_at TIMESTAMPTZ;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_claimed_at TIMESTAMPTZ;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_claim_worker_id TEXT;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_claim_worker_generation BIGINT;
 ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_last_error JSONB;
 ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_escalated_at TIMESTAMPTZ;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_escalation_code TEXT;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS completion_unknown_worker_id TEXT;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS completion_unknown_worker_generation BIGINT;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS completion_unknown_lease_token_hash BYTEA;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS completion_unknown_fencing_epoch BIGINT;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_last_claim_token_hash BYTEA;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_last_claim_worker_id TEXT;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_last_claim_worker_generation BIGINT;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_last_request_fingerprint BYTEA;
+ALTER TABLE commander_effects ADD COLUMN IF NOT EXISTS reconcile_last_result JSONB;
 CREATE INDEX IF NOT EXISTS commander_effects_reconcile_ready_idx
   ON commander_effects (reconcile_after)
   WHERE state = 'COMPLETION_UNKNOWN';
@@ -424,6 +473,7 @@ export const TENANT_ID_TABLES = [
   'commander_capability_revocations',
   'commander_capability_replays',
   'commander_action_kill_switches',
+  'commander_evidence_receipts',
 ] as const;
 
 /**
@@ -541,6 +591,9 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_worker') THEN
     CREATE ROLE commander_worker NOLOGIN;
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_adapter_ops') THEN
+    CREATE ROLE commander_adapter_ops NOLOGIN NOBYPASSRLS NOCREATEROLE;
+  END IF;
 END $$;
 
 -- Owner role: runs migrations, owns tables, can read the migrations table.
@@ -561,6 +614,15 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO c
 GRANT commander_app TO commander_owner;
 GRANT commander_scheduler TO commander_owner;
 GRANT commander_worker TO commander_owner;
+GRANT commander_adapter_ops TO commander_owner;
+
+-- Action operations has no table DML. Every mutation is an owner-defined RPC.
+GRANT USAGE ON SCHEMA public TO commander_adapter_ops;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM commander_adapter_ops;
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM commander_adapter_ops;
+GRANT SELECT ON TABLE commander_workers TO commander_adapter_ops;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL PRIVILEGES ON TABLES FROM commander_adapter_ops;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL PRIVILEGES ON SEQUENCES FROM commander_adapter_ops;
 
 -- App role: least-privilege DML only. Cannot alter schema or bypass RLS.
 GRANT USAGE ON SCHEMA public TO commander_app;
@@ -568,6 +630,10 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO commander
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO commander_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO commander_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO commander_app;
+-- Runtime admission locks are owner-owned RPC work. API replicas cannot mutate
+-- or directly lock the authoritative worker registry.
+REVOKE INSERT, UPDATE, DELETE ON TABLE commander_workers FROM commander_app;
+REVOKE INSERT ON TABLE commander_effects FROM commander_app;
 
 -- Scheduler role: can bypass RLS for cross-tenant recovery and scanning.
 -- It must still be explicitly opted into via PostgresKernelRepositoryOptions.schedulerMode.
@@ -593,7 +659,6 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO commander_worker;
 
 GRANT INSERT ON TABLE
   commander_events,
-  commander_effects,
   commander_tenant_execution_usage,
   commander_timers,
   commander_interactions,
@@ -631,6 +696,7 @@ REVOKE INSERT, UPDATE, DELETE ON TABLE commander_tenant_execution_control FROM c
 REVOKE INSERT, UPDATE, DELETE ON TABLE commander_outbox_dlq FROM commander_worker;
 REVOKE INSERT ON TABLE commander_runs FROM commander_worker;
 REVOKE INSERT ON TABLE commander_steps FROM commander_worker;
+REVOKE INSERT ON TABLE commander_effects FROM commander_worker;
 
 -- Capability revoke/replay — no DELETE (tombstones via INSERT only).
 REVOKE DELETE ON TABLE commander_capability_revocations FROM commander_worker;
@@ -806,6 +872,10 @@ DECLARE
 BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('commander_worker_register:' || COALESCE(p_id, '')));
 
+  IF session_user NOT IN ('commander_worker', 'commander_adapter_ops') THEN
+    RAISE EXCEPTION 'WORKER_REGISTER_RUNTIME_ROLE_REQUIRED';
+  END IF;
+
   IF p_id IS NULL OR length(p_id) = 0 THEN
     RAISE EXCEPTION 'WORKER_REGISTER_INVALID: id required';
   END IF;
@@ -828,6 +898,24 @@ BEGIN
   IF p_capabilities IS NULL OR jsonb_typeof(p_capabilities) <> 'array'
      OR jsonb_array_length(p_capabilities) = 0 THEN
     RAISE EXCEPTION 'WORKER_REGISTER_INVALID: capabilities must be a non-empty array';
+  END IF;
+
+  IF session_user = 'commander_adapter_ops' THEN
+    IF p_kind IS DISTINCT FROM 'adapter-ops'
+       OR p_identity_subject IS DISTINCT FROM 'db:commander_adapter_ops'
+       OR NOT (
+         (p_id LIKE 'reconcile:%' AND p_capabilities = '["effect.reconcile"]'::jsonb)
+         OR (p_id LIKE 'compensation:%' AND p_capabilities = '["effect.compensate"]'::jsonb)
+       ) THEN
+      RAISE EXCEPTION 'ADAPTER_OPS_SERVER_ASSIGNMENT_REQUIRED';
+    END IF;
+  ELSE
+    IF p_kind = 'adapter-ops'
+       OR p_id LIKE 'reconcile:%'
+       OR p_id LIKE 'compensation:%'
+       OR p_capabilities ?| ARRAY['effect.reconcile', 'effect.compensate'] THEN
+      RAISE EXCEPTION 'GENERIC_WORKER_RESERVED_CAPABILITY';
+    END IF;
   END IF;
 
   FOR v_cap IN SELECT jsonb_array_elements_text(p_capabilities)
@@ -884,7 +972,7 @@ BEGIN
     p_id, p_kind, p_version,
     p_capabilities,
     COALESCE(p_labels, '{}'::jsonb),
-    p_max_concurrency, 'ACTIVE', 1, 0, p_identity_subject, p_tenant_ids, now(), now()
+    p_max_concurrency, 'ACTIVE', 1, 0, 'db:' || session_user, p_tenant_ids, now(), now()
   )
   ON CONFLICT (id) DO UPDATE SET
     kind = EXCLUDED.kind,
@@ -895,7 +983,7 @@ BEGIN
     status = 'ACTIVE',
     generation = commander_workers.generation + 1,
     active_steps = 0,
-    identity_subject = EXCLUDED.identity_subject,
+    identity_subject = 'db:' || session_user,
     tenant_ids = EXCLUDED.tenant_ids,
     registered_at = now(),
     last_heartbeat_at = now()
@@ -1068,6 +1156,1029 @@ END $$;
 GRANT EXECUTE ON FUNCTION register_worker(text, text, text, jsonb, jsonb, integer, text, jsonb, text) TO commander_worker;
 GRANT EXECUTE ON FUNCTION heartbeat_worker(text, bigint, integer, text) TO commander_worker;
 GRANT EXECUTE ON FUNCTION drain_worker(text, bigint, text) TO commander_worker;
+`;
+
+/** Dedicated, server-assigned action-operations worker authority. */
+export const KERNEL_ADAPTER_OPS_SQL = `
+CREATE OR REPLACE FUNCTION register_adapter_ops_worker(
+  p_role text,
+  p_instance_id text,
+  p_tenant_ids jsonb,
+  p_previous_claim_secret text DEFAULT NULL
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  v_capability text;
+  v_worker_id text;
+BEGIN
+  IF session_user IS DISTINCT FROM 'commander_adapter_ops' THEN
+    RAISE EXCEPTION 'ADAPTER_OPS_ROLE_REQUIRED';
+  END IF;
+  IF p_role = 'reconcile' THEN
+    v_capability := 'effect.reconcile';
+  ELSIF p_role = 'compensation' THEN
+    v_capability := 'effect.compensate';
+  ELSE
+    RAISE EXCEPTION 'ADAPTER_OPS_ROLE_INVALID';
+  END IF;
+  IF p_instance_id IS NULL OR length(trim(p_instance_id)) = 0
+     OR p_instance_id !~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$' THEN
+    RAISE EXCEPTION 'ADAPTER_OPS_INSTANCE_INVALID';
+  END IF;
+  v_worker_id := p_role || ':' || p_instance_id;
+  RETURN register_worker(
+    v_worker_id,
+    'adapter-ops',
+    'v1',
+    jsonb_build_array(v_capability),
+    jsonb_build_object('logicalRole', p_role),
+    1,
+    'db:' || session_user,
+    p_tenant_ids,
+    p_previous_claim_secret
+  );
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION heartbeat_adapter_ops_worker(
+  p_worker_id text,
+  p_generation bigint,
+  p_claim_secret text
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+BEGIN
+  IF session_user IS DISTINCT FROM 'commander_adapter_ops' OR NOT EXISTS (
+    SELECT 1 FROM commander_workers
+    WHERE id=p_worker_id
+      AND identity_subject='db:commander_adapter_ops'
+      AND capabilities IN ('["effect.reconcile"]'::jsonb, '["effect.compensate"]'::jsonb)
+      AND jsonb_array_length(capabilities)=1
+  ) THEN
+    RETURN NULL;
+  END IF;
+  RETURN heartbeat_worker(p_worker_id, p_generation, 0, p_claim_secret);
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION get_operations_readiness(
+  p_tenant_id text
+) RETURNS TABLE(
+  reconciliation_workers bigint,
+  compensation_workers bigint,
+  checked_at timestamptz
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  v_checked_at timestamptz := clock_timestamp();
+BEGIN
+  IF session_user IS DISTINCT FROM 'commander_adapter_ops' THEN
+    RAISE EXCEPTION 'ADAPTER_OPS_ROLE_REQUIRED';
+  END IF;
+  IF p_tenant_id IS NULL OR length(trim(p_tenant_id)) = 0
+     OR COALESCE(current_setting('app.tenant_scope', true), '') = ''
+     OR NOT p_tenant_id = ANY(
+       string_to_array(current_setting('app.tenant_scope', true), ',')
+     ) THEN
+    RAISE EXCEPTION 'TENANT_SCOPE_REQUIRED';
+  END IF;
+
+  RETURN QUERY
+  WITH qualified_workers AS MATERIALIZED (
+    SELECT w.capabilities
+    FROM commander_workers w
+    WHERE w.status = 'ACTIVE'
+      AND w.identity_subject = 'db:commander_adapter_ops'
+      AND w.tenant_ids ? p_tenant_id
+      AND jsonb_array_length(w.capabilities) = 1
+      AND w.capabilities IN ('["effect.reconcile"]'::jsonb, '["effect.compensate"]'::jsonb)
+      AND w.last_heartbeat_at > w.registered_at
+      AND w.last_heartbeat_at >= v_checked_at - interval '30 seconds'
+  )
+  SELECT
+    count(*) FILTER (WHERE capabilities = '["effect.reconcile"]'::jsonb),
+    count(*) FILTER (WHERE capabilities = '["effect.compensate"]'::jsonb),
+    v_checked_at
+  FROM qualified_workers;
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION drain_adapter_ops_worker(
+  p_worker_id text,
+  p_generation bigint,
+  p_claim_secret text
+) RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+BEGIN
+  IF session_user IS DISTINCT FROM 'commander_adapter_ops' OR NOT EXISTS (
+    SELECT 1 FROM commander_workers
+    WHERE id=p_worker_id
+      AND identity_subject='db:commander_adapter_ops'
+      AND capabilities IN ('["effect.reconcile"]'::jsonb, '["effect.compensate"]'::jsonb)
+      AND jsonb_array_length(capabilities)=1
+  ) THEN
+    RETURN false;
+  END IF;
+  RETURN drain_worker(p_worker_id, p_generation, p_claim_secret);
+END;
+$fn$;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='commander_owner') THEN
+    ALTER FUNCTION register_adapter_ops_worker(text,text,jsonb,text) OWNER TO commander_owner;
+    ALTER FUNCTION heartbeat_adapter_ops_worker(text,bigint,text) OWNER TO commander_owner;
+    ALTER FUNCTION get_operations_readiness(text) OWNER TO commander_owner;
+    ALTER FUNCTION drain_adapter_ops_worker(text,bigint,text) OWNER TO commander_owner;
+  END IF;
+END $$;
+
+REVOKE ALL ON FUNCTION register_adapter_ops_worker(text,text,jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION heartbeat_adapter_ops_worker(text,bigint,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION get_operations_readiness(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION drain_adapter_ops_worker(text,bigint,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION register_adapter_ops_worker(text,text,jsonb,text) FROM commander_worker;
+REVOKE ALL ON FUNCTION heartbeat_adapter_ops_worker(text,bigint,text) FROM commander_worker;
+REVOKE ALL ON FUNCTION get_operations_readiness(text) FROM commander_worker;
+REVOKE ALL ON FUNCTION drain_adapter_ops_worker(text,bigint,text) FROM commander_worker;
+REVOKE ALL ON FUNCTION register_worker(text,text,text,jsonb,jsonb,integer,text,jsonb,text) FROM commander_adapter_ops;
+REVOKE ALL ON FUNCTION heartbeat_worker(text,bigint,integer,text) FROM commander_adapter_ops;
+REVOKE ALL ON FUNCTION drain_worker(text,bigint,text) FROM commander_adapter_ops;
+GRANT EXECUTE ON FUNCTION register_adapter_ops_worker(text,text,jsonb,text) TO commander_adapter_ops;
+GRANT EXECUTE ON FUNCTION heartbeat_adapter_ops_worker(text,bigint,text) TO commander_adapter_ops;
+GRANT EXECUTE ON FUNCTION get_operations_readiness(text) TO commander_adapter_ops;
+GRANT EXECUTE ON FUNCTION drain_adapter_ops_worker(text,bigint,text) TO commander_adapter_ops;
+`;
+
+/** Atomic forward Class A admission under the migration owner's authority. */
+export const KERNEL_ADMIT_CLASS_A_SQL = `
+CREATE OR REPLACE FUNCTION commander_is_class_a_effect_type(p_type text) RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+STRICT
+SET search_path = public
+AS $fn$
+  SELECT CASE
+    WHEN EXISTS (
+      SELECT 1
+      FROM unnest(string_to_array(lower(trim(p_type)), '.')) AS segment
+      WHERE segment IN ('crm','connector','compensate','http','saas','write','mutate','egress')
+    ) THEN true
+    WHEN lower(trim(p_type)) LIKE 'llm.%'
+      OR lower(trim(p_type)) LIKE 'retrieve.%'
+      OR lower(trim(p_type)) LIKE 'read.%'
+      OR lower(trim(p_type)) LIKE 'budget.%'
+      OR lower(trim(p_type)) LIKE 'local.%'
+      OR lower(trim(p_type)) LIKE 'compute.%' THEN false
+    ELSE true
+  END
+$fn$;
+
+CREATE OR REPLACE FUNCTION commander_canonical_jsonb(p_value jsonb) RETURNS text
+LANGUAGE sql
+IMMUTABLE
+STRICT
+SET search_path = public
+AS $fn$
+  SELECT CASE jsonb_typeof(p_value)
+    WHEN 'object' THEN '{' || COALESCE((
+      SELECT string_agg(to_jsonb(entry.key)::text || ':' || commander_canonical_jsonb(entry.value), ',' ORDER BY entry.key)
+      FROM jsonb_each(p_value) AS entry
+    ), '') || '}'
+    WHEN 'array' THEN '[' || COALESCE((
+      SELECT string_agg(commander_canonical_jsonb(item.value), ',' ORDER BY item.ordinality)
+      FROM jsonb_array_elements(p_value) WITH ORDINALITY AS item(value, ordinality)
+    ), '') || ']'
+    ELSE p_value::text
+  END
+$fn$;
+
+CREATE OR REPLACE FUNCTION admit_class_a_effect(
+  p_id text,
+  p_run_id text,
+  p_step_id text,
+  p_tenant_id text,
+  p_type text,
+  p_idempotency_key text,
+  p_request_hash text,
+  p_policy_decision_id text,
+  p_policy_snapshot_id text,
+  p_action_digest text,
+  p_lease_worker_id text,
+  p_lease_worker_generation bigint,
+  p_lease_token text,
+  p_lease_fencing_epoch bigint,
+  p_request jsonb
+) RETURNS TABLE(admitted boolean, reason text, replayed boolean, effect jsonb)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  v_step commander_steps%ROWTYPE;
+  v_existing commander_effects%ROWTYPE;
+  v_inserted commander_effects%ROWTYPE;
+BEGIN
+  IF session_user NOT IN ('commander_app', 'commander_worker') THEN
+    RAISE EXCEPTION 'CLASS_A_ADMISSION_RUNTIME_ROLE_REQUIRED';
+  END IF;
+  IF p_type IS NULL OR length(trim(p_type)) = 0 THEN
+    RAISE EXCEPTION 'EFFECT_TYPE_REQUIRED';
+  END IF;
+  IF lower(trim(p_type)) LIKE 'compensate.%' THEN
+    RAISE EXCEPTION 'COMPENSATION_ADMISSION_UNAVAILABLE';
+  END IF;
+  IF p_tenant_id IS NULL OR length(trim(p_tenant_id)) = 0
+     OR p_request_hash IS NULL OR length(trim(p_request_hash)) = 0
+     OR p_policy_snapshot_id IS NULL OR length(trim(p_policy_snapshot_id)) = 0
+     OR p_lease_worker_id IS NULL OR length(trim(p_lease_worker_id)) = 0 THEN
+    RETURN QUERY SELECT false, 'REQUEST_BINDING_INVALID'::text, false, NULL::jsonb;
+    RETURN;
+  END IF;
+  IF p_request_hash IS DISTINCT FROM encode(
+    sha256(convert_to(commander_canonical_jsonb(p_request), 'UTF8')),
+    'hex'
+  ) THEN
+    RETURN QUERY SELECT false, 'REQUEST_BINDING_INVALID'::text, false, NULL::jsonb;
+    RETURN;
+  END IF;
+
+  SELECT s.* INTO v_step
+  FROM commander_steps s
+  WHERE s.id = p_step_id
+    AND s.run_id = p_run_id
+    AND s.tenant_id = p_tenant_id
+    AND s.state = 'RUNNING'
+    AND s.lease_worker_id = p_lease_worker_id
+    AND s.lease_worker_generation = p_lease_worker_generation
+    AND s.lease_token = p_lease_token
+    AND s.fencing_epoch = p_lease_fencing_epoch
+    AND s.lease_expires_at > clock_timestamp()
+    AND EXISTS (
+      SELECT 1 FROM commander_workers lease_worker
+      WHERE lease_worker.id = p_lease_worker_id
+        AND lease_worker.generation = p_lease_worker_generation
+    )
+  FOR UPDATE OF s;
+
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 'LEASE_LOST'::text, false, NULL::jsonb;
+    RETURN;
+  END IF;
+
+  SELECT e.* INTO v_existing
+  FROM commander_effects e
+  WHERE e.tenant_id = p_tenant_id AND e.idempotency_key = p_idempotency_key;
+  IF FOUND THEN
+    IF v_existing.run_id IS DISTINCT FROM p_run_id
+       OR v_existing.step_id IS DISTINCT FROM p_step_id
+       OR v_existing.type IS DISTINCT FROM p_type
+       OR v_existing.request_hash IS DISTINCT FROM p_request_hash
+       OR v_existing.policy_decision_id IS DISTINCT FROM p_policy_decision_id
+       OR v_existing.policy_snapshot_id IS DISTINCT FROM p_policy_snapshot_id
+       OR v_existing.action_digest IS DISTINCT FROM p_action_digest THEN
+      RETURN QUERY SELECT false, 'IDEMPOTENCY_CONFLICT'::text, false, NULL::jsonb;
+      RETURN;
+    END IF;
+    RETURN QUERY SELECT true, NULL::text, true, to_jsonb(v_existing);
+    RETURN;
+  END IF;
+
+  INSERT INTO commander_effects (
+    id, run_id, step_id, tenant_id, type, idempotency_key, request_hash,
+    policy_decision_id, policy_snapshot_id, action_digest,
+    lease_worker_id, lease_worker_generation, lease_fencing_epoch, state, request
+  ) VALUES (
+    p_id, p_run_id, p_step_id, p_tenant_id, p_type, p_idempotency_key, p_request_hash,
+    p_policy_decision_id, p_policy_snapshot_id, p_action_digest,
+    p_lease_worker_id, p_lease_worker_generation, p_lease_fencing_epoch, 'ADMITTED', p_request
+  ) RETURNING * INTO v_inserted;
+
+  RETURN QUERY SELECT true, NULL::text, false, to_jsonb(v_inserted);
+END;
+$fn$;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_owner') THEN
+    ALTER FUNCTION commander_is_class_a_effect_type(text) OWNER TO commander_owner;
+    ALTER FUNCTION commander_canonical_jsonb(jsonb) OWNER TO commander_owner;
+    ALTER FUNCTION admit_class_a_effect(
+      text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+    ) OWNER TO commander_owner;
+  END IF;
+END $$;
+
+REVOKE ALL ON FUNCTION commander_canonical_jsonb(jsonb) FROM PUBLIC;
+REVOKE ALL ON FUNCTION commander_is_class_a_effect_type(text) FROM PUBLIC;
+
+REVOKE ALL ON FUNCTION admit_class_a_effect(
+  text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION admit_class_a_effect(
+  text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+) TO commander_app;
+GRANT EXECUTE ON FUNCTION admit_class_a_effect(
+  text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+) TO commander_worker;
+`;
+
+/**
+ * Forward-only admission split and adapter-ops authority closure.
+ *
+ * The previous admission implementation becomes an owner-only helper. Runtime
+ * roles can execute exactly one class-bound wrapper selected by the repository.
+ */
+export const KERNEL_TASK1_FINAL_REVIEW_SQL = `
+ALTER FUNCTION admit_class_a_effect(
+  text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+) RENAME TO commander_admit_effect_private;
+
+REVOKE ALL ON FUNCTION commander_admit_effect_private(
+  text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+) FROM PUBLIC;
+REVOKE ALL ON FUNCTION commander_admit_effect_private(
+  text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+) FROM commander_app;
+REVOKE ALL ON FUNCTION commander_admit_effect_private(
+  text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+) FROM commander_worker;
+
+CREATE OR REPLACE FUNCTION admit_class_a_effect(
+  p_id text, p_run_id text, p_step_id text, p_tenant_id text, p_type text,
+  p_idempotency_key text, p_request_hash text, p_policy_decision_id text,
+  p_policy_snapshot_id text, p_action_digest text, p_lease_worker_id text,
+  p_lease_worker_generation bigint, p_lease_token text,
+  p_lease_fencing_epoch bigint, p_request jsonb
+) RETURNS TABLE(admitted boolean, reason text, replayed boolean, effect jsonb)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  v_step commander_steps%ROWTYPE;
+  v_existing boolean := false;
+  v_reconciliation_workers integer := 0;
+  v_compensation_workers integer := 0;
+BEGIN
+  IF session_user NOT IN ('commander_app', 'commander_worker') THEN
+    RAISE EXCEPTION 'CLASS_A_ADMISSION_RUNTIME_ROLE_REQUIRED';
+  END IF;
+  IF p_type IS NULL OR length(trim(p_type)) = 0 THEN
+    RAISE EXCEPTION 'EFFECT_TYPE_REQUIRED';
+  END IF;
+  IF lower(trim(p_type)) LIKE 'compensate.%' THEN
+    RAISE EXCEPTION 'COMPENSATION_ADMISSION_UNAVAILABLE';
+  END IF;
+  IF NOT commander_is_class_a_effect_type(p_type) THEN
+    RAISE EXCEPTION 'EFFECT_CLASS_MISMATCH';
+  END IF;
+  IF p_tenant_id IS NULL OR length(trim(p_tenant_id)) = 0
+     OR p_request_hash IS NULL OR length(trim(p_request_hash)) = 0
+     OR p_policy_snapshot_id IS NULL OR length(trim(p_policy_snapshot_id)) = 0
+     OR p_lease_worker_id IS NULL OR length(trim(p_lease_worker_id)) = 0
+     OR p_request_hash IS DISTINCT FROM encode(
+       sha256(convert_to(commander_canonical_jsonb(p_request), 'UTF8')),
+       'hex'
+     ) THEN
+    RETURN QUERY SELECT false, 'REQUEST_BINDING_INVALID'::text, false, NULL::jsonb;
+    RETURN;
+  END IF;
+
+  SELECT s.* INTO v_step
+  FROM commander_steps s
+  WHERE s.id = p_step_id
+    AND s.run_id = p_run_id
+    AND s.tenant_id = p_tenant_id
+    AND s.state = 'RUNNING'
+    AND s.lease_worker_id = p_lease_worker_id
+    AND s.lease_worker_generation = p_lease_worker_generation
+    AND s.lease_token = p_lease_token
+    AND s.fencing_epoch = p_lease_fencing_epoch
+    AND s.lease_expires_at > clock_timestamp()
+    AND EXISTS (
+      SELECT 1 FROM commander_workers lease_worker
+      WHERE lease_worker.id = p_lease_worker_id
+        AND lease_worker.generation = p_lease_worker_generation
+    )
+  FOR UPDATE OF s;
+
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 'LEASE_LOST'::text, false, NULL::jsonb;
+    RETURN;
+  END IF;
+
+  SELECT EXISTS (
+    SELECT 1
+    FROM commander_effects e
+    WHERE e.tenant_id = p_tenant_id
+      AND e.idempotency_key = p_idempotency_key
+  ) INTO v_existing;
+
+  IF v_existing THEN
+    RETURN QUERY SELECT * FROM commander_admit_effect_private(
+      p_id,p_run_id,p_step_id,p_tenant_id,p_type,p_idempotency_key,p_request_hash,
+      p_policy_decision_id,p_policy_snapshot_id,p_action_digest,p_lease_worker_id,
+      p_lease_worker_generation,p_lease_token,p_lease_fencing_epoch,p_request
+    );
+    RETURN;
+  END IF;
+
+  WITH locked_workers AS MATERIALIZED (
+    SELECT w.capabilities, w.status, w.registered_at, w.last_heartbeat_at
+    FROM commander_workers w
+    WHERE w.identity_subject = 'db:commander_adapter_ops'
+      AND w.tenant_ids ? p_tenant_id
+      AND jsonb_array_length(w.capabilities) = 1
+      AND w.capabilities IN ('["effect.reconcile"]'::jsonb, '["effect.compensate"]'::jsonb)
+    FOR NO KEY UPDATE OF w
+  )
+  SELECT
+    count(*) FILTER (
+      WHERE capabilities = '["effect.reconcile"]'::jsonb
+        AND status = 'ACTIVE'
+        AND last_heartbeat_at > registered_at
+        AND last_heartbeat_at >= clock_timestamp() - interval '30 seconds'
+    ),
+    count(*) FILTER (
+      WHERE capabilities = '["effect.compensate"]'::jsonb
+        AND status = 'ACTIVE'
+        AND last_heartbeat_at > registered_at
+        AND last_heartbeat_at >= clock_timestamp() - interval '30 seconds'
+    )
+  INTO v_reconciliation_workers, v_compensation_workers
+  FROM locked_workers;
+
+  SELECT EXISTS (
+    SELECT 1
+    FROM commander_effects e
+    WHERE e.tenant_id = p_tenant_id
+      AND e.idempotency_key = p_idempotency_key
+  ) INTO v_existing;
+
+  IF NOT v_existing AND (v_reconciliation_workers = 0 OR v_compensation_workers = 0) THEN
+    RETURN QUERY SELECT false, 'OPERATIONS_NOT_READY'::text, false, NULL::jsonb;
+    RETURN;
+  END IF;
+
+  RETURN QUERY SELECT * FROM commander_admit_effect_private(
+    p_id,p_run_id,p_step_id,p_tenant_id,p_type,p_idempotency_key,p_request_hash,
+    p_policy_decision_id,p_policy_snapshot_id,p_action_digest,p_lease_worker_id,
+    p_lease_worker_generation,p_lease_token,p_lease_fencing_epoch,p_request
+  );
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION admit_non_class_a_effect(
+  p_id text, p_run_id text, p_step_id text, p_tenant_id text, p_type text,
+  p_idempotency_key text, p_request_hash text, p_policy_decision_id text,
+  p_policy_snapshot_id text, p_action_digest text, p_lease_worker_id text,
+  p_lease_worker_generation bigint, p_lease_token text,
+  p_lease_fencing_epoch bigint, p_request jsonb
+) RETURNS TABLE(admitted boolean, reason text, replayed boolean, effect jsonb)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+BEGIN
+  IF session_user NOT IN ('commander_app', 'commander_worker') THEN
+    RAISE EXCEPTION 'NON_CLASS_A_ADMISSION_RUNTIME_ROLE_REQUIRED';
+  END IF;
+  IF p_type IS NULL OR length(trim(p_type)) = 0 THEN
+    RAISE EXCEPTION 'EFFECT_TYPE_REQUIRED';
+  END IF;
+  IF lower(trim(p_type)) LIKE 'compensate.%' THEN
+    RAISE EXCEPTION 'COMPENSATION_ADMISSION_UNAVAILABLE';
+  END IF;
+  IF commander_is_class_a_effect_type(p_type) THEN
+    RAISE EXCEPTION 'EFFECT_CLASS_MISMATCH';
+  END IF;
+  RETURN QUERY SELECT * FROM commander_admit_effect_private(
+    p_id,p_run_id,p_step_id,p_tenant_id,p_type,p_idempotency_key,p_request_hash,
+    p_policy_decision_id,p_policy_snapshot_id,p_action_digest,p_lease_worker_id,
+    p_lease_worker_generation,p_lease_token,p_lease_fencing_epoch,p_request
+  );
+END;
+$fn$;
+
+ALTER FUNCTION admit_class_a_effect(
+  text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+) OWNER TO commander_owner;
+ALTER FUNCTION admit_non_class_a_effect(
+  text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+) OWNER TO commander_owner;
+
+REVOKE ALL ON FUNCTION admit_class_a_effect(
+  text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+) FROM PUBLIC;
+REVOKE ALL ON FUNCTION admit_non_class_a_effect(
+  text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION admit_class_a_effect(
+  text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+) TO commander_app, commander_worker;
+GRANT EXECUTE ON FUNCTION admit_non_class_a_effect(
+  text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+) TO commander_app, commander_worker;
+
+REVOKE INSERT ON TABLE commander_effects FROM commander_app, commander_worker;
+REVOKE SELECT ON TABLE commander_workers FROM commander_adapter_ops;
+GRANT EXECUTE ON FUNCTION get_operations_readiness(text) TO commander_adapter_ops;
+`;
+
+export const KERNEL_TASK1_COMPLETED_REPLAY_GATE_SQL = `
+CREATE OR REPLACE FUNCTION admit_class_a_effect(
+  p_id text, p_run_id text, p_step_id text, p_tenant_id text, p_type text,
+  p_idempotency_key text, p_request_hash text, p_policy_decision_id text,
+  p_policy_snapshot_id text, p_action_digest text, p_lease_worker_id text,
+  p_lease_worker_generation bigint, p_lease_token text,
+  p_lease_fencing_epoch bigint, p_request jsonb
+) RETURNS TABLE(admitted boolean, reason text, replayed boolean, effect jsonb)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  v_step commander_steps%ROWTYPE;
+  v_existing commander_effects%ROWTYPE;
+  v_reconciliation_workers integer := 0;
+  v_compensation_workers integer := 0;
+BEGIN
+  IF session_user NOT IN ('commander_app', 'commander_worker') THEN
+    RAISE EXCEPTION 'CLASS_A_ADMISSION_RUNTIME_ROLE_REQUIRED';
+  END IF;
+  IF p_type IS NULL OR length(trim(p_type)) = 0 THEN
+    RAISE EXCEPTION 'EFFECT_TYPE_REQUIRED';
+  END IF;
+  IF lower(trim(p_type)) LIKE 'compensate.%' THEN
+    RAISE EXCEPTION 'COMPENSATION_ADMISSION_UNAVAILABLE';
+  END IF;
+  IF NOT commander_is_class_a_effect_type(p_type) THEN
+    RAISE EXCEPTION 'EFFECT_CLASS_MISMATCH';
+  END IF;
+  IF p_tenant_id IS NULL OR length(trim(p_tenant_id)) = 0
+     OR p_request_hash IS NULL OR length(trim(p_request_hash)) = 0
+     OR p_policy_snapshot_id IS NULL OR length(trim(p_policy_snapshot_id)) = 0
+     OR p_lease_worker_id IS NULL OR length(trim(p_lease_worker_id)) = 0
+     OR p_request_hash IS DISTINCT FROM encode(
+       sha256(convert_to(commander_canonical_jsonb(p_request), 'UTF8')),
+       'hex'
+     ) THEN
+    RETURN QUERY SELECT false, 'REQUEST_BINDING_INVALID'::text, false, NULL::jsonb;
+    RETURN;
+  END IF;
+
+  SELECT s.* INTO v_step
+  FROM commander_steps s
+  WHERE s.id = p_step_id
+    AND s.run_id = p_run_id
+    AND s.tenant_id = p_tenant_id
+    AND s.state = 'RUNNING'
+    AND s.lease_worker_id = p_lease_worker_id
+    AND s.lease_worker_generation = p_lease_worker_generation
+    AND s.lease_token = p_lease_token
+    AND s.fencing_epoch = p_lease_fencing_epoch
+    AND s.lease_expires_at > clock_timestamp()
+    AND EXISTS (
+      SELECT 1 FROM commander_workers lease_worker
+      WHERE lease_worker.id = p_lease_worker_id
+        AND lease_worker.generation = p_lease_worker_generation
+    )
+  FOR UPDATE OF s;
+
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 'LEASE_LOST'::text, false, NULL::jsonb;
+    RETURN;
+  END IF;
+
+  SELECT e.* INTO v_existing
+  FROM commander_effects e
+  WHERE e.tenant_id = p_tenant_id
+    AND e.idempotency_key = p_idempotency_key;
+
+  IF FOUND THEN
+    IF v_existing.run_id IS DISTINCT FROM p_run_id
+       OR v_existing.step_id IS DISTINCT FROM p_step_id
+       OR v_existing.type IS DISTINCT FROM p_type
+       OR v_existing.request_hash IS DISTINCT FROM p_request_hash
+       OR v_existing.policy_decision_id IS DISTINCT FROM p_policy_decision_id
+       OR v_existing.policy_snapshot_id IS DISTINCT FROM p_policy_snapshot_id
+       OR v_existing.action_digest IS DISTINCT FROM p_action_digest THEN
+      RETURN QUERY SELECT false, 'IDEMPOTENCY_CONFLICT'::text, false, NULL::jsonb;
+      RETURN;
+    END IF;
+    IF v_existing.state = 'COMPLETED' THEN
+      RETURN QUERY SELECT * FROM commander_admit_effect_private(
+        p_id,p_run_id,p_step_id,p_tenant_id,p_type,p_idempotency_key,p_request_hash,
+        p_policy_decision_id,p_policy_snapshot_id,p_action_digest,p_lease_worker_id,
+        p_lease_worker_generation,p_lease_token,p_lease_fencing_epoch,p_request
+      );
+      RETURN;
+    END IF;
+  END IF;
+
+  WITH locked_workers AS MATERIALIZED (
+    SELECT w.capabilities, w.status, w.registered_at, w.last_heartbeat_at
+    FROM commander_workers w
+    WHERE w.identity_subject = 'db:commander_adapter_ops'
+      AND w.tenant_ids ? p_tenant_id
+      AND jsonb_array_length(w.capabilities) = 1
+      AND w.capabilities IN ('["effect.reconcile"]'::jsonb, '["effect.compensate"]'::jsonb)
+    FOR NO KEY UPDATE OF w
+  )
+  SELECT
+    count(*) FILTER (
+      WHERE capabilities = '["effect.reconcile"]'::jsonb
+        AND status = 'ACTIVE'
+        AND last_heartbeat_at > registered_at
+        AND last_heartbeat_at >= clock_timestamp() - interval '30 seconds'
+    ),
+    count(*) FILTER (
+      WHERE capabilities = '["effect.compensate"]'::jsonb
+        AND status = 'ACTIVE'
+        AND last_heartbeat_at > registered_at
+        AND last_heartbeat_at >= clock_timestamp() - interval '30 seconds'
+    )
+  INTO v_reconciliation_workers, v_compensation_workers
+  FROM locked_workers;
+
+  SELECT e.* INTO v_existing
+  FROM commander_effects e
+  WHERE e.tenant_id = p_tenant_id
+    AND e.idempotency_key = p_idempotency_key;
+
+  IF FOUND THEN
+    IF v_existing.run_id IS DISTINCT FROM p_run_id
+       OR v_existing.step_id IS DISTINCT FROM p_step_id
+       OR v_existing.type IS DISTINCT FROM p_type
+       OR v_existing.request_hash IS DISTINCT FROM p_request_hash
+       OR v_existing.policy_decision_id IS DISTINCT FROM p_policy_decision_id
+       OR v_existing.policy_snapshot_id IS DISTINCT FROM p_policy_snapshot_id
+       OR v_existing.action_digest IS DISTINCT FROM p_action_digest THEN
+      RETURN QUERY SELECT false, 'IDEMPOTENCY_CONFLICT'::text, false, NULL::jsonb;
+      RETURN;
+    END IF;
+    IF v_existing.state = 'COMPLETED' THEN
+      RETURN QUERY SELECT * FROM commander_admit_effect_private(
+        p_id,p_run_id,p_step_id,p_tenant_id,p_type,p_idempotency_key,p_request_hash,
+        p_policy_decision_id,p_policy_snapshot_id,p_action_digest,p_lease_worker_id,
+        p_lease_worker_generation,p_lease_token,p_lease_fencing_epoch,p_request
+      );
+      RETURN;
+    END IF;
+  END IF;
+
+  IF v_reconciliation_workers = 0 OR v_compensation_workers = 0 THEN
+    RETURN QUERY SELECT false, 'OPERATIONS_NOT_READY'::text, false, NULL::jsonb;
+    RETURN;
+  END IF;
+
+  RETURN QUERY SELECT * FROM commander_admit_effect_private(
+    p_id,p_run_id,p_step_id,p_tenant_id,p_type,p_idempotency_key,p_request_hash,
+    p_policy_decision_id,p_policy_snapshot_id,p_action_digest,p_lease_worker_id,
+    p_lease_worker_generation,p_lease_token,p_lease_fencing_epoch,p_request
+  );
+END;
+$fn$;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_owner') THEN
+    ALTER FUNCTION admit_class_a_effect(
+      text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+    ) OWNER TO commander_owner;
+  END IF;
+END $$;
+
+REVOKE ALL ON FUNCTION admit_class_a_effect(
+  text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION admit_class_a_effect(
+  text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+) TO commander_app;
+GRANT EXECUTE ON FUNCTION admit_class_a_effect(
+  text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+) TO commander_worker;
+`;
+
+/** Final Task 1 runtime closure. Kept separate from every pinned prior descriptor. */
+export const KERNEL_TASK1_RUNTIME_AUTHORITY_CLOSURE_SQL = `
+REVOKE INSERT ON TABLE commander_effects FROM commander_scheduler;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  REVOKE INSERT ON TABLES FROM commander_scheduler;
+
+CREATE OR REPLACE FUNCTION admit_class_a_effect(
+  p_id text, p_run_id text, p_step_id text, p_tenant_id text, p_type text,
+  p_idempotency_key text, p_request_hash text, p_policy_decision_id text,
+  p_policy_snapshot_id text, p_action_digest text, p_lease_worker_id text,
+  p_lease_worker_generation bigint, p_lease_token text,
+  p_lease_fencing_epoch bigint, p_request jsonb
+) RETURNS TABLE(admitted boolean, reason text, replayed boolean, effect jsonb)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  v_step commander_steps%ROWTYPE;
+  v_existing commander_effects%ROWTYPE;
+  v_scope text;
+  v_reconciliation_workers integer := 0;
+  v_compensation_workers integer := 0;
+BEGIN
+  IF session_user NOT IN ('commander_app', 'commander_worker') THEN
+    RAISE EXCEPTION 'CLASS_A_ADMISSION_RUNTIME_ROLE_REQUIRED';
+  END IF;
+  IF p_type IS NULL OR length(trim(p_type)) = 0 THEN
+    RAISE EXCEPTION 'EFFECT_TYPE_REQUIRED';
+  END IF;
+  IF lower(trim(p_type)) LIKE 'compensate.%' THEN
+    RAISE EXCEPTION 'COMPENSATION_ADMISSION_UNAVAILABLE';
+  END IF;
+  IF NOT commander_is_class_a_effect_type(p_type) THEN
+    RAISE EXCEPTION 'EFFECT_CLASS_MISMATCH';
+  END IF;
+  IF p_tenant_id IS NULL OR length(trim(p_tenant_id)) = 0
+     OR p_request_hash IS NULL OR length(trim(p_request_hash)) = 0
+     OR p_policy_snapshot_id IS NULL OR length(trim(p_policy_snapshot_id)) = 0
+     OR p_lease_worker_id IS NULL OR length(trim(p_lease_worker_id)) = 0
+     OR p_request_hash IS DISTINCT FROM encode(
+       sha256(convert_to(commander_canonical_jsonb(p_request), 'UTF8')),
+       'hex'
+     ) THEN
+    RETURN QUERY SELECT false, 'REQUEST_BINDING_INVALID'::text, false, NULL::jsonb;
+    RETURN;
+  END IF;
+
+  v_scope := COALESCE(current_setting('app.tenant_scope', true), '');
+  IF v_scope = '' OR NOT p_tenant_id = ANY(string_to_array(v_scope, ',')) THEN
+    RAISE EXCEPTION 'TENANT_SCOPE_MISMATCH';
+  END IF;
+
+  SELECT s.* INTO v_step
+  FROM commander_steps s
+  JOIN commander_workers lease_worker
+    ON lease_worker.id = p_lease_worker_id
+   AND lease_worker.generation = p_lease_worker_generation
+   AND lease_worker.status = 'ACTIVE'
+   AND lease_worker.identity_subject = 'db:commander_worker'
+   AND lease_worker.tenant_ids ? p_tenant_id
+  WHERE s.id = p_step_id
+    AND s.run_id = p_run_id
+    AND s.tenant_id = p_tenant_id
+    AND s.state = 'RUNNING'
+    AND s.lease_worker_id = p_lease_worker_id
+    AND s.lease_worker_generation = p_lease_worker_generation
+    AND s.lease_token = p_lease_token
+    AND s.fencing_epoch = p_lease_fencing_epoch
+    AND s.lease_expires_at > clock_timestamp()
+  FOR UPDATE OF s, lease_worker;
+
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 'LEASE_LOST'::text, false, NULL::jsonb;
+    RETURN;
+  END IF;
+
+  SELECT e.* INTO v_existing
+  FROM commander_effects e
+  WHERE e.tenant_id = p_tenant_id
+    AND e.idempotency_key = p_idempotency_key;
+
+  IF FOUND THEN
+    IF v_existing.run_id IS DISTINCT FROM p_run_id
+       OR v_existing.step_id IS DISTINCT FROM p_step_id
+       OR v_existing.type IS DISTINCT FROM p_type
+       OR v_existing.request_hash IS DISTINCT FROM p_request_hash
+       OR v_existing.policy_decision_id IS DISTINCT FROM p_policy_decision_id
+       OR v_existing.policy_snapshot_id IS DISTINCT FROM p_policy_snapshot_id
+       OR v_existing.action_digest IS DISTINCT FROM p_action_digest THEN
+      RETURN QUERY SELECT false, 'IDEMPOTENCY_CONFLICT'::text, false, NULL::jsonb;
+      RETURN;
+    END IF;
+    IF v_existing.state = 'COMPLETED' THEN
+      RETURN QUERY SELECT * FROM commander_admit_effect_private(
+        p_id,p_run_id,p_step_id,p_tenant_id,p_type,p_idempotency_key,p_request_hash,
+        p_policy_decision_id,p_policy_snapshot_id,p_action_digest,p_lease_worker_id,
+        p_lease_worker_generation,p_lease_token,p_lease_fencing_epoch,p_request
+      );
+      RETURN;
+    END IF;
+  END IF;
+
+  WITH locked_workers AS MATERIALIZED (
+    SELECT w.capabilities, w.status, w.registered_at, w.last_heartbeat_at
+    FROM commander_workers w
+    WHERE w.identity_subject = 'db:commander_adapter_ops'
+      AND w.tenant_ids ? p_tenant_id
+      AND jsonb_array_length(w.capabilities) = 1
+      AND w.capabilities IN ('["effect.reconcile"]'::jsonb, '["effect.compensate"]'::jsonb)
+    FOR NO KEY UPDATE OF w
+  )
+  SELECT
+    count(*) FILTER (
+      WHERE capabilities = '["effect.reconcile"]'::jsonb
+        AND status = 'ACTIVE'
+        AND last_heartbeat_at > registered_at
+        AND last_heartbeat_at >= clock_timestamp() - interval '30 seconds'
+    ),
+    count(*) FILTER (
+      WHERE capabilities = '["effect.compensate"]'::jsonb
+        AND status = 'ACTIVE'
+        AND last_heartbeat_at > registered_at
+        AND last_heartbeat_at >= clock_timestamp() - interval '30 seconds'
+    )
+  INTO v_reconciliation_workers, v_compensation_workers
+  FROM locked_workers;
+
+  SELECT e.* INTO v_existing
+  FROM commander_effects e
+  WHERE e.tenant_id = p_tenant_id
+    AND e.idempotency_key = p_idempotency_key;
+
+  IF FOUND THEN
+    IF v_existing.run_id IS DISTINCT FROM p_run_id
+       OR v_existing.step_id IS DISTINCT FROM p_step_id
+       OR v_existing.type IS DISTINCT FROM p_type
+       OR v_existing.request_hash IS DISTINCT FROM p_request_hash
+       OR v_existing.policy_decision_id IS DISTINCT FROM p_policy_decision_id
+       OR v_existing.policy_snapshot_id IS DISTINCT FROM p_policy_snapshot_id
+       OR v_existing.action_digest IS DISTINCT FROM p_action_digest THEN
+      RETURN QUERY SELECT false, 'IDEMPOTENCY_CONFLICT'::text, false, NULL::jsonb;
+      RETURN;
+    END IF;
+    IF v_existing.state = 'COMPLETED' THEN
+      RETURN QUERY SELECT * FROM commander_admit_effect_private(
+        p_id,p_run_id,p_step_id,p_tenant_id,p_type,p_idempotency_key,p_request_hash,
+        p_policy_decision_id,p_policy_snapshot_id,p_action_digest,p_lease_worker_id,
+        p_lease_worker_generation,p_lease_token,p_lease_fencing_epoch,p_request
+      );
+      RETURN;
+    END IF;
+  END IF;
+
+  IF v_reconciliation_workers = 0 OR v_compensation_workers = 0 THEN
+    RETURN QUERY SELECT false, 'OPERATIONS_NOT_READY'::text, false, NULL::jsonb;
+    RETURN;
+  END IF;
+
+  RETURN QUERY SELECT * FROM commander_admit_effect_private(
+    p_id,p_run_id,p_step_id,p_tenant_id,p_type,p_idempotency_key,p_request_hash,
+    p_policy_decision_id,p_policy_snapshot_id,p_action_digest,p_lease_worker_id,
+    p_lease_worker_generation,p_lease_token,p_lease_fencing_epoch,p_request
+  );
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION admit_non_class_a_effect(
+  p_id text, p_run_id text, p_step_id text, p_tenant_id text, p_type text,
+  p_idempotency_key text, p_request_hash text, p_policy_decision_id text,
+  p_policy_snapshot_id text, p_action_digest text, p_lease_worker_id text,
+  p_lease_worker_generation bigint, p_lease_token text,
+  p_lease_fencing_epoch bigint, p_request jsonb
+) RETURNS TABLE(admitted boolean, reason text, replayed boolean, effect jsonb)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  v_scope text;
+BEGIN
+  IF session_user NOT IN ('commander_app', 'commander_worker') THEN
+    RAISE EXCEPTION 'NON_CLASS_A_ADMISSION_RUNTIME_ROLE_REQUIRED';
+  END IF;
+  IF p_type IS NULL OR length(trim(p_type)) = 0 THEN
+    RAISE EXCEPTION 'EFFECT_TYPE_REQUIRED';
+  END IF;
+  IF lower(trim(p_type)) LIKE 'compensate.%' THEN
+    RAISE EXCEPTION 'COMPENSATION_ADMISSION_UNAVAILABLE';
+  END IF;
+  IF commander_is_class_a_effect_type(p_type) THEN
+    RAISE EXCEPTION 'EFFECT_CLASS_MISMATCH';
+  END IF;
+
+  v_scope := COALESCE(current_setting('app.tenant_scope', true), '');
+  IF v_scope = '' OR NOT p_tenant_id = ANY(string_to_array(v_scope, ',')) THEN
+    RAISE EXCEPTION 'TENANT_SCOPE_MISMATCH';
+  END IF;
+
+  PERFORM 1
+  FROM commander_workers lease_worker
+  WHERE lease_worker.id = p_lease_worker_id
+    AND lease_worker.generation = p_lease_worker_generation
+    AND lease_worker.status = 'ACTIVE'
+    AND lease_worker.identity_subject = 'db:commander_worker'
+    AND lease_worker.tenant_ids ? p_tenant_id
+  FOR UPDATE OF lease_worker;
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 'LEASE_LOST'::text, false, NULL::jsonb;
+    RETURN;
+  END IF;
+
+  RETURN QUERY SELECT * FROM commander_admit_effect_private(
+    p_id,p_run_id,p_step_id,p_tenant_id,p_type,p_idempotency_key,p_request_hash,
+    p_policy_decision_id,p_policy_snapshot_id,p_action_digest,p_lease_worker_id,
+    p_lease_worker_generation,p_lease_token,p_lease_fencing_epoch,p_request
+  );
+END;
+$fn$;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_owner') THEN
+    ALTER FUNCTION admit_class_a_effect(
+      text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+    ) OWNER TO commander_owner;
+    ALTER FUNCTION admit_non_class_a_effect(
+      text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+    ) OWNER TO commander_owner;
+  END IF;
+END $$;
+
+REVOKE ALL ON FUNCTION admit_class_a_effect(
+  text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+) FROM PUBLIC;
+REVOKE ALL ON FUNCTION admit_non_class_a_effect(
+  text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION admit_class_a_effect(
+  text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+) TO commander_app, commander_worker;
+GRANT EXECUTE ON FUNCTION admit_non_class_a_effect(
+  text,text,text,text,text,text,text,text,text,text,text,bigint,text,bigint,jsonb
+) TO commander_app, commander_worker;
+
+CREATE OR REPLACE FUNCTION enforce_runtime_effect_tenant_scope()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  v_scope text;
+BEGIN
+  IF session_user NOT IN ('commander_app', 'commander_worker') THEN
+    RETURN NEW;
+  END IF;
+
+  v_scope := COALESCE(current_setting('app.tenant_scope', true), '');
+  IF v_scope = ''
+     OR NOT (NEW.tenant_id = ANY(string_to_array(v_scope, ','))) THEN
+    RAISE EXCEPTION 'TENANT_SCOPE_MISMATCH';
+  END IF;
+
+  IF session_user = 'commander_worker' AND NOT EXISTS (
+    SELECT 1
+    FROM commander_workers w
+    WHERE w.id = NEW.lease_worker_id
+      AND w.generation = NEW.lease_worker_generation
+      AND w.status = 'ACTIVE'
+      AND w.tenant_ids ? NEW.tenant_id
+  ) THEN
+    RAISE EXCEPTION 'WORKER_TENANT_AUTHORIZATION_REQUIRED';
+  END IF;
+
+  RETURN NEW;
+END
+$fn$;
+
+REVOKE ALL ON FUNCTION enforce_runtime_effect_tenant_scope() FROM PUBLIC;
+DROP TRIGGER IF EXISTS commander_effects_runtime_tenant_scope ON commander_effects;
+CREATE TRIGGER commander_effects_runtime_tenant_scope
+BEFORE INSERT OR UPDATE OF tenant_id, lease_worker_id, lease_worker_generation
+ON commander_effects
+FOR EACH ROW EXECUTE FUNCTION enforce_runtime_effect_tenant_scope();
+
+CREATE OR REPLACE FUNCTION enforce_adapter_ops_worker_id_grammar()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+BEGIN
+  IF NEW.kind = 'adapter-ops'
+     AND NEW.id !~ '^(reconcile|compensation):[a-z0-9]([-a-z0-9.]*[a-z0-9])?$' THEN
+    RAISE EXCEPTION 'ADAPTER_OPS_INSTANCE_INVALID';
+  END IF;
+  RETURN NEW;
+END
+$fn$;
+
+REVOKE ALL ON FUNCTION enforce_adapter_ops_worker_id_grammar() FROM PUBLIC;
+DROP TRIGGER IF EXISTS commander_workers_adapter_ops_id_grammar ON commander_workers;
+CREATE TRIGGER commander_workers_adapter_ops_id_grammar
+BEFORE INSERT OR UPDATE OF id, kind
+ON commander_workers
+FOR EACH ROW EXECUTE FUNCTION enforce_adapter_ops_worker_id_grammar();
 `;
 
 /**
@@ -1316,11 +2427,10 @@ GRANT EXECUTE ON FUNCTION claim_next_step(text, bigint, integer, text, jsonb) TO
 /**
  * Worker-only SECURITY DEFINER reconcile claim (adapter-ops LOGIN path).
  * Same durable-authz rules as claim_next_step: never sets app.tenant_scope='*',
- * never accepts caller tenant lists, GRANT EXECUTE only to commander_worker.
+ * never accepts caller tenant lists, GRANT EXECUTE only to commander_adapter_ops.
  * Open-ended durable '*' fail-closes (empty result) — do not expand.
  * P1-A: requires p_claim_secret matching commander_worker_claim_secrets hash.
  *
- * Follow-up: GRANT EXECUTE only to commander_adapter_ops LOGIN (split from worker).
  */
 export const KERNEL_CLAIM_RECONCILE_SQL = `
 DROP FUNCTION IF EXISTS claim_reconcile_effects(text, bigint, integer, timestamptz, integer);
@@ -1383,7 +2493,9 @@ BEGIN
   SELECT w.tenant_ids, w.status, w.generation
     INTO v_worker_tenants, v_worker_status, v_worker_generation
   FROM commander_workers w
-  WHERE w.id = p_worker_id;
+  WHERE w.id = p_worker_id
+    AND w.identity_subject = 'db:commander_adapter_ops'
+    AND w.capabilities = '["effect.reconcile"]'::jsonb;
 
   IF NOT FOUND
      OR v_worker_status IS DISTINCT FROM 'ACTIVE'
@@ -1460,7 +2572,8 @@ BEGIN
     REVOKE ALL ON FUNCTION claim_reconcile_effects(text, bigint, integer, timestamptz, integer, text) FROM commander_app;
   END IF;
 END $$;
-GRANT EXECUTE ON FUNCTION claim_reconcile_effects(text, bigint, integer, timestamptz, integer, text) TO commander_worker;
+REVOKE ALL ON FUNCTION claim_reconcile_effects(text, bigint, integer, timestamptz, integer, text) FROM commander_worker;
+GRANT EXECUTE ON FUNCTION claim_reconcile_effects(text, bigint, integer, timestamptz, integer, text) TO commander_adapter_ops;
 
 -- Worker-only SECURITY DEFINER compensation/outbox claim (adapter-ops LOGIN).
 -- Same durable-authz + claim-secret rules as claim_reconcile_effects.

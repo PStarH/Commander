@@ -195,7 +195,7 @@ describe('servicenow.incidentCreate adapter', () => {
       request: { expectedState: '7' },
       compensationResponse: compensated,
     });
-    assert.equal(compensationOutcome.status, 'COMPLETED');
+    assert.equal(compensationOutcome.status, 'APPLIED');
     assert.equal(compensationOutcome.response?.sysId, forward.sysId);
     assert.equal(
       servicenowCorrelationId(tenantId, compensationIdempotencyKey),
@@ -223,7 +223,7 @@ describe('servicenow.incidentCreate adapter', () => {
       request: {},
     });
     assert.equal(state.writeCount, writesBefore);
-    assert.equal(outcome.status, 'COMPLETED');
+    assert.equal(outcome.status, 'APPLIED');
 
     await adapter.compensate({
       tenantId,
@@ -243,7 +243,7 @@ describe('servicenow.incidentCreate adapter', () => {
       request: { expectedState: '7' },
       compensationResponse: { sysId: state.incidents[0]!.sys_id, state: '7' },
     });
-    assert.equal(compensationOutcome.status, 'COMPLETED');
+    assert.equal(compensationOutcome.status, 'APPLIED');
   });
 
   it('rejects malicious ServiceNow instance names', () => {

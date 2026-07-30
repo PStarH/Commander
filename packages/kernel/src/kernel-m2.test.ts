@@ -659,6 +659,7 @@ describe('PostgresKernelRepository — Kernel-native approval release', () => {
       'interaction-postgres-approval',
       'run-postgres-approval',
       'tenant-postgres',
+      false,
     ]);
     const releasedStep = pool.queries.find(({ sql }) => sql.includes('UPDATE commander_steps'));
     assert.ok(releasedStep);

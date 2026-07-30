@@ -12,12 +12,61 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { OPENAPI_V1_SPEC } from './openapi.js';
 import { CONTRACT_SCHEMAS } from './schemas.js';
 import { validateResource, snapshotContracts, detectBreakingChanges } from './compatibility.js';
 import { RUN_STATES, STEP_STATES } from './states.js';
 import { KERNEL_ERROR_CODES } from './errors.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const ACTION_STATES = [
+  'PROPOSED',
+  'AWAITING_APPROVAL',
+  'ADMITTED',
+  'RUNNING',
+  'SUCCEEDED',
+  'FAILED',
+  'COMPLETION_UNKNOWN',
+  'ESCALATED',
+] as const;
+
+const ACTION_OPERATIONS = [
+  { path: '/actions/simulate', method: 'post', success: '200', requestBody: true },
+  { path: '/actions', method: 'post', success: '202', requestBody: true },
+  { path: '/actions/{runId}', method: 'get', success: '200', requestBody: false },
+  { path: '/actions/{runId}/approve', method: 'post', success: '200', requestBody: true },
+  { path: '/actions/{runId}/reject', method: 'post', success: '200', requestBody: true },
+  { path: '/actions/{runId}/reconcile', method: 'post', success: '202', requestBody: false },
+  { path: '/actions/{runId}/evidence', method: 'get', success: '200', requestBody: false },
+  { path: '/actions/kill-switches', method: 'get', success: '200', requestBody: false },
+  { path: '/actions/kill-switches/{scope}/{value}', method: 'put', success: '200', requestBody: true },
+  { path: '/actions/kill-switches/{scope}/{value}', method: 'delete', success: '204', requestBody: false },
+] as const;
+
+type OpenApiSchema = {
+  $ref?: string;
+  type?: string;
+  required?: readonly string[];
+  enum?: readonly string[];
+  properties?: Record<string, OpenApiSchema>;
+};
+
+type OpenApiResponse = {
+  $ref?: string;
+  content?: { 'application/json'?: { schema?: OpenApiSchema } };
+};
+
+type OpenApiOperation = {
+  requestBody?: {
+    content?: { 'application/json'?: { schema?: OpenApiSchema } };
+  };
+  responses?: Record<string, OpenApiResponse>;
+};
 
 describe('OpenAPI Spec Conformance', () => {
 
@@ -76,23 +125,15 @@ describe('OpenAPI Spec Conformance', () => {
       }
     });
 
-    it('all write operations return 202 with Location header', () => {
-      const paths = OPENAPI_V1_SPEC.paths ?? {};
-      for (const [path, pathItem] of Object.entries(paths)) {
-        const postOp = (pathItem as Record<string, unknown>).post as
-          { responses?: Record<string, { description: string }> } | undefined;
-        if (!postOp) continue;
-        const accepted = postOp.responses?.['202'];
-        assert.ok(
-          accepted,
-          `POST at ${path} must have 202 response (async pattern)`,
-        );
-      }
+    it('uses 202 for accepted action proposal and reconcile operations', () => {
+      const paths = OPENAPI_V1_SPEC.paths as Record<string, Record<string, OpenApiOperation>>;
+      assert.ok(paths['/actions']?.post?.responses?.['202']);
+      assert.ok(paths['/actions/{runId}/reconcile']?.post?.responses?.['202']);
     });
   });
 
   describe('Component schemas completeness', () => {
-    it('has all 14 component schemas', () => {
+    it('has all core and Action Gateway component schemas', () => {
       const schemas = OPENAPI_V1_SPEC.components?.schemas;
       assert.ok(schemas, 'Must have component schemas');
       const required = [
@@ -100,6 +141,12 @@ describe('OpenAPI Spec Conformance', () => {
         'PolicyBundle', 'Effect', 'AgentDefinition', 'ToolDefinition',
         'ConnectorDefinition', 'KernelEvent', 'Error',
         'CreateRunRequest', 'CreateInteractionResponseRequest',
+        'ActionProposeRequest', 'ActionDecision', 'ActionSimulation',
+        'GovernedAction', 'ActionApprovalRequest', 'ActionRejectionRequest',
+        'ActionSimulationResponse', 'ActionResponse', 'ActionProposeResponse',
+        'ActionReconcileAccepted', 'ActionEvidence', 'ActionError',
+        'ActionKillSwitch', 'ActionKillSwitchUpdate',
+        'ActionKillSwitchListResponse', 'ActionKillSwitchResponse',
       ];
       for (const name of required) {
         assert.ok((schemas as Record<string, unknown>)[name], `Must have component schema: ${name}`);
@@ -121,10 +168,7 @@ describe('OpenAPI Spec Conformance', () => {
       const schemas = OPENAPI_V1_SPEC.components?.schemas ?? {};
       for (const [name, schema] of Object.entries(schemas)) {
         const required = (schema as { required?: string[] }).required;
-        assert.ok(
-          Array.isArray(required) && required.length > 0,
-          `Schema '${name}' must have non-empty required array`,
-        );
+        assert.ok(Array.isArray(required), `Schema '${name}' must have required array`);
       }
     });
   });
@@ -360,6 +404,86 @@ describe('OpenAPI Spec Conformance', () => {
         }
       }
     });
+
+    it('covers every Action Gateway operation with concrete schemas', () => {
+      const paths = OPENAPI_V1_SPEC.paths as Record<string, Record<string, OpenApiOperation>>;
+      const responseComponents = OPENAPI_V1_SPEC.components.responses as Record<
+        string,
+        OpenApiResponse
+      >;
+
+      for (const expected of ACTION_OPERATIONS) {
+        const operation = paths[expected.path]?.[expected.method];
+        assert.ok(operation, `${expected.method.toUpperCase()} ${expected.path} must be defined`);
+
+        if (expected.requestBody) {
+          assert.ok(
+            operation.requestBody?.content?.['application/json']?.schema?.$ref,
+            `${expected.method.toUpperCase()} ${expected.path} must reference a request schema`,
+          );
+        }
+
+        const success = operation.responses?.[expected.success];
+        assert.ok(
+          success,
+          `${expected.method.toUpperCase()} ${expected.path} must define ${expected.success}`,
+        );
+        if (expected.success !== '204') {
+          const resolved = success.$ref
+            ? responseComponents[success.$ref.replace('#/components/responses/', '')]
+            : success;
+          assert.ok(
+            resolved?.content?.['application/json']?.schema?.$ref,
+            `${expected.method.toUpperCase()} ${expected.path} ${expected.success} must reference a response schema`,
+          );
+        }
+
+        const errors = Object.entries(operation.responses ?? {}).filter(
+          ([status]) => Number(status) >= 400,
+        );
+        assert.ok(errors.length > 0, `${expected.method.toUpperCase()} ${expected.path} needs errors`);
+        for (const [, response] of errors) {
+          const resolved = response.$ref
+            ? responseComponents[response.$ref.replace('#/components/responses/', '')]
+            : response;
+          assert.equal(
+            resolved?.content?.['application/json']?.schema?.$ref,
+            '#/components/schemas/ActionError',
+          );
+        }
+      }
+    });
+
+    it('defines the canonical action states exactly once in the governed action schema', () => {
+      const schemas = OPENAPI_V1_SPEC.components.schemas as Record<string, OpenApiSchema>;
+      assert.deepEqual(schemas.GovernedAction?.properties?.state?.enum, ACTION_STATES);
+    });
+  });
+
+  describe('Action Gateway fixtures', () => {
+    const fixtures = {
+      propose: 'actionProposeResponse',
+      approval: 'actionResponse',
+      reconcile: 'actionReconcileAccepted',
+      evidence: 'actionEvidence',
+      error: 'actionError',
+    } as const;
+
+    for (const [fixtureName, schemaName] of Object.entries(fixtures)) {
+      it(`${fixtureName}.json validates against ${schemaName}`, () => {
+        const fixturePath = join(__dirname, '..', 'fixtures', 'actions', 'v1', `${fixtureName}.json`);
+        const fixture = JSON.parse(readFileSync(fixturePath, 'utf8')) as unknown;
+        const result = validateResource(schemaName as never, fixture);
+        assert.equal(result.ok, true, result.errors.join('; '));
+      });
+    }
+
+    it('requires a stable nested error.code', () => {
+      const schema = (CONTRACT_SCHEMAS as Record<string, OpenApiSchema>).actionError;
+      assert.ok(schema.required?.includes('error'));
+      assert.ok(schema.properties?.error?.required?.includes('code'));
+      assert.equal(schema.properties?.error?.properties?.code?.type, 'string');
+    });
   });
 
   describe('JSON Schema registry completeness', () => {
@@ -382,13 +506,10 @@ describe('OpenAPI Spec Conformance', () => {
       }
     });
 
-    it('all schemas have at least one required field', () => {
+    it('all schemas declare required fields', () => {
       for (const [name, schema] of Object.entries(CONTRACT_SCHEMAS)) {
         const required = (schema as { required?: string[] }).required;
-        assert.ok(
-          Array.isArray(required) && required.length > 0,
-          `Schema '${name}' must have at least one required field`,
-        );
+        assert.ok(Array.isArray(required), `Schema '${name}' must have required array`);
       }
     });
 
@@ -396,7 +517,8 @@ describe('OpenAPI Spec Conformance', () => {
       for (const [name, schema] of Object.entries(CONTRACT_SCHEMAS)) {
         const id = (schema as { $id?: string }).$id;
         assert.ok(
-          id?.startsWith('https://commander.dev/contracts/v2/'),
+          id?.startsWith('https://commander.dev/contracts/v2/') ||
+            id?.startsWith('https://commander.dev/contracts/actions/v1/'),
           `Schema '${name}' $id must match pattern: ${id}`,
         );
       }

@@ -310,6 +310,18 @@ describe('claimReconcileEffects durable authz parity (P1-4)', () => {
     });
     assert.ok(claimed?.lease, 'setup claim must succeed');
     assert.equal(claimed.tenantId, input.tenantId);
+    const now = new Date();
+    for (const [role, capability] of [
+      ['reconcile', 'effect.reconcile'],
+      ['compensation', 'effect.compensate'],
+    ] as const) {
+      repo.seedTestWorker(`${role}:${input.tenantId}`, [input.tenantId], 1, {
+        capabilities: [capability],
+        identitySubject: 'db:commander_adapter_ops',
+        registeredAt: new Date(now.getTime() - 10_000),
+        lastHeartbeatAt: new Date(now.getTime() - 1_000),
+      });
+    }
     const admitted = await repo.admitEffect({
       id: input.effectId,
       runId: input.runId,

@@ -44,13 +44,6 @@ interface DashboardProps {
   memoryOverview: MemoryOverview | null;
   loading: boolean;
   agentNameById: Map<string, string>;
-  onStatusChange: (missionId: string, status: string) => void;
-  onApprove: (missionId: string) => void;
-  onCreateMission: (payload: any) => void;
-  onCreateLog: (
-    missionId: string,
-    payload: { level: 'INFO' | 'SUCCESS' | 'WARN' | 'ERROR'; message: string },
-  ) => void;
   onSearchMemory: (filters?: any) => void;
 }
 
@@ -59,10 +52,6 @@ export function Dashboard({
   memoryItems,
   memoryOverview,
   agentNameById,
-  onStatusChange,
-  onApprove,
-  onCreateMission,
-  onCreateLog,
   onSearchMemory,
 }: DashboardProps) {
   const [tokenTrend, setTokenTrend] = useState<TrendPoint[]>([]);
@@ -115,20 +104,12 @@ export function Dashboard({
 
       <AgentRoster agents={snapshot.agents} />
 
-      <MissionBoard
-        missions={snapshot.missions}
-        agents={snapshot.agents}
-        agentNameById={agentNameById}
-        onStatusChange={onStatusChange}
-        onApprove={onApprove}
-        onCreateMission={onCreateMission}
-      />
+      <MissionBoard missions={snapshot.missions} agentNameById={agentNameById} />
 
       <ExecutionFeed
         logs={snapshot.latestLogs}
         missions={snapshot.missions}
         agentNameById={agentNameById}
-        onCreateLog={onCreateLog}
       />
 
       <MemoryBrowser items={memoryItems} overview={memoryOverview} onSearch={onSearchMemory} />

@@ -1,11 +1,18 @@
+{{- if not .Values.tenantAuthority.transportBootstrap }}
 # =============================================================================
 # Commander API — Deployment
 # =============================================================================
 {{- include "commander.requireEnterpriseSecrets" . }}
+{{- include "commander.requireLifecycleValues" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "commander.fullname" . }}-api
+  annotations:
+    commander.io/tenant-context-aware: "true"
+    commander.io/tenant-authority-phase: {{ .Values.tenantAuthority.cutoverPhase | quote }}
+    commander.io/tenant-authority-image-digest: {{ .Values.image.digest | quote }}
+    commander.io/tenant-authority-configuration-sha256: {{ .Values.tenantAuthority.configurationSha256 | quote }}
   labels:
     {{- include "commander.labels" . | nindent 4 }}
     app.kubernetes.io/component: api
@@ -27,6 +34,10 @@ spec:
         app.kubernetes.io/component: api
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        commander.io/tenant-context-aware: "true"
+        commander.io/tenant-authority-phase: {{ .Values.tenantAuthority.cutoverPhase | quote }}
+        commander.io/tenant-authority-image-digest: {{ .Values.image.digest | quote }}
+        commander.io/tenant-authority-configuration-sha256: {{ .Values.tenantAuthority.configurationSha256 | quote }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets: {{ toYaml . | nindent 8 }}
@@ -35,13 +46,52 @@ spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: {{ .Values.api.terminationGracePeriodSeconds }}
       securityContext: {{ toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if include "commander.postgresBackend" . }}
+      initContainers:
+        - name: api-proof-tls-materialize
+          image: {{ include "commander.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["node", "-e"]
+          args:
+            - |
+              const fs = require('node:fs');
+              const files = [['tls.crt', 0o444], ['tls.key', 0o400]];
+              for (const [name, mode] of files) {
+                const source = `/source/api-proof/${name}`;
+                const target = `/runtime/api-proof/${name}`;
+                fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL);
+                fs.chownSync(target, {{ .Values.podSecurityContext.runAsUser }}, {{ .Values.podSecurityContext.runAsGroup }});
+                fs.chmodSync(target, mode);
+                const stat = fs.lstatSync(target);
+                if (!stat.isFile() || stat.isSymbolicLink() || stat.mode % 512 !== mode) process.exit(1);
+              }
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "DAC_OVERRIDE", "FOWNER"]
+          volumeMounts:
+            - name: api-proof-private-source
+              mountPath: /source/api-proof
+              readOnly: true
+            - name: api-proof-tls-runtime
+              mountPath: /runtime/api-proof
+        {{- include "commander.runtimeMigrationGate" (dict "root" . "key" (include "commander.databaseAppSecretKey" .)) | nindent 8 }}
+      {{- end }}
       containers:
         - name: api
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ include "commander.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
               containerPort: {{ .Values.api.port }}
+              protocol: TCP
+            - name: tenant-authority-proof
+              containerPort: {{ .Values.tenantAuthority.apiProof.port }}
               protocol: TCP
           env:
             - name: NODE_ENV
@@ -49,6 +99,22 @@ spec:
             {{- include "commander.profileTierEnv" . | nindent 12 }}
             - name: PORT
               value: {{ .Values.api.port | quote }}
+            - name: COMMANDER_TENANT_AUTHORITY_IMAGE_DIGEST
+              value: {{ .Values.image.digest | quote }}
+            - name: COMMANDER_TENANT_AUTHORITY_CONFIGURATION_SHA256
+              value: {{ .Values.tenantAuthority.configurationSha256 | quote }}
+            - name: COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE
+              value: {{ .Values.tenantAuthority.cutoverPhase | quote }}
+            {{- if include "commander.postgresBackend" . }}
+            - name: COMMANDER_TENANT_AUTHORITY_PROOF_PORT
+              value: {{ .Values.tenantAuthority.apiProof.port | quote }}
+            - name: COMMANDER_TENANT_AUTHORITY_PROOF_CERT_FILE
+              value: /run/commander/api-proof/tls.crt
+            - name: COMMANDER_TENANT_AUTHORITY_PROOF_KEY_FILE
+              value: /run/commander/api-proof/tls.key
+            - name: COMMANDER_TENANT_AUTHORITY_PROOF_DNS_NAME
+              value: {{ printf "%s-api-proof.%s.svc.cluster.local" (include "commander.fullname" .) .Release.Namespace | quote }}
+            {{- end }}
             - name: LOG_LEVEL
               value: {{ .Values.config.logLevel | quote }}
             - name: CORS_ORIGINS
@@ -201,6 +267,11 @@ spec:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
                   key: {{ include "commander.databaseAppSecretKey" . | quote }}
+            - name: COMMANDER_TENANT_AUTHORITY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.databaseUrlSecretName" . | quote }}
+                  key: {{ include "commander.databaseTenantAuthoritySecretKey" . | quote }}
             {{- end }}
             {{- if .Values.observability.otel.enabled }}
             - name: OTEL_EXPORTER_ENDPOINT
@@ -219,13 +290,19 @@ spec:
             periodSeconds: {{ .Values.api.health.periodSeconds }}
           readinessProbe:
             httpGet:
-              path: {{ .Values.api.health.readinessPath }}
-              port: http
+              path: /ready/tenant-authority/v1
+              port: tenant-authority-proof
+              scheme: HTTPS
             initialDelaySeconds: {{ .Values.api.health.initialDelaySeconds }}
             periodSeconds: {{ .Values.api.health.periodSeconds }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if include "commander.postgresBackend" . }}
+            - name: api-proof-tls-runtime
+              mountPath: /run/commander/api-proof
+              readOnly: true
+            {{- end }}
             {{- if .Values.persistence.enabled }}
             - name: commander-state
               mountPath: /app/.commander_state
@@ -239,6 +316,20 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if include "commander.postgresBackend" . }}
+        - name: api-proof-private-source
+          secret:
+            secretName: {{ .Values.tenantAuthority.apiProof.privateSecret | quote }}
+            items:
+              - key: {{ .Values.tenantAuthority.apiProof.certKey | quote }}
+                path: tls.crt
+                mode: 292
+              - key: {{ .Values.tenantAuthority.apiProof.keyKey | quote }}
+                path: tls.key
+                mode: 256
+        - name: api-proof-tls-runtime
+          emptyDir: {}
+        {{- end }}
         {{- if .Values.persistence.enabled }}
         - name: commander-state
           persistentVolumeClaim:
@@ -262,3 +353,4 @@ spec:
       {{- with .Values.tolerations }}
       tolerations: {{ toYaml . | nindent 8 }}
       {{- end }}
+{{- end }}

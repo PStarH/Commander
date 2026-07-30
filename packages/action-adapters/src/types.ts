@@ -48,20 +48,38 @@ export interface AdapterCredentialProvider {
   ): Promise<{ instance: string; username: string; password: string }>;
 }
 
+export interface KubernetesCredentialProvider {
+  getToken(tenantId: string, cluster: string, namespace: string): Promise<string>;
+  getServer(tenantId: string, cluster: string, namespace: string): URL;
+}
+
+export interface KubernetesClusterCredentialConfig {
+  server: string | URL;
+  tokenEnv: string;
+  namespaces?: readonly string[];
+}
+
 export interface EnvAdapterCredentialProviderOptions {
   cellTenantId: string;
   githubTokenEnv?: string;
   serviceNowInstanceEnv?: string;
   serviceNowUsernameEnv?: string;
   serviceNowPasswordEnv?: string;
+  kubernetesClusters?: Readonly<Record<string, KubernetesClusterCredentialConfig>>;
 }
 
-export class EnvAdapterCredentialProvider implements AdapterCredentialProvider {
+export class EnvAdapterCredentialProvider
+  implements AdapterCredentialProvider, KubernetesCredentialProvider
+{
   private readonly cellTenantId: string;
   private readonly githubTokenEnv: string;
   private readonly serviceNowInstanceEnv: string;
   private readonly serviceNowUsernameEnv: string;
   private readonly serviceNowPasswordEnv: string;
+  private readonly kubernetesClusters: ReadonlyMap<
+    string,
+    { server: URL; tokenEnv: string; namespaces: ReadonlySet<string> }
+  >;
 
   constructor(options: EnvAdapterCredentialProviderOptions) {
     if (!options.cellTenantId) {
@@ -72,6 +90,33 @@ export class EnvAdapterCredentialProvider implements AdapterCredentialProvider {
     this.serviceNowInstanceEnv = options.serviceNowInstanceEnv ?? 'SERVICENOW_INSTANCE';
     this.serviceNowUsernameEnv = options.serviceNowUsernameEnv ?? 'SERVICENOW_USERNAME';
     this.serviceNowPasswordEnv = options.serviceNowPasswordEnv ?? 'SERVICENOW_PASSWORD';
+    this.kubernetesClusters = new Map(
+      Object.entries(options.kubernetesClusters ?? {}).map(([cluster, config]) => {
+        const configuredNamespaces =
+          config.namespaces ?? process.env.COMMANDER_KUBERNETES_NAMESPACES?.split(',') ?? [];
+        if (!isDnsSubdomain(cluster) || !config.tokenEnv || configuredNamespaces.length === 0) {
+          throw new Error(`Invalid Kubernetes cluster credential registration: ${cluster}`);
+        }
+        const namespaces = new Set(configuredNamespaces);
+        if (
+          namespaces.size !== configuredNamespaces.length ||
+          [...namespaces].some((value) => !isDnsLabel(value))
+        ) {
+          throw new Error(`Invalid Kubernetes namespace credential registration: ${cluster}`);
+        }
+        const server = new URL(config.server);
+        if (
+          server.protocol !== 'https:' ||
+          server.username ||
+          server.password ||
+          server.search ||
+          server.hash
+        ) {
+          throw new Error(`Invalid Kubernetes API server registration: ${cluster}`);
+        }
+        return [cluster, { server, tokenEnv: config.tokenEnv, namespaces }] as const;
+      }),
+    );
   }
 
   static fromProcessEnv(): EnvAdapterCredentialProvider {
@@ -79,7 +124,25 @@ export class EnvAdapterCredentialProvider implements AdapterCredentialProvider {
     if (!cellTenantId) {
       throw new Error('COMMANDER_CELL_TENANT_ID is required');
     }
-    return new EnvAdapterCredentialProvider({ cellTenantId });
+    const cluster = process.env.COMMANDER_KUBERNETES_CLUSTER;
+    const server = process.env.COMMANDER_KUBERNETES_SERVER;
+    const tokenEnv = process.env.COMMANDER_KUBERNETES_TOKEN_ENV;
+    const namespaces = process.env.COMMANDER_KUBERNETES_NAMESPACES;
+    if (
+      (cluster || server || tokenEnv || namespaces) &&
+      !(cluster && server && tokenEnv && namespaces)
+    ) {
+      throw new Error(
+        'COMMANDER_KUBERNETES_CLUSTER, COMMANDER_KUBERNETES_SERVER, COMMANDER_KUBERNETES_TOKEN_ENV, and COMMANDER_KUBERNETES_NAMESPACES must be configured together',
+      );
+    }
+    return new EnvAdapterCredentialProvider({
+      cellTenantId,
+      kubernetesClusters:
+        cluster && server && tokenEnv && namespaces
+          ? { [cluster]: { server, tokenEnv, namespaces: namespaces.split(',') } }
+          : undefined,
+    });
   }
 
   private assertTenant(tenantId: string): void {
@@ -116,6 +179,32 @@ export class EnvAdapterCredentialProvider implements AdapterCredentialProvider {
     }
     return { instance, username, password };
   }
+
+  private kubernetesRegistration(tenantId: string, cluster: string, namespace: string) {
+    this.assertTenant(tenantId);
+    const registration = this.kubernetesClusters.get(cluster);
+    if (!registration) {
+      throw new Error(`Kubernetes cluster is not registered: ${cluster}`);
+    }
+    if (!registration.namespaces.has(namespace)) {
+      throw new Error(`Kubernetes namespace is not authorized: ${cluster}/${namespace}`);
+    }
+    return registration;
+  }
+
+  async getToken(tenantId: string, cluster: string, namespace: string): Promise<string> {
+    const registration = this.kubernetesRegistration(tenantId, cluster, namespace);
+    const token = process.env[registration.tokenEnv];
+    if (!token) {
+      throw new Error(`Kubernetes credentials are not configured for cluster: ${cluster}`);
+    }
+    return token;
+  }
+
+  getServer(tenantId: string, cluster: string, namespace: string): URL {
+    const registration = this.kubernetesRegistration(tenantId, cluster, namespace);
+    return new URL(registration.server.href);
+  }
 }
 
 export interface AdapterEvidenceSummary {
@@ -126,6 +215,15 @@ export interface AdapterEvidenceSummary {
 }
 
 const GITHUB_DEST_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const DNS_SAFE_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+function isDnsLabel(value: string): boolean {
+  return value.length <= 63 && DNS_SAFE_LABEL.test(value);
+}
+
+function isDnsSubdomain(value: string): boolean {
+  return value.length <= 253 && value.split('.').every((label) => DNS_SAFE_LABEL.test(label));
+}
 
 export function parseGitHubDestination(destination: string): { owner: string; repo: string } {
   const match = /^github:\/\/([^/]+)\/([^/]+)\/pulls$/.exec(destination);
@@ -153,6 +251,24 @@ export function parseServiceNowDestination(destination: string): { instance: str
   return { instance };
 }
 
+export function parseKubernetesDeploymentDestination(destination: string): {
+  cluster: string;
+  namespace: string;
+  name: string;
+} {
+  const match = /^k8s:\/\/([^/]+)\/([^/]+)\/deployments\/([^/]+)$/.exec(destination);
+  if (!match) {
+    throw new Error(`Invalid Kubernetes deployment destination: ${destination}`);
+  }
+  const cluster = match[1]!;
+  const namespace = match[2]!;
+  const name = match[3]!;
+  if (!isDnsSubdomain(cluster) || !isDnsLabel(namespace) || !isDnsLabel(name)) {
+    throw new Error(`Invalid Kubernetes deployment destination: ${destination}`);
+  }
+  return { cluster, namespace, name };
+}
+
 export function toEvidenceSummary(
   descriptor: ActionAdapterDescriptorV1,
   response: Record<string, unknown>,
@@ -161,11 +277,7 @@ export function toEvidenceSummary(
   for (const key of descriptor.evidenceResponseSummaryKeys) {
     if (key in response) {
       const value = response[key];
-      if (
-        typeof value === 'string' ||
-        typeof value === 'number' ||
-        typeof value === 'boolean'
-      ) {
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
         (summary as Record<string, unknown>)[key] = value;
       }
     }

@@ -14,7 +14,7 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
-export type ComposeRoleProfile = 'cell' | 'base' | 'v2' | 'v2-bench';
+export type ComposeRoleProfile = 'cell' | 'base' | 'prod' | 'v2' | 'v2-bench';
 
 /** Service name → expected Postgres LOGIN role (DSN username). */
 export const SERVICE_ROLE_MAP: Readonly<Record<string, string>> = {
@@ -25,7 +25,7 @@ export const SERVICE_ROLE_MAP: Readonly<Record<string, string>> = {
   'api-2': 'commander_app',
   'kernel-ops': 'commander_scheduler',
   worker: 'commander_worker',
-  'adapter-ops': 'commander_worker',
+  'adapter-ops': 'commander_adapter_ops',
 };
 
 const OWNER_ROLE = 'commander_owner';
@@ -41,6 +41,7 @@ const ISOLATED_LEGACY_STORE_PROFILES = new Set<ComposeRoleProfile>([
 export const EXPECTED_WORKER_TENANTS: Readonly<Record<ComposeRoleProfile, string>> = {
   cell: 'local',
   base: 'tenant-local',
+  prod: 'tenant-local',
   v2: 'tenant-local',
   'v2-bench': 'tenant-0,tenant-1,tenant-2,tenant-3,tenant-4',
 };
@@ -51,6 +52,7 @@ export interface ComposeConfig {
 
 export interface ComposeService {
   environment?: Record<string, string | number | boolean | null> | string[] | null;
+  volumes?: Array<string | { source?: string; target?: string; type?: string }>;
   profiles?: string[];
 }
 
@@ -63,7 +65,7 @@ function parseArgs(): {
   const fileIdx = args.indexOf('--file');
   const profileIdx = args.indexOf('--profile');
   const profileRaw = (profileIdx >= 0 ? args[profileIdx + 1] : 'cell') ?? 'cell';
-  const allowed: ComposeRoleProfile[] = ['cell', 'base', 'v2', 'v2-bench'];
+  const allowed: ComposeRoleProfile[] = ['cell', 'base', 'prod', 'v2', 'v2-bench'];
   if (!allowed.includes(profileRaw as ComposeRoleProfile)) {
     throw new Error(`Unknown --profile ${profileRaw}; expected one of ${allowed.join(', ')}`);
   }
@@ -106,9 +108,24 @@ export function dsnRole(dsn: string | undefined): string | null {
   return m?.[1] ?? null;
 }
 
-/** Prefer DATABASE_URL, then COMMANDER_KERNEL_DATABASE_URL. */
-export function serviceDsn(env: Record<string, string>): string | undefined {
-  return env.DATABASE_URL || env.COMMANDER_KERNEL_DATABASE_URL || undefined;
+/** Prefer the production role-specific DSN, then the legacy generic keys. */
+export function serviceDsn(
+  env: Record<string, string>,
+  serviceName?: string,
+): string | undefined {
+  const productionDsnKey: Record<string, string> = {
+    'kernel-migrate': 'COMMANDER_OWNER_DATABASE_URL',
+    api: 'COMMANDER_API_DATABASE_URL',
+    'kernel-ops': 'COMMANDER_SCHEDULER_DATABASE_URL',
+    worker: 'COMMANDER_WORKER_DATABASE_URL',
+    'adapter-ops': 'COMMANDER_ADAPTER_OPS_DATABASE_URL',
+  };
+  return (
+    (serviceName ? env[productionDsnKey[serviceName] ?? ''] : undefined) ||
+    env.DATABASE_URL ||
+    env.COMMANDER_KERNEL_DATABASE_URL ||
+    undefined
+  );
 }
 
 function normalizeTenantList(raw: string): string[] {
@@ -141,8 +158,14 @@ export function assertComposeRoles(
   }
 
   if (profile === 'v2') {
-    for (const name of ['kernel-migrate', 'api', 'kernel-ops', 'worker'] as const) {
+    for (const name of ['kernel-migrate', 'api', 'kernel-ops', 'worker', 'adapter-ops'] as const) {
       assert.ok(services[name], `v2 profile missing service ${name}`);
+    }
+  }
+
+  if (profile === 'prod') {
+    for (const name of ['kernel-migrate', 'api', 'kernel-ops', 'worker', 'adapter-ops'] as const) {
+      assert.ok(services[name], `prod profile missing service ${name}`);
     }
   }
 
@@ -150,6 +173,7 @@ export function assertComposeRoles(
     assert.ok(services.migrate || services['kernel-migrate'], 'v2-bench missing migrate service');
     assert.ok(services.worker, 'v2-bench missing worker service');
     assert.ok(services['kernel-ops'], 'v2-bench missing kernel-ops service');
+    assert.ok(services['adapter-ops'], 'v2-bench missing adapter-ops service');
     assert.ok(
       services['api-1'] || services['api-2'] || services.api,
       'v2-bench missing api service',
@@ -161,7 +185,30 @@ export function assertComposeRoles(
     if (!expectedRole || !service) continue;
 
     const env = normalizeEnvironment(service.environment);
-    const dsn = serviceDsn(env);
+    if (profile === 'prod') {
+      assert.ok(
+        env.COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE === 'expand' ||
+          env.COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE === 'enforce',
+        `${name}: COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE must be expand or enforce`,
+      );
+      if (name === 'kernel-migrate' || name === 'api' || name === 'kernel-ops') {
+        const allowedTenants = env.COMMANDER_ALLOWED_TENANTS;
+        assert.ok(
+          allowedTenants !== undefined &&
+            normalizeTenantList(allowedTenants).length > 0 &&
+            !normalizeTenantList(allowedTenants).includes('*'),
+          `${name}: COMMANDER_ALLOWED_TENANTS must be a non-empty explicit list`,
+        );
+      }
+      if (name !== 'kernel-migrate') {
+        assert.equal(
+          env.COMMANDER_BOOTSTRAP_AUTHORITY_DATABASE_URL,
+          undefined,
+          `${name}: bootstrap authority may only reach the fresh migrator`,
+        );
+      }
+    }
+    const dsn = serviceDsn(env, name);
     assert.ok(dsn, `${name}: missing DATABASE_URL / COMMANDER_KERNEL_DATABASE_URL`);
 
     const role = dsnRole(dsn);
@@ -222,6 +269,19 @@ export function assertComposeRoles(
         tenantListsEqual(tenants, expectedTenants),
         `${name}: expected COMMANDER_WORKER_TENANTS=${expectedTenants}, got ${tenants}`,
       );
+      if (name === 'adapter-ops') {
+        assert.ok(env.COMMANDER_ADAPTER_OPS_INSTANCE_ID?.trim(), `${name}: instance id is required`);
+        const claimSecretDir = env.COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR?.trim();
+        assert.ok(claimSecretDir, `${name}: claim secret dir is required`);
+        assert.ok(
+          service.volumes?.some((volume) =>
+            typeof volume === 'string'
+              ? volume.endsWith(`:${claimSecretDir}`)
+              : volume.target === claimSecretDir && Boolean(volume.source),
+          ),
+          `${name}: claim secret volume must mount at ${claimSecretDir}`,
+        );
+      }
     }
   }
 

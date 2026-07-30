@@ -8,7 +8,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   assertComposeCellHealth,
@@ -22,9 +22,109 @@ export interface CellSmokeResult {
   mode: CellSmokeMode;
   passed: boolean;
   steps: Record<string, boolean>;
+  controlledChange: ControlledChangeCellEvidence;
   gitSha: string;
   topology: string;
   elapsedMs: number;
+}
+
+/**
+ * This telemetry is intentionally separate from generic cell health. A cell
+ * without the Kind rollback driver is healthy only as a generic cell, not as
+ * evidence for the controlled Kubernetes change.
+ */
+export interface ControlledChangeCellEvidence {
+  proofVerdict: 'PROVEN' | 'NOT_READY';
+  remoteOutcome: 'APPLIED' | 'NOT_APPLIED' | 'UNKNOWN';
+  reconciliationLatencyMs: number | null;
+  duplicateWriteCount: number | null;
+  writesDuringReconciliation: number | null;
+  compensationDisposition: 'APPLIED' | 'NOT_APPLIED' | 'UNKNOWN' | 'NOT_RUN';
+  irreducibleUnknownDisposition: 'ESCALATED' | 'NOT_RUN';
+}
+
+export function notReadyControlledChangeEvidence(): ControlledChangeCellEvidence {
+  return {
+    proofVerdict: 'NOT_READY',
+    remoteOutcome: 'UNKNOWN',
+    reconciliationLatencyMs: null,
+    duplicateWriteCount: null,
+    writesDuringReconciliation: null,
+    compensationDisposition: 'NOT_RUN',
+    irreducibleUnknownDisposition: 'NOT_RUN',
+  };
+}
+
+function controlledChangeRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('CONTROLLED_CHANGE_EVIDENCE_INVALID');
+  }
+  return value as Record<string, unknown>;
+}
+
+export function validateControlledChangeEvidence(
+  value: ControlledChangeCellEvidence,
+): ControlledChangeCellEvidence {
+  if (!['PROVEN', 'NOT_READY'].includes(value.proofVerdict)) {
+    throw new Error('CONTROLLED_CHANGE_EVIDENCE_INVALID');
+  }
+  if (!['APPLIED', 'NOT_APPLIED', 'UNKNOWN'].includes(value.remoteOutcome)) {
+    throw new Error('CONTROLLED_CHANGE_EVIDENCE_INVALID');
+  }
+  if (
+    !['APPLIED', 'NOT_APPLIED', 'UNKNOWN', 'NOT_RUN'].includes(value.compensationDisposition) ||
+    !['ESCALATED', 'NOT_RUN'].includes(value.irreducibleUnknownDisposition)
+  ) {
+    throw new Error('CONTROLLED_CHANGE_EVIDENCE_INVALID');
+  }
+  if (value.proofVerdict === 'PROVEN') {
+    if (
+      value.remoteOutcome !== 'APPLIED' ||
+      !Number.isSafeInteger(value.reconciliationLatencyMs) ||
+      (value.reconciliationLatencyMs ?? -1) < 0 ||
+      value.duplicateWriteCount !== 0 ||
+      value.writesDuringReconciliation !== 0 ||
+      value.compensationDisposition !== 'APPLIED' ||
+      value.irreducibleUnknownDisposition !== 'ESCALATED'
+    ) {
+      throw new Error('CONTROLLED_CHANGE_PROVEN_INVARIANTS_INVALID');
+    }
+  }
+  return value;
+}
+
+export function controlledChangeEvidenceFromProofResult(
+  value: unknown,
+): ControlledChangeCellEvidence {
+  const proof = controlledChangeRecord(value);
+  const metrics = controlledChangeRecord(proof.metrics);
+  if (!Array.isArray(proof.failures)) {
+    throw new Error('CONTROLLED_CHANGE_EVIDENCE_INVALID');
+  }
+  if (proof.verdict === 'PROVEN') {
+    if (proof.failures.length !== 0) {
+      throw new Error('CONTROLLED_CHANGE_PROVEN_FAILURES_PRESENT');
+    }
+    throw new Error('CONTROLLED_CHANGE_SIGNED_ARTIFACT_VERIFICATION_REQUIRED');
+  }
+  return validateControlledChangeEvidence({
+    proofVerdict: proof.verdict as ControlledChangeCellEvidence['proofVerdict'],
+    remoteOutcome: metrics.remoteOutcome as ControlledChangeCellEvidence['remoteOutcome'],
+    reconciliationLatencyMs: metrics.reconciliationLatencyMs as number | null,
+    duplicateWriteCount: metrics.duplicateWriteCount as number | null,
+    writesDuringReconciliation: metrics.writesDuringReconciliation as number | null,
+    compensationDisposition:
+      metrics.compensationDisposition as ControlledChangeCellEvidence['compensationDisposition'],
+    irreducibleUnknownDisposition:
+      metrics.irreducibleUnknownDisposition as ControlledChangeCellEvidence['irreducibleUnknownDisposition'],
+  });
+}
+
+export async function loadControlledChangeProofArtifact(
+  path: string | undefined,
+): Promise<ControlledChangeCellEvidence> {
+  if (!path) return notReadyControlledChangeEvidence();
+  return controlledChangeEvidenceFromProofResult(JSON.parse(await readFile(path, 'utf8')));
 }
 
 function resolveGitSha(): string {
@@ -137,8 +237,7 @@ export async function runOptionalChaosStep(
   steps: Record<string, boolean>,
   options?: { require?: boolean; loadChaos?: () => Promise<ChaosModule> },
 ): Promise<void> {
-  const requireChaos =
-    options?.require === true || process.env.CELL_SMOKE_REQUIRE_CHAOS === '1';
+  const requireChaos = options?.require === true || process.env.CELL_SMOKE_REQUIRE_CHAOS === '1';
   try {
     const { runL4BAdapterChaos } = options?.loadChaos
       ? await options.loadChaos()
@@ -157,7 +256,9 @@ function assertComposeKernelBackend(): boolean {
     'docker compose -f docker-compose.yml -f docker-compose.cell.yml --profile cell config --format json',
     { encoding: 'utf-8', cwd: process.cwd(), env: { ...process.env, ...COMPOSE_CONFIG_ENV } },
   );
-  const config = JSON.parse(json) as { services?: Record<string, { environment?: ComposeServiceEnv }> };
+  const config = JSON.parse(json) as {
+    services?: Record<string, { environment?: ComposeServiceEnv }>;
+  };
   assertKernelBackendOnCellServices(config);
   assertCapabilityAuthorityOnCellServices(config);
   return true;
@@ -167,10 +268,14 @@ export async function runCellSmoke(options: {
   baseUrl?: string;
   mode?: CellSmokeMode;
   apiKey?: string;
+  controlledChange?: ControlledChangeCellEvidence;
 }): Promise<CellSmokeResult> {
   const started = Date.now();
   const mode = options.mode ?? 'mock';
   const steps: Record<string, boolean> = {};
+  const controlledChange = validateControlledChangeEvidence(
+    options.controlledChange ?? notReadyControlledChangeEvidence(),
+  );
   const baseUrl = options.baseUrl ?? 'http://localhost:4000';
 
   if (mode === 'mock') {
@@ -185,6 +290,7 @@ export async function runCellSmoke(options: {
       mode,
       passed: steps.S6 === true,
       steps,
+      controlledChange,
       gitSha: resolveGitSha(),
       topology: 'mock',
       elapsedMs: Date.now() - started,
@@ -201,6 +307,7 @@ export async function runCellSmoke(options: {
       mode,
       passed: steps.helm_template_assert === true,
       steps,
+      controlledChange,
       gitSha: resolveGitSha(),
       topology: 'helm-template-assert',
       elapsedMs: Date.now() - started,
@@ -216,6 +323,7 @@ export async function runCellSmoke(options: {
           mode,
           passed: false,
           steps,
+          controlledChange,
           gitSha: resolveGitSha(),
           topology: 'compose-cell',
           elapsedMs: Date.now() - started,
@@ -258,6 +366,7 @@ export async function runCellSmoke(options: {
     mode,
     passed: Object.values(steps).every(Boolean),
     steps,
+    controlledChange,
     gitSha: resolveGitSha(),
     topology: mode === 'compose' ? 'compose-cell' : mode,
     elapsedMs: Date.now() - started,
@@ -271,15 +380,18 @@ async function main(): Promise<void> {
   const baseUrl = baseUrlIdx >= 0 ? args[baseUrlIdx + 1] : 'http://localhost:4000';
   const mode = (modeIdx >= 0 ? args[modeIdx + 1] : 'compose') as CellSmokeMode;
   const apiKey = process.env.COMMANDER_API_KEY;
+  const proofIdx = args.indexOf('--controlled-change-proof');
+  const controlledChange = await loadControlledChangeProofArtifact(
+    (proofIdx >= 0 ? args[proofIdx + 1] : undefined) ??
+      process.env.COMMANDER_KUBERNETES_PROOF_ARTIFACT,
+  );
 
-  const result = await runCellSmoke({ baseUrl, mode, apiKey });
+  const result = await runCellSmoke({ baseUrl, mode, apiKey, controlledChange });
   const outDir = join(process.cwd(), 'artifacts');
   await mkdir(outDir, { recursive: true });
   const outPath = join(outDir, 'l4-b-cell-smoke-' + Date.now() + '.json');
   await writeFile(outPath, JSON.stringify(result, null, 2));
-  console.log(
-    'Cell smoke ' + (result.passed ? 'PASS' : 'FAIL') + ' → ' + outPath,
-  );
+  console.log('Cell smoke ' + (result.passed ? 'PASS' : 'FAIL') + ' → ' + outPath);
   if (!result.passed) process.exit(1);
 }
 

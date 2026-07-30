@@ -24,6 +24,7 @@ import {
   Key,
   Briefcase,
   Activity,
+  SquareActivity,
 } from 'lucide-react';
 import type { AuthUser } from '../api';
 import { t } from '../i18n';
@@ -34,6 +35,7 @@ const NAV_ITEMS = [
   { to: '/agents', icon: Users, label: t('nav.agents') },
   { to: '/missions', icon: Kanban, label: t('nav.missions') },
   { to: '/execution', icon: ScrollText, label: t('nav.execution') },
+  { to: '/actions', icon: SquareActivity, label: 'Actions' },
   { to: '/memory', icon: BookOpen, label: t('nav.memory') },
   { to: '/governance', icon: ShieldCheck, label: t('nav.governance') },
   { to: '/workflows', icon: Workflow, label: t('nav.workflows') },

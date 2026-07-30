@@ -11,12 +11,97 @@ export {
   KERNEL_CLAIM_SQL,
   KERNEL_CLAIM_RECONCILE_SQL,
   KERNEL_CLAIM_SECRET_SQL,
+  KERNEL_ADAPTER_OPS_SQL,
   KERNEL_RLS_SQL,
   KERNEL_ROLES_SQL,
   KERNEL_SCHEMA_SQL,
   KERNEL_SCHEMA_VERSION,
 } from './schema.js';
-export { KERNEL_MIGRATIONS, runKernelMigrations } from './migrations.js';
+export {
+  KERNEL_MIGRATIONS,
+  KERNEL_TASK1_BASELINE_MIGRATIONS,
+  KERNEL_TASK1_CLOSURE_MIGRATIONS,
+  KERNEL_TASK1_CLOSURE_MIGRATION_CHECKSUMS,
+  KERNEL_TASK2_FORWARD_MIGRATION_CHECKSUMS,
+  KERNEL_TASK2_FORWARD_MIGRATIONS,
+  KERNEL_SIGNED_EVIDENCE_MIGRATIONS,
+  runKernelMigrations,
+} from './migrations.js';
+export { KERNEL_SIGNED_EVIDENCE_SQL } from './evidenceSchema.js';
+export {
+  TASK1_DATABASE_ROLES,
+  canonicalBootstrapJson,
+  canonicalBootstrapSha256,
+  createDatabasePeerBinding,
+  createDatabasePeerBindingInput,
+  createOriginBinding,
+  createPrebootstrapSnapshots,
+  verifyDatabasePeerBinding,
+  verifyPersistedOriginBinding,
+} from './canonicalBootstrap.js';
+export type {
+  BootstrapIdentitiesV1,
+  BootstrapIdentityV1,
+  DatabasePeerBindingInputRoleV1,
+  DatabasePeerBindingInputV1,
+  DatabasePeerBindingRoleV1,
+  DatabasePeerBindingV1,
+  OriginBindingV1,
+  PrebootstrapInventoryV1,
+  PrebootstrapSnapshotsV1,
+  Task1DatabaseRole,
+} from './canonicalBootstrap.js';
+export {
+  AUTHORITY_CLASSIFIER_MANIFEST_SHA256,
+  AUTHORITY_CLASSIFIER_MANIFEST_V1,
+  authorityClassifierManifestSha256,
+  exportAuthorityClassifierManifest,
+  verifyAuthorityClassifierCatalog,
+  verifyAuthorityClassifierManifest,
+} from './authorityClassifierManifest.js';
+export {
+  TASK1_CATALOG_QUERIES,
+  classifyTask1CatalogOrigin,
+  collectTask1PrebootstrapInventory,
+  exportTask1CatalogPostcondition,
+  verifyTask1CatalogPostcondition,
+} from './task1Catalog.js';
+export type {
+  Task1CatalogBootstrapContext,
+  Task1CatalogOriginKind,
+  Task1CatalogPostconditionStage,
+} from './task1Catalog.js';
+export {
+  KERNEL_TASK1_HELM_LIFECYCLE_GATE_SQL,
+  PostgresTask1LifecycleOwnerTransactions,
+  TASK1_LIFECYCLE_DESCRIPTOR_SQL,
+  TASK1_LIFECYCLE_LOCK_STATE_SQL,
+  Task1LifecycleLedger,
+  createTask1OperationAuditNonce,
+  verifyTask1FreshPendingRetry,
+} from './task1LifecycleLedger.js';
+export type {
+  Task1FreshPendingRetry,
+  Task1LifecycleLockedState,
+  Task1LifecycleOperation,
+  Task1LifecycleOwnerTransaction,
+  Task1LifecycleOwnerTransactions,
+  Task1LifecycleRequest,
+  Task1LifecycleResult,
+  Task1PlatformBinding,
+} from './task1LifecycleLedger.js';
+export { decideTenantCutoverOperation } from './tenantCutoverStateMachine.js';
+export type {
+  TenantCutoverCommand,
+  TenantCutoverDecision,
+  TenantCutoverOperationIdentity,
+  TenantCutoverOperationKind,
+  TenantCutoverPlatformKind,
+  TenantCutoverRecordedExpand,
+  TenantCutoverRequest,
+  TenantCutoverRuntimePhase,
+  TenantCutoverState,
+} from './tenantCutoverStateMachine.js';
 export {
   generateWorkerClaimSecret,
   hashWorkerClaimSecret,
@@ -57,6 +142,7 @@ export type {
   CompensationEffectBroker,
   CompensationOutboxPort,
   CompensationTokenProvider,
+  CompensationTokenContext,
 } from './ops/compensationConsumer.js';
 export type { ReclaimDaemonConfig, ReclaimStats } from './ops/reclaimDaemon.js';
 export { KernelOpsRuntime } from './ops/opsRuntime.js';
@@ -77,6 +163,17 @@ export type {
   SqlQueryResult,
 } from './postgres.js';
 export type { KernelRepository } from './repository.js';
+export { InMemoryEvidenceRepository } from './evidenceRepository.js';
+export type {
+  EvidenceRepository,
+  KernelEvidenceRecord,
+  KernelEvidenceSignature,
+} from './evidenceRepository.js';
+export { observeTask1DatabasePeers } from './task1DatabasePeer.js';
+export type {
+  Task1DatabasePeerObservation,
+  Task1DatabasePeerObserverOptions,
+} from './task1DatabasePeer.js';
 export {
   KernelCapabilityReplayStore,
   KernelCapabilityRevocationStore,
@@ -100,7 +197,17 @@ export type {
   CapabilityAuthorityEnv,
   CreateCapabilityAuthorityOptions,
 } from './capabilityAuthority.js';
-export { KERNEL_API_VERSION, KernelInvariantError } from './types.js';
+export { KERNEL_API_VERSION, OPERATIONS_HEARTBEAT_TTL_MS, KernelInvariantError } from './types.js';
+export {
+  DEFAULT_RECONCILE_DEADLINE_MS,
+  RECONCILE_CLAIM_TTL_MS,
+  RECONCILE_INITIAL_DELAY_MS,
+  RECONCILE_MAX_ATTEMPTS,
+  RECONCILE_MAX_DELAY_MS,
+  createReconcilePolicy,
+  nextReconcileAfter,
+  reconcileDeadlineWindowMs,
+} from './reconcilePolicy.js';
 export type {
   AdmitEffectRequest,
   AdmitEffectResult,
@@ -118,6 +225,8 @@ export type {
   KernelInteraction,
   KernelLease,
   KernelOutboxMessage,
+  OperationsReadiness,
+  KernelCompensationAdmissionBinding,
   KernelRun,
   KernelRunHandle,
   KernelRunState,
@@ -128,6 +237,12 @@ export type {
   NewKernelStep,
   ReconcileEffectRequest,
   RequestReconcileInput,
+  RequestReconcileResult,
+  ReconcileDisposition,
+  ReconcileEscalationCode,
+  ReconcilePolicy,
+  ReconcileQueryError,
+  ReconcileQueryErrorCode,
   ClaimReconcileEffectsInput,
   ClaimedReconcileEffect,
   RescheduleReconcileInput,
@@ -135,6 +250,14 @@ export type {
   FailEffectRequest,
   RequestCompensationInput,
   RequestCompensationResult,
+  CompensationAuthorizationRecord,
+  KernelCompensationRequest,
+  ClaimCompensationRequestInput,
+  ClaimedCompensationRequest,
+  CompensationDisposition,
+  CompensationMutationResult,
+  FinalizeCompensationInput,
+  ParkCompensationUnknownInput,
   InteractionStatus,
   TimerState,
   TimerType,

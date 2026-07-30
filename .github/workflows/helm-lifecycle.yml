@@ -3,18 +3,28 @@ name: Helm Lifecycle
 on:
   pull_request:
     paths:
+      - 'apps/api/**'
       - 'deploy/helm/commander/**'
-      - 'scripts/helm-**'
-      - 'scripts/chart-content-digest*'
-      - 'scripts/fixtures/helm-lifecycle/**'
+      - 'packages/**'
+      - 'scripts/**'
+      - '.dockerignore'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig*.json'
       - '.github/workflows/helm-lifecycle.yml'
   push:
     branches: [main, master]
     paths:
+      - 'apps/api/**'
       - 'deploy/helm/commander/**'
-      - 'scripts/helm-**'
-      - 'scripts/chart-content-digest*'
-      - 'scripts/fixtures/helm-lifecycle/**'
+      - 'packages/**'
+      - 'scripts/**'
+      - '.dockerignore'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig*.json'
       - '.github/workflows/helm-lifecycle.yml'
 
 jobs:
@@ -28,6 +38,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec tsx --test scripts/chart-content-digest.test.ts scripts/helm-cell-assert.test.ts scripts/helm-lifecycle-static.test.ts scripts/helm-lifecycle-kind.test.ts
       - run: pnpm exec tsx scripts/chart-content-digest.ts verify deploy/helm/commander
@@ -45,6 +57,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
       - uses: helm/kind-action@v1
         with:
           cluster_name: commander-helm-lifecycle

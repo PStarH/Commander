@@ -17,6 +17,7 @@
  */
 
 import { fileURLToPath } from 'node:url';
+import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import { reportSilentFailure } from '../../silentFailureReporter';
 import { getGlobalLogger } from '../../logging';
 import { $, section, kv } from './_shared';
@@ -61,11 +62,7 @@ interface PgPool {
 function createPool(connectionString: string): PgPool | null {
   if (!connectionString) return null;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const pg = require('pg') as {
-      Pool: new (opts: { connectionString: string; max: number }) => PgPool;
-    };
-    return new pg.Pool({ connectionString, max: 3 });
+    return createVerifiedPostgresPool({ connectionString, max: 3 });
   } catch (err) {
     reportSilentFailure(err, 'diagnose:createPool');
     return null;

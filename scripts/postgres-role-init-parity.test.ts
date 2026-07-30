@@ -20,7 +20,14 @@ const repoRoot = join(here, '..');
 const PROD = join(repoRoot, 'deploy', 'docker', 'postgres-init.sql');
 const BENCH = join(repoRoot, 'deploy', 'docker', 'postgres-init.bench.sql');
 
-const EXPECTED_ROLES = ['commander_owner', 'commander_app', 'commander_scheduler', 'commander_worker'];
+const EXPECTED_ROLES = [
+  'commander_owner',
+  'commander_app',
+  'commander_tenant_authority',
+  'commander_scheduler',
+  'commander_worker',
+  'commander_adapter_ops',
+];
 
 interface RoleFacts {
   roles: string[];
@@ -87,7 +94,7 @@ describe('postgres role-init parity', () => {
   const prod = extractFacts(readFileSync(PROD, 'utf-8'));
   const bench = extractFacts(readFileSync(BENCH, 'utf-8'));
 
-  it('both files define all four Commander roles', () => {
+  it('both files define all six Commander roles', () => {
     for (const role of EXPECTED_ROLES) {
       assert.ok(
         prod.roles.some((r) => r.startsWith(`${role}:`)),
@@ -112,14 +119,37 @@ describe('postgres role-init parity', () => {
     assert.deepEqual(bench.grants, prod.grants);
   });
 
-  it('only commander_scheduler carries BYPASSRLS; owner is the only CREATEROLE', () => {
+  it('only owner and scheduler carry BYPASSRLS; owner is the only CREATEROLE', () => {
     const workerLine = prod.roles.find((r) => r.startsWith('commander_worker:'));
     const appLine = prod.roles.find((r) => r.startsWith('commander_app:'));
     const schedulerLine = prod.roles.find((r) => r.startsWith('commander_scheduler:'));
+    const authorityLine = prod.roles.find((r) => r.startsWith('commander_tenant_authority:'));
+    const adapterOpsLine = prod.roles.find((r) => r.startsWith('commander_adapter_ops:'));
     assert.ok(workerLine?.includes('NOBYPASSRLS'), 'commander_worker must be NOBYPASSRLS');
     assert.ok(appLine?.includes('NOBYPASSRLS'), 'commander_app must be NOBYPASSRLS');
+    assert.ok(adapterOpsLine?.includes('NOBYPASSRLS'), 'commander_adapter_ops must be NOBYPASSRLS');
+    assert.ok(authorityLine?.includes('NOBYPASSRLS'), 'commander_tenant_authority must be NOBYPASSRLS');
+    const ownerLine = prod.roles.find((r) => r.startsWith('commander_owner:'));
+    assert.ok(ownerLine?.includes('BYPASSRLS') && !ownerLine.includes('NOBYPASSRLS'),
+      'commander_owner must carry BYPASSRLS');
     assert.ok(schedulerLine?.includes('BYPASSRLS') && !schedulerLine.includes('NOBYPASSRLS'),
       'commander_scheduler must carry BYPASSRLS');
     assert.ok(workerLine?.includes('NOCREATEROLE'), 'commander_worker must be NOCREATEROLE');
+    assert.ok(adapterOpsLine?.includes('NOCREATEROLE'), 'commander_adapter_ops must be NOCREATEROLE');
+  });
+
+  it('never grants reconcile claim back to commander_worker', () => {
+    for (const file of [PROD, BENCH]) {
+      const sql = readFileSync(file, 'utf8');
+      assert.doesNotMatch(
+        sql,
+        /GRANT EXECUTE ON FUNCTION claim_reconcile_effects\([^;]+\) TO commander_worker/i,
+        `${file} must reserve reconcile claims for commander_adapter_ops`,
+      );
+      assert.match(
+        sql,
+        /GRANT EXECUTE ON FUNCTION claim_reconcile_effects\([^;]+\) TO commander_adapter_ops/i,
+      );
+    }
   });
 });

@@ -142,8 +142,8 @@ describe('github.pullRequestCreate adapter', () => {
       request: { head: 'feature', base: 'main' },
     });
     assert.equal(state.writeCount, writesBefore);
-    assert.equal(outcome.status, 'COMPLETED');
-    if (outcome.status === 'COMPLETED') {
+    assert.equal(outcome.status, 'APPLIED');
+    if (outcome.status === 'APPLIED') {
       assert.equal(outcome.response.prNumber, 1);
     }
   });
@@ -174,7 +174,7 @@ describe('github.pullRequestCreate adapter', () => {
       request: { prNumber: forward.prNumber },
       compensationResponse: compensated,
     });
-    assert.equal(outcome.status, 'COMPLETED');
+    assert.equal(outcome.status, 'APPLIED');
   });
 
   it('maps 401/403 to NOT_COMMITTED NEVER', async () => {

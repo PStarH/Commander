@@ -51,6 +51,7 @@ database:
   postgres:
     bundled: true
     persistence: { enabled: false }
-    tls:
-      publicSecret: commander-lifecycle-database-public-ca
-      publicCaKey: ca.crt
+
+databaseTls:
+  existingSecret: commander-lifecycle-database-tls
+  expectedServerSpkiSha256: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc

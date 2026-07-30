@@ -81,11 +81,15 @@ function adapterExecutor(adapter: ActionAdapter): EffectExecutor {
           idempotencyKey: input.request.idempotencyKey,
           destination,
           forwardResponse:
-            ((input.request as Record<string, unknown>).forwardResponse as Record<string, unknown>) ??
-            {},
+            ((input.request as Record<string, unknown>).forwardResponse as Record<
+              string,
+              unknown
+            >) ?? {},
           compensationPatch:
-            ((input.request as Record<string, unknown>).compensationPatch as Record<string, unknown>) ??
-            {},
+            ((input.request as Record<string, unknown>).compensationPatch as Record<
+              string,
+              unknown
+            >) ?? {},
           signal: input.signal,
         });
       }
@@ -202,7 +206,7 @@ async function runTimeoutReconcileScenario(ctx: ConformanceAdapterContext): Prom
     executor,
     { append: async () => {} },
     // 保持默认 requireRequestBinding=true；token 已绑定 canonicalRequestHash
-    { localWorkerId: 'worker-1' },
+    { localWorkerId: 'worker-1', localWorkerGeneration: 1 },
   );
   const token = issuer.issue(
     buildConformanceIssueInput({
@@ -213,6 +217,9 @@ async function runTimeoutReconcileScenario(ctx: ConformanceAdapterContext): Prom
       effectTypes: [ctx.adapter.descriptor.effectType],
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       requestHash: canonicalRequestHash(request),
+      actionDigest: canonicalRequestHash(request),
+      workerId: 'worker-1',
+      workerGeneration: 1,
     }),
   );
   await assert.rejects(
@@ -223,7 +230,12 @@ async function runTimeoutReconcileScenario(ctx: ConformanceAdapterContext): Prom
         type: ctx.adapter.descriptor.effectType,
         request,
         idempotencyKey,
-        lease: { workerId: 'worker-1', token: 'lease', fencingEpoch: 1 },
+        lease: {
+          workerId: 'worker-1',
+          workerGeneration: 1,
+          token: 'lease',
+          fencingEpoch: 1,
+        },
         actor: 'worker-1',
       }),
     (error: unknown) =>
@@ -233,14 +245,20 @@ async function runTimeoutReconcileScenario(ctx: ConformanceAdapterContext): Prom
   const querier = registry.outcomeQuerierFor(ctx.adapter.descriptor.effectType);
   assert.ok(querier);
   const reconciled = await broker.reconcileUnknown({
-    effectId: 'eff-conformance-chaos',
-    tenantId,
-    actor: 'conformance-reconciler',
+    effect: {
+      id: 'eff-conformance-chaos',
+      state: 'COMPLETION_UNKNOWN',
+      type: ctx.adapter.descriptor.effectType,
+      idempotencyKey,
+      request,
+      runId: 'run-conformance',
+      stepId: 'step-conformance',
+      tenantId,
+    },
     querier,
   });
-  assert.equal(reconciled.status, 'COMPLETED');
-  assert.equal(reconciled.invokedExecutor, false);
-  assert.equal(getState(), 'COMPLETED');
+  assert.equal(reconciled.status, 'APPLIED');
+  assert.equal(getState(), 'COMPLETION_UNKNOWN');
 }
 
 export function registerConformanceSuite(options: ConformanceSuiteOptions): void {

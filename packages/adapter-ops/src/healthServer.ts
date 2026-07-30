@@ -2,6 +2,7 @@
  * Minimal HTTP health surface for adapter-operations Deployments.
  */
 import { createServer, type Server } from 'node:http';
+import type { OpsLoopHealth } from './reconciliationDaemon.js';
 
 export interface AdapterOpsHealthHandle {
   port: number;
@@ -11,12 +12,21 @@ export interface AdapterOpsHealthHandle {
 export async function startAdapterOpsHealthServer(options: {
   port: number;
   isReady: () => boolean | Promise<boolean>;
+  getLoopHealth?: () => {
+    reconciliation: OpsLoopHealth;
+    compensation: OpsLoopHealth;
+  };
 }): Promise<AdapterOpsHealthHandle> {
   const server: Server = createServer((req, res) => {
     const url = req.url?.split('?')[0] ?? '/';
     if (url === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok' }));
+      res.end(
+        JSON.stringify({
+          status: 'ok',
+          ...(options.getLoopHealth ? { loops: options.getLoopHealth() } : {}),
+        }),
+      );
       return;
     }
     if (url === '/ready') {

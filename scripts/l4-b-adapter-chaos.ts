@@ -44,6 +44,8 @@ export interface L4BChaosResult {
 
 const tenantId = 'l4-b-chaos-tenant';
 const destination = 'github://octo/repo/pulls';
+const workerId = 'worker-chaos';
+const workerGeneration = 1;
 
 function chaosCredentials() {
   return {
@@ -107,6 +109,9 @@ export async function runL4BAdapterChaos(): Promise<L4BChaosResult> {
   const registry = new ActionAdapterRegistry([adapter]);
   const executor = createActionAdapterEffectExecutor(registry);
   const kernel = new InMemoryKernelRepository();
+  const claimSecret = kernel.seedTestWorker(workerId, [tenantId], workerGeneration, {
+    capabilities: ['tool', 'effect.execute'],
+  });
 
   await kernel.createRun(
     {
@@ -120,7 +125,13 @@ export async function runL4BAdapterChaos(): Promise<L4BChaosResult> {
     },
     'chaos',
   );
-  const step = await kernel.claimNextStep({ workerId: 'worker-chaos', leaseTtlMs: 60_000 });
+  const step = await kernel.claimNextStep({
+    workerId,
+    workerGeneration,
+    claimSecret,
+    capabilities: ['tool'],
+    leaseTtlMs: 60_000,
+  });
   assert.ok(step?.lease);
   await kernel.setAllowlistEntry(tenantId, 'connector.github.pull-request.create', true);
 
@@ -154,7 +165,7 @@ export async function runL4BAdapterChaos(): Promise<L4BChaosResult> {
     kernel,
     executor,
     { append: async () => {} },
-    { localWorkerId: 'worker-chaos', requireRequestBinding: false },
+    { localWorkerId: workerId, requireRequestBinding: false },
   );
 
   const effectId = 'eff-chaos-1';
@@ -169,6 +180,8 @@ export async function runL4BAdapterChaos(): Promise<L4BChaosResult> {
     // Class A fixtures must carry actionDigest (Task 2 gate — do not weaken broker).
     actionDigest: 'a'.repeat(64),
     policySnapshotId: 'chaos-policy',
+    workerId,
+    workerGeneration,
   });
 
   const originalComplete = kernel.completeEffect.bind(kernel);
@@ -184,7 +197,7 @@ export async function runL4BAdapterChaos(): Promise<L4BChaosResult> {
           request,
           idempotencyKey: request.idempotencyKey,
           lease: step.lease!,
-          actor: 'worker-chaos',
+          actor: workerId,
         }),
       (error: unknown) =>
         error instanceof EffectBrokerError && error.code === 'COMPLETION_UNCONFIRMED',

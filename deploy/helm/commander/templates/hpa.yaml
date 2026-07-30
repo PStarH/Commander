@@ -1,3 +1,4 @@
+{{- if not .Values.tenantAuthority.transportBootstrap }}
 # =============================================================================
 # Commander — Horizontal Pod Autoscaler
 # =============================================================================
@@ -28,4 +29,5 @@ spec:
         target:
           type: Utilization
           averageUtilization: {{ .Values.api.autoscaling.targetMemoryUtilizationPercentage }}
+{{- end }}
 {{- end }}

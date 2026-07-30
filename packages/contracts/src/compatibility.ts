@@ -68,25 +68,7 @@ export function snapshotContracts(): ContractSnapshot {
     runStates: RUN_STATES,
     stepStates: STEP_STATES,
     errorCodes: KERNEL_ERROR_CODES,
-    schemaNames: Object.keys({
-      organization: 1,
-      project: 1,
-      environment: 1,
-      principal: 1,
-      run: 1,
-      step: 1,
-      workGraph: 1,
-      interaction: 1,
-      artifact: 1,
-      policyBundle: 1,
-      worker: 1,
-      effect: 1,
-      agentDefinition: 1,
-      toolDefinition: 1,
-      connectorDefinition: 1,
-      kernelEvent: 1,
-      kernelError: 1,
-    }),
+    schemaNames: Object.keys(CONTRACT_SCHEMAS),
   };
 }
 

@@ -1,8 +1,9 @@
 # =============================================================================
 # Commander — Bundled Postgres role init (demo)
-# Creates the same four LOGIN roles/grants as deploy/docker/postgres-init.sql.
+# Creates the same five LOGIN roles/grants as deploy/docker/postgres-init.sql.
 # Passwords are injected as env from the generated database Secret (not inlined).
 # =============================================================================
+{{- include "commander.requireTransportBootstrapValues" . }}
 {{- if include "commander.bundledPostgres" . }}
 apiVersion: v1
 kind: ConfigMap
@@ -19,52 +20,80 @@ data:
     : "${COMMANDER_APP_PASSWORD:?COMMANDER_APP_PASSWORD is required}"
     : "${COMMANDER_SCHEDULER_PASSWORD:?COMMANDER_SCHEDULER_PASSWORD is required}"
     : "${COMMANDER_WORKER_PASSWORD:?COMMANDER_WORKER_PASSWORD is required}"
+    : "${COMMANDER_ADAPTER_OPS_PASSWORD:?COMMANDER_ADAPTER_OPS_PASSWORD is required}"
 
     psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<EOSQL
-    DO $$
+    DO \$\$
     BEGIN
       IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_owner') THEN
-        CREATE ROLE commander_owner WITH LOGIN PASSWORD '${COMMANDER_OWNER_PASSWORD}' BYPASSRLS CREATEROLE;
+        CREATE ROLE commander_owner WITH LOGIN PASSWORD '${COMMANDER_OWNER_PASSWORD}' NOSUPERUSER NOCREATEDB CREATEROLE INHERIT NOREPLICATION BYPASSRLS;
       ELSE
-        ALTER ROLE commander_owner WITH LOGIN PASSWORD '${COMMANDER_OWNER_PASSWORD}' BYPASSRLS CREATEROLE;
+        ALTER ROLE commander_owner WITH LOGIN PASSWORD '${COMMANDER_OWNER_PASSWORD}' NOSUPERUSER NOCREATEDB CREATEROLE INHERIT NOREPLICATION BYPASSRLS;
       END IF;
-    END $$;
+    END \$\$;
 
-    DO $$
+    DO \$\$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_tenant_authority') THEN
+        CREATE ROLE commander_tenant_authority WITH LOGIN PASSWORD '${COMMANDER_TENANT_AUTHORITY_PASSWORD}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+      ELSE
+        ALTER ROLE commander_tenant_authority WITH LOGIN PASSWORD '${COMMANDER_TENANT_AUTHORITY_PASSWORD}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+      END IF;
+    END \$\$;
+
+    DO \$\$
     BEGIN
       IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_app') THEN
-        CREATE ROLE commander_app WITH LOGIN PASSWORD '${COMMANDER_APP_PASSWORD}' NOBYPASSRLS NOCREATEROLE;
+        CREATE ROLE commander_app WITH LOGIN PASSWORD '${COMMANDER_APP_PASSWORD}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
       ELSE
-        ALTER ROLE commander_app WITH LOGIN PASSWORD '${COMMANDER_APP_PASSWORD}' NOBYPASSRLS NOCREATEROLE;
+        ALTER ROLE commander_app WITH LOGIN PASSWORD '${COMMANDER_APP_PASSWORD}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
       END IF;
-    END $$;
+    END \$\$;
+    ALTER ROLE commander_app SET statement_timeout = '55s';
+    ALTER ROLE commander_app SET idle_in_transaction_session_timeout = '10s';
 
-    DO $$
+    DO \$\$
     BEGIN
       IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_scheduler') THEN
-        CREATE ROLE commander_scheduler WITH LOGIN PASSWORD '${COMMANDER_SCHEDULER_PASSWORD}' BYPASSRLS NOCREATEROLE;
+        CREATE ROLE commander_scheduler WITH LOGIN PASSWORD '${COMMANDER_SCHEDULER_PASSWORD}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION BYPASSRLS;
       ELSE
-        ALTER ROLE commander_scheduler WITH LOGIN PASSWORD '${COMMANDER_SCHEDULER_PASSWORD}' BYPASSRLS NOCREATEROLE;
+        ALTER ROLE commander_scheduler WITH LOGIN PASSWORD '${COMMANDER_SCHEDULER_PASSWORD}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION BYPASSRLS;
       END IF;
-    END $$;
+    END \$\$;
 
-    DO $$
+    DO \$\$
     BEGIN
       IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_worker') THEN
-        CREATE ROLE commander_worker WITH LOGIN PASSWORD '${COMMANDER_WORKER_PASSWORD}' NOBYPASSRLS NOCREATEROLE;
+        CREATE ROLE commander_worker WITH LOGIN PASSWORD '${COMMANDER_WORKER_PASSWORD}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
       ELSE
-        ALTER ROLE commander_worker WITH LOGIN PASSWORD '${COMMANDER_WORKER_PASSWORD}' NOBYPASSRLS NOCREATEROLE;
+        ALTER ROLE commander_worker WITH LOGIN PASSWORD '${COMMANDER_WORKER_PASSWORD}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
       END IF;
-    END $$;
+    END \$\$;
 
-    GRANT ALL PRIVILEGES ON DATABASE ${POSTGRES_DB} TO commander_owner;
-    GRANT CREATE ON SCHEMA public TO commander_owner;
-    GRANT commander_app TO commander_owner WITH ADMIN OPTION;
-    GRANT commander_scheduler TO commander_owner WITH ADMIN OPTION;
-    GRANT commander_worker TO commander_owner WITH ADMIN OPTION;
+    DO \$\$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_adapter_ops') THEN
+        CREATE ROLE commander_adapter_ops WITH LOGIN PASSWORD '${COMMANDER_ADAPTER_OPS_PASSWORD}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+      ELSE
+        ALTER ROLE commander_adapter_ops WITH LOGIN PASSWORD '${COMMANDER_ADAPTER_OPS_PASSWORD}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+      END IF;
+    END \$\$;
+
+    ALTER DATABASE ${POSTGRES_DB} OWNER TO commander_owner;
+    ALTER SCHEMA public OWNER TO commander_owner;
+    REVOKE ALL ON DATABASE ${POSTGRES_DB} FROM PUBLIC;
+    REVOKE ALL ON SCHEMA public FROM PUBLIC;
+    GRANT commander_app TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+    GRANT commander_tenant_authority TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+    GRANT commander_scheduler TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+    GRANT commander_worker TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+    GRANT commander_adapter_ops TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
 
     GRANT CONNECT ON DATABASE ${POSTGRES_DB} TO commander_app;
     GRANT USAGE ON SCHEMA public TO commander_app;
+
+    GRANT CONNECT ON DATABASE ${POSTGRES_DB} TO commander_tenant_authority;
+    GRANT USAGE ON SCHEMA public TO commander_tenant_authority;
 
     GRANT CONNECT ON DATABASE ${POSTGRES_DB} TO commander_scheduler;
     GRANT USAGE ON SCHEMA public TO commander_scheduler;
@@ -72,9 +101,13 @@ data:
     GRANT CONNECT ON DATABASE ${POSTGRES_DB} TO commander_worker;
     GRANT USAGE ON SCHEMA public TO commander_worker;
 
+    GRANT CONNECT ON DATABASE ${POSTGRES_DB} TO commander_adapter_ops;
+    GRANT USAGE ON SCHEMA public TO commander_adapter_ops;
+
     -- Claim / worker-register RPC EXECUTE parity (functions created by kernel migrations).
-    -- Only commander_worker may EXECUTE; commander_app must not.
-    DO $$
+    -- Generic claims stay with commander_worker; reconciliation claims are
+    -- reserved for commander_adapter_ops.
+    DO \$\$
     BEGIN
       IF EXISTS (
         SELECT 1 FROM pg_proc p
@@ -106,7 +139,8 @@ data:
         BEGIN
           REVOKE ALL ON FUNCTION claim_reconcile_effects(text, bigint, integer, timestamptz, integer, text) FROM PUBLIC;
           REVOKE ALL ON FUNCTION claim_reconcile_effects(text, bigint, integer, timestamptz, integer, text) FROM commander_app;
-          GRANT EXECUTE ON FUNCTION claim_reconcile_effects(text, bigint, integer, timestamptz, integer, text) TO commander_worker;
+          REVOKE ALL ON FUNCTION claim_reconcile_effects(text, bigint, integer, timestamptz, integer, text) FROM commander_worker;
+          GRANT EXECUTE ON FUNCTION claim_reconcile_effects(text, bigint, integer, timestamptz, integer, text) TO commander_adapter_ops;
         EXCEPTION WHEN undefined_function THEN NULL;
         END;
       END IF;
@@ -236,6 +270,6 @@ data:
       ) THEN
         REVOKE DELETE ON TABLE commander_action_kill_switches FROM commander_worker;
       END IF;
-    END $$;
+    END \$\$;
     EOSQL
 {{- end }}

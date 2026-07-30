@@ -1,61 +1,86 @@
+{{- if not .Values.tenantAuthority.transportBootstrap }}
 # =============================================================================
 # Commander — Database Migration Job (Helm pre-install/pre-upgrade hook)
 # =============================================================================
 {{- if include "commander.postgresBackend" . }}
 {{- include "commander.requireEnterpriseSecrets" . }}
+{{- include "commander.requireLifecycleValues" . }}
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "commander.fullname" . }}-migration
+  name: {{ include "commander.migrationJobName" . }}
   labels:
     {{- include "commander.labels" . | nindent 4 }}
     app.kubernetes.io/component: migration
   annotations:
-    helm.sh/hook: post-install,post-upgrade
-    helm.sh/hook-weight: "-5"
+    {{- $hook := include "commander.migrationHook" . }}
+    {{- if $hook }}
+    helm.sh/hook: {{ $hook }}
+    helm.sh/hook-weight: "-10"
+    {{- end }}
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
   backoffLimit: 0
+  activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .Values.migration.ttlSecondsAfterFinished }}
   template:
     metadata:
       labels:
         {{- include "commander.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: migration
+        commander.io/migration-client-v2: "true"
+        commander.io/migration-release: {{ .Release.Name | quote }}
     spec:
       restartPolicy: Never
       terminationGracePeriodSeconds: {{ .Values.migration.terminationGracePeriodSeconds }}
-      serviceAccountName: {{ include "commander.serviceAccountName" . }}
       automountServiceAccountToken: false
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets: {{ toYaml . | nindent 8 }}
       {{- end }}
       securityContext: {{ toYaml .Values.podSecurityContext | nindent 8 }}
-      {{- if include "commander.bundledPostgres" . }}
       initContainers:
-        - name: wait-for-postgres
-          image: "{{ .Values.database.postgres.image.repository }}:{{ .Values.database.postgres.image.tag }}"
-          imagePullPolicy: IfNotPresent
-          command:
-            - sh
-            - -c
-            - |
-              until pg_isready -h {{ include "commander.fullname" . }}-postgres -p {{ .Values.database.postgres.port }} -U {{ .Values.database.postgres.user }}; do
-                echo "Waiting for postgres..."
-                sleep 2
-              done
+        - name: secret-and-database-preflight
+          image: {{ include "commander.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["node", "packages/kernel/dist/migrationGate.js", "preflight"]
+          env:
+            - name: COMMANDER_DATABASE_WAIT_TIMEOUT_SECONDS
+              value: {{ .Values.migration.databaseWaitTimeoutSeconds | quote }}
+            - name: COMMANDER_DATABASE_TLS_CA_FILE
+              value: /run/commander/database-tls/ca.crt
+            - name: COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256
+              value: {{ .Values.databaseTls.expectedServerSpkiSha256 | quote }}
+            - name: COMMANDER_TENANT_AUTHORITY_PROOF_PUBLIC_CERT_FILE
+              value: /run/commander/api-proof-public/tls.crt
+            {{- range $name, $key := dict "OWNER" (include "commander.databaseOwnerSecretKey" .) "APP" (include "commander.databaseAppSecretKey" .) "TENANT_AUTHORITY" (include "commander.databaseTenantAuthoritySecretKey" .) "SCHEDULER" (include "commander.databaseSchedulerSecretKey" .) "WORKER" (include "commander.databaseWorkerSecretKey" .) "ADAPTER_OPS" (include "commander.databaseAdapterOpsSecretKey" .) }}
+            - name: COMMANDER_PREFLIGHT_{{ $name }}_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.databaseUrlSecretName" $ | quote }}
+                  key: {{ $key | quote }}
+                  optional: true
+            {{- end }}
           securityContext:
             {{- include "commander.cellSecurityContext" . | nindent 12 }}
-      {{- end }}
+          volumeMounts:
+            - name: database-public-ca
+              mountPath: /run/commander/database-tls
+              readOnly: true
+            - name: api-proof-public
+              mountPath: /run/commander/api-proof-public
+              readOnly: true
       containers:
         - name: migration
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ include "commander.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
             - node
             - packages/kernel/dist/migrate.js
+            - tenant-cutover-migrate
           env:
             - name: NODE_ENV
               value: {{ .Values.config.nodeEnv | quote }}
+            - name: COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE
+              value: {{ .Values.tenantAuthority.cutoverPhase | quote }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -66,6 +91,45 @@ spec:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
                   key: {{ include "commander.databaseOwnerSecretKey" . | quote }}
+            {{- range $name, $key := dict "OWNER" (include "commander.databaseOwnerSecretKey" .) "APP" (include "commander.databaseAppSecretKey" .) "TENANT_AUTHORITY" (include "commander.databaseTenantAuthoritySecretKey" .) "SCHEDULER" (include "commander.databaseSchedulerSecretKey" .) "WORKER" (include "commander.databaseWorkerSecretKey" .) "ADAPTER_OPS" (include "commander.databaseAdapterOpsSecretKey" .) }}
+            - name: COMMANDER_{{ $name }}_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.databaseUrlSecretName" $ | quote }}
+                  key: {{ $key | quote }}
+            {{- end }}
+            - name: COMMANDER_DATABASE_TLS_CA_FILE
+              value: /run/commander/database-tls/ca.crt
+            - name: COMMANDER_DATABASE_TLS_CA_MOUNT_IDENTITY
+              value: {{ printf "secret/%s:%s" (include "commander.databaseTlsCaSecretName" .) .Values.databaseTls.caKey | quote }}
+            - name: COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256
+              value: {{ .Values.databaseTls.expectedServerSpkiSha256 | quote }}
+            - name: COMMANDER_TENANT_AUTHORITY_PROOF_PUBLIC_CERT_FILE
+              value: /run/commander/api-proof-public/tls.crt
+            - name: COMMANDER_ADAPTER_OPS_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.databaseUrlSecretName" . | quote }}
+                  key: {{ include "commander.databaseAdapterOpsSecretKey" . | quote }}
+            {{- if .Release.IsInstall }}
+            {{- if include "commander.bundledPostgres" . }}
+            - name: COMMANDER_BUNDLED_POSTGRES_BOOTSTRAP
+              value: "1"
+            - name: COMMANDER_BUNDLED_POSTGRES_USER
+              value: {{ .Values.database.postgres.user | quote }}
+            - name: COMMANDER_BUNDLED_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.databaseUrlSecretName" . | quote }}
+                  key: postgres-password
+            {{- else }}
+            - name: COMMANDER_BOOTSTRAP_AUTHORITY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.tenantAuthority.bootstrapAuthoritySecret | default "" | quote }}
+                  key: bootstrap-authority-url
+            {{- end }}
+            {{- end }}
             # Seed commander_worker_allowed_tenants from cell worker.tenants (owner migration).
             - name: COMMANDER_WORKER_ALLOWED_TENANTS
               value: {{ .Values.worker.tenants | quote }}
@@ -77,7 +141,26 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: database-public-ca
+              mountPath: /run/commander/database-tls
+              readOnly: true
+            - name: api-proof-public
+              mountPath: /run/commander/api-proof-public
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
+        - name: database-public-ca
+          secret:
+            secretName: {{ include "commander.databaseTlsCaSecretName" . | quote }}
+            items:
+              - key: {{ .Values.databaseTls.caKey | quote }}
+                path: ca.crt
+        - name: api-proof-public
+          secret:
+            secretName: {{ .Values.tenantAuthority.apiProof.publicSecret | quote }}
+            items:
+              - key: {{ .Values.tenantAuthority.apiProof.certKey | quote }}
+                path: tls.crt
+{{- end }}
 {{- end }}

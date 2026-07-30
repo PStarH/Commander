@@ -28,6 +28,14 @@ describe('L3-05 §3.1 — /v1 kernel-only (no WarRoom fallback)', () => {
     }
   });
 
+  it('production gateway uses the kernel repository factory for tenant-authority wiring', () => {
+    const src = readApiSrc('src/v1GatewayKernel.ts');
+    assert.match(src, /createKernelRepository/);
+    assert.match(src, /COMMANDER_KERNEL_BACKEND:\s*'postgres'/);
+    assert.doesNotMatch(src, /new\s+PostgresKernelRepository\s*\(/);
+    assert.doesNotMatch(src, /createVerifiedPostgresPool\s*\(/);
+  });
+
   it('index.ts wires /v1 runs to getV1KernelGateway, not WarRoom store', () => {
     const src = readApiSrc('src/index.ts');
     assert.match(src, /createV1GatewayRouter\(getV1KernelGateway\)/);
@@ -56,7 +64,10 @@ describe('L3-05 §3.1 — /v1 kernel-only (no WarRoom fallback)', () => {
       (req as express.Request & { tenantId?: string }).tenantId = 'tenant-a';
       next();
     });
-    app.use('/v1', createV1GatewayRouter(() => null));
+    app.use(
+      '/v1',
+      createV1GatewayRouter(() => null),
+    );
 
     const server = createServer(app);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -176,7 +187,10 @@ describe('L3-05 §4.1 — SDK and /v1 share kernel run semantics', () => {
       (req as express.Request & { tenantId?: string }).tenantId = 'tenant-a';
       next();
     });
-    app.use('/v1', createV1GatewayRouter(() => new ProbeGateway()));
+    app.use(
+      '/v1',
+      createV1GatewayRouter(() => new ProbeGateway()),
+    );
 
     const server = createServer(app);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

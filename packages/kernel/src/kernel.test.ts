@@ -15,6 +15,26 @@ const createRun = (steps: NewKernelStep[] = [{ id: 'step-a', kind: 'agent' }]) =
   steps,
 });
 
+function seedOperationsReadiness(
+  kernel: InMemoryKernelRepository,
+  ...tenantIds: string[]
+): void {
+  const now = new Date();
+  for (const tenantId of tenantIds) {
+    for (const [role, capability] of [
+      ['reconcile', 'effect.reconcile'],
+      ['compensation', 'effect.compensate'],
+    ] as const) {
+      kernel.seedTestWorker(`${role}:${tenantId}`, [tenantId], 1, {
+        capabilities: [capability],
+        identitySubject: 'db:commander_adapter_ops',
+        registeredAt: new Date(now.getTime() - 10_000),
+        lastHeartbeatAt: new Date(now.getTime() - 1_000),
+      });
+    }
+  }
+}
+
 describe('execution kernel semantics', () => {
   it('claims dependency-ready work once and fences stale completion', async () => {
     const kernel = new InMemoryKernelRepository();
@@ -54,6 +74,7 @@ describe('execution kernel semantics', () => {
     const first = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
     assert.equal(first?.id, 'first');
     assert.equal(await kernel.claimNextStep({ workerId: 'worker-2', leaseTtlMs: 60_000 }), null);
+    seedOperationsReadiness(kernel, 'tenant-a');
     const admitted = await kernel.admitEffect({
       id: 'effect-1',
       runId: 'run-1',
@@ -100,32 +121,6 @@ describe('execution kernel semantics', () => {
     });
     assert.equal(conflict.admitted, false);
     if (!conflict.admitted) assert.equal(conflict.reason, 'IDEMPOTENCY_CONFLICT');
-    const unknownAdmission = await kernel.admitEffect({
-      id: 'effect-unknown',
-      runId: 'run-1',
-      stepId: 'first',
-      tenantId: 'tenant-a',
-      type: 'http.write',
-      idempotencyKey: 'key-unknown',
-      policyDecisionId: 'decision-1',
-      policySnapshotId: 'policy-v1',
-      actionDigest: 'a'.repeat(64),
-      request: { target: 'unknown' },
-      lease: first!.lease!,
-      actor: 'worker-1',
-    });
-    assert.equal(unknownAdmission.admitted, true);
-    assert.equal(
-      (
-        await kernel.markEffectCompletionUnknown({
-          effectId: 'effect-unknown',
-          tenantId: 'tenant-a',
-          reason: 'network partition after external response',
-          actor: 'reconciler',
-        })
-      )?.state,
-      'COMPLETION_UNKNOWN',
-    );
     assert.equal(
       await kernel.completeEffect(
         'effect-1',
@@ -161,6 +156,7 @@ describe('execution kernel semantics', () => {
       leaseTtlMs: 60_000,
     });
     assert.ok(claimed?.lease);
+    seedOperationsReadiness(kernel, 'tenant-a');
     const lease = claimed!.lease!;
     const digest = 'a'.repeat(64);
     const admitted = await kernel.admitEffect({
@@ -289,6 +285,7 @@ describe('execution kernel semantics', () => {
     });
     assert.ok(stepA?.lease);
     assert.ok(stepB?.lease);
+    seedOperationsReadiness(kernel, 'tenant-a', 'tenant-b');
     assert.equal(
       (
         await kernel.admitEffect({
@@ -550,6 +547,7 @@ describe('execution kernel semantics', () => {
     await kernel.createRun(createRun(), 'gateway');
     const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
     assert.ok(claimed?.lease);
+    seedOperationsReadiness(kernel, 'tenant-a');
     const admitted = await kernel.admitEffect({
       id: 'effect-recon',
       runId: 'run-1',
@@ -617,6 +615,7 @@ describe('execution kernel semantics', () => {
     await kernel.createRun(createRun(), 'gateway');
     const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
     assert.ok(claimed?.lease);
+    seedOperationsReadiness(kernel, 'tenant-a');
     assert.equal(
       (
         await kernel.admitEffect({
@@ -727,6 +726,7 @@ describe('execution kernel semantics', () => {
     await kernel.createRun(createRun(), 'gateway');
     const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
     assert.ok(claimed?.lease);
+    seedOperationsReadiness(kernel, 'tenant-a');
     assert.equal(
       (
         await kernel.admitEffect({
@@ -755,11 +755,12 @@ describe('execution kernel semantics', () => {
     );
   });
 
-  it('requests compensation on terminal failStep when completed effects exist', async () => {
+  it('requires separate compensation authority when failStep follows a completed effect', async () => {
     const kernel = new InMemoryKernelRepository();
     await kernel.createRun(createRun([{ id: 'step-a', kind: 'agent', maxAttempts: 1 }]), 'gateway');
     const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
     assert.ok(claimed?.lease);
+    seedOperationsReadiness(kernel, 'tenant-a');
     assert.equal(
       (
         await kernel.admitEffect({
@@ -798,27 +799,24 @@ describe('execution kernel semantics', () => {
       actor: 'worker-1',
     });
     assert.equal(failed?.state, 'FAILED');
-    assert.equal((await kernel.getRun('run-1', 'tenant-a'))?.state, 'COMPENSATING');
+    assert.equal((await kernel.getRun('run-1', 'tenant-a'))?.state, 'RUNNING');
 
     const messages = await kernel.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 100);
-    const compensation = messages.filter(
-      (message) => message.topic === 'commander.kernel.compensation.requested',
-    );
-    assert.equal(compensation.length, 1);
-    assert.deepEqual(compensation[0]?.payload.effectIds, ['effect-done']);
+    assert.equal(messages.length, 0);
     assert.equal(
       (await kernel.listEvents('run-1', 'tenant-a')).some(
-        (event) => event.type === 'run.compensating',
+        (event) => event.type === 'compensation.authorization_required',
       ),
       true,
     );
   });
 
-  it('requests compensation on failStepByTimer when completed effects exist', async () => {
+  it('requires separate compensation authority when failStepByTimer follows a completed effect', async () => {
     const kernel = new InMemoryKernelRepository();
     await kernel.createRun(createRun([{ id: 'step-a', kind: 'agent', maxAttempts: 1 }]), 'gateway');
     const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
     assert.ok(claimed?.lease);
+    seedOperationsReadiness(kernel, 'tenant-a');
     assert.equal(
       (
         await kernel.admitEffect({
@@ -855,19 +853,17 @@ describe('execution kernel semantics', () => {
       'kernel.timer',
     );
     assert.equal(failed?.state, 'FAILED');
-    assert.equal((await kernel.getRun('run-1', 'tenant-a'))?.state, 'COMPENSATING');
+    assert.equal((await kernel.getRun('run-1', 'tenant-a'))?.state, 'RUNNING');
     const messages = await kernel.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 100);
-    assert.equal(
-      messages.some((message) => message.topic === 'commander.kernel.compensation.requested'),
-      true,
-    );
+    assert.equal(messages.length, 0);
   });
 
-  it('requests compensation on failStepByTimer when run is PAUSED with completed effects', async () => {
+  it('keeps a paused run non-terminal when failStepByTimer lacks compensation authorization', async () => {
     const kernel = new InMemoryKernelRepository();
     await kernel.createRun(createRun([{ id: 'step-a', kind: 'agent', maxAttempts: 1 }]), 'gateway');
     const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
     assert.ok(claimed?.lease);
+    seedOperationsReadiness(kernel, 'tenant-a');
     assert.equal(
       (
         await kernel.admitEffect({
@@ -909,18 +905,14 @@ describe('execution kernel semantics', () => {
       'kernel.timer',
     );
     assert.equal(failed?.state, 'FAILED');
-    assert.equal((await kernel.getRun('run-1', 'tenant-a'))?.state, 'COMPENSATING');
+    assert.equal((await kernel.getRun('run-1', 'tenant-a'))?.state, 'PAUSED');
     assert.equal(validateRunTransition('PAUSED', 'COMPENSATING').ok, true);
 
     const messages = await kernel.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 100);
-    const compensation = messages.filter(
-      (message) => message.topic === 'commander.kernel.compensation.requested',
-    );
-    assert.equal(compensation.length, 1);
-    assert.deepEqual(compensation[0]?.payload.effectIds, ['effect-paused']);
+    assert.equal(messages.length, 0);
     assert.equal(
       (await kernel.listEvents('run-1', 'tenant-a')).some(
-        (event) => event.type === 'run.compensating',
+        (event) => event.type === 'compensation.authorization_required',
       ),
       true,
     );
@@ -1005,6 +997,7 @@ describe('execution kernel semantics', () => {
     await kernel.createRun(createRun([{ id: 'step-a', kind: 'agent' }]), 'gateway');
     const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
     assert.ok(claimed?.lease);
+    seedOperationsReadiness(kernel, 'tenant-a');
     assert.equal(
       (
         await kernel.admitEffect({
@@ -1048,6 +1041,7 @@ describe('execution kernel semantics', () => {
     await kernel.createRun(createRun([{ id: 'step-a', kind: 'agent' }]), 'gateway');
     const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
     assert.ok(claimed?.lease);
+    seedOperationsReadiness(kernel, 'tenant-a');
     assert.equal(
       (
         await kernel.admitEffect({
@@ -1113,7 +1107,7 @@ describe('execution kernel semantics', () => {
     assert.equal(await kernel.claimNextStep({ workerId: 'worker-2', leaseTtlMs: 60_000 }), null);
   });
 
-  it('cancels open sibling steps when terminal fail enters COMPENSATING', async () => {
+  it('keeps sibling steps open while terminal evidence is absent', async () => {
     const kernel = new InMemoryKernelRepository();
     await kernel.createRun(
       createRun([
@@ -1124,6 +1118,7 @@ describe('execution kernel semantics', () => {
     );
     const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
     assert.ok(claimed?.lease);
+    seedOperationsReadiness(kernel, 'tenant-a');
     assert.equal(
       (
         await kernel.admitEffect({
@@ -1162,10 +1157,9 @@ describe('execution kernel semantics', () => {
       actor: 'worker-1',
     });
     assert.equal(failed?.state, 'FAILED');
-    assert.equal((await kernel.getRun('run-1', 'tenant-a'))?.state, 'COMPENSATING');
-    assert.equal((await kernel.getStep('step-b', 'tenant-a'))?.state, 'CANCELLED');
+    assert.equal((await kernel.getRun('run-1', 'tenant-a'))?.state, 'RUNNING');
+    assert.equal((await kernel.getStep('step-b', 'tenant-a'))?.state, 'PENDING');
   });
 
-  // NOTE: compensation *request* ≠ drain. packages/kernel ops compensation remains
-  // probe-only unless a drain owner lands; this PR closes fail→request honesty only.
+  // Compensation execution is authorized only through the separately persisted authority flow.
 });

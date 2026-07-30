@@ -5,8 +5,8 @@
  * communication. This router lets an Agent be embedded directly into those IM
  * workflows: users @mention the bot in a group chat, the IM platform forwards
  * the message to Commander via a webhook URL, Commander dispatches it to the
- * target Agent via the shared AgentRuntime, and the Agent's reply is returned
- * in the platform-specific response format.
+ * target Agent through Commander. Synchronous execution has been removed from
+ * the API process; callers must migrate to the canonical action/run surface.
  *
  * Endpoints:
  *   POST /api/webhook/dingtalk/:id?  — DingTalk robot callback
@@ -20,22 +20,19 @@
  * field so they coexist with any pre-existing outgoing-webhook entries).
  */
 import { reportSilentFailure } from '@commander/core';
-import { Router, text, type NextFunction, type Request, type Response } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { getSharedRuntime } from './sharedRuntime';
 import { toErrorMessage } from './routeHelpers';
 import { validateBody } from './validationMiddleware';
 import {
-  decryptWeComMessage,
   timingSafeEqualString,
   verifyDingTalkSignature,
   verifyWeComSignature,
 } from './webhookCrypto';
 import { atomicWriteFileSync, readJsonFileSafe } from './atomicWrite';
-import { hasRole } from './userStore';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -51,12 +48,6 @@ export interface IMWebhookConfig {
   agentId: string;
   enabled: boolean;
   createdAt: string;
-  /** Authenticated tenant that owns this configuration. */
-  tenantId?: string;
-  /** WeCom protocol EncodingAESKey; never returned by config APIs. */
-  encodingAESKey?: string;
-  /** Optional CorpID/SuiteID expected in the decrypted envelope. */
-  receiveId?: string;
 }
 
 // ── Persistence ───────────────────────────────────────────────────────────
@@ -108,37 +99,6 @@ function findIMWebhook(id: string): IMWebhookConfig | undefined {
   return readIMWebhooks().find((w) => w.id === id);
 }
 
-function requestTenant(req: Request): string | undefined {
-  const bound = req.tenantId;
-  const claim = req.user?.tenantId;
-  if (bound && claim && bound !== claim) return undefined;
-  return bound ?? claim;
-}
-
-function requireWebhookAdmin(req: Request, res: Response, next: NextFunction): void {
-  if (!req.user && !req.apiKeyId) {
-    res.status(401).json({ error: 'Authentication required' });
-    return;
-  }
-  const tenantId = requestTenant(req);
-  const role = req.user?.role;
-  const scopes = req.apiScopes ?? req.user?.scopes ?? [];
-  const authorized =
-    (!!role && hasRole(role, 'admin')) || scopes.includes('admin') || scopes.includes('*');
-  if (!tenantId || !authorized) {
-    res.status(403).json({ error: 'Tenant-bound webhook administration authority is required' });
-    return;
-  }
-  next();
-}
-
-function publicWebhookConfig(
-  config: IMWebhookConfig,
-): Omit<IMWebhookConfig, 'secret' | 'encodingAESKey'> {
-  const { secret: _secret, encodingAESKey: _encodingAESKey, ...safe } = config;
-  return safe;
-}
-
 function generateId(): string {
   return `imwh_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -155,56 +115,29 @@ function extractXmlField(xml: string, tag: string): string | null {
   return plain ? (plain[1] ?? null) : null;
 }
 
-// ── Agent execution helper ────────────────────────────────────────────────
-
-type WebhookRuntimeProvider = () => Pick<ReturnType<typeof getSharedRuntime>, 'execute'>;
-
-async function executeAgentMessage(
-  agentId: string,
-  message: string,
-  getRuntime: WebhookRuntimeProvider = getSharedRuntime,
-): Promise<string> {
-  const runtime = getRuntime();
-  const result = await runtime.execute({
-    agentId,
-    projectId: 'project-war-room',
-    goal: message,
-    contextData: {},
-    availableTools: [],
-    tokenBudget: 50000,
-    maxSteps: 20,
+function sendExecutionGone(res: Response): void {
+  res.status(410).json({
+    error: {
+      code: 'LEGACY_EXECUTION_DISABLED',
+      message: 'Synchronous webhook execution has been removed.',
+      replacement: 'POST /v1/actions',
+    },
   });
-
-  return (
-    result.summary || (result.status === 'success' ? 'Task completed.' : `Task ${result.status}.`)
-  );
 }
 
 // ── Validation schemas ────────────────────────────────────────────────────
 
-const createWebhookSchema = z
-  .object({
-    platform: z.enum(['dingtalk', 'feishu', 'wecom']),
-    name: z.string().min(1).max(128),
-    secret: z.string().max(256).optional(),
-    agentId: z.string().min(1).max(128),
-    enabled: z.boolean().optional(),
-    encodingAESKey: z.string().length(43).optional(),
-    receiveId: z.string().min(1).max(256).optional(),
-  })
-  .superRefine((value, ctx) => {
-    if (value.platform === 'wecom' && !value.encodingAESKey) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['encodingAESKey'],
-        message: 'encodingAESKey is required for WeCom webhooks',
-      });
-    }
-  });
+const createWebhookSchema = z.object({
+  platform: z.enum(['dingtalk', 'feishu', 'wecom']),
+  name: z.string().min(1).max(128),
+  secret: z.string().max(256).optional(),
+  agentId: z.string().min(1).max(128),
+  enabled: z.boolean().optional(),
+});
 
 // ── Router ────────────────────────────────────────────────────────────────
 
-export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getSharedRuntime): Router {
+export function createWebhookRouter(): Router {
   const router = Router();
 
   // ── POST /api/webhook/dingtalk/:id? — DingTalk robot callback ─────────
@@ -214,11 +147,6 @@ export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getShar
     try {
       const id = typeof req.params.id === 'string' ? req.params.id : undefined;
       const config = id ? findIMWebhook(id) : undefined;
-
-      if (config && !config.enabled) {
-        res.status(404).json({ error: 'Webhook disabled' });
-        return;
-      }
 
       // A valid webhook config is required for all DingTalk callbacks.
       if (!config) {
@@ -254,9 +182,7 @@ export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getShar
         return;
       }
 
-      const reply = await executeAgentMessage(config.agentId, messageText);
-
-      res.json({ msgtype: 'text', text: { content: reply } });
+      sendExecutionGone(res);
     } catch (error) {
       res.status(500).json({ error: toErrorMessage(error) });
     }
@@ -269,11 +195,6 @@ export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getShar
     try {
       const id = typeof req.params.id === 'string' ? req.params.id : undefined;
       const config = id ? findIMWebhook(id) : undefined;
-
-      if (config && !config.enabled) {
-        res.status(404).json({ error: 'Webhook disabled' });
-        return;
-      }
 
       const body = req.body as Record<string, unknown>;
       const header = (body.header ?? {}) as Record<string, unknown>;
@@ -326,11 +247,7 @@ export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getShar
           return;
         }
 
-        const reply = await executeAgentMessage(config.agentId, messageText);
-
-        // Feishu expects a 200 with code 0 for acknowledgment.
-        // The reply is posted back via the Feishu API (if configured).
-        res.json({ code: 0, msg: 'success', reply });
+        sendExecutionGone(res);
       } else {
         // Unknown event — acknowledge
         res.json({ code: 0, msg: 'success' });
@@ -348,26 +265,20 @@ export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getShar
       const id = typeof req.params.id === 'string' ? req.params.id : undefined;
       const config = id ? findIMWebhook(id) : undefined;
 
-      if (config && !config.enabled) {
-        res.status(404).json({ error: 'Webhook disabled' });
-        return;
-      }
-
       const msgSignature = req.query.msg_signature as string | undefined;
       const timestamp = req.query.timestamp as string | undefined;
       const nonce = req.query.nonce as string | undefined;
 
       // WeCom sends XML in the body; express.json() may have already parsed it
       // if Content-Type was JSON, but for XML we need the raw body.
-      const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {});
+      const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
 
       // Extract encrypted content for signature verification
       const encrypt = extractXmlField(rawBody, 'Encrypt');
 
-      // Plaintext fields are not trusted until the encrypted envelope is
-      // verified and decrypted below.
-      let msgType: string | null = null;
-      let content: string | null = null;
+      // Extract text content from XML
+      const msgType = extractXmlField(rawBody, 'MsgType');
+      const content = extractXmlField(rawBody, 'Content');
 
       // Timestamp freshness: WeCom timestamps are seconds; reject if skewed > 5 min.
       const tsNum = timestamp !== undefined ? Number(timestamp) : NaN;
@@ -394,14 +305,7 @@ export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getShar
           res.status(401).json({ error: 'Invalid msg_signature' });
           return;
         }
-        const decryptedEcho = config.encodingAESKey
-          ? decryptWeComMessage(config.encodingAESKey, echostr, config.receiveId)
-          : null;
-        if (!decryptedEcho) {
-          res.status(401).json({ error: 'WeCom decryption unavailable' });
-          return;
-        }
-        res.send(decryptedEcho);
+        res.send(echostr);
         return;
       }
 
@@ -421,29 +325,11 @@ export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getShar
         return;
       }
 
-      if (!config.encodingAESKey) {
-        res.status(401).json({ error: 'WeCom decryption unavailable' });
-        return;
-      }
-      const decryptedBody = decryptWeComMessage(config.encodingAESKey, encrypt, config.receiveId);
-      if (!decryptedBody) {
-        res.status(401).json({ error: 'Invalid encrypted WeCom payload' });
-        return;
-      }
-      msgType = extractXmlField(decryptedBody, 'MsgType');
-      content = extractXmlField(decryptedBody, 'Content');
-
       if (msgType === 'text' && content) {
         // Strip @bot mention
         const messageText = content.replace(/^\s*@\S+\s*/, '').trim();
         if (messageText) {
-          const reply = await executeAgentMessage(config.agentId, messageText, getRuntime);
-
-          // Return plain XML response (unencrypted for simplicity)
-          res.type('application/xml');
-          res.send(
-            `<xml><MsgType><![CDATA[text]]></MsgType><Content><![CDATA[${reply}]]></Content></xml>`,
-          );
+          sendExecutionGone(res);
           return;
         }
       }
@@ -455,9 +341,8 @@ export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getShar
       res.status(500).json({ error: toErrorMessage(error) });
     }
   }
-  const parseWeComXml = text({ type: ['application/xml', 'text/xml'], limit: '1mb' });
-  router.post('/api/webhook/wecom', parseWeComXml, wecomHandler);
-  router.post('/api/webhook/wecom/:id', parseWeComXml, wecomHandler);
+  router.post('/api/webhook/wecom', wecomHandler);
+  router.post('/api/webhook/wecom/:id', wecomHandler);
   // WeCom URL verification typically arrives as GET with echostr.
   router.get('/api/webhook/wecom', wecomHandler);
   router.get('/api/webhook/wecom/:id', wecomHandler);
@@ -465,9 +350,8 @@ export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getShar
   // ── GET /api/webhook/config — list IM webhooks ────────────────────────
   router.get('/api/webhook/config', (_req: Request, res: Response) => {
     try {
-      const tenantId = requestTenant(_req);
-      const configs = readIMWebhooks().filter((config) => config.tenantId === tenantId);
-      res.json({ webhooks: configs.map(publicWebhookConfig), total: configs.length });
+      const configs = readIMWebhooks();
+      res.json({ webhooks: configs, total: configs.length });
     } catch (error) {
       res.status(500).json({ error: toErrorMessage(error) });
     }
@@ -476,11 +360,10 @@ export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getShar
   // ── POST /api/webhook/config — create IM webhook config ───────────────
   router.post(
     '/api/webhook/config',
-    requireWebhookAdmin,
     validateBody(createWebhookSchema),
     (req: Request, res: Response) => {
       try {
-        const { platform, name, agentId, enabled, encodingAESKey, receiveId } = req.body as z.infer<
+        const { platform, name, agentId, enabled } = req.body as z.infer<
           typeof createWebhookSchema
         >;
 
@@ -493,15 +376,12 @@ export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getShar
           agentId,
           enabled: enabled ?? true,
           createdAt: new Date().toISOString(),
-          tenantId: requestTenant(req),
-          encodingAESKey,
-          receiveId,
         };
 
         configs.push(newConfig);
         writeIMWebhooks(configs);
 
-        res.status(201).json({ webhook: publicWebhookConfig(newConfig) });
+        res.status(201).json({ webhook: newConfig });
       } catch (error) {
         res.status(500).json({ error: toErrorMessage(error) });
       }
@@ -509,15 +389,12 @@ export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getShar
   );
 
   // ── DELETE /api/webhook/config/:id — delete IM webhook config ─────────
-  router.delete('/api/webhook/config/:id', requireWebhookAdmin, (req: Request, res: Response) => {
+  router.delete('/api/webhook/config/:id', (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const configs = readIMWebhooks();
       const index = configs.findIndex((w) => w.id === id);
       if (index === -1) {
-        return res.status(404).json({ error: 'Webhook config not found' });
-      }
-      if (configs[index]?.tenantId !== requestTenant(req)) {
         return res.status(404).json({ error: 'Webhook config not found' });
       }
 

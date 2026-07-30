@@ -54,7 +54,7 @@ describe('L3-08a InMemoryTicketAdapter chaos', () => {
       request: {},
       tenantId: 'tenant',
     });
-    assert.equal(outcome.status, 'COMPLETED');
+    assert.equal(outcome.status, 'APPLIED');
     assert.equal(outcome.response?.status, 'closed');
   });
 
@@ -185,14 +185,18 @@ describe('L3-08a InMemoryTicketAdapter chaos', () => {
     assert.equal(effects.get('eff-ticket')?.state, 'COMPLETION_UNKNOWN');
 
     const reconciled = await broker.reconcileUnknown({
-      effectId: 'eff-ticket',
-      tenantId: 'tenant',
-      actor: 'reconciler',
+      effect: {
+        ...effects.get('eff-ticket')!,
+        state: 'COMPLETION_UNKNOWN',
+      },
       querier: tickets,
     });
-    assert.equal(reconciled.status, 'COMPLETED');
-    assert.equal(reconciled.invokedExecutor, false);
+    assert.equal(reconciled.status, 'APPLIED');
     assert.equal(tickets.createInvocations, 1, 'chaos: no second remote write');
-    assert.equal(effects.get('eff-ticket')?.state, 'COMPLETED');
+    assert.equal(
+      effects.get('eff-ticket')?.state,
+      'COMPLETION_UNKNOWN',
+      'EffectBroker is snapshot-only; the repository owner applies the disposition',
+    );
   });
 });

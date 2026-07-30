@@ -7,10 +7,53 @@
  *   commander action kill disable <scope> <value> [--reason=...]
  */
 import { parseFlags } from '../util';
+import {
+  ACTION_KILL_SWITCH_SCOPES_V1,
+  validateResource,
+  type ContractSchemaName,
+} from '@commander/contracts';
 
 export interface ActionApiConfig {
   baseUrl: string;
   apiKey: string;
+}
+
+class ActionCliValidationError extends Error {}
+
+function validationError(message: string): never {
+  throw new ActionCliValidationError(message);
+}
+
+function requiredValue(value: string | undefined, usage: string): string {
+  if (!value?.trim()) validationError(usage);
+  return value;
+}
+
+function parseData(value: string | undefined, usage: string): Record<string, unknown> {
+  const raw = requiredValue(value, usage);
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) validationError(usage);
+    return parsed as Record<string, unknown>;
+  } catch (error) {
+    if (error instanceof ActionCliValidationError) throw error;
+    validationError(`${usage} (--data must be a JSON object)`);
+  }
+}
+
+function parseContractData(
+  schemaName: ContractSchemaName,
+  value: string | undefined,
+  usage: string,
+): Record<string, unknown> {
+  const parsed = parseData(value, usage);
+  const result = validateResource(schemaName, parsed);
+  if (!result.ok) validationError(`${usage} (${result.errors.join('; ')})`);
+  return parsed;
+}
+
+function writeIdempotencyKey(flags: Record<string, string>, usage: string): string {
+  return requiredValue(flags['idempotency-key'], `${usage} --idempotency-key=<key>`);
 }
 
 export function resolveActionApiConfig(env: NodeJS.ProcessEnv = process.env): ActionApiConfig {
@@ -36,7 +79,11 @@ export async function actionApiFetch(
   return fetchImpl(`${config.baseUrl}${path}`, { ...init, headers });
 }
 
-async function killList(config: ActionApiConfig, fetchImpl: typeof fetch): Promise<void> {
+async function killList(
+  config: ActionApiConfig,
+  fetchImpl: typeof fetch,
+  json: boolean,
+): Promise<void> {
   const response = await actionApiFetch(
     '/v1/actions/kill-switches',
     { method: 'GET' },
@@ -48,6 +95,10 @@ async function killList(config: ActionApiConfig, fetchImpl: typeof fetch): Promi
     throw new Error(`Kill switch list failed (${response.status}): ${body}`);
   }
   const payload = (await response.json()) as { killSwitches: Array<Record<string, unknown>> };
+  if (json) {
+    printPayload(payload, true);
+    return;
+  }
   if (payload.killSwitches.length === 0) {
     console.log('No kill switches configured.');
     return;
@@ -65,12 +116,15 @@ async function killSet(
   scope: string,
   value: string,
   enabled: boolean,
+  idempotencyKey: string,
+  json: boolean,
   reason?: string,
 ): Promise<void> {
   const response = await actionApiFetch(
     `/v1/actions/kill-switches/${encodeURIComponent(scope)}/${encodeURIComponent(value)}`,
     {
       method: 'PUT',
+      headers: { 'idempotency-key': idempotencyKey },
       body: JSON.stringify({ enabled, ...(reason ? { reason } : {}) }),
     },
     config,
@@ -81,11 +135,49 @@ async function killSet(
     throw new Error(`Kill switch update failed (${response.status}): ${body}`);
   }
   const payload = (await response.json()) as { killSwitch: Record<string, unknown> };
+  if (json) {
+    printPayload(payload, true);
+    return;
+  }
   console.log(
     `Kill switch ${payload.killSwitch.scope}/${payload.killSwitch.value} is now ${
       payload.killSwitch.enabled ? 'enabled' : 'disabled'
     }.`,
   );
+}
+
+async function gatewayRequest(
+  path: string,
+  init: RequestInit,
+  config: ActionApiConfig,
+  fetchImpl: typeof fetch,
+): Promise<unknown> {
+  const response = await actionApiFetch(path, init, config, fetchImpl);
+  const text = await response.text();
+  let payload: unknown = undefined;
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = text;
+    }
+  }
+  if (!response.ok) {
+    const code =
+      payload && typeof payload === 'object' && 'error' in payload
+        ? (payload as { error?: { code?: string } }).error?.code
+        : undefined;
+    throw new Error(`Action gateway failed (${response.status}${code ? ` ${code}` : ''})`);
+  }
+  return payload;
+}
+
+function printPayload(payload: unknown, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(payload));
+    return;
+  }
+  console.log(JSON.stringify(payload, null, 2));
 }
 
 export async function cmdAction(
@@ -104,44 +196,159 @@ export async function cmdAction(
   const rest = parsed.positional.slice(1);
   const mergedFlags = { ...parsed.flags, ...flags };
 
-  if (subcommand !== 'kill') {
-    console.error('Usage: commander action kill list|enable|disable');
-    exit(1);
-  }
-
-  const action = rest[0];
-  if (!action) {
-    console.error('Usage: commander action kill list|enable|disable');
-    exit(1);
-  }
-
-  let config: ActionApiConfig | undefined;
   try {
-    config = resolveActionApiConfig(deps.env);
-  } catch (error) {
-    console.error((error as Error).message);
-    exit(1);
-  }
+    const config = resolveActionApiConfig(deps.env);
+    const json = mergedFlags.json === 'true';
 
-  try {
-    if (action === 'list') {
-      await killList(config!, fetchImpl);
-      return;
-    }
-    if (action === 'enable' || action === 'disable') {
-      const scope = rest[1];
-      const value = rest[2];
-      if (!scope || !value) {
-        console.error(`Usage: commander action kill ${action} <scope> <value> [--reason=...]`);
-        exit(1);
+    if (subcommand === 'kill') {
+      const action = requiredValue(
+        rest[0],
+        'Usage: commander action kill list|enable|disable',
+      );
+      if (action === 'list') {
+        await killList(config, fetchImpl, json);
+        return;
       }
-      await killSet(config!, fetchImpl, scope, value, action === 'enable', mergedFlags.reason);
-      return;
+      if (action === 'enable' || action === 'disable') {
+        const scope = requiredValue(
+          rest[1],
+          `Usage: commander action kill ${action} <scope> <value> [--reason=...]`,
+        );
+        const value = requiredValue(
+          rest[2],
+          `Usage: commander action kill ${action} <scope> <value> [--reason=...]`,
+        );
+        if (!ACTION_KILL_SWITCH_SCOPES_V1.includes(scope as never)) {
+          validationError(`Unknown kill switch scope: ${scope}`);
+        }
+        const idempotencyKey = writeIdempotencyKey(
+          mergedFlags,
+          `Usage: commander action kill ${action} <scope> <value>`,
+        );
+        await killSet(
+          config,
+          fetchImpl,
+          scope,
+          value,
+          action === 'enable',
+          idempotencyKey,
+          json,
+          mergedFlags.reason,
+        );
+        return;
+      }
+      validationError('Usage: commander action kill list|enable|disable');
     }
-    console.error('Usage: commander action kill list|enable|disable');
-    exit(1);
+
+    let path: string;
+    let init: RequestInit;
+    switch (subcommand) {
+      case 'simulate':
+      case 'propose': {
+        const body = parseContractData(
+          'actionProposeRequest',
+          mergedFlags.data,
+          `Usage: commander action ${subcommand} --data='<json>' [--json]`,
+        );
+        const idempotencyKey = requiredValue(
+          typeof body.idempotencyKey === 'string' ? body.idempotencyKey : undefined,
+          'Action input requires idempotencyKey',
+        );
+        path = subcommand === 'simulate' ? '/v1/actions/simulate' : '/v1/actions';
+        init = {
+          method: 'POST',
+          headers: { 'idempotency-key': idempotencyKey },
+          body: JSON.stringify(body),
+        };
+        break;
+      }
+      case 'get': {
+        const runId = requiredValue(rest[0], 'Usage: commander action get <runId> [--json]');
+        path = `/v1/actions/${encodeURIComponent(runId)}`;
+        init = { method: 'GET' };
+        break;
+      }
+      case 'approve': {
+        const runId = requiredValue(rest[0], 'Usage: commander action approve <runId> --data=\'<json>\'');
+        const body = parseContractData(
+          'actionApprovalRequest',
+          mergedFlags.data,
+          'Usage: commander action approve <runId> --data=\'<json>\'',
+        );
+        path = `/v1/actions/${encodeURIComponent(runId)}/approve`;
+        init = {
+          method: 'POST',
+          headers: {
+            'idempotency-key': writeIdempotencyKey(
+              mergedFlags,
+              'Usage: commander action approve <runId>',
+            ),
+          },
+          body: JSON.stringify(body),
+        };
+        break;
+      }
+      case 'reject': {
+        const runId = requiredValue(rest[0], 'Usage: commander action reject <runId> [--reason=...]');
+        path = `/v1/actions/${encodeURIComponent(runId)}/reject`;
+        init = {
+          method: 'POST',
+          headers: {
+            'idempotency-key': writeIdempotencyKey(
+              mergedFlags,
+              'Usage: commander action reject <runId>',
+            ),
+          },
+          body: JSON.stringify(mergedFlags.reason ? { reason: mergedFlags.reason } : {}),
+        };
+        break;
+      }
+      case 'reconcile': {
+        const runId = requiredValue(rest[0], 'Usage: commander action reconcile <runId> [--json]');
+        path = `/v1/actions/${encodeURIComponent(runId)}/reconcile`;
+        init = {
+          method: 'POST',
+          headers: {
+            'idempotency-key': writeIdempotencyKey(
+              mergedFlags,
+              'Usage: commander action reconcile <runId>',
+            ),
+          },
+          body: JSON.stringify({}),
+        };
+        break;
+      }
+      case 'evidence': {
+        if (rest[0] !== 'verify') {
+          validationError('Usage: commander action evidence verify <runId> [--json]');
+        }
+        const runId = requiredValue(
+          rest[1],
+          'Usage: commander action evidence verify <runId> [--json]',
+        );
+        path = `/v1/actions/${encodeURIComponent(runId)}/evidence`;
+        init = { method: 'GET' };
+        break;
+      }
+      default:
+        validationError(
+          'Usage: commander action simulate|propose|get|approve|reject|reconcile|evidence|kill',
+        );
+    }
+
+    const payload = await gatewayRequest(path, init, config, fetchImpl);
+    if (
+      subcommand === 'evidence' &&
+      payload &&
+      typeof payload === 'object' &&
+      'verification' in payload &&
+      (payload as { verification?: { ok?: boolean } }).verification?.ok === false
+    ) {
+      throw new Error('Action evidence verification failed');
+    }
+    printPayload(payload, json);
   } catch (error) {
     console.error((error as Error).message);
-    exit(1);
+    exit(error instanceof ActionCliValidationError ? 2 : 1);
   }
 }
