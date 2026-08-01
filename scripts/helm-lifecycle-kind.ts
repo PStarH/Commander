@@ -1332,13 +1332,48 @@ async function runCutoverCommand(
   }
   await completion;
   if (exitCode !== 0) {
-    const detail = Buffer.concat(stderr).toString('utf8').trim().slice(-4_000);
+    const stderrText = Buffer.concat(stderr).toString('utf8').trim().slice(-4_000);
+    const diag = await captureCutoverFailureDiagnostics();
+    const detail = [stderrText, diag].filter(Boolean).join('\n').slice(-8_000);
     throw new Error(`HELM_TENANT_CUTOVER_FAILED${detail ? `: ${detail}` : ''}`);
   }
   if (requireLiveProofPod && !proofPodObserved) {
     throw new Error('LIVE_PROOF_POD_NOT_OBSERVED');
   }
   return { proofPodObserved, stdout: Buffer.concat(stdout).toString('utf8') };
+}
+
+async function captureCutoverFailureDiagnostics(): Promise<string> {
+  const selector = 'commander.io/tenant-cutover-owner-execution';
+  const parts: string[] = [];
+  const collect: Array<[string, string[]]> = [
+    ['status', ['get', 'pods,jobs', '-n', NAMESPACE, '-l', selector, '-o', 'wide']],
+    ['describe', ['describe', 'pods', '-n', NAMESPACE, '-l', selector]],
+    [
+      'logs',
+      [
+        'logs',
+        '-n',
+        NAMESPACE,
+        '-l',
+        selector,
+        '--all-containers=true',
+        '--prefix=true',
+        '--tail=-1',
+        '--ignore-errors=true',
+      ],
+    ],
+  ];
+  for (const [label, args] of collect) {
+    try {
+      const r = await runCmd('kubectl', args);
+      const body = (r.stdout || r.stderr || '').trim();
+      if (body) parts.push(`--- kubectl ${label} ---\n${body.slice(-4_000)}`);
+    } catch {
+      // best-effort diagnostics only
+    }
+  }
+  return parts.join('\n');
 }
 
 async function assertProofReaderRbac(release: string): Promise<AssertionResult[]> {
