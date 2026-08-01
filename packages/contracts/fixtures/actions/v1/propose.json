@@ -1,0 +1,27 @@
+{
+  "action": {
+    "runId": "run_action_01",
+    "stepId": "step_action_01",
+    "effectId": "effect_action_01",
+    "state": "AWAITING_APPROVAL",
+    "decision": {
+      "effect": "require_approval",
+      "decisionId": "decision_action_01",
+      "reason": "The destination requires a human decision.",
+      "policySnapshotId": "policy_action_v1"
+    },
+    "simulation": {
+      "effect": "require_approval",
+      "decisionId": "decision_action_01",
+      "reason": "The destination requires a human decision.",
+      "policySnapshotId": "policy_action_v1",
+      "simulationId": "simulation_action_01",
+      "actionDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "actionDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "policySnapshotId": "policy_action_v1",
+    "createdAt": "2026-07-21T00:00:00.000Z",
+    "updatedAt": "2026-07-21T00:00:00.000Z"
+  },
+  "idempotentReplay": false
+}

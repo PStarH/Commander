@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "ACTION_DIGEST_MISMATCH",
+    "message": "Approval action digest does not match the persisted simulation."
+  }
+}

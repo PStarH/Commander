@@ -1,4 +1,6 @@
 import { reportSilentFailure } from '@commander/core';
+import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
+import type { QueryResultRow } from 'pg';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -642,25 +644,13 @@ function createSqliteApiStore(dbPath: string): SqliteApiStore {
 }
 
 function createPostgresApiStore(connectionString: string): PostgresApiStore {
-  let Pool: new (config: { connectionString: string }) => {
-    query<T = Record<string, unknown>>(sql: string, values?: unknown[]): Promise<{ rows: T[] }>;
-    end(): Promise<void>;
-  };
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    Pool = require('pg').Pool;
-  } catch (err) {
-    reportSilentFailure(err, 'apiStore:pg-load');
-    throw new Error('PostgresApiStore requires the "pg" package. Install it with: pnpm add pg');
-  }
-
-  const pool = new Pool({ connectionString });
+  const pool = createVerifiedPostgresPool({ connectionString });
 
   const exec = async (sql: string, values?: unknown[]): Promise<void> => {
     await pool.query(sql, values);
   };
 
-  const queryOne = async <T = Record<string, unknown>>(
+  const queryOne = async <T extends QueryResultRow = Record<string, unknown>>(
     sql: string,
     values?: unknown[],
   ): Promise<T | undefined> => {
@@ -668,7 +658,7 @@ function createPostgresApiStore(connectionString: string): PostgresApiStore {
     return rows[0];
   };
 
-  const queryAll = async <T = Record<string, unknown>>(
+  const queryAll = async <T extends QueryResultRow = Record<string, unknown>>(
     sql: string,
     values?: unknown[],
   ): Promise<T[]> => {

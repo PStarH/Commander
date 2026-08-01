@@ -1,3 +1,4 @@
+{{- if not .Values.tenantAuthority.transportBootstrap }}
 # =============================================================================
 # Commander API — PodDisruptionBudget
 # =============================================================================
@@ -15,4 +16,23 @@ spec:
     matchLabels:
       {{- include "commander.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: api
+{{- end }}
+{{- if and .Values.adapterOps.enabled .Values.adapterOps.pdb.enabled }}
+{{- if .Values.api.pdb.enabled }}
+---
+{{- end }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "commander.fullname" . }}-adapter-ops
+  labels:
+    {{- include "commander.labels" . | nindent 4 }}
+    app.kubernetes.io/component: adapter-ops
+spec:
+  minAvailable: {{ .Values.adapterOps.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "commander.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: adapter-ops
+{{- end }}
 {{- end }}

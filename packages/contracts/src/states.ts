@@ -21,6 +21,7 @@ export const STEP_STATES = [
   'PENDING',
   'RUNNING',
   'WAITING_FOR_HUMAN',
+  'WAITING_FOR_RECONCILIATION',
   'RETRY_WAIT',
   'SUCCEEDED',
   'FAILED',
@@ -62,9 +63,17 @@ export const RUN_TRANSITIONS: Readonly<Record<RunState, readonly RunState[]>> = 
 /** Valid step state transitions keyed by current state. */
 export const STEP_TRANSITIONS: Readonly<Record<StepState, readonly StepState[]>> = {
   PENDING: ['RUNNING', 'SKIPPED', 'FAILED', 'CANCELLED'],
-  RUNNING: ['WAITING_FOR_HUMAN', 'RETRY_WAIT', 'SUCCEEDED', 'FAILED', 'CANCELLED'],
+  RUNNING: [
+    'WAITING_FOR_HUMAN',
+    'WAITING_FOR_RECONCILIATION',
+    'RETRY_WAIT',
+    'SUCCEEDED',
+    'FAILED',
+    'CANCELLED',
+  ],
   // 人工应答后释放 step → RETRY_WAIT（与 kernel answerInteraction / repositoryContract 对齐）
   WAITING_FOR_HUMAN: ['RUNNING', 'RETRY_WAIT', 'FAILED', 'CANCELLED'],
+  WAITING_FOR_RECONCILIATION: ['SUCCEEDED', 'FAILED'],
   RETRY_WAIT: ['RUNNING', 'FAILED', 'CANCELLED'],
   SUCCEEDED: [],
   FAILED: [],

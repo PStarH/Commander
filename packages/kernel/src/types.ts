@@ -6,10 +6,26 @@ import type {
   RunState,
   StepState,
 } from '@commander/contracts';
-
+import type { KernelEvidenceRecord } from './evidenceRepository.js';
 export type { KernelErrorDetails, KernelEvent } from '@commander/contracts';
 
 export const KERNEL_API_VERSION = 'v2' as const;
+export const OPERATIONS_HEARTBEAT_TTL_MS = 30_000;
+
+export interface OperationsReadiness {
+  ready: boolean;
+  reason?: 'RECONCILIATION_DRAIN_UNAVAILABLE' | 'COMPENSATION_DRAIN_UNAVAILABLE';
+  reconciliationWorkers: number;
+  compensationWorkers: number;
+  checkedAt: string;
+}
+
+/** Task 1 contract only; Task 3 supplies the atomic compensation claim RPC. */
+export interface KernelCompensationAdmissionBinding {
+  authorizationId: string;
+  requestId: string;
+  claimToken: string;
+}
 
 /** Re-exported from @commander/contracts; kept for source compatibility. */
 export type KernelRunState = RunState;
@@ -116,18 +132,74 @@ export interface KernelEffect {
   leaseWorkerGeneration: number;
   /** Fencing epoch from the admit lease. */
   leaseFencingEpoch: number;
-  state: 'ADMITTED' | 'COMPLETION_UNKNOWN' | 'COMPLETED' | 'FAILED';
+  state:
+    | 'ADMITTED'
+    | 'COMPLETION_UNKNOWN'
+    | 'CONFIRMED_NOT_APPLIED'
+    | 'COMPLETED'
+    | 'FAILED';
   request: Record<string, unknown>;
   response?: Record<string, unknown>;
   createdAt: string;
   completedAt?: string;
   reconcileAttempts: number;
+  governedActionDeadlineAt: string | null;
+  reconcilePolicy: ReconcilePolicy | null;
+  reconcileDisposition: ReconcileDisposition | null;
   reconcileAfter: string | null;
+  reconcileObservedAt: string | null;
   reconcileClaimToken: string | null;
   reconcileClaimExpiresAt: string | null;
-  reconcileLastError: Record<string, unknown> | null;
+  reconcileClaimedAt: string | null;
+  reconcileClaimWorkerId: string | null;
+  reconcileClaimWorkerGeneration: number | null;
+  reconcileLastError: ReconcileQueryError | null;
   reconcileEscalatedAt: string | null;
+  reconcileEscalationCode: ReconcileEscalationCode | null;
 }
+
+export interface ReconcilePolicy {
+  maxAttempts: number;
+  initialDelayMs: number;
+  maxDelayMs: number;
+  deadlineAt: string;
+}
+
+export type ReconcileDisposition =
+  | 'PENDING'
+  | 'CONFIRMED_APPLIED'
+  | 'CONFIRMED_NOT_APPLIED'
+  | 'ESCALATED';
+
+export type ReconcileQueryErrorCode =
+  | 'RECONCILE_OUTCOME_NOT_YET_VISIBLE'
+  | 'RECONCILE_MULTIPLE_MATCHES'
+  | 'RECONCILE_QUERY_TIMEOUT'
+  | 'RECONCILE_QUERY_TRANSPORT'
+  | 'RECONCILE_QUERY_RATE_LIMITED'
+  | 'RECONCILE_QUERY_UNAVAILABLE'
+  | 'RECONCILE_QUERY_AUTHENTICATION_FAILED'
+  | 'RECONCILE_QUERY_AUTHORIZATION_FAILED'
+  | 'RECONCILE_QUERY_CONFIGURATION_INVALID'
+  | 'RECONCILE_QUERY_RESPONSE_INVALID'
+  | 'RECONCILE_NEGATIVE_PROOF_INVALID'
+  | 'RECONCILE_QUERY_UNCLASSIFIED';
+
+export interface ReconcileQueryError {
+  category?: 'TRANSIENT' | 'PERMANENT';
+  code: string;
+  message: string;
+}
+
+export type ReconcileEscalationCode =
+  | 'RECONCILE_POLICY_BACKFILL_REVIEW_REQUIRED'
+  | 'RECONCILE_LEGACY_TERMINAL_CONFLICT'
+  | 'RECONCILE_DEADLINE_EXPIRED'
+  | 'RECONCILE_MAX_ATTEMPTS_EXHAUSTED'
+  | 'RECONCILE_ADAPTER_NOT_FOUND'
+  | 'RECONCILE_QUERY_UNSUPPORTED'
+  | 'COMPENSATION_QUERY_UNSUPPORTED'
+  | 'RECONCILE_QUERY_PERMANENT_FAILURE';
 
 export interface CreateKernelRun {
   id: string;
@@ -217,6 +289,7 @@ export interface AdmitEffectRequest {
   actionDigest: string;
   request: Record<string, unknown>;
   lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>;
+  compensationBinding?: KernelCompensationAdmissionBinding;
   actor: string;
 }
 
@@ -225,7 +298,33 @@ export interface MarkEffectCompletionUnknownRequest {
   tenantId: string;
   reason: string;
   actor: string;
+  governedActionDeadlineAt?: string;
+  lease?: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>;
 }
+
+export interface ParkEffectCompletionUnknownInput {
+  tenantId: string;
+  effectId: string;
+  workerId: string;
+  workerGeneration: number;
+  claimSecret: string;
+  leaseToken: string;
+  fencingEpoch: number;
+  error: { code: string; message: string };
+  governedActionDeadlineAt?: string;
+}
+
+export type ParkEffectCompletionUnknownResult =
+  | { parked: true; replayed: boolean; effect: KernelEffect }
+  | {
+      parked: false;
+      reason:
+        | 'NOT_FOUND'
+        | 'NOT_ADMITTED_OR_UNKNOWN'
+        | 'ADMISSION_BINDING_MISMATCH'
+        | 'LEASE_FENCED'
+        | 'STEP_TERMINAL_RACE';
+    };
 
 /** L3-08a: advance COMPLETION_UNKNOWN after remote query (no worker lease). */
 export interface ReconcileEffectRequest {
@@ -240,8 +339,86 @@ export interface RequestReconcileInput {
   effectId: string;
   tenantId: string;
   actor: string;
-  reconcileAfter?: string;
 }
+
+export type RequestReconcileResult =
+  | {
+      scheduled: true;
+      effectId: string;
+      state: 'COMPLETION_UNKNOWN';
+      reconcileAfter: string;
+      alreadyScheduled: boolean;
+    }
+  | {
+      scheduled: false;
+      reason: 'NOT_FOUND' | 'NOT_UNKNOWN' | 'ESCALATED' | 'DEADLINE_EXPIRED';
+    };
+
+export interface ReconcileClaimAuth {
+  tenantId: string;
+  effectId: string;
+  workerId: string;
+  workerGeneration: number;
+  claimSecret: string;
+  claimToken: string;
+  /** Signed terminal receipt. Required when this mutation reaches a terminal disposition. */
+  evidence?: KernelEvidenceRecord;
+}
+
+export type ReconcileMutationInput =
+  | (ReconcileClaimAuth & { mutation: 'COMPLETE'; response: Record<string, unknown> })
+  | (ReconcileClaimAuth & {
+      mutation: 'CONFIRM_NOT_APPLIED';
+      response: Record<string, unknown>;
+    })
+  | (ReconcileClaimAuth & { mutation: 'RESCHEDULE'; lastError: ReconcileQueryError })
+  | (ReconcileClaimAuth & {
+      mutation: 'ESCALATE';
+      reason:
+        | 'RECONCILE_ADAPTER_NOT_FOUND'
+        | 'RECONCILE_QUERY_UNSUPPORTED'
+        | 'COMPENSATION_QUERY_UNSUPPORTED'
+        | 'RECONCILE_POLICY_BACKFILL_REVIEW_REQUIRED';
+    });
+
+export interface ReconcileMutationReceipt {
+  effectId: string;
+  requestFingerprint: string;
+  effectState: KernelEffect['state'];
+  reconcileAttempts: number;
+  reconcileAfter: string | null;
+  reconcileEscalatedAt: string | null;
+  eventId: string;
+}
+
+export type ReconcileMutationResult =
+  | {
+      applied: true;
+      replayed: boolean;
+      disposition: 'COMPLETED' | 'CONFIRMED_NOT_APPLIED' | 'RESCHEDULED' | 'ESCALATED';
+      receipt: ReconcileMutationReceipt;
+    }
+  | {
+      applied: false;
+      reason:
+        | 'NOT_FOUND'
+        | 'NOT_COMPLETION_UNKNOWN'
+        | 'CLAIM_NOT_OWNED'
+        | 'CLAIM_EXPIRED'
+        | 'WORKER_FENCED'
+        | 'CLAIM_REPLAY_CONFLICT'
+        | 'TERMINAL_EVIDENCE_REQUIRED';
+    }
+  | {
+      applied: false;
+      reason: 'STEP_TERMINAL_RACE';
+      stepState: 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'SKIPPED';
+    }
+  | {
+      applied: false;
+      reason: 'RUN_TERMINAL_RACE';
+      runState: 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'COMPENSATED';
+    };
 
 export interface ClaimReconcileEffectsInput {
   limit: number;
@@ -272,7 +449,7 @@ export interface RescheduleReconcileInput {
   tenantId: string;
   claimToken: string;
   reconcileAfter: string;
-  lastError?: { code: string; message: string };
+  lastError?: ReconcileQueryError;
 }
 
 export interface EscalateReconcileInput {
@@ -280,6 +457,7 @@ export interface EscalateReconcileInput {
   tenantId: string;
   claimToken: string;
   reason: string;
+  code?: ReconcileEscalationCode;
 }
 
 export interface FailEffectRequest {
@@ -290,21 +468,126 @@ export interface FailEffectRequest {
   actor: string;
 }
 
-export interface RequestCompensationInput {
+export interface CompensationAuthorizationRecord {
+  id: string;
   tenantId: string;
   originalRunId: string;
-  originalEffectId?: string;
-  actor: string;
-  adapterVersion: string;
+  originalEffectId: string;
   compensationEffectType: string;
+  adapterVersion: string;
+  compensationPatch: Record<string, unknown>;
+  forwardReceiptHash: string;
+  policyDecisionId: string;
+  policySnapshotId: string;
+  decision: 'allow' | 'require_approval' | 'deny';
+  actionDigest: string;
+  expiresAt: string;
+  approvalInteractionId?: string;
 }
 
-export interface RequestCompensationResult {
-  compensationRunId: string;
-  originalEffectId: string;
-  originalRunId: string;
-  outboxMessageId?: string;
+export interface RequestCompensationInput {
+  tenantId: string;
+  authorizationId: string;
+  actor: string;
 }
+
+export interface KernelCompensationRequest {
+  id: string;
+  tenantId: string;
+  originalRunId: string;
+  originalEffectId: string;
+  compensationRunId: string;
+  compensationStepId: string;
+  adapterVersion: string;
+  compensationEffectType: string;
+  compensationPatch: Record<string, unknown>;
+  forwardReceiptHash: string;
+  authorizationId: string;
+  reconcilePolicy: ReconcilePolicy;
+  state:
+    | 'AUTHORIZED'
+    | 'CLAIMED'
+    | 'COMPLETION_UNKNOWN'
+    | 'COMPLETED'
+    | 'CONFIRMED_NOT_APPLIED'
+    | 'ESCALATED';
+  claimWorkerId?: string;
+  claimWorkerGeneration?: number;
+  claimToken?: string;
+  claimExpiresAt?: string;
+  compensationEffectId?: string;
+}
+
+export type RequestCompensationResult =
+  | { accepted: true; request: KernelCompensationRequest; replayed: boolean }
+  | {
+      accepted: false;
+      requestId: string;
+      reason:
+        | 'AUTHORIZATION_NOT_FOUND'
+        | 'FORWARD_EFFECT_NOT_FOUND'
+        | 'FORWARD_RECEIPT_MISMATCH'
+        | 'ACTION_DIGEST_MISMATCH'
+        | 'POLICY_DENIED'
+        | 'AUTHORIZATION_EXPIRED'
+        | 'APPROVAL_REQUIRED'
+        | 'APPROVAL_BINDING_MISMATCH';
+    };
+
+export interface CompensationClaimIdentity {
+  workerId: string;
+  workerGeneration: number;
+  claimSecret: string;
+}
+
+export interface ClaimCompensationRequestInput extends CompensationClaimIdentity {
+  requestId: string;
+  outboxMessageId: string;
+  leaseTtlMs?: number;
+  now?: Date;
+}
+
+export interface ClaimedCompensationRequest {
+  request: KernelCompensationRequest;
+  forwardResponse: Record<string, unknown>;
+  lease: KernelLease;
+  outboxMessageId: string;
+  outboxClaimToken: string;
+  authorization: CompensationAuthorizationRecord;
+}
+
+export type CompensationDisposition =
+  | 'COMPLETED'
+  | 'CONFIRMED_NOT_APPLIED'
+  | 'COMPLETION_UNKNOWN'
+  | 'ESCALATED';
+
+export interface FinalizeCompensationInput extends CompensationClaimIdentity {
+  tenantId: string;
+  requestId: string;
+  effectId: string;
+  disposition: Exclude<CompensationDisposition, 'COMPLETION_UNKNOWN'>;
+  actor: string;
+  outboxMessageId: string;
+  outboxClaimToken: string;
+  response?: Record<string, unknown>;
+  /** Signed action-scoped receipt persisted atomically with the terminal mutation. */
+  evidence?: KernelEvidenceRecord;
+}
+
+export interface ParkCompensationUnknownInput extends CompensationClaimIdentity {
+  tenantId: string;
+  requestId: string;
+  effectId: string;
+  actor: string;
+  outboxMessageId: string;
+  outboxClaimToken: string;
+  error: { code: string; message: string };
+}
+
+export type CompensationMutationResult =
+  | { applied: true; disposition: CompensationDisposition; replayed: boolean }
+  | { applied: false; reason: string };
 
 export type AdmitEffectResult =
   | { admitted: true; replayed: false; effect: KernelEffect }
@@ -316,7 +599,9 @@ export type AdmitEffectResult =
         | 'STEP_NOT_RUNNING'
         | 'IDEMPOTENCY_CONFLICT'
         | 'POLICY_SNAPSHOT_ID_REQUIRED'
-        | 'LEASE_WORKER_ID_REQUIRED';
+        | 'LEASE_WORKER_ID_REQUIRED'
+        | 'OPERATIONS_NOT_READY'
+        | 'COMPENSATION_ADMISSION_UNAVAILABLE';
     };
 
 export class KernelInvariantError extends Error {
@@ -389,6 +674,7 @@ export interface KernelInteraction {
 }
 
 export interface CreateInteractionRequest {
+  id?: string;
   runId: string;
   stepId: string;
   tenantId: string;

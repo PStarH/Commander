@@ -20,7 +20,7 @@ kernelOps:
 
 adapterOps:
   enabled: true
-  # Single replica until daemon ids are POD_NAME-suffixed (multi-replica stomps claims).
+  # Pod metadata.name is the durable adapter-ops instance identity.
   replicas: 1
   secrets:
     create: true
@@ -29,16 +29,45 @@ adapterOps:
 capability:
   create: true
 
+evidenceSigning:
+  create: true
+
 database:
   enabled: true
   backend: postgres
   postgres:
     bundled: true
+    persistence:
+      enabled: false
     password: ''
     existingSecret: ''
 
+databaseTls:
+  existingSecret: commander-database-tls
+  expectedServerSpkiSha256: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+
+image:
+  digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+tenantAuthority:
+  configurationSha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  apiProof:
+    publicSecret: commander-api-proof-public
+    privateSecret: commander-api-proof-private
+
 networkPolicy:
   enabled: true
+  databaseEndpoints:
+    - roles: [owner, app, tenant-authority, scheduler, worker, adapter-ops]
+      service:
+        namespace: default
+        name: commander-postgres
+        servicePort: 5432
+        targetPort: 5432
+        podSelector:
+          app.kubernetes.io/name: commander
+          app.kubernetes.io/instance: commander
+          app.kubernetes.io/component: postgres
 
 sandboxd:
   enabled: false

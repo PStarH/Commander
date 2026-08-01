@@ -1,13 +1,12 @@
 import { useState } from 'react';
-import { Input, Select, Button } from './ui';
-import type { ExecutionLog, Mission, LogLevel } from '../types';
+import { Select } from './ui';
+import type { ExecutionLog, Mission } from '../types';
 import { LOG_LEVEL_OPTIONS, formatTimestamp } from '../types';
 
 interface ExecutionFeedProps {
   logs: ExecutionLog[];
   missions: Mission[];
   agentNameById: Map<string, string>;
-  onCreateLog: (missionId: string, payload: { level: LogLevel; message: string }) => void;
 }
 
 const logColors: Record<string, string> = {
@@ -24,20 +23,10 @@ const logBgColors: Record<string, string> = {
   ERROR: 'rgba(40, 10, 16, 0.4)',
 };
 
-export function ExecutionFeed({ logs, missions, agentNameById, onCreateLog }: ExecutionFeedProps) {
-  const [logMissionId, setLogMissionId] = useState(missions[0]?.id || '');
-  const [logLevel, setLogLevel] = useState<LogLevel>('INFO');
-  const [logMessage, setLogMessage] = useState('');
+export function ExecutionFeed({ logs, missions, agentNameById }: ExecutionFeedProps) {
   const [filterLevel, setFilterLevel] = useState<string>('ALL');
 
   const filteredLogs = filterLevel === 'ALL' ? logs : logs.filter((l) => l.level === filterLevel);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!logMissionId || !logMessage.trim()) return;
-    onCreateLog(logMissionId, { level: logLevel, message: logMessage.trim() });
-    setLogMessage('');
-  };
 
   return (
     <div className="execution-feed">
@@ -55,29 +44,6 @@ export function ExecutionFeed({ logs, missions, agentNameById, onCreateLog }: Ex
           ))}
         </Select>
       </div>
-
-      <form className="composer log-composer" onSubmit={handleSubmit}>
-        <Select value={logMissionId} onChange={(e) => setLogMissionId(e.target.value)}>
-          {missions.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.title}
-            </option>
-          ))}
-        </Select>
-        <Select value={logLevel} onChange={(e) => setLogLevel(e.target.value as LogLevel)}>
-          {LOG_LEVEL_OPTIONS.map((l) => (
-            <option key={l} value={l}>
-              {l}
-            </option>
-          ))}
-        </Select>
-        <Input
-          value={logMessage}
-          onChange={(e) => setLogMessage(e.target.value)}
-          placeholder="Write a checkpoint log"
-        />
-        <Button type="submit">Append</Button>
-      </form>
 
       <div className="log-timeline">
         {filteredLogs.length === 0 && <div className="empty">No logs recorded yet</div>}

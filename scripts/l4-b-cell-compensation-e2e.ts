@@ -24,24 +24,28 @@ import {
   CELL_E2E_TENANT,
   tryComposeCellUp,
 } from './l4-b-cell-compose.js';
+import {
+  loadControlledChangeProofArtifact,
+  notReadyControlledChangeEvidence,
+  validateControlledChangeEvidence,
+  type ControlledChangeCellEvidence,
+} from './l4-b-cell-smoke.js';
+
+export { notReadyControlledChangeEvidence } from './l4-b-cell-smoke.js';
 
 export type CompensationE2EMode = 'mock' | 'compose';
 
 export interface CompensationE2EResult {
   mode: CompensationE2EMode;
-  verdict: 'PROVEN' | 'ENFORCED-script-only' | 'BLOCKED';
+  verdict: 'ENFORCED' | 'ENFORCED-script-only' | 'BLOCKED';
   passed: boolean;
   steps: Record<string, boolean | string>;
+  controlledChange: ControlledChangeCellEvidence;
   dockerError?: string;
   elapsedMs: number;
 }
 
-export {
-  assertComposeCellHealth,
-  CELL_COMPOSE_ENV,
-  CELL_E2E_TENANT,
-  tryComposeCellUp,
-};
+export { assertComposeCellHealth, CELL_COMPOSE_ENV, CELL_E2E_TENANT, tryComposeCellUp };
 
 async function httpJson(
   baseUrl: string,
@@ -164,7 +168,8 @@ export async function runComposeDemoCompensationFlow(
     args: { title: 'Cell compensation E2E' },
     idempotencyKey: idem,
   });
-  if (proposed.status !== 202) return { proposed: false, approved: false, forwardDone: false, compensated: false };
+  if (proposed.status !== 202)
+    return { proposed: false, approved: false, forwardDone: false, compensated: false };
   const action = (proposed.json?.action ?? {}) as {
     runId: string;
     simulation: { actionDigest: string; simulationId: string; policySnapshotId: string };
@@ -174,7 +179,8 @@ export async function runComposeDemoCompensationFlow(
     simulationId: action.simulation.simulationId,
     policySnapshotId: action.simulation.policySnapshotId,
   });
-  if (approved.status !== 200) return { proposed: true, approved: false, forwardDone: false, compensated: false };
+  if (approved.status !== 200)
+    return { proposed: true, approved: false, forwardDone: false, compensated: false };
   const forwardState = await pollActionTerminal(baseUrl, action.runId);
   if (forwardState !== 'SUCCEEDED') {
     return { proposed: true, approved: true, forwardDone: false, compensated: false };
@@ -206,10 +212,14 @@ export async function runCellCompensationE2E(options: {
   mode?: CompensationE2EMode;
   baseUrl?: string;
   composeUp?: boolean;
+  controlledChange?: ControlledChangeCellEvidence;
 }): Promise<CompensationE2EResult> {
   const started = Date.now();
   const mode = options.mode ?? 'mock';
   const steps: Record<string, boolean | string> = {};
+  const controlledChange = validateControlledChangeEvidence(
+    options.controlledChange ?? notReadyControlledChangeEvidence(),
+  );
 
   if (mode === 'mock') {
     try {
@@ -224,6 +234,7 @@ export async function runCellCompensationE2E(options: {
       verdict: passed ? 'ENFORCED-script-only' : 'BLOCKED',
       passed,
       steps,
+      controlledChange,
       elapsedMs: Date.now() - started,
     };
   }
@@ -238,6 +249,7 @@ export async function runCellCompensationE2E(options: {
         verdict: 'BLOCKED',
         passed: false,
         steps,
+        controlledChange,
         dockerError: up.error,
         elapsedMs: Date.now() - started,
       };
@@ -253,6 +265,7 @@ export async function runCellCompensationE2E(options: {
       verdict: 'BLOCKED',
       passed: false,
       steps,
+      controlledChange,
       dockerError,
       elapsedMs: Date.now() - started,
     };
@@ -261,7 +274,7 @@ export async function runCellCompensationE2E(options: {
   const flow = await runComposeDemoCompensationFlow(options.baseUrl);
   Object.assign(steps, flow);
 
-  // Host InMemory CompensationDaemon is informational only — must NOT gate compose PROVEN
+  // Host InMemory CompensationDaemon is informational only and does not raise compose evidence.
   // (specialized audit: S_adapter_ops_mock was greenwashing "adapter-ops consumed outbox").
   const mockOk = await runAdapterOpsCompensationMock().catch(() => false);
   steps.S_adapter_ops_mock_host = mockOk;
@@ -275,9 +288,10 @@ export async function runCellCompensationE2E(options: {
 
   return {
     mode,
-    verdict: passed ? 'PROVEN' : 'BLOCKED',
+    verdict: passed ? 'ENFORCED' : 'BLOCKED',
     passed,
     steps,
+    controlledChange,
     dockerError,
     elapsedMs: Date.now() - started,
   };
@@ -290,14 +304,21 @@ async function main(): Promise<void> {
   const mode = (modeIdx >= 0 ? args[modeIdx + 1] : 'compose') as CompensationE2EMode;
   const baseUrl = baseIdx >= 0 ? args[baseIdx + 1] : 'http://localhost:4000';
   const composeUp = args.includes('--up');
+  const proofIdx = args.indexOf('--controlled-change-proof');
+  const controlledChange = await loadControlledChangeProofArtifact(
+    (proofIdx >= 0 ? args[proofIdx + 1] : undefined) ??
+      process.env.COMMANDER_KUBERNETES_PROOF_ARTIFACT,
+  );
 
-  const result = await runCellCompensationE2E({ mode, baseUrl, composeUp });
+  const result = await runCellCompensationE2E({ mode, baseUrl, composeUp, controlledChange });
   const outDir = join(process.cwd(), 'artifacts');
   await mkdir(outDir, { recursive: true });
   const outPath = join(outDir, `l4-b-cell-compensation-e2e-${Date.now()}.json`);
   await writeFile(outPath, JSON.stringify(result, null, 2));
   console.log(`Cell compensation E2E steps: ${JSON.stringify(result.steps)}`);
-  console.log(`Cell compensation E2E ${result.verdict} ${result.passed ? 'PASS' : 'FAIL'} → ${outPath}`);
+  console.log(
+    `Cell compensation E2E ${result.verdict} ${result.passed ? 'PASS' : 'FAIL'} → ${outPath}`,
+  );
   if (!result.passed) process.exit(1);
 }
 

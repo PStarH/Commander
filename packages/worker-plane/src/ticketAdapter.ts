@@ -65,15 +65,15 @@ export class InMemoryTicketAdapter implements EffectOutcomeQuerier {
     tenantId: string;
   }): Promise<EffectRemoteOutcome> {
     const hit = this.byIdempotency.get(this.key(input.tenantId, input.idempotencyKey));
-    if (!hit) return { status: 'UNKNOWN' };
+    if (!hit) return { status: 'NOT_APPLIED', response: {} };
     if (hit.status === 'failed') {
       return {
-        status: 'FAILED',
+        status: 'NOT_APPLIED',
         response: { ticketId: hit.ticketId, title: hit.title, status: hit.status },
       };
     }
     return {
-      status: 'COMPLETED',
+      status: 'APPLIED',
       response: { ticketId: hit.ticketId, title: hit.title, status: hit.status },
     };
   }

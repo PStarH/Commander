@@ -18,21 +18,35 @@ import type {
   KernelStep,
   KernelTimer,
   MarkEffectCompletionUnknownRequest,
+  ParkEffectCompletionUnknownInput,
+  ParkEffectCompletionUnknownResult,
   ReconcileEffectRequest,
   RequestReconcileInput,
+  RequestReconcileResult,
   ClaimReconcileEffectsInput,
   ClaimedReconcileEffect,
   RescheduleReconcileInput,
   EscalateReconcileInput,
+  ReconcileClaimAuth,
+  ReconcileMutationResult,
   FailEffectRequest,
   RequestCompensationInput,
   RequestCompensationResult,
+  CompensationAuthorizationRecord,
+  ClaimCompensationRequestInput,
+  ClaimedCompensationRequest,
+  FinalizeCompensationInput,
+  ParkCompensationUnknownInput,
+  CompensationMutationResult,
   TenantExecutionControl,
   KillSwitch,
   KillSwitchMatchDims,
   PutKillSwitchInput,
   RemoveKillSwitchInput,
+  OperationsReadiness,
 } from './types.js';
+import type { EvidenceRepository, KernelEvidenceRecord } from './evidenceRepository.js';
+import type { CompensationOutboxPort } from './ops/compensationConsumer.js';
 
 export type { KillSwitchMatchDims } from './types.js';
 
@@ -43,7 +57,7 @@ export type { KillSwitchMatchDims } from './types.js';
  * in-memory implementation is intentionally test-only and is never selected
  * by a production factory.
  */
-export interface KernelRepository {
+export interface KernelRepository extends EvidenceRepository, CompensationOutboxPort {
   initialize(): Promise<void>;
   createRun(command: CreateKernelRun, actor: string): Promise<KernelRun>;
   /** Control-plane configured maximum simultaneously running steps for a tenant. */
@@ -83,6 +97,8 @@ export interface KernelRepository {
   /** Remove the tenant execution gate without resuming individually paused runs. */
   resumeTenant(tenantId: string, actor: string): Promise<TenantExecutionControl>;
   getTenantExecutionControl(tenantId: string): Promise<TenantExecutionControl>;
+  /** Kernel-authoritative drain readiness; never accepts caller worker metadata. */
+  getOperationsReadiness(tenantId: string, now?: Date): Promise<OperationsReadiness>;
   admitEffect(request: AdmitEffectRequest): Promise<AdmitEffectResult>;
   completeEffect(
     effectId: string,
@@ -91,7 +107,23 @@ export interface KernelRepository {
     response: Record<string, unknown>,
     actor: string,
   ): Promise<KernelEffect | null>;
+  /** Atomically commit a terminal effect and its immutable signed receipt. */
+  completeEffectWithEvidence(
+    effectId: string,
+    tenantId: string,
+    lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>,
+    response: Record<string, unknown>,
+    actor: string,
+    evidence: KernelEvidenceRecord,
+  ): Promise<KernelEffect | null>;
+  /** Atomically fail a never-committed effect and persist its immutable signed receipt. */
+  failEffectWithEvidence(
+    request: FailEffectRequest & { evidence: KernelEvidenceRecord },
+  ): Promise<KernelEffect | null>;
   markEffectCompletionUnknown(request: MarkEffectCompletionUnknownRequest): Promise<KernelEffect | null>;
+  parkEffectCompletionUnknown(
+    input: ParkEffectCompletionUnknownInput,
+  ): Promise<ParkEffectCompletionUnknownResult>;
   /** L3-08a: load a single effect for UNKNOWN reconcile. */
   getEffect(effectId: string, tenantId: string): Promise<KernelEffect | null>;
   /**
@@ -99,13 +131,54 @@ export interface KernelRepository {
    * Ops/reconciler path — no worker lease; never re-executes the write.
    */
   reconcileEffect(request: ReconcileEffectRequest): Promise<KernelEffect | null>;
-  requestReconcile(input: RequestReconcileInput): Promise<KernelEffect | null>;
+  requestReconcile(input: RequestReconcileInput): Promise<RequestReconcileResult>;
   claimReconcileEffects(input: ClaimReconcileEffectsInput): Promise<ClaimedReconcileEffect[]>;
+  completeReconcileEffect(
+    input: ReconcileClaimAuth & { response: Record<string, unknown> },
+  ): Promise<ReconcileMutationResult>;
+  confirmEffectNotApplied(
+    input: ReconcileClaimAuth & { response: Record<string, unknown> },
+  ): Promise<ReconcileMutationResult>;
+  rescheduleReconcileEffect(
+    input: ReconcileClaimAuth & { lastError: import('./types.js').ReconcileQueryError },
+  ): Promise<ReconcileMutationResult>;
+  escalateReconcileEffect(
+    input: ReconcileClaimAuth & {
+      reason:
+        | 'RECONCILE_ADAPTER_NOT_FOUND'
+        | 'RECONCILE_QUERY_UNSUPPORTED'
+        | 'COMPENSATION_QUERY_UNSUPPORTED'
+        | 'RECONCILE_POLICY_BACKFILL_REVIEW_REQUIRED';
+    },
+  ): Promise<ReconcileMutationResult>;
   rescheduleReconcile(input: RescheduleReconcileInput): Promise<boolean>;
   escalateReconcile(input: EscalateReconcileInput): Promise<boolean>;
   releaseReconcileClaim(effectId: string, tenantId: string, claimToken: string): Promise<boolean>;
   failEffect(request: FailEffectRequest): Promise<KernelEffect | null>;
-  requestCompensation(input: RequestCompensationInput): Promise<RequestCompensationResult | null>;
+  createCompensationAuthorization(
+    authorization: CompensationAuthorizationRecord,
+  ): Promise<{ authorization: CompensationAuthorizationRecord; replayed: boolean }>;
+  getCompensationAuthorization(
+    authorizationId: string,
+    tenantId: string,
+  ): Promise<CompensationAuthorizationRecord | null>;
+  requestCompensation(input: RequestCompensationInput): Promise<RequestCompensationResult>;
+  claimCompensationRequest(
+    input: ClaimCompensationRequestInput,
+  ): Promise<ClaimedCompensationRequest | null>;
+  admitCompensationEffect(
+    input: import('./types.js').AdmitEffectRequest & {
+      requestId: string;
+      outboxMessageId: string;
+      outboxClaimToken: string;
+    },
+  ): Promise<AdmitEffectResult>;
+  parkCompensationUnknown(
+    input: ParkCompensationUnknownInput,
+  ): Promise<CompensationMutationResult>;
+  finalizeCompensation(
+    input: FinalizeCompensationInput,
+  ): Promise<CompensationMutationResult>;
   claimOutbox(limit: number, now?: Date): Promise<KernelOutboxMessage[]>;
   /** Worker LOGIN requires tenantId so RLS can scope the UPDATE. */
   markOutboxPublished(messageId: string, claimToken: string, tenantId?: string): Promise<boolean>;

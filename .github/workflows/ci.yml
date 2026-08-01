@@ -504,6 +504,7 @@ jobs:
     env:
       OWNER_DSN: postgres://commander:commander@localhost:5432/commander
       COMMANDER_KERNEL_DATABASE_URL: postgres://commander:commander@localhost:5432/commander
+      COMMANDER_TASK1_PG_URL: postgres://commander:commander@localhost:5432/commander
     steps:
       - uses: actions/checkout@v6
 
@@ -531,7 +532,7 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v4
         with:
-          version: v3.14.4
+          version: v3.17.3
 
       # P1 fail-closed: sole gate command (no parallel subset steps)
       - name: Deploy gates (pnpm test:deploy-gates)

@@ -68,7 +68,7 @@ describe('PostgreSQL kernel ops durability', () => {
       assert.ok(stepC?.lease);
       const admitted = await repo.admitEffect({
         id: `effect-${suffix}`, runId: stepC.runId, stepId: stepC.id, tenantId: tenantC,
-        type: 'tool', idempotencyKey: `effect-key-${suffix}`, request: { tool: 'write' },
+        type: 'read.cache', idempotencyKey: `effect-key-${suffix}`, request: { tool: 'write' },
         policyDecisionId: 'decision',
         policySnapshotId: 'policy',
         actionDigest: 'a'.repeat(64),
@@ -111,11 +111,13 @@ describe('PostgreSQL kernel ops durability', () => {
         [[KERNEL_COMPENSATION_TOPIC, LEGACY_COMPENSATION_TOPIC], tenantC],
       );
 
+      let brokerAdmissions = 0;
       let compensated = 0;
       const consumeResult = await consumeCompensationBatch(
         repo,
         {
           admit: async (input) => {
+            brokerAdmissions += 1;
             const cmpAdmit = await repo.admitEffect({
               id: input.effectId,
               runId: stepC.runId,
@@ -159,9 +161,23 @@ describe('PostgreSQL kernel ops durability', () => {
         { workerId: 'cmp-worker', topic: KERNEL_COMPENSATION_TOPIC, limit: 10 },
       );
       assert.equal(consumeResult.consumed, 1);
-      assert.equal(consumeResult.succeeded, 1);
-      assert.equal(compensated, 1);
+      assert.equal(consumeResult.succeeded, 0);
+      assert.equal(consumeResult.failed, 1);
+      assert.equal(brokerAdmissions, 0, 'missing Task 3 authorization must fail before broker admission');
+      assert.equal(compensated, 0, 'fail-closed compensation must not invoke the adapter');
       assert.equal((await repo.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 10)).length, 0);
+      const retriableComp = await pool.query<{
+        published_at: Date | null;
+        moved_to_dlq_at: Date | null;
+        last_error: { code?: string } | null;
+      }>(
+        `SELECT published_at, moved_to_dlq_at, last_error FROM commander_outbox
+         WHERE tenant_id=$1 AND topic=$2`,
+        [tenantC, KERNEL_COMPENSATION_TOPIC],
+      );
+      assert.equal(retriableComp.rows[0]?.published_at, null);
+      assert.equal(retriableComp.rows[0]?.moved_to_dlq_at, null);
+      assert.equal(retriableComp.rows[0]?.last_error?.code, 'COMPENSATION_ADMISSION_UNAVAILABLE');
 
       const durableEventId = `restart-event-${suffix}`;
       await delivery.publish({
@@ -252,7 +268,7 @@ describe('PostgreSQL kernel ops durability', () => {
         assert.ok(claimedB?.lease, `round ${round}: step-b not claimed`);
 
         assert.equal((await repo.admitEffect({
-          id: effectA, runId, stepId: stepA, tenantId, type: 'tool',
+          id: effectA, runId, stepId: stepA, tenantId, type: 'read.cache',
           idempotencyKey: `a-${suffix}`, request: { tool: 'write-a' },
           policyDecisionId: 'decision-a',
           policySnapshotId: 'policy',
@@ -264,7 +280,7 @@ describe('PostgreSQL kernel ops durability', () => {
         ));
 
         assert.equal((await repo.admitEffect({
-          id: effectB, runId, stepId: stepB, tenantId, type: 'tool',
+          id: effectB, runId, stepId: stepB, tenantId, type: 'read.cache',
           idempotencyKey: `b-${suffix}`, request: { tool: 'write-b' },
           policyDecisionId: 'decision-b',
           policySnapshotId: 'policy',

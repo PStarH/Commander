@@ -1,26 +1,19 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import * as ownerSeeds from './seedWorkerClaimSecret.js';
+import type { ClaimSecretSeedClient } from './seedWorkerClaimSecret.js';
 
 describe('owner migration seeds', () => {
   it('seeds both demo ticket policies for every explicit tenant without overwriting', async () => {
     const calls: Array<{ sql: string; values?: readonly unknown[] }> = [];
-    const client = {
+    const client: ClaimSecretSeedClient = {
       async query(sql: string, values?: readonly unknown[]) {
         calls.push({ sql, values });
       },
     };
-    const seedDemoTicketAllowlist = (
-      ownerSeeds as typeof ownerSeeds & {
-        seedDemoTicketAllowlist: (
-          client: typeof client,
-          tenantIds: readonly string[],
-        ) => Promise<void>;
-      }
-    ).seedDemoTicketAllowlist;
 
-    assert.equal(typeof seedDemoTicketAllowlist, 'function');
-    await seedDemoTicketAllowlist(client, ['tenant-a', ' tenant-b ']);
+    assert.equal(typeof ownerSeeds.seedDemoTicketAllowlist, 'function');
+    await ownerSeeds.seedDemoTicketAllowlist(client, ['tenant-a', ' tenant-b ']);
 
     assert.deepEqual(
       calls.map((call) => call.values),
@@ -38,22 +31,17 @@ describe('owner migration seeds', () => {
 
   it('rejects wildcard tenants before writing policy', async () => {
     let writes = 0;
-    const client = {
+    const client: ClaimSecretSeedClient = {
       async query() {
         writes += 1;
       },
     };
-    const seedDemoTicketAllowlist = (
-      ownerSeeds as typeof ownerSeeds & {
-        seedDemoTicketAllowlist: (
-          client: typeof client,
-          tenantIds: readonly string[],
-        ) => Promise<void>;
-      }
-    ).seedDemoTicketAllowlist;
 
-    assert.equal(typeof seedDemoTicketAllowlist, 'function');
-    await assert.rejects(seedDemoTicketAllowlist(client, ['*']), /WORKER_ALLOWED_TENANT_INVALID/);
+    assert.equal(typeof ownerSeeds.seedDemoTicketAllowlist, 'function');
+    await assert.rejects(
+      ownerSeeds.seedDemoTicketAllowlist(client, ['*']),
+      /WORKER_ALLOWED_TENANT_INVALID/,
+    );
     assert.equal(writes, 0);
   });
 });

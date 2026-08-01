@@ -1,12 +1,18 @@
 import express, { type Request, type Response, type Router } from 'express';
+import {
+  evaluateManifestGatewayEffect,
+  findAdapterManifest,
+  isClassAEffectType,
+  type ActionStateV1,
+} from '@commander/contracts';
 import { z } from 'zod';
 import {
-  buildRunEvidenceBundle,
+  assertTerminalEvidence,
+  canonicalEvidenceBody,
   verifyEvidenceBundle,
-  type EvidenceAuditSource,
-  type EvidenceEffectSource,
+  verifyEvidenceSignature,
+  type EvidenceJwks,
 } from '@commander/effect-broker';
-import type { KernelEvent } from '@commander/kernel';
 import {
   GatewayIdempotencyConflictError,
   GatewayStepIdConflictError,
@@ -20,6 +26,25 @@ import type { KillSwitchMatchDims } from './v1GatewayKernel';
 const ACTION_GATEWAY_AUTHORITY = 'commander.action-gateway/v1';
 const ACTION_POLICY_SNAPSHOT = 'action-gateway-mvp-v1';
 
+function configuredEvidenceJwks(): EvidenceJwks | null {
+  const raw = process.env.COMMANDER_EVIDENCE_JWKS_JSON?.trim();
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      Array.isArray(parsed) ||
+      !Array.isArray((parsed as { keys?: unknown }).keys)
+    ) {
+      return null;
+    }
+    return parsed as EvidenceJwks;
+  } catch {
+    return null;
+  }
+}
+
 const actionInputSchema = z
   .object({
     source: z.string().min(1).max(128),
@@ -30,6 +55,23 @@ const actionInputSchema = z
     effectType: z.string().regex(/^[a-zA-Z0-9._:-]{1,128}$/),
     args: z.record(z.string(), z.unknown()),
     idempotencyKey: z.string().regex(/^[A-Za-z0-9._:-]{8,256}$/),
+  })
+  .strict();
+
+const compensationInputSchema = z
+  .object({
+    originalEffectId: z.string().min(1).max(256),
+    adapterVersion: z.string().min(1).max(256),
+    compensationEffectType: z.string().regex(/^compensate\.[a-zA-Z0-9._:-]{1,117}$/),
+    compensationPatch: z.record(z.string(), z.unknown()),
+    forwardReceiptHash: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
+const compensationApprovalSchema = z
+  .object({
+    actionDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    policySnapshotId: z.string().min(1).max(256),
   })
   .strict();
 
@@ -87,6 +129,60 @@ export interface ActionSimulation extends ActionDecision {
   actionDigest: string;
 }
 
+type GatewayStep = NonNullable<Awaited<ReturnType<V1KernelGateway['getStep']>>>;
+type GatewayEffect = NonNullable<Awaited<ReturnType<V1KernelGateway['getEffect']>>>;
+
+export function projectCanonicalActionState(input: {
+  decisionEffect: ActionDecision['effect'];
+  approval?: boolean;
+  runState: KernelRun['state'];
+  stepState?: GatewayStep['state'];
+  effectState?: GatewayEffect['state'];
+  reconcileEscalatedAt?: GatewayEffect['reconcileEscalatedAt'];
+  reconcileDisposition?: GatewayEffect['reconcileDisposition'];
+}): ActionStateV1 {
+  if (input.decisionEffect === 'deny' || input.approval === false) return 'FAILED';
+  if (input.decisionEffect === 'require_approval' && input.approval !== true) {
+    return 'AWAITING_APPROVAL';
+  }
+
+  if (input.reconcileEscalatedAt || input.reconcileDisposition === 'ESCALATED') {
+    return 'ESCALATED';
+  }
+  if (
+    input.effectState === 'COMPLETION_UNKNOWN' ||
+    input.stepState === 'WAITING_FOR_RECONCILIATION'
+  ) {
+    return 'COMPLETION_UNKNOWN';
+  }
+
+  if (input.runState === 'SUCCEEDED' || input.runState === 'COMPENSATED') return 'SUCCEEDED';
+  if (input.runState === 'FAILED' || input.runState === 'CANCELLED') return 'FAILED';
+
+  if (input.stepState === 'SUCCEEDED') return 'SUCCEEDED';
+  if (
+    input.stepState === 'FAILED' ||
+    input.stepState === 'CANCELLED' ||
+    input.stepState === 'SKIPPED'
+  ) {
+    return 'FAILED';
+  }
+
+  if (input.effectState === 'COMPLETED') return 'SUCCEEDED';
+  if (input.effectState === 'FAILED' || input.effectState === 'CONFIRMED_NOT_APPLIED') {
+    return 'FAILED';
+  }
+
+  if (
+    input.runState === 'RUNNING' ||
+    input.runState === 'COMPENSATING' ||
+    input.stepState === 'RUNNING'
+  ) {
+    return 'RUNNING';
+  }
+  return 'ADMITTED';
+}
+
 interface ActionGatewayMetadata {
   authority: typeof ACTION_GATEWAY_AUTHORITY;
   stepId: string;
@@ -141,6 +237,35 @@ function requiredApprover(req: Request, res: Response): string | null {
       error: {
         code: 'ACTION_APPROVAL_FORBIDDEN',
         message: 'Admin role or actions:approve API key scope is required.',
+      },
+    });
+    return null;
+  }
+  return principalId;
+}
+
+function requiredReconcileAuthority(req: Request, res: Response): string | null {
+  const principalId = req.user?.id ?? req.apiKeyId;
+  if (!principalId) {
+    res.status(401).json({
+      error: {
+        code: 'AUTHENTICATION_REQUIRED',
+        message: 'An authenticated principal is required.',
+      },
+    });
+    return null;
+  }
+  const isAdminUser = req.user?.role === 'admin' || req.user?.role === 'super_admin';
+  const apiScopes = req.apiKeyId ? (req.apiScopes ?? []) : [];
+  const hasScope =
+    apiScopes.includes('actions:reconcile') ||
+    apiScopes.includes('admin') ||
+    apiScopes.includes('*');
+  if (!isAdminUser && !hasScope) {
+    res.status(403).json({
+      error: {
+        code: 'ACTION_RECONCILE_FORBIDDEN',
+        message: 'Admin role or actions:reconcile API key scope is required.',
       },
     });
     return null;
@@ -221,6 +346,20 @@ function deterministicId(prefix: string, value: string): string {
 }
 
 function evaluateAction(envelope: ActionEnvelope): ActionDecision {
+  const manifest = findAdapterManifest({
+    effectType: envelope.effectType,
+    toolName: envelope.tool,
+    destination: envelope.destination,
+  });
+  if (manifest) {
+    const effect = evaluateManifestGatewayEffect(manifest, envelope.destination);
+    return {
+      effect,
+      decisionId: `action-gateway-manifest-${effect}`,
+      reason: `Registered adapter policy requires '${effect}' for this exact action.`,
+      policySnapshotId: ACTION_POLICY_SNAPSHOT,
+    };
+  }
   const isCreate =
     envelope.effectType === 'demo.ticket.create' && envelope.tool === 'ticket.create';
   const isCompensation =
@@ -334,26 +473,16 @@ async function renderAction(
     ? interactions.find((item) => item.id === metadata.interactionId)
     : undefined;
   const effect = effects.find((item) => item.id === metadata.effectId);
-  let state: string = run.state;
-  if (metadata.decision.effect === 'deny') state = 'DENIED';
-  if (metadata.decision.effect === 'require_approval') {
-    if (interaction?.response?.approved === false) state = 'REJECTED';
-    else if (interaction?.response?.approved !== true) state = 'WAITING_FOR_APPROVAL';
-    else state = 'APPROVED';
-  }
-  if (
-    metadata.decision.effect !== 'deny' &&
-    interaction?.response?.approved !== false &&
-    (metadata.decision.effect !== 'require_approval' || interaction?.response?.approved === true)
-  ) {
-    if (effect?.state === 'COMPLETION_UNKNOWN') state = 'COMPLETION_UNKNOWN';
-    else if (['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(run.state)) state = run.state;
-    else if (step && ['SUCCEEDED', 'FAILED', 'CANCELLED', 'SKIPPED'].includes(step.state)) {
-      state = step.state;
-    } else if (effect?.state === 'COMPLETED' || effect?.state === 'FAILED') {
-      state = effect.state;
-    }
-  }
+  const approval = interaction?.response?.approved;
+  const state = projectCanonicalActionState({
+    decisionEffect: metadata.decision.effect,
+    approval: typeof approval === 'boolean' ? approval : undefined,
+    runState: run.state,
+    stepState: step?.state,
+    effectState: effect?.state,
+    reconcileEscalatedAt: effect?.reconcileEscalatedAt,
+    reconcileDisposition: effect?.reconcileDisposition,
+  });
   return {
     runId: run.id,
     stepId: metadata.stepId,
@@ -378,29 +507,6 @@ function actionNotFound(res: Response) {
   return res.status(404).json({
     error: { code: 'ACTION_NOT_FOUND', message: 'Action was not found.' },
   });
-}
-
-function evidenceAuditDetails(event: KernelEvent): Record<string, unknown> {
-  if (event.type === 'interaction.created') {
-    const expiresAt = event.payload.expiresAt;
-    return {
-      interactionId: event.aggregateId,
-      status: 'pending',
-      expiresAt: typeof expiresAt === 'string' ? expiresAt : null,
-    };
-  }
-  if (event.type === 'interaction.answered') {
-    const response =
-      event.payload.response && typeof event.payload.response === 'object'
-        ? (event.payload.response as Record<string, unknown>)
-        : {};
-    return {
-      interactionId: event.aggregateId,
-      status: 'answered',
-      ...(typeof response.approved === 'boolean' ? { approved: response.approved } : {}),
-    };
-  }
-  return event.payload;
 }
 
 export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway | null): Router {
@@ -551,6 +657,27 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
 
     const envelope: ActionEnvelope = { tenantId, ...parsed.data };
     if (await rejectIfKillSwitchActive(kernel, envelope, res)) return;
+    if (isClassAEffectType(envelope.effectType)) {
+      try {
+        const readiness = await kernel.getOperationsReadiness(tenantId);
+        if (!readiness.ready) {
+          return res.status(503).json({
+            error: {
+              code: 'OPERATIONS_NOT_READY',
+              message: 'Required reconciliation and compensation drains are unavailable.',
+              details: readiness,
+            },
+          });
+        }
+      } catch {
+        return res.status(503).json({
+          error: {
+            code: 'OPERATIONS_NOT_READY',
+            message: 'Operations readiness could not be verified.',
+          },
+        });
+      }
+    }
     const simulation = buildSimulation(envelope);
     const decision: ActionDecision = {
       effect: simulation.effect,
@@ -565,7 +692,7 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
         error: { code: 'ACTION_POLICY_DENIED', message: decision.reason },
         action: {
           runId,
-          state: 'DENIED',
+          state: 'FAILED',
           decision,
           simulation,
           actionDigest: simulation.actionDigest,
@@ -792,9 +919,11 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
     });
   });
 
-  router.post('/:runId/reconcile', async (req, res) => {
+  router.post('/:runId/compensations', async (req, res) => {
     const tenantId = requiredTenant(req, res);
     if (!tenantId) return;
+    const parsed = compensationInputSchema.safeParse(req.body);
+    if (!parsed.success) return invalidRequest(res, parsed.error);
     const kernel = resolveKernel();
     if (!kernel) {
       return res.status(503).json({
@@ -806,20 +935,231 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
     }
     const loaded = await loadAction(kernel, req.params.runId, tenantId);
     if (!loaded) return actionNotFound(res);
-    const effects = await kernel.listEffects(loaded.run.id, tenantId);
-    const unknown = effects.find((effect) => effect.state === 'COMPLETION_UNKNOWN');
-    if (!unknown) {
-      return res.status(409).json({
-        error: { code: 'NO_RECONCILABLE_EFFECT', message: 'No completion-unknown effect exists.' },
+    const originalEffect = await kernel.getEffect(parsed.data.originalEffectId, tenantId);
+    if (
+      !originalEffect ||
+      originalEffect.runId !== loaded.run.id ||
+      originalEffect.state !== 'COMPLETED' ||
+      originalEffect.type.startsWith('compensate.') ||
+      !originalEffect.response
+    ) {
+      return res.status(404).json({
+        error: {
+          code: 'FORWARD_EFFECT_NOT_FOUND',
+          message: 'Completed forward effect was not found.',
+        },
       });
     }
-    return res.status(501).json({
-      error: {
-        code: 'RECONCILER_NOT_CONFIGURED',
-        message: 'The adapter reconciler is not configured on this API process.',
+    if (canonicalValueHash(originalEffect.response) !== parsed.data.forwardReceiptHash) {
+      return res.status(409).json({
+        error: {
+          code: 'FORWARD_RECEIPT_MISMATCH',
+          message: 'Forward receipt binding does not match.',
+        },
+      });
+    }
+    const destination = originalEffect.request.destination;
+    if (typeof destination !== 'string' || destination.length === 0) {
+      return res.status(409).json({
+        error: {
+          code: 'FORWARD_EFFECT_INVALID',
+          message: 'Forward effect has no durable destination.',
+        },
+      });
+    }
+    const compensationAction = {
+      type: parsed.data.compensationEffectType,
+      originalEffectId: originalEffect.id,
+      adapterVersion: parsed.data.adapterVersion,
+      forwardResponse: originalEffect.response,
+      compensationPatch: parsed.data.compensationPatch,
+    };
+    const actionDigest = canonicalValueHash(compensationAction);
+    const envelope: ActionEnvelope = {
+      tenantId,
+      source: loaded.metadata.envelope.source,
+      package: loaded.metadata.envelope.package,
+      model: loaded.metadata.envelope.model,
+      tool:
+        parsed.data.compensationEffectType === 'compensate.demo.ticket.create'
+          ? 'ticket.compensate'
+          : loaded.metadata.envelope.tool,
+      destination,
+      effectType: parsed.data.compensationEffectType,
+      args: parsed.data.compensationPatch,
+      idempotencyKey: `cmp:${originalEffect.id}:${parsed.data.adapterVersion}`,
+    };
+    const decision = evaluateAction(envelope);
+    const authorizationId = `authorization_${canonicalValueHash({
+      tenantId,
+      originalRunId: loaded.run.id,
+      originalEffectId: originalEffect.id,
+      adapterVersion: parsed.data.adapterVersion,
+      actionDigest,
+    }).slice(0, 40)}`;
+    const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+    const approvalInteractionId =
+      decision.effect === 'require_approval'
+        ? `interaction_${canonicalValueHash({ authorizationId, actionDigest }).slice(0, 40)}`
+        : undefined;
+    if (approvalInteractionId) {
+      const existing = (await kernel.listInteractions(loaded.run.id, tenantId)).find(
+        (interaction) => interaction.id === approvalInteractionId,
+      );
+      if (!existing) {
+        await kernel.createInteraction(
+          {
+            id: approvalInteractionId,
+            runId: loaded.run.id,
+            stepId: loaded.metadata.stepId,
+            tenantId,
+            prompt: `Approve compensation authorization ${authorizationId}`,
+            expiresAt: new Date(expiresAt),
+          },
+          actor(req),
+        );
+      }
+    }
+    const authorization = {
+      id: authorizationId,
+      tenantId,
+      originalRunId: loaded.run.id,
+      originalEffectId: originalEffect.id,
+      compensationEffectType: parsed.data.compensationEffectType,
+      adapterVersion: parsed.data.adapterVersion,
+      compensationPatch: parsed.data.compensationPatch,
+      forwardReceiptHash: parsed.data.forwardReceiptHash,
+      policyDecisionId: decision.decisionId,
+      policySnapshotId: decision.policySnapshotId,
+      decision: decision.effect,
+      actionDigest,
+      expiresAt,
+      ...(approvalInteractionId ? { approvalInteractionId } : {}),
+    };
+    try {
+      const persisted = await kernel.createCompensationAuthorization(authorization);
+      if (decision.effect === 'require_approval') {
+        return res.status(202).json({
+          authorization: persisted.authorization,
+          replayed: persisted.replayed,
+          state: 'AWAITING_APPROVAL',
+        });
+      }
+      const result = await kernel.requestCompensation({
+        tenantId,
+        authorizationId,
+        actor: actor(req),
+      });
+      if (result.accepted) return res.status(202).json(result);
+      return res.status(result.reason === 'POLICY_DENIED' ? 403 : 409).json({
+        error: { code: result.reason, message: 'Compensation authorization was not executable.' },
+        requestId: result.requestId,
+      });
+    } catch (error) {
+      return res.status(409).json({
+        error: {
+          code: error instanceof Error ? error.message : 'COMPENSATION_AUTHORIZATION_FAILED',
+          message: 'Compensation authorization could not be persisted.',
+        },
+      });
+    }
+  });
+
+  router.post('/:runId/compensations/:authorizationId/approve', async (req, res) => {
+    const tenantId = requiredTenant(req, res);
+    if (!tenantId) return;
+    const approver = requiredApprover(req, res);
+    if (!approver) return;
+    const parsed = compensationApprovalSchema.safeParse(req.body);
+    if (!parsed.success) return invalidRequest(res, parsed.error);
+    const kernel = resolveKernel();
+    if (!kernel) return res.status(503).json({ error: { code: 'KERNEL_UNAVAILABLE' } });
+    const loaded = await loadAction(kernel, req.params.runId, tenantId);
+    if (!loaded) return actionNotFound(res);
+    const authorization = await kernel.getCompensationAuthorization(
+      req.params.authorizationId,
+      tenantId,
+    );
+    if (!authorization || authorization.originalRunId !== loaded.run.id) {
+      return res.status(404).json({ error: { code: 'COMPENSATION_AUTHORIZATION_NOT_FOUND' } });
+    }
+    if (
+      authorization.decision !== 'require_approval' ||
+      !authorization.approvalInteractionId ||
+      authorization.actionDigest !== parsed.data.actionDigest ||
+      authorization.policySnapshotId !== parsed.data.policySnapshotId
+    ) {
+      return res.status(409).json({ error: { code: 'APPROVAL_BINDING_MISMATCH' } });
+    }
+    const interaction = await kernel.answerInteraction({
+      interactionId: authorization.approvalInteractionId,
+      runId: loaded.run.id,
+      tenantId,
+      response: {
+        approved: true,
+        approvedBy: approver,
+        authorizationId: authorization.id,
+        originalEffectId: authorization.originalEffectId,
+        actionDigest: authorization.actionDigest,
+        policyDecisionId: authorization.policyDecisionId,
+        policySnapshotId: authorization.policySnapshotId,
       },
-      effectId: unknown.id,
+      actor: approver,
+      releaseStep: false,
     });
+    const result = await kernel.requestCompensation({
+      tenantId,
+      authorizationId: authorization.id,
+      actor: approver,
+    });
+    return result.accepted
+      ? res.status(202).json({ interaction, ...result })
+      : res.status(409).json({ error: { code: result.reason }, requestId: result.requestId });
+  });
+
+  router.post('/:runId/reconcile', async (req, res) => {
+    const tenantId = requiredTenant(req, res);
+    if (!tenantId) return;
+    const actor = requiredReconcileAuthority(req, res);
+    if (!actor) return;
+    const kernel = resolveKernel();
+    if (!kernel) {
+      return res.status(503).json({
+        error: {
+          code: 'KERNEL_UNAVAILABLE',
+          message: 'Shared execution kernel is not configured.',
+        },
+      });
+    }
+    const loaded = await loadAction(kernel, req.params.runId, tenantId);
+    if (!loaded) return actionNotFound(res);
+    const result = await kernel.requestReconcile(loaded.metadata.effectId, tenantId, actor);
+    if (result.scheduled) return res.status(202).json(result);
+    switch (result.reason) {
+      case 'NOT_FOUND':
+        return actionNotFound(res);
+      case 'NOT_UNKNOWN':
+        return res.status(409).json({
+          error: {
+            code: 'NO_RECONCILABLE_EFFECT',
+            message: 'No completion-unknown effect exists.',
+          },
+        });
+      case 'ESCALATED':
+        return res.status(409).json({
+          error: {
+            code: 'RECONCILIATION_ESCALATED',
+            message: 'The completion-unknown effect is already escalated.',
+          },
+        });
+      case 'DEADLINE_EXPIRED':
+        return res.status(410).json({
+          error: {
+            code: 'RECONCILIATION_DEADLINE_EXPIRED',
+            message: 'The completion-unknown effect reconciliation deadline has expired.',
+          },
+        });
+    }
   });
 
   router.get('/:runId/evidence', async (req, res) => {
@@ -836,42 +1176,44 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
     }
     const loaded = await loadAction(kernel, req.params.runId, tenantId);
     if (!loaded) return actionNotFound(res);
-    const [events, effects] = await Promise.all([
-      kernel.listEvents(loaded.run.id, tenantId),
-      kernel.listEffects(loaded.run.id, tenantId),
-    ]);
-    const evidenceEffects: EvidenceEffectSource[] = effects.map((effect) => ({
-      ...effect,
-      approvalInteractionId:
-        effect.id === loaded.metadata.effectId ? loaded.metadata.interactionId : undefined,
-    }));
-    const auditEvents: EvidenceAuditSource[] = events.map((event) => ({
-      type: event.type,
-      severity: event.type.includes('failed') || event.type.includes('denied') ? 'high' : 'low',
-      tenantId: event.tenantId,
-      runId: event.runId,
-      stepId: event.stepId ?? loaded.metadata.stepId,
-      at: event.occurredAt,
-      details: evidenceAuditDetails(event),
-    }));
-    const bundle = buildRunEvidenceBundle({
-      tenantId,
-      runId: loaded.run.id,
-      intentHash: loaded.run.intentHash,
-      workGraphHash: loaded.run.workGraphHash,
-      workGraphVersion: loaded.run.workGraphVersion,
-      policySnapshotId: loaded.run.policySnapshotId,
-      kernelApiVersion: 'v1',
-      effects: evidenceEffects,
-      auditEvents,
-      exportedAt: loaded.run.updatedAt,
-      bundleId: `bundle_${canonicalValueHash({
-        runId: loaded.run.id,
-        actionDigest: loaded.metadata.actionDigest,
-        updatedAt: loaded.run.updatedAt,
-      }).slice(0, 40)}`,
-    });
-    return res.json({ bundle, verification: verifyEvidenceBundle(bundle) });
+    const record = await kernel.getEvidence(loaded.run.id, tenantId);
+    if (!record?.anchoredAt || !record.signature) {
+      return res.status(503).json({
+        error: {
+          code: 'EVIDENCE_NOT_READY',
+          message: 'A signed and anchored evidence receipt is not available.',
+        },
+      });
+    }
+    try {
+      if (
+        record.tenantId !== tenantId ||
+        record.runId !== loaded.run.id ||
+        record.body.scope.tenantId !== tenantId ||
+        record.body.scope.runId !== loaded.run.id ||
+        record.bundleId !== record.body.bundleId ||
+        record.actionDigest !== record.body.actionDigest ||
+        record.contentHash !== record.body.contentHash
+      ) {
+        throw new Error('EVIDENCE_RECORD_BINDING_INVALID');
+      }
+      const receipt = { ...record.body, signature: record.signature };
+      const verification = verifyEvidenceBundle(receipt);
+      if (!verification.ok) throw new Error(verification.reason ?? 'EVIDENCE_INVALID');
+      assertTerminalEvidence(receipt);
+      const jwks = configuredEvidenceJwks();
+      if (
+        !jwks ||
+        !verifyEvidenceSignature(canonicalEvidenceBody(receipt), record.signature, jwks)
+      ) {
+        throw new Error('EVIDENCE_SIGNATURE_INVALID');
+      }
+      return res.json({ receipt, verification });
+    } catch {
+      return res.status(503).json({
+        error: { code: 'EVIDENCE_INVALID', message: 'Persisted evidence failed integrity checks.' },
+      });
+    }
   });
 
   return router;

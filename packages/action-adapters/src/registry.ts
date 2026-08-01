@@ -1,8 +1,13 @@
 import type { EffectOutcomeQuerier } from '@commander/effect-broker';
 import type { ActionAdapterDescriptorV1 } from '@commander/contracts';
-import type { ActionAdapter, AdapterCredentialProvider } from './types.js';
+import type {
+  ActionAdapter,
+  AdapterCredentialProvider,
+  KubernetesCredentialProvider,
+} from './types.js';
 import { createGitHubPullRequestCreateAdapter } from './github/pullRequestCreate.js';
 import { createServiceNowIncidentCreateAdapter } from './servicenow/incidentCreate.js';
+import { createKubernetesDeploymentRollbackAdapter } from './kubernetes/deploymentRollback.js';
 
 export class ActionAdapterRegistry {
   private readonly adapters: Map<string, ActionAdapter>;
@@ -15,10 +20,13 @@ export class ActionAdapterRegistry {
     }
   }
 
-  static production(credentials: AdapterCredentialProvider): ActionAdapterRegistry {
+  static production(
+    credentials: AdapterCredentialProvider & KubernetesCredentialProvider,
+  ): ActionAdapterRegistry {
     return new ActionAdapterRegistry([
       createGitHubPullRequestCreateAdapter({ credentials }),
       createServiceNowIncidentCreateAdapter({ credentials }),
+      createKubernetesDeploymentRollbackAdapter({ credentials }),
     ]);
   }
 
@@ -34,15 +42,20 @@ export class ActionAdapterRegistry {
     const adapter = this.resolve(effectType);
     if (!adapter) return null;
     return {
-      queryOutcome: async (input) =>
-        adapter.queryOutcome({
+      queryOutcome: async (input) => {
+        const queryInput = {
           tenantId: input.tenantId,
           effectId: input.effectId,
           idempotencyKey: input.idempotencyKey,
           destination: String(input.request.destination ?? ''),
           request: input.request,
           signal: input.signal,
-        }),
+        };
+        if (effectType === adapter.descriptor.compensationEffectType) {
+          return adapter.queryCompensationOutcome(queryInput);
+        }
+        return adapter.queryOutcome(queryInput);
+      },
     };
   }
 

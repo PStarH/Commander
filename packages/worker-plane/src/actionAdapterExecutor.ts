@@ -3,6 +3,7 @@ import {
   ActionAdapterRegistry,
   EnvAdapterCredentialProvider,
   type AdapterCredentialProvider,
+  type KubernetesCredentialProvider,
 } from '@commander/action-adapters';
 
 export function createActionAdapterEffectExecutor(
@@ -54,16 +55,27 @@ export function createActionAdapterEffectExecutor(
 }
 
 export function createProductionAdapterRegistry(
-  credentials?: AdapterCredentialProvider,
+  credentials?: AdapterCredentialProvider & KubernetesCredentialProvider,
+  env: NodeJS.ProcessEnv = process.env,
 ): ActionAdapterRegistry {
-  const cellTenantId = process.env.COMMANDER_CELL_TENANT_ID;
+  const cellTenantId = env.COMMANDER_CELL_TENANT_ID;
   if (!cellTenantId) {
     return ActionAdapterRegistry.empty();
+  }
+  const cluster = env.COMMANDER_KUBERNETES_CLUSTER;
+  const server = env.COMMANDER_KUBERNETES_SERVER;
+  const tokenEnv = env.COMMANDER_KUBERNETES_TOKEN_ENV;
+  if ((cluster || server || tokenEnv) && !(cluster && server && tokenEnv)) {
+    throw new Error(
+      'COMMANDER_KUBERNETES_CLUSTER, COMMANDER_KUBERNETES_SERVER, and COMMANDER_KUBERNETES_TOKEN_ENV must be configured together',
+    );
   }
   const provider =
     credentials ??
     new EnvAdapterCredentialProvider({
       cellTenantId,
+      kubernetesClusters:
+        cluster && server && tokenEnv ? { [cluster]: { server, tokenEnv } } : undefined,
     });
   return ActionAdapterRegistry.production(provider);
 }

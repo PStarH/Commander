@@ -16,7 +16,7 @@ import {
   runWithTenant,
   type TenantConfig,
 } from '@commander/core/runtime';
-import { getRuntimeStats, getTenantRunDurations } from './agentRuntimeRegistry';
+import { getTenantMetricStats, getTenantRunDurations } from './tenantMetricsStore';
 
 const ACTIVE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MAX_TENANTS = 100;
@@ -77,7 +77,7 @@ function collectTenantData(): TenantMetricData[] {
   const provider = getGlobalTenantProvider();
   const fairness = getTenantFairnessMonitor();
   const tenantManager = getTenantManager();
-  const runtimeStats = getRuntimeStats();
+  const runtimeStats = getTenantMetricStats();
 
   const activeSet = new Map<string, number>();
   for (const stat of runtimeStats) {

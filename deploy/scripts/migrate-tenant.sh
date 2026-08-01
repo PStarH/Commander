@@ -162,7 +162,11 @@ DST_DIR="$(data_dir_for_model "$TARGET_MODEL" "$TENANT_ID")"
 if [[ "$DRY_RUN" == true ]]; then
   echo "[dry-run] Would migrate '$TENANT_ID' from '$CURRENT_MODEL' to '$TARGET_MODEL'"
   if [[ -n "$SRC_DIR" && -e "$SRC_DIR" ]]; then
-    echo "[dry-run] Would copy: $SRC_DIR -> $DST_DIR"
+    if [[ -n "$DST_DIR" ]]; then
+      echo "[dry-run] Would copy: $SRC_DIR -> $DST_DIR"
+    else
+      echo "[dry-run] Would migrate to pool and retain source: $SRC_DIR"
+    fi
   elif [[ -n "$DST_DIR" ]]; then
     echo "[dry-run] Would create empty directory: $DST_DIR"
   fi
@@ -171,20 +175,59 @@ if [[ "$DRY_RUN" == true ]]; then
 fi
 
 # -----------------------------------------------------------------------------
-# Copy data when moving from a model that had on-disk storage
+# Stage the destination without modifying the source or configuration.
 # -----------------------------------------------------------------------------
-if [[ -n "$SRC_DIR" && -e "$SRC_DIR" ]]; then
-  mkdir -p "$DST_DIR"
-  # Copy contents including hidden files; preserve permissions/timestamps
-  cp -Rp "$SRC_DIR/"* "$SRC_DIR/".[^.]* "$DST_DIR/" 2>/dev/null || true
-  # Fallback: some shells may not expand hidden-file glob; use find for safety
-  find "$SRC_DIR" -mindepth 1 -maxdepth 1 -exec cp -Rp {} "$DST_DIR/" \;
-  echo "Copied tenant data: $SRC_DIR -> $DST_DIR"
-else
-  if [[ -n "$DST_DIR" ]]; then
-    mkdir -p "$DST_DIR"/{memory,runs,logs,artifacts,storage}
-    echo "Created empty tenant directory: $DST_DIR"
+CREATED_DESTINATION=false
+STAGING_DIR=""
+STAGING_OWNER=""
+OWNERSHIP_FILE=".commander-migrate-tenant-owned"
+OWNERSHIP_TOKEN="commander-migrate-tenant:$$:$TENANT_ID:$DST_DIR"
+
+remove_owned_directory() {
+  local directory="$1"
+  local sentinel="$directory/$OWNERSHIP_FILE"
+  if [[ ! -f "$sentinel" ]] || [[ "$(<"$sentinel")" != "$OWNERSHIP_TOKEN" ]]; then
+    echo "Error: refusing to remove unowned directory: $directory" >&2
+    return 1
   fi
+  rm -rf -- "$directory"
+}
+
+cleanup_staging() {
+  if [[ -n "$STAGING_DIR" && -d "$STAGING_DIR" ]]; then
+    if [[ -f "$STAGING_OWNER" ]] && [[ "$(<"$STAGING_OWNER")" == "$OWNERSHIP_TOKEN" ]]; then
+      rm -rf -- "$STAGING_DIR"
+    else
+      echo "Error: refusing to remove unowned staging directory: $STAGING_DIR" >&2
+    fi
+  fi
+  if [[ -n "$STAGING_OWNER" && -f "$STAGING_OWNER" ]] && \
+    [[ "$(<"$STAGING_OWNER")" == "$OWNERSHIP_TOKEN" ]]; then
+    rm -f -- "$STAGING_OWNER"
+  fi
+}
+trap cleanup_staging EXIT
+
+if [[ -n "$DST_DIR" ]]; then
+  if [[ -e "$DST_DIR" ]]; then
+    echo "Error: destination already exists: $DST_DIR" >&2
+    exit 1
+  fi
+  mkdir -p "$(dirname "$DST_DIR")"
+  STAGING_DIR="$(mktemp -d "${DST_DIR}.tmp.XXXXXX")"
+  STAGING_OWNER="${STAGING_DIR}.owner"
+  (set -o noclobber; printf '%s\n' "$OWNERSHIP_TOKEN" > "$STAGING_OWNER")
+  if [[ -n "$SRC_DIR" && -e "$SRC_DIR" ]]; then
+    cp -Rp "$SRC_DIR/." "$STAGING_DIR/"
+  else
+    mkdir -p "$STAGING_DIR"/{memory,runs,logs,artifacts,storage}
+  fi
+  printf '%s\n' "$OWNERSHIP_TOKEN" > "$STAGING_DIR/$OWNERSHIP_FILE"
+  mv "$STAGING_DIR" "$DST_DIR"
+  STAGING_DIR=""
+  rm -f -- "$STAGING_OWNER"
+  STAGING_OWNER=""
+  CREATED_DESTINATION=true
 fi
 
 # -----------------------------------------------------------------------------
@@ -193,10 +236,11 @@ fi
 export _TARGET_MODEL="$TARGET_MODEL"
 export _DATA_ROOT="$DATA_ROOT"
 
-python3 - <<'PY'
+if ! python3 - <<'PY'
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 config_path = os.environ['_CONFIG_PATH']
@@ -228,9 +272,49 @@ else:
     tenant['workspacePath'] = prefix
     tenant['storagePath'] = str(Path(prefix) / 'storage')
 
-with open(config_path, 'w') as f:
-    json.dump(data, f, indent=2, ensure_ascii=False)
-    f.write('\n')
+config = Path(config_path)
+temporary = None
+try:
+    with tempfile.NamedTemporaryFile(
+        mode='w',
+        encoding='utf-8',
+        dir=config.parent,
+        prefix=f'.{config.name}.',
+        delete=False,
+    ) as f:
+        temporary = Path(f.name)
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write('\n')
+        f.flush()
+        os.fsync(f.fileno())
+
+    temporary.chmod(config.stat().st_mode & 0o777)
+    os.replace(temporary, config)
+    temporary = None
+finally:
+    if temporary is not None:
+        temporary.unlink(missing_ok=True)
 PY
+then
+  if [[ "$CREATED_DESTINATION" == true ]]; then
+    remove_owned_directory "$DST_DIR" || true
+  fi
+  echo "Error: failed to update $CONFIG_FILE; source retained" >&2
+  exit 1
+fi
+
+if [[ -n "$SRC_DIR" && -e "$SRC_DIR" && -n "$DST_DIR" ]]; then
+  if ! rm -rf -- "$SRC_DIR"; then
+    echo "Error: failed to remove source; destination remains active and source remnants are retained at $SRC_DIR" >&2
+    exit 1
+  fi
+  rm -f -- "$DST_DIR/$OWNERSHIP_FILE"
+  echo "Migrated tenant data: $SRC_DIR -> $DST_DIR"
+elif [[ -n "$SRC_DIR" && -e "$SRC_DIR" ]]; then
+  echo "Migrated tenant data to pool (source retained): $SRC_DIR"
+elif [[ -n "$DST_DIR" ]]; then
+  rm -f -- "$DST_DIR/$OWNERSHIP_FILE"
+  echo "Created empty tenant directory: $DST_DIR"
+fi
 
 echo "Tenant '$TENANT_ID' migrated from '$CURRENT_MODEL' to '$TARGET_MODEL'."

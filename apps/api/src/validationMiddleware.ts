@@ -1,6 +1,12 @@
 import type { Request, Response, NextFunction } from 'express';
 import { ZodError, ZodSchema } from 'zod';
 
+declare module 'express' {
+  interface Request {
+    validatedQuery?: Record<string, unknown>;
+  }
+}
+
 export function validateBody(schema: ZodSchema) {
   return (req: Request, res: Response, next: NextFunction): void => {
     try {
@@ -25,7 +31,7 @@ export function validateBody(schema: ZodSchema) {
 export function validateQuery(schema: ZodSchema) {
   return (req: Request, res: Response, next: NextFunction): void => {
     try {
-      (req as any).validatedQuery = schema.parse(req.query);
+      req.validatedQuery = schema.parse(req.query) as Record<string, unknown>;
       next();
     } catch (err) {
       if (err instanceof ZodError) {
@@ -43,10 +49,10 @@ export function validateQuery(schema: ZodSchema) {
   };
 }
 
-export function validateParams(schema: ZodSchema) {
+export function validateParams<T extends Record<string, string>>(schema: ZodSchema<T>) {
   return (req: Request, res: Response, next: NextFunction): void => {
     try {
-      req.params = schema.parse(req.params) as any;
+      req.params = schema.parse(req.params) as Request['params'];
       next();
     } catch (err) {
       if (err instanceof ZodError) {

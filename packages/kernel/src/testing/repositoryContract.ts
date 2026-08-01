@@ -10,6 +10,18 @@ export interface RepositoryContractContext {
   create: () => Promise<KernelRepository>;
   destroy: (repo: KernelRepository) => Promise<void>;
   seedWorker?: (repo: KernelRepository) => Promise<{ workerId: string; generation: number }>;
+  seedOperationsWorker?: (
+    repo: KernelRepository,
+    input: {
+      id: string;
+      tenantIds: string[];
+      capabilities: string[];
+      status?: 'ACTIVE' | 'DRAINING' | 'OFFLINE';
+      registeredAt: Date;
+      lastHeartbeatAt: Date;
+      identitySubject?: string;
+    },
+  ) => Promise<void>;
 }
 
 const createRun = (steps: NewKernelStep[] = [{ id: 'step-a', kind: 'agent' }]) => ({
@@ -38,8 +50,258 @@ async function claim(
   });
 }
 
+async function seedFreshOperationsDrains(
+  kernel: KernelRepository,
+  ctx: RepositoryContractContext,
+  suffix: string,
+): Promise<void> {
+  assert.ok(ctx.seedOperationsWorker, `${ctx.name} must seed operations workers`);
+  const now = new Date();
+  for (const [role, capability] of [
+    ['reconcile', 'effect.reconcile'],
+    ['compensation', 'effect.compensate'],
+  ] as const) {
+    await ctx.seedOperationsWorker!(kernel, {
+      id: `${role}:${suffix}`,
+      tenantIds: ['tenant-a'],
+      capabilities: [capability],
+      identitySubject: 'db:commander_adapter_ops',
+      registeredAt: new Date(now.getTime() - 10_000),
+      lastHeartbeatAt: new Date(now.getTime() - 1_000),
+    });
+  }
+}
+
 export function runKernelRepositoryContractTests(ctx: RepositoryContractContext): void {
   describe(`KernelRepository contract — ${ctx.name}`, () => {
+    it('fails operations readiness closed until distinct drains complete fresh ticks', async () => {
+      const kernel = await ctx.create();
+      const now = new Date('2026-07-23T10:00:00.000Z');
+      try {
+        assert.deepEqual(await kernel.getOperationsReadiness('tenant-a', now), {
+          ready: false,
+          reason: 'RECONCILIATION_DRAIN_UNAVAILABLE',
+          reconciliationWorkers: 0,
+          compensationWorkers: 0,
+          checkedAt: now.toISOString(),
+        });
+        assert.ok(ctx.seedOperationsWorker, `${ctx.name} must seed operations workers`);
+        await ctx.seedOperationsWorker!(kernel, {
+          id: 'reconcile:a', tenantIds: ['tenant-a'], capabilities: ['effect.reconcile'],
+          identitySubject: 'forged:generic-worker',
+          registeredAt: new Date(now.getTime() - 1_000), lastHeartbeatAt: new Date(now.getTime() - 1_000),
+        });
+        assert.equal((await kernel.getOperationsReadiness('tenant-a', now)).ready, false, 'forged identity and registration timestamp cannot establish readiness');
+        await ctx.seedOperationsWorker!(kernel, {
+          id: 'reconcile:a', tenantIds: ['tenant-a'], capabilities: ['effect.reconcile'],
+          identitySubject: 'db:commander_adapter_ops',
+          registeredAt: new Date(now.getTime() - 10_000), lastHeartbeatAt: new Date(now.getTime() - 1_000),
+        });
+        await ctx.seedOperationsWorker!(kernel, {
+          id: 'compensate:a', tenantIds: ['tenant-a'], capabilities: ['effect.compensate'],
+          identitySubject: 'db:commander_adapter_ops',
+          registeredAt: new Date(now.getTime() - 10_000), lastHeartbeatAt: new Date(now.getTime() - 1_000),
+        });
+        const ready = await kernel.getOperationsReadiness('tenant-a', now);
+        assert.equal(ready.ready, true);
+        assert.equal(ready.reconciliationWorkers, 1);
+        assert.equal(ready.compensationWorkers, 1);
+        assert.equal((await kernel.getOperationsReadiness('tenant-b', now)).ready, false, 'another tenant cannot borrow drains');
+      } finally {
+        await ctx.destroy(kernel);
+      }
+    });
+
+    it('rejects stale, draining, and dual-capability substitutes for distinct drains', async () => {
+      const kernel = await ctx.create();
+      const now = new Date('2026-07-23T10:00:00.000Z');
+      try {
+        assert.ok(ctx.seedOperationsWorker, `${ctx.name} must seed operations workers`);
+        await ctx.seedOperationsWorker!(kernel, {
+          id: 'both:a', tenantIds: ['tenant-a'], capabilities: ['effect.reconcile', 'effect.compensate'],
+          identitySubject: 'db:commander_adapter_ops',
+          registeredAt: new Date(now.getTime() - 10_000), lastHeartbeatAt: new Date(now.getTime() - 1_000),
+        });
+        assert.equal((await kernel.getOperationsReadiness('tenant-a', now)).ready, false, 'capabilities must be exact and server assigned');
+        await ctx.seedOperationsWorker!(kernel, {
+          id: 'reconcile:a', tenantIds: ['tenant-a'], capabilities: ['effect.reconcile'], status: 'DRAINING',
+          identitySubject: 'db:commander_adapter_ops',
+          registeredAt: new Date(now.getTime() - 10_000), lastHeartbeatAt: new Date(now.getTime() - 1_000),
+        });
+        await ctx.seedOperationsWorker!(kernel, {
+          id: 'compensate:a', tenantIds: ['tenant-a'], capabilities: ['effect.compensate'],
+          identitySubject: 'db:commander_adapter_ops',
+          registeredAt: new Date(now.getTime() - 60_000), lastHeartbeatAt: new Date(now.getTime() - 31_000),
+        });
+        const readiness = await kernel.getOperationsReadiness('tenant-a', now);
+        assert.equal(readiness.ready, false);
+        assert.equal(readiness.reason, 'RECONCILIATION_DRAIN_UNAVAILABLE');
+      } finally {
+        await ctx.destroy(kernel);
+      }
+    });
+
+    it('fails Class A admission closed until both operations drains are fresh', async () => {
+      const kernel = await ctx.create();
+      try {
+        await kernel.createRun(createRun(), 'gateway');
+        const claimed = await claim(kernel, ctx);
+        assert.ok(claimed?.lease);
+
+        const blocked = await kernel.admitEffect({
+          id: 'effect-class-a-blocked',
+          runId: 'run-1',
+          stepId: claimed!.id,
+          tenantId: 'tenant-a',
+          type: 'http.post',
+          idempotencyKey: 'class-a-blocked',
+          policyDecisionId: 'decision-class-a',
+          policySnapshotId: 'policy-v1',
+          actionDigest: 'a'.repeat(64),
+          request: { target: 'blocked' },
+          lease: claimed!.lease!,
+          actor: 'worker-1',
+        });
+        assert.deepEqual(blocked, { admitted: false, reason: 'OPERATIONS_NOT_READY' });
+
+        await seedFreshOperationsDrains(kernel, ctx, 'admission');
+
+        const admitted = await kernel.admitEffect({
+          id: 'effect-class-a-ready',
+          runId: 'run-1',
+          stepId: claimed!.id,
+          tenantId: 'tenant-a',
+          type: 'http.post',
+          idempotencyKey: 'class-a-ready',
+          policyDecisionId: 'decision-class-a',
+          policySnapshotId: 'policy-v1',
+          actionDigest: 'b'.repeat(64),
+          request: { target: 'ready' },
+          lease: claimed!.lease!,
+          actor: 'worker-1',
+        });
+        assert.equal(admitted.admitted, true);
+      } finally {
+        await ctx.destroy(kernel);
+      }
+    });
+
+    it('allows only completed Class A replays to bypass operations readiness', async () => {
+      for (const state of ['ADMITTED', 'COMPLETION_UNKNOWN', 'FAILED'] as const) {
+        const kernel = await ctx.create();
+        try {
+          await kernel.createRun(createRun(), 'gateway');
+          const claimed = await claim(kernel, ctx);
+          assert.ok(claimed?.lease);
+          const suffix = `replay-${state.toLowerCase()}`;
+          await seedFreshOperationsDrains(kernel, ctx, suffix);
+          const request = {
+            id: `effect-${suffix}`,
+            runId: 'run-1',
+            stepId: claimed!.id,
+            tenantId: 'tenant-a',
+            type: 'http.post',
+            idempotencyKey: `idem-${suffix}`,
+            policyDecisionId: 'decision-replay',
+            policySnapshotId: 'policy-v1',
+            actionDigest: 'a'.repeat(64),
+            request: { target: suffix },
+            lease: claimed!.lease!,
+            actor: 'worker-1',
+          };
+          assert.equal((await kernel.admitEffect(request)).admitted, true);
+          if (state === 'COMPLETION_UNKNOWN') {
+            assert.ok(await kernel.markEffectCompletionUnknown({
+              effectId: request.id,
+              tenantId: request.tenantId,
+              reason: 'timeout',
+              actor: request.actor,
+            }));
+          } else if (state === 'FAILED') {
+            assert.ok(await kernel.failEffect({
+              effectId: request.id,
+              tenantId: request.tenantId,
+              lease: request.lease,
+              error: { code: 'REMOTE_REJECTED', message: 'rejected', retryable: false },
+              actor: request.actor,
+            }));
+          }
+          const now = new Date();
+          await ctx.seedOperationsWorker!(kernel, {
+            id: `compensation:${suffix}`,
+            tenantIds: ['tenant-a'],
+            capabilities: ['effect.compensate'],
+            status: 'DRAINING',
+            identitySubject: 'db:commander_adapter_ops',
+            registeredAt: new Date(now.getTime() - 10_000),
+            lastHeartbeatAt: new Date(now.getTime() - 1_000),
+          });
+
+          const replay = await kernel.admitEffect({
+            ...request,
+            id: `${request.id}-replay`,
+          });
+          assert.equal(replay.admitted, false, `${state} is not a completed durable receipt`);
+          if (!replay.admitted) {
+            assert.ok(
+              replay.reason === 'OPERATIONS_NOT_READY' || replay.reason === 'LEASE_LOST',
+              `${state} must fail closed on readiness or the released lease`,
+            );
+          }
+        } finally {
+          await ctx.destroy(kernel);
+        }
+      }
+
+      const kernel = await ctx.create();
+      try {
+        await kernel.createRun(createRun(), 'gateway');
+        const claimed = await claim(kernel, ctx);
+        assert.ok(claimed?.lease);
+        await seedFreshOperationsDrains(kernel, ctx, 'replay-completed');
+        const request = {
+          id: 'effect-replay-completed',
+          runId: 'run-1',
+          stepId: claimed!.id,
+          tenantId: 'tenant-a',
+          type: 'http.post',
+          idempotencyKey: 'idem-replay-completed',
+          policyDecisionId: 'decision-replay',
+          policySnapshotId: 'policy-v1',
+          actionDigest: 'b'.repeat(64),
+          request: { target: 'completed' },
+          lease: claimed!.lease!,
+          actor: 'worker-1',
+        };
+        assert.equal((await kernel.admitEffect(request)).admitted, true);
+        assert.equal(
+          (await kernel.completeEffect(
+            request.id,
+            request.tenantId,
+            request.lease,
+            { receipt: 'durable' },
+            request.actor,
+          ))?.state,
+          'COMPLETED',
+        );
+        const now = new Date();
+        await ctx.seedOperationsWorker!(kernel, {
+          id: 'compensation:replay-completed',
+          tenantIds: ['tenant-a'],
+          capabilities: ['effect.compensate'],
+          status: 'DRAINING',
+          identitySubject: 'db:commander_adapter_ops',
+          registeredAt: new Date(now.getTime() - 10_000),
+          lastHeartbeatAt: new Date(now.getTime() - 1_000),
+        });
+        const replay = await kernel.admitEffect({ ...request, id: `${request.id}-replay` });
+        assert.equal(replay.admitted && replay.replayed, true);
+        if (replay.admitted) assert.equal(replay.effect.state, 'COMPLETED');
+      } finally {
+        await ctx.destroy(kernel);
+      }
+    });
+
     it('claims dependency-ready work once and fences stale completion', async () => {
       const kernel = await ctx.create();
       try {
@@ -76,6 +338,7 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
         await kernel.createRun(createRun([{ id: 'first', kind: 'agent' }, { id: 'second', kind: 'tool', dependencies: ['first'] }]), 'gateway');
         const first = await claim(kernel, ctx, { capabilities: ['agent'] });
         assert.equal(first?.id, 'first');
+        await seedFreshOperationsDrains(kernel, ctx, 'idempotency');
         const admitted = await kernel.admitEffect({
           id: 'effect-1', runId: 'run-1', stepId: 'first', tenantId: 'tenant-a',
           type: 'http.write', idempotencyKey: 'key-1', policyDecisionId: 'decision-1',
@@ -106,6 +369,7 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
         await kernel.createRun(createRun(), 'gateway');
         const claimed = await claim(kernel, ctx);
         assert.ok(claimed?.lease);
+        await seedFreshOperationsDrains(kernel, ctx, 'bindings');
         const lease = claimed!.lease!;
         const digest = 'c'.repeat(64);
         const admitted = await kernel.admitEffect({
@@ -258,6 +522,7 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
       try {
         await kernel.createRun(createRun(), 'gateway');
         const claimed = await claim(kernel, ctx);
+        await seedFreshOperationsDrains(kernel, ctx, 'reconcile');
         await kernel.admitEffect({
           id: 'effect-recon', runId: 'run-1', stepId: claimed!.id, tenantId: 'tenant-a',
           type: 'ticket.create', idempotencyKey: 'idem-recon', policyDecisionId: 'decision-1',
@@ -280,6 +545,7 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
       try {
         await kernel.createRun(createRun(), 'gateway');
         const claimed = await claim(kernel, ctx);
+        await seedFreshOperationsDrains(kernel, ctx, 'claim-reconcile');
         await kernel.admitEffect({
           id: 'effect-claim', runId: 'run-1', stepId: claimed!.id, tenantId: 'tenant-a',
           type: 'connector.github.pull-request.create', idempotencyKey: 'claim-key',
@@ -289,10 +555,20 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
           request: {}, lease: claimed!.lease!, actor: 'worker-1',
         });
         await kernel.markEffectCompletionUnknown({ effectId: 'effect-claim', tenantId: 'tenant-a', reason: 'timeout', actor: 'worker-1' });
-        const future = new Date(Date.now() + 120_000).toISOString();
-        await kernel.requestReconcile({ effectId: 'effect-claim', tenantId: 'tenant-a', actor: 'api', reconcileAfter: future });
-        assert.equal((await kernel.claimReconcileEffects({ limit: 5, now: new Date() })).length, 0);
-        const claimedEffects = await kernel.claimReconcileEffects({ limit: 5, now: new Date(Date.parse(future) + 1) });
+        const requested = await kernel.requestReconcile({
+          effectId: 'effect-claim',
+          tenantId: 'tenant-a',
+          actor: 'api',
+        });
+        assert.equal(requested.scheduled, true);
+        assert.equal(
+          (await kernel.claimReconcileEffects({ limit: 5, now: new Date(0) })).length,
+          0,
+        );
+        const claimedEffects = await kernel.claimReconcileEffects({
+          limit: 5,
+          now: new Date(Date.now() + 120_000),
+        });
         assert.equal(claimedEffects.length, 1);
       } finally {
         await ctx.destroy(kernel);
@@ -304,6 +580,7 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
       try {
         await kernel.createRun(createRun(), 'gateway');
         const claimed = await claim(kernel, ctx);
+        await seedFreshOperationsDrains(kernel, ctx, 'fail-effect');
         await kernel.admitEffect({
           id: 'effect-fail', runId: 'run-1', stepId: claimed!.id, tenantId: 'tenant-a',
           type: 'connector.github.pull-request.create', idempotencyKey: 'fail-key',
@@ -437,6 +714,9 @@ if (isDirectTestEntry) {
     name: 'InMemory',
     create: async () => new InMemoryKernelRepository(),
     destroy: async () => {},
+    seedOperationsWorker: async (repo, input) => {
+      (repo as InMemoryKernelRepository).seedTestWorker(input.id, input.tenantIds, 1, input);
+    },
   });
 
   runKernelRepositoryContractTests({
@@ -458,6 +738,9 @@ if (isDirectTestEntry) {
       const sqlite = repo as SqliteKernelRepository;
       sqlite.seedTestWorker('worker-1', ['tenant-a'], 1);
       return { workerId: 'worker-1', generation: 1 };
+    },
+    seedOperationsWorker: async (repo, input) => {
+      (repo as SqliteKernelRepository).seedTestWorker(input.id, input.tenantIds, 1, input);
     },
   });
 }

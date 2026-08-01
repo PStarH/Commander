@@ -104,18 +104,22 @@ describe('compensationPublisherRace (postgres)', () => {
       }
 
       const deliveredCompensationTopics: string[] = [];
+      let brokerAdmissions = 0;
+      let brokerExecutions = 0;
       for (let round = 0; round < 100; round++) {
         const [pub] = await Promise.all([
           publisher.publish(5),
           consumeCompensationBatch(
             repo,
             {
-              admit: async () => ({ admitted: true, effectId: `eff-${round}`, replayed: false }),
-              executeAdmitted: async () => ({
-                effectId: `eff-${round}`,
-                replayed: false,
-                response: { ok: true },
-              }),
+              admit: async () => {
+                brokerAdmissions += 1;
+                return { admitted: true, effectId: `eff-${round}`, replayed: false };
+              },
+              executeAdmitted: async () => {
+                brokerExecutions += 1;
+                return { effectId: `eff-${round}`, replayed: false, response: { ok: true } };
+              },
             },
             async () => 'race-token',
             { workerId: 'race-consumer', limit: 5, topic: KERNEL_COMPENSATION_TOPIC },
@@ -138,6 +142,8 @@ describe('compensationPublisherRace (postgres)', () => {
         [],
         'kernel-ops publisher must not deliver compensation topics under interleaved load',
       );
+      assert.equal(brokerAdmissions, 0, 'pre-Task-3 payloads must fail before broker admission');
+      assert.equal(brokerExecutions, 0, 'publisher race must not masquerade as compensation execution');
 
       const remainingLegacy = await repo.claimOutboxByTopic(LEGACY_COMPENSATION_TOPIC, 100);
       assert.equal(remainingLegacy.length, legacySeeded);

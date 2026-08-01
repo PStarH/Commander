@@ -71,6 +71,11 @@ export interface DrillReport {
     killSwitches: boolean;
     outboxTableExists: boolean;
     timersTableExists: boolean;
+    evidenceReceiptsRestored: boolean;
+    evidenceAnchorsRestored: boolean;
+    identityOutcomeAccountingPreserved: boolean;
+    evidenceReceiptCount: number;
+    anchoredEvidenceReceiptCount: number;
     rowCount: { runs: number; steps: number; events: number };
   };
   rpo: { targetMs: number; actualMs: number; passed: boolean; mode: 'measured' | 'draft' };
@@ -155,6 +160,75 @@ export function sanitizeError(err: unknown, secrets: string[] = []): string {
   msg = msg.replace(/postgres(?:ql)?:\/\/[^\s'"]+/gi, '[redacted-dsn]');
   msg = msg.replace(/PGPASSWORD=\S+/gi, 'PGPASSWORD=[redacted]');
   return msg;
+}
+
+export function assessRestoredEvidence(
+  dsn: DsnParts,
+  runPsqlFn: (dsn: DsnParts, sql: string) => string,
+): Pick<
+  DrillReport['validation'],
+  | 'evidenceReceiptsRestored'
+  | 'evidenceAnchorsRestored'
+  | 'identityOutcomeAccountingPreserved'
+  | 'evidenceReceiptCount'
+  | 'anchoredEvidenceReceiptCount'
+> {
+  const empty = {
+    evidenceReceiptsRestored: false,
+    evidenceAnchorsRestored: false,
+    identityOutcomeAccountingPreserved: false,
+    evidenceReceiptCount: 0,
+    anchoredEvidenceReceiptCount: 0,
+  };
+  try {
+    const exists = runPsqlFn(
+      dsn,
+      "SELECT to_regclass('public.commander_evidence_receipts') IS NOT NULL",
+    );
+    if (exists !== 't') return empty;
+    const evidenceReceiptCount = Number.parseInt(
+      runPsqlFn(dsn, 'SELECT COUNT(*) FROM public.commander_evidence_receipts'),
+      10,
+    );
+    const anchoredEvidenceReceiptCount = Number.parseInt(
+      runPsqlFn(
+        dsn,
+        'SELECT COUNT(*) FROM public.commander_evidence_receipts WHERE anchored_at IS NOT NULL',
+      ),
+      10,
+    );
+    const identityOutcomeCount = Number.parseInt(
+      runPsqlFn(
+        dsn,
+        `SELECT COUNT(*)
+           FROM public.commander_evidence_receipts AS receipt
+          WHERE receipt.action_digest ~ '^[a-f0-9]{64}$'
+            AND receipt.content_hash ~ '^[a-f0-9]{64}$'
+            AND pg_catalog.jsonb_typeof(receipt.signature) = 'object'
+            AND pg_catalog.jsonb_typeof(receipt.body) = 'object'
+            AND receipt.body ? 'scope'
+            AND receipt.body ? 'terminalDisposition'`,
+      ),
+      10,
+    );
+    if (
+      !Number.isSafeInteger(evidenceReceiptCount) ||
+      !Number.isSafeInteger(anchoredEvidenceReceiptCount) ||
+      !Number.isSafeInteger(identityOutcomeCount) ||
+      evidenceReceiptCount <= 0
+    ) {
+      return empty;
+    }
+    return {
+      evidenceReceiptsRestored: true,
+      evidenceAnchorsRestored: anchoredEvidenceReceiptCount === evidenceReceiptCount,
+      identityOutcomeAccountingPreserved: identityOutcomeCount === evidenceReceiptCount,
+      evidenceReceiptCount,
+      anchoredEvidenceReceiptCount,
+    };
+  } catch {
+    return empty;
+  }
 }
 
 function pgEnv(dsn: DsnParts): NodeJS.ProcessEnv {
@@ -272,6 +346,11 @@ async function main(): Promise<void> {
       killSwitches: false,
       outboxTableExists: false,
       timersTableExists: false,
+      evidenceReceiptsRestored: false,
+      evidenceAnchorsRestored: false,
+      identityOutcomeAccountingPreserved: false,
+      evidenceReceiptCount: 0,
+      anchoredEvidenceReceiptCount: 0,
       rowCount: { runs: 0, steps: 0, events: 0 },
     },
     rpo: { targetMs: RPO_TARGET_MS, actualMs: 0, passed: false, mode: 'draft' },
@@ -371,6 +450,7 @@ async function main(): Promise<void> {
       report.validation.effects = tableExists(restoredDsn, 'commander_effects');
       report.validation.interactions = tableExists(restoredDsn, 'commander_interactions');
       report.validation.killSwitches = tableExists(restoredDsn, 'commander_kill_switches');
+      Object.assign(report.validation, assessRestoredEvidence(restoredDsn, runPsql));
       report.restore.schemaValid =
         report.validation.runsTableExists &&
         report.validation.stepsTableExists &&
