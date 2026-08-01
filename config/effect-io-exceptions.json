@@ -1,5 +1,5 @@
 {
-  "baselineCount": 76,
+  "baselineCount": 75,
   "exceptions": [
     {
       "id": "api-onboarding-fetch",
@@ -211,18 +211,6 @@
       "expiresAt": "2026-12-31",
       "patterns": [
         "child_process"
-      ]
-    },
-    {
-      "id": "core-mcp-a2aClient",
-      "path": "packages/core/src/mcp/a2aClient.ts",
-      "owner": "@commander/core",
-      "reason": "MCP/A2A protocol I/O — core protocol surface",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "fetch(",
-        "node:https"
       ]
     },
     {
