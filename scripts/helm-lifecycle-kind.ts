@@ -1335,6 +1335,7 @@ async function runCutoverCommand(
     const stderrText = Buffer.concat(stderr).toString('utf8').trim().slice(-4_000);
     const diag = await captureCutoverFailureDiagnostics();
     const detail = [stderrText, diag].filter(Boolean).join('\n').slice(-8_000);
+    if (diag) process.stderr.write(`[cutover-diagnostics]\n${diag}\n`);
     throw new Error(`HELM_TENANT_CUTOVER_FAILED${detail ? `: ${detail}` : ''}`);
   }
   if (requireLiveProofPod && !proofPodObserved) {
