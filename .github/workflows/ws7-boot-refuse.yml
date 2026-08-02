@@ -42,7 +42,7 @@ jobs:
         run: pnpm --filter @commander/core build:production
 
       - name: Core production sandbox boot-refuse
-        run: pnpm --filter @commander/core exec tsx --test tests/sandbox/boot-refuse.test.ts
+        run: pnpm --filter @commander/core exec node --import tsx --test tests/sandbox/boot-refuse.test.ts
 
       - name: Worker production sandbox boot-refuse
-        run: pnpm exec tsx --test packages/worker-plane/src/boot-refuse.test.ts
+        run: pnpm exec node --import tsx --test packages/worker-plane/src/boot-refuse.test.ts

@@ -283,7 +283,7 @@ jobs:
         # boot-refuse tests construct their own production env internally
         # (local `productionEnv` constant). Do NOT set COMMANDER_ALLOW_NO_SANDBOX
         # here — spec §3 forbids that combination even as dead config.
-        run: pnpm --filter @commander/core exec tsx --test tests/sandbox/boot-refuse.test.ts
+        run: pnpm --filter @commander/core exec node --import tsx --test tests/sandbox/boot-refuse.test.ts
 
       - name: Kernel unit tests (compensation DLQ + WS2)
         # L2-12: claimOutbox(+ByTopic) DLQ/max_attempts filter + poison→DLQ proofs.
@@ -304,11 +304,11 @@ jobs:
           pnpm --filter @commander/kernel build
           pnpm --filter @commander/action-adapters build
           pnpm --filter @commander/core build
-          pnpm --filter @commander/core exec tsx --test \
+          pnpm --filter @commander/core exec node --import tsx --test \
             tests/sandbox/productionPolicy.test.ts \
             tests/memory/memoryAuditQuery.test.ts \
             tests/security/exec-policy-resource-tool.test.ts
-          pnpm exec tsx --test \
+          pnpm exec node --import tsx --test \
             packages/worker-plane/src/llmBrokerBridge.test.ts \
             packages/worker-plane/src/workerRuntimeAdapter.test.ts \
             packages/worker-plane/src/stepWorkloadIdentity.test.ts \
@@ -319,7 +319,7 @@ jobs:
             packages/worker-plane/src/bootstrap.policy.test.ts \
             packages/worker-plane/src/bootstrap.authority.test.ts \
             packages/worker-plane/src/registry.rls.test.ts
-          pnpm exec tsx --test \
+          pnpm exec node --import tsx --test \
             apps/api/test/namespacedMemoryEndpoints.test.ts \
             apps/api/test/namespacedMemoryRbac.test.ts \
             apps/api/test/legacyExecutionGuard.test.ts \
@@ -455,10 +455,10 @@ jobs:
           pnpm --filter @commander/worker-plane build
           pnpm --filter @commander/api build
       - name: Kernel PostgreSQL integration (fencing + tenant isolation)
-        run: pnpm exec tsx --test packages/kernel/src/postgres.integration.test.ts
+        run: pnpm exec node --import tsx --test packages/kernel/src/postgres.integration.test.ts
       - name: Kernel PostgreSQL ops + compensation race (C4/C5/C2 PG)
         run: |
-          pnpm exec tsx --test --test-concurrency=1 \
+          pnpm exec node --import tsx --test --test-concurrency=1 \
             packages/kernel/src/postgres.ops.integration.test.ts \
             packages/kernel/src/ops/outbox/compensationPublisherRace.integration.test.ts \
             packages/kernel/src/ops/outbox/compensationPublisherRace.postgres.integration.test.ts
@@ -474,11 +474,11 @@ jobs:
           path: artifacts/l4-b-compensation-dual-race-*.json
           if-no-files-found: error
       - name: Worker plane e2e (execute + lease reclaim)
-        run: pnpm exec tsx --test --test-force-exit packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts
+        run: pnpm exec node --import tsx --test --test-force-exit packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts
       - name: Production worker sandbox boot-refuse
         # boot-refuse test passes env explicitly to createProductionWorkerSandboxReadiness().
         # Do NOT set COMMANDER_ALLOW_NO_SANDBOX here — spec §3 forbids that combination.
-        run: pnpm exec tsx --test packages/worker-plane/src/boot-refuse.test.ts
+        run: pnpm exec node --import tsx --test packages/worker-plane/src/boot-refuse.test.ts
       - name: Full Gateway → Worker terminal loop
         run: pnpm p0:full-loop
         env:
