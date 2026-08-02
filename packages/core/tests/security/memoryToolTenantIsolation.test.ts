@@ -188,7 +188,13 @@ describe('agent-facing memory tenant isolation', () => {
     const tenant = `memory-${randomUUID().slice(0, 8)}`;
     tenantIds.push(tenant);
     const tenantDefault = path.join(memoryDir, tenantPathSegment(tenant), 'default');
-    const external = await fs.mkdtemp(path.join(os.tmpdir(), 'commander-memory-hardlink-'));
+    // Keep the hard-link source outside the tenant root while placing it on
+    // the same volume as the workspace. Windows rejects cross-volume links
+    // with EXDEV (GitHub runners commonly place the workspace and temp dir on
+    // different drives), which would mask the isolation assertion.
+    const external = await fs.mkdtemp(
+      path.join(path.dirname(memoryDir), 'commander-memory-hardlink-'),
+    );
     externalDirs.push(external);
     await fs.mkdir(tenantDefault, { recursive: true });
     const target = path.join(external, 'external.json');
