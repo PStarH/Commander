@@ -10,9 +10,6 @@ updates:
       interval: 'weekly'
       day: 'monday'
     open-pull-requests-limit: 10
-    labels:
-      - 'dependencies'
-      - 'npm'
     commit-message:
       prefix: 'chore'
       prefix-development: 'chore'
@@ -36,9 +33,6 @@ updates:
       interval: 'weekly'
       day: 'monday'
     open-pull-requests-limit: 5
-    labels:
-      - 'dependencies'
-      - 'npm'
     commit-message:
       prefix: 'chore'
       prefix-development: 'chore'
@@ -51,9 +45,6 @@ updates:
       interval: 'weekly'
       day: 'monday'
     open-pull-requests-limit: 5
-    labels:
-      - 'dependencies'
-      - 'npm'
     commit-message:
       prefix: 'chore'
       prefix-development: 'chore'
@@ -66,9 +57,6 @@ updates:
       interval: 'weekly'
       day: 'monday'
     open-pull-requests-limit: 5
-    labels:
-      - 'dependencies'
-      - 'npm'
     commit-message:
       prefix: 'chore'
       include: 'scope'
@@ -79,9 +67,6 @@ updates:
     schedule:
       interval: 'weekly'
       day: 'monday'
-    labels:
-      - 'dependencies'
-      - 'docker'
     commit-message:
       prefix: 'chore'
       include: 'scope'
@@ -92,9 +77,6 @@ updates:
     schedule:
       interval: 'weekly'
       day: 'monday'
-    labels:
-      - 'dependencies'
-      - 'github-actions'
     commit-message:
       prefix: 'chore'
       include: 'scope'
