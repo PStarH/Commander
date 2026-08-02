@@ -1,0 +1,50 @@
+name: Module A CI
+
+on:
+  workflow_dispatch:
+  push:
+  pull_request:
+    branches: [master, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: module-a-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  module-a-gates:
+    name: Module A local authority gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NODE_ENV: test
+      COMMANDER_CI_EVIDENCE_DIR: .internal/evidence/ci/module-a
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.4
+          run_install: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Module A gates
+        run: bash scripts/ci/module-a-gates.sh
+
+      - name: Upload Module A evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: module-a-evidence-${{ github.run_id }}
+          path: .internal/evidence/ci/module-a/
+          if-no-files-found: warn
+          retention-days: 14
