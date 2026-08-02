@@ -341,9 +341,9 @@ function runExecPolicySmoke(): void {
   // file path is relative to the package root.
   const vitestCwd = path.join(REPO_ROOT, 'packages', 'core');
   try {
-    execFileSync(
-      'npx',
-      ['vitest', 'run', EXECPOLICY_TEST_FILE, '--no-cache', '--reporter=default'],
+            execFileSync(
+              'pnpm',
+              ['exec', 'vitest', 'run', EXECPOLICY_TEST_FILE, '--no-cache', '--reporter=default'],
       {
         cwd: vitestCwd,
         stdio: 'inherit',
