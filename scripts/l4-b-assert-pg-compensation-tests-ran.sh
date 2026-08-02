@@ -11,13 +11,21 @@ if [[ -z "${DATABASE_URL:-}" && -z "${COMMANDER_KERNEL_DATABASE_URL:-}" ]]; then
   exit 1
 fi
 
+set +e
 out="$(
   pnpm exec tsx --test --test-concurrency=1 \
     packages/kernel/src/postgres.ops.integration.test.ts \
     packages/kernel/src/ops/outbox/compensationPublisherRace.postgres.integration.test.ts \
     2>&1
 )"
+test_status=$?
+set -e
 printf '%s\n' "$out"
+
+if (( test_status != 0 )); then
+  echo "ERROR: PG compensation tests exited with status ${test_status}" >&2
+  exit "$test_status"
+fi
 
 # Prefer grep over rg — GitHub-hosted runners do not ship ripgrep by default.
 # Node 22 prefixes summary rows with '#'; newer Node versions use an info glyph.

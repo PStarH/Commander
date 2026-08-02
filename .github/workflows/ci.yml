@@ -197,28 +197,16 @@ jobs:
           echo "::notice::Post-rebuild binding status: ABI=$(node -p 'process.versions.modules') platform=$(node -p 'process.platform') arch=$(node -p 'process.arch')"
 
       - name: Security audit
-        # npm retired the legacy /-/npm/v1/security/audits endpoint (HTTP 410),
-        # which makes bare `pnpm audit` fail the entire Quality Gates matrix
-        # before any tests run. Soften: try audit, warn on transport/API
-        # retirement errors, still fail on real high/critical advisories when
-        # the endpoint works. CodeQL + pnpm audit:wiring remain hard gates.
-        # Explicit bash: Windows runners default to pwsh and parse this as .ps1
-        # (ParserError on `if echo "$out" | grep ...`).
+        # Keep high/critical advisories hard failures. The helper only allows
+        # the React Router RSC advisory when the checked-out app is proven to
+        # use BrowserRouter exclusively; every other advisory remains blocking.
         shell: bash
         run: |
           set +e
-          out=$(pnpm audit --audit-level=high 2>&1)
-          code=$?
-          echo "$out"
-          if [ $code -eq 0 ]; then
-            exit 0
-          fi
-          if echo "$out" | grep -Eqi '410|ERR_PNPM_AUDIT_BAD_RESPONSE|endpoint is being retired|ECONNRESET|ETIMEDOUT|fetch failed'; then
-            echo "::warning::pnpm audit transport/API unavailable (npm audit endpoint retirement or network). Continuing; audit:wiring + CodeQL remain hard security gates."
-            exit 0
-          fi
-          echo "::error::pnpm audit reported high/critical advisories"
-          exit $code
+          pnpm audit --json --audit-level=high > audit-report.json 2>&1
+          audit_code=$?
+          set -e
+          node scripts/ci-security-audit.mjs audit-report.json "$audit_code"
 
       - name: ESLint check (no-console rule)
         run: pnpm exec eslint packages/core/src
