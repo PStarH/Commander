@@ -12,10 +12,6 @@ const RSC_RUNTIME_APIS =
 const DIRECT_REACT_ROUTER_IMPORT =
   /(?:from\s*|import\s*\()['"]react-router(?!-dom)(?:\/[^'"]*)?['"]/;
 
-function pnpmCommand() {
-  return process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
-}
-
 function parseJsonOutput(output) {
   const firstObject = output.indexOf('{');
   if (firstObject < 0) return null;
@@ -124,11 +120,20 @@ function printAdvisories(advisories) {
   }
 }
 
-const result = spawnSync(pnpmCommand(), ['audit', '--json', '--audit-level=high'], {
+const result = spawnSync('pnpm', ['audit', '--json', '--audit-level=high'], {
   encoding: 'utf8',
   maxBuffer: 16 * 1024 * 1024,
+  // pnpm is installed as a .cmd shim on GitHub-hosted Windows runners.
+  // Using the platform shell lets Node resolve that shim exactly as the
+  // workflow shell does, while the arguments remain fixed and non-user input.
+  shell: process.platform === 'win32',
 });
 const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+
+if (result.error) {
+  console.error(`::error::unable to execute pnpm audit: ${result.error.message}`);
+  process.exit(1);
+}
 
 if (result.status === 0) {
   console.log(output);
