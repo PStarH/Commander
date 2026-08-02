@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -120,22 +120,31 @@ function printAdvisories(advisories) {
   }
 }
 
-const result = spawnSync('pnpm', ['audit', '--json', '--audit-level=high'], {
-  encoding: 'utf8',
-  maxBuffer: 16 * 1024 * 1024,
-  // pnpm is installed as a .cmd shim on GitHub-hosted Windows runners.
-  // Using the platform shell lets Node resolve that shim exactly as the
-  // workflow shell does, while the arguments remain fixed and non-user input.
-  shell: process.platform === 'win32',
-});
-const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+const auditReportPath = process.argv[2];
+let auditStatus;
+let output;
 
-if (result.error) {
-  console.error(`::error::unable to execute pnpm audit: ${result.error.message}`);
-  process.exit(1);
+if (auditReportPath && existsSync(auditReportPath)) {
+  auditStatus = Number.parseInt(process.argv[3] ?? '1', 10);
+  output = readFileSync(auditReportPath, 'utf8');
+} else {
+  const result = spawnSync('pnpm', ['audit', '--json', '--audit-level=high'], {
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+    // pnpm is installed as a .cmd shim on GitHub-hosted Windows runners.
+    // Using the platform shell lets Node resolve that shim exactly as the
+    // workflow shell does, while the arguments remain fixed and non-user input.
+    shell: process.platform === 'win32',
+  });
+  output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+  auditStatus = result.status ?? 1;
+  if (result.error) {
+    console.error(`::error::unable to execute pnpm audit: ${result.error.message}`);
+    process.exit(1);
+  }
 }
 
-if (result.status === 0) {
+if (auditStatus === 0) {
   console.log(output);
   process.exit(0);
 }
@@ -161,7 +170,7 @@ const unresolved = advisories.filter(
 if (unresolved.length > 0 || !report) {
   printAdvisories(unresolved);
   if (!report) console.error(output);
-  process.exit(result.status || 1);
+  process.exit(auditStatus || 1);
 }
 
 console.warn(

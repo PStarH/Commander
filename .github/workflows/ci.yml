@@ -200,7 +200,13 @@ jobs:
         # Keep high/critical advisories hard failures. The helper only allows
         # the React Router RSC advisory when the checked-out app is proven to
         # use BrowserRouter exclusively; every other advisory remains blocking.
-        run: node scripts/ci-security-audit.mjs
+        shell: bash
+        run: |
+          set +e
+          pnpm audit --json --audit-level=high > audit-report.json 2>&1
+          audit_code=$?
+          set -e
+          node scripts/ci-security-audit.mjs audit-report.json "$audit_code"
 
       - name: ESLint check (no-console rule)
         run: pnpm exec eslint packages/core/src
