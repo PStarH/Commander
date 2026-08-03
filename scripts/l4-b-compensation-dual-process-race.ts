@@ -291,7 +291,7 @@ async function runWorkerLoop(
           await publisher.publish(10);
         } else {
           if (!auth) throw new Error('dual-race consumer auth is required');
-          await consumeCompensationBatch(
+          const consumed = await consumeCompensationBatch(
             repo,
             {
               admit: async () => ({ admitted: true, effectId: randomUUID(), replayed: false }),
@@ -309,6 +309,11 @@ async function runWorkerLoop(
               registry: { resolve: () => null },
             },
           );
+          if (consumed.consumed > 0) {
+            console.log(
+              `[consumer:${process.pid}] consumed=${consumed.consumed} escalated=${consumed.escalated}`,
+            );
+          }
         }
       } catch (err) {
         console.error(`[worker ${role}] tick error:`, err);
@@ -371,7 +376,7 @@ export async function runDualProcessRace(options: {
   let consumerProc: ChildProcess | undefined;
   let timedOut = false;
   let consumerAuth: { workerId: string; workerGeneration: number; claimSecret: string } | undefined;
-  const adapterId = `compensation:dual-race-${suffix}`;
+  const adapterId = `compensation:${suffix}`;
   try {
     await runKernelMigrations(pool);
     await seedWorkerAllowedTenants(pool, [tenantId]);
@@ -401,7 +406,6 @@ export async function runDualProcessRace(options: {
         effectId: `noise-${tenantId}-${i}`,
       });
     }
-
     publisherProc = spawnWorker('publisher', options.databaseUrl, stopFile);
     consumerProc = spawnWorker(
       'consumer',
