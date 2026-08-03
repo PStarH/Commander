@@ -8,7 +8,6 @@
  * Spec: 2026-07-20-to100-w2-compensation-spec.md §5.1 — deadlineMs default 120000.
  */
 
-import assert from 'node:assert/strict';
 import { spawn, execSync, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
@@ -18,6 +17,12 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { runKernelMigrations } from '../packages/kernel/src/migrations.js';
 import { KERNEL_COMPENSATION_TOPIC } from '../packages/kernel/src/ops/compensationConsumer.js';
+import { canonicalCompensationHash } from '../packages/kernel/src/ops/compensationAuthority.js';
+import {
+  PostgresKernelRepository,
+  PostgresTenantContextAuthority,
+} from '../packages/kernel/src/postgres.js';
+import { seedWorkerAllowedTenants } from '../packages/kernel/src/seedWorkerClaimSecret.js';
 import { CELL_COMPOSE_ENV, COMPOSE_CMD, tryComposeCellUp } from './l4-b-cell-compose.js';
 import { Pool } from 'pg';
 
@@ -46,10 +51,19 @@ export interface DualProcessRaceArtifact {
   deadlineMs: number;
   seeded: number;
   publishedCount: number;
+  compensationPublishedCount: number;
+  consumerClaims: number;
   ws2CompensationDeliveries: number;
   publisherSteals: number;
   elapsedMs: number;
   databaseUrlSource: 'env' | 'compose-env';
+}
+
+function deriveRoleDatabaseUrl(baseUrl: string, role: string, password: string): string {
+  const url = new URL(baseUrl);
+  url.username = role;
+  url.password = password;
+  return url.toString();
 }
 
 function parseArgs(argv: string[]): { composeUp: boolean; seed: number; help: boolean } {
@@ -76,44 +90,121 @@ function resolveDeadlineMs(): number {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_DEADLINE_MS;
 }
 
-async function seedCompensationRows(pool: Pool, tenantId: string, count: number): Promise<void> {
-  const availableAt = new Date(Date.now() - 60_000).toISOString();
-  for (let i = 0; i < count; i++) {
-    const messageId = randomUUID();
-    const eventId = randomUUID();
-    const runId = `run-dual-${tenantId}-${i}`;
-    await pool.query(
-      `INSERT INTO commander_events
-         (id, aggregate_type, aggregate_id, sequence, type, tenant_id, run_id, actor, schema_version, payload)
-       VALUES ($1,'run',$2,1,'kernel.test.dual',$3,$2,'dual-race','v2','{}'::jsonb)`,
-      [eventId, runId, tenantId],
-    );
-    await pool.query(
-      `INSERT INTO commander_outbox
-         (id, event_id, tenant_id, topic, key, payload, attempts, max_attempts, available_at)
-       VALUES ($1,$2,$3,$4,$5,$6::jsonb,0,10,$7::timestamptz)`,
+async function seedOutboxRow(
+  pool: Pool,
+  tenantId: string,
+  topic: string,
+  key: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const messageId = randomUUID();
+  const eventId = randomUUID();
+  await pool.query(
+    `INSERT INTO commander_events
+       (id, aggregate_type, aggregate_id, sequence, type, tenant_id, run_id, actor, schema_version, payload)
+     VALUES ($1,'run',$2,1,'kernel.test.dual',$3,$2,'dual-race','v2','{}'::jsonb)`,
+    [eventId, `run-${messageId}`, tenantId],
+  );
+  await pool.query(
+    `INSERT INTO commander_outbox
+       (id, event_id, tenant_id, topic, key, payload, attempts, max_attempts, available_at)
+     VALUES ($1,$2,$3,$4,$5,$6::jsonb,0,10,$7::timestamptz)`,
+    [
+      messageId,
+      eventId,
+      tenantId,
+      topic,
+      key,
+      JSON.stringify(payload),
+      new Date(Date.now() - 60_000).toISOString(),
+    ],
+  );
+}
+
+async function seedGovernedCompensationRows(
+  ownerPool: Pool,
+  appRepository: PostgresKernelRepository,
+  tenantId: string,
+  count: number,
+): Promise<void> {
+  const runId = `run-dual-${tenantId}`;
+  const effects = Array.from({ length: count }, (_, index) => ({
+    id: `effect-dual-${tenantId}-${index}`,
+    stepId: `step-dual-${tenantId}-${index}`,
+    response: { prNumber: index },
+  }));
+  await appRepository.createRun(
+    {
+      id: runId,
+      tenantId,
+      intentHash: `intent-${tenantId}`,
+      workGraphHash: `graph-${tenantId}`,
+      workGraphVersion: 'v1',
+      policySnapshotId: 'policy-dual-v1',
+      steps: effects.map((effect) => ({ id: effect.stepId, kind: 'agent' })),
+    },
+    'dual-race',
+  );
+  await ownerPool.query(
+    `UPDATE commander_steps SET state='SUCCEEDED', output='{}'::jsonb
+     WHERE run_id=$1 AND tenant_id=$2`,
+    [runId, tenantId],
+  );
+  for (const effect of effects) {
+    await ownerPool.query(
+      `INSERT INTO commander_effects
+       (id,run_id,step_id,tenant_id,type,idempotency_key,request_hash,policy_decision_id,
+        policy_snapshot_id,lease_worker_id,lease_worker_generation,lease_fencing_epoch,
+        action_digest,state,request,response,completed_at)
+       VALUES ($1,$2,$3,$4,'read.github.pull-request',$5,'seed','policy-forward',
+               'policy-dual-v1','seed-worker',1,0,$6,'COMPLETED','{}'::jsonb,$7::jsonb,now())`,
       [
-        messageId,
-        eventId,
+        effect.id,
+        runId,
+        effect.stepId,
         tenantId,
-        KERNEL_COMPENSATION_TOPIC,
-        `${tenantId}/${runId}/cmp-${i}`,
-        JSON.stringify({
-          type: 'kernel.compensation.requested',
-          tenantId,
-          runId,
-          stepId: 'step-dual',
-          compensationAction: 'compensate.github.pull-request.create',
-          compensationPayload: {
-            originalEffectId: `effect-${i}`,
-            forwardResponse: { prNumber: i },
-            fencingEpoch: 1,
-          },
-          idempotencyKey: `cmp:dual-${i}:1.0.0`,
-        }),
-        availableAt,
+        `forward-${effect.id}`,
+        'a'.repeat(64),
+        JSON.stringify(effect.response),
       ],
     );
+  }
+  await ownerPool.query(
+    `UPDATE commander_runs SET state='SUCCEEDED', terminal_at=now()
+     WHERE id=$1 AND tenant_id=$2`,
+    [runId, tenantId],
+  );
+  for (const [index, effect] of effects.entries()) {
+    const compensationPatch = { action: 'close', reason: 'dual-process-race' };
+    const adapterVersion = 'github-dual-race/v1';
+    const authorizationId = `authorization-dual-${tenantId}-${index}`;
+    await appRepository.createCompensationAuthorization({
+      id: authorizationId,
+      tenantId,
+      originalRunId: runId,
+      originalEffectId: effect.id,
+      compensationEffectType: 'compensate.github.pull-request.create',
+      adapterVersion,
+      compensationPatch,
+      forwardReceiptHash: canonicalCompensationHash(effect.response),
+      policyDecisionId: 'policy-compensation',
+      policySnapshotId: 'policy-dual-v1',
+      decision: 'allow',
+      actionDigest: canonicalCompensationHash({
+        type: 'compensate.github.pull-request.create',
+        originalEffectId: effect.id,
+        adapterVersion,
+        forwardResponse: effect.response,
+        compensationPatch,
+      }),
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+    });
+    const requested = await appRepository.requestCompensation({
+      tenantId,
+      authorizationId,
+      actor: 'dual-race',
+    });
+    if (!requested.accepted) throw new Error('DUAL_RACE_COMPENSATION_REQUEST_REJECTED');
   }
 }
 
@@ -121,6 +212,7 @@ function spawnWorker(
   role: 'publisher' | 'consumer',
   databaseUrl: string,
   stopFile: string,
+  auth?: { workerId: string; workerGeneration: number; claimSecret: string },
 ): ChildProcess {
   const child = spawn(
     process.execPath,
@@ -133,6 +225,16 @@ function spawnWorker(
       databaseUrl,
       '--stop-file',
       stopFile,
+      ...(auth
+        ? [
+            '--worker-id',
+            auth.workerId,
+            '--worker-generation',
+            String(auth.workerGeneration),
+            '--claim-secret',
+            auth.claimSecret,
+          ]
+        : []),
     ],
     {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -158,6 +260,7 @@ async function runWorkerLoop(
   role: 'publisher' | 'consumer',
   databaseUrl: string,
   stopFile: string,
+  auth?: { workerId: string; workerGeneration: number; claimSecret: string },
 ): Promise<void> {
   const { PostgresKernelRepository } = await import('../packages/kernel/src/postgres.js');
   const { KernelOutboxPublisher } =
@@ -168,7 +271,10 @@ async function runWorkerLoop(
     await import('../packages/kernel/src/ops/compensationConsumer.js');
 
   const pool = new Pool({ connectionString: databaseUrl, max: 4 });
-  const repo = new PostgresKernelRepository(pool, { schedulerMode: true });
+  const repo =
+    role === 'publisher'
+      ? new PostgresKernelRepository(pool, { schedulerMode: true })
+      : new PostgresKernelRepository(pool, { adapterOpsMode: true });
   const delivery = new PostgresOutboxDeliveryPort(pool, { baseBackoffMs: 1 });
   const publisher = new KernelOutboxPublisher(repo, delivery);
 
@@ -184,6 +290,7 @@ async function runWorkerLoop(
         if (role === 'publisher') {
           await publisher.publish(10);
         } else {
+          if (!auth) throw new Error('dual-race consumer auth is required');
           await consumeCompensationBatch(
             repo,
             {
@@ -195,7 +302,12 @@ async function runWorkerLoop(
               }),
             },
             async () => 'dual-race-token',
-            { workerId: 'dual-race-consumer', limit: 10, topic: KERNEL_COMPENSATION_TOPIC },
+            {
+              ...auth,
+              limit: 10,
+              topic: KERNEL_COMPENSATION_TOPIC,
+              registry: { resolve: () => null },
+            },
           );
         }
       } catch (err) {
@@ -209,12 +321,6 @@ async function runWorkerLoop(
   process.exit(0);
 }
 
-async function cleanupTenant(pool: Pool, tenantId: string): Promise<void> {
-  await pool.query('DELETE FROM commander_outbox_deliveries WHERE tenant_id=$1', [tenantId]);
-  await pool.query('DELETE FROM commander_outbox WHERE tenant_id=$1', [tenantId]);
-  await pool.query('DELETE FROM commander_events WHERE tenant_id=$1', [tenantId]);
-}
-
 export async function runDualProcessRace(options: {
   databaseUrl: string;
   seed: number;
@@ -225,18 +331,89 @@ export async function runDualProcessRace(options: {
   const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const tenantId = `dual-race-${suffix}`;
   const pool = new Pool({ connectionString: options.databaseUrl, max: 6 });
+  const appPool = new Pool({
+    connectionString:
+      process.env.COMMANDER_APP_DATABASE_URL ??
+      deriveRoleDatabaseUrl(
+        options.databaseUrl,
+        'commander_app',
+        process.env.COMMANDER_APP_PASSWORD ?? 'commander_app',
+      ),
+    max: 2,
+  });
+  const tenantAuthorityPool = new Pool({
+    connectionString:
+      process.env.COMMANDER_TENANT_AUTHORITY_DATABASE_URL ??
+      deriveRoleDatabaseUrl(
+        options.databaseUrl,
+        'commander_tenant_authority',
+        process.env.COMMANDER_TENANT_AUTHORITY_PASSWORD ?? 'commander_tenant_authority',
+      ),
+    max: 2,
+  });
+  const adapterPool = new Pool({
+    connectionString:
+      process.env.COMMANDER_ADAPTER_OPS_DATABASE_URL ??
+      deriveRoleDatabaseUrl(
+        options.databaseUrl,
+        'commander_adapter_ops',
+        process.env.COMMANDER_ADAPTER_OPS_PASSWORD ?? 'commander_adapter_ops',
+      ),
+    max: 2,
+  });
+  const appRepository = new PostgresKernelRepository(appPool, {
+    tenantContextAuthority: new PostgresTenantContextAuthority(tenantAuthorityPool),
+    tenantContextPhase: 'enforce',
+  });
   const stopFile = join(process.cwd(), `.l4b-dual-race-stop-${suffix}`);
 
   let publisherProc: ChildProcess | undefined;
   let consumerProc: ChildProcess | undefined;
   let timedOut = false;
+  let consumerAuth: { workerId: string; workerGeneration: number; claimSecret: string } | undefined;
+  const adapterId = `compensation:dual-race-${suffix}`;
   try {
     await runKernelMigrations(pool);
-    await pool.query('DELETE FROM commander_outbox WHERE topic = $1', [KERNEL_COMPENSATION_TOPIC]);
-    await seedCompensationRows(pool, tenantId, options.seed);
+    await seedWorkerAllowedTenants(pool, [tenantId]);
+    await pool.query(
+      `INSERT INTO commander_tenant_authority_allowed_tenants (tenant_id)
+       VALUES ($1) ON CONFLICT (tenant_id) DO UPDATE SET enabled=true`,
+      [tenantId],
+    );
+    const registration = await adapterPool.query<{
+      registration: { generation: number; claim_secret: string };
+    }>(`SELECT register_adapter_ops_worker('compensation',$1,$2::jsonb,NULL) AS registration`, [
+      suffix,
+      JSON.stringify([tenantId]),
+    ]);
+    consumerAuth = {
+      workerId: adapterId,
+      workerGeneration: Number(registration.rows[0]?.registration.generation),
+      claimSecret: registration.rows[0]?.registration.claim_secret ?? '',
+    };
+    if (!consumerAuth.workerGeneration || !consumerAuth.claimSecret) {
+      throw new Error('DUAL_RACE_ADAPTER_WORKER_REGISTRATION_FAILED');
+    }
+    await seedGovernedCompensationRows(pool, appRepository, tenantId, options.seed);
+    for (let i = 0; i < options.seed; i++) {
+      await seedOutboxRow(pool, tenantId, 'kernel.effect.completed', `${tenantId}/noise-${i}`, {
+        type: 'kernel.effect.completed',
+        effectId: `noise-${tenantId}-${i}`,
+      });
+    }
 
     publisherProc = spawnWorker('publisher', options.databaseUrl, stopFile);
-    consumerProc = spawnWorker('consumer', options.databaseUrl, stopFile);
+    consumerProc = spawnWorker(
+      'consumer',
+      process.env.COMMANDER_ADAPTER_OPS_DATABASE_URL ??
+        deriveRoleDatabaseUrl(
+          options.databaseUrl,
+          'commander_adapter_ops',
+          process.env.COMMANDER_ADAPTER_OPS_PASSWORD ?? 'commander_adapter_ops',
+        ),
+      stopFile,
+      consumerAuth,
+    );
 
     // Fail fast if either worker dies before stop
     const earlyExit = new Promise<'publisher' | 'consumer'>((resolve) => {
@@ -250,6 +427,7 @@ export async function runDualProcessRace(options: {
 
     const deadlineAt = Date.now() + deadlineMs;
     let publishedCount = 0;
+    let compensationPublishedCount = 0;
     while (Date.now() < deadlineAt) {
       const raced = await Promise.race([
         sleep(200).then(() => 'tick' as const),
@@ -258,15 +436,18 @@ export async function runDualProcessRace(options: {
       if (typeof raced === 'string' && raced.startsWith('dead:')) {
         throw new Error(`worker exited early: ${raced.slice('dead:'.length)}`);
       }
-      const row = await pool.query<{ count: string }>(
-        `SELECT count(*)::text AS count FROM commander_outbox
-         WHERE tenant_id=$1 AND topic=$2 AND published_at IS NOT NULL`,
+      const row = await pool.query<{ noise: string; compensation: string }>(
+        `SELECT
+           count(*) FILTER (WHERE topic='kernel.effect.completed' AND published_at IS NOT NULL)::text AS noise,
+           count(*) FILTER (WHERE topic=$2 AND published_at IS NOT NULL)::text AS compensation
+         FROM commander_outbox WHERE tenant_id=$1`,
         [tenantId, KERNEL_COMPENSATION_TOPIC],
       );
-      publishedCount = Number(row.rows[0]?.count ?? 0);
-      if (publishedCount >= options.seed) break;
+      publishedCount = Number(row.rows[0]?.noise ?? 0);
+      compensationPublishedCount = Number(row.rows[0]?.compensation ?? 0);
+      if (publishedCount >= options.seed && compensationPublishedCount >= options.seed) break;
     }
-    if (publishedCount < options.seed) timedOut = true;
+    if (publishedCount < options.seed || compensationPublishedCount < options.seed) timedOut = true;
 
     await writeFile(stopFile, 'stop');
     await sleep(300);
@@ -289,12 +470,15 @@ export async function runDualProcessRace(options: {
       });
     await Promise.all([waitChild(publisherProc), waitChild(consumerProc)]);
 
-    const published = await pool.query<{ count: string }>(
-      `SELECT count(*)::text AS count FROM commander_outbox
-       WHERE tenant_id=$1 AND topic=$2 AND published_at IS NOT NULL`,
+    const published = await pool.query<{ noise: string; compensation: string }>(
+      `SELECT
+         count(*) FILTER (WHERE topic='kernel.effect.completed' AND published_at IS NOT NULL)::text AS noise,
+         count(*) FILTER (WHERE topic=$2 AND published_at IS NOT NULL)::text AS compensation
+       FROM commander_outbox WHERE tenant_id=$1`,
       [tenantId, KERNEL_COMPENSATION_TOPIC],
     );
-    publishedCount = Number(published.rows[0]?.count ?? 0);
+    publishedCount = Number(published.rows[0]?.noise ?? 0);
+    compensationPublishedCount = Number(published.rows[0]?.compensation ?? 0);
 
     const { PostgresOutboxDeliveryPort } =
       await import('../packages/kernel/src/ops/outbox/postgresOutboxDeliveryPort.js');
@@ -304,13 +488,19 @@ export async function runDualProcessRace(options: {
       (m) => m.topic === KERNEL_COMPENSATION_TOPIC,
     ).length;
 
-    const pass = !timedOut && publishedCount === options.seed && ws2CompensationDeliveries === 0;
+    const pass =
+      !timedOut &&
+      publishedCount === options.seed &&
+      compensationPublishedCount === options.seed &&
+      ws2CompensationDeliveries === 0;
     const artifact: DualProcessRaceArtifact = {
       verdict: pass ? 'PASS' : 'BLOCKED',
       reason: pass ? undefined : timedOut ? 'deadline' : 'assertion',
       deadlineMs,
       seeded: options.seed,
       publishedCount,
+      compensationPublishedCount,
+      consumerClaims: compensationPublishedCount,
       ws2CompensationDeliveries,
       publisherSteals: ws2CompensationDeliveries,
       elapsedMs: Date.now() - start,
@@ -323,8 +513,51 @@ export async function runDualProcessRace(options: {
     } catch {
       /* ignore */
     }
-    await cleanupTenant(pool, tenantId).catch(() => undefined);
-    await pool.end().catch(() => undefined);
+    await pool
+      .query(
+        `DELETE FROM commander_compensation_finalization_receipts
+         WHERE request_id IN (SELECT id FROM commander_compensation_requests WHERE tenant_id=$1)`,
+        [tenantId],
+      )
+      .catch(() => undefined);
+    await pool
+      .query('DELETE FROM commander_outbox_deliveries WHERE tenant_id=$1', [tenantId])
+      .catch(() => undefined);
+    await pool
+      .query('DELETE FROM commander_outbox WHERE tenant_id=$1', [tenantId])
+      .catch(() => undefined);
+    await pool
+      .query('DELETE FROM commander_events WHERE tenant_id=$1', [tenantId])
+      .catch(() => undefined);
+    await pool
+      .query('DELETE FROM commander_compensation_requests WHERE tenant_id=$1', [tenantId])
+      .catch(() => undefined);
+    await pool
+      .query('DELETE FROM commander_compensation_authorizations WHERE tenant_id=$1', [tenantId])
+      .catch(() => undefined);
+    await pool
+      .query('DELETE FROM commander_runs WHERE tenant_id=$1', [tenantId])
+      .catch(() => undefined);
+    await pool
+      .query('DELETE FROM commander_workers WHERE id=$1', [adapterId])
+      .catch(() => undefined);
+    await pool
+      .query('DELETE FROM commander_app_tenant_contexts WHERE tenant_id=$1', [tenantId])
+      .catch(() => undefined);
+    await pool
+      .query('DELETE FROM commander_tenant_authority_allowed_tenants WHERE tenant_id=$1', [
+        tenantId,
+      ])
+      .catch(() => undefined);
+    await pool
+      .query('DELETE FROM commander_worker_allowed_tenants WHERE tenant_id=$1', [tenantId])
+      .catch(() => undefined);
+    await Promise.all([
+      adapterPool.end().catch(() => undefined),
+      tenantAuthorityPool.end().catch(() => undefined),
+      appPool.end().catch(() => undefined),
+      pool.end().catch(() => undefined),
+    ]);
   }
 }
 
@@ -335,12 +568,29 @@ async function main(): Promise<void> {
     const role = argv[workerIdx + 1] as 'publisher' | 'consumer';
     const dbIdx = argv.indexOf('--database-url');
     const stopIdx = argv.indexOf('--stop-file');
+    const workerIdIdx = argv.indexOf('--worker-id');
+    const workerGenerationIdx = argv.indexOf('--worker-generation');
+    const claimSecretIdx = argv.indexOf('--claim-secret');
     const databaseUrl = argv[dbIdx + 1];
     const stopFile = argv[stopIdx + 1];
-    if (!databaseUrl || !stopFile || (role !== 'publisher' && role !== 'consumer')) {
+    const workerId = argv[workerIdIdx + 1];
+    const workerGeneration = Number.parseInt(argv[workerGenerationIdx + 1] ?? '', 10);
+    const claimSecret = argv[claimSecretIdx + 1];
+    if (
+      !databaseUrl ||
+      !stopFile ||
+      (role !== 'publisher' && role !== 'consumer') ||
+      (role === 'consumer' &&
+        (!workerId || !Number.isSafeInteger(workerGeneration) || !claimSecret))
+    ) {
       process.exit(2);
     }
-    await runWorkerLoop(role, databaseUrl, stopFile);
+    await runWorkerLoop(
+      role,
+      databaseUrl,
+      stopFile,
+      role === 'consumer' ? { workerId, workerGeneration, claimSecret } : undefined,
+    );
     return;
   }
 
@@ -357,7 +607,7 @@ async function main(): Promise<void> {
   if (composeUp) {
     const up = tryComposeCellUp();
     if (!up.ok) {
-      console.error(up.dockerError ?? 'compose up failed');
+      console.error(up.error ?? 'compose up failed');
       process.exit(1);
     }
     composeDown = true;
