@@ -49,9 +49,11 @@
  *   npx tsx scripts/commander-rotate.ts OPENAI_API_KEY --confirm 2026-06-23T03:53:00Z-ciso --audit
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { getAuditChainLedger } from '../packages/core/src/security/auditChainLedger';
+import {
+  collectPersistedEntries,
+  getAuditChainLedger,
+  type AuditChainEntry,
+} from '../packages/core/src/security/auditChainLedger';
 
 // ============================================================================
 // L1 — Canonical secret table (mirrors docs/security/keys-rotation.md §1 + §2
@@ -205,6 +207,18 @@ interface RotateArgs {
   json: boolean;
 }
 
+interface RotationReceipt {
+  schema: 'commander-key-rotation-receipt/v1';
+  envVar: string;
+  rotationId: string;
+  action: 'attempt' | 'confirm' | 'dry';
+  auditRecordId: string;
+  chainId: string;
+  sequence: number;
+  timestamp: string;
+  hmac: string;
+}
+
 function parseArgs(argv: string[]): { ok: true; value: RotateArgs } | { ok: false; error: string } {
   let envVar: string | undefined;
   let action: RotateArgs['action'] = 'dry';
@@ -213,14 +227,18 @@ function parseArgs(argv: string[]): { ok: true; value: RotateArgs } | { ok: fals
   let audit = false;
   let json = false;
 
-  for (let i = 2; i < argv.length; i++) {
-    const arg = argv[i];
+  // `pnpm run <script> -- <args>` forwards the separator to the script.
+  // Consume it explicitly so the documented package entrypoint behaves like
+  // the direct `tsx` invocation.
+  const args = argv[2] === '--' ? argv.slice(3) : argv.slice(2);
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
     if (arg === undefined) break;
     if (arg === '--attempt') {
       action = 'attempt';
     } else if (arg === '--confirm') {
       action = 'confirm';
-      const next = argv[++i];
+      const next = args[++i];
       if (next === undefined || next.startsWith('--')) {
         return { ok: false, error: `--confirm requires a <rotation-id> argument` };
       }
@@ -311,7 +329,7 @@ function appendAudit(
   binding: SecretClassBinding,
   rotationId: string,
   action: RotateArgs['action'],
-): { ok: true; rotationId: string } | { ok: false; error: string } {
+): { ok: true; entry: AuditChainEntry; receipt: RotationReceipt } | { ok: false; error: string } {
   const eventType =
     action === 'attempt'
       ? 'key_rotation_attempt'
@@ -335,10 +353,35 @@ function appendAudit(
         // would create a persistent leak artifact.
       },
     });
-    return { ok: true, rotationId: entry.id };
+    return {
+      ok: true,
+      entry,
+      receipt: {
+        schema: 'commander-key-rotation-receipt/v1',
+        envVar,
+        rotationId,
+        action,
+        auditRecordId: entry.id,
+        chainId: entry.chainId,
+        sequence: entry.seq,
+        timestamp: entry.timestamp,
+        hmac: entry.hmac,
+      },
+    };
   } catch (err) {
     return { ok: false, error: `AuditChainLedger failed: ${(err as Error).message}` };
   }
+}
+
+function hasRotationAttempt(envVar: string, rotationId: string): boolean {
+  const ledger = getAuditChainLedger();
+  const persisted = collectPersistedEntries(ledger.persistDirectory);
+  return [...persisted, ...ledger.getEntries()].some(
+    (entry) =>
+      entry.type === 'key_rotation_attempt' &&
+      entry.details?.envVar === envVar &&
+      entry.details?.rotationId === rotationId,
+  );
 }
 
 // ============================================================================
@@ -414,18 +457,65 @@ function main(): number {
       process.stderr.write('[commander-rotate] --confirm requires a <rotation-id> argument\n');
       return 1;
     }
+    if (!args.audit) {
+      process.stderr.write(
+        '[commander-rotate] --confirm requires --audit so the confirmation is durable\n',
+      );
+      return 1;
+    }
   }
 
-  // Synthesize a rotation-id for --attempt unless the operator supplied one.
-  // Format: ISO UTC timestamp + operator handle if available.
+  // Synthesize a rotation-id for non-confirming actions. Format: ISO UTC
+  // timestamp + operator handle if available, so audited dry-runs also have a
+  // durable correlation id instead of an undefined receipt field.
   const operatorHandle = process.env.COMMANDER_OPERATOR_HANDLE ?? 'unknown';
   const now = new Date().toISOString().slice(0, 19) + 'Z';
   const rotationId =
-    args.action === 'attempt' ? `${now}-${operatorHandle}` : (args.rotationId as string);
+    args.action === 'confirm' ? (args.rotationId as string) : `${now}-${operatorHandle}`;
 
   // Emit audit event only when --audit is explicit (L4 contract).
   let auditRecordId: string | null = null;
+  let rotationReceipt: RotationReceipt | null = null;
   if (args.audit) {
+    if (args.action === 'confirm') {
+      try {
+        if (!hasRotationAttempt(args.envVar, rotationId)) {
+          const message = `no persisted key_rotation_attempt found for ${args.envVar} and rotation-id ${rotationId}`;
+          if (args.json) {
+            process.stdout.write(
+              JSON.stringify({
+                ok: false,
+                reason: 'validation',
+                envVar: args.envVar,
+                rotationId,
+                error: message,
+                exitCode: 1,
+              }) + '\n',
+            );
+          } else {
+            process.stderr.write(`[commander-rotate] ${message}\n`);
+          }
+          return 1;
+        }
+      } catch (err) {
+        const message = `AuditChainLedger failed: ${(err as Error).message}`;
+        if (args.json) {
+          process.stdout.write(
+            JSON.stringify({
+              ok: false,
+              reason: 'audit',
+              envVar: args.envVar,
+              rotationId,
+              error: message,
+              exitCode: 2,
+            }) + '\n',
+          );
+        } else {
+          process.stderr.write(`[commander-rotate] ${message}\n`);
+        }
+        return 2;
+      }
+    }
     const a = appendAudit(args.envVar, binding, rotationId, args.action);
     if (!a.ok) {
       if (args.json) {
@@ -444,7 +534,8 @@ function main(): number {
       }
       return 2;
     }
-    auditRecordId = a.rotationId;
+    auditRecordId = a.entry.id;
+    rotationReceipt = a.receipt;
   }
 
   const playbook = renderPlaybook(args.envVar, binding, rotationId);
@@ -460,6 +551,7 @@ function main(): number {
           rotationId,
           action: args.action,
           auditRecordId,
+          rotationReceipt,
           playbook,
           exitCode: 0,
         },
@@ -471,6 +563,9 @@ function main(): number {
     process.stdout.write(playbook + '\n');
     if (args.audit) {
       process.stdout.write(`\n[commander-rotate] audit record: ${auditRecordId ?? '<unset>'}\n`);
+      process.stdout.write(
+        `[commander-rotate] rotation receipt: ${JSON.stringify(rotationReceipt)}\n`,
+      );
     } else {
       process.stdout.write(
         `\n[commander-rotate] (dry-run / intent-only) re-run with --audit to record to tamper-evident ledger\n`,

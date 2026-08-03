@@ -405,99 +405,106 @@ describe(
       if (!databaseUrl) {
         throw new Error('PostgreSQL E2E requires COMMANDER_KERNEL_DATABASE_URL or DATABASE_URL');
       }
-      const pool = new Pool({ connectionString: databaseUrl, max: 8 });
-      const appPool = new Pool({
-        connectionString: deriveRoleDatabaseUrl(databaseUrl, 'commander_app', appPassword),
-        max: 4,
-      });
       const tenantId = `e2e-tenant-${Date.now()}`;
       const workerId = `e2e-worker-${Date.now()}`;
-      const authorityPool = new Pool({
-        connectionString: deriveRoleDatabaseUrl(
-          databaseUrl,
-          'commander_tenant_authority',
-          process.env.COMMANDER_TENANT_AUTHORITY_PASSWORD ?? 'commander_tenant_authority',
-        ),
-        max: 2,
-      });
-
-      await runKernelMigrations(pool);
-      const escapedWorkerPassword = workerPassword.replace(/'/g, "''");
-      await pool.query(
-        `ALTER ROLE commander_worker WITH LOGIN PASSWORD '${escapedWorkerPassword}'`,
-      );
-      await pool.query(
-        `INSERT INTO commander_tenant_authority_allowed_tenants (tenant_id)
-         VALUES ($1)
-         ON CONFLICT (tenant_id) DO UPDATE SET enabled = true`,
-        [tenantId],
-      );
-      await seedWorkerAllowedTenants(pool, [tenantId]);
-      const workerPool = new Pool({
-        connectionString: deriveWorkerDatabaseUrl(databaseUrl),
-        max: 4,
-      });
-
-      const appKernel = new PostgresKernelRepository(appPool, {
-        tenantContextPhase: 'enforce',
-        tenantContextAuthority: new PostgresTenantContextAuthority(authorityPool),
-      });
-      const workerKernel = new PostgresKernelRepository(workerPool);
-      await appKernel.initialize();
-      await workerKernel.initialize();
-
-      const registry = new PostgresWorkerRegistry(workerPool);
-      await registry.initialize();
-
-      const authenticator = new ApiKeyWorkerAuthenticator({
-        validTokens: new Set(['worker-token']),
-        defaultTenantIds: [tenantId],
-        defaultCapabilities: ['agent'],
-      });
-
-      const worker = new WorkerService(
-        {
-          id: workerId,
-          kind: 'agent',
-          version: 'e2e',
-          capabilities: ['agent'],
-          maxConcurrency: 2,
-        },
-        {
-          subject: `worker:${workerId}`,
-          token: 'worker-token',
-          expiresAt: new Date(Date.now() + 3600_000).toISOString(),
-        },
-        authenticator,
-        registry,
-        workerKernel,
-        deterministicExecutor,
-        { leaseTtlMs: 5000, workerHeartbeatMs: 1000, pollIntervalMs: 50 },
-      );
-
-      await worker.start();
-
-      const step: NewKernelStep = {
-        id: `step-${tenantId}`,
-        kind: 'agent',
-        input: agentInput('say hello'),
-        maxAttempts: 1,
-      };
-
-      const run = await appKernel.createRun(
-        {
-          id: `run-${tenantId}`,
-          tenantId,
-          intentHash: 'intent-e2e',
-          workGraphHash: 'hash-e2e',
-          workGraphVersion: 'v1',
-          policySnapshotId: 'policy-e2e',
-          steps: [step],
-        },
-        'e2e-test',
-      );
-
+      let pool: Pool | undefined;
+      let appPool: Pool | undefined;
+      let authorityPool: Pool | undefined;
+      let workerPool: Pool | undefined;
+      let worker: WorkerService | undefined;
+      let migrationsComplete = false;
       try {
+        pool = new Pool({ connectionString: databaseUrl, max: 8 });
+        appPool = new Pool({
+          connectionString: deriveRoleDatabaseUrl(databaseUrl, 'commander_app', appPassword),
+          max: 4,
+        });
+        authorityPool = new Pool({
+          connectionString: deriveRoleDatabaseUrl(
+            databaseUrl,
+            'commander_tenant_authority',
+            process.env.COMMANDER_TENANT_AUTHORITY_PASSWORD ?? 'commander_tenant_authority',
+          ),
+          max: 2,
+        });
+
+        await runKernelMigrations(pool);
+        migrationsComplete = true;
+        const escapedWorkerPassword = workerPassword.replace(/'/g, "''");
+        await pool.query(
+          `ALTER ROLE commander_worker WITH LOGIN PASSWORD '${escapedWorkerPassword}'`,
+        );
+        await pool.query(
+          `INSERT INTO commander_tenant_authority_allowed_tenants (tenant_id)
+           VALUES ($1)
+           ON CONFLICT (tenant_id) DO UPDATE SET enabled = true`,
+          [tenantId],
+        );
+        await seedWorkerAllowedTenants(pool, [tenantId]);
+        workerPool = new Pool({
+          connectionString: deriveWorkerDatabaseUrl(databaseUrl),
+          max: 4,
+        });
+
+        const appKernel = new PostgresKernelRepository(appPool, {
+          tenantContextPhase: 'enforce',
+          tenantContextAuthority: new PostgresTenantContextAuthority(authorityPool),
+        });
+        const workerKernel = new PostgresKernelRepository(workerPool);
+        await appKernel.initialize();
+        await workerKernel.initialize();
+
+        const registry = new PostgresWorkerRegistry(workerPool);
+        await registry.initialize();
+
+        const authenticator = new ApiKeyWorkerAuthenticator({
+          validTokens: new Set(['worker-token']),
+          defaultTenantIds: [tenantId],
+          defaultCapabilities: ['agent'],
+        });
+
+        worker = new WorkerService(
+          {
+            id: workerId,
+            kind: 'agent',
+            version: 'e2e',
+            capabilities: ['agent'],
+            maxConcurrency: 2,
+          },
+          {
+            subject: `worker:${workerId}`,
+            token: 'worker-token',
+            expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+          },
+          authenticator,
+          registry,
+          workerKernel,
+          deterministicExecutor,
+          { leaseTtlMs: 5000, workerHeartbeatMs: 1000, pollIntervalMs: 50 },
+        );
+
+        await worker.start();
+
+        const step: NewKernelStep = {
+          id: `step-${tenantId}`,
+          kind: 'agent',
+          input: agentInput('say hello'),
+          maxAttempts: 1,
+        };
+
+        const run = await appKernel.createRun(
+          {
+            id: `run-${tenantId}`,
+            tenantId,
+            intentHash: 'intent-e2e',
+            workGraphHash: 'hash-e2e',
+            workGraphVersion: 'v1',
+            policySnapshotId: 'policy-e2e',
+            steps: [step],
+          },
+          'e2e-test',
+        );
+
         for (let i = 0; i < 200; i++) {
           const claimed = await worker.pollOnce();
           if (!claimed) {
@@ -529,75 +536,87 @@ describe(
         );
         assert.ok((outbox.rowCount ?? 0) > 0, 'outbox publication exists');
       } finally {
-        await worker.stop();
-        await pool.query('DELETE FROM commander_steps WHERE tenant_id=$1', [tenantId]);
-        await pool.query('DELETE FROM commander_runs WHERE tenant_id=$1', [tenantId]);
-        await pool.query('DELETE FROM commander_events WHERE tenant_id=$1', [tenantId]);
-        await pool.query('DELETE FROM commander_outbox WHERE tenant_id=$1', [tenantId]);
-        await pool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id=$1', [
-          workerId,
-        ]);
-        await pool.query('DELETE FROM commander_workers WHERE id=$1', [workerId]);
-        await pool.query('DELETE FROM commander_worker_allowed_tenants WHERE tenant_id=$1', [
-          tenantId,
-        ]);
-        await workerPool.end();
-        await authorityPool.end();
-        await appPool.end();
-        await pool.end();
+        try {
+          await worker?.stop();
+        } finally {
+          try {
+            if (pool && migrationsComplete) {
+              await pool.query('DELETE FROM commander_steps WHERE tenant_id=$1', [tenantId]);
+              await pool.query('DELETE FROM commander_runs WHERE tenant_id=$1', [tenantId]);
+              await pool.query('DELETE FROM commander_events WHERE tenant_id=$1', [tenantId]);
+              await pool.query('DELETE FROM commander_outbox WHERE tenant_id=$1', [tenantId]);
+              await pool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id=$1', [
+                workerId,
+              ]);
+              await pool.query('DELETE FROM commander_workers WHERE id=$1', [workerId]);
+              await pool.query('DELETE FROM commander_worker_allowed_tenants WHERE tenant_id=$1', [
+                tenantId,
+              ]);
+            }
+          } finally {
+            await Promise.all([
+              workerPool?.end(),
+              authorityPool?.end(),
+              appPool?.end(),
+              pool?.end(),
+            ]);
+          }
+        }
       }
     });
 
     it('reclaims an expired lease so a second worker completes without dual success', async () => {
       if (!databaseUrl) return;
-      const pool = new Pool({ connectionString: databaseUrl, max: 8 });
       const tenantId = `e2e-reclaim-${Date.now()}`;
       const workerA = `e2e-wA-${Date.now()}`;
       const workerB = `e2e-wB-${Date.now()}`;
-
-      await runKernelMigrations(pool);
-      // Recovery/reclaim is a scheduler-plane write (cross-tenant). Worker claims use
-      // the same repo with an explicit tenantIds scope on claimNextStep.
-      const kernel = new PostgresKernelRepository(pool, { schedulerMode: true });
-      await kernel.initialize();
-
-      await pool.query(
-        `INSERT INTO commander_workers (id,kind,version,capabilities,max_concurrency,status,generation,identity_subject,tenant_ids)
-       VALUES ($1,'agent','e2e','["agent"]',2,'ACTIVE',1,$2,$3::jsonb),
-              ($4,'agent','e2e','["agent"]',2,'ACTIVE',1,$5,$6::jsonb)`,
-        [
-          workerA,
-          workerA,
-          JSON.stringify([tenantId]),
-          workerB,
-          workerB,
-          JSON.stringify([tenantId]),
-        ],
-      );
-
-      const runId = `run-${tenantId}`;
-      const stepId = `step-${tenantId}`;
-      await kernel.createRun(
-        {
-          id: runId,
-          tenantId,
-          intentHash: 'intent-reclaim',
-          workGraphHash: 'hash-reclaim',
-          workGraphVersion: 'v1',
-          policySnapshotId: 'policy-e2e',
-          steps: [
-            {
-              id: stepId,
-              kind: 'agent',
-              input: agentInput('reclaim path'),
-              maxAttempts: 3,
-            },
-          ],
-        },
-        'e2e-reclaim',
-      );
-
+      let pool: Pool | undefined;
+      let migrationsComplete = false;
       try {
+        pool = new Pool({ connectionString: databaseUrl, max: 8 });
+        await runKernelMigrations(pool);
+        migrationsComplete = true;
+        // Recovery/reclaim is a scheduler-plane write (cross-tenant). Worker claims use
+        // the same repo with an explicit tenantIds scope on claimNextStep.
+        const kernel = new PostgresKernelRepository(pool, { schedulerMode: true });
+        await kernel.initialize();
+
+        await pool.query(
+          `INSERT INTO commander_workers (id,kind,version,capabilities,max_concurrency,status,generation,identity_subject,tenant_ids)
+         VALUES ($1,'agent','e2e','["agent"]',2,'ACTIVE',1,$2,$3::jsonb),
+                ($4,'agent','e2e','["agent"]',2,'ACTIVE',1,$5,$6::jsonb)`,
+          [
+            workerA,
+            workerA,
+            JSON.stringify([tenantId]),
+            workerB,
+            workerB,
+            JSON.stringify([tenantId]),
+          ],
+        );
+
+        const runId = `run-${tenantId}`;
+        const stepId = `step-${tenantId}`;
+        await kernel.createRun(
+          {
+            id: runId,
+            tenantId,
+            intentHash: 'intent-reclaim',
+            workGraphHash: 'hash-reclaim',
+            workGraphVersion: 'v1',
+            policySnapshotId: 'policy-e2e',
+            steps: [
+              {
+                id: stepId,
+                kind: 'agent',
+                input: agentInput('reclaim path'),
+                maxAttempts: 3,
+              },
+            ],
+          },
+          'e2e-reclaim',
+        );
+
         const claimed = await kernel.claimNextStep({
           workerId: workerA,
           workerGeneration: 1,
@@ -655,14 +674,19 @@ describe(
         const finalRun = await kernel.getRun(runId, tenantId);
         assert.equal(finalRun?.state, 'SUCCEEDED');
       } finally {
-        await pool.query('DELETE FROM commander_steps WHERE tenant_id=$1', [tenantId]);
-        await pool.query('DELETE FROM commander_runs WHERE tenant_id=$1', [tenantId]);
-        await pool.query('DELETE FROM commander_events WHERE tenant_id=$1', [tenantId]);
-        await pool.query('DELETE FROM commander_outbox WHERE tenant_id=$1', [tenantId]);
-        await pool.query('DELETE FROM commander_workers WHERE id = ANY($1::text[])', [
-          [workerA, workerB],
-        ]);
-        await pool.end();
+        try {
+          if (pool && migrationsComplete) {
+            await pool.query('DELETE FROM commander_steps WHERE tenant_id=$1', [tenantId]);
+            await pool.query('DELETE FROM commander_runs WHERE tenant_id=$1', [tenantId]);
+            await pool.query('DELETE FROM commander_events WHERE tenant_id=$1', [tenantId]);
+            await pool.query('DELETE FROM commander_outbox WHERE tenant_id=$1', [tenantId]);
+            await pool.query('DELETE FROM commander_workers WHERE id = ANY($1::text[])', [
+              [workerA, workerB],
+            ]);
+          }
+        } finally {
+          await pool?.end();
+        }
       }
     });
   },
