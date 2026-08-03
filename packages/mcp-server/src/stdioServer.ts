@@ -326,6 +326,38 @@ function registerActionGatewayTools(
     },
     required: ['runId', 'idempotencyKey'],
   };
+  const compensationRequestSchema: MCPTool['inputSchema'] = {
+    type: 'object',
+    properties: {
+      runId: { type: 'string' },
+      idempotencyKey: { type: 'string' },
+      originalEffectId: { type: 'string' },
+      adapterVersion: { type: 'string' },
+      compensationEffectType: { type: 'string' },
+      compensationPatch: { type: 'object' },
+      forwardReceiptHash: { type: 'string' },
+    },
+    required: [
+      'runId',
+      'idempotencyKey',
+      'originalEffectId',
+      'adapterVersion',
+      'compensationEffectType',
+      'compensationPatch',
+      'forwardReceiptHash',
+    ],
+  };
+  const compensationApprovalSchema: MCPTool['inputSchema'] = {
+    type: 'object',
+    properties: {
+      runId: { type: 'string' },
+      authorizationId: { type: 'string' },
+      idempotencyKey: { type: 'string' },
+      actionDigest: { type: 'string' },
+      policySnapshotId: { type: 'string' },
+    },
+    required: ['runId', 'authorizationId', 'idempotencyKey', 'actionDigest', 'policySnapshotId'],
+  };
 
   registerGatewayTool(
     server,
@@ -380,6 +412,38 @@ function registerActionGatewayTools(
         path: `${actionPath(runId)}/approve`,
         body: { actionDigest, simulationId, policySnapshotId },
         headers: idempotencyHeaders(args.idempotencyKey),
+      };
+    },
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_compensation_request',
+    'Request governed compensation for a completed forward effect.',
+    compensationRequestSchema,
+    (args) => {
+      const { runId, idempotencyKey, ...body } = args;
+      return {
+        method: 'POST',
+        path: `${actionPath(runId)}/compensations`,
+        body,
+        headers: idempotencyHeaders(idempotencyKey),
+      };
+    },
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_compensation_approve',
+    'Approve a bound compensation authorization.',
+    compensationApprovalSchema,
+    (args) => {
+      const { runId, authorizationId, idempotencyKey, actionDigest, policySnapshotId } = args;
+      return {
+        method: 'POST',
+        path: `${actionPath(runId)}/compensations/${encodeURIComponent(requiredString(authorizationId, 'authorizationId'))}/approve`,
+        body: { actionDigest, policySnapshotId },
+        headers: idempotencyHeaders(idempotencyKey),
       };
     },
   );

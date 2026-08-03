@@ -1,5 +1,5 @@
 /**
- * costDashboardEndpoints — Enterprise-grade cost analytics dashboard router.
+ * costDashboardEndpoints — cost analytics dashboard router.
  *
  * Addresses "cost anxiety" — the #1 pain point for enterprise users who worry
  * about runaway LLM API costs. Provides LangSmith-style granular cost reporting

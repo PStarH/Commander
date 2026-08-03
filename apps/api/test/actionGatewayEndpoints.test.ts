@@ -30,6 +30,7 @@ class InMemoryGateway implements V1KernelGateway {
   readonly evidence = new Map<string, GatewayEvidenceRecord>();
   killSwitchLookupError: Error | null = null;
   operationsReady = true;
+  evidenceReady = true;
 
   getOperationsReadiness(_tenantId: string, now = new Date()) {
     return Promise.resolve({
@@ -39,6 +40,10 @@ class InMemoryGateway implements V1KernelGateway {
       compensationWorkers: this.operationsReady ? 1 : 0,
       checkedAt: now.toISOString(),
     });
+  }
+
+  getEvidenceRepositoryAvailability() {
+    return Promise.resolve({ ready: this.evidenceReady });
   }
 
   async submit(input: Parameters<V1KernelGateway['submit']>[0]) {
@@ -567,6 +572,38 @@ describe('L4-01 governed action HTTP API', () => {
       assert.equal(response.status, 503);
       assert.equal(((await response.json()) as any).error.code, 'OPERATIONS_NOT_READY');
       assert.deepEqual(await gateway.repository.listRuns('tenant-a'), []);
+    });
+  });
+
+  it('rejects Class A with 503 when the evidence repository is unavailable', async () => {
+    const gateway = new InMemoryGateway();
+    gateway.evidenceReady = false;
+    await withGateway(gateway, async (baseUrl) => {
+      const response = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'evidence-not-ready',
+      });
+      const payload = (await response.json()) as {
+        error: {
+          code: string;
+          details?: { evidenceRepository?: { ready: boolean } };
+        };
+      };
+      assert.equal(response.status, 503);
+      assert.equal(payload.error.code, 'OPERATIONS_NOT_READY');
+      assert.deepEqual(payload.error.details.evidenceRepository, { ready: false });
+      assert.deepEqual(await gateway.repository.listRuns('tenant-a'), []);
+    });
+  });
+
+  it('admits Class A when operations and the evidence repository are ready', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const response = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'evidence-ready',
+      });
+      assert.equal(response.status, 202);
     });
   });
   it('requires an authenticated principal on every action endpoint', async () => {

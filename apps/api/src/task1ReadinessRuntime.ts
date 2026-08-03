@@ -93,9 +93,7 @@ export function parseTask1ReadinessEnvironment(
   const dnsLabels = proofDnsName.split('.');
   if (
     proofDnsName.length > 253 ||
-    dnsLabels.some((label) =>
-      !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)
-    )
+    dnsLabels.some((label) => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
   ) {
     throw new Error('TASK1_READINESS_PROOF_DNS_NAME_INVALID');
   }
@@ -112,7 +110,9 @@ export function parseTask1ReadinessEnvironment(
   if (appDatabaseUrl === authorityDatabaseUrl) {
     throw new Error('TASK1_READINESS_DATABASE_URLS_MUST_BE_DISTINCT');
   }
-  if (databaseRole(appDatabaseUrl, 'TASK1_READINESS_APP_DATABASE_URL_INVALID') !== 'commander_app') {
+  if (
+    databaseRole(appDatabaseUrl, 'TASK1_READINESS_APP_DATABASE_URL_INVALID') !== 'commander_app'
+  ) {
     throw new Error('TASK1_READINESS_APP_DATABASE_ROLE_INVALID');
   }
   if (
@@ -298,17 +298,23 @@ export async function runTask1TenantSelfCheck(
     await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
     transactionStarted = true;
     const target = oneRow(
-      (await client.query<TargetRow>(`
+      (
+        await client.query<TargetRow>(
+          `
 SELECT
   (SELECT d.oid FROM pg_catalog.pg_database AS d WHERE d.datname = pg_catalog.current_database()) AS database_oid,
   pg_catalog.pg_backend_pid() AS backend_pid,
   pg_catalog.pg_current_xact_id()::text AS xid
-`.trim())).rows,
+`.trim(),
+        )
+      ).rows,
       'TASK1_READINESS_TARGET_INVALID',
     );
     if (
-      !Number.isInteger(target.database_oid) || target.database_oid <= 0 ||
-      !Number.isInteger(target.backend_pid) || target.backend_pid <= 0 ||
+      !Number.isInteger(target.database_oid) ||
+      target.database_oid <= 0 ||
+      !Number.isInteger(target.backend_pid) ||
+      target.backend_pid <= 0 ||
       !POSITIVE_DECIMAL.test(target.xid)
     ) {
       throw new Error('TASK1_READINESS_TARGET_INVALID');
@@ -316,10 +322,12 @@ SELECT
 
     const issued = await withTask1QueryClient(authorityPool, async (authorityClient) => {
       const row = oneRow(
-        (await authorityClient.query<{ context_id: string }>(
-          'SELECT context_id::text FROM public.issue_app_tenant_context($1, $2::oid, $3, $4::xid8)',
-          [READINESS_TENANT, target.database_oid, target.backend_pid, target.xid],
-        )).rows,
+        (
+          await authorityClient.query<{ context_id: string }>(
+            'SELECT context_id::text FROM public.issue_app_tenant_context($1::text, $2::oid, $3::integer, $4::xid8)',
+            [READINESS_TENANT, target.database_oid, target.backend_pid, target.xid],
+          )
+        ).rows,
         'TASK1_READINESS_ISSUE_INVALID',
       );
       if (!UUID.test(row.context_id)) throw new Error('TASK1_READINESS_ISSUE_INVALID');
@@ -327,18 +335,22 @@ SELECT
     });
 
     const bound = oneRow(
-      (await client.query<{ tenant_id: string }>(
-        'SELECT tenant_id FROM public.bind_app_tenant_context($1::uuid)',
-        [issued.context_id],
-      )).rows,
+      (
+        await client.query<{ tenant_id: string }>(
+          'SELECT tenant_id FROM public.bind_app_tenant_context($1::uuid)',
+          [issued.context_id],
+        )
+      ).rows,
       'TASK1_READINESS_BIND_INVALID',
     );
     if (bound.tenant_id !== READINESS_TENANT) throw new Error('TASK1_READINESS_BIND_INVALID');
 
     const resolved = oneRow(
-      (await client.query<{ tenant_id: string }>(
-        'SELECT public.commander_authenticated_app_tenant() AS tenant_id',
-      )).rows,
+      (
+        await client.query<{ tenant_id: string }>(
+          'SELECT public.commander_authenticated_app_tenant() AS tenant_id',
+        )
+      ).rows,
       'TASK1_READINESS_RESOLVE_INVALID',
     );
     if (resolved.tenant_id !== READINESS_TENANT) throw new Error('TASK1_READINESS_RESOLVE_INVALID');
@@ -372,10 +384,14 @@ export async function pollTask1RuntimeIdentity(
   try {
     await withTask1QueryClient(authorityPool, async (client) => {
       const row = oneRow(
-        (await client.query<RuntimeIdentityRow>(`
+        (
+          await client.query<RuntimeIdentityRow>(
+            `
 SELECT operation_version_text, runtime_phase, api_image_digest, configuration_sha256
 FROM public.commander_runtime_configuration_identity()
-`.trim())).rows,
+`.trim(),
+          )
+        ).rows,
         'TASK1_RUNTIME_IDENTITY_INVALID',
       );
       proof.recordRuntimeIdentity({
@@ -406,10 +422,14 @@ export async function readTask1DatabaseIdentity(
 ): Promise<Task1DatabaseIdentity> {
   return withTask1QueryClient(authorityPool, async (client) => {
     const row = oneRow(
-      (await client.query<DatabaseIdentityRow>(`
+      (
+        await client.query<DatabaseIdentityRow>(
+          `
 SELECT installation_id::text, database_peer_binding_sha256
 FROM public.commander_database_identity()
-`.trim())).rows,
+`.trim(),
+        )
+      ).rows,
       'TASK1_DATABASE_IDENTITY_INVALID',
     );
     if (!UUID.test(row.installation_id) || !SHA256.test(row.database_peer_binding_sha256)) {
@@ -525,20 +545,26 @@ export function createTask1ReadinessDatabasePools(
   env: NodeJS.ProcessEnv = process.env,
   createPool: typeof createVerifiedPostgresPool = createVerifiedPostgresPool,
 ): { appPool: Pool; authorityPool: Pool } {
-  const appPool = createPool({
-    connectionString: config.appDatabaseUrl,
-    max: 2,
-    connectionTimeoutMillis: 2_000,
-    query_timeout: 2_000,
-    statement_timeout: 1_500,
-  }, env);
-  const authorityPool = createPool({
-    connectionString: config.authorityDatabaseUrl,
-    max: 2,
-    connectionTimeoutMillis: 2_000,
-    query_timeout: 900,
-    statement_timeout: 750,
-  }, env);
+  const appPool = createPool(
+    {
+      connectionString: config.appDatabaseUrl,
+      max: 2,
+      connectionTimeoutMillis: 2_000,
+      query_timeout: 2_000,
+      statement_timeout: 1_500,
+    },
+    env,
+  );
+  const authorityPool = createPool(
+    {
+      connectionString: config.authorityDatabaseUrl,
+      max: 2,
+      connectionTimeoutMillis: 2_000,
+      query_timeout: 900,
+      statement_timeout: 750,
+    },
+    env,
+  );
   return { appPool, authorityPool };
 }
 
@@ -560,7 +586,7 @@ function listen(server: Server, port: number): Promise<void> {
 
 function closeServer(server: Server): Promise<void> {
   return new Promise((resolveClose, reject) => {
-    server.close((error) => error ? reject(error) : resolveClose());
+    server.close((error) => (error ? reject(error) : resolveClose()));
   });
 }
 
@@ -607,12 +633,12 @@ export async function startTask1ReadinessService(
   return {
     close(): Promise<void> {
       closePromise ??= (async () => {
-      runtime?.stop();
-      await Promise.allSettled([
-        server?.listening ? closeServer(server) : Promise.resolve(),
-        appPool.end(),
-        authorityPool.end(),
-      ]);
+        runtime?.stop();
+        await Promise.allSettled([
+          server?.listening ? closeServer(server) : Promise.resolve(),
+          appPool.end(),
+          authorityPool.end(),
+        ]);
       })();
       return closePromise;
     },

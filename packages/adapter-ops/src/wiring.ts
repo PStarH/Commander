@@ -2,6 +2,8 @@ import {
   createKernelRepository,
   createCapabilityAuthority,
   type CapabilityAuthority,
+  type AdapterOpsCompensationTerminalEvidenceAuthority,
+  type AdapterOpsEvidenceContextAuthority,
   type CompensationOutboxPort,
   type CompensationTokenProvider,
   type CompensationTokenContext,
@@ -415,10 +417,7 @@ export function productionCapabilityBrokerOptions(
 }
 
 type GovernedCompensationAuthorization = Parameters<CompensationTokenProvider>[0];
-type DurableCompensationTokenContext = Extract<
-  CompensationTokenContext,
-  { authorization: object }
->;
+type DurableCompensationTokenContext = Extract<CompensationTokenContext, { authorization: object }>;
 type LegacyCompensationTokenContext = Exclude<
   CompensationTokenContext,
   DurableCompensationTokenContext
@@ -770,6 +769,63 @@ function createProductionRegistry(
 
 export const COMPENSATION_AUTHORITY_UNAVAILABLE = 'COMPENSATION_AUTHORITY_UNAVAILABLE';
 
+export const ADAPTER_OPS_EVIDENCE_AUTHORITY_UNAVAILABLE =
+  'ADAPTER_OPS_EVIDENCE_AUTHORITY_UNAVAILABLE';
+
+export const ADAPTER_OPS_COMPENSATION_TERMINAL_AUTHORITY_UNAVAILABLE =
+  'ADAPTER_OPS_COMPENSATION_TERMINAL_AUTHORITY_UNAVAILABLE';
+
+export function requireAdapterOpsEvidenceAuthority(
+  value: unknown,
+): AdapterOpsEvidenceContextAuthority {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    typeof (value as { getAdapterOpsEvidenceContext?: unknown }).getAdapterOpsEvidenceContext !==
+      'function'
+  ) {
+    throw new Error(ADAPTER_OPS_EVIDENCE_AUTHORITY_UNAVAILABLE);
+  }
+  return value as AdapterOpsEvidenceContextAuthority;
+}
+
+export async function requireAdapterOpsEvidenceAuthorityAvailability(
+  value: unknown,
+): Promise<void> {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    typeof (value as { checkEvidenceRepositoryAvailability?: unknown })
+      .checkEvidenceRepositoryAvailability !== 'function'
+  ) {
+    throw new Error(ADAPTER_OPS_EVIDENCE_AUTHORITY_UNAVAILABLE);
+  }
+  try {
+    const availability = await (
+      value as { checkEvidenceRepositoryAvailability(): Promise<{ ready: boolean }> }
+    ).checkEvidenceRepositoryAvailability();
+    if (!availability.ready) throw new Error(ADAPTER_OPS_EVIDENCE_AUTHORITY_UNAVAILABLE);
+  } catch {
+    throw new Error(ADAPTER_OPS_EVIDENCE_AUTHORITY_UNAVAILABLE);
+  }
+}
+
+export function requireAdapterOpsCompensationTerminalEvidenceAuthority(
+  value: unknown,
+): AdapterOpsCompensationTerminalEvidenceAuthority {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    typeof (value as { completeCompensationEffectWithEvidence?: unknown })
+      .completeCompensationEffectWithEvidence !== 'function' ||
+    typeof (value as { failCompensationEffectWithEvidence?: unknown })
+      .failCompensationEffectWithEvidence !== 'function'
+  ) {
+    throw new Error(ADAPTER_OPS_COMPENSATION_TERMINAL_AUTHORITY_UNAVAILABLE);
+  }
+  return value as AdapterOpsCompensationTerminalEvidenceAuthority;
+}
+
 const COMPENSATION_AUTHORITY_METHODS = [
   'claimCompensationWork',
   'completeCompensationWork',
@@ -844,6 +900,7 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
   });
   const repository = handle.repository;
   try {
+    if (handle.postgresPool) await requireAdapterOpsEvidenceAuthorityAvailability(repository);
     let compensationRepository: CompensationOutboxPort;
     try {
       compensationRepository =
@@ -900,14 +957,10 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
         actor: string,
         evidence: EvidenceRecord,
       ) =>
-        repository.completeEffectWithEvidence(
-          effectId,
-          tenantId,
-          lease,
-          response,
-          actor,
-          { ...evidence, body: Object.fromEntries(Object.entries(evidence.body)) },
-        ),
+        repository.completeEffectWithEvidence(effectId, tenantId, lease, response, actor, {
+          ...evidence,
+          body: Object.fromEntries(Object.entries(evidence.body)),
+        }),
       failEffectWithEvidence: (
         input: Parameters<NonNullable<EffectKernelPort['failEffectWithEvidence']>>[0],
       ) =>
@@ -964,17 +1017,126 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
       compensationClaimSecret = registered.compensation.claimSecret;
     }
 
+    const evidenceAuthority = handle.postgresPool
+      ? requireAdapterOpsEvidenceAuthority(repository)
+      : undefined;
+    const compensationTerminalAuthority = handle.postgresPool
+      ? requireAdapterOpsCompensationTerminalEvidenceAuthority(repository)
+      : undefined;
+    const terminalEvidenceContext = (
+      workerId: string,
+      workerGeneration: number,
+      claimSecret: string,
+    ) =>
+      evidenceAuthority
+        ? {
+            getTerminalEvidenceContext: (
+              effectId: string,
+              runId: string,
+              tenantId: string,
+              claimToken: string,
+            ) =>
+              evidenceAuthority.getAdapterOpsEvidenceContext({
+                workerId,
+                workerGeneration,
+                claimSecret,
+                tenantId,
+                runId,
+                effectId,
+                claimToken,
+              }),
+          }
+        : undefined;
+    const reconcileEvidenceContext = terminalEvidenceContext(
+      reconcileWorkerId,
+      reconcileGeneration,
+      reconcileClaimSecret,
+    );
+    const compensationEvidenceContext = terminalEvidenceContext(
+      compensationWorkerId,
+      compensationGeneration,
+      compensationClaimSecret,
+    );
+
     const compensationKernelPort = {
       ...kernelPort,
+      compensationTerminalEvidenceRequired: Boolean(compensationTerminalAuthority),
+      ...(compensationEvidenceContext ?? {}),
       admitEffect: (input: Parameters<typeof repository.admitEffect>[0]) =>
         input.compensationBinding
           ? repository.admitCompensationEffect({
               ...input,
               requestId: input.compensationBinding.requestId,
-              outboxMessageId: '',
-              outboxClaimToken: input.compensationBinding.claimToken,
+              requestClaimToken:
+                input.compensationBinding.requestClaimToken ?? input.compensationBinding.claimToken,
+              outboxMessageId: input.compensationBinding.outboxMessageId ?? '',
+              outboxClaimToken:
+                input.compensationBinding.outboxClaimToken ?? input.compensationBinding.claimToken,
             })
           : repository.admitEffect(input),
+      ...(compensationTerminalAuthority
+        ? {
+            completeEffect: async () => {
+              throw new Error(ADAPTER_OPS_COMPENSATION_TERMINAL_AUTHORITY_UNAVAILABLE);
+            },
+            completeEffectWithEvidence: undefined,
+            failEffectWithEvidence: undefined,
+            failEffect: undefined,
+            markEffectCompletionUnknown: undefined,
+            listEffectsForRun: undefined,
+            listEvents: undefined,
+            completeCompensationEffectWithEvidence: (
+              input: Parameters<
+                NonNullable<EffectKernelPort['completeCompensationEffectWithEvidence']>
+              >[0],
+            ) =>
+              compensationTerminalAuthority.completeCompensationEffectWithEvidence({
+                workerId: compensationWorkerId,
+                workerGeneration: compensationGeneration,
+                claimSecret: compensationClaimSecret,
+                tenantId: input.tenantId,
+                runId: input.runId,
+                stepId: input.stepId,
+                effectId: input.effectId,
+                requestId: input.claim.requestId,
+                requestClaimToken: input.claim.requestClaimToken,
+                outboxMessageId: input.claim.outboxMessageId,
+                outboxClaimToken: input.claim.outboxClaimToken,
+                lease: input.lease,
+                response: input.response,
+                actor: input.actor,
+                evidence: {
+                  ...input.evidence,
+                  body: Object.fromEntries(Object.entries(input.evidence.body)),
+                },
+              }),
+            failCompensationEffectWithEvidence: (
+              input: Parameters<
+                NonNullable<EffectKernelPort['failCompensationEffectWithEvidence']>
+              >[0],
+            ) =>
+              compensationTerminalAuthority.failCompensationEffectWithEvidence({
+                workerId: compensationWorkerId,
+                workerGeneration: compensationGeneration,
+                claimSecret: compensationClaimSecret,
+                tenantId: input.tenantId,
+                runId: input.runId,
+                stepId: input.stepId,
+                effectId: input.effectId,
+                requestId: input.claim.requestId,
+                requestClaimToken: input.claim.requestClaimToken,
+                outboxMessageId: input.claim.outboxMessageId,
+                outboxClaimToken: input.claim.outboxClaimToken,
+                lease: input.lease,
+                error: input.error,
+                actor: input.actor,
+                evidence: {
+                  ...input.evidence,
+                  body: Object.fromEntries(Object.entries(input.evidence.body)),
+                },
+              }),
+          }
+        : {}),
     };
 
     // Compensation path: broker affinity MUST match admit lease workerId (not adapter-ops-worker).
@@ -990,9 +1152,7 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
           compensationWorkerId,
           compensationGeneration,
         ),
-        ...(evidenceSigner
-          ? { evidenceSigner, requireEvidencePersistence: true as const }
-          : {}),
+        ...(evidenceSigner ? { evidenceSigner, requireEvidencePersistence: true as const } : {}),
       },
     );
     const reconciliation = new ReconciliationDaemon({
@@ -1016,6 +1176,7 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
       workerId: reconcileWorkerId,
       workerGeneration: reconcileGeneration,
       claimSecret: reconcileClaimSecret,
+      ...(reconcileEvidenceContext ? { terminalEvidenceContext: reconcileEvidenceContext } : {}),
       ...(evidenceSigner ? { evidenceSigner } : {}),
       heartbeat:
         lifecycleRegistry && reconcileClaimSecret
@@ -1036,6 +1197,9 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
     const compensation = new CompensationDaemon({
       repository: compensationRepository,
       evidenceRepository: repository,
+      ...(compensationEvidenceContext
+        ? { terminalEvidenceContext: compensationEvidenceContext }
+        : {}),
       broker: compensationBroker,
       registry,
       tokenProvider: async (authorization) =>

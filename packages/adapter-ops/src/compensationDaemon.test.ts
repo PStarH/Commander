@@ -98,6 +98,7 @@ describe('CompensationDaemon', () => {
         deadlineAt: '2099-01-01T00:00:00.000Z',
       },
       state: 'CLAIMED' as const,
+      claimToken: 'claim-a',
       compensationEffectId: 'effect-compensation',
     };
     const evidence = {
@@ -118,15 +119,19 @@ describe('CompensationDaemon', () => {
       retentionUntil: '2027-07-30T00:00:00.000Z',
     };
     let finalized: Record<string, unknown> | undefined;
+    let admittedInput: Record<string, unknown> | undefined;
+    const contextReads: unknown[][] = [];
     const repository = {
-      ...emptyPort(async () => [{
-        request,
-        authorization,
-        forwardResponse,
-        lease: { ...WORKER, token: 'claim-a', fencingEpoch: 4 },
-        outboxMessageId: 'outbox-a',
-        outboxClaimToken: 'claim-a',
-      }]),
+      ...emptyPort(async () => [
+        {
+          request,
+          authorization,
+          forwardResponse,
+          lease: { ...WORKER, token: 'claim-a', fencingEpoch: 4 },
+          outboxMessageId: 'outbox-a',
+          outboxClaimToken: 'claim-a',
+        },
+      ]),
       getEvidence: async () => evidence,
       listEffectsForRun: async () => [],
       listEvents: async () => [],
@@ -141,7 +146,10 @@ describe('CompensationDaemon', () => {
       evidenceRepository: repository as never,
       registry: { resolve: () => ({ descriptor: { adapterVersion: 'adapter-v1' } }) } as never,
       broker: {
-        admit: async () => ({ admitted: true, effectId: 'effect-compensation', replayed: false }),
+        admit: async (input: Record<string, unknown>) => {
+          admittedInput = input;
+          return { admitted: true, effectId: 'effect-compensation', replayed: false };
+        },
         executeAdmitted: async () => ({
           effectId: 'effect-compensation',
           replayed: false,
@@ -153,11 +161,26 @@ describe('CompensationDaemon', () => {
         sign: async () => evidence.signature,
         verify: () => true,
       },
+      terminalEvidenceContext: {
+        getTerminalEvidenceContext: async (...args: unknown[]) => {
+          contextReads.push(args);
+          return { effect: {} as never, events: [], evidence };
+        },
+      },
       pollIntervalMs: 60_000,
     });
 
     assert.equal((await daemon.tick()).succeeded, 1);
+    assert.deepEqual(admittedInput?.compensationClaim, {
+      requestId: 'request-a',
+      requestClaimToken: 'claim-a',
+      outboxMessageId: 'outbox-a',
+      outboxClaimToken: 'claim-a',
+    });
     assert.deepEqual(finalized?.evidence, evidence);
+    assert.deepEqual(contextReads, [
+      ['effect-compensation', 'run-compensation', 'tenant-a', 'claim-a'],
+    ]);
   });
 
   it('heartbeats only after a real governed zero-claim tick', async () => {

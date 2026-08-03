@@ -73,6 +73,8 @@ describe('l4-b-cell-smoke', () => {
     assert.equal(env.COMMANDER_CELL_TENANT_ID, 'cell-smoke-tenant');
     assert.equal(env.COMMANDER_WORKER_TENANTS, env.COMMANDER_CELL_TENANT_ID);
     assert.equal(env.COMMANDER_WORKER_ALLOWED_TENANTS, env.COMMANDER_CELL_TENANT_ID);
+    assert.ok(env.COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM);
+    assert.ok(env.COMMANDER_EVIDENCE_SIGNING_KEY_ID);
   });
 
   it('mock mode only asserts chaos step S6 (no fake deploy steps)', async (t) => {

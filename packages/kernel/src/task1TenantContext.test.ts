@@ -31,7 +31,7 @@ describe('Task 1 authenticated tenant context', () => {
         xid: '18446744073709551615',
       }),
       {
-        text: 'SELECT context_id::text, expires_at FROM public.issue_app_tenant_context($1, $2::oid, $3, $4::xid8)',
+        text: 'SELECT context_id::text, expires_at FROM public.issue_app_tenant_context($1::text, $2::oid, $3::integer, $4::xid8)',
         values: ['tenant-a', 16384, 90210, '18446744073709551615'],
       },
     );
@@ -55,9 +55,10 @@ describe('Task 1 authenticated tenant context', () => {
       /UNIQUE\s*\(target_database_oid,\s*target_backend_pid,\s*target_xid\)/i,
     );
     assert.match(KERNEL_TASK1_TENANT_CONTEXT_SQL, /closed_at\s+timestamptz/i);
-    const closeFunction = KERNEL_TASK1_TENANT_CONTEXT_SQL.match(
-      /CREATE OR REPLACE FUNCTION public\.close_app_tenant_context[\s\S]*?\$function\$;/i,
-    )?.[0] ?? '';
+    const closeFunction =
+      KERNEL_TASK1_TENANT_CONTEXT_SQL.match(
+        /CREATE OR REPLACE FUNCTION public\.close_app_tenant_context[\s\S]*?\$function\$;/i,
+      )?.[0] ?? '';
     assert.match(closeFunction, /SET closed_at = pg_catalog\.clock_timestamp\(\)/i);
     assert.doesNotMatch(closeFunction, /DELETE\s+FROM/i);
   });
@@ -68,9 +69,13 @@ describe('Task 1 authenticated tenant context', () => {
       'commander_authenticated_app_tenant',
       'close_app_tenant_context',
     ]) {
-      const body = KERNEL_TASK1_TENANT_CONTEXT_SQL.match(
-        new RegExp(`CREATE OR REPLACE FUNCTION public\\.${functionName}[\\s\\S]*?\\$function\\$;`, 'i'),
-      )?.[0] ?? '';
+      const body =
+        KERNEL_TASK1_TENANT_CONTEXT_SQL.match(
+          new RegExp(
+            `CREATE OR REPLACE FUNCTION public\\.${functionName}[\\s\\S]*?\\$function\\$;`,
+            'i',
+          ),
+        )?.[0] ?? '';
       assert.match(body, /session_user\s*<>\s*'commander_app'/i);
       assert.match(body, /target_database_oid/i);
       assert.match(body, /target_backend_pid/i);
@@ -80,17 +85,24 @@ describe('Task 1 authenticated tenant context', () => {
       assert.match(body, /TENANT_CONTEXT_INVALID/i);
     }
     assert.match(KERNEL_TASK1_TENANT_CONTEXT_SQL, /pg_current_xact_id_if_assigned\(\)/i);
-    assert.match(KERNEL_TASK1_TENANT_CONTEXT_SQL, /set_config\(\s*'app\.authenticated_tenant_context_id'/i);
+    assert.match(
+      KERNEL_TASK1_TENANT_CONTEXT_SQL,
+      /set_config\(\s*'app\.authenticated_tenant_context_id'/i,
+    );
   });
 
   it('issues only as tenant authority with database-generated UUID and fixed expiry', () => {
-    const issueFunction = KERNEL_TASK1_TENANT_CONTEXT_SQL.match(
-      /CREATE OR REPLACE FUNCTION public\.issue_app_tenant_context[\s\S]*?\$function\$;/i,
-    )?.[0] ?? '';
+    const issueFunction =
+      KERNEL_TASK1_TENANT_CONTEXT_SQL.match(
+        /CREATE OR REPLACE FUNCTION public\.issue_app_tenant_context[\s\S]*?\$function\$;/i,
+      )?.[0] ?? '';
     assert.match(issueFunction, /session_user\s*<>\s*'commander_tenant_authority'/i);
     assert.match(issueFunction, /pg_catalog\.gen_random_uuid\(\)/i);
     assert.match(issueFunction, /interval\s+'60 seconds'/i);
-    assert.match(issueFunction, /FOR UPDATE SKIP LOCKED[\s\S]*LIMIT 100|LIMIT 100[\s\S]*FOR UPDATE SKIP LOCKED/i);
+    assert.match(
+      issueFunction,
+      /FOR UPDATE SKIP LOCKED[\s\S]*LIMIT 100|LIMIT 100[\s\S]*FOR UPDATE SKIP LOCKED/i,
+    );
     assert.match(issueFunction, /bound_at\s+IS\s+NULL/i);
     assert.match(issueFunction, /closed_at\s+IS\s+NULL/i);
   });
@@ -100,9 +112,10 @@ describe('Task 1 authenticated tenant context', () => {
       KERNEL_TASK1_PRODUCT_TENANT_PREDICATE_SQL,
       "tenant_id ~ '^[a-zA-Z0-9._:-]{1,128}$' AND tenant_id <> 'commander/readiness/v1'",
     );
-    const allowlistTable = KERNEL_TASK1_TENANT_CONTEXT_SQL.match(
-      /CREATE TABLE public\.commander_tenant_authority_allowed_tenants[\s\S]*?\);/i,
-    )?.[0] ?? '';
+    const allowlistTable =
+      KERNEL_TASK1_TENANT_CONTEXT_SQL.match(
+        /CREATE TABLE public\.commander_tenant_authority_allowed_tenants[\s\S]*?\);/i,
+      )?.[0] ?? '';
     assert.match(allowlistTable, /commander\/readiness\/v1/);
     assert.match(
       KERNEL_TASK1_TENANT_CONTEXT_SQL,
@@ -138,8 +151,14 @@ describe('Task 1 authenticated tenant context', () => {
       /GRANT EXECUTE ON FUNCTION public\.commander_database_identity\(\),\s*public\.commander_runtime_configuration_identity\(\)\s+TO commander_tenant_authority/i,
     );
     assert.match(KERNEL_TASK1_TENANT_CONTEXT_SQL, /REVOKE TEMPORARY ON DATABASE/i);
-    assert.match(KERNEL_TASK1_TENANT_CONTEXT_SQL, /ALTER ROLE commander_app SET statement_timeout = '55s'/i);
-    assert.match(KERNEL_TASK1_TENANT_CONTEXT_SQL, /ALTER ROLE commander_app SET idle_in_transaction_session_timeout = '10s'/i);
+    assert.match(
+      KERNEL_TASK1_TENANT_CONTEXT_SQL,
+      /ALTER ROLE commander_app SET statement_timeout = '55s'/i,
+    );
+    assert.match(
+      KERNEL_TASK1_TENANT_CONTEXT_SQL,
+      /ALTER ROLE commander_app SET idle_in_transaction_session_timeout = '10s'/i,
+    );
   });
 
   it('enforces only the closed committed tenant relation inventory', () => {

@@ -71,6 +71,8 @@ function isEvidenceBundle(value: unknown): value is EvidenceBundle {
 
 export interface V1KernelGateway {
   getOperationsReadiness(tenantId: string, now?: Date): Promise<OperationsReadiness>;
+  /** Optional read-only evidence repository availability probe; absent is not ready. */
+  getEvidenceRepositoryAvailability?(): Promise<{ ready: boolean }>;
   submit(input: {
     tenantId: string;
     idempotencyKey: string;
@@ -225,6 +227,10 @@ class RepositoryV1KernelGateway implements V1KernelGateway {
 
   getOperationsReadiness(tenantId: string, now?: Date): Promise<OperationsReadiness> {
     return this.repository.getOperationsReadiness(tenantId, now);
+  }
+
+  async getEvidenceRepositoryAvailability(): Promise<{ ready: boolean }> {
+    return (await this.repository.checkEvidenceRepositoryAvailability?.()) ?? { ready: false };
   }
 
   async submit(

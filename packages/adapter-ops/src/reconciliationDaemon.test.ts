@@ -72,6 +72,7 @@ function daemonFor(input: {
   heartbeat?: () => Promise<void>;
   drain?: () => Promise<void>;
   telemetry?: (event: Record<string, unknown>) => void;
+  terminalEvidenceContext?: Record<string, unknown>;
 }) {
   const querier = { queryOutcome: async () => ({ status: 'UNKNOWN' }) };
   const queryCalls: Array<Record<string, unknown>> = [];
@@ -121,11 +122,32 @@ function daemonFor(input: {
     heartbeat: input.heartbeat,
     drain: input.drain,
     telemetry: input.telemetry as never,
+    terminalEvidenceContext: input.terminalEvidenceContext as never,
   });
   return { daemon, querier, queryCalls, repository, brokerFactoryCalls: () => brokerFactoryCalls };
 }
 
 describe('ReconciliationDaemon', () => {
+  it('binds evidence context reads to the current reconcile claim token', async () => {
+    const reads: unknown[][] = [];
+    const { daemon } = daemonFor({
+      outcome: { status: 'APPLIED', response: { number: 42 } },
+      terminalEvidenceContext: {
+        getTerminalEvidenceContext: async (...args: unknown[]) => {
+          reads.push(args);
+          return { effect: EFFECT, events: [] };
+        },
+      },
+      repository: {
+        listEffectsForRun: async () => assert.fail('broad effect read must not run'),
+        listEvents: async () => assert.fail('broad event read must not run'),
+      },
+    });
+
+    assert.equal((await daemon.tick()).completed, 1);
+    assert.deepEqual(reads, [[EFFECT.id, EFFECT.runId, EFFECT.tenantId, CLAIM.claimToken]]);
+  });
+
   it('maps APPLIED and NOT_APPLIED to exactly one fenced terminal mutation', async () => {
     for (const test of [
       {

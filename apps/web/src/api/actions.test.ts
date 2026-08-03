@@ -121,4 +121,44 @@ describe('ActionGatewayClient', () => {
 
     assert.deepEqual(await client.getActionEvidence('run-1'), evidence);
   });
+
+  it('routes compensation request and approval through the gateway', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const client = new ActionGatewayClient({
+      baseUrl: 'https://commander.example',
+      token: 'token-1',
+      fetchImpl: (async (url, init) => {
+        calls.push({ url: String(url), init: init ?? {} });
+        return new Response(JSON.stringify({ state: 'AWAITING_APPROVAL' }), {
+          status: 202,
+          headers: { 'content-type': 'application/json' },
+        });
+      }) as typeof fetch,
+    });
+    const input = {
+      originalEffectId: 'effect-1',
+      adapterVersion: 'demo.adapter.v1',
+      compensationEffectType: 'compensate.demo.ticket.create',
+      compensationPatch: { ticketId: 'ticket-1' },
+      forwardReceiptHash: 'a'.repeat(64),
+    };
+
+    await client.requestCompensation('run-1', input, 'compensation-request-1');
+    await client.approveCompensation(
+      'run-1',
+      'authorization-1',
+      { actionDigest: 'b'.repeat(64), policySnapshotId: 'policy-1' },
+      'compensation-approve-1',
+    );
+
+    assert.deepEqual(calls.map(({ url }) => url), [
+      'https://commander.example/v1/actions/run-1/compensations',
+      'https://commander.example/v1/actions/run-1/compensations/authorization-1/approve',
+    ]);
+    assert.deepEqual(
+      calls.map(({ init }) => new Headers(init.headers).get('idempotency-key')),
+      ['compensation-request-1', 'compensation-approve-1'],
+    );
+    assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), input);
+  });
 });

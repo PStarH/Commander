@@ -24,6 +24,44 @@ describe('worker action adapter execution', () => {
     );
   });
 
+  it('registers Kubernetes from the injected worker environment and preserves its credential boundaries', async () => {
+    const registry = createProductionAdapterRegistry(undefined, {
+      COMMANDER_CELL_TENANT_ID: 'tenant-a',
+      COMMANDER_KUBERNETES_CLUSTER: 'kind',
+      COMMANDER_KUBERNETES_SERVER: 'https://127.0.0.1:6443',
+      COMMANDER_KUBERNETES_TOKEN_ENV: 'COMMANDER_KUBERNETES_BEARER_TOKEN',
+      COMMANDER_KUBERNETES_NAMESPACES: 'commander',
+      COMMANDER_KUBERNETES_BEARER_TOKEN: 'injected-kind-token',
+    });
+    const adapter = registry.resolve(KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR.effectType);
+    assert.ok(adapter);
+
+    const query = {
+      effectId: 'effect-a',
+      idempotencyKey: 'rollback-0001',
+      signal: new AbortController().signal,
+      request: { args: { targetRevision: '41' } },
+    };
+    await assert.rejects(
+      () =>
+        adapter.queryOutcome({
+          ...query,
+          tenantId: 'tenant-b',
+          destination: 'k8s://kind/commander/deployments/api',
+        }),
+      /Tenant credential isolation/,
+    );
+    await assert.rejects(
+      () =>
+        adapter.queryOutcome({
+          ...query,
+          tenantId: 'tenant-a',
+          destination: 'k8s://kind/other/deployments/api',
+        }),
+      /Kubernetes namespace is not authorized/,
+    );
+  });
+
   it('delegates a registered Kubernetes effect with its authorization bindings intact', async () => {
     let received: AdapterExecuteInput | undefined;
     const adapter: ActionAdapter = {

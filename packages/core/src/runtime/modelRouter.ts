@@ -509,7 +509,7 @@ export interface ProviderTierConfig {
 
 export const RECOMMENDED_TIERS: Record<ProviderTier, ProviderTierConfig> = {
   essential: {
-    description: 'Covers 95% of use cases with top 3 providers',
+    description: 'Default provider set for common workloads; customize as needed',
     providers: ['openai', 'anthropic', 'google'],
     minModels: 3,
   },
@@ -519,7 +519,7 @@ export const RECOMMENDED_TIERS: Record<ProviderTier, ProviderTierConfig> = {
     minModels: 2,
   },
   enterprise: {
-    description: 'SOC2/compliance requirements with managed services',
+    description: 'Managed-service provider options for deployments with compliance requirements',
     providers: ['bedrock', 'azure'],
     minModels: 2,
   },

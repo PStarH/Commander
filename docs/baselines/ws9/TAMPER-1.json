@@ -5,6 +5,6 @@
   "breach": false,
   "details": "Field modification detected: verify().ok=false, reason=invalid_hmac. HMAC-SHA256 re-derivation mismatch on tampered message field.",
   "artifacts": [],
-  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
-  "ranAt": "2026-07-16T10:24:19.377Z"
+  "gitSha": "258767cd75d990ce64ff861484187b5d6b7ce828",
+  "ranAt": "2026-07-30T08:48:34.431Z"
 }

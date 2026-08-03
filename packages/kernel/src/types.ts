@@ -1,11 +1,6 @@
 /** Canonical, versioned execution-kernel domain types. */
 
-import type {
-  KernelErrorDetails,
-  KernelEvent,
-  RunState,
-  StepState,
-} from '@commander/contracts';
+import type { KernelErrorDetails, KernelEvent, RunState, StepState } from '@commander/contracts';
 import type { KernelEvidenceRecord } from './evidenceRepository.js';
 export type { KernelErrorDetails, KernelEvent } from '@commander/contracts';
 
@@ -25,6 +20,9 @@ export interface KernelCompensationAdmissionBinding {
   authorizationId: string;
   requestId: string;
   claimToken: string;
+  requestClaimToken?: string;
+  outboxMessageId?: string;
+  outboxClaimToken?: string;
 }
 
 /** Re-exported from @commander/contracts; kept for source compatibility. */
@@ -132,12 +130,7 @@ export interface KernelEffect {
   leaseWorkerGeneration: number;
   /** Fencing epoch from the admit lease. */
   leaseFencingEpoch: number;
-  state:
-    | 'ADMITTED'
-    | 'COMPLETION_UNKNOWN'
-    | 'CONFIRMED_NOT_APPLIED'
-    | 'COMPLETED'
-    | 'FAILED';
+  state: 'ADMITTED' | 'COMPLETION_UNKNOWN' | 'CONFIRMED_NOT_APPLIED' | 'COMPLETED' | 'FAILED';
   request: Record<string, unknown>;
   response?: Record<string, unknown>;
   createdAt: string;
@@ -166,10 +159,7 @@ export interface ReconcilePolicy {
 }
 
 export type ReconcileDisposition =
-  | 'PENDING'
-  | 'CONFIRMED_APPLIED'
-  | 'CONFIRMED_NOT_APPLIED'
-  | 'ESCALATED';
+  'PENDING' | 'CONFIRMED_APPLIED' | 'CONFIRMED_NOT_APPLIED' | 'ESCALATED';
 
 export type ReconcileQueryErrorCode =
   | 'RECONCILE_OUTCOME_NOT_YET_VISIBLE'
@@ -557,10 +547,7 @@ export interface ClaimedCompensationRequest {
 }
 
 export type CompensationDisposition =
-  | 'COMPLETED'
-  | 'CONFIRMED_NOT_APPLIED'
-  | 'COMPLETION_UNKNOWN'
-  | 'ESCALATED';
+  'COMPLETED' | 'CONFIRMED_NOT_APPLIED' | 'COMPLETION_UNKNOWN' | 'ESCALATED';
 
 export interface FinalizeCompensationInput extends CompensationClaimIdentity {
   tenantId: string;
@@ -695,12 +682,7 @@ export interface AnswerInteractionRequest {
 // ── Kill switches (L4-04) ───────────────────────────────────────────────────
 
 export type KillSwitchScope =
-  | 'tenant'
-  | 'package'
-  | 'model'
-  | 'tool'
-  | 'destination'
-  | 'effect-type';
+  'tenant' | 'package' | 'model' | 'tool' | 'destination' | 'effect-type';
 
 export interface KillSwitch {
   tenantId: string;

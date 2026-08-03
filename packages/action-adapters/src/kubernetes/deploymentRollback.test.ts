@@ -159,10 +159,7 @@ function fixture(initial?: Partial<FixtureState>) {
       if (state.listStatus) return new Response('{}', { status: state.listStatus });
       return Response.json({ items: state.deployments.map(wireDeployment) });
     }
-    if (
-      method === 'GET' &&
-      url.pathname === '/apis/apps/v1/namespaces/commander/replicasets'
-    ) {
+    if (method === 'GET' && url.pathname === '/apis/apps/v1/namespaces/commander/replicasets') {
       assert.equal(url.searchParams.get('labelSelector'), 'app=api');
       return Response.json({ items: state.replicaSets.map(wireReplicaSet) });
     }
@@ -172,8 +169,10 @@ function fixture(initial?: Partial<FixtureState>) {
       Object.assign(state.deployments[0]!.annotations, annotations);
       if (body?.spec && typeof body.spec === 'object') {
         state.rollbackCount += 1;
-        state.deployments[0]!.template = (body.spec as Record<string, unknown>)
-          .template as Record<string, unknown>;
+        state.deployments[0]!.template = (body.spec as Record<string, unknown>).template as Record<
+          string,
+          unknown
+        >;
         state.deployments[0]!.revision = '10';
         state.deployments[0]!.generation = 3;
         state.deployments[0]!.observedGeneration = state.rolloutCompletes ? 3 : 2;
@@ -209,6 +208,23 @@ function executeInput() {
 }
 
 describe('Kubernetes deployment rollback adapter', () => {
+  it('rejects forward arguments outside the approved descriptor keys', async () => {
+    const { adapter, state } = fixture();
+    await assert.rejects(
+      () =>
+        adapter.execute({
+          ...executeInput(),
+          args: { targetRevision: '7', reason: 'rollback faulty release', image: 'attacker/image' },
+        }),
+      (error: unknown) =>
+        error instanceof AdapterExecutionError &&
+        error.code === 'KUBERNETES_ARGUMENTS_INVALID' &&
+        error.commitState === 'NOT_COMMITTED',
+    );
+    assert.equal(state.markerPatchCount, 0);
+    assert.equal(state.rollbackCount, 0);
+  });
+
   it('uses ReplicaSet history and strategic merge PATCH for an apps/v1 rollback', async () => {
     const { adapter, state } = fixture();
     const response = await adapter.execute(executeInput());
@@ -329,7 +345,13 @@ describe('Kubernetes deployment rollback adapter', () => {
         destination,
         request: { targetRevision: '7' },
       }),
-      { status: 'UNKNOWN', error: { code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE', message: 'Remote outcome is not yet provable' } },
+      {
+        status: 'UNKNOWN',
+        error: {
+          code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+          message: 'Remote outcome is not yet provable',
+        },
+      },
     );
 
     const duplicate = fixture({
@@ -358,11 +380,17 @@ describe('Kubernetes deployment rollback adapter', () => {
         destination,
         request: { targetRevision: '7' },
       }),
-      { status: 'UNKNOWN', error: { code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE', message: 'Remote outcome is not yet provable' } },
+      {
+        status: 'UNKNOWN',
+        error: {
+          code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+          message: 'Remote outcome is not yet provable',
+        },
+      },
     );
   });
 
-  it('maps 404 to NOT_APPLIED and uncertain query HTTP statuses to UNKNOWN', async () => {
+  it('maps unavailable collection queries to UNKNOWN', async () => {
     const missing = fixture({ listStatus: 404 });
     assert.equal(
       (
@@ -374,7 +402,7 @@ describe('Kubernetes deployment rollback adapter', () => {
           request: { targetRevision: '7' },
         })
       ).status,
-      'NOT_APPLIED',
+      'UNKNOWN',
     );
     for (const status of [409, 429, 500]) {
       const uncertain = fixture({ listStatus: status });
@@ -386,7 +414,13 @@ describe('Kubernetes deployment rollback adapter', () => {
           destination,
           request: { targetRevision: '7' },
         }),
-        { status: 'UNKNOWN', error: { code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE', message: 'Remote outcome is not yet provable' } },
+        {
+          status: 'UNKNOWN',
+          error: {
+            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+            message: 'Remote outcome is not yet provable',
+          },
+        },
       );
     }
   });
@@ -523,7 +557,13 @@ describe('Kubernetes deployment rollback adapter', () => {
           compensationPatch: { targetRevision: '9', reason: 'restore prior revision' },
         },
       }),
-      { status: 'UNKNOWN', error: { code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE', message: 'Remote outcome is not yet provable' } },
+      {
+        status: 'UNKNOWN',
+        error: {
+          code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+          message: 'Remote outcome is not yet provable',
+        },
+      },
     );
   });
 });

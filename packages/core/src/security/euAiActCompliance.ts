@@ -1,7 +1,7 @@
 /**
- * EU AI Act Compliance Reporter
+ * EU AI Act Reporting Scaffold
  *
- * Automated generation of compliance reports required by the EU AI Act:
+ * Automated generation of reporting scaffolds for EU AI Act Articles:
  * - Article 12: Transparency obligations — what the AI system does, its capabilities
  *   and limitations, how decisions are made, and what data it uses.
  * - Article 13: Human oversight measures — design of human-in-the-loop controls,
@@ -13,7 +13,7 @@
  * - Auto-generated from system configuration, runtime statistics, and security posture
  * - Signed with HMAC for tamper-evidence via AuditChainLedger
  * - Exportable as Markdown (for human review) and JSON (for CI/CD/regulatory submission)
- * - Snapshotable for historical comparison (prove improving compliance over time)
+ * - Snapshotable for historical comparison (track changes in the self-assessment over time)
  *
  * Design: Zero-config — all data is extracted from running system state.
  */
@@ -62,7 +62,7 @@ export interface Article12Report {
   dataSources: string[];
   /** Decision-making process explanation */
   decisionProcess: string;
-  /** Accuracy and performance metrics */
+  /** Accuracy and performance metrics (only populated from a supplied, current evidence pack) */
   performanceMetrics: {
     benchmarkResults: Record<string, number>;
     lastEvaluatedAt: string;
@@ -95,6 +95,7 @@ export interface Article13Report {
   auditTrailCompleteness: {
     totalEvents: number;
     retentionPeriod: string;
+    /** True only when an external manifest/WORM verification result is supplied. */
     tamperProof: boolean;
     coverage: number; // 0-1
   };
@@ -171,7 +172,7 @@ export class EuAiActComplianceReporter {
   // ── Main API ──────────────────────────────────────────────────────
 
   /**
-   * Generate a full EU AI Act compliance report (Articles 12, 13, 14).
+   * Generate an EU AI Act reporting scaffold (Articles 12, 13, 14).
    */
   generateReport(options: ComplianceReportOptions = {}): EuAiActReport {
     const now = new Date().toISOString();
@@ -188,7 +189,7 @@ export class EuAiActComplianceReporter {
       meta: {
         reportId,
         generatedAt: now,
-        generatedBy: 'Commander EuAiActComplianceReporter v1.0',
+        generatedBy: 'Commander EuAiActReportingScaffold v1.0',
         version: '1.0.0',
         format: options.format ?? 'markdown',
         hmacSignature: '',
@@ -227,7 +228,7 @@ export class EuAiActComplianceReporter {
     // Log
     getGlobalLogger().info(
       'EuAiActCompliance',
-      `📋 EU AI Act compliance report generated: ${reportId} (score: ${complianceSummary.overallComplianceScore}/100)`,
+      `📋 EU AI Act reporting scaffold generated: ${reportId} (self-assessment score: ${complianceSummary.overallComplianceScore}/100)`,
     );
 
     return report;
@@ -238,7 +239,7 @@ export class EuAiActComplianceReporter {
    */
   formatMarkdown(report: EuAiActReport): string {
     const lines: string[] = [
-      `# EU AI Act Compliance Report`,
+      `# EU AI Act Reporting Scaffold`,
       '',
       `**Report ID:** ${report.meta.reportId}`,
       `**Generated:** ${report.meta.generatedAt}`,
@@ -248,9 +249,10 @@ export class EuAiActComplianceReporter {
       '',
       '---',
       '',
-      '## Compliance Summary',
+      '## Self-Assessment Summary',
       '',
-      `**Overall Score:** ${report.complianceSummary.overallComplianceScore}/100`,
+      `**Self-assessment score:** ${report.complianceSummary.overallComplianceScore}/100`,
+      '**Evidence boundary:** This automated mapping is not an external audit, legal opinion, or certification.',
       '',
       `| Article | Score |`,
       `|---------|-------|`,
@@ -324,8 +326,8 @@ export class EuAiActComplianceReporter {
       '### Audit Trail',
       `- Total Events: ${report.article13.auditTrailCompleteness.totalEvents}`,
       `- Retention: ${report.article13.auditTrailCompleteness.retentionPeriod}`,
-      `- Tamper-Proof: ${report.article13.auditTrailCompleteness.tamperProof ? 'Yes ✅' : 'No ❌'}`,
-      `- Coverage: ${(report.article13.auditTrailCompleteness.coverage * 100).toFixed(0)}%`,
+      `- External WORM/KMS anchoring: ${report.article13.auditTrailCompleteness.tamperProof ? 'Verified ✅' : 'Not attached ❌'}`,
+      `- Configured logger coverage (self-assessed): ${(report.article13.auditTrailCompleteness.coverage * 100).toFixed(0)}%`,
       '',
       '---',
       '',
@@ -352,7 +354,7 @@ export class EuAiActComplianceReporter {
       '',
       '### Testing & Validation',
       `- Red Team Scenarios: ${report.article14.testingAndValidation.redTeamScenarios}`,
-      `- Security Score: ${report.article14.testingAndValidation.securityScore}/100`,
+      `- Self-assessment security score: ${report.article14.testingAndValidation.securityScore}/100`,
       `- Last Tested: ${report.article14.testingAndValidation.lastTestedAt}`,
       `- Frequency: ${report.article14.testingAndValidation.testingFrequency}`,
       '',
@@ -364,7 +366,7 @@ export class EuAiActComplianceReporter {
       '',
       '---',
       '',
-      `*Report generated by Commander EU AI Act Compliance Reporter v1.0*`,
+      `*Report generated by Commander EU AI Act Reporting Scaffold v1.0*`,
       `*Signature: ${report.meta.hmacSignature}*`,
     ];
 
@@ -431,10 +433,10 @@ export class EuAiActComplianceReporter {
       resolvedGaps,
       summary:
         scoreDelta > 0
-          ? `Compliance improved by ${scoreDelta} points. ${resolvedGaps.length} gaps resolved.`
+          ? `Control-coverage score improved by ${scoreDelta} points. ${resolvedGaps.length} gaps resolved.`
           : scoreDelta < 0
-            ? `Compliance declined by ${Math.abs(scoreDelta)} points. ${newGaps.length} new gaps identified.`
-            : 'No change in compliance score.',
+            ? `Control-coverage score declined by ${Math.abs(scoreDelta)} points. ${newGaps.length} new gaps identified.`
+            : 'No change in control-coverage score.',
     };
   }
 
@@ -444,14 +446,14 @@ export class EuAiActComplianceReporter {
     return {
       systemDescription:
         options.systemDescription ??
-        'Commander is a multi-agent AI orchestration system that dynamically selects execution topology based on task complexity. It routes tasks through a deliberation → scaling → topology → decomposition → execution → synthesis → quality gate pipeline with built-in security controls, data exfiltration prevention, and comprehensive audit logging.',
+        'Commander is a multi-agent AI orchestration system that dynamically selects execution topology based on task complexity. It routes tasks through a deliberation → scaling → topology → decomposition → execution → synthesis → quality gate pipeline with built-in security controls, configured data-exfiltration checks, and audit logging on enabled paths.',
       capabilities: [
         'Multi-agent orchestration with 5 canonical topologies (SINGLE, CHAIN, DISPATCH, ORCHESTRATOR, REVIEW) + 9 legacy aliases',
         'Automated task decomposition and sub-agent coordination',
         '25 LLM provider integrations with automatic fallback chains',
         'Built-in security scanning: ContentScanner (injection detection), OutputSanitizer (data exfiltration prevention), SupplyChainScanner (skill/tool verification)',
-        'Comprehensive audit trail: SecurityAuditLogger, AuditChainLedger (tamper-evident), AgentLineage (relationship tracking)',
-        'Multi-tenant isolation with per-tenant rate limiting, storage, and memory',
+        'Audit trail components: SecurityAuditLogger, AuditChainLedger (tamper-evident), AgentLineage (relationship tracking)',
+        'Tenant-aware request context with selected per-tenant controls; storage-layer isolation is opt-in on the alpha Enterprise Gateway',
         'Crash-safe state checkpoints with atomic write-tmp-rename',
         'SSE streaming for real-time agent visibility',
         'Self-evolution with Thompson Sampling meta-learning',
@@ -474,36 +476,29 @@ export class EuAiActComplianceReporter {
         'Configuration files and environment variables',
       ],
       decisionProcess:
-        'Commander employs a deliberation-based decision pipeline: (1) Task complexity is analyzed, (2) An optimal topology is selected from 8 execution patterns, (3) Tasks are recursively decomposed (ROMA-inspired atomization), (4) Sub-agents execute in dependency-aware parallel batches, (5) Results are synthesized via configurable strategies (lead, hierarchical, vote, ensemble), (6) Output passes through 5 quality gates (hallucination, consistency, completeness, accuracy, safety) and a data exfiltration prevention layer before delivery.',
+        'Commander employs a deliberation-based decision pipeline: (1) Task complexity is analyzed, (2) a topology is selected from 5 canonical patterns (with legacy aliases), (3) tasks are recursively decomposed (ROMA-inspired atomization), (4) sub-agents execute in dependency-aware parallel batches, (5) results are synthesized via configurable strategies (lead, hierarchical, vote, ensemble), and (6) on paths with verification enabled, configured quality checks and output sanitization run before delivery.',
       performanceMetrics: {
-        benchmarkResults:
-          options.includeBenchmarks !== false
-            ? {
-                GAIA: 69.7,
-                PinchBench: 97.7,
-                'HumanEval+': 91.5,
-                'BFCL (Tool Selection)': 60.0,
-                'BFCL (Parameter Prediction)': 91.4,
-              }
-            : {},
+        // Historical benchmark numbers were invalidated or lack a retained
+        // current evidence pack. Do not publish placeholders as measurements.
+        benchmarkResults: {},
         lastEvaluatedAt: new Date().toISOString(),
         evaluationFrequency: 'Quarterly',
       },
       transparencyMeasures: [
-        'Real-time SSE streaming of agent decisions and tool calls',
-        'Comprehensive execution trace recording with full replay capability',
+        'Real-time SSE streaming of emitted agent events and tool calls',
+        'Configured execution trace recording; replay depends on retained event data',
         'Decision provenance tracking (buildDecisions, decisionsSummary)',
         'Structured output validation with configurable schemas',
-        'Open-source codebase (MIT license) with full architectural documentation',
-        'All security events logged to tamper-evident audit chain',
+        'Open-source codebase (MIT license) with architecture documentation',
+        'Configured security events are recorded in a tamper-evident audit chain',
       ],
       userDisclosures: [
         'The system is an AI agent — outputs should be independently verified',
-        'All LLM calls are logged and may be reviewed for quality assurance',
+        'LLM calls on configured paths are logged and may be reviewed for quality assurance',
         'Tool executions are visible in real-time via SSE streaming',
-        'Data exfiltration prevention is active at all output boundaries',
+        'Configured output sanitization is applied on supported output boundaries; deployment coverage must be verified separately',
         'Users can configure approval requirements for high-risk tool operations',
-        'EU AI Act compliance reports are generated automatically and available on request',
+        'EU AI Act reporting scaffolds are generated automatically and available for review',
       ],
     };
   }
@@ -514,7 +509,7 @@ export class EuAiActComplianceReporter {
 
     return {
       oversightDesign:
-        'Commander implements a multi-layer human oversight architecture designed to meet EU AI Act Article 13 requirements. The system provides real-time visibility into agent decisions via SSE streaming, configurable approval gates for high-risk operations, comprehensive audit trails, and operator override capabilities at every execution stage.',
+        'Commander maps a multi-layer human-oversight architecture to EU AI Act Article 13 controls. The system provides real-time visibility into emitted agent events via SSE streaming, configurable approval gates for high-risk operations, audit-trail components, and operator override capabilities on enabled execution paths.',
       hitlMechanisms: [
         {
           name: 'Approval System',
@@ -529,7 +524,7 @@ export class EuAiActComplianceReporter {
           name: 'SSE Real-Time Monitoring',
           type: 'monitoring',
           description:
-            'Server-Sent Events stream provides real-time visibility into every agent decision, tool call, and output delta. Operators can watch agent behavior as it unfolds.',
+            'Server-Sent Events stream provides real-time visibility into emitted agent events, tool calls, and output deltas on enabled paths. Operators can inspect the available execution trace as it unfolds.',
           whenActivated: 'Continuously during active agent execution',
           responseTime: 'Instant (streaming)',
         },
@@ -553,7 +548,7 @@ export class EuAiActComplianceReporter {
           name: 'Post-Execution Review',
           type: 'review',
           description:
-            'Complete execution traces with tool inputs/outputs, decision provenance, and quality gate results available for post-hoc human review.',
+            'Available execution traces with tool inputs/outputs, decision provenance, and quality gate results can support post-hoc human review.',
           whenActivated: 'After each agent execution',
           responseTime: 'Review within 24 hours for critical tasks',
         },
@@ -577,7 +572,7 @@ export class EuAiActComplianceReporter {
       ],
       monitoringTools: [
         'SSE Streaming Dashboard — real-time agent execution visibility',
-        'Security Audit Logger — all security events with severity classification',
+        'Security Audit Logger — configured security events with severity classification',
         'Agent-SOC Dashboard — P0-P4 incident tracking with response SLAs',
         'OpenMetrics/Prometheus Endpoints — metrics on token usage, cost, errors',
         'OpenTelemetry Export — distributed tracing to Jaeger/Grafana/SigNoz',
@@ -585,7 +580,7 @@ export class EuAiActComplianceReporter {
         'Execution Trace Recorder — full step-by-step replay capability',
       ],
       operatorTraining: [
-        'Understanding of the 8 execution topologies and when each is selected',
+        'Understanding of the 5 canonical execution topologies and their legacy aliases',
         'Proficiency with SSE streaming dashboard for real-time monitoring',
         'Knowledge of the 5-mode approval system and how to configure per-task approval policies',
         'Ability to interpret security alerts and follow incident response playbooks',
@@ -595,8 +590,11 @@ export class EuAiActComplianceReporter {
       auditTrailCompleteness: {
         totalEvents: stats.totalEvents,
         retentionPeriod: '90 days (rotating log, configurable)',
-        tamperProof: true,
-        coverage: 1.0, // All security events covered by SecurityAuditLogger
+        // A per-process HMAC chain is tamper-evident, not tamper-proof. The
+        // stronger status is only derived by verifyWithManifest() after an
+        // external WORM/KMS anchor is verified.
+        tamperProof: false,
+        coverage: 1.0, // Configured security logger events are covered
       },
     };
   }
@@ -607,7 +605,7 @@ export class EuAiActComplianceReporter {
 
     return {
       methodology:
-        'Commander employs a continuous risk assessment methodology aligned with NIST AI RMF and ISO 42001. Risks are identified through automated red team testing (47 scenarios across 8 OWASP categories), continuous security monitoring (burst, escalation, and anomaly detection), supply chain scanning (8 malicious signatures), and post-execution quality gating (hallucination, consistency, completeness, accuracy, safety). Each risk is classified by severity, likelihood, and impact, with documented mitigation measures and residual risk acceptance.',
+        'Commander uses a configured risk-assessment methodology mapped to NIST AI RMF and ISO 42001. The current harness includes red-team sample scenarios, configured security-monitor signals, supply-chain scanning, and post-execution quality checks. Each listed risk is classified by severity, likelihood, and impact, with documented mitigation measures and residual-risk notes.',
       highRiskCategories: [
         {
           category: 'Prompt Injection',
@@ -618,7 +616,7 @@ export class EuAiActComplianceReporter {
           mitigationMeasures: [
             'ContentScanner with multi-language injection detection (EN/CN/RU/JP/AR)',
             'Hidden HTML, CSS, and Unicode obfuscation detection',
-            'OutputSanitizer at all output boundaries',
+            'OutputSanitizer on configured output boundaries',
             'Tool execution sandboxing with ExecPolicy DSL',
           ],
           residualRisk: 'tolerable',
@@ -630,7 +628,7 @@ export class EuAiActComplianceReporter {
           impact:
             'Sensitive data (API keys, PII, credentials) could leak through tool outputs or SSE streams',
           mitigationMeasures: [
-            'OutputSanitizer intercepts and redacts at all output boundaries',
+            'OutputSanitizer intercepts and redacts on configured output boundaries',
             '35+ detection patterns (API keys, cloud creds, PII, private keys, JWTs)',
             'SSE stream accumulator buffer catches split tokens',
             'Per-stream redaction with audit chain recording',
@@ -710,7 +708,7 @@ export class EuAiActComplianceReporter {
       ],
       securityControls: [
         'ContentScanner — multi-language prompt injection detection',
-        'OutputSanitizer — data exfiltration prevention at all boundaries',
+        'OutputSanitizer — data-exfiltration checks on configured boundaries',
         'SupplyChainScanner — 8 malicious signature categories',
         'CostGuard — 8 economic attack type detection with auto-melt',
         'GuardianAgent — semantic drift and anomaly monitoring',
@@ -734,18 +732,18 @@ export class EuAiActComplianceReporter {
         securityScore,
         lastTestedAt: new Date().toISOString(),
         testingFrequency:
-          'Every PR (smoke), every merge to main (full battery), monthly comprehensive',
+          'Configured cadence: PR smoke checks, merge checks, and a planned periodic review',
       },
       continuousMonitoring: [
         'SecurityMonitor — real-time burst, escalation, and anomaly detection',
-        'SecurityAuditLogger — all security events with severity classification',
+        'SecurityAuditLogger — configured security events with severity classification',
         'GuardianAgent — continuous semantic drift and safety monitoring',
         'CostGuard — real-time economic attack detection',
-        'OpenMetrics/Prometheus — all security metrics with alert thresholds',
+        'OpenMetrics/Prometheus — configured security metrics with alert thresholds',
         'AgentSOC Dashboard — P0-P4 incident tracking with SLA monitoring',
       ],
       residualRiskStatement:
-        'After applying all listed mitigation measures, the residual risk is assessed as TOLERABLE. No critical risks remain unmitigated. The primary residual risks are (1) novel prompt injection techniques not yet covered by existing detection patterns, (2) zero-day vulnerabilities in LLM providers or sandbox infrastructure, and (3) sophisticated multi-stage attacks combining injection with social engineering. These risks are continuously monitored and addressed through the red team testing program and security update cycle. The system is NOT recommended for fully autonomous operation in life-safety, financial trading, or legal decision-making contexts without human operator supervision.',
+        'This self-assessment records residual risk as TOLERABLE for the listed controls; it does not establish that critical risks are absent. Remaining risks include (1) novel prompt-injection techniques not covered by current patterns, (2) zero-day vulnerabilities in LLM providers or sandbox infrastructure, and (3) sophisticated multi-stage attacks combining injection with social engineering. These risks require ongoing review. The system is NOT recommended for fully autonomous operation in life-safety, financial trading, or legal decision-making contexts without human operator supervision.',
     };
   }
 
@@ -804,7 +802,6 @@ export class EuAiActComplianceReporter {
     if (article.limitations.length >= 3) score += 15;
     if (article.dataSources.length >= 3) score += 10;
     if (article.decisionProcess.length > 50) score += 15;
-    if (Object.keys(article.performanceMetrics.benchmarkResults).length >= 3) score += 10;
     if (article.transparencyMeasures.length >= 3) score += 10;
     if (article.userDisclosures.length >= 3) score += 10;
     return Math.min(100, score);

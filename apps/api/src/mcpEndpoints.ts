@@ -349,6 +349,46 @@ function registerActionGatewayTools(
     properties: { runId: { type: 'string' } },
     required: ['runId'],
   };
+  const idempotentRunIdSchema: MCPTool['inputSchema'] = {
+    type: 'object',
+    properties: {
+      runId: { type: 'string' },
+      idempotencyKey: { type: 'string' },
+    },
+    required: ['runId', 'idempotencyKey'],
+  };
+  const compensationRequestSchema: MCPTool['inputSchema'] = {
+    type: 'object',
+    properties: {
+      runId: { type: 'string' },
+      idempotencyKey: { type: 'string' },
+      originalEffectId: { type: 'string' },
+      adapterVersion: { type: 'string' },
+      compensationEffectType: { type: 'string' },
+      compensationPatch: { type: 'object' },
+      forwardReceiptHash: { type: 'string' },
+    },
+    required: [
+      'runId',
+      'idempotencyKey',
+      'originalEffectId',
+      'adapterVersion',
+      'compensationEffectType',
+      'compensationPatch',
+      'forwardReceiptHash',
+    ],
+  };
+  const compensationApprovalSchema: MCPTool['inputSchema'] = {
+    type: 'object',
+    properties: {
+      runId: { type: 'string' },
+      authorizationId: { type: 'string' },
+      idempotencyKey: { type: 'string' },
+      actionDigest: { type: 'string' },
+      policySnapshotId: { type: 'string' },
+    },
+    required: ['runId', 'authorizationId', 'idempotencyKey', 'actionDigest', 'policySnapshotId'],
+  };
 
   registerGatewayTool(
     server,
@@ -383,18 +423,52 @@ function registerActionGatewayTools(
       type: 'object',
       properties: {
         runId: { type: 'string' },
+        idempotencyKey: { type: 'string' },
         actionDigest: { type: 'string' },
         simulationId: { type: 'string' },
         policySnapshotId: { type: 'string' },
       },
-      required: ['runId', 'actionDigest', 'simulationId', 'policySnapshotId'],
+      required: ['runId', 'idempotencyKey', 'actionDigest', 'simulationId', 'policySnapshotId'],
     },
     (args) => {
-      const { runId, actionDigest, simulationId, policySnapshotId } = args;
+      const { runId, idempotencyKey, actionDigest, simulationId, policySnapshotId } = args;
       return {
         method: 'POST',
         path: `${actionPath(runId)}/approve`,
         body: { actionDigest, simulationId, policySnapshotId },
+        headers: idempotencyHeaders(idempotencyKey),
+      };
+    },
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_compensation_request',
+    'Request governed compensation for a completed forward effect.',
+    compensationRequestSchema,
+    (args) => {
+      const { runId, idempotencyKey, ...body } = args;
+      return {
+        method: 'POST',
+        path: `${actionPath(runId)}/compensations`,
+        body,
+        headers: idempotencyHeaders(idempotencyKey),
+      };
+    },
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_compensation_approve',
+    'Approve a bound compensation authorization.',
+    compensationApprovalSchema,
+    (args) => {
+      const { runId, authorizationId, idempotencyKey, actionDigest, policySnapshotId } = args;
+      return {
+        method: 'POST',
+        path: `${actionPath(runId)}/compensations/${encodeURIComponent(requiredString(authorizationId, 'authorizationId'))}/approve`,
+        body: { actionDigest, policySnapshotId },
+        headers: idempotencyHeaders(idempotencyKey),
       };
     },
   );
@@ -403,8 +477,12 @@ function registerActionGatewayTools(
     executor,
     'commander_action_reconcile',
     'Request reconciliation for a completion-unknown action.',
-    runIdSchema,
-    (args) => ({ method: 'POST', path: `${actionPath(args.runId)}/reconcile` }),
+    idempotentRunIdSchema,
+    (args) => ({
+      method: 'POST',
+      path: `${actionPath(args.runId)}/reconcile`,
+      headers: idempotencyHeaders(args.idempotencyKey),
+    }),
   );
   registerGatewayTool(
     server,
@@ -440,8 +518,11 @@ function actionRequest(
   path: string,
   body: Record<string, unknown>,
 ): McpActionGatewayRequest {
-  const idempotencyKey = requiredString(body.idempotencyKey, 'idempotencyKey');
-  return { method, path, body, headers: { 'Idempotency-Key': idempotencyKey } };
+  return { method, path, body, headers: idempotencyHeaders(body.idempotencyKey) };
+}
+
+function idempotencyHeaders(value: unknown): Record<string, string> {
+  return { 'Idempotency-Key': requiredString(value, 'idempotencyKey') };
 }
 
 function actionPath(runId: unknown): string {

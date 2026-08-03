@@ -347,7 +347,6 @@ describe('claimReconcileEffects durable authz parity (P1-4)', () => {
       effectId: input.effectId,
       tenantId: input.tenantId,
       actor: 'api',
-      reconcileAfter: new Date(Date.now() - 1_000).toISOString(),
     });
   }
 

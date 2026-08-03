@@ -55,6 +55,13 @@ export {
 } from './effects.js';
 export type {
   ActionApprovalRequestV1,
+  ActionCompensationApprovalRequestV1,
+  ActionCompensationApprovalResponseV1,
+  ActionCompensationAuthorizationV1,
+  ActionCompensationAwaitingApprovalV1,
+  ActionCompensationRequestAcceptedV1,
+  ActionCompensationRequestResponseV1,
+  ActionCompensationRequestV1,
   ActionDecisionV1,
   ActionEffectV1,
   ActionErrorDetailV1,

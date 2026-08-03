@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import { describe, it } from 'node:test';
 import {
   buildRestoreDatabaseUrl,
+  assertDrTlsConfiguration,
+  buildDrPostgresEnv,
   computeRpoMs,
   queryRunCommittedAt,
   parseDatabaseUrl,
@@ -10,8 +13,25 @@ import {
   refuseSourceDestructiveRestore,
   sanitizeError,
   assessRestoredEvidence,
+  assertRegularArtifact,
+  restoreBackupDirectory,
+  restoredValidationFailures,
+  createFreshRestoreDatabase,
+  restoreIntoFreshTarget,
+  assertEmptyRestoreTarget,
+  validateRetainedJwks,
+  verifyRestoredReceipts,
+  verifyRestoredReceiptPages,
+  parseRestoredReceiptRows,
+  resolveDrillOverall,
+  type DrillReport,
   type DsnParts,
 } from './dr-backup-verify.js';
+import {
+  buildRunEvidenceBundle,
+  canonicalEvidenceBody,
+  createEvidenceSigner,
+} from '../packages/effect-broker/src/index.js';
 
 describe('dr-backup-verify honesty', () => {
   it('parseDatabaseUrl extracts host/port/database', () => {
@@ -31,26 +51,87 @@ describe('dr-backup-verify honesty', () => {
     assert.equal(rst.port, 5433);
   });
 
+  it('requires explicit verified TLS inputs for every DR CLI database connection', () => {
+    const source = 'postgres://user:pass@source.example.test:5432/commander?sslmode=verify-full';
+    const restore =
+      'postgres://user:pass@restore.example.test:5432/commander_dr?sslmode=verify-full';
+    const tls = {
+      COMMANDER_DATABASE_TLS_CA_FILE: '/run/commander/database-tls/ca.crt',
+      COMMANDER_DATABASE_TLS_CA_MOUNT_IDENTITY: 'secret/commander-db-tls:ca.crt',
+      COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: 'a'.repeat(64),
+    };
+    assert.doesNotThrow(() => assertDrTlsConfiguration(source, restore, tls));
+    assert.throws(
+      () => assertDrTlsConfiguration(source.replace('?sslmode=verify-full', ''), restore, tls),
+      /DATABASE_URL must require sslmode=verify-full/,
+    );
+    assert.throws(
+      () =>
+        assertDrTlsConfiguration(source, restore, { ...tls, COMMANDER_DATABASE_TLS_CA_FILE: '' }),
+      /COMMANDER_DATABASE_TLS_CA_FILE_REQUIRED/,
+    );
+
+    const env = buildDrPostgresEnv(parseDatabaseUrl(source), tls);
+    assert.equal(env.PGSSLMODE, 'verify-full');
+    assert.equal(env.PGSSLROOTCERT, tls.COMMANDER_DATABASE_TLS_CA_FILE);
+  });
+
   it('assertDistinctRestoreTarget rejects same host:port:database', () => {
-    const dsn: DsnParts = { host: 'localhost', port: 5432, database: 'commander', user: 'u', password: 'p' };
+    const dsn: DsnParts = {
+      host: 'localhost',
+      port: 5432,
+      database: 'commander',
+      user: 'u',
+      password: 'p',
+    };
     assert.throws(() => assertDistinctRestoreTarget(dsn, { ...dsn }), /distinct restore/);
   });
 
   it('refuseSourceDestructiveRestore blocks restore when RST DSN equals source', () => {
-    const dsn: DsnParts = { host: 'localhost', port: 5432, database: 'commander', user: 'u', password: 'p' };
+    const dsn: DsnParts = {
+      host: 'localhost',
+      port: 5432,
+      database: 'commander',
+      user: 'u',
+      password: 'p',
+    };
     const reason = refuseSourceDestructiveRestore(dsn, { ...dsn });
     assert.match(reason ?? '', /distinct restore/);
   });
 
   it('refuseSourceDestructiveRestore allows distinct port restore target', () => {
-    const source: DsnParts = { host: 'localhost', port: 5432, database: 'commander', user: 'u', password: 'p' };
-    const restore: DsnParts = { host: 'localhost', port: 5433, database: 'commander_dr', user: 'u', password: 'p' };
+    const source: DsnParts = {
+      host: 'localhost',
+      port: 5432,
+      database: 'commander',
+      user: 'u',
+      password: 'p',
+    };
+    const restore: DsnParts = {
+      host: 'localhost',
+      port: 5433,
+      database: 'commander_dr',
+      user: 'u',
+      password: 'p',
+    };
     assert.equal(refuseSourceDestructiveRestore(source, restore), null);
   });
 
   it('assertDistinctRestoreTarget accepts different port', () => {
-    const source: DsnParts = { host: 'localhost', port: 5432, database: 'commander', user: 'u', password: 'p' };
-    const restore: DsnParts = { host: 'localhost', port: 5433, database: 'commander', user: 'u', password: 'p' };
+    const source: DsnParts = {
+      host: 'localhost',
+      port: 5432,
+      database: 'commander',
+      user: 'u',
+      password: 'p',
+    };
+    const restore: DsnParts = {
+      host: 'localhost',
+      port: 5433,
+      database: 'commander',
+      user: 'u',
+      password: 'p',
+    };
     assert.doesNotThrow(() => assertDistinctRestoreTarget(source, restore));
   });
 
@@ -65,31 +146,42 @@ describe('dr-backup-verify honesty', () => {
   });
 
   it('queryRunCommittedAt reads epoch ms from psql output', () => {
-    const dsn: DsnParts = { host: 'localhost', port: 5432, database: 'commander', user: 'u', password: 'p' };
+    const dsn: DsnParts = {
+      host: 'localhost',
+      port: 5432,
+      database: 'commander',
+      user: 'u',
+      password: 'p',
+    };
     const epochMs = '1718806710000';
     const committed = queryRunCommittedAt(dsn, 'run_test', (_d, _sql) => epochMs);
     assert.equal(committed.getTime(), Number(epochMs));
   });
 
   it('resolveHonestyLevel is DRAFT without independent restore', () => {
-    assert.equal(resolveHonestyLevel({ independentRestore: false, sentinelVerified: false }), 'DRAFT');
+    assert.equal(
+      resolveHonestyLevel({ independentRestore: false, sentinelVerified: false }),
+      'DRAFT',
+    );
   });
 
   it('resolveHonestyLevel is ENFORCED with restore + sentinel but no cell processes', () => {
     assert.equal(
-      resolveHonestyLevel({ independentRestore: true, sentinelVerified: true, cellProcessesVerified: false }),
+      resolveHonestyLevel({
+        independentRestore: true,
+        sentinelVerified: true,
+      }),
       'ENFORCED',
     );
   });
 
-  it('resolveHonestyLevel is PROVEN only with full verification', () => {
+  it('never promotes an environment flag to PROVEN', () => {
     assert.equal(
       resolveHonestyLevel({
         independentRestore: true,
         sentinelVerified: true,
-        cellProcessesVerified: true,
       }),
-      'PROVEN',
+      'ENFORCED',
     );
   });
 
@@ -141,5 +233,424 @@ describe('dr-backup-verify honesty', () => {
         anchoredEvidenceReceiptCount: 1,
       },
     );
+  });
+
+  it('uses the supplied backup artifact directory exactly for restore-only drills', () => {
+    assert.equal(
+      restoreBackupDirectory('restore', '/var/backups/retained-drill', 'new-drill-id'),
+      '/var/backups/retained-drill',
+    );
+    assert.equal(
+      restoreBackupDirectory('full', '/var/backups', 'new-drill-id'),
+      '/var/backups/new-drill-id',
+    );
+  });
+
+  it('rejects a missing or non-regular dump artifact before restore', () => {
+    assert.throws(
+      () => assertRegularArtifact('/var/backups/drill/dump.dump', { isFile: () => false }),
+      /not a regular file/,
+    );
+  });
+
+  it('fails closed on a restore database creation failure without retrying', () => {
+    const dsn: DsnParts = {
+      host: 'localhost',
+      port: 5433,
+      database: 'commander_dr',
+      user: 'u',
+      password: 'p',
+    };
+    let attempts = 0;
+    assert.throws(
+      () =>
+        createFreshRestoreDatabase(dsn, () => {
+          attempts += 1;
+          throw new Error('database already exists');
+        }),
+      /create a fresh restore database/,
+    );
+    assert.equal(attempts, 1);
+  });
+
+  it('rejects a newly created restore target that contains user objects', () => {
+    assert.throws(() => assertEmptyRestoreTarget(1), /not empty/);
+    assert.doesNotThrow(() => assertEmptyRestoreTarget(0));
+  });
+
+  it('checks a newly created target is empty before invoking pg_restore', () => {
+    const calls: string[] = [];
+    assert.throws(
+      () =>
+        restoreIntoFreshTarget({
+          createDatabase: () => calls.push('create'),
+          countUserObjects: () => {
+            calls.push('empty-check');
+            return 1;
+          },
+          restore: () => calls.push('pg_restore'),
+        }),
+      /not empty/,
+    );
+    assert.deepEqual(calls, ['create', 'empty-check']);
+  });
+
+  it('lists every failed required restored lifecycle and evidence invariant', () => {
+    const validation: DrillReport['validation'] = {
+      runsTableExists: false,
+      stepsTableExists: false,
+      eventsTableExists: false,
+      effects: false,
+      interactions: false,
+      killSwitches: false,
+      outboxTableExists: false,
+      timersTableExists: false,
+      evidenceReceiptsRestored: false,
+      evidenceAnchorsRestored: false,
+      identityOutcomeAccountingPreserved: false,
+      evidenceReceiptCount: 0,
+      anchoredEvidenceReceiptCount: 0,
+      evidenceReceiptsVerified: 0,
+      evidenceReceiptVerificationFailures: 0,
+      retainedJwksSha256: null,
+      retainedJwksKeyIds: [],
+      rowCount: { runs: 0, steps: 0, events: 0 },
+    };
+    assert.equal(restoredValidationFailures(validation).length, 11);
+  });
+
+  it('allows PASS only for a fully valid full drill', () => {
+    assert.equal(
+      resolveDrillOverall({
+        mode: 'full',
+        independentRestore: true,
+        restoreFailures: [],
+        validationFailures: [],
+        sentinelVerified: true,
+        rpoPassed: true,
+        rtoPassed: true,
+      }),
+      'PASS',
+    );
+  });
+
+  it('fails a restored artifact/schema/evidence problem even when source checks are unavailable', () => {
+    assert.equal(
+      resolveDrillOverall({
+        mode: 'restore',
+        independentRestore: true,
+        restoreFailures: [],
+        validationFailures: ['restored evidence receipts missing'],
+        sentinelVerified: false,
+        rpoPassed: false,
+        rtoPassed: true,
+      }),
+      'FAIL',
+    );
+  });
+
+  it('keeps a valid restore-only drill DRAFT without source sentinel or RPO context', () => {
+    assert.equal(
+      resolveDrillOverall({
+        mode: 'restore',
+        independentRestore: true,
+        restoreFailures: [],
+        validationFailures: [],
+        sentinelVerified: false,
+        rpoPassed: false,
+        rtoPassed: true,
+      }),
+      'DRAFT',
+    );
+  });
+
+  it('fails rather than drafting an unsafe or non-independent restore', () => {
+    assert.equal(
+      resolveDrillOverall({
+        mode: 'restore',
+        independentRestore: false,
+        restoreFailures: ['restore target equals source'],
+        validationFailures: [],
+        sentinelVerified: false,
+        rpoPassed: false,
+        rtoPassed: true,
+      }),
+      'FAIL',
+    );
+  });
+
+  it('fails restore-only for every restore-side failure class', () => {
+    for (const restoreFailures of [
+      ['restore target equals source'],
+      ['backup artifact missing'],
+      ['pg_restore failed'],
+    ]) {
+      assert.equal(
+        resolveDrillOverall({
+          mode: 'restore',
+          independentRestore: true,
+          restoreFailures,
+          validationFailures: [],
+          sentinelVerified: false,
+          rpoPassed: false,
+          rtoPassed: true,
+        }),
+        'FAIL',
+      );
+    }
+
+    for (const validationFailure of [
+      'restored schema invalid',
+      'restored evidence invalid',
+      'retained JWKS artifact invalid',
+    ]) {
+      assert.equal(
+        resolveDrillOverall({
+          mode: 'restore',
+          independentRestore: true,
+          restoreFailures: [],
+          validationFailures: [validationFailure],
+          sentinelVerified: false,
+          rpoPassed: false,
+          rtoPassed: true,
+        }),
+        'FAIL',
+      );
+    }
+  });
+
+  it('accepts only public unique Ed25519 retained JWKS keys', () => {
+    const keyPair = generateKeyPairSync('ed25519');
+    const publicJwk = keyPair.publicKey.export({ format: 'jwk' }) as { x: string };
+    const jwks = validateRetainedJwks(
+      {
+        keys: [
+          { kty: 'OKP', crv: 'Ed25519', alg: 'EdDSA', use: 'sig', kid: 'old-1', x: publicJwk.x },
+        ],
+      },
+      Buffer.from('{"keys":[{"kid":"old-1"}]}'),
+    );
+    assert.deepEqual(jwks.keyIds, ['old-1']);
+    assert.match(jwks.sha256, /^[a-f0-9]{64}$/);
+    assert.throws(
+      () =>
+        validateRetainedJwks(
+          {
+            keys: [
+              {
+                kty: 'OKP',
+                crv: 'Ed25519',
+                alg: 'EdDSA',
+                use: 'sig',
+                kid: 'valid-before-bad',
+                x: publicJwk.x,
+              },
+              {
+                kty: 'OKP',
+                crv: 'Ed25519',
+                alg: 'EdDSA',
+                use: 'sig',
+                kid: 'private',
+                x: 'public',
+                d: 'secret',
+              },
+            ],
+          },
+          Buffer.from('{}'),
+        ),
+      /private key material/,
+    );
+    assert.throws(
+      () =>
+        validateRetainedJwks(
+          {
+            keys: [
+              { kty: 'OKP', crv: 'Ed25519', alg: 'EdDSA', use: 'sig', kid: 'same', x: publicJwk.x },
+              { kty: 'OKP', crv: 'Ed25519', alg: 'EdDSA', use: 'sig', kid: 'same', x: publicJwk.x },
+            ],
+          },
+          Buffer.from('{}'),
+        ),
+      /unique/,
+    );
+    assert.throws(
+      () =>
+        validateRetainedJwks(
+          {
+            keys: [
+              {
+                kty: 'OKP',
+                crv: 'Ed25519',
+                alg: 'EdDSA',
+                use: 'sig',
+                kid: 'bad',
+                x: 'not-a-public-key',
+              },
+            ],
+          },
+          Buffer.from('{}'),
+        ),
+      /public key is invalid/,
+    );
+  });
+
+  it('verifies a real restored receipt and rejects body signature tampering', async () => {
+    const keyPair = generateKeyPairSync('ed25519');
+    const privateKeyPem = keyPair.privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
+    const signer = createEvidenceSigner({ privateKeyPem, keyId: 'retained' });
+    const body = buildRunEvidenceBundle({
+      tenantId: 'tenant-1',
+      runId: 'run-1',
+      policySnapshotId: 'policy-1',
+      effects: [
+        {
+          id: 'effect-1',
+          runId: 'run-1',
+          stepId: 'step-1',
+          tenantId: 'tenant-1',
+          type: 'kubernetes.deployment.rollback',
+          state: 'COMPLETED',
+          policyDecisionId: 'decision-1',
+          requestHash: 'a'.repeat(64),
+          createdAt: '2026-07-31T00:00:00.000Z',
+          completedAt: '2026-07-31T00:00:01.000Z',
+        },
+      ],
+    });
+    const signature = await signer.sign(canonicalEvidenceBody(body));
+    const completeBody = { ...body, signature };
+    const retainedJwks = validateRetainedJwks(
+      signer.jwks,
+      Buffer.from(JSON.stringify(signer.jwks), 'utf8'),
+    ).jwks;
+    const row = {
+      body: completeBody,
+      signature,
+      actionDigest: completeBody.actionDigest,
+      contentHash: completeBody.contentHash,
+    };
+    const verified = verifyRestoredReceipts([row], retainedJwks);
+    assert.deepEqual(verified, { verified: 1, failed: 0, failures: [] });
+    const tampered = verifyRestoredReceipts(
+      [{ ...row, body: { ...completeBody, signature: { ...signature, value: 'tampered' } } }],
+      retainedJwks,
+    );
+    assert.deepEqual(tampered, {
+      verified: 0,
+      failed: 1,
+      failures: ['EVIDENCE_SIGNATURE_BINDING_MISMATCH'],
+    });
+    const tamperedColumn = verifyRestoredReceipts(
+      [{ ...row, signature: { ...signature, value: 'tampered-column' } }],
+      retainedJwks,
+    );
+    assert.deepEqual(tamperedColumn, {
+      verified: 0,
+      failed: 1,
+      failures: ['EVIDENCE_SIGNATURE_BINDING_MISMATCH'],
+    });
+  });
+
+  it('rejects database hash columns and retained key ids independently', () => {
+    const jwks = {
+      keys: [
+        { kty: 'OKP', crv: 'Ed25519', alg: 'EdDSA', use: 'sig', kid: 'retained', x: 'public' },
+      ],
+    };
+    const signature = {
+      algorithm: 'Ed25519',
+      keyId: 'missing',
+      signedAt: new Date().toISOString(),
+      value: 'signature',
+    } as const;
+    const receipt = {
+      body: { actionDigest: 'body-action', contentHash: 'body-content', signature } as never,
+      signature,
+      actionDigest: 'db-action',
+      contentHash: 'body-content',
+    };
+    assert.deepEqual(verifyRestoredReceipts([receipt], jwks), {
+      verified: 0,
+      failed: 1,
+      failures: ['EVIDENCE_ACTION_DIGEST_MISMATCH'],
+    });
+    assert.deepEqual(
+      verifyRestoredReceipts(
+        [{ ...receipt, actionDigest: 'body-action', contentHash: 'db-content' }],
+        jwks,
+      ),
+      {
+        verified: 0,
+        failed: 1,
+        failures: ['EVIDENCE_CONTENT_HASH_MISMATCH'],
+      },
+    );
+    assert.deepEqual(
+      verifyRestoredReceipts(
+        [{ ...receipt, actionDigest: 'body-action', contentHash: 'body-content' }],
+        jwks,
+      ),
+      {
+        verified: 0,
+        failed: 1,
+        failures: ['EVIDENCE_KEY_ID_NOT_RETAINED'],
+      },
+    );
+    assert.deepEqual(
+      parseRestoredReceiptRows(JSON.stringify([{ body: {}, signature: {} }])).length,
+      1,
+    );
+  });
+
+  it('verifies restored receipts page by page with keyset cursors and bounded failure reasons', () => {
+    const cursors: Array<{ createdAt: string; tenantId: string; bundleId: string } | null> = [];
+    const invalidReceipt = {
+      body: {} as never,
+      signature: {} as never,
+    };
+    const result = verifyRestoredReceiptPages(
+      (cursor) => {
+        cursors.push(cursor);
+        if (!cursor) {
+          return {
+            receipts: [invalidReceipt, invalidReceipt],
+            cursor: {
+              createdAt: '2026-07-31T00:00:00.000Z',
+              tenantId: 'tenant-a',
+              bundleId: 'bundle-b',
+            },
+          };
+        }
+        assert.deepEqual(cursor, {
+          createdAt: '2026-07-31T00:00:00.000Z',
+          tenantId: 'tenant-a',
+          bundleId: 'bundle-b',
+        });
+        return {
+          receipts: [invalidReceipt],
+          cursor: {
+            createdAt: '2026-07-31T00:00:01.000Z',
+            tenantId: 'tenant-a',
+            bundleId: 'bundle-c',
+          },
+        };
+      },
+      { keys: [] },
+      { pageSize: 2, maxFailureReasons: 2 },
+    );
+
+    assert.deepEqual(cursors, [
+      null,
+      {
+        createdAt: '2026-07-31T00:00:00.000Z',
+        tenantId: 'tenant-a',
+        bundleId: 'bundle-b',
+      },
+    ]);
+    assert.deepEqual(result, {
+      verified: 0,
+      failed: 3,
+      failures: ['EVIDENCE_SIGNATURE_BINDING_MISMATCH', 'EVIDENCE_SIGNATURE_BINDING_MISMATCH'],
+    });
   });
 });

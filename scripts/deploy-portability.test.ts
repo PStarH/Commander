@@ -100,6 +100,136 @@ function isolation(config: string): string {
 }
 
 describe('deployment gate portability', () => {
+  it('bootstraps the CI deploy-gate database with a separate owner closure session', () => {
+    const workflow = load(
+      readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'),
+    ) as {
+      jobs?: Record<
+        string,
+        {
+          env?: Record<string, string>;
+          steps?: Array<{ name?: string; run?: string; env?: Record<string, string> }>;
+        }
+      >;
+    };
+    const job = workflow.jobs?.['l4-b-deploy-gates'];
+    assert.ok(job, 'CI must define the l4-b deploy-gates job');
+    assert.match(job.env?.OWNER_DSN ?? '', /postgres:\/\/commander_owner:/);
+    assert.match(job.env?.COMMANDER_OWNER_DATABASE_URL ?? '', /postgres:\/\/commander_owner:/);
+    assert.match(job.env?.DATABASE_URL ?? '', /postgres:\/\/commander:/);
+    assert.match(job.env?.COMMANDER_KERNEL_DATABASE_URL ?? '', /postgres:\/\/commander:/);
+    assert.match(job.env?.COMMANDER_TASK1_PG_URL ?? '', /postgres:\/\/commander_ci_admin:/);
+    assert.doesNotMatch(job.env?.OWNER_DSN ?? '', /postgres:\/\/commander:/);
+
+    const steps = job.steps ?? [];
+    const bootstrapIndex = steps.findIndex(
+      (step) => step.name === 'Bootstrap deploy-gate authority',
+    );
+    const migrationIndex = steps.findIndex(
+      (step) => step.name === 'Apply enforced Task 1 closure migrations',
+    );
+    const postClosureIndex = steps.findIndex(
+      (step) => step.name === 'Apply post-closure kernel migrations',
+    );
+    const gateIndex = steps.findIndex(
+      (step) => step.name === 'Deploy gates (pnpm test:deploy-gates)',
+    );
+    assert.ok(bootstrapIndex >= 0, 'CI must bootstrap the deploy-gate authority topology');
+    assert.ok(migrationIndex > bootstrapIndex, 'closure migrations must follow bootstrap');
+    assert.ok(postClosureIndex > migrationIndex, 'full migrations must follow closure migrations');
+    assert.ok(
+      gateIndex > postClosureIndex,
+      'deploy gates must follow full post-closure migrations',
+    );
+
+    const bootstrap = steps[bootstrapIndex]?.run ?? '';
+    assert.match(bootstrap, /CREATE ROLE commander_ci_admin WITH LOGIN SUPERUSER/);
+    assert.match(bootstrap, /CREATE ROLE commander_owner WITH LOGIN/);
+    assert.match(
+      bootstrap,
+      /CREATE ROLE commander_scheduler WITH LOGIN PASSWORD 'commander_scheduler' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION BYPASSRLS;/,
+    );
+    assert.match(bootstrap, /ALTER DATABASE commander OWNER TO commander_owner/);
+    for (const role of [
+      'commander_app',
+      'commander_tenant_authority',
+      'commander_scheduler',
+      'commander_worker',
+      'commander_adapter_ops',
+    ]) {
+      assert.match(bootstrap, new RegExp(`GRANT ${role} TO commander_owner WITH ADMIN OPTION`));
+    }
+
+    const migration = steps[migrationIndex];
+    assert.match(migration?.run ?? '', /ci-bootstrap-deploy-gates\.ts closure/);
+    assert.equal(migration?.env, undefined);
+    assert.match(steps[postClosureIndex]?.run ?? '', /ci-bootstrap-deploy-gates\.ts full/);
+  });
+
+  it('persists the authorized rotation keyring into the deploy-gate verifier step', () => {
+    const workflow = load(
+      readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'),
+    ) as {
+      jobs?: Record<
+        string,
+        { steps?: Array<{ name?: string; run?: string; env?: Record<string, string> }> }
+      >;
+    };
+    const steps = workflow.jobs?.['l4-b-deploy-gates']?.steps ?? [];
+    const importIndex = steps.findIndex(
+      (step) => step.name === 'Import authorized rotation sign-off key',
+    );
+    const gateIndex = steps.findIndex(
+      (step) => step.name === 'Deploy gates (pnpm test:deploy-gates)',
+    );
+    assert.ok(importIndex >= 0, 'CI must import the authorized rotation public key');
+    assert.ok(gateIndex > importIndex, 'rotation verification must run after key import');
+    assert.match(
+      steps[importIndex]?.run ?? '',
+      /GNUPGHOME=.*commander-gnupg[\s\S]*>>\s*"\$GITHUB_ENV"/,
+      'the imported keyring must persist into later GitHub Actions steps',
+    );
+    assert.match(
+      steps[gateIndex]?.run ?? '',
+      /pnpm test:deploy-gates/,
+      'the persisted keyring is consumed by test:deploy-gates -> rotate:verify',
+    );
+  });
+
+  it('exposes DR live proof only through a protected, fail-closed CI handoff', () => {
+    const workflow = load(
+      readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'),
+    ) as {
+      jobs?: Record<
+        string,
+        {
+          environment?: string;
+          'runs-on'?: unknown;
+          steps?: Array<{ name?: string; run?: string; env?: Record<string, string> }>;
+        }
+      >;
+    };
+    const job = workflow.jobs?.['l4-b-dr-live-proof'];
+    assert.ok(job, 'CI must expose an explicit G4 DR live-proof handoff job');
+    assert.equal(job.environment, 'cd-live-proof');
+    assert.deepEqual(job['runs-on'], ['self-hosted', 'linux', 'x64', 'commander-dr']);
+
+    const inputStep = job.steps?.find((step) => step.name === 'Materialize protected DR inputs');
+    const proofStep = job.steps?.find((step) => step.name === 'Run G4 rotation and DR proof');
+    assert.match(inputStep?.run ?? '', /COMMANDER_DR_SOURCE_DATABASE_URL/);
+    assert.match(inputStep?.run ?? '', /COMMANDER_DR_RESTORE_DATABASE_URL/);
+    assert.match(inputStep?.run ?? '', /COMMANDER_DR_DATABASE_TLS_CA_PEM/);
+    assert.match(inputStep?.run ?? '', /COMMANDER_DR_DATABASE_TLS_SPKI_SHA256/);
+    assert.match(inputStep?.run ?? '', /COMMANDER_DR_DATABASE_TLS_CA_MOUNT_IDENTITY/);
+    assert.match(inputStep?.run ?? '', /COMMANDER_DR_EVIDENCE_JWKS_JSON/);
+    assert.match(inputStep?.run ?? '', /sslmode/);
+    assert.match(inputStep?.run ?? '', /PGSSLMODE=verify-full/);
+    assert.match(inputStep?.run ?? '', /PGSSLROOTCERT/);
+    assert.match(inputStep?.run ?? '', /must not contain private key material/);
+    assert.match(proofStep?.run ?? '', /pnpm rotate:verify/);
+    assert.match(proofStep?.run ?? '', /pnpm dr:verify/);
+  });
+
   it('pins every CI Helm installation to the supported 3.17.3 runtime', () => {
     for (const workflow of ['.github/workflows/ci.yml', '.github/workflows/helm-lifecycle.yml']) {
       const parsed = load(readFileSync(join(process.cwd(), workflow), 'utf8')) as {

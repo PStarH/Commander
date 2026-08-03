@@ -12,17 +12,22 @@ import {
 import * as kernel2026072116 from './schema20260721_16.js';
 import { KERNEL_TASK1_HELM_LIFECYCLE_GATE_SQL } from './task1LifecycleLedger.js';
 import {
+  KERNEL_TASK1_API_OPERATIONS_READINESS_SQL,
   KERNEL_TASK1_AUTHENTICATED_TENANT_AUTHORITY_ENFORCE_SQL,
   KERNEL_TASK1_AUTHENTICATED_TENANT_AUTHORITY_EXPAND_SQL,
 } from './task1TenantContext.js';
 import {
   KERNEL_TASK2_RECONCILIATION_RPCS_SQL,
   KERNEL_TASK2_RECONCILIATION_SCHEMA_SQL,
+  KERNEL_TASK2_RECONCILIATION_SCHEMA_SQL_HISTORICAL,
   KERNEL_TASK2_ROLE_CLOSURE_SQL,
 } from './task2Reconciliation.js';
 import type { SqlClient, SqlPool } from './postgres.js';
 import {
+  KERNEL_ADAPTER_OPS_COMPENSATION_TERMINAL_EVIDENCE_SQL,
+  KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL,
   KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL,
+  KERNEL_SIGNED_EVIDENCE_ORDERING_SQL,
   KERNEL_SIGNED_EVIDENCE_SQL,
 } from './evidenceSchema.js';
 import { KERNEL_COMPENSATION_PERSISTENCE_SQL } from './compensationSchema.js';
@@ -35,6 +40,61 @@ export interface KernelMigration {
 }
 
 const checksum = (sql: string): string => createHash('sha256').update(sql).digest('hex');
+
+const KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_CHECKSUM =
+  'd76d0dc499b7c2b69abe779252792cf3fd7dd1921e09cd9b8d77e42035f7149d';
+if (
+  checksum(KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL) !==
+  KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_CHECKSUM
+) {
+  throw new Error(
+    'Signed evidence authority closure source changed without a new migration descriptor',
+  );
+}
+
+const KERNEL_TASK2_RECONCILIATION_SCHEMA_HISTORICAL_CHECKSUM =
+  '281a703a1cc0a6f98e53d30e78ce9cdf632f31685794bdd3d95c122e431c7703';
+const KERNEL_TASK2_RECONCILIATION_SCHEMA_CANONICAL_CHECKSUM =
+  '46a7513bc4f2402ec1819c1f286c58586417daea9eead4070b278962c73d21c1';
+const KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_CHECKSUM =
+  '5da52ef2d903c20bd81138331e0669e3745375f73161b5945a264e3ceaf27f65';
+const KERNEL_ADAPTER_OPS_COMPENSATION_TERMINAL_EVIDENCE_CHECKSUM =
+  'e26ae10783bdd959815887140cbc94ba641443898fde1c10ff61c670e97640f2';
+const KERNEL_SIGNED_EVIDENCE_ORDERING_CHECKSUM =
+  'b5e5fe007767c4649e8c82bc43b6ffcac38fbb947b143866a031648b34298bcb';
+
+const pinnedSource = (name: string, sql: string, expected: string): string => {
+  if (checksum(sql) !== expected) {
+    throw new Error(`${name} source changed without a new migration descriptor`);
+  }
+  return expected;
+};
+
+pinnedSource(
+  'Task 2 historical reconciliation schema',
+  KERNEL_TASK2_RECONCILIATION_SCHEMA_SQL_HISTORICAL,
+  KERNEL_TASK2_RECONCILIATION_SCHEMA_HISTORICAL_CHECKSUM,
+);
+pinnedSource(
+  'Task 2 canonical reconciliation schema',
+  KERNEL_TASK2_RECONCILIATION_SCHEMA_SQL,
+  KERNEL_TASK2_RECONCILIATION_SCHEMA_CANONICAL_CHECKSUM,
+);
+pinnedSource(
+  'Adapter-ops evidence context',
+  KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL,
+  KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_CHECKSUM,
+);
+pinnedSource(
+  'Adapter-ops compensation terminal evidence',
+  KERNEL_ADAPTER_OPS_COMPENSATION_TERMINAL_EVIDENCE_SQL,
+  KERNEL_ADAPTER_OPS_COMPENSATION_TERMINAL_EVIDENCE_CHECKSUM,
+);
+pinnedSource(
+  'Signed evidence ordering',
+  KERNEL_SIGNED_EVIDENCE_ORDERING_SQL,
+  KERNEL_SIGNED_EVIDENCE_ORDERING_CHECKSUM,
+);
 
 const KERNEL_2026072116_SCHEMA_VERSION = kernel2026072116.KERNEL_SCHEMA_VERSION;
 
@@ -97,6 +157,8 @@ export const KERNEL_TASK1_FORWARD_MIGRATION_CHECKSUMS = Object.freeze({
     'a946e4a209282b9a287bd0e6f82d3253d0ce91e69a382fd3d7f8cb2a93fe569c',
   '2026-07-26.1.task1_runtime_authority_closure':
     'e6dc7640498b11819d67670d765109b91c9327e841dcff2536b7cce7629077ba',
+  '2026-08-01.1.task1_api_operations_readiness':
+    '6b206a58b9dbb97e0b8310d5bc7a8fee4aa5d893eeb6d7b92a5b08509e6c2c53',
 });
 
 /** Phase-aware closure descriptors. The lifecycle owner runner, never runtime startup, applies them. */
@@ -112,6 +174,8 @@ export const KERNEL_TASK1_CLOSURE_MIGRATION_CHECKSUMS = Object.freeze({
 export const KERNEL_TASK2_FORWARD_MIGRATION_CHECKSUMS = Object.freeze({
   '2026-07-26.2.task2_reconciliation_schema':
     '281a703a1cc0a6f98e53d30e78ce9cdf632f31685794bdd3d95c122e431c7703',
+  '2026-08-02.3.task2_reconciliation_schema_canonical_baseline':
+    '46a7513bc4f2402ec1819c1f286c58586417daea9eead4070b278962c73d21c1',
   '2026-07-26.2.task2_reconciliation_rpcs':
     '79007556a06e8188c4d85c23ec71d0ee114eafdff337747c5aa5ee76c8bb2b62',
   '2026-07-26.2.task2_role_closure':
@@ -165,11 +229,19 @@ export const KERNEL_TASK1_FORWARD_MIGRATIONS: readonly KernelMigration[] = [
     '2026-07-26.1.task1_runtime_authority_closure',
     KERNEL_TASK1_RUNTIME_AUTHORITY_CLOSURE_SQL,
   ),
+  task1ForwardMigration(
+    '2026-08-01.1.task1_api_operations_readiness',
+    KERNEL_TASK1_API_OPERATIONS_READINESS_SQL,
+  ),
 ];
 
 export const KERNEL_TASK2_FORWARD_MIGRATIONS: readonly KernelMigration[] = [
   task2ForwardMigration(
     '2026-07-26.2.task2_reconciliation_schema',
+    KERNEL_TASK2_RECONCILIATION_SCHEMA_SQL_HISTORICAL,
+  ),
+  task2ForwardMigration(
+    '2026-08-02.3.task2_reconciliation_schema_canonical_baseline',
     KERNEL_TASK2_RECONCILIATION_SCHEMA_SQL,
   ),
   task2ForwardMigration(
@@ -188,7 +260,22 @@ export const KERNEL_SIGNED_EVIDENCE_MIGRATIONS: readonly KernelMigration[] = [
   {
     id: '2026-07-29.2.signed_evidence_authority_closure',
     sql: KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL,
-    checksum: checksum(KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL),
+    checksum: KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_CHECKSUM,
+  },
+  {
+    id: '2026-08-02.1.adapter_ops_evidence_context',
+    sql: KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL,
+    checksum: KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_CHECKSUM,
+  },
+  {
+    id: '2026-08-02.2.adapter_ops_compensation_terminal_evidence',
+    sql: KERNEL_ADAPTER_OPS_COMPENSATION_TERMINAL_EVIDENCE_SQL,
+    checksum: KERNEL_ADAPTER_OPS_COMPENSATION_TERMINAL_EVIDENCE_CHECKSUM,
+  },
+  {
+    id: '2026-08-02.4.signed_evidence_ordering_repair',
+    sql: KERNEL_SIGNED_EVIDENCE_ORDERING_SQL,
+    checksum: KERNEL_SIGNED_EVIDENCE_ORDERING_CHECKSUM,
   },
 ];
 
@@ -243,6 +330,8 @@ export const KERNEL_MIGRATIONS: readonly KernelMigration[] = [
   ...KERNEL_CAMPAIGN2_CRITICAL_HARDENING_MIGRATIONS,
   ...KERNEL_SIGNED_EVIDENCE_MIGRATIONS,
 ];
+
+const TASK2_HISTORICAL_SCHEMA_ID = '2026-07-26.2.task2_reconciliation_schema';
 
 export interface MigrationRunOptions {
   /** Expected role category for the connection. */
@@ -397,13 +486,31 @@ export async function runKernelMigrations(
       'SELECT checksum FROM commander_kernel_migrations WHERE id=$1',
       ['2026-07-27.3.task1_authenticated_tenant_authority_enforce'],
     );
-    const migrations =
+    const canonicalClosureApplied =
       closure.rows[0]?.checksum ===
       KERNEL_TASK1_CLOSURE_MIGRATION_CHECKSUMS[
         '2026-07-27.3.task1_authenticated_tenant_authority_enforce'
-      ]
-        ? KERNEL_MIGRATIONS
-        : KERNEL_TASK1_BASELINE_MIGRATIONS;
+      ];
+    if (closure.rows[0] && !canonicalClosureApplied) {
+      throw new Error(
+        'Kernel migrations rejected: Task 1 enforce closure checksum is not the canonical published descriptor',
+      );
+    }
+    if (canonicalClosureApplied) {
+      const historicalTask2 = await client.query<{ checksum: string }>(
+        'SELECT checksum FROM commander_kernel_migrations WHERE id=$1',
+        [TASK2_HISTORICAL_SCHEMA_ID],
+      );
+      if (
+        historicalTask2.rows[0] &&
+        historicalTask2.rows[0].checksum !== KERNEL_TASK2_RECONCILIATION_SCHEMA_HISTORICAL_CHECKSUM
+      ) {
+        throw new Error(`Kernel migration checksum mismatch for ${TASK2_HISTORICAL_SCHEMA_ID}`);
+      }
+    }
+    const migrations = canonicalClosureApplied
+      ? KERNEL_MIGRATIONS.filter((migration) => migration.id !== TASK2_HISTORICAL_SCHEMA_ID)
+      : KERNEL_TASK1_BASELINE_MIGRATIONS;
     for (const migration of migrations) {
       const existing = await client.query<{ checksum: string }>(
         'SELECT checksum FROM commander_kernel_migrations WHERE id=$1',

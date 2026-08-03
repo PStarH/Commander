@@ -98,6 +98,25 @@ function requiredReason(value: unknown): string {
   return value;
 }
 
+function requiredExecuteArgs(value: unknown): { targetRevision: string; reason: string } {
+  const args = objectRecord(value);
+  if (
+    !args ||
+    Object.keys(args).length !== 2 ||
+    !Object.keys(args).every((key) => key === 'targetRevision' || key === 'reason')
+  ) {
+    throw executionError(
+      'Kubernetes rollback arguments contain an unsupported key',
+      'KUBERNETES_ARGUMENTS_INVALID',
+      'NOT_COMMITTED',
+    );
+  }
+  return {
+    targetRevision: requiredRevision(args.targetRevision, 'targetRevision'),
+    reason: requiredReason(args.reason),
+  };
+}
+
 function objectRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -374,7 +393,9 @@ export function createKubernetesDeploymentRollbackAdapter(
       return { classification: 'UNKNOWN', deployments: [] };
     }
     if (response.status === 404) {
-      return { classification: 'NOT_APPLIED', deployments: [], httpStatus: 404 };
+      // A missing collection is an unavailable observation, not proof that a
+      // prior marker was never committed (the namespace/API may have gone away).
+      return { classification: 'UNKNOWN', deployments: [], httpStatus: 404 };
     }
     if (response.status === 409 || response.status === 429 || response.status >= 500) {
       return { classification: 'UNKNOWN', deployments: [], httpStatus: response.status };
@@ -531,8 +552,7 @@ export function createKubernetesDeploymentRollbackAdapter(
     descriptor: KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
 
     async execute(input: AdapterExecuteInput): Promise<Record<string, unknown>> {
-      const targetRevision = requiredRevision(input.args.targetRevision, 'targetRevision');
-      const reason = requiredReason(input.args.reason);
+      const { targetRevision, reason } = requiredExecuteArgs(input.args);
       const context = parseKubernetesDeploymentDestination(input.destination);
       const marker = commanderActionMarker(input.tenantId, input.idempotencyKey);
       const observed = await observe(input, ACTION_MARKER_ANNOTATION, marker, targetRevision);

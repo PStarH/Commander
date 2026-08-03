@@ -222,11 +222,13 @@ const CANONICAL_SIGNALS = new Map<string, readonly string[]>([
 ]);
 
 const CANONICAL_CLIENT_ENTRYPOINTS = new Map<string, string>([
+  ['apps/web/src/pages/ActionsPage.tsx', '@commander/web'],
   ['scripts/l4-b-adapter-chaos.ts', 'repository-proofs'],
   ['scripts/l4-b-cell-reconciliation-e2e.ts', 'repository-proofs'],
 ]);
 
 const CANONICAL_CLIENT_SIGNALS = new Map<string, readonly string[]>([
+  ['apps/web/src/pages/ActionsPage.tsx', ['call:requestCompensation']],
   ['scripts/l4-b-adapter-chaos.ts', ['call:createRun', 'call:requestReconcile']],
   [
     'scripts/l4-b-cell-reconciliation-e2e.ts',
@@ -821,6 +823,15 @@ export function buildInventory(input: BuildInventoryInput = {}): InventoryResult
       owner = TEMPORARY_GATES.get(path)!;
       disposition = 'remove';
       relevantSignals = ['gate'];
+    } else if (approval) {
+      // Keep hash-bound legacy approvals visible even when static signal
+      // extraction cannot recognize the source's write mechanism.
+      authorityKind = 'write-capable-legacy';
+      owner = approval.owner;
+      expiresAt = approval.expiresAt;
+      replacement = approval.canonicalReplacement;
+      disposition = approval.disposition;
+      relevantSignals = ['allowlist-only'];
     } else if (signals.reads.length > 0 || READ_ONLY_ENTRYPOINTS.has(path)) {
       authorityKind = 'read-only-legacy';
       owner = READ_ONLY_ENTRYPOINTS.get(path) ?? 'legacy projection';
@@ -838,7 +849,9 @@ export function buildInventory(input: BuildInventoryInput = {}): InventoryResult
       callers,
       sourceSha256: hash(source),
       callersSha256: hashCallers(callers, sources),
-      writesExternally: signals.writes.length > 0,
+      writesExternally:
+        signals.writes.length > 0 ||
+        (Boolean(approval) && authorityKind === 'write-capable-legacy'),
       owner,
       expiresAt,
       canonicalReplacement: replacement,
@@ -847,7 +860,6 @@ export function buildInventory(input: BuildInventoryInput = {}): InventoryResult
     entries.push(entry);
 
     if (approval) {
-      if (signals.writes.length === 0) errors.add(`Stale legacy authority approval: ${path}`);
       if (authorityKind === 'canonical-client') {
         errors.add(`Canonical client cannot be allowlisted: ${path}`);
       }

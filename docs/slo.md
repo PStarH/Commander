@@ -3,6 +3,8 @@
 This document describes the public Service Level Objectives (SLOs) for Commander.
 The targets are measured daily by the SLO benchmark runner
 (`.github/workflows/slo-bench.yml`) and reported in the web dashboard at `/slo`.
+The committed measurements are CI baselines and target definitions, not evidence
+of production SLA attainment or a customer contract.
 
 ## SLO Summary
 

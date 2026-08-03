@@ -369,6 +369,65 @@ void describe('@commander/sdk — Gateway V1 client', () => {
     assert.equal(result.verification.ok, true);
   });
 
+  void it('requests and approves a compensation through the action gateway', async () => {
+    const { CommanderGatewayClient } = require('../src/v1/client');
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const client = new CommanderGatewayClient({
+      baseUrl: 'https://commander.example',
+      apiKey: 'key',
+      fetch: async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        const body = url.endsWith('/compensations')
+          ? {
+              authorization: { id: 'authorization-1', actionDigest: 'b'.repeat(64) },
+              replayed: false,
+              state: 'AWAITING_APPROVAL',
+            }
+          : {
+              interaction: { id: 'interaction-1', status: 'answered' },
+              accepted: true,
+              request: { id: 'request-1', state: 'AUTHORIZED' },
+              replayed: false,
+            };
+        return new Response(JSON.stringify(body), {
+          status: 202,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+    const input = {
+      originalEffectId: 'effect-1',
+      adapterVersion: 'demo.adapter.v1',
+      compensationEffectType: 'compensate.demo.ticket.create',
+      compensationPatch: { ticketId: 'ticket-1' },
+      forwardReceiptHash: 'a'.repeat(64),
+    };
+
+    const requested = await client.requestActionCompensation(
+      'run-action-1',
+      input,
+      'compensation-request-1',
+    );
+    const approved = await client.approveActionCompensation(
+      'run-action-1',
+      'authorization-1',
+      { actionDigest: 'b'.repeat(64), policySnapshotId: 'policy-1' },
+      'compensation-approve-1',
+    );
+
+    assert.equal(requested.state, 'AWAITING_APPROVAL');
+    assert.equal(approved.accepted, true);
+    assert.deepEqual(calls.map(({ url }) => url), [
+      'https://commander.example/v1/actions/run-action-1/compensations',
+      'https://commander.example/v1/actions/run-action-1/compensations/authorization-1/approve',
+    ]);
+    assert.deepEqual(
+      calls.map(({ init }) => new Headers(init?.headers).get('idempotency-key')),
+      ['compensation-request-1', 'compensation-approve-1'],
+    );
+    assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), input);
+  });
+
   void it('reconcileAction preserves the canonical 202 result', async () => {
     const { CommanderGatewayClient } = require('../src/v1/client');
     const fixture = {

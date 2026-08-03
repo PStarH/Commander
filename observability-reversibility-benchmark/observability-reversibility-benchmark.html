@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Commander 可观测性与可逆性 · 行业第一对标分析</title>
+  <title>Commander 可观测性与可逆性 · 代码审查快照</title>
 
   <style>
     @font-face {
@@ -163,10 +163,10 @@
 
     <!-- ===== HERO ===== -->
     <header class="hero">
-      <div class="eyebrow">Gap Analysis · 行业第一对标</div>
-      <h1>Commander 可观测性与可逆性<br>距离行业第一有多远</h1>
-      <p class="subtitle">以 Langfuse + OpenTelemetry GenAI 语义约定为可观测性标杆，以 Temporal 为可逆性标杆，对 Commander 现有实现进行逐维度盘点、差距量化与改进路线规划。</p>
-      <div class="meta">数据截止: 2026-06-28 · 代码库: 362 commits / 250k 行核心代码 · 2852 passing tests</div>
+      <div class="eyebrow">Gap Analysis · archival code-review snapshot</div>
+      <h1>Commander 可观测性与可逆性<br>相对参考基线的差距</h1>
+      <p class="subtitle">以 Langfuse + OpenTelemetry GenAI 语义约定作为可观测性参考，以 Temporal 作为可逆性参考，对 Commander 代码库进行逐维度盘点、差距量化与改进路线规划。本文不是独立竞争性评测，也不构成生产、客户或合规证明。</p>
+      <div class="meta">数据截止: 2026-06-28 · 代码审查快照 · 代码库: 362 commits / 250k 行核心代码 · 2852 passing tests（测试数量不等于运行时证明）</div>
 
       <div class="score-row">
         <div class="score-card">
@@ -179,7 +179,7 @@
           <div class="label">可逆性 成熟度</div>
           <div class="val" style="color:var(--accent)">6.0<span style="font-size:1rem;color:var(--muted)">/10</span></div>
           <div class="bar"><span style="width:60%;background:var(--accent)"></span></div>
-          <div class="delta" style="color:var(--warn)">距离 Temporal ≈ 40% · 4 项已领先</div>
+          <div class="delta" style="color:var(--warn)">相对 Temporal 参考维度差距约 40% · 4 项代码评分较高</div>
         </div>
       </div>
     </header>
@@ -190,7 +190,7 @@
         <li><a href="#exec">执行摘要</a></li>
         <li><a href="#method">方法论与对标基准</a></li>
         <li><a href="#obs-current">可观测性 · 现状盘点</a></li>
-        <li><a href="#obs-gap">可观测性 · 对标行业第一</a></li>
+        <li><a href="#obs-gap">可观测性 · 对标参考基线</a></li>
         <li><a href="#rev-current">可逆性 · 现状盘点</a></li>
         <li><a href="#rev-gap">可逆性 · 对标 Temporal</a></li>
         <li><a href="#distance">差距量化</a></li>
@@ -202,21 +202,21 @@
     <!-- ===== EXEC SUMMARY ===== -->
     <section id="exec">
       <h2>执行摘要</h2>
-      <p class="lead">Commander 在两个能力域呈现<strong>截然不同的成熟度分布</strong>：可观测性已在多数维度达到或超过行业第一梯队，而可逆性虽然覆盖面广，却因核心模块"已实现未接线"而与 Temporal 存在结构性差距。</p>
+      <p class="lead">Commander 在两个能力域呈现<strong>截然不同的成熟度分布</strong>：按本报告参考维度，可观测性在多数项得分较高，而可逆性虽然覆盖面广，却因核心模块"已实现未接线"而与 Temporal 参考存在结构性差距。</p>
 
       <div class="callout win">
-        <div class="ctitle">已领先行业第一的能力</div>
+        <div class="ctitle">相对参考基线的候选优势</div>
         <ul class="flat">
-          <li class="win"><strong>成本防护 (BillExplosionGuard)</strong> — 三层防护、五级硬上限、六种经济攻击模式检测、自动熔断，远超 Langfuse 的被动成本统计</li>
-          <li class="win"><strong>安全审计链 (AuditChainLedger)</strong> — HMAC-SHA256 哈希链、防篡改、满足 EU AI Act 第 12 条，Langfuse/LangSmith 均无等效机制</li>
-          <li class="win"><strong>SLO→告警→事件闭环</strong> — 完整 incident 生命周期管理 + 事后复盘，超越 Langfuse 的分析仪表盘</li>
-          <li class="win"><strong>补偿/Saga 广度</strong> — 风险分级回滚计划 + 不可逆动作缓冲 + LIFO 补偿，Temporal 原生不支持 saga</li>
-          <li class="win"><strong>租约 + Fencing 围栏</strong> — 单调 fencing epoch 防僵尸进程写入，比 Temporal 的模型更细粒度</li>
+          <li class="win"><strong>成本防护 (BillExplosionGuard)</strong> — 代码包含三层防护、五级硬上限和经济攻击模式检测；与本报告的 Langfuse 参考维度相比属于主动控制，仍需真实部署验证。</li>
+          <li class="win"><strong>安全审计链 (AuditChainLedger)</strong> — 代码包含 HMAC-SHA256 哈希链和篡改检测；当前是 tamper-evident in-process 机制，外部 WORM/KMS 与独立合规评估仍待补证。</li>
+          <li class="win"><strong>SLO→告警→事件闭环</strong> — 代码包含 incident 生命周期管理与事后复盘；本报告将其列为相对 Langfuse 参考维度的差异点。</li>
+          <li class="win"><strong>补偿/Saga 广度</strong> — 代码包含风险分级回滚计划、不可逆动作缓冲与 LIFO 补偿；与 Temporal 的能力边界差异需要独立验证。</li>
+          <li class="win"><strong>租约 + Fencing 围栏</strong> — 代码包含单调 fencing epoch 以防僵尸进程写入；本报告将粒度差异列为待验证假设。</li>
         </ul>
       </div>
 
       <div class="callout danger">
-        <div class="ctitle">阻断行业第一的关键缺口</div>
+        <div class="ctitle">阻断参考基线结论的关键缺口</div>
         <ul class="flat">
           <li class="crit"><strong>EventSourcingEngine 未接线</strong> — 348 行完整实现（WAL + SHA-256 哈希链 + 回放 + 快照）零运行时调用，状态无法从事件重建</li>
           <li class="crit"><strong>RecoveryBootstrapper.bootstrap 未接线</strong> — 僵尸 run 启动扫描器代码完整，但 serviceInitializer 启动时不执行，崩溃后 run 不自动恢复</li>
@@ -225,25 +225,25 @@
         </ul>
       </div>
 
-      <p><strong>核心判断：</strong>距离行业第一不是"从零建设"的距离，而是"<strong>接线 + 补齐</strong>"的距离。四个 P0 项中有三个是"代码已存在、只需接入运行时"，预计 1-2 周即可将可逆性成熟度从 6.0 提升至 7.5+，可观测性从 7.6 提升至 8.5+。</p>
+      <p><strong>代码审查判断：</strong>差距主要来自"接线 + 补齐"，但这里的 6.0/7.6 等分数是本报告的主观评分和改进估计，不是经过独立基准或生产观测验证的成熟度。</p>
     </section>
 
     <!-- ===== METHOD ===== -->
     <section id="method">
       <h2>方法论与对标基准</h2>
-      <p>本次分析遵循"先盘点现状、再对标基准、后量化差距"的路径。代码盘点覆盖 <code>packages/core</code>、<code>packages/observability</code>、<code>packages/web</code> 全部可观测性与可逆性相关源文件，逐模块核实"已构建 vs 已接线"状态。行业基准选取两个维度各自的事实标准：</p>
+      <p>本次分析遵循"先盘点现状、再对标基准、后量化差距"的路径。代码盘点覆盖 <code>packages/core</code>、<code>packages/observability</code>、<code>packages/web</code> 全部可观测性与可逆性相关源文件，逐模块核实"已构建 vs 已接线"状态。参考基线选取两个维度的公开资料：</p>
 
       <h4>可观测性基准：Langfuse + OpenTelemetry GenAI</h4>
-      <p>Langfuse 是当前最成熟的开源 LLM 应用可观测性平台，原生理解 token 用量、prompt/completion 对、评估评分等 LLM 概念，提供追踪、会话分组、成本追踪、LLM-as-Judge 评估、prompt 管理、实验数据集与自定义仪表盘<sup><a href="#cite-3">[3]</a></sup>。OpenTelemetry GenAI 语义约定（当前 Development 状态）定义了生成式 AI 的标准化信号：events、exceptions、metrics、model spans、agent spans，以及 Anthropic/OpenAI/AWS Bedrock/MCP 技术特定约定<sup><a href="#cite-1">[1]</a></sup>。两者组合代表"标准化 + LLM 原生"的行业第一梯队。</p>
+      <p>Langfuse 是本报告选用的开源 LLM 应用可观测性参考，原生理解 token 用量、prompt/completion 对、评估评分等 LLM 概念，提供追踪、会话分组、成本追踪、LLM-as-Judge 评估、prompt 管理、实验数据集与自定义仪表盘<sup><a href="#cite-3">[3]</a></sup>。OpenTelemetry GenAI 语义约定（当前 Development 状态）定义了生成式 AI 的标准化信号。两者组合在本文中只是"标准化 + LLM 原生"参考基线。</p>
 
       <h4>可逆性基准：Temporal</h4>
-      <p>Temporal 是工作流持久化执行与可逆性的事实标准。其核心是<strong>事件溯源</strong>：完整有序的 Event History 是唯一真相源，崩溃后通过从头重放事件历史重建状态（而非快照恢复），Activity 执行一次后结果记入历史、重放时复用而非重算，工作流必须确定性以保证重放正确<sup><a href="#cite-2">[2]</a></sup>。Temporal 可运行数年、自动恢复，是可逆性领域无可争议的第一。</p>
+      <p>Temporal 是本文选用的工作流持久化执行与可逆性参考。其核心是<strong>事件溯源</strong>：完整有序的 Event History 是唯一真相源，崩溃后通过从头重放事件历史重建状态，Activity 结果记入历史并在重放时复用，工作流需要确定性以保证重放正确<sup><a href="#cite-2">[2]</a></sup>。本文不把该参考描述升级为行业认证或排名。</p>
     </section>
 
     <!-- ===== OBSERVABILITY CURRENT ===== -->
     <section id="obs-current">
       <h2>可观测性 · 现状盘点</h2>
-      <p>Commander 的可观测性分布在 <code>packages/core/src/observability/</code>（22 个源文件，约 7,500 行，已接入运行时）、<code>packages/core/src/runtime/</code>（运行时级指标/追踪/健康检查）与 <code>packages/core/src/security/</code>（审计/成本防护）。关键结论：<strong>绝大多数模块已被真实调用</strong>，这与项目"40+ 安全模块已实现但未运行时调用"的普遍风险模式不同。</p>
+          <p>Commander 的可观测性代码分布在 <code>packages/core/src/observability/</code>、<code>packages/core/src/runtime/</code> 与 <code>packages/core/src/security/</code>。代码检查发现多数模块存在调用点；本快照没有对每个部署路径执行真实运行时覆盖验证，因此不把"存在调用点"升级为生产接线证明。</p>
 
       <h3>八大能力域成熟度</h3>
       <div class="table-wrap">
@@ -253,7 +253,7 @@
             <tr><td>指标收集</td><td><code>metricsCollector.ts</code> (983)<br><code>logging.ts</code> MetricsCollector (629)</td><td><span class="tag full">深度接入</span></td><td>高</td><td>两套收集器接口不统一；无 summary 类型</td></tr>
             <tr><td>分布式追踪</td><td><code>executionTrace.ts</code> (408)<br><code>openTelemetryExporter.ts</code> (397)<br><code>distributedTracing.ts</code> (294)<br><code>otelExporter.ts</code> (528)</td><td><span class="tag basic">部分接入</span></td><td>中</td><td><strong>W3C 追踪中间件未挂载</strong>；<strong>PII 脱敏导出器未激活</strong></td></tr>
             <tr><td>结构化日志</td><td><code>logging.ts</code> (629)</td><td><span class="tag full">接入</span></td><td>中</td><td>无 ELK/Loki 聚合；correlation ID 因追踪未激活而断裂</td></tr>
-            <tr><td>健康检查</td><td><code>healthCheck.ts</code> (364)</td><td><span class="tag full">真实组件</span></td><td>高</td><td>无</td></tr>
+            <tr><td>健康检查</td><td><code>healthCheck.ts</code> (364)</td><td><span class="tag full">代码组件</span></td><td>高</td><td>无</td></tr>
             <tr><td>成本/Token 追踪</td><td><code>billExplosionGuard.ts</code> (2351)<br><code>costGuard.ts</code> (831)<br><code>costEstimator.ts</code> (566)</td><td><span class="tag full">热路径深度接入</span></td><td>最高</td><td>无</td></tr>
             <tr><td>安全审计</td><td><code>securityAuditLogger.ts</code> (576)<br><code>auditChainLedger.ts</code> (607)</td><td><span class="tag full">深度接入</span></td><td>高</td><td>无</td></tr>
             <tr><td>SLO/告警/事件</td><td><code>sloMonitoringEngine.ts</code> (395)<br><code>alertRuleEngine.ts</code> (520)<br><code>incidentManager.ts</code> (588)</td><td><span class="tag full">完整闭环</span></td><td>高</td><td>无</td></tr>
@@ -270,26 +270,26 @@
       </div>
 
       <div class="callout win">
-        <div class="ctitle">已领先行业第一的差异化能力</div>
-        <p style="margin-bottom:0.4rem"><strong>BillExplosionGuard（2351 行）</strong>不仅追踪成本，更<strong>主动防护</strong>：三层检查（调用前预估 / 调用后记录 / 工具放大检查）、五级硬上限（每请求/每会话/每租户日/月/全局日）、六种经济攻击模式（token_flood / tool_amplification / concurrent_burst / context_stuffing / model_degradation / retry_storm）、80% 警告→90% 限流→100% 熔断。Langfuse 仅有被动成本统计，无主动防护。</p>
-        <p style="margin-bottom:0"><strong>AuditChainLedger（607 行）</strong>HMAC-SHA256 哈希链、每租户 HKDF 派生密钥、跨文件轮转重算验证，满足 EU AI Act 第 12 条与 GDPR 第 30 条。Langfuse/LangSmith/Arize 均无防篡改审计链。</p>
+        <div class="ctitle">相对参考基线的差异化候选项</div>
+        <p style="margin-bottom:0.4rem"><strong>BillExplosionGuard（2351 行）</strong>代码包含调用前预估、调用后记录、工具放大检查、硬上限和多种经济攻击模式；本报告评分将其视为主动控制方向，是否在真实负载下按预期工作仍需部署测试。</p>
+        <p style="margin-bottom:0"><strong>AuditChainLedger（607 行）</strong>代码包含 HMAC-SHA256 哈希链、每租户 HKDF 派生密钥和轮转验证。当前证据支持 tamper-evident in-process 语义；不能据此证明与 EU AI Act/GDPR 对齐或具备外部不可篡改性。</p>
       </div>
     </section>
 
     <!-- ===== OBSERVABILITY GAP ===== -->
     <section id="obs-gap">
-      <h2>可观测性 · 对标行业第一</h2>
-      <p>将 Commander 与 Langfuse + OpenTelemetry GenAI 组合基准逐维度对比，成熟度评分（10 分制，10 = 行业第一）：</p>
+      <h2>可观测性 · 对标参考基线</h2>
+      <p>将 Commander 与 Langfuse + OpenTelemetry GenAI 组合参考基线逐维度对比；成熟度评分为本次代码审查的相对判断（10 分不等于行业认证）：</p>
 
       <div class="table-wrap">
         <table>
-          <thead><tr><th>维度</th><th>Commander</th><th>行业第一</th><th>差距</th><th>说明</th></tr></thead>
+          <thead><tr><th>维度</th><th>Commander</th><th>参考基线</th><th>差距</th><th>说明</th></tr></thead>
           <tbody>
             <tr><td>指标收集</td><td>9</td><td>8</td><td><span class="tag lead">+1 领先</span></td><td>Prometheus 兼容 + OTel GenAI 别名 + 40+ 便捷方法，超出 Langfuse 指标广度</td></tr>
             <tr><td>分布式追踪</td><td>5</td><td>9</td><td><span class="tag none">-4 落后</span></td><td>执行追踪+OTLP 已接入，但 W3C 跨服务传播未激活、PII 脱敏未启用</td></tr>
             <tr><td>结构化日志</td><td>6</td><td>7</td><td><span class="tag basic">-1 落后</span></td><td>5 级 + JSON 格式，但无外部聚合、correlation ID 断裂</td></tr>
-            <tr><td>成本/Token 追踪</td><td>10</td><td>7</td><td><span class="tag lead">+3 领先</span></td><td>主动防护远超 Langfuse 被动统计</td></tr>
-            <tr><td>安全审计</td><td>9</td><td>4</td><td><span class="tag lead">+5 领先</span></td><td>哈希链防篡改 + 25+ 事件类型，行业第一梯队无等效</td></tr>
+            <tr><td>成本/Token 追踪</td><td>10</td><td>7</td><td><span class="tag lead">+3 本报告评分</span></td><td>主动控制相对 Langfuse 参考统计维度更丰富</td></tr>
+            <tr><td>安全审计</td><td>9</td><td>4</td><td><span class="tag lead">+5 本报告评分</span></td><td>HMAC 链与 25+ 事件类型；外部锚定和独立对比尚未验证</td></tr>
             <tr><td>SLO/告警/事件</td><td>9</td><td>6</td><td><span class="tag lead">+3 领先</span></td><td>完整 incident 生命周期，Langfuse 仅分析仪表盘</td></tr>
             <tr><td>评估平台</td><td>6</td><td>9</td><td><span class="tag none">-3 落后</span></td><td>evalScorer/experimentRunner 存在，但 LLM-as-Judge 深度、数据集/A-B 测试不及 Langfuse</td></tr>
             <tr><td>仪表盘/可视化</td><td>7</td><td>8</td><td><span class="tag basic">-1 落后</span></td><td>Web UI + 17 个 HTTP 端点，但无 Grafana 捆绑、Helm otel 默认关闭</td></tr>
@@ -304,7 +304,7 @@
         </div>
       </figure>
 
-      <p><strong>定位判断：</strong>Commander 在可观测性上已是"<strong>偏科的第一梯队</strong>"。在企业安全/成本/SLO 维度领先 3-5 分，但在分布式追踪和评估平台落后 3-4 分。整体加权成熟度 7.6/10，距离行业第一约 25%，且其中约 10 分可通过"激活已实现代码"在数天内弥合。</p>
+      <p><strong>定位判断：</strong>按本报告的相对评分，Commander 在企业安全/成本/SLO 维度得分较高，但在分布式追踪和评估平台存在差距。整体加权成熟度 7.6/10 是代码审查估计，不是行业排名或生产指标。</p>
     </section>
 
     <!-- ===== REVERSIBILITY CURRENT ===== -->
@@ -333,7 +333,7 @@
 
       <div class="callout danger">
         <div class="ctitle">两个"已实现未接线"的致命缺口</div>
-        <p style="margin-bottom:0.5rem"><strong>1. EventSourcingEngine（348 行）</strong>——最完整的事件溯源实现：WAL 持久化、SHA-256 哈希链防篡改、流式回放 <code>readFrom</code>、快照、完整性验证 <code>verifyIntegrity</code>、压缩 <code>compact</code>。实现了 <code>contracts/pillarI.ts</code> 的 <code>IEventSourcingEngine</code> 契约。<strong>但 <code>getGlobalEventSourcingEngine()</code> 无任何运行时调用方</strong>——状态可从事件重建的能力存在却未接入，这是与 Temporal 最核心的差距。</p>
+        <p style="margin-bottom:0.5rem"><strong>1. EventSourcingEngine（348 行）</strong>——最完整的事件溯源实现：WAL 持久化、SHA-256 哈希链篡改检测、流式回放 <code>readFrom</code>、快照、完整性验证 <code>verifyIntegrity</code>、压缩 <code>compact</code>。实现了 <code>contracts/pillarI.ts</code> 的 <code>IEventSourcingEngine</code> 契约。<strong>但 <code>getGlobalEventSourcingEngine()</code> 无任何运行时调用方</strong>——状态可从事件重建的能力存在却未接入，这是与 Temporal 最核心的差距。</p>
         <p style="margin-bottom:0"><strong>2. RecoveryBootstrapper.bootstrap()（247 行）</strong>——僵尸 run 启动扫描器：扫描 RunLedger 中 EXECUTING/VERIFYING/PAUSED 状态的 run，校验 lease 过期→抢占（升 fencing epoch 围栏僵尸）→恢复或 abort+compensate→写 DLQ。<strong>但 <code>bootstrap()</code> 仅在测试中调用，serviceInitializer/httpServer 启动时不执行</strong>，进程崩溃重启后僵尸 run 不会自动恢复。</p>
       </div>
 
@@ -387,10 +387,10 @@
     <!-- ===== DISTANCE ===== -->
     <section id="distance">
       <h2>差距量化</h2>
-      <p>将 16 个维度按"差距分（行业第一 - Commander，负值表示领先）"排序，可清晰看到 Commander 的能力分布：<strong>左半区是需追赶的缺口，右半区是已建立的优势</strong>。</p>
+      <p>将 16 个维度按"差距分（参考基线 - Commander，负值表示本报告评分较高）"排序，可看到代码审查中的能力分布；它不是独立产品评测排名。</p>
 
       <figure class="chart-figure">
-        <figcaption>图 3：各维度距行业第一的差距（正值=落后，负值=领先）</figcaption>
+        <figcaption>图 3：各维度距参考基线的差距（正值=落后，负值=本报告评分较高）</figcaption>
         <div class="chart-box">
           <div id="chart-gap-bar" style="width:100%;min-height:560px"></div>
         </div>
@@ -411,7 +411,7 @@
         <div class="callout win">
           <div class="ctitle">已建立的优势（领先 ≥ 2）</div>
           <ul class="flat">
-            <li class="win">安全审计 -5（可观测性 · 哈希链防篡改）</li>
+            <li class="win">安全审计 -5（可观测性 · HMAC 篡改检测；外部锚定未证）</li>
             <li class="win">补偿/Saga -4（可逆性 · 风险分级回滚）</li>
             <li class="win">SLO/告警/事件 -3（可观测性 · 完整闭环）</li>
             <li class="win">成本/Token -3（可观测性 · 主动防护）</li>
@@ -420,7 +420,7 @@
         </div>
       </div>
 
-      <p><strong>距离总览：</strong>16 个维度中，6 个需追赶（其中 3 个是"已实现未接线"）、5 个已领先、2 个持平、3 个小幅落后。可观测性距离第一约 25%，可逆性约 40%。两个能力域合计，<strong>约 60% 的差距可通过"接线已有代码"在 2-4 周内弥合</strong>，剩余 40% 需架构级投入。</p>
+      <p><strong>差距总览：</strong>16 个维度中，6 个需追赶（其中 3 个是"已实现未接线"）、5 个在本报告评分中较高、2 个持平、3 个小幅落后。25%/40% 和 60% 等比例是规划估计，不应作为产品成熟度或交付时间承诺。</p>
     </section>
 
     <!-- ===== ROADMAP ===== -->
@@ -472,15 +472,15 @@
     <!-- ===== CONCLUSION ===== -->
     <section id="conclusion">
       <h2>结论</h2>
-      <p class="lead">Commander 距离可观测性与可逆性的行业第一，<strong>不是从零建设的距离，而是接线与补齐的距离</strong>。</p>
+      <p class="lead">Commander 相对本报告参考基线的主要工作，是接线与补齐；该判断来自代码审查快照，不是行业排名。</p>
 
-      <p>在可观测性领域，Commander 已是偏科的第一梯队——成本防护、安全审计链、SLO→事件闭环三项领先 Langfuse/LangSmith 3-5 分。完成 P0 的追踪中间件挂载与 PII 脱敏激活后，可观测性成熟度可从 7.6 提升至 8.5+，进入全面第一梯队。</p>
+      <p>在本报告的可观测性评分中，成本防护、安全审计链、SLO→事件闭环得分高于参考维度；完成追踪中间件挂载与 PII 脱敏激活后，评分可能提升，但需要真实部署数据重新评估。</p>
 
-      <p>在可逆性领域，Commander 的补偿/Saga、DLQ、租约围栏、幂等性已领先或持平 Temporal，但事件溯源核心"已实现未接线"造成结构性落差。完成 P0 的 EventSourcingEngine 与 RecoveryBootstrapper 接线后，可逆性成熟度可从 6.0 跃升至 7.5+；若进一步完成 P2 的确定性执行约束，则可在"事件溯源为基座 + 补偿为外延"的混合架构上真正比肩 Temporal。</p>
+      <p>在本报告的可逆性评分中，补偿/Saga、DLQ、租约围栏、幂等性得分较高，但事件溯源核心"已实现未接线"造成结构性落差。接线后能否改善实际可逆性，必须以真实故障注入、恢复和外部效果证据重新评估。</p>
 
       <div class="callout win">
         <div class="ctitle">行动建议</div>
-        <p style="margin-bottom:0"><strong>立即启动 P0 四项</strong>（预计 1-2 周，投入产出比最高）。其中 EventSourcingEngine 接线是单点价值最大的改进——它将 Commander 从"外挂可逆"升级为"内生 + 外挂可逆"，是通往行业第一的架构分水岭。同步更新过时的 <code>reversibility.matrix.json</code> 与 <code>audit-wiring.ts</code> 的 srcPath 期望，消除 CI 误报。</p>
+        <p style="margin-bottom:0"><strong>建议启动 P0 四项</strong>（1-2 周为工作量估计，不是交付承诺）。其中 EventSourcingEngine 接线可能是高价值改进；是否改变实际可逆性需要同步补充真实故障与恢复证据。</p>
       </div>
     </section>
 

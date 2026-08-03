@@ -85,7 +85,12 @@ export interface KernelRepository extends EvidenceRepository, CompensationOutbox
   /** Wake a step that is waiting for retry so it becomes claimable again. */
   wakeRetryStep(stepId: string, tenantId: string, actor: string): Promise<KernelStep | null>;
   /** Fail a step from a timer/deadline without a worker lease. */
-  failStepByTimer(stepId: string, tenantId: string, error: { code: string; message: string; retryable: boolean; details?: Record<string, unknown> }, actor: string): Promise<KernelStep | null>;
+  failStepByTimer(
+    stepId: string,
+    tenantId: string,
+    error: { code: string; message: string; retryable: boolean; details?: Record<string, unknown> },
+    actor: string,
+  ): Promise<KernelStep | null>;
   /** Pause a run, releasing any active worker leases but keeping scheduled work. */
   pauseRun(runId: string, tenantId: string, actor: string): Promise<KernelRun | null>;
   /** Resume a paused run so that pending steps become claimable again. */
@@ -99,6 +104,8 @@ export interface KernelRepository extends EvidenceRepository, CompensationOutbox
   getTenantExecutionControl(tenantId: string): Promise<TenantExecutionControl>;
   /** Kernel-authoritative drain readiness; never accepts caller worker metadata. */
   getOperationsReadiness(tenantId: string, now?: Date): Promise<OperationsReadiness>;
+  /** Read-only availability probe for the durable evidence repository. */
+  checkEvidenceRepositoryAvailability?(): Promise<{ ready: boolean }>;
   admitEffect(request: AdmitEffectRequest): Promise<AdmitEffectResult>;
   completeEffect(
     effectId: string,
@@ -120,7 +127,9 @@ export interface KernelRepository extends EvidenceRepository, CompensationOutbox
   failEffectWithEvidence(
     request: FailEffectRequest & { evidence: KernelEvidenceRecord },
   ): Promise<KernelEffect | null>;
-  markEffectCompletionUnknown(request: MarkEffectCompletionUnknownRequest): Promise<KernelEffect | null>;
+  markEffectCompletionUnknown(
+    request: MarkEffectCompletionUnknownRequest,
+  ): Promise<KernelEffect | null>;
   parkEffectCompletionUnknown(
     input: ParkEffectCompletionUnknownInput,
   ): Promise<ParkEffectCompletionUnknownResult>;
@@ -169,16 +178,13 @@ export interface KernelRepository extends EvidenceRepository, CompensationOutbox
   admitCompensationEffect(
     input: import('./types.js').AdmitEffectRequest & {
       requestId: string;
+      requestClaimToken: string;
       outboxMessageId: string;
       outboxClaimToken: string;
     },
   ): Promise<AdmitEffectResult>;
-  parkCompensationUnknown(
-    input: ParkCompensationUnknownInput,
-  ): Promise<CompensationMutationResult>;
-  finalizeCompensation(
-    input: FinalizeCompensationInput,
-  ): Promise<CompensationMutationResult>;
+  parkCompensationUnknown(input: ParkCompensationUnknownInput): Promise<CompensationMutationResult>;
+  finalizeCompensation(input: FinalizeCompensationInput): Promise<CompensationMutationResult>;
   claimOutbox(limit: number, now?: Date): Promise<KernelOutboxMessage[]>;
   /** Worker LOGIN requires tenantId so RLS can scope the UPDATE. */
   markOutboxPublished(messageId: string, claimToken: string, tenantId?: string): Promise<boolean>;
@@ -226,7 +232,10 @@ export interface KernelRepository extends EvidenceRepository, CompensationOutbox
 
   /** Move outbox messages that exceeded max_attempts to the DLQ.
    *  Applies exponential backoff to messages below the threshold. */
-  sweepOutboxDlq(now?: Date, limit?: number): Promise<{ movedToDlq: number; backoffApplied: number }>;
+  sweepOutboxDlq(
+    now?: Date,
+    limit?: number,
+  ): Promise<{ movedToDlq: number; backoffApplied: number }>;
   /** List DLQ entries for inspection and replay. */
   listDlqEntries(limit?: number, topic?: string): Promise<KernelDlqEntry[]>;
   /** Replay a DLQ entry back into the outbox for re-publishing. */
@@ -257,7 +266,12 @@ export interface KernelRepository extends EvidenceRepository, CompensationOutbox
   isCapabilityRevoked(jti: string, tenantId: string): Promise<boolean>;
 
   /** Revoke a capability token by jti. Idempotent. Tenant-scoped write. */
-  revokeCapability(input: { jti: string; tenantId: string; expiresAt: string; reason?: string }): Promise<void>;
+  revokeCapability(input: {
+    jti: string;
+    tenantId: string;
+    expiresAt: string;
+    reason?: string;
+  }): Promise<void>;
 
   /**
    * Atomically consume a capability (jti, nonce) under tenant scope.
@@ -286,10 +300,19 @@ export interface KernelRepository extends EvidenceRepository, CompensationOutbox
 
   /** Increment the daily quota counter for a tenant/action_class. Returns the
    *  updated row so the broker can compare against the configured ceiling. */
-  incrementQuota(input: { tenantId: string; actionClass: string; tokensUsed?: number; now?: Date }): Promise<{ countUsed: number; tokensUsed: number }>;
+  incrementQuota(input: {
+    tenantId: string;
+    actionClass: string;
+    tokensUsed?: number;
+    now?: Date;
+  }): Promise<{ countUsed: number; tokensUsed: number }>;
 
   /** Read the current daily quota row (or zeros if none yet). */
-  getQuota(tenantId: string, actionClass: string, now?: Date): Promise<{ countUsed: number; tokensUsed: number }>;
+  getQuota(
+    tenantId: string,
+    actionClass: string,
+    now?: Date,
+  ): Promise<{ countUsed: number; tokensUsed: number }>;
 
   // ── L4-04 Kill switches ───────────────────────────────────────────────────
 

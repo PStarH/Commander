@@ -6,6 +6,10 @@
 
 import type {
   ActionApprovalRequestV1,
+  ActionCompensationApprovalRequestV1,
+  ActionCompensationApprovalResponseV1,
+  ActionCompensationRequestResponseV1,
+  ActionCompensationRequestV1,
   ActionDecisionV1,
   ActionEffectV1,
   ActionErrorDetailV1,
@@ -105,6 +109,10 @@ export type GovernedActionState = ActionStateV1;
 export type GovernedAction = GovernedActionV1;
 export type ProposeActionInput = ActionProposeRequestV1;
 export type ActionApprovalInput = ActionApprovalRequestV1;
+export type ActionCompensationInput = ActionCompensationRequestV1;
+export type ActionCompensationApprovalInput = ActionCompensationApprovalRequestV1;
+export type ActionCompensationResult = ActionCompensationRequestResponseV1;
+export type ActionCompensationApprovalResult = ActionCompensationApprovalResponseV1;
 export type SimulateActionResult = ActionSimulationResponseV1;
 export type ProposeActionResult = ActionProposeResponseV1 & { accepted: boolean };
 export type RequestReconcileResult = ActionReconcileAcceptedV1;

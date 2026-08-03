@@ -24,6 +24,7 @@ import {
   KERNEL_HISTORICAL_MIGRATION_CHECKSUMS,
   KERNEL_MIGRATIONS,
   KERNEL_TASK2_FORWARD_MIGRATIONS,
+  KERNEL_TASK2_FORWARD_MIGRATION_CHECKSUMS,
   runTask1ClosureMigrations,
   runKernelMigrations,
 } from './migrations.js';
@@ -148,6 +149,8 @@ describe('Task 1 authoritative Class A admission', () => {
         'a946e4a209282b9a287bd0e6f82d3253d0ce91e69a382fd3d7f8cb2a93fe569c',
       '2026-07-26.1.task1_runtime_authority_closure':
         'e6dc7640498b11819d67670d765109b91c9327e841dcff2536b7cce7629077ba',
+      '2026-08-01.1.task1_api_operations_readiness':
+        '6b206a58b9dbb97e0b8310d5bc7a8fee4aa5d893eeb6d7b92a5b08509e6c2c53',
     });
     assert.deepEqual(
       Object.fromEntries(KERNEL_TASK1_FORWARD_MIGRATIONS.map(({ id, checksum }) => [id, checksum])),
@@ -173,6 +176,69 @@ describe('Task 1 authoritative Class A admission', () => {
       KERNEL_MIGRATIONS.some(({ id }) => id.startsWith('2026-07-27.')),
       false,
       'runtime startup must not bypass the phase-aware lifecycle runner',
+    );
+  });
+
+  it('binds the Task 2 schema baseline to every canonical Task 1 closure descriptor', () => {
+    const task2Schema = KERNEL_TASK2_FORWARD_MIGRATIONS.find(
+      ({ id }) => id === '2026-08-02.3.task2_reconciliation_schema_canonical_baseline',
+    );
+    assert.ok(task2Schema);
+
+    for (const [id, checksum] of Object.entries(KERNEL_TASK1_CLOSURE_MIGRATION_CHECKSUMS)) {
+      assert.ok(
+        task2Schema.sql.includes(`'${id}', '${checksum}'`),
+        `Task 2 schema baseline must require canonical Task 1 closure descriptor ${id}`,
+      );
+    }
+
+    const historicalTask2Schema = KERNEL_TASK2_FORWARD_MIGRATIONS.find(
+      ({ id }) => id === '2026-07-26.2.task2_reconciliation_schema',
+    );
+    assert.ok(historicalTask2Schema);
+    assert.match(
+      historicalTask2Schema.sql,
+      /'2026-07-27\.3\.task1_authenticated_tenant_authority_enforce', 'fa9474d03f7f7adca4b32d9164c2510b6eb09ed5ad9929747d997272accb126e'/,
+    );
+    assert.deepEqual(KERNEL_TASK2_FORWARD_MIGRATION_CHECKSUMS, {
+      '2026-07-26.2.task2_reconciliation_schema':
+        '281a703a1cc0a6f98e53d30e78ce9cdf632f31685794bdd3d95c122e431c7703',
+      '2026-08-02.3.task2_reconciliation_schema_canonical_baseline':
+        '46a7513bc4f2402ec1819c1f286c58586417daea9eead4070b278962c73d21c1',
+      '2026-07-26.2.task2_reconciliation_rpcs':
+        '79007556a06e8188c4d85c23ec71d0ee114eafdff337747c5aa5ee76c8bb2b62',
+      '2026-07-26.2.task2_role_closure':
+        '5e56de3dfa9a4d884822c077ca28e6bdc7d482a1cfcc3a3b9a7d5a567e6e0289',
+    });
+  });
+
+  it('ships a tenant-bound read-only operations readiness RPC for the app role', () => {
+    const migration = KERNEL_MIGRATIONS.find(
+      ({ id }) => id === '2026-08-01.1.task1_api_operations_readiness',
+    );
+    assert.ok(migration, 'app readiness must be installed as a new forward descriptor');
+
+    const rpc =
+      migration.sql.match(
+        /CREATE OR REPLACE FUNCTION public\.get_api_operations_readiness[\s\S]*?\$fn\$;/i,
+      )?.[0] ?? '';
+    assert.match(rpc, /SECURITY DEFINER/i);
+    assert.match(rpc, /session_user IS DISTINCT FROM 'commander_app'/i);
+    assert.match(rpc, /commander_authenticated_app_tenant\(\)/i);
+    assert.match(rpc, /commander_authenticated_app_tenant\(\) IS DISTINCT FROM p_tenant_id/i);
+    assert.match(rpc, /FROM public\.commander_workers/i);
+    assert.doesNotMatch(rpc, /\b(?:INSERT INTO|UPDATE public\.|DELETE FROM)\b/i);
+    assert.match(
+      migration.sql,
+      /ALTER FUNCTION public\.get_api_operations_readiness\(text\) OWNER TO commander_owner/i,
+    );
+    assert.match(
+      migration.sql,
+      /GRANT EXECUTE ON FUNCTION public\.get_api_operations_readiness\(text\) TO commander_app/i,
+    );
+    assert.doesNotMatch(
+      migration.sql,
+      /GRANT SELECT ON (?:TABLE )?public\.commander_workers TO commander_app/i,
     );
   });
 
@@ -249,10 +315,60 @@ describe('Task 1 authoritative Class A admission', () => {
 
     await runKernelMigrations(pool);
 
+    const canonicalTask2Ids = KERNEL_TASK2_FORWARD_MIGRATIONS.filter(
+      ({ id }) => id !== '2026-07-26.2.task2_reconciliation_schema',
+    ).map(({ id }) => id);
     assert.deepEqual(
-      pool.client.appliedMigrationIds.slice(0, KERNEL_TASK2_FORWARD_MIGRATIONS.length),
-      KERNEL_TASK2_FORWARD_MIGRATIONS.map(({ id }) => id),
+      pool.client.appliedMigrationIds.slice(0, canonicalTask2Ids.length),
+      canonicalTask2Ids,
     );
+  });
+
+  it('preserves a historical Task 2 ledger row while applying the canonical repair', async () => {
+    const ledger = new Map(
+      [...KERNEL_TASK1_BASELINE_MIGRATIONS, ...KERNEL_TASK1_CLOSURE_MIGRATIONS].map(
+        ({ id, checksum }) => [id, checksum],
+      ),
+    );
+    ledger.set(
+      '2026-07-26.2.task2_reconciliation_schema',
+      '281a703a1cc0a6f98e53d30e78ce9cdf632f31685794bdd3d95c122e431c7703',
+    );
+    const pool = new MigrationLedgerPool(ledger);
+
+    await runKernelMigrations(pool);
+
+    assert.equal(
+      pool.client.appliedMigrationIds[0],
+      '2026-08-02.3.task2_reconciliation_schema_canonical_baseline',
+    );
+    assert.equal(
+      pool.client.appliedMigrationIds.includes('2026-07-26.2.task2_reconciliation_schema'),
+      false,
+    );
+    assert.equal(
+      ledger.get('2026-07-26.2.task2_reconciliation_schema'),
+      '281a703a1cc0a6f98e53d30e78ce9cdf632f31685794bdd3d95c122e431c7703',
+    );
+  });
+
+  it('fails closed for the unreachable historical Task 1 enforce baseline', async () => {
+    const ledger = new Map(
+      [...KERNEL_TASK1_BASELINE_MIGRATIONS, ...KERNEL_TASK1_CLOSURE_MIGRATIONS].map(
+        ({ id, checksum }) => [id, checksum],
+      ),
+    );
+    ledger.set(
+      '2026-07-27.3.task1_authenticated_tenant_authority_enforce',
+      'fa9474d03f7f7adca4b32d9164c2510b6eb09ed5ad9929747d997272accb126e',
+    );
+    const pool = new MigrationLedgerPool(ledger);
+
+    await assert.rejects(
+      () => runKernelMigrations(pool),
+      /Task 1 enforce closure checksum is not the canonical published descriptor/,
+    );
+    assert.deepEqual(pool.client.appliedMigrationIds, []);
   });
 
   it('rejects a changed 2026-07-21.16 migration checksum before any forward migration runs', async () => {

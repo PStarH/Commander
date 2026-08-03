@@ -90,6 +90,8 @@ function actionFixture(name: string): Record<string, unknown> {
 
 const ACTION_PROPOSE_FIXTURE = actionFixture('propose');
 const ACTION_APPROVAL_FIXTURE = actionFixture('approval');
+const ACTION_COMPENSATION_FIXTURE = actionFixture('compensation');
+const ACTION_COMPENSATION_APPROVAL_FIXTURE = actionFixture('compensation-approval');
 const ACTION_RECONCILE_FIXTURE = actionFixture('reconcile');
 const ACTION_EVIDENCE_FIXTURE = actionFixture('evidence');
 const ACTION_ERROR_FIXTURE = actionFixture('error');
@@ -295,6 +297,8 @@ const RESOURCE_EXAMPLES: Record<ContractSchemaName, Record<string, unknown>> = {
     simulationId: ACTION_SIMULATION_FIXTURE.simulationId,
     policySnapshotId: ACTION_SIMULATION_FIXTURE.policySnapshotId,
   },
+  actionCompensationRequest: ACTION_COMPENSATION_FIXTURE,
+  actionCompensationApprovalRequest: ACTION_COMPENSATION_APPROVAL_FIXTURE,
   actionRejectionRequest: {},
   actionSimulationResponse: { simulation: ACTION_SIMULATION_FIXTURE },
   actionResponse: ACTION_APPROVAL_FIXTURE,

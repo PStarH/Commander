@@ -691,7 +691,10 @@ export function withDefaultLlmAllowlist(
     completeEffect: (effectId, tenantId, lease, response, actor) =>
       kernel.completeEffect(effectId, tenantId, lease, response, actor),
     completeEffectWithEvidence: kernel.completeEffectWithEvidence?.bind(kernel),
+    failEffectWithEvidence: kernel.failEffectWithEvidence?.bind(kernel),
     markEffectCompletionUnknown: kernel.markEffectCompletionUnknown?.bind(kernel),
+    listEffectsForRun: kernel.listEffectsForRun?.bind(kernel),
+    listEvents: kernel.listEvents?.bind(kernel),
     incrementQuota: kernel.incrementQuota?.bind(kernel),
     getQuota: kernel.getQuota?.bind(kernel),
     isActionAllowed: async (tenantId, action) => {
@@ -828,16 +831,17 @@ export function createEffectBroker(
   };
 
   const brokerOptions = productionCapabilityBrokerOptions(capability, localWorkerId);
-  const evidenceRepository = kernel as AllowlistKernel &
-    KernelRepository & {
-      completeEffectWithEvidence?: EffectKernelPort['completeEffectWithEvidence'];
-    };
-  let evidenceOptions: Pick<
-    EffectBrokerOptions,
-    'evidenceSigner' | 'requireEvidencePersistence'
-  > = {};
+  let evidenceOptions: Pick<EffectBrokerOptions, 'evidenceSigner' | 'requireEvidencePersistence'> =
+    {};
   if (evidenceSigner) {
-    if (!evidenceRepository.completeEffectWithEvidence) throw new Error(EVIDENCE_REPOSITORY_REQUIRED);
+    if (
+      !effectKernel.completeEffectWithEvidence ||
+      !effectKernel.failEffectWithEvidence ||
+      !effectKernel.listEffectsForRun ||
+      !effectKernel.listEvents
+    ) {
+      throw new Error(EVIDENCE_REPOSITORY_REQUIRED);
+    }
     evidenceOptions = {
       evidenceSigner,
       requireEvidencePersistence: true,

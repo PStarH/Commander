@@ -277,7 +277,7 @@ describe('WS2 §8 compensation outbox claiming', () => {
     assert.ok(revoke, 'revokeCapability not found');
     assert.match(
       isRevoked![0],
-      /\}, \[tenantId\]\);/,
+      /\},\s*\[tenantId\],?\s*\);/,
       'isCapabilityRevoked must pass [tenantId] to withTransaction',
     );
     assert.match(
@@ -287,7 +287,7 @@ describe('WS2 §8 compensation outbox claiming', () => {
     );
     assert.match(
       revoke![0],
-      /\}, \[input\.tenantId\]\);/,
+      /\},\s*\[input\.tenantId\],?\s*\);/,
       'revokeCapability must pass [input.tenantId] to withTransaction',
     );
     assert.match(

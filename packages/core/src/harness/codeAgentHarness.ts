@@ -9,7 +9,7 @@
  *
  * This harness is selected for power/standard-tier code models by the built-in
  * selection rules in HarnessRegistry. It demonstrates the full capability of
- * the pluggable harness system while being 100% compatible with Commander's
+ * the pluggable harness system while preserving compatibility with Commander's
  * plugin hooks, tenant isolation, and metrics infrastructure.
  */
 import type {

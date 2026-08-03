@@ -6,6 +6,7 @@ export interface WorkerHealthHandle {
 }
 
 export async function startWorkerHealthServer(options: {
+  host?: string;
   port: number;
   isReady: () => boolean | Promise<boolean>;
 }): Promise<WorkerHealthHandle> {
@@ -44,7 +45,7 @@ export async function startWorkerHealthServer(options: {
     };
     server.once('error', onError);
     server.once('listening', onListening);
-    server.listen(options.port);
+    server.listen(options.port, options.host);
   });
 
   const address = server.address();

@@ -201,10 +201,7 @@ export async function cmdAction(
     const json = mergedFlags.json === 'true';
 
     if (subcommand === 'kill') {
-      const action = requiredValue(
-        rest[0],
-        'Usage: commander action kill list|enable|disable',
-      );
+      const action = requiredValue(rest[0], 'Usage: commander action kill list|enable|disable');
       if (action === 'list') {
         await killList(config, fetchImpl, json);
         return;
@@ -262,6 +259,55 @@ export async function cmdAction(
         };
         break;
       }
+      case 'compensation': {
+        const operation = requiredValue(
+          rest[0],
+          "Usage: commander action compensation request|approve <runId> [authorizationId] --data='<json>'",
+        );
+        const runId = requiredValue(
+          rest[1],
+          "Usage: commander action compensation request|approve <runId> [authorizationId] --data='<json>'",
+        );
+        const idempotencyKey = writeIdempotencyKey(
+          mergedFlags,
+          `Usage: commander action compensation ${operation} ${runId}`,
+        );
+        if (operation === 'request') {
+          const body = parseContractData(
+            'actionCompensationRequest',
+            mergedFlags.data,
+            "Usage: commander action compensation request <runId> --data='<json>'",
+          );
+          path = `/v1/actions/${encodeURIComponent(runId)}/compensations`;
+          init = {
+            method: 'POST',
+            headers: { 'idempotency-key': idempotencyKey },
+            body: JSON.stringify(body),
+          };
+          break;
+        }
+        if (operation === 'approve') {
+          const authorizationId = requiredValue(
+            rest[2],
+            "Usage: commander action compensation approve <runId> <authorizationId> --data='<json>'",
+          );
+          const body = parseContractData(
+            'actionCompensationApprovalRequest',
+            mergedFlags.data,
+            "Usage: commander action compensation approve <runId> <authorizationId> --data='<json>'",
+          );
+          path = `/v1/actions/${encodeURIComponent(runId)}/compensations/${encodeURIComponent(authorizationId)}/approve`;
+          init = {
+            method: 'POST',
+            headers: { 'idempotency-key': idempotencyKey },
+            body: JSON.stringify(body),
+          };
+          break;
+        }
+        validationError(
+          "Usage: commander action compensation request|approve <runId> [authorizationId] --data='<json>'",
+        );
+      }
       case 'get': {
         const runId = requiredValue(rest[0], 'Usage: commander action get <runId> [--json]');
         path = `/v1/actions/${encodeURIComponent(runId)}`;
@@ -269,11 +315,14 @@ export async function cmdAction(
         break;
       }
       case 'approve': {
-        const runId = requiredValue(rest[0], 'Usage: commander action approve <runId> --data=\'<json>\'');
+        const runId = requiredValue(
+          rest[0],
+          "Usage: commander action approve <runId> --data='<json>'",
+        );
         const body = parseContractData(
           'actionApprovalRequest',
           mergedFlags.data,
-          'Usage: commander action approve <runId> --data=\'<json>\'',
+          "Usage: commander action approve <runId> --data='<json>'",
         );
         path = `/v1/actions/${encodeURIComponent(runId)}/approve`;
         init = {
@@ -289,7 +338,10 @@ export async function cmdAction(
         break;
       }
       case 'reject': {
-        const runId = requiredValue(rest[0], 'Usage: commander action reject <runId> [--reason=...]');
+        const runId = requiredValue(
+          rest[0],
+          'Usage: commander action reject <runId> [--reason=...]',
+        );
         path = `/v1/actions/${encodeURIComponent(runId)}/reject`;
         init = {
           method: 'POST',
@@ -332,7 +384,7 @@ export async function cmdAction(
       }
       default:
         validationError(
-          'Usage: commander action simulate|propose|get|approve|reject|reconcile|evidence|kill',
+          'Usage: commander action simulate|propose|get|approve|reject|compensation|reconcile|evidence|kill',
         );
     }
 

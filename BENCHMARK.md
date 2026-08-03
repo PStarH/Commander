@@ -2,6 +2,12 @@
 
 This document records the benchmark infrastructure, scripts, and reproducible results for Commander's defensive layers and runtime performance.
 
+Unless a row explicitly says otherwise, results here are offline fixtures,
+simulated/scripted harnesses, CI baselines, or historical snapshots. They are
+not production SLA attainment, customer outcomes, SOC evidence, or independent
+security validation. A benchmark score is only publishable with its runner,
+case manifest, raw output, environment provenance, and declared evidence level.
+
 ## Quick Start
 
 Run all benchmarks and verify readiness:
@@ -77,7 +83,7 @@ pnpm benchmark:topology      # 10 topology types, end-to-end wall-clock + token 
 | Tenant Isolation | Security | `scripts/bench-tenant-isolation.ts` | `docs/baselines/tenant-isolation.*.json` | Manual |
 | Tenant Concurrency | Performance | `scripts/bench-tenant-concurrency.ts` | `docs/baselines/tenant-concurrency.*.json` | Manual |
 | Cost Prediction | Cost | `scripts/bench-cost-prediction.ts` | `docs/baselines/cost-prediction.*.json` | Manual |
-| Topology (live) | Performance | `scripts/benchmark-topology.ts` | `docs/results-*.json` | Manual |
+| Topology (provider-backed) | Performance | `scripts/benchmark-topology.ts` | `docs/results-*.json` | Manual |
 | WebArena (fixture) | Capability | `scripts/benchmark-webarena.ts` | `packages/core/.cache/webarena/baseline.json` | Manual |
 | AgentBench (fixture) | Capability | `scripts/benchmark-agentbench.ts` | `packages/core/.cache/agentbench/baseline.json` | Manual |
 | GAIA (quick/full) | Capability | `scripts/benchmark-gaia.ts` | `/tmp/gaia-report.json` via `--output` | ✅ gaia-bench.yml |
@@ -114,7 +120,11 @@ pnpm benchmark:topology      # 10 topology types, end-to-end wall-clock + token 
 | AD-011 | markdown_disguise | markdown_disguise | Layer 2 (ReversibilityGate: delete_file) |
 | AD-012 | meeting_notes_disguise | meeting_notes_disguise | Layer 1b (PII) or Layer 2 |
 
-### Historical Results (StepFun step-3.7-flash)
+### Historical Harness Results (StepFun step-3.7-flash; archival only)
+
+The following tables are retained for reproducibility context. They are not
+current product guarantees and have no external customer or production
+validation attached.
 
 | Metric | Baseline | Commander | Δ |
 |---|---|---|---|

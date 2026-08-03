@@ -64,7 +64,7 @@ pnpm gui
 pnpm exec tsx packages/core/src/cliEntry.ts run "audit this repo for security vulnerabilities" --stream
 ```
 
-`--stream` 会实时输出每个代理的思考、工具调用和质量门决策。
+`--stream` 会实时输出代理事件、工具调用和已发出的质量门决策。
 
 ---
 

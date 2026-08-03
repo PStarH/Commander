@@ -1000,12 +1000,10 @@ describe('PostgresKernelRepository integration', () => {
           reason: 'timeout',
           actor: workerId,
         });
-        const past = new Date(Date.now() - 1_000).toISOString();
         await appRepo.requestReconcile({
           effectId,
           tenantId: tenantAllowed,
           actor: 'integration',
-          reconcileAfter: past,
         });
 
         await assert.rejects(
@@ -1098,7 +1096,6 @@ describe('PostgresKernelRepository integration', () => {
           effectId: outsideEffect,
           tenantId: tenantOutside,
           actor: 'integration',
-          reconcileAfter: past,
         });
 
         const noWiden = await workerRepo.claimReconcileEffects({

@@ -91,8 +91,9 @@ export function SLOPage() {
           <h1>Service Level Objectives</h1>
         </div>
         <p className="page-desc">
-          Public SLO commitments and measured baseline. Updated daily by the SLO benchmark runner.
-          Last measurement: {new Date(status.updatedAt).toLocaleString()}.
+          Public SLO targets and measured CI baseline. These figures are not production SLA
+          attainment. Updated daily by the SLO benchmark runner. Last measurement:{' '}
+          {new Date(status.updatedAt).toLocaleString()}.
         </p>
       </div>
 

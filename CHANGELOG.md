@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependabot configuration for automated dependency updates
 - Pull request template for consistent PR descriptions
 - npm audit and test coverage checks in CI pipeline
-- Architecture V2 packages: `@commander/contracts`, `@commander/kernel`, `@commander/worker-plane`, `@commander/operations`, `@commander/effect-broker`
+- Architecture V2 packages: `@commander/contracts`, `@commander/kernel`, `@commander/worker-plane`, `@commander/effect-broker`, and `@commander/adapter-ops`
 - `docs/getting-started.md` quick-start guide
 
 ### Changed
@@ -98,7 +98,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenAPI 3.0 specification served at `/openapi.json`
 - Readiness probe (`/ready`) for Kubernetes-style deployment checks
 - OpenMetrics/Prometheus-compatible metrics format at `/metrics`
-- Multi-tenant isolation with per-tenant rate limits, concurrency, storage, memory
+- Tenant-aware request context and selected backend controls (Enterprise Gateway remains alpha; storage isolation is opt-in)
 - Circuit breaker for provider failures (threshold → open → half-open → recovery)
 - Dead letter queue for unrecoverable errors
 - Compensation registry for mutation tool rollback
@@ -122,22 +122,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `getDefaultProvider` return type (`any` → `LLMProvider`)
 - Dynamic `require()` replaced with top-level ESM imports
 - Silent catch blocks in skills, codeFixer, JSON.parse, LSP rejection handlers
-- GAIA evidence audit trail (broken 10-task run replaced with real 165-task results)
+- GAIA evidence audit trail documenting an invalidated 10-task run; a valid full 165-task rerun remains pending
 
 ### Removed
 
-- **GAIA benchmark content** — Previous 69.7% result was invalidated by a scoring
-  bug (empty `expected` field marked responses as correct). Scoring fixed, full
-  re-run pending. All claim/badge references removed from `README*.md`.
+- **GAIA benchmark content** — A previous numeric result was invalidated by a
+  scoring bug (empty `expected` field marked responses as correct). Scoring is
+  fixed, but a valid full re-run is still pending; no score is a current claim.
 
 ## [0.1.0] — 2026-05-18
 
 ### Added
 
-- GAIA 69.7% benchmark (+48.5pp over bare MiMo 21.2%)
-- PinchBench 97.7% (42/43) on core tasks (beat OpenClaw 89.5%; multifile.json failed)
-- BFCL 30-task subset evaluation (80.0% tool/param accuracy; NOT official 2000+ leaderboard)
-- MT-Bench 5-question subset evaluation (7.8/10; NOT standard 80-question MT-Bench)
+- Historical benchmark harnesses for GAIA, PinchBench, BFCL, and MT-Bench were
+  added; their old numeric outputs are archival only and are not retained as
+  current performance claims.
 - Unified benchmark runner with YAML config
 - CLI: `commander run`, `plan`, `watch`, `status`, `config`, `doctor`, `workers`
 - Adaptive temperature controller and codeFixer for syntax repair
@@ -154,12 +153,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - HTTP API server for runtime management and task execution
 - Span-based execution tracing with persistent storage
 - Concurrent tool execution and AgentTool with result budgeting
-- Commander Arena: 5-agent parallel battle (4.1x speedup)
+- Commander Arena: 5-agent parallel battle (historical harness result; no current performance claim)
 - TaskPool: parallel multi-agent execution engine
 
 ### Changed
 
-- All benchmark reports updated with evidence chains and verified results
+- Benchmark baseline artifacts now declare their evidence level; live verification remains environment-dependent
 - module audit marking `@experimental` components
 
 ### Fixed

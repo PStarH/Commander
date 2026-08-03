@@ -58,11 +58,11 @@ const MAX_AUTH_FAILURES = parseInt(process.env.AUTH_MAX_FAILURES ?? '5', 10);
 const LOCKOUT_DURATION_MS = parseInt(process.env.AUTH_LOCKOUT_MS ?? '300000', 10); // 5 min
 const AUTH_FAILURE_WINDOW_MS = 60_000; // 1 minute sliding window
 
-const authFailureStore = getAuthFailureStore();
+const startupAuthFailureStore = getAuthFailureStore();
 
 // Cleanup old entries every 5 minutes
 setInterval(() => {
-  authFailureStore.cleanup(Date.now(), AUTH_FAILURE_WINDOW_MS).catch((err) => {
+  startupAuthFailureStore.cleanup(Date.now(), AUTH_FAILURE_WINDOW_MS).catch((err) => {
     process.stderr.write(`[Auth] Failed to cleanup auth failure entries: ${String(err)}\n`);
   });
 }, 300_000).unref();
@@ -191,47 +191,40 @@ function getClientIp(req: Request): string {
 }
 
 async function recordAuthFailure(ip: string): Promise<void> {
-  try {
-    const now = Date.now();
-    let entry = await authFailureStore.get(ip);
-    if (!entry || entry.lastFailureAt < now - AUTH_FAILURE_WINDOW_MS) {
-      entry = { count: 0, firstFailureAt: now, lastFailureAt: now, lockedUntil: 0 };
-    }
-    entry.count++;
-    entry.lastFailureAt = now;
-    if (entry.count >= MAX_AUTH_FAILURES && entry.lockedUntil === 0) {
-      entry.lockedUntil = now + LOCKOUT_DURATION_MS;
-      try {
-        getGlobalLogger().warn(
-          'AuthMiddleware',
-          `IP ${ip} locked out after ${entry.count} failures`,
-          {
-            ip,
-            count: entry.count,
-            lockoutDurationSeconds: LOCKOUT_DURATION_MS / 1000,
-          },
-        );
-      } catch {
-        process.stderr.write(
-          `[Auth] IP ${ip} locked out after ${entry.count} failures for ${LOCKOUT_DURATION_MS / 1000}s\n`,
-        );
-      }
-    }
-    await authFailureStore.set(ip, entry);
-  } catch (err) {
-    process.stderr.write(`[Auth] Failed to record auth failure: ${String(err)}\n`);
+  const authFailureStore = getAuthFailureStore();
+  const now = Date.now();
+  let entry = await authFailureStore.get(ip);
+  if (!entry || entry.lastFailureAt < now - AUTH_FAILURE_WINDOW_MS) {
+    entry = { count: 0, firstFailureAt: now, lastFailureAt: now, lockedUntil: 0 };
   }
+  entry.count++;
+  entry.lastFailureAt = now;
+  if (entry.count >= MAX_AUTH_FAILURES && entry.lockedUntil === 0) {
+    entry.lockedUntil = now + LOCKOUT_DURATION_MS;
+    try {
+      getGlobalLogger().warn(
+        'AuthMiddleware',
+        `IP ${ip} locked out after ${entry.count} failures`,
+        {
+          ip,
+          count: entry.count,
+          lockoutDurationSeconds: LOCKOUT_DURATION_MS / 1000,
+        },
+      );
+    } catch {
+      process.stderr.write(
+        `[Auth] IP ${ip} locked out after ${entry.count} failures for ${LOCKOUT_DURATION_MS / 1000}s\n`,
+      );
+    }
+  }
+  await authFailureStore.set(ip, entry);
 }
 
 async function isLockedOut(ip: string): Promise<boolean> {
-  try {
-    const entry = await authFailureStore.get(ip);
-    if (!entry) return false;
-    return entry.lockedUntil > Date.now();
-  } catch (err) {
-    process.stderr.write(`[Auth] Failed to check lockout status: ${String(err)}\n`);
-    return false;
-  }
+  const authFailureStore = getAuthFailureStore();
+  const entry = await authFailureStore.get(ip);
+  if (!entry) return false;
+  return entry.lockedUntil > Date.now();
 }
 
 // Module-load one-shot warning if AUTH_DISABLED=true in production.
@@ -326,6 +319,7 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
   // Check lockout BEFORE processing auth — fail fast for locked IPs
   if (await isLockedOut(clientIp)) {
     try {
+      const authFailureStore = getAuthFailureStore();
       const entry = await authFailureStore.get(clientIp);
       const lockedUntil = entry?.lockedUntil ?? 0;
       const retryAfter = Math.max(0, Math.ceil((lockedUntil - Date.now()) / 1000));

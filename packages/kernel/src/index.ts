@@ -165,6 +165,11 @@ export type {
 export type { KernelRepository } from './repository.js';
 export { InMemoryEvidenceRepository } from './evidenceRepository.js';
 export type {
+  AdapterOpsCompensationTerminalEvidenceAuthority,
+  AdapterOpsCompensationTerminalEvidenceBinding,
+  AdapterOpsEvidenceContext,
+  AdapterOpsEvidenceContextAuthority,
+  AdapterOpsEvidenceContextRequest,
   EvidenceRepository,
   KernelEvidenceRecord,
   KernelEvidenceSignature,

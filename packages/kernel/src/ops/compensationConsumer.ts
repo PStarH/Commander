@@ -86,6 +86,12 @@ export interface CompensationEffectBroker {
       stepId: string;
       workloadId: string;
     };
+    compensationClaim?: {
+      requestId: string;
+      requestClaimToken: string;
+      outboxMessageId: string;
+      outboxClaimToken: string;
+    };
   }): Promise<{ admitted: boolean; effectId: string; replayed: boolean; reason?: string }>;
   executeAdmitted(input: { effectId: string; timeoutMs?: number }): Promise<{
     effectId: string;
@@ -94,11 +100,13 @@ export interface CompensationEffectBroker {
   }>;
 }
 
-export type CompensationTokenContext = GovernedCompensationAuthorization | {
-    authorization: CompensationAuthorizationRecord;
-    request: KernelCompensationRequest;
-    forwardResponse: Record<string, unknown>;
-  };
+export type CompensationTokenContext =
+  | GovernedCompensationAuthorization
+  | {
+      authorization: CompensationAuthorizationRecord;
+      request: KernelCompensationRequest;
+      forwardResponse: Record<string, unknown>;
+    };
 
 export interface CompensationTokenProvider {
   (authorization: CompensationTokenContext): Promise<string | null>;
@@ -119,6 +127,7 @@ export interface CompensationConsumerOptions extends CompensationClaimAuth {
     response: Record<string, unknown>;
     eventType: string;
     disposition: 'COMPLETED' | 'CONFIRMED_NOT_APPLIED' | 'ESCALATED';
+    claimToken: string;
   }) => Promise<KernelEvidenceRecord>;
   onAdapterUnregistered?: (input: {
     tenantId: string;
@@ -362,8 +371,12 @@ export async function consumeCompensationBatch(
 
     const token = await tokenProvider(
       isDurableClaim(work)
-        ? { authorization: work.authorization, request: work.request, forwardResponse: work.forwardResponse }
-        : authorization as GovernedCompensationAuthorization,
+        ? {
+            authorization: work.authorization,
+            request: work.request,
+            forwardResponse: work.forwardResponse,
+          }
+        : (authorization as GovernedCompensationAuthorization),
     );
     if (!token) {
       await escalate(outbox, work, options, 'COMPENSATION_TOKEN_REFUSED');
@@ -384,6 +397,16 @@ export async function consumeCompensationBatch(
         stepId,
         workloadId: options.workerId,
       },
+      ...(isDurableClaim(work)
+        ? {
+            compensationClaim: {
+              requestId: work.request.id,
+              requestClaimToken: work.request.claimToken ?? '',
+              outboxMessageId: work.outboxMessageId,
+              outboxClaimToken: work.outboxClaimToken,
+            },
+          }
+        : {}),
     });
     if (!admission.admitted || admission.effectId !== effectId) {
       await escalate(outbox, work, options, 'COMPENSATION_ADMIT_REJECTED');
@@ -453,6 +476,7 @@ export async function consumeCompensationBatch(
               response: execution.response,
               eventType: 'compensation.completed',
               disposition: 'COMPLETED',
+              claimToken: work.outboxClaimToken,
             }),
           })
         : await outbox.completeCompensationWork({

@@ -38,7 +38,7 @@ export function SecurityPosturePage() {
       <div className="page">
         <div className="page-head">
           <span className="section-label">Security Posture</span>
-          <h1>Compliance & Red Team Dashboard</h1>
+          <h1>Security Posture Dashboard</h1>
         </div>
         <div className="card" style={{ padding: '32px', textAlign: 'center' }}>
           <span style={{ color: 'var(--text-muted)' }}>Loading security posture…</span>
@@ -52,15 +52,15 @@ export function SecurityPosturePage() {
       <div className="page">
         <div className="page-head">
           <span className="section-label">Security Posture</span>
-          <h1>Compliance & Red Team Dashboard</h1>
+          <h1>Security Posture Dashboard</h1>
         </div>
         <div className="card" style={{ padding: '24px', textAlign: 'center' }}>
           <p style={{ color: 'var(--accent-amber)', fontSize: '0.8rem', marginBottom: '8px' }}>
             {error ?? 'No posture data available'}
           </p>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>
-            Run a security posture assessment to generate real compliance data. The backend reads
-            snapshots from <code>.commander/posture-snapshots.json</code>.
+            Run a security posture assessment to generate posture data. The backend reads snapshots
+            from <code>.commander/posture-snapshots.json</code>.
           </p>
         </div>
       </div>
@@ -71,10 +71,11 @@ export function SecurityPosturePage() {
     <div className="page">
       <div className="page-head">
         <span className="section-label">Security Posture</span>
-        <h1>Compliance & Red Team Dashboard</h1>
+        <h1>Security Posture & Red Team Dashboard</h1>
         <p className="page-desc">
-          ISO 42001:2023 &amp; NIST AI RMF 1.0 compliance mapping with continuous red team testing.
-          Snapshot history tracks posture across CI/CD runs.
+          ISO 42001:2023 &amp; NIST AI RMF 1.0 control mapping with configured red-team signals.
+          Snapshot history tracks self-assessed posture across CI/CD runs; this is not
+          certification.
         </p>
       </div>
 
@@ -82,7 +83,7 @@ export function SecurityPosturePage() {
         {/* ── Metrics Row ──────────────────────────────────────────── */}
         <div className="metric-row">
           <MetricCard
-            label="Compliance Score"
+            label="Posture Score"
             value={report.posture.overallScore}
             suffix={`/100 · ${report.posture.grade}`}
             icon="S"
@@ -351,7 +352,7 @@ function NewCapabilitiesSection() {
     {
       icon: '✓',
       title: 'Sandbox Verifier',
-      desc: 'Formal sandbox verification with 7 cross-platform isolation tests: file read/write/escape, network access, process fork, env sanitization. Evidence-backed compliance reporting.',
+      desc: 'Formal sandbox verification with 7 cross-platform isolation tests: file read/write/escape, network access, process fork, env sanitization. Control-coverage reporting is separate from external audit evidence.',
       color: 'var(--accent-cyan)',
       tag: 'operational_readiness',
     },
@@ -372,7 +373,7 @@ function NewCapabilitiesSection() {
     {
       icon: '▦',
       title: 'MITRE ATLAS Mapper',
-      desc: 'Automatic mapping of security events to MITRE ATLAS tactics/techniques (14 tactics, 60+ techniques). Generates ATLAS Navigator heatmaps + compliance reports.',
+      desc: 'Automatic mapping of security events to MITRE ATLAS tactics/techniques (14 tactics, 60+ techniques). Generates ATLAS Navigator heatmaps + control-coverage reports.',
       color: 'var(--accent-blue)',
       tag: 'compliance',
     },

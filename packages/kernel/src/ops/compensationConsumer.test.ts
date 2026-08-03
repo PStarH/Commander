@@ -4,6 +4,7 @@ import {
   consumeCompensationBatch,
   type ClaimedCompensationWork,
   type CompensationOutboxPort,
+  type LegacyClaimedCompensationWork,
 } from './compensationConsumer.js';
 import {
   sealGovernedCompensationAuthorization,
@@ -51,7 +52,7 @@ function claimed(
   authorization: GovernedCompensationAuthorization = sealGovernedCompensationAuthorization(
     authorityInput(),
   ),
-): ClaimedCompensationWork {
+): LegacyClaimedCompensationWork {
   return {
     messageId: 'outbox-1',
     tenantId: authorization.tenantId,
@@ -87,6 +88,12 @@ function makePort(items: ClaimedCompensationWork[] = [claimed()]) {
     async escalateCompensationWork(input) {
       calls.push({ method: 'escalate', input });
       return { applied: true, disposition: 'ESCALATED' };
+    },
+    async parkCompensationUnknown() {
+      throw new Error('parkCompensationUnknown is not exercised by legacy-path fixtures');
+    },
+    async finalizeCompensation() {
+      throw new Error('finalizeCompensation is not exercised by legacy-path fixtures');
     },
   };
   return {

@@ -1,18 +1,16 @@
 <p align="center">
   <img src="https://img.shields.io/badge/GAIA-TBD-lightgrey?style=flat-square" />
-  <img src="https://img.shields.io/badge/PinchBench-97.7%25-green?style=flat-square" />
-  <img src="https://img.shields.io/badge/HumanEval+-91.5%25-orange?style=flat-square" />
   <img src="https://img.shields.io/badge/providers-25-purple?style=flat-square" />
   <img src="https://img.shields.io/badge/topologies-5-red?style=flat-square" />
   <img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" />
 </p>
 
 <h1 align="center">Commander</h1>
-<p align="center"><strong>看清 AI 在做什么。信任结果。花费更少。</strong></p>
+<p align="center"><strong>看清 AI 在做什么。检查结果。花费更少。</strong></p>
 
 <p align="center">
   <code>pnpm exec tsx packages/core/src/cliEntry.ts watch "investigate this bug"</code><br>
-  <sub>无需安装。一条命令。实时查看多智能体推理过程流式传输到你的终端。</sub>
+  <sub>无需安装。一条命令。实时查看多智能体事件和工具调用流式传输到你的终端。</sub>
 </p>
 
 <p align="center">
@@ -25,15 +23,15 @@
 
 ## Commander 的独特之处
 
-**透明——一切尽在眼前。** 每个智能体的思考过程、工具调用和决策都通过 SSE 实时流式传输。没有黑箱。你可以一步步观察智能体的工作过程。
+**透明——查看运行事件。** 智能体事件、工具调用和可用的质量门决策会通过 SSE 实时流式传输。你可以逐步检查已发出的工作轨迹。
 
-**可靠——经过验证的输出。** 质量门控在返回结果前会检查每一项输出。包括幻觉检测、一致性、完整性、准确性与安全性校验。你得到的是可以信赖的结果。
+**可靠——可配置的输出检查。** 在启用验证管线的路径上，质量门控会在返回结果前运行配置的检查，包括幻觉检测、一致性、完整性、准确性与安全性。失败时系统会重试或报告失败。
 
-**经济高效——智能花费。** 推理引擎在消耗 token 之前会分析你的任务。自动选择合适的拓扑结构——简单任务使用 1 个智能体，复杂任务使用并行智能体。实际成本：每任务约 $0.10，包含质量验证。
+**经济高效——智能花费。** 推理引擎在消耗 token 之前会分析你的任务。自动选择合适的拓扑结构——简单任务使用 1 个智能体，复杂任务使用并行智能体。实际成本取决于提供商、模型、任务和启用的验证检查。
 
 **25 个 LLM 提供商。** OpenAI、Anthropic、Google、Azure、DeepSeek、GLM、MiMo、Xiaomi、Groq、Together、Perplexity、Fireworks、Replicate、Mistral、Cohere、OpenRouter、xAI、Anyscale、DeepInfra、Agnes、Ollama、vLLM、AWS Bedrock、StepFun、MiniMax——设置一个环境变量，Commander 会处理其余一切。包含回退链。
 
-**自我改进。** Meta-learner 使用 Thompson Sampling + Reflexion 跨运行调优智能体配置。使用越多，效果越好。
+**自我改进。** Meta-learner 使用 Thompson Sampling + Reflexion 根据已记录运行调优智能体配置；效果取决于任务、模型和数据。
 
 ---
 
@@ -44,7 +42,7 @@
 pnpm exec tsx packages/core/src/cliEntry.ts watch "find the bug in src/server.ts and fix it"
 ```
 
-这不是模拟——这是来自实际智能体执行的实时 SSE 流的真实录像。每一次工具调用、每一个决策、每一次验证都实时流式传输到你的终端。你可以**观看**智能体思考。
+这是用于展示界面的录制示例，展示 CLI 的 SSE 流式交互；它不代表生产运行结果或客户现场证据。
 
 ---
 
@@ -60,7 +58,7 @@ export OPENAI_API_KEY=sk-...
 # 3. 运行任何任务
 pnpm exec tsx packages/core/src/cliEntry.ts run "analyze this repository"
 pnpm exec tsx packages/core/src/cliEntry.ts plan "implement authentication"    # 执行前查看计划
-pnpm exec tsx packages/core/src/cliEntry.ts watch "debug the failing test"     # 实时查看智能体推理
+pnpm exec tsx packages/core/src/cliEntry.ts watch "debug the failing test"     # 实时查看智能体事件
 ```
 
 ---
@@ -84,7 +82,7 @@ pnpm exec tsx packages/core/src/cliEntry.ts watch "debug the failing test"     #
 
 ## 拓扑结构
 
-Commander 自动从 5 种标准拓扑中选择最佳方案：
+Commander 自动从 5 种标准拓扑中选择合适的方案：
 
 - **SINGLE** — 单一智能体，简单查询、快速回答
 - **CHAIN** — 顺序管线，逐步精炼
@@ -116,10 +114,10 @@ packages/core/src/
 
 ## 质量门控
 
-每个结果在返回前都经过验证：
+在启用验证管线的路径上，结果会在返回前经过配置的检查：
 
 ```
-任务输入 → 智能体执行 → [质量门控] → 验证输出
+任务输入 → 智能体执行 → [质量门控] → 配置检查后的输出
                             │
                             ├─ 幻觉检测（hallucination）
                             ├─ 一致性（consistency）
@@ -175,25 +173,25 @@ docker compose up -d
 
 ## 基准测试
 
+> 以下基准运行于模拟/脚本化 harness 或 CI 基线，衡量的是 harness，不是生产 SLA 或 SOC 证据。
+
 ```bash
 pnpm benchmark:gaia        # 运行 GAIA 基准测试（完整脚本见 package.json scripts）
 ```
 
 ---
 
-| 基准测试                               | Commander  | 裸 LLM (MiMo) | OpenClaw |      Δ      |
-| -------------------------------------- | :--------: | :-----------: | :------: | :---------: |
-| **GAIA**（165 个多步推理任务）         | ⏳ 待重跑  |     21.2%     |    —     |      —      |
-| **BFCL** 工具选择（35 场景非官方子集） | **77.1%**  |       —       |    —     |      —      |
-| **BFCL** 参数预测（35 场景非官方子集） | **77.1%**  |       —       |    —     |      —      |
-| **PinchBench**（43 个智能体任务）      | **100.0%** |       —       |  89.5%   | **+10.5pp** |
-| **HumanEval+**（164 个 Python 问题）   | **96.3%**  |       —       |    —     |      —      |
-
-BFCL 在本仓库中使用了多个非官方子集：35 场景通用子集（`benchmarks/bfcl/results_full.json`，77.1% 工具 / 77.1% 参数）、30 任务 Commander 重跑（`docs/benchmark-results/bfcl/results.json`，80.0% / 80.0%）以及 12 核心子集（`benchmarks/bfcl/results.json`，91.7% / 91.7%）。这些都不是官方 BFCL 排行榜运行结果。
+| 套件 | 覆盖范围 | 结果 |
+| ---- | -------- | ---- |
+| 混沌工程 | 255 个合成案例 + 55 个变异案例 | 仅列出 harness；结果见基准矩阵 |
+| 红队 | 47 个场景、8 类攻击 | 所列用例均 blocked（模拟 harness） |
+| AgentDojo | 12 个安全测试案例 | 所列用例均 blocked（模拟 harness） |
+| GAIA Spine | 核心能力基准 | 已调度 quick/offline 回归；完整 fixture 待补齐 |
+| SLO | API 成功率 99.5%、P95 延迟 <2s | CI 基线，不是生产 SLA |
 
 ```bash
 # 复现任意基准测试
-pnpm --filter @commander/core benchmark:verify  # 重新计算已提交的 BFCL 分数声明
+pnpm test:core                   # 运行核心套件并验证本地基线
 pnpm test:core                   # 完整核心套件：node:test + vitest
 pnpm benchmark:chaos:full        # 混沌工程基准测试（255 场景）
 ```
@@ -207,7 +205,7 @@ pnpm benchmark:chaos:full        # 混沌工程基准测试（255 场景）
 | `commander run <task>`         | 完整多智能体执行（`--dry-run` 显示计划，`--stream` 实时 SSE 流，`--tui` 终端仪表盘） |
 | `commander fix`                | 自动修复 lint、格式和类型错误                     |
 | `commander init`               | 零配置环境扫描 + 提供商连接测试                   |
-| `commander company <task>`     | 企业模式：质量门控 + 记忆                         |
+| `commander company <task>`     | 本地 company 模式：质量门控 + 记忆                 |
 | `commander swarm <task>`       | 递归拆解 + 并行执行                               |
 | `commander drive <task>`       | 自主逐步执行                                      |
 | `commander goal <task>`        | 多轮收敛循环                                      |

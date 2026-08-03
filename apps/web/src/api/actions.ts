@@ -1,5 +1,9 @@
 import type {
   ActionApprovalRequestV1,
+  ActionCompensationApprovalRequestV1,
+  ActionCompensationApprovalResponseV1,
+  ActionCompensationRequestResponseV1,
+  ActionCompensationRequestV1,
   ActionEvidenceV1,
   ActionKillSwitchScopeV1,
   ActionKillSwitchV1,
@@ -24,6 +28,10 @@ function storedAuthToken(): string | null {
 
 export type ActionState = ActionStateV1;
 export type {
+  ActionCompensationApprovalRequestV1,
+  ActionCompensationApprovalResponseV1,
+  ActionCompensationRequestResponseV1,
+  ActionCompensationRequestV1,
   ActionEvidenceV1,
   ActionKillSwitchScopeV1,
   ActionKillSwitchV1,
@@ -95,9 +103,7 @@ export class ActionGatewayClient {
     });
   }
 
-  proposeAction(
-    input: ActionProposeRequestV1,
-  ): Promise<ActionProposeResponseV1> {
+  proposeAction(input: ActionProposeRequestV1): Promise<ActionProposeResponseV1> {
     return this.request('/v1/actions', {
       method: 'POST',
       headers: { 'idempotency-key': input.idempotencyKey },
@@ -126,6 +132,34 @@ export class ActionGatewayClient {
       },
     );
     return result.action;
+  }
+
+  requestCompensation(
+    runId: string,
+    input: ActionCompensationRequestV1,
+    idempotencyKey: string,
+  ): Promise<ActionCompensationRequestResponseV1> {
+    return this.request(`/v1/actions/${encodeURIComponent(runId)}/compensations`, {
+      method: 'POST',
+      headers: { 'idempotency-key': idempotencyKey },
+      body: JSON.stringify(input),
+    });
+  }
+
+  approveCompensation(
+    runId: string,
+    authorizationId: string,
+    input: ActionCompensationApprovalRequestV1,
+    idempotencyKey: string,
+  ): Promise<ActionCompensationApprovalResponseV1> {
+    return this.request(
+      `/v1/actions/${encodeURIComponent(runId)}/compensations/${encodeURIComponent(authorizationId)}/approve`,
+      {
+        method: 'POST',
+        headers: { 'idempotency-key': idempotencyKey },
+        body: JSON.stringify(input),
+      },
+    );
   }
 
   async rejectAction(

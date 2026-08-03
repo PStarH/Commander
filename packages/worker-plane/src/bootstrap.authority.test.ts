@@ -20,6 +20,7 @@ import {
   EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV,
   OWNER_DATABASE_ROLE_REJECTED,
   productionCapabilityBrokerOptions,
+  withDefaultLlmAllowlist,
 } from './bootstrap.js';
 
 function ed25519Material(kid: string): {
@@ -79,6 +80,49 @@ describe('worker-plane authority startup gates', () => {
       new RegExp(EVIDENCE_REPOSITORY_REQUIRED),
     );
   });
+
+  it('preserves the signed evidence authority surface through the policy wrapper', () => {
+    const repository = new InMemoryKernelRepository();
+    const port = withDefaultLlmAllowlist(repository);
+
+    assert.equal(typeof port.completeEffectWithEvidence, 'function');
+    assert.equal(typeof port.failEffectWithEvidence, 'function');
+    assert.equal(typeof port.listEffectsForRun, 'function');
+    assert.equal(typeof port.listEvents, 'function');
+  });
+
+  it('rejects an incomplete signed evidence authority before worker polling', () => {
+    const capability = ed25519Material('capability-evidence-contract');
+    const evidence = ed25519Material('evidence-contract');
+    const signer = createWorkerEvidenceSigner(
+      productionEnv({
+        [EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV]: evidence.privateKeyPem,
+        [EVIDENCE_SIGNING_KEY_ID_ENV]: evidence.keyId,
+      }),
+    );
+    assert.ok(signer);
+    const env = productionEnv({
+      [CAPABILITY_PRIVATE_KEY_PEM_ENV]: capability.privateKeyPem,
+      [CAPABILITY_KEY_ID_ENV]: capability.keyId,
+      [CAPABILITY_JWKS_JSON_ENV]: capability.jwksJson,
+    });
+
+    for (const method of [
+      'completeEffectWithEvidence',
+      'failEffectWithEvidence',
+      'listEffectsForRun',
+      'listEvents',
+    ] as const) {
+      const repository = new InMemoryKernelRepository();
+      Object.defineProperty(repository, method, { value: undefined });
+      assert.throws(
+        () => createEffectBroker(repository as never, 'worker-1', env, signer),
+        new RegExp(EVIDENCE_REPOSITORY_REQUIRED),
+        method,
+      );
+    }
+  });
+
   it('rejects missing private key before poll (production)', () => {
     const mat = ed25519Material('kid-wp');
     const repo = new InMemoryKernelRepository();

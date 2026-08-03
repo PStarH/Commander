@@ -95,10 +95,7 @@ describe('EnvAdapterCredentialProvider', () => {
           },
         },
       });
-      assert.equal(
-        await provider.getToken('tenant-a', 'kind', 'commander'),
-        'kind-secret-token',
-      );
+      assert.equal(await provider.getToken('tenant-a', 'kind', 'commander'), 'kind-secret-token');
       assert.equal(
         provider.getServer('tenant-a', 'kind', 'commander').href,
         'https://127.0.0.1:6443/',
@@ -123,5 +120,23 @@ describe('EnvAdapterCredentialProvider', () => {
       if (previous === undefined) delete process.env.KIND_BEARER_TOKEN;
       else process.env.KIND_BEARER_TOKEN = previous;
     }
+  });
+
+  it('uses the explicitly injected environment for Kubernetes tokens', async () => {
+    const provider = new EnvAdapterCredentialProvider({
+      cellTenantId: 'tenant-a',
+      environment: {
+        COMMANDER_KIND_TOKEN: 'injected-kind-token',
+      },
+      kubernetesClusters: {
+        kind: {
+          server: 'https://127.0.0.1:6443',
+          tokenEnv: 'COMMANDER_KIND_TOKEN',
+          namespaces: ['commander'],
+        },
+      },
+    });
+
+    assert.equal(await provider.getToken('tenant-a', 'kind', 'commander'), 'injected-kind-token');
   });
 });

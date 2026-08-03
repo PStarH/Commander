@@ -1,6 +1,6 @@
 /**
  * Attack PoCs — Demonstrating real exploitable issues in the
- * production-grade sub-projects we just shipped.
+ * recently added security sub-projects.
  *
  * This is a red team exercise, not a tool. Each function returns
  * { vulnerability, severity, evidence } and the script aggregates
@@ -782,7 +782,7 @@ async function attackShadowProxy(): Promise<void> {
 // ═══════════════════════════════════════════════════════════════════
 
 async function main(): Promise<void> {
-  console.log('\n🥷 Commander Production-Grade Attack PoCs\n');
+  console.log('\n🥷 Commander Security Attack PoCs\n');
   console.log('═══════════════════════════════════════════════════════════════════\n');
 
   attackPiiScrubber();

@@ -5,6 +5,7 @@ import {
   FileCheck2,
   Play,
   RefreshCw,
+  RotateCcw,
   Search,
   Send,
   Shield,
@@ -14,6 +15,9 @@ import { Badge, Button, Input, Select } from '../components/ui';
 import {
   ActionGatewayClient,
   ActionGatewayError,
+  type ActionCompensationApprovalRequestV1,
+  type ActionCompensationRequestResponseV1,
+  type ActionCompensationRequestV1,
   type ActionEvidenceV1,
   type ActionKillSwitchScopeV1,
   type ActionKillSwitchV1,
@@ -62,6 +66,18 @@ export function ActionsPage({ token }: ActionsPageProps) {
   const [action, setAction] = useState<GovernedActionV1 | null>(null);
   const [approvalDigest, setApprovalDigest] = useState('');
   const [evidence, setEvidence] = useState<ActionEvidenceV1 | null>(null);
+  const [compensation, setCompensation] = useState<ActionCompensationRequestResponseV1 | null>(
+    null,
+  );
+  const [compensationAdapterVersion, setCompensationAdapterVersion] = useState('demo.adapter.v1');
+  const [compensationEffectType, setCompensationEffectType] = useState(
+    'compensate.demo.ticket.create',
+  );
+  const [compensationPatchText, setCompensationPatchText] = useState('{}');
+  const [forwardReceiptHash, setForwardReceiptHash] = useState('');
+  const [compensationAuthorizationId, setCompensationAuthorizationId] = useState('');
+  const [compensationActionDigest, setCompensationActionDigest] = useState('');
+  const [compensationPolicySnapshotId, setCompensationPolicySnapshotId] = useState('');
   const [killSwitches, setKillSwitches] = useState<ActionKillSwitchV1[]>([]);
   const [killScope, setKillScope] = useState<ActionKillSwitchScopeV1>('effect-type');
   const [killValue, setKillValue] = useState('');
@@ -120,16 +136,16 @@ export function ActionsPage({ token }: ActionsPageProps) {
     if (!action) return;
     await perform(async () => {
       const updated = approved
-        ? await client.approveAction(action.runId, {
-            actionDigest: approvalDigest,
-            simulationId: action.simulation.simulationId,
-            policySnapshotId: action.policySnapshotId,
-          }, operationKey('approve', action.runId))
-        : await client.rejectAction(
+        ? await client.approveAction(
             action.runId,
-            undefined,
-            operationKey('reject', action.runId),
-          );
+            {
+              actionDigest: approvalDigest,
+              simulationId: action.simulation.simulationId,
+              policySnapshotId: action.policySnapshotId,
+            },
+            operationKey('approve', action.runId),
+          )
+        : await client.rejectAction(action.runId, undefined, operationKey('reject', action.runId));
       setAction(updated);
     });
   }
@@ -145,6 +161,51 @@ export function ActionsPage({ token }: ActionsPageProps) {
   async function verifyEvidence() {
     if (!action) return;
     await perform(async () => setEvidence(await client.getActionEvidence(action.runId)));
+  }
+
+  async function requestCompensation() {
+    if (!action) return;
+    await perform(async () => {
+      const patch: unknown = JSON.parse(compensationPatchText);
+      if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+        throw new Error('Compensation patch must be a JSON object');
+      }
+      const input: ActionCompensationRequestV1 = {
+        originalEffectId: action.effectId,
+        adapterVersion: compensationAdapterVersion,
+        compensationEffectType,
+        compensationPatch: patch as Record<string, unknown>,
+        forwardReceiptHash,
+      };
+      const result = await client.requestCompensation(
+        action.runId,
+        input,
+        operationKey('compensation-request', action.runId),
+      );
+      setCompensation(result);
+      if ('authorization' in result && result.authorization) {
+        setCompensationAuthorizationId(result.authorization.id);
+        setCompensationActionDigest(result.authorization.actionDigest);
+        setCompensationPolicySnapshotId(result.authorization.policySnapshotId);
+      }
+    });
+  }
+
+  async function approveCompensation() {
+    if (!action || !compensationAuthorizationId) return;
+    await perform(async () => {
+      const input: ActionCompensationApprovalRequestV1 = {
+        actionDigest: compensationActionDigest,
+        policySnapshotId: compensationPolicySnapshotId,
+      };
+      const result = await client.approveCompensation(
+        action.runId,
+        compensationAuthorizationId,
+        input,
+        operationKey('compensation-approve', compensationAuthorizationId),
+      );
+      setCompensation(result);
+    });
   }
 
   async function refreshKillSwitches() {
@@ -178,7 +239,12 @@ export function ActionsPage({ token }: ActionsPageProps) {
             placeholder="Run ID"
             aria-label="Run ID"
           />
-          <Button variant="secondary" onClick={loadAction} disabled={busy || !runId.trim()} title="Load action">
+          <Button
+            variant="secondary"
+            onClick={loadAction}
+            disabled={busy || !runId.trim()}
+            title="Load action"
+          >
             <Search size={15} />
             Load
           </Button>
@@ -190,18 +256,79 @@ export function ActionsPage({ token }: ActionsPageProps) {
       <section className="actions-band">
         <div className="actions-band-head">
           <h2>Proposal</h2>
-          {simulation ? <Badge variant={simulation.effect === 'deny' ? 'error' : simulation.effect === 'require_approval' ? 'warning' : 'success'}>{simulation.effect}</Badge> : null}
+          {simulation ? (
+            <Badge
+              variant={
+                simulation.effect === 'deny'
+                  ? 'error'
+                  : simulation.effect === 'require_approval'
+                    ? 'warning'
+                    : 'success'
+              }
+            >
+              {simulation.effect}
+            </Badge>
+          ) : null}
         </div>
         <div className="actions-form-grid">
-          <label>Tool<Input value={request.tool} onChange={(event) => setRequest((current) => ({ ...current, tool: event.target.value }))} /></label>
-          <label>Effect type<Input value={request.effectType} onChange={(event) => setRequest((current) => ({ ...current, effectType: event.target.value }))} /></label>
-          <label>Destination<Input value={request.destination} onChange={(event) => setRequest((current) => ({ ...current, destination: event.target.value }))} /></label>
-          <label>Idempotency key<Input value={request.idempotencyKey} onChange={(event) => setRequest((current) => ({ ...current, idempotencyKey: event.target.value }))} /></label>
-          <label className="actions-json-field">Arguments<textarea value={argsText} onChange={(event) => setArgsText(event.target.value)} spellCheck={false} /></label>
+          <label>
+            Tool
+            <Input
+              value={request.tool}
+              onChange={(event) =>
+                setRequest((current) => ({ ...current, tool: event.target.value }))
+              }
+            />
+          </label>
+          <label>
+            Effect type
+            <Input
+              value={request.effectType}
+              onChange={(event) =>
+                setRequest((current) => ({ ...current, effectType: event.target.value }))
+              }
+            />
+          </label>
+          <label>
+            Destination
+            <Input
+              value={request.destination}
+              onChange={(event) =>
+                setRequest((current) => ({ ...current, destination: event.target.value }))
+              }
+            />
+          </label>
+          <label>
+            Idempotency key
+            <Input
+              value={request.idempotencyKey}
+              onChange={(event) =>
+                setRequest((current) => ({ ...current, idempotencyKey: event.target.value }))
+              }
+            />
+          </label>
+          <label className="actions-json-field">
+            Arguments
+            <textarea
+              value={argsText}
+              onChange={(event) => setArgsText(event.target.value)}
+              spellCheck={false}
+            />
+          </label>
         </div>
         <div className="actions-command-row">
-          <Button variant="secondary" onClick={simulate} disabled={busy || !request.idempotencyKey.trim()}><Play size={15} />Simulate</Button>
-          <Button onClick={propose} disabled={busy || !request.idempotencyKey.trim()}><Send size={15} />Propose</Button>
+          <Button
+            variant="secondary"
+            onClick={simulate}
+            disabled={busy || !request.idempotencyKey.trim()}
+          >
+            <Play size={15} />
+            Simulate
+          </Button>
+          <Button onClick={propose} disabled={busy || !request.idempotencyKey.trim()}>
+            <Send size={15} />
+            Propose
+          </Button>
           {simulation ? <code>{simulation.actionDigest}</code> : null}
         </div>
       </section>
@@ -219,22 +346,130 @@ export function ActionsPage({ token }: ActionsPageProps) {
           {action.state === 'AWAITING_APPROVAL' ? (
             <div className="actions-review-row">
               <Shield size={18} />
-              <Input value={approvalDigest} onChange={(event) => setApprovalDigest(event.target.value)} aria-label="Approval action digest" />
-              <Button onClick={() => review(true)} disabled={busy || !approvalMatches} title="Approve exact digest"><Check size={15} />Approve</Button>
-              <Button variant="danger" onClick={() => review(false)} disabled={busy}><X size={15} />Reject</Button>
+              <Input
+                value={approvalDigest}
+                onChange={(event) => setApprovalDigest(event.target.value)}
+                aria-label="Approval action digest"
+              />
+              <Button
+                onClick={() => review(true)}
+                disabled={busy || !approvalMatches}
+                title="Approve exact digest"
+              >
+                <Check size={15} />
+                Approve
+              </Button>
+              <Button variant="danger" onClick={() => review(false)} disabled={busy}>
+                <X size={15} />
+                Reject
+              </Button>
             </div>
           ) : null}
 
           {action.state === 'COMPLETION_UNKNOWN' ? (
             <div className="actions-command-row">
-              <Button onClick={reconcile} disabled={busy}><RefreshCw size={15} />Reconcile</Button>
+              <Button onClick={reconcile} disabled={busy}>
+                <RefreshCw size={15} />
+                Reconcile
+              </Button>
             </div>
           ) : null}
 
           {['SUCCEEDED', 'FAILED', 'ESCALATED'].includes(action.state) ? (
             <div className="actions-command-row">
-              <Button variant="secondary" onClick={verifyEvidence} disabled={busy}><FileCheck2 size={15} />Verify evidence</Button>
-              {evidence ? <Badge variant={evidence.verification.ok ? 'success' : 'error'}>{evidence.verification.ok ? 'verified' : 'invalid'}</Badge> : null}
+              <Button variant="secondary" onClick={verifyEvidence} disabled={busy}>
+                <FileCheck2 size={15} />
+                Verify evidence
+              </Button>
+              {evidence ? (
+                <Badge variant={evidence.verification.ok ? 'success' : 'error'}>
+                  {evidence.verification.ok ? 'verified' : 'invalid'}
+                </Badge>
+              ) : null}
+            </div>
+          ) : null}
+
+          {action.state === 'SUCCEEDED' ? (
+            <div className="actions-compensation">
+              <div className="actions-band-head">
+                <h3>Compensation</h3>
+                {compensation && 'state' in compensation ? (
+                  <Badge variant="warning">{compensation.state}</Badge>
+                ) : null}
+                {compensation && 'accepted' in compensation && compensation.accepted ? (
+                  <Badge variant="success">accepted</Badge>
+                ) : null}
+              </div>
+              <div className="actions-form-grid">
+                <label>
+                  Adapter version
+                  <Input
+                    value={compensationAdapterVersion}
+                    onChange={(event) => setCompensationAdapterVersion(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Compensation effect type
+                  <Input
+                    value={compensationEffectType}
+                    onChange={(event) => setCompensationEffectType(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Forward receipt hash
+                  <Input
+                    value={forwardReceiptHash}
+                    onChange={(event) => setForwardReceiptHash(event.target.value)}
+                  />
+                </label>
+                <label className="actions-json-field">
+                  Compensation patch
+                  <textarea
+                    value={compensationPatchText}
+                    onChange={(event) => setCompensationPatchText(event.target.value)}
+                    spellCheck={false}
+                  />
+                </label>
+              </div>
+              <div className="actions-command-row">
+                <Button
+                  variant="secondary"
+                  onClick={requestCompensation}
+                  disabled={busy || !forwardReceiptHash.trim()}
+                >
+                  <RotateCcw size={15} />
+                  Request compensation
+                </Button>
+              </div>
+              {compensationAuthorizationId ? (
+                <div className="actions-review-row">
+                  <Input
+                    value={compensationAuthorizationId}
+                    onChange={(event) => setCompensationAuthorizationId(event.target.value)}
+                    aria-label="Compensation authorization ID"
+                  />
+                  <Input
+                    value={compensationActionDigest}
+                    onChange={(event) => setCompensationActionDigest(event.target.value)}
+                    aria-label="Compensation action digest"
+                  />
+                  <Input
+                    value={compensationPolicySnapshotId}
+                    onChange={(event) => setCompensationPolicySnapshotId(event.target.value)}
+                    aria-label="Compensation policy snapshot ID"
+                  />
+                  <Button
+                    onClick={approveCompensation}
+                    disabled={busy || !compensationActionDigest || !compensationPolicySnapshotId}
+                  >
+                    <Check size={15} />
+                    Approve compensation
+                  </Button>
+                </div>
+              ) : null}
+              {compensation ? (
+                <pre className="actions-result">{JSON.stringify(compensation, null, 2)}</pre>
+              ) : null}
             </div>
           ) : null}
         </section>
@@ -243,17 +478,50 @@ export function ActionsPage({ token }: ActionsPageProps) {
       <section className="actions-band">
         <div className="actions-band-head">
           <h2>Kill switches</h2>
-          <Button variant="ghost" size="sm" onClick={refreshKillSwitches} disabled={busy} title="Refresh kill switches"><RefreshCw size={14} /></Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={refreshKillSwitches}
+            disabled={busy}
+            title="Refresh kill switches"
+          >
+            <RefreshCw size={14} />
+          </Button>
         </div>
         <div className="actions-kill-row">
-          <Select value={killScope} onChange={(event) => setKillScope(event.target.value as ActionKillSwitchScopeV1)} aria-label="Kill switch scope">
-            {['tenant', 'package', 'model', 'tool', 'destination', 'effect-type'].map((scope) => <option key={scope} value={scope}>{scope}</option>)}
+          <Select
+            value={killScope}
+            onChange={(event) => setKillScope(event.target.value as ActionKillSwitchScopeV1)}
+            aria-label="Kill switch scope"
+          >
+            {['tenant', 'package', 'model', 'tool', 'destination', 'effect-type'].map((scope) => (
+              <option key={scope} value={scope}>
+                {scope}
+              </option>
+            ))}
           </Select>
-          <Input value={killValue} onChange={(event) => setKillValue(event.target.value)} placeholder="Value" aria-label="Kill switch value" />
-          <Button variant="danger" onClick={enableKillSwitch} disabled={busy || !killValue.trim()}><Ban size={15} />Enable</Button>
+          <Input
+            value={killValue}
+            onChange={(event) => setKillValue(event.target.value)}
+            placeholder="Value"
+            aria-label="Kill switch value"
+          />
+          <Button variant="danger" onClick={enableKillSwitch} disabled={busy || !killValue.trim()}>
+            <Ban size={15} />
+            Enable
+          </Button>
         </div>
         <div className="actions-switch-list">
-          {killSwitches.map((item) => <div key={`${item.scope}:${item.value}`}><code>{item.scope}:{item.value}</code><Badge variant={item.enabled ? 'error' : 'info'}>{item.enabled ? 'enabled' : 'disabled'}</Badge></div>)}
+          {killSwitches.map((item) => (
+            <div key={`${item.scope}:${item.value}`}>
+              <code>
+                {item.scope}:{item.value}
+              </code>
+              <Badge variant={item.enabled ? 'error' : 'info'}>
+                {item.enabled ? 'enabled' : 'disabled'}
+              </Badge>
+            </div>
+          ))}
         </div>
       </section>
     </div>

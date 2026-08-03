@@ -15,6 +15,7 @@ import type { CapabilityTokenIssuer, WorkloadBinding } from '@commander/effect-b
 import {
   assertEffectBrokerForProduction,
   mustRouteExternalEffectThroughBroker,
+  workerExecutionErrorFromEffectFailure,
 } from './effectGate.js';
 import type { ToolEffectCatalog } from './toolEffectCatalog.js';
 import { DENY_ALL_TOOL_EFFECT_CATALOG } from './toolEffectCatalog.js';
@@ -177,12 +178,9 @@ export class ToolStepExecutor implements StepExecutor {
           toolName: input.toolName,
         };
       } catch (error) {
-        if (error instanceof WorkerExecutionError) throw error;
-        const message = error instanceof Error ? error.message : String(error);
-        throw new WorkerExecutionError(message, {
-          code: 'EFFECT_EXECUTION_FAILED',
-          retryable: false,
-          details: { toolName: input.toolName, stepId: step.id },
+        throw workerExecutionErrorFromEffectFailure(error, {
+          toolName: input.toolName,
+          stepId: step.id,
         });
       }
     }

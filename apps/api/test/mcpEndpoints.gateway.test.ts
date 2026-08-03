@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { describe, it } from 'node:test';
 import express from 'express';
+import { resetGuardianAgent } from '@commander/core';
 import { createMCPRouter, type McpActionGatewayExecutor } from '../src/mcpEndpoints.js';
 
 async function withMcpRouter(
@@ -36,7 +37,9 @@ async function rpc(baseUrl: string, name: string, args: Record<string, unknown>)
     }),
   });
   assert.equal(response.status, 200);
-  return response.json() as Promise<Record<string, unknown>>;
+  const body = (await response.json()) as Record<string, unknown>;
+  assert.equal(body.error, undefined);
+  return body;
 }
 
 describe('MCP Action Gateway surface', () => {
@@ -58,6 +61,8 @@ describe('MCP Action Gateway surface', () => {
       assert.equal(status.enterpriseWrites, true);
       assert.deepEqual(status.tools.map((tool) => tool.name).sort(), [
         'commander_action_approve',
+        'commander_action_compensation_approve',
+        'commander_action_compensation_request',
         'commander_action_evidence',
         'commander_action_get',
         'commander_action_propose',
@@ -80,11 +85,32 @@ describe('MCP Action Gateway surface', () => {
       await rpc(baseUrl, 'commander_action_get', { runId: 'run/1' });
       await rpc(baseUrl, 'commander_action_approve', {
         runId: 'run/1',
+        idempotencyKey: 'mcp-approve-0001',
         actionDigest: 'b'.repeat(64),
         simulationId: 'simulation-api-1',
         policySnapshotId: 'policy-api-1',
       });
-      await rpc(baseUrl, 'commander_action_reconcile', { runId: 'run/1' });
+      await rpc(baseUrl, 'commander_action_compensation_request', {
+        runId: 'run/1',
+        idempotencyKey: 'mcp-compensation-0001',
+        originalEffectId: 'effect-1',
+        adapterVersion: 'demo.adapter.v1',
+        compensationEffectType: 'compensate.demo.ticket.create',
+        compensationPatch: { ticketId: 'ticket-1' },
+        forwardReceiptHash: 'c'.repeat(64),
+      });
+      await rpc(baseUrl, 'commander_action_compensation_approve', {
+        runId: 'run/1',
+        authorizationId: 'authorization-1',
+        idempotencyKey: 'mcp-compensation-approve-0001',
+        actionDigest: 'd'.repeat(64),
+        policySnapshotId: 'policy-api-1',
+      });
+      resetGuardianAgent();
+      await rpc(baseUrl, 'commander_action_reconcile', {
+        runId: 'run/1',
+        idempotencyKey: 'mcp-reconcile-0001',
+      });
       await rpc(baseUrl, 'commander_action_evidence', { runId: 'run/1' });
     });
 
@@ -128,8 +154,31 @@ describe('MCP Action Gateway surface', () => {
           simulationId: 'simulation-api-1',
           policySnapshotId: 'policy-api-1',
         },
+        headers: { 'Idempotency-Key': 'mcp-approve-0001' },
       },
-      { method: 'POST', path: '/v1/actions/run%2F1/reconcile' },
+      {
+        method: 'POST',
+        path: '/v1/actions/run%2F1/compensations',
+        body: {
+          originalEffectId: 'effect-1',
+          adapterVersion: 'demo.adapter.v1',
+          compensationEffectType: 'compensate.demo.ticket.create',
+          compensationPatch: { ticketId: 'ticket-1' },
+          forwardReceiptHash: 'c'.repeat(64),
+        },
+        headers: { 'Idempotency-Key': 'mcp-compensation-0001' },
+      },
+      {
+        method: 'POST',
+        path: '/v1/actions/run%2F1/compensations/authorization-1/approve',
+        body: { actionDigest: 'd'.repeat(64), policySnapshotId: 'policy-api-1' },
+        headers: { 'Idempotency-Key': 'mcp-compensation-approve-0001' },
+      },
+      {
+        method: 'POST',
+        path: '/v1/actions/run%2F1/reconcile',
+        headers: { 'Idempotency-Key': 'mcp-reconcile-0001' },
+      },
       { method: 'GET', path: '/v1/actions/run%2F1/evidence' },
     ]);
   });

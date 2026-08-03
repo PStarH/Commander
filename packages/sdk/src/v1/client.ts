@@ -2,6 +2,10 @@
 import { createPublicKey, verify } from 'node:crypto';
 import type {
   ActionApprovalInput,
+  ActionCompensationApprovalInput,
+  ActionCompensationApprovalResult,
+  ActionCompensationInput,
+  ActionCompensationResult,
   ActionEvidenceBundle,
   ActionEvidenceJwks,
   ActionEvidenceVerification,
@@ -180,6 +184,34 @@ export class CommanderGatewayClient {
       body: JSON.stringify(input),
     });
     return (await this.body(response)).action;
+  }
+  async requestActionCompensation(
+    runId: string,
+    input: ActionCompensationInput,
+    idempotencyKey: string,
+  ): Promise<ActionCompensationResult> {
+    const response = await this.call(`/v1/actions/${encodeURIComponent(runId)}/compensations`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(input),
+    });
+    return this.body(response);
+  }
+  async approveActionCompensation(
+    runId: string,
+    authorizationId: string,
+    input: ActionCompensationApprovalInput,
+    idempotencyKey: string,
+  ): Promise<ActionCompensationApprovalResult> {
+    const response = await this.call(
+      `/v1/actions/${encodeURIComponent(runId)}/compensations/${encodeURIComponent(authorizationId)}/approve`,
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': idempotencyKey },
+        body: JSON.stringify(input),
+      },
+    );
+    return this.body(response);
   }
   async rejectAction(
     runId: string,

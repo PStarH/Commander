@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { EffectBrokerError } from '@commander/effect-broker';
 import { ToolStepExecutor } from './toolStepExecutor.js';
 import { ConnectorStepExecutor } from './connectorStepExecutor.js';
 import type { ClaimedStep } from './types.js';
@@ -108,5 +109,50 @@ describe('tool/connector broker fail-closed', () => {
         err instanceof WorkerExecutionError &&
         err.options.code === 'EFFECT_AUTHORIZATION_REQUIRED',
     );
+  });
+
+  it('preserves reconciliation-owned broker errors across tool and connector executors', async () => {
+    const broker = {
+      execute: async () => {
+        throw new EffectBrokerError('EVIDENCE_PERSIST_FAILED', { effectId: 'e1' });
+      },
+    };
+    const executors = [
+      {
+        executor: new ToolStepExecutor(undefined, broker),
+        input: {
+          toolName: 'http.get',
+          args: {},
+          effectId: 'e1',
+          idempotencyKey: 'k1',
+          capabilityToken: 'tok',
+        },
+      },
+      {
+        executor: new ConnectorStepExecutor(undefined, broker),
+        input: {
+          connectorName: 'crm',
+          operation: 'write',
+          args: {},
+          effectId: 'e1',
+          idempotencyKey: 'k1',
+          capabilityToken: 'tok',
+        },
+      },
+    ];
+
+    for (const { executor, input } of executors) {
+      await assert.rejects(
+        () =>
+          executor.execute(step(input), {
+            signal: AbortSignal.timeout(5_000),
+            worker: { id: 'w1' } as never,
+          }),
+        (error: unknown) =>
+          error instanceof WorkerExecutionError &&
+          error.options.code === 'EVIDENCE_PERSIST_FAILED' &&
+          error.options.retryable === false,
+      );
+    }
   });
 });
