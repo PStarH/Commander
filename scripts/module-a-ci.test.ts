@@ -31,6 +31,16 @@ function moduleAWorkflow(): Workflow {
 }
 
 describe('Module A CI workflow', () => {
+  it('declares architecture-gate runtime dependencies at the workspace root', () => {
+    const packageJson = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as {
+      devDependencies?: Record<string, string>;
+    };
+    assert.ok(
+      packageJson.devDependencies?.typescript,
+      'workspace root must declare typescript because architecture-gate imports it directly',
+    );
+  });
+
   it('uses a reproducible runner and preserves gate evidence on failure', () => {
     const workflow = moduleAWorkflow();
     const job = workflow.jobs?.['module-a-gates'];
