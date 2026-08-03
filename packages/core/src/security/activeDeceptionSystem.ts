@@ -308,7 +308,8 @@ const DEFAULT_HONEYPOTS: DefaultHoneypotDef[] = [
     path: '/api/internal/config/secrets',
     method: 'GET',
     responseTemplate: {
-      aws_access_key_id: process.env.COMMANDER_DECOY_AWS_ACCESS_KEY_ID ?? generateDecoyAwsAccessKeyId(),
+      aws_access_key_id:
+        process.env.COMMANDER_DECOY_AWS_ACCESS_KEY_ID ?? generateDecoyAwsAccessKeyId(),
       aws_secret_access_key: 'PLACEHOLDER',
       stripe_secret_key: 'sk_live_PLACEHOLDER',
     },

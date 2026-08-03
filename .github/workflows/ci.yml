@@ -222,22 +222,23 @@ jobs:
         shell: bash
         run: |
           set +e
-          out=$(pnpm audit --audit-level=high --json 2>&1)
+          audit_output="$RUNNER_TEMP/pnpm-audit.json"
+          pnpm audit --audit-level=high --json > "$audit_output" 2>&1
           code=$?
-          echo "$out"
+          cat "$audit_output"
           if [ $code -eq 0 ]; then
             exit 0
           fi
-          if echo "$out" | grep -Eqi '410|ERR_PNPM_AUDIT_BAD_RESPONSE|endpoint is being retired|ECONNRESET|ETIMEDOUT|fetch failed'; then
+          if grep -Eqi '410|ERR_PNPM_AUDIT_BAD_RESPONSE|endpoint is being retired|ECONNRESET|ETIMEDOUT|fetch failed' "$audit_output"; then
             echo "::warning::pnpm audit transport/API unavailable (npm audit endpoint retirement or network). Continuing; audit:wiring + CodeQL remain hard security gates."
             exit 0
           fi
           # GHSA-qwww-vcr4-c8h2 is scoped to React Router's unstable RSC APIs.
           # This SPA uses BrowserRouter/Routes only; the policy checker below
           # fails closed if any other advisory is present or RSC wiring appears.
-          if [ "$code" -ne 0 ] && node --input-type=module - "$out" <<'NODE'
+          if [ "$code" -ne 0 ] && node --input-type=module - "$audit_output" <<'NODE'
           import { readFileSync } from 'node:fs';
-          const raw = process.argv[2] ?? '';
+          const raw = readFileSync(process.argv[2], 'utf8');
           let audit;
           try {
             audit = JSON.parse(raw);
