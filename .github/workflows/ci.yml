@@ -229,47 +229,18 @@ jobs:
           if [ $code -eq 0 ]; then
             exit 0
           fi
-          if grep -Eqi 'HTTP[[:space:]]*410|status[[:space:]]*(code|Code)?[=:]?[[:space:]]*410|ERR_PNPM_AUDIT_BAD_RESPONSE|endpoint is being retired|ECONNRESET|ETIMEDOUT|fetch failed' "$audit_output"; then
-            echo "::warning::pnpm audit transport/API unavailable (npm audit endpoint retirement or network). Continuing; audit:wiring + CodeQL remain hard security gates."
-            exit 0
-          fi
           # GHSA-qwww-vcr4-c8h2 is scoped to React Router's unstable RSC APIs.
-          # This SPA uses BrowserRouter/Routes only; the policy checker below
-          # fails closed if any other advisory is present or RSC wiring appears.
-          if [ "$code" -ne 0 ] && node --input-type=module - "$audit_output" <<'NODE'
-          import { readdirSync, readFileSync } from 'node:fs';
-          import { join } from 'node:path';
-          const raw = readFileSync(process.argv[2], 'utf8');
-          let audit;
-          try {
-            audit = JSON.parse(raw);
-          } catch {
-            process.exit(1);
-          }
-          const advisoryIds = Object.values(audit.advisories ?? {}).map((entry) => entry.github_advisory_id);
-          const onlyKnownRscAdvisory = advisoryIds.length === 1 && advisoryIds[0] === 'GHSA-qwww-vcr4-c8h2';
-          const webSources = [];
-          const collectSources = (directory) => {
-            for (const entry of readdirSync(directory, { withFileTypes: true })) {
-              const file = join(directory, entry.name);
-              if (entry.isDirectory()) collectSources(file);
-              else if (/\.(?:[cm]?[jt]sx?)$/.test(entry.name)) webSources.push(file);
-            }
-          };
-          collectSources('apps/web/src');
-          const usesUnstableRsc = webSources.some((file) =>
-            /unstable[_-]?rsc|ServerRouter|RSCHydration|createCallServer/.test(
-              readFileSync(file, 'utf8'),
-            ),
-          );
-          if (!onlyKnownRscAdvisory || usesUnstableRsc) process.exit(1);
-          console.log('::warning::GHSA-qwww-vcr4-c8h2 is not applicable: the web SPA has no unstable React Router RSC wiring; keep this exception until react-router >=8.3.0 is published.');
-          NODE
-          then
+          # The policy script parses valid JSON before considering a narrowly
+          # recognized pnpm transport failure. It fails closed for malformed
+          # output, other advisories, and any RSC wiring in apps/web/src.
+          if [ "$code" -ne 0 ] && pnpm exec tsx scripts/ci-audit-policy.ts "$audit_output"; then
             exit 0
           fi
           echo "::error::pnpm audit reported high/critical advisories"
           exit $code
+
+      - name: Security audit policy regression
+        run: pnpm exec node --import tsx --test scripts/ci-audit-policy.test.ts
 
       - name: ESLint check (no-console rule)
         run: pnpm exec eslint packages/core/src
