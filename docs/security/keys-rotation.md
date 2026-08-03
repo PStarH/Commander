@@ -160,10 +160,10 @@ The Signed-Commit SHA is the binding artifact; reviewers can replay `git verify-
 
 | Role                 | Name                  | GitHub handle        | GPG fingerprint (16-char short) | Signed-Commit SHA                        |
 | -------------------- | --------------------- | -------------------- | ------------------------------- | ---------------------------------------- |
-| **CISO**             | Commander Pre-Release Sign-off | @commander-project-signoff | 09D0DB9C03667BEE                |  |
-| **Head of Security** | Demo Head of Security | @commander-hos-demo  | 12AA1940B17D9448                | e8020a0b6a1143adc7cb48bd6ad78dfaf0c5915d |
-| **Engineering Lead** | Demo Engineering Lead | @commander-eng-demo  | 12AA1940B17D9448                | e8020a0b6a1143adc7cb48bd6ad78dfaf0c5915d |
-| **Compliance Lead**  | Demo Compliance Lead  | @commander-cmp-demo  | 12AA1940B17D9448                | e8020a0b6a1143adc7cb48bd6ad78dfaf0c5915d |
+| **CISO**             | Commander Pre-Release Sign-off | @commander-project-signoff | 09D0DB9C03667BEE                | 09ae4b172e4c9277786949a64b225aea98d183b2 |
+| **Head of Security** | Commander Pre-Release Sign-off | @commander-project-signoff | 09D0DB9C03667BEE                | dcee2082e0b8d3d6dadded3ca82dab787e487837 |
+| **Engineering Lead** | Commander Pre-Release Sign-off | @commander-project-signoff | 09D0DB9C03667BEE                | efe6b767049d59005e1648c5addc9fae6ea7d4b9 |
+| **Compliance Lead**  | Commander Pre-Release Sign-off | @commander-project-signoff | 09D0DB9C03667BEE                | b1f48b4bb2ac9f97d3900977c4fce6d47c747ce6 |
 
 ### §6.4 — Procedural note
 
