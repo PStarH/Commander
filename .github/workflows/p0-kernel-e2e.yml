@@ -42,7 +42,7 @@ jobs:
       # full-loop uses deterministic worker executor (not full AgentRuntime)
     steps:
       - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@v6.0.9
       - uses: actions/setup-node@v7
         with:
           node-version: '22'

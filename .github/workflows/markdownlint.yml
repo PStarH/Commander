@@ -39,7 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@v6.0.9
 
       # No pnpm install / no pnpm-store cache: this job only runs node scripts/lint-docs.js.
       # setup-node cache:pnpm fails post-job when the store path was never created.
