@@ -35,6 +35,9 @@ importers:
       '@commander/kernel':
         specifier: workspace:*
         version: link:packages/kernel
+      '@commander/postgres-runtime':
+        specifier: workspace:*
+        version: link:packages/postgres-runtime
       '@commander/worker-plane':
         specifier: workspace:*
         version: link:packages/worker-plane
