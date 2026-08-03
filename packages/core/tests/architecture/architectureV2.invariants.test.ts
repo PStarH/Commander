@@ -116,20 +116,23 @@ describe('Architecture V2 invariants', () => {
     assert.match(read('.github/workflows/ci.yml'), /run: pnpm arch:guard/);
     assert.match(read('.github/workflows/ci.yml'), /run: pnpm arch:guard:test/);
     assert.match(read('.github/workflows/ci.yml'), /run: pnpm contract:check/);
+    assert.match(read('.github/workflows/ci.yml'), /pnpm --filter @commander\/contracts test/);
     assert.match(
       read('.github/workflows/ci.yml'),
-      /pnpm --filter @commander\/contracts test/,
+      /Architecture V2 invariant gates[\s\S]*run: pnpm test:arch/,
     );
     assert.match(
       read('.github/workflows/ci.yml'),
-      /Architecture V2 package boundary gate[\s\S]*continue-on-error:\s*true[\s\S]*pnpm arch:gate/,
+      /Architecture constitution guard \(repository\)[\s\S]*run: pnpm arch:guard/,
     );
   });
 
   it('contract snapshot baseline exists and matches current surface', () => {
     const baselinePath = join(ROOT, 'packages/contracts/snapshots/contract-snapshot.baseline.json');
     assert.ok(existsSync(baselinePath), 'contract snapshot baseline must be committed');
-    const baseline = JSON.parse(read('packages/contracts/snapshots/contract-snapshot.baseline.json')) as {
+    const baseline = JSON.parse(
+      read('packages/contracts/snapshots/contract-snapshot.baseline.json'),
+    ) as {
       version: string;
       resources: string[];
     };
