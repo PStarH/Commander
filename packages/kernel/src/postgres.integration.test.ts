@@ -4,9 +4,23 @@ import { Pool } from 'pg';
 import { PostgresKernelRepository, PostgresTenantContextAuthority } from './postgres.js';
 import type { SqlClient, SqlPool } from './postgres.js';
 import { runKernelMigrations } from './migrations.js';
+import type {
+  ClaimedReconcileEffect,
+  ClaimReconcileEffectsInput,
+  ClaimStepRequest,
+  CompleteStepRequest,
+  FailEffectRequest,
+  KernelEffect,
+  KernelLease,
+  KernelOutboxMessage,
+  KernelStep,
+  KernelTimer,
+  OperationsReadiness,
+} from './types.js';
 import { KernelInvariantError } from './types.js';
 import { TENANT_TABLES } from './schema.js';
 import { seedWorkerAllowedTenants, seedWorkerClaimSecret } from './seedWorkerClaimSecret.js';
+import { runKernelRepositoryContractTests } from './testing/repositoryContract.js';
 
 const databaseUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
 const workerPassword = process.env.COMMANDER_WORKER_PASSWORD ?? 'commander_worker';
@@ -26,6 +40,20 @@ const workerDatabaseUrl =
   process.env.COMMANDER_WORKER_DATABASE_URL ??
   (databaseUrl
     ? deriveRoleDatabaseUrl(databaseUrl, 'commander_worker', workerPassword)
+    : undefined);
+const schedulerDatabaseUrl =
+  process.env.COMMANDER_SCHEDULER_DATABASE_URL ??
+  (databaseUrl
+    ? deriveRoleDatabaseUrl(
+        databaseUrl,
+        'commander_scheduler',
+        process.env.COMMANDER_SCHEDULER_PASSWORD ?? 'commander_scheduler',
+      )
+    : undefined);
+const adapterOpsDatabaseUrl =
+  process.env.COMMANDER_ADAPTER_OPS_DATABASE_URL ??
+  (databaseUrl
+    ? deriveRoleDatabaseUrl(databaseUrl, 'commander_adapter_ops', adapterOpsPassword)
     : undefined);
 
 function createEnforcedAppContext(ownerDatabaseUrl: string): {
@@ -101,6 +129,291 @@ function createLoginPool(roleDatabaseUrl: string): SqlPool & { end: () => Promis
 async function ensureRoleLogin(ownerPool: Pool, role: string, password: string): Promise<void> {
   const escaped = password.replace(/'/g, "''");
   await ownerPool.query(`ALTER ROLE ${role} WITH LOGIN PASSWORD '${escaped}'`);
+}
+
+async function resetPostgresContractTables(pool: Pool): Promise<void> {
+  // The contract reuses stable fixture IDs; its disposable integration database
+  // is reset between cases while preserving the migration checksum ledger.
+  await pool.query(`
+    DO $reset$
+    DECLARE r RECORD;
+    BEGIN
+      FOR r IN
+        SELECT tablename
+        FROM pg_tables
+        WHERE schemaname = 'public'
+          AND tablename LIKE 'commander_%'
+          AND tablename <> 'commander_kernel_migrations'
+      LOOP
+        EXECUTE format('TRUNCATE TABLE %I CASCADE', r.tablename);
+      END LOOP;
+    END
+    $reset$;
+  `);
+}
+
+interface ContractWorkerCredential {
+  id: string;
+  generation: number;
+  claimSecret: string;
+}
+
+interface PostgresContractResources {
+  ownerPool: Pool;
+  workerPool: Pool;
+  adapterPool: Pool;
+  schedulerPool: SqlPool & { end: () => Promise<void> };
+  appPool: SqlPool & { end: () => Promise<void> };
+  tenantAuthorityPool: SqlPool & { end: () => Promise<void> };
+  workerRepository: PostgresKernelRepository;
+  schedulerRepository: PostgresKernelRepository;
+  workerCredential?: ContractWorkerCredential;
+}
+
+/**
+ * The shared contract assumes a single repository, whereas production splits
+ * app, worker, adapter-ops, and scheduler authority. This test-only facade
+ * preserves that contract while each privileged operation uses its real LOGIN.
+ */
+class PostgresContractRepository extends PostgresKernelRepository {
+  constructor(
+    appPool: SqlPool,
+    tenantContextAuthority: PostgresTenantContextAuthority,
+    readonly resources: PostgresContractResources,
+  ) {
+    super(appPool, { tenantContextAuthority, tenantContextPhase: 'enforce' });
+  }
+
+  override async claimNextStep(request: ClaimStepRequest): Promise<KernelStep | null> {
+    const credential = this.resources.workerCredential;
+    if (!credential || request.workerId !== credential.id) return null;
+    return this.resources.workerRepository.claimNextStep({
+      ...request,
+      workerGeneration: credential.generation,
+      claimSecret: credential.claimSecret,
+    });
+  }
+
+  override async getOperationsReadiness(tenantId: string, at?: Date): Promise<OperationsReadiness> {
+    return this.resources.schedulerRepository.getOperationsReadiness(tenantId, at);
+  }
+
+  override async completeStep(request: CompleteStepRequest): Promise<KernelStep | null> {
+    return this.resources.workerRepository.completeStep(request);
+  }
+
+  override async completeEffect(
+    effectId: string,
+    tenantId: string,
+    lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>,
+    response: Record<string, unknown>,
+    actor: string,
+  ): Promise<KernelEffect | null> {
+    return this.resources.workerRepository.completeEffect(
+      effectId,
+      tenantId,
+      lease,
+      response,
+      actor,
+    );
+  }
+
+  override async failEffect(request: FailEffectRequest): Promise<KernelEffect | null> {
+    return this.resources.workerRepository.failEffect(request);
+  }
+
+  override async claimOutbox(limit: number, now?: Date): Promise<KernelOutboxMessage[]> {
+    // The app and scheduler LOGINs may be backed by separate hosts. Advance the
+    // test scheduler clock slightly so a just-committed lifecycle event is not
+    // hidden by harmless container clock skew.
+    return this.resources.schedulerRepository.claimOutbox(
+      limit,
+      now ?? new Date(Date.now() + 60_000),
+    );
+  }
+
+  override async markOutboxPublished(
+    messageId: string,
+    claimToken: string,
+    tenantId?: string,
+  ): Promise<boolean> {
+    return this.resources.schedulerRepository.markOutboxPublished(messageId, claimToken, tenantId);
+  }
+
+  override async claimExpiredTimers(now?: Date, limit?: number): Promise<KernelTimer[]> {
+    return this.resources.schedulerRepository.claimExpiredTimers(now, limit);
+  }
+
+  override async claimReconcileEffects(
+    input: ClaimReconcileEffectsInput,
+  ): Promise<ClaimedReconcileEffect[]> {
+    return this.resources.schedulerRepository.claimReconcileEffects(input);
+  }
+}
+
+async function seedContractWorker(repository: PostgresContractRepository): Promise<{
+  workerId: string;
+  generation: number;
+}> {
+  const { resources } = repository;
+  if (resources.workerCredential) {
+    return {
+      workerId: resources.workerCredential.id,
+      generation: resources.workerCredential.generation,
+    };
+  }
+  const registration = await resources.workerPool.query<{
+    registration: { id: string; generation: number; claim_secret: string };
+  }>(
+    `SELECT register_worker(
+       'worker-1','agent','contract','["agent","tool"]'::jsonb,'{}'::jsonb,4,
+       'db:commander_worker','["tenant-a"]'::jsonb,NULL
+     ) AS registration`,
+  );
+  const credential = registration.rows[0]?.registration;
+  assert.ok(credential, 'worker registration must return a credential');
+  resources.workerCredential = {
+    id: credential.id,
+    generation: Number(credential.generation),
+    claimSecret: credential.claim_secret,
+  };
+  return { workerId: credential.id, generation: Number(credential.generation) };
+}
+
+async function seedContractOperationsWorker(
+  repository: PostgresContractRepository,
+  input: {
+    id: string;
+    tenantIds: string[];
+    capabilities: string[];
+    status?: 'ACTIVE' | 'DRAINING' | 'OFFLINE';
+    registeredAt: Date;
+    lastHeartbeatAt: Date;
+    identitySubject?: string;
+  },
+): Promise<void> {
+  const { ownerPool, adapterPool } = repository.resources;
+  const capability = input.capabilities[0];
+  const role = capability === 'effect.reconcile' ? 'reconcile' : 'compensation';
+  const instanceId = input.id.slice(input.id.indexOf(':') + 1).replaceAll('_', '-');
+  const registeredWorkerId = `${role}:${instanceId}`;
+  const canRegister =
+    input.capabilities.length === 1 &&
+    (capability === 'effect.reconcile' || capability === 'effect.compensate') &&
+    input.status !== 'DRAINING' &&
+    input.status !== 'OFFLINE' &&
+    input.identitySubject === 'db:commander_adapter_ops' &&
+    input.lastHeartbeatAt > input.registeredAt;
+
+  for (const tenantId of input.tenantIds) {
+    await ownerPool.query(
+      `INSERT INTO commander_worker_allowed_tenants (tenant_id)
+       VALUES ($1)
+       ON CONFLICT (tenant_id) DO NOTHING`,
+      [tenantId],
+    );
+  }
+
+  await ownerPool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id=$1', [
+    input.id,
+  ]);
+  await ownerPool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id=$1', [
+    registeredWorkerId,
+  ]);
+  await ownerPool.query('DELETE FROM commander_workers WHERE id=$1', [input.id]);
+  await ownerPool.query('DELETE FROM commander_workers WHERE id=$1', [registeredWorkerId]);
+
+  if (canRegister) {
+    const registration = await adapterPool.query<{
+      registration: { id: string; generation: number; claim_secret: string };
+    }>(`SELECT register_adapter_ops_worker($1,$2,$3::jsonb,NULL) AS registration`, [
+      role,
+      instanceId,
+      JSON.stringify(input.tenantIds),
+    ]);
+    const credential = registration.rows[0]?.registration;
+    assert.ok(credential, 'adapter-ops registration must return a credential');
+    await adapterPool.query('SELECT heartbeat_adapter_ops_worker($1,$2,$3)', [
+      credential.id,
+      credential.generation,
+      credential.claim_secret,
+    ]);
+    return;
+  }
+
+  // Negative contract fixtures intentionally model rows a runtime RPC cannot create.
+  await ownerPool.query(
+    `INSERT INTO commander_workers (
+       id,kind,version,capabilities,max_concurrency,status,generation,identity_subject,
+       tenant_ids,registered_at,last_heartbeat_at
+     ) VALUES ($1,'agent','contract',$2::jsonb,1,$3,1,$4,$5::jsonb,$6,$7)`,
+    [
+      input.id,
+      JSON.stringify(input.capabilities),
+      input.status ?? 'ACTIVE',
+      input.identitySubject ?? 'db:commander_adapter_ops',
+      JSON.stringify(input.tenantIds),
+      input.registeredAt.toISOString(),
+      input.lastHeartbeatAt.toISOString(),
+    ],
+  );
+}
+
+if (databaseUrl && workerDatabaseUrl && schedulerDatabaseUrl && adapterOpsDatabaseUrl) {
+  runKernelRepositoryContractTests({
+    name: 'Postgres enforced authorities',
+    create: async () => {
+      const ownerPool = new Pool({ connectionString: databaseUrl, max: 4 });
+      await runKernelMigrations(ownerPool);
+      await ensureRoleLogin(ownerPool, 'commander_app', appPassword);
+      await ensureRoleLogin(ownerPool, 'commander_tenant_authority', tenantAuthorityPassword);
+      await ensureRoleLogin(ownerPool, 'commander_worker', workerPassword);
+      await ensureRoleLogin(
+        ownerPool,
+        'commander_scheduler',
+        process.env.COMMANDER_SCHEDULER_PASSWORD ?? 'commander_scheduler',
+      );
+      await ensureRoleLogin(ownerPool, 'commander_adapter_ops', adapterOpsPassword);
+      await resetPostgresContractTables(ownerPool);
+      await seedWorkerAllowedTenants(ownerPool, ['tenant-a']);
+      await seedTenantAuthorityAllowedTenants(ownerPool, ['tenant-a', 'tenant-b']);
+
+      const { appPool, tenantAuthorityPool } = createEnforcedAppContext(databaseUrl);
+      const workerPool = new Pool({ connectionString: workerDatabaseUrl, max: 2 });
+      const adapterPool = new Pool({ connectionString: adapterOpsDatabaseUrl, max: 2 });
+      const schedulerPool = createLoginPool(schedulerDatabaseUrl);
+      const workerRepository = new PostgresKernelRepository(workerPool, { schedulerMode: false });
+      const schedulerRepository = new PostgresKernelRepository(schedulerPool, {
+        schedulerMode: true,
+      });
+      const authority = new PostgresTenantContextAuthority(tenantAuthorityPool);
+      const resources: PostgresContractResources = {
+        ownerPool,
+        workerPool,
+        adapterPool,
+        schedulerPool,
+        appPool,
+        tenantAuthorityPool,
+        workerRepository,
+        schedulerRepository,
+      };
+      return new PostgresContractRepository(appPool, authority, resources);
+    },
+    destroy: async (repository) => {
+      const contract = repository as PostgresContractRepository;
+      const { resources } = contract;
+      await resources.workerPool.end();
+      await resources.adapterPool.end();
+      await resources.schedulerPool.end();
+      await resources.tenantAuthorityPool.end();
+      await resources.appPool.end();
+      await resetPostgresContractTables(resources.ownerPool);
+      await resources.ownerPool.end();
+    },
+    seedWorker: async (repository) => seedContractWorker(repository as PostgresContractRepository),
+    seedOperationsWorker: async (repository, input) =>
+      seedContractOperationsWorker(repository as PostgresContractRepository, input),
+  });
 }
 
 describe('PostgresKernelRepository integration', () => {

@@ -57,6 +57,16 @@ describe('CI audit policy', () => {
     );
   });
 
+  it('fails closed when an unrecognized audit error only mentions status 410', () => {
+    assert.equal(
+      evaluateAuditOutput(
+        'ERR_PNPM_AUDIT_BAD_RESPONSE advisory metadata mentions 410 but endpoint status is unknown',
+        createWebSourceTree(),
+      ),
+      'fail',
+    );
+  });
+
   it('fails the exception when nested web source enables React Router RSC', () => {
     const sourceRoot = createWebSourceTree({
       'features/rsc/entry.tsx':

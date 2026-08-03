@@ -109,7 +109,7 @@ export {
 } from './claimSecret.js';
 export { seedWorkerClaimSecret, seedWorkerAllowedTenants } from './seedWorkerClaimSecret.js';
 export type { ClaimSecretSeedClient } from './seedWorkerClaimSecret.js';
-export { PostgresKernelRepository } from './postgres.js';
+export { PostgresKernelRepository, PostgresTenantContextAuthority } from './postgres.js';
 export { SqliteKernelRepository } from './sqlite.js';
 export {
   createKernelRepository,
