@@ -9,6 +9,8 @@ export interface RepositoryContractContext {
   name: string;
   create: () => Promise<KernelRepository>;
   destroy: (repo: KernelRepository) => Promise<void>;
+  /** Adapter-ops PostgreSQL reconciliation uses a database-owned claim clock. */
+  reconcileClaimUsesDatabaseClock?: boolean;
   seedWorker?: (repo: KernelRepository) => Promise<{ workerId: string; generation: number }>;
   seedOperationsWorker?: (
     repo: KernelRepository,
@@ -89,26 +91,43 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
         });
         assert.ok(ctx.seedOperationsWorker, `${ctx.name} must seed operations workers`);
         await ctx.seedOperationsWorker!(kernel, {
-          id: 'reconcile:a', tenantIds: ['tenant-a'], capabilities: ['effect.reconcile'],
+          id: 'reconcile:a',
+          tenantIds: ['tenant-a'],
+          capabilities: ['effect.reconcile'],
           identitySubject: 'forged:generic-worker',
-          registeredAt: new Date(now.getTime() - 1_000), lastHeartbeatAt: new Date(now.getTime() - 1_000),
+          registeredAt: new Date(now.getTime() - 1_000),
+          lastHeartbeatAt: new Date(now.getTime() - 1_000),
         });
-        assert.equal((await kernel.getOperationsReadiness('tenant-a', now)).ready, false, 'forged identity and registration timestamp cannot establish readiness');
+        assert.equal(
+          (await kernel.getOperationsReadiness('tenant-a', now)).ready,
+          false,
+          'forged identity and registration timestamp cannot establish readiness',
+        );
         await ctx.seedOperationsWorker!(kernel, {
-          id: 'reconcile:a', tenantIds: ['tenant-a'], capabilities: ['effect.reconcile'],
+          id: 'reconcile:a',
+          tenantIds: ['tenant-a'],
+          capabilities: ['effect.reconcile'],
           identitySubject: 'db:commander_adapter_ops',
-          registeredAt: new Date(now.getTime() - 10_000), lastHeartbeatAt: new Date(now.getTime() - 1_000),
+          registeredAt: new Date(now.getTime() - 10_000),
+          lastHeartbeatAt: new Date(now.getTime() - 1_000),
         });
         await ctx.seedOperationsWorker!(kernel, {
-          id: 'compensate:a', tenantIds: ['tenant-a'], capabilities: ['effect.compensate'],
+          id: 'compensate:a',
+          tenantIds: ['tenant-a'],
+          capabilities: ['effect.compensate'],
           identitySubject: 'db:commander_adapter_ops',
-          registeredAt: new Date(now.getTime() - 10_000), lastHeartbeatAt: new Date(now.getTime() - 1_000),
+          registeredAt: new Date(now.getTime() - 10_000),
+          lastHeartbeatAt: new Date(now.getTime() - 1_000),
         });
         const ready = await kernel.getOperationsReadiness('tenant-a', now);
         assert.equal(ready.ready, true);
         assert.equal(ready.reconciliationWorkers, 1);
         assert.equal(ready.compensationWorkers, 1);
-        assert.equal((await kernel.getOperationsReadiness('tenant-b', now)).ready, false, 'another tenant cannot borrow drains');
+        assert.equal(
+          (await kernel.getOperationsReadiness('tenant-b', now)).ready,
+          false,
+          'another tenant cannot borrow drains',
+        );
       } finally {
         await ctx.destroy(kernel);
       }
@@ -120,20 +139,34 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
       try {
         assert.ok(ctx.seedOperationsWorker, `${ctx.name} must seed operations workers`);
         await ctx.seedOperationsWorker!(kernel, {
-          id: 'both:a', tenantIds: ['tenant-a'], capabilities: ['effect.reconcile', 'effect.compensate'],
+          id: 'both:a',
+          tenantIds: ['tenant-a'],
+          capabilities: ['effect.reconcile', 'effect.compensate'],
           identitySubject: 'db:commander_adapter_ops',
-          registeredAt: new Date(now.getTime() - 10_000), lastHeartbeatAt: new Date(now.getTime() - 1_000),
+          registeredAt: new Date(now.getTime() - 10_000),
+          lastHeartbeatAt: new Date(now.getTime() - 1_000),
         });
-        assert.equal((await kernel.getOperationsReadiness('tenant-a', now)).ready, false, 'capabilities must be exact and server assigned');
+        assert.equal(
+          (await kernel.getOperationsReadiness('tenant-a', now)).ready,
+          false,
+          'capabilities must be exact and server assigned',
+        );
         await ctx.seedOperationsWorker!(kernel, {
-          id: 'reconcile:a', tenantIds: ['tenant-a'], capabilities: ['effect.reconcile'], status: 'DRAINING',
+          id: 'reconcile:a',
+          tenantIds: ['tenant-a'],
+          capabilities: ['effect.reconcile'],
+          status: 'DRAINING',
           identitySubject: 'db:commander_adapter_ops',
-          registeredAt: new Date(now.getTime() - 10_000), lastHeartbeatAt: new Date(now.getTime() - 1_000),
+          registeredAt: new Date(now.getTime() - 10_000),
+          lastHeartbeatAt: new Date(now.getTime() - 1_000),
         });
         await ctx.seedOperationsWorker!(kernel, {
-          id: 'compensate:a', tenantIds: ['tenant-a'], capabilities: ['effect.compensate'],
+          id: 'compensate:a',
+          tenantIds: ['tenant-a'],
+          capabilities: ['effect.compensate'],
           identitySubject: 'db:commander_adapter_ops',
-          registeredAt: new Date(now.getTime() - 60_000), lastHeartbeatAt: new Date(now.getTime() - 31_000),
+          registeredAt: new Date(now.getTime() - 60_000),
+          lastHeartbeatAt: new Date(now.getTime() - 31_000),
         });
         const readiness = await kernel.getOperationsReadiness('tenant-a', now);
         assert.equal(readiness.ready, false);
@@ -213,20 +246,24 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
           };
           assert.equal((await kernel.admitEffect(request)).admitted, true);
           if (state === 'COMPLETION_UNKNOWN') {
-            assert.ok(await kernel.markEffectCompletionUnknown({
-              effectId: request.id,
-              tenantId: request.tenantId,
-              reason: 'timeout',
-              actor: request.actor,
-            }));
+            assert.ok(
+              await kernel.markEffectCompletionUnknown({
+                effectId: request.id,
+                tenantId: request.tenantId,
+                reason: 'timeout',
+                actor: request.actor,
+              }),
+            );
           } else if (state === 'FAILED') {
-            assert.ok(await kernel.failEffect({
-              effectId: request.id,
-              tenantId: request.tenantId,
-              lease: request.lease,
-              error: { code: 'REMOTE_REJECTED', message: 'rejected', retryable: false },
-              actor: request.actor,
-            }));
+            assert.ok(
+              await kernel.failEffect({
+                effectId: request.id,
+                tenantId: request.tenantId,
+                lease: request.lease,
+                error: { code: 'REMOTE_REJECTED', message: 'rejected', retryable: false },
+                actor: request.actor,
+              }),
+            );
           }
           const now = new Date();
           await ctx.seedOperationsWorker!(kernel, {
@@ -277,13 +314,15 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
         };
         assert.equal((await kernel.admitEffect(request)).admitted, true);
         assert.equal(
-          (await kernel.completeEffect(
-            request.id,
-            request.tenantId,
-            request.lease,
-            { receipt: 'durable' },
-            request.actor,
-          ))?.state,
+          (
+            await kernel.completeEffect(
+              request.id,
+              request.tenantId,
+              request.lease,
+              { receipt: 'durable' },
+              request.actor,
+            )
+          )?.state,
           'COMPLETED',
         );
         const now = new Date();
@@ -314,7 +353,12 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
         const stale = await kernel.completeStep({
           stepId: 'step-a',
           tenantId: claimed!.tenantId,
-          lease: { workerId: claimed!.lease!.workerId, token: 'wrong', fencingEpoch: claimed!.lease!.fencingEpoch, workerGeneration: claimed!.lease!.workerGeneration },
+          lease: {
+            workerId: claimed!.lease!.workerId,
+            token: 'wrong',
+            fencingEpoch: claimed!.lease!.fencingEpoch,
+            workerGeneration: claimed!.lease!.workerGeneration,
+          },
           expectedVersion: claimed!.version,
           actor: 'worker-1',
         });
@@ -337,28 +381,60 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
     it('enforces graph dependencies and effect idempotency within a tenant', async () => {
       const kernel = await ctx.create();
       try {
-        await kernel.createRun(createRun([{ id: 'first', kind: 'agent' }, { id: 'second', kind: 'tool', dependencies: ['first'] }]), 'gateway');
+        await kernel.createRun(
+          createRun([
+            { id: 'first', kind: 'agent' },
+            { id: 'second', kind: 'tool', dependencies: ['first'] },
+          ]),
+          'gateway',
+        );
         const first = await claim(kernel, ctx, { capabilities: ['agent'] });
         assert.equal(first?.id, 'first');
         await seedFreshOperationsDrains(kernel, ctx, 'idempotency');
         const admitted = await kernel.admitEffect({
-          id: 'effect-1', runId: 'run-1', stepId: 'first', tenantId: 'tenant-a',
-          type: 'http.write', idempotencyKey: 'key-1', policyDecisionId: 'decision-1',
+          id: 'effect-1',
+          runId: 'run-1',
+          stepId: 'first',
+          tenantId: 'tenant-a',
+          type: 'http.write',
+          idempotencyKey: 'key-1',
+          policyDecisionId: 'decision-1',
           policySnapshotId: 'policy-v1',
           actionDigest: 'a'.repeat(64),
-          request: { target: 'x' }, lease: first!.lease!, actor: 'worker-1',
+          request: { target: 'x' },
+          lease: first!.lease!,
+          actor: 'worker-1',
         });
         assert.equal(admitted.admitted, true);
         const replay = await kernel.admitEffect({
-          id: 'effect-2', runId: 'run-1', stepId: 'first', tenantId: 'tenant-a',
-          type: 'http.write', idempotencyKey: 'key-1', policyDecisionId: 'decision-1',
+          id: 'effect-2',
+          runId: 'run-1',
+          stepId: 'first',
+          tenantId: 'tenant-a',
+          type: 'http.write',
+          idempotencyKey: 'key-1',
+          policyDecisionId: 'decision-1',
           policySnapshotId: 'policy-v1',
           actionDigest: 'a'.repeat(64),
-          request: { target: 'x' }, lease: first!.lease!, actor: 'worker-1',
+          request: { target: 'x' },
+          lease: first!.lease!,
+          actor: 'worker-1',
         });
         assert.equal(replay.admitted && replay.replayed, true);
-        await kernel.completeEffect('effect-1', 'tenant-a', first!.lease!, { ok: true }, 'worker-1');
-        await kernel.completeStep({ stepId: 'first', tenantId: first!.tenantId, lease: first!.lease!, expectedVersion: first!.version, actor: 'worker-1' });
+        await kernel.completeEffect(
+          'effect-1',
+          'tenant-a',
+          first!.lease!,
+          { ok: true },
+          'worker-1',
+        );
+        await kernel.completeStep({
+          stepId: 'first',
+          tenantId: first!.tenantId,
+          lease: first!.lease!,
+          expectedVersion: first!.version,
+          actor: 'worker-1',
+        });
         assert.equal((await claim(kernel, ctx, { capabilities: ['tool'] }))?.id, 'second');
       } finally {
         await ctx.destroy(kernel);
@@ -420,7 +496,8 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
           actor: 'worker-1',
         });
         assert.equal(snapshotConflict.admitted, false);
-        if (!snapshotConflict.admitted) assert.equal(snapshotConflict.reason, 'IDEMPOTENCY_CONFLICT');
+        if (!snapshotConflict.admitted)
+          assert.equal(snapshotConflict.reason, 'IDEMPOTENCY_CONFLICT');
 
         const digestConflict = await kernel.admitEffect({
           id: 'effect-bind-digest',
@@ -466,7 +543,8 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
           actor: 'worker-1',
         });
         assert.equal(blankSnapshot.admitted, false);
-        if (!blankSnapshot.admitted) assert.equal(blankSnapshot.reason, 'POLICY_SNAPSHOT_ID_REQUIRED');
+        if (!blankSnapshot.admitted)
+          assert.equal(blankSnapshot.reason, 'POLICY_SNAPSHOT_ID_REQUIRED');
 
         const blankWorker = await kernel.admitEffect({
           id: 'effect-blank-worker',
@@ -496,7 +574,10 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
         const messages = await kernel.claimOutbox(10);
         assert.equal(messages.length, 1);
         assert.equal(messages[0]?.topic, 'commander.run.created');
-        assert.equal(await kernel.markOutboxPublished(messages[0]!.id, messages[0]!.claimToken!), true);
+        assert.equal(
+          await kernel.markOutboxPublished(messages[0]!.id, messages[0]!.claimToken!),
+          true,
+        );
         assert.equal((await kernel.claimOutbox(10)).length, 0);
       } finally {
         await ctx.destroy(kernel);
@@ -526,17 +607,37 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
         const claimed = await claim(kernel, ctx);
         await seedFreshOperationsDrains(kernel, ctx, 'reconcile');
         await kernel.admitEffect({
-          id: 'effect-recon', runId: 'run-1', stepId: claimed!.id, tenantId: 'tenant-a',
-          type: 'ticket.create', idempotencyKey: 'idem-recon', policyDecisionId: 'decision-1',
+          id: 'effect-recon',
+          runId: 'run-1',
+          stepId: claimed!.id,
+          tenantId: 'tenant-a',
+          type: 'ticket.create',
+          idempotencyKey: 'idem-recon',
+          policyDecisionId: 'decision-1',
           policySnapshotId: 'policy-v1',
           actionDigest: 'a'.repeat(64),
-          request: { title: 't' }, lease: claimed!.lease!, actor: 'worker-1',
+          request: { title: 't' },
+          lease: claimed!.lease!,
+          actor: 'worker-1',
         });
-        await kernel.markEffectCompletionUnknown({ effectId: 'effect-recon', tenantId: 'tenant-a', reason: 'timeout', actor: 'worker-1' });
-        assert.equal((await kernel.reconcileEffect({
-          effectId: 'effect-recon', tenantId: 'tenant-a', state: 'COMPLETED',
-          response: { ticketId: 'T-1' }, actor: 'reconciler',
-        }))?.state, 'COMPLETED');
+        await kernel.markEffectCompletionUnknown({
+          effectId: 'effect-recon',
+          tenantId: 'tenant-a',
+          reason: 'timeout',
+          actor: 'worker-1',
+        });
+        assert.equal(
+          (
+            await kernel.reconcileEffect({
+              effectId: 'effect-recon',
+              tenantId: 'tenant-a',
+              state: 'COMPLETED',
+              response: { ticketId: 'T-1' },
+              actor: 'reconciler',
+            })
+          )?.state,
+          'COMPLETED',
+        );
       } finally {
         await ctx.destroy(kernel);
       }
@@ -549,27 +650,40 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
         const claimed = await claim(kernel, ctx);
         await seedFreshOperationsDrains(kernel, ctx, 'claim-reconcile');
         await kernel.admitEffect({
-          id: 'effect-claim', runId: 'run-1', stepId: claimed!.id, tenantId: 'tenant-a',
-          type: 'connector.github.pull-request.create', idempotencyKey: 'claim-key',
+          id: 'effect-claim',
+          runId: 'run-1',
+          stepId: claimed!.id,
+          tenantId: 'tenant-a',
+          type: 'connector.github.pull-request.create',
+          idempotencyKey: 'claim-key',
           policyDecisionId: 'decision-1',
           policySnapshotId: 'policy-v1',
           actionDigest: 'a'.repeat(64),
-          request: {}, lease: claimed!.lease!, actor: 'worker-1',
+          request: {},
+          lease: claimed!.lease!,
+          actor: 'worker-1',
         });
-        await kernel.markEffectCompletionUnknown({ effectId: 'effect-claim', tenantId: 'tenant-a', reason: 'timeout', actor: 'worker-1' });
+        await kernel.markEffectCompletionUnknown({
+          effectId: 'effect-claim',
+          tenantId: 'tenant-a',
+          reason: 'timeout',
+          actor: 'worker-1',
+        });
         const requested = await kernel.requestReconcile({
           effectId: 'effect-claim',
           tenantId: 'tenant-a',
           actor: 'api',
         });
         assert.equal(requested.scheduled, true);
-        assert.equal(
-          (await kernel.claimReconcileEffects({ limit: 5, now: new Date(0) })).length,
-          0,
-        );
+        if (!ctx.reconcileClaimUsesDatabaseClock) {
+          assert.equal(
+            (await kernel.claimReconcileEffects({ limit: 5, now: new Date(0) })).length,
+            0,
+          );
+        }
         const claimedEffects = await kernel.claimReconcileEffects({
           limit: 5,
-          now: new Date(Date.now() + 120_000),
+          now: ctx.reconcileClaimUsesDatabaseClock ? undefined : new Date(Date.now() + 120_000),
         });
         assert.equal(claimedEffects.length, 1);
       } finally {
@@ -584,16 +698,25 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
         const claimed = await claim(kernel, ctx);
         await seedFreshOperationsDrains(kernel, ctx, 'fail-effect');
         await kernel.admitEffect({
-          id: 'effect-fail', runId: 'run-1', stepId: claimed!.id, tenantId: 'tenant-a',
-          type: 'connector.github.pull-request.create', idempotencyKey: 'fail-key',
+          id: 'effect-fail',
+          runId: 'run-1',
+          stepId: claimed!.id,
+          tenantId: 'tenant-a',
+          type: 'connector.github.pull-request.create',
+          idempotencyKey: 'fail-key',
           policyDecisionId: 'decision-1',
           policySnapshotId: 'policy-v1',
           actionDigest: 'a'.repeat(64),
-          request: {}, lease: claimed!.lease!, actor: 'worker-1',
+          request: {},
+          lease: claimed!.lease!,
+          actor: 'worker-1',
         });
         const failed = await kernel.failEffect({
-          effectId: 'effect-fail', tenantId: 'tenant-a', lease: claimed!.lease!,
-          error: { code: 'AUTH_FAILED', message: '401', retryable: false }, actor: 'worker-1',
+          effectId: 'effect-fail',
+          tenantId: 'tenant-a',
+          lease: claimed!.lease!,
+          error: { code: 'AUTH_FAILED', message: '401', retryable: false },
+          actor: 'worker-1',
         });
         assert.equal(failed?.state, 'FAILED');
       } finally {
@@ -605,11 +728,16 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
       const kernel = await ctx.create();
       try {
         await kernel.putKillSwitch({
-          tenantId: 'tenant-a', scope: 'tool', value: 'ticket.create',
-          enabled: true, actor: 'ops', reason: 'block',
+          tenantId: 'tenant-a',
+          scope: 'tool',
+          value: 'ticket.create',
+          enabled: true,
+          actor: 'ops',
+          reason: 'block',
         });
         const match = await kernel.findMatchingKillSwitch('tenant-a', {
-          tool: 'ticket.create', effectType: 'demo.ticket.create',
+          tool: 'ticket.create',
+          effectType: 'demo.ticket.create',
         });
         assert.ok(match);
         assert.equal(match.scope, 'tool');
@@ -647,12 +775,21 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
           createRun([{ id: 'step-human', kind: 'tool', initialState: 'WAITING_FOR_HUMAN' }]),
           'gateway',
         );
-        const interaction = await kernel.createInteraction({
-          runId: 'run-1', stepId: 'step-human', tenantId: 'tenant-a', prompt: 'Approve now?',
-        }, 'gateway');
+        const interaction = await kernel.createInteraction(
+          {
+            runId: 'run-1',
+            stepId: 'step-human',
+            tenantId: 'tenant-a',
+            prompt: 'Approve now?',
+          },
+          'gateway',
+        );
         const answered = await kernel.answerInteraction({
-          interactionId: interaction.id, runId: 'run-1', tenantId: 'tenant-a',
-          response: { approved: true }, actor: 'human',
+          interactionId: interaction.id,
+          runId: 'run-1',
+          tenantId: 'tenant-a',
+          response: { approved: true },
+          actor: 'human',
         });
         assert.equal(answered.status, 'answered');
       } finally {
@@ -665,10 +802,17 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
       try {
         await kernel.createRun(createRun(), 'gateway');
         const firesAt = new Date(Date.now() - 1000);
-        const timer = await kernel.createTimer({
-          runId: 'run-1', stepId: 'step-a', tenantId: 'tenant-a',
-          firesAt, timerType: 'STEP_DEADLINE', payload: {},
-        }, 'test');
+        const timer = await kernel.createTimer(
+          {
+            runId: 'run-1',
+            stepId: 'step-a',
+            tenantId: 'tenant-a',
+            firesAt,
+            timerType: 'STEP_DEADLINE',
+            payload: {},
+          },
+          'test',
+        );
         const fired = await kernel.claimExpiredTimers(new Date(), 10);
         assert.ok(fired.some((t) => t.id === timer.id));
         const token = fired.find((t) => t.id === timer.id)?.claimToken;
