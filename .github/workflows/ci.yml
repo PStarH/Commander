@@ -275,6 +275,7 @@ jobs:
           # tsc --noEmit resolves @commander/plugin-sdk types from dist; clean CI has none
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/plugin-sdk build
+          pnpm --filter @commander/postgres-runtime build
           pnpm --filter @commander/core exec tsc --noEmit
 
       - name: TypeScript check (SDK)

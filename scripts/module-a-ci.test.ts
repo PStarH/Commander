@@ -30,6 +30,10 @@ function moduleAWorkflow(): Workflow {
   ) as Workflow;
 }
 
+function qualityWorkflow(): Workflow {
+  return load(readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8')) as Workflow;
+}
+
 describe('Module A CI workflow', () => {
   it('declares architecture-gate runtime dependencies at the workspace root', () => {
     const packageJson = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as {
@@ -38,6 +42,17 @@ describe('Module A CI workflow', () => {
     assert.ok(
       packageJson.devDependencies?.typescript,
       'workspace root must declare typescript because architecture-gate imports it directly',
+    );
+  });
+
+  it('builds postgres-runtime before the clean core typecheck', () => {
+    const quality = qualityWorkflow().jobs?.quality;
+    assert.ok(quality, 'Quality workflow must define its quality job');
+    const coreTypecheck = quality.steps?.find((step) => step.name === 'TypeScript check (core)');
+    assert.match(
+      coreTypecheck?.run ?? '',
+      /pnpm --filter @commander\/postgres-runtime build[\s\S]*pnpm --filter @commander\/core exec tsc --noEmit/,
+      'clean core typecheck must build postgres-runtime declarations first',
     );
   });
 
