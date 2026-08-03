@@ -32,6 +32,7 @@ import {
   type DrilledRun,
 } from '../packages/kernel/src/disasterRecovery.js';
 import { createDrillRun } from '../packages/kernel/src/drillWorkload.js';
+import { createVerifiedPostgresPool } from '../packages/postgres-runtime/src/index.js';
 import { verifyEvidenceReceipt, type EvidenceVerificationResult } from './verify-evidence.js';
 import {
   canonicalEvidenceJson,
@@ -76,6 +77,10 @@ export interface DrillReport {
     pgVersion: string;
     schemaValid: boolean;
     independent: boolean;
+  };
+  tls: {
+    sourceVerified: boolean;
+    restoreVerified: boolean;
   };
   validation: {
     runsTableExists: boolean;
@@ -180,6 +185,53 @@ export function buildDrPostgresEnv(
     PGSSLMODE: 'verify-full',
     PGSSLROOTCERT: caFile,
   };
+}
+
+/**
+ * Prove the target database identity before invoking libpq tooling.
+ *
+ * `psql` can enforce CA/SAN validation through `sslmode=verify-full`, but it
+ * has no portable SPKI pin option. The application pool already owns the
+ * repository's CA + hostname + SPKI contract, so use one short-lived pool
+ * connection as an authenticated TLS preflight for every DR target.
+ */
+export async function verifyDrDatabaseTlsConnection(
+  databaseUrl: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  const pool = createVerifiedPostgresPool(
+    {
+      connectionString: databaseUrl,
+      connectionTimeoutMillis: 10_000,
+      max: 1,
+    },
+    environment,
+  );
+  try {
+    await pool.query('SELECT 1');
+  } finally {
+    await pool.end();
+  }
+}
+
+export function buildPostgresControlDatabaseUrl(databaseUrl: string): string {
+  const url = new URL(databaseUrl);
+  url.pathname = '/postgres';
+  return url.toString();
+}
+
+/**
+ * Keep the restore server preflight ahead of the first mutating operation.
+ * The callback is intentionally synchronous because it wraps `createdb`.
+ */
+export async function preflightRestoreServerBeforeCreate(
+  restoreDatabaseUrl: string,
+  verify: (controlDatabaseUrl: string) => Promise<void> = (controlDatabaseUrl) =>
+    verifyDrDatabaseTlsConnection(controlDatabaseUrl),
+  createDatabase: () => void,
+): Promise<void> {
+  await verify(buildPostgresControlDatabaseUrl(restoreDatabaseUrl));
+  createDatabase();
 }
 
 export function assertDistinctRestoreTarget(source: DsnParts, restore: DsnParts): void {
@@ -787,6 +839,7 @@ async function main(): Promise<void> {
     cutoffAt: null,
     backup: { path: drillBackupPath, sizeBytes: 0, durationMs: 0, method: 'pg_dump' },
     restore: { durationMs: 0, pgVersion: '', schemaValid: false, independent: false },
+    tls: { sourceVerified: false, restoreVerified: false },
     validation: {
       runsTableExists: false,
       stepsTableExists: false,
@@ -824,6 +877,12 @@ async function main(): Promise<void> {
   }
 
   try {
+    if (mode === 'full' || mode === 'backup') {
+      console.log('[0/6] Verifying source PostgreSQL TLS identity (CA + hostname + SPKI)...');
+      await verifyDrDatabaseTlsConnection(dbUrl);
+      report.tls.sourceVerified = true;
+    }
+
     if (mode === 'full' || mode === 'backup') {
       console.log('[1/6] Sentinel runA (before cutoff)...');
       runA = await createDrillRun(dbUrl);
@@ -885,23 +944,25 @@ async function main(): Promise<void> {
 
     assertDistinctRestoreTarget(sourceDsn, restoredDsn);
     try {
-      restoreIntoFreshTarget({
-        createDatabase: () => {
-          createFreshRestoreDatabase(restoredDsn, () => {
-            execFileSync('createdb', [restoredDsn.database], {
-              env: { ...buildDrPostgresEnv(restoredDsn), PGDATABASE: 'postgres' },
-              stdio: 'pipe',
-            });
-          });
-        },
-        countUserObjects: () => countRestoreTargetUserObjects(restoredDsn),
-        restore: () => {
-          execFileSync('pg_restore', ['--no-owner', '--no-acl', dumpFile], {
-            env: buildDrPostgresEnv(restoredDsn),
+      // The target database does not exist yet. Verify the restore server
+      // identity through its control database before issuing createdb.
+      await preflightRestoreServerBeforeCreate(restoreDbUrl, verifyDrDatabaseTlsConnection, () => {
+        createFreshRestoreDatabase(restoredDsn, () => {
+          execFileSync('createdb', [restoredDsn.database], {
+            env: { ...buildDrPostgresEnv(restoredDsn), PGDATABASE: 'postgres' },
             stdio: 'pipe',
-            timeout: 5 * 60 * 1000,
           });
-        },
+        });
+      });
+      assertEmptyRestoreTarget(countRestoreTargetUserObjects(restoredDsn));
+      // The restore database is created immediately above. Verify its
+      // certificate/key identity before pg_restore can write anything.
+      await verifyDrDatabaseTlsConnection(restoreDbUrl);
+      report.tls.restoreVerified = true;
+      execFileSync('pg_restore', ['--no-owner', '--no-acl', dumpFile], {
+        env: buildDrPostgresEnv(restoredDsn),
+        stdio: 'pipe',
+        timeout: 5 * 60 * 1000,
       });
       independentRestore = true;
       report.restore.independent = true;

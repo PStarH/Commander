@@ -28,6 +28,23 @@ const appPassword = process.env.COMMANDER_APP_PASSWORD ?? 'commander_app';
 const adapterOpsPassword = process.env.COMMANDER_ADAPTER_OPS_PASSWORD ?? 'commander_adapter_ops';
 const tenantAuthorityPassword =
   process.env.COMMANDER_TENANT_AUTHORITY_PASSWORD ?? 'commander_tenant_authority';
+const contractDatabaseEnabled = process.env.COMMANDER_KERNEL_POSTGRES_CONTRACT_TEST === '1';
+const contractDatabaseUrl = process.env.COMMANDER_KERNEL_POSTGRES_CONTRACT_DATABASE_URL;
+const contractDatabaseMarker = 'commander_kernel_contract_v1';
+
+function resolveContractDatabaseUrl(): string | undefined {
+  if (!contractDatabaseEnabled) return undefined;
+  if (!contractDatabaseUrl) {
+    throw new Error('COMMANDER_KERNEL_POSTGRES_CONTRACT_DATABASE_URL_REQUIRED');
+  }
+  const databaseName = new URL(contractDatabaseUrl).pathname.slice(1);
+  if (databaseName !== 'commander_kernel_contract') {
+    throw new Error('COMMANDER_KERNEL_POSTGRES_CONTRACT_DATABASE_MUST_BE_ISOLATED');
+  }
+  return contractDatabaseUrl;
+}
+
+const isolatedContractDatabaseUrl = resolveContractDatabaseUrl();
 
 function deriveRoleDatabaseUrl(baseUrl: string, role: string, password: string): string {
   const url = new URL(baseUrl);
@@ -56,17 +73,35 @@ const adapterOpsDatabaseUrl =
     ? deriveRoleDatabaseUrl(databaseUrl, 'commander_adapter_ops', adapterOpsPassword)
     : undefined);
 
-function createEnforcedAppContext(ownerDatabaseUrl: string): {
+const contractWorkerDatabaseUrl = isolatedContractDatabaseUrl
+  ? deriveRoleDatabaseUrl(isolatedContractDatabaseUrl, 'commander_worker', workerPassword)
+  : undefined;
+const contractSchedulerDatabaseUrl = isolatedContractDatabaseUrl
+  ? deriveRoleDatabaseUrl(
+      isolatedContractDatabaseUrl,
+      'commander_scheduler',
+      process.env.COMMANDER_SCHEDULER_PASSWORD ?? 'commander_scheduler',
+    )
+  : undefined;
+const contractAdapterOpsDatabaseUrl = isolatedContractDatabaseUrl
+  ? deriveRoleDatabaseUrl(isolatedContractDatabaseUrl, 'commander_adapter_ops', adapterOpsPassword)
+  : undefined;
+
+function createEnforcedAppContext(
+  ownerDatabaseUrl: string,
+  options: { forceDerivedRoleUrls?: boolean } = {},
+): {
   appPool: SqlPool & { end: () => Promise<void> };
   tenantAuthorityPool: SqlPool & { end: () => Promise<void> };
   createRepository: () => PostgresKernelRepository;
 } {
+  const forceDerivedRoleUrls = options.forceDerivedRoleUrls === true;
   const appPool = createLoginPool(
-    process.env.COMMANDER_APP_DATABASE_URL ??
+    (forceDerivedRoleUrls ? undefined : process.env.COMMANDER_APP_DATABASE_URL) ??
       deriveRoleDatabaseUrl(ownerDatabaseUrl, 'commander_app', appPassword),
   );
   const tenantAuthorityPool = createLoginPool(
-    process.env.COMMANDER_TENANT_AUTHORITY_DATABASE_URL ??
+    (forceDerivedRoleUrls ? undefined : process.env.COMMANDER_TENANT_AUTHORITY_DATABASE_URL) ??
       deriveRoleDatabaseUrl(
         ownerDatabaseUrl,
         'commander_tenant_authority',
@@ -152,6 +187,30 @@ async function resetPostgresContractTables(pool: Pool): Promise<void> {
   `);
 }
 
+async function assertDisposableContractDatabase(pool: Pool): Promise<void> {
+  const result = await pool.query<{ marker: string }>(
+    `SELECT marker
+       FROM public.kernel_contract_disposable_marker
+      WHERE marker = $1`,
+    [contractDatabaseMarker],
+  );
+  if (result.rowCount !== 1) {
+    throw new Error('COMMANDER_KERNEL_POSTGRES_CONTRACT_DATABASE_MARKER_REQUIRED');
+  }
+}
+
+async function readPostgresClock(pool: SqlPool): Promise<Date> {
+  const client = await pool.connect();
+  try {
+    const result = await client.query<{ now: Date | string }>('SELECT clock_timestamp() AS now');
+    const value = result.rows[0]?.now;
+    if (!value) throw new Error('POSTGRES_CLOCK_UNAVAILABLE');
+    return new Date(value);
+  } finally {
+    client.release();
+  }
+}
+
 interface ContractWorkerCredential {
   id: string;
   generation: number;
@@ -166,8 +225,10 @@ interface PostgresContractResources {
   appPool: SqlPool & { end: () => Promise<void> };
   tenantAuthorityPool: SqlPool & { end: () => Promise<void> };
   workerRepository: PostgresKernelRepository;
+  adapterRepository: PostgresKernelRepository;
   schedulerRepository: PostgresKernelRepository;
   workerCredential?: ContractWorkerCredential;
+  reconcileCredential?: ContractWorkerCredential;
 }
 
 /**
@@ -195,7 +256,8 @@ class PostgresContractRepository extends PostgresKernelRepository {
   }
 
   override async getOperationsReadiness(tenantId: string, at?: Date): Promise<OperationsReadiness> {
-    return this.resources.schedulerRepository.getOperationsReadiness(tenantId, at);
+    const readiness = await super.getOperationsReadiness(tenantId, at);
+    return at ? { ...readiness, checkedAt: at.toISOString() } : readiness;
   }
 
   override async completeStep(request: CompleteStepRequest): Promise<KernelStep | null> {
@@ -223,12 +285,11 @@ class PostgresContractRepository extends PostgresKernelRepository {
   }
 
   override async claimOutbox(limit: number, now?: Date): Promise<KernelOutboxMessage[]> {
-    // The app and scheduler LOGINs may be backed by separate hosts. Advance the
-    // test scheduler clock slightly so a just-committed lifecycle event is not
-    // hidden by harmless container clock skew.
+    // Scheduler claim eligibility is evaluated by PostgreSQL. Reading the same
+    // server clock avoids relying on skewed process clocks across real LOGINS.
     return this.resources.schedulerRepository.claimOutbox(
       limit,
-      now ?? new Date(Date.now() + 60_000),
+      now ?? (await readPostgresClock(this.resources.schedulerPool)),
     );
   }
 
@@ -247,7 +308,14 @@ class PostgresContractRepository extends PostgresKernelRepository {
   override async claimReconcileEffects(
     input: ClaimReconcileEffectsInput,
   ): Promise<ClaimedReconcileEffect[]> {
-    return this.resources.schedulerRepository.claimReconcileEffects(input);
+    const credential = this.resources.reconcileCredential;
+    if (!credential) return [];
+    return this.resources.adapterRepository.claimReconcileEffects({
+      ...input,
+      workerId: credential.id,
+      workerGeneration: credential.generation,
+      claimSecret: credential.claimSecret,
+    });
   }
 }
 
@@ -338,6 +406,13 @@ async function seedContractOperationsWorker(
       credential.generation,
       credential.claim_secret,
     ]);
+    if (capability === 'effect.reconcile') {
+      repository.resources.reconcileCredential = {
+        id: credential.id,
+        generation: Number(credential.generation),
+        claimSecret: credential.claim_secret,
+      };
+    }
     return;
   }
 
@@ -359,11 +434,19 @@ async function seedContractOperationsWorker(
   );
 }
 
-if (databaseUrl && workerDatabaseUrl && schedulerDatabaseUrl && adapterOpsDatabaseUrl) {
+if (
+  contractDatabaseEnabled &&
+  isolatedContractDatabaseUrl &&
+  contractWorkerDatabaseUrl &&
+  contractSchedulerDatabaseUrl &&
+  contractAdapterOpsDatabaseUrl
+) {
   runKernelRepositoryContractTests({
     name: 'Postgres enforced authorities',
+    reconcileClaimUsesDatabaseClock: true,
     create: async () => {
-      const ownerPool = new Pool({ connectionString: databaseUrl, max: 4 });
+      const ownerPool = new Pool({ connectionString: isolatedContractDatabaseUrl, max: 4 });
+      await assertDisposableContractDatabase(ownerPool);
       await runKernelMigrations(ownerPool);
       await ensureRoleLogin(ownerPool, 'commander_app', appPassword);
       await ensureRoleLogin(ownerPool, 'commander_tenant_authority', tenantAuthorityPassword);
@@ -378,11 +461,18 @@ if (databaseUrl && workerDatabaseUrl && schedulerDatabaseUrl && adapterOpsDataba
       await seedWorkerAllowedTenants(ownerPool, ['tenant-a']);
       await seedTenantAuthorityAllowedTenants(ownerPool, ['tenant-a', 'tenant-b']);
 
-      const { appPool, tenantAuthorityPool } = createEnforcedAppContext(databaseUrl);
-      const workerPool = new Pool({ connectionString: workerDatabaseUrl, max: 2 });
-      const adapterPool = new Pool({ connectionString: adapterOpsDatabaseUrl, max: 2 });
-      const schedulerPool = createLoginPool(schedulerDatabaseUrl);
+      const { appPool, tenantAuthorityPool } = createEnforcedAppContext(
+        isolatedContractDatabaseUrl,
+        { forceDerivedRoleUrls: true },
+      );
+      const workerPool = new Pool({ connectionString: contractWorkerDatabaseUrl, max: 2 });
+      const adapterPool = new Pool({ connectionString: contractAdapterOpsDatabaseUrl, max: 2 });
+      const schedulerPool = createLoginPool(contractSchedulerDatabaseUrl);
       const workerRepository = new PostgresKernelRepository(workerPool, { schedulerMode: false });
+      const adapterRepository = new PostgresKernelRepository(adapterPool, {
+        schedulerMode: false,
+        adapterOpsMode: true,
+      });
       const schedulerRepository = new PostgresKernelRepository(schedulerPool, {
         schedulerMode: true,
       });
@@ -395,6 +485,7 @@ if (databaseUrl && workerDatabaseUrl && schedulerDatabaseUrl && adapterOpsDataba
         appPool,
         tenantAuthorityPool,
         workerRepository,
+        adapterRepository,
         schedulerRepository,
       };
       return new PostgresContractRepository(appPool, authority, resources);

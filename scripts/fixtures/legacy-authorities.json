@@ -403,7 +403,7 @@
     },
     {
       "path": "scripts/l4-b-compensation-dual-process-race.ts",
-      "sourceSha256": "46d665a5c5dfda4bdd7f44c8222a5c37c9d1251bd60db1421a6b775eae26da73",
+      "sourceSha256": "cd8761620ded74f7e39a106f9339fe9495efadd5935ed10881bc0bf0b69d435e",
       "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "owner": "repository-operations",
       "reason": "Live compensation race fixture directly seeds and cleans canonical kernel rows",

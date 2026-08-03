@@ -447,6 +447,8 @@ jobs:
     env:
       DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander
       COMMANDER_KERNEL_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander
+      COMMANDER_KERNEL_POSTGRES_CONTRACT_TEST: '1'
+      COMMANDER_KERNEL_POSTGRES_CONTRACT_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander_kernel_contract
       COMMANDER_OWNER_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander
       OWNER_DSN: postgres://commander_owner:commander_owner@localhost:5432/commander
       GIT_TERMINAL_PROMPT: '0'
@@ -501,6 +503,34 @@ jobs:
           GRANT commander_worker TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
           GRANT commander_adapter_ops TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
           SQL
+      - name: Create isolated kernel contract database
+        env:
+          PGPASSWORD: commander
+        run: |
+          if ! psql --host localhost --port 5432 --username commander --dbname postgres --tuples-only --no-align \
+            --command "SELECT 1 FROM pg_database WHERE datname = 'commander_kernel_contract'" | grep -qx 1; then
+            createdb --host localhost --port 5432 --username commander --owner commander_owner commander_kernel_contract
+          fi
+          psql --set ON_ERROR_STOP=1 --host localhost --port 5432 --username commander --dbname commander_kernel_contract <<'SQL'
+          ALTER SCHEMA public OWNER TO commander_owner;
+          GRANT USAGE, CREATE ON SCHEMA public TO commander_owner;
+          CREATE TABLE IF NOT EXISTS public.kernel_contract_disposable_marker (
+            marker text PRIMARY KEY CHECK (marker = 'commander_kernel_contract_v1')
+          );
+          INSERT INTO public.kernel_contract_disposable_marker (marker)
+          VALUES ('commander_kernel_contract_v1')
+          ON CONFLICT (marker) DO NOTHING;
+          ALTER TABLE public.kernel_contract_disposable_marker OWNER TO commander_owner;
+          REVOKE ALL ON public.kernel_contract_disposable_marker FROM PUBLIC;
+          GRANT CONNECT ON DATABASE commander_kernel_contract TO commander_app, commander_tenant_authority,
+            commander_scheduler, commander_worker, commander_adapter_ops;
+          SQL
+      - name: Apply isolated kernel contract migrations
+        env:
+          COMMANDER_OWNER_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander_kernel_contract
+        run: |
+          pnpm exec tsx scripts/ci-bootstrap-deploy-gates.ts closure
+          pnpm exec tsx scripts/ci-bootstrap-deploy-gates.ts full
       - name: Apply kernel closure migrations
         run: |
           pnpm exec tsx scripts/ci-bootstrap-deploy-gates.ts closure
@@ -509,6 +539,7 @@ jobs:
         run: |
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/plugin-sdk build
+          pnpm --filter @commander/postgres-runtime build
           pnpm --filter @commander/effect-broker build
           pnpm --filter @commander/kernel build
           pnpm --filter @commander/action-adapters build
@@ -535,7 +566,7 @@ jobs:
           path: artifacts/l4-b-compensation-dual-race-*.json
           if-no-files-found: error
       - name: Worker plane e2e (execute + lease reclaim)
-        run: pnpm exec node --import tsx --test --test-force-exit packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts
+        run: pnpm exec node --import tsx --test packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts
       - name: Full Gateway → Worker terminal loop
         run: pnpm p0:full-loop:tls
         env:
@@ -793,6 +824,9 @@ jobs:
           const report = JSON.parse(readFileSync(process.argv[2], 'utf8'));
           if (report.overall !== 'PASS' || report.honestyLevel !== 'ENFORCED' || !report.restore?.independent) {
             throw new Error('DR report did not establish the required ENFORCED independent PASS result');
+          }
+          if (!report.tls?.sourceVerified || !report.tls?.restoreVerified) {
+            throw new Error('DR report did not prove CA, hostname, and SPKI verification for both database targets');
           }
           if (report.validation?.evidenceReceiptsVerified !== report.validation?.evidenceReceiptCount) {
             throw new Error('DR report did not verify every restored evidence receipt');

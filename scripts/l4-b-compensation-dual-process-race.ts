@@ -29,6 +29,9 @@ import { Pool } from 'pg';
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const TSX_CLI = createRequire(import.meta.url).resolve('tsx/cli');
 const DEFAULT_DEADLINE_MS = 120_000;
+const WORKER_STOP_FILE_GRACE_MS = 300;
+const WORKER_SIGTERM_GRACE_MS = 5_000;
+const WORKER_SIGKILL_REAP_MS = 5_000;
 
 const HELP = `L4-B compensation dual-process race (C6)
 
@@ -256,6 +259,68 @@ function spawnWorker(
   return child;
 }
 
+function workerHasExited(child: ChildProcess): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+async function reapWorker(child: ChildProcess | undefined): Promise<void> {
+  if (!child || workerHasExited(child)) return;
+
+  await new Promise<void>((resolve) => {
+    let completed = false;
+    let termTimer: ReturnType<typeof setTimeout> | undefined;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    const finish = () => {
+      if (completed) return;
+      completed = true;
+      if (termTimer) clearTimeout(termTimer);
+      if (killTimer) clearTimeout(killTimer);
+      child.removeListener('exit', finish);
+      resolve();
+    };
+    const sendSigkill = () => {
+      if (workerHasExited(child)) {
+        finish();
+        return;
+      }
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        finish();
+        return;
+      }
+      killTimer = setTimeout(finish, WORKER_SIGKILL_REAP_MS);
+    };
+
+    child.once('exit', finish);
+    if (workerHasExited(child)) {
+      finish();
+      return;
+    }
+    termTimer = setTimeout(sendSigkill, WORKER_SIGTERM_GRACE_MS);
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      sendSigkill();
+    }
+  });
+}
+
+async function stopAndReapWorkers(
+  stopFile: string,
+  publisherProc: ChildProcess | undefined,
+  consumerProc: ChildProcess | undefined,
+): Promise<void> {
+  await writeFile(stopFile, 'stop').catch(() => undefined);
+  if (
+    (publisherProc && !workerHasExited(publisherProc)) ||
+    (consumerProc && !workerHasExited(consumerProc))
+  ) {
+    await sleep(WORKER_STOP_FILE_GRACE_MS);
+  }
+  await Promise.all([reapWorker(publisherProc), reapWorker(consumerProc)]);
+}
+
 async function runWorkerLoop(
   role: 'publisher' | 'consumer',
   databaseUrl: string,
@@ -453,26 +518,7 @@ export async function runDualProcessRace(options: {
     }
     if (publishedCount < options.seed || compensationPublishedCount < options.seed) timedOut = true;
 
-    await writeFile(stopFile, 'stop');
-    await sleep(300);
-
-    const waitChild = (child: ChildProcess | undefined) =>
-      new Promise<void>((resolve) => {
-        if (!child || child.exitCode !== null) {
-          resolve();
-          return;
-        }
-        const timer = setTimeout(() => {
-          child.kill('SIGKILL');
-          resolve();
-        }, 5_000);
-        child.once('exit', () => {
-          clearTimeout(timer);
-          resolve();
-        });
-        child.kill('SIGTERM');
-      });
-    await Promise.all([waitChild(publisherProc), waitChild(consumerProc)]);
+    await stopAndReapWorkers(stopFile, publisherProc, consumerProc);
 
     const published = await pool.query<{ noise: string; compensation: string }>(
       `SELECT
@@ -491,11 +537,19 @@ export async function runDualProcessRace(options: {
     const ws2CompensationDeliveries = ws2.filter(
       (m) => m.topic === KERNEL_COMPENSATION_TOPIC,
     ).length;
+    const claims = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+         FROM commander_compensation_requests
+        WHERE tenant_id=$1 AND claim_worker_id=$2`,
+      [tenantId, adapterId],
+    );
+    const consumerClaims = Number(claims.rows[0]?.count ?? 0);
 
     const pass =
       !timedOut &&
       publishedCount === options.seed &&
       compensationPublishedCount === options.seed &&
+      consumerClaims === options.seed &&
       ws2CompensationDeliveries === 0;
     const artifact: DualProcessRaceArtifact = {
       verdict: pass ? 'PASS' : 'BLOCKED',
@@ -504,7 +558,7 @@ export async function runDualProcessRace(options: {
       seeded: options.seed,
       publishedCount,
       compensationPublishedCount,
-      consumerClaims: compensationPublishedCount,
+      consumerClaims,
       ws2CompensationDeliveries,
       publisherSteals: ws2CompensationDeliveries,
       elapsedMs: Date.now() - start,
@@ -512,6 +566,7 @@ export async function runDualProcessRace(options: {
     };
     return artifact;
   } finally {
+    await stopAndReapWorkers(stopFile, publisherProc, consumerProc);
     try {
       await unlink(stopFile);
     } catch {

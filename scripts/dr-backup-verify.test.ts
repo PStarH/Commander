@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { generateKeyPairSync } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import {
   buildRestoreDatabaseUrl,
@@ -19,6 +23,9 @@ import {
   createFreshRestoreDatabase,
   restoreIntoFreshTarget,
   assertEmptyRestoreTarget,
+  verifyDrDatabaseTlsConnection,
+  buildPostgresControlDatabaseUrl,
+  preflightRestoreServerBeforeCreate,
   validateRetainedJwks,
   verifyRestoredReceipts,
   verifyRestoredReceiptPages,
@@ -74,6 +81,112 @@ describe('dr-backup-verify honesty', () => {
     const env = buildDrPostgresEnv(parseDatabaseUrl(source), tls);
     assert.equal(env.PGSSLMODE, 'verify-full');
     assert.equal(env.PGSSLROOTCERT, tls.COMMANDER_DATABASE_TLS_CA_FILE);
+  });
+
+  it('uses the verified pool contract before opening a DR database connection', async () => {
+    await assert.rejects(
+      () =>
+        verifyDrDatabaseTlsConnection(
+          'postgres://user:pass@restore.example.test:5432/commander_dr?sslmode=verify-full',
+          {
+            COMMANDER_DATABASE_TLS_CA_FILE: '/does/not/exist',
+            COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: 'not-a-sha256-pin',
+          },
+        ),
+      /COMMANDER_DATABASE_TLS_CA_FILE_UNREADABLE|COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256_INVALID/,
+    );
+  });
+
+  it('probes the restore server through the postgres control database before createdb', () => {
+    assert.equal(
+      buildPostgresControlDatabaseUrl(
+        'postgres://user:pass@restore.example.test:5432/commander_dr?sslmode=verify-full',
+      ),
+      'postgres://user:pass@restore.example.test:5432/postgres?sslmode=verify-full',
+    );
+  });
+
+  it('rejects restore TLS preflight before the database creation callback runs', async () => {
+    let createCalls = 0;
+    await assert.rejects(
+      () =>
+        preflightRestoreServerBeforeCreate(
+          'postgres://user:pass@restore.example.test:5432/commander_dr?sslmode=verify-full',
+          async (databaseUrl) => {
+            assert.equal(
+              databaseUrl,
+              'postgres://user:pass@restore.example.test:5432/postgres?sslmode=verify-full',
+            );
+            throw new Error('restore server SPKI mismatch');
+          },
+          () => {
+            createCalls += 1;
+          },
+        ),
+      /restore server SPKI mismatch/,
+    );
+    assert.equal(createCalls, 0);
+  });
+
+  it('does not invoke createdb when the restore control preflight rejects', () => {
+    const root = mkdtempSync(join(tmpdir(), 'commander-dr-restore-preflight-'));
+    const bin = join(root, 'bin');
+    const createdbMarker = join(root, 'createdb-called');
+    const createdbPath = join(bin, 'createdb');
+    const keyPair = generateKeyPairSync('ed25519');
+    const publicJwk = keyPair.publicKey.export({ format: 'jwk' }) as { x: string };
+    try {
+      mkdirSync(bin);
+      writeFileSync(join(root, 'dump.dump'), 'not-used-before-preflight');
+      writeFileSync(
+        join(root, 'jwks.json'),
+        JSON.stringify({
+          keys: [
+            {
+              kty: 'OKP',
+              crv: 'Ed25519',
+              alg: 'EdDSA',
+              use: 'sig',
+              kid: 'retained',
+              x: publicJwk.x,
+            },
+          ],
+        }),
+      );
+      writeFileSync(createdbPath, `#!/bin/sh\ntouch '${createdbMarker}'\n`);
+      chmodSync(createdbPath, 0o755);
+
+      const result = spawnSync(
+        process.execPath,
+        [
+          '--import',
+          'tsx',
+          resolve('scripts/dr-backup-verify.ts'),
+          '--restore',
+          '--backup-path',
+          root,
+        ],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH ?? ''}`,
+            DATABASE_URL:
+              'postgres://user:pass@source.example.test:5432/commander?sslmode=verify-full',
+            RST_DATABASE_URL:
+              'postgres://user:pass@restore.example.test:5432/commander_dr?sslmode=verify-full',
+            COMMANDER_DATABASE_TLS_CA_FILE: join(root, 'missing-ca.crt'),
+            COMMANDER_DATABASE_TLS_CA_MOUNT_IDENTITY: 'test-ca-mount',
+            COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: 'a'.repeat(64),
+          },
+        },
+      );
+
+      assert.equal(result.status, 1, result.stderr);
+      assert.equal(existsSync(createdbMarker), false, result.stdout);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('assertDistinctRestoreTarget rejects same host:port:database', () => {

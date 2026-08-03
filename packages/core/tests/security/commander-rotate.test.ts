@@ -17,14 +17,17 @@
  */
 
 import * as fs from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import * as path from 'node:path';
+import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-const REPO_ROOT = path.resolve(__dirname, '../..');
+const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const PKG_DIR = path.join(REPO_ROOT, 'packages/core');
 const IS_WIN = process.platform === 'win32';
 const CLI_PATH = path.join(REPO_ROOT, 'scripts', 'commander-rotate.ts');
+let AUDIT_DIR: string;
 
 // Resolve the `tsx` shim by walking up from this file looking for
 // any `node_modules/.bin/tsx`. Works for pnpm-hoisted installs where
@@ -43,14 +46,18 @@ function findTsxBin(): string {
 
 function run(args: string[]) {
   const tsxBin = findTsxBin();
-  const r = spawnSync('node', [tsxBin, CLI_PATH, ...args], {
+  const r = spawnSync(tsxBin, [CLI_PATH, ...args], {
     cwd: PKG_DIR,
     encoding: 'utf-8',
     timeout: 30_000,
-    shell: true,
+    // Avoid shell lookup in sandboxed Vitest workers. The argv is already
+    // structured, so shell interpretation adds no value and weakens the
+    // command-injection contract this test is meant to exercise.
+    shell: IS_WIN,
     env: {
       ...process.env,
       COMMANDER_AUDIT_CHAIN_KEY: process.env.COMMANDER_AUDIT_CHAIN_KEY ?? 'x'.repeat(40),
+      COMMANDER_AUDIT_PERSIST_DIR: AUDIT_DIR,
     },
   });
   if (r.status === null) {
@@ -66,6 +73,14 @@ function run(args: string[]) {
 }
 
 describe('Audit #7 — commander-rotate CLI', () => {
+  beforeAll(() => {
+    AUDIT_DIR = mkdtempSync(path.join(tmpdir(), 'commander-rotate-test-'));
+  });
+
+  afterAll(() => {
+    rmSync(AUDIT_DIR, { recursive: true, force: true });
+  });
+
   it('unknown env-var → exit 1 with validation message', () => {
     const r = run(['FAKE_KEY', '--attempt']);
     expect(r.status).toBe(1);
@@ -83,8 +98,9 @@ describe('Audit #7 — commander-rotate CLI', () => {
   it('--force + unknown env-var → exit 0 (incident override path)', () => {
     const r = run(['CUSTOM_ENV_VAR', '--force', '--json']);
     expect(r.status).toBe(0);
-    expect(r.stdout).toMatch(/"ok":\s*true/);
-    expect(r.stdout).toMatch(/"forced"/);
+    const parsed = JSON.parse(r.stdout) as { ok: boolean; secretClass: string };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.secretClass).toMatch(/forced/);
   });
 
   it('known env-var without --audit → exit 0 with playbook and dry-run notice', () => {
@@ -103,8 +119,14 @@ describe('Audit #7 — commander-rotate CLI', () => {
     expect(r.stdout).toMatch(/audit record:/);
   });
 
+  it('accepts the pnpm `--` argument separator', () => {
+    const r = run(['--', 'OPENAI_API_KEY', '--attempt', '--json']);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).envVar).toBe('OPENAI_API_KEY');
+  });
+
   it('--json output is well-formed JSON with documented fields', () => {
-    const r = run(['OPENAI_API_KEY', '--attempt', '--json']);
+    const r = run(['OPENAI_API_KEY', '--attempt', '--audit', '--json']);
     expect(r.status).toBe(0);
     const parsed = JSON.parse(r.stdout) as {
       ok: boolean;
@@ -114,6 +136,16 @@ describe('Audit #7 — commander-rotate CLI', () => {
       rotationId: string;
       action: string;
       auditRecordId: string | null;
+      rotationReceipt: {
+        schema: string;
+        envVar: string;
+        rotationId: string;
+        auditRecordId: string;
+        chainId: string;
+        sequence: number;
+        timestamp: string;
+        hmac: string;
+      } | null;
       playbook: string;
       exitCode: number;
     };
@@ -123,6 +155,10 @@ describe('Audit #7 — commander-rotate CLI', () => {
     expect(parsed.cadenceDays).toBe(90);
     expect(parsed.action).toBe('attempt');
     expect(parsed.rotationId).toMatch(/^\d{4}-\d{2}-\d{2}T.*-{1}/);
+    expect(parsed.rotationReceipt?.schema).toBe('commander-key-rotation-receipt/v1');
+    expect(parsed.rotationReceipt?.rotationId).toBe(parsed.rotationId);
+    expect(parsed.rotationReceipt?.auditRecordId).toBe(parsed.auditRecordId);
+    expect(parsed.rotationReceipt?.hmac).toMatch(/^[a-f0-9]{64}$/);
     expect(parsed.exitCode).toBe(0);
   });
 
@@ -132,7 +168,7 @@ describe('Audit #7 — commander-rotate CLI', () => {
     expect((r.stderr ?? '') + (r.stdout ?? '')).toMatch(/requires a <rotation-id>/);
   });
 
-  it('--confirm with explicit rotation-id → exit 0 with audit record', () => {
+  it('--confirm rejects an id without a persisted attempt', () => {
     const r = run([
       'OPENAI_API_KEY',
       '--confirm',
@@ -140,15 +176,29 @@ describe('Audit #7 — commander-rotate CLI', () => {
       '--audit',
       '--json',
     ]);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toMatch(/no persisted key_rotation_attempt/);
+  });
+
+  it('--confirm with the attempt receipt id exits 0 with a bound receipt', () => {
+    const attempt = run(['OPENAI_API_KEY', '--attempt', '--audit', '--json']);
+    expect(attempt.status).toBe(0);
+    const attemptPayload = JSON.parse(attempt.stdout) as { rotationId: string };
+    const r = run(['OPENAI_API_KEY', '--confirm', attemptPayload.rotationId, '--audit', '--json']);
     expect(r.status).toBe(0);
     const parsed = JSON.parse(r.stdout) as {
       ok: boolean;
       action: string;
       rotationId: string;
+      rotationReceipt: { schema: string; action: string };
     };
     expect(parsed.ok).toBe(true);
     expect(parsed.action).toBe('confirm');
-    expect(parsed.rotationId).toBe('2026-06-23T03:53:00Z-ciso');
+    expect(parsed.rotationId).toBe(attemptPayload.rotationId);
+    expect(parsed.rotationReceipt).toMatchObject({
+      schema: 'commander-key-rotation-receipt/v1',
+      action: 'confirm',
+    });
   });
 
   it('L4 contract: rotating a 90d secret (COMMANDER_AUDIT_CHAIN_KEY) picks the 365d cadence', () => {
@@ -166,5 +216,21 @@ describe('Audit #7 — commander-rotate CLI', () => {
     const patternLeak = /(sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16})/;
     expect(r.stdout).not.toMatch(patternLeak);
     expect(r.stderr ?? '').not.toMatch(patternLeak);
+  });
+
+  it('audited dry-runs receive a correlation id and receipt', () => {
+    const r = run(['OPENAI_API_KEY', '--dry-run', '--audit', '--json']);
+    expect(r.status).toBe(0);
+    const parsed = JSON.parse(r.stdout) as {
+      action: string;
+      rotationId: string;
+      rotationReceipt: { action: string; rotationId: string } | null;
+    };
+    expect(parsed.action).toBe('dry');
+    expect(parsed.rotationId).toMatch(/^\d{4}-\d{2}-\d{2}T.*-/);
+    expect(parsed.rotationReceipt).toMatchObject({
+      action: 'dry',
+      rotationId: parsed.rotationId,
+    });
   });
 });

@@ -378,12 +378,9 @@ export default defineConfig({
       // --- harness ---
       'tests/harness/tier1AgentLoop.test.ts',
       'tests/harness/tier1Harness.test.ts',
-      // Note: commander-rotate integration tests spawn the CLI via tsx. They
-      // pass when invoked directly but fail inside the vitest worker because
-      // the sandboxed environment cannot resolve /bin/sh or the node binary.
-      // The CLI itself is verified manually; these tests are excluded from
-      // the automated gate until the runner environment supports spawnSync.
-      // 'tests/security/commander-rotate.test.ts',
+      // commander-rotate integration tests exercise the real CLI subprocess,
+      // argv parser, persisted audit chain, and receipt contract.
+      'tests/security/commander-rotate.test.ts',
       'tests/security/d25-precommit-hook.test.ts',
       // --- http ---
       // --- ultimate ---
