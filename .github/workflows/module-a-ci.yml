@@ -3,8 +3,43 @@ name: Module A CI
 on:
   workflow_dispatch:
   push:
+    branches: [master, main]
+    paths:
+      - 'packages/contracts/**'
+      - 'packages/effect-broker/**'
+      - 'packages/kernel/**'
+      - 'packages/worker-plane/**'
+      - 'packages/action-adapters/**'
+      - 'packages/core/**'
+      - 'packages/plugin-sdk/**'
+      - 'packages/postgres-runtime/**'
+      - 'apps/api/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig*.json'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/module-a-ci.yml'
   pull_request:
     branches: [master, main]
+    paths:
+      - 'packages/contracts/**'
+      - 'packages/effect-broker/**'
+      - 'packages/kernel/**'
+      - 'packages/worker-plane/**'
+      - 'packages/action-adapters/**'
+      - 'packages/core/**'
+      - 'packages/plugin-sdk/**'
+      - 'packages/postgres-runtime/**'
+      - 'apps/api/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig*.json'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/module-a-ci.yml'
 
 permissions:
   contents: read
