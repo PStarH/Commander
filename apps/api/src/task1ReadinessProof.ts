@@ -73,7 +73,8 @@ export class Task1ReadinessProof {
 
   constructor(private readonly options: Task1ReadinessProofOptions) {
     if (
-      !options.installationId || !SHA256.test(options.databasePeerBindingSha256) ||
+      !options.installationId ||
+      !SHA256.test(options.databasePeerBindingSha256) ||
       !IMAGE_DIGEST.test(options.expectedImageDigest) ||
       !SHA256.test(options.expectedConfigurationSha256)
     ) {
@@ -142,7 +143,8 @@ export class Task1ReadinessProof {
 
     const cached = this.runtimeIdentity;
     if (
-      !cached || !isFresh(now, cached.observedAtMs, this.runtimeIdentityMaximumAgeMs) ||
+      !cached ||
+      !isFresh(now, cached.observedAtMs, this.runtimeIdentityMaximumAgeMs) ||
       cached.value.phase !== this.options.expectedPhase ||
       cached.value.imageDigest !== this.options.expectedImageDigest ||
       cached.value.configurationSha256 !== this.options.expectedConfigurationSha256
@@ -151,15 +153,17 @@ export class Task1ReadinessProof {
       return true;
     }
 
-    response.status(200).end(JSON.stringify({
-      challenge,
-      operationVersion: cached.value.operationVersion,
-      phase: cached.value.phase,
-      installationId: this.options.installationId,
-      databasePeerBindingSha256: this.options.databasePeerBindingSha256,
-      imageDigest: cached.value.imageDigest,
-      configurationSha256: cached.value.configurationSha256,
-    }));
+    response.status(200).end(
+      JSON.stringify({
+        challenge,
+        operationVersion: cached.value.operationVersion,
+        phase: cached.value.phase,
+        installationId: this.options.installationId,
+        databasePeerBindingSha256: this.options.databasePeerBindingSha256,
+        imageDigest: cached.value.imageDigest,
+        configurationSha256: cached.value.configurationSha256,
+      }),
+    );
     return true;
   }
 }

@@ -10,10 +10,13 @@ describe('ActionGatewayClient', () => {
       token: 'token-1',
       fetchImpl: (async (url, init) => {
         calls.push({ url: String(url), init: init ?? {} });
-        return new Response(JSON.stringify({ action: { runId: 'run-1' }, idempotentReplay: false }), {
-          status: 202,
-          headers: { 'content-type': 'application/json' },
-        });
+        return new Response(
+          JSON.stringify({ action: { runId: 'run-1' }, idempotentReplay: false }),
+          {
+            status: 202,
+            headers: { 'content-type': 'application/json' },
+          },
+        );
       }) as typeof fetch,
     });
 
@@ -38,10 +41,13 @@ describe('ActionGatewayClient', () => {
     const client = new ActionGatewayClient({
       token: 'token-1',
       fetchImpl: (async () =>
-        new Response(JSON.stringify({ error: { code: 'OPERATIONS_NOT_READY', message: 'closed' } }), {
-          status: 503,
-          headers: { 'content-type': 'application/json' },
-        })) as typeof fetch,
+        new Response(
+          JSON.stringify({ error: { code: 'OPERATIONS_NOT_READY', message: 'closed' } }),
+          {
+            status: 503,
+            headers: { 'content-type': 'application/json' },
+          },
+        )) as typeof fetch,
     });
 
     await assert.rejects(
@@ -94,10 +100,7 @@ describe('ActionGatewayClient', () => {
     );
     await client.rejectAction('run-1', undefined, 'reject-1');
     await client.reconcileAction('run-1', 'reconcile-1');
-    await client.setKillSwitch(
-      { scope: 'tool', value: 'ticket.create', enabled: true },
-      'kill-1',
-    );
+    await client.setKillSwitch({ scope: 'tool', value: 'ticket.create', enabled: true }, 'kill-1');
 
     assert.deepEqual(
       calls.map(({ init }) => new Headers(init.headers).get('idempotency-key')),
@@ -151,10 +154,13 @@ describe('ActionGatewayClient', () => {
       'compensation-approve-1',
     );
 
-    assert.deepEqual(calls.map(({ url }) => url), [
-      'https://commander.example/v1/actions/run-1/compensations',
-      'https://commander.example/v1/actions/run-1/compensations/authorization-1/approve',
-    ]);
+    assert.deepEqual(
+      calls.map(({ url }) => url),
+      [
+        'https://commander.example/v1/actions/run-1/compensations',
+        'https://commander.example/v1/actions/run-1/compensations/authorization-1/approve',
+      ],
+    );
     assert.deepEqual(
       calls.map(({ init }) => new Headers(init.headers).get('idempotency-key')),
       ['compensation-request-1', 'compensation-approve-1'],
