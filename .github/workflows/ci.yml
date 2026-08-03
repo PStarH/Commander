@@ -222,7 +222,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          out=$(pnpm audit --audit-level=high 2>&1)
+          out=$(pnpm audit --audit-level=high --json 2>&1)
           code=$?
           echo "$out"
           if [ $code -eq 0 ]; then
@@ -462,8 +462,8 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      DATABASE_URL: postgres://commander:commander@localhost:5432/commander
-      COMMANDER_KERNEL_DATABASE_URL: postgres://commander:commander@localhost:5432/commander
+      DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander
+      COMMANDER_KERNEL_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander
       COMMANDER_OWNER_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander
       OWNER_DSN: postgres://commander_owner:commander_owner@localhost:5432/commander
       GIT_TERMINAL_PROMPT: '0'
