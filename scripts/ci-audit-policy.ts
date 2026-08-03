@@ -47,7 +47,12 @@ function hasReactRouterRscWiring(sourceRoot: string): boolean {
 function isKnownPnpmTransportFailure(raw: string): boolean {
   const auditEndpointFailure = /^ERR_PNPM_AUDIT_BAD_RESPONSE\b/m.test(raw);
   const pnpmNetworkFailure = /^ERR_PNPM_(?:META_FETCH_FAIL|FETCH_[A-Z_]+)\b/m.test(raw);
-  const endpointRetired = /\b410\b|endpoint is being retired/i.test(raw);
+  // Match the pnpm endpoint's explicit status description. A bare `410` can
+  // occur in an advisory title/body and must never turn an unknown failure
+  // into an allowed transport exception.
+  const endpointRetired =
+    /(?:audit endpoint|unexpected response|status(?: code)?|http)\D{0,32}410\b/i.test(raw) ||
+    /audit endpoint[^\n]*endpoint is being retired/i.test(raw);
   const transientNetworkFailure = /\b(?:ECONNRESET|ETIMEDOUT)\b|fetch failed/i.test(raw);
 
   return (

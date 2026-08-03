@@ -73,7 +73,9 @@ async function seedFreshOperationsDrains(
 }
 
 export function runKernelRepositoryContractTests(ctx: RepositoryContractContext): void {
-  describe(`KernelRepository contract — ${ctx.name}`, () => {
+  // Contract fixtures use stable IDs. Run cases serially so SQL-backed runners
+  // can reset their disposable database without cross-case interference.
+  describe(`KernelRepository contract — ${ctx.name}`, { concurrency: 1 }, () => {
     it('fails operations readiness closed until distinct drains complete fresh ticks', async () => {
       const kernel = await ctx.create();
       const now = new Date('2026-07-23T10:00:00.000Z');

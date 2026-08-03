@@ -4,6 +4,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { Pool } from 'pg';
 import {
   PostgresKernelRepository,
+  PostgresTenantContextAuthority,
   runKernelMigrations,
   seedWorkerAllowedTenants,
   type NewKernelStep,
@@ -30,12 +31,17 @@ import { InMemoryTicketAdapter } from '../ticketAdapter.js';
 const databaseUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
 const requirePg = process.env.COMMANDER_E2E_REQUIRE_PG === '1';
 const workerPassword = process.env.COMMANDER_WORKER_PASSWORD ?? 'commander_worker';
+const appPassword = process.env.COMMANDER_APP_PASSWORD ?? 'commander_app';
+
+function deriveRoleDatabaseUrl(baseUrl: string, username: string, password: string): string {
+  const url = new URL(baseUrl);
+  url.username = username;
+  url.password = password;
+  return url.toString();
+}
 
 function deriveWorkerDatabaseUrl(baseUrl: string): string {
-  const url = new URL(baseUrl);
-  url.username = 'commander_worker';
-  url.password = workerPassword;
-  return url.toString();
+  return deriveRoleDatabaseUrl(baseUrl, 'commander_worker', workerPassword);
 }
 
 /** Deterministic executor — proves worker↔kernel claim/complete without AgentRuntime/LLM. */
@@ -400,13 +406,31 @@ describe(
         throw new Error('PostgreSQL E2E requires COMMANDER_KERNEL_DATABASE_URL or DATABASE_URL');
       }
       const pool = new Pool({ connectionString: databaseUrl, max: 8 });
+      const appPool = new Pool({
+        connectionString: deriveRoleDatabaseUrl(databaseUrl, 'commander_app', appPassword),
+        max: 4,
+      });
       const tenantId = `e2e-tenant-${Date.now()}`;
       const workerId = `e2e-worker-${Date.now()}`;
+      const authorityPool = new Pool({
+        connectionString: deriveRoleDatabaseUrl(
+          databaseUrl,
+          'commander_tenant_authority',
+          process.env.COMMANDER_TENANT_AUTHORITY_PASSWORD ?? 'commander_tenant_authority',
+        ),
+        max: 2,
+      });
 
       await runKernelMigrations(pool);
       const escapedWorkerPassword = workerPassword.replace(/'/g, "''");
       await pool.query(
         `ALTER ROLE commander_worker WITH LOGIN PASSWORD '${escapedWorkerPassword}'`,
+      );
+      await pool.query(
+        `INSERT INTO commander_tenant_authority_allowed_tenants (tenant_id)
+         VALUES ($1)
+         ON CONFLICT (tenant_id) DO UPDATE SET enabled = true`,
+        [tenantId],
       );
       await seedWorkerAllowedTenants(pool, [tenantId]);
       const workerPool = new Pool({
@@ -414,7 +438,10 @@ describe(
         max: 4,
       });
 
-      const appKernel = new PostgresKernelRepository(pool);
+      const appKernel = new PostgresKernelRepository(appPool, {
+        tenantContextPhase: 'enforce',
+        tenantContextAuthority: new PostgresTenantContextAuthority(authorityPool),
+      });
       const workerKernel = new PostgresKernelRepository(workerPool);
       await appKernel.initialize();
       await workerKernel.initialize();
@@ -515,6 +542,8 @@ describe(
           tenantId,
         ]);
         await workerPool.end();
+        await authorityPool.end();
+        await appPool.end();
         await pool.end();
       }
     });
