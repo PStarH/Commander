@@ -24,30 +24,13 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix:
-        # Pull requests run the full quality suite once on the canonical
-        # runner. Compatibility entries still run on main pushes and manual
-        # dispatches, preserving platform coverage without six identical PR runs.
-        include:
-          - os: ubuntu-latest
-            node-version: '22'
-            canonical: true
-          - os: ubuntu-latest
-            node-version: '20'
-            canonical: false
-          - os: macos-latest
-            node-version: '20'
-            canonical: false
-          - os: macos-latest
-            node-version: '22'
-            canonical: false
-          - os: windows-latest
-            node-version: '20'
-            canonical: false
-          - os: windows-latest
-            node-version: '22'
-            canonical: false
-    if: ${{ matrix.canonical || github.event_name != 'pull_request' }}
+      # Pull requests run the full quality suite once on the canonical runner.
+      # Compatibility entries still run on main pushes and manual dispatches,
+      # preserving platform coverage without six identical PR runs.
+      matrix: >-
+        ${{ fromJSON(github.event_name == 'pull_request'
+          && '{"include":[{"os":"ubuntu-latest","node-version":"22","canonical":true}]}'
+          || '{"include":[{"os":"ubuntu-latest","node-version":"22","canonical":true},{"os":"ubuntu-latest","node-version":"20","canonical":false},{"os":"macos-latest","node-version":"20","canonical":false},{"os":"macos-latest","node-version":"22","canonical":false},{"os":"windows-latest","node-version":"20","canonical":false},{"os":"windows-latest","node-version":"22","canonical":false}]}') }}
     steps:
       - uses: actions/checkout@v6
 
