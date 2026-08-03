@@ -792,6 +792,10 @@ describe('PostgresKernelRepository integration', () => {
           'DELETE FROM commander_worker_claim_secrets WHERE worker_id LIKE $1',
           [`${workerId}%`],
         );
+        await ownerPool.query(
+          'DELETE FROM commander_worker_claim_secrets WHERE worker_id = ANY($1::text[])',
+          [adapterWorkerIds],
+        );
         await ownerPool.query('DELETE FROM commander_workers WHERE id LIKE $1', [`${workerId}%`]);
         await ownerPool.query('DELETE FROM commander_worker_allowed_tenants WHERE tenant_id=$1', [
           tenantAllowed,
