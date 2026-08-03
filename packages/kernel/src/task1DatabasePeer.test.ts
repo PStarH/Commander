@@ -69,7 +69,7 @@ describe('Task 1 six-role database peer observation', () => {
         `postgres://${LOGINS[role]}:secret@db.example.test/commander?sslmode=verify-full`;
     }
     const observation = await observeTask1DatabasePeers(env, {
-      readFile: (() => Buffer.from('ca')) as typeof import('node:fs').readFileSync,
+      readFile: (() => Buffer.from('ca')) as unknown as typeof import('node:fs').readFileSync,
       createPool: ((input) => {
         const login = decodeURIComponent(new URL(String(input.connectionString)).username);
         return new FakePool(login, cert) as unknown as Pool;

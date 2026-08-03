@@ -4,6 +4,7 @@ import { describe, it, before, after } from 'node:test';
 import express from 'express';
 import {
   probeDatabase,
+  probeEvidenceRepository,
   probeKernel,
   probeEffectBroker,
   probeReadiness,
@@ -76,6 +77,15 @@ describe('WS3 §6 health probes — individual', () => {
     assert.equal(result, 'unknown');
   });
 
+  it('probeEvidenceRepository fails closed when the availability probe rejects', async () => {
+    assert.equal(
+      await probeEvidenceRepository(async () => {
+        throw new Error('unavailable');
+      }),
+      'fail',
+    );
+  });
+
   it('probeKernel returns ok when gateway is non-null', async () => {
     const result = await probeKernel(() => ({}) as never);
     assert.equal(result, 'ok');
@@ -130,6 +140,25 @@ describe('WS3 §6 /ready — honesty invariants', () => {
         const body = (await res.json()) as { status: string; checks: Record<string, string> };
         assert.equal(body.status, 'not_ready');
         assert.equal(body.checks.database, 'fail');
+      },
+    );
+  });
+
+  it('returns 503 not_ready when evidence repository probe fails', async () => {
+    await withReadyApp(
+      {
+        database: async () => 'ok',
+        kernel: () => ({} as never),
+        evidenceRepository: async () => {
+          throw new Error('evidence unavailable');
+        },
+      },
+      async (base) => {
+        const res = await fetch(`${base}/ready`);
+        assert.equal(res.status, 503);
+        const body = (await res.json()) as { status: string; checks: Record<string, string> };
+        assert.equal(body.status, 'not_ready');
+        assert.equal(body.checks.evidenceRepository, 'fail');
       },
     );
   });

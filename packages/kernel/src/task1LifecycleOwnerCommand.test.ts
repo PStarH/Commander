@@ -371,7 +371,7 @@ describe('Task 1 lifecycle owner commands', () => {
       dependencies(),
     );
     assert.equal(output.action, 'append');
-    assert.equal(output.operation.operationVersion, '2');
+    assert.equal((output.operation as { operationVersion: string }).operationVersion, '2');
   });
 
   it('rejects a caller-selected configuration digest before it reaches the ledger', async () => {

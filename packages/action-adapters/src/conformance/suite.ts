@@ -36,6 +36,7 @@ export interface ConformanceAdapterContext {
   executeArgs: Record<string, unknown>;
   queryRequest: Record<string, unknown>;
   compensationPatch: Record<string, unknown>;
+  prepareTimeout?: () => void;
 }
 
 export interface ConformanceAdapterFactory {
@@ -174,6 +175,7 @@ function createChaosKernel(): {
 }
 
 async function runTimeoutReconcileScenario(ctx: ConformanceAdapterContext): Promise<void> {
+  ctx.prepareTimeout?.();
   const registry = new ActionAdapterRegistry([ctx.adapter]);
   const executor = adapterExecutor(ctx.adapter);
   const { kernel, getState } = createChaosKernel();
@@ -239,7 +241,8 @@ async function runTimeoutReconcileScenario(ctx: ConformanceAdapterContext): Prom
         actor: 'worker-1',
       }),
     (error: unknown) =>
-      error instanceof EffectBrokerError && error.code === 'COMPLETION_UNCONFIRMED',
+      error instanceof EffectBrokerError &&
+      (error.code === 'COMPLETION_UNCONFIRMED' || error.code === 'COMPLETION_UNKNOWN'),
   );
   assert.equal(getState(), 'COMPLETION_UNKNOWN');
   const querier = registry.outcomeQuerierFor(ctx.adapter.descriptor.effectType);
@@ -292,7 +295,9 @@ export function registerConformanceSuite(options: ConformanceSuiteOptions): void
       const mismatched =
         descriptor.adapterId === 'github.pull-request.create'
           ? 'github://octo/repo/issues'
-          : 'servicenow://dev12345/change_request';
+          : descriptor.adapterId === 'servicenow.incident.create'
+            ? 'servicenow://dev12345/change_request'
+            : 'k8s://kind/commander/services/api';
       assert.equal(
         findAdapterManifest({
           effectType: descriptor.effectType,
@@ -313,7 +318,9 @@ export function registerConformanceSuite(options: ConformanceSuiteOptions): void
           destination:
             descriptor.adapterId === 'github.pull-request.create'
               ? 'github://octo/repo/pulls'
-              : 'servicenow://dev12345/incident',
+              : descriptor.adapterId === 'servicenow.incident.create'
+                ? 'servicenow://dev12345/incident'
+                : 'k8s://kind/commander/deployments/api',
         }),
         null,
       );

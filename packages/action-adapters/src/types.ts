@@ -61,6 +61,7 @@ export interface KubernetesClusterCredentialConfig {
 
 export interface EnvAdapterCredentialProviderOptions {
   cellTenantId: string;
+  environment?: NodeJS.ProcessEnv;
   githubTokenEnv?: string;
   serviceNowInstanceEnv?: string;
   serviceNowUsernameEnv?: string;
@@ -76,6 +77,7 @@ export class EnvAdapterCredentialProvider
   private readonly serviceNowInstanceEnv: string;
   private readonly serviceNowUsernameEnv: string;
   private readonly serviceNowPasswordEnv: string;
+  private readonly environment: NodeJS.ProcessEnv;
   private readonly kubernetesClusters: ReadonlyMap<
     string,
     { server: URL; tokenEnv: string; namespaces: ReadonlySet<string> }
@@ -86,6 +88,7 @@ export class EnvAdapterCredentialProvider
       throw new Error('COMMANDER_CELL_TENANT_ID is required for EnvAdapterCredentialProvider');
     }
     this.cellTenantId = options.cellTenantId;
+    this.environment = options.environment ?? process.env;
     this.githubTokenEnv = options.githubTokenEnv ?? 'GITHUB_TOKEN';
     this.serviceNowInstanceEnv = options.serviceNowInstanceEnv ?? 'SERVICENOW_INSTANCE';
     this.serviceNowUsernameEnv = options.serviceNowUsernameEnv ?? 'SERVICENOW_USERNAME';
@@ -93,7 +96,7 @@ export class EnvAdapterCredentialProvider
     this.kubernetesClusters = new Map(
       Object.entries(options.kubernetesClusters ?? {}).map(([cluster, config]) => {
         const configuredNamespaces =
-          config.namespaces ?? process.env.COMMANDER_KUBERNETES_NAMESPACES?.split(',') ?? [];
+          config.namespaces ?? this.environment.COMMANDER_KUBERNETES_NAMESPACES?.split(',') ?? [];
         if (!isDnsSubdomain(cluster) || !config.tokenEnv || configuredNamespaces.length === 0) {
           throw new Error(`Invalid Kubernetes cluster credential registration: ${cluster}`);
         }
@@ -119,15 +122,17 @@ export class EnvAdapterCredentialProvider
     );
   }
 
-  static fromProcessEnv(): EnvAdapterCredentialProvider {
-    const cellTenantId = process.env.COMMANDER_CELL_TENANT_ID;
+  static fromProcessEnv(
+    environment: NodeJS.ProcessEnv = process.env,
+  ): EnvAdapterCredentialProvider {
+    const cellTenantId = environment.COMMANDER_CELL_TENANT_ID;
     if (!cellTenantId) {
       throw new Error('COMMANDER_CELL_TENANT_ID is required');
     }
-    const cluster = process.env.COMMANDER_KUBERNETES_CLUSTER;
-    const server = process.env.COMMANDER_KUBERNETES_SERVER;
-    const tokenEnv = process.env.COMMANDER_KUBERNETES_TOKEN_ENV;
-    const namespaces = process.env.COMMANDER_KUBERNETES_NAMESPACES;
+    const cluster = environment.COMMANDER_KUBERNETES_CLUSTER;
+    const server = environment.COMMANDER_KUBERNETES_SERVER;
+    const tokenEnv = environment.COMMANDER_KUBERNETES_TOKEN_ENV;
+    const namespaces = environment.COMMANDER_KUBERNETES_NAMESPACES;
     if (
       (cluster || server || tokenEnv || namespaces) &&
       !(cluster && server && tokenEnv && namespaces)
@@ -138,6 +143,7 @@ export class EnvAdapterCredentialProvider
     }
     return new EnvAdapterCredentialProvider({
       cellTenantId,
+      environment,
       kubernetesClusters:
         cluster && server && tokenEnv && namespaces
           ? { [cluster]: { server, tokenEnv, namespaces: namespaces.split(',') } }
@@ -154,8 +160,8 @@ export class EnvAdapterCredentialProvider
   async getGitHubToken(tenantId: string, _destination: string): Promise<string> {
     this.assertTenant(tenantId);
     const token =
-      process.env[this.githubTokenEnv] ??
-      (this.githubTokenEnv === 'GITHUB_TOKEN' ? process.env.GITHUB_PAT : undefined);
+      this.environment[this.githubTokenEnv] ??
+      (this.githubTokenEnv === 'GITHUB_TOKEN' ? this.environment.GITHUB_PAT : undefined);
     if (!token) {
       throw new Error('GitHub credentials are not configured');
     }
@@ -167,9 +173,9 @@ export class EnvAdapterCredentialProvider
     destination: string,
   ): Promise<{ instance: string; username: string; password: string }> {
     this.assertTenant(tenantId);
-    const instance = process.env[this.serviceNowInstanceEnv];
-    const username = process.env[this.serviceNowUsernameEnv];
-    const password = process.env[this.serviceNowPasswordEnv];
+    const instance = this.environment[this.serviceNowInstanceEnv];
+    const username = this.environment[this.serviceNowUsernameEnv];
+    const password = this.environment[this.serviceNowPasswordEnv];
     if (!instance || !username || !password) {
       throw new Error('ServiceNow credentials are not configured');
     }
@@ -194,7 +200,7 @@ export class EnvAdapterCredentialProvider
 
   async getToken(tenantId: string, cluster: string, namespace: string): Promise<string> {
     const registration = this.kubernetesRegistration(tenantId, cluster, namespace);
-    const token = process.env[registration.tokenEnv];
+    const token = this.environment[registration.tokenEnv];
     if (!token) {
       throw new Error(`Kubernetes credentials are not configured for cluster: ${cluster}`);
     }

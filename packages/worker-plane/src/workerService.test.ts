@@ -117,7 +117,6 @@ class FakeKernel implements KernelWorkerPort {
     lease: WorkerLease;
     expectedVersion: number;
   }): Promise<unknown | null> {
-    this.failureCount++;
     const step = this.steps.find((candidate) => candidate.id === request.stepId);
     if (
       !step ||
@@ -141,6 +140,7 @@ class FakeKernel implements KernelWorkerPort {
     retryAt?: Date;
     refundAttempt?: boolean;
   }): Promise<unknown | null> {
+    this.failureCount++;
     const step = this.steps.find((candidate) => candidate.id === request.stepId);
     if (
       !step ||
@@ -301,7 +301,11 @@ describe('worker plane', () => {
     await service.stop();
   });
 
-  for (const code of ['COMPLETION_UNKNOWN', 'COMPLETION_UNCONFIRMED'] as const) {
+  for (const code of [
+    'COMPLETION_UNKNOWN',
+    'COMPLETION_UNCONFIRMED',
+    'EVIDENCE_PERSIST_FAILED',
+  ] as const) {
     it(`does not fail a step after EffectBroker transfers ownership with ${code}`, async () => {
       const kernel = new FakeKernel();
       kernel.addRun(`run-${code}`, 'tenant-a', [{ id: `step-${code}`, kind: 'agent' }]);

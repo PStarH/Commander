@@ -6,6 +6,7 @@ import {
   type KernelEvidenceRecord,
 } from './evidenceRepository.js';
 import { SqliteKernelRepository } from './sqlite.js';
+import { PostgresKernelRepository, type SqlClient, type SqlPool } from './postgres.js';
 import {
   InMemoryKernelRepository,
   seedFreshOperationsDrains,
@@ -63,8 +64,7 @@ function terminalRecord(
       terminalDisposition: disposition,
       scope: { tenantId: 'tenant-a', runId, effectId },
       effects: [{ effectId, state: effectState }],
-      auditEvents:
-        disposition === 'ESCALATED' ? [{ type: 'effect.reconcile_escalated' }] : [],
+      auditEvents: disposition === 'ESCALATED' ? [{ type: 'effect.reconcile_escalated' }] : [],
       signature,
     },
     contentHash,
@@ -155,13 +155,44 @@ describe('SQLite evidence repository integration', () => {
     assert.deepEqual(await repository.appendEvidence(record), { inserted: true });
     assert.deepEqual(await repository.appendEvidence(structuredClone(record)), { inserted: false });
     await assert.rejects(
-      repository.appendEvidence({ ...record, signature: { ...record.signature, value: 'changed' } }),
+      repository.appendEvidence({
+        ...record,
+        signature: { ...record.signature, value: 'changed' },
+      }),
       /EVIDENCE_CONFLICT/,
     );
     assert.deepEqual(await repository.getEvidence(record.runId, record.tenantId), record);
     assert.equal(await repository.getEvidence(record.runId, 'tenant-b'), null);
     assert.deepEqual(await repository.listEvidence(record.tenantId), [record]);
     repository.close();
+  });
+});
+
+describe('PostgreSQL evidence repository availability probe', () => {
+  it('uses a global catalog read without requiring tenant scope on API repositories', async () => {
+    const queries: string[] = [];
+    const client: SqlClient = {
+      async query<T>(sql: string) {
+        queries.push(sql);
+        if (sql.includes('session_user')) {
+          return { rows: [{ login_role: 'commander_app' }] as T[], rowCount: 1 };
+        }
+        return { rows: [{ available: true }] as T[], rowCount: 1 };
+      },
+      release() {},
+    };
+    const pool: SqlPool = { connect: async () => client };
+    const repository = new PostgresKernelRepository(pool);
+
+    assert.deepEqual(await repository.checkEvidenceRepositoryAvailability?.(), { ready: true });
+    assert.equal(
+      queries.some((query) => query.includes('FROM public.commander_evidence_receipts')),
+      true,
+    );
+    assert.equal(
+      queries.some((query) => query.includes("set_config('app.tenant_scope'")),
+      false,
+    );
   });
 });
 
@@ -214,15 +245,10 @@ describe('atomic terminal evidence authority', () => {
   it('leaves an in-memory reconciliation claim untouched when evidence is missing', async () => {
     const repository = new InMemoryKernelRepository();
     seedFreshOperationsDrains(repository, 'tenant-a');
-    const reconcileSecret = repository.seedTestWorker(
-      'worker-reconcile-missing',
-      ['tenant-a'],
-      1,
-      {
-        capabilities: ['effect.reconcile'],
-        identitySubject: 'db:commander_adapter_ops',
-      },
-    );
+    const reconcileSecret = repository.seedTestWorker('worker-reconcile-missing', ['tenant-a'], 1, {
+      capabilities: ['effect.reconcile'],
+      identitySubject: 'db:commander_adapter_ops',
+    });
     const admitted = await admitAtomicEffect(repository, 'reconcile-missing', 'http.post');
     await repository.markEffectCompletionUnknown({
       effectId: admitted.effectId,
@@ -394,7 +420,7 @@ describe('atomic terminal evidence authority', () => {
     const evidence = terminalRecord(admitted.runId, `evidence_${admitted.effectId}`);
     const conflicting = structuredClone(evidence);
     conflicting.contentHash = 'c'.repeat(64);
-    conflicting.body.contentHash = conflicting.contentHash;
+    (conflicting.body as { contentHash: string }).contentHash = conflicting.contentHash;
     await repository.appendEvidence(conflicting);
 
     await assert.rejects(

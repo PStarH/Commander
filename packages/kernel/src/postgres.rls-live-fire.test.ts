@@ -454,7 +454,6 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
         effectId,
         tenantId: allowTenant,
         actor: 'live-fire',
-        reconcileAfter: new Date(Date.now() - 1_000).toISOString(),
       });
 
       await assert.rejects(

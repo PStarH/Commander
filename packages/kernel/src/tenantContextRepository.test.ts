@@ -26,14 +26,30 @@ class RecordingClient implements SqlClient {
     if (/bind_app_tenant_context/i.test(sql)) {
       return { rows: [{ tenant_id: 'tenant-a', replayed: false } as T], rowCount: 1 };
     }
+    if (/get_api_operations_readiness/i.test(sql)) {
+      return {
+        rows: [
+          {
+            reconciliation_workers: '2',
+            compensation_workers: '1',
+            checked_at: '2026-08-01T00:00:00.000Z',
+          } as T,
+        ],
+        rowCount: 1,
+      };
+    }
     return { rows: [], rowCount: 0 };
   }
-  release(error?: Error | boolean): void { this.releases.push(error); }
+  release(error?: Error | boolean): void {
+    this.releases.push(error);
+  }
 }
 
 class Pool implements SqlPool {
   constructor(readonly client: RecordingClient) {}
-  async connect(): Promise<SqlClient> { return this.client; }
+  async connect(): Promise<SqlClient> {
+    return this.client;
+  }
 }
 
 class Authority implements TenantContextAuthority {
@@ -68,10 +84,11 @@ describe('PostgresKernelRepository tenant context protocol', () => {
   it('rejects reusing the app pool as the authority pool', () => {
     const pool = new Pool(new RecordingClient());
     assert.throws(
-      () => new PostgresKernelRepository(pool, {
-        tenantContextAuthority: new PostgresTenantContextAuthority(pool),
-        tenantContextPhase: 'enforce',
-      }),
+      () =>
+        new PostgresKernelRepository(pool, {
+          tenantContextAuthority: new PostgresTenantContextAuthority(pool),
+          tenantContextPhase: 'enforce',
+        }),
       /TENANT_CONTEXT_AUTHORITY_POOL_MUST_BE_SEPARATE/,
     );
   });
@@ -85,16 +102,22 @@ describe('PostgresKernelRepository tenant context protocol', () => {
     });
 
     assert.equal(await repository.getRun('run-a', 'tenant-a'), null);
-    assert.deepEqual(authority.calls, [{
-      tenantId: 'tenant-a',
-      target: { databaseOid: 16384, backendPid: 42, xid: '91' },
-    }]);
+    assert.deepEqual(authority.calls, [
+      {
+        tenantId: 'tenant-a',
+        target: { databaseOid: 16384, backendPid: 42, xid: '91' },
+      },
+    ]);
     const sql = client.queries.map(({ sql }) => sql.replace(/\s+/g, ' ').trim());
     assert.ok(sql.indexOf('BEGIN ISOLATION LEVEL READ COMMITTED') >= 0);
-    assert.ok(sql.findIndex((value) => /pg_current_xact_id\(\)::text AS xid/i.test(value)) <
-      sql.findIndex((value) => /bind_app_tenant_context/i.test(value)));
+    assert.ok(
+      sql.findIndex((value) => /pg_current_xact_id\(\)::text AS xid/i.test(value)) <
+        sql.findIndex((value) => /bind_app_tenant_context/i.test(value)),
+    );
     assert.ok(sql.some((value) => /set_config\('app\.tenant_scope'/i.test(value)));
-    assert.ok(sql.findIndex((value) => /close_app_tenant_context/i.test(value)) < sql.indexOf('COMMIT'));
+    assert.ok(
+      sql.findIndex((value) => /close_app_tenant_context/i.test(value)) < sql.indexOf('COMMIT'),
+    );
     assert.deepEqual(client.releases, [undefined]);
   });
 
@@ -115,11 +138,46 @@ describe('PostgresKernelRepository tenant context protocol', () => {
 
     await assert.rejects(() => repository.getRun('run-a', 'tenant-a'), /TENANT_CONTEXT_INVALID/);
     const sql = client.queries.map(({ sql }) => sql.replace(/\s+/g, ' ').trim());
-    assert.equal(sql.some((value) => /set_config\('app\.tenant_scope'/i.test(value)), false);
+    assert.equal(
+      sql.some((value) => /set_config\('app\.tenant_scope'/i.test(value)),
+      false,
+    );
     assert.ok(sql.includes('ROLLBACK'));
     assert.equal(sql.includes('COMMIT'), false);
     assert.equal(client.releases.length, 1);
     assert.ok(client.releases[0] instanceof Error);
+  });
+
+  it('reads operations readiness through the tenant-bound app RPC in enforce phase', async () => {
+    const client = new RecordingClient();
+    const repository = new PostgresKernelRepository(new Pool(client), {
+      tenantContextAuthority: new Authority(),
+      tenantContextPhase: 'enforce',
+    });
+
+    assert.deepEqual(await repository.getOperationsReadiness('tenant-a'), {
+      ready: true,
+      reconciliationWorkers: 2,
+      compensationWorkers: 1,
+      checkedAt: '2026-08-01T00:00:00.000Z',
+    });
+
+    const statements = client.queries.map(({ sql, values }) => ({
+      sql: sql.replace(/\s+/g, ' ').trim(),
+      values,
+    }));
+    const bindIndex = statements.findIndex(({ sql }) => /bind_app_tenant_context/i.test(sql));
+    const readinessIndex = statements.findIndex(({ sql }) =>
+      /get_api_operations_readiness/i.test(sql),
+    );
+    const closeIndex = statements.findIndex(({ sql }) => /close_app_tenant_context/i.test(sql));
+    assert.ok(bindIndex >= 0 && bindIndex < readinessIndex);
+    assert.ok(closeIndex > readinessIndex);
+    assert.deepEqual(statements[readinessIndex]?.values, ['tenant-a']);
+    assert.equal(
+      statements.some(({ sql }) => /FROM (?:public\.)?commander_workers/i.test(sql)),
+      false,
+    );
   });
 
   it('destroys the app client when rollback also fails', async () => {

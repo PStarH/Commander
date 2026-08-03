@@ -1732,7 +1732,7 @@ class CommanderClient:
     # ------------------------------------------------------------------
 
     async def get_security_posture(self) -> SecurityPostureReport:
-        """Get the latest full compliance report."""
+        """Get the latest self-assessed security posture report."""
         data = await self._request("GET", "/api/security/posture")
         return SecurityPostureReport(**data)
 

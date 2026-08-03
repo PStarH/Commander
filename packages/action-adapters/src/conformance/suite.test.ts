@@ -1,8 +1,15 @@
+import assert from 'node:assert/strict';
 import { describe } from 'node:test';
-import { githubPrBodyMarker, servicenowCorrelationId } from '@commander/contracts';
+import {
+  commanderActionMarker,
+  compensationIdempotencyKey,
+  githubPrBodyMarker,
+  servicenowCorrelationId,
+} from '@commander/contracts';
 import { createGitHubPullRequestCreateAdapter } from '../github/pullRequestCreate.js';
 import { createServiceNowIncidentCreateAdapter } from '../servicenow/incidentCreate.js';
-import type { AdapterCredentialProvider } from '../types.js';
+import { createKubernetesDeploymentRollbackAdapter } from '../kubernetes/deploymentRollback.js';
+import type { AdapterCredentialProvider, KubernetesCredentialProvider } from '../types.js';
 import { registerConformanceSuite, type ConformanceAdapterFactory } from './suite.js';
 
 const tenantId = 'tenant-a';
@@ -38,6 +45,7 @@ const githubFactory: ConformanceAdapterFactory = {
       number: number;
       html_url: string;
       state: string;
+      title: string;
       body: string;
       head: { ref: string };
       base: { ref: string };
@@ -61,6 +69,7 @@ const githubFactory: ConformanceAdapterFactory = {
           number: pulls.length + 1,
           html_url: `https://github.com/octo/repo/pull/${pulls.length + 1}`,
           state: 'open',
+          title: body.title,
           body: body.body,
           head: { ref: body.head },
           base: { ref: body.base },
@@ -245,7 +254,10 @@ const serviceNowFactory: ConformanceAdapterFactory = {
       adapter: createServiceNowIncidentCreateAdapter({
         credentials: serviceNowCredentials(),
         fetch: async (input, init) => {
-          if ((init?.method ?? 'GET') === 'GET' && String(input).includes('/api/now/table/incident?')) {
+          if (
+            (init?.method ?? 'GET') === 'GET' &&
+            String(input).includes('/api/now/table/incident?')
+          ) {
             return new Response(JSON.stringify({ result: incidents }), { status: 200 });
           }
           return new Response('unexpected', { status: 500 });
@@ -260,7 +272,264 @@ const serviceNowFactory: ConformanceAdapterFactory = {
   },
 };
 
+const kubernetesFactory: ConformanceAdapterFactory = {
+  name: 'kubernetes.deployment.rollback',
+  createAdapter() {
+    const counters = { createCount: 0, writeCount: 0, compensateCount: 0 };
+    let timeoutNextRollback = false;
+    let deployment = {
+      revision: '9',
+      template: {
+        metadata: { labels: { app: 'api' } },
+        spec: { containers: [{ name: 'api', image: 'example/api:v2' }] },
+      },
+      annotations: {} as Record<string, string>,
+      generation: 2,
+    };
+    const targetTemplate = {
+      metadata: { labels: { app: 'api' } },
+      spec: { containers: [{ name: 'api', image: 'example/api:v1' }] },
+    };
+    const provider: KubernetesCredentialProvider = {
+      async getToken(requestTenant, cluster, namespace) {
+        assert.equal(requestTenant, tenantId);
+        assert.equal(cluster, 'kind');
+        assert.equal(namespace, 'commander');
+        return 'k8s-test-token';
+      },
+      getServer(requestTenant, cluster, namespace) {
+        assert.equal(requestTenant, tenantId);
+        assert.equal(cluster, 'kind');
+        assert.equal(namespace, 'commander');
+        return new URL('https://kubernetes.example');
+      },
+    };
+    const wireDeployment = () =>
+      Response.json({
+        items: [
+          {
+            metadata: {
+              name: 'api',
+              namespace: 'commander',
+              uid: 'uid-api',
+              resourceVersion: '100',
+              generation: deployment.generation,
+              annotations: {
+                'deployment.kubernetes.io/revision': deployment.revision,
+                ...deployment.annotations,
+              },
+            },
+            spec: { selector: { matchLabels: { app: 'api' } }, template: deployment.template },
+            status: {
+              observedGeneration: deployment.generation,
+              replicas: 1,
+              updatedReplicas: 1,
+              availableReplicas: 1,
+              unavailableReplicas: 0,
+            },
+          },
+        ],
+      });
+    const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = new URL(String(input));
+      const method = init?.method ?? 'GET';
+      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+      assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer k8s-test-token');
+      if (method === 'GET' && url.pathname.endsWith('/deployments')) return wireDeployment();
+      if (method === 'GET' && url.pathname.endsWith('/replicasets')) {
+        return Response.json({
+          items: [
+            {
+              metadata: {
+                annotations: { 'deployment.kubernetes.io/revision': '7' },
+                ownerReferences: [{ kind: 'Deployment', uid: 'uid-api' }],
+              },
+              spec: { template: targetTemplate },
+            },
+            {
+              metadata: {
+                annotations: { 'deployment.kubernetes.io/revision': '9' },
+                ownerReferences: [{ kind: 'Deployment', uid: 'uid-api' }],
+              },
+              spec: { template: deployment.template },
+            },
+          ],
+        });
+      }
+      if (method === 'PATCH' && url.pathname.endsWith('/api')) {
+        counters.writeCount += 1;
+        const metadata = (body.metadata ?? {}) as Record<string, unknown>;
+        const annotations = (metadata.annotations ?? {}) as Record<string, string>;
+        Object.assign(deployment.annotations, annotations);
+        if (body.spec) {
+          counters.compensateCount += deployment.annotations['commander.io/compensation-marker']
+            ? 1
+            : 0;
+          deployment.template = (body.spec as Record<string, unknown>).template as Record<
+            string,
+            unknown
+          >;
+          deployment.revision = String(Number(deployment.revision) + 1);
+          deployment.generation += 1;
+          const response = Response.json({
+            metadata: {
+              name: 'api',
+              namespace: 'commander',
+              uid: 'uid-api',
+              resourceVersion: '101',
+              generation: deployment.generation,
+              annotations: {
+                'deployment.kubernetes.io/revision': deployment.revision,
+                ...deployment.annotations,
+              },
+            },
+            spec: { selector: { matchLabels: { app: 'api' } }, template: deployment.template },
+            status: {
+              observedGeneration: deployment.generation,
+              replicas: 1,
+              updatedReplicas: 1,
+              availableReplicas: 1,
+              unavailableReplicas: 0,
+            },
+          });
+          if (timeoutNextRollback) {
+            timeoutNextRollback = false;
+            throw new DOMException('accepted but timed out', 'AbortError');
+          }
+          return response;
+        }
+        counters.createCount += deployment.annotations['commander.io/action-marker'] ? 1 : 0;
+        return Response.json({
+          metadata: {
+            name: 'api',
+            namespace: 'commander',
+            uid: 'uid-api',
+            resourceVersion: '101',
+            generation: deployment.generation,
+            annotations: {
+              'deployment.kubernetes.io/revision': deployment.revision,
+              ...deployment.annotations,
+            },
+          },
+          spec: { selector: { matchLabels: { app: 'api' } }, template: deployment.template },
+          status: {
+            observedGeneration: deployment.generation,
+            replicas: 1,
+            updatedReplicas: 1,
+            availableReplicas: 1,
+            unavailableReplicas: 0,
+          },
+        });
+      }
+      return new Response('{}', { status: 404 });
+    };
+    return {
+      adapter: createKubernetesDeploymentRollbackAdapter({
+        credentials: provider,
+        fetch: fetchImpl,
+      }),
+      counters,
+      destination: 'k8s://kind/commander/deployments/api',
+      executeArgs: { targetRevision: '7', reason: 'conformance rollback' },
+      queryRequest: { args: { targetRevision: '7' } },
+      compensationPatch: { targetRevision: '9', reason: 'conformance compensation' },
+      prepareTimeout: () => {
+        timeoutNextRollback = true;
+      },
+    };
+  },
+  createAuthFailureAdapter() {
+    return createKubernetesDeploymentRollbackAdapter({
+      credentials: {
+        async getToken() {
+          return 'k8s-test-token';
+        },
+        getServer() {
+          return new URL('https://kubernetes.example');
+        },
+      },
+      fetch: async () => new Response('{}', { status: 403 }),
+    });
+  },
+  createMultiMarkerContext() {
+    const marker = commanderActionMarker(tenantId, idempotencyKey);
+    return {
+      counters: { createCount: 0, writeCount: 0, compensateCount: 0 },
+      destination: 'k8s://kind/commander/deployments/api',
+      executeArgs: { targetRevision: '7', reason: 'conformance rollback' },
+      queryRequest: { args: { targetRevision: '7' } },
+      compensationPatch: { targetRevision: '9', reason: 'conformance compensation' },
+      adapter: createKubernetesDeploymentRollbackAdapter({
+        credentials: {
+          async getToken() {
+            return 'k8s-test-token';
+          },
+          getServer() {
+            return new URL('https://kubernetes.example');
+          },
+        },
+        fetch: async (input, init) => {
+          if ((init?.method ?? 'GET') === 'GET' && String(input).includes('/deployments')) {
+            return Response.json({
+              items: [
+                {
+                  metadata: {
+                    name: 'api',
+                    namespace: 'commander',
+                    uid: 'uid-api',
+                    generation: 2,
+                    annotations: {
+                      'commander.io/action-marker': marker,
+                      'deployment.kubernetes.io/revision': '7',
+                    },
+                  },
+                  spec: {
+                    selector: { matchLabels: { app: 'api' } },
+                    template: { metadata: { labels: { app: 'api' } } },
+                  },
+                  status: {
+                    observedGeneration: 2,
+                    replicas: 1,
+                    updatedReplicas: 1,
+                    availableReplicas: 1,
+                    unavailableReplicas: 0,
+                  },
+                },
+                {
+                  metadata: {
+                    name: 'api-copy',
+                    namespace: 'commander',
+                    uid: 'uid-copy',
+                    generation: 2,
+                    annotations: {
+                      'commander.io/action-marker': marker,
+                      'deployment.kubernetes.io/revision': '7',
+                    },
+                  },
+                  spec: {
+                    selector: { matchLabels: { app: 'api-copy' } },
+                    template: { metadata: { labels: { app: 'api-copy' } } },
+                  },
+                  status: {
+                    observedGeneration: 2,
+                    replicas: 1,
+                    updatedReplicas: 1,
+                    availableReplicas: 1,
+                    unavailableReplicas: 0,
+                  },
+                },
+              ],
+            });
+          }
+          return new Response('{}', { status: 500 });
+        },
+      }),
+    };
+  },
+};
+
 describe('L4-02 adapter conformance suite', () => {
   registerConformanceSuite({ factory: githubFactory });
   registerConformanceSuite({ factory: serviceNowFactory });
+  registerConformanceSuite({ factory: kubernetesFactory });
 });

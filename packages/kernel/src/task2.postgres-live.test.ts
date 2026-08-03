@@ -5,6 +5,7 @@ import { Pool } from 'pg';
 import { runKernelMigrations, runTask1ClosureMigrations } from './migrations.js';
 import { PostgresKernelRepository } from './postgres.js';
 import { seedWorkerAllowedTenants } from './seedWorkerClaimSecret.js';
+import type { KernelEvidenceRecord } from './evidenceRepository.js';
 import type { KernelStep, ReconcileMutationResult } from './types.js';
 
 const adminUrl = process.env.COMMANDER_TASK2_PG_URL;
@@ -25,6 +26,53 @@ function databaseUrl(databaseName: string, role?: string, password?: string): st
 }
 
 type RegisteredWorker = { generation: number; claimSecret: string };
+
+function terminalEvidence(
+  effect: { effectId: string; step: KernelStep },
+  state: 'COMPLETED' | 'CONFIRMED_NOT_APPLIED' | 'COMPLETION_UNKNOWN',
+): KernelEvidenceRecord {
+  const disposition =
+    state === 'COMPLETED'
+      ? 'SUCCEEDED'
+      : state === 'CONFIRMED_NOT_APPLIED'
+        ? 'FAILED'
+        : 'ESCALATED';
+  const bundleId = `evidence_${effect.effectId}`;
+  const actionDigest = 'a'.repeat(64);
+  const contentHash = 'b'.repeat(64);
+  const signature = {
+    algorithm: 'Ed25519' as const,
+    keyId: 'task2-live-test-key',
+    signedAt: '2026-08-02T00:00:00.000Z',
+    value: 'task2-live-signature',
+  };
+  return {
+    tenantId: effect.step.tenantId,
+    runId: effect.step.runId,
+    bundleId,
+    actionDigest,
+    body: {
+      bodyVersion: 'commander.evidence-body/v1',
+      bundleId,
+      actionDigest,
+      contentHash,
+      terminalDisposition: disposition,
+      scope: {
+        tenantId: effect.step.tenantId,
+        runId: effect.step.runId,
+        effectId: effect.effectId,
+      },
+      effects: [{ effectId: effect.effectId, state }],
+      auditEvents: disposition === 'ESCALATED' ? [{ type: 'effect.reconcile_escalated' }] : [],
+      signature,
+    },
+    contentHash,
+    signature,
+    createdAt: '2026-08-02T00:00:00.000Z',
+    anchoredAt: '2026-08-02T00:00:00.000Z',
+    retentionUntil: '2027-08-02T00:00:00.000Z',
+  };
+}
 
 describe('Task 2 real PostgreSQL reconciliation authority', { skip: !adminUrl }, () => {
   const suffix = `${process.pid}-${randomUUID().replaceAll('-', '').slice(0, 12)}`;
@@ -188,7 +236,7 @@ describe('Task 2 real PostgreSQL reconciliation authority', { skip: !adminUrl },
       lease: step.lease,
       actor: workerId,
     });
-    assert.equal(admitted.admitted, true);
+    assert.equal(admitted.admitted, true, JSON.stringify(admitted));
     return { effectId, step };
   }
 
@@ -234,8 +282,29 @@ describe('Task 2 real PostgreSQL reconciliation authority', { skip: !adminUrl },
     };
   }
 
+  function evidenceAuth(input: {
+    tenantId?: string;
+    runId: string;
+    effectId: string;
+    claimToken: string;
+  }) {
+    return {
+      workerId: adapterIdA,
+      workerGeneration: adapterA.generation,
+      claimSecret: adapterA.claimSecret,
+      tenantId: input.tenantId ?? tenantA,
+      runId: input.runId,
+      effectId: input.effectId,
+      claimToken: input.claimToken,
+    };
+  }
+
   it('authenticates parking exactly once and rejects stale worker credentials', async () => {
     const admitted = await createAdmittedEffect('park-auth');
+    const usageBefore = await ownerPool.query<{ running_steps: string }>(
+      `SELECT running_steps::text FROM commander_tenant_execution_usage WHERE tenant_id=$1`,
+      [tenantA],
+    );
     const base = {
       tenantId: tenantA,
       effectId: admitted.effectId,
@@ -260,6 +329,15 @@ describe('Task 2 real PostgreSQL reconciliation authority', { skip: !adminUrl },
     const first = await workerRepo.parkEffectCompletionUnknown(base);
     assert.equal(first.parked, true);
     assert.equal(first.parked && first.replayed, false);
+    const usageAfter = await ownerPool.query<{ running_steps: string }>(
+      `SELECT running_steps::text FROM commander_tenant_execution_usage WHERE tenant_id=$1`,
+      [tenantA],
+    );
+    assert.equal(
+      usageAfter.rows[0]?.running_steps,
+      String(Math.max(0, Number(usageBefore.rows[0]?.running_steps ?? 0) - 1)),
+      'first UNKNOWN parking must release the tenant execution slot',
+    );
     const replay = await workerRepo.parkEffectCompletionUnknown(base);
     assert.equal(replay.parked && replay.replayed, true);
     assert.deepEqual(
@@ -274,6 +352,96 @@ describe('Task 2 real PostgreSQL reconciliation authority', { skip: !adminUrl },
     assert.equal(events.rows[0]?.count, '1');
   });
 
+  it('rejects stale leases in the legacy completion-unknown mutation', async () => {
+    const admitted = await createAdmittedEffect('legacy-mark-stale');
+    const lease = admitted.step.lease!;
+
+    const stale = await ownerRepo.markEffectCompletionUnknown({
+      effectId: admitted.effectId,
+      tenantId: tenantA,
+      reason: 'stale-worker',
+      actor: workerId,
+      lease: { ...lease, fencingEpoch: lease.fencingEpoch + 1 },
+    });
+
+    assert.equal(stale, null, 'a stale fencing epoch must not park the effect');
+    const state = await ownerPool.query<{ effect_state: string; step_state: string }>(
+      `SELECT e.state AS effect_state, s.state AS step_state
+         FROM commander_effects e
+         JOIN commander_steps s ON s.id=e.step_id AND s.run_id=e.run_id AND s.tenant_id=e.tenant_id
+        WHERE e.id=$1 AND e.tenant_id=$2`,
+      [admitted.effectId, tenantA],
+    );
+    assert.deepEqual(state.rows[0], { effect_state: 'ADMITTED', step_state: 'RUNNING' });
+  });
+
+  it('transfers a valid legacy completion-unknown mark to reconciliation ownership', async () => {
+    const admitted = await createAdmittedEffect('legacy-mark-valid');
+    const lease = admitted.step.lease!;
+
+    const beforeUsage = await ownerPool.query<{ running_steps: string }>(
+      `SELECT running_steps::text FROM commander_tenant_execution_usage WHERE tenant_id=$1`,
+      [tenantA],
+    );
+    const runningStepsBeforeMark = Number(beforeUsage.rows[0]?.running_steps ?? 0);
+
+    const marked = await ownerRepo.markEffectCompletionUnknown({
+      effectId: admitted.effectId,
+      tenantId: tenantA,
+      reason: 'valid-worker',
+      actor: workerId,
+      lease,
+    });
+
+    assert.equal(marked?.state, 'COMPLETION_UNKNOWN');
+    const state = await ownerPool.query<{
+      effect_state: string;
+      reconcile_disposition: string | null;
+      reconcile_deadline_at: string | null;
+      step_state: string;
+      lease_worker_id: string | null;
+      lease_worker_generation: string | null;
+      lease_token: string | null;
+      lease_expires_at: string | null;
+      running_steps: string;
+    }>(
+      `SELECT e.state AS effect_state, e.reconcile_disposition, e.reconcile_deadline_at,
+              s.state AS step_state, s.lease_worker_id, s.lease_worker_generation::text,
+              s.lease_token, s.lease_expires_at, u.running_steps::text
+         FROM commander_effects e
+         JOIN commander_steps s ON s.id=e.step_id AND s.run_id=e.run_id AND s.tenant_id=e.tenant_id
+         JOIN commander_tenant_execution_usage u ON u.tenant_id=e.tenant_id
+        WHERE e.id=$1 AND e.tenant_id=$2`,
+      [admitted.effectId, tenantA],
+    );
+    assert.deepEqual(state.rows[0], {
+      effect_state: 'COMPLETION_UNKNOWN',
+      reconcile_disposition: 'PENDING',
+      reconcile_deadline_at: state.rows[0]?.reconcile_deadline_at,
+      step_state: 'WAITING_FOR_RECONCILIATION',
+      lease_worker_id: null,
+      lease_worker_generation: '0',
+      lease_token: null,
+      lease_expires_at: null,
+      running_steps: String(Math.max(0, runningStepsBeforeMark - 1)),
+    });
+    assert.ok(state.rows[0]?.reconcile_deadline_at);
+
+    const claims = await adapterRepo.claimReconcileEffects({
+      workerId: adapterIdA,
+      workerGeneration: adapterA.generation,
+      claimSecret: adapterA.claimSecret,
+      limit: 10,
+      claimTtlMs: 60_000,
+      now: new Date(Date.now() + 1_000),
+    });
+    assert.equal(
+      claims.some((claim) => claim.effect.id === admitted.effectId),
+      true,
+      'a valid UNKNOWN mark must be visible to adapter-ops reconciliation',
+    );
+  });
+
   it('fences claims and all four mutations, including replay, expiry, and tenant concealment', async () => {
     const complete = await park('complete');
     const confirm = await park('confirm');
@@ -282,6 +450,11 @@ describe('Task 2 real PostgreSQL reconciliation authority', { skip: !adminUrl },
     const authNegative = await park('auth-negative');
     const expired = await park('expired');
     const crossTenant = await park('cross-tenant', tenantB);
+    await ownerPool.query(
+      `UPDATE commander_effects SET type='write.cache'
+        WHERE tenant_id=$1 AND id = ANY($2::text[])`,
+      [tenantA, [complete.effectId, confirm.effectId]],
+    );
 
     assert.deepEqual(
       await adapterRepo.claimReconcileEffects({
@@ -310,14 +483,17 @@ describe('Task 2 real PostgreSQL reconciliation authority', { skip: !adminUrl },
     assert.equal(tokens.has(crossTenant.effectId), false, 'claim must be tenant concealed');
 
     const completeAuth = auth(complete.effectId, tokens.get(complete.effectId)!);
+    const completeEvidence = terminalEvidence(complete, 'COMPLETED');
     const completed = await adapterRepo.completeReconcileEffect({
       ...completeAuth,
       response: { remoteId: 'applied-1' },
+      evidence: completeEvidence,
     });
     assert.equal(completed.applied && completed.disposition, 'COMPLETED');
     const completedReplay = await adapterRepo.completeReconcileEffect({
       ...completeAuth,
       response: { remoteId: 'applied-1' },
+      evidence: completeEvidence,
     });
     assert.equal(completedReplay.applied && completedReplay.replayed, true);
     assert.deepEqual(
@@ -328,8 +504,21 @@ describe('Task 2 real PostgreSQL reconciliation authority', { skip: !adminUrl },
     const confirmed = await adapterRepo.confirmEffectNotApplied({
       ...auth(confirm.effectId, tokens.get(confirm.effectId)!),
       response: { remoteId: 'not-applied-1' },
+      evidence: terminalEvidence(confirm, 'CONFIRMED_NOT_APPLIED'),
     });
     assert.equal(confirmed.applied && confirmed.disposition, 'CONFIRMED_NOT_APPLIED');
+    const terminalRuns = await ownerPool.query<{ id: string; state: string }>(
+      `SELECT id, state FROM commander_runs WHERE id = ANY($1::text[]) ORDER BY id`,
+      [[complete.step.runId, confirm.step.runId]],
+    );
+    assert.deepEqual(
+      Object.fromEntries(terminalRuns.rows.map((run) => [run.id, run.state])),
+      {
+        [complete.step.runId]: 'SUCCEEDED',
+        [confirm.step.runId]: 'FAILED',
+      },
+      'terminal evidence and aggregate run transition must commit atomically',
+    );
     const rescheduled = await adapterRepo.rescheduleReconcileEffect({
       ...auth(reschedule.effectId, tokens.get(reschedule.effectId)!),
       lastError: { code: 'REMOTE_UNKNOWN', message: 'Remote status remains unknown' },
@@ -338,6 +527,7 @@ describe('Task 2 real PostgreSQL reconciliation authority', { skip: !adminUrl },
     const escalated = await adapterRepo.escalateReconcileEffect({
       ...auth(escalate.effectId, tokens.get(escalate.effectId)!),
       reason: 'RECONCILE_QUERY_UNSUPPORTED',
+      evidence: terminalEvidence(escalate, 'COMPLETION_UNKNOWN'),
     });
     assert.equal(escalated.applied && escalated.disposition, 'ESCALATED');
 
@@ -438,6 +628,98 @@ describe('Task 2 real PostgreSQL reconciliation authority', { skip: !adminUrl },
     );
   });
 
+  it('reveals reconciliation evidence context only to the exact unexpired claim', async () => {
+    const first = await park('evidence-context-first');
+    const second = await park('evidence-context-second');
+    const crossTenant = await park('evidence-context-cross-tenant', tenantB);
+    const claims = await claimAll();
+    const tokens = new Map(claims.map((claim) => [claim.effect.id, claim.claimToken]));
+    const firstToken = tokens.get(first.effectId);
+    const secondToken = tokens.get(second.effectId);
+    assert.ok(firstToken);
+    assert.ok(secondToken);
+
+    const context = await adapterRepo.getAdapterOpsEvidenceContext(
+      evidenceAuth({
+        runId: first.step.runId,
+        effectId: first.effectId,
+        claimToken: firstToken,
+      }),
+    );
+    assert.equal(context.effect.id, first.effectId);
+    assert.equal(context.effect.runId, first.step.runId);
+    assert.equal(context.effect.tenantId, tenantA);
+
+    await assert.rejects(
+      adapterRepo.getAdapterOpsEvidenceContext(
+        evidenceAuth({
+          runId: first.step.runId,
+          effectId: first.effectId,
+          claimToken: '',
+        }),
+      ),
+      /ADAPTER_OPS_EVIDENCE_CONTEXT_INVALID/,
+    );
+    await assert.rejects(
+      adapterRepo.getAdapterOpsEvidenceContext(
+        evidenceAuth({
+          runId: first.step.runId,
+          effectId: first.effectId,
+          claimToken: 'wrong-token',
+        }),
+      ),
+      /ADAPTER_OPS_EVIDENCE_CONTEXT_DENIED/,
+    );
+    await assert.rejects(
+      adapterRepo.getAdapterOpsEvidenceContext(
+        evidenceAuth({
+          runId: first.step.runId,
+          effectId: second.effectId,
+          claimToken: firstToken,
+        }),
+      ),
+      /ADAPTER_OPS_EVIDENCE_CONTEXT_DENIED/,
+    );
+    await assert.rejects(
+      adapterRepo.getAdapterOpsEvidenceContext(
+        evidenceAuth({
+          runId: second.step.runId,
+          effectId: first.effectId,
+          claimToken: firstToken,
+        }),
+      ),
+      /ADAPTER_OPS_EVIDENCE_CONTEXT_DENIED/,
+    );
+    await assert.rejects(
+      adapterRepo.getAdapterOpsEvidenceContext(
+        evidenceAuth({
+          tenantId: tenantB,
+          runId: crossTenant.step.runId,
+          effectId: crossTenant.effectId,
+          claimToken: firstToken,
+        }),
+      ),
+      /ADAPTER_OPS_EVIDENCE_CONTEXT_DENIED/,
+    );
+
+    await ownerPool.query(
+      `UPDATE commander_effects
+          SET reconcile_claim_expires_at=clock_timestamp()-interval '1 second'
+        WHERE id=$1 AND tenant_id=$2`,
+      [first.effectId, tenantA],
+    );
+    await assert.rejects(
+      adapterRepo.getAdapterOpsEvidenceContext(
+        evidenceAuth({
+          runId: first.step.runId,
+          effectId: first.effectId,
+          claimToken: firstToken,
+        }),
+      ),
+      /ADAPTER_OPS_EVIDENCE_CONTEXT_DENIED/,
+    );
+  });
+
   it('denies reconciliation RPCs to other roles and adapter-ops direct table access', async () => {
     await assert.rejects(
       () =>
@@ -467,5 +749,13 @@ describe('Task 2 real PostgreSQL reconciliation authority', { skip: !adminUrl },
       () => adapterPool.query(`UPDATE commander_effects SET reconcile_attempts=0`),
       /permission denied/i,
     );
+  });
+
+  it('reports the adapter-ops evidence authority unavailable when its PostgreSQL RPC is absent', async () => {
+    assert.deepEqual(await adapterRepo.checkEvidenceRepositoryAvailability(), { ready: true });
+    await ownerPool.query(
+      'DROP FUNCTION public.read_adapter_ops_evidence_context(text,bigint,text,text,text,text,text)',
+    );
+    assert.deepEqual(await adapterRepo.checkEvidenceRepositoryAvailability(), { ready: false });
   });
 });

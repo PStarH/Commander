@@ -144,7 +144,8 @@ function buildIsoCompliance(dimensions: PostureDimension[]) {
   const compliancePercentage = Math.round((coveredCount / allClauses.length) * 100);
 
   return {
-    fullyCompliant: gaps.length === 0,
+    // Internal clause coverage is not an external audit or certification.
+    fullyCompliant: false,
     clauseCoverage,
     gaps,
     compliancePercentage,
@@ -305,7 +306,7 @@ function buildAuditChecklist(dimensions: PostureDimension[]) {
   return checklist;
 }
 
-// ── Build full compliance report from real snapshots ───────────────────
+// ── Build self-assessed control-coverage report from snapshots ─────────
 function buildComplianceReport(snapshots: PostureSnapshot[]) {
   if (snapshots.length === 0) {
     return null;
@@ -334,7 +335,7 @@ function buildComplianceReport(snapshots: PostureSnapshot[]) {
 export function createSecurityPostureRouter(): Router {
   const router = Router();
 
-  // ── GET /api/security/posture — full compliance report ──────────────
+  // ── GET /api/security/posture — self-assessed posture report ─────────
   router.get('/api/security/posture', (_req: Request, res: Response) => {
     try {
       const snapshots = readSnapshots();
@@ -347,7 +348,7 @@ export function createSecurityPostureRouter(): Router {
 
       const report = buildComplianceReport(snapshots);
       if (!report) {
-        return res.status(500).json({ error: 'Failed to build compliance report' });
+        return res.status(500).json({ error: 'Failed to build posture report' });
       }
 
       res.json(report);

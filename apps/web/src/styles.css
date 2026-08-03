@@ -2432,6 +2432,29 @@ p {
   gap: 10px;
 }
 
+.actions-compensation {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.22));
+}
+
+.actions-compensation h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.actions-result {
+  margin: 1rem 0 0;
+  max-height: 14rem;
+  overflow: auto;
+  padding: 0.75rem;
+  border: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.22));
+  background: var(--surface-muted, rgba(15, 23, 42, 0.04));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.75rem;
+}
+
 .actions-lookup .inp {
   width: min(340px, 42vw);
 }

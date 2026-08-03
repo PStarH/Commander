@@ -73,6 +73,13 @@ export interface WorkloadBinding {
   workloadId?: string;
 }
 
+export interface CompensationTerminalClaimBinding {
+  requestId: string;
+  requestClaimToken: string;
+  outboxMessageId: string;
+  outboxClaimToken: string;
+}
+
 export interface CapabilityRevocationStore {
   revoke(jti: string, expiresAt: string): void | Promise<void>;
   /** tenantId required so durable PG observe can set app.tenant_scope under RLS. */
@@ -130,6 +137,8 @@ export interface PolicyEvaluator {
 }
 
 export interface EffectKernelPort {
+  /** PostgreSQL adapter-ops must never fall back to generic table-backed terminal writes. */
+  compensationTerminalEvidenceRequired?: boolean;
   getOperationsReadiness?(tenantId: string): Promise<{
     ready: boolean;
     reason?: 'RECONCILIATION_DRAIN_UNAVAILABLE' | 'COMPENSATION_DRAIN_UNAVAILABLE';
@@ -149,7 +158,14 @@ export interface EffectKernelPort {
     actionDigest: string;
     request: Record<string, unknown>;
     lease: { workerId: string; workerGeneration?: number; token: string; fencingEpoch: number };
-    compensationBinding?: { authorizationId: string; requestId: string; claimToken: string };
+    compensationBinding?: {
+      authorizationId: string;
+      requestId: string;
+      claimToken: string;
+      requestClaimToken?: string;
+      outboxMessageId?: string;
+      outboxClaimToken?: string;
+    };
     actor: string;
   }): Promise<{
     admitted: boolean;
@@ -180,6 +196,28 @@ export interface EffectKernelPort {
     actor: string;
     evidence: EvidenceRecord;
   }): Promise<unknown | null>;
+  completeCompensationEffectWithEvidence?(input: {
+    tenantId: string;
+    runId: string;
+    stepId: string;
+    effectId: string;
+    claim: CompensationTerminalClaimBinding;
+    lease: { workerId: string; workerGeneration?: number; token: string; fencingEpoch: number };
+    response: Record<string, unknown>;
+    actor: string;
+    evidence: EvidenceRecord;
+  }): Promise<unknown | null>;
+  failCompensationEffectWithEvidence?(input: {
+    tenantId: string;
+    runId: string;
+    stepId: string;
+    effectId: string;
+    claim: CompensationTerminalClaimBinding;
+    lease: { workerId: string; workerGeneration?: number; token: string; fencingEpoch: number };
+    error: { code: string; message: string; retryable: boolean; details?: Record<string, unknown> };
+    actor: string;
+    evidence: EvidenceRecord;
+  }): Promise<unknown | null>;
   markEffectCompletionUnknown?(input: {
     effectId: string;
     tenantId: string;
@@ -203,15 +241,37 @@ export interface EffectKernelPort {
     runId: string,
     tenantId: string,
   ): Promise<Array<EvidenceEffectSource & { actionDigest?: string; policySnapshotId?: string }>>;
-  listEvents?(runId: string, tenantId: string): Promise<Array<{
-    type: string;
-    tenantId: string;
-    runId: string;
-    stepId?: string;
-    aggregateId: string;
-    occurredAt: string;
-    payload: Record<string, unknown>;
-  }>>;
+  listEvents?(
+    runId: string,
+    tenantId: string,
+  ): Promise<
+    Array<{
+      type: string;
+      tenantId: string;
+      runId: string;
+      stepId?: string;
+      aggregateId: string;
+      occurredAt: string;
+      payload: Record<string, unknown>;
+    }>
+  >;
+  getTerminalEvidenceContext?(
+    effectId: string,
+    runId: string,
+    tenantId: string,
+    claimToken: string,
+  ): Promise<{
+    effect: EvidenceEffectSource & { actionDigest?: string; policySnapshotId?: string };
+    events: Array<{
+      type: string;
+      tenantId: string;
+      runId: string;
+      stepId?: string;
+      aggregateId: string;
+      occurredAt: string;
+      payload: Record<string, unknown>;
+    }>;
+  }>;
   /** L3-08a: load ledger effect for UNKNOWN reconcile (no side-effect execute). */
   getEffect?(
     effectId: string,
@@ -254,7 +314,7 @@ export interface EffectKernelPort {
 }
 
 export async function buildTerminalEvidenceRecordFromKernel(input: {
-  kernel: Pick<Required<EffectKernelPort>, 'listEffectsForRun' | 'listEvents'>;
+  kernel: Pick<EffectKernelPort, 'getTerminalEvidenceContext' | 'listEffectsForRun' | 'listEvents'>;
   signer: EvidenceSigner;
   tenantId: string;
   runId: string;
@@ -268,12 +328,28 @@ export async function buildTerminalEvidenceRecordFromKernel(input: {
   };
   recordedAt: string;
   retentionUntil: string;
+  claimToken?: string;
 }): Promise<EvidenceRecord> {
-  const [kernelEffects, kernelEvents] = await Promise.all([
-    input.kernel.listEffectsForRun(input.runId, input.tenantId),
-    input.kernel.listEvents(input.runId, input.tenantId),
-  ]);
-  const target = kernelEffects.find((effect) => effect.id === input.effectId);
+  const context = input.kernel.getTerminalEvidenceContext
+    ? input.claimToken
+      ? await input.kernel.getTerminalEvidenceContext(
+          input.effectId,
+          input.runId,
+          input.tenantId,
+          input.claimToken,
+        )
+      : null
+    : input.kernel.listEffectsForRun && input.kernel.listEvents
+      ? await Promise.all([
+          input.kernel.listEffectsForRun(input.runId, input.tenantId),
+          input.kernel.listEvents(input.runId, input.tenantId),
+        ]).then(([effects, events]) => ({
+          effect: effects.find((effect) => effect.id === input.effectId),
+          events,
+        }))
+      : null;
+  if (!context) throw new Error('EVIDENCE_LIFECYCLE_TRUTH_REQUIRED');
+  const target = context.effect;
   if (!target || target.tenantId !== input.tenantId || target.runId !== input.runId) {
     throw new Error('EVIDENCE_LIFECYCLE_TRUTH_INVALID');
   }
@@ -281,30 +357,30 @@ export async function buildTerminalEvidenceRecordFromKernel(input: {
     throw new Error('EVIDENCE_LIFECYCLE_BINDING_REQUIRED');
   }
 
-  const effects = [{
-    ...target,
-    state: input.projectedState,
-    response: input.response,
-    completedAt: input.recordedAt,
-  }];
-  const auditEvents: EvidenceAuditSource[] = kernelEvents
+  const effects = [
+    {
+      ...target,
+      state: input.projectedState,
+      response: input.response,
+      completedAt: input.recordedAt,
+    },
+  ];
+  const auditEvents: EvidenceAuditSource[] = context.events
     .filter(
-      (event) =>
-        event.aggregateId === input.effectId || event.payload.effectId === input.effectId,
+      (event) => event.aggregateId === input.effectId || event.payload.effectId === input.effectId,
     )
     .map((event) => ({
-    type: event.type,
-    severity:
-      event.type.includes('failed') || event.type.includes('escalat') ? 'high' : 'low',
-    tenantId: event.tenantId,
-    runId: event.runId,
-    stepId: event.stepId ?? target.stepId,
-    at: event.occurredAt,
-    details: {
-      ...event.payload,
-      effectId:
-        typeof event.payload.effectId === 'string' ? event.payload.effectId : event.aggregateId,
-    },
+      type: event.type,
+      severity: event.type.includes('failed') || event.type.includes('escalat') ? 'high' : 'low',
+      tenantId: event.tenantId,
+      runId: event.runId,
+      stepId: event.stepId ?? target.stepId,
+      at: event.occurredAt,
+      details: {
+        ...event.payload,
+        effectId:
+          typeof event.payload.effectId === 'string' ? event.payload.effectId : event.aggregateId,
+      },
     }));
   auditEvents.push({
     type: input.terminalEvent.type,
@@ -713,6 +789,7 @@ export interface AdmittedEffect {
   /** Kernel ledger state at admit time — replay cache-hit only when COMPLETED. */
   effectState: string;
   cachedResponse?: Record<string, unknown>;
+  compensationClaim?: CompensationTerminalClaimBinding;
 }
 
 class InMemoryAdmissionStore implements AdmissionStore {
@@ -793,9 +870,7 @@ function workerFenceMismatch(
   return null;
 }
 
-function hasCompensationAdmissionBinding(
-  grant: CapabilityGrant,
-): boolean {
+function hasCompensationAdmissionBinding(grant: CapabilityGrant): boolean {
   const approvalValid =
     typeof grant.approvalBinding === 'object' &&
     grant.approvalBinding !== null &&
@@ -875,11 +950,22 @@ export class EffectBroker {
     if (requireOperationsReadiness && !kernel.getOperationsReadiness) {
       throw new EffectBrokerError('OPERATIONS_READINESS_CHECK_REQUIRED');
     }
+    const compensationTerminalAuthorityReady =
+      kernel.compensationTerminalEvidenceRequired === true &&
+      typeof kernel.completeCompensationEffectWithEvidence === 'function' &&
+      typeof kernel.failCompensationEffectWithEvidence === 'function';
     if (
       (options.requireEvidencePersistence || options.evidenceSigner) &&
-      (!options.evidenceSigner || !kernel.completeEffectWithEvidence)
+      (!options.evidenceSigner ||
+        (!kernel.completeEffectWithEvidence && !compensationTerminalAuthorityReady))
     ) {
       throw new EffectBrokerError('EVIDENCE_PERSISTENCE_REQUIRED');
+    }
+    if (
+      kernel.compensationTerminalEvidenceRequired &&
+      (!compensationTerminalAuthorityReady || !options.evidenceSigner)
+    ) {
+      throw new EffectBrokerError('COMPENSATION_TERMINAL_EVIDENCE_AUTHORITY_REQUIRED');
     }
     this.options = {
       audience: options.audience ?? 'commander.effect-broker',
@@ -919,6 +1005,7 @@ export class EffectBroker {
     actor: string;
     /** Step-scoped identity binding from kernel-claimed workload context. */
     workloadBinding?: WorkloadBinding;
+    compensationClaim?: CompensationTerminalClaimBinding;
   }): Promise<AdmissionResult> {
     const grant = await this.tokens.verify(input.token);
     if (isProductionProfile() && !input.workloadBinding) {
@@ -1018,6 +1105,16 @@ export class EffectBroker {
       if (!hasCompensationAdmissionBinding(grant)) {
         return this.rejectAdmit(grant, 'COMPENSATION_BINDING_REQUIRED', {});
       }
+      if (
+        this.kernel.compensationTerminalEvidenceRequired &&
+        (!input.compensationClaim ||
+          input.compensationClaim.requestId !== grant.requestId ||
+          input.compensationClaim.requestClaimToken !== input.lease.token ||
+          input.compensationClaim.outboxClaimToken !== input.lease.token ||
+          !input.compensationClaim.outboxMessageId)
+      ) {
+        return this.rejectAdmit(grant, 'COMPENSATION_CLAIM_BINDING_REQUIRED', {});
+      }
     }
     if (
       this.options.requireOperationsReadiness &&
@@ -1055,6 +1152,13 @@ export class EffectBroker {
               authorizationId: grant.authorizationId!,
               requestId: grant.requestId!,
               claimToken: input.lease.token,
+              ...(input.compensationClaim
+                ? {
+                    requestClaimToken: input.compensationClaim.requestClaimToken,
+                    outboxMessageId: input.compensationClaim.outboxMessageId,
+                    outboxClaimToken: input.compensationClaim.outboxClaimToken,
+                  }
+                : {}),
             },
           }
         : {}),
@@ -1110,6 +1214,7 @@ export class EffectBroker {
       replayed: !!admitted.replayed,
       effectState,
       cachedResponse: completedReplay ? admitted.effect.response : undefined,
+      ...(input.compensationClaim ? { compensationClaim: input.compensationClaim } : {}),
     });
     return result;
   }
@@ -1223,12 +1328,12 @@ export class EffectBroker {
             const failed = this.evidenceSigner
               ? await this.failTerminalEffect(admission, failure)
               : await this.kernel.failEffect?.({
-              effectId: admission.kernelEffectId,
-              tenantId: admission.grant.tenantId,
-              lease: admission.lease,
-              error: failure,
-              actor: admission.actor,
-            });
+                  effectId: admission.kernelEffectId,
+                  tenantId: admission.grant.tenantId,
+                  lease: admission.lease,
+                  error: failure,
+                  actor: admission.actor,
+                });
             if (!failed) {
               await this.parkUnfinishedAdmission(admission, error.code);
               parked = true;
@@ -1288,6 +1393,22 @@ export class EffectBroker {
         details: { policyDecisionId: admission.decision.decisionId },
       });
       assertEvidenceRecord(record);
+      if (this.kernel.compensationTerminalEvidenceRequired) {
+        if (!admission.compensationClaim || !this.kernel.completeCompensationEffectWithEvidence) {
+          throw new Error('COMPENSATION_TERMINAL_EVIDENCE_AUTHORITY_REQUIRED');
+        }
+        return await this.kernel.completeCompensationEffectWithEvidence({
+          tenantId: admission.grant.tenantId,
+          runId: admission.grant.runId,
+          stepId: admission.grant.stepId,
+          effectId: admission.kernelEffectId,
+          claim: admission.compensationClaim,
+          lease: admission.lease,
+          response,
+          actor: admission.actor,
+          evidence: record,
+        });
+      }
       return await this.kernel.completeEffectWithEvidence!(
         admission.kernelEffectId,
         admission.grant.tenantId,
@@ -1307,8 +1428,11 @@ export class EffectBroker {
     admission: AdmittedEffect,
     error: { code: string; message: string; retryable: boolean; details?: Record<string, unknown> },
   ): Promise<unknown | null> {
+    const failEffectWithEvidence = this.kernel.failEffectWithEvidence;
+    const failCompensationEffectWithEvidence = this.kernel.failCompensationEffectWithEvidence;
     try {
-      if (!this.kernel.failEffectWithEvidence) throw new Error('FAILED_EVIDENCE_AUTHORITY_REQUIRED');
+      if (!this.kernel.compensationTerminalEvidenceRequired && !failEffectWithEvidence)
+        throw new Error('FAILED_EVIDENCE_AUTHORITY_REQUIRED');
       const record = await this.buildTerminalEvidenceRecord(admission, {
         state: 'FAILED',
         response: error,
@@ -1317,7 +1441,26 @@ export class EffectBroker {
         details: { errorCode: error.code },
       });
       assertEvidenceRecord(record);
-      return await this.kernel.failEffectWithEvidence({
+      if (this.kernel.compensationTerminalEvidenceRequired) {
+        if (!admission.compensationClaim || !failCompensationEffectWithEvidence) {
+          throw new Error('COMPENSATION_TERMINAL_EVIDENCE_AUTHORITY_REQUIRED');
+        }
+        return await failCompensationEffectWithEvidence({
+          tenantId: admission.grant.tenantId,
+          runId: admission.grant.runId,
+          stepId: admission.grant.stepId,
+          effectId: admission.kernelEffectId,
+          claim: admission.compensationClaim,
+          lease: admission.lease,
+          error,
+          actor: admission.actor,
+          evidence: record,
+        });
+      }
+      if (!failEffectWithEvidence) {
+        throw new Error('FAILED_EVIDENCE_AUTHORITY_REQUIRED');
+      }
+      return await failEffectWithEvidence({
         effectId: admission.kernelEffectId,
         tenantId: admission.grant.tenantId,
         lease: admission.lease,
@@ -1342,15 +1485,29 @@ export class EffectBroker {
       details: Record<string, unknown>;
     },
   ): Promise<EvidenceRecord> {
-    if (!this.evidenceSigner || !this.kernel.listEffectsForRun || !this.kernel.listEvents) {
+    if (
+      !this.evidenceSigner ||
+      (!this.kernel.getTerminalEvidenceContext &&
+        (!this.kernel.listEffectsForRun || !this.kernel.listEvents))
+    ) {
       throw new Error('EVIDENCE_LIFECYCLE_TRUTH_REQUIRED');
     }
     const completedAt = new Date().toISOString();
-    const [kernelEffects, kernelEvents] = await Promise.all([
-      this.kernel.listEffectsForRun(admission.grant.runId, admission.grant.tenantId),
-      this.kernel.listEvents(admission.grant.runId, admission.grant.tenantId),
-    ]);
-    const target = kernelEffects.find((effect) => effect.id === admission.kernelEffectId);
+    const context = this.kernel.getTerminalEvidenceContext
+      ? await this.kernel.getTerminalEvidenceContext(
+          admission.kernelEffectId,
+          admission.grant.runId,
+          admission.grant.tenantId,
+          admission.lease.token,
+        )
+      : await Promise.all([
+          this.kernel.listEffectsForRun!(admission.grant.runId, admission.grant.tenantId),
+          this.kernel.listEvents!(admission.grant.runId, admission.grant.tenantId),
+        ]).then(([effects, events]) => ({
+          effect: effects.find((effect) => effect.id === admission.kernelEffectId),
+          events,
+        }));
+    const target = context.effect;
     if (
       !target ||
       target.tenantId !== admission.grant.tenantId ||
@@ -1370,27 +1527,24 @@ export class EffectBroker {
     const effects = [
       { ...target, state: terminal.state, response: terminal.response, completedAt },
     ];
-    const auditEvents: EvidenceAuditSource[] = kernelEvents
+    const auditEvents: EvidenceAuditSource[] = context.events
       .filter(
         (event) =>
           event.aggregateId === admission.kernelEffectId ||
           event.payload.effectId === admission.kernelEffectId,
       )
       .map((event) => ({
-      type: event.type,
-      severity:
-        event.type.includes('failed') || event.type.includes('escalat') ? 'high' : 'low',
-      tenantId: event.tenantId,
-      runId: event.runId,
-      ...(event.stepId ? { stepId: event.stepId } : { stepId: admission.grant.stepId }),
-      at: event.occurredAt,
-      details: {
-        ...event.payload,
-        effectId:
-          typeof event.payload.effectId === 'string'
-            ? event.payload.effectId
-            : event.aggregateId,
-      },
+        type: event.type,
+        severity: event.type.includes('failed') || event.type.includes('escalat') ? 'high' : 'low',
+        tenantId: event.tenantId,
+        runId: event.runId,
+        ...(event.stepId ? { stepId: event.stepId } : { stepId: admission.grant.stepId }),
+        at: event.occurredAt,
+        details: {
+          ...event.payload,
+          effectId:
+            typeof event.payload.effectId === 'string' ? event.payload.effectId : event.aggregateId,
+        },
       }));
     auditEvents.push({
       type: terminal.eventType,

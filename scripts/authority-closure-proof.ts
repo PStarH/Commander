@@ -34,17 +34,31 @@ import {
   runKernelMigrations,
   seedWorkerAllowedTenants,
   seedWorkerClaimSecret,
+  KERNEL_COMPENSATION_TOPIC,
 } from '../packages/kernel/src/index.js';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
-import type { SqlClient, SqlPool } from '../packages/kernel/src/postgres.js';
+import {
+  PostgresTenantContextAuthority,
+  type SqlClient,
+  type SqlPool,
+} from '../packages/kernel/src/postgres.js';
 import { TENANT_TABLES } from '../packages/kernel/src/schema.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ARTIFACT_PATH = resolve(ROOT, '.superpowers/sdd/authority-closure-proof-latest.json');
-const MANIFEST_PATH = resolve(ROOT, '.superpowers/sdd/authority-closure-proof-latest.manifest.json');
+const MANIFEST_PATH = resolve(
+  ROOT,
+  '.superpowers/sdd/authority-closure-proof-latest.manifest.json',
+);
 const LOG_PATH = resolve(ROOT, '.superpowers/sdd/authority-closure-proof-latest.log.json');
-const EVIDENCE_PATH = resolve(ROOT, '.superpowers/sdd/authority-closure-proof-latest.evidence.json');
-const SOURCE_MANIFEST_PATH = resolve(ROOT, '.superpowers/sdd/authority-closure-proof-latest.source.json');
+const EVIDENCE_PATH = resolve(
+  ROOT,
+  '.superpowers/sdd/authority-closure-proof-latest.evidence.json',
+);
+const SOURCE_MANIFEST_PATH = resolve(
+  ROOT,
+  '.superpowers/sdd/authority-closure-proof-latest.source.json',
+);
 const FALLBACK_DSN = 'postgres://commander:commander@127.0.0.1:5433/commander';
 
 const appPassword = process.env.COMMANDER_APP_PASSWORD ?? 'commander_app';
@@ -73,7 +87,12 @@ export interface AuthorityProofResult {
     runtimeCrossTenantAdmissionRejected: boolean;
     invalidAdapterOpsWorkerIdRejected: boolean;
   };
-  effect: { policyBound: boolean; actionDigestBound: boolean; actionDigestRequired: boolean; fenced: boolean };
+  effect: {
+    policyBound: boolean;
+    actionDigestBound: boolean;
+    actionDigestRequired: boolean;
+    fenced: boolean;
+  };
   capability: {
     replayRejected: boolean;
     revocationObserved: boolean;
@@ -95,11 +114,18 @@ export interface AuthorityProofMetadata {
     untrackedFiles: string[];
   };
   versions: {
-    dependencies: string; image: string; protocol: string;
-    contract: string; policy: string; adapter: string;
+    dependencies: string;
+    image: string;
+    protocol: string;
+    contract: string;
+    policy: string;
+    adapter: string;
   };
   environment: {
-    topology: string; backend: string; tenants: string[]; databaseRoles: string[];
+    topology: string;
+    backend: string;
+    tenants: string[];
+    databaseRoles: string[];
   };
   provider: { externalSystemReality: string };
   fault: { description: string; injectionPoints: string[] };
@@ -112,40 +138,58 @@ export interface AuthorityProofMetadata {
 }
 
 const nonEmpty = (value: unknown): boolean =>
-  typeof value === 'string' ? value.trim().length > 0
-    : Array.isArray(value) ? value.length > 0 && value.every(nonEmpty)
-      : typeof value === 'number' ? Number.isFinite(value) && value >= 0
+  typeof value === 'string'
+    ? value.trim().length > 0
+    : Array.isArray(value)
+      ? value.length > 0 && value.every(nonEmpty)
+      : typeof value === 'number'
+        ? Number.isFinite(value) && value >= 0
         : typeof value === 'boolean';
 
 export function validateProofMetadata(metadata: AuthorityProofMetadata): string[] {
   const mandatory: Array<[string, unknown]> = [
-    ['workflowId', metadata.workflowId], ['source.commit', metadata.source?.commit],
+    ['workflowId', metadata.workflowId],
+    ['source.commit', metadata.source?.commit],
     ['source.dirty', metadata.source?.dirty],
     ['source.trackedDiffSha256', metadata.source?.trackedDiffSha256],
     ['versions.dependencies', metadata.versions?.dependencies],
-    ['versions.image', metadata.versions?.image], ['versions.protocol', metadata.versions?.protocol],
-    ['versions.contract', metadata.versions?.contract], ['versions.policy', metadata.versions?.policy],
-    ['versions.adapter', metadata.versions?.adapter], ['environment.topology', metadata.environment?.topology],
-    ['environment.backend', metadata.environment?.backend], ['environment.tenants', metadata.environment?.tenants],
+    ['versions.image', metadata.versions?.image],
+    ['versions.protocol', metadata.versions?.protocol],
+    ['versions.contract', metadata.versions?.contract],
+    ['versions.policy', metadata.versions?.policy],
+    ['versions.adapter', metadata.versions?.adapter],
+    ['environment.topology', metadata.environment?.topology],
+    ['environment.backend', metadata.environment?.backend],
+    ['environment.tenants', metadata.environment?.tenants],
     ['environment.databaseRoles', metadata.environment?.databaseRoles],
     ['provider.externalSystemReality', metadata.provider?.externalSystemReality],
-    ['fault.description', metadata.fault?.description], ['fault.injectionPoints', metadata.fault?.injectionPoints],
-    ['outcomes.expected', metadata.outcomes?.expected], ['outcomes.observed', metadata.outcomes?.observed],
-    ['timing.startedAt', metadata.timing?.startedAt], ['timing.endedAt', metadata.timing?.endedAt],
-    ['timing.durationMs', metadata.timing?.durationMs], ['generatingCommand', metadata.generatingCommand],
-    ['hashes.logs', metadata.hashes?.logs], ['hashes.evidence', metadata.hashes?.evidence],
-    ['hashes.artifacts', metadata.hashes?.artifacts], ['limitations', metadata.limitations],
+    ['fault.description', metadata.fault?.description],
+    ['fault.injectionPoints', metadata.fault?.injectionPoints],
+    ['outcomes.expected', metadata.outcomes?.expected],
+    ['outcomes.observed', metadata.outcomes?.observed],
+    ['timing.startedAt', metadata.timing?.startedAt],
+    ['timing.endedAt', metadata.timing?.endedAt],
+    ['timing.durationMs', metadata.timing?.durationMs],
+    ['generatingCommand', metadata.generatingCommand],
+    ['hashes.logs', metadata.hashes?.logs],
+    ['hashes.evidence', metadata.hashes?.evidence],
+    ['hashes.artifacts', metadata.hashes?.artifacts],
+    ['limitations', metadata.limitations],
     ['untestedBranches', metadata.untestedBranches],
   ];
   const failures = mandatory
     .filter(([, value]) => !nonEmpty(value))
     .map(([name]) => `mandatory metadata empty: ${name}`);
-  if (metadata.source?.trackedDiffSha256
-      && !/^[a-f0-9]{64}$/.test(metadata.source.trackedDiffSha256)) {
+  if (
+    metadata.source?.trackedDiffSha256 &&
+    !/^[a-f0-9]{64}$/.test(metadata.source.trackedDiffSha256)
+  ) {
     failures.push('invalid source hash: source.trackedDiffSha256');
   }
-  if (Array.isArray(metadata.source?.untrackedFiles)
-      && metadata.source.untrackedFiles.some((value) => !/^.+:sha256:[a-f0-9]{64}$/.test(value))) {
+  if (
+    Array.isArray(metadata.source?.untrackedFiles) &&
+    metadata.source.untrackedFiles.some((value) => !/^.+:sha256:[a-f0-9]{64}$/.test(value))
+  ) {
     failures.push('invalid source hash reference: source.untrackedFiles');
   }
   const hashReference = /^[^:\s]+:sha256:[a-f0-9]{64}$/;
@@ -167,19 +211,27 @@ export function createArtifactManifest(artifact: string, artifactBody: string) {
 
 function emptyProofMetadata(): AuthorityProofMetadata {
   return {
-    workflowId: '', source: { commit: '', dirty: false, trackedDiffSha256: '', untrackedFiles: [] },
+    workflowId: '',
+    source: { commit: '', dirty: false, trackedDiffSha256: '', untrackedFiles: [] },
     versions: { dependencies: '', image: '', protocol: '', contract: '', policy: '', adapter: '' },
     environment: { topology: '', backend: '', tenants: [], databaseRoles: [] },
-    provider: { externalSystemReality: '' }, fault: { description: '', injectionPoints: [] },
-    outcomes: { expected: [], observed: [] }, timing: { startedAt: '', endedAt: '', durationMs: -1 },
-    generatingCommand: '', hashes: { logs: [], evidence: [], artifacts: [] },
-    limitations: [], untestedBranches: [],
+    provider: { externalSystemReality: '' },
+    fault: { description: '', injectionPoints: [] },
+    outcomes: { expected: [], observed: [] },
+    timing: { startedAt: '', endedAt: '', durationMs: -1 },
+    generatingCommand: '',
+    hashes: { logs: [], evidence: [], artifacts: [] },
+    limitations: [],
+    untestedBranches: [],
   };
 }
 
 function resolveGitDirty(): boolean {
   try {
-    return execFileSync('git', ['status', '--porcelain'], { cwd: ROOT, encoding: 'utf8' }).trim().length > 0;
+    return (
+      execFileSync('git', ['status', '--porcelain'], { cwd: ROOT, encoding: 'utf8' }).trim()
+        .length > 0
+    );
   } catch {
     return true;
   }
@@ -191,7 +243,8 @@ function captureWorkspaceSource(gitSha: string): AuthorityProofMetadata['source'
     maxBuffer: 64 * 1024 * 1024,
   });
   const untrackedOutput = execFileSync(
-    'git', ['ls-files', '--others', '--exclude-standard', '-z'],
+    'git',
+    ['ls-files', '--others', '--exclude-standard', '-z'],
     { cwd: ROOT, encoding: 'utf8' },
   );
   const untrackedFiles = untrackedOutput
@@ -230,7 +283,10 @@ function buildProofMetadata(input: {
 }): AuthorityProofMetadata {
   const outcomes: AuthorityProofMetadata['outcomes'] = {
     expected: ['all authority flags true', 'no raw runtime authority bypass'],
-    observed: input.failures.length === 0 ? ['all authority flags true'] : ['authority proof failures recorded'],
+    observed:
+      input.failures.length === 0
+        ? ['all authority flags true']
+        : ['authority proof failures recorded'],
   };
   const timing: AuthorityProofMetadata['timing'] = {
     startedAt: input.startedAt,
@@ -244,21 +300,39 @@ function buildProofMetadata(input: {
     source: input.source,
     versions: {
       dependencies: `pnpm-lock.yaml:sha256:${sha256Hex(lockfile)}`,
-      image: 'not-applicable:local-host', protocol: 'v1', contract: 'v2', policy: 'v1', adapter: 'v1',
+      image: 'not-applicable:local-host',
+      protocol: 'v1',
+      contract: 'v2',
+      policy: 'v1',
+      adapter: 'v1',
     },
     environment: {
-      topology: 'single-process-local-role-clients', backend: 'postgresql-16',
+      topology: 'single-process-local-role-clients',
+      backend: 'postgresql-16',
       tenants: input.tenants,
-      databaseRoles: ['commander_owner', 'commander_app', 'commander_worker', 'commander_scheduler', 'commander_adapter_ops'],
+      databaseRoles: [
+        'commander_owner',
+        'commander_app',
+        'commander_worker',
+        'commander_scheduler',
+        'commander_adapter_ops',
+      ],
     },
     provider: { externalSystemReality: 'not-applicable' },
-    fault: { description: 'raw-role authority rejection checks', injectionPoints: ['database-role-rpc-boundary'] },
+    fault: {
+      description: 'raw-role authority rejection checks',
+      injectionPoints: ['database-role-rpc-boundary'],
+    },
     outcomes,
     timing,
     generatingCommand: 'pnpm proof:authority',
     hashes: {
-      logs: [`.superpowers/sdd/authority-closure-proof-latest.log.json:sha256:${sha256Hex(createProofLogBody({ outcomes, timing }))}`],
-      evidence: [`.superpowers/sdd/authority-closure-proof-latest.evidence.json:sha256:${sha256Hex(createProofEvidenceBody(input.flags))}`],
+      logs: [
+        `.superpowers/sdd/authority-closure-proof-latest.log.json:sha256:${sha256Hex(createProofLogBody({ outcomes, timing }))}`,
+      ],
+      evidence: [
+        `.superpowers/sdd/authority-closure-proof-latest.evidence.json:sha256:${sha256Hex(createProofEvidenceBody(input.flags))}`,
+      ],
       artifacts: [
         `scripts/authority-closure-proof.ts:sha256:${sha256Hex(proofHarness)}`,
         `.superpowers/sdd/authority-closure-proof-latest.source.json:sha256:${sha256Hex(createSourceManifestBody(input.source))}`,
@@ -367,7 +441,8 @@ export function finalizeResult(input: {
   }
 
   const allTrue = boolChecks.every(([, ok]) => ok);
-  const passed = allTrue && failures.length === 0 && Boolean(input.gitSha) && input.gitSha !== 'unknown';
+  const passed =
+    allTrue && failures.length === 0 && Boolean(input.gitSha) && input.gitSha !== 'unknown';
 
   return {
     gitSha: input.gitSha,
@@ -492,7 +567,12 @@ function falseFlags(): AuthorityProofFlags {
       runtimeCrossTenantAdmissionRejected: false,
       invalidAdapterOpsWorkerIdRejected: false,
     },
-    effect: { policyBound: false, actionDigestBound: false, actionDigestRequired: false, fenced: false },
+    effect: {
+      policyBound: false,
+      actionDigestBound: false,
+      actionDigestRequired: false,
+      fenced: false,
+    },
     capability: {
       replayRejected: false,
       revocationObserved: false,
@@ -569,7 +649,12 @@ async function checkRolesSeparated(input: {
     ok = false;
     failures.push('rolesSeparated: commander_adapter_ops must not BYPASSRLS');
   }
-  for (const name of ['commander_app', 'commander_worker', 'commander_scheduler', 'commander_adapter_ops']) {
+  for (const name of [
+    'commander_app',
+    'commander_worker',
+    'commander_scheduler',
+    'commander_adapter_ops',
+  ]) {
     if (byName.get(name)?.rolsuper) {
       ok = false;
       failures.push(`rolesSeparated: ${name} must not be superuser`);
@@ -585,15 +670,25 @@ async function checkRolesSeparated(input: {
   const client = await appPool.connect();
   try {
     await client.query(`SELECT set_config('app.tenant_scope', $1, false)`, [tenantA]);
-    const leaked = await client.query(`SELECT id FROM commander_runs WHERE tenant_id=$1`, [tenantB]);
-    if (leaked.rows.length > 0) {
-      ok = false;
-      failures.push('rolesSeparated: app role leaked cross-tenant rows');
+    try {
+      const leaked = await client.query(`SELECT id FROM commander_runs WHERE tenant_id=$1`, [
+        tenantB,
+      ]);
+      if (leaked.rows.length > 0) {
+        ok = false;
+        failures.push('rolesSeparated: app role leaked cross-tenant rows');
+      }
+    } catch (error) {
+      if (!/TENANT_CONTEXT_INVALID/i.test(error instanceof Error ? error.message : String(error))) {
+        throw error;
+      }
     }
   } finally {
     try {
       await client.query(`SELECT set_config('app.tenant_scope', '', false)`);
-    } catch { /* best-effort pool hygiene */ }
+    } catch {
+      /* best-effort pool hygiene */
+    }
     client.release();
   }
 
@@ -737,7 +832,9 @@ async function checkEffectBindings(input: {
       actor: workerId,
     });
     if (!admitted.admitted) {
-      failures.push(`effect: initial admit failed (${'reason' in admitted ? admitted.reason : 'unknown'})`);
+      failures.push(
+        `effect: initial admit failed (${'reason' in admitted ? admitted.reason : 'unknown'})`,
+      );
       return { policyBound, actionDigestBound, actionDigestRequired, fenced };
     }
 
@@ -923,7 +1020,10 @@ async function checkEffectBindings(input: {
         }),
       },
       {
-        admitEffect: async () => ({ admitted: true, effect: { id: 'e-digest', state: 'ADMITTED' } }),
+        admitEffect: async () => ({
+          admitted: true,
+          effect: { id: 'e-digest', state: 'ADMITTED' },
+        }),
         completeEffect: async () => ({}),
       },
       { execute: async () => ({ ok: true }) },
@@ -977,7 +1077,9 @@ async function checkEffectBindings(input: {
       );
     }
   } finally {
-    await ownerPool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id=$1', [workerId]);
+    await ownerPool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id=$1', [
+      workerId,
+    ]);
     await ownerPool.query('DELETE FROM commander_workers WHERE id=$1', [workerId]);
   }
 
@@ -1112,7 +1214,9 @@ async function checkCapability(input: {
   let rotatedAwayRejected = false;
   try {
     await authBOnly.verifier.verify(tokenSignedByA);
-    failures.push('capability.rotationObserved: rotated-away kid A still verified under B-only JWKS');
+    failures.push(
+      'capability.rotationObserved: rotated-away kid A still verified under B-only JWKS',
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (/Unknown capability token key id|unknown.*kid|key id/i.test(msg)) {
@@ -1283,9 +1387,7 @@ async function checkWorkerDsnThreat(input: {
       const workerHasSecretExec = secretOverloads.some((r) => r.worker_exec);
       const workerHasStaleExec = staleOverloads.some((r) => r.worker_exec);
       if (!workerHasSecretExec) {
-        failures.push(
-          `database.claimExecuteRequiresSecret: worker missing EXECUTE on ${label}`,
-        );
+        failures.push(`database.claimExecuteRequiresSecret: worker missing EXECUTE on ${label}`);
         return false;
       }
       if (workerHasStaleExec) {
@@ -1310,10 +1412,16 @@ async function checkWorkerDsnThreat(input: {
         m[1]!.toLowerCase(),
       );
       // text,bigint,text,integer,timestamptz,text
-      return types.length === 6 && types[0] === 'text' && types[2] === 'text' && types[5] === 'text';
+      return (
+        types.length === 6 && types[0] === 'text' && types[2] === 'text' && types[5] === 'text'
+      );
     };
 
-    const okNext = await checkClaimExec('claim_next_step', nextStepSecret, 'claim_next_step with p_claim_secret');
+    const okNext = await checkClaimExec(
+      'claim_next_step',
+      nextStepSecret,
+      'claim_next_step with p_claim_secret',
+    );
     const okOutbox = await checkClaimExec(
       'claim_outbox_by_topic',
       outboxSecret,
@@ -1324,9 +1432,12 @@ async function checkWorkerDsnThreat(input: {
        FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
        WHERE n.nspname='public' AND p.proname='claim_reconcile_effects'`,
     );
-    const workerCannotReconcile = reconcileExec.rows.length > 0 && reconcileExec.rows.every((row) => !row.worker_exec);
+    const workerCannotReconcile =
+      reconcileExec.rows.length > 0 && reconcileExec.rows.every((row) => !row.worker_exec);
     if (!workerCannotReconcile) {
-      failures.push('database.claimExecuteRequiresSecret: worker must not EXECUTE claim_reconcile_effects');
+      failures.push(
+        'database.claimExecuteRequiresSecret: worker must not EXECUTE claim_reconcile_effects',
+      );
     }
     if (okNext && okOutbox && workerCannotReconcile) {
       claimExecuteRequiresSecret = true;
@@ -1352,7 +1463,9 @@ async function checkWorkerDsnThreat(input: {
     }
     try {
       await wClient.query('SELECT secret_hash FROM commander_worker_claim_secrets LIMIT 1');
-      failures.push('database.peerClaimWithoutSecretRejected: worker SELECT claim_secrets unexpectedly succeeded');
+      failures.push(
+        'database.peerClaimWithoutSecretRejected: worker SELECT claim_secrets unexpectedly succeeded',
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!/permission denied/i.test(msg)) {
@@ -1362,7 +1475,9 @@ async function checkWorkerDsnThreat(input: {
   } finally {
     try {
       await wClient.query(`SELECT set_config('app.tenant_scope', '', false)`);
-    } catch { /* best-effort pool hygiene */ }
+    } catch {
+      /* best-effort pool hygiene */
+    }
     wClient.release();
   }
   const updateId = `proof-upd-${randomUUID().slice(0, 8)}`;
@@ -1375,10 +1490,10 @@ async function checkWorkerDsnThreat(input: {
   try {
     await updClient.query(`SELECT set_config('app.tenant_scope', $1, false)`, [allowedTenant]);
     try {
-      await updClient.query(
-        `UPDATE commander_workers SET tenant_ids = $1::jsonb WHERE id = $2`,
-        [JSON.stringify([allowedTenant, 'victim-widen']), updateId],
-      );
+      await updClient.query(`UPDATE commander_workers SET tenant_ids = $1::jsonb WHERE id = $2`, [
+        JSON.stringify([allowedTenant, 'victim-widen']),
+        updateId,
+      ]);
       failures.push('database.workerDirectUpdateRejected: UPDATE unexpectedly succeeded');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1388,7 +1503,9 @@ async function checkWorkerDsnThreat(input: {
   } finally {
     try {
       await updClient.query(`SELECT set_config('app.tenant_scope', '', false)`);
-    } catch { /* best-effort pool hygiene */ }
+    } catch {
+      /* best-effort pool hygiene */
+    }
     updClient.release();
   }
 
@@ -1410,7 +1527,9 @@ async function checkWorkerDsnThreat(input: {
         `DELETE FROM commander_capability_revocations WHERE tenant_id = $1 AND jti = $2`,
         [allowedTenant, revokeJti],
       );
-      failures.push('database.workerRevocationDeleteRejected: DELETE revocations unexpectedly succeeded');
+      failures.push(
+        'database.workerRevocationDeleteRejected: DELETE revocations unexpectedly succeeded',
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/permission denied/i.test(msg)) revokeDeleteDenied = true;
@@ -1418,16 +1537,21 @@ async function checkWorkerDsnThreat(input: {
     }
     try {
       await delClient.query(`DELETE FROM commander_outbox WHERE tenant_id = $1`, [allowedTenant]);
-      failures.push('database.workerRevocationDeleteRejected: DELETE outbox unexpectedly succeeded');
+      failures.push(
+        'database.workerRevocationDeleteRejected: DELETE outbox unexpectedly succeeded',
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/permission denied/i.test(msg)) outboxDeleteDenied = true;
-      else failures.push(`database.workerRevocationDeleteRejected: outbox unexpected error: ${msg}`);
+      else
+        failures.push(`database.workerRevocationDeleteRejected: outbox unexpected error: ${msg}`);
     }
   } finally {
     try {
       await delClient.query(`SELECT set_config('app.tenant_scope', '', false)`);
-    } catch { /* best-effort pool hygiene */ }
+    } catch {
+      /* best-effort pool hygiene */
+    }
     delClient.release();
   }
   if (revokeDeleteDenied && outboxDeleteDenied) {
@@ -1487,14 +1611,18 @@ async function checkWorkerDsnThreat(input: {
     );
     await ownerPool.query(
       `INSERT INTO commander_outbox (id, event_id, tenant_id, topic, key, payload, attempts, max_attempts, available_at)
-       VALUES ($1, $2, $3, 'commander.compensation', $4, '{}'::jsonb, 0, 5, now())`,
-      [outboxId, eventId, allowedTenant, `cmp/${outboxId}`],
+       VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, 0, 5, now())`,
+      [outboxId, eventId, allowedTenant, KERNEL_COMPENSATION_TOPIC, `cmp/${outboxId}`],
     );
+    const claimNowResult = await ownerPool.query<{ now: Date | string }>(
+      'SELECT clock_timestamp() AS now',
+    );
+    const claimNow = new Date(claimNowResult.rows[0]?.now ?? Date.now());
     let outboxNo: unknown[] = [];
     let outboxWrong: unknown[] = [];
     let outboxOk: unknown[] = [];
     try {
-      outboxNo = await workerRepo.claimOutboxByTopic('commander.compensation', 10, new Date(), {
+      outboxNo = await workerRepo.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 10, claimNow, {
         workerId: peerId,
         workerGeneration: 1,
         claimSecret: '',
@@ -1502,17 +1630,16 @@ async function checkWorkerDsnThreat(input: {
     } catch {
       outboxNo = [];
     }
-    outboxWrong = await workerRepo.claimOutboxByTopic('commander.compensation', 10, new Date(), {
+    outboxWrong = await workerRepo.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 10, claimNow, {
       workerId: peerId,
       workerGeneration: 1,
       claimSecret: 'peer-guess',
     });
-    outboxOk = await workerRepo.claimOutboxByTopic('commander.compensation', 10, new Date(), {
+    outboxOk = await workerRepo.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 10, claimNow, {
       workerId: peerId,
       workerGeneration: 1,
       claimSecret: peerSecret,
     });
-
     const outboxSecretOk =
       outboxNo.length === 0 &&
       outboxWrong.length === 0 &&
@@ -1550,7 +1677,11 @@ async function checkWorkerDsnThreat(input: {
       );
       await outsideClient.query('COMMIT');
     } catch (err) {
-      try { await outsideClient.query('ROLLBACK'); } catch { /* ignore */ }
+      try {
+        await outsideClient.query('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
       const msg = err instanceof Error ? err.message : String(err);
       if (/row-level security|permission denied/i.test(msg)) {
         workerOutsideAllowlistWriteRejected = true;
@@ -1572,7 +1703,9 @@ async function checkWorkerDsnThreat(input: {
          )`,
         [victimId, JSON.stringify(['victim-not-allowed'])],
       );
-      failures.push('database.workerCrossTenantRegisterRejected: register_worker unexpectedly succeeded');
+      failures.push(
+        'database.workerCrossTenantRegisterRejected: register_worker unexpectedly succeeded',
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/WORKER_TENANT_NOT_ALLOWED/i.test(msg)) workerCrossTenantRegisterRejected = true;
@@ -1592,7 +1725,9 @@ async function checkWorkerDsnThreat(input: {
   );
   const hijackPool = new Pool({ connectionString: workerUrl, max: 1 });
   try {
-    const first = await hijackPool.query<{ register_worker: { claim_secret?: string; generation?: number } }>(
+    const first = await hijackPool.query<{
+      register_worker: { claim_secret?: string; generation?: number };
+    }>(
       `SELECT register_worker(
          $1::text, 'agent', 'v1', '["agent"]'::jsonb, '{}'::jsonb, 1, $1::text, $2::jsonb, NULL
        ) AS register_worker`,
@@ -1600,7 +1735,9 @@ async function checkWorkerDsnThreat(input: {
     );
     const firstSecret = first.rows[0]?.register_worker?.claim_secret;
     if (!firstSecret) {
-      failures.push('database.workerIdentityTakeoverRejected: initial register_worker returned no secret');
+      failures.push(
+        'database.workerIdentityTakeoverRejected: initial register_worker returned no secret',
+      );
     } else {
       try {
         await hijackPool.query(
@@ -1621,7 +1758,9 @@ async function checkWorkerDsnThreat(input: {
             [hijackId],
           );
           if (drained.rows[0]?.drain_worker === true) {
-            failures.push('database.workerIdentityTakeoverRejected: drain_worker without secret succeeded');
+            failures.push(
+              'database.workerIdentityTakeoverRejected: drain_worker without secret succeeded',
+            );
           } else {
             workerIdentityTakeoverRejected = true;
           }
@@ -1634,9 +1773,10 @@ async function checkWorkerDsnThreat(input: {
     await hijackPool.end();
   }
 
-  await ownerPool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id = ANY($1::text[])', [
-    [directId, victimId, peerId, updateId, hijackId],
-  ]);
+  await ownerPool.query(
+    'DELETE FROM commander_worker_claim_secrets WHERE worker_id = ANY($1::text[])',
+    [[directId, victimId, peerId, updateId, hijackId]],
+  );
   await ownerPool.query('DELETE FROM commander_workers WHERE id = ANY($1::text[])', [
     [directId, victimId, peerId, updateId, hijackId],
   ]);
@@ -1692,10 +1832,11 @@ async function checkAdapterOpsAuthority(input: {
       'SELECT session_user::text AS session_user',
     );
     const role = attrs.rows[0];
-    adapterOpsRoleSeparated = identity.rows[0]?.session_user === 'commander_adapter_ops'
-      && role?.rolbypassrls === false
-      && role?.rolsuper === false
-      && role?.rolcreaterole === false;
+    adapterOpsRoleSeparated =
+      identity.rows[0]?.session_user === 'commander_adapter_ops' &&
+      role?.rolbypassrls === false &&
+      role?.rolsuper === false &&
+      role?.rolcreaterole === false;
     if (!adapterOpsRoleSeparated) {
       failures.push('database.adapterOpsRoleSeparated: LOGIN identity or role attributes invalid');
     }
@@ -1727,26 +1868,33 @@ async function checkAdapterOpsAuthority(input: {
     if (!invalidAdapterOpsWorkerIdRejected) {
       failures.push('database.invalidAdapterOpsWorkerIdRejected: invalid instance ID was accepted');
     }
-    await identityClient.query(
-      'SELECT heartbeat_adapter_ops_worker($1,$2,$3)',
-      [recon.id, recon.generation, recon.claim_secret],
-    );
-    await identityClient.query(
-      'SELECT heartbeat_adapter_ops_worker($1,$2,$3)',
-      [comp.id, comp.generation, comp.claim_secret],
-    );
-    await identityClient.query(
-      'SELECT claim_reconcile_effects($1,$2,1,clock_timestamp(),8,$3)',
-      [recon.id, recon.generation, recon.claim_secret],
-    );
+    await identityClient.query('SELECT heartbeat_adapter_ops_worker($1,$2,$3)', [
+      recon.id,
+      recon.generation,
+      recon.claim_secret,
+    ]);
+    await identityClient.query('SELECT heartbeat_adapter_ops_worker($1,$2,$3)', [
+      comp.id,
+      comp.generation,
+      comp.claim_secret,
+    ]);
+    await identityClient.query('SELECT claim_reconcile_effects($1,$2,1,$3)', [
+      recon.id,
+      recon.generation,
+      recon.claim_secret,
+    ]);
 
     let directUpdateDenied = false;
     let genericRegisterDenied = false;
     let forwardClaimDenied = false;
     try {
-      await identityClient.query('UPDATE commander_workers SET status=status WHERE id=$1', [recon.id]);
+      await identityClient.query('UPDATE commander_workers SET status=status WHERE id=$1', [
+        recon.id,
+      ]);
     } catch (error) {
-      directUpdateDenied = /permission denied/i.test(error instanceof Error ? error.message : String(error));
+      directUpdateDenied = /permission denied/i.test(
+        error instanceof Error ? error.message : String(error),
+      );
     }
     try {
       await identityClient.query(
@@ -1754,12 +1902,16 @@ async function checkAdapterOpsAuthority(input: {
         [JSON.stringify([tenantId])],
       );
     } catch (error) {
-      genericRegisterDenied = /permission denied/i.test(error instanceof Error ? error.message : String(error));
+      genericRegisterDenied = /permission denied/i.test(
+        error instanceof Error ? error.message : String(error),
+      );
     }
     try {
       await identityClient.query(`SELECT claim_next_step('forged',1,1000,'guess','["agent"]')`);
     } catch (error) {
-      forwardClaimDenied = /permission denied/i.test(error instanceof Error ? error.message : String(error));
+      forwardClaimDenied = /permission denied/i.test(
+        error instanceof Error ? error.message : String(error),
+      );
     }
 
     const workerReconcileExec = await ownerPool.query<{ allowed: boolean }>(
@@ -1767,10 +1919,15 @@ async function checkAdapterOpsAuthority(input: {
        FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
        WHERE n.nspname='public' AND p.proname='claim_reconcile_effects'`,
     );
-    adapterOpsRpcOnly = directUpdateDenied && genericRegisterDenied && forwardClaimDenied
-      && workerReconcileExec.rows.every((row) => !row.allowed);
+    adapterOpsRpcOnly =
+      directUpdateDenied &&
+      genericRegisterDenied &&
+      forwardClaimDenied &&
+      workerReconcileExec.rows.every((row) => !row.allowed);
     if (!adapterOpsRpcOnly) {
-      failures.push('database.adapterOpsRpcOnly: adapter-ops or worker retained forbidden authority');
+      failures.push(
+        'database.adapterOpsRpcOnly: adapter-ops or worker retained forbidden authority',
+      );
     }
   } finally {
     identityClient.release();
@@ -1796,11 +1953,18 @@ async function checkAdapterOpsAuthority(input: {
      WHERE n.nspname='public' AND p.proname='admit_class_a_effect'`,
   );
   const rpc = admission.rows[0];
-  classAAdmissionRpcOnly = rpc?.owner === 'commander_owner'
-    && rpc.app_exec && rpc.worker_exec && !rpc.adapter_exec
-    && !rpc.app_update && !rpc.worker_update && !rpc.adapter_update;
+  classAAdmissionRpcOnly =
+    rpc?.owner === 'commander_owner' &&
+    rpc.app_exec &&
+    rpc.worker_exec &&
+    !rpc.adapter_exec &&
+    !rpc.app_update &&
+    !rpc.worker_update &&
+    !rpc.adapter_update;
   if (!classAAdmissionRpcOnly) {
-    failures.push('database.classAAdmissionRpcOnly: owner/EXECUTE/table privilege contract invalid');
+    failures.push(
+      'database.classAAdmissionRpcOnly: owner/EXECUTE/table privilege contract invalid',
+    );
   }
 
   return {
@@ -1843,13 +2007,27 @@ async function checkRuntimeAdmissionAttacks(input: {
     schedulerClient.release();
   }
   if (!schedulerRawEffectInsertRejected) {
-    failures.push('database.schedulerRawEffectInsertRejected: scheduler raw INSERT was not permission-denied');
+    failures.push(
+      'database.schedulerRawEffectInsertRejected: scheduler raw INSERT was not permission-denied',
+    );
   }
 
   const argumentSql = [
-    '$1::text', '$2::text', '$3::text', '$4::text', '$5::text',
-    '$6::text', '$7::text', '$8::text', '$9::text', '$10::text',
-    '$11::text', '$12::bigint', '$13::text', '$14::bigint', '$15::jsonb',
+    '$1::text',
+    '$2::text',
+    '$3::text',
+    '$4::text',
+    '$5::text',
+    '$6::text',
+    '$7::text',
+    '$8::text',
+    '$9::text',
+    '$10::text',
+    '$11::text',
+    '$12::bigint',
+    '$13::text',
+    '$14::bigint',
+    '$15::jsonb',
   ].join(',');
   let rejected = 0;
   for (const pool of [appPool, workerPool]) {
@@ -1861,16 +2039,29 @@ async function checkRuntimeAdmissionAttacks(input: {
         ['admit_non_class_a_effect', 'read.cache'],
       ] as const) {
         try {
-          await client.query(
-            `SELECT * FROM ${rpc}(${argumentSql})`,
-            [
-              `proof-cross-${randomUUID().slice(0, 8)}`, 'run', 'step', tenantB, effectType,
-              'idem', canonicalRequestHash({}), 'decision', 'policy', 'digest',
-              'worker', 1, 'lease', 1, '{}',
-            ],
-          );
+          await client.query(`SELECT * FROM ${rpc}(${argumentSql})`, [
+            `proof-cross-${randomUUID().slice(0, 8)}`,
+            'run',
+            'step',
+            tenantB,
+            effectType,
+            'idem',
+            canonicalRequestHash({}),
+            'decision',
+            'policy',
+            'digest',
+            'worker',
+            1,
+            'lease',
+            1,
+            '{}',
+          ]);
         } catch (error) {
-          if (/TENANT_SCOPE_MISMATCH/i.test(error instanceof Error ? error.message : String(error))) {
+          if (
+            /TENANT_SCOPE_MISMATCH|TENANT_CONTEXT_INVALID/i.test(
+              error instanceof Error ? error.message : String(error),
+            )
+          ) {
             rejected += 1;
           }
         }
@@ -1878,13 +2069,17 @@ async function checkRuntimeAdmissionAttacks(input: {
     } finally {
       try {
         await client.query(`SELECT set_config('app.tenant_scope', '', false)`);
-      } catch { /* best-effort pool hygiene */ }
+      } catch {
+        /* best-effort pool hygiene */
+      }
       client.release();
     }
   }
   const runtimeCrossTenantAdmissionRejected = rejected === 4;
   if (!runtimeCrossTenantAdmissionRejected) {
-    failures.push(`database.runtimeCrossTenantAdmissionRejected: rejected ${rejected}/4 raw attacks`);
+    failures.push(
+      `database.runtimeCrossTenantAdmissionRejected: rejected ${rejected}/4 raw attacks`,
+    );
   }
   return { schedulerRawEffectInsertRejected, runtimeCrossTenantAdmissionRejected };
 }
@@ -1903,6 +2098,7 @@ export async function runAuthorityProof(): Promise<AuthorityProofResult> {
   let ownerPool: Pool | undefined;
   let appPool: (SqlPool & { end: () => Promise<void> }) | undefined;
   let workerPool: (SqlPool & { end: () => Promise<void> }) | undefined;
+  let tenantAuthorityPool: (SqlPool & { end: () => Promise<void> }) | undefined;
   let adapterOpsPool: (SqlPool & { end: () => Promise<void> }) | undefined;
   let schedulerPool: (SqlPool & { end: () => Promise<void> }) | undefined;
   const suffix = `${Date.now()}`;
@@ -1916,25 +2112,45 @@ export async function runAuthorityProof(): Promise<AuthorityProofResult> {
     await runKernelMigrations(ownerPool);
 
     await ensureRoleLogin(ownerPool, 'commander_app', appPassword);
+    await ensureRoleLogin(ownerPool, 'commander_tenant_authority', 'commander_tenant_authority');
     await ensureRoleLogin(ownerPool, 'commander_scheduler', schedulerPassword);
     await ensureRoleLogin(ownerPool, 'commander_worker', workerPassword);
     await ensureRoleLogin(ownerPool, 'commander_adapter_ops', adapterOpsPassword);
 
     const appUrl = deriveRoleDatabaseUrl(ownerDsn, 'commander_app', appPassword);
+    const tenantAuthorityUrl = deriveRoleDatabaseUrl(
+      ownerDsn,
+      'commander_tenant_authority',
+      'commander_tenant_authority',
+    );
     const workerUrl = deriveRoleDatabaseUrl(ownerDsn, 'commander_worker', workerPassword);
     const schedulerUrl = deriveRoleDatabaseUrl(ownerDsn, 'commander_scheduler', schedulerPassword);
-    const adapterOpsUrl = deriveRoleDatabaseUrl(ownerDsn, 'commander_adapter_ops', adapterOpsPassword);
+    const adapterOpsUrl = deriveRoleDatabaseUrl(
+      ownerDsn,
+      'commander_adapter_ops',
+      adapterOpsPassword,
+    );
 
     appPool = createLoginPool(appUrl);
+    tenantAuthorityPool = createLoginPool(tenantAuthorityUrl);
     workerPool = createLoginPool(workerUrl);
     schedulerPool = createLoginPool(schedulerUrl);
     adapterOpsPool = createLoginPool(adapterOpsUrl);
 
-    const appRepo = new PostgresKernelRepository(appPool);
+    const appRepo = new PostgresKernelRepository(appPool, {
+      tenantContextAuthority: new PostgresTenantContextAuthority(tenantAuthorityPool),
+      tenantContextPhase: 'enforce',
+    });
     const workerRepo = new PostgresKernelRepository(workerPool, { schedulerMode: false });
 
     // Worker RLS now requires allowlist membership for any tenant-scoped write.
     await seedWorkerAllowedTenants(ownerPool, [tenantA, tenantB, tenantCap]);
+    await ownerPool.query(
+      `INSERT INTO commander_tenant_authority_allowed_tenants (tenant_id)
+       VALUES ($1), ($2), ($3)
+       ON CONFLICT (tenant_id) DO UPDATE SET enabled = true`,
+      [tenantA, tenantB, tenantCap],
+    );
 
     flags.database.rlsEnabled = await checkRlsEnabled(ownerPool, failures);
     flags.database.rolesSeparated = await checkRolesSeparated({
@@ -1987,8 +2203,10 @@ export async function runAuthorityProof(): Promise<AuthorityProofResult> {
       tenantB,
       failures,
     });
-    flags.database.schedulerRawEffectInsertRejected = runtimeAttacks.schedulerRawEffectInsertRejected;
-    flags.database.runtimeCrossTenantAdmissionRejected = runtimeAttacks.runtimeCrossTenantAdmissionRejected;
+    flags.database.schedulerRawEffectInsertRejected =
+      runtimeAttacks.schedulerRawEffectInsertRejected;
+    flags.database.runtimeCrossTenantAdmissionRejected =
+      runtimeAttacks.runtimeCrossTenantAdmissionRejected;
 
     const effect = await checkEffectBindings({
       ownerPool,
@@ -2023,14 +2241,34 @@ export async function runAuthorityProof(): Promise<AuthorityProofResult> {
         );
         await ownerPool.query(
           `DELETE FROM commander_workers WHERE id LIKE $1 OR id LIKE $2 OR id LIKE $3 OR id LIKE $4 OR id LIKE $5 OR id LIKE $6 OR id LIKE $7`,
-          ['proof-worker-%', 'proof-fence-%', 'proof-direct-%', 'proof-victim-%', 'proof-peer-%', 'reconcile:proof-%', 'compensation:proof-%'],
+          [
+            'proof-worker-%',
+            'proof-fence-%',
+            'proof-direct-%',
+            'proof-victim-%',
+            'proof-peer-%',
+            'reconcile:proof-%',
+            'compensation:proof-%',
+          ],
         );
         await ownerPool.query(
           `DELETE FROM commander_worker_claim_secrets WHERE worker_id LIKE $1 OR worker_id LIKE $2 OR worker_id LIKE $3 OR worker_id LIKE $4 OR worker_id LIKE $5 OR worker_id LIKE $6 OR worker_id LIKE $7`,
-          ['proof-worker-%', 'proof-fence-%', 'proof-direct-%', 'proof-victim-%', 'proof-peer-%', 'reconcile:proof-%', 'compensation:proof-%'],
+          [
+            'proof-worker-%',
+            'proof-fence-%',
+            'proof-direct-%',
+            'proof-victim-%',
+            'proof-peer-%',
+            'reconcile:proof-%',
+            'compensation:proof-%',
+          ],
         );
         await ownerPool.query(
           `DELETE FROM commander_worker_allowed_tenants WHERE tenant_id = ANY($1::text[])`,
+          [[tenantA, tenantB, tenantCap]],
+        );
+        await ownerPool.query(
+          `DELETE FROM commander_tenant_authority_allowed_tenants WHERE tenant_id = ANY($1::text[])`,
           [[tenantA, tenantB, tenantCap]],
         );
       }
@@ -2038,6 +2276,7 @@ export async function runAuthorityProof(): Promise<AuthorityProofResult> {
       /* cleanup best-effort */
     }
     await appPool?.end().catch(() => undefined);
+    await tenantAuthorityPool?.end().catch(() => undefined);
     await workerPool?.end().catch(() => undefined);
     await schedulerPool?.end().catch(() => undefined);
     await adapterOpsPool?.end().catch(() => undefined);
@@ -2050,7 +2289,13 @@ export async function runAuthorityProof(): Promise<AuthorityProofResult> {
     flags,
     failures,
     metadata: buildProofMetadata({
-      gitSha, startedAt, endedAt, flags, failures, tenants: [tenantA, tenantB, tenantCap], source,
+      gitSha,
+      startedAt,
+      endedAt,
+      flags,
+      failures,
+      tenants: [tenantA, tenantB, tenantCap],
+      source,
     }),
   });
 }

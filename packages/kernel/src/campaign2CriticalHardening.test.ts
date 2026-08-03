@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL } from './campaign2CriticalHardening.js';
-import { KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL } from './evidenceSchema.js';
+import {
+  KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL,
+  KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL,
+  KERNEL_SIGNED_EVIDENCE_ORDERING_SQL,
+} from './evidenceSchema.js';
+import { KERNEL_SIGNED_EVIDENCE_MIGRATIONS } from './migrations.js';
 import {
   PostgresKernelRepository,
   type SqlClient,
@@ -51,6 +56,30 @@ class RecordingClient implements SqlClient {
     }
     if (/complete_reconcile_effect/i.test(sql)) {
       return result([{ result: { applied: false, reason: 'NOT_FOUND' } } as T]);
+    }
+    if (/read_adapter_ops_evidence_context/i.test(sql)) {
+      return result([
+        {
+          result: {
+            effect: {
+              id: 'effect-a',
+              runId: 'run-a',
+              stepId: 'step-a',
+              tenantId: 'tenant-a',
+              type: 'crm.write',
+              state: 'COMPLETION_UNKNOWN',
+              requestHash: 'request-a',
+              policyDecisionId: 'decision-a',
+              policySnapshotId: 'snapshot-a',
+              actionDigest: 'b'.repeat(64),
+              request: {},
+              createdAt: '2026-07-30T00:00:00.000Z',
+            },
+            events: [],
+            evidence: null,
+          },
+        } as T,
+      ]);
     }
     return result<T>();
   }
@@ -109,6 +138,111 @@ const EVIDENCE: KernelEvidenceRecord = {
 };
 
 describe('Campaign 2 critical authority hardening', () => {
+  it('pins the published signed-evidence authority closure checksum', () => {
+    const historical = KERNEL_SIGNED_EVIDENCE_MIGRATIONS.find(
+      ({ id }) => id === '2026-07-29.2.signed_evidence_authority_closure',
+    );
+    assert.equal(
+      historical?.checksum,
+      'd76d0dc499b7c2b69abe779252792cf3fd7dd1921e09cd9b8d77e42035f7149d',
+    );
+  });
+
+  it('validates and locks reconciliation authority before receipt and terminal mutation', () => {
+    assert.match(
+      KERNEL_SIGNED_EVIDENCE_ORDERING_SQL,
+      /validate_reconcile_effect_mutation_v1[\s\S]*FOR UPDATE[\s\S]*CREATE OR REPLACE FUNCTION public\.apply_reconcile_effect_with_evidence_v1/i,
+    );
+    const wrapper = KERNEL_SIGNED_EVIDENCE_ORDERING_SQL.match(
+      /CREATE OR REPLACE FUNCTION public\.apply_reconcile_effect_with_evidence_v1[\s\S]*?\n\$fn\$;/i,
+    )?.[0];
+    assert.ok(wrapper);
+    assert.ok(
+      wrapper.indexOf('validate_reconcile_effect_mutation_v1') <
+        wrapper.indexOf('commander_insert_reconcile_evidence_v1'),
+    );
+    assert.ok(
+      wrapper.indexOf('commander_insert_reconcile_evidence_v1') <
+        wrapper.indexOf('apply_reconcile_effect_mutation_v1'),
+    );
+    assert.match(
+      KERNEL_SIGNED_EVIDENCE_ORDERING_SQL,
+      /REVOKE ALL ON FUNCTION public\.validate_reconcile_effect_mutation_v1[\s\S]*commander_adapter_ops/i,
+    );
+  });
+
+  it('exposes only an effect-scoped evidence context to durable adapter-ops workers', () => {
+    assert.match(
+      KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL,
+      /CREATE FUNCTION public\.read_adapter_ops_evidence_context\([\s\S]*SECURITY DEFINER/i,
+    );
+    assert.match(
+      KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL,
+      /session_user\s*<>\s*'commander_adapter_ops'/i,
+    );
+    assert.match(KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL, /secret_hash\s*=\s*sha256/i);
+    assert.match(KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL, /w\.tenant_ids\s*\?\s*p_tenant_id/i);
+    assert.match(
+      KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL,
+      /w\.capabilities\s+IN\s*\([\s\S]*effect\.reconcile[\s\S]*effect\.compensate/i,
+    );
+    assert.match(KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL, /effect\.id\s*=\s*p_effect_id/i);
+    assert.match(KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL, /effect\.run_id\s*=\s*p_run_id/i);
+    assert.match(KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL, /event\.aggregate_id\s*=\s*p_effect_id/i);
+    assert.match(
+      KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL,
+      /reconcile_claim_token IS DISTINCT FROM p_claim_token/i,
+    );
+    assert.match(
+      KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL,
+      /reconcile_claim_expires_at\s*<=\s*clock_timestamp\(\)/i,
+    );
+    assert.match(
+      KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL,
+      /request\.claim_token\s*=\s*p_claim_token/i,
+    );
+    assert.match(
+      KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL,
+      /outbox\.claim_token\s*=\s*p_claim_token/i,
+    );
+    assert.match(KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL, /step\.lease_token\s*=\s*p_claim_token/i);
+    assert.doesNotMatch(KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL, /GRANT\s+SELECT\s+ON\s+TABLE/i);
+    assert.match(
+      KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL,
+      /GRANT EXECUTE ON FUNCTION public\.read_adapter_ops_evidence_context\([\s\S]*TO commander_adapter_ops/i,
+    );
+  });
+
+  it('reads adapter-ops evidence context through worker-authenticated RPC arguments', async () => {
+    const client = new RecordingClient('commander_adapter_ops');
+    const repository = new PostgresKernelRepository(new Pool(client), { adapterOpsMode: true });
+
+    const context = await repository.getAdapterOpsEvidenceContext({
+      workerId: 'reconcile-worker',
+      workerGeneration: 2,
+      claimSecret: 'secret',
+      tenantId: 'tenant-a',
+      runId: 'run-a',
+      effectId: 'effect-a',
+      claimToken: 'claim-a',
+    });
+
+    const query = client.queries.find(({ sql }) => /read_adapter_ops_evidence_context/i.test(sql));
+    assert.deepEqual(query?.values, [
+      'reconcile-worker',
+      2,
+      'secret',
+      'tenant-a',
+      'run-a',
+      'effect-a',
+      'claim-a',
+    ]);
+    assert.equal(context.effect.id, 'effect-a');
+    assert.equal(context.effect.runId, 'run-a');
+    assert.deepEqual(context.events, []);
+    assert.equal(context.evidence, null);
+  });
+
   it('binds app compensation RPCs to the database-authenticated tenant', () => {
     assert.match(
       KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL,
@@ -208,15 +342,24 @@ describe('Campaign 2 critical authority hardening', () => {
     ]) {
       assert.match(
         KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL,
-        new RegExp(`CREATE (?:OR REPLACE )?FUNCTION public\\.${rpc}\\([\\s\\S]*?p_evidence jsonb`, 'i'),
+        new RegExp(
+          `CREATE (?:OR REPLACE )?FUNCTION public\\.${rpc}\\([\\s\\S]*?p_evidence jsonb`,
+          'i',
+        ),
       );
       assert.match(
         KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL,
-        new RegExp(`REVOKE ALL ON FUNCTION public\\.${rpc}\\(text,text,text,bigint,text,text,jsonb\\)\\s+FROM commander_adapter_ops`, 'i'),
+        new RegExp(
+          `REVOKE ALL ON FUNCTION public\\.${rpc}\\(text,text,text,bigint,text,text,jsonb\\)\\s+FROM commander_adapter_ops`,
+          'i',
+        ),
       );
       assert.match(
         KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL,
-        new RegExp(`GRANT EXECUTE ON FUNCTION public\\.${rpc}\\(\\s*text,text,text,bigint,text,text,jsonb,jsonb\\s*\\)\\s+TO commander_adapter_ops`, 'i'),
+        new RegExp(
+          `GRANT EXECUTE ON FUNCTION public\\.${rpc}\\(\\s*text,text,text,bigint,text,text,jsonb,jsonb\\s*\\)\\s+TO commander_adapter_ops`,
+          'i',
+        ),
       );
     }
     assert.match(KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL, /TERMINAL_EVIDENCE_REQUIRED/i);
@@ -257,7 +400,9 @@ describe('Campaign 2 critical authority hardening', () => {
       evidence: EVIDENCE,
     });
 
-    const mutation = client.queries.find(({ sql }) => /SELECT complete_reconcile_effect/i.test(sql));
+    const mutation = client.queries.find(({ sql }) =>
+      /SELECT complete_reconcile_effect/i.test(sql),
+    );
     assert.match(mutation?.sql ?? '', /\$8::jsonb/);
     assert.deepEqual(mutation?.values, [
       'tenant-a',

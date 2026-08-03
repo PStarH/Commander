@@ -14,6 +14,10 @@ import httpx
 from ._exceptions import map_status_to_error
 from ._types import (
     ActionApprovalInput,
+    ActionCompensationApprovalInput,
+    ActionCompensationApprovalResult,
+    ActionCompensationInput,
+    ActionCompensationResult,
     ActionEvidenceBundle,
     ActionEvidenceJwks,
     ActionEvidenceVerification,
@@ -266,6 +270,37 @@ class CommanderGatewayClient:
             headers={"Idempotency-Key": idempotency_key},
         )
         return GovernedAction(**data["action"])
+
+    async def request_action_compensation(
+        self,
+        run_id: str,
+        input: ActionCompensationInput,
+        *,
+        idempotency_key: str,
+    ) -> ActionCompensationResult:
+        data = await self._request(
+            "POST",
+            f"/v1/actions/{quote(run_id, safe='')}/compensations",
+            json=input.model_dump(by_alias=True),
+            headers={"Idempotency-Key": idempotency_key},
+        )
+        return ActionCompensationResult(**data)
+
+    async def approve_action_compensation(
+        self,
+        run_id: str,
+        authorization_id: str,
+        input: ActionCompensationApprovalInput,
+        *,
+        idempotency_key: str,
+    ) -> ActionCompensationApprovalResult:
+        data = await self._request(
+            "POST",
+            f"/v1/actions/{quote(run_id, safe='')}/compensations/{quote(authorization_id, safe='')}/approve",
+            json=input.model_dump(by_alias=True),
+            headers={"Idempotency-Key": idempotency_key},
+        )
+        return ActionCompensationApprovalResult(**data)
 
     async def reject_action(
         self, run_id: str, *, reason: str | None = None, idempotency_key: str

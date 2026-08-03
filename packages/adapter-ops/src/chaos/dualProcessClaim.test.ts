@@ -3,14 +3,15 @@ import { fork, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
-import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { after, before, describe, it } from 'node:test';
+import { type EvidenceSigner } from '@commander/effect-broker';
 import {
   PostgresKernelRepository,
   runKernelMigrations,
   seedWorkerAllowedTenants,
   type KernelRepository,
+  type AdapterOpsEvidenceContextAuthority,
   type PostgresKernelRepositoryOptions,
   type SqlPool,
   type SqlQueryResult,
@@ -18,6 +19,16 @@ import {
 import { runTask1ClosureMigrations } from '../../../kernel/src/migrations.js';
 import { PostgresTenantContextAuthority } from '../../../kernel/src/postgres.js';
 import { ReconciliationDaemon, type ReconciliationDaemonOptions } from '../reconciliationDaemon.js';
+
+const TEST_EVIDENCE_SIGNER: EvidenceSigner = {
+  sign: async () => ({
+    algorithm: 'Ed25519',
+    keyId: 'dual-process-test-key',
+    signedAt: '2026-07-29T00:00:01.000Z',
+    value: 'dual-process-test-signature',
+  }),
+  verify: () => true,
+};
 
 const ownerUrl = process.env.COMMANDER_TASK1_PG_URL?.trim();
 const CHILD_FLAG = '--dual-process-claim-child';
@@ -48,6 +59,8 @@ function adaptReconciliationRepository(
   repository: KernelRepository,
 ): ReconciliationDaemonOptions['repository'] {
   return {
+    listEffectsForRun: (runId, tenantId) => repository.listEffectsForRun(runId, tenantId),
+    listEvents: (runId, tenantId) => repository.listEvents(runId, tenantId),
     claimReconcileEffects: (input) => repository.claimReconcileEffects(input),
     completeReconcileEffect: (input) => repository.completeReconcileEffect(input),
     confirmEffectNotApplied: (input) => repository.confirmEffectNotApplied(input),
@@ -64,6 +77,47 @@ function adaptReconciliationRepository(
 }
 
 type Registration = { id: string; generation: number; claimSecret: string };
+
+const DEPLOY_GATE_ROLES = [
+  'commander_owner',
+  'commander_app',
+  'commander_tenant_authority',
+  'commander_scheduler',
+  'commander_worker',
+  'commander_adapter_ops',
+] as const;
+
+const RUNTIME_DEPLOY_GATE_ROLES = DEPLOY_GATE_ROLES.filter((role) => role !== 'commander_owner');
+
+type DeployGateRole = (typeof DEPLOY_GATE_ROLES)[number];
+
+interface DeployGateRoleSnapshot {
+  rolname: DeployGateRole;
+  rolsuper: boolean;
+  rolinherit: boolean;
+  rolcreaterole: boolean;
+  rolcreatedb: boolean;
+  rolcanlogin: boolean;
+  rolreplication: boolean;
+  rolbypassrls: boolean;
+  rolconnlimit: number;
+  rolpassword: string | null;
+  rolvaliduntil: Date | null;
+}
+
+interface DeployGateMembershipSnapshot {
+  roleName: DeployGateRole;
+  grantorName: string;
+  adminOption: boolean;
+  inheritOption: boolean;
+  setOption: boolean;
+}
+
+interface DeployGateAuthoritySnapshot {
+  roles: DeployGateRoleSnapshot[];
+  memberships: DeployGateMembershipSnapshot[];
+  testGrantor: string;
+}
 
 type ChildMessage =
   | { type: 'claimed'; registration: Registration; effectId: string; claimToken: string }
@@ -86,6 +140,160 @@ function databaseUrl(baseUrl: string, databaseName: string, role?: string): stri
     url.password = role;
   }
   return url.toString();
+}
+
+function isDeployGateRole(value: string): value is DeployGateRole {
+  return (DEPLOY_GATE_ROLES as readonly string[]).includes(value);
+}
+
+async function snapshotDeployGateAuthority(
+  pool: LiveTestPool,
+): Promise<DeployGateAuthoritySnapshot> {
+  // pg_authid access is deliberate: this test changes role passwords and cannot
+  // safely restore an existing role unless its original verifier is readable.
+  const roles = await pool.query<Omit<DeployGateRoleSnapshot, 'rolname'> & { rolname: string }>(
+    `SELECT rolname, rolsuper, rolinherit, rolcreaterole, rolcreatedb, rolcanlogin,
+            rolreplication, rolbypassrls, rolconnlimit, rolpassword, rolvaliduntil
+       FROM pg_catalog.pg_authid
+      WHERE rolname = ANY($1::text[])
+      ORDER BY rolname`,
+    [DEPLOY_GATE_ROLES],
+  );
+  const memberships = await pool.query<{
+    role_name: string;
+    grantor_name: string;
+    admin_option: boolean;
+    inherit_option: boolean;
+    set_option: boolean;
+  }>(
+    `SELECT role.rolname AS role_name,
+            grantor.rolname AS grantor_name,
+            membership.admin_option,
+            membership.inherit_option,
+            membership.set_option
+       FROM pg_catalog.pg_auth_members AS membership
+       JOIN pg_catalog.pg_roles AS role ON role.oid = membership.roleid
+       JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member
+       JOIN pg_catalog.pg_roles AS grantor ON grantor.oid = membership.grantor
+      WHERE role.rolname = ANY($1::text[])
+        AND member.rolname = 'commander_owner'
+      ORDER BY role.rolname, grantor.rolname`,
+    [RUNTIME_DEPLOY_GATE_ROLES],
+  );
+  const identity = await pool.query<{ current_user: string }>('SELECT current_user');
+
+  return {
+    roles: roles.rows.map((role) => {
+      if (!isDeployGateRole(role.rolname)) {
+        throw new Error(`unexpected deploy-gate role snapshot: ${role.rolname}`);
+      }
+      return { ...role, rolname: role.rolname };
+    }),
+    memberships: memberships.rows.map((membership) => {
+      if (!isDeployGateRole(membership.role_name)) {
+        throw new Error(`unexpected deploy-gate membership snapshot: ${membership.role_name}`);
+      }
+      return {
+        roleName: membership.role_name,
+        grantorName: membership.grantor_name,
+        adminOption: membership.admin_option,
+        inheritOption: membership.inherit_option,
+        setOption: membership.set_option,
+      };
+    }),
+    testGrantor: identity.rows[0]!.current_user,
+  };
+}
+
+async function restoreDeployGateAuthority(
+  pool: LiveTestPool,
+  snapshot: DeployGateAuthoritySnapshot,
+): Promise<void> {
+  const originalRoles = new Set(snapshot.roles.map((role) => role.rolname));
+
+  for (const role of RUNTIME_DEPLOY_GATE_ROLES) {
+    // The test grants this edge as its own database identity. CASCADE is necessary
+    // because a pre-existing commander_owner grant can depend on that admin option.
+    const revoked = await pool.query<{ statement: string }>(
+      `SELECT format(
+         'REVOKE %I FROM commander_owner GRANTED BY %I CASCADE',
+         $1::text,
+         $2::text
+       ) AS statement`,
+      [role, snapshot.testGrantor],
+    );
+    await pool.query(revoked.rows[0]!.statement);
+  }
+
+  for (const role of snapshot.roles) {
+    const restored = await pool.query<{ statement: string }>(
+      `SELECT format(
+         'ALTER ROLE %I WITH %s %s %s %s %s %s %s CONNECTION LIMIT %s PASSWORD %L%s',
+         $1::text,
+         CASE WHEN $2 THEN 'SUPERUSER' ELSE 'NOSUPERUSER' END,
+         CASE WHEN $3 THEN 'INHERIT' ELSE 'NOINHERIT' END,
+         CASE WHEN $4 THEN 'CREATEROLE' ELSE 'NOCREATEROLE' END,
+         CASE WHEN $5 THEN 'CREATEDB' ELSE 'NOCREATEDB' END,
+         CASE WHEN $6 THEN 'LOGIN' ELSE 'NOLOGIN' END,
+         CASE WHEN $7 THEN 'REPLICATION' ELSE 'NOREPLICATION' END,
+         CASE WHEN $8 THEN 'BYPASSRLS' ELSE 'NOBYPASSRLS' END,
+         $9::integer,
+         $10::text,
+         CASE
+           WHEN $11::timestamptz IS NULL THEN ''
+           ELSE format(' VALID UNTIL %L', $11::timestamptz)
+         END
+       ) AS statement`,
+      [
+        role.rolname,
+        role.rolsuper,
+        role.rolinherit,
+        role.rolcreaterole,
+        role.rolcreatedb,
+        role.rolcanlogin,
+        role.rolreplication,
+        role.rolbypassrls,
+        role.rolconnlimit,
+        role.rolpassword,
+        role.rolvaliduntil,
+      ],
+    );
+    await pool.query(restored.rows[0]!.statement);
+  }
+
+  for (const membership of [...snapshot.memberships].sort((left, right) => {
+    if (left.grantorName === 'commander_owner' && right.grantorName !== 'commander_owner') {
+      return 1;
+    }
+    if (right.grantorName === 'commander_owner' && left.grantorName !== 'commander_owner') {
+      return -1;
+    }
+    return left.grantorName.localeCompare(right.grantorName);
+  })) {
+    const granted = await pool.query<{ statement: string }>(
+      `SELECT format(
+         'GRANT %I TO commander_owner WITH%sINHERIT %s, SET %s GRANTED BY %I',
+         $1::text,
+         CASE WHEN $2 THEN ' ADMIN OPTION, ' ELSE ' ' END,
+         CASE WHEN $3 THEN 'TRUE' ELSE 'FALSE' END,
+         CASE WHEN $4 THEN 'TRUE' ELSE 'FALSE' END,
+         $5::text
+       ) AS statement`,
+      [
+        membership.roleName,
+        membership.adminOption,
+        membership.inheritOption,
+        membership.setOption,
+        membership.grantorName,
+      ],
+    );
+    await pool.query(granted.rows[0]!.statement);
+  }
+
+  for (const role of RUNTIME_DEPLOY_GATE_ROLES) {
+    if (!originalRoles.has(role)) await pool.query(`DROP ROLE ${role}`);
+  }
+  if (!originalRoles.has('commander_owner')) await pool.query('DROP ROLE commander_owner');
 }
 
 function repositoryHandle(
@@ -172,6 +380,20 @@ async function runSurvivorChild(config: {
     );
     const daemon = new ReconciliationDaemon({
       repository: adaptReconciliationRepository(handle.repository),
+      terminalEvidenceContext: {
+        getTerminalEvidenceContext: (effectId, runId, tenantId, claimToken) =>
+          (
+            handle.repository as KernelRepository & AdapterOpsEvidenceContextAuthority
+          ).getAdapterOpsEvidenceContext({
+            workerId: registration.id,
+            workerGeneration: registration.generation,
+            claimSecret: registration.claimSecret,
+            tenantId,
+            runId,
+            effectId,
+            claimToken,
+          }),
+      },
       registry: {
         resolve: () => ({}),
         outcomeQuerierFor: () => ({ queryOutcome: async () => ({ status: 'APPLIED' }) }) as never,
@@ -183,6 +405,7 @@ async function runSurvivorChild(config: {
           return { status: 'APPLIED', response: { observed: true } };
         },
       }),
+      evidenceSigner: TEST_EVIDENCE_SIGNER,
       pollIntervalMs: 60_000,
       batchSize: 1,
       workerId: registration.id,
@@ -301,7 +524,7 @@ if (process.argv.includes(CHILD_FLAG)) {
     const authorityDatabaseUrl = databaseUrl(ownerUrl!, databaseName, 'commander_tenant_authority');
     const adapterDatabaseUrl = databaseUrl(ownerUrl!, databaseName, 'commander_adapter_ops');
     const workerDatabaseUrl = databaseUrl(ownerUrl!, databaseName, 'commander_worker');
-    let adminPool: LiveTestPool;
+    let adminPool: LiveTestPool | undefined;
     let authorityPool: LiveTestPool;
     let ownerHandle: TestRepositoryHandle;
     let appHandle: TestRepositoryHandle;
@@ -310,22 +533,33 @@ if (process.argv.includes(CHILD_FLAG)) {
     let effectId: string;
     let claimant: ChildProcess | undefined;
     let survivor: ChildProcess | undefined;
+    let deployGateAuthoritySnapshot: DeployGateAuthoritySnapshot | undefined;
 
     before(async () => {
       adminPool = new Pool({ connectionString: ownerUrl!, max: 2 });
+      deployGateAuthoritySnapshot = await snapshotDeployGateAuthority(adminPool);
+      // The CI service starts with only its bootstrap user. Create the
+      // least-authority roles before altering them and running migrations.
+      for (const role of DEPLOY_GATE_ROLES) {
+        await adminPool.query(
+          `DO $do$ BEGIN
+             IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '${role}') THEN
+               CREATE ROLE ${role};
+             END IF;
+           END $do$;`,
+        );
+      }
       await adminPool.query(
         `ALTER ROLE commander_owner LOGIN NOSUPERUSER NOCREATEDB CREATEROLE INHERIT
            NOREPLICATION BYPASSRLS PASSWORD 'commander_owner'`,
       );
-      for (const role of [
-        'commander_app',
-        'commander_tenant_authority',
-        'commander_worker',
-        'commander_adapter_ops',
-      ]) {
+      for (const role of RUNTIME_DEPLOY_GATE_ROLES) {
         await adminPool.query(
           `ALTER ROLE ${role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT
              NOREPLICATION NOBYPASSRLS PASSWORD '${role}'`,
+        );
+        await adminPool.query(
+          `GRANT ${role} TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE`,
         );
       }
       await adminPool.query(
@@ -425,19 +659,15 @@ if (process.argv.includes(CHILD_FLAG)) {
         ownerHandle?.close(),
       ]);
       if (adminPool) {
-        await adminPool
-          .query(`DROP DATABASE IF EXISTS ${databaseIdentifier(databaseName)}`)
-          .catch(() => undefined);
-        await adminPool
-          .query(
-            `ALTER ROLE commander_owner NOLOGIN NOCREATEROLE;
-             ALTER ROLE commander_app NOLOGIN;
-             ALTER ROLE commander_tenant_authority NOLOGIN;
-             ALTER ROLE commander_worker NOLOGIN;
-             ALTER ROLE commander_adapter_ops NOLOGIN`,
-          )
-          .catch(() => undefined);
-        await adminPool.end();
+        try {
+          await adminPool.query(`DROP DATABASE IF EXISTS ${databaseIdentifier(databaseName)}`);
+          if (!deployGateAuthoritySnapshot) {
+            throw new Error('deploy-gate authority snapshot was not captured');
+          }
+          await restoreDeployGateAuthority(adminPool, deployGateAuthoritySnapshot);
+        } finally {
+          await adminPool.end();
+        }
       }
     });
 
@@ -479,6 +709,22 @@ if (process.argv.includes(CHILD_FLAG)) {
           claim.registration.claimSecret,
         );
         assert.equal(replacementA.generation, claim.registration.generation + 1);
+        await assert.rejects(
+          adapterParentHandle.repository.listEffectsForRun(`dual-run-${suffix}`, tenantId),
+          /permission denied/i,
+        );
+        await assert.rejects(
+          adapterParentHandle.repository.getAdapterOpsEvidenceContext({
+            workerId: claim.registration.id,
+            workerGeneration: claim.registration.generation,
+            claimSecret: claim.registration.claimSecret,
+            tenantId,
+            runId: `dual-run-${suffix}`,
+            effectId,
+            claimToken: claim.claimToken,
+          }),
+          /ADAPTER_OPS_EVIDENCE_CONTEXT_DENIED/,
+        );
         const staleCompletion = await adapterParentHandle.repository.completeReconcileEffect({
           tenantId,
           effectId,
@@ -502,7 +748,12 @@ if (process.argv.includes(CHILD_FLAG)) {
         assert.equal(ready.registration.generation, 1);
         assert.equal(ready.firstClaimed, 0, 'unexpired claim must remain exclusive');
 
-        await sleep(1_350);
+        await ownerHandle.postgresPool!.query(
+          `UPDATE commander_effects
+              SET reconcile_claim_expires_at = clock_timestamp() - interval '1 millisecond'
+            WHERE id = $1 AND tenant_id = $2`,
+          [effectId, tenantId],
+        );
         const survivorExit = waitForExit(survivor);
         const donePromise = nextMessage(survivor, 'survivor-done');
         survivor.send('resume');

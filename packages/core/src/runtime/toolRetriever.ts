@@ -1,10 +1,9 @@
 /**
  * Dynamic Tool Retrieval (ITR - Instruction-Tool Retrieval)
  *
- * Research finding (arXiv 2602.17046): Dynamic tool retrieval achieves:
- * - 95% reduction in per-step context tokens
- * - 32% improvement in tool routing accuracy
- * - 70% cost reduction
+ * The cited research (arXiv 2602.17046) reports reductions in context and cost
+ * for dynamic tool retrieval. Those published results are not Commander
+ * performance guarantees or a Commander benchmark.
  *
  * Instead of loading ALL tool definitions into every LLM request,
  * we dynamically select only the tools relevant to the current task

@@ -41,6 +41,7 @@ describe('legacy authority inventory gate', () => {
     assert.equal(result.unapprovedWriteAuthorities.length, 0);
     for (const path of [
       'packages/effect-broker/src/evidenceSink.ts',
+      'apps/web/src/pages/ActionsPage.tsx',
       'scripts/l4-b-adapter-chaos.ts',
       'scripts/l4-b-cell-reconciliation-e2e.ts',
     ]) {
@@ -326,6 +327,36 @@ await pool.query('SELECT * FROM commander_runs');
           error.includes('Invalid legacy authority approval'),
         ),
       );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('retains allowlisted sources when generic signal extraction is empty', () => {
+    const path = 'apps/api/src/legacy-without-signal.ts';
+    const source = 'export const legacyBoundary = true;\n';
+    const root = fixtureRoot({ [path]: source });
+    const approval = {
+      path,
+      sourceSha256: sha256(source),
+      callersSha256: callersSha256({}),
+      owner: '@commander/api',
+      reason: 'Known legacy boundary pending authority migration',
+      expiresAt: '2026-10-31',
+      canonicalReplacement: 'POST /v1/runs',
+      disposition: 'migrate-and-delete' as const,
+    };
+    try {
+      const result = buildInventory({
+        root,
+        files: [path],
+        allowlist: [approval],
+        today: '2026-07-29',
+      });
+      assert.equal(result.passed, true, result.errors.join('\n'));
+      assert.deepEqual(result.entries[0]?.signals, ['allowlist-only']);
+      assert.equal(result.entries[0]?.authorityKind, 'write-capable-legacy');
+      assert.equal(result.entries[0]?.writesExternally, true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

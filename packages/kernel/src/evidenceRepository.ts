@@ -18,6 +18,91 @@ export interface KernelEvidenceRecord {
   retentionUntil: string;
 }
 
+export interface AdapterOpsEvidenceContextRequest {
+  workerId: string;
+  workerGeneration: number;
+  claimSecret: string;
+  tenantId: string;
+  runId: string;
+  effectId: string;
+  claimToken: string;
+}
+
+export interface AdapterOpsEvidenceContext {
+  effect: {
+    id: string;
+    runId: string;
+    stepId: string;
+    tenantId: string;
+    type: string;
+    state: string;
+    policyDecisionId: string;
+    policySnapshotId: string;
+    actionDigest: string;
+    requestHash: string;
+    request?: Record<string, unknown>;
+    response?: Record<string, unknown>;
+    createdAt: string;
+    completedAt?: string;
+  };
+  events: Array<{
+    type: string;
+    tenantId: string;
+    runId: string;
+    stepId?: string;
+    aggregateId: string;
+    occurredAt: string;
+    payload: Record<string, unknown>;
+  }>;
+  evidence: KernelEvidenceRecord | null;
+}
+
+export interface AdapterOpsEvidenceContextAuthority {
+  getAdapterOpsEvidenceContext(
+    input: AdapterOpsEvidenceContextRequest,
+  ): Promise<AdapterOpsEvidenceContext>;
+}
+
+export interface AdapterOpsCompensationTerminalEvidenceBinding {
+  workerId: string;
+  workerGeneration: number;
+  claimSecret: string;
+  tenantId: string;
+  runId: string;
+  stepId: string;
+  effectId: string;
+  requestId: string;
+  requestClaimToken: string;
+  outboxMessageId: string;
+  outboxClaimToken: string;
+  lease: {
+    workerId: string;
+    workerGeneration?: number;
+    token: string;
+    fencingEpoch: number;
+  };
+  actor: string;
+  evidence: KernelEvidenceRecord;
+}
+
+export interface AdapterOpsCompensationTerminalEvidenceAuthority {
+  completeCompensationEffectWithEvidence(
+    input: AdapterOpsCompensationTerminalEvidenceBinding & {
+      response: Record<string, unknown>;
+    },
+  ): Promise<import('./types.js').KernelEffect | null>;
+  failCompensationEffectWithEvidence(
+    input: AdapterOpsCompensationTerminalEvidenceBinding & {
+      error: {
+        code: string;
+        message: string;
+        retryable: boolean;
+        details?: Record<string, unknown>;
+      };
+    },
+  ): Promise<import('./types.js').KernelEffect | null>;
+}
+
 export interface EvidenceRepository {
   appendEvidence(record: KernelEvidenceRecord): Promise<{ inserted: boolean }>;
   getEvidence(runId: string, tenantId: string): Promise<KernelEvidenceRecord | null>;

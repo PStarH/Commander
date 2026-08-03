@@ -1,10 +1,12 @@
-export const KERNEL_TASK2_RECONCILIATION_SCHEMA_SQL = String.raw`
+const TASK2_TASK1_ENFORCE_CHECKSUM_MARKER = '__TASK1_ENFORCE_CHECKSUM__';
+
+const KERNEL_TASK2_RECONCILIATION_SCHEMA_TEMPLATE_SQL = String.raw`
 DO $task2_baseline$
 DECLARE
   v_expected jsonb := jsonb_build_object(
     '2026-07-27.1.task1_helm_lifecycle_gate', '6b7e2bc0acd4ee28ad02f9c70924709bb6f9e00205247d87e752e2df5ff930f3',
     '2026-07-27.2.task1_authenticated_tenant_authority_expand', 'd9a70e13065a7eeb82fae265080530481bd644c0798e32bd88b67722cbdf6eb5',
-    '2026-07-27.3.task1_authenticated_tenant_authority_enforce', 'fa9474d03f7f7adca4b32d9164c2510b6eb09ed5ad9929747d997272accb126e'
+    '2026-07-27.3.task1_authenticated_tenant_authority_enforce', '__TASK1_ENFORCE_CHECKSUM__'
   );
   v_actual jsonb;
 BEGIN
@@ -208,6 +210,23 @@ INSERT INTO public.commander_reconcile_protocol_config (
 ) VALUES ('commander.action/v1', 8, 30000, 900000, 60000, 86400000, clock_timestamp())
 ON CONFLICT (protocol_version) DO NOTHING;
 `;
+
+/**
+ * The original Task 2 descriptor is retained for ledger compatibility. New
+ * installations use the canonical Task 1 enforce checksum below through the
+ * dated forward descriptor in migrations.ts.
+ */
+export const KERNEL_TASK2_RECONCILIATION_SCHEMA_SQL_HISTORICAL =
+  KERNEL_TASK2_RECONCILIATION_SCHEMA_TEMPLATE_SQL.replace(
+    TASK2_TASK1_ENFORCE_CHECKSUM_MARKER,
+    'fa9474d03f7f7adca4b32d9164c2510b6eb09ed5ad9929747d997272accb126e',
+  );
+
+export const KERNEL_TASK2_RECONCILIATION_SCHEMA_SQL =
+  KERNEL_TASK2_RECONCILIATION_SCHEMA_TEMPLATE_SQL.replace(
+    TASK2_TASK1_ENFORCE_CHECKSUM_MARKER,
+    '9994edfd6cd1cb7f68b538b4b0f04d1f73435a003b6dba958da7ccdcffc42fc5',
+  );
 
 export const KERNEL_TASK2_RECONCILIATION_RPCS_SQL = String.raw`
 CREATE OR REPLACE FUNCTION public.configure_reconcile_protocol_v1(p_deadline_window_ms bigint)

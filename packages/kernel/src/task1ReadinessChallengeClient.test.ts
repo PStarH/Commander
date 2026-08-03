@@ -33,7 +33,7 @@ describe('Task 1 readiness challenge client', () => {
     const server = createServer({
       cert: fixture.cert, key: fixture.key, minVersion: 'TLSv1.3', maxVersion: 'TLSv1.3',
     }, (request, response) => {
-      assert.equal(request.socket.getProtocol(), 'TLSv1.3');
+      assert.equal((request.socket as unknown as { getProtocol(): string | null }).getProtocol(), 'TLSv1.3');
       assert.equal(request.headers['x-commander-readiness-challenge'], challenge);
       response.setHeader('content-type', 'application/json');
       response.end(JSON.stringify({ challenge }));

@@ -13,8 +13,8 @@
  */
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
-import { Pool } from 'pg';
 import { PostgresKernelRepository } from '@commander/kernel';
+import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import type { LLMProvider, LLMRequest, LLMResponse } from '@commander/core';
 import {
   WorkerService,
@@ -60,7 +60,10 @@ export async function createWorkerService(): Promise<WorkerService> {
     .filter(Boolean);
   const maxConcurrency = Number(process.env.COMMANDER_WORKER_MAX_CONCURRENCY ?? 4);
 
-  const pool = new Pool({ connectionString: dbUrl, max: maxConcurrency + 4 });
+  const pool = createVerifiedPostgresPool({
+    connectionString: dbUrl,
+    max: maxConcurrency + 4,
+  });
   const kernel = new PostgresKernelRepository(pool, { schedulerMode });
   await kernel.initialize();
 

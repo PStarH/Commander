@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import {
   assertExpectedTlsFailure,
@@ -15,6 +16,17 @@ const endpoints: TlsFixtureEndpoints = {
 };
 
 describe('Task 1 PostgreSQL TLS fixture contract', () => {
+  it('exports a canonical absolute certificate mount directory before Compose starts', () => {
+    const runner = readFileSync(
+      new URL('./task1-postgres-tls-fixture-run.sh', import.meta.url),
+      'utf8',
+    );
+    assert.match(
+      runner,
+      /mkdir -p "\$STATE_DIR"\nSTATE_DIR=\$\(CDPATH= cd -- "\$STATE_DIR" && pwd\)\n\nexport COMPOSE_PROJECT_NAME\nexport FIXTURE_STATE_DIR="\$STATE_DIR"/,
+    );
+  });
+
   it('accepts a fragmented PostgreSQL SSLRequest and rejects trailing bytes', async () => {
     const { createPostgresSslRequestReader } =
       await import('../deploy/testing/postgres-tls/fixture-proxies.mjs');

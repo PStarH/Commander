@@ -9,7 +9,7 @@
  *
  * Profile hierarchy:
  *   dev      — minimal overhead, core DLP only, no hallucination detection
- *   standard — production-ready local-first (default): all gateway layers on,
+ *   standard — local-first default: all gateway layers on,
  *              common DLP types only, hallucination detection on
  *   strict   — enterprise / regulated: all 14 DLP types (incl. industry-specific)
  *
@@ -80,7 +80,7 @@ const PROFILES: Record<SecurityProfile, SecurityProfileConfig> = {
     dlpEnabledTypes: COMMON_DLP_TYPES,
     enableHallucinationDetector: false,
   },
-  // Standard: production-ready local-first single-user deployment
+  // Standard: local-first single-user deployment defaults
   standard: {
     enableZeroTrust: true,
     enableDLP: true,

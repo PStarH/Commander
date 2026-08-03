@@ -37,9 +37,8 @@ try {
  * 4. Only `console.log()` output is returned to the LLM context
  * 5. Intermediate tool results NEVER enter context → zero token waste
  *
- * BFCL v3 impact:
- *   Normal flow (5 tools) = 0.96^5 = 59% success
- *   Script flow (5 tools) = ~96% success (single LLM call)
+ * BFCL v3 impact projection (not a measured benchmark result):
+ *   A single script call can reduce the number of LLM round-trips for a tool chain.
  */
 export class ExecuteScriptTool implements Tool {
   definition: ToolDefinition = {

@@ -10,7 +10,12 @@ import respx
 
 from commander import CommanderClient
 from commander._gateway_client import CommanderGatewayClient
-from commander._types import ActionApprovalInput, ProposeActionInput
+from commander._types import (
+    ActionApprovalInput,
+    ActionCompensationApprovalInput,
+    ActionCompensationInput,
+    ProposeActionInput,
+)
 from commander._exceptions import (
     AuthenticationError,
     ConnectionError,
@@ -261,3 +266,73 @@ class TestGatewayClient:
                 assert route.called
         assert evidence.receipt["bundleId"] == "bundle-1"
         assert evidence.verification.ok is True
+
+    async def test_request_and_approve_compensation(
+        self, mock_api: respx.MockRouter
+    ) -> None:
+        request_route = mock_api.post(
+            "/v1/actions/run-action-1/compensations"
+        ).respond(
+            202,
+            json={
+                "authorization": {
+                    "id": "authorization-1",
+                    "tenantId": "tenant-1",
+                    "originalRunId": "run-action-1",
+                    "originalEffectId": "effect-1",
+                    "compensationEffectType": "compensate.demo.ticket.create",
+                    "adapterVersion": "demo.adapter.v1",
+                    "compensationPatch": {"ticketId": "ticket-1"},
+                    "forwardReceiptHash": "a" * 64,
+                    "policyDecisionId": "decision-1",
+                    "policySnapshotId": "policy-1",
+                    "decision": "require_approval",
+                    "actionDigest": "b" * 64,
+                    "expiresAt": "2026-08-02T00:00:00.000Z",
+                },
+                "replayed": False,
+                "state": "AWAITING_APPROVAL",
+            },
+        )
+        approve_route = mock_api.post(
+            "/v1/actions/run-action-1/compensations/authorization-1/approve"
+        ).respond(
+            202,
+            json={
+                "interaction": {"id": "interaction-1", "status": "answered"},
+                "accepted": True,
+                "request": {"id": "request-1", "state": "AUTHORIZED"},
+                "replayed": False,
+            },
+        )
+        compensation = ActionCompensationInput(
+            originalEffectId="effect-1",
+            adapterVersion="demo.adapter.v1",
+            compensationEffectType="compensate.demo.ticket.create",
+            compensationPatch={"ticketId": "ticket-1"},
+            forwardReceiptHash="a" * 64,
+        )
+        approval = ActionCompensationApprovalInput(
+            actionDigest="b" * 64,
+            policySnapshotId="policy-1",
+        )
+
+        async with CommanderGatewayClient(
+            base_url="http://localhost:3001", api_key="test"
+        ) as client:
+            async with mock_api:
+                requested = await client.request_action_compensation(
+                    "run-action-1", compensation, idempotency_key="compensation-request-1"
+                )
+                approved = await client.approve_action_compensation(
+                    "run-action-1",
+                    "authorization-1",
+                    approval,
+                    idempotency_key="compensation-approve-1",
+                )
+                assert request_route.called
+                assert approve_route.called
+                assert request_route.calls.last.request.headers["Idempotency-Key"] == "compensation-request-1"
+                assert approve_route.calls.last.request.headers["Idempotency-Key"] == "compensation-approve-1"
+        assert requested.state == "AWAITING_APPROVAL"
+        assert approved.accepted is True

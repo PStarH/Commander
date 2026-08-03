@@ -431,7 +431,7 @@ describe('Task 1 PostgreSQL catalog collector', () => {
               : membership(name),
           ),
       },
-    ]) {
+    ] as Array<Record<string, unknown[]>>) {
       const client = new CatalogClient(overrides);
       await assert.rejects(
         () => collectTask1PrebootstrapInventory(client, bootstrap),

@@ -97,13 +97,11 @@ describe('EuAiActComplianceReporter', () => {
       expect(report.article12.dataSources.length).toBeGreaterThan(3);
     });
 
-    it('includes performance metrics', () => {
+    it('does not publish benchmark numbers without a current evidence pack', () => {
       const reporter = new EuAiActComplianceReporter();
       const report = reporter.generateReport();
 
-      expect(
-        Object.keys(report.article12.performanceMetrics.benchmarkResults).length,
-      ).toBeGreaterThanOrEqual(3);
+      expect(Object.keys(report.article12.performanceMetrics.benchmarkResults).length).toBe(0);
     });
 
     it('includes transparency measures and user disclosures', () => {
@@ -168,11 +166,11 @@ describe('EuAiActComplianceReporter', () => {
       expect(report.article13.operatorTraining.length).toBeGreaterThan(3);
     });
 
-    it('reports audit trail completeness', () => {
+    it('does not claim tamper-proof without external manifest verification', () => {
       const reporter = new EuAiActComplianceReporter();
       const report = reporter.generateReport();
 
-      expect(report.article13.auditTrailCompleteness.tamperProof).toBe(true);
+      expect(report.article13.auditTrailCompleteness.tamperProof).toBe(false);
       expect(report.article13.auditTrailCompleteness.coverage).toBe(1.0);
     });
   });
@@ -272,11 +270,11 @@ describe('EuAiActComplianceReporter', () => {
       const report = reporter.generateReport();
       const markdown = reporter.formatMarkdown(report);
 
-      expect(markdown).toContain('# EU AI Act Compliance Report');
+      expect(markdown).toContain('# EU AI Act Reporting Scaffold');
       expect(markdown).toContain('## Article 12');
       expect(markdown).toContain('## Article 13');
       expect(markdown).toContain('## Article 14');
-      expect(markdown).toContain('## Compliance Summary');
+      expect(markdown).toContain('## Self-Assessment Summary');
       expect(markdown).toContain(report.meta.reportId);
     });
 
@@ -348,13 +346,11 @@ describe('EuAiActComplianceReporter', () => {
   // ── Benchmark toggle ────────────────────────────────────────────
 
   describe('benchmark configuration', () => {
-    it('includes benchmarks by default', () => {
+    it('does not publish invalidated benchmarks by default', () => {
       const reporter = new EuAiActComplianceReporter();
       const report = reporter.generateReport();
 
-      expect(
-        Object.keys(report.article12.performanceMetrics.benchmarkResults).length,
-      ).toBeGreaterThanOrEqual(3);
+      expect(Object.keys(report.article12.performanceMetrics.benchmarkResults).length).toBe(0);
     });
 
     it('can exclude benchmarks', () => {

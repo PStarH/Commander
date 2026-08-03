@@ -57,15 +57,20 @@ type ReconcileDisposition = Extract<ReconcileMutationResult, { applied: true }>[
 
 interface ReconciliationRepository {
   listEffectsForRun(runId: string, tenantId: string): Promise<KernelEffect[]>;
-  listEvents(runId: string, tenantId: string): Promise<Array<{
-    type: string;
-    tenantId: string;
-    runId: string;
-    stepId?: string;
-    aggregateId: string;
-    occurredAt: string;
-    payload: Record<string, unknown>;
-  }>>;
+  listEvents(
+    runId: string,
+    tenantId: string,
+  ): Promise<
+    Array<{
+      type: string;
+      tenantId: string;
+      runId: string;
+      stepId?: string;
+      aggregateId: string;
+      occurredAt: string;
+      payload: Record<string, unknown>;
+    }>
+  >;
   claimReconcileEffects(input: {
     workerId: string;
     workerGeneration: number;
@@ -172,6 +177,10 @@ export function opsLoopErrorCode(error: unknown): string {
 
 export interface ReconciliationDaemonOptions {
   repository: ReconciliationRepository;
+  terminalEvidenceContext?: Pick<
+    import('@commander/effect-broker').EffectKernelPort,
+    'getTerminalEvidenceContext'
+  >;
   brokerFactory: (querier: EffectOutcomeQuerier) => ReconciliationBroker;
   registry: ReconciliationRegistry;
   pollIntervalMs: number;
@@ -390,6 +399,7 @@ export class ReconciliationDaemon {
     if (this.options.registry.resolve(effect.type) === null) {
       const evidence = await this.buildEvidence(
         effect,
+        claimToken,
         'COMPLETION_UNKNOWN',
         { reason: 'RECONCILE_ADAPTER_NOT_FOUND' },
         'effect.reconcile_escalated',
@@ -414,6 +424,7 @@ export class ReconciliationDaemon {
         : 'RECONCILE_QUERY_UNSUPPORTED';
       const evidence = await this.buildEvidence(
         effect,
+        claimToken,
         'COMPLETION_UNKNOWN',
         { reason },
         'effect.reconcile_escalated',
@@ -445,6 +456,7 @@ export class ReconciliationDaemon {
     if (outcome.status === 'APPLIED') {
       const evidence = await this.buildEvidence(
         effect,
+        claimToken,
         'COMPLETED',
         outcome.response,
         'effect.reconciled_completed',
@@ -464,6 +476,7 @@ export class ReconciliationDaemon {
     if (outcome.status === 'NOT_APPLIED') {
       const evidence = await this.buildEvidence(
         effect,
+        claimToken,
         'CONFIRMED_NOT_APPLIED',
         outcome.response,
         'effect.confirmed_not_applied',
@@ -483,6 +496,7 @@ export class ReconciliationDaemon {
 
     const evidence = await this.buildEvidence(
       effect,
+      claimToken,
       'COMPLETION_UNKNOWN',
       outcome.error,
       'effect.reconcile_escalated',
@@ -502,6 +516,7 @@ export class ReconciliationDaemon {
 
   private async buildEvidence(
     effect: KernelEffect,
+    claimToken: string,
     projectedState: 'COMPLETED' | 'CONFIRMED_NOT_APPLIED' | 'COMPLETION_UNKNOWN',
     response: Record<string, unknown>,
     eventType: string,
@@ -514,7 +529,7 @@ export class ReconciliationDaemon {
     }
     const recordedAt = new Date().toISOString();
     const evidence = await buildTerminalEvidenceRecordFromKernel({
-      kernel: this.options.repository,
+      kernel: this.options.terminalEvidenceContext ?? this.options.repository,
       signer: this.options.evidenceSigner,
       tenantId: effect.tenantId,
       runId: effect.runId,
@@ -530,6 +545,7 @@ export class ReconciliationDaemon {
       retentionUntil: new Date(
         Date.parse(recordedAt) + (this.options.evidenceRetentionMs ?? 365 * 24 * 60 * 60 * 1_000),
       ).toISOString(),
+      claimToken,
     });
     return {
       ...evidence,

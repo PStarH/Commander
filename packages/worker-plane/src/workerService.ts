@@ -58,7 +58,8 @@ function toWorkerExecutionError(error: unknown): WorkerError {
 function reconciliationOwnsStep(error: WorkerError): boolean {
   return (
     error.options.code === 'COMPLETION_UNKNOWN' ||
-    error.options.code === 'COMPLETION_UNCONFIRMED'
+    error.options.code === 'COMPLETION_UNCONFIRMED' ||
+    error.options.code === 'EVIDENCE_PERSIST_FAILED'
   );
 }
 

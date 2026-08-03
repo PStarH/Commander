@@ -669,11 +669,27 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
             },
           });
         }
+        const evidenceReadiness = kernel.getEvidenceRepositoryAvailability
+          ? await kernel.getEvidenceRepositoryAvailability()
+          : { ready: false };
+        if (!evidenceReadiness.ready) {
+          return res.status(503).json({
+            error: {
+              code: 'OPERATIONS_NOT_READY',
+              message: 'Required operations and evidence repository are unavailable.',
+              details: {
+                operations: readiness,
+                evidenceRepository: { ready: false },
+              },
+            },
+          });
+        }
       } catch {
         return res.status(503).json({
           error: {
             code: 'OPERATIONS_NOT_READY',
             message: 'Operations readiness could not be verified.',
+            details: { evidenceRepository: { ready: false } },
           },
         });
       }

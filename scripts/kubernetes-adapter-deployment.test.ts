@@ -228,7 +228,7 @@ describe('Kubernetes adapter Compose wiring', () => {
   ];
 
   for (const path of files) {
-    it(`keeps explicit Kubernetes credentials on adapter-ops in ${path}`, () => {
+    it(`keeps explicit Kubernetes credentials on the controlled worker and adapter-ops in ${path}`, () => {
       const config = record(load(readFileSync(join(root, path), 'utf8')));
       const services = record(config.services);
       const adapterOps = record(services['adapter-ops']);
@@ -237,7 +237,11 @@ describe('Kubernetes adapter Compose wiring', () => {
         assert.ok(adapterNames.has(name), `${path}: adapter-ops missing ${name}`);
       }
       for (const [serviceName, value] of Object.entries(services)) {
-        if (serviceName === 'adapter-ops') continue;
+        if (
+          serviceName === 'adapter-ops' ||
+          (path === 'docker-compose.cell.yml' && serviceName === 'worker')
+        )
+          continue;
         const names = composeEnvNames(record(value).environment ?? {});
         for (const name of kubernetesEnvNames) {
           assert.equal(names.has(name), false, `${path}: ${serviceName} received ${name}`);
@@ -251,8 +255,12 @@ describe('Kubernetes adapter Compose wiring', () => {
     const services = record(config.services);
     const adapterNames = composeEnvNames(record(services['adapter-ops']).environment);
     assert.ok(adapterNames.has('COMMANDER_KUBERNETES_NAMESPACES'));
+    const workerNames = composeEnvNames(record(services.worker).environment);
+    for (const name of kubernetesAuthorityEnvNames) {
+      assert.ok(workerNames.has(name), `worker missing ${name}`);
+    }
     for (const [serviceName, value] of Object.entries(services)) {
-      if (serviceName === 'adapter-ops') continue;
+      if (serviceName === 'adapter-ops' || serviceName === 'worker') continue;
       assert.equal(
         composeEnvNames(record(value).environment ?? {}).has('COMMANDER_KUBERNETES_NAMESPACES'),
         false,
