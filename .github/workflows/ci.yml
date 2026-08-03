@@ -47,7 +47,7 @@ jobs:
           - os: windows-latest
             node-version: '22'
             canonical: false
-    if: matrix.canonical || github.event_name != 'pull_request'
+    if: ${{ matrix.canonical || github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@v6
 
