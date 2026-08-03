@@ -14,7 +14,7 @@
  *   2. Commander event → ATLAS classifier — maps SecurityEvent, RedTeamScenario,
  *      GuardianAction, CorrelationMatch to ATLAS technique IDs
  *   3. Heatmap generator — produces MITRE ATLAS navigator-compatible JSON
- *   4. Compliance report — ISO 42001 / NIST AI RMF alignment with ATLAS evidence
+ *   4. Control-coverage report — ISO 42001 / NIST AI RMF alignment with ATLAS evidence
  *
  * Based on:
  *   - MITRE ATLAS v2026.05 (mitre-atlas/atlas-data)

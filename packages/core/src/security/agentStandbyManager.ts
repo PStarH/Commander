@@ -1,7 +1,7 @@
 /**
  * AgentStandbyManager — Hot Standby Agent Architecture
  *
- * Enterprise-grade agent instance failover: Active → Hot Standby → Cold Standby.
+ * Deployment-scoped agent instance failover: Active → Hot Standby → Cold Standby.
  * When the active agent fails (crash, attack, degradation, cost anomaly), the
  * hot standby takes over within seconds.
  *

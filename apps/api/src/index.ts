@@ -167,7 +167,8 @@ function validateEnvironment(): void {
   }
 
   if (!process.env.CORS_ORIGINS) {
-    getGlobalLogger().warn('Startup',
+    getGlobalLogger().warn(
+      'Startup',
       `[env] CORS_ORIGINS not set — only localhost origins are allowed. ` +
         `For production/browser access from other hosts, set CORS_ORIGINS=https://your-ui-host.example.com`,
     );
@@ -384,6 +385,13 @@ app.get('/health', (_req, res) => {
 app.get('/ready', async (_req, res) => {
   const result = await probeReadiness({
     kernel: () => getV1KernelGateway(),
+    evidenceRepository: async () => {
+      const gateway = getV1KernelGateway();
+      if (!gateway?.getEvidenceRepositoryAvailability) throw new Error('unavailable');
+      if (!(await gateway.getEvidenceRepositoryAvailability()).ready)
+        throw new Error('unavailable');
+      return 'ok';
+    },
     warRoomStore: () => store !== null,
     memoryHeap: () => {
       const mem = process.memoryUsage();
@@ -398,11 +406,19 @@ app.get('/ready', async (_req, res) => {
 app.get('/v1/health', async (_req, res) => {
   const result = await probeReadiness({
     kernel: () => getV1KernelGateway(),
+    evidenceRepository: async () => {
+      const gateway = getV1KernelGateway();
+      if (!gateway?.getEvidenceRepositoryAvailability) throw new Error('unavailable');
+      if (!(await gateway.getEvidenceRepositoryAvailability()).ready)
+        throw new Error('unavailable');
+      return 'ok';
+    },
   });
   res.status(result.status === 'ready' ? 200 : 503).json({
     status: result.status,
     checks: {
       kernel: result.checks.kernel,
+      evidenceRepository: result.checks.evidenceRepository,
     },
     timestamp: result.timestamp,
   });
@@ -972,11 +988,9 @@ async function startServer(): Promise<void> {
   }
 
   // Mount routers after shared state (including memoryIndexManager) is initialized.
-  getGlobalLogger().info(
-    'Mount',
-    'registered routers',
-    { routers: listRegisteredRouters().map((r) => `${r.name}@${r.mountPath}`) },
-  );
+  getGlobalLogger().info('Mount', 'registered routers', {
+    routers: listRegisteredRouters().map((r) => `${r.name}@${r.mountPath}`),
+  });
 
   // WS3 §2/§3/§8 — Enterprise gateway middleware (mounted BEFORE product
   // routers so non-/v1 paths are blocked/tagged before any handler runs):

@@ -1078,7 +1078,8 @@ BEGIN
   SELECT * INTO v_step FROM public.commander_steps
    WHERE id=v_request.compensation_step_id AND tenant_id=v_request.tenant_id FOR UPDATE;
   SELECT * INTO v_outbox FROM public.commander_outbox
-   WHERE tenant_id=v_request.tenant_id AND topic='commander.kernel.compensation.requested'
+   WHERE id=p_admission->>'outboxMessageId'
+     AND tenant_id=v_request.tenant_id AND topic='commander.kernel.compensation.requested'
      AND claim_token=p_admission->>'outboxClaimToken' AND published_at IS NULL FOR UPDATE;
   v_request_payload := jsonb_build_object('originalEffectId',v_request.original_effect_id,
     'forwardResponse',COALESCE(v_original.response,'{}'::jsonb),'compensationPatch',v_auth.compensation_patch);
@@ -1087,7 +1088,7 @@ BEGIN
      OR v_request.state<>'CLAIMED' OR v_request.compensation_effect_id<>p_admission->>'id'
      OR v_request.compensation_run_id<>p_admission->>'runId'
      OR v_request.compensation_step_id<>p_admission->>'stepId'
-     OR v_request.claim_token<>p_admission->>'outboxClaimToken'
+     OR v_request.claim_token<>p_admission->>'requestClaimToken'
      OR v_step.state<>'RUNNING' OR v_step.lease_worker_id<>p_admission #>> '{lease,workerId}'
      OR v_step.lease_worker_generation<>(p_admission #>> '{lease,workerGeneration}')::bigint
      OR v_step.lease_token<>p_admission #>> '{lease,token}'

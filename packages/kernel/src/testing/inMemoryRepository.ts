@@ -249,6 +249,10 @@ export class InMemoryKernelRepository implements KernelRepository {
       .map(clone);
   }
 
+  async checkEvidenceRepositoryAvailability(): Promise<{ ready: boolean }> {
+    return { ready: true };
+  }
+
   /** Test-only: enqueue an arbitrary outbox message (used by compensation DLQ proofs). */
   seedOutboxMessage(input: {
     topic: string;

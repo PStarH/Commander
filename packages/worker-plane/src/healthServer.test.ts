@@ -3,9 +3,25 @@ import { describe, it } from 'node:test';
 import { startWorkerHealthServer } from './healthServer.js';
 
 describe('worker health server', () => {
+  it('honors an explicit bind host instead of silently binding all interfaces', async () => {
+    await assert.rejects(
+      () =>
+        startWorkerHealthServer({
+          host: 'does-not-exist.invalid',
+          port: 0,
+          isReady: () => true,
+        }),
+      /ENOTFOUND|EAI_AGAIN|ENETUNREACH|EADDRNOTAVAIL/,
+    );
+  });
+
   it('keeps liveness independent from registration readiness', async () => {
     let ready = false;
-    const health = await startWorkerHealthServer({ port: 0, isReady: () => ready });
+    const health = await startWorkerHealthServer({
+      host: '127.0.0.1',
+      port: 0,
+      isReady: () => ready,
+    });
     try {
       const live = await fetch(`http://127.0.0.1:${health.port}/health`);
       assert.equal(live.status, 200);
@@ -23,6 +39,7 @@ describe('worker health server', () => {
 
   it('fails readiness closed when the readiness callback rejects', async () => {
     const health = await startWorkerHealthServer({
+      host: '127.0.0.1',
       port: 0,
       isReady: async () => {
         throw new Error('registration unavailable');

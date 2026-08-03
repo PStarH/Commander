@@ -23,6 +23,8 @@ beforeEach(() => {
 describe('createStdioMcpServer', () => {
   const canonicalActionTools = [
     'commander_action_approve',
+    'commander_action_compensation_approve',
+    'commander_action_compensation_request',
     'commander_action_evidence',
     'commander_action_get',
     'commander_action_propose',
@@ -68,16 +70,35 @@ describe('createStdioMcpServer', () => {
       simulationId: 'simulation-42',
       policySnapshotId: 'policy-42',
     };
+    const compensation = {
+      runId: 'run/42',
+      idempotencyKey: 'mcp-compensation-0001',
+      originalEffectId: 'effect-42',
+      adapterVersion: 'demo.adapter.v1',
+      compensationEffectType: 'compensate.demo.ticket.create',
+      compensationPatch: { ticketId: 'ticket-42' },
+      forwardReceiptHash: 'b'.repeat(64),
+    };
+    const compensationApproval = {
+      runId: 'run/42',
+      authorizationId: 'authorization-42',
+      idempotencyKey: 'mcp-compensation-approve-0001',
+      actionDigest: 'c'.repeat(64),
+      policySnapshotId: 'policy-42',
+    };
     const cases = [
       ['commander_action_simulate', envelope],
       ['commander_action_propose', envelope],
       ['commander_action_get', { runId: 'run/42' }],
       ['commander_action_approve', approval],
+      ['commander_action_compensation_request', compensation],
+      ['commander_action_compensation_approve', compensationApproval],
       ['commander_action_reconcile', { runId: 'run/42', idempotencyKey: 'mcp-reconcile-0001' }],
       ['commander_action_evidence', { runId: 'run/42' }],
     ] as const;
 
     for (const [name, args] of cases) {
+      resetGuardianAgent();
       const response = await server.handleRequest({
         jsonrpc: '2.0',
         id: name,
@@ -110,6 +131,24 @@ describe('createStdioMcpServer', () => {
           policySnapshotId: 'policy-42',
         },
         headers: { 'Idempotency-Key': 'mcp-approve-0001' },
+      },
+      {
+        method: 'POST',
+        path: '/v1/actions/run%2F42/compensations',
+        body: {
+          originalEffectId: 'effect-42',
+          adapterVersion: 'demo.adapter.v1',
+          compensationEffectType: 'compensate.demo.ticket.create',
+          compensationPatch: { ticketId: 'ticket-42' },
+          forwardReceiptHash: 'b'.repeat(64),
+        },
+        headers: { 'Idempotency-Key': 'mcp-compensation-0001' },
+      },
+      {
+        method: 'POST',
+        path: '/v1/actions/run%2F42/compensations/authorization-42/approve',
+        body: { actionDigest: 'c'.repeat(64), policySnapshotId: 'policy-42' },
+        headers: { 'Idempotency-Key': 'mcp-compensation-approve-0001' },
       },
       {
         method: 'POST',

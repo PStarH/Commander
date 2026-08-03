@@ -140,8 +140,8 @@ describe('PostgreSQL kernel ops durability', () => {
             return {
               admitted: cmpAdmit.admitted,
               effectId: input.effectId,
-              replayed: !!cmpAdmit.replayed,
-              reason: cmpAdmit.reason,
+              replayed: 'replayed' in cmpAdmit ? cmpAdmit.replayed : false,
+              reason: 'reason' in cmpAdmit ? cmpAdmit.reason : undefined,
             };
           },
           executeAdmitted: async (input) => {
@@ -158,11 +158,11 @@ describe('PostgreSQL kernel ops durability', () => {
           },
         },
         async () => 'cmp-token',
-        { workerId: 'cmp-worker', topic: KERNEL_COMPENSATION_TOPIC, limit: 10 },
+        { workerId: 'cmp-worker', workerGeneration: 1, claimSecret: 'cmp-secret', registry: { resolve: () => null }, topic: KERNEL_COMPENSATION_TOPIC, limit: 10 },
       );
       assert.equal(consumeResult.consumed, 1);
       assert.equal(consumeResult.succeeded, 0);
-      assert.equal(consumeResult.failed, 1);
+      assert.equal(consumeResult.escalated, 1);
       assert.equal(brokerAdmissions, 0, 'missing Task 3 authorization must fail before broker admission');
       assert.equal(compensated, 0, 'fail-closed compensation must not invoke the adapter');
       assert.equal((await repo.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 10)).length, 0);

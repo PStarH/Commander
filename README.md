@@ -13,7 +13,7 @@
 
 <p align="center">
   <code>pnpm exec tsx packages/core/src/cliEntry.ts run "audit this repo" --stream</code><br>
-  <sub>Every agent thought streams to your terminal. Every output is verified. 25 providers. One command.</sub>
+  <sub>Agent events and tool calls stream to your terminal. Configured verification checks run on outputs. 25 providers. One command.</sub>
 </p>
 
 <p align="center">
@@ -30,13 +30,13 @@
 
 ## What is Commander
 
-Commander takes a task — any task — and automatically breaks it down, routes it to the right agents, and verifies every output.
+Commander takes a task — any task — and automatically breaks it down, routes it to the right agents, and runs configured verification checks on outputs.
 
 - **Simple tasks** get one agent, one pass.
 - **Research tasks** get parallel agents, then synthesis.
 - **Complex engineering tasks** get a full pipeline: analysis → implementation → review → merge.
 
-Every agent decision streams to you in real time. Every output passes through five quality gates before you see it. When a provider fails, the next one takes over. When an agent writes buggy code, the review agent catches it.
+Agent events and emitted decisions stream to you in real time. On paths with the verification pipeline enabled, configured quality gates run before you see the result. When a provider fails, the next one takes over. When an agent writes buggy code, the review agent can catch it.
 
 **No graph building. No YAML. No black boxes.**
 
@@ -111,7 +111,7 @@ Task classification, complexity estimation, and topology selection — all autom
 
 ### Live Streaming
 
-Every agent thought, every tool call, every quality gate decision — streamed to your terminal or SSE endpoint. Not polling. Not logs after the fact. You watch your agents reason, step by step.
+Agent events, tool calls, and configured gate decisions stream to your terminal or SSE endpoint. Not polling. Not logs after the fact. You can inspect the emitted work trace step by step.
 
 ```
 ┌─ Deliberation ──────────────────────────────────────────────┐
@@ -119,15 +119,15 @@ Every agent thought, every tool call, every quality gate decision — streamed t
 │ Classification: ANALYSIS · Complexity: 7/10                  │
 │ Topology: DISPATCH (3 agents)                                │
 ├─ Agent α (security-scanner) ─────────────────────────────────┤
-│ [think] Scanning package.json for known CVEs...              │
+│ [event] Scanning package.json for known CVEs...              │
 │ [tool] npm audit · 2 critical, 5 moderate                    │
 │ [gate] ACCURACY ✓ · COMPLETENESS ✓                           │
 ├─ Agent β (code-reviewer) ────────────────────────────────────┤
-│ [think] Checking for hardcoded secrets...                    │
+│ [event] Checking for hardcoded secrets...                    │
 │ [tool] grep · found 1 potential secret in config.ts          │
 │ [gate] SAFETY ⚠ · Potential secret detected                  │
 ├─ Agent γ (dependency-checker) ───────────────────────────────┤
-│ [think] Analyzing license compliance...                      │
+│ [event] Analyzing license compliance...                      │
 │ [tool] license-check · No GPL/AGPL dependencies              │
 │ [gate] COMPLETENESS ✓ · ACCURACY ✓                           │
 ├─ Synthesizer ────────────────────────────────────────────────┤
@@ -142,9 +142,9 @@ Set any one API key. Commander detects your provider, and if it fails, falls thr
 
 OpenAI · Anthropic · Google · Azure · DeepSeek · GLM · MiMo · Xiaomi · Groq · Together · Perplexity · Fireworks · Replicate · Mistral · Cohere · OpenRouter · xAI · Anyscale · DeepInfra · Agnes · Ollama · vLLM · AWS Bedrock · StepFun · MiniMax
 
-### Quality Gates on Every Output
+### Configured Quality Gates
 
-Before returning any result, Commander runs 5-layer verification:
+On paths with the verification pipeline enabled, Commander runs these 5 configured checks before returning a result:
 
 | Gate          | What it checks                              |
 | ------------- | ------------------------------------------- |
@@ -154,7 +154,7 @@ Before returning any result, Commander runs 5-layer verification:
 | Accuracy      | Factual correctness against source material |
 | Safety        | Content scanning, injection detection       |
 
-If the output fails any gate, the system retries or reports the failure with full context.
+If the output fails a configured gate, the system retries or reports the failure with full context.
 
 ### Resilience
 
@@ -168,7 +168,7 @@ If the output fails any gate, the system retries or reports the failure with ful
 
 ### Security
 
-AES-256-GCM encrypted secrets vault. Tamper-proof audit chain. RBAC with capability tokens. ISO 42001 / NIST AI RMF compliance **reporting scaffolds** (reporters, not certification). Red team framework (47 scenarios, 8 attack categories). Request-context tenant scoping (AsyncLocalStorage); storage-layer isolation is opt-in — Enterprise Gateway, alpha.
+AES-256-GCM encrypted secrets vault. Tamper-evident in-process HMAC audit chain (external WORM/KMS evidence pending). RBAC with capability tokens. ISO 42001 / NIST AI RMF compliance **reporting scaffolds** (reporters, not certification). Red team framework (47 scenarios, 8 attack categories). Request-context tenant scoping (AsyncLocalStorage); storage-layer isolation is opt-in — Enterprise Gateway, alpha.
 
 ### Self-Optimization
 
@@ -257,11 +257,10 @@ Open `http://localhost:5173`. The console provides:
 
 | Suite             | Coverage                           | Result                                       |
 | ----------------- | ---------------------------------- | -------------------------------------------- |
-| Chaos Engineering | 255 synthetic + 55 mutation        | 55.7% pass rate                              |
-| Red Team          | 47 scenarios, 8 attack categories  | 100% defense (simulated harness)             |
-| AgentDojo         | 12 security test cases             | 100% defense (simulated harness)             |
-| RealWorld         | 50 production-like cases           | 96% pass rate                                |
-| GAIA Spine        | Core capability benchmark          | Running daily                                |
+| Chaos Engineering | 255 synthetic + 55 mutation        | Harness entry; see the retained baseline matrix |
+| Red Team          | 47 scenarios, 8 attack categories  | all listed cases blocked (simulated harness) |
+| AgentDojo         | 12 security test cases             | all listed cases blocked (simulated harness) |
+| GAIA Spine        | Core capability benchmark          | Scheduled quick/offline run; full fixture pending |
 | SLO               | 99.5% API success, <2s p95 latency | CI baseline, not production SLA              |
 
 Full matrix: [BENCHMARK.md](BENCHMARK.md)
@@ -285,9 +284,9 @@ Monitors: memory, circuit breakers, DLQ size, checkpoint staleness, pending comp
 
 Existing agent frameworks treat you like a passenger. You write configuration, you wait, and you hope the output is correct. When it's wrong, you have no idea why.
 
-Commander treats you like an **engineer**. You see every decision. You trust every result. You ship faster because you're not guessing what your AI is doing.
+Commander treats you like an **engineer**. You can inspect each decision and configured verification result. You ship faster because you're not guessing what your AI is doing.
 
-The system is built with the same discipline as any production distributed system: circuit breakers, dead letter queues, SSE streaming, semantic caching, and provider fallback chains. The only difference is that the workload is LLM calls instead of HTTP requests.
+The system uses familiar distributed-system patterns: circuit breakers, dead letter queues, SSE streaming, semantic caching, and provider fallback chains. Its workload is LLM calls rather than ordinary HTTP requests.
 
 ---
 

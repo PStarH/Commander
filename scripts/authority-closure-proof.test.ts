@@ -148,7 +148,7 @@ describe('authority-closure-proof helpers', () => {
     const source = readFileSync(new URL('./authority-closure-proof.ts', import.meta.url), 'utf8');
     assert.match(
       source,
-      /metadata: buildProofMetadata\(\s*\{\s*gitSha, startedAt, endedAt, flags, failures, tenants: \[tenantA, tenantB, tenantCap\], source,?\s*\}\s*\)/,
+      /metadata: buildProofMetadata\(\s*\{\s*gitSha,\s*startedAt,\s*endedAt,\s*flags,\s*failures,\s*tenants:\s*\[tenantA,\s*tenantB,\s*tenantCap\],\s*source,?\s*\}\s*\)/,
     );
     assert.match(source, /tenants: input\.tenants/);
   });
@@ -158,7 +158,7 @@ describe('authority-closure-proof helpers', () => {
     assert.match(source, /authority-closure-proof-latest\.source\.json/);
     assert.match(source, /git', \['diff', '--binary', 'HEAD', '--'\]/);
     assert.match(source, /maxBuffer:\s*64 \* 1024 \* 1024/);
-    assert.match(source, /git', \['ls-files', '--others', '--exclude-standard', '-z'\]/);
+    assert.match(source, /git',\s*\['ls-files',\s*'--others',\s*'--exclude-standard',\s*'-z'\]/);
     assert.match(source, /trackedDiffSha256/);
     assert.match(source, /untrackedFiles/);
   });

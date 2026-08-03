@@ -16,6 +16,15 @@ describe('workerExecutionErrorFromEffectFailure', () => {
     assert.equal(err.options.details?.effectId, 'e1');
   });
 
+  it('preserves evidence persistence ownership without making it retryable', () => {
+    const err = workerExecutionErrorFromEffectFailure(
+      new EffectBrokerError('EVIDENCE_PERSIST_FAILED', { effectId: 'e1' }),
+      { toolName: 'http.get', stepId: 's1' },
+    );
+    assert.equal(err.options.code, 'EVIDENCE_PERSIST_FAILED');
+    assert.equal(err.options.retryable, false);
+  });
+
   it('falls back to EFFECT_EXECUTION_FAILED for unknown errors', () => {
     const err = workerExecutionErrorFromEffectFailure(new Error('boom'), {
       stepId: 's1',

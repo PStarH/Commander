@@ -30,7 +30,7 @@ export function buildIssueAppTenantContextQuery(
   target: AppTenantTransactionTarget,
 ): TenantContextSqlQuery {
   return {
-    text: 'SELECT context_id::text, expires_at FROM public.issue_app_tenant_context($1, $2::oid, $3, $4::xid8)',
+    text: 'SELECT context_id::text, expires_at FROM public.issue_app_tenant_context($1::text, $2::oid, $3::integer, $4::xid8)',
     values: [tenantId, target.databaseOid, target.backendPid, target.xid],
   };
 }
@@ -43,7 +43,9 @@ export function buildBindAppTenantContextQuery(contextId: string): TenantContext
 }
 
 /** Expand-only compatibility scope. The caller must pass the tenant returned by bind. */
-export function buildSetLegacyTenantScopeQuery(authenticatedTenantId: string): TenantContextSqlQuery {
+export function buildSetLegacyTenantScopeQuery(
+  authenticatedTenantId: string,
+): TenantContextSqlQuery {
   return {
     text: "SELECT pg_catalog.set_config('app.tenant_scope', $1, true)",
     values: [authenticatedTenantId],
@@ -641,3 +643,54 @@ ALTER ROLE commander_app SET idle_in_transaction_session_timeout = '10s';
 /** Immutable expand descriptor; the context SQL is intentionally applied before enforcement. */
 export const KERNEL_TASK1_AUTHENTICATED_TENANT_AUTHORITY_EXPAND_SQL =
   KERNEL_TASK1_TENANT_CONTEXT_SQL;
+
+/** Read-only API-role readiness aggregate; the app role never reads worker rows directly. */
+export const KERNEL_TASK1_API_OPERATIONS_READINESS_SQL = `
+CREATE OR REPLACE FUNCTION public.get_api_operations_readiness(
+  p_tenant_id text
+) RETURNS TABLE(
+  reconciliation_workers bigint,
+  compensation_workers bigint,
+  checked_at timestamptz
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $fn$
+DECLARE
+  v_checked_at timestamptz := pg_catalog.clock_timestamp();
+BEGIN
+  IF session_user IS DISTINCT FROM 'commander_app' THEN
+    RAISE EXCEPTION 'APP_ROLE_REQUIRED';
+  END IF;
+  IF p_tenant_id IS NULL
+     OR length(pg_catalog.btrim(p_tenant_id)) = 0
+     OR public.commander_authenticated_app_tenant() IS DISTINCT FROM p_tenant_id THEN
+    RAISE EXCEPTION 'TENANT_CONTEXT_INVALID';
+  END IF;
+
+  RETURN QUERY
+  WITH qualified_workers AS MATERIALIZED (
+    SELECT worker.capabilities
+      FROM public.commander_workers AS worker
+     WHERE worker.status = 'ACTIVE'
+       AND worker.identity_subject = 'db:commander_adapter_ops'
+       AND worker.tenant_ids ? p_tenant_id
+       AND pg_catalog.jsonb_array_length(worker.capabilities) = 1
+       AND worker.capabilities IN ('["effect.reconcile"]'::jsonb, '["effect.compensate"]'::jsonb)
+       AND worker.last_heartbeat_at > worker.registered_at
+       AND worker.last_heartbeat_at >= v_checked_at - interval '30 seconds'
+  )
+  SELECT
+    count(*) FILTER (WHERE capabilities = '["effect.reconcile"]'::jsonb),
+    count(*) FILTER (WHERE capabilities = '["effect.compensate"]'::jsonb),
+    v_checked_at
+  FROM qualified_workers;
+END
+$fn$;
+
+ALTER FUNCTION public.get_api_operations_readiness(text) OWNER TO commander_owner;
+REVOKE ALL ON FUNCTION public.get_api_operations_readiness(text)
+  FROM PUBLIC, commander_app, commander_worker, commander_adapter_ops, commander_scheduler;
+GRANT EXECUTE ON FUNCTION public.get_api_operations_readiness(text) TO commander_app;
+`;

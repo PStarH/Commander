@@ -104,10 +104,10 @@ export interface PinnedTask1LifecycleManifests {
   lifecycle: PinnedManifest;
 }
 
-const HISTORICAL_SOURCE_SHA256 = '70e8c24e3fb4527debcc87e96ebb3a0b52a91c8e655d9c09d36436fecb89d768';
-const HARDENED_SOURCE_SHA256 = '8694e82dee65fb8f41ed44d3afe6881c0aecbcbbf425223433bae7eabf169c3b';
+const HISTORICAL_SOURCE_SHA256 = 'fe469fca7e019141634f427e2097f46c2060f671bcbf45d3adc3c9fc25217d83';
+const HARDENED_SOURCE_SHA256 = '8dc2dd31166b1ec1a361f90513d4628e5516f6303949a6b87b0fdd0bff2566a6';
 const LIFECYCLE_MANIFEST_SHA256 =
-  '992202faa906e11c389238da72515a89acfb1aff7cbcd8ac6fd29c7696bdc495';
+  '1ab71770a5fc7b175abbbc1704e028ca1f867154ea781535fe363d13d3b55cbf';
 
 function pinnedManifest(path: string, expectedSha256: string): PinnedManifest {
   const source = readFileSync(new URL(path, import.meta.url), 'utf8').trimEnd();

@@ -26,9 +26,9 @@
     "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
     "typecheck": "tsc --noEmit",
     "pretest": "pnpm --filter @commander/postgres-runtime build",
-    "test": "pnpm --workspace-root exec tsx --test packages/worker-plane/src/workerService.test.ts packages/worker-plane/src/registry.rls.test.ts packages/worker-plane/src/stepWorkloadIdentity.test.ts packages/worker-plane/src/llmBrokerBridge.test.ts packages/worker-plane/src/m3-worker-plane.test.ts packages/worker-plane/src/l3-03b-gateway-localonly.test.ts packages/worker-plane/src/l3-03a-effect-tool-monopoly.test.ts packages/worker-plane/src/ticketAdapter.test.ts packages/worker-plane/src/actionGatewayPolicy.test.ts packages/worker-plane/src/bootstrap.policy.test.ts packages/worker-plane/src/bootstrap.authority.test.ts packages/worker-plane/src/healthServer.test.ts packages/worker-plane/src/main.health.test.ts",
-    "test:e2e": "pnpm --workspace-root exec tsx --test --test-force-exit packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts",
-    "test:e2e:pg": "pnpm --workspace-root exec tsx --test --test-force-exit packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts",
+    "test": "pnpm --workspace-root exec node --import tsx --test packages/worker-plane/src/workerService.test.ts packages/worker-plane/src/registry.rls.test.ts packages/worker-plane/src/stepWorkloadIdentity.test.ts packages/worker-plane/src/llmBrokerBridge.test.ts packages/worker-plane/src/m3-worker-plane.test.ts packages/worker-plane/src/l3-03b-gateway-localonly.test.ts packages/worker-plane/src/l3-03a-effect-tool-monopoly.test.ts packages/worker-plane/src/ticketAdapter.test.ts packages/worker-plane/src/actionGatewayPolicy.test.ts packages/worker-plane/src/bootstrap.policy.test.ts packages/worker-plane/src/bootstrap.authority.test.ts packages/worker-plane/src/healthServer.test.ts packages/worker-plane/src/main.health.test.ts",
+    "test:e2e:in-memory": "pnpm --workspace-root exec node --import tsx --test --test-force-exit packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts",
+    "test:e2e:pg": "COMMANDER_E2E_REQUIRE_PG=1 pnpm --workspace-root exec node --import tsx --test --test-force-exit packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts",
     "prepublishOnly": "tsc -p tsconfig.json"
   },
   "keywords": [

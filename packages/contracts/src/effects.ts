@@ -165,6 +165,58 @@ export interface ActionApprovalRequestV1 {
   policySnapshotId: string;
 }
 
+export interface ActionCompensationRequestV1 {
+  originalEffectId: string;
+  adapterVersion: string;
+  compensationEffectType: string;
+  compensationPatch: Record<string, unknown>;
+  forwardReceiptHash: string;
+}
+
+export interface ActionCompensationApprovalRequestV1 {
+  actionDigest: string;
+  policySnapshotId: string;
+}
+
+export interface ActionCompensationAuthorizationV1 {
+  id: string;
+  tenantId: string;
+  originalRunId: string;
+  originalEffectId: string;
+  compensationEffectType: string;
+  adapterVersion: string;
+  compensationPatch: Record<string, unknown>;
+  forwardReceiptHash: string;
+  policyDecisionId: string;
+  policySnapshotId: string;
+  decision: 'allow' | 'require_approval' | 'deny';
+  actionDigest: string;
+  expiresAt: string;
+  approvalInteractionId?: string;
+}
+
+export interface ActionCompensationAwaitingApprovalV1 {
+  authorization: ActionCompensationAuthorizationV1;
+  replayed: boolean;
+  state: 'AWAITING_APPROVAL';
+}
+
+export interface ActionCompensationRequestAcceptedV1 {
+  accepted: true;
+  request: Record<string, unknown>;
+  replayed: boolean;
+}
+
+export type ActionCompensationRequestResponseV1 =
+  ActionCompensationAwaitingApprovalV1 | ActionCompensationRequestAcceptedV1;
+
+export interface ActionCompensationApprovalResponseV1 {
+  interaction: Record<string, unknown>;
+  accepted: true;
+  request: Record<string, unknown>;
+  replayed: boolean;
+}
+
 export interface ActionRejectionRequestV1 {
   reason?: string;
 }

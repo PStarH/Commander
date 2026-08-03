@@ -35,18 +35,42 @@ const EMPTY_COMPENSATION_STATS: CompensationTickStats = {
 
 export interface CompensationDaemonOptions {
   repository: CompensationOutboxPort;
+  terminalEvidenceContext?: {
+    getTerminalEvidenceContext(
+      effectId: string,
+      runId: string,
+      tenantId: string,
+      claimToken: string,
+    ): Promise<
+      Awaited<
+        ReturnType<
+          NonNullable<
+            import('@commander/effect-broker').EffectKernelPort['getTerminalEvidenceContext']
+          >
+        >
+      > & { evidence: import('@commander/kernel').KernelEvidenceRecord | null }
+    >;
+  };
   evidenceRepository?: {
-    getEvidence(runId: string, tenantId: string): Promise<import('@commander/kernel').KernelEvidenceRecord | null>;
+    getEvidence(
+      runId: string,
+      tenantId: string,
+    ): Promise<import('@commander/kernel').KernelEvidenceRecord | null>;
     listEffectsForRun(runId: string, tenantId: string): Promise<KernelEffect[]>;
-    listEvents(runId: string, tenantId: string): Promise<Array<{
-      type: string;
-      tenantId: string;
-      runId: string;
-      stepId?: string;
-      aggregateId: string;
-      occurredAt: string;
-      payload: Record<string, unknown>;
-    }>>;
+    listEvents(
+      runId: string,
+      tenantId: string,
+    ): Promise<
+      Array<{
+        type: string;
+        tenantId: string;
+        runId: string;
+        stepId?: string;
+        aggregateId: string;
+        occurredAt: string;
+        payload: Record<string, unknown>;
+      }>
+    >;
   };
   broker: EffectBroker;
   registry: ActionAdapterRegistry;
@@ -237,6 +261,7 @@ export class CompensationDaemon {
     response: Record<string, unknown>;
     eventType: string;
     disposition: 'COMPLETED' | 'CONFIRMED_NOT_APPLIED' | 'ESCALATED';
+    claimToken: string;
   }): Promise<import('@commander/kernel').KernelEvidenceRecord> {
     const evidenceRepository = this.options.evidenceRepository;
     if (!evidenceRepository) {
@@ -245,7 +270,14 @@ export class CompensationDaemon {
       });
     }
     if (input.projectedState === 'COMPLETED') {
-      const existing = await evidenceRepository.getEvidence(input.runId, input.tenantId);
+      const existing = this.options.terminalEvidenceContext
+        ? (await this.options.terminalEvidenceContext.getTerminalEvidenceContext(
+            input.effectId,
+            input.runId,
+            input.tenantId,
+            input.claimToken,
+          )).evidence
+        : await evidenceRepository.getEvidence(input.runId, input.tenantId);
       if (existing?.bundleId === `evidence_${input.effectId}`) return existing;
       throw Object.assign(new Error('completed compensation evidence is missing'), {
         code: 'TERMINAL_EVIDENCE_REQUIRED',
@@ -258,7 +290,7 @@ export class CompensationDaemon {
     }
     const recordedAt = new Date().toISOString();
     const evidence = await buildTerminalEvidenceRecordFromKernel({
-      kernel: evidenceRepository,
+      kernel: this.options.terminalEvidenceContext ?? evidenceRepository,
       signer: this.options.evidenceSigner,
       ...input,
       terminalEvent: {
@@ -270,6 +302,7 @@ export class CompensationDaemon {
       retentionUntil: new Date(
         Date.parse(recordedAt) + (this.options.evidenceRetentionMs ?? 365 * 24 * 60 * 60 * 1_000),
       ).toISOString(),
+      claimToken: input.claimToken,
     });
     return { ...evidence, body: Object.fromEntries(Object.entries(evidence.body)) };
   }

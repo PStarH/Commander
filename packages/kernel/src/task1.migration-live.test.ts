@@ -11,6 +11,7 @@ import {
   runKernelMigrations,
   runTask1ClosureMigrations,
 } from './migrations.js';
+import { KERNEL_TASK2_RECONCILIATION_SCHEMA_SQL_HISTORICAL } from './task2Reconciliation.js';
 
 const ownerUrl = process.env.COMMANDER_TASK1_PG_URL;
 
@@ -253,6 +254,11 @@ describe('Task 1 PostgreSQL migration history', { skip: !ownerUrl }, () => {
             );
 
             await runTask1ClosureMigrations(lifecyclePool, 'enforce');
+            await assert.rejects(
+              () => lifecyclePool.query(KERNEL_TASK2_RECONCILIATION_SCHEMA_SQL_HISTORICAL),
+              /TASK2_TASK1_ENFORCE_BASELINE_REQUIRED/,
+              'the frozen Task 2 descriptor must reject the canonical Task 1 enforce ledger',
+            );
             await runKernelMigrations(lifecyclePool);
             ledger = await readLedger(lifecyclePool);
             assert.deepEqual(
@@ -261,7 +267,16 @@ describe('Task 1 PostgreSQL migration history', { skip: !ownerUrl }, () => {
             );
             assert.deepEqual(
               ledger.filter(({ id }) => id.startsWith('2026-07-26.2.')).map(({ id }) => id),
-              KERNEL_TASK2_FORWARD_MIGRATIONS.map(({ id }) => id).sort(),
+              KERNEL_TASK2_FORWARD_MIGRATIONS.filter(({ id }) => id.startsWith('2026-07-26.2.'))
+                .filter(({ id }) => id !== '2026-07-26.2.task2_reconciliation_schema')
+                .map(({ id }) => id)
+                .sort(),
+            );
+            assert.equal(
+              ledger.some(
+                ({ id }) => id === '2026-08-02.3.task2_reconciliation_schema_canonical_baseline',
+              ),
+              true,
             );
           } finally {
             await lifecyclePool.end();

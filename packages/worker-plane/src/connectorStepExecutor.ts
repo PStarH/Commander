@@ -22,6 +22,7 @@ import type { CapabilityTokenIssuer } from '@commander/effect-broker';
 import {
   assertEffectBrokerForProduction,
   mustRouteExternalEffectThroughBroker,
+  workerExecutionErrorFromEffectFailure,
 } from './effectGate.js';
 import type { ToolEffectCatalog } from './toolEffectCatalog.js';
 import { DENY_ALL_TOOL_EFFECT_CATALOG } from './toolEffectCatalog.js';
@@ -196,15 +197,10 @@ export class ConnectorStepExecutor implements StepExecutor {
           operation: input.operation,
         };
       } catch (error) {
-        if (error instanceof WorkerExecutionError) throw error;
-        throw new WorkerExecutionError(error instanceof Error ? error.message : String(error), {
-          code: 'EFFECT_EXECUTION_FAILED',
-          retryable: false,
-          details: {
-            connectorName: input.connectorName,
-            operation: input.operation,
-            stepId: step.id,
-          },
+        throw workerExecutionErrorFromEffectFailure(error, {
+          connectorName: input.connectorName,
+          operation: input.operation,
+          stepId: step.id,
         });
       }
     }

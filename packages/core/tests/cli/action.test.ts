@@ -154,6 +154,35 @@ describe('commander action gateway CLI', () => {
     },
     { args: ['reject', 'run-1', '--reason=unsafe', '--idempotency-key=reject-1'], method: 'POST', path: '/v1/actions/run-1/reject' },
     { args: ['reconcile', 'run-1', '--idempotency-key=reconcile-1'], method: 'POST', path: '/v1/actions/run-1/reconcile' },
+    {
+      args: [
+        'compensation',
+        'request',
+        'run-1',
+        '--idempotency-key=compensation-1',
+        `--data=${JSON.stringify({
+          originalEffectId: 'effect-1',
+          adapterVersion: 'demo.adapter.v1',
+          compensationEffectType: 'compensate.demo.ticket.create',
+          compensationPatch: { ticketId: 'ticket-1' },
+          forwardReceiptHash: 'a'.repeat(64),
+        })}`,
+      ],
+      method: 'POST',
+      path: '/v1/actions/run-1/compensations',
+    },
+    {
+      args: [
+        'compensation',
+        'approve',
+        'run-1',
+        'authorization-1',
+        '--idempotency-key=compensation-approve-1',
+        `--data=${JSON.stringify({ actionDigest: 'b'.repeat(64), policySnapshotId: 'policy-1' })}`,
+      ],
+      method: 'POST',
+      path: '/v1/actions/run-1/compensations/authorization-1/approve',
+    },
     { args: ['evidence', 'verify', 'run-1'], method: 'GET', path: '/v1/actions/run-1/evidence' },
   ])('routes $args through the action gateway', async ({ args, method, path }) => {
     const fetchMock = vi.fn(

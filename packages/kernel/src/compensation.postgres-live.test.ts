@@ -7,10 +7,14 @@ import { PostgresKernelRepository, PostgresTenantContextAuthority } from './post
 import { seedWorkerAllowedTenants } from './seedWorkerClaimSecret.js';
 import {
   governedCompensationAuthorizationInput,
+  type LegacyGovernedCompensationInput,
 } from './ops/compensationPersistence.js';
-import { sealGovernedCompensationAuthorization } from './ops/compensationAuthority.js';
+import {
+  canonicalCompensationHash,
+  sealGovernedCompensationAuthorization,
+} from './ops/compensationAuthority.js';
 import { KERNEL_COMPENSATION_TOPIC } from './ops/compensationConsumer.js';
-import type { RequestCompensationInput } from './types.js';
+import { buildTerminalEvidenceRecordFromKernel } from '@commander/effect-broker';
 
 const adminUrl = process.env.COMMANDER_COMPENSATION_PG_URL;
 
@@ -82,7 +86,10 @@ describe('governed compensation PostgreSQL authority', { skip: !adminUrl }, () =
     );
 
     worker = new Pool({ connectionString: url('commander_worker', passwords.worker), max: 3 });
-    adapter = new Pool({ connectionString: url('commander_adapter_ops', passwords.adapter), max: 3 });
+    adapter = new Pool({
+      connectionString: url('commander_adapter_ops', passwords.adapter),
+      max: 3,
+    });
     app = new Pool({ connectionString: url('commander_app', passwords.app), max: 3 });
     authority = new Pool({
       connectionString: url('commander_tenant_authority', passwords.authority),
@@ -130,10 +137,10 @@ describe('governed compensation PostgreSQL authority', { skip: !adminUrl }, () =
     }
   });
 
-  async function completedForwardEffect() {
-    const runId = `run-forward-${suffix}`;
-    const stepId = `step-forward-${suffix}`;
-    const effectId = `effect-forward-${suffix}`;
+  async function completedForwardEffect(label = 'context') {
+    const runId = `run-forward-${label}-${suffix}`;
+    const stepId = `step-forward-${label}-${suffix}`;
+    const effectId = `effect-forward-${label}-${suffix}`;
     await ownerRepository.createRun(
       {
         id: runId,
@@ -161,7 +168,7 @@ describe('governed compensation PostgreSQL authority', { skip: !adminUrl }, () =
       stepId,
       tenantId: tenantA,
       type: 'read.ticket',
-      idempotencyKey: `forward-${suffix}`,
+      idempotencyKey: `forward-${label}-${suffix}`,
       policyDecisionId: 'policy-decision-forward',
       policySnapshotId: 'policy-forward-v1',
       actionDigest: 'a'.repeat(64),
@@ -171,7 +178,9 @@ describe('governed compensation PostgreSQL authority', { skip: !adminUrl }, () =
     });
     assert.equal(admitted.admitted, true);
     const response = { providerId: 'INC-1', version: 7 };
-    assert.ok(await workerRepository.completeEffect(effectId, tenantA, step.lease, response, workerId));
+    assert.ok(
+      await workerRepository.completeEffect(effectId, tenantA, step.lease, response, workerId),
+    );
     await owner.query(
       `UPDATE commander_steps SET state='SUCCEEDED',lease_worker_id=NULL,lease_worker_generation=0,
          lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE id=$1 AND tenant_id=$2`,
@@ -185,9 +194,146 @@ describe('governed compensation PostgreSQL authority', { skip: !adminUrl }, () =
     return { runId, stepId, effectId, request, response };
   }
 
-  it('uses immutable authorization/request rows and only adapter-ops can execute the lifecycle', async () => {
+  async function claimAdmittedCompensation(label: string) {
+    const forward = await completedForwardEffect(label);
+    const base: LegacyGovernedCompensationInput = {
+      tenantId: tenantA,
+      originalRunId: forward.runId,
+      originalEffectId: forward.effectId,
+      forwardReceipt: forward.response,
+      adapterVersion: `demo-ticket/${label}/v1`,
+      compensationEffectType: 'compensate.demo.ticket.create',
+      compensationPatch: { status: 'cancelled', label },
+      policyDecisionId: `policy-decision-compensation-${label}`,
+      policySnapshotId: `policy-compensation-${label}-v1`,
+      actionDigest: '',
+      decisionEffect: 'allow',
+      authorizationExpiresAt: new Date(Date.now() + 300_000).toISOString(),
+      approvalBinding: null,
+      actor: 'api-user',
+    };
+    const sealed = sealGovernedCompensationAuthorization(
+      governedCompensationAuthorizationInput({
+        request: base,
+        originalRunStateAtRequest: 'SUCCEEDED',
+        originalEffect: { request: forward.request, response: forward.response },
+      }),
+    );
+    base.actionDigest = canonicalCompensationHash({
+      type: base.compensationEffectType,
+      originalEffectId: base.originalEffectId,
+      adapterVersion: base.adapterVersion,
+      forwardResponse: base.forwardReceipt,
+      compensationPatch: base.compensationPatch,
+    });
+    await appRepository.createCompensationAuthorization({
+      id: sealed.authorizationId,
+      tenantId: base.tenantId,
+      originalRunId: base.originalRunId,
+      originalEffectId: base.originalEffectId,
+      compensationEffectType: base.compensationEffectType,
+      adapterVersion: base.adapterVersion,
+      compensationPatch: base.compensationPatch,
+      forwardReceiptHash: sealed.forwardReceiptHash,
+      policyDecisionId: base.policyDecisionId,
+      policySnapshotId: base.policySnapshotId,
+      decision: base.decisionEffect,
+      actionDigest: base.actionDigest,
+      expiresAt: base.authorizationExpiresAt,
+    });
+    const requested = await appRepository.requestCompensation({
+      tenantId: tenantA,
+      authorizationId: sealed.authorizationId,
+      actor: base.actor,
+    });
+    assert.equal(requested.accepted, true);
+    const claim = await adapterRepository.claimCompensationRequest({
+      requestId: requested.request.id,
+      outboxMessageId: '',
+      workerId: adapterId,
+      workerGeneration: adapterGeneration,
+      claimSecret: adapterSecret,
+    });
+    assert.ok(claim && 'request' in claim);
+    const compensationEffectId = claim.request.compensationEffectId;
+    assert.ok(compensationEffectId);
+    const admitted = await adapterRepository.admitCompensationEffect({
+      id: compensationEffectId,
+      runId: claim.request.compensationRunId,
+      stepId: claim.request.compensationStepId,
+      tenantId: tenantA,
+      type: claim.authorization.compensationEffectType,
+      idempotencyKey: `cmp:${claim.request.originalEffectId}:${claim.request.adapterVersion}`,
+      policyDecisionId: claim.authorization.policyDecisionId,
+      policySnapshotId: claim.authorization.policySnapshotId,
+      actionDigest: claim.authorization.actionDigest,
+      request: {
+        originalEffectId: claim.request.originalEffectId,
+        forwardResponse: claim.forwardResponse,
+        compensationPatch: claim.authorization.compensationPatch,
+      },
+      lease: claim.lease,
+      requestId: claim.request.id,
+      requestClaimToken: claim.request.claimToken!,
+      outboxMessageId: claim.outboxMessageId,
+      outboxClaimToken: claim.outboxClaimToken,
+      actor: adapterId,
+    });
+    assert.equal(admitted.admitted, true);
+    return { claim, compensationEffectId };
+  }
+
+  async function terminalEvidence(
+    claim: Extract<
+      Awaited<ReturnType<typeof adapterRepository.claimCompensationWork>>[number],
+      { request: unknown }
+    >,
+    effectId: string,
+    projectedState: 'COMPLETED' | 'FAILED',
+    response: Record<string, unknown>,
+  ) {
+    const recordedAt = new Date().toISOString();
+    return buildTerminalEvidenceRecordFromKernel({
+      kernel: {
+        getTerminalEvidenceContext: (contextEffectId, runId, tenantId, claimToken) =>
+          adapterRepository.getAdapterOpsEvidenceContext({
+            workerId: adapterId,
+            workerGeneration: adapterGeneration,
+            claimSecret: adapterSecret,
+            tenantId,
+            runId,
+            effectId: contextEffectId,
+            claimToken,
+          }),
+      },
+      signer: {
+        sign: async () => ({
+          algorithm: 'Ed25519',
+          keyId: 'compensation-live-test',
+          signedAt: recordedAt,
+          value: `signature-${effectId}-${projectedState}`,
+        }),
+        verify: () => true,
+      },
+      tenantId: tenantA,
+      runId: claim.request.compensationRunId,
+      effectId,
+      projectedState,
+      response,
+      terminalEvent: {
+        type: projectedState === 'COMPLETED' ? 'effect.completed' : 'effect.failed',
+        severity: projectedState === 'COMPLETED' ? 'low' : 'high',
+        details: projectedState === 'COMPLETED' ? {} : { errorCode: response.code },
+      },
+      recordedAt,
+      retentionUntil: new Date(Date.parse(recordedAt) + 86_400_000).toISOString(),
+      claimToken: claim.outboxClaimToken,
+    });
+  }
+
+  it('binds compensation evidence context to immutable claim authority', async () => {
     const forward = await completedForwardEffect();
-    const base: RequestCompensationInput = {
+    const base: LegacyGovernedCompensationInput = {
       tenantId: tenantA,
       originalRunId: forward.runId,
       originalEffectId: forward.effectId,
@@ -210,11 +356,39 @@ describe('governed compensation PostgreSQL authority', { skip: !adminUrl }, () =
         originalEffect: { request: forward.request, response: forward.response },
       }),
     );
-    base.actionDigest = sealed.actionDigest;
-    const requested = await appRepository.requestCompensation(base);
-    assert.equal(requested?.status, 'SCHEDULED');
+    base.actionDigest = canonicalCompensationHash({
+      type: base.compensationEffectType,
+      originalEffectId: base.originalEffectId,
+      adapterVersion: base.adapterVersion,
+      forwardResponse: base.forwardReceipt,
+      compensationPatch: base.compensationPatch,
+    });
+    await appRepository.createCompensationAuthorization({
+      id: sealed.authorizationId,
+      tenantId: base.tenantId,
+      originalRunId: base.originalRunId,
+      originalEffectId: base.originalEffectId,
+      compensationEffectType: base.compensationEffectType,
+      adapterVersion: base.adapterVersion,
+      compensationPatch: base.compensationPatch,
+      forwardReceiptHash: sealed.forwardReceiptHash,
+      policyDecisionId: base.policyDecisionId,
+      policySnapshotId: base.policySnapshotId,
+      decision: base.decisionEffect,
+      actionDigest: base.actionDigest,
+      expiresAt: base.authorizationExpiresAt,
+    });
+    const requested = await appRepository.requestCompensation({
+      tenantId: base.tenantId,
+      authorizationId: sealed.authorizationId,
+      actor: base.actor,
+    });
+    assert.equal(requested.accepted, true);
 
-    const authorityTables = await owner.query<{ authorization: string | null; request: string | null }>(
+    const authorityTables = await owner.query<{
+      authorization: string | null;
+      request: string | null;
+    }>(
       `SELECT to_regclass('public.commander_compensation_authorizations')::text AS authorization,
               to_regclass('public.commander_compensation_requests')::text AS request`,
     );
@@ -249,45 +423,350 @@ describe('governed compensation PostgreSQL authority', { skip: !adminUrl }, () =
     });
     assert.equal(claims.length, 1);
     const claim = claims[0]!;
-    const admitted = await adapterRepository.admitEffect({
-      id: claim.authorization.compensationEffectId,
-      runId: claim.authorization.compensationRunId,
-      stepId: claim.authorization.compensationStepId,
+    assert.ok(claim, 'compensation claim must be present');
+    if (!('request' in claim)) {
+      throw new Error('compensation claim must be a durable claimed request');
+    }
+    const compensationEffectId = claim.request.compensationEffectId;
+    assert.ok(
+      compensationEffectId,
+      'claimed compensation request must carry a compensation effect id',
+    );
+    const admitted = await adapterRepository.admitCompensationEffect({
+      id: compensationEffectId,
+      runId: claim.request.compensationRunId,
+      stepId: claim.request.compensationStepId,
       tenantId: tenantA,
       type: claim.authorization.compensationEffectType,
-      idempotencyKey: claim.authorization.idempotencyKey,
+      idempotencyKey: `cmp:${claim.request.originalEffectId}:${claim.request.adapterVersion}`,
       policyDecisionId: claim.authorization.policyDecisionId,
       policySnapshotId: claim.authorization.policySnapshotId,
       actionDigest: claim.authorization.actionDigest,
-      request: claim.authorization.compensationRequest,
-      lease: claim.lease,
-      compensationBinding: {
-        authorizationId: claim.authorization.authorizationId,
-        requestId: claim.authorization.requestId,
-        claimToken: claim.claimToken,
+      request: {
+        originalEffectId: claim.request.originalEffectId,
+        forwardResponse: claim.forwardResponse,
+        compensationPatch: claim.authorization.compensationPatch,
       },
+      lease: claim.lease,
+      requestId: claim.request.id,
+      requestClaimToken: claim.request.claimToken!,
+      outboxMessageId: claim.outboxMessageId,
+      outboxClaimToken: claim.outboxClaimToken,
       actor: adapterId,
     });
     assert.equal(admitted.admitted, true);
-    assert.ok(
-      await adapterRepository.completeEffect(
-        claim.authorization.compensationEffectId,
-        tenantA,
-        claim.lease,
-        { compensated: true },
-        adapterId,
-      ),
-    );
-    const disposition = await adapterRepository.completeCompensationWork({
+    const evidenceContext = await adapterRepository.getAdapterOpsEvidenceContext({
       workerId: adapterId,
       workerGeneration: adapterGeneration,
       claimSecret: adapterSecret,
       tenantId: tenantA,
-      messageId: claim.messageId,
-      outboxClaimToken: claim.claimToken,
-      compensationEffectId: claim.authorization.compensationEffectId,
-      response: { compensated: true },
+      runId: claim.request.compensationRunId,
+      effectId: compensationEffectId,
+      claimToken: claim.outboxClaimToken,
     });
-    assert.equal(disposition.applied && disposition.disposition, 'COMPLETED');
+    assert.equal(evidenceContext.effect.id, compensationEffectId);
+    assert.equal(evidenceContext.evidence, null);
+    await assert.rejects(
+      adapterRepository.getAdapterOpsEvidenceContext({
+        workerId: adapterId,
+        workerGeneration: adapterGeneration,
+        claimSecret: adapterSecret,
+        tenantId: tenantA,
+        runId: claim.request.compensationRunId,
+        effectId: compensationEffectId,
+        claimToken: '',
+      }),
+      /ADAPTER_OPS_EVIDENCE_CONTEXT_INVALID/,
+    );
+    await assert.rejects(
+      adapterRepository.getAdapterOpsEvidenceContext({
+        workerId: adapterId,
+        workerGeneration: adapterGeneration,
+        claimSecret: adapterSecret,
+        tenantId: tenantA,
+        runId: claim.request.compensationRunId,
+        effectId: compensationEffectId,
+        claimToken: `${claim.outboxClaimToken}-wrong`,
+      }),
+      /ADAPTER_OPS_EVIDENCE_CONTEXT_DENIED/,
+    );
+    await assert.rejects(
+      adapterRepository.getAdapterOpsEvidenceContext({
+        workerId: adapterId,
+        workerGeneration: adapterGeneration,
+        claimSecret: adapterSecret,
+        tenantId: tenantA,
+        runId: forward.runId,
+        effectId: compensationEffectId,
+        claimToken: claim.outboxClaimToken,
+      }),
+      /ADAPTER_OPS_EVIDENCE_CONTEXT_DENIED/,
+    );
+    await assert.rejects(
+      adapterRepository.getAdapterOpsEvidenceContext({
+        workerId: adapterId,
+        workerGeneration: adapterGeneration,
+        claimSecret: adapterSecret,
+        tenantId: tenantA,
+        runId: claim.request.compensationRunId,
+        effectId: forward.effectId,
+        claimToken: claim.outboxClaimToken,
+      }),
+      /ADAPTER_OPS_EVIDENCE_CONTEXT_DENIED/,
+    );
+    await assert.rejects(
+      adapterRepository.getAdapterOpsEvidenceContext({
+        workerId: adapterId,
+        workerGeneration: adapterGeneration,
+        claimSecret: adapterSecret,
+        tenantId: tenantB,
+        runId: claim.request.compensationRunId,
+        effectId: compensationEffectId,
+        claimToken: claim.outboxClaimToken,
+      }),
+      /ADAPTER_OPS_EVIDENCE_CONTEXT_DENIED/,
+    );
+
+    await owner.query(
+      `UPDATE commander_compensation_requests
+          SET claim_expires_at=clock_timestamp()-interval '1 second'
+        WHERE id=$1 AND tenant_id=$2`,
+      [claim.request.id, tenantA],
+    );
+    await assert.rejects(
+      adapterRepository.getAdapterOpsEvidenceContext({
+        workerId: adapterId,
+        workerGeneration: adapterGeneration,
+        claimSecret: adapterSecret,
+        tenantId: tenantA,
+        runId: claim.request.compensationRunId,
+        effectId: compensationEffectId,
+        claimToken: claim.outboxClaimToken,
+      }),
+      /ADAPTER_OPS_EVIDENCE_CONTEXT_DENIED/,
+    );
+    await owner.query(
+      `UPDATE commander_compensation_requests
+          SET claim_expires_at=clock_timestamp()+interval '60 seconds'
+        WHERE id=$1 AND tenant_id=$2`,
+      [claim.request.id, tenantA],
+    );
+
+    const outbox = await owner.query<{ payload: Record<string, unknown> }>(
+      'SELECT payload FROM commander_outbox WHERE id=$1 AND tenant_id=$2',
+      [claim.outboxMessageId, tenantA],
+    );
+    assert.ok(outbox.rows[0]);
+    await owner.query(
+      `UPDATE commander_outbox
+          SET payload=jsonb_build_object('requestId','other-request','tenantId',$2::text)
+        WHERE id=$1 AND tenant_id=$2`,
+      [claim.outboxMessageId, tenantA],
+    );
+    await assert.rejects(
+      adapterRepository.getAdapterOpsEvidenceContext({
+        workerId: adapterId,
+        workerGeneration: adapterGeneration,
+        claimSecret: adapterSecret,
+        tenantId: tenantA,
+        runId: claim.request.compensationRunId,
+        effectId: compensationEffectId,
+        claimToken: claim.outboxClaimToken,
+      }),
+      /ADAPTER_OPS_EVIDENCE_CONTEXT_DENIED/,
+    );
+    await owner.query(
+      'UPDATE commander_outbox SET payload=$1::jsonb WHERE id=$2 AND tenant_id=$3',
+      [JSON.stringify(outbox.rows[0].payload), claim.outboxMessageId, tenantA],
+    );
+
+    const response = { compensated: true };
+    const evidence = await terminalEvidence(claim, compensationEffectId, 'COMPLETED', response);
+    const terminalInput = {
+      workerId: adapterId,
+      workerGeneration: adapterGeneration,
+      claimSecret: adapterSecret,
+      tenantId: tenantA,
+      runId: claim.request.compensationRunId,
+      stepId: claim.request.compensationStepId,
+      effectId: compensationEffectId,
+      requestId: claim.request.id,
+      requestClaimToken: claim.request.claimToken!,
+      outboxMessageId: claim.outboxMessageId,
+      outboxClaimToken: claim.outboxClaimToken,
+      lease: claim.lease,
+      actor: adapterId,
+      response,
+      evidence,
+    };
+    assert.equal(
+      await adapterRepository.completeCompensationEffectWithEvidence({
+        ...terminalInput,
+        requestId: `${claim.request.id}-wrong`,
+      }),
+      null,
+    );
+    assert.equal(
+      await adapterRepository.completeCompensationEffectWithEvidence({
+        ...terminalInput,
+        lease: { ...terminalInput.lease, fencingEpoch: terminalInput.lease.fencingEpoch + 1 },
+      }),
+      null,
+    );
+    await assert.rejects(
+      adapterRepository.completeCompensationEffectWithEvidence({
+        ...terminalInput,
+        evidence: { ...evidence, actionDigest: '0'.repeat(64) },
+      }),
+      /EVIDENCE_RECORD_BINDING_INVALID/,
+    );
+    const rejectedState = await owner.query<{
+      state: string;
+      receipts: string;
+      events: string;
+      outbox: string;
+    }>(
+      `SELECT effect.state,
+              (SELECT count(*)::text FROM commander_evidence_receipts receipt
+                WHERE receipt.tenant_id=effect.tenant_id
+                  AND receipt.bundle_id='evidence_'||effect.id) AS receipts,
+              (SELECT count(*)::text FROM commander_events event
+                WHERE event.tenant_id=effect.tenant_id AND event.aggregate_id=effect.id
+                  AND event.type='effect.completed') AS events,
+              (SELECT count(*)::text FROM commander_outbox outbox
+                JOIN commander_events event ON event.id=outbox.event_id
+               WHERE outbox.tenant_id=effect.tenant_id AND event.aggregate_id=effect.id
+                 AND event.type='effect.completed') AS outbox
+         FROM commander_effects effect WHERE effect.id=$1 AND effect.tenant_id=$2`,
+      [compensationEffectId, tenantA],
+    );
+    assert.deepEqual(rejectedState.rows[0], {
+      state: 'ADMITTED',
+      receipts: '0',
+      events: '0',
+      outbox: '0',
+    });
+    assert.equal(
+      (await adapterRepository.completeCompensationEffectWithEvidence(terminalInput))?.state,
+      'COMPLETED',
+    );
+    const completedWrites = await owner.query<{ receipts: string; events: string; outbox: string }>(
+      `SELECT
+         (SELECT count(*)::text FROM commander_evidence_receipts
+           WHERE tenant_id=$2 AND bundle_id='evidence_'||$1) AS receipts,
+         (SELECT count(*)::text FROM commander_events
+           WHERE tenant_id=$2 AND aggregate_id=$1 AND type='effect.completed') AS events,
+         (SELECT count(*)::text FROM commander_outbox o JOIN commander_events e ON e.id=o.event_id
+           WHERE o.tenant_id=$2 AND e.aggregate_id=$1 AND e.type='effect.completed') AS outbox`,
+      [compensationEffectId, tenantA],
+    );
+    assert.deepEqual(completedWrites.rows[0], { receipts: '1', events: '1', outbox: '1' });
+    assert.deepEqual(
+      await adapterRepository.finalizeCompensation({
+        workerId: adapterId,
+        workerGeneration: adapterGeneration,
+        claimSecret: adapterSecret,
+        tenantId: tenantA,
+        requestId: claim.request.id,
+        effectId: compensationEffectId,
+        disposition: 'COMPLETED',
+        actor: adapterId,
+        outboxMessageId: claim.outboxMessageId,
+        outboxClaimToken: claim.outboxClaimToken,
+        response,
+        evidence,
+      }),
+      { applied: true, disposition: 'COMPLETED', replayed: false },
+    );
+    await assert.rejects(
+      adapter.query('SELECT * FROM commander_effects WHERE tenant_id=$1', [tenantA]),
+      /permission denied/i,
+    );
+  });
+
+  it('rejects stale leases in the legacy generic compensation completion fallback', async () => {
+    const { claim, compensationEffectId } = await claimAdmittedCompensation('legacy-fenced');
+    const completed = await ownerRepository.completeEffect(
+      compensationEffectId,
+      tenantA,
+      { ...claim.lease, fencingEpoch: claim.lease.fencingEpoch + 1 },
+      { compensated: true },
+      adapterId,
+    );
+
+    assert.equal(completed, null, 'a stale compensation lease must not complete the effect');
+    const state = await owner.query<{ state: string }>(
+      'SELECT state FROM commander_effects WHERE id=$1 AND tenant_id=$2',
+      [compensationEffectId, tenantA],
+    );
+    assert.equal(state.rows[0]?.state, 'ADMITTED');
+
+    const validCompletion = await ownerRepository.completeEffect(
+      compensationEffectId,
+      tenantA,
+      claim.lease,
+      { compensated: true },
+      adapterId,
+    );
+    assert.equal(validCompletion?.state, 'COMPLETED');
+    const completionEvidence = await terminalEvidence(claim, compensationEffectId, 'COMPLETED', {
+      compensated: true,
+    });
+    assert.deepEqual(
+      await adapterRepository.finalizeCompensation({
+        workerId: adapterId,
+        workerGeneration: adapterGeneration,
+        claimSecret: adapterSecret,
+        tenantId: tenantA,
+        requestId: claim.request.id,
+        effectId: compensationEffectId,
+        disposition: 'COMPLETED',
+        actor: adapterId,
+        outboxMessageId: claim.outboxMessageId,
+        outboxClaimToken: claim.outboxClaimToken,
+        response: { compensated: true },
+        evidence: completionEvidence,
+      }),
+      { applied: true, disposition: 'COMPLETED', replayed: false },
+    );
+  });
+
+  it('fails compensation effects with evidence through the fenced adapter-ops authority', async () => {
+    const { claim, compensationEffectId } = await claimAdmittedCompensation('failed');
+    const error = {
+      code: 'REMOTE_REJECTED',
+      message: 'provider rejected compensation',
+      retryable: false,
+    };
+    const evidence = await terminalEvidence(claim, compensationEffectId, 'FAILED', error);
+    const failed = await adapterRepository.failCompensationEffectWithEvidence({
+      workerId: adapterId,
+      workerGeneration: adapterGeneration,
+      claimSecret: adapterSecret,
+      tenantId: tenantA,
+      runId: claim.request.compensationRunId,
+      stepId: claim.request.compensationStepId,
+      effectId: compensationEffectId,
+      requestId: claim.request.id,
+      requestClaimToken: claim.request.claimToken!,
+      outboxMessageId: claim.outboxMessageId,
+      outboxClaimToken: claim.outboxClaimToken,
+      lease: claim.lease,
+      actor: adapterId,
+      error,
+      evidence,
+    });
+    assert.equal(failed?.state, 'FAILED');
+    const writes = await owner.query<{ receipts: string; events: string; outbox: string }>(
+      `SELECT
+         (SELECT count(*)::text FROM commander_evidence_receipts
+           WHERE tenant_id=$2 AND bundle_id='evidence_'||$1) AS receipts,
+         (SELECT count(*)::text FROM commander_events
+           WHERE tenant_id=$2 AND aggregate_id=$1 AND type='effect.failed') AS events,
+         (SELECT count(*)::text FROM commander_outbox o JOIN commander_events e ON e.id=o.event_id
+           WHERE o.tenant_id=$2 AND e.aggregate_id=$1 AND e.type='effect.failed') AS outbox`,
+      [compensationEffectId, tenantA],
+    );
+    assert.deepEqual(writes.rows[0], { receipts: '1', events: '1', outbox: '1' });
   });
 });

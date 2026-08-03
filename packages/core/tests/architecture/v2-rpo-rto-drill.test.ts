@@ -263,9 +263,9 @@ describe('V2 RPO/RTO Drill — Disaster Recovery Verification', () => {
     }
   });
 
-  // ─── Idempotency: No Duplicate Effects After Recovery ───
+  // ─── Idempotency: No Duplicate In-Memory Effect Records After Recovery ───
 
-  it('idempotency: should not duplicate effects when replaying after recovery', async () => {
+  it('idempotency: should not duplicate in-memory effect records after recovery', async () => {
     const command = createRunCommand(tenantId, [{ kind: 'agent', maxAttempts: 3 }]);
     const run = await kernel.createRun(command, 'gateway');
 

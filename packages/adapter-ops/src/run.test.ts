@@ -25,6 +25,8 @@ import {
   assertDurableCapabilityStores,
   assertNonOwnerDatabaseRole,
   assertNonOwnerDatabaseUrl,
+  ADAPTER_OPS_EVIDENCE_AUTHORITY_UNAVAILABLE,
+  ADAPTER_OPS_COMPENSATION_TERMINAL_AUTHORITY_UNAVAILABLE,
   ADAPTER_OPS_COMPENSATION_WORKER_ID,
   ADAPTER_OPS_RECONCILE_WORKER_ID,
   type AdapterOpsWorkerRegistry,
@@ -36,6 +38,9 @@ import {
   OWNER_DATABASE_ROLE_REJECTED,
   productionCapabilityBrokerOptions,
   registerAdapterOpsDaemonWorkers,
+  requireAdapterOpsEvidenceAuthorityAvailability,
+  requireAdapterOpsEvidenceAuthority,
+  requireAdapterOpsCompensationTerminalEvidenceAuthority,
   requireCompensationAuthority,
   resolveAdapterOpsInstanceId,
   WORKER_TENANT_SCOPE_REQUIRED,
@@ -62,9 +67,17 @@ const CAPABILITY_ENV_KEYS = [
   'COMMANDER_REQUIRE_CAPABILITY_AUTHORITY',
 ] as const;
 
+const DATABASE_URL_ENV_KEYS = ['COMMANDER_KERNEL_DATABASE_URL', 'DATABASE_URL'] as const;
+
 function snapshotCapabilityEnv(): Record<string, string | undefined> {
   const out: Record<string, string | undefined> = {};
   for (const key of CAPABILITY_ENV_KEYS) out[key] = process.env[key];
+  return out;
+}
+
+function snapshotDatabaseUrlEnv(): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = {};
+  for (const key of DATABASE_URL_ENV_KEYS) out[key] = process.env[key];
   return out;
 }
 
@@ -77,6 +90,10 @@ function restoreEnv(saved: Record<string, string | undefined>): void {
 
 function clearCapabilityEnv(): void {
   for (const key of CAPABILITY_ENV_KEYS) delete process.env[key];
+}
+
+function clearDatabaseUrlEnv(): void {
+  for (const key of DATABASE_URL_ENV_KEYS) delete process.env[key];
 }
 
 class InMemoryAdapterOpsWorkerRegistry implements AdapterOpsWorkerRegistry {
@@ -124,12 +141,59 @@ class InMemoryAdapterOpsWorkerRegistry implements AdapterOpsWorkerRegistry {
 }
 
 describe('adapter-ops run wiring', () => {
+  it('creates SQLite wiring without inherited PostgreSQL URLs and restores them', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ops-sqlite-inherited-urls-'));
+    const dbPath = join(dir, 'kernel.sqlite');
+    const ownerUrl = 'postgres://commander:commander@127.0.0.1:5432/commander';
+    const initial = {
+      COMMANDER_KERNEL_BACKEND: process.env.COMMANDER_KERNEL_BACKEND,
+      COMMANDER_KERNEL_SQLITE_PATH: process.env.COMMANDER_KERNEL_SQLITE_PATH,
+      ...snapshotDatabaseUrlEnv(),
+      COMMANDER_CELL_TENANT_ID: process.env.COMMANDER_CELL_TENANT_ID,
+      NODE_ENV: process.env.NODE_ENV,
+      COMMANDER_ADAPTER_OPS_DEMO_OPEN: process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN,
+      ...snapshotCapabilityEnv(),
+    };
+    try {
+      process.env.COMMANDER_KERNEL_DATABASE_URL = ownerUrl;
+      process.env.DATABASE_URL = ownerUrl;
+      const saved = {
+        COMMANDER_KERNEL_BACKEND: process.env.COMMANDER_KERNEL_BACKEND,
+        COMMANDER_KERNEL_SQLITE_PATH: process.env.COMMANDER_KERNEL_SQLITE_PATH,
+        ...snapshotDatabaseUrlEnv(),
+        COMMANDER_CELL_TENANT_ID: process.env.COMMANDER_CELL_TENANT_ID,
+        NODE_ENV: process.env.NODE_ENV,
+        COMMANDER_ADAPTER_OPS_DEMO_OPEN: process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN,
+        ...snapshotCapabilityEnv(),
+      };
+      clearDatabaseUrlEnv();
+      process.env.COMMANDER_KERNEL_BACKEND = 'sqlite';
+      process.env.COMMANDER_KERNEL_SQLITE_PATH = dbPath;
+      process.env.COMMANDER_CELL_TENANT_ID = 'local';
+      delete process.env.NODE_ENV;
+      delete process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN;
+      clearCapabilityEnv();
+      try {
+        const wiring = await createAdapterOpsWiring();
+        await wiring.close();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+        restoreEnv(saved);
+      }
+      assert.equal(process.env.COMMANDER_KERNEL_DATABASE_URL, ownerUrl);
+      assert.equal(process.env.DATABASE_URL, ownerUrl);
+    } finally {
+      restoreEnv(initial);
+    }
+  });
+
   it('loads adapter credential registrations from the process environment', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ops-adapter-credentials-'));
     const dbPath = join(dir, 'kernel.sqlite');
     const saved = {
       COMMANDER_KERNEL_BACKEND: process.env.COMMANDER_KERNEL_BACKEND,
       COMMANDER_KERNEL_SQLITE_PATH: process.env.COMMANDER_KERNEL_SQLITE_PATH,
+      ...snapshotDatabaseUrlEnv(),
       COMMANDER_CELL_TENANT_ID: process.env.COMMANDER_CELL_TENANT_ID,
       NODE_ENV: process.env.NODE_ENV,
       COMMANDER_ADAPTER_OPS_DEMO_OPEN: process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN,
@@ -141,6 +205,7 @@ describe('adapter-ops run wiring', () => {
       calls += 1;
       return new EnvAdapterCredentialProvider({ cellTenantId: 'local' });
     };
+    clearDatabaseUrlEnv();
     process.env.COMMANDER_KERNEL_BACKEND = 'sqlite';
     process.env.COMMANDER_KERNEL_SQLITE_PATH = dbPath;
     process.env.COMMANDER_CELL_TENANT_ID = 'local';
@@ -164,11 +229,13 @@ describe('adapter-ops run wiring', () => {
     const saved = {
       COMMANDER_KERNEL_BACKEND: process.env.COMMANDER_KERNEL_BACKEND,
       COMMANDER_KERNEL_SQLITE_PATH: process.env.COMMANDER_KERNEL_SQLITE_PATH,
+      ...snapshotDatabaseUrlEnv(),
       COMMANDER_CELL_TENANT_ID: process.env.COMMANDER_CELL_TENANT_ID,
       NODE_ENV: process.env.NODE_ENV,
       COMMANDER_ADAPTER_OPS_DEMO_OPEN: process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN,
       ...snapshotCapabilityEnv(),
     };
+    clearDatabaseUrlEnv();
     process.env.COMMANDER_KERNEL_BACKEND = 'sqlite';
     process.env.COMMANDER_KERNEL_SQLITE_PATH = dbPath;
     process.env.COMMANDER_CELL_TENANT_ID = 'local';
@@ -198,11 +265,13 @@ describe('adapter-ops run wiring', () => {
     const saved = {
       COMMANDER_KERNEL_BACKEND: process.env.COMMANDER_KERNEL_BACKEND,
       COMMANDER_KERNEL_SQLITE_PATH: process.env.COMMANDER_KERNEL_SQLITE_PATH,
+      ...snapshotDatabaseUrlEnv(),
       COMMANDER_CELL_TENANT_ID: process.env.COMMANDER_CELL_TENANT_ID,
       NODE_ENV: process.env.NODE_ENV,
       COMMANDER_ADAPTER_OPS_DEMO_OPEN: process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN,
       ...snapshotCapabilityEnv(),
     };
+    clearDatabaseUrlEnv();
     process.env.COMMANDER_KERNEL_BACKEND = 'sqlite';
     process.env.COMMANDER_KERNEL_SQLITE_PATH = dbPath;
     delete process.env.COMMANDER_CELL_TENANT_ID;
@@ -230,6 +299,7 @@ describe('adapter-ops run wiring', () => {
       COMMANDER_KERNEL_BACKEND: process.env.COMMANDER_KERNEL_BACKEND,
       COMMANDER_KERNEL_SQLITE_PATH: process.env.COMMANDER_KERNEL_SQLITE_PATH,
       COMMANDER_KERNEL_DATABASE_URL: process.env.COMMANDER_KERNEL_DATABASE_URL,
+      DATABASE_URL: process.env.DATABASE_URL,
       COMMANDER_CELL_TENANT_ID: process.env.COMMANDER_CELL_TENANT_ID,
       COMMANDER_ADAPTER_OPS_DEMO_OPEN: process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN,
       ...snapshotCapabilityEnv(),
@@ -238,6 +308,7 @@ describe('adapter-ops run wiring', () => {
     delete process.env.NODE_ENV;
     delete process.env.COMMANDER_PROFILE;
     process.env.COMMANDER_REQUIRE_CAPABILITY_AUTHORITY = '1';
+    clearDatabaseUrlEnv();
     process.env.COMMANDER_KERNEL_BACKEND = 'sqlite';
     process.env.COMMANDER_KERNEL_SQLITE_PATH = dbPath;
     process.env.COMMANDER_CELL_TENANT_ID = 'local';
@@ -313,12 +384,14 @@ describe('adapter-ops run wiring', () => {
     const saved = {
       COMMANDER_KERNEL_BACKEND: process.env.COMMANDER_KERNEL_BACKEND,
       COMMANDER_KERNEL_SQLITE_PATH: process.env.COMMANDER_KERNEL_SQLITE_PATH,
+      ...snapshotDatabaseUrlEnv(),
       COMMANDER_CELL_TENANT_ID: process.env.COMMANDER_CELL_TENANT_ID,
       NODE_ENV: process.env.NODE_ENV,
       COMMANDER_PROFILE: process.env.COMMANDER_PROFILE,
       COMMANDER_ADAPTER_OPS_DEMO_OPEN: process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN,
       ...snapshotCapabilityEnv(),
     };
+    clearDatabaseUrlEnv();
     process.env.COMMANDER_KERNEL_BACKEND = 'sqlite';
     process.env.COMMANDER_KERNEL_SQLITE_PATH = dbPath;
     process.env.COMMANDER_CELL_TENANT_ID = 'local';
@@ -338,6 +411,39 @@ describe('adapter-ops run wiring', () => {
 });
 
 describe('adapter-ops authority startup gates', () => {
+  it('rejects startup when the PostgreSQL evidence RPC availability probe fails', async () => {
+    await assert.rejects(
+      () =>
+        requireAdapterOpsEvidenceAuthorityAvailability({
+          checkEvidenceRepositoryAvailability: async () => ({ ready: false }),
+        }),
+      (err: unknown) =>
+        err instanceof Error && err.message === ADAPTER_OPS_EVIDENCE_AUTHORITY_UNAVAILABLE,
+    );
+    await assert.doesNotReject(() =>
+      requireAdapterOpsEvidenceAuthorityAvailability({
+        checkEvidenceRepositoryAvailability: async () => ({ ready: true }),
+      }),
+    );
+  });
+
+  it('rejects PostgreSQL runtime repositories without claim-bound evidence authority', () => {
+    assert.throws(
+      () => requireAdapterOpsEvidenceAuthority({}),
+      (err: unknown) =>
+        err instanceof Error && err.message === ADAPTER_OPS_EVIDENCE_AUTHORITY_UNAVAILABLE,
+    );
+  });
+
+  it('rejects PostgreSQL compensation wiring without claim-bound terminal evidence RPCs', () => {
+    assert.throws(
+      () => requireAdapterOpsCompensationTerminalEvidenceAuthority({}),
+      (err: unknown) =>
+        err instanceof Error &&
+        err.message === ADAPTER_OPS_COMPENSATION_TERMINAL_AUTHORITY_UNAVAILABLE,
+    );
+  });
+
   it('rejects missing private key before egress', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ops-miss-pem-'));
     const dbPath = join(dir, 'kernel.sqlite');
@@ -347,6 +453,7 @@ describe('adapter-ops authority startup gates', () => {
       COMMANDER_PROFILE: process.env.COMMANDER_PROFILE,
       COMMANDER_KERNEL_BACKEND: process.env.COMMANDER_KERNEL_BACKEND,
       COMMANDER_KERNEL_SQLITE_PATH: process.env.COMMANDER_KERNEL_SQLITE_PATH,
+      ...snapshotDatabaseUrlEnv(),
       COMMANDER_CELL_TENANT_ID: process.env.COMMANDER_CELL_TENANT_ID,
       COMMANDER_ADAPTER_OPS_DEMO_OPEN: process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN,
       ...snapshotCapabilityEnv(),
@@ -355,6 +462,7 @@ describe('adapter-ops authority startup gates', () => {
     delete process.env.COMMANDER_PROFILE;
     delete process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN;
     process.env.COMMANDER_REQUIRE_CAPABILITY_AUTHORITY = '1';
+    clearDatabaseUrlEnv();
     process.env.COMMANDER_KERNEL_BACKEND = 'sqlite';
     process.env.COMMANDER_KERNEL_SQLITE_PATH = dbPath;
     process.env.COMMANDER_CELL_TENANT_ID = 'local';
@@ -384,6 +492,7 @@ describe('adapter-ops authority startup gates', () => {
       COMMANDER_PROFILE: process.env.COMMANDER_PROFILE,
       COMMANDER_KERNEL_BACKEND: process.env.COMMANDER_KERNEL_BACKEND,
       COMMANDER_KERNEL_SQLITE_PATH: process.env.COMMANDER_KERNEL_SQLITE_PATH,
+      ...snapshotDatabaseUrlEnv(),
       COMMANDER_CELL_TENANT_ID: process.env.COMMANDER_CELL_TENANT_ID,
       COMMANDER_ADAPTER_OPS_DEMO_OPEN: process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN,
       ...snapshotCapabilityEnv(),
@@ -392,6 +501,7 @@ describe('adapter-ops authority startup gates', () => {
     delete process.env.COMMANDER_PROFILE;
     delete process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN;
     process.env.COMMANDER_REQUIRE_CAPABILITY_AUTHORITY = '1';
+    clearDatabaseUrlEnv();
     process.env.COMMANDER_KERNEL_BACKEND = 'sqlite';
     process.env.COMMANDER_KERNEL_SQLITE_PATH = dbPath;
     process.env.COMMANDER_CELL_TENANT_ID = 'local';
@@ -421,6 +531,7 @@ describe('adapter-ops authority startup gates', () => {
       COMMANDER_PROFILE: process.env.COMMANDER_PROFILE,
       COMMANDER_KERNEL_BACKEND: process.env.COMMANDER_KERNEL_BACKEND,
       COMMANDER_KERNEL_SQLITE_PATH: process.env.COMMANDER_KERNEL_SQLITE_PATH,
+      ...snapshotDatabaseUrlEnv(),
       COMMANDER_CELL_TENANT_ID: process.env.COMMANDER_CELL_TENANT_ID,
       COMMANDER_ADAPTER_OPS_DEMO_OPEN: process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN,
       ...snapshotCapabilityEnv(),
@@ -429,6 +540,7 @@ describe('adapter-ops authority startup gates', () => {
     delete process.env.COMMANDER_PROFILE;
     delete process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN;
     process.env.COMMANDER_REQUIRE_CAPABILITY_AUTHORITY = '1';
+    clearDatabaseUrlEnv();
     process.env.COMMANDER_KERNEL_BACKEND = 'sqlite';
     process.env.COMMANDER_KERNEL_SQLITE_PATH = dbPath;
     process.env.COMMANDER_CELL_TENANT_ID = 'local';
@@ -641,6 +753,7 @@ describe('adapter-ops P0 worker registry + compensation mint', () => {
     const saved = {
       COMMANDER_KERNEL_BACKEND: process.env.COMMANDER_KERNEL_BACKEND,
       COMMANDER_KERNEL_SQLITE_PATH: process.env.COMMANDER_KERNEL_SQLITE_PATH,
+      ...snapshotDatabaseUrlEnv(),
       COMMANDER_CELL_TENANT_ID: process.env.COMMANDER_CELL_TENANT_ID,
       COMMANDER_WORKER_TENANTS: process.env.COMMANDER_WORKER_TENANTS,
       COMMANDER_ADAPTER_OPS_INSTANCE_ID: process.env.COMMANDER_ADAPTER_OPS_INSTANCE_ID,
@@ -649,6 +762,7 @@ describe('adapter-ops P0 worker registry + compensation mint', () => {
       COMMANDER_ADAPTER_OPS_DEMO_OPEN: process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN,
       ...snapshotCapabilityEnv(),
     };
+    clearDatabaseUrlEnv();
     process.env.COMMANDER_KERNEL_BACKEND = 'sqlite';
     process.env.COMMANDER_KERNEL_SQLITE_PATH = dbPath;
     process.env.COMMANDER_CELL_TENANT_ID = 'local';
@@ -693,12 +807,14 @@ describe('adapter-ops P0 worker registry + compensation mint', () => {
     const saved = {
       COMMANDER_KERNEL_BACKEND: process.env.COMMANDER_KERNEL_BACKEND,
       COMMANDER_KERNEL_SQLITE_PATH: process.env.COMMANDER_KERNEL_SQLITE_PATH,
+      ...snapshotDatabaseUrlEnv(),
       COMMANDER_CELL_TENANT_ID: process.env.COMMANDER_CELL_TENANT_ID,
       COMMANDER_WORKER_TENANTS: process.env.COMMANDER_WORKER_TENANTS,
       NODE_ENV: process.env.NODE_ENV,
       COMMANDER_ADAPTER_OPS_DEMO_OPEN: process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN,
       ...snapshotCapabilityEnv(),
     };
+    clearDatabaseUrlEnv();
     process.env.COMMANDER_KERNEL_BACKEND = 'sqlite';
     process.env.COMMANDER_KERNEL_SQLITE_PATH = dbPath;
     process.env.COMMANDER_CELL_TENANT_ID = 'local';

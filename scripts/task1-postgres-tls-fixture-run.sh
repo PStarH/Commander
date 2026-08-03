@@ -6,6 +6,9 @@ FIXTURE_DIR="$ROOT_DIR/deploy/testing/postgres-tls"
 STATE_DIR=${COMMANDER_POSTGRES_TLS_FIXTURE_STATE_DIR:-"$ROOT_DIR/.tmp/task1-postgres-tls-fixture"}
 COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-commander-postgres-tls-fixture}
 
+mkdir -p "$STATE_DIR"
+STATE_DIR=$(CDPATH= cd -- "$STATE_DIR" && pwd)
+
 export COMPOSE_PROJECT_NAME
 export FIXTURE_STATE_DIR="$STATE_DIR"
 

@@ -59,6 +59,18 @@ import {
 } from './ops/compensationConsumer.js';
 import { createReconcilePolicy, nextReconcileAfter } from './reconcilePolicy.js';
 import { canonicalCompensationHash } from './ops/compensationAuthority.js';
+import {
+  reqString,
+  reqInteger,
+  reqStringArray,
+  reqJsonObject,
+  reqOptionalJsonObject,
+  reqEnum,
+  STEP_STATES,
+  EFFECT_STATES,
+  TIMER_TYPES,
+  TIMER_STATES,
+} from './sqliteRowGuards.js';
 
 export interface SqliteKernelRepositoryOptions {
   /** File path; :memory: only in tests when allowMemory=true */
@@ -74,41 +86,31 @@ function fromStepAdapter(row: Record<string, unknown>): KernelStep {
   const lease =
     row.lease_token && row.lease_worker_id && row.lease_expires_at
       ? {
-          workerId: row.lease_worker_id as string,
-          workerGeneration: Number(row.lease_worker_generation ?? 0),
-          token: row.lease_token as string,
-          fencingEpoch: Number(row.fencing_epoch),
-          expiresAt: String(row.lease_expires_at),
+          workerId: reqString('commander_steps', row, 'lease_worker_id'),
+          workerGeneration: reqInteger('commander_steps', row, 'lease_worker_generation'),
+          token: reqString('commander_steps', row, 'lease_token'),
+          fencingEpoch: reqInteger('commander_steps', row, 'fencing_epoch'),
+          expiresAt: reqString('commander_steps', row, 'lease_expires_at'),
         }
       : undefined;
-  const parseJson = (v: unknown) => {
-    if (typeof v === 'string') {
-      try {
-        return JSON.parse(v);
-      } catch {
-        return {};
-      }
-    }
-    return v ?? {};
-  };
   return {
-    id: row.id as string,
-    runId: row.run_id as string,
-    tenantId: row.tenant_id as string,
-    kind: row.kind as string,
-    state: row.state as KernelStep['state'],
-    version: Number(row.version),
-    attempt: Number(row.attempt),
-    maxAttempts: Number(row.max_attempts),
-    priority: Number(row.priority),
-    dependencies: parseJson(row.dependencies) as string[],
-    input: parseJson(row.input) as Record<string, unknown>,
-    output: row.output ? (parseJson(row.output) as Record<string, unknown>) : undefined,
-    error: row.error ? (parseJson(row.error) as KernelStep['error']) : undefined,
-    scheduledAt: String(row.scheduled_at),
+    id: reqString('commander_steps', row, 'id'),
+    runId: reqString('commander_steps', row, 'run_id'),
+    tenantId: reqString('commander_steps', row, 'tenant_id'),
+    kind: reqString('commander_steps', row, 'kind'),
+    state: reqEnum('commander_steps', row, 'state', STEP_STATES),
+    version: reqInteger('commander_steps', row, 'version'),
+    attempt: reqInteger('commander_steps', row, 'attempt'),
+    maxAttempts: reqInteger('commander_steps', row, 'max_attempts'),
+    priority: reqInteger('commander_steps', row, 'priority'),
+    dependencies: reqStringArray('commander_steps', row, 'dependencies'),
+    input: reqJsonObject('commander_steps', row, 'input'),
+    output: reqOptionalJsonObject('commander_steps', row, 'output'),
+    error: reqOptionalJsonObject<KernelStep['error']>('commander_steps', row, 'error'),
+    scheduledAt: reqString('commander_steps', row, 'scheduled_at'),
     lease,
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
+    createdAt: reqString('commander_steps', row, 'created_at'),
+    updatedAt: reqString('commander_steps', row, 'updated_at'),
   };
 }
 
@@ -123,21 +125,21 @@ function parseJsonValue(value: unknown): unknown {
 
 function fromEffectAdapter(row: Record<string, unknown>): KernelEffect {
   return {
-    id: String(row.id),
-    runId: String(row.run_id),
-    stepId: String(row.step_id),
-    tenantId: String(row.tenant_id),
-    type: String(row.type),
-    idempotencyKey: String(row.idempotency_key),
-    requestHash: String(row.request_hash),
-    policyDecisionId: String(row.policy_decision_id),
+    id: reqString('commander_effects', row, 'id'),
+    runId: reqString('commander_effects', row, 'run_id'),
+    stepId: reqString('commander_effects', row, 'step_id'),
+    tenantId: reqString('commander_effects', row, 'tenant_id'),
+    type: reqString('commander_effects', row, 'type'),
+    idempotencyKey: reqString('commander_effects', row, 'idempotency_key'),
+    requestHash: reqString('commander_effects', row, 'request_hash'),
+    policyDecisionId: reqString('commander_effects', row, 'policy_decision_id'),
     policySnapshotId: String(row.policy_snapshot_id || 'legacy-unbound'),
     actionDigest: String(row.action_digest || row.request_hash),
     leaseWorkerId: String(row.lease_worker_id || 'legacy-unbound'),
     leaseWorkerGeneration: Number(row.lease_worker_generation ?? 0),
     leaseFencingEpoch: Number(row.lease_fencing_epoch ?? 0),
-    state: row.state as KernelEffect['state'],
-    request: (parseJsonValue(row.request) ?? {}) as Record<string, unknown>,
+    state: reqEnum('commander_effects', row, 'state', EFFECT_STATES),
+    request: reqJsonObject('commander_effects', row, 'request'),
     response:
       row.response == null ? undefined : (parseJsonValue(row.response) as Record<string, unknown>),
     createdAt: new Date(String(row.created_at)).toISOString(),
@@ -3020,18 +3022,15 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         [claimToken, now.toISOString(), ...ids],
       );
       return result.rows.map((row) => ({
-        id: row.id as string,
-        runId: row.run_id as string,
-        stepId: row.step_id as string,
-        tenantId: row.tenant_id as string,
-        firesAt: String(row.fires_at),
-        timerType: row.timer_type as import('./types.js').KernelTimer['timerType'],
-        state: row.state as import('./types.js').KernelTimer['state'],
-        payload:
-          typeof row.payload === 'string'
-            ? JSON.parse(row.payload)
-            : ((row.payload as Record<string, unknown>) ?? {}),
-        createdAt: String(row.created_at),
+        id: reqString('commander_timers', row, 'id'),
+        runId: reqString('commander_timers', row, 'run_id'),
+        stepId: reqString('commander_timers', row, 'step_id'),
+        tenantId: reqString('commander_timers', row, 'tenant_id'),
+        firesAt: reqString('commander_timers', row, 'fires_at'),
+        timerType: reqEnum('commander_timers', row, 'timer_type', TIMER_TYPES),
+        state: reqEnum('commander_timers', row, 'state', TIMER_STATES),
+        payload: reqJsonObject('commander_timers', row, 'payload'),
+        createdAt: reqString('commander_timers', row, 'created_at'),
         firedAt: row.fired_at ? String(row.fired_at) : undefined,
         claimToken: row.claim_token as string | undefined,
       }));

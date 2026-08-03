@@ -1,15 +1,15 @@
 /**
  * ComplianceAuditReport — Third-Party Security Audit Preparation.
  *
- * Produces enterprise-ready audit documentation by:
+ * Produces audit documentation for enterprise review by:
  *   1. Mapping Commander's security controls to ISO 42001 and NIST AI RMF
  *   2. Aggregating security posture scoring across all defense dimensions
  *   3. Tracking historical scores with trend analysis
  *   4. Generating auditor-ready markdown/JSON reports
  *
- * This is the "last mile" of enterprise trust — the document that lets
- * a CISO or external auditor verify Commander's security posture in
- * 15 minutes without reading code.
+ * This is a self-assessed control-coverage report. It helps a CISO or
+ * external auditor review Commander's posture, but does not establish
+ * certification or replace an independent audit.
  *
  * Scoring dimensions (weighted):
  *   - Input Security (25%): Content scanning, prompt injection defense
@@ -156,7 +156,10 @@ export interface PostureSnapshot {
 
 /** ISO 42001 compliance summary */
 export interface IsoComplianceSummary {
-  /** Whether all required clauses are addressed */
+  /**
+   * Reserved for externally certified status. Internal clause coverage is a
+   * self-assessment and must never set this flag by itself.
+   */
   fullyCompliant: boolean;
   /** Per-clause coverage */
   clauseCoverage: Map<
@@ -174,7 +177,7 @@ export interface IsoComplianceSummary {
     severity: 'critical' | 'high' | 'medium' | 'low';
     recommendation: string;
   }>;
-  /** Overall compliance percentage 0-100 */
+  /** Internal control-coverage percentage 0-100; not certification */
   compliancePercentage: number;
 }
 
@@ -611,9 +614,9 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   },
   {
     id: 'CTL-020',
-    name: 'EU AI Act Compliance Reporter',
+    name: 'EU AI Act Reporting Scaffold',
     description:
-      'Automated Article 12/13/14 compliance reports with HMAC signing. 7 high-risk categories with mitigation documentation.',
+      'Automated Article 12/13/14 control-coverage summaries with HMAC signing. 7 high-risk categories with mitigation documentation; not certification.',
     implementedBy: ['EuAiActComplianceReporter'],
     isoClauses: ['7.5', '9.2', '9.3'],
     nistSubcategories: ['GOVERN-1.1', 'GOVERN-5.1'],
@@ -830,7 +833,10 @@ export class ComplianceAuditManager {
     const compliancePercentage = Math.round((coveredCount / ALL_ISO_CLAUSES.length) * 100);
 
     return {
-      fullyCompliant: gaps.length === 0,
+      // Clause coverage is an internal mapping, not an external audit or
+      // certification. Keep the certification-shaped flag false until an
+      // independent evidence source is explicitly attached.
+      fullyCompliant: false,
       clauseCoverage,
       gaps,
       compliancePercentage,
@@ -1249,9 +1255,11 @@ export class ComplianceAuditManager {
     // ISO 42001 Compliance
     lines.push('## ISO 42001:2023 Compliance Mapping');
     lines.push('');
-    lines.push(`**Compliance:** ${report.isoCompliance.compliancePercentage}%`);
     lines.push(
-      `**Status:** ${report.isoCompliance.fullyCompliant ? '✅ Fully Compliant' : '⚠️ Gaps Identified'}`,
+      `**Control coverage (self-assessment):** ${report.isoCompliance.compliancePercentage}%`,
+    );
+    lines.push(
+      '**Status:** ⚠️ Reporting scaffold; external audit or certification is not established',
     );
     lines.push('');
 

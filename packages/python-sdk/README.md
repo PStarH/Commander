@@ -165,7 +165,7 @@ asyncio.run(main())
 
 | Method                                       | Description                            |
 | -------------------------------------------- | -------------------------------------- |
-| `client.get_security_posture()`              | Latest compliance report               |
+| `client.get_security_posture()`              | Latest self-assessed posture report    |
 | `client.get_security_posture_history(...)`   | Snapshot history                       |
 | `client.get_security_posture_snapshot(id)`   | Specific snapshot                      |
 

@@ -96,7 +96,7 @@ export { AgentLineage, getAgentLineage, resetAgentLineage } from './agentLineage
 
 export type { LineageNode, LineageEventType, LineageSummary, LineageQuery } from './agentLineage';
 
-// SupplyChainScanner — enterprise-grade skill/tool pre-load security scanning
+// SupplyChainScanner — skill/tool pre-load security scanning
 export {
   SupplyChainScanner,
   getSupplyChainScanner,
@@ -190,7 +190,7 @@ export type {
   AgentSocConfig,
 } from './agentSoc';
 
-// EuAiActCompliance — EU AI Act Article 12/13/14 automated compliance reporting
+// EuAiActCompliance — EU AI Act Article 12/13/14 self-assessment reporting
 export {
   EuAiActComplianceReporter,
   getEuAiActComplianceReporter,
@@ -223,7 +223,7 @@ export type {
   StandbyStatus,
 } from './agentStandbyManager';
 
-// RedTeamBaseline — regression detection for continuous red team CI/CD
+// RedTeamBaseline — regression detection for configured red-team CI/CD
 export {
   RedTeamBaselineManager,
   getRedTeamBaseline,

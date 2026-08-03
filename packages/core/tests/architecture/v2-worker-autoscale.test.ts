@@ -281,9 +281,13 @@ describe('V2 Worker Auto-Scaling — Simulation Tests', () => {
         `1-worker throughput (${soloThroughput.toFixed(1)} steps/s)`,
     );
 
-    // No step should be executed twice
+    // No in-memory step claim should be recorded twice
     const executedIds = executor5.executions.map((s) => s.id);
-    assert.equal(new Set(executedIds).size, executedIds.length, 'No duplicate executions');
+    assert.equal(
+      new Set(executedIds).size,
+      executedIds.length,
+      'No duplicate in-memory step claims',
+    );
   });
 
   // ── b) Scale down: 10→2 workers, queue still drains ──
@@ -324,12 +328,12 @@ describe('V2 Worker Auto-Scaling — Simulation Tests', () => {
       `All ${totalSteps} steps should be completed (phase1=${phase1Total}, phase2=${phase2Total})`,
     );
 
-    // No duplicate executions
+    // No duplicate in-memory step claims
     const executedIds = executor2.executions.map((s) => s.id);
     assert.equal(
       new Set(executedIds).size,
       executedIds.length,
-      'No duplicate executions in phase 2',
+      'No duplicate in-memory step claims in phase 2',
     );
 
     // No steps should remain
@@ -444,9 +448,13 @@ describe('V2 Worker Auto-Scaling — Simulation Tests', () => {
     );
     assert.equal(result.failed, 0, 'No failures expected during recovery');
 
-    // Verify no duplicate executions
+    // Verify no duplicate in-memory step claims
     const executedIds = executor.executions.map((s) => s.id);
-    assert.equal(new Set(executedIds).size, executedIds.length, 'No duplicate executions');
+    assert.equal(
+      new Set(executedIds).size,
+      executedIds.length,
+      'No duplicate in-memory step claims',
+    );
 
     // Verify the orphaned steps were reclaimed and completed
     for (const orphanedId of orphanedStepIds) {

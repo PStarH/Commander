@@ -855,7 +855,7 @@ class SecurityPostureHistory(CommanderModel):
 
 
 class SecurityPostureReport(CommanderModel):
-    """Full compliance report from the latest posture snapshot."""
+    """Self-assessed control-coverage report from the latest posture snapshot."""
 
     metadata: dict[str, Any] = Field(default_factory=dict)
     posture: dict[str, Any] = Field(default_factory=dict)
@@ -1159,6 +1159,61 @@ class ActionApprovalInput(CommanderModel):
     action_digest: str = Field(..., alias="actionDigest")
     simulation_id: str = Field(..., alias="simulationId")
     policy_snapshot_id: str = Field(..., alias="policySnapshotId")
+
+
+class ActionCompensationInput(CommanderModel):
+    """Request a governed compensation for a completed forward effect."""
+
+    original_effect_id: str = Field(..., alias="originalEffectId")
+    adapter_version: str = Field(..., alias="adapterVersion")
+    compensation_effect_type: str = Field(..., alias="compensationEffectType")
+    compensation_patch: dict[str, Any] = Field(alias="compensationPatch")
+    forward_receipt_hash: str = Field(..., alias="forwardReceiptHash")
+
+
+class ActionCompensationApprovalInput(CommanderModel):
+    """Approval binding for a governed compensation authorization."""
+
+    action_digest: str = Field(..., alias="actionDigest")
+    policy_snapshot_id: str = Field(..., alias="policySnapshotId")
+
+
+class ActionCompensationAuthorization(CommanderModel):
+    """Persisted compensation authorization returned by the gateway."""
+
+    id: str
+    tenant_id: str = Field(alias="tenantId")
+    original_run_id: str = Field(alias="originalRunId")
+    original_effect_id: str = Field(alias="originalEffectId")
+    compensation_effect_type: str = Field(alias="compensationEffectType")
+    adapter_version: str = Field(alias="adapterVersion")
+    compensation_patch: dict[str, Any] = Field(alias="compensationPatch")
+    forward_receipt_hash: str = Field(alias="forwardReceiptHash")
+    policy_decision_id: str = Field(alias="policyDecisionId")
+    policy_snapshot_id: str = Field(alias="policySnapshotId")
+    decision: Literal["allow", "require_approval", "deny"]
+    action_digest: str = Field(alias="actionDigest")
+    expires_at: str = Field(alias="expiresAt")
+    approval_interaction_id: str | None = Field(None, alias="approvalInteractionId")
+
+
+class ActionCompensationResult(CommanderModel):
+    """Gateway compensation request result."""
+
+    authorization: ActionCompensationAuthorization | None = None
+    replayed: bool = False
+    state: Literal["AWAITING_APPROVAL"] | None = None
+    accepted: bool | None = None
+    request: dict[str, Any] | None = None
+
+
+class ActionCompensationApprovalResult(CommanderModel):
+    """Gateway compensation approval result."""
+
+    interaction: dict[str, Any]
+    accepted: bool
+    request: dict[str, Any]
+    replayed: bool = False
 
 
 class ActionEvidenceServerVerification(CommanderModel):

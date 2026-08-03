@@ -59,6 +59,122 @@ function makeTokens() {
 }
 
 describe('EffectBroker', () => {
+  it('builds terminal evidence from one effect-scoped kernel context', async () => {
+    let contextReads = 0;
+    const record = await buildTerminalEvidenceRecordFromKernel({
+      kernel: {
+        getTerminalEvidenceContext: async (effectId, runId, tenantId, claimToken) => {
+          contextReads += 1;
+          assert.deepEqual(
+            { effectId, runId, tenantId, claimToken },
+            {
+              effectId: 'effect-context',
+              runId: 'run-context',
+              tenantId: 'tenant',
+              claimToken: 'claim-context',
+            },
+          );
+          return {
+            effect: {
+              id: 'effect-context',
+              runId: 'run-context',
+              stepId: 'step-context',
+              tenantId: 'tenant',
+              type: 'crm.write',
+              state: 'COMPLETION_UNKNOWN',
+              policyDecisionId: 'decision-context',
+              policySnapshotId: 'policy-context',
+              actionDigest: 'e'.repeat(64),
+              requestHash: 'request-context',
+              createdAt: '2026-07-29T00:00:00.000Z',
+            },
+            events: [
+              {
+                type: 'effect.completion_unknown',
+                tenantId: 'tenant',
+                runId: 'run-context',
+                stepId: 'step-context',
+                aggregateId: 'effect-context',
+                occurredAt: '2026-07-29T00:00:01.000Z',
+                payload: { reason: 'REMOTE_TIMEOUT' },
+              },
+            ],
+          };
+        },
+      },
+      signer: {
+        sign: async () => ({
+          algorithm: 'Ed25519',
+          keyId: 'cell-1',
+          signedAt: '2026-07-29T00:00:02.000Z',
+          value: 'signature',
+        }),
+        verify: () => true,
+      },
+      tenantId: 'tenant',
+      runId: 'run-context',
+      effectId: 'effect-context',
+      projectedState: 'COMPLETED',
+      response: { remoteId: 'remote-context' },
+      terminalEvent: {
+        type: 'effect.reconciled_completed',
+        severity: 'low',
+        details: { disposition: 'COMPLETED' },
+      },
+      recordedAt: '2026-07-29T00:00:03.000Z',
+      retentionUntil: '2027-07-29T00:00:03.000Z',
+      claimToken: 'claim-context',
+    });
+
+    assert.equal(contextReads, 1);
+    assert.equal(record.bundleId, 'evidence_effect-context');
+    assert.deepEqual(
+      record.body.auditEvents.map((event) => event.type),
+      ['effect.completion_unknown', 'effect.reconciled_completed'],
+    );
+  });
+
+  it('does not fall back to broad lifecycle reads when the context authority denies', async () => {
+    let broadReads = 0;
+    await assert.rejects(
+      buildTerminalEvidenceRecordFromKernel({
+        kernel: {
+          getTerminalEvidenceContext: async () => {
+            throw new Error('ADAPTER_OPS_EVIDENCE_CONTEXT_DENIED');
+          },
+          listEffectsForRun: async () => {
+            broadReads += 1;
+            return [];
+          },
+          listEvents: async () => {
+            broadReads += 1;
+            return [];
+          },
+        },
+        signer: {
+          sign: async () => ({
+            algorithm: 'Ed25519',
+            keyId: 'cell-1',
+            signedAt: '2026-07-29T00:00:02.000Z',
+            value: 'signature',
+          }),
+          verify: () => true,
+        },
+        tenantId: 'tenant',
+        runId: 'run-context',
+        effectId: 'effect-context',
+        projectedState: 'COMPLETED',
+        response: {},
+        terminalEvent: { type: 'effect.completed', severity: 'low', details: {} },
+        recordedAt: '2026-07-29T00:00:03.000Z',
+        retentionUntil: '2027-07-29T00:00:03.000Z',
+        claimToken: 'wrong-claim',
+      }),
+      /ADAPTER_OPS_EVIDENCE_CONTEXT_DENIED/,
+    );
+    assert.equal(broadReads, 0);
+  });
+
   it('projects a reconciliation receipt from kernel lifecycle truth', async () => {
     const record = await buildTerminalEvidenceRecordFromKernel({
       kernel: {
@@ -137,7 +253,10 @@ describe('EffectBroker', () => {
     assert.equal(record.actionDigest, 'c'.repeat(64));
     assert.equal(record.body.terminalDisposition, 'FAILED');
     assert.equal(record.body.effects[0]?.state, 'CONFIRMED_NOT_APPLIED');
-    assert.deepEqual(record.body.effects.map((effect) => effect.effectId), ['effect-reconciled']);
+    assert.deepEqual(
+      record.body.effects.map((effect) => effect.effectId),
+      ['effect-reconciled'],
+    );
     assert.deepEqual(
       record.body.auditEvents.map((event) => event.type),
       ['effect.completion_unknown', 'effect.confirmed_not_applied'],
@@ -167,7 +286,14 @@ describe('EffectBroker', () => {
           normalCompletionCalled = true;
           return {};
         },
-        completeEffectWithEvidence: async (_effectId, _tenantId, _lease, _response, _actor, record) => {
+        completeEffectWithEvidence: async (
+          _effectId,
+          _tenantId,
+          _lease,
+          _response,
+          _actor,
+          record,
+        ) => {
           atomicRecord = record;
           return {};
         },
@@ -238,9 +364,10 @@ describe('EffectBroker', () => {
     assert.equal(normalCompletionCalled, false);
     assert.equal(atomicRecord?.bundleId, 'evidence_effect-atomic-evidence');
     assert.equal(atomicRecord?.anchoredAt !== null, true);
-    assert.deepEqual(atomicRecord?.body.effects.map((effect) => effect.effectId), [
-      'effect-atomic-evidence',
-    ]);
+    assert.deepEqual(
+      atomicRecord?.body.effects.map((effect) => effect.effectId),
+      ['effect-atomic-evidence'],
+    );
     assert.equal(atomicRecord?.body.effects[0]?.createdAt, '2026-07-29T00:00:02.000Z');
     assert.equal(atomicRecord?.body.auditEvents[0]?.type, 'effect.admitted');
   });
@@ -323,6 +450,108 @@ describe('EffectBroker', () => {
     );
     assert.equal(failedEvidence?.body.terminalDisposition, 'FAILED');
     assert.equal(failedEvidence?.body.effects[0]?.state, 'FAILED');
+  });
+
+  it('uses the claim-bound compensation terminal authority without generic write fallback', async () => {
+    const tokens = makeTokens();
+    const request = { target: 'ticket://INC-1' };
+    const compensationGrant: CapabilityGrant = {
+      ...grant,
+      effectTypes: ['compensate.crm.write'],
+      requestHash: canonicalRequestHash(request),
+      actionDigest: 'c'.repeat(64),
+      policyDecisionId: 'd1',
+      authorizationId: 'authorization-1',
+      requestId: 'request-1',
+      adapterVersion: '1.0.0',
+      decisionEffect: 'allow',
+      approvalBinding: null,
+    };
+    let genericWrites = 0;
+    let terminalInput: Record<string, unknown> | undefined;
+    const broker = new EffectBroker(
+      tokens,
+      {
+        evaluate: async () => ({
+          effect: 'allow',
+          decisionId: 'd1',
+          reason: 'ok',
+          policySnapshotId: 'p1',
+        }),
+      },
+      {
+        compensationTerminalEvidenceRequired: true,
+        admitEffect: async () => ({
+          admitted: true,
+          effect: { id: 'effect-compensation-terminal', state: 'ADMITTED' },
+        }),
+        completeEffect: async () => {
+          genericWrites += 1;
+          return {};
+        },
+        completeCompensationEffectWithEvidence: async (input) => {
+          terminalInput = input;
+          return {};
+        },
+        failCompensationEffectWithEvidence: async () => ({}),
+        getTerminalEvidenceContext: async () => ({
+          effect: {
+            id: 'effect-compensation-terminal',
+            runId: 'run',
+            stepId: 'step',
+            tenantId: 'tenant',
+            type: 'compensate.crm.write',
+            state: 'ADMITTED',
+            policyDecisionId: 'd1',
+            policySnapshotId: 'p1',
+            actionDigest: 'c'.repeat(64),
+            requestHash: canonicalRequestHash(request),
+            createdAt: '2026-08-02T00:00:00.000Z',
+          },
+          events: [],
+        }),
+      },
+      { execute: async () => ({ compensated: true }) },
+      { append: async () => {} },
+      {
+        evidenceSigner: {
+          sign: async () => ({
+            algorithm: 'Ed25519',
+            keyId: 'cell-1',
+            signedAt: '2026-08-02T00:00:01.000Z',
+            value: 'sig',
+          }),
+          verify: () => true,
+        },
+        requireEvidencePersistence: true,
+      },
+    );
+    const claim = {
+      requestId: 'request-1',
+      requestClaimToken: 'claim-1',
+      outboxMessageId: 'outbox-1',
+      outboxClaimToken: 'claim-1',
+    };
+    const admitted = await broker.admit({
+      effectId: 'effect-compensation-terminal',
+      token: tokens.issue(compensationGrant),
+      type: 'compensate.crm.write',
+      request,
+      idempotencyKey: 'compensation-terminal',
+      lease: { workerId: 'w', workerGeneration: 1, token: 'claim-1', fencingEpoch: 7 },
+      actor: 'w',
+      compensationClaim: claim,
+    });
+    assert.equal(admitted.admitted, true);
+    await broker.executeAdmitted({ effectId: 'effect-compensation-terminal' });
+
+    assert.equal(genericWrites, 0);
+    assert.deepEqual(terminalInput?.claim, claim);
+    assert.equal(terminalInput?.effectId, 'effect-compensation-terminal');
+    assert.equal(
+      (terminalInput?.evidence as EvidenceRecord | undefined)?.bundleId,
+      'evidence_effect-compensation-terminal',
+    );
   });
 
   it('parks without kernel completion when mandatory evidence persistence fails', async () => {

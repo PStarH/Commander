@@ -122,7 +122,7 @@ describe('compensationPublisherRace (postgres)', () => {
               },
             },
             async () => 'race-token',
-            { workerId: 'race-consumer', limit: 5, topic: KERNEL_COMPENSATION_TOPIC },
+            { workerId: 'race-consumer', workerGeneration: 1, claimSecret: 'race-secret', registry: { resolve: () => null }, limit: 5, topic: KERNEL_COMPENSATION_TOPIC },
           ),
         ]);
         assert.ok(pub.published + pub.duplicates + pub.retried + pub.failed >= 0);

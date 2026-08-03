@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import type { PoolClient } from 'pg';
 import {
   canonicalBootstrapJson,
   canonicalBootstrapSha256,
@@ -74,7 +75,7 @@ const bootstrapIdentities = {
 };
 
 function inventory(
-  identities: typeof bootstrapIdentities | null = bootstrapIdentities,
+  identities: (Omit<typeof bootstrapIdentities, 'envelope'> & { envelope: 'E1' | 'E2' }) | null = bootstrapIdentities,
   ledger: Array<{ id: string; checksum: string }> | null = null,
   productRows: boolean[] = [],
 ): PrebootstrapInventoryV1 {
@@ -302,7 +303,7 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
 
   it('loads bootstrap identity with the PostgreSQL session_user value expression', async () => {
     const client = new RecordingClient();
-    const context = await loadTask1BootstrapContext(client);
+    const context = await loadTask1BootstrapContext(client as unknown as PoolClient);
     assert.equal(context.sessionUser, 'postgres');
     assert.match(client.statements[0]!, /authority\.rolname = session_user/i);
     assert.doesNotMatch(client.statements[0]!, /pg_catalog\.session_user/i);

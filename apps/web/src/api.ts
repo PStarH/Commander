@@ -573,7 +573,7 @@ export async function fetchLineage(runId: string): Promise<LineageSummaryRespons
 }
 
 // ============================================================================
-// Security Posture — real compliance report from GET /api/security/posture
+// Security Posture — self-assessed posture report from GET /api/security/posture
 // ============================================================================
 
 export async function fetchSecurityPosture(): Promise<ComplianceAuditReport> {

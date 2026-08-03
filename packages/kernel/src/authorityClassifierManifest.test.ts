@@ -122,12 +122,27 @@ const comparisonFixture = {
   ],
 } as const;
 
+type MutableManifest = {
+  version: string;
+  rows: Array<{
+    signature: string;
+    category: string;
+    owner: string;
+    executableRoles: string[];
+    allowedSessionUsers: string[];
+    allowedRelations: string[];
+    appResolverRequired: boolean;
+    triggerBinding: { relation: string; events: string[]; columns: string[] } | null;
+  }>;
+  policies: Array<{ relation: string; role: string; name: string; command: string }>;
+};
+
 test('rejects malformed or wildcard literal rows', () => {
-  const duplicate = structuredClone(comparisonFixture);
+  const duplicate = structuredClone(comparisonFixture) as unknown as MutableManifest;
   duplicate.rows.push(structuredClone(duplicate.rows[0]));
   assert.throws(() => verifyAuthorityClassifierManifest(duplicate), /duplicate signatures/);
 
-  const wildcard = structuredClone(comparisonFixture);
+  const wildcard = structuredClone(comparisonFixture) as unknown as MutableManifest;
   wildcard.rows[0].allowedRelations[0] = 'public.*';
   assert.throws(() => verifyAuthorityClassifierManifest(wildcard), /must be an exact string list/);
 

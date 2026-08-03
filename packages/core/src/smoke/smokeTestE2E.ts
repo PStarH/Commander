@@ -1,5 +1,5 @@
 /**
- * smokeTestE2E — End-to-end smoke test for the 4 production-grade sub-projects.
+ * smokeTestE2E — End-to-end smoke test for four security sub-projects.
  *
  * Exercises:
  *   1. Gap Discovery Loop    — record → list → close → metrics
