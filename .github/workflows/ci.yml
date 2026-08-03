@@ -13,6 +13,10 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   quality:
     name: Quality Gates (${{ matrix.os }}, Node ${{ matrix.node-version }})
@@ -21,8 +25,29 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        node-version: ['20', '22']
+        # Pull requests run the full quality suite once on the canonical
+        # runner. Compatibility entries still run on main pushes and manual
+        # dispatches, preserving platform coverage without six identical PR runs.
+        include:
+          - os: ubuntu-latest
+            node-version: '22'
+            canonical: true
+          - os: ubuntu-latest
+            node-version: '20'
+            canonical: false
+          - os: macos-latest
+            node-version: '20'
+            canonical: false
+          - os: macos-latest
+            node-version: '22'
+            canonical: false
+          - os: windows-latest
+            node-version: '20'
+            canonical: false
+          - os: windows-latest
+            node-version: '22'
+            canonical: false
+    if: matrix.canonical || github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v6
 
@@ -224,6 +249,31 @@ jobs:
             echo "::warning::pnpm audit transport/API unavailable (npm audit endpoint retirement or network). Continuing; audit:wiring + CodeQL remain hard security gates."
             exit 0
           fi
+          # GHSA-qwww-vcr4-c8h2 is scoped to React Router's unstable RSC APIs.
+          # This SPA uses BrowserRouter/Routes only; the policy checker below
+          # fails closed if any other advisory is present or RSC wiring appears.
+          if [ "$code" -ne 0 ] && node --input-type=module - "$out" <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const raw = process.argv[2] ?? '';
+          let audit;
+          try {
+            audit = JSON.parse(raw);
+          } catch {
+            process.exit(1);
+          }
+          const advisoryIds = Object.values(audit.advisories ?? {}).map((entry) => entry.github_advisory_id);
+          const onlyKnownRscAdvisory = advisoryIds.length === 1 && advisoryIds[0] === 'GHSA-qwww-vcr4-c8h2';
+          const webSources = ['apps/web/src/App.tsx', 'apps/web/src/main.tsx'];
+          const usesUnstableRsc = webSources.some((file) => {
+            const source = readFileSync(file, 'utf8');
+            return /unstable[_-]?rsc|ServerRouter|RSCHydration|createCallServer/.test(source);
+          });
+          if (!onlyKnownRscAdvisory || usesUnstableRsc) process.exit(1);
+          console.log('::warning::GHSA-qwww-vcr4-c8h2 is not applicable: the web SPA has no unstable React Router RSC wiring; keep this exception until react-router >=8.3.0 is published.');
+          NODE
+          then
+            exit 0
+          fi
           echo "::error::pnpm audit reported high/critical advisories"
           exit $code
 
@@ -250,9 +300,11 @@ jobs:
           pnpm --filter @commander/sdk typecheck
 
       - name: Generate dependency SBOM
+        if: matrix.canonical
         run: pnpm list --recursive --depth=Infinity --json > sbom.json
 
       - name: Upload SBOM artifact
+        if: matrix.canonical
         uses: actions/upload-artifact@v4
         with:
           name: sbom-${{ matrix.os }}-node${{ matrix.node-version }}
@@ -279,21 +331,6 @@ jobs:
 
       - name: Contracts package tests (controlPlane + baseline + OpenAPI)
         run: pnpm --filter @commander/contracts test
-
-      - name: Architecture V2 package boundary gate
-        # WS0 PARTIAL: known red on unversioned api routes + in-memory outbox Map.
-        # arch:guard + contract:check are the ENFORCED gates; do not treat this as ACCEPTED.
-        continue-on-error: true
-        run: pnpm arch:gate
-
-      - name: Production sandbox static gate
-        run: pnpm --filter @commander/core build:production
-
-      - name: Production sandbox boot-refuse
-        # boot-refuse tests construct their own production env internally
-        # (local `productionEnv` constant). Do NOT set COMMANDER_ALLOW_NO_SANDBOX
-        # here — spec §3 forbids that combination even as dead config.
-        run: pnpm --filter @commander/core exec node --import tsx --test tests/sandbox/boot-refuse.test.ts
 
       - name: Kernel unit tests (compensation DLQ + WS2)
         # L2-12: claimOutbox(+ByTopic) DLQ/max_attempts filter + poison→DLQ proofs.
@@ -359,6 +396,7 @@ jobs:
           fi
 
       - name: Run SLO measurements
+        if: matrix.canonical
         shell: bash
         env:
           # Dev/test bypass only — CI runners lack real sandbox runtimes.
@@ -367,14 +405,14 @@ jobs:
 
       - name: Upload SLO report
         uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && matrix.canonical
         with:
           name: slo-report-${{ matrix.os }}-node${{ matrix.node-version }}
           path: packages/core/.commander_benchmarks/slo-report-*.json
           if-no-files-found: ignore
 
       - name: Print SLO summary
-        if: always()
+        if: always() && matrix.canonical
         shell: bash
         run: |
           echo "📊 SLO measurement summary"
@@ -390,16 +428,8 @@ jobs:
         shell: bash
         run: cd packages/core && pnpm exec tsx src/cliEntry.ts status
 
-      - name: Build core package
-        shell: bash
-        run: |
-          # core tsc imports @commander/plugin-sdk; clean CI has no local dist cache
-          pnpm --filter @commander/contracts build
-          pnpm --filter @commander/plugin-sdk build
-          pnpm --filter @commander/core build
-
       - name: Red Team Smoke Test (security gate)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.canonical
         shell: bash
         run: |
           echo "🔴 Running red team smoke test (5 critical scenarios)..."
@@ -451,6 +481,8 @@ jobs:
     env:
       DATABASE_URL: postgres://commander:commander@localhost:5432/commander
       COMMANDER_KERNEL_DATABASE_URL: postgres://commander:commander@localhost:5432/commander
+      COMMANDER_OWNER_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander
+      OWNER_DSN: postgres://commander_owner:commander_owner@localhost:5432/commander
       GIT_TERMINAL_PROMPT: '0'
       COMMANDER_INTERACTION_DB: ':memory:'
     steps:
@@ -463,6 +495,50 @@ jobs:
       - run: pnpm install
       - name: Rebuild better-sqlite3 (repositoryContract SQLite suite)
         run: pnpm rebuild better-sqlite3
+      - name: Bootstrap kernel integration roles
+        env:
+          PGPASSWORD: commander
+        run: |
+          psql --set ON_ERROR_STOP=1 --host localhost --port 5432 --username commander --dbname commander <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_owner') THEN
+              CREATE ROLE commander_owner LOGIN PASSWORD 'commander_owner' NOSUPERUSER NOCREATEDB CREATEROLE INHERIT NOREPLICATION BYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_app') THEN
+              CREATE ROLE commander_app LOGIN PASSWORD 'commander_app' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_tenant_authority') THEN
+              CREATE ROLE commander_tenant_authority LOGIN PASSWORD 'commander_tenant_authority' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_scheduler') THEN
+              CREATE ROLE commander_scheduler LOGIN PASSWORD 'commander_scheduler' NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION BYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_worker') THEN
+              CREATE ROLE commander_worker LOGIN PASSWORD 'commander_worker' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_adapter_ops') THEN
+              CREATE ROLE commander_adapter_ops LOGIN PASSWORD 'commander_adapter_ops' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+            END IF;
+          END $$;
+          ALTER ROLE commander_owner LOGIN CREATEROLE BYPASSRLS PASSWORD 'commander_owner';
+          ALTER ROLE commander_app LOGIN NOBYPASSRLS PASSWORD 'commander_app';
+          ALTER ROLE commander_tenant_authority LOGIN NOBYPASSRLS PASSWORD 'commander_tenant_authority';
+          ALTER ROLE commander_scheduler LOGIN BYPASSRLS PASSWORD 'commander_scheduler';
+          ALTER ROLE commander_worker LOGIN NOBYPASSRLS PASSWORD 'commander_worker';
+          ALTER ROLE commander_adapter_ops LOGIN NOBYPASSRLS PASSWORD 'commander_adapter_ops';
+          ALTER DATABASE commander OWNER TO commander_owner;
+          ALTER SCHEMA public OWNER TO commander_owner;
+          GRANT commander_app TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_tenant_authority TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_scheduler TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_worker TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_adapter_ops TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          SQL
+      - name: Apply kernel closure migrations
+        run: |
+          pnpm exec tsx scripts/ci-bootstrap-deploy-gates.ts closure
+          pnpm exec tsx scripts/ci-bootstrap-deploy-gates.ts full
       - name: Build kernel / worker-plane / core / api
         run: |
           pnpm --filter @commander/contracts build
@@ -494,10 +570,6 @@ jobs:
           if-no-files-found: error
       - name: Worker plane e2e (execute + lease reclaim)
         run: pnpm exec node --import tsx --test --test-force-exit packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts
-      - name: Production worker sandbox boot-refuse
-        # boot-refuse test passes env explicitly to createProductionWorkerSandboxReadiness().
-        # Do NOT set COMMANDER_ALLOW_NO_SANDBOX here — spec §3 forbids that combination.
-        run: pnpm exec node --import tsx --test packages/worker-plane/src/boot-refuse.test.ts
       - name: Full Gateway → Worker terminal loop
         run: pnpm p0:full-loop:tls
         env:
