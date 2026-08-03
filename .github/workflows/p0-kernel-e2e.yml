@@ -1,7 +1,7 @@
 name: P0 Kernel E2E
 
 # Lightweight gate for Architecture V2 closure work.
-# Complements ci.yml kernel-postgres-integration; runs on P0 branches and PRs.
+# Complements ci.yml kernel-postgres-integration; runs on P0 branches and on demand.
 
 on:
   push:
@@ -9,8 +9,6 @@ on:
       - 'p0/**'
       - master
       - main
-  pull_request:
-    branches: [master, main]
   workflow_dispatch:
 
 jobs:

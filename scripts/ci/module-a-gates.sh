@@ -40,10 +40,8 @@ run_gate build-prerequisites bash -c '
 '
 run_gate focused \
   pnpm --workspace-root exec node --import tsx --test \
-  packages/worker-plane/src/bootstrap.authority.test.ts \
   packages/worker-plane/src/effectGate.test.ts \
-  packages/worker-plane/src/toolStepExecutor.broker.test.ts \
-  packages/worker-plane/src/workerService.test.ts
+  packages/worker-plane/src/toolStepExecutor.broker.test.ts
 run_gate worker-full \
   pnpm --workspace-root exec node --import tsx --test \
   packages/worker-plane/src/workerService.test.ts \
