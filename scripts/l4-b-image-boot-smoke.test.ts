@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
+import { resolve } from 'node:path';
 import {
   artifactPassedSemantics,
   assertInImageProbePayload,
@@ -17,7 +19,8 @@ describe('l4-b-image-boot-smoke', () => {
   };
 
   it('parses probe stdout JSON line', () => {
-    const stdout = 'noise\n{"snapshotSchemaCount":3,"resourcesCount":2,"schemasDirEntryCount":1,"distIndexExists":true}\n';
+    const stdout =
+      'noise\n{"snapshotSchemaCount":3,"resourcesCount":2,"schemasDirEntryCount":1,"distIndexExists":true}\n';
     const payload = parseInImageProbeStdout(stdout);
     assert.equal(payload.snapshotSchemaCount, 3);
   });
@@ -53,5 +56,35 @@ describe('l4-b-image-boot-smoke', () => {
 
     const bad = { ...artifact, usedBindMount: true as false };
     assert.equal(artifactPassedSemantics(bad), false);
+  });
+
+  it('includes postgres-runtime in the worker image dependency closure', () => {
+    const dockerfile = readFileSync(resolve('packages/worker-plane/Dockerfile'), 'utf8');
+
+    assert.equal(
+      dockerfile.match(
+        /COPY packages\/postgres-runtime\/package\.json \.\/packages\/postgres-runtime\/package\.json/g,
+      )?.length,
+      2,
+      'postgres-runtime manifest must exist in dependency and production stages',
+    );
+    assert.match(dockerfile, /--filter @commander\/postgres-runtime/);
+    assert.equal(
+      dockerfile.match(
+        /COPY --from=deps \/app\/packages\/postgres-runtime\/node_modules \.\/packages\/postgres-runtime\/node_modules/g,
+      )?.length,
+      2,
+      'postgres-runtime dependencies must exist in build and production stages',
+    );
+    assert.match(dockerfile, /COPY packages\/postgres-runtime \.\/packages\/postgres-runtime/);
+    assert.match(
+      dockerfile,
+      /RUN cd packages\/postgres-runtime[\s\S]*RUN cd packages\/core/,
+      'postgres-runtime declarations must be built before core',
+    );
+    assert.match(
+      dockerfile,
+      /COPY --from=build \/app\/packages\/postgres-runtime\/dist \.\/packages\/postgres-runtime\/dist/,
+    );
   });
 });
