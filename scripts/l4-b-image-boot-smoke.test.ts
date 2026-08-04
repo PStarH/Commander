@@ -58,33 +58,52 @@ describe('l4-b-image-boot-smoke', () => {
     assert.equal(artifactPassedSemantics(bad), false);
   });
 
-  it('includes postgres-runtime in the worker image dependency closure', () => {
-    const dockerfile = readFileSync(resolve('packages/worker-plane/Dockerfile'), 'utf8');
+  it('includes postgres-runtime in every cell image dependency closure', () => {
+    const images = [
+      ['apps/api/Dockerfile', 'core'],
+      ['packages/worker-plane/Dockerfile', 'core'],
+      ['packages/kernel/Dockerfile.ops', 'kernel'],
+      ['packages/adapter-ops/Dockerfile.ops', 'kernel'],
+    ] as const;
 
-    assert.equal(
-      dockerfile.match(
-        /COPY packages\/postgres-runtime\/package\.json \.\/packages\/postgres-runtime\/package\.json/g,
-      )?.length,
-      2,
-      'postgres-runtime manifest must exist in dependency and production stages',
-    );
-    assert.match(dockerfile, /--filter @commander\/postgres-runtime/);
-    assert.equal(
-      dockerfile.match(
-        /COPY --from=deps \/app\/packages\/postgres-runtime\/node_modules \.\/packages\/postgres-runtime\/node_modules/g,
-      )?.length,
-      2,
-      'postgres-runtime dependencies must exist in build and production stages',
-    );
-    assert.match(dockerfile, /COPY packages\/postgres-runtime \.\/packages\/postgres-runtime/);
-    assert.match(
-      dockerfile,
-      /RUN cd packages\/postgres-runtime[\s\S]*RUN cd packages\/core/,
-      'postgres-runtime declarations must be built before core',
-    );
-    assert.match(
-      dockerfile,
-      /COPY --from=build \/app\/packages\/postgres-runtime\/dist \.\/packages\/postgres-runtime\/dist/,
-    );
+    for (const [dockerfilePath, dependentPackage] of images) {
+      const dockerfile = readFileSync(resolve(dockerfilePath), 'utf8');
+      const message = (requirement: string): string => `${dockerfilePath}: ${requirement}`;
+
+      assert.equal(
+        dockerfile.match(
+          /COPY packages\/postgres-runtime\/package\.json \.\/packages\/postgres-runtime\/package\.json/g,
+        )?.length,
+        2,
+        message('manifest must exist in dependency and production stages'),
+      );
+      assert.match(
+        dockerfile,
+        /--filter @commander\/postgres-runtime/,
+        message('install filter missing'),
+      );
+      assert.equal(
+        dockerfile.match(
+          /COPY --from=deps \/app\/packages\/postgres-runtime\/node_modules \.\/packages\/postgres-runtime\/node_modules/g,
+        )?.length,
+        2,
+        message('dependencies must exist in build and production stages'),
+      );
+      assert.match(
+        dockerfile,
+        /COPY packages\/postgres-runtime \.\/packages\/postgres-runtime/,
+        message('build source missing'),
+      );
+      assert.match(
+        dockerfile,
+        new RegExp(`RUN cd packages/postgres-runtime[\\s\\S]*RUN cd packages/${dependentPackage}`),
+        message(`postgres-runtime declarations must be built before ${dependentPackage}`),
+      );
+      assert.match(
+        dockerfile,
+        /COPY --from=build \/app\/packages\/postgres-runtime\/dist \.\/packages\/postgres-runtime\/dist/,
+        message('production dist missing'),
+      );
+    }
   });
 });
