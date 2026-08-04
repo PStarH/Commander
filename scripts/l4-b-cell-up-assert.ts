@@ -17,6 +17,7 @@ import {
   COMPOSE_CMD,
   ensureCellSandboxImage,
   generateCellCapabilityMaterials,
+  generateCellDatabaseTlsMaterials,
   generateCellEvidenceSigningMaterials,
 } from './l4-b-cell-compose.js';
 
@@ -81,6 +82,7 @@ export function buildCellUpAssertEnv(): Record<string, string> {
           COMMANDER_EVIDENCE_SIGNING_KEY_ID: process.env.COMMANDER_EVIDENCE_SIGNING_KEY_ID,
         }
       : generateCellEvidenceSigningMaterials();
+  const databaseTls = generateCellDatabaseTlsMaterials();
 
   return {
     POSTGRES_PASSWORD: postgresPassword,
@@ -94,6 +96,7 @@ export function buildCellUpAssertEnv(): Record<string, string> {
     COMMANDER_WORKER_ALLOWED_TENANTS: CELL_E2E_TENANT,
     ...capability,
     ...evidenceSigning,
+    ...databaseTls,
     COMMANDER_ENABLE_DEMO_TICKET: '1',
     COMMANDER_CELL_TENANT_ID: CELL_E2E_TENANT,
     COMMANDER_DEFAULT_TENANT_ID: CELL_E2E_TENANT,

@@ -33,8 +33,7 @@ const CELL_FIXTURE: ComposeConfig = {
     },
     'kernel-ops': {
       environment: {
-        DATABASE_URL:
-          'postgres://commander_scheduler:commander_scheduler@postgres:5432/commander',
+        DATABASE_URL: 'postgres://commander_scheduler:commander_scheduler@postgres:5432/commander',
       },
       profiles: ['cell'],
     },
@@ -47,7 +46,8 @@ const CELL_FIXTURE: ComposeConfig = {
     },
     'adapter-ops': {
       environment: {
-        DATABASE_URL: 'postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander',
+        DATABASE_URL:
+          'postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander',
         COMMANDER_WORKER_TENANTS: 'local',
         COMMANDER_ADAPTER_OPS_INSTANCE_ID: 'local',
         COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR: '/var/run/commander/adapter-ops',
@@ -82,8 +82,7 @@ const V2_FIXTURE: ComposeConfig = {
     },
     'kernel-ops': {
       environment: {
-        DATABASE_URL:
-          'postgres://commander_scheduler:commander_scheduler@postgres:5432/commander',
+        DATABASE_URL: 'postgres://commander_scheduler:commander_scheduler@postgres:5432/commander',
       },
       profiles: ['v2'],
     },
@@ -96,7 +95,8 @@ const V2_FIXTURE: ComposeConfig = {
     },
     'adapter-ops': {
       environment: {
-        DATABASE_URL: 'postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander',
+        DATABASE_URL:
+          'postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander',
         COMMANDER_WORKER_TENANTS: 'tenant-local',
         COMMANDER_ADAPTER_OPS_INSTANCE_ID: 'local',
         COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR: '/var/run/commander/adapter-ops',
@@ -136,13 +136,13 @@ const V2_BENCH_FIXTURE: ComposeConfig = {
     },
     'kernel-ops': {
       environment: {
-        DATABASE_URL:
-          'postgres://commander_scheduler:commander_scheduler@postgres:5432/commander',
+        DATABASE_URL: 'postgres://commander_scheduler:commander_scheduler@postgres:5432/commander',
       },
     },
     'adapter-ops': {
       environment: {
-        DATABASE_URL: 'postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander',
+        DATABASE_URL:
+          'postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander',
         COMMANDER_WORKER_TENANTS: 'tenant-0,tenant-1,tenant-2,tenant-3,tenant-4',
         COMMANDER_ADAPTER_OPS_INSTANCE_ID: 'bench',
         COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR: '/var/run/commander/adapter-ops',
@@ -386,11 +386,7 @@ describe('compose source files (static drift guard)', () => {
       ['docker-compose.v2.yml', v2],
     ] as const) {
       assert.match(text, /commander_worker/, `${name} must reference commander_worker DSN`);
-      assert.match(
-        text,
-        /COMMANDER_WORKER_TENANTS/,
-        `${name} must set COMMANDER_WORKER_TENANTS`,
-      );
+      assert.match(text, /COMMANDER_WORKER_TENANTS/, `${name} must set COMMANDER_WORKER_TENANTS`);
       assert.doesNotMatch(
         text,
         /COMMANDER_WORKER_TENANTS\s*[:=]\s*['"]?\*/,
@@ -431,5 +427,44 @@ describe('compose source files (static drift guard)', () => {
       /COMMANDER_ENABLE_DEMO_TICKET/,
       'cell migration must receive the explicit demo policy opt-in',
     );
+  });
+
+  it('cell compose enables verified PostgreSQL TLS for every database consumer', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const { resolve, dirname } = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+    const cell = await readFile(resolve(root, 'docker-compose.cell.yml'), 'utf8');
+
+    assert.match(cell, /^  cell-tls-materialize:/m);
+    assert.match(cell, /ssl=on/);
+    assert.match(cell, /ssl_ca_file=\/run\/commander\/postgres-tls\/ca\.crt/);
+    assert.match(cell, /ssl_cert_file=\/run\/commander\/postgres-tls\/tls\.crt/);
+    assert.match(cell, /ssl_key_file=\/run\/commander\/postgres-tls\/tls\.key/);
+
+    for (const service of ['kernel-migrate', 'api', 'worker', 'kernel-ops', 'adapter-ops']) {
+      const source = `${cell}\n  __cell_test_end__:\n`;
+      const block =
+        source.match(
+          new RegExp(`^  ${service}:\\n([\\s\\S]*?)(?=^  [a-z_][a-z0-9_-]*:)`, 'm'),
+        )?.[0] ?? '';
+      assert.ok(block, `cell compose must override ${service}`);
+      assert.match(block, /sslmode=verify-full/, `${service} must require verify-full`);
+      assert.match(
+        block,
+        /COMMANDER_DATABASE_TLS_CA_FILE=\/run\/commander\/database-tls\/ca\.crt/,
+        `${service} must receive the trusted CA path`,
+      );
+      assert.match(
+        block,
+        /COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256/,
+        `${service} must receive the server SPKI pin`,
+      );
+      assert.match(
+        block,
+        /database-ca-runtime:\/run\/commander\/database-tls:ro/,
+        `${service} must mount the trusted CA`,
+      );
+    }
   });
 });
