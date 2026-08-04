@@ -598,6 +598,9 @@ jobs:
       OWNER_DSN: postgres://commander_owner:commander_owner@localhost:5432/commander
     steps:
       - uses: actions/checkout@v6
+        with:
+          # test:deploy-gates verifies the immutable approved-v8 commit/tree.
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v6
 
