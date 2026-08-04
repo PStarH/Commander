@@ -14,6 +14,7 @@ import {
   FileEditTool,
   FileSearchTool,
   FileListTool,
+  isWithinRoot,
 } from '../../src/tools/fileSystemTool';
 
 describe('FileReadTool', () => {
@@ -62,6 +63,13 @@ describe('FileReadTool', () => {
   it('blocks path traversal', async () => {
     const result = await tool.execute({ path: '../../../etc/passwd' });
     assert.ok(result.includes('Error'));
+  });
+});
+
+describe('isWithinRoot', () => {
+  it('uses Windows drive path boundaries without accepting a prefix collision', () => {
+    assert.strictEqual(isWithinRoot('c:\\WORKSPACE\\reports\\result.md', 'C:\\workspace'), true);
+    assert.strictEqual(isWithinRoot('C:\\workspace-escape\\result.md', 'C:\\workspace'), false);
   });
 });
 
