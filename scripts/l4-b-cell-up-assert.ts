@@ -27,6 +27,7 @@ export const CELL_UP_ASSERT_SERVICES = [
   'kernel-ops',
   'adapter-ops',
   'postgres',
+  'redis',
 ] as const;
 
 export const CELL_DIAGNOSTIC_SERVICES = [
