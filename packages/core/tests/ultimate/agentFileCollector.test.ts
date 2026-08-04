@@ -113,11 +113,19 @@ describe('extractOutputFilePath', () => {
     expect(result).toBe('/var/log/output.md');
   });
 
-  it('extracts an absolute Windows drive path', () => {
-    const goal = String.raw`Write the report to C:\workspace\reports\result.md`;
+  it('extracts absolute Windows drive, UNC, and namespace paths', () => {
+    const paths = [
+      String.raw`C:\workspace\reports\result.md`,
+      String.raw`\\server\share\reports\result.md`,
+      String.raw`\\?\C:\workspace\reports\result.md`,
+      String.raw`\\?\UNC\server\share\reports\result.md`,
+    ];
 
-    expect(extractOutputFilePath(goal)).toBe(String.raw`C:\workspace\reports\result.md`);
-    expect(extractLegacyOutputFilePath(goal)).toBe(String.raw`C:\workspace\reports\result.md`);
+    for (const outputPath of paths) {
+      const goal = `Write the report to ${outputPath}`;
+      expect(extractOutputFilePath(goal)).toBe(outputPath);
+      expect(extractLegacyOutputFilePath(goal)).toBe(outputPath);
+    }
   });
 });
 
