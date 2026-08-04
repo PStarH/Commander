@@ -3,8 +3,10 @@
  * Kept separate so cell-smoke and compensation-e2e do not import each other.
  */
 
-import { generateKeyPairSync } from 'node:crypto';
-import { execSync } from 'node:child_process';
+import { createHash, generateKeyPairSync, X509Certificate } from 'node:crypto';
+import { execFileSync, execSync } from 'node:child_process';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 export const CELL_E2E_TENANT = 'cell-smoke-tenant';
 
@@ -41,8 +43,99 @@ export function generateCellEvidenceSigningMaterials(): {
   };
 }
 
+export function generateCellDatabaseTlsMaterials(): {
+  COMMANDER_CELL_DATABASE_TLS_CA_HOST_FILE: string;
+  COMMANDER_CELL_DATABASE_TLS_CERT_HOST_FILE: string;
+  COMMANDER_CELL_DATABASE_TLS_KEY_HOST_FILE: string;
+  COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: string;
+} {
+  const directory = mkdtempSync(join(process.cwd(), '.commander_cell_database_tls_'));
+  process.once('exit', () => rmSync(directory, { recursive: true, force: true }));
+  const caKey = join(directory, 'ca.key');
+  const caCert = join(directory, 'ca.crt');
+  const serverKey = join(directory, 'tls.key');
+  const serverCsr = join(directory, 'tls.csr');
+  const serverCert = join(directory, 'tls.crt');
+  const extensions = join(directory, 'server.ext');
+
+  execFileSync(
+    'openssl',
+    [
+      'req',
+      '-x509',
+      '-newkey',
+      'rsa:2048',
+      '-nodes',
+      '-days',
+      '2',
+      '-keyout',
+      caKey,
+      '-out',
+      caCert,
+      '-subj',
+      '/CN=Commander Cell Database CA',
+    ],
+    { stdio: 'ignore' },
+  );
+  execFileSync(
+    'openssl',
+    [
+      'req',
+      '-newkey',
+      'rsa:2048',
+      '-nodes',
+      '-keyout',
+      serverKey,
+      '-out',
+      serverCsr,
+      '-subj',
+      '/CN=postgres',
+    ],
+    { stdio: 'ignore' },
+  );
+  writeFileSync(
+    extensions,
+    'subjectAltName=DNS:postgres\nextendedKeyUsage=serverAuth\nkeyUsage=digitalSignature,keyEncipherment\n',
+    { mode: 0o600 },
+  );
+  execFileSync(
+    'openssl',
+    [
+      'x509',
+      '-req',
+      '-days',
+      '2',
+      '-in',
+      serverCsr,
+      '-CA',
+      caCert,
+      '-CAkey',
+      caKey,
+      '-CAcreateserial',
+      '-out',
+      serverCert,
+      '-extfile',
+      extensions,
+    ],
+    { stdio: 'ignore' },
+  );
+  chmodSync(serverKey, 0o600);
+
+  const certificate = new X509Certificate(readFileSync(serverCert));
+  const spki = certificate.publicKey.export({ format: 'der', type: 'spki' });
+  return {
+    COMMANDER_CELL_DATABASE_TLS_CA_HOST_FILE: caCert,
+    COMMANDER_CELL_DATABASE_TLS_CERT_HOST_FILE: serverCert,
+    COMMANDER_CELL_DATABASE_TLS_KEY_HOST_FILE: serverKey,
+    COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: createHash('sha256')
+      .update(spki)
+      .digest('hex'),
+  };
+}
+
 const CELL_CAPABILITY_MATERIALS = generateCellCapabilityMaterials();
 const CELL_EVIDENCE_SIGNING_MATERIALS = generateCellEvidenceSigningMaterials();
+const CELL_DATABASE_TLS_MATERIALS = generateCellDatabaseTlsMaterials();
 
 export const COMPOSE_CONFIG_ENV: Record<string, string> = {
   POSTGRES_PASSWORD: 'ci-cell-smoke',
@@ -57,6 +150,7 @@ export const COMPOSE_CONFIG_ENV: Record<string, string> = {
   COMMANDER_WORKER_ALLOWED_TENANTS: CELL_E2E_TENANT,
   ...CELL_CAPABILITY_MATERIALS,
   ...CELL_EVIDENCE_SIGNING_MATERIALS,
+  ...CELL_DATABASE_TLS_MATERIALS,
 };
 
 /** GID of docker.sock as seen inside a container (Colima often uses 991). */
@@ -99,7 +193,7 @@ export function resolveDockerGid(
 }
 
 /** In-compose Postgres DSN — must override any host DATABASE_URL (e.g. :5433 test PG). */
-const CELL_POSTGRES_URL = `postgres://commander:${COMPOSE_CONFIG_ENV.POSTGRES_PASSWORD}@postgres:5432/commander`;
+const CELL_POSTGRES_URL = `postgres://commander:${COMPOSE_CONFIG_ENV.POSTGRES_PASSWORD}@postgres:5432/commander?sslmode=verify-full`;
 
 export const CELL_COMPOSE_ENV: Record<string, string> = {
   ...COMPOSE_CONFIG_ENV,
