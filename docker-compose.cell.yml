@@ -26,6 +26,10 @@ volumes:
 # =============================================================================
 
 services:
+  redis:
+    profiles:
+      - cell
+
   cell-tls-materialize:
     image: postgres:16-alpine
     user: '0:0'
@@ -110,6 +114,7 @@ services:
       - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_app:commander_app@postgres:5432/commander?sslmode=verify-full
       - COMMANDER_DATABASE_TLS_CA_FILE=/run/commander/database-tls/ca.crt
       - COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?set COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256}
+      - AUTH_FAILURE_REDIS_URL=redis://redis:6379
       - COMMANDER_MASTER_KEY=${COMMANDER_MASTER_KEY:?set COMMANDER_MASTER_KEY}
       - JWT_SECRET=${JWT_SECRET:?set JWT_SECRET}
       # API legacy HMAC path (not worker/adapter authority).
@@ -120,6 +125,8 @@ services:
     depends_on:
       kernel-migrate:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
 
   worker:
     profiles:

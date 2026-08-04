@@ -103,6 +103,7 @@ describe('l4-b-cell-smoke', () => {
       'kernel-ops',
       'adapter-ops',
       'postgres',
+      'redis',
       'kernel-migrate',
       'cell-tls-materialize',
     ]);
@@ -123,6 +124,25 @@ describe('l4-b-cell-smoke', () => {
       (step) => step.name === 'Upload cell up-assert artifacts',
     );
     assert.equal(upload?.if, 'always()');
+  });
+
+  it('wires the production API auth-failure authority to the cell Redis service', () => {
+    const compose = load(readFileSync(join(process.cwd(), 'docker-compose.cell.yml'), 'utf8')) as {
+      services?: Record<
+        string,
+        {
+          profiles?: string[];
+          environment?: string[];
+          depends_on?: Record<string, { condition?: string }>;
+        }
+      >;
+    };
+    const redis = compose.services?.redis;
+    const api = compose.services?.api;
+
+    assert.ok(redis?.profiles?.includes('cell'));
+    assert.ok(api?.environment?.includes('AUTH_FAILURE_REDIS_URL=redis://redis:6379'));
+    assert.equal(api?.depends_on?.redis?.condition, 'service_healthy');
   });
 
   it('mock mode only asserts chaos step S6 (no fake deploy steps)', async (t) => {
