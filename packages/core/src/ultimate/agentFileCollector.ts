@@ -51,7 +51,7 @@ export interface CollectAgentFilesParams {
  */
 export function extractOutputFilePath(goal: string): string | null {
   const extRe = `(?:md|txt|json|ts|js|py|html|css|yaml|yml|csv|xml|sh|sql|go|rs|java|c|cpp|h)`;
-  const absolutePathRe = String.raw`(?:[A-Za-z]:[\\/]|/)\S+?\.${extRe}`;
+  const absolutePathRe = String.raw`(?:[A-Za-z]:[\\/]|\\\\|/)\S+?\.${extRe}`;
   const relativePathRe = String.raw`\.[\\/]\S+?\.${extRe}`;
   const outputPathRe = `(?:${absolutePathRe}|${relativePathRe})`;
 
