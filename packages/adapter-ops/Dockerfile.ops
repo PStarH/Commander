@@ -60,6 +60,7 @@ COPY --from=build /app/packages/contracts/fixtures ./packages/contracts/fixtures
 COPY --from=build /app/packages/effect-broker/dist ./packages/effect-broker/dist
 COPY --from=build /app/packages/postgres-runtime/dist ./packages/postgres-runtime/dist
 COPY --from=build /app/packages/kernel/dist ./packages/kernel/dist
+COPY --from=build /app/packages/kernel/src/*.json ./packages/kernel/src/
 COPY --from=build /app/packages/action-adapters/dist ./packages/action-adapters/dist
 COPY --from=build /app/packages/adapter-ops/dist ./packages/adapter-ops/dist
 COPY packages/contracts/package.json ./packages/contracts/package.json
