@@ -21,6 +21,9 @@ const CAPABILITY_ENV = {
   COMMANDER_CAPABILITY_KEY_ID: 'test-kid',
   COMMANDER_CAPABILITY_JWKS_JSON:
     '{"keys":[{"kty":"OKP","crv":"Ed25519","x":"x","kid":"test-kid"}]}',
+  COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM:
+    '-----BEGIN PRIVATE KEY-----\nM\n-----END PRIVATE KEY-----',
+  COMMANDER_EVIDENCE_SIGNING_KEY_ID: 'evidence-test-kid',
 };
 
 describe('l4-b-cell-smoke', () => {
@@ -242,7 +245,7 @@ describe('l4-b-cell-smoke', () => {
     );
   });
 
-  it('assertCapabilityAuthorityOnCellServices requires PEM/JWKS/key id on worker and adapter-ops', () => {
+  it('assertCapabilityAuthorityOnCellServices requires capability and evidence keys on worker and adapter-ops', () => {
     assert.doesNotThrow(() =>
       assertCapabilityAuthorityOnCellServices({
         services: {
@@ -250,6 +253,21 @@ describe('l4-b-cell-smoke', () => {
           'adapter-ops': { environment: { ...KERNEL_BACKEND_ENV, ...CAPABILITY_ENV } },
         },
       }),
+    );
+  });
+
+  it('assertCapabilityAuthorityOnCellServices rejects a missing adapter evidence signer', () => {
+    const { COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM: _, ...withoutEvidencePrivateKey } =
+      CAPABILITY_ENV;
+    assert.throws(
+      () =>
+        assertCapabilityAuthorityOnCellServices({
+          services: {
+            worker: { environment: CAPABILITY_ENV },
+            'adapter-ops': { environment: withoutEvidencePrivateKey },
+          },
+        }),
+      /COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM/,
     );
   });
 
@@ -263,6 +281,9 @@ describe('l4-b-cell-smoke', () => {
                 COMMANDER_CAPABILITY_PRIVATE_KEY_PEM:
                   CAPABILITY_ENV.COMMANDER_CAPABILITY_PRIVATE_KEY_PEM,
                 COMMANDER_CAPABILITY_KEY_ID: CAPABILITY_ENV.COMMANDER_CAPABILITY_KEY_ID,
+                COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM:
+                  CAPABILITY_ENV.COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM,
+                COMMANDER_EVIDENCE_SIGNING_KEY_ID: CAPABILITY_ENV.COMMANDER_EVIDENCE_SIGNING_KEY_ID,
               },
             },
             'adapter-ops': { environment: CAPABILITY_ENV },
