@@ -148,13 +148,18 @@ async function assertHelmCellTemplate(): Promise<boolean> {
 
 export const CELL_KERNEL_SERVICES = ['api', 'worker', 'kernel-ops', 'adapter-ops'] as const;
 
-/** Worker/adapter must fail-closed on Ed25519 PEM/JWKS/key id (not HMAC). */
+/** Worker/adapter must fail-closed on capability and evidence signing authority. */
 export const CELL_CAPABILITY_SERVICES = ['worker', 'adapter-ops'] as const;
 
 const CAPABILITY_ENV_REQUIRED = [
   'COMMANDER_CAPABILITY_PRIVATE_KEY_PEM',
   'COMMANDER_CAPABILITY_KEY_ID',
   'COMMANDER_CAPABILITY_JWKS_JSON',
+] as const;
+
+const EVIDENCE_ENV_REQUIRED = [
+  'COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM',
+  'COMMANDER_EVIDENCE_SIGNING_KEY_ID',
 ] as const;
 
 type ComposeServiceEnv = Record<string, string | number | null> | string[];
@@ -203,6 +208,12 @@ export function assertCapabilityAuthorityOnCellServices(composeConfig: {
       const value = env.get(key);
       if (!value || value.trim() === '') {
         throw new Error(`${service}: ${key} must be present (PEM/JWKS/key id contract)`);
+      }
+    }
+    for (const key of EVIDENCE_ENV_REQUIRED) {
+      const value = env.get(key);
+      if (!value || value.trim() === '') {
+        throw new Error(`${service}: ${key} must be present (evidence signer contract)`);
       }
     }
     if (env.has('COMMANDER_CAPABILITY_TOKEN_KEY')) {
