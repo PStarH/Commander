@@ -3443,7 +3443,13 @@ export class PostgresKernelRepository implements KernelRepository {
                to_regprocedure('public.read_adapter_ops_evidence_context(text,bigint,text,text,text,text,text)') IS NOT NULL AS context_rpc,
                to_regprocedure('public.complete_compensation_effect_with_evidence(jsonb)') IS NOT NULL AS terminal_complete_rpc,
                to_regprocedure('public.fail_compensation_effect_with_evidence(jsonb)') IS NOT NULL AS terminal_fail_rpc`
-          : 'SELECT EXISTS (SELECT 1 FROM public.commander_evidence_receipts LIMIT 1) AS available',
+          : `SELECT
+               to_regclass('public.commander_evidence_receipts') IS NOT NULL
+               AND has_table_privilege(
+                 current_user,
+                 to_regclass('public.commander_evidence_receipts'),
+                 'SELECT'
+               ) IS TRUE AS available`,
       );
       const row = result.rows[0];
       return {

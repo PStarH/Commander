@@ -169,7 +169,7 @@ describe('SQLite evidence repository integration', () => {
 });
 
 describe('PostgreSQL evidence repository availability probe', () => {
-  it('uses a global catalog read without requiring tenant scope on API repositories', async () => {
+  it('reports an empty but installed evidence repository as available', async () => {
     const queries: string[] = [];
     const client: SqlClient = {
       async query<T>(sql: string) {
@@ -177,7 +177,8 @@ describe('PostgreSQL evidence repository availability probe', () => {
         if (sql.includes('session_user')) {
           return { rows: [{ login_role: 'commander_app' }] as T[], rowCount: 1 };
         }
-        return { rows: [{ available: true }] as T[], rowCount: 1 };
+        const tableExists = sql.includes("to_regclass('public.commander_evidence_receipts')");
+        return { rows: [{ available: tableExists }] as T[], rowCount: 1 };
       },
       release() {},
     };
@@ -186,7 +187,7 @@ describe('PostgreSQL evidence repository availability probe', () => {
 
     assert.deepEqual(await repository.checkEvidenceRepositoryAvailability?.(), { ready: true });
     assert.equal(
-      queries.some((query) => query.includes('FROM public.commander_evidence_receipts')),
+      queries.some((query) => query.includes("to_regclass('public.commander_evidence_receipts')")),
       true,
     );
     assert.equal(
