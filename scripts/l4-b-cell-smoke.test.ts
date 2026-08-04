@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
-import { relative } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { describe, it } from 'node:test';
+import { load } from 'js-yaml';
 import {
   applyApiGateToComposeSidecarSteps,
   assertCapabilityAuthorityOnCellServices,
@@ -11,7 +12,7 @@ import {
   runCellSmoke,
   runOptionalChaosStep,
 } from './l4-b-cell-smoke.js';
-import { buildCellUpAssertEnv } from './l4-b-cell-up-assert.js';
+import { buildCellUpAssertEnv, CELL_DIAGNOSTIC_SERVICES } from './l4-b-cell-up-assert.js';
 
 const KERNEL_BACKEND_ENV = { COMMANDER_KERNEL_BACKEND: 'postgres' };
 
@@ -90,6 +91,35 @@ describe('l4-b-cell-smoke', () => {
         `${name} must be under the Docker-shared workspace`,
       );
     }
+  });
+
+  it('retains complete compose diagnostics and the failure artifact when health never converges', () => {
+    assert.deepEqual(CELL_DIAGNOSTIC_SERVICES, [
+      'api',
+      'worker',
+      'kernel-ops',
+      'adapter-ops',
+      'postgres',
+      'kernel-migrate',
+      'cell-tls-materialize',
+    ]);
+
+    const harness = readFileSync(join(process.cwd(), 'scripts/l4-b-cell-up-assert.ts'), 'utf8');
+    assert.match(
+      harness,
+      /if \(!healthPoll\.ok\) \{[\s\S]*?collectCellDiagnostics\(runtimeEnv\)/,
+      'health timeout must print container state before cleanup removes the stack',
+    );
+
+    const workflow = load(
+      readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'),
+    ) as {
+      jobs?: Record<string, { steps?: Array<{ name?: string; if?: string }> }>;
+    };
+    const upload = workflow.jobs?.['l4-b-cell-runtime']?.steps?.find(
+      (step) => step.name === 'Upload cell up-assert artifacts',
+    );
+    assert.equal(upload?.if, 'always()');
   });
 
   it('mock mode only asserts chaos step S6 (no fake deploy steps)', async (t) => {
