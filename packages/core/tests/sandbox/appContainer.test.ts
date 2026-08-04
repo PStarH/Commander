@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import {
   AppContainerSB,
   buildAppContainerAclGrantScript,
@@ -561,7 +561,7 @@ describe('AppContainerSB', () => {
   });
 
   it.runIf(process.platform === 'win32')(
-    'does not execute a malicious rollback path in Windows PowerShell',
+    'does not execute a malicious rollback path when ACL rollback fails in Windows PowerShell',
     () => {
       const marker = path.join(stateDir, 'acl-injection-marker.txt');
       const maliciousPath = `C:\\missing\"; Set-Content -Path '${marker}' -Value PWNED; #`;
@@ -569,11 +569,14 @@ describe('AppContainerSB', () => {
         { path: maliciousPath, access: 'read' },
       ]);
 
-      execFileSync(
+      const result = spawnSync(
         'powershell.exe',
         ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
-        { timeout: 10_000 },
+        { encoding: 'utf8', timeout: 10_000 },
       );
+
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBeGreaterThan(0);
       expect(fs.existsSync(marker)).toBe(false);
     },
   );
