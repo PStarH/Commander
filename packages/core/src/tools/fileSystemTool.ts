@@ -34,9 +34,32 @@ export function getSafeRoot(): string {
   return path.resolve(process.env.COMMANDER_WORKSPACE || process.cwd());
 }
 
+function looksLikeWindowsPath(value: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(value) || /^\\\\/.test(value);
+}
+
+function normalizeBoundaryPath(value: string, pathApi: typeof path): string {
+  const normalized = pathApi.normalize(value);
+  if (pathApi !== path.win32) return normalized;
+
+  const withoutNamespace = normalized.startsWith('\\\\?\\UNC\\')
+    ? `\\\\${normalized.slice('\\\\?\\UNC\\'.length)}`
+    : normalized.startsWith('\\\\?\\')
+      ? normalized.slice('\\\\?\\'.length)
+      : normalized;
+  return withoutNamespace.toLowerCase();
+}
+
 /** Check that a resolved path is within SAFE_ROOT (prevents prefix collision like workspace-evil). */
 export function isWithinRoot(resolved: string, root: string): boolean {
-  return resolved === root || resolved.startsWith(root + path.sep);
+  const pathApi = looksLikeWindowsPath(resolved) || looksLikeWindowsPath(root) ? path.win32 : path;
+  const normalizedResolved = normalizeBoundaryPath(resolved, pathApi);
+  const normalizedRoot = normalizeBoundaryPath(root, pathApi);
+  const relative = pathApi.relative(normalizedRoot, normalizedResolved);
+  return (
+    relative === '' ||
+    (!relative.startsWith(`..${pathApi.sep}`) && relative !== '..' && !pathApi.isAbsolute(relative))
+  );
 }
 
 /**
