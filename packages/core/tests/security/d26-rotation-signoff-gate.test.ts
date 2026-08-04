@@ -607,15 +607,20 @@ describe('D3.0 hardening — public reason-codes API (reasons: readonly string[]
 });
 
 describe('D2.9 hardening — verifier policy contracts (integration)', () => {
-  it('RED on the live repo doc — empty table = policy NOT bound (D2.9 requires ≥4)', async () => {
+  it('RED on the live repo doc when the provisional key is absent from the keyring', async () => {
     const result = await runVerifierAsync(REAL_DOC);
     expect(result.ok).toBe(false);
     expect(result.exitCode).toBe(1);
     expect(result.report).toMatch(/RED: policy NOT bound/);
     expect(result.report).toMatch(/at least 4 role\(s\) must hold a GPG-verified SHA/);
-    const demoSha = 'e8020a0b6a1143adc7cb48bd6ad78dfaf0c5915d';
-    for (const row of result.rows) {
-      expect(row.sha).toBe(demoSha);
+    const provisionalShas = [
+      '09ae4b172e4c9277786949a64b225aea98d183b2',
+      'dcee2082e0b8d3d6dadded3ca82dab787e487837',
+      'efe6b767049d59005e1648c5addc9fae6ea7d4b9',
+      'b1f48b4bb2ac9f97d3900977c4fce6d47c747ce6',
+    ];
+    for (const [index, row] of result.rows.entries()) {
+      expect(row.sha).toBe(provisionalShas[index]);
       expect(row.verified).toBe(false);
     }
   });
