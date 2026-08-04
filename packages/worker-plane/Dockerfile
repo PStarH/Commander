@@ -116,6 +116,7 @@ COPY --from=build /app/packages/contracts/fixtures ./packages/contracts/fixtures
 COPY --from=build /app/packages/plugin-sdk/dist ./packages/plugin-sdk/dist
 COPY --from=build /app/packages/core/dist ./packages/core/dist
 COPY --from=build /app/packages/kernel/dist ./packages/kernel/dist
+COPY --from=build /app/packages/kernel/src/*.json ./packages/kernel/src/
 COPY --from=build /app/packages/effect-broker/dist ./packages/effect-broker/dist
 COPY --from=build /app/packages/postgres-runtime/dist ./packages/postgres-runtime/dist
 COPY --from=build /app/packages/action-adapters/dist ./packages/action-adapters/dist

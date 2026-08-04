@@ -62,12 +62,19 @@ describe('Task 1 deployment closure', () => {
   });
 
   it('packages every checksum-pinned kernel manifest used by the production image', () => {
-    const dockerfile = read('apps/api/Dockerfile');
     const lifecycle = read('packages/kernel/src/task1LifecycleInitialize.ts');
-    assert.match(
-      dockerfile,
-      /COPY --from=build \/app\/packages\/kernel\/src\/\*\.json \.\/packages\/kernel\/src\//,
-    );
+    for (const dockerfilePath of [
+      'apps/api/Dockerfile',
+      'packages/worker-plane/Dockerfile',
+      'packages/kernel/Dockerfile.ops',
+      'packages/adapter-ops/Dockerfile.ops',
+    ]) {
+      assert.match(
+        read(dockerfilePath),
+        /COPY --from=build \/app\/packages\/kernel\/src\/\*\.json \.\/packages\/kernel\/src\//,
+        `${dockerfilePath}: checksum-pinned kernel manifests missing`,
+      );
+    }
     for (const manifest of [
       'task1HistoricalBaselineManifestSource.v1.json',
       'task1HardenedBaselineManifestSource.v1.json',
