@@ -268,6 +268,19 @@ export async function runCellUpAssert(options: {
   } catch (err) {
     dockerError = err instanceof Error ? err.message : String(err);
     passed = false;
+    try {
+      execSync(
+        `${COMPOSE_CMD} logs --no-color --tail 200 cell-tls-materialize postgres kernel-migrate`,
+        {
+          cwd: process.cwd(),
+          env: runtimeEnv,
+          stdio: 'inherit',
+        },
+      );
+    } catch (logError) {
+      const message = logError instanceof Error ? logError.message : String(logError);
+      console.error(`Cell diagnostic log collection failed: ${message}`);
+    }
   } finally {
     if (!options.keepStack) {
       try {
