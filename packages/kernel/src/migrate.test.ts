@@ -7,6 +7,7 @@ import {
   runTask1OwnerMode,
   currentTask1Operation,
   createTask1ProofRuntime,
+  migrationFailureDiagnostic,
   readTask1OwnerInput,
 } from './migrate.js';
 import { canonicalBootstrapJson, canonicalBootstrapSha256 } from './canonicalBootstrap.js';
@@ -23,6 +24,29 @@ describe('kernel owner migration entrypoint', () => {
         DATABASE_URL: 'postgres://legacy',
       }),
       'postgres://owner',
+    );
+  });
+
+  it('reports only fixed migration stages and sanitized error codes', () => {
+    const databaseError = Object.assign(new Error('password authentication failed for user foo'), {
+      code: '28P01',
+    });
+    assert.equal(
+      migrationFailureDiagnostic('kernel-migrations', databaseError),
+      'stage=kernel-migrations code=28P01',
+    );
+    assert.equal(
+      migrationFailureDiagnostic(
+        'adapter-ops-login',
+        new Error('COMMANDER_DATABASE_SERVER_SPKI_MISMATCH'),
+      ),
+      'stage=adapter-ops-login code=COMMANDER_DATABASE_SERVER_SPKI_MISMATCH',
+    );
+    assert.equal(
+      migrationFailureDiagnostic('worker-tenant-seed', {
+        code: 'unsafe code postgres://owner:secret@db',
+      }),
+      'stage=worker-tenant-seed',
     );
   });
 

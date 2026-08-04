@@ -545,6 +545,27 @@ function readStandardInput(): Promise<string> {
 const TASK1_OWNER_INPUT_FILE = '/run/commander/tenant-cutover/request.json';
 const TASK1_OWNER_INPUT_MAX_BYTES = 128 * 1024;
 
+export type MigrationStage =
+  | 'pool-create'
+  | 'owner-command'
+  | 'adapter-ops-login'
+  | 'kernel-migrations'
+  | 'closure-migrations'
+  | 'worker-tenant-seed'
+  | 'demo-policy-seed';
+
+export function migrationFailureDiagnostic(stage: MigrationStage, error: unknown): string {
+  const record = error && typeof error === 'object' ? (error as Record<string, unknown>) : {};
+  const candidate =
+    typeof record.code === 'string'
+      ? record.code
+      : error instanceof Error
+        ? error.message
+        : undefined;
+  const code = candidate && /^[A-Z0-9_]{2,80}$/.test(candidate) ? candidate : undefined;
+  return code ? `stage=${stage} code=${code}` : `stage=${stage}`;
+}
+
 export async function readTask1OwnerInput(
   env: NodeJS.ProcessEnv = process.env,
   readStdin: () => Promise<string> = readStandardInput,
@@ -572,10 +593,13 @@ async function main() {
     process.exit(1);
   }
 
-  const pool = createVerifiedPostgresPool({ connectionString: databaseUrl });
+  let stage: MigrationStage = 'pool-create';
+  let pool: Pool | undefined;
   try {
+    pool = createVerifiedPostgresPool({ connectionString: databaseUrl });
     const action = process.argv[2];
     if (isTask1OwnerCommandMode(action)) {
+      stage = 'owner-command';
       const stdin = await readTask1OwnerInput();
       const proofRuntime = createTask1ProofRuntime(pool, process.env);
       const response = await runTask1OwnerMode(action, stdin, pool, {
@@ -592,10 +616,13 @@ async function main() {
     const closurePhase = parseTask1ClosureMigrationPhase(process.argv.slice(2), process.env);
     const adapterOpsPassword = resolveAdapterOpsPassword(process.env);
     if (adapterOpsPassword) {
+      stage = 'adapter-ops-login';
       await ensureAdapterOpsLogin(pool, adapterOpsPassword);
     }
+    stage = 'kernel-migrations';
     await runKernelMigrations(pool, { requiredRole: 'owner' });
     if (closurePhase) {
+      stage = 'closure-migrations';
       await runTask1ClosureMigrations(pool, closurePhase);
     }
     // Seed cell tenants so register_worker can admit worker LOGIN registrations.
@@ -604,9 +631,11 @@ async function main() {
       process.env.COMMANDER_WORKER_ALLOWED_TENANTS ?? process.env.COMMANDER_WORKER_TENANTS,
     );
     if (tenants.length > 0) {
+      stage = 'worker-tenant-seed';
       await seedWorkerAllowedTenants(pool, tenants);
       console.log(`Seeded commander_worker_allowed_tenants: ${tenants.join(',')}`);
       if (process.env.COMMANDER_ENABLE_DEMO_TICKET === '1') {
+        stage = 'demo-policy-seed';
         await seedDemoTicketAllowlist(pool, tenants);
         console.log(`Seeded demo ticket effect policy: ${tenants.join(',')}`);
       }
@@ -616,13 +645,15 @@ async function main() {
         ? `Task 1 ${closurePhase} migrations applied successfully`
         : 'Kernel migrations applied successfully',
     );
-  } catch {
+  } catch (error) {
     // Database errors can echo DSNs, bind values, or generated SQL. The lifecycle evidence uses
-    // owner-side error codes; this general entrypoint never reflects exception text to its logs.
-    console.error('Migration failed: COMMANDER_MIGRATION_FAILED');
+    // owner-side error codes; this entrypoint emits only a fixed stage and sanitized machine code.
+    console.error(
+      `Migration failed: COMMANDER_MIGRATION_FAILED ${migrationFailureDiagnostic(stage, error)}`,
+    );
     process.exit(1);
   } finally {
-    await pool.end();
+    await pool?.end();
   }
 }
 
