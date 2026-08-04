@@ -29,6 +29,12 @@ export const CELL_UP_ASSERT_SERVICES = [
   'postgres',
 ] as const;
 
+export const CELL_DIAGNOSTIC_SERVICES = [
+  ...CELL_UP_ASSERT_SERVICES,
+  'kernel-migrate',
+  'cell-tls-materialize',
+] as const;
+
 const HELP = `L4-B cell up-assert — compose cell profile health + anonymous /ready hammer
 
 Usage:
@@ -201,6 +207,24 @@ export function probeWorkerPid1User(composeEnv: Record<string, string>): {
   }
 }
 
+function collectCellDiagnostics(runtimeEnv: NodeJS.ProcessEnv): void {
+  for (const command of [
+    `${COMPOSE_CMD} ps -a`,
+    `${COMPOSE_CMD} logs --no-color --tail 200 ${CELL_DIAGNOSTIC_SERVICES.join(' ')}`,
+  ]) {
+    try {
+      execSync(command, {
+        cwd: process.cwd(),
+        env: runtimeEnv,
+        stdio: 'inherit',
+      });
+    } catch (logError) {
+      const message = logError instanceof Error ? logError.message : String(logError);
+      console.error(`Cell diagnostic command failed: ${message}`);
+    }
+  }
+}
+
 export interface CellUpAssertResult {
   verdict: 'PASS' | 'BLOCKED';
   passed: boolean;
@@ -255,6 +279,7 @@ export async function runCellUpAssert(options: {
     composeServicesHealthy = healthPoll.last;
     if (!healthPoll.ok) {
       dockerError = `compose services not healthy within timeout: ${JSON.stringify(composeServicesHealthy)}`;
+      collectCellDiagnostics(runtimeEnv);
     } else {
       readyHammer = await assertAnonymousReadyHammer(baseUrl);
       workerPid1 = probeWorkerPid1User(composeEnv);
@@ -268,19 +293,7 @@ export async function runCellUpAssert(options: {
   } catch (err) {
     dockerError = err instanceof Error ? err.message : String(err);
     passed = false;
-    try {
-      execSync(
-        `${COMPOSE_CMD} logs --no-color --tail 200 cell-tls-materialize postgres kernel-migrate`,
-        {
-          cwd: process.cwd(),
-          env: runtimeEnv,
-          stdio: 'inherit',
-        },
-      );
-    } catch (logError) {
-      const message = logError instanceof Error ? logError.message : String(logError);
-      console.error(`Cell diagnostic log collection failed: ${message}`);
-    }
+    collectCellDiagnostics(runtimeEnv);
   } finally {
     if (!options.keepStack) {
       try {
