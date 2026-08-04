@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
+import { relative } from 'node:path';
 import { describe, it } from 'node:test';
 import {
   applyApiGateToComposeSidecarSteps,
@@ -75,6 +77,19 @@ describe('l4-b-cell-smoke', () => {
     assert.equal(env.COMMANDER_WORKER_ALLOWED_TENANTS, env.COMMANDER_CELL_TENANT_ID);
     assert.ok(env.COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM);
     assert.ok(env.COMMANDER_EVIDENCE_SIGNING_KEY_ID);
+    assert.match(env.COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256, /^[a-f0-9]{64}$/);
+    for (const name of [
+      'COMMANDER_CELL_DATABASE_TLS_CA_HOST_FILE',
+      'COMMANDER_CELL_DATABASE_TLS_CERT_HOST_FILE',
+      'COMMANDER_CELL_DATABASE_TLS_KEY_HOST_FILE',
+    ] as const) {
+      assert.ok(existsSync(env[name]), `${name} must reference generated TLS material`);
+      assert.equal(
+        relative(process.cwd(), env[name]).startsWith('..'),
+        false,
+        `${name} must be under the Docker-shared workspace`,
+      );
+    }
   });
 
   it('mock mode only asserts chaos step S6 (no fake deploy steps)', async (t) => {
