@@ -82,8 +82,26 @@ async function statIfExists(p: string): Promise<import('node:fs').Stats | undefi
   }
 }
 
+async function nearestExistingAncestor(value: string): Promise<string> {
+  let ancestor = value;
+  while ((await statIfExists(ancestor)) === undefined) {
+    const parent = path.dirname(ancestor);
+    if (parent === ancestor) break;
+    ancestor = parent;
+  }
+  return ancestor;
+}
+
 export async function safePath(target: string): Promise<string> {
-  const resolved = path.resolve(getSafeRoot(), target);
+  const safeRoot = getSafeRoot();
+  let safeRootReal: string;
+  try {
+    safeRootReal = await fs.promises.realpath(safeRoot);
+  } catch {
+    safeRootReal = safeRoot;
+  }
+
+  const resolved = path.resolve(safeRoot, target);
   // Resolve symlinks for the resolved path (e.g., /tmp -> /private/tmp on macOS)
   let resolvedReal: string;
   try {
@@ -91,10 +109,7 @@ export async function safePath(target: string): Promise<string> {
   } catch (err) {
     reportSilentFailure(err, 'fileSystemTool:50');
     // File doesn't exist yet — resolve the parent directory
-    let parent = path.dirname(resolved);
-    while (parent !== '/' && (await statIfExists(parent)) === undefined) {
-      parent = path.dirname(parent);
-    }
+    const parent = await nearestExistingAncestor(path.dirname(resolved));
     try {
       resolvedReal = (await fs.promises.realpath(parent)) + resolved.slice(parent.length);
     } catch (err) {
@@ -102,30 +117,27 @@ export async function safePath(target: string): Promise<string> {
       resolvedReal = resolved;
     }
   }
-  if (!isWithinRoot(resolvedReal, getSafeRoot())) {
+  if (!isWithinRoot(resolvedReal, safeRootReal)) {
     throw new Error(`Access denied: path "${target}" is outside workspace`);
   }
   // GAP-15: Resolve symlinks to prevent traversal bypass.
   try {
     const real = await fs.promises.realpath(resolved);
-    if (!isWithinRoot(real, getSafeRoot())) {
+    if (!isWithinRoot(real, safeRootReal)) {
       throw new Error(`Access denied: symlink "${target}" points outside workspace`);
     }
     return real;
   } catch (err: unknown) {
     if (err instanceof Error && 'code' in err && (err as { code: string }).code === 'ENOENT') {
-      let ancestor = path.dirname(resolved);
-      while (ancestor !== getSafeRoot() && (await statIfExists(ancestor)) === undefined) {
-        ancestor = path.dirname(ancestor);
-      }
+      const ancestor = await nearestExistingAncestor(path.dirname(resolved));
       try {
         const realAncestor = await fs.promises.realpath(ancestor);
-        if (!isWithinRoot(realAncestor, getSafeRoot())) {
+        if (!isWithinRoot(realAncestor, safeRootReal)) {
           throw new Error(`Access denied: ancestor of "${target}" is outside workspace`);
         }
       } catch (e) {
         if (e instanceof Error && e.message.startsWith('Access denied')) throw e;
-        if (!isWithinRoot(resolved, getSafeRoot()))
+        if (!isWithinRoot(resolved, safeRoot))
           throw new Error(`Access denied: path "${target}" is outside workspace`);
       }
       return resolved;

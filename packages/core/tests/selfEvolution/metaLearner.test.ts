@@ -160,23 +160,29 @@ describe('MetaLearner', () => {
   });
 
   describe('predictions', () => {
-    it('creates predictions and records verdicts', () => {
+    it('records a verdict when execution changes to the predicted target strategy', () => {
       const ml = new MetaLearner(100, 1, undefined, {
         enabled: true,
         minRunsBeforeLearning: 1,
         enablePredictionLoop: true,
       });
-      ml.createPrediction('edit-1', 'switch to parallel', 'PARALLEL', 'SEQUENTIAL', 'gpt-4', [
-        'code',
-      ]);
-      expect(ml.getPredictions().length).toBe(1);
-
       ml.recordExperience(
         makeExperience({ modelUsed: 'gpt-4', taskType: 'code', strategyUsed: 'SEQUENTIAL' }),
       );
-      ml.selectStrategy('code', 'gpt-4');
+      const sourceStrategy = ml.selectStrategy('code', 'gpt-4');
+      const targetStrategy = sourceStrategy === 'PARALLEL' ? 'SEQUENTIAL' : 'PARALLEL';
+      ml.createPrediction(
+        'edit-1',
+        `switch from ${sourceStrategy} to ${targetStrategy}`,
+        targetStrategy,
+        sourceStrategy,
+        'gpt-4',
+        ['code'],
+      );
+      expect(ml.getPredictions().length).toBe(1);
+
       ml.recordExperience(
-        makeExperience({ modelUsed: 'gpt-4', taskType: 'code', strategyUsed: 'PARALLEL' }),
+        makeExperience({ modelUsed: 'gpt-4', taskType: 'code', strategyUsed: targetStrategy }),
       );
       expect(ml.getVerdicts().length).toBe(1);
     });
