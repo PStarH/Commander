@@ -145,6 +145,22 @@ describe('l4-b-cell-smoke', () => {
     assert.equal(api?.depends_on?.redis?.condition, 'service_healthy');
   });
 
+  it('applies post-closure kernel migrations before starting cell runtimes', () => {
+    const compose = load(readFileSync(join(process.cwd(), 'docker-compose.cell.yml'), 'utf8')) as {
+      services?: Record<string, { entrypoint?: string[]; command?: string[] }>;
+    };
+    const migration = compose.services?.['kernel-migrate'];
+    const command = migration?.command?.[0] ?? '';
+
+    assert.deepEqual(migration?.entrypoint, ['/bin/sh', '-euc']);
+    assert.match(command, /COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE=enforce/);
+    assert.match(command, /migrate\.js tenant-cutover-migrate/);
+    assert.ok(
+      command.indexOf('migrate.js tenant-cutover-migrate') < command.lastIndexOf('migrate.js'),
+      'full migrations must run after the enforced closure descriptors',
+    );
+  });
+
   it('mock mode only asserts chaos step S6 (no fake deploy steps)', async (t) => {
     const result = await runCellSmoke({ mode: 'mock' });
     assert.equal(result.steps.S1, undefined);

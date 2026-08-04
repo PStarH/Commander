@@ -79,6 +79,11 @@ services:
   kernel-migrate:
     profiles:
       - cell
+    entrypoint: ['/bin/sh', '-euc']
+    command:
+      - |
+        COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE=enforce node packages/kernel/dist/migrate.js tenant-cutover-migrate
+        node packages/kernel/dist/migrate.js
     environment:
       # Hardcoded role DSNs — block host DATABASE_URL / COMMANDER_KERNEL_DATABASE_URL bleed.
       - DATABASE_URL=postgres://commander_owner:commander_owner@postgres:5432/commander?sslmode=verify-full
