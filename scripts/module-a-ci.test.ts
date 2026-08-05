@@ -132,4 +132,25 @@ describe('Module A CI workflow', () => {
     assert.equal(teardown?.if, 'always()');
     assert.equal(teardown?.run, 'pnpm cell:down');
   });
+
+  it('captures failed cell service logs before teardown', () => {
+    const job = qualityWorkflow().jobs?.['l4-b-cell-runtime'];
+    assert.ok(job, 'Quality workflow must define the L4-B Cell Runtime job');
+    const flowIndex = job.steps?.findIndex(
+      (step) => step.name === 'Cell compensation E2E compose (C3)',
+    );
+    const diagnosticsIndex = job.steps?.findIndex(
+      (step) => step.name === 'Capture cell failure diagnostics',
+    );
+    const teardownIndex = job.steps?.findIndex((step) => step.name === 'Tear down cell compose');
+    const flow = job.steps?.[flowIndex ?? -1];
+    const diagnostics = job.steps?.[diagnosticsIndex ?? -1];
+
+    assert.equal(flow?.run, 'pnpm cell:compensation-e2e -- --mode compose');
+    assert.equal(diagnostics?.if, 'failure()');
+    assert.match(diagnostics?.run ?? '', /com\.docker\.compose\.service/);
+    assert.match(diagnostics?.run ?? '', /docker logs/);
+    assert.ok((flowIndex ?? -1) < (diagnosticsIndex ?? -1));
+    assert.ok((diagnosticsIndex ?? -1) < (teardownIndex ?? -1));
+  });
 });
