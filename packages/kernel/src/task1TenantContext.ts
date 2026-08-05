@@ -694,3 +694,111 @@ REVOKE ALL ON FUNCTION public.get_api_operations_readiness(text)
   FROM PUBLIC, commander_app, commander_worker, commander_adapter_ops, commander_scheduler;
 GRANT EXECUTE ON FUNCTION public.get_api_operations_readiness(text) TO commander_app;
 `;
+
+/**
+ * Post-closure repair for the tenant-context timestamp ordering invariant.
+ * The original closure descriptor remains immutable; this SQL is applied once
+ * as a forward migration after the context functions already exist.
+ */
+export const KERNEL_TASK1_TENANT_CONTEXT_CLOCK_REPAIR_SQL = `
+CREATE OR REPLACE FUNCTION public.bind_app_tenant_context(p_context_id uuid)
+RETURNS TABLE(tenant_id text, replayed boolean, expires_at timestamptz)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $function$
+DECLARE
+  v_context public.commander_app_tenant_contexts%ROWTYPE;
+  v_database_oid oid;
+  v_xid xid8;
+  v_replayed boolean;
+BEGIN
+  IF session_user <> 'commander_app' OR p_context_id IS NULL THEN
+    RAISE EXCEPTION 'TENANT_CONTEXT_INVALID' USING ERRCODE = '22023';
+  END IF;
+  v_xid := pg_catalog.pg_current_xact_id_if_assigned();
+  IF v_xid IS NULL THEN
+    RAISE EXCEPTION 'TENANT_CONTEXT_INVALID' USING ERRCODE = '22023';
+  END IF;
+  SELECT d.oid
+    INTO v_database_oid
+    FROM pg_catalog.pg_database AS d
+   WHERE d.datname = pg_catalog.current_database();
+
+  SELECT candidate.*
+    INTO v_context
+    FROM public.commander_app_tenant_contexts AS candidate
+   WHERE candidate.context_id = p_context_id
+     AND candidate.target_database_oid = v_database_oid
+     AND candidate.target_backend_pid = pg_catalog.pg_backend_pid()
+     AND candidate.target_xid = v_xid
+     AND candidate.closed_at IS NULL
+     AND candidate.expires_at > pg_catalog.statement_timestamp()
+   FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'TENANT_CONTEXT_INVALID' USING ERRCODE = '22023';
+  END IF;
+
+  v_replayed := v_context.bound_at IS NOT NULL;
+  IF NOT v_replayed THEN
+    UPDATE public.commander_app_tenant_contexts AS context
+       SET bound_at = GREATEST(pg_catalog.clock_timestamp(), context.issued_at)
+     WHERE context.context_id = p_context_id;
+  END IF;
+  PERFORM pg_catalog.set_config(
+    'app.authenticated_tenant_context_id',
+    p_context_id::text,
+    true
+  );
+  RETURN QUERY SELECT v_context.tenant_id, v_replayed, v_context.expires_at;
+END
+$function$;
+
+CREATE OR REPLACE FUNCTION public.close_app_tenant_context(p_context_id uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $function$
+DECLARE
+  v_database_oid oid;
+  v_xid xid8;
+BEGIN
+  IF session_user <> 'commander_app' OR p_context_id IS NULL THEN
+    RAISE EXCEPTION 'TENANT_CONTEXT_INVALID' USING ERRCODE = '22023';
+  END IF;
+  v_xid := pg_catalog.pg_current_xact_id_if_assigned();
+  IF v_xid IS NULL THEN
+    RAISE EXCEPTION 'TENANT_CONTEXT_INVALID' USING ERRCODE = '22023';
+  END IF;
+  SELECT d.oid
+    INTO v_database_oid
+    FROM pg_catalog.pg_database AS d
+   WHERE d.datname = pg_catalog.current_database();
+
+  UPDATE public.commander_app_tenant_contexts AS context
+     SET closed_at = GREATEST(pg_catalog.clock_timestamp(), context.bound_at)
+   WHERE context.context_id = p_context_id
+     AND context.target_database_oid = v_database_oid
+     AND context.target_backend_pid = pg_catalog.pg_backend_pid()
+     AND context.target_xid = v_xid
+     AND context.bound_at IS NOT NULL
+     AND context.closed_at IS NULL
+     AND context.expires_at > pg_catalog.statement_timestamp();
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'TENANT_CONTEXT_INVALID' USING ERRCODE = '22023';
+  END IF;
+  PERFORM pg_catalog.set_config('app.authenticated_tenant_context_id', '', true);
+END
+$function$;
+
+ALTER FUNCTION public.bind_app_tenant_context(uuid) OWNER TO commander_owner;
+ALTER FUNCTION public.close_app_tenant_context(uuid) OWNER TO commander_owner;
+
+REVOKE ALL ON FUNCTION public.bind_app_tenant_context(uuid),
+  public.close_app_tenant_context(uuid)
+  FROM PUBLIC, commander_app, commander_worker, commander_adapter_ops, commander_scheduler, commander_tenant_authority;
+GRANT EXECUTE ON FUNCTION public.bind_app_tenant_context(uuid),
+  public.close_app_tenant_context(uuid)
+  TO commander_app;
+`;

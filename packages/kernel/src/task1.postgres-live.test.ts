@@ -332,6 +332,100 @@ describe('Task 1 real PostgreSQL role and admission authority', { skip: !ownerUr
     }
   });
 
+  it('keeps tenant context timestamps ordered when stored timestamps are in the future', async () => {
+    const contextIds: string[] = [];
+
+    const runCase = async (mode: 'issued' | 'bound'): Promise<string> => {
+      const app = await appPool.connect();
+      let contextId: string | undefined;
+      try {
+        await app.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+        const target = await app.query<{
+          database_oid: number;
+          backend_pid: number;
+          xid: string;
+        }>(`
+          SELECT database.oid AS database_oid,
+                 pg_catalog.pg_backend_pid() AS backend_pid,
+                 pg_catalog.pg_current_xact_id()::text AS xid
+            FROM pg_catalog.pg_database AS database
+           WHERE database.datname = pg_catalog.current_database()
+        `);
+        const targetRow = target.rows[0]!;
+        const issued = await tenantAuthorityPool.query<{ context_id: string }>(
+          `SELECT context_id::text
+             FROM public.issue_app_tenant_context($1::text, $2::oid, $3::integer, $4::xid8)`,
+          [tenantId, targetRow.database_oid, targetRow.backend_pid, targetRow.xid],
+        );
+        contextId = issued.rows[0]!.context_id;
+        contextIds.push(contextId);
+
+        if (mode === 'issued') {
+          await ownerPool.query(
+            `UPDATE public.commander_app_tenant_contexts
+                SET issued_at = pg_catalog.clock_timestamp() + interval '1 hour',
+                    expires_at = pg_catalog.clock_timestamp() + interval '2 hours',
+                    bound_at = NULL,
+                    closed_at = NULL
+              WHERE context_id = $1::uuid`,
+            [contextId],
+          );
+        } else {
+          await ownerPool.query(
+            `UPDATE public.commander_app_tenant_contexts
+                SET issued_at = pg_catalog.clock_timestamp() - interval '1 hour',
+                    expires_at = pg_catalog.clock_timestamp() + interval '2 hours',
+                    bound_at = pg_catalog.clock_timestamp() + interval '1 hour',
+                    closed_at = NULL
+              WHERE context_id = $1::uuid`,
+            [contextId],
+          );
+        }
+
+        await app.query('SELECT public.bind_app_tenant_context($1::uuid)', [contextId]);
+        await app.query('SELECT public.close_app_tenant_context($1::uuid)', [contextId]);
+        await app.query('COMMIT');
+        return contextId;
+      } catch (error) {
+        await app.query('ROLLBACK').catch(() => undefined);
+        throw error;
+      } finally {
+        app.release();
+      }
+    };
+
+    try {
+      await runCase('issued');
+      await runCase('bound');
+
+      const ordered = await ownerPool.query<{
+        bound_ordered: boolean;
+        closed_ordered: boolean;
+      }>(
+        `SELECT issued_at <= bound_at AS bound_ordered,
+                bound_at <= closed_at AS closed_ordered
+           FROM public.commander_app_tenant_contexts
+          WHERE context_id = ANY($1::uuid[])
+          ORDER BY context_id`,
+        [contextIds],
+      );
+      assert.equal(ordered.rowCount, 2);
+      assert.deepEqual(
+        ordered.rows,
+        [
+          { bound_ordered: true, closed_ordered: true },
+          { bound_ordered: true, closed_ordered: true },
+        ],
+        'database-owned timestamps must satisfy both context ordering checks',
+      );
+    } finally {
+      await ownerPool.query(
+        'DELETE FROM public.commander_app_tenant_contexts WHERE context_id = ANY($1::uuid[])',
+        [contextIds],
+      );
+    }
+  });
+
   it('enforces dedicated positive and negative role RPC paths', async () => {
     const registrationOnly = await appRepo.getOperationsReadiness(tenantId);
     assert.equal(registrationOnly.ready, false, 'registration alone must not establish readiness');

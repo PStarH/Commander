@@ -20,6 +20,8 @@ import {
   KERNEL_TASK1_BASELINE_MIGRATIONS,
   KERNEL_TASK1_CLOSURE_MIGRATION_CHECKSUMS,
   KERNEL_TASK1_CLOSURE_MIGRATIONS,
+  KERNEL_TASK1_POST_CLOSURE_MIGRATION_CHECKSUMS,
+  KERNEL_TASK1_POST_CLOSURE_MIGRATIONS,
   KERNEL_FORWARD_MIGRATIONS,
   KERNEL_HISTORICAL_MIGRATION_CHECKSUMS,
   KERNEL_MIGRATIONS,
@@ -171,6 +173,28 @@ describe('Task 1 authoritative Class A admission', () => {
         '2026-07-27.2.task1_authenticated_tenant_authority_expand',
         '2026-07-27.3.task1_authenticated_tenant_authority_enforce',
       ],
+    );
+    assert.deepEqual(KERNEL_TASK1_POST_CLOSURE_MIGRATION_CHECKSUMS, {
+      '2026-08-05.1.task1_tenant_context_clock_monotonicity':
+        '1c0abf04fede099ca65bb983d2b6b0eb443e0e065aebd02fe9d43ee40ceadf56',
+    });
+    assert.deepEqual(
+      KERNEL_TASK1_POST_CLOSURE_MIGRATIONS.map(({ id }) => id),
+      ['2026-08-05.1.task1_tenant_context_clock_monotonicity'],
+    );
+    assert.equal(
+      KERNEL_TASK1_BASELINE_MIGRATIONS.some(({ id }) =>
+        id.startsWith('2026-08-05.1.task1_tenant_context_clock_monotonicity'),
+      ),
+      false,
+      'clock repair must not run before the Task 1 closure functions exist',
+    );
+    assert.equal(
+      KERNEL_MIGRATIONS.some(({ id }) =>
+        id.startsWith('2026-08-05.1.task1_tenant_context_clock_monotonicity'),
+      ),
+      false,
+      'clock repair must be applied only by the post-closure owner path',
     );
     assert.equal(
       KERNEL_MIGRATIONS.some(({ id }) => id.startsWith('2026-07-27.')),
@@ -397,7 +421,10 @@ describe('Task 1 authoritative Class A admission', () => {
 
     pool.client.appliedMigrationIds.length = 0;
     await runTask1ClosureMigrations(pool, 'enforce');
-    assert.deepEqual(pool.client.appliedMigrationIds, [KERNEL_TASK1_CLOSURE_MIGRATIONS[2]!.id]);
+    assert.deepEqual(pool.client.appliedMigrationIds, [
+      KERNEL_TASK1_CLOSURE_MIGRATIONS[2]!.id,
+      ...KERNEL_TASK1_POST_CLOSURE_MIGRATIONS.map(({ id }) => id),
+    ]);
   });
 
   it('uses distinct class-bound RPCs and keeps the shared helper private', () => {
