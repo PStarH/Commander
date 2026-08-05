@@ -303,7 +303,7 @@
     },
     {
       "path": "scripts/authority-closure-proof.ts",
-      "sourceSha256": "0baef28fef8f27fd3a238e872be11e88b7fbf605ac554a7887244b4c76b1cf76",
+      "sourceSha256": "78b0c0dba9cbbe0edea84a582b05122809ba7139148678422c6ddd956e7338c6",
       "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "owner": "repository-operations",
       "reason": "Live closure proof intentionally seeds challenged kernel rows",
