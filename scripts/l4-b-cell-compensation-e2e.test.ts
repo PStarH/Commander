@@ -161,6 +161,8 @@ describe('l4-b-cell-compensation-e2e', () => {
         proposed: true,
         approved: true,
         forwardDone: true,
+        forwardReceiptHash: 'b'.repeat(64),
+        rawForwardResponseAbsent: true,
         compensationRequested: true,
         compensationApproved: true,
         compensationRunDone: true,

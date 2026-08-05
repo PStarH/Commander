@@ -3685,21 +3685,8 @@ export class PostgresKernelRepository implements KernelRepository {
             `Interaction ${request.interactionId} not found or already answered`,
           );
         }
-        let released: { rows: DbStep[] };
-        if (request.releaseStep === false) {
-          const current = await client.query<DbStep>(
-            `SELECT * FROM commander_steps
-           WHERE id=$1 AND run_id=$2 AND tenant_id=$3 AND state='WAITING_FOR_HUMAN'`,
-            [interaction.step_id, request.runId, request.tenantId],
-          );
-          if (!current.rows[0]) {
-            throw new KernelInvariantError(
-              'INTERACTION_NOT_FOUND',
-              `Interaction ${request.interactionId} has no matching waiting step`,
-            );
-          }
-          released = { rows: current.rows };
-        } else {
+        let released: { rows: DbStep[] } | undefined;
+        if (request.releaseStep !== false) {
           assertStepTransition(interaction.step_state, 'RETRY_WAIT');
           released = await client.query<DbStep>(
             `UPDATE commander_steps
@@ -3746,7 +3733,6 @@ export class PostgresKernelRepository implements KernelRepository {
             `Interaction ${request.interactionId} not found or already answered`,
           );
         }
-        const step = fromStep(released.rows[0]!);
         await this.appendEvent(client, {
           aggregateType: 'interaction',
           aggregateId: request.interactionId,
@@ -3759,6 +3745,7 @@ export class PostgresKernelRepository implements KernelRepository {
           payload: { response: request.response },
         });
         if (request.releaseStep !== false) {
+          const step = fromStep(released!.rows[0]!);
           await this.appendEvent(client, {
             aggregateType: 'step',
             aggregateId: step.id,

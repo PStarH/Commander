@@ -311,6 +311,20 @@ export async function runComposeDemoCompensationFlow(
       compensationErrorCode: 'FORWARD_RECEIPT_HASH_MISSING',
     };
   }
+  const rawForwardResponseAbsent =
+    !('response' in (forward.action ?? {})) && !('forwardResponse' in (forward.action ?? {}));
+  if (!rawForwardResponseAbsent) {
+    return {
+      proposed: true,
+      approved: true,
+      forwardDone: true,
+      forwardReceiptHash,
+      rawForwardResponseAbsent,
+      compensationRequested: false,
+      compensated: false,
+      compensationErrorCode: 'RAW_FORWARD_RESPONSE_EXPOSED',
+    };
+  }
   const compensate = await httpJson(baseUrl, 'POST', `/v1/actions/${action.runId}/compensations`, {
     originalEffectId: action.effectId,
     adapterVersion: 'demo-ticket/v1',
@@ -401,6 +415,8 @@ export async function runComposeDemoCompensationFlow(
     proposed: true,
     approved: true,
     forwardDone: true,
+    forwardReceiptHash,
+    rawForwardResponseAbsent,
     compensationRequested: true,
     compensationApproved,
     compensationRunDone: compensationRunState === 'SUCCEEDED',
@@ -490,6 +506,8 @@ export async function runCellCompensationE2E(options: {
       flow.proposed === true &&
       flow.approved === true &&
       flow.forwardDone === true &&
+      typeof flow.forwardReceiptHash === 'string' &&
+      flow.rawForwardResponseAbsent === true &&
       flow.compensated === true &&
       (options.composeUp ? steps.composeUp === true : true);
 
