@@ -902,7 +902,7 @@ jobs:
         run: pnpm cell:image-boot-smoke -- --image-tag commander-worker-ci --skip-build
 
       - name: Cell up assert (compose profile)
-        run: pnpm cell:up-assert
+        run: pnpm cell:up-assert --keep
 
       - name: Cell compensation E2E compose (C3)
         run: pnpm cell:compensation-e2e -- --mode compose
@@ -913,7 +913,7 @@ jobs:
         run: |
           set -u
           for service in api postgres; do
-            container_id="$(docker ps \
+            container_id="$(docker ps -a \
               --filter "label=com.docker.compose.service=${service}" \
               --format '{{.ID}}' | head -n 1)"
             if [[ -n "$container_id" ]]; then

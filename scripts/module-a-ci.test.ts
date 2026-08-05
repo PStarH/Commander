@@ -133,6 +133,14 @@ describe('Module A CI workflow', () => {
     assert.equal(teardown?.run, 'pnpm cell:down');
   });
 
+  it('keeps the asserted cell topology running for the compensation proof', () => {
+    const job = qualityWorkflow().jobs?.['l4-b-cell-runtime'];
+    assert.ok(job, 'Quality workflow must define the L4-B Cell Runtime job');
+    const upAssert = job.steps?.find((step) => step.name === 'Cell up assert (compose profile)');
+
+    assert.equal(upAssert?.run, 'pnpm cell:up-assert --keep');
+  });
+
   it('captures failed cell service logs before teardown', () => {
     const job = qualityWorkflow().jobs?.['l4-b-cell-runtime'];
     assert.ok(job, 'Quality workflow must define the L4-B Cell Runtime job');
@@ -149,6 +157,7 @@ describe('Module A CI workflow', () => {
     assert.equal(flow?.run, 'pnpm cell:compensation-e2e -- --mode compose');
     assert.equal(diagnostics?.if, 'failure()');
     assert.match(diagnostics?.run ?? '', /com\.docker\.compose\.service/);
+    assert.match(diagnostics?.run ?? '', /docker ps -a/);
     assert.match(diagnostics?.run ?? '', /docker logs/);
     assert.ok((flowIndex ?? -1) < (diagnosticsIndex ?? -1));
     assert.ok((diagnosticsIndex ?? -1) < (teardownIndex ?? -1));
