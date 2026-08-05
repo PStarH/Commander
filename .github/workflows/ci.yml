@@ -905,7 +905,23 @@ jobs:
         run: pnpm cell:up-assert
 
       - name: Cell compensation E2E compose (C3)
-        run: pnpm cell:compensation-e2e -- --mode compose --up
+        run: pnpm cell:compensation-e2e -- --mode compose
+
+      - name: Capture cell failure diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          set -u
+          for service in api postgres; do
+            container_id="$(docker ps \
+              --filter "label=com.docker.compose.service=${service}" \
+              --format '{{.ID}}' | head -n 1)"
+            if [[ -n "$container_id" ]]; then
+              echo "::group::${service} container logs"
+              docker logs --tail 300 "$container_id" 2>&1
+              echo "::endgroup::"
+            fi
+          done
 
       - name: Tear down cell compose
         if: always()
