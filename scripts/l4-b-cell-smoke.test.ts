@@ -145,6 +145,21 @@ describe('l4-b-cell-smoke', () => {
     assert.equal(api?.depends_on?.redis?.condition, 'service_healthy');
   });
 
+  it('binds the cell API to the enforced tenant-context authority', () => {
+    const compose = load(readFileSync(join(process.cwd(), 'docker-compose.cell.yml'), 'utf8')) as {
+      services?: Record<string, { environment?: string[] }>;
+    };
+    const environment = compose.services?.api?.environment ?? [];
+
+    assert.ok(environment.includes('COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE=enforce'));
+    assert.ok(environment.includes('COMMANDER_TENANT_CONTEXT_PHASE=enforce'));
+    assert.ok(
+      environment.includes(
+        'COMMANDER_TENANT_AUTHORITY_DATABASE_URL=postgres://commander_tenant_authority:commander_tenant_authority@postgres:5432/commander?sslmode=verify-full',
+      ),
+    );
+  });
+
   it('applies post-closure kernel migrations before starting cell runtimes', () => {
     const compose = load(readFileSync(join(process.cwd(), 'docker-compose.cell.yml'), 'utf8')) as {
       services?: Record<string, { entrypoint?: string[]; command?: string[] }>;
