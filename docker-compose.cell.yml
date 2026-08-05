@@ -118,7 +118,6 @@ services:
       - DATABASE_URL=postgres://commander_app:commander_app@postgres:5432/commander?sslmode=verify-full
       - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_app:commander_app@postgres:5432/commander?sslmode=verify-full
       - COMMANDER_TENANT_AUTHORITY_DATABASE_URL=postgres://commander_tenant_authority:commander_tenant_authority@postgres:5432/commander?sslmode=verify-full
-      - COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE=enforce
       - COMMANDER_TENANT_CONTEXT_PHASE=enforce
       - COMMANDER_DATABASE_TLS_CA_FILE=/run/commander/database-tls/ca.crt
       - COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?set COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256}
