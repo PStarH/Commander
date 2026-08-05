@@ -2911,6 +2911,18 @@ export class PostgresKernelRepository implements KernelRepository {
   }
 
   async isCapabilityRevoked(jti: string, tenantId: string): Promise<boolean> {
+    if (this.options.adapterOpsMode) {
+      return this.withTransaction(
+        async (client) => {
+          const result = await client.query<{ revoked: boolean }>(
+            `SELECT public.is_adapter_ops_capability_revoked($1, $2) AS revoked`,
+            [jti, tenantId],
+          );
+          return result.rows[0]?.revoked !== false;
+        },
+        [tenantId],
+      );
+    }
     return this.withTransaction(
       async (client) => {
         const result = await client.query(
@@ -2947,6 +2959,18 @@ export class PostgresKernelRepository implements KernelRepository {
     nonce: string;
     expiresAt: string;
   }): Promise<boolean> {
+    if (this.options.adapterOpsMode) {
+      return this.withTransaction(
+        async (client) => {
+          const result = await client.query<{ replayed: boolean }>(
+            `SELECT public.consume_adapter_ops_capability_replay($1, $2, $3, $4::timestamptz) AS replayed`,
+            [input.tenantId, input.jti, input.nonce, input.expiresAt],
+          );
+          return result.rows[0]?.replayed !== false;
+        },
+        [input.tenantId],
+      );
+    }
     return this.withTransaction(
       async (client) => {
         const result = await client.query<{ jti: string }>(

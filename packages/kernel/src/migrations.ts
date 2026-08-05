@@ -37,6 +37,7 @@ import {
 } from './compensationSchema.js';
 import { KERNEL_COMPENSATION_QUEUE_ISOLATION_SQL } from './compensationQueueIsolation.js';
 import {
+  KERNEL_ADAPTER_OPS_CAPABILITY_STORES_SQL,
   KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL,
   KERNEL_COMPENSATION_APPROVAL_CLAIM_BINDING_SQL,
   KERNEL_COMPENSATION_AUTHORIZATION_READ_SQL,
@@ -351,6 +352,11 @@ export const KERNEL_CAMPAIGN2_CRITICAL_HARDENING_MIGRATIONS: readonly KernelMigr
     id: '2026-08-05.5.compensation_queue_isolation',
     sql: KERNEL_COMPENSATION_QUEUE_ISOLATION_SQL,
     checksum: checksum(KERNEL_COMPENSATION_QUEUE_ISOLATION_SQL),
+  },
+  {
+    id: '2026-08-05.6.adapter_ops_capability_stores',
+    sql: KERNEL_ADAPTER_OPS_CAPABILITY_STORES_SQL,
+    checksum: checksum(KERNEL_ADAPTER_OPS_CAPABILITY_STORES_SQL),
   },
 ];
 
