@@ -7,6 +7,7 @@ import {
   KERNEL_FORWARD_MIGRATIONS,
   KERNEL_TASK1_BASELINE_MIGRATIONS,
   KERNEL_TASK1_CLOSURE_MIGRATIONS,
+  KERNEL_TASK1_POST_CLOSURE_MIGRATIONS,
   KERNEL_TASK2_FORWARD_MIGRATIONS,
   runKernelMigrations,
   runTask1ClosureMigrations,
@@ -183,6 +184,11 @@ describe('Task 1 PostgreSQL migration history', { skip: !ownerUrl }, () => {
         fresh.map(({ id, checksum }) => ({ id, checksum })),
         upgraded.map(({ id, checksum }) => ({ id, checksum })),
       );
+      assert.equal(
+        fresh.some(({ id }) => KERNEL_TASK1_POST_CLOSURE_MIGRATIONS.some((migration) => migration.id === id)),
+        false,
+        'fresh baseline migration must not record post-closure repairs',
+      );
     } finally {
       await adminPool.end();
     }
@@ -271,6 +277,10 @@ describe('Task 1 PostgreSQL migration history', { skip: !ownerUrl }, () => {
                 .filter(({ id }) => id !== '2026-07-26.2.task2_reconciliation_schema')
                 .map(({ id }) => id)
                 .sort(),
+            );
+            assert.deepEqual(
+              ledger.filter(({ id }) => id.startsWith('2026-08-05.1.')).map(({ id }) => id),
+              KERNEL_TASK1_POST_CLOSURE_MIGRATIONS.map(({ id }) => id),
             );
             assert.equal(
               ledger.some(

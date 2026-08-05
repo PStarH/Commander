@@ -15,6 +15,7 @@ import {
   KERNEL_TASK1_API_OPERATIONS_READINESS_SQL,
   KERNEL_TASK1_AUTHENTICATED_TENANT_AUTHORITY_ENFORCE_SQL,
   KERNEL_TASK1_AUTHENTICATED_TENANT_AUTHORITY_EXPAND_SQL,
+  KERNEL_TASK1_TENANT_CONTEXT_CLOCK_REPAIR_SQL,
 } from './task1TenantContext.js';
 import {
   KERNEL_TASK2_RECONCILIATION_RPCS_SQL,
@@ -171,6 +172,12 @@ export const KERNEL_TASK1_CLOSURE_MIGRATION_CHECKSUMS = Object.freeze({
     '9994edfd6cd1cb7f68b538b4b0f04d1f73435a003b6dba958da7ccdcffc42fc5',
 });
 
+/** Post-closure repairs that require the Task 1 context functions to exist first. */
+export const KERNEL_TASK1_POST_CLOSURE_MIGRATION_CHECKSUMS = Object.freeze({
+  '2026-08-05.1.task1_tenant_context_clock_monotonicity':
+    '1c0abf04fede099ca65bb983d2b6b0eb443e0e065aebd02fe9d43ee40ceadf56',
+});
+
 export const KERNEL_TASK2_FORWARD_MIGRATION_CHECKSUMS = Object.freeze({
   '2026-07-26.2.task2_reconciliation_schema':
     '281a703a1cc0a6f98e53d30e78ce9cdf632f31685794bdd3d95c122e431c7703',
@@ -184,6 +191,7 @@ export const KERNEL_TASK2_FORWARD_MIGRATION_CHECKSUMS = Object.freeze({
 
 type Task1ForwardMigrationId = keyof typeof KERNEL_TASK1_FORWARD_MIGRATION_CHECKSUMS;
 type Task1ClosureMigrationId = keyof typeof KERNEL_TASK1_CLOSURE_MIGRATION_CHECKSUMS;
+type Task1PostClosureMigrationId = keyof typeof KERNEL_TASK1_POST_CLOSURE_MIGRATION_CHECKSUMS;
 type Task2ForwardMigrationId = keyof typeof KERNEL_TASK2_FORWARD_MIGRATION_CHECKSUMS;
 
 function task1ForwardMigration(id: Task1ForwardMigrationId, sql: string): KernelMigration {
@@ -200,6 +208,18 @@ function task1ClosureMigration(id: Task1ClosureMigrationId, sql: string): Kernel
   const actualChecksum = checksum(sql);
   if (actualChecksum !== expectedChecksum) {
     throw new Error(`Task 1 closure migration source changed without a new descriptor: ${id}`);
+  }
+  return { id, sql, checksum: expectedChecksum };
+}
+
+function task1PostClosureMigration(
+  id: Task1PostClosureMigrationId,
+  sql: string,
+): KernelMigration {
+  const expectedChecksum = KERNEL_TASK1_POST_CLOSURE_MIGRATION_CHECKSUMS[id];
+  const actualChecksum = checksum(sql);
+  if (actualChecksum !== expectedChecksum) {
+    throw new Error(`Task 1 post-closure migration source changed without a new descriptor: ${id}`);
   }
   return { id, sql, checksum: expectedChecksum };
 }
@@ -249,6 +269,13 @@ export const KERNEL_TASK2_FORWARD_MIGRATIONS: readonly KernelMigration[] = [
     KERNEL_TASK2_RECONCILIATION_RPCS_SQL,
   ),
   task2ForwardMigration('2026-07-26.2.task2_role_closure', KERNEL_TASK2_ROLE_CLOSURE_SQL),
+];
+
+export const KERNEL_TASK1_POST_CLOSURE_MIGRATIONS: readonly KernelMigration[] = [
+  task1PostClosureMigration(
+    '2026-08-05.1.task1_tenant_context_clock_monotonicity',
+    KERNEL_TASK1_TENANT_CONTEXT_CLOCK_REPAIR_SQL,
+  ),
 ];
 
 export const KERNEL_SIGNED_EVIDENCE_MIGRATIONS: readonly KernelMigration[] = [
@@ -390,6 +417,26 @@ export async function applyTask1ClosureDescriptorSet(
   }
 }
 
+async function applyTask1PostClosureMigrations(client: SqlClient): Promise<void> {
+  for (const migration of KERNEL_TASK1_POST_CLOSURE_MIGRATIONS) {
+    const existing = await client.query<{ checksum: string }>(
+      'SELECT checksum FROM commander_kernel_migrations WHERE id=$1',
+      [migration.id],
+    );
+    if (existing.rows[0]) {
+      if (existing.rows[0].checksum !== migration.checksum) {
+        throw new Error('TASK1_POST_CLOSURE_CHECKSUM_MISMATCH');
+      }
+      continue;
+    }
+    await client.query(migration.sql);
+    await client.query('INSERT INTO commander_kernel_migrations (id, checksum) VALUES ($1,$2)', [
+      migration.id,
+      migration.checksum,
+    ]);
+  }
+}
+
 /**
  * Apply the Task 1 closure descriptors under an exact owner session. Runtime startup deliberately
  * calls runKernelMigrations instead, whose descriptor set excludes these phase-gated migrations.
@@ -418,6 +465,7 @@ export async function runTask1ClosureMigrations(
       client,
       phase === 'expand' ? ['lifecycle', 'expand'] : ['lifecycle', 'expand', 'enforce'],
     );
+    if (phase === 'enforce') await applyTask1PostClosureMigrations(client);
     await client.query('COMMIT');
   } catch (error) {
     try {
@@ -527,6 +575,8 @@ export async function runKernelMigrations(
         migration.checksum,
       ]);
     }
+
+    if (canonicalClosureApplied) await applyTask1PostClosureMigrations(client);
 
     // Ensure the migration owner can bypass RLS for operational queries and the
     // migrations table (which has no tenant_id column). Superusers already have
