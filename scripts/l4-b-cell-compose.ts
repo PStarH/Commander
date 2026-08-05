@@ -299,12 +299,17 @@ async function probeOnce(baseUrl: string): Promise<Record<string, boolean>> {
     "fetch('http://127.0.0.1:8082/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
     'adapter-ops',
   );
+  const adapterOpsReady = composeExec(
+    "fetch('http://127.0.0.1:8082/ready').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+    'adapter-ops',
+  );
   return {
     apiReady: ready?.ok === true,
     apiHealth: health?.ok === true,
     workerHealth: worker,
     kernelOpsHealth: kernelOps,
     adapterOpsHealth: adapterOps,
+    adapterOpsReady,
   };
 }
 

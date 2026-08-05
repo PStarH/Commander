@@ -906,7 +906,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload cell compensation e2e artifacts
-        if: success()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: l4-b-cell-compensation-e2e
