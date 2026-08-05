@@ -358,6 +358,26 @@ type DbTenantExecutionControl = {
   paused_at: string | Date | null;
   resumed_at: string | Date | null;
 };
+type DbCompensationRequest = {
+  id: string;
+  tenant_id: string;
+  original_run_id: string;
+  original_effect_id: string;
+  compensation_run_id: string;
+  compensation_step_id: string;
+  adapter_version: string;
+  compensation_effect_type: string;
+  compensation_patch: Record<string, unknown>;
+  forward_receipt_hash: string;
+  authorization_id: string;
+  reconcile_policy: KernelCompensationRequest['reconcilePolicy'];
+  state: KernelCompensationRequest['state'];
+  claim_worker_id: string | null;
+  claim_worker_generation: number | string | null;
+  claim_token: string | null;
+  claim_expires_at: string | Date | null;
+  compensation_effect_id: string | null;
+};
 type DbEvidence = {
   tenant_id: string;
   run_id: string;
@@ -2461,23 +2481,14 @@ export class PostgresKernelRepository implements KernelRepository {
   ): Promise<CompensationAuthorizationRecord | null> {
     return this.withTransaction(
       async (client) => {
-        const result = await client.query<Record<string, unknown>>(
-          `SELECT id,tenant_id AS "tenantId",original_run_id AS "originalRunId",
-          original_effect_id AS "originalEffectId",compensation_effect_type AS "compensationEffectType",
-          adapter_version AS "adapterVersion",compensation_patch AS "compensationPatch",
-          forward_receipt_hash AS "forwardReceiptHash",policy_decision_id AS "policyDecisionId",
-          policy_snapshot_id AS "policySnapshotId",decision,action_digest AS "actionDigest",
-          expires_at AS "expiresAt",approval_interaction_id AS "approvalInteractionId"
-         FROM commander_compensation_authorizations WHERE id=$1 AND tenant_id=$2`,
-          [authorizationId, tenantId],
-        );
-        const row = result.rows[0];
-        return row
-          ? ({
-              ...row,
-              expiresAt: iso(row.expiresAt as Date | string),
-            } as unknown as CompensationAuthorizationRecord)
-          : null;
+        const result = await client.query<{
+          authorization: CompensationAuthorizationRecord | string | null;
+        }>('SELECT get_compensation_authorization($1::text,$2::text) AS authorization', [
+          tenantId,
+          authorizationId,
+        ]);
+        const raw = result.rows[0]?.authorization;
+        return raw == null ? null : typeof raw === 'string' ? JSON.parse(raw) : raw;
       },
       [tenantId],
     );
@@ -2492,7 +2503,16 @@ export class PostgresKernelRepository implements KernelRepository {
         );
         const raw = result.rows[0]?.result;
         if (!raw) throw new Error('COMPENSATION_REQUEST_PERSISTENCE_FAILED');
-        return typeof raw === 'string' ? JSON.parse(raw) : raw;
+        const parsed = (typeof raw === 'string' ? JSON.parse(raw) : raw) as
+          | Exclude<RequestCompensationResult, { accepted: true }>
+          | { accepted: true; request: DbCompensationRequest; replayed: boolean };
+        return parsed.accepted
+          ? {
+              accepted: true,
+              request: mapCompensationRequest(parsed.request),
+              replayed: parsed.replayed,
+            }
+          : parsed;
       },
       [input.tenantId],
     );
@@ -4417,6 +4437,30 @@ function mapKillSwitch(row: {
     reason: row.reason ?? undefined,
     actor: row.actor,
     updatedAt: iso(row.updated_at),
+  };
+}
+
+function mapCompensationRequest(row: DbCompensationRequest): KernelCompensationRequest {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    originalRunId: row.original_run_id,
+    originalEffectId: row.original_effect_id,
+    compensationRunId: row.compensation_run_id,
+    compensationStepId: row.compensation_step_id,
+    adapterVersion: row.adapter_version,
+    compensationEffectType: row.compensation_effect_type,
+    compensationPatch: row.compensation_patch,
+    forwardReceiptHash: row.forward_receipt_hash,
+    authorizationId: row.authorization_id,
+    reconcilePolicy: row.reconcile_policy,
+    state: row.state,
+    claimWorkerId: row.claim_worker_id ?? undefined,
+    claimWorkerGeneration:
+      row.claim_worker_generation == null ? undefined : Number(row.claim_worker_generation),
+    claimToken: row.claim_token ?? undefined,
+    claimExpiresAt: row.claim_expires_at ? iso(row.claim_expires_at) : undefined,
+    compensationEffectId: row.compensation_effect_id ?? undefined,
   };
 }
 
