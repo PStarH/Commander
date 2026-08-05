@@ -268,3 +268,92 @@ REVOKE ALL ON FUNCTION public.claim_compensation_request(text,text,text,bigint,t
 GRANT EXECUTE ON FUNCTION public.claim_compensation_request(text,text,text,bigint,text)
   TO commander_adapter_ops;
 `;
+
+/** Keeps durable capability verification on owner-owned RPCs for adapter-ops. */
+export const KERNEL_ADAPTER_OPS_CAPABILITY_STORES_SQL = String.raw`
+CREATE FUNCTION public.is_adapter_ops_capability_revoked(
+  p_jti text,
+  p_tenant_id text
+) RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $function$
+BEGIN
+  IF session_user <> 'commander_adapter_ops'
+     OR NULLIF(p_jti, '') IS NULL
+     OR NULLIF(p_tenant_id, '') IS NULL
+     OR NOT EXISTS (
+       SELECT 1
+         FROM public.commander_workers AS worker
+        WHERE worker.identity_subject = 'db:commander_adapter_ops'
+          AND worker.status = 'ACTIVE'
+          AND worker.tenant_ids ? p_tenant_id
+          AND worker.capabilities IN (
+            '["effect.reconcile"]'::jsonb,
+            '["effect.compensate"]'::jsonb
+          )
+     ) THEN
+    RAISE EXCEPTION 'ADAPTER_OPS_CAPABILITY_AUTHORITY_REJECTED' USING ERRCODE = '42501';
+  END IF;
+  RETURN EXISTS (
+    SELECT 1
+      FROM public.commander_capability_revocations
+     WHERE tenant_id = p_tenant_id
+       AND jti = p_jti
+       AND expires_at > clock_timestamp()
+  );
+END
+$function$;
+
+CREATE FUNCTION public.consume_adapter_ops_capability_replay(
+  p_tenant_id text,
+  p_jti text,
+  p_nonce text,
+  p_expires_at timestamptz
+) RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $function$
+DECLARE
+  v_inserted integer;
+BEGIN
+  IF session_user <> 'commander_adapter_ops'
+     OR NULLIF(p_tenant_id, '') IS NULL
+     OR NULLIF(p_jti, '') IS NULL
+     OR NULLIF(p_nonce, '') IS NULL
+     OR p_expires_at <= clock_timestamp()
+     OR NOT EXISTS (
+       SELECT 1
+         FROM public.commander_workers AS worker
+        WHERE worker.identity_subject = 'db:commander_adapter_ops'
+          AND worker.status = 'ACTIVE'
+          AND worker.tenant_ids ? p_tenant_id
+          AND worker.capabilities IN (
+            '["effect.reconcile"]'::jsonb,
+            '["effect.compensate"]'::jsonb
+          )
+     ) THEN
+    RAISE EXCEPTION 'ADAPTER_OPS_CAPABILITY_AUTHORITY_REJECTED' USING ERRCODE = '42501';
+  END IF;
+  INSERT INTO public.commander_capability_replays (tenant_id, jti, nonce, expires_at)
+  VALUES (p_tenant_id, p_jti, p_nonce, p_expires_at)
+  ON CONFLICT DO NOTHING;
+  GET DIAGNOSTICS v_inserted = ROW_COUNT;
+  RETURN v_inserted = 0;
+END
+$function$;
+
+ALTER FUNCTION public.is_adapter_ops_capability_revoked(text,text) OWNER TO commander_owner;
+ALTER FUNCTION public.consume_adapter_ops_capability_replay(text,text,text,timestamptz)
+  OWNER TO commander_owner;
+REVOKE ALL ON FUNCTION public.is_adapter_ops_capability_revoked(text,text)
+  FROM PUBLIC, commander_app, commander_worker, commander_scheduler, commander_tenant_authority;
+REVOKE ALL ON FUNCTION public.consume_adapter_ops_capability_replay(text,text,text,timestamptz)
+  FROM PUBLIC, commander_app, commander_worker, commander_scheduler, commander_tenant_authority;
+GRANT EXECUTE ON FUNCTION public.is_adapter_ops_capability_revoked(text,text)
+  TO commander_adapter_ops;
+GRANT EXECUTE ON FUNCTION public.consume_adapter_ops_capability_replay(text,text,text,timestamptz)
+  TO commander_adapter_ops;
+`;

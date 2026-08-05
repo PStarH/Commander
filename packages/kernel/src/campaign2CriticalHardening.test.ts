@@ -10,7 +10,10 @@ import {
   KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL,
   KERNEL_SIGNED_EVIDENCE_ORDERING_SQL,
 } from './evidenceSchema.js';
-import { KERNEL_SIGNED_EVIDENCE_MIGRATIONS } from './migrations.js';
+import {
+  KERNEL_CAMPAIGN2_CRITICAL_HARDENING_MIGRATIONS,
+  KERNEL_SIGNED_EVIDENCE_MIGRATIONS,
+} from './migrations.js';
 import {
   PostgresKernelRepository,
   type SqlClient,
@@ -142,6 +145,48 @@ const EVIDENCE: KernelEvidenceRecord = {
 };
 
 describe('Campaign 2 critical authority hardening', () => {
+  it('keeps adapter-ops capability checks behind owner-owned RPCs', async () => {
+    const migration = KERNEL_CAMPAIGN2_CRITICAL_HARDENING_MIGRATIONS.find(
+      ({ id }) => id === '2026-08-05.6.adapter_ops_capability_stores',
+    );
+    assert.ok(migration, 'adapter-ops capability authority migration is required');
+    assert.match(
+      migration.sql,
+      /CREATE FUNCTION public\.is_adapter_ops_capability_revoked\([\s\S]*?p_jti text,[\s\S]*?p_tenant_id text[\s\S]*?SECURITY DEFINER/i,
+    );
+    assert.match(
+      migration.sql,
+      /CREATE FUNCTION public\.consume_adapter_ops_capability_replay\([\s\S]*?p_tenant_id text,[\s\S]*?p_jti text,[\s\S]*?p_nonce text,[\s\S]*?p_expires_at timestamptz[\s\S]*?SECURITY DEFINER/i,
+    );
+    assert.match(
+      migration.sql,
+      /GRANT EXECUTE ON FUNCTION public\.is_adapter_ops_capability_revoked\(text,text\)[\s\S]*TO commander_adapter_ops/i,
+    );
+    assert.match(
+      migration.sql,
+      /GRANT EXECUTE ON FUNCTION public\.consume_adapter_ops_capability_replay\(text,text,text,timestamptz\)[\s\S]*TO commander_adapter_ops/i,
+    );
+
+    const client = new RecordingClient('commander_adapter_ops');
+    const repository = new PostgresKernelRepository(new Pool(client), { adapterOpsMode: true });
+    await repository.isCapabilityRevoked('jti-a', 'tenant-a');
+    await repository.consumeCapabilityReplay({
+      tenantId: 'tenant-a',
+      jti: 'jti-a',
+      nonce: 'nonce-a',
+      expiresAt: '2026-08-05T12:00:00.000Z',
+    });
+
+    const capabilitySql = client.queries
+      .map(({ sql }) => sql)
+      .filter((sql) => /capability_(?:revoked|replay|revocations|replays)/i.test(sql))
+      .join('\n');
+    assert.match(capabilitySql, /is_adapter_ops_capability_revoked/i);
+    assert.match(capabilitySql, /consume_adapter_ops_capability_replay/i);
+    assert.doesNotMatch(capabilitySql, /FROM commander_capability_revocations/i);
+    assert.doesNotMatch(capabilitySql, /INSERT INTO commander_capability_replays/i);
+  });
+
   it('fails closed on missing approval fields and releases historical compensation leases', () => {
     for (const field of [
       'authorizationId',

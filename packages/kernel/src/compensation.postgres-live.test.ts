@@ -194,6 +194,45 @@ describe('governed compensation PostgreSQL authority', { skip: !adminUrl }, () =
     return { runId, stepId, effectId, request, response };
   }
 
+  it('uses adapter-ops capability RPCs without direct table privileges', async () => {
+    const jti = `capability-${suffix}`;
+    const nonce = `nonce-${suffix}`;
+    await owner.query(
+      `INSERT INTO commander_capability_revocations (tenant_id,jti,expires_at,reason)
+       VALUES ($1,$2,now() + interval '5 minutes','integration')`,
+      [tenantA, jti],
+    );
+    try {
+      assert.equal(await adapterRepository.isCapabilityRevoked(jti, tenantA), true);
+      const replay = {
+        tenantId: tenantA,
+        jti,
+        nonce,
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      };
+      assert.equal(await adapterRepository.consumeCapabilityReplay(replay), false);
+      assert.equal(await adapterRepository.consumeCapabilityReplay(replay), true);
+
+      const privileges = await owner.query<{
+        reads_revocations: boolean;
+        writes_replays: boolean;
+      }>(`SELECT
+           has_table_privilege('commander_adapter_ops','commander_capability_revocations','SELECT') AS reads_revocations,
+           has_table_privilege('commander_adapter_ops','commander_capability_replays','INSERT') AS writes_replays`);
+      assert.equal(privileges.rows[0]?.reads_revocations, false);
+      assert.equal(privileges.rows[0]?.writes_replays, false);
+    } finally {
+      await owner.query(`DELETE FROM commander_capability_replays WHERE tenant_id=$1 AND jti=$2`, [
+        tenantA,
+        jti,
+      ]);
+      await owner.query(
+        `DELETE FROM commander_capability_revocations WHERE tenant_id=$1 AND jti=$2`,
+        [tenantA, jti],
+      );
+    }
+  });
+
   async function requestAuthorizedCompensation(label: string) {
     const forward = await completedForwardEffect(label);
     const base: LegacyGovernedCompensationInput = {
