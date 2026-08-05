@@ -7,7 +7,11 @@ import {
   applyTask1ClosureDescriptorSet,
   type Task1ClosurePhase,
 } from './migrations.js';
-import { seedDemoTicketAllowlist, seedWorkerAllowedTenants } from './seedWorkerClaimSecret.js';
+import {
+  seedDemoTicketAllowlist,
+  seedWorkerAllowedTenants,
+  type ClaimSecretSeedClient,
+} from './seedWorkerClaimSecret.js';
 import {
   runTask1OwnerCommand,
   parseTask1OwnerCommandInput,
@@ -48,6 +52,33 @@ export function parseAllowedTenantsEnv(raw: string | undefined): string[] {
     .split(',')
     .map((t) => t.trim())
     .filter((t) => t.length > 0 && t !== '*');
+}
+
+/** Whether the post-closure tenant-authority table is available for owner seeding. */
+export function shouldSeedTenantAuthorityAllowedTenants(
+  closurePhase: Task1ClosurePhase | undefined,
+  tenantIds: readonly string[],
+): boolean {
+  return closurePhase !== undefined && tenantIds.length > 0;
+}
+
+/** Seed the closure tenant authority allowlist through the owner migration connection only. */
+export async function seedTenantAuthorityAllowedTenants(
+  client: ClaimSecretSeedClient,
+  tenantIds: readonly string[],
+): Promise<void> {
+  for (const tenantId of tenantIds) {
+    const trimmed = tenantId.trim();
+    if (!trimmed || trimmed === '*') {
+      throw new Error(`TENANT_AUTHORITY_ALLOWED_TENANT_INVALID: refusing to seed '${tenantId}'`);
+    }
+    await client.query(
+      `INSERT INTO public.commander_tenant_authority_allowed_tenants (tenant_id, enabled)
+       VALUES ($1, true)
+       ON CONFLICT (tenant_id) DO UPDATE SET enabled = true`,
+      [trimmed],
+    );
+  }
 }
 
 /** Populated-volume upgrade gate: role init scripts only run on first database creation. */
@@ -551,6 +582,7 @@ export type MigrationStage =
   | 'adapter-ops-login'
   | 'kernel-migrations'
   | 'closure-migrations'
+  | 'tenant-authority-seed'
   | 'worker-tenant-seed'
   | 'demo-policy-seed';
 
@@ -631,6 +663,11 @@ async function main() {
       process.env.COMMANDER_WORKER_ALLOWED_TENANTS ?? process.env.COMMANDER_WORKER_TENANTS,
     );
     if (tenants.length > 0) {
+      if (shouldSeedTenantAuthorityAllowedTenants(closurePhase, tenants)) {
+        stage = 'tenant-authority-seed';
+        await seedTenantAuthorityAllowedTenants(pool, tenants);
+        console.log(`Seeded commander_tenant_authority_allowed_tenants: ${tenants.join(',')}`);
+      }
       stage = 'worker-tenant-seed';
       await seedWorkerAllowedTenants(pool, tenants);
       console.log(`Seeded commander_worker_allowed_tenants: ${tenants.join(',')}`);
