@@ -876,14 +876,24 @@ jobs:
           pnpm --filter @commander/action-adapters build
 
       - name: Generate cell compose secrets
+        shell: bash
         run: |
-          echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" >> "$GITHUB_ENV"
-          echo "COMMANDER_API_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
-          echo "COMMANDER_MASTER_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
-          echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
-          echo "COMMANDER_CAPABILITY_TOKEN_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
-          echo "COMMANDER_INTEGRITY_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
-          echo "COMMANDER_WORKER_AUTH_TOKEN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          set -euo pipefail
+          write_masked_env() {
+            local name="$1"
+            local bytes="$2"
+            local value
+            value="$(openssl rand -hex "$bytes")"
+            printf '::add-mask::%s\n' "$value"
+            printf '%s=%s\n' "$name" "$value" >> "$GITHUB_ENV"
+          }
+          write_masked_env POSTGRES_PASSWORD 16
+          write_masked_env COMMANDER_API_KEY 32
+          write_masked_env COMMANDER_MASTER_KEY 32
+          write_masked_env JWT_SECRET 32
+          write_masked_env COMMANDER_CAPABILITY_TOKEN_KEY 32
+          write_masked_env COMMANDER_INTEGRITY_KEY 32
+          write_masked_env COMMANDER_WORKER_AUTH_TOKEN 32
 
       - name: Docker build worker image (--no-cache)
         run: docker build --no-cache -f packages/worker-plane/Dockerfile -t commander-worker-ci .
@@ -896,6 +906,10 @@ jobs:
 
       - name: Cell compensation E2E compose (C3)
         run: pnpm cell:compensation-e2e -- --mode compose --up
+
+      - name: Tear down cell compose
+        if: always()
+        run: pnpm cell:down
 
       - name: Upload cell up-assert artifacts
         if: always()

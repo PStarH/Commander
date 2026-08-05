@@ -26,6 +26,9 @@ importers:
 
   .:
     dependencies:
+      '@commander/action-adapters':
+        specifier: workspace:*
+        version: link:packages/action-adapters
       '@commander/core':
         specifier: workspace:*
         version: link:packages/core

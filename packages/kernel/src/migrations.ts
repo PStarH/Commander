@@ -31,7 +31,10 @@ import {
   KERNEL_SIGNED_EVIDENCE_ORDERING_SQL,
   KERNEL_SIGNED_EVIDENCE_SQL,
 } from './evidenceSchema.js';
-import { KERNEL_COMPENSATION_PERSISTENCE_SQL } from './compensationSchema.js';
+import {
+  KERNEL_COMPENSATION_PERSISTENCE_SQL,
+  KERNEL_COMPENSATION_TERMINAL_CLOSURE_SQL,
+} from './compensationSchema.js';
 import { KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL } from './campaign2CriticalHardening.js';
 
 export interface KernelMigration {
@@ -63,6 +66,8 @@ const KERNEL_ADAPTER_OPS_COMPENSATION_TERMINAL_EVIDENCE_CHECKSUM =
   'e26ae10783bdd959815887140cbc94ba641443898fde1c10ff61c670e97640f2';
 const KERNEL_SIGNED_EVIDENCE_ORDERING_CHECKSUM =
   'b5e5fe007767c4649e8c82bc43b6ffcac38fbb947b143866a031648b34298bcb';
+const KERNEL_COMPENSATION_PERSISTENCE_HISTORICAL_CHECKSUM =
+  '9eb068023ff22fa9a9c59c87d2cccb3b4ebbf3320d629aa9ad6b02fe6ef1e654';
 
 const pinnedSource = (name: string, sql: string, expected: string): string => {
   if (checksum(sql) !== expected) {
@@ -80,6 +85,11 @@ pinnedSource(
   'Task 2 canonical reconciliation schema',
   KERNEL_TASK2_RECONCILIATION_SCHEMA_SQL,
   KERNEL_TASK2_RECONCILIATION_SCHEMA_CANONICAL_CHECKSUM,
+);
+pinnedSource(
+  'Historical governed compensation persistence',
+  KERNEL_COMPENSATION_PERSISTENCE_SQL,
+  KERNEL_COMPENSATION_PERSISTENCE_HISTORICAL_CHECKSUM,
 );
 pinnedSource(
   'Adapter-ops evidence context',
@@ -310,7 +320,12 @@ export const KERNEL_COMPENSATION_PERSISTENCE_MIGRATIONS: readonly KernelMigratio
   {
     id: '2026-07-29.1.governed_compensation_persistence',
     sql: KERNEL_COMPENSATION_PERSISTENCE_SQL,
-    checksum: checksum(KERNEL_COMPENSATION_PERSISTENCE_SQL),
+    checksum: KERNEL_COMPENSATION_PERSISTENCE_HISTORICAL_CHECKSUM,
+  },
+  {
+    id: '2026-08-05.2.compensation_terminal_closure',
+    sql: KERNEL_COMPENSATION_TERMINAL_CLOSURE_SQL,
+    checksum: checksum(KERNEL_COMPENSATION_TERMINAL_CLOSURE_SQL),
   },
 ];
 

@@ -137,7 +137,7 @@ const CELL_CAPABILITY_MATERIALS = generateCellCapabilityMaterials();
 const CELL_EVIDENCE_SIGNING_MATERIALS = generateCellEvidenceSigningMaterials();
 const CELL_DATABASE_TLS_MATERIALS = generateCellDatabaseTlsMaterials();
 
-export const COMPOSE_CONFIG_ENV: Record<string, string> = {
+const COMPOSE_SECRET_DEFAULTS = {
   POSTGRES_PASSWORD: 'ci-cell-smoke',
   COMMANDER_API_KEY: 'ci-cell-smoke-api-key',
   COMMANDER_MASTER_KEY: 'ci-cell-smoke-master-key-32chars!!',
@@ -146,12 +146,42 @@ export const COMPOSE_CONFIG_ENV: Record<string, string> = {
   COMMANDER_CAPABILITY_TOKEN_KEY: 'ci-cell-smoke-capability-key',
   COMMANDER_INTEGRITY_KEY: 'ci-cell-smoke-integrity-key',
   COMMANDER_WORKER_AUTH_TOKEN: 'ci-cell-smoke-worker-token',
-  COMMANDER_WORKER_TENANTS: CELL_E2E_TENANT,
-  COMMANDER_WORKER_ALLOWED_TENANTS: CELL_E2E_TENANT,
-  ...CELL_CAPABILITY_MATERIALS,
-  ...CELL_EVIDENCE_SIGNING_MATERIALS,
-  ...CELL_DATABASE_TLS_MATERIALS,
-};
+} as const;
+
+type CellComposeSecretName = keyof typeof COMPOSE_SECRET_DEFAULTS;
+
+function resolveCellComposeSecret(env: NodeJS.ProcessEnv, name: CellComposeSecretName): string {
+  const value = env[name];
+  if (value === undefined || value === '') return COMPOSE_SECRET_DEFAULTS[name];
+  if (value.length < 16 || value.trim() !== value || /[\0\r\n]/.test(value)) {
+    throw new Error(`INVALID_CELL_COMPOSE_SECRET:${name}`);
+  }
+  if (name === 'COMMANDER_API_KEY' && /[:;]/.test(value)) {
+    throw new Error(`INVALID_CELL_COMPOSE_SECRET:${name}`);
+  }
+  return value;
+}
+
+export function createCellComposeConfigEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  const secrets = Object.fromEntries(
+    (Object.keys(COMPOSE_SECRET_DEFAULTS) as CellComposeSecretName[]).map((name) => [
+      name,
+      resolveCellComposeSecret(env, name),
+    ]),
+  ) as Record<CellComposeSecretName, string>;
+  return {
+    ...secrets,
+    COMMANDER_WORKER_TENANTS: CELL_E2E_TENANT,
+    COMMANDER_WORKER_ALLOWED_TENANTS: CELL_E2E_TENANT,
+    ...CELL_CAPABILITY_MATERIALS,
+    ...CELL_EVIDENCE_SIGNING_MATERIALS,
+    ...CELL_DATABASE_TLS_MATERIALS,
+  };
+}
+
+export const COMPOSE_CONFIG_ENV: Record<string, string> = createCellComposeConfigEnv();
 
 /** GID of docker.sock as seen inside a container (Colima often uses 991). */
 export function resolveDockerGid(
@@ -192,24 +222,26 @@ export function resolveDockerGid(
   return '0';
 }
 
-/** In-compose Postgres DSN — must override any host DATABASE_URL (e.g. :5433 test PG). */
-const CELL_POSTGRES_URL = `postgres://commander:${COMPOSE_CONFIG_ENV.POSTGRES_PASSWORD}@postgres:5432/commander?sslmode=verify-full`;
+export function createCellComposeEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const config = createCellComposeConfigEnv(env);
+  // In-compose Postgres DSN must override any host DATABASE_URL (e.g. :5433 test PG).
+  const postgresUrl = `postgres://commander:${encodeURIComponent(config.POSTGRES_PASSWORD)}@postgres:5432/commander?sslmode=verify-full`;
+  return {
+    ...config,
+    DATABASE_URL: postgresUrl,
+    COMMANDER_KERNEL_DATABASE_URL: postgresUrl,
+    COMMANDER_ENABLE_DEMO_TICKET: '1',
+    COMMANDER_CELL_TENANT_ID: CELL_E2E_TENANT,
+    // Single-tenant cell escape hatch for v1TenantGuard (NullTenantProvider).
+    COMMANDER_DEFAULT_TENANT_ID: CELL_E2E_TENANT,
+    API_KEYS: `${config.COMMANDER_API_KEY}:cell-e2e:admin;actions:approve`,
+    TENANT_API_KEYS: `${CELL_E2E_TENANT}:${config.COMMANDER_API_KEY}`,
+    GITHUB_TOKEN: env.CELL_E2E_GITHUB_TOKEN ?? 'cell-e2e-github-token',
+    DOCKER_GID: resolveDockerGid({ env }),
+  };
+}
 
-export const CELL_COMPOSE_ENV: Record<string, string> = {
-  ...COMPOSE_CONFIG_ENV,
-  // Fail-closed vs host leakage: compose ${DATABASE_URL:-…} otherwise picks up
-  // a local probe URL (127.0.0.1:5433) and kernel-migrate gets ECONNREFUSED.
-  DATABASE_URL: CELL_POSTGRES_URL,
-  COMMANDER_KERNEL_DATABASE_URL: CELL_POSTGRES_URL,
-  COMMANDER_ENABLE_DEMO_TICKET: '1',
-  COMMANDER_CELL_TENANT_ID: CELL_E2E_TENANT,
-  // Single-tenant cell escape hatch for v1TenantGuard (NullTenantProvider).
-  COMMANDER_DEFAULT_TENANT_ID: CELL_E2E_TENANT,
-  API_KEYS: `${COMPOSE_CONFIG_ENV.COMMANDER_API_KEY}:cell-e2e:admin;actions:approve`,
-  TENANT_API_KEYS: `${CELL_E2E_TENANT}:${COMPOSE_CONFIG_ENV.COMMANDER_API_KEY}`,
-  GITHUB_TOKEN: process.env.CELL_E2E_GITHUB_TOKEN ?? 'cell-e2e-github-token',
-  DOCKER_GID: resolveDockerGid(),
-};
+export const CELL_COMPOSE_ENV: Record<string, string> = createCellComposeEnv();
 
 export const COMPOSE_CMD =
   'docker compose -f docker-compose.yml -f docker-compose.cell.yml --profile cell';
@@ -279,6 +311,25 @@ export function tryComposeCellUp(): { ok: boolean; error?: string } {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, error: message };
+  }
+}
+
+export function tryComposeCellDown(
+  options: {
+    execute?: (command: string, env: NodeJS.ProcessEnv) => void;
+  } = {},
+): { ok: boolean; error?: string } {
+  const env = { ...process.env, ...CELL_COMPOSE_ENV };
+  const execute =
+    options.execute ??
+    ((command: string, runtimeEnv: NodeJS.ProcessEnv) => {
+      execSync(command, { cwd: process.cwd(), env: runtimeEnv, stdio: 'pipe' });
+    });
+  try {
+    execute(`${COMPOSE_CMD} down -v --remove-orphans`, env);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 

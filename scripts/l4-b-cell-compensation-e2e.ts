@@ -14,14 +14,16 @@ import {
   ActionAdapterRegistry,
   createGitHubPullRequestCreateAdapter,
 } from '@commander/action-adapters';
-import { KERNEL_COMPENSATION_TOPIC } from '@commander/kernel';
-import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
+import type { CompensationOutboxPort } from '@commander/kernel';
 import { CompensationDaemon } from '../packages/adapter-ops/src/compensationDaemon.js';
+import { sealGovernedCompensationAuthorization } from '../packages/kernel/src/ops/compensationAuthority.js';
 import { createChaosMockFetch } from './l4-b-adapter-chaos.js';
 import {
   assertComposeCellHealth,
   CELL_COMPOSE_ENV,
   CELL_E2E_TENANT,
+  createCellComposeEnv,
+  tryComposeCellDown,
   tryComposeCellUp,
 } from './l4-b-cell-compose.js';
 import {
@@ -42,10 +44,18 @@ export interface CompensationE2EResult {
   steps: Record<string, boolean | string>;
   controlledChange: ControlledChangeCellEvidence;
   dockerError?: string;
+  teardownError?: string;
   elapsedMs: number;
 }
 
-export { assertComposeCellHealth, CELL_COMPOSE_ENV, CELL_E2E_TENANT, tryComposeCellUp };
+export {
+  assertComposeCellHealth,
+  CELL_COMPOSE_ENV,
+  CELL_E2E_TENANT,
+  createCellComposeEnv,
+  tryComposeCellDown,
+  tryComposeCellUp,
+};
 
 async function httpJson(
   baseUrl: string,
@@ -87,71 +97,151 @@ export async function runAdapterOpsCompensationMock(): Promise<boolean> {
     fetch: createChaosMockFetch(counters),
   });
   const registry = new ActionAdapterRegistry([adapter]);
-  const kernel = new InMemoryKernelRepository();
   const tenantId = 'adapter-ops-mock-tenant';
-
-  kernel.seedOutboxMessage({
-    topic: KERNEL_COMPENSATION_TOPIC,
+  const workerId = 'adapter-ops-mock';
+  const workerGeneration = 1;
+  const claimSecret = 'adapter-ops-mock-claim-secret';
+  const authorization = sealGovernedCompensationAuthorization({
+    schema: 'commander.compensation/v1',
+    authorizationId: 'authorization-cmp',
+    requestId: 'request-cmp',
     tenantId,
-    key: `${tenantId}/run-cmp/effect-forward`,
-    payload: {
-      type: 'kernel.compensation.requested',
-      tenantId,
-      runId: 'run-cmp',
-      stepId: 'step-cmp',
-      compensationAction: 'compensate.github.pull-request.create',
-      compensationPayload: {
-        originalEffectId: 'effect-forward',
-        forwardResponse: { prNumber: 1 },
-        destination: 'github://octo/repo/pulls',
-      },
-      idempotencyKey: 'cmp:effect-forward:1.0.0',
+    originalRunId: 'run-forward',
+    originalEffectId: 'effect-forward',
+    originalRunStateAtRequest: 'COMPENSATING',
+    compensationRunId: 'run-cmp',
+    compensationStepId: 'step-cmp',
+    compensationEffectId: 'effect-cmp',
+    compensationEffectType: 'compensate.github.pull-request.create',
+    compensationRequest: {
+      originalEffectId: 'effect-forward',
+      forwardResponse: { prNumber: 1 },
+      destination: 'github://octo/repo/pulls',
+      compensationPatch: {},
     },
+    idempotencyKey: 'cmp:effect-forward:1.0.0',
+    forwardReceipt: { prNumber: 1 },
+    adapterVersion: adapter.descriptor.adapterVersion,
+    policyDecisionId: 'policy-compensation',
+    policySnapshotId: 'policy-cell-v1',
+    decisionEffect: 'allow',
+    authorizationExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+    approvalBinding: null,
   });
-
-  const genericClaims = await kernel.claimOutbox(10);
-  assert.ok(
-    genericClaims.every((m) => m.topic !== KERNEL_COMPENSATION_TOPIC),
-    'kernel-ops publisher must not steal compensation topic',
-  );
+  let claimed = false;
+  let finalized = false;
+  const repository: CompensationOutboxPort = {
+    async claimCompensationWork(input) {
+      assert.equal(input.workerId, workerId);
+      assert.equal(input.workerGeneration, workerGeneration);
+      assert.equal(input.claimSecret, claimSecret);
+      if (claimed) return [];
+      claimed = true;
+      return [
+        {
+          messageId: 'outbox-cmp',
+          tenantId,
+          claimToken: 'outbox-claim-cmp',
+          authorization,
+          lease: {
+            workerId,
+            workerGeneration,
+            token: 'outbox-claim-cmp',
+            fencingEpoch: 1,
+          },
+        },
+      ];
+    },
+    async completeCompensationWork(input) {
+      assert.equal(input.workerId, workerId);
+      assert.equal(input.workerGeneration, workerGeneration);
+      assert.equal(input.claimSecret, claimSecret);
+      assert.equal(input.compensationEffectId, authorization.compensationEffectId);
+      finalized = true;
+      return { applied: true, disposition: 'COMPLETED' };
+    },
+    async handoffCompensationUnknown() {
+      assert.fail('mock compensation must not hand off an unknown result');
+    },
+    async escalateCompensationWork(input) {
+      assert.fail(`valid mock compensation must not escalate: ${input.reason}`);
+    },
+    async parkCompensationUnknown() {
+      assert.fail('legacy sealed work must not use the durable unknown path');
+    },
+    async finalizeCompensation() {
+      assert.fail('legacy sealed work must not use the durable finalization path');
+    },
+  };
 
   let compensated = false;
   const daemon = new CompensationDaemon({
-    repository: kernel,
+    repository,
     registry,
     broker: {
-      admit: async () => ({ admitted: true, effectId: 'eff-comp', replayed: false }),
-      executeAdmitted: async () => {
+      admit: async (input) => ({ admitted: true, effectId: input.effectId, replayed: false }),
+      executeAdmitted: async (input) => {
         compensated = true;
-        return { effectId: 'eff-comp', replayed: false, response: { state: 'closed' } };
+        return { effectId: input.effectId, replayed: false, response: { state: 'closed' } };
       },
     },
     tokenProvider: async () => 'cmp-token',
     pollIntervalMs: 60_000,
-    workerId: 'adapter-ops-mock',
+    workerId,
+    workerGeneration,
+    claimSecret,
   });
 
   const tick = await daemon.tick();
   assert.equal(tick.consumed, 1);
   assert.equal(tick.succeeded, 1);
-  assert.equal((await kernel.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 10)).length, 0);
-  return compensated && tick.succeeded === 1;
+  return compensated && finalized && tick.succeeded === 1;
 }
 
-async function pollActionTerminal(
+async function pollAction(
   baseUrl: string,
   runId: string,
+  expectedStates: ReadonlySet<string>,
   timeoutMs = 90_000,
-): Promise<string> {
-  const terminal = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED', 'COMPENSATED']);
+): Promise<{ state: string; action?: Record<string, unknown> }> {
+  const failed = new Set(['FAILED', 'CANCELLED']);
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const { json } = await httpJson(baseUrl, 'GET', `/v1/actions/${runId}`);
-    const action = json?.action as { state?: string } | undefined;
-    if (action?.state && terminal.has(action.state)) return action.state;
+    const action = json?.action as Record<string, unknown> | undefined;
+    const state = typeof action?.state === 'string' ? action.state : undefined;
+    if (state && (expectedStates.has(state) || failed.has(state))) return { state, action };
+    await sleep(500);
+  }
+  return { state: 'TIMEOUT' };
+}
+
+async function pollRunState(
+  baseUrl: string,
+  runId: string,
+  expectedState: string,
+  timeoutMs = 90_000,
+): Promise<string> {
+  const failed = new Set(['FAILED', 'CANCELLED']);
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const { json } = await httpJson(baseUrl, 'GET', `/v1/runs/${runId}/status`);
+    const state = typeof json?.state === 'string' ? json.state : undefined;
+    if (state === expectedState || (state && failed.has(state))) return state;
     await sleep(500);
   }
   return 'TIMEOUT';
+}
+
+async function hasRunEvent(baseUrl: string, runId: string, eventType: string): Promise<boolean> {
+  const { status, json } = await httpJson(baseUrl, 'GET', `/v1/runs/${runId}/events`);
+  if (status !== 200 || !Array.isArray(json?.events)) return false;
+  return json.events.some(
+    (event) =>
+      typeof event === 'object' &&
+      event !== null &&
+      (event as { type?: unknown }).type === eventType,
+  );
 }
 
 export async function runComposeDemoCompensationFlow(
@@ -181,6 +271,7 @@ export async function runComposeDemoCompensationFlow(
   }
   const action = (proposed.json?.action ?? {}) as {
     runId: string;
+    effectId: string;
     simulation: { actionDigest: string; simulationId: string; policySnapshotId: string };
   };
   const approved = await httpJson(baseUrl, 'POST', `/v1/actions/${action.runId}/approve`, {
@@ -199,19 +290,33 @@ export async function runComposeDemoCompensationFlow(
       ...(typeof error?.code === 'string' ? { approvalErrorCode: error.code } : {}),
     };
   }
-  const forwardState = await pollActionTerminal(baseUrl, action.runId);
-  if (forwardState !== 'SUCCEEDED') {
-    return { proposed: true, approved: true, forwardDone: false, compensated: false };
+  const forward = await pollAction(baseUrl, action.runId, new Set(['SUCCEEDED']));
+  if (forward.state !== 'SUCCEEDED') {
+    return {
+      proposed: true,
+      approved: true,
+      forwardDone: false,
+      compensated: false,
+      forwardState: forward.state,
+    };
   }
-  const compensate = await httpJson(baseUrl, 'POST', '/v1/actions', {
-    source: 'cell-e2e',
-    package: 'cell-e2e',
-    model: 'mock',
-    tool: 'ticket.compensate',
-    destination: 'demo://tickets',
-    effectType: 'compensate.demo.ticket.create',
-    args: { targetIdempotencyKey: idem },
-    idempotencyKey: `cmp-${idem}`,
+  const forwardReceiptHash = forward.action?.forwardReceiptHash;
+  if (typeof forwardReceiptHash !== 'string') {
+    return {
+      proposed: true,
+      approved: true,
+      forwardDone: true,
+      compensationRequested: false,
+      compensated: false,
+      compensationErrorCode: 'FORWARD_RECEIPT_HASH_MISSING',
+    };
+  }
+  const compensate = await httpJson(baseUrl, 'POST', `/v1/actions/${action.runId}/compensations`, {
+    originalEffectId: action.effectId,
+    adapterVersion: 'demo-ticket/v1',
+    compensationEffectType: 'compensate.demo.ticket.create',
+    compensationPatch: { targetIdempotencyKey: idem },
+    forwardReceiptHash,
   });
   if (compensate.status !== 202) {
     const error = compensate.json?.error as { code?: unknown } | undefined;
@@ -219,18 +324,90 @@ export async function runComposeDemoCompensationFlow(
       proposed: true,
       approved: true,
       forwardDone: true,
+      compensationRequested: false,
       compensated: false,
       compensationHttpStatus: String(compensate.status),
       ...(typeof error?.code === 'string' ? { compensationErrorCode: error.code } : {}),
     };
   }
-  const compAction = (compensate.json?.action ?? {}) as { runId: string };
-  const compState = await pollActionTerminal(baseUrl, compAction.runId);
+  const authorization = compensate.json?.authorization as
+    { id?: unknown; actionDigest?: unknown; policySnapshotId?: unknown } | undefined;
+  let compensationRequest = compensate.json?.request as { compensationRunId?: unknown } | undefined;
+  let compensationApproved = compensate.json?.state !== 'AWAITING_APPROVAL';
+  if (compensate.json?.state === 'AWAITING_APPROVAL') {
+    if (
+      typeof authorization?.id !== 'string' ||
+      typeof authorization.actionDigest !== 'string' ||
+      typeof authorization.policySnapshotId !== 'string'
+    ) {
+      return {
+        proposed: true,
+        approved: true,
+        forwardDone: true,
+        compensationRequested: true,
+        compensationApproved: false,
+        compensated: false,
+        compensationErrorCode: 'COMPENSATION_AUTHORIZATION_INVALID',
+      };
+    }
+    const compensationApproval = await httpJson(
+      baseUrl,
+      'POST',
+      `/v1/actions/${action.runId}/compensations/${encodeURIComponent(authorization.id)}/approve`,
+      {
+        actionDigest: authorization.actionDigest,
+        policySnapshotId: authorization.policySnapshotId,
+      },
+    );
+    compensationApproved = compensationApproval.status === 202;
+    if (!compensationApproved) {
+      const error = compensationApproval.json?.error as { code?: unknown } | undefined;
+      return {
+        proposed: true,
+        approved: true,
+        forwardDone: true,
+        compensationRequested: true,
+        compensationApproved: false,
+        compensated: false,
+        compensationApprovalHttpStatus: String(compensationApproval.status),
+        ...(typeof error?.code === 'string' ? { compensationApprovalErrorCode: error.code } : {}),
+      };
+    }
+    compensationRequest = compensationApproval.json?.request as
+      { compensationRunId?: unknown } | undefined;
+  }
+  const compensationRunId = compensationRequest?.compensationRunId;
+  if (typeof compensationRunId !== 'string') {
+    return {
+      proposed: true,
+      approved: true,
+      forwardDone: true,
+      compensationRequested: true,
+      compensationApproved,
+      compensationRunDone: false,
+      compensated: false,
+      compensationErrorCode: 'COMPENSATION_RUN_ID_MISSING',
+    };
+  }
+  const compensationRunState = await pollRunState(baseUrl, compensationRunId, 'SUCCEEDED');
+  const compState =
+    compensationRunState === 'SUCCEEDED'
+      ? await pollRunState(baseUrl, action.runId, 'COMPENSATED')
+      : 'NOT_RUN';
+  const compensationEventRecorded =
+    compensationRunState === 'SUCCEEDED' &&
+    (await hasRunEvent(baseUrl, compensationRunId, 'compensation.completed'));
   return {
     proposed: true,
     approved: true,
     forwardDone: true,
-    compensated: compState === 'SUCCEEDED',
+    compensationRequested: true,
+    compensationApproved,
+    compensationRunDone: compensationRunState === 'SUCCEEDED',
+    compensationEventRecorded,
+    compensated: compState === 'COMPENSATED' && compensationEventRecorded,
+    compState,
+    compensationRunState,
   };
 }
 
@@ -265,62 +442,78 @@ export async function runCellCompensationE2E(options: {
     };
   }
 
-  let dockerError: string | undefined;
-  if (options.composeUp) {
-    const up = tryComposeCellUp();
-    steps.composeUp = up.ok;
-    if (!up.ok) {
-      return {
+  let result: CompensationE2EResult | undefined;
+  try {
+    let dockerError: string | undefined;
+    if (options.composeUp) {
+      const up = tryComposeCellUp();
+      steps.composeUp = up.ok;
+      if (!up.ok) {
+        result = {
+          mode,
+          verdict: 'BLOCKED',
+          passed: false,
+          steps,
+          controlledChange,
+          dockerError: up.error,
+          elapsedMs: Date.now() - started,
+        };
+        return result;
+      }
+    }
+
+    const health = await assertComposeCellHealth(options.baseUrl);
+    Object.assign(steps, health);
+
+    if (Object.values(health).some((v) => !v)) {
+      result = {
         mode,
         verdict: 'BLOCKED',
         passed: false,
         steps,
         controlledChange,
-        dockerError: up.error,
+        dockerError,
         elapsedMs: Date.now() - started,
       };
+      return result;
     }
-  }
 
-  const health = await assertComposeCellHealth(options.baseUrl);
-  Object.assign(steps, health);
+    const flow = await runComposeDemoCompensationFlow(options.baseUrl);
+    Object.assign(steps, flow);
 
-  if (Object.values(health).some((v) => !v)) {
-    return {
+    // Host InMemory CompensationDaemon is informational only and does not raise compose evidence.
+    // (specialized audit: S_adapter_ops_mock was greenwashing "adapter-ops consumed outbox").
+    const mockOk = await runAdapterOpsCompensationMock().catch(() => false);
+    steps.S_adapter_ops_mock_host = mockOk;
+
+    const passed =
+      flow.proposed === true &&
+      flow.approved === true &&
+      flow.forwardDone === true &&
+      flow.compensated === true &&
+      (options.composeUp ? steps.composeUp === true : true);
+
+    result = {
       mode,
-      verdict: 'BLOCKED',
-      passed: false,
+      verdict: passed ? 'ENFORCED' : 'BLOCKED',
+      passed,
       steps,
       controlledChange,
       dockerError,
       elapsedMs: Date.now() - started,
     };
+    return result;
+  } finally {
+    if (options.composeUp) {
+      const down = tryComposeCellDown();
+      steps.composeDown = down.ok;
+      if (!down.ok && result) {
+        result.verdict = 'BLOCKED';
+        result.passed = false;
+        result.teardownError = down.error;
+      }
+    }
   }
-
-  const flow = await runComposeDemoCompensationFlow(options.baseUrl);
-  Object.assign(steps, flow);
-
-  // Host InMemory CompensationDaemon is informational only and does not raise compose evidence.
-  // (specialized audit: S_adapter_ops_mock was greenwashing "adapter-ops consumed outbox").
-  const mockOk = await runAdapterOpsCompensationMock().catch(() => false);
-  steps.S_adapter_ops_mock_host = mockOk;
-
-  const passed =
-    flow.proposed === true &&
-    flow.approved === true &&
-    flow.forwardDone === true &&
-    flow.compensated === true &&
-    (options.composeUp ? steps.composeUp === true : true);
-
-  return {
-    mode,
-    verdict: passed ? 'ENFORCED' : 'BLOCKED',
-    passed,
-    steps,
-    controlledChange,
-    dockerError,
-    elapsedMs: Date.now() - started,
-  };
 }
 
 async function main(): Promise<void> {

@@ -544,5 +544,17 @@ describe('Consumer-Driven Contract Test — SDK vs Contracts', () => {
       assert.equal(result.ok, false, 'Should reject invalid enum');
       assert.ok(result.errors.some((e) => e.includes('state')), 'Should report enum error for state');
     });
+
+    it('validates governed actions with an optional terminal forward receipt hash', () => {
+      const nonTerminal = validateResource('governedAction', ACTION_FIXTURE);
+      assert.equal(nonTerminal.ok, true, nonTerminal.errors.join('; '));
+
+      const terminal = validateResource('governedAction', {
+        ...ACTION_FIXTURE,
+        state: 'SUCCEEDED',
+        forwardReceiptHash: HASH_64,
+      });
+      assert.equal(terminal.ok, true, terminal.errors.join('; '));
+    });
   });
 });

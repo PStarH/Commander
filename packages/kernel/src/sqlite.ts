@@ -1391,11 +1391,18 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         [request.originalEffectId, request.tenantId],
       );
       const originalEffect = effectResult.rows[0];
+      const originalRunResult = await client.query<Record<string, unknown>>(
+        `SELECT * FROM commander_runs WHERE id=? AND tenant_id=?
+         AND state IN ('PENDING','RUNNING','PAUSED','SUCCEEDED','FAILED','CANCELLED','COMPENSATING')`,
+        [request.originalRunId, request.tenantId],
+      );
+      const originalRun = originalRunResult.rows[0];
       const payload = message?.payload as Record<string, unknown> | undefined;
       if (
         !message ||
         !authorization ||
         !originalEffect ||
+        !originalRun ||
         payload?.requestId !== request.id ||
         payload.authorizationId !== authorization.id ||
         payload.actionDigest !== authorization.actionDigest ||
@@ -1437,10 +1444,22 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
           request.id,
         ],
       );
-      await client.query(
-        `UPDATE commander_runs SET state='COMPENSATING',updated_at=? WHERE id=? AND tenant_id=?`,
+      const compensationRunUpdate = await client.query<{ version: number }>(
+        `UPDATE commander_runs SET state='COMPENSATING',version=version+1,updated_at=?
+         WHERE id=? AND tenant_id=? AND state IN ('PENDING','COMPENSATING') RETURNING version`,
         [at.toISOString(), request.compensationRunId, request.tenantId],
       );
+      const originalRunUpdate = await client.query<{ version: number }>(
+        `UPDATE commander_runs SET state='COMPENSATING',
+         version=version+CASE WHEN state='COMPENSATING' THEN 0 ELSE 1 END,
+         terminal_at=NULL,updated_at=? WHERE id=? AND tenant_id=?
+         AND state IN ('PENDING','RUNNING','PAUSED','SUCCEEDED','FAILED','CANCELLED','COMPENSATING')
+         RETURNING version`,
+        [at.toISOString(), request.originalRunId, request.tenantId],
+      );
+      if (!compensationRunUpdate.rows[0] || !originalRunUpdate.rows[0]) {
+        throw new Error('COMPENSATION_RUN_TRANSITION_REJECTED');
+      }
       await client.query(
         `UPDATE commander_steps SET state='RUNNING',version=version+1,lease_worker_id=?,
         lease_worker_generation=?,lease_token=?,fencing_epoch=?,lease_expires_at=?,updated_at=? WHERE id=? AND tenant_id=?`,
@@ -1459,6 +1478,34 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         `UPDATE commander_outbox SET claimed_at=?,claim_token=?,attempts=attempts+1 WHERE id=?`,
         [at.toISOString(), claimToken, input.outboxMessageId],
       );
+      const transitionPayload = {
+        requestId: request.id,
+        originalRunId: request.originalRunId,
+        compensationRunId: request.compensationRunId,
+      };
+      await this.appendEvent(client, {
+        aggregateType: 'run',
+        aggregateId: request.compensationRunId,
+        sequence: Number(compensationRunUpdate.rows[0].version),
+        type: 'run.compensating',
+        tenantId: request.tenantId,
+        runId: request.compensationRunId,
+        stepId: request.compensationStepId,
+        actor: input.workerId,
+        payload: transitionPayload,
+      });
+      if (originalRun.state !== 'COMPENSATING') {
+        await this.appendEvent(client, {
+          aggregateType: 'run',
+          aggregateId: request.originalRunId,
+          sequence: Number(originalRunUpdate.rows[0].version),
+          type: 'run.compensating',
+          tenantId: request.tenantId,
+          runId: request.originalRunId,
+          actor: input.workerId,
+          payload: transitionPayload,
+        });
+      }
       request.state = 'CLAIMED';
       request.claimWorkerId = input.workerId;
       request.claimWorkerGeneration = input.workerGeneration;
@@ -1485,6 +1532,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
   override async admitCompensationEffect(
     input: AdmitEffectRequest & {
       requestId: string;
+      requestClaimToken: string;
       outboxMessageId: string;
       outboxClaimToken: string;
     },
@@ -1492,39 +1540,141 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
     return this.withTransaction(
       async (client) => {
         const requestResult = await client.query<Record<string, unknown>>(
-          'SELECT * FROM commander_compensation_requests WHERE id=?',
-          [input.requestId],
+          'SELECT * FROM commander_compensation_requests WHERE id=? AND tenant_id=?',
+          [input.requestId, input.tenantId],
         );
         const row = requestResult.rows[0];
         if (!row) return { admitted: false, reason: 'COMPENSATION_ADMISSION_UNAVAILABLE' } as const;
         const request = this.compensationRequestFromRow(row);
-        const authorization = await this.getCompensationAuthorization(
-          request.authorizationId,
-          request.tenantId,
+        const authorizationResult = await client.query<Record<string, unknown>>(
+          'SELECT * FROM commander_compensation_authorizations WHERE id=? AND tenant_id=?',
+          [request.authorizationId, request.tenantId],
         );
+        const authorization = authorizationResult.rows[0]
+          ? this.compensationAuthorizationFromRow(authorizationResult.rows[0])
+          : null;
         const effectResult = await client.query<Record<string, unknown>>(
-          'SELECT response FROM commander_effects WHERE id=? AND tenant_id=?',
+          `SELECT response FROM commander_effects
+           WHERE id=? AND tenant_id=? AND state='COMPLETED'`,
           [request.originalEffectId, request.tenantId],
         );
         const forwardResponse = effectResult.rows[0]?.response;
+        const outboxResult = await client.query<Record<string, unknown>>(
+          `SELECT * FROM commander_outbox WHERE id=? AND tenant_id=? AND topic=?
+           AND published_at IS NULL`,
+          [input.outboxMessageId, request.tenantId, KERNEL_COMPENSATION_TOPIC],
+        );
+        const outbox = outboxResult.rows[0];
+        const runResult = await client.query<Record<string, unknown>>(
+          `SELECT * FROM commander_runs WHERE id=? AND tenant_id=? AND state='COMPENSATING'`,
+          [request.compensationRunId, request.tenantId],
+        );
+        const stepResult = await client.query<Record<string, unknown>>(
+          `SELECT * FROM commander_steps WHERE id=? AND run_id=? AND tenant_id=? AND state='RUNNING'`,
+          [request.compensationStepId, request.compensationRunId, request.tenantId],
+        );
+        const step = stepResult.rows[0];
+        const now = Date.now();
         if (
           !authorization ||
+          !forwardResponse ||
+          !outbox ||
+          !runResult.rows[0] ||
+          !step ||
           request.state !== 'CLAIMED' ||
+          request.tenantId !== input.tenantId ||
+          request.compensationRunId !== input.runId ||
+          request.compensationStepId !== input.stepId ||
           request.compensationEffectId !== input.id ||
+          request.claimWorkerId !== input.lease.workerId ||
+          request.claimWorkerGeneration !== input.lease.workerGeneration ||
+          request.claimToken !== input.requestClaimToken ||
           request.claimToken !== input.outboxClaimToken ||
+          request.claimToken !== input.lease.token ||
+          !request.claimExpiresAt ||
+          Date.parse(request.claimExpiresAt) <= now ||
+          outbox.claim_token !== input.outboxClaimToken ||
+          (outbox.payload as Record<string, unknown>)?.requestId !== request.id ||
+          step.lease_worker_id !== input.lease.workerId ||
+          Number(step.lease_worker_generation) !== input.lease.workerGeneration ||
+          step.lease_token !== input.lease.token ||
+          Number(step.fencing_epoch) !== input.lease.fencingEpoch ||
+          !step.lease_expires_at ||
+          Date.parse(String(step.lease_expires_at)) <= now ||
           input.type !== authorization.compensationEffectType ||
           input.actionDigest !== authorization.actionDigest ||
           input.policyDecisionId !== authorization.policyDecisionId ||
           input.policySnapshotId !== authorization.policySnapshotId ||
-          JSON.stringify(input.request) !==
-            JSON.stringify({
+          canonicalJson(input.request) !==
+            canonicalJson({
               originalEffectId: request.originalEffectId,
               forwardResponse,
               compensationPatch: authorization.compensationPatch,
             })
-        )
+        ) {
           return { admitted: false, reason: 'COMPENSATION_ADMISSION_UNAVAILABLE' } as const;
-        return super.admitEffect(input);
+        }
+        const requestFingerprint = sha256(canonicalJson(input.request));
+        const existingResult = await client.query<Record<string, unknown>>(
+          `SELECT * FROM commander_effects WHERE tenant_id=? AND idempotency_key=?`,
+          [input.tenantId, input.idempotencyKey],
+        );
+        const existing = existingResult.rows[0];
+        if (existing) {
+          const exact =
+            existing.id === input.id &&
+            existing.run_id === input.runId &&
+            existing.step_id === input.stepId &&
+            existing.type === input.type &&
+            existing.request_hash === requestFingerprint &&
+            existing.policy_decision_id === input.policyDecisionId &&
+            existing.policy_snapshot_id === input.policySnapshotId &&
+            existing.action_digest === input.actionDigest;
+          return exact
+            ? { admitted: true, replayed: true, effect: fromEffectAdapter(existing) }
+            : { admitted: false, reason: 'IDEMPOTENCY_CONFLICT' };
+        }
+        const inserted = await client.query<Record<string, unknown>>(
+          `INSERT INTO commander_effects(
+             id,run_id,step_id,tenant_id,type,idempotency_key,request_hash,policy_decision_id,
+             policy_snapshot_id,action_digest,lease_worker_id,lease_worker_generation,
+             lease_fencing_epoch,state,request
+           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'ADMITTED',?) RETURNING *`,
+          [
+            input.id,
+            input.runId,
+            input.stepId,
+            input.tenantId,
+            input.type,
+            input.idempotencyKey,
+            requestFingerprint,
+            input.policyDecisionId,
+            input.policySnapshotId,
+            input.actionDigest,
+            input.lease.workerId,
+            input.lease.workerGeneration,
+            input.lease.fencingEpoch,
+            input.request,
+          ],
+        );
+        const effect = fromEffectAdapter(inserted.rows[0]!);
+        await this.appendEvent(client, {
+          aggregateType: 'effect',
+          aggregateId: effect.id,
+          sequence: 1,
+          type: 'effect.admitted',
+          tenantId: effect.tenantId,
+          runId: effect.runId,
+          stepId: effect.stepId,
+          actor: input.actor,
+          payload: {
+            type: effect.type,
+            policyDecisionId: effect.policyDecisionId,
+            policySnapshotId: effect.policySnapshotId,
+            actionDigest: effect.actionDigest,
+          },
+        });
+        return { admitted: true, replayed: false, effect };
       },
       [input.tenantId],
     );
@@ -1547,160 +1697,319 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
     disposition: import('./types.js').CompensationDisposition,
     payload: Record<string, unknown>,
   ): Promise<CompensationMutationResult> {
-    const scope = this.resolveDurableWorkerTenantScope(
-      input.workerId,
-      input.workerGeneration,
-      input.claimSecret,
-    );
-    if (!scope || !scope.tenantIds.includes(input.tenantId))
-      return { applied: false, reason: 'WORKER_FENCED' };
-    return this.withTransaction(async (client) => {
-      const requestResult = await client.query<Record<string, unknown>>(
-        'SELECT * FROM commander_compensation_requests WHERE id=? AND tenant_id=?',
-        [input.requestId, input.tenantId],
-      );
-      const row = requestResult.rows[0];
-      if (!row) return { applied: false, reason: 'NOT_FOUND' };
-      const request = this.compensationRequestFromRow(row);
-      const outbox = await client.query<Record<string, unknown>>(
-        'SELECT * FROM commander_outbox WHERE id=? AND tenant_id=?',
-        [input.outboxMessageId, input.tenantId],
-      );
-      if (
-        request.compensationEffectId !== input.effectId ||
-        request.claimToken !== input.outboxClaimToken ||
-        outbox.rows[0]?.claim_token !== input.outboxClaimToken
-      )
-        return { applied: false, reason: 'CLAIM_NOT_OWNED' };
-      const effectResult = await client.query<Record<string, unknown>>(
-        'SELECT * FROM commander_effects WHERE id=? AND tenant_id=?',
-        [input.effectId, input.tenantId],
-      );
-      const effect = effectResult.rows[0];
-      if (!effect) {
-        if (disposition !== 'ESCALATED' || ('evidence' in input && input.evidence)) {
-          return { applied: false, reason: 'PRE_ADMISSION_ESCALATION_ONLY' };
+    return this.withTransaction(
+      async (client) => {
+        const fingerprint = sha256(canonicalJson({ input, disposition, payload }));
+        const receiptResult = await client.query<Record<string, unknown>>(
+          `SELECT * FROM commander_compensation_finalization_receipts WHERE outbox_message_id=?`,
+          [input.outboxMessageId],
+        );
+        const receipt = receiptResult.rows[0];
+        if (receipt) {
+          if (receipt.request_id !== input.requestId || receipt.fingerprint !== fingerprint) {
+            return { applied: false, reason: 'CLAIM_REPLAY_CONFLICT' };
+          }
+          const result = parseJsonValue(receipt.result) as Extract<
+            CompensationMutationResult,
+            { applied: true }
+          >;
+          return { ...result, replayed: true };
         }
-        const at = new Date().toISOString();
-        await client.query(
-          `UPDATE commander_compensation_requests SET state='ESCALATED',updated_at=? WHERE id=?`,
-          [at, request.id],
+        const scope = this.resolveDurableWorkerTenantScope(
+          input.workerId,
+          input.workerGeneration,
+          input.claimSecret,
         );
-        await client.query(
-          `UPDATE commander_steps SET state='WAITING_FOR_HUMAN',lease_worker_id=NULL,
-             lease_worker_generation=0,lease_token=NULL,lease_expires_at=NULL WHERE id=?`,
-          [request.compensationStepId],
-        );
-        await client.query(
-          `UPDATE commander_runs SET state='COMPENSATING',terminal_at=NULL,updated_at=? WHERE id=?`,
-          [at, request.compensationRunId],
-        );
-        await client.query(
-          `UPDATE commander_outbox SET published_at=?,claimed_at=NULL,claim_token=NULL WHERE id=?`,
-          [at, input.outboxMessageId],
-        );
-        return { applied: true, disposition: 'ESCALATED', replayed: false };
-      }
-      if (disposition !== 'COMPLETION_UNKNOWN') {
-        if (!('evidence' in input) || !input.evidence) {
-          return { applied: false, reason: 'TERMINAL_EVIDENCE_REQUIRED' };
+        if (!scope || !scope.tenantIds.includes(input.tenantId)) {
+          return { applied: false, reason: 'WORKER_FENCED' };
         }
-        if (disposition === 'COMPLETED' && effect.state !== 'COMPLETED') {
-          return { applied: false, reason: 'EFFECT_NOT_COMPLETED' };
-        }
+        const requestResult = await client.query<Record<string, unknown>>(
+          'SELECT * FROM commander_compensation_requests WHERE id=? AND tenant_id=?',
+          [input.requestId, input.tenantId],
+        );
+        const row = requestResult.rows[0];
+        if (!row) return { applied: false, reason: 'NOT_FOUND' };
+        const request = this.compensationRequestFromRow(row);
+        const outbox = await client.query<Record<string, unknown>>(
+          'SELECT * FROM commander_outbox WHERE id=? AND tenant_id=?',
+          [input.outboxMessageId, input.tenantId],
+        );
         if (
-          disposition === 'CONFIRMED_NOT_APPLIED' &&
-          !['COMPLETION_UNKNOWN', 'CONFIRMED_NOT_APPLIED'].includes(String(effect.state))
-        ) {
-          return { applied: false, reason: 'EFFECT_NOT_UNKNOWN' };
+          request.compensationEffectId !== input.effectId ||
+          request.claimToken !== input.outboxClaimToken ||
+          outbox.rows[0]?.claim_token !== input.outboxClaimToken
+        )
+          return { applied: false, reason: 'CLAIM_NOT_OWNED' };
+        const effectResult = await client.query<Record<string, unknown>>(
+          'SELECT * FROM commander_effects WHERE id=? AND tenant_id=?',
+          [input.effectId, input.tenantId],
+        );
+        const effect = effectResult.rows[0];
+        if (!effect) {
+          if (disposition !== 'ESCALATED' || ('evidence' in input && input.evidence)) {
+            return { applied: false, reason: 'PRE_ADMISSION_ESCALATION_ONLY' };
+          }
+          const at = new Date().toISOString();
+          await client.query(
+            `UPDATE commander_compensation_requests SET state='ESCALATED',updated_at=? WHERE id=?`,
+            [at, request.id],
+          );
+          await client.query(
+            `UPDATE commander_steps SET state='WAITING_FOR_HUMAN',lease_worker_id=NULL,
+             lease_worker_generation=0,lease_token=NULL,lease_expires_at=NULL WHERE id=?`,
+            [request.compensationStepId],
+          );
+          await client.query(
+            `UPDATE commander_runs SET state='COMPENSATING',terminal_at=NULL,updated_at=? WHERE id=?`,
+            [at, request.compensationRunId],
+          );
+          await client.query(
+            `UPDATE commander_outbox SET published_at=?,claimed_at=NULL,claim_token=NULL WHERE id=?`,
+            [at, input.outboxMessageId],
+          );
+          const result = {
+            applied: true as const,
+            disposition: 'ESCALATED' as const,
+            replayed: false,
+          };
+          await client.query(
+            `INSERT INTO commander_compensation_finalization_receipts(
+             outbox_message_id,request_id,fingerprint,result,created_at
+           ) VALUES(?,?,?,?,?)`,
+            [input.outboxMessageId, request.id, fingerprint, result, at],
+          );
+          return result;
         }
-        if (disposition === 'ESCALATED' && effect.state !== 'COMPLETION_UNKNOWN') {
-          return { applied: false, reason: 'EFFECT_NOT_UNKNOWN' };
+        if (disposition !== 'COMPLETION_UNKNOWN') {
+          if (!('evidence' in input) || !input.evidence) {
+            return { applied: false, reason: 'TERMINAL_EVIDENCE_REQUIRED' };
+          }
+          if (disposition === 'COMPLETED' && effect.state !== 'COMPLETED') {
+            return { applied: false, reason: 'EFFECT_NOT_COMPLETED' };
+          }
+          if (
+            disposition === 'CONFIRMED_NOT_APPLIED' &&
+            !['COMPLETION_UNKNOWN', 'CONFIRMED_NOT_APPLIED'].includes(String(effect.state))
+          ) {
+            return { applied: false, reason: 'EFFECT_NOT_UNKNOWN' };
+          }
+          if (disposition === 'ESCALATED' && effect.state !== 'COMPLETION_UNKNOWN') {
+            return { applied: false, reason: 'EFFECT_NOT_UNKNOWN' };
+          }
+          const current = fromEffectAdapter(effect);
+          const projected = {
+            ...current,
+            state:
+              disposition === 'COMPLETED'
+                ? current.state
+                : disposition === 'CONFIRMED_NOT_APPLIED'
+                  ? ('CONFIRMED_NOT_APPLIED' as const)
+                  : ('COMPLETION_UNKNOWN' as const),
+          };
+          assertEvidenceRecordBoundToEffect(input.evidence, projected);
+          await this.appendSqliteEvidenceInTransaction(client, input.evidence);
         }
-        const current = fromEffectAdapter(effect);
-        const projected = {
-          ...current,
-          state:
-            disposition === 'COMPLETED'
-              ? current.state
-              : disposition === 'CONFIRMED_NOT_APPLIED'
-                ? 'CONFIRMED_NOT_APPLIED' as const
-                : 'COMPLETION_UNKNOWN' as const,
-        };
-        assertEvidenceRecordBoundToEffect(input.evidence, projected);
-        await this.appendSqliteEvidenceInTransaction(client, input.evidence);
-      }
-      if (disposition === 'COMPLETION_UNKNOWN') {
-        if (!['ADMITTED', 'COMPLETION_UNKNOWN'].includes(String(effect.state)))
-          return { applied: false, reason: 'EFFECT_NOT_ADMITTED_OR_UNKNOWN' };
-        await client.query(
-          `UPDATE commander_effects SET state='COMPLETION_UNKNOWN',response=?,reconcile_policy=?,reconcile_disposition='PENDING',reconcile_after=? WHERE id=?`,
-          [payload, request.reconcilePolicy, new Date().toISOString(), input.effectId],
-        );
-        await client.query(
-          `UPDATE commander_compensation_requests SET state='COMPLETION_UNKNOWN',updated_at=? WHERE id=?`,
-          [new Date().toISOString(), request.id],
-        );
-        await client.query(
-          `UPDATE commander_steps SET state='WAITING_FOR_RECONCILIATION',lease_worker_id=NULL,lease_worker_generation=0,lease_token=NULL,lease_expires_at=NULL WHERE id=?`,
-          [request.compensationStepId],
-        );
-      } else if (disposition === 'COMPLETED') {
-        await client.query(
-          `UPDATE commander_compensation_requests SET state='COMPLETED',updated_at=? WHERE id=?`,
-          [new Date().toISOString(), request.id],
-        );
-        await client.query(
-          `UPDATE commander_steps SET state='SUCCEEDED',output=?,lease_worker_id=NULL,lease_worker_generation=0,lease_token=NULL,lease_expires_at=NULL WHERE id=?`,
-          [payload, request.compensationStepId],
-        );
-        await client.query(
-          `UPDATE commander_runs SET state='SUCCEEDED',terminal_at=?,updated_at=? WHERE id=?`,
-          [new Date().toISOString(), new Date().toISOString(), request.compensationRunId],
-        );
-        await client.query(
-          `UPDATE commander_runs SET state='COMPENSATED',terminal_at=?,updated_at=? WHERE id=? AND state='COMPENSATING'`,
-          [new Date().toISOString(), new Date().toISOString(), request.originalRunId],
-        );
-      } else if (disposition === 'CONFIRMED_NOT_APPLIED') {
-        await client.query(
-          `UPDATE commander_effects SET state='CONFIRMED_NOT_APPLIED',response=?,completed_at=? WHERE id=?`,
-          [payload, new Date().toISOString(), input.effectId],
-        );
-        await client.query(
-          `UPDATE commander_compensation_requests SET state='CONFIRMED_NOT_APPLIED',updated_at=? WHERE id=?`,
-          [new Date().toISOString(), request.id],
-        );
-        await client.query(
-          `UPDATE commander_steps SET state='FAILED',lease_worker_id=NULL,lease_worker_generation=0,lease_token=NULL,lease_expires_at=NULL WHERE id=?`,
-          [request.compensationStepId],
-        );
-        await client.query(
-          `UPDATE commander_runs SET state='FAILED',terminal_at=?,updated_at=? WHERE id=?`,
-          [new Date().toISOString(), new Date().toISOString(), request.compensationRunId],
-        );
-      } else {
-        await client.query(
-          `UPDATE commander_compensation_requests SET state='ESCALATED',updated_at=? WHERE id=?`,
-          [new Date().toISOString(), request.id],
-        );
-        await client.query(
-          `UPDATE commander_steps SET state='WAITING_FOR_HUMAN',lease_worker_id=NULL,lease_worker_generation=0,lease_token=NULL,lease_expires_at=NULL WHERE id=?`,
-          [request.compensationStepId],
-        );
-        await client.query(
-          `UPDATE commander_effects SET reconcile_disposition='ESCALATED',
+        if (disposition === 'COMPLETION_UNKNOWN') {
+          if (!['ADMITTED', 'COMPLETION_UNKNOWN'].includes(String(effect.state)))
+            return { applied: false, reason: 'EFFECT_NOT_ADMITTED_OR_UNKNOWN' };
+          await client.query(
+            `UPDATE commander_effects SET state='COMPLETION_UNKNOWN',response=?,reconcile_policy=?,reconcile_disposition='PENDING',reconcile_after=? WHERE id=?`,
+            [payload, request.reconcilePolicy, new Date().toISOString(), input.effectId],
+          );
+          await client.query(
+            `UPDATE commander_compensation_requests SET state='COMPLETION_UNKNOWN',updated_at=? WHERE id=?`,
+            [new Date().toISOString(), request.id],
+          );
+          await client.query(
+            `UPDATE commander_steps SET state='WAITING_FOR_RECONCILIATION',lease_worker_id=NULL,lease_worker_generation=0,lease_token=NULL,lease_expires_at=NULL WHERE id=?`,
+            [request.compensationStepId],
+          );
+        } else if (disposition === 'COMPLETED') {
+          const at = new Date().toISOString();
+          await client.query(
+            `UPDATE commander_compensation_requests SET state='COMPLETED',updated_at=? WHERE id=?`,
+            [at, request.id],
+          );
+          const stepUpdate = await client.query<{ version: number }>(
+            `UPDATE commander_steps SET state='SUCCEEDED',output=?,version=version+1,
+           lease_worker_id=NULL,lease_worker_generation=0,lease_token=NULL,
+           lease_expires_at=NULL,updated_at=? WHERE id=? AND tenant_id=? RETURNING version`,
+            [payload, at, request.compensationStepId, input.tenantId],
+          );
+          const compensationRunUpdate = await client.query<{ version: number }>(
+            `UPDATE commander_runs SET state='SUCCEEDED',version=version+1,terminal_at=?,updated_at=?
+           WHERE id=? AND tenant_id=? RETURNING version`,
+            [at, at, request.compensationRunId, input.tenantId],
+          );
+          const originalRunUpdate = await client.query<{ version: number }>(
+            `UPDATE commander_runs SET state='COMPENSATED',version=version+1,terminal_at=?,updated_at=?
+           WHERE id=? AND tenant_id=? AND state='COMPENSATING' RETURNING version`,
+            [at, at, request.originalRunId, input.tenantId],
+          );
+          if (!stepUpdate.rows[0] || !compensationRunUpdate.rows[0] || !originalRunUpdate.rows[0]) {
+            throw new Error('COMPENSATION_TERMINAL_TRANSITION_REJECTED');
+          }
+          const transitionPayload = {
+            requestId: request.id,
+            originalRunId: request.originalRunId,
+            originalEffectId: request.originalEffectId,
+            compensationRunId: request.compensationRunId,
+            compensationEffectId: input.effectId,
+            disposition,
+          };
+          await this.appendEvent(client, {
+            aggregateType: 'step',
+            aggregateId: request.compensationStepId,
+            sequence: Number(stepUpdate.rows[0].version),
+            type: 'step.succeeded',
+            tenantId: input.tenantId,
+            runId: request.compensationRunId,
+            stepId: request.compensationStepId,
+            actor: input.actor,
+            payload: transitionPayload,
+          });
+          await this.appendEvent(client, {
+            aggregateType: 'run',
+            aggregateId: request.compensationRunId,
+            sequence: Number(compensationRunUpdate.rows[0].version),
+            type: 'run.succeeded',
+            tenantId: input.tenantId,
+            runId: request.compensationRunId,
+            stepId: request.compensationStepId,
+            actor: input.actor,
+            payload: transitionPayload,
+          });
+          await this.appendEvent(client, {
+            aggregateType: 'run',
+            aggregateId: request.originalRunId,
+            sequence: Number(originalRunUpdate.rows[0].version),
+            type: 'run.compensated',
+            tenantId: input.tenantId,
+            runId: request.originalRunId,
+            actor: input.actor,
+            payload: transitionPayload,
+          });
+          await this.appendEvent(client, {
+            aggregateType: 'effect',
+            aggregateId: input.effectId,
+            sequence: await this.nextEffectEventSequence(client, input.effectId),
+            type: 'compensation.completed',
+            tenantId: input.tenantId,
+            runId: request.compensationRunId,
+            stepId: request.compensationStepId,
+            actor: input.actor,
+            payload: {
+              originalRunId: request.originalRunId,
+              originalEffectId: request.originalEffectId,
+              compensationRunId: request.compensationRunId,
+              compensationEffectId: input.effectId,
+            },
+          });
+        } else if (disposition === 'CONFIRMED_NOT_APPLIED') {
+          const at = new Date().toISOString();
+          await client.query(
+            `UPDATE commander_effects SET state='CONFIRMED_NOT_APPLIED',response=?,completed_at=? WHERE id=?`,
+            [payload, at, input.effectId],
+          );
+          await client.query(
+            `UPDATE commander_compensation_requests SET state='CONFIRMED_NOT_APPLIED',updated_at=? WHERE id=?`,
+            [at, request.id],
+          );
+          const stepUpdate = await client.query<{ version: number }>(
+            `UPDATE commander_steps SET state='FAILED',version=version+1,lease_worker_id=NULL,
+           lease_worker_generation=0,lease_token=NULL,lease_expires_at=NULL,updated_at=?
+           WHERE id=? AND tenant_id=? RETURNING version`,
+            [at, request.compensationStepId, input.tenantId],
+          );
+          const compensationRunUpdate = await client.query<{ version: number }>(
+            `UPDATE commander_runs SET state='FAILED',version=version+1,terminal_at=?,updated_at=?
+           WHERE id=? AND tenant_id=? RETURNING version`,
+            [at, at, request.compensationRunId, input.tenantId],
+          );
+          const originalRunUpdate = await client.query<{ version: number }>(
+            `UPDATE commander_runs SET state='FAILED',version=version+1,terminal_at=?,updated_at=?
+           WHERE id=? AND tenant_id=? AND state='COMPENSATING' RETURNING version`,
+            [at, at, request.originalRunId, input.tenantId],
+          );
+          if (!stepUpdate.rows[0] || !compensationRunUpdate.rows[0] || !originalRunUpdate.rows[0]) {
+            throw new Error('COMPENSATION_TERMINAL_TRANSITION_REJECTED');
+          }
+          const transitionPayload = {
+            requestId: request.id,
+            originalRunId: request.originalRunId,
+            originalEffectId: request.originalEffectId,
+            compensationRunId: request.compensationRunId,
+            compensationEffectId: input.effectId,
+            disposition,
+          };
+          await this.appendEvent(client, {
+            aggregateType: 'step',
+            aggregateId: request.compensationStepId,
+            sequence: Number(stepUpdate.rows[0].version),
+            type: 'step.failed',
+            tenantId: input.tenantId,
+            runId: request.compensationRunId,
+            stepId: request.compensationStepId,
+            actor: input.actor,
+            payload: transitionPayload,
+          });
+          await this.appendEvent(client, {
+            aggregateType: 'run',
+            aggregateId: request.compensationRunId,
+            sequence: Number(compensationRunUpdate.rows[0].version),
+            type: 'run.failed',
+            tenantId: input.tenantId,
+            runId: request.compensationRunId,
+            stepId: request.compensationStepId,
+            actor: input.actor,
+            payload: transitionPayload,
+          });
+          await this.appendEvent(client, {
+            aggregateType: 'run',
+            aggregateId: request.originalRunId,
+            sequence: Number(originalRunUpdate.rows[0].version),
+            type: 'run.failed',
+            tenantId: input.tenantId,
+            runId: request.originalRunId,
+            actor: input.actor,
+            payload: transitionPayload,
+          });
+        } else {
+          await client.query(
+            `UPDATE commander_compensation_requests SET state='ESCALATED',updated_at=? WHERE id=?`,
+            [new Date().toISOString(), request.id],
+          );
+          await client.query(
+            `UPDATE commander_steps SET state='WAITING_FOR_HUMAN',lease_worker_id=NULL,lease_worker_generation=0,lease_token=NULL,lease_expires_at=NULL WHERE id=?`,
+            [request.compensationStepId],
+          );
+          await client.query(
+            `UPDATE commander_effects SET reconcile_disposition='ESCALATED',
              reconcile_escalated_at=?,reconcile_escalation_code=?,reconcile_after=NULL
            WHERE id=? AND tenant_id=?`,
-          [new Date().toISOString(), 'COMPENSATION_QUERY_UNSUPPORTED', input.effectId, input.tenantId],
+            [
+              new Date().toISOString(),
+              'COMPENSATION_QUERY_UNSUPPORTED',
+              input.effectId,
+              input.tenantId,
+            ],
+          );
+        }
+        await client.query(
+          `UPDATE commander_outbox SET published_at=?,claimed_at=NULL,claim_token=NULL WHERE id=?`,
+          [new Date().toISOString(), input.outboxMessageId],
         );
-      }
-      await client.query(
-        `UPDATE commander_outbox SET published_at=?,claimed_at=NULL,claim_token=NULL WHERE id=?`,
-        [new Date().toISOString(), input.outboxMessageId],
-      );
-      return { applied: true, disposition, replayed: false };
-    }, scope.tenantIds);
+        const result = { applied: true as const, disposition, replayed: false };
+        await client.query(
+          `INSERT INTO commander_compensation_finalization_receipts(
+           outbox_message_id,request_id,fingerprint,result,created_at
+         ) VALUES(?,?,?,?,?)`,
+          [input.outboxMessageId, request.id, fingerprint, result, new Date().toISOString()],
+        );
+        return result;
+      },
+      [input.tenantId],
+    );
   }
 
   override async claimCompensationWork(
@@ -2017,10 +2326,10 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
               disposition === 'COMPLETED'
                 ? current.state
                 : current.state === 'ADMITTED'
-                  ? 'FAILED' as const
-                  : 'COMPLETION_UNKNOWN' as const,
+                  ? ('FAILED' as const)
+                  : ('COMPLETION_UNKNOWN' as const),
           };
-          if (!await this.hasEvidenceForEffect(client, projected)) {
+          if (!(await this.hasEvidenceForEffect(client, projected))) {
             return { applied: false, reason: 'TERMINAL_EVIDENCE_REQUIRED' };
           }
         }
@@ -2191,7 +2500,11 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
           [effect.run_id, request.tenantId],
         );
         const step = stepResult.rows[0];
-        if (!step || step.state !== 'RUNNING' || runResult.rows[0]?.state !== 'RUNNING')
+        if (
+          !step ||
+          step.state !== 'RUNNING' ||
+          !['RUNNING', 'COMPENSATING'].includes(runResult.rows[0]?.state ?? '')
+        )
           return null;
         if (
           request.lease &&
@@ -2699,11 +3012,11 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
             Date.parse(nextAfter) >= Date.parse(deadlineAt));
         const projectedState =
           mutation === 'COMPLETE' && !deadlineExpired
-            ? 'COMPLETED' as const
+            ? ('COMPLETED' as const)
             : mutation === 'CONFIRM_NOT_APPLIED' && !deadlineExpired
-              ? 'CONFIRMED_NOT_APPLIED' as const
+              ? ('CONFIRMED_NOT_APPLIED' as const)
               : mutation === 'ESCALATE' || deadlineExpired || rescheduleEscalates
-                ? 'COMPLETION_UNKNOWN' as const
+                ? ('COMPLETION_UNKNOWN' as const)
                 : null;
         if (projectedState) {
           if (!input.evidence) {
