@@ -35,7 +35,10 @@ import {
   KERNEL_COMPENSATION_PERSISTENCE_SQL,
   KERNEL_COMPENSATION_TERMINAL_CLOSURE_SQL,
 } from './compensationSchema.js';
-import { KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL } from './campaign2CriticalHardening.js';
+import {
+  KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL,
+  KERNEL_COMPENSATION_AUTHORIZATION_READ_SQL,
+} from './campaign2CriticalHardening.js';
 
 export interface KernelMigration {
   id: string;
@@ -334,6 +337,11 @@ export const KERNEL_CAMPAIGN2_CRITICAL_HARDENING_MIGRATIONS: readonly KernelMigr
     id: '2026-07-29.2.campaign2_critical_authority_hardening',
     sql: KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL,
     checksum: checksum(KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL),
+  },
+  {
+    id: '2026-08-05.3.compensation_authorization_read',
+    sql: KERNEL_COMPENSATION_AUTHORIZATION_READ_SQL,
+    checksum: checksum(KERNEL_COMPENSATION_AUTHORIZATION_READ_SQL),
   },
 ];
 
