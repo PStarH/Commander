@@ -159,7 +159,34 @@ describe('Module A CI workflow', () => {
     assert.match(diagnostics?.run ?? '', /com\.docker\.compose\.service/);
     assert.match(diagnostics?.run ?? '', /docker ps -a/);
     assert.match(diagnostics?.run ?? '', /docker logs/);
+    assert.match(diagnostics?.run ?? '', /sanitize_diagnostic/);
+    for (const secret of [
+      'POSTGRES_PASSWORD',
+      'COMMANDER_API_KEY',
+      'COMMANDER_MASTER_KEY',
+      'JWT_SECRET',
+      'COMMANDER_CAPABILITY_TOKEN_KEY',
+      'COMMANDER_INTEGRITY_KEY',
+      'COMMANDER_WORKER_AUTH_TOKEN',
+    ]) {
+      assert.match(diagnostics?.run ?? '', new RegExp(`\\b${secret}\\b`));
+    }
+    for (const service of ['adapter-ops', 'worker', 'kernel-ops', 'api', 'postgres']) {
+      assert.match(diagnostics?.run ?? '', new RegExp(`\\b${service}\\b`));
+    }
     assert.ok((flowIndex ?? -1) < (diagnosticsIndex ?? -1));
     assert.ok((diagnosticsIndex ?? -1) < (teardownIndex ?? -1));
+
+    const diagnosticsUpload = job.steps?.find(
+      (step) => step.name === 'Upload cell failure diagnostics',
+    );
+    const diagnosticsUploadIndex = job.steps?.findIndex(
+      (step) => step.name === 'Upload cell failure diagnostics',
+    );
+    assert.equal(diagnosticsUpload?.if, 'always()');
+    assert.equal(diagnosticsUpload?.uses, 'actions/upload-artifact@v4');
+    assert.equal(diagnosticsUpload?.with?.path, 'artifacts/l4-b-cell-diagnostics/');
+    assert.equal(diagnosticsUpload?.with?.['if-no-files-found'], 'warn');
+    assert.ok((teardownIndex ?? -1) < (diagnosticsUploadIndex ?? -1));
   });
 });

@@ -569,7 +569,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
     workerId: string,
     workerGeneration: number,
     claimSecret?: string,
-  ): { tenantIds: string[]; openEnded: boolean } | null {
+  ): { tenantIds: string[]; openEnded: boolean; capabilities: string[] } | null {
     if (!claimSecret || claimSecret.length === 0) return null;
     const secretRow = this.db
       .prepare(
@@ -580,23 +580,32 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
       return null;
     }
     const worker = this.db
-      .prepare(`SELECT tenant_ids, status, generation FROM commander_workers WHERE id = ?`)
-      .get(workerId) as { tenant_ids: string; status: string; generation: number } | undefined;
+      .prepare(
+        `SELECT tenant_ids, capabilities, status, generation FROM commander_workers WHERE id = ?`,
+      )
+      .get(workerId) as
+      { tenant_ids: string; capabilities: string; status: string; generation: number } | undefined;
     if (!worker || worker.status !== 'ACTIVE' || Number(worker.generation) !== workerGeneration) {
       return null;
     }
     let raw: unknown;
+    let rawCapabilities: unknown;
     try {
       raw = JSON.parse(worker.tenant_ids || '[]');
+      rawCapabilities = JSON.parse(worker.capabilities || '[]');
     } catch {
       return null;
     }
-    if (!Array.isArray(raw)) return null;
+    if (!Array.isArray(raw) || !Array.isArray(rawCapabilities)) return null;
     const parsed = raw.filter((t): t is string => typeof t === 'string' && t.length > 0);
+    const capabilities = rawCapabilities.filter(
+      (capability): capability is string =>
+        typeof capability === 'string' && capability.trim().length > 0 && capability !== '*',
+    );
     // Product decision: durable '*' fail-closed (parity with claim_* DEFINER).
     if (parsed.includes('*')) return null;
-    if (parsed.length === 0) return null;
-    return { tenantIds: parsed, openEnded: false };
+    if (parsed.length === 0 || capabilities.length === 0) return null;
+    return { tenantIds: parsed, openEnded: false, capabilities };
   }
 
   private workerHasAnyCapability(workerId: string, capabilities: readonly string[]): boolean {
@@ -634,8 +643,8 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
     const expiry = new Date(now.getTime() + request.leaseTtlMs);
     const token = randomUUID();
     const workerGeneration = request.workerGeneration ?? -1;
-    const capabilities = request.capabilities ?? [];
-    const capsJson = JSON.stringify(capabilities);
+    const requestedCapabilities = request.capabilities ?? [];
+    let capabilities = requestedCapabilities;
 
     // Worker path (PG claim_next_step parity): ignore caller tenantIds/tenantId;
     // authorize solely from durable commander_workers.tenant_ids.
@@ -650,6 +659,11 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
       if (!scope) return null;
       tenantIds = scope.tenantIds;
       openEnded = scope.openEnded;
+      capabilities =
+        requestedCapabilities.length === 0
+          ? scope.capabilities
+          : requestedCapabilities.filter((capability) => scope.capabilities.includes(capability));
+      if (capabilities.length === 0) return null;
     } else {
       tenantIds = request.tenantIds ?? (request.tenantId ? [request.tenantId] : []);
       openEnded = tenantIds.length === 0;
@@ -668,9 +682,15 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         if (!scope.openEnded && scope.tenantIds.length === 0) return null;
         tenantIds = scope.tenantIds;
         openEnded = scope.openEnded;
+        capabilities =
+          requestedCapabilities.length === 0
+            ? scope.capabilities
+            : requestedCapabilities.filter((capability) => scope.capabilities.includes(capability));
+        if (capabilities.length === 0) return null;
       }
 
       const filterTenants = openEnded ? [] : tenantIds;
+      const capsJson = JSON.stringify(capabilities);
       const tenantClause =
         filterTenants.length === 0
           ? ''
@@ -1066,6 +1086,8 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
           if (
             !binding ||
             binding.approved !== true ||
+            typeof binding.approvedBy !== 'string' ||
+            binding.approvedBy.length === 0 ||
             binding.authorizationId !== authorization.id ||
             binding.actionDigest !== authorization.actionDigest ||
             binding.policyDecisionId !== authorization.policyDecisionId ||
@@ -1103,7 +1125,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         await client.query(
           `INSERT INTO commander_steps(
              id,run_id,tenant_id,kind,state,max_attempts,priority,dependencies,input,scheduled_at
-           ) VALUES(?,?,?,'tool','PENDING',1,0,?,?,?)`,
+           ) VALUES(?,?,?,'effect.compensate','PENDING',1,0,?,?,?)`,
           [
             compensationStepId,
             compensationRunId,
@@ -1411,6 +1433,45 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
       )
         return null;
       const at = input.now ?? new Date();
+      const claimedAuthorization: ClaimedCompensationRequest['authorization'] = {
+        ...authorization,
+        approvalBinding: null,
+      };
+      if (authorization.decision === 'require_approval') {
+        if (!authorization.approvalInteractionId) return null;
+        const approvalResult = await client.query<Record<string, unknown>>(
+          `SELECT response, expires_at FROM commander_interactions
+           WHERE id=? AND tenant_id=? AND run_id=? AND status='answered'`,
+          [authorization.approvalInteractionId, request.tenantId, request.originalRunId],
+        );
+        const approval = approvalResult.rows[0];
+        const response = approval?.response as Record<string, unknown> | undefined;
+        const approvalExpiresAt =
+          typeof approval?.expires_at === 'string' ? approval.expires_at : '';
+        if (
+          !response ||
+          response.approved !== true ||
+          typeof response.approvedBy !== 'string' ||
+          response.approvedBy.length === 0 ||
+          response.authorizationId !== authorization.id ||
+          response.actionDigest !== authorization.actionDigest ||
+          response.policyDecisionId !== authorization.policyDecisionId ||
+          response.policySnapshotId !== authorization.policySnapshotId ||
+          !Number.isFinite(Date.parse(approvalExpiresAt)) ||
+          Date.parse(approvalExpiresAt) <= at.getTime()
+        ) {
+          return null;
+        }
+        claimedAuthorization.approvalBinding = {
+          approvalId: authorization.approvalInteractionId,
+          approverPrincipalId: response.approvedBy,
+          actionDigest: authorization.actionDigest,
+          policySnapshotId: authorization.policySnapshotId,
+          expiresAt: new Date(
+            Math.min(Date.parse(authorization.expiresAt), Date.parse(approvalExpiresAt)),
+          ).toISOString(),
+        };
+      }
       if (
         request.state === 'CLAIMED' &&
         request.claimExpiresAt &&
@@ -1514,7 +1575,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
       request.compensationEffectId = effectId;
       return {
         request,
-        authorization,
+        authorization: claimedAuthorization,
         forwardResponse: originalEffect.response as Record<string, unknown>,
         lease: {
           workerId: input.workerId,

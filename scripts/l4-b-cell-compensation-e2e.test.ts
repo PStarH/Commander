@@ -46,12 +46,14 @@ describe('l4-b-cell-compensation-e2e', () => {
     const address = server.address();
     assert.ok(address && typeof address !== 'string');
     try {
-      assert.deepEqual(await runComposeDemoCompensationFlow(`http://127.0.0.1:${address.port}`), {
+      const result = await runComposeDemoCompensationFlow(`http://127.0.0.1:${address.port}`);
+      assert.deepEqual(result, {
         proposed: false,
         approved: false,
         forwardDone: false,
         compensated: false,
         proposalHttpStatus: '503',
+        escalationReason: 'OPERATIONS_NOT_READY',
         proposalErrorCode: 'OPERATIONS_NOT_READY',
       });
     } finally {
@@ -147,7 +149,20 @@ describe('l4-b-cell-compensation-e2e', () => {
       }
       if (req.method === 'GET' && req.url === '/v1/runs/run-compensation/events') {
         res.writeHead(200);
-        res.end(JSON.stringify({ events: [{ type: 'compensation.completed' }] }));
+        res.end(
+          JSON.stringify({
+            events: [
+              {
+                type: 'compensation.completed',
+                payload: {
+                  response: { secret: 'must-not-escape' },
+                  forwardResponse: { secret: 'must-not-escape' },
+                  forwardReceipt: { secret: 'must-not-escape' },
+                },
+              },
+            ],
+          }),
+        );
         return;
       }
       res.writeHead(404);
@@ -157,7 +172,8 @@ describe('l4-b-cell-compensation-e2e', () => {
     const address = server.address();
     assert.ok(address && typeof address !== 'string');
     try {
-      assert.deepEqual(await runComposeDemoCompensationFlow(`http://127.0.0.1:${address.port}`), {
+      const result = await runComposeDemoCompensationFlow(`http://127.0.0.1:${address.port}`);
+      assert.deepEqual(result, {
         proposed: true,
         approved: true,
         forwardDone: true,
@@ -167,10 +183,15 @@ describe('l4-b-cell-compensation-e2e', () => {
         compensationApproved: true,
         compensationRunDone: true,
         compensationEventRecorded: true,
+        compensationRunEvents: [{ type: 'compensation.completed' }],
         compensated: true,
         compState: 'COMPENSATED',
         compensationRunState: 'SUCCEEDED',
       });
+      assert.doesNotMatch(
+        JSON.stringify(result),
+        /must-not-escape|"response"|"forwardResponse"|"forwardReceipt"/,
+      );
       assert.deepEqual(requests[3], {
         method: 'POST',
         path: '/v1/actions/run-forward/compensations',
@@ -187,6 +208,24 @@ describe('l4-b-cell-compensation-e2e', () => {
         policySnapshotId: 'action-gateway-mvp-v1',
       });
       assert.equal(actionReads, 1, 'compensation terminal state comes from raw run status');
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
+  it('exposes an escalation reason when compensation is rejected', async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(503, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { reason: 'ACTION_GATEWAY_UNAVAILABLE' } }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    try {
+      const result = await runComposeDemoCompensationFlow(`http://127.0.0.1:${address.port}`);
+      assert.equal(result.escalationReason, 'ACTION_GATEWAY_UNAVAILABLE');
     } finally {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
