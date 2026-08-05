@@ -103,7 +103,7 @@ export interface CompensationEffectBroker {
 export type CompensationTokenContext =
   | GovernedCompensationAuthorization
   | {
-      authorization: CompensationAuthorizationRecord;
+      authorization: ClaimedCompensationRequest['authorization'];
       request: KernelCompensationRequest;
       forwardResponse: Record<string, unknown>;
     };

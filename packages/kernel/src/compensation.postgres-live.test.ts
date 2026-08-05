@@ -194,7 +194,7 @@ describe('governed compensation PostgreSQL authority', { skip: !adminUrl }, () =
     return { runId, stepId, effectId, request, response };
   }
 
-  async function claimAdmittedCompensation(label: string) {
+  async function requestAuthorizedCompensation(label: string) {
     const forward = await completedForwardEffect(label);
     const base: LegacyGovernedCompensationInput = {
       tenantId: tenantA,
@@ -247,6 +247,11 @@ describe('governed compensation PostgreSQL authority', { skip: !adminUrl }, () =
       actor: base.actor,
     });
     assert.equal(requested.accepted, true);
+    return { forward, requested };
+  }
+
+  async function claimAdmittedCompensation(label: string) {
+    const { requested } = await requestAuthorizedCompensation(label);
     const claim = await adapterRepository.claimCompensationRequest({
       requestId: requested.request.id,
       outboxMessageId: '',
@@ -876,5 +881,88 @@ describe('governed compensation PostgreSQL authority', { skip: !adminUrl }, () =
     });
     assert.equal(requested.accepted, true);
     assert.equal(typeof requested.request.compensationRunId, 'string');
+
+    const compensationOutbox = await owner.query<{ id: string }>(
+      `SELECT id FROM commander_outbox
+       WHERE tenant_id=$1 AND topic=$2 AND payload->>'requestId'=$3`,
+      [tenantA, KERNEL_COMPENSATION_TOPIC, requested.request.id],
+    );
+    await owner.query(
+      `UPDATE commander_interactions SET response=response-'actionDigest' WHERE id=$1 AND tenant_id=$2`,
+      [interactionId, tenantA],
+    );
+    await assert.rejects(
+      () =>
+        adapterRepository.claimCompensationRequest({
+          requestId: requested.request.id,
+          outboxMessageId: compensationOutbox.rows[0]!.id,
+          workerId: adapterId,
+          workerGeneration: adapterGeneration,
+          claimSecret: adapterSecret,
+        }),
+      /COMPENSATION_APPROVAL_BINDING_INVALID/,
+    );
+    await owner.query(
+      `UPDATE commander_interactions
+          SET response=jsonb_set(response,'{actionDigest}',to_jsonb($1::text),true)
+        WHERE id=$2 AND tenant_id=$3`,
+      [actionDigest, interactionId, tenantA],
+    );
+    const claim = await adapterRepository.claimCompensationRequest({
+      requestId: requested.request.id,
+      outboxMessageId: compensationOutbox.rows[0]!.id,
+      workerId: adapterId,
+      workerGeneration: adapterGeneration,
+      claimSecret: adapterSecret,
+    });
+    assert.ok(claim);
+    assert.ok('approvalBinding' in claim.authorization);
+    assert.deepEqual(claim.authorization.approvalBinding, {
+      approvalId: interactionId,
+      approverPrincipalId: 'api-user',
+      actionDigest,
+      policySnapshotId,
+      expiresAt: claim.authorization.expiresAt,
+    });
+  });
+
+  it('reserves governed compensation steps for the adapter-ops consumer', async () => {
+    const { requested } = await requestAuthorizedCompensation('reserved-queue');
+    const generalWorkerId = `general-tool-${suffix}`;
+    const registration = await worker.query<{
+      registration: { generation: number; claim_secret: string };
+    }>(
+      `SELECT register_worker($1,'agent','comp-live','["tool"]','{}',1,$1,$2::jsonb,NULL) AS registration`,
+      [generalWorkerId, JSON.stringify([tenantA])],
+    );
+    const generalClaim = await workerRepository.claimNextStep({
+      workerId: generalWorkerId,
+      workerGeneration: Number(registration.rows[0]!.registration.generation),
+      claimSecret: registration.rows[0]!.registration.claim_secret,
+      capabilities: ['tool'],
+      leaseTtlMs: 60_000,
+    });
+
+    assert.equal(generalClaim, null, 'general workers must not claim governed compensation work');
+    const step = await owner.query<{ kind: string }>(
+      'SELECT kind FROM commander_steps WHERE id=$1 AND tenant_id=$2',
+      [requested.request.compensationStepId, tenantA],
+    );
+    assert.equal(step.rows[0]?.kind, 'effect.compensate');
+    const outbox = await owner.query<{ id: string }>(
+      `SELECT id FROM commander_outbox
+       WHERE tenant_id=$1 AND topic=$2 AND payload->>'requestId'=$3`,
+      [tenantA, KERNEL_COMPENSATION_TOPIC, requested.request.id],
+    );
+    const compensationClaim = await adapterRepository.claimCompensationRequest({
+      requestId: requested.request.id,
+      outboxMessageId: outbox.rows[0]!.id,
+      workerId: adapterId,
+      workerGeneration: adapterGeneration,
+      claimSecret: adapterSecret,
+    });
+    assert.equal(compensationClaim?.request.id, requested.request.id);
+    assert.equal(compensationClaim?.request.claimToken, compensationClaim?.outboxClaimToken);
+    assert.equal(compensationClaim?.lease.token, compensationClaim?.outboxClaimToken);
   });
 });

@@ -186,3 +186,85 @@ REVOKE ALL ON FUNCTION public.get_compensation_authorization(text,text)
     commander_tenant_authority;
 GRANT EXECUTE ON FUNCTION public.get_compensation_authorization(text,text) TO commander_app;
 `;
+
+/** Carries the persisted approval proof into the signed compensation grant. */
+export const KERNEL_COMPENSATION_APPROVAL_CLAIM_BINDING_SQL = String.raw`
+CREATE OR REPLACE FUNCTION public.claim_compensation_request(
+  p_request_id text,
+  p_outbox_message_id text,
+  p_worker_id text,
+  p_worker_generation bigint,
+  p_claim_secret text
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $function$
+DECLARE
+  v_now timestamptz := clock_timestamp();
+  v_claim_ttl interval := interval '60 seconds';
+  v_result jsonb;
+  v_approval public.commander_interactions%ROWTYPE;
+BEGIN
+  IF session_user <> 'commander_adapter_ops' THEN
+    RETURN NULL;
+  END IF;
+  v_result := public.claim_compensation_request_internal_v1(
+    p_request_id,
+    p_outbox_message_id,
+    p_worker_id,
+    p_worker_generation,
+    p_claim_secret,
+    (extract(epoch FROM v_claim_ttl) * 1000)::integer,
+    v_now
+  );
+  IF v_result IS NULL THEN
+    RETURN NULL;
+  END IF;
+  IF v_result #>> '{authorization,decision}' = 'require_approval' THEN
+    SELECT * INTO v_approval
+      FROM public.commander_interactions
+     WHERE id = v_result #>> '{authorization,approvalInteractionId}'
+       AND tenant_id = v_result #>> '{authorization,tenantId}'
+       AND run_id = v_result #>> '{authorization,originalRunId}'
+       AND status = 'answered';
+    IF NOT FOUND
+       OR v_approval.response->>'approved' <> 'true'
+       OR NULLIF(v_approval.response->>'approvedBy', '') IS NULL
+       OR v_approval.response->>'authorizationId' IS DISTINCT FROM v_result #>> '{authorization,id}'
+       OR v_approval.response->>'originalEffectId' IS DISTINCT FROM v_result #>> '{authorization,originalEffectId}'
+       OR v_approval.response->>'actionDigest' IS DISTINCT FROM v_result #>> '{authorization,actionDigest}'
+       OR v_approval.response->>'policyDecisionId' IS DISTINCT FROM v_result #>> '{authorization,policyDecisionId}'
+       OR v_approval.response->>'policySnapshotId' IS DISTINCT FROM v_result #>> '{authorization,policySnapshotId}'
+       OR v_approval.expires_at <= v_now THEN
+      RAISE EXCEPTION 'COMPENSATION_APPROVAL_BINDING_INVALID' USING ERRCODE = '22023';
+    END IF;
+    v_result := jsonb_set(
+      v_result,
+      '{authorization,approvalBinding}',
+      jsonb_build_object(
+        'approvalId', v_approval.id,
+        'approverPrincipalId', v_approval.response->>'approvedBy',
+        'actionDigest', v_result #>> '{authorization,actionDigest}',
+        'policySnapshotId', v_result #>> '{authorization,policySnapshotId}',
+        'expiresAt', LEAST(
+          (v_result #>> '{authorization,expiresAt}')::timestamptz,
+          v_approval.expires_at
+        )
+      ),
+      true
+    );
+  ELSE
+    v_result := jsonb_set(v_result, '{authorization,approvalBinding}', 'null'::jsonb, true);
+  END IF;
+  RETURN v_result;
+END
+$function$;
+
+ALTER FUNCTION public.claim_compensation_request(text,text,text,bigint,text)
+  OWNER TO commander_owner;
+REVOKE ALL ON FUNCTION public.claim_compensation_request(text,text,text,bigint,text)
+  FROM PUBLIC, commander_app, commander_worker, commander_scheduler, commander_tenant_authority;
+GRANT EXECUTE ON FUNCTION public.claim_compensation_request(text,text,text,bigint,text)
+  TO commander_adapter_ops;
+`;

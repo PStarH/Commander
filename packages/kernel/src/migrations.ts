@@ -35,8 +35,10 @@ import {
   KERNEL_COMPENSATION_PERSISTENCE_SQL,
   KERNEL_COMPENSATION_TERMINAL_CLOSURE_SQL,
 } from './compensationSchema.js';
+import { KERNEL_COMPENSATION_QUEUE_ISOLATION_SQL } from './compensationQueueIsolation.js';
 import {
   KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL,
+  KERNEL_COMPENSATION_APPROVAL_CLAIM_BINDING_SQL,
   KERNEL_COMPENSATION_AUTHORIZATION_READ_SQL,
 } from './campaign2CriticalHardening.js';
 
@@ -225,10 +227,7 @@ function task1ClosureMigration(id: Task1ClosureMigrationId, sql: string): Kernel
   return { id, sql, checksum: expectedChecksum };
 }
 
-function task1PostClosureMigration(
-  id: Task1PostClosureMigrationId,
-  sql: string,
-): KernelMigration {
+function task1PostClosureMigration(id: Task1PostClosureMigrationId, sql: string): KernelMigration {
   const expectedChecksum = KERNEL_TASK1_POST_CLOSURE_MIGRATION_CHECKSUMS[id];
   const actualChecksum = checksum(sql);
   if (actualChecksum !== expectedChecksum) {
@@ -342,6 +341,16 @@ export const KERNEL_CAMPAIGN2_CRITICAL_HARDENING_MIGRATIONS: readonly KernelMigr
     id: '2026-08-05.3.compensation_authorization_read',
     sql: KERNEL_COMPENSATION_AUTHORIZATION_READ_SQL,
     checksum: checksum(KERNEL_COMPENSATION_AUTHORIZATION_READ_SQL),
+  },
+  {
+    id: '2026-08-05.4.compensation_approval_claim_binding',
+    sql: KERNEL_COMPENSATION_APPROVAL_CLAIM_BINDING_SQL,
+    checksum: checksum(KERNEL_COMPENSATION_APPROVAL_CLAIM_BINDING_SQL),
+  },
+  {
+    id: '2026-08-05.5.compensation_queue_isolation',
+    sql: KERNEL_COMPENSATION_QUEUE_ISOLATION_SQL,
+    checksum: checksum(KERNEL_COMPENSATION_QUEUE_ISOLATION_SQL),
   },
 ];
 

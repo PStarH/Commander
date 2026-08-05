@@ -37,12 +37,28 @@ export { notReadyControlledChangeEvidence } from './l4-b-cell-smoke.js';
 
 export type CompensationE2EMode = 'mock' | 'compose';
 
+export interface CompensationRunEvent {
+  type: string;
+}
+
+export interface CompensationFlowResult {
+  proposed: boolean;
+  approved: boolean;
+  forwardDone: boolean;
+  compensated: boolean;
+  compensationRunEvents?: CompensationRunEvent[];
+  escalationReason?: string;
+  [key: string]: boolean | string | CompensationRunEvent[] | undefined;
+}
+
 export interface CompensationE2EResult {
   mode: CompensationE2EMode;
   verdict: 'ENFORCED' | 'ENFORCED-script-only' | 'BLOCKED';
   passed: boolean;
   steps: Record<string, boolean | string>;
   controlledChange: ControlledChangeCellEvidence;
+  compensationRunEvents?: CompensationRunEvent[];
+  escalationReason?: string;
   dockerError?: string;
   teardownError?: string;
   elapsedMs: number;
@@ -81,6 +97,18 @@ async function httpJson(
     json = null;
   }
   return { status: res.status, json };
+}
+
+function extractEscalationReason(json: Record<string, unknown> | null): string | undefined {
+  const error = json?.error;
+  const errorRecord =
+    typeof error === 'object' && error !== null && !Array.isArray(error)
+      ? (error as Record<string, unknown>)
+      : undefined;
+  for (const candidate of [errorRecord?.reason, errorRecord?.code, json?.reason, json?.code]) {
+    if (typeof candidate === 'string' && candidate.length > 0) return candidate;
+  }
+  return undefined;
 }
 
 export async function runAdapterOpsCompensationMock(): Promise<boolean> {
@@ -233,20 +261,19 @@ async function pollRunState(
   return 'TIMEOUT';
 }
 
-async function hasRunEvent(baseUrl: string, runId: string, eventType: string): Promise<boolean> {
+async function getRunEvents(baseUrl: string, runId: string): Promise<CompensationRunEvent[]> {
   const { status, json } = await httpJson(baseUrl, 'GET', `/v1/runs/${runId}/events`);
-  if (status !== 200 || !Array.isArray(json?.events)) return false;
-  return json.events.some(
-    (event) =>
-      typeof event === 'object' &&
-      event !== null &&
-      (event as { type?: unknown }).type === eventType,
-  );
+  if (status !== 200 || !Array.isArray(json?.events)) return [];
+  return json.events.flatMap((event) => {
+    if (typeof event !== 'object' || event === null || Array.isArray(event)) return [];
+    const type = (event as Record<string, unknown>).type;
+    return typeof type === 'string' && type.length > 0 ? [{ type }] : [];
+  });
 }
 
 export async function runComposeDemoCompensationFlow(
   baseUrl = 'http://localhost:4000',
-): Promise<Record<string, boolean | string>> {
+): Promise<CompensationFlowResult> {
   const idem = `cell-comp-${Date.now()}`;
   const proposed = await httpJson(baseUrl, 'POST', '/v1/actions', {
     source: 'cell-e2e',
@@ -266,6 +293,7 @@ export async function runComposeDemoCompensationFlow(
       forwardDone: false,
       compensated: false,
       proposalHttpStatus: String(proposed.status),
+      escalationReason: extractEscalationReason(proposed.json) ?? 'ACTION_PROPOSAL_REJECTED',
       ...(typeof error?.code === 'string' ? { proposalErrorCode: error.code } : {}),
     };
   }
@@ -287,6 +315,7 @@ export async function runComposeDemoCompensationFlow(
       forwardDone: false,
       compensated: false,
       approvalHttpStatus: String(approved.status),
+      escalationReason: extractEscalationReason(approved.json) ?? 'ACTION_APPROVAL_REJECTED',
       ...(typeof error?.code === 'string' ? { approvalErrorCode: error.code } : {}),
     };
   }
@@ -298,6 +327,7 @@ export async function runComposeDemoCompensationFlow(
       forwardDone: false,
       compensated: false,
       forwardState: forward.state,
+      escalationReason: `FORWARD_RUN_${forward.state}`,
     };
   }
   const forwardReceiptHash = forward.action?.forwardReceiptHash;
@@ -309,6 +339,7 @@ export async function runComposeDemoCompensationFlow(
       compensationRequested: false,
       compensated: false,
       compensationErrorCode: 'FORWARD_RECEIPT_HASH_MISSING',
+      escalationReason: 'FORWARD_RECEIPT_HASH_MISSING',
     };
   }
   const rawForwardResponseAbsent =
@@ -323,6 +354,7 @@ export async function runComposeDemoCompensationFlow(
       compensationRequested: false,
       compensated: false,
       compensationErrorCode: 'RAW_FORWARD_RESPONSE_EXPOSED',
+      escalationReason: 'RAW_FORWARD_RESPONSE_EXPOSED',
     };
   }
   const compensate = await httpJson(baseUrl, 'POST', `/v1/actions/${action.runId}/compensations`, {
@@ -341,6 +373,7 @@ export async function runComposeDemoCompensationFlow(
       compensationRequested: false,
       compensated: false,
       compensationHttpStatus: String(compensate.status),
+      escalationReason: extractEscalationReason(compensate.json) ?? 'COMPENSATION_REQUEST_REJECTED',
       ...(typeof error?.code === 'string' ? { compensationErrorCode: error.code } : {}),
     };
   }
@@ -362,6 +395,7 @@ export async function runComposeDemoCompensationFlow(
         compensationApproved: false,
         compensated: false,
         compensationErrorCode: 'COMPENSATION_AUTHORIZATION_INVALID',
+        escalationReason: 'COMPENSATION_AUTHORIZATION_INVALID',
       };
     }
     const compensationApproval = await httpJson(
@@ -384,6 +418,8 @@ export async function runComposeDemoCompensationFlow(
         compensationApproved: false,
         compensated: false,
         compensationApprovalHttpStatus: String(compensationApproval.status),
+        escalationReason:
+          extractEscalationReason(compensationApproval.json) ?? 'COMPENSATION_APPROVAL_REJECTED',
         ...(typeof error?.code === 'string' ? { compensationApprovalErrorCode: error.code } : {}),
       };
     }
@@ -401,6 +437,7 @@ export async function runComposeDemoCompensationFlow(
       compensationRunDone: false,
       compensated: false,
       compensationErrorCode: 'COMPENSATION_RUN_ID_MISSING',
+      escalationReason: 'COMPENSATION_RUN_ID_MISSING',
     };
   }
   const compensationRunState = await pollRunState(baseUrl, compensationRunId, 'SUCCEEDED');
@@ -408,9 +445,20 @@ export async function runComposeDemoCompensationFlow(
     compensationRunState === 'SUCCEEDED'
       ? await pollRunState(baseUrl, action.runId, 'COMPENSATED')
       : 'NOT_RUN';
-  const compensationEventRecorded =
-    compensationRunState === 'SUCCEEDED' &&
-    (await hasRunEvent(baseUrl, compensationRunId, 'compensation.completed'));
+  const compensationRunEvents =
+    compensationRunState === 'SUCCEEDED' ? await getRunEvents(baseUrl, compensationRunId) : [];
+  const compensationEventRecorded = compensationRunEvents.some(
+    (event) => event.type === 'compensation.completed',
+  );
+  const compensated = compState === 'COMPENSATED' && compensationEventRecorded;
+  const escalationReason =
+    compensationRunState !== 'SUCCEEDED'
+      ? `COMPENSATION_RUN_${compensationRunState}`
+      : compState !== 'COMPENSATED'
+        ? `ORIGINAL_RUN_${compState}`
+        : !compensationEventRecorded
+          ? 'COMPENSATION_COMPLETED_EVENT_MISSING'
+          : undefined;
   return {
     proposed: true,
     approved: true,
@@ -421,9 +469,11 @@ export async function runComposeDemoCompensationFlow(
     compensationApproved,
     compensationRunDone: compensationRunState === 'SUCCEEDED',
     compensationEventRecorded,
-    compensated: compState === 'COMPENSATED' && compensationEventRecorded,
+    compensationRunEvents,
+    compensated,
     compState,
     compensationRunState,
+    ...(escalationReason ? { escalationReason } : {}),
   };
 }
 
@@ -454,6 +504,7 @@ export async function runCellCompensationE2E(options: {
       passed,
       steps,
       controlledChange,
+      ...(passed ? {} : { escalationReason: 'MOCK_ADAPTER_OPS_FAILED' }),
       elapsedMs: Date.now() - started,
     };
   }
@@ -472,6 +523,7 @@ export async function runCellCompensationE2E(options: {
           steps,
           controlledChange,
           dockerError: up.error,
+          escalationReason: 'CELL_COMPOSE_UP_FAILED',
           elapsedMs: Date.now() - started,
         };
         return result;
@@ -489,13 +541,16 @@ export async function runCellCompensationE2E(options: {
         steps,
         controlledChange,
         dockerError,
+        escalationReason: 'CELL_HEALTH_CHECK_FAILED',
         elapsedMs: Date.now() - started,
       };
       return result;
     }
 
     const flow = await runComposeDemoCompensationFlow(options.baseUrl);
-    Object.assign(steps, flow);
+    const { compensationRunEvents, escalationReason, ...flowSteps } = flow;
+    Object.assign(steps, flowSteps);
+    if (escalationReason) steps.escalationReason = escalationReason;
 
     // Host InMemory CompensationDaemon is informational only and does not raise compose evidence.
     // (specialized audit: S_adapter_ops_mock was greenwashing "adapter-ops consumed outbox").
@@ -517,6 +572,8 @@ export async function runCellCompensationE2E(options: {
       passed,
       steps,
       controlledChange,
+      ...(compensationRunEvents ? { compensationRunEvents } : {}),
+      ...(escalationReason ? { escalationReason } : {}),
       dockerError,
       elapsedMs: Date.now() - started,
     };
@@ -529,6 +586,7 @@ export async function runCellCompensationE2E(options: {
         result.verdict = 'BLOCKED';
         result.passed = false;
         result.teardownError = down.error;
+        result.escalationReason ??= 'CELL_COMPOSE_TEARDOWN_FAILED';
       }
     }
   }

@@ -912,20 +912,46 @@ jobs:
         shell: bash
         run: |
           set -u
-          for service in api postgres; do
+          diagnostics_dir="artifacts/l4-b-cell-diagnostics"
+          mkdir -p "$diagnostics_dir"
+          sanitize_diagnostic() {
+            local path="$1"
+            local secret_name secret_value
+            for secret_name in POSTGRES_PASSWORD COMMANDER_API_KEY COMMANDER_MASTER_KEY JWT_SECRET COMMANDER_CAPABILITY_TOKEN_KEY COMMANDER_INTEGRITY_KEY COMMANDER_WORKER_AUTH_TOKEN; do
+              secret_value="${!secret_name:-}"
+              if [[ -n "$secret_value" ]]; then
+                sed -i "s/${secret_value}/[REDACTED:${secret_name}]/g" "$path"
+              fi
+            done
+          }
+          for service in adapter-ops worker kernel-ops api postgres; do
             container_id="$(docker ps -a \
               --filter "label=com.docker.compose.service=${service}" \
               --format '{{.ID}}' | head -n 1)"
+            log_path="$diagnostics_dir/${service}.log"
             if [[ -n "$container_id" ]]; then
               echo "::group::${service} container logs"
-              docker logs --tail 300 "$container_id" 2>&1
+              docker logs --tail 300 "$container_id" > "$log_path" 2>&1 || true
+              sanitize_diagnostic "$log_path"
+              cat "$log_path"
               echo "::endgroup::"
+            else
+              printf 'container not found for compose service %s\n' "$service" > "$log_path"
             fi
           done
+          docker ps -a > "$diagnostics_dir/docker-ps-a.txt" 2>&1 || true
 
       - name: Tear down cell compose
         if: always()
         run: pnpm cell:down
+
+      - name: Upload cell failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: l4-b-cell-failure-diagnostics
+          path: artifacts/l4-b-cell-diagnostics/
+          if-no-files-found: warn
 
       - name: Upload cell up-assert artifacts
         if: always()

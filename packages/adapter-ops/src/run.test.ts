@@ -10,6 +10,7 @@ import {
   CAPABILITY_KEY_ID_ENV,
   CAPABILITY_PRIVATE_KEY_PEM_ENV,
   createCapabilityAuthority,
+  type CompensationTokenProvider,
 } from '@commander/kernel';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
 import { EnvAdapterCredentialProvider } from '@commander/action-adapters';
@@ -1047,6 +1048,80 @@ describe('adapter-ops P0 worker registry + compensation mint', () => {
       grant.jti,
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
+  });
+
+  it('carries the persisted approval binding into durable compensation grants', async () => {
+    const mat = ed25519Material('kid-cmp-approval');
+    const capability = createCapabilityAuthority(
+      {
+        NODE_ENV: 'test',
+        [CAPABILITY_PRIVATE_KEY_PEM_ENV]: mat.privateKeyPem,
+        [CAPABILITY_KEY_ID_ENV]: mat.keyId,
+        [CAPABILITY_JWKS_JSON_ENV]: mat.jwksJson,
+      },
+      new InMemoryKernelRepository(),
+    );
+    const expiresAt = new Date(Date.now() + 30_000).toISOString();
+    const approvalBinding = {
+      approvalId: 'interaction-compensation-approval',
+      approverPrincipalId: 'approver-1',
+      actionDigest: 'a'.repeat(64),
+      policySnapshotId: 'snapshot-persisted',
+      expiresAt,
+    };
+    const durableContext = {
+      authorization: {
+        id: 'authorization-approved',
+        tenantId: 'tenant-a',
+        originalRunId: 'run-original',
+        originalEffectId: 'effect-original',
+        compensationEffectType: 'compensate.demo.ticket.create',
+        adapterVersion: 'demo-ticket/v1',
+        compensationPatch: { targetIdempotencyKey: 'ticket-1' },
+        forwardReceiptHash: 'b'.repeat(64),
+        policyDecisionId: 'decision-persisted',
+        policySnapshotId: 'snapshot-persisted',
+        decision: 'require_approval' as const,
+        actionDigest: 'a'.repeat(64),
+        expiresAt,
+        approvalInteractionId: approvalBinding.approvalId,
+        approvalBinding,
+      },
+      request: {
+        id: 'request-approved',
+        tenantId: 'tenant-a',
+        originalRunId: 'run-original',
+        originalEffectId: 'effect-original',
+        compensationRunId: 'run-compensation',
+        compensationStepId: 'step-compensation',
+        adapterVersion: 'demo-ticket/v1',
+        compensationEffectType: 'compensate.demo.ticket.create',
+        compensationPatch: { targetIdempotencyKey: 'ticket-1' },
+        forwardReceiptHash: 'b'.repeat(64),
+        authorizationId: 'authorization-approved',
+        reconcilePolicy: {
+          maxAttempts: 8,
+          initialDelayMs: 30_000,
+          maxDelayMs: 900_000,
+          deadlineAt: expiresAt,
+        },
+        state: 'CLAIMED' as const,
+        compensationEffectId: 'effect-compensation',
+      },
+      forwardResponse: { ticketId: 'T-1', title: 'Approved ticket', status: 'open' },
+    };
+    const tokenProvider: CompensationTokenProvider = async (authorization) =>
+      issueCompensationCapabilityToken({
+        issuer: capability.issuer,
+        authorization,
+        workerId: ADAPTER_OPS_COMPENSATION_WORKER_ID,
+        workerGeneration: 2,
+      });
+
+    const token = await tokenProvider(durableContext);
+    assert.ok(token);
+    const grant = await capability.verifier.verify(token);
+    assert.deepEqual(grant.approvalBinding, approvalBinding);
   });
 
   it('requires the complete governed compensation authority port', () => {

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL } from './campaign2CriticalHardening.js';
+import {
+  KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL,
+  KERNEL_COMPENSATION_APPROVAL_CLAIM_BINDING_SQL,
+} from './campaign2CriticalHardening.js';
+import { KERNEL_COMPENSATION_QUEUE_ISOLATION_SQL } from './compensationQueueIsolation.js';
 import {
   KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL,
   KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL,
@@ -138,6 +142,25 @@ const EVIDENCE: KernelEvidenceRecord = {
 };
 
 describe('Campaign 2 critical authority hardening', () => {
+  it('fails closed on missing approval fields and releases historical compensation leases', () => {
+    for (const field of [
+      'authorizationId',
+      'originalEffectId',
+      'actionDigest',
+      'policyDecisionId',
+      'policySnapshotId',
+    ]) {
+      assert.match(
+        KERNEL_COMPENSATION_APPROVAL_CLAIM_BINDING_SQL,
+        new RegExp(`response->>'${field}' IS DISTINCT FROM`),
+      );
+    }
+    assert.match(KERNEL_COMPENSATION_QUEUE_ISOLATION_SQL, /step\.state = 'RUNNING'/);
+    assert.match(KERNEL_COMPENSATION_QUEUE_ISOLATION_SQL, /state = 'RETRY_WAIT'/);
+    assert.match(KERNEL_COMPENSATION_QUEUE_ISOLATION_SQL, /lease_token = NULL/);
+    assert.match(KERNEL_COMPENSATION_QUEUE_ISOLATION_SQL, /running_steps = GREATEST\(0,/);
+  });
+
   it('pins the published signed-evidence authority closure checksum', () => {
     const historical = KERNEL_SIGNED_EVIDENCE_MIGRATIONS.find(
       ({ id }) => id === '2026-07-29.2.signed_evidence_authority_closure',
