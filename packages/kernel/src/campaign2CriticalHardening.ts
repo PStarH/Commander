@@ -135,3 +135,54 @@ GRANT EXECUTE ON FUNCTION public.claim_reconcile_effects(text,bigint,integer,tex
 GRANT EXECUTE ON FUNCTION public.claim_compensation_request(text,text,text,bigint,text)
   TO commander_adapter_ops;
 `;
+
+/** Narrow app read authority for approval-bound compensation metadata. */
+export const KERNEL_COMPENSATION_AUTHORIZATION_READ_SQL = String.raw`
+CREATE OR REPLACE FUNCTION public.get_compensation_authorization(
+  p_tenant_id text,
+  p_authorization_id text
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $function$
+DECLARE
+  v_tenant text;
+  v_authorization jsonb;
+BEGIN
+  IF session_user <> 'commander_app' OR NULLIF(p_authorization_id, '') IS NULL THEN
+    RAISE EXCEPTION 'TENANT_CONTEXT_INVALID' USING ERRCODE = '22023';
+  END IF;
+  v_tenant := public.commander_authenticated_app_tenant();
+  IF p_tenant_id IS DISTINCT FROM v_tenant THEN
+    RAISE EXCEPTION 'TENANT_CONTEXT_INVALID' USING ERRCODE = '22023';
+  END IF;
+  SELECT jsonb_build_object(
+    'id', auth.id,
+    'tenantId', auth.tenant_id,
+    'originalRunId', auth.original_run_id,
+    'originalEffectId', auth.original_effect_id,
+    'compensationEffectType', auth.compensation_effect_type,
+    'adapterVersion', auth.adapter_version,
+    'compensationPatch', auth.compensation_patch,
+    'forwardReceiptHash', auth.forward_receipt_hash,
+    'policyDecisionId', auth.policy_decision_id,
+    'policySnapshotId', auth.policy_snapshot_id,
+    'decision', auth.decision,
+    'actionDigest', auth.action_digest,
+    'expiresAt', auth.expires_at,
+    'approvalInteractionId', auth.approval_interaction_id
+  ) INTO v_authorization
+  FROM public.commander_compensation_authorizations AS auth
+  WHERE auth.id = p_authorization_id
+    AND auth.tenant_id = v_tenant;
+  RETURN v_authorization;
+END
+$function$;
+
+ALTER FUNCTION public.get_compensation_authorization(text,text) OWNER TO commander_owner;
+REVOKE ALL ON FUNCTION public.get_compensation_authorization(text,text)
+  FROM PUBLIC, commander_worker, commander_adapter_ops, commander_scheduler,
+    commander_tenant_authority;
+GRANT EXECUTE ON FUNCTION public.get_compensation_authorization(text,text) TO commander_app;
+`;

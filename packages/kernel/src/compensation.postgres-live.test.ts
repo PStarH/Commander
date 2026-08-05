@@ -798,4 +798,83 @@ describe('governed compensation PostgreSQL authority', { skip: !adminUrl }, () =
     );
     assert.deepEqual(writes.rows[0], { receipts: '1', events: '1', outbox: '1' });
   });
+
+  it('approves compensation bound to a terminal forward step', async () => {
+    const forward = await completedForwardEffect('approval');
+    const interactionId = `interaction-compensation-approval-${suffix}`;
+    const adapterVersion = 'demo-ticket/approval/v1';
+    const compensationEffectType = 'compensate.demo.ticket.create';
+    const compensationPatch = { status: 'cancelled' };
+    const policyDecisionId = 'policy-decision-compensation-approval';
+    const policySnapshotId = 'policy-compensation-approval-v1';
+    const expiresAt = new Date(Date.now() + 300_000);
+    const actionDigest = canonicalCompensationHash({
+      type: compensationEffectType,
+      originalEffectId: forward.effectId,
+      adapterVersion,
+      forwardResponse: forward.response,
+      compensationPatch,
+    });
+    const forwardReceiptHash = canonicalCompensationHash(forward.response);
+    const authorizationId = `authorization-compensation-approval-${suffix}`;
+
+    await appRepository.createInteraction(
+      {
+        id: interactionId,
+        runId: forward.runId,
+        stepId: forward.stepId,
+        tenantId: tenantA,
+        prompt: 'Approve compensation?',
+        expiresAt,
+      },
+      'api-user',
+    );
+    await appRepository.createCompensationAuthorization({
+      id: authorizationId,
+      tenantId: tenantA,
+      originalRunId: forward.runId,
+      originalEffectId: forward.effectId,
+      compensationEffectType,
+      adapterVersion,
+      compensationPatch,
+      forwardReceiptHash,
+      policyDecisionId,
+      policySnapshotId,
+      decision: 'require_approval',
+      actionDigest,
+      expiresAt: expiresAt.toISOString(),
+      approvalInteractionId: interactionId,
+    });
+    const storedAuthorization = await appRepository.getCompensationAuthorization(
+      authorizationId,
+      tenantA,
+    );
+    assert.equal(storedAuthorization?.id, authorizationId);
+
+    const interaction = await appRepository.answerInteraction({
+      interactionId,
+      runId: forward.runId,
+      tenantId: tenantA,
+      response: {
+        approved: true,
+        approvedBy: 'api-user',
+        authorizationId,
+        originalEffectId: forward.effectId,
+        actionDigest,
+        policyDecisionId,
+        policySnapshotId,
+      },
+      actor: 'api-user',
+      releaseStep: false,
+    });
+    assert.equal(interaction.status, 'answered');
+
+    const requested = await appRepository.requestCompensation({
+      tenantId: tenantA,
+      authorizationId,
+      actor: 'api-user',
+    });
+    assert.equal(requested.accepted, true);
+    assert.equal(typeof requested.request.compensationRunId, 'string');
+  });
 });
