@@ -479,6 +479,7 @@ export const governedActionSchema = {
     runId: actionIdentifierSchema,
     stepId: actionIdentifierSchema,
     effectId: actionIdentifierSchema,
+    forwardReceiptHash: actionDigestSchema,
     state: { type: 'string', enum: [...ACTION_STATES_V1] },
     decision: {
       type: 'object',

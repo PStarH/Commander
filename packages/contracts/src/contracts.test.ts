@@ -52,7 +52,7 @@ describe('@commander/contracts state machine', () => {
     ]);
   });
 
-  it('rejects terminal state transitions', () => {
+  it('rejects terminal states returning to forward execution', () => {
     for (const state of TERMINAL_RUN_STATES) {
       assert.equal(isValidRunTransition(state, 'RUNNING'), false);
       assert.equal(validateRunTransition(state, 'RUNNING').ok, false);
@@ -61,6 +61,16 @@ describe('@commander/contracts state machine', () => {
       assert.equal(isValidStepTransition(state, 'RUNNING'), false);
       assert.equal(validateStepTransition(state, 'RUNNING').ok, false);
     }
+  });
+
+  it('allows governed compensation after a forward terminal outcome', () => {
+    for (const state of ['SUCCEEDED', 'FAILED', 'CANCELLED'] as const) {
+      assert.equal(isTerminalRunState(state), true);
+      assert.equal(isValidRunTransition(state, 'COMPENSATING'), true);
+      assert.equal(validateRunTransition(state, 'COMPENSATING').ok, true);
+    }
+
+    assert.equal(isValidRunTransition('COMPENSATED', 'COMPENSATING'), false);
   });
 
   it('allows valid pause/resume/cancel transitions', () => {

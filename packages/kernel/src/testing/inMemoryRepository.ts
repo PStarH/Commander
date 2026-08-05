@@ -977,6 +977,12 @@ export class InMemoryKernelRepository implements KernelRepository {
     };
   }
   async admitEffect(request: AdmitEffectRequest): Promise<AdmitEffectResult> {
+    return this.admitEffectValidated(request, false);
+  }
+  private async admitEffectValidated(
+    request: AdmitEffectRequest,
+    canonicalCompensationAdmission: boolean,
+  ): Promise<AdmitEffectResult> {
     // Fail-closed: never let a blank policySnapshotId / lease.workerId slip
     // through to storage where it would otherwise coerce to 'legacy-unbound'.
     if (!request.policySnapshotId || !request.policySnapshotId.trim()) {
@@ -997,7 +1003,7 @@ export class InMemoryKernelRepository implements KernelRepository {
     ) {
       return { admitted: false, reason: 'LEASE_LOST' };
     }
-    if (isCompensation) {
+    if (isCompensation && !canonicalCompensationAdmission) {
       const run = this.runs.get(request.runId);
       const authorization = run ? this.compensationAuthorization(run) : null;
       const stepAuthorization = (step.input as { authorization?: unknown }).authorization;
@@ -1222,8 +1228,15 @@ export class InMemoryKernelRepository implements KernelRepository {
     effect.completedAt = now();
     if (!existing) this.evidence.set(evidenceKey, clone(request.evidence));
     this.event(
-      'effect', effect.id, 2, 'effect.failed', request.tenantId, effect.runId,
-      effect.stepId, request.actor, { error: request.error },
+      'effect',
+      effect.id,
+      2,
+      'effect.failed',
+      request.tenantId,
+      effect.runId,
+      effect.stepId,
+      request.actor,
+      { error: request.error },
     );
     return clone(effect);
   }
@@ -1240,7 +1253,7 @@ export class InMemoryKernelRepository implements KernelRepository {
       effect.tenantId !== request.tenantId ||
       effect.state !== 'ADMITTED' ||
       step.state !== 'RUNNING' ||
-      run.state !== 'RUNNING' ||
+      !['RUNNING', 'COMPENSATING'].includes(run.state) ||
       (request.lease !== undefined && !live(step.lease, request.lease))
     )
       return null;
@@ -1631,11 +1644,11 @@ export class InMemoryKernelRepository implements KernelRepository {
         nextAttempt >= policy.maxAttempts);
     const projectedState =
       mutation === 'COMPLETE'
-        ? 'COMPLETED' as const
+        ? ('COMPLETED' as const)
         : mutation === 'CONFIRM_NOT_APPLIED'
-          ? 'CONFIRMED_NOT_APPLIED' as const
+          ? ('CONFIRMED_NOT_APPLIED' as const)
           : mutation === 'ESCALATE' || rescheduleEscalates
-            ? 'COMPLETION_UNKNOWN' as const
+            ? ('COMPLETION_UNKNOWN' as const)
             : null;
     let evidenceEntry: { key: string; record: KernelEvidenceRecord } | null = null;
     if (projectedState) {
@@ -2169,11 +2182,22 @@ export class InMemoryKernelRepository implements KernelRepository {
     }
     const authorization = this.compensationAuthorizations.get(request.authorizationId);
     const originalEffect = this.effects.get(request.originalEffectId);
+    const originalRun = this.runs.get(request.originalRunId);
     if (
       !authorization ||
       authorization.tenantId !== request.tenantId ||
       message.payload.actionDigest !== authorization.actionDigest ||
       !originalEffect?.response ||
+      !originalRun ||
+      ![
+        'PENDING',
+        'RUNNING',
+        'PAUSED',
+        'SUCCEEDED',
+        'FAILED',
+        'CANCELLED',
+        'COMPENSATING',
+      ].includes(originalRun.state) ||
       canonicalCompensationHash(originalEffect.response) !== authorization.forwardReceiptHash
     ) {
       return null;
@@ -2213,7 +2237,37 @@ export class InMemoryKernelRepository implements KernelRepository {
       originalEffectId: request.originalEffectId,
     }).slice(0, 40)}`;
     run.state = 'COMPENSATING';
+    run.version += 1;
     run.updatedAt = at.toISOString();
+    this.event(
+      'run',
+      run.id,
+      run.version,
+      'run.compensating',
+      run.tenantId,
+      run.id,
+      step.id,
+      input.workerId,
+      { requestId: request.id, originalRunId: originalRun.id },
+    );
+    const originalRunTransitioned = originalRun.state !== 'COMPENSATING';
+    if (originalRunTransitioned) originalRun.version += 1;
+    originalRun.state = 'COMPENSATING';
+    originalRun.terminalAt = undefined;
+    originalRun.updatedAt = at.toISOString();
+    if (originalRunTransitioned) {
+      this.event(
+        'run',
+        originalRun.id,
+        originalRun.version,
+        'run.compensating',
+        originalRun.tenantId,
+        originalRun.id,
+        undefined,
+        input.workerId,
+        { requestId: request.id, compensationRunId: run.id },
+      );
+    }
     step.state = 'RUNNING';
     step.version += 1;
     step.updatedAt = at.toISOString();
@@ -2242,6 +2296,7 @@ export class InMemoryKernelRepository implements KernelRepository {
   async admitCompensationEffect(
     input: AdmitEffectRequest & {
       requestId: string;
+      requestClaimToken: string;
       outboxMessageId: string;
       outboxClaimToken: string;
     },
@@ -2260,6 +2315,7 @@ export class InMemoryKernelRepository implements KernelRepository {
       request.compensationRunId !== input.runId ||
       request.compensationStepId !== input.stepId ||
       request.tenantId !== input.tenantId ||
+      request.claimToken !== input.requestClaimToken ||
       request.claimToken !== input.outboxClaimToken ||
       input.outboxMessageId !==
         [...this.outbox.values()].find((m) => m.id === input.outboxMessageId)?.id ||
@@ -2276,7 +2332,7 @@ export class InMemoryKernelRepository implements KernelRepository {
     ) {
       return { admitted: false, reason: 'COMPENSATION_ADMISSION_UNAVAILABLE' };
     }
-    return this.admitEffect(input);
+    return this.admitEffectValidated(input, true);
   }
 
   private compensationMutation(
@@ -2395,8 +2451,8 @@ export class InMemoryKernelRepository implements KernelRepository {
         input.disposition === 'COMPLETED'
           ? effect.state
           : input.disposition === 'CONFIRMED_NOT_APPLIED'
-            ? 'CONFIRMED_NOT_APPLIED' as const
-            : 'COMPLETION_UNKNOWN' as const,
+            ? ('CONFIRMED_NOT_APPLIED' as const)
+            : ('COMPLETION_UNKNOWN' as const),
     };
     if (!input.evidence) {
       return { applied: false, reason: 'TERMINAL_EVIDENCE_REQUIRED' };
@@ -2416,20 +2472,134 @@ export class InMemoryKernelRepository implements KernelRepository {
     }
     assertEvidenceRecordBoundToEffect(input.evidence, projectedEffect);
     await this.appendEvidence(input.evidence);
+    const terminalAt = now();
+    const eventPayload = {
+      requestId: request.id,
+      originalRunId: originalRun.id,
+      originalEffectId: request.originalEffectId,
+      compensationRunId: run.id,
+      compensationEffectId: effect.id,
+      disposition: input.disposition,
+    };
     if (input.disposition === 'COMPLETED') {
       request.state = 'COMPLETED';
       step.state = 'SUCCEEDED';
       step.output = clone(input.response ?? {});
+      step.version += 1;
+      step.updatedAt = terminalAt;
       run.state = 'SUCCEEDED';
-      run.terminalAt = now();
-      if (originalRun.state === 'COMPENSATING') originalRun.state = 'COMPENSATED';
+      run.version += 1;
+      run.updatedAt = terminalAt;
+      run.terminalAt = terminalAt;
+      if (originalRun.state === 'COMPENSATING') {
+        originalRun.state = 'COMPENSATED';
+        originalRun.version += 1;
+        originalRun.updatedAt = terminalAt;
+        originalRun.terminalAt = terminalAt;
+      }
+      this.event(
+        'step',
+        step.id,
+        step.version,
+        'step.succeeded',
+        step.tenantId,
+        step.runId,
+        step.id,
+        input.actor,
+        eventPayload,
+      );
+      this.event(
+        'run',
+        run.id,
+        run.version,
+        'run.succeeded',
+        run.tenantId,
+        run.id,
+        step.id,
+        input.actor,
+        eventPayload,
+      );
+      this.event(
+        'run',
+        originalRun.id,
+        originalRun.version,
+        'run.compensated',
+        originalRun.tenantId,
+        originalRun.id,
+        undefined,
+        input.actor,
+        eventPayload,
+      );
+      const sequence =
+        this.events
+          .filter((event) => event.aggregateType === 'effect' && event.aggregateId === effect.id)
+          .reduce((highest, event) => Math.max(highest, event.sequence), 0) + 1;
+      this.event(
+        'effect',
+        effect.id,
+        sequence,
+        'compensation.completed',
+        effect.tenantId,
+        effect.runId,
+        effect.stepId,
+        input.actor,
+        {
+          originalRunId: originalRun.id,
+          originalEffectId: request.originalEffectId,
+          compensationRunId: run.id,
+          compensationEffectId: effect.id,
+        },
+      );
     } else if (input.disposition === 'CONFIRMED_NOT_APPLIED') {
       effect.state = 'CONFIRMED_NOT_APPLIED';
       effect.response = clone(input.response ?? {});
       request.state = 'CONFIRMED_NOT_APPLIED';
       step.state = 'FAILED';
+      step.version += 1;
+      step.updatedAt = terminalAt;
       run.state = 'FAILED';
-      run.terminalAt = now();
+      run.version += 1;
+      run.updatedAt = terminalAt;
+      run.terminalAt = terminalAt;
+      if (originalRun.state === 'COMPENSATING') {
+        originalRun.state = 'FAILED';
+        originalRun.version += 1;
+        originalRun.updatedAt = terminalAt;
+        originalRun.terminalAt = terminalAt;
+      }
+      this.event(
+        'step',
+        step.id,
+        step.version,
+        'step.failed',
+        step.tenantId,
+        step.runId,
+        step.id,
+        input.actor,
+        eventPayload,
+      );
+      this.event(
+        'run',
+        run.id,
+        run.version,
+        'run.failed',
+        run.tenantId,
+        run.id,
+        step.id,
+        input.actor,
+        eventPayload,
+      );
+      this.event(
+        'run',
+        originalRun.id,
+        originalRun.version,
+        'run.failed',
+        originalRun.tenantId,
+        originalRun.id,
+        undefined,
+        input.actor,
+        eventPayload,
+      );
     } else {
       request.state = 'ESCALATED';
       step.state = 'WAITING_FOR_HUMAN';
@@ -3377,7 +3547,11 @@ export class InMemoryKernelRepository implements KernelRepository {
   }
   private hasUnreceiptedConsequentialEffect(runId: string, tenantId: string): boolean {
     return [...this.effects.values()].some((effect) => {
-      if (effect.runId !== runId || effect.tenantId !== tenantId || !isClassAEffectType(effect.type)) {
+      if (
+        effect.runId !== runId ||
+        effect.tenantId !== tenantId ||
+        !isClassAEffectType(effect.type)
+      ) {
         return false;
       }
       return !this.hasEvidenceForEffect(effect);

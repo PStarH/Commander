@@ -37,6 +37,7 @@ import { join } from 'node:path';
 import { createEgressGatedFetch, parseEgressAllowlist } from './egress.js';
 import { ReconciliationDaemon } from './reconciliationDaemon.js';
 import { CompensationDaemon } from './compensationDaemon.js';
+import { createDemoTicketCompensationAdapter } from './demoTicketAdapter.js';
 
 const ADAPTER_ROUTING_POLICY_SNAPSHOT_ID = 'adapter-ops-v1';
 
@@ -764,6 +765,7 @@ function createProductionRegistry(
     createGitHubPullRequestCreateAdapter({ credentials, fetch: fetchImpl }),
     createKubernetesDeploymentRollbackAdapter({ credentials, fetch: fetchImpl }),
     createServiceNowIncidentCreateAdapter({ credentials, fetch: fetchImpl }),
+    ...(process.env.COMMANDER_CELL_TIER === 'demo' ? [createDemoTicketCompensationAdapter()] : []),
   ]);
 }
 

@@ -46,16 +46,23 @@ export const TERMINAL_STEP_STATES: ReadonlySet<StepState> = new Set([
   'SKIPPED',
 ]);
 
-/** Valid run state transitions keyed by current state. */
+/**
+ * Valid run state transitions keyed by current state.
+ *
+ * SUCCEEDED, FAILED, and CANCELLED remain terminal for ordinary execution.
+ * A governed compensation request may explicitly reopen one of those outcomes
+ * into COMPENSATING; no transition back into the forward execution lifecycle
+ * is permitted.
+ */
 export const RUN_TRANSITIONS: Readonly<Record<RunState, readonly RunState[]>> = {
   // PENDING/PAUSED may still hold COMPLETED effects (e.g. pause then deadline);
   // compensation replaces the historical *→FAILED finish path in those cases.
   PENDING: ['RUNNING', 'PAUSED', 'FAILED', 'CANCELLED', 'COMPENSATING'],
   RUNNING: ['PAUSED', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'COMPENSATING'],
   PAUSED: ['RUNNING', 'FAILED', 'CANCELLED', 'COMPENSATING'],
-  SUCCEEDED: [],
-  FAILED: [],
-  CANCELLED: [],
+  SUCCEEDED: ['COMPENSATING'],
+  FAILED: ['COMPENSATING'],
+  CANCELLED: ['COMPENSATING'],
   COMPENSATING: ['COMPENSATED', 'FAILED'],
   COMPENSATED: [],
 };

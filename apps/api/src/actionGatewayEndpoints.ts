@@ -487,6 +487,9 @@ async function renderAction(
     runId: run.id,
     stepId: metadata.stepId,
     effectId: metadata.effectId,
+    ...(effect?.state === 'COMPLETED' && effect.response
+      ? { forwardReceiptHash: canonicalValueHash(effect.response) }
+      : {}),
     state,
     decision: metadata.decision,
     simulation: metadata.simulation,

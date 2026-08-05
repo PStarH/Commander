@@ -379,6 +379,14 @@ CREATE TABLE IF NOT EXISTS commander_compensation_requests (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS commander_compensation_finalization_receipts (
+  outbox_message_id TEXT PRIMARY KEY REFERENCES commander_outbox(id) ON DELETE RESTRICT,
+  request_id TEXT NOT NULL REFERENCES commander_compensation_requests(id) ON DELETE RESTRICT,
+  fingerprint TEXT NOT NULL,
+  result TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS commander_outbox_deliveries (
   id TEXT PRIMARY KEY,
   event_id TEXT NOT NULL UNIQUE,

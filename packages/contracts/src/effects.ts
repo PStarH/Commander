@@ -150,6 +150,7 @@ export interface GovernedActionV1 {
   runId: string;
   stepId: string;
   effectId: string;
+  forwardReceiptHash?: string;
   state: ActionStateV1;
   decision: ActionDecisionV1;
   simulation: ActionSimulationV1;
