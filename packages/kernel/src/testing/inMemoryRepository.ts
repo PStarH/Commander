@@ -365,7 +365,7 @@ export class InMemoryKernelRepository implements KernelRepository {
     workerId: string,
     workerGeneration: number,
     claimSecret?: string,
-  ): { tenantIds: string[]; openEnded: boolean } | null {
+  ): { tenantIds: string[]; openEnded: boolean; capabilities: string[] } | null {
     if (!claimSecret || claimSecret.length === 0) return null;
     const stored = this.claimSecretHashes.get(workerId);
     if (
@@ -382,8 +382,11 @@ export class InMemoryKernelRepository implements KernelRepository {
     const parsed = worker.tenantIds.filter((t) => typeof t === 'string' && t.length > 0);
     // Product decision: durable '*' fail-closed (parity with claim_* DEFINER / SQLite).
     if (parsed.includes('*')) return null;
-    if (parsed.length === 0) return null;
-    return { tenantIds: parsed, openEnded: false };
+    const capabilities = worker.capabilities.filter(
+      (capability) => capability.trim().length > 0 && capability !== '*',
+    );
+    if (parsed.length === 0 || capabilities.length === 0) return null;
+    return { tenantIds: parsed, openEnded: false, capabilities };
   }
 
   async createRun(command: CreateKernelRun, actor: string): Promise<KernelRun> {
@@ -501,6 +504,7 @@ export class InMemoryKernelRepository implements KernelRepository {
   async claimNextStep(request: ClaimStepRequest): Promise<KernelStep | null> {
     const at = request.now ?? new Date();
     const workerGeneration = request.workerGeneration ?? -1;
+    let capabilities = request.capabilities ?? [];
     let tenantFilter: string[] | null; // null = open-ended (all tenants)
     if (!this.schedulerMode) {
       // Worker path: durable authz only — empty caller tenantIds must not mean all.
@@ -511,6 +515,11 @@ export class InMemoryKernelRepository implements KernelRepository {
       );
       if (!scope) return null;
       tenantFilter = scope.openEnded ? null : scope.tenantIds;
+      capabilities =
+        capabilities.length === 0
+          ? scope.capabilities
+          : capabilities.filter((capability) => scope.capabilities.includes(capability));
+      if (capabilities.length === 0) return null;
     } else {
       const caller = request.tenantIds ?? (request.tenantId ? [request.tenantId] : []);
       tenantFilter = caller.length === 0 ? null : caller;
@@ -519,9 +528,9 @@ export class InMemoryKernelRepository implements KernelRepository {
       .filter(
         (step) =>
           (tenantFilter === null || tenantFilter.includes(step.tenantId)) &&
-          (!request.capabilities ||
-            request.capabilities.length === 0 ||
-            request.capabilities.includes(step.kind)) &&
+          (this.schedulerMode && capabilities.length === 0
+            ? true
+            : capabilities.includes(step.kind)) &&
           ['PENDING', 'RETRY_WAIT'].includes(step.state) &&
           !this.tenantControls.get(step.tenantId)?.paused &&
           ['PENDING', 'RUNNING'].includes(this.runs.get(step.runId)?.state ?? 'FAILED') &&
@@ -2000,6 +2009,8 @@ export class InMemoryKernelRepository implements KernelRepository {
         approval.runId !== authorization.originalRunId ||
         approval.status !== 'answered' ||
         response.approved !== true ||
+        typeof response.approvedBy !== 'string' ||
+        response.approvedBy.length === 0 ||
         response.authorizationId !== authorization.id ||
         response.actionDigest !== authorization.actionDigest ||
         response.policyDecisionId !== authorization.policyDecisionId ||
@@ -2035,7 +2046,7 @@ export class InMemoryKernelRepository implements KernelRepository {
         workGraphVersion: 'action-gateway-compensation/v2',
         policySnapshotId: authorization.policySnapshotId,
         metadata: { compensationRequestId: requestId, authorizationId: authorization.id },
-        steps: [{ id: compensationStepId, kind: 'tool', input: { requestId } }],
+        steps: [{ id: compensationStepId, kind: 'effect.compensate', input: { requestId } }],
       },
       input.actor,
     );
@@ -2203,6 +2214,42 @@ export class InMemoryKernelRepository implements KernelRepository {
       return null;
     }
     const at = input.now ?? new Date();
+    const claimedAuthorization: ClaimedCompensationRequest['authorization'] = {
+      ...clone(authorization),
+      approvalBinding: null,
+    };
+    if (authorization.decision === 'require_approval') {
+      if (!authorization.approvalInteractionId) return null;
+      const approval = this.interactions.get(authorization.approvalInteractionId);
+      const response = approval?.response ?? {};
+      const approvalExpiresAt = approval?.expiresAt ?? '';
+      if (
+        !approval ||
+        approval.tenantId !== request.tenantId ||
+        approval.runId !== request.originalRunId ||
+        approval.status !== 'answered' ||
+        response.approved !== true ||
+        typeof response.approvedBy !== 'string' ||
+        response.approvedBy.length === 0 ||
+        response.authorizationId !== authorization.id ||
+        response.actionDigest !== authorization.actionDigest ||
+        response.policyDecisionId !== authorization.policyDecisionId ||
+        response.policySnapshotId !== authorization.policySnapshotId ||
+        !Number.isFinite(Date.parse(approvalExpiresAt)) ||
+        Date.parse(approvalExpiresAt) <= at.getTime()
+      ) {
+        return null;
+      }
+      claimedAuthorization.approvalBinding = {
+        approvalId: authorization.approvalInteractionId,
+        approverPrincipalId: response.approvedBy,
+        actionDigest: authorization.actionDigest,
+        policySnapshotId: authorization.policySnapshotId,
+        expiresAt: new Date(
+          Math.min(Date.parse(authorization.expiresAt), Date.parse(approvalExpiresAt)),
+        ).toISOString(),
+      };
+    }
     if (
       request.state === 'CLAIMED' &&
       request.claimExpiresAt &&
@@ -2285,7 +2332,7 @@ export class InMemoryKernelRepository implements KernelRepository {
     });
     return {
       request: clone(request),
-      authorization: clone(authorization),
+      authorization: claimedAuthorization,
       forwardResponse: clone(originalEffect.response),
       lease: clone(step.lease),
       outboxMessageId: message.id,

@@ -495,7 +495,9 @@ export function issueCompensationCapabilityToken(input: {
     requestId: durable ? durable.request.id : legacy!.requestId,
     adapterVersion: durable ? durable.authorization.adapterVersion : legacy!.adapterVersion,
     decisionEffect: durable ? durable.authorization.decision : legacy!.decisionEffect,
-    ...(legacy ? { approvalBinding: legacy.approvalBinding } : {}),
+    approvalBinding: durable
+      ? (durable.authorization.approvalBinding ?? null)
+      : legacy!.approvalBinding,
     nonce: randomUUID(),
   };
   return input.issuer.issue(grant);

@@ -475,6 +475,14 @@ export interface CompensationAuthorizationRecord {
   approvalInteractionId?: string;
 }
 
+export interface CompensationApprovalClaimBinding {
+  approvalId: string;
+  approverPrincipalId: string;
+  actionDigest: string;
+  policySnapshotId: string;
+  expiresAt: string;
+}
+
 export interface RequestCompensationInput {
   tenantId: string;
   authorizationId: string;
@@ -543,7 +551,9 @@ export interface ClaimedCompensationRequest {
   lease: KernelLease;
   outboxMessageId: string;
   outboxClaimToken: string;
-  authorization: CompensationAuthorizationRecord;
+  authorization: CompensationAuthorizationRecord & {
+    approvalBinding?: CompensationApprovalClaimBinding | null;
+  };
 }
 
 export type CompensationDisposition =

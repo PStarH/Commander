@@ -434,6 +434,111 @@ for (const kind of ['memory', 'sqlite'] as const) {
       }
     });
 
+    it('keeps governed compensation steps out of the ordinary worker queue', async () => {
+      const harness = await createHarness(kind);
+      try {
+        const original = await completedForwardEffect(harness, `queue-isolation-${kind}`);
+        const authorization = authorizationFor(original);
+        await harness.repository.createCompensationAuthorization(authorization);
+        const requested = await harness.repository.requestCompensation({
+          tenantId: TENANT,
+          authorizationId: authorization.id,
+          actor: 'action-gateway',
+        });
+        assert.equal(requested.accepted, true, JSON.stringify(requested));
+        const claimSecret = harness.seedWorker('ordinary-tool-worker', [TENANT], 1, {
+          claimSecret: 'ordinary-tool-secret',
+          capabilities: ['tool'],
+        });
+        for (const capabilities of [['effect.compensate'], undefined] as const) {
+          const claimed = await harness.repository.claimNextStep({
+            workerId: 'ordinary-tool-worker',
+            workerGeneration: 1,
+            claimSecret,
+            leaseTtlMs: 60_000,
+            ...(capabilities ? { capabilities: [...capabilities] } : {}),
+          });
+          assert.equal(claimed, null);
+        }
+      } finally {
+        harness.close();
+      }
+    });
+
+    it('derives the durable approval binding from the answered interaction', async () => {
+      const harness = await createHarness(kind);
+      try {
+        const original = await completedForwardEffect(harness, `approval-binding-${kind}`);
+        const approvalInteractionId = `approval-${kind}`;
+        const approvalExpiresAt = new Date(Date.now() + 60_000);
+        await harness.repository.createInteraction(
+          {
+            id: approvalInteractionId,
+            runId: original.runId,
+            stepId: original.stepId,
+            tenantId: TENANT,
+            prompt: 'Approve compensation',
+            expiresAt: approvalExpiresAt,
+          },
+          'action-gateway',
+        );
+        const authorization = {
+          ...authorizationFor(original),
+          decision: 'require_approval' as const,
+          approvalInteractionId,
+        };
+        await harness.repository.createCompensationAuthorization(authorization);
+        await harness.repository.answerInteraction({
+          interactionId: approvalInteractionId,
+          runId: original.runId,
+          tenantId: TENANT,
+          response: {
+            approved: true,
+            approvedBy: 'principal-approver',
+            authorizationId: authorization.id,
+            actionDigest: authorization.actionDigest,
+            policyDecisionId: authorization.policyDecisionId,
+            policySnapshotId: authorization.policySnapshotId,
+          },
+          actor: 'principal-approver',
+          releaseStep: false,
+        });
+        const requested = await harness.repository.requestCompensation({
+          tenantId: TENANT,
+          authorizationId: authorization.id,
+          actor: 'action-gateway',
+        });
+        assert.equal(requested.accepted, true, JSON.stringify(requested));
+        if (!requested.accepted) return;
+        const messages = await harness.repository.claimOutboxByTopic(
+          'commander.kernel.compensation.requested',
+          1,
+          new Date(),
+          {
+            workerId: 'compensation-worker',
+            workerGeneration: 1,
+            claimSecret: 'compensation-secret',
+          },
+        );
+        const claimed = await harness.repository.claimCompensationRequest({
+          requestId: requested.request.id,
+          outboxMessageId: messages[0]!.id,
+          workerId: 'compensation-worker',
+          workerGeneration: 1,
+          claimSecret: 'compensation-secret',
+        });
+        assert.deepEqual(claimed?.authorization.approvalBinding, {
+          approvalId: approvalInteractionId,
+          approverPrincipalId: 'principal-approver',
+          actionDigest: authorization.actionDigest,
+          policySnapshotId: authorization.policySnapshotId,
+          expiresAt: approvalExpiresAt.toISOString(),
+        });
+      } finally {
+        harness.close();
+      }
+    });
+
     it('atomically escalates a rejected claim before an effect is admitted', async () => {
       const harness = await createHarness(kind);
       try {
