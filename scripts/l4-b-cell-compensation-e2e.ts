@@ -156,7 +156,7 @@ async function pollActionTerminal(
 
 export async function runComposeDemoCompensationFlow(
   baseUrl = 'http://localhost:4000',
-): Promise<Record<string, boolean>> {
+): Promise<Record<string, boolean | string>> {
   const idem = `cell-comp-${Date.now()}`;
   const proposed = await httpJson(baseUrl, 'POST', '/v1/actions', {
     source: 'cell-e2e',
@@ -168,8 +168,17 @@ export async function runComposeDemoCompensationFlow(
     args: { title: 'Cell compensation E2E' },
     idempotencyKey: idem,
   });
-  if (proposed.status !== 202)
-    return { proposed: false, approved: false, forwardDone: false, compensated: false };
+  if (proposed.status !== 202) {
+    const error = proposed.json?.error as { code?: unknown } | undefined;
+    return {
+      proposed: false,
+      approved: false,
+      forwardDone: false,
+      compensated: false,
+      proposalHttpStatus: String(proposed.status),
+      ...(typeof error?.code === 'string' ? { proposalErrorCode: error.code } : {}),
+    };
+  }
   const action = (proposed.json?.action ?? {}) as {
     runId: string;
     simulation: { actionDigest: string; simulationId: string; policySnapshotId: string };
@@ -179,8 +188,17 @@ export async function runComposeDemoCompensationFlow(
     simulationId: action.simulation.simulationId,
     policySnapshotId: action.simulation.policySnapshotId,
   });
-  if (approved.status !== 200)
-    return { proposed: true, approved: false, forwardDone: false, compensated: false };
+  if (approved.status !== 200) {
+    const error = approved.json?.error as { code?: unknown } | undefined;
+    return {
+      proposed: true,
+      approved: false,
+      forwardDone: false,
+      compensated: false,
+      approvalHttpStatus: String(approved.status),
+      ...(typeof error?.code === 'string' ? { approvalErrorCode: error.code } : {}),
+    };
+  }
   const forwardState = await pollActionTerminal(baseUrl, action.runId);
   if (forwardState !== 'SUCCEEDED') {
     return { proposed: true, approved: true, forwardDone: false, compensated: false };
@@ -196,7 +214,15 @@ export async function runComposeDemoCompensationFlow(
     idempotencyKey: `cmp-${idem}`,
   });
   if (compensate.status !== 202) {
-    return { proposed: true, approved: true, forwardDone: true, compensated: false };
+    const error = compensate.json?.error as { code?: unknown } | undefined;
+    return {
+      proposed: true,
+      approved: true,
+      forwardDone: true,
+      compensated: false,
+      compensationHttpStatus: String(compensate.status),
+      ...(typeof error?.code === 'string' ? { compensationErrorCode: error.code } : {}),
+    };
   }
   const compAction = (compensate.json?.action ?? {}) as { runId: string };
   const compState = await pollActionTerminal(baseUrl, compAction.runId);
