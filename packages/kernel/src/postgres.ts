@@ -1863,7 +1863,7 @@ export class PostgresKernelRepository implements KernelRepository {
              SELECT 1 FROM commander_runs r
               WHERE r.id=commander_effects.run_id
                 AND r.tenant_id=commander_effects.tenant_id
-                AND r.state='RUNNING'
+                AND r.state IN ('RUNNING','COMPENSATING')
            )
            AND EXISTS (
              SELECT 1 FROM commander_steps s

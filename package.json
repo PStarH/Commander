@@ -155,6 +155,7 @@
     "cell:reconciliation-e2e": "pnpm exec tsx scripts/l4-b-cell-reconciliation-e2e.ts",
     "cell:compensation-dual-race": "pnpm exec tsx scripts/l4-b-compensation-dual-process-race.ts",
     "cell:up-assert": "pnpm exec tsx scripts/l4-b-cell-up-assert.ts",
+    "cell:down": "pnpm exec tsx scripts/l4-b-cell-down.ts",
     "cell:image-boot-smoke": "pnpm exec tsx scripts/l4-b-image-boot-smoke.ts",
     "helm:cell-assert": "pnpm run helm:cell-assert:demo && pnpm run helm:cell-assert:enterprise",
     "helm:cell-assert:demo": "helm template cell-demo deploy/helm/commander -f deploy/helm/commander/values-demo.yaml --set image.tag=test --set tenantAuthority.proofOwnerSecret=cell-demo-proof-owner-r1 --set tenantAuthority.releaseProjectionConfigMap=cell-demo-release-projection-r1 | pnpm exec tsx scripts/helm-cell-assert.ts --profile demo",
@@ -171,6 +172,7 @@
     "typescript-eslint": "^8.62.0"
   },
   "dependencies": {
+    "@commander/action-adapters": "workspace:*",
     "@commander/core": "workspace:*",
     "@commander/effect-broker": "workspace:*",
     "@commander/kernel": "workspace:*",

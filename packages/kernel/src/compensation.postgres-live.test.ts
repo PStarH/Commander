@@ -432,6 +432,15 @@ describe('governed compensation PostgreSQL authority', { skip: !adminUrl }, () =
       compensationEffectId,
       'claimed compensation request must carry a compensation effect id',
     );
+    assert.equal(
+      (
+        await owner.query<{ state: string }>(
+          'SELECT state FROM commander_runs WHERE id=$1 AND tenant_id=$2',
+          [forward.runId, tenantA],
+        )
+      ).rows[0]?.state,
+      'COMPENSATING',
+    );
     const admitted = await adapterRepository.admitCompensationEffect({
       id: compensationEffectId,
       runId: claim.request.compensationRunId,
@@ -678,6 +687,26 @@ describe('governed compensation PostgreSQL authority', { skip: !adminUrl }, () =
       }),
       { applied: true, disposition: 'COMPLETED', replayed: false },
     );
+    const terminal = await owner.query<{
+      compensation_state: string;
+      original_state: string;
+      completed_events: string;
+    }>(
+      `SELECT compensation.state AS compensation_state,
+              original.state AS original_state,
+              (SELECT count(*)::text FROM commander_events event
+                WHERE event.tenant_id=$3 AND event.run_id=compensation.id
+                  AND event.type='compensation.completed') AS completed_events
+         FROM commander_runs compensation
+         JOIN commander_runs original ON original.id=$1 AND original.tenant_id=$3
+        WHERE compensation.id=$2 AND compensation.tenant_id=$3`,
+      [forward.runId, claim.request.compensationRunId, tenantA],
+    );
+    assert.deepEqual(terminal.rows[0], {
+      compensation_state: 'SUCCEEDED',
+      original_state: 'COMPENSATED',
+      completed_events: '1',
+    });
     await assert.rejects(
       adapter.query('SELECT * FROM commander_effects WHERE tenant_id=$1', [tenantA]),
       /permission denied/i,

@@ -20,7 +20,7 @@ import type {
   GatewayEvidenceRecord,
   V1KernelGateway,
 } from '../src/v1GatewayKernel.js';
-import { GatewayIdempotencyConflictError } from '../src/v1GatewayKernel.js';
+import { canonicalValueHash, GatewayIdempotencyConflictError } from '../src/v1GatewayKernel.js';
 import { projectCanonicalActionState } from '../src/actionGatewayEndpoints.js';
 import { createV1GatewayRouter } from '../src/v1GatewayEndpoints.js';
 
@@ -1159,7 +1159,10 @@ describe('L4-01 governed action HTTP API', () => {
       const terminalGet = await fetch(`${baseUrl}/v1/actions/${terminal.action.runId}`, {
         headers: { 'x-test-tenant': 'tenant-a' },
       });
-      assert.equal(((await terminalGet.json()) as any).action.state, 'SUCCEEDED');
+      const terminalAction = ((await terminalGet.json()) as any).action;
+      assert.equal(terminalAction.state, 'SUCCEEDED');
+      assert.equal(terminalAction.forwardReceiptHash, canonicalValueHash({ status: 'ok' }));
+      assert.equal('response' in terminalAction, false, 'raw effect response must stay private');
     });
   });
 

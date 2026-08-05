@@ -106,4 +106,30 @@ describe('Module A CI workflow', () => {
     assert.match(source, /execFileSync\(\s*'pnpm'/s);
     assert.doesNotMatch(source, /execFileSync\(\s*'npx'/s);
   });
+
+  it('masks generated cell secrets', () => {
+    const job = qualityWorkflow().jobs?.['l4-b-cell-runtime'];
+    assert.ok(job, 'Quality workflow must define the L4-B Cell Runtime job');
+    const generate = job.steps?.find((step) => step.name === 'Generate cell compose secrets');
+    assert.match(generate?.run ?? '', /::add-mask::/);
+    for (const name of [
+      'POSTGRES_PASSWORD',
+      'COMMANDER_API_KEY',
+      'COMMANDER_MASTER_KEY',
+      'JWT_SECRET',
+      'COMMANDER_CAPABILITY_TOKEN_KEY',
+      'COMMANDER_INTEGRITY_KEY',
+      'COMMANDER_WORKER_AUTH_TOKEN',
+    ]) {
+      assert.match(generate?.run ?? '', new RegExp(`write_masked_env ${name} `));
+    }
+  });
+
+  it('always tears down the cell compose topology', () => {
+    const job = qualityWorkflow().jobs?.['l4-b-cell-runtime'];
+    assert.ok(job, 'Quality workflow must define the L4-B Cell Runtime job');
+    const teardown = job.steps?.find((step) => step.name === 'Tear down cell compose');
+    assert.equal(teardown?.if, 'always()');
+    assert.equal(teardown?.run, 'pnpm cell:down');
+  });
 });

@@ -6,6 +6,9 @@ import { assertRunTransition, assertStepTransition } from './transitionValidatio
 describe('kernel transition validation', () => {
   it('accepts transitions declared by @commander/contracts', () => {
     assert.doesNotThrow(() => assertRunTransition('PENDING', 'RUNNING'));
+    assert.doesNotThrow(() => assertRunTransition('SUCCEEDED', 'COMPENSATING'));
+    assert.doesNotThrow(() => assertRunTransition('FAILED', 'COMPENSATING'));
+    assert.doesNotThrow(() => assertRunTransition('CANCELLED', 'COMPENSATING'));
     assert.doesNotThrow(() => assertStepTransition('RUNNING', 'RETRY_WAIT'));
   });
 
