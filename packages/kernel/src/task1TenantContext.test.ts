@@ -7,6 +7,7 @@ import {
   KERNEL_TASK1_ENFORCED_TENANT_RELATIONS,
   KERNEL_TASK1_PRODUCT_TENANT_PREDICATE_SQL,
   KERNEL_TASK1_TENANT_CONTEXT_SQL,
+  KERNEL_TASK1_TENANT_CONTEXT_CLOCK_REPAIR_SQL,
   READ_APP_TENANT_TRANSACTION_TARGET_SQL,
   buildBindAppTenantContextQuery,
   buildCloseAppTenantContextQuery,
@@ -61,6 +62,38 @@ describe('Task 1 authenticated tenant context', () => {
       )?.[0] ?? '';
     assert.match(closeFunction, /SET closed_at = pg_catalog\.clock_timestamp\(\)/i);
     assert.doesNotMatch(closeFunction, /DELETE\s+FROM/i);
+  });
+
+  it('repairs timestamp ordering without weakening the tenant-context authority boundary', () => {
+    const bindFunction =
+      KERNEL_TASK1_TENANT_CONTEXT_CLOCK_REPAIR_SQL.match(
+        /CREATE OR REPLACE FUNCTION public\.bind_app_tenant_context[\s\S]*?\$function\$;/i,
+      )?.[0] ?? '';
+    const closeFunction =
+      KERNEL_TASK1_TENANT_CONTEXT_CLOCK_REPAIR_SQL.match(
+        /CREATE OR REPLACE FUNCTION public\.close_app_tenant_context[\s\S]*?\$function\$;/i,
+      )?.[0] ?? '';
+
+    assert.match(bindFunction, /SECURITY DEFINER/i);
+    assert.match(bindFunction, /SET search_path = pg_catalog/i);
+    assert.match(bindFunction, /session_user\s*<>\s*'commander_app'/i);
+    assert.match(bindFunction, /target_database_oid/i);
+    assert.match(bindFunction, /target_backend_pid/i);
+    assert.match(bindFunction, /target_xid/i);
+    assert.match(
+      bindFunction,
+      /SET bound_at\s*=\s*GREATEST\(pg_catalog\.clock_timestamp\(\),\s*context\.issued_at\)/i,
+    );
+    assert.match(
+      closeFunction,
+      /SET closed_at\s*=\s*GREATEST\(pg_catalog\.clock_timestamp\(\),\s*context\.bound_at\)/i,
+    );
+    assert.match(KERNEL_TASK1_TENANT_CONTEXT_CLOCK_REPAIR_SQL, /ALTER FUNCTION public\.bind_app_tenant_context\(uuid\) OWNER TO commander_owner/i);
+    assert.match(KERNEL_TASK1_TENANT_CONTEXT_CLOCK_REPAIR_SQL, /ALTER FUNCTION public\.close_app_tenant_context\(uuid\) OWNER TO commander_owner/i);
+    assert.match(
+      KERNEL_TASK1_TENANT_CONTEXT_CLOCK_REPAIR_SQL,
+      /GRANT EXECUTE ON FUNCTION public\.bind_app_tenant_context\(uuid\),\s*public\.close_app_tenant_context\(uuid\)\s+TO commander_app/i,
+    );
   });
 
   it('binds and resolves only the exact app database, backend PID, and xid8', () => {
