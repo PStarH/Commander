@@ -9,6 +9,8 @@ import {
   createTask1ProofRuntime,
   migrationFailureDiagnostic,
   readTask1OwnerInput,
+  seedTenantAuthorityAllowedTenants,
+  shouldSeedTenantAuthorityAllowedTenants,
 } from './migrate.js';
 import { canonicalBootstrapJson, canonicalBootstrapSha256 } from './canonicalBootstrap.js';
 import type { Task1RolloutProofReceipt } from './task1RolloutProof.js';
@@ -74,6 +76,50 @@ describe('kernel owner migration entrypoint', () => {
     assert.equal(isTask1OwnerCommandMode('tenant-cutover-prove'), true);
     assert.equal(isTask1OwnerCommandMode('tenant-cutover-restore'), true);
     assert.equal(isTask1OwnerCommandMode('migration'), false);
+  });
+
+  it('seeds the closure tenant authority allowlist with parameterized owner queries', async () => {
+    const calls: Array<{ sql: string; values?: readonly unknown[] }> = [];
+    const client = {
+      query: async (sql: string, values?: readonly unknown[]) => {
+        calls.push({ sql, values });
+      },
+    };
+
+    await seedTenantAuthorityAllowedTenants(client, [' tenant-a ', 'tenant-b']);
+
+    assert.equal(calls.length, 2);
+    assert.match(
+      calls[0]!.sql,
+      /INSERT INTO public\.commander_tenant_authority_allowed_tenants \(tenant_id, enabled\)/i,
+    );
+    assert.match(calls[0]!.sql, /VALUES \(\$1, true\)/i);
+    assert.match(calls[0]!.sql, /ON CONFLICT \(tenant_id\) DO UPDATE SET enabled = true/i);
+    assert.deepEqual(
+      calls.map((call) => call.values),
+      [['tenant-a'], ['tenant-b']],
+    );
+    assert.doesNotMatch(calls[0]!.sql, /tenant-a|tenant-b/);
+
+    await seedTenantAuthorityAllowedTenants(client, []);
+    assert.equal(calls.length, 2, 'empty tenant input must not query the closure table');
+    await assert.rejects(
+      () => seedTenantAuthorityAllowedTenants(client, ['  ']),
+      /TENANT_AUTHORITY_ALLOWED_TENANT_INVALID/,
+    );
+    await assert.rejects(
+      () => seedTenantAuthorityAllowedTenants(client, ['*']),
+      /TENANT_AUTHORITY_ALLOWED_TENANT_INVALID/,
+    );
+    assert.equal(calls.length, 2, 'invalid tenant input must not query the closure table');
+  });
+
+  it('gates authority allowlist seeding on applied closure phase and non-empty tenants', () => {
+    assert.equal(shouldSeedTenantAuthorityAllowedTenants(undefined, ['tenant-a']), false);
+    assert.equal(shouldSeedTenantAuthorityAllowedTenants('expand', []), false);
+    assert.equal(shouldSeedTenantAuthorityAllowedTenants('expand', ['tenant-a']), true);
+    assert.equal(shouldSeedTenantAuthorityAllowedTenants('enforce', ['tenant-a']), true);
+    assert.equal(shouldSeedTenantAuthorityAllowedTenants('enforce', []), false);
   });
 
   it('reads owner requests only from stdin or the fixed in-cluster request mount', async () => {
