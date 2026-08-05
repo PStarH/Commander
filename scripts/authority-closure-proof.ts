@@ -1603,6 +1603,7 @@ async function checkWorkerDsnThreat(input: {
   if (noSecret === null && wrongSecret === null && withSecret !== null) {
     const outboxId = `proof-obx-${randomUUID().slice(0, 8)}`;
     const eventId = `evt-${outboxId}`;
+    const claimNow = new Date();
     await ownerPool.query(
       `INSERT INTO commander_events
          (id, aggregate_type, aggregate_id, sequence, type, tenant_id, run_id, actor, schema_version, payload)
@@ -1611,13 +1612,16 @@ async function checkWorkerDsnThreat(input: {
     );
     await ownerPool.query(
       `INSERT INTO commander_outbox (id, event_id, tenant_id, topic, key, payload, attempts, max_attempts, available_at)
-       VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, 0, 5, now())`,
-      [outboxId, eventId, allowedTenant, KERNEL_COMPENSATION_TOPIC, `cmp/${outboxId}`],
+       VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, 0, 5, $6::timestamptz)`,
+      [
+        outboxId,
+        eventId,
+        allowedTenant,
+        KERNEL_COMPENSATION_TOPIC,
+        `cmp/${outboxId}`,
+        claimNow.toISOString(),
+      ],
     );
-    const claimNowResult = await ownerPool.query<{ now: Date | string }>(
-      'SELECT clock_timestamp() AS now',
-    );
-    const claimNow = new Date(claimNowResult.rows[0]?.now ?? Date.now());
     let outboxNo: unknown[] = [];
     let outboxWrong: unknown[] = [];
     let outboxOk: unknown[] = [];

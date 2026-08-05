@@ -144,6 +144,16 @@ describe('authority-closure-proof helpers', () => {
     assert.match(source, /from '\.\.\/packages\/effect-broker\/src\/index\.js'/);
   });
 
+  it('uses one explicit instant for the outbox fixture and its claim', () => {
+    const source = readFileSync(new URL('./authority-closure-proof.ts', import.meta.url), 'utf8');
+    const block = source.match(/const outboxId =[\s\S]*?const outboxSecretOk =/)?.[0] ?? '';
+
+    assert.match(block, /const claimNow = new Date\(\);/);
+    assert.match(block, /available_at\)\s*VALUES \([^)]*\$6::timestamptz\)/);
+    assert.match(block, /KERNEL_COMPENSATION_TOPIC[\s\S]*?claimNow\.toISOString\(\)/);
+    assert.doesNotMatch(block, /clock_timestamp/);
+  });
+
   it('records the timestamp-suffixed proof tenant IDs in metadata', () => {
     const source = readFileSync(new URL('./authority-closure-proof.ts', import.meta.url), 'utf8');
     assert.match(
