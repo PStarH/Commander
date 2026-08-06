@@ -96,6 +96,15 @@ function resource(rendered: string, kind: string, name: string): string {
 }
 
 describe('Helm lifecycle static contract', () => {
+  it('binds production auth-failure authority to the enabled Redis service', () => {
+    const api = deployment(render(false, ['--set', 'redis.enabled=true']), 'api');
+    assert.match(api, /- name: REDIS_URL\n\s+value: redis:\/\/lifecycle-demo-redis:6379/);
+    assert.match(
+      api,
+      /- name: AUTH_FAILURE_REDIS_URL\n\s+value: redis:\/\/lifecycle-demo-redis:6379/,
+    );
+  });
+
   it('limits controller transport bootstrap to the three bundled PostgreSQL objects', () => {
     const rendered = render(false, [
       '--set',
@@ -342,7 +351,10 @@ describe('Helm lifecycle static contract', () => {
       assert.match(manifest, new RegExp(`key: ["']?${key}["']?`));
       assert.match(manifest, /COMMANDER_DATABASE_TLS_CA_FILE/);
       assert.match(manifest, /COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256/);
-      assert.match(manifest, /name: database-public-ca[\s\S]*mountPath: \/run\/commander\/database-tls/);
+      assert.match(
+        manifest,
+        /name: database-public-ca[\s\S]*mountPath: \/run\/commander\/database-tls/,
+      );
       assert.doesNotMatch(manifest, /owner-url|BOOTSTRAP_AUTHORITY/);
     }
   });
