@@ -1753,6 +1753,14 @@ data: { owner-url: ${payload} }
       'TENANT_CUTOVER_COMMAND_FAILED stage=post-render code=TENANT_CUTOVER_HELM_POST_RENDER_FAILED',
       'TENANT_CUTOVER_COMMAND_FAILED stage=rollout code=TENANT_CUTOVER_HELM_ROLLOUT_FAILED',
     ]);
+    assert.equal(
+      helmCommandFailureDiagnostic('post-render', 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID'),
+      'TENANT_CUTOVER_COMMAND_FAILED stage=post-render code=TENANT_CUTOVER_RELEASE_PROJECTION_INVALID',
+    );
+    assert.match(
+      helmCommandFailureDiagnostic('post-render', 'postgres://secret'),
+      /code=TENANT_CUTOVER_HELM_POST_RENDER_FAILED$/,
+    );
     assert.doesNotMatch(
       diagnostics.join('\n'),
       /postgres(?:ql)?:|password|values|kind:\s*Secret|COMMANDER_OWNER_DATABASE_URL|stderr/i,
