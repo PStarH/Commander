@@ -108,6 +108,7 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.match(values, new RegExp(`digest: sha256:${'a'.repeat(64)}`));
     assert.match(values, /bundled: true\n    user: postgres/);
     assert.match(values, /existingSecret: cmdr-live-database-tls/);
+    assert.match(values, /redis:\n  enabled: true/);
     for (const role of ['owner', 'app', 'tenant-authority', 'scheduler', 'worker', 'adapter-ops']) {
       assert.match(values, new RegExp(`- ${role}`));
     }

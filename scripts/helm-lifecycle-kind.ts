@@ -248,7 +248,7 @@ adapterOps:
 persistence:
   enabled: false
 redis:
-  enabled: false
+  enabled: true
 api:
   replicas: 2
   secrets:
