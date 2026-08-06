@@ -12,7 +12,9 @@ This test is skipped unless INTEGRATION=1 is set.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 import os
+
 import pytest
 
 from commander import CommanderClient
@@ -24,7 +26,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture
-async def live_client() -> CommanderClient:
+async def live_client() -> AsyncIterator[CommanderClient]:
     api_key = os.environ.get("COMMANDER_API_KEY", "")
     base_url = os.environ.get("COMMANDER_URL", "http://localhost:3001")
     async with CommanderClient(api_key=api_key, base_url=base_url) as client:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import get_args
+
 import pytest
 import respx
 
@@ -31,19 +33,19 @@ class TestTopology:
             "ENSEMBLE",
             "EVALUATOR_OPTIMIZER",
         }
-        assert set(Topology.__args__) == values  # type: ignore[attr-defined]
+        assert set(get_args(Topology)) == values
 
 
 class TestAgent:
     def test_agent_requires_name_and_role(self) -> None:
         with pytest.raises(ValueError, match="name"):
-            Agent(AgentConfig(name="", role="role"))
+            Agent(AgentConfig(name="", role="role", maxSteps=None))
         with pytest.raises(ValueError, match="role"):
-            Agent(AgentConfig(name="name", role=""))
+            Agent(AgentConfig(name="name", role="", maxSteps=None))
 
     def test_agent_auto_id(self) -> None:
-        a1 = Agent(AgentConfig(name="a", role="r"))
-        a2 = Agent(AgentConfig(name="b", role="r"))
+        a1 = Agent(AgentConfig(name="a", role="r", maxSteps=None))
+        a2 = Agent(AgentConfig(name="b", role="r", maxSteps=None))
         assert a1.id != a2.id
         assert a1.id.startswith("agent_")
 
@@ -55,6 +57,7 @@ class TestAgent:
                 role="Review code",
                 tools=["file_read"],
                 topology="SINGLE",
+                maxSteps=None,
             )
         )
         agent.run_count = 5
@@ -103,7 +106,12 @@ class TestAgentManagement:
     async def test_create_list_remove_agents(self) -> None:
         async with CommanderClient(api_key="test") as client:
             agent = client.create_agent(
-                AgentConfig(name="coder", role="Write code", tools=["file_write"])
+                AgentConfig(
+                    name="coder",
+                    role="Write code",
+                    tools=["file_write"],
+                    maxSteps=None,
+                )
             )
             assert agent in client.list_agents()
             assert client.get_agent(agent.id) is agent
@@ -127,8 +135,15 @@ class TestTaskSubmission:
             },
         )
         async with CommanderClient(api_key="test") as client:
-            agent = client.create_agent(AgentConfig(name="a", role="r"))
-            task = Task(goal="say hello")
+            agent = client.create_agent(
+                AgentConfig(name="a", role="r", maxSteps=None)
+            )
+            task = Task(
+                goal="say hello",
+                outputSchema=None,
+                deadlineMs=None,
+                batchEligible=None,
+            )
             async with mock_api:
                 handle = client.submit_task(agent, task)
                 assert isinstance(handle, TaskHandle)
@@ -148,8 +163,15 @@ class TestTaskSubmission:
 
     async def test_cancel_task(self) -> None:
         async with CommanderClient(api_key="test") as client:
-            agent = client.create_agent(AgentConfig(name="a", role="r"))
-            task = Task(goal="slow")
+            agent = client.create_agent(
+                AgentConfig(name="a", role="r", maxSteps=None)
+            )
+            task = Task(
+                goal="slow",
+                outputSchema=None,
+                deadlineMs=None,
+                batchEligible=None,
+            )
             handle = client.submit_task(agent, task)
             assert client.cancel_task(handle.id) is True
             assert handle.status == "cancelled"
@@ -174,8 +196,15 @@ class TestEvents:
         async with CommanderClient(api_key="test") as client:
             events: list[ExecutionEvent] = []
             unsub = client.on_event(events.append)
-            agent = client.create_agent(AgentConfig(name="a", role="r"))
-            task = Task(goal="hello")
+            agent = client.create_agent(
+                AgentConfig(name="a", role="r", maxSteps=None)
+            )
+            task = Task(
+                goal="hello",
+                outputSchema=None,
+                deadlineMs=None,
+                batchEligible=None,
+            )
             async with mock_api:
                 handle = client.submit_task(agent, task)
                 await client.await_task(handle.id, timeout_ms=2000)
@@ -207,9 +236,19 @@ class TestSessions:
             },
         )
         async with CommanderClient(api_key="test") as client:
-            agent = client.create_agent(AgentConfig(name="a", role="r"))
+            agent = client.create_agent(
+                AgentConfig(name="a", role="r", maxSteps=None)
+            )
             async with mock_api:
-                client.submit_task(agent, Task(goal="task"))
+                client.submit_task(
+                    agent,
+                    Task(
+                        goal="task",
+                        outputSchema=None,
+                        deadlineMs=None,
+                        batchEligible=None,
+                    ),
+                )
                 await client.await_task("task_1", timeout_ms=2000)
                 sessions = client.list_sessions()
             assert len(sessions) == 1
@@ -245,7 +284,7 @@ class TestStatsAndStatus:
             },
         )
         async with CommanderClient(api_key="test") as client:
-            client.create_agent(AgentConfig(name="a", role="r"))
+            client.create_agent(AgentConfig(name="a", role="r", maxSteps=None))
             async with mock_api:
                 status = await client.get_status()
             assert status.active_sessions == 1

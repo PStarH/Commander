@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Protocol, runtime_checkable
+
 import pytest
 import respx
 
@@ -38,6 +40,15 @@ from commander import (
 )
 from commander._gateway_client import CommanderGatewayClient, verify_action_evidence
 from commander._types import KillSwitchUpdateInput, ProposeActionInput
+
+
+@runtime_checkable
+class GatewayError(Protocol):
+    @property
+    def status(self) -> int: ...
+
+    @property
+    def code(self) -> str: ...
 
 
 class TestCostDashboard:
@@ -142,8 +153,9 @@ class TestOIDC:
             settings = OIDCSettingsUpdate(
                 enabled=True,
                 issuer="https://example.com",
-                client_id="client-1",
-                redirect_uri="http://localhost:5173/login",
+                clientId="client-1",
+                roleClaim="roles",
+                redirectUri="http://localhost:5173/login",
             )
             async with mock_api:
                 result = await client.update_oidc_settings(settings)
@@ -380,8 +392,9 @@ class TestApprovalConfig:
             policy = ToolPolicy(
                 pattern="custom_tool",
                 level="manual",
-                risk_level="high",
+                riskLevel="high",
                 description="Custom tool",
+                autoApproveIf=None,
             )
             async with mock_api:
                 result = await client.add_approval_policy(policy)
@@ -447,7 +460,9 @@ class TestOutgoingWebhooks:
             from commander import OutgoingWebhookCreate
 
             webhook = OutgoingWebhookCreate(
-                url="https://example.com/webhook", events=["run.completed"]
+                url="https://example.com/webhook",
+                events=["run.completed"],
+                retryMax=None,
             )
             async with mock_api:
                 result = await client.create_outgoing_webhook(webhook)
@@ -633,8 +648,10 @@ class TestCanonicalActionGatewaySurface:
                         "run-action-1", idempotency_key="reconcile-action-0002"
                     )
 
-        assert caught.value.status == status
-        assert caught.value.code == code
+        error = caught.value
+        assert isinstance(error, GatewayError)
+        assert error.status == status
+        assert error.code == code
 
     async def test_propose_action_sends_explicit_idempotency_header(
         self, mock_api: respx.MockRouter

@@ -339,59 +339,24 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
   }
 
   const apiKeys = getCachedKeys();
+  const anonymousAccessEnabled =
+    apiKeys.size === 0 &&
+    !isProductionEnv() &&
+    getApiKeyStore().list().length === 0 &&
+    process.env.COMMANDER_ALLOW_ANON === '1';
+  if (anonymousAccessEnabled) {
+    req.tenantId ||= process.env.COMMANDER_DEFAULT_TENANT_ID || 'local';
+    return next();
+  }
+
   const authHeader = readHeader(req.headers.authorization);
   const apiKeyHeader = readHeader(req.headers['x-api-key']);
-
-  let keyId: string | null = null;
-  let matchedScopes: string[] = [];
-  let matchedKey: StoredKey | null = null;
-
-  // Header presence selects credential syntax only; every supplied key still
-  // passes the timing-safe lookup before the request can continue.
-  // codeql[js/user-controlled-bypass]: lookup below is mandatory before next().
-  if (apiKeyHeader) {
-    const matched = findKey(apiKeyHeader, apiKeys);
-    if (!matched) {
-      await recordAuthFailure(clientIp);
-      try {
-        getGlobalLogger().warn('AuthMiddleware', 'Invalid API key', { ip: clientIp, path });
-      } catch {
-        process.stderr.write(`[Auth] Invalid API key from IP=${clientIp} path=${path}\n`);
-      }
-      res.status(401).json({ error: 'Invalid API key' });
-      return;
-    }
-    keyId = matched.name;
-    matchedScopes = matched.scopes;
-    matchedKey = matched;
-  } else if (authHeader?.startsWith('Bearer ')) {
-    const token = authHeader.slice(7);
-    const matched = findKey(token, apiKeys);
-    if (!matched) {
-      await recordAuthFailure(clientIp);
-      try {
-        getGlobalLogger().warn('AuthMiddleware', 'Invalid bearer token', { ip: clientIp, path });
-      } catch {
-        process.stderr.write(`[Auth] Invalid bearer token from IP=${clientIp} path=${path}\n`);
-      }
-      res.status(401).json({ error: 'Invalid bearer token' });
-      return;
-    }
-    keyId = matched.name;
-    matchedScopes = matched.scopes;
-    matchedKey = matched;
-  } else if (
-    apiKeys.size > 0 ||
-    isProductionEnv() ||
-    getApiKeyStore().list().length > 0 ||
-    // Non-production with no keys previously fell open. Require an explicit
-    // opt-in so local/dev deploys are not anonymously writable by default.
-    process.env.COMMANDER_ALLOW_ANON !== '1'
-  ) {
-    // Default-deny: require authentication whenever any API key is configured —
-    // in the env cache OR the persistent store — or whenever we are in
-    // production. Outside production, anonymous access is only allowed when
-    // COMMANDER_ALLOW_ANON=1 is set explicitly (dev escape hatch).
+  const credential = apiKeyHeader
+    ? { token: apiKeyHeader, name: 'API key' as const }
+    : authHeader?.startsWith('Bearer ')
+      ? { token: authHeader.slice(7), name: 'bearer token' as const }
+      : null;
+  if (!credential) {
     res.status(401).json({
       error: 'Authentication required',
       hint: 'Provide X-API-Key header or Authorization: Bearer <token>',
@@ -399,16 +364,25 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
     return;
   }
 
-  if (keyId) {
-    req.apiKeyId = keyId;
-    req.apiScopes = matchedScopes;
-    if (matchedKey?.tenantId) {
-      req.tenantId = matchedKey.tenantId;
+  const matchedKey = findKey(credential.token, apiKeys);
+  if (!matchedKey) {
+    await recordAuthFailure(clientIp);
+    try {
+      getGlobalLogger().warn('AuthMiddleware', `Invalid ${credential.name}`, {
+        ip: clientIp,
+        path,
+      });
+    } catch {
+      process.stderr.write(`[Auth] Invalid ${credential.name} from IP=${clientIp} path=${path}\n`);
     }
-  } else if (!req.tenantId) {
-    // COMMANDER_ALLOW_ANON fall-through: bind a default tenant so downstream
-    // tenant-scoped stores (memory, etc.) have an ALS context.
-    req.tenantId = process.env.COMMANDER_DEFAULT_TENANT_ID || 'local';
+    res.status(401).json({ error: `Invalid ${credential.name}` });
+    return;
+  }
+
+  req.apiKeyId = matchedKey.name;
+  req.apiScopes = matchedKey.scopes;
+  if (matchedKey.tenantId) {
+    req.tenantId = matchedKey.tenantId;
   }
 
   next();

@@ -152,9 +152,14 @@ describe('authMiddleware', () => {
       resetApiKeyStore();
 
       const result = await runAuth('/api/orchestrator/status');
+      const resultWithHeader = await runAuth('/api/orchestrator/status', {
+        'x-api-key': 'ignored-in-explicit-anonymous-mode',
+      });
 
       assert.equal(result.nextCalled, true);
       assert.equal(result.result.statusCode, 200);
+      assert.equal(resultWithHeader.nextCalled, true);
+      assert.equal(resultWithHeader.result.statusCode, 200);
     } finally {
       resetApiKeyStore();
       if (moved) {
