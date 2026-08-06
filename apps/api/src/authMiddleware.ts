@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import * as crypto from 'node:crypto';
 import { getGlobalLogger } from '@commander/core';
 import { isProductionEnv, describeProdSignal } from './envSignal';
+import { deriveApiKeyHash } from './apiKeyHash';
 import { getApiKeyStore } from './apiKeyStore';
 import { getAuthFailureStore } from './authFailureStore';
 
@@ -41,7 +42,7 @@ const PUBLIC_PATHS = new Set([
 // the comparison path leaked timing information through early-exit branching.
 //
 // New approach:
-// 1. Keys are SHA-256 hashed at parse time; plaintext is never retained.
+// 1. Keys are scrypt-derived at parse time; plaintext is never retained.
 // 2. Lookup uses timingSafeEqual on hashes — constant-time comparison.
 // 3. Auth-failure lockout: after MAX_AUTH_FAILURES within the window, the
 //    source IP is locked out for LOCKOUT_DURATION_MS, preventing brute-force.
@@ -67,14 +68,6 @@ setInterval(() => {
   });
 }, 300_000).unref();
 
-function sha256(input: string): Buffer {
-  // API keys are high-entropy bearer tokens, not human passwords. A deterministic
-  // digest is required for O(1) lookup and compatibility with the persisted store.
-  // lgtm[js/insufficient-password-hash]
-  // codeql[js/insufficient-password-hash]: high-entropy API token lookup digest
-  return crypto.createHash('sha256').update(input).digest();
-}
-
 function parseApiKeys(raw: string | undefined): Map<string, StoredKey> {
   const keys = new Map<string, StoredKey>();
   if (!raw) return keys;
@@ -85,7 +78,8 @@ function parseApiKeys(raw: string | undefined): Map<string, StoredKey> {
       const scopeSpec = scopeParts.join(':');
       const scopes = scopeSpec ? scopeSpec.split(';').filter(Boolean) : ['read', 'write'];
       // Store only the hash — plaintext key is discarded after hashing
-      keys.set(sha256(rawKey).toString('hex'), { hash: sha256(rawKey), name, scopes });
+      const hash = deriveApiKeyHash(rawKey);
+      keys.set(hash.toString('hex'), { hash, name, scopes });
     }
   }
   return keys;
@@ -108,8 +102,9 @@ function parseTenantApiKeys(raw: string | undefined): Map<string, StoredKey> {
     for (const rawKey of rawKeys) {
       const key = rawKey.trim();
       if (!key) continue;
-      keys.set(sha256(key).toString('hex'), {
-        hash: sha256(key),
+      const hash = deriveApiKeyHash(key);
+      keys.set(hash.toString('hex'), {
+        hash,
         name: `${tenantId}:${key.slice(0, 8)}`,
         scopes: ['read', 'write'],
         tenantId,
@@ -154,7 +149,7 @@ function getCachedKeys(): Map<string, StoredKey> {
  * crypto.timingSafeEqual to guard against timing side-channels.
  */
 function findKey(token: string, storedKeys: Map<string, StoredKey>): StoredKey | null {
-  const tokenHash = sha256(token);
+  const tokenHash = deriveApiKeyHash(token);
   // O(1) lookup by hex digest; timing of Map.get is independent of token content.
   const stored = storedKeys.get(tokenHash.toString('hex'));
   if (stored) {
