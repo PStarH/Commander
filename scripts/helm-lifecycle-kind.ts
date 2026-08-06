@@ -547,9 +547,15 @@ export function sanitizeEvidence(evidence: HarnessEvidence): HarnessEvidence {
 
 const LIFECYCLE_FAILURE_DIAGNOSTIC =
   /(?:COMMANDER_MIGRATION_FAILED|COMMANDER_PROOF_FAILED) stage=[a-z0-9-]+ code=[A-Z0-9_]{2,80}/g;
+const API_STARTUP_FAILURE_CODE =
+  /^\[startup\] Failed to start API server: ([A-Z0-9_]{2,80})$/gm;
 
 export function extractLifecycleFailureDiagnostics(logs: string): string[] {
-  return [...new Set(logs.match(LIFECYCLE_FAILURE_DIAGNOSTIC) ?? [])];
+  const diagnostics = logs.match(LIFECYCLE_FAILURE_DIAGNOSTIC) ?? [];
+  for (const match of logs.matchAll(API_STARTUP_FAILURE_CODE)) {
+    diagnostics.push(`COMMANDER_API_FAILED stage=startup code=${match[1]}`);
+  }
+  return [...new Set(diagnostics)];
 }
 
 function runCmd(

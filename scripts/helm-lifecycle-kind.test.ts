@@ -501,17 +501,20 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.ok(detail.startsWith('postgres://'), 'DSN prefix preserved for diagnostics');
   });
 
-  it('extracts only fixed migration stage and code diagnostics from pod logs', () => {
+  it('extracts only fixed lifecycle stage and code diagnostics from pod logs', () => {
     assert.deepEqual(
       extractLifecycleFailureDiagnostics(`
 connection failed for postgres://owner:secret@database/commander
 Migration failed: COMMANDER_MIGRATION_FAILED stage=closure-migrations code=TASK1_CATALOG_COLLECTION_FAILED
 password=still-secret
 Migration failed: COMMANDER_MIGRATION_FAILED stage=owner-command code=TENANT_CUTOVER_PROOF_INVALID
+[startup] Failed to start API server: TASK1_READINESS_DATABASE_IDENTITY_INVALID
+[startup] Failed to start API server: raw error contains secret
 `),
       [
         'COMMANDER_MIGRATION_FAILED stage=closure-migrations code=TASK1_CATALOG_COLLECTION_FAILED',
         'COMMANDER_MIGRATION_FAILED stage=owner-command code=TENANT_CUTOVER_PROOF_INVALID',
+        'COMMANDER_API_FAILED stage=startup code=TASK1_READINESS_DATABASE_IDENTITY_INVALID',
       ],
     );
   });
