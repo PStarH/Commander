@@ -2704,11 +2704,11 @@ function assertProjectionConsumer(
   } catch {
     fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
   }
-  if (jobs.length !== 1) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+  if (jobs.length !== 1) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID_JOB_COUNT');
   const metadata = jsonRecord(jobs[0]!.metadata, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
   const suffix = `-tenant-cutover-prove-r${revision}`;
   const expectedName = `${release.slice(0, 63 - suffix.length).replace(/-$/, '')}${suffix}`;
-  if (metadata.name !== expectedName) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+  if (metadata.name !== expectedName) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID_JOB_NAME');
   const spec = jsonRecord(jobs[0]!.spec, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
   const template = jsonRecord(spec.template, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
   const podSpec = jsonRecord(template.spec, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
@@ -2716,9 +2716,11 @@ function assertProjectionConsumer(
     ? podSpec.volumes.map((value) => jsonRecord(value, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID'))
     : [];
   const volume = volumes.filter((value) => value.name === 'release-projection');
-  if (volume.length !== 1) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+  if (volume.length !== 1) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID_VOLUME');
   const configMap = jsonRecord(volume[0]!.configMap, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
-  if (configMap.name !== configMapName) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+  if (configMap.name !== configMapName) {
+    fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID_VOLUME_NAME');
+  }
 }
 
 type HelmCommandPort = (
