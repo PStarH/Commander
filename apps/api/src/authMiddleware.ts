@@ -68,6 +68,10 @@ setInterval(() => {
 }, 300_000).unref();
 
 function sha256(input: string): Buffer {
+  // API keys are high-entropy bearer tokens, not human passwords. A deterministic
+  // digest is required for O(1) lookup and compatibility with the persisted store.
+  // lgtm[js/insufficient-password-hash]
+  // codeql[js/insufficient-password-hash]: high-entropy API token lookup digest
   return crypto.createHash('sha256').update(input).digest();
 }
 
