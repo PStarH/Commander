@@ -8,8 +8,22 @@ by detecting repetitive tool-call patterns and injecting recovery hints.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Optional, Protocol
+
+
+class ObjectToolCall(Protocol):
+    """Tool-call object exposing the attributes consumed by the advisor."""
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def arguments(self) -> object: ...
+
+
+ToolCall = dict[str, Any] | ObjectToolCall
 
 
 @dataclass
@@ -40,7 +54,7 @@ class TrajectoryAdvisor:
     same_tool_loops: int = field(default=0, init=False)
     hints_injected: int = field(default=0, init=False)
 
-    def _tool_key(self, tool_call: dict[str, Any]) -> tuple[str, str]:
+    def _tool_key(self, tool_call: ToolCall) -> tuple[str, str]:
         name = (
             tool_call.get("name", "")
             if isinstance(tool_call, dict)
@@ -53,7 +67,7 @@ class TrajectoryAdvisor:
         )
         return (name, json.dumps(args, sort_keys=True, default=str))
 
-    def check(self, tool_call_history: list[dict[str, Any]]) -> Optional[AdvisorHint]:
+    def check(self, tool_call_history: Sequence[ToolCall]) -> Optional[AdvisorHint]:
         """Return a hint if a loop is detected, else None."""
         if len(tool_call_history) < self.repeat_threshold:
             return None
