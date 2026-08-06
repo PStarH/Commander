@@ -1295,6 +1295,7 @@ async function inspectLifecycleFailureDiagnostics(release: string): Promise<stri
   const selectors = [
     `commander.io/migration-client-v2=true,commander.io/migration-release=${release}`,
     `commander.io/tenant-authority-proof-reader=true,commander.io/tenant-authority-proof-release=${release}`,
+    `app.kubernetes.io/instance=${release}`,
   ];
   const results = await Promise.all(
     selectors.map((selector) =>

@@ -120,6 +120,7 @@ async function main(): Promise<void> {
       return;
     } catch (error) {
       lastError = error;
+      process.stderr.write(`${diagnostic(mode, error)}\n`);
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   } while (Date.now() < deadline);
