@@ -228,8 +228,15 @@ const HELM_COMMAND_FAILURE_CODES: Record<HelmCommandFailureStage, string> = {
   rollout: 'TENANT_CUTOVER_HELM_ROLLOUT_FAILED',
 };
 
-export function helmCommandFailureDiagnostic(stage: HelmCommandFailureStage): string {
-  return `TENANT_CUTOVER_COMMAND_FAILED stage=${stage} code=${HELM_COMMAND_FAILURE_CODES[stage]}`;
+export function helmCommandFailureDiagnostic(
+  stage: HelmCommandFailureStage,
+  detailCode?: string,
+): string {
+  const code =
+    detailCode && /^TENANT_CUTOVER_[A-Z0-9_]{2,80}$/.test(detailCode)
+      ? detailCode
+      : HELM_COMMAND_FAILURE_CODES[stage];
+  return `TENANT_CUTOVER_COMMAND_FAILED stage=${stage} code=${code}`;
 }
 
 function fail(code: string): never {
@@ -2606,6 +2613,7 @@ async function runHelmPostRendered(
   const token = randomBytes(32).toString('hex');
   let requests = 0;
   let failureStage: HelmCommandFailureStage = 'render';
+  let postRenderFailureCode: string | undefined;
   const server = createServer(async (request, response) => {
     try {
       const supplied = request.headers['x-commander-restore-token'];
@@ -2629,7 +2637,11 @@ async function runHelmPostRendered(
       response.writeHead(200, { 'content-type': 'application/yaml' });
       response.end(rendered);
       failureStage = 'rollout';
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (/^TENANT_CUTOVER_[A-Z0-9_]{2,80}$/.test(message)) {
+        postRenderFailureCode = message;
+      }
       response.writeHead(400);
       response.end();
     }
@@ -2652,7 +2664,7 @@ async function runHelmPostRendered(
     try {
       await processResult(helm, 'TENANT_CUTOVER_COMMAND_FAILED');
     } catch {
-      throw new Error(helmCommandFailureDiagnostic(failureStage));
+      throw new Error(helmCommandFailureDiagnostic(failureStage, postRenderFailureCode));
     }
     if (requests !== 1) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
   } finally {
