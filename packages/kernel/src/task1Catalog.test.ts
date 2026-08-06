@@ -208,7 +208,16 @@ class CatalogClient implements SqlClient {
       memberships: roleNames
         .filter((name) => name !== 'commander_owner')
         .map((name) => membership(name)),
-      'role-settings': [],
+      'role-settings': [
+        {
+          database: '*',
+          role: 'commander_app',
+          settings: [
+            { name: 'idle_in_transaction_session_timeout', value: '10s' },
+            { name: 'statement_timeout', value: '55s' },
+          ],
+        },
+      ],
       'database-acl': [],
       'schema-acls': [],
       'default-acls': [],
@@ -363,6 +372,25 @@ describe('Task 1 PostgreSQL catalog collector', () => {
     assert.equal(client.queries[1]?.sql, 'SET LOCAL search_path = pg_catalog');
     assert.equal(client.queries.at(-1)?.sql, 'COMMIT');
     assert.ok(client.queries.every(({ values }) => values.length === 0));
+  });
+
+  it('classifies fresh E2 with the expected global commander_app role settings', async () => {
+    const client = new CatalogClient({
+      'role-settings': [
+        {
+          database: '*',
+          role: 'commander_app',
+          settings: [
+            { name: 'idle_in_transaction_session_timeout', value: '10s' },
+            { name: 'statement_timeout', value: '55s' },
+          ],
+        },
+      ],
+    });
+
+    const inventory = await collectTask1PrebootstrapInventory(client, bootstrap);
+
+    assert.equal(classifyTask1CatalogOrigin(inventory, bootstrap).kind, 'E2');
   });
 
   it('does not commit a read-only snapshot owned by the lifecycle initializer', async () => {

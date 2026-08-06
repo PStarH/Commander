@@ -11,10 +11,7 @@ import {
   type DatabasePeerBindingV1,
   type PrebootstrapInventoryV1,
 } from './canonicalBootstrap.js';
-import {
-  KERNEL_TASK1_BASELINE_MIGRATIONS,
-  KERNEL_TASK1_CLOSURE_MIGRATIONS,
-} from './migrations.js';
+import { KERNEL_TASK1_BASELINE_MIGRATIONS, KERNEL_TASK1_CLOSURE_MIGRATIONS } from './migrations.js';
 import type { SqlClient } from './postgres.js';
 
 type JsonRecord = Record<string, unknown>;
@@ -698,7 +695,6 @@ function freshCatalogIsEmpty(inventory: PrebootstrapInventoryV1): boolean {
       'triggers',
       'productSources',
       'productHasRows',
-      'roleSettings',
       'defaultAcls',
     ].every((key) => Array.isArray(inventory[key]) && (inventory[key] as unknown[]).length === 0)
   );
@@ -742,6 +738,20 @@ export function classifyTask1CatalogOrigin(
     .map(expectedRole)
     .sort((left, right) => byteCompare(String(left.name), String(right.name)));
   if (!exactRows(roles, expectedRoles)) fail('MIGRATION_LEDGER_TAMPERED');
+  if (
+    !exactRows(inventory.roleSettings, [
+      {
+        database: '*',
+        role: 'commander_app',
+        settings: [
+          { name: 'idle_in_transaction_session_timeout', value: '10s' },
+          { name: 'statement_timeout', value: '55s' },
+        ],
+      },
+    ])
+  ) {
+    fail('MIGRATION_LEDGER_TAMPERED');
+  }
   const memberRoles = (envelope === 'E1' ? E1_ROLES : E2_ROLES).filter((name) => name !== OWNER);
   const expectedMemberships = memberRoles
     .map((role) => ({
