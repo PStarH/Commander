@@ -1357,7 +1357,7 @@ async function runCutoverCommand(
     ]);
     proofPodObserved = liveProofObserved || proofPodObserved;
     diagnostics.forEach((diagnostic) => failureDiagnostics.add(diagnostic));
-    if (shouldPollDiagnostics) nextDiagnosticPollAt = now + 500;
+    if (shouldPollDiagnostics) nextDiagnosticPollAt = now + 100;
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
   await completion;
