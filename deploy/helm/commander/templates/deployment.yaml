@@ -272,6 +272,7 @@ spec:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
                   key: {{ include "commander.databaseTenantAuthoritySecretKey" . | quote }}
+            {{- include "commander.databaseTlsEnv" . | nindent 12 }}
             {{- end }}
             {{- if .Values.observability.otel.enabled }}
             - name: OTEL_EXPORTER_ENDPOINT
@@ -302,6 +303,7 @@ spec:
             - name: api-proof-tls-runtime
               mountPath: /run/commander/api-proof
               readOnly: true
+            {{- include "commander.databaseTlsVolumeMount" . | nindent 12 }}
             {{- end }}
             {{- if .Values.persistence.enabled }}
             - name: commander-state
@@ -329,6 +331,7 @@ spec:
                 mode: 256
         - name: api-proof-tls-runtime
           emptyDir: {}
+        {{- include "commander.databaseTlsVolume" . | nindent 8 }}
         {{- end }}
         {{- if .Values.persistence.enabled }}
         - name: commander-state
