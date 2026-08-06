@@ -2674,55 +2674,6 @@ async function runHelmPostRendered(
   }
 }
 
-function assertProjectionConsumer(
-  manifest: string,
-  release: string,
-  revision: string,
-  configMapName: string,
-): void {
-  const jobs: JsonRecord[] = [];
-  try {
-    loadAll(manifest, (document) => {
-      if (!document || typeof document !== 'object' || Array.isArray(document)) return;
-      const object = document as JsonRecord;
-      const metadata = jsonRecord(object.metadata, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
-      const annotations =
-        metadata.annotations === undefined
-          ? {}
-          : jsonRecord(metadata.annotations, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
-      if (
-        object.kind === 'Job' &&
-        typeof annotations['helm.sh/hook'] === 'string' &&
-        annotations['helm.sh/hook']
-          .split(',')
-          .map((value) => value.trim())
-          .includes('post-upgrade')
-      ) {
-        jobs.push(object);
-      }
-    });
-  } catch {
-    fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
-  }
-  if (jobs.length !== 1) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID_JOB_COUNT');
-  const metadata = jsonRecord(jobs[0]!.metadata, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
-  const suffix = `-tenant-cutover-prove-r${revision}`;
-  const expectedName = `${release.slice(0, 63 - suffix.length).replace(/-$/, '')}${suffix}`;
-  if (metadata.name !== expectedName) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID_JOB_NAME');
-  const spec = jsonRecord(jobs[0]!.spec, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
-  const template = jsonRecord(spec.template, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
-  const podSpec = jsonRecord(template.spec, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
-  const volumes = Array.isArray(podSpec.volumes)
-    ? podSpec.volumes.map((value) => jsonRecord(value, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID'))
-    : [];
-  const volume = volumes.filter((value) => value.name === 'release-projection');
-  if (volume.length !== 1) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID_VOLUME');
-  const configMap = jsonRecord(volume[0]!.configMap, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
-  if (configMap.name !== configMapName) {
-    fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID_VOLUME_NAME');
-  }
-}
-
 type HelmCommandPort = (
   program: string,
   args: readonly string[],
@@ -3372,12 +3323,6 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
         await deleteProjectionConfigMap();
         try {
           await runHelmPostRendered(request.args, async (manifest) => {
-            assertProjectionConsumer(
-              manifest,
-              request.release,
-              request.revision,
-              request.projectionConfigMapName,
-            );
             projection = projectHelmReleaseRevision({
               namespace: request.namespace,
               releaseName: request.release,
@@ -3575,12 +3520,6 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
                 streamValuesToHelm({
                   ...input,
                   afterPostRender: async (manifest) => {
-                    assertProjectionConsumer(
-                      manifest,
-                      request.release,
-                      request.targetRevision,
-                      request.projectionConfigMapName,
-                    );
                     const projection = projectHelmReleaseRevision({
                       namespace: request.namespace,
                       releaseName: request.release,
