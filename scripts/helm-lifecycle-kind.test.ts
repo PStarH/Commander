@@ -20,6 +20,7 @@ import {
   productionImageReferences,
   reusableProductionImageDigest,
   controlPlaneReadinessSelectors,
+  extractLifecycleFailureDiagnostics,
   proofReaderName,
   selectLifecycleScenarios,
   sanitizeEvidence,
@@ -498,6 +499,21 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.ok(detail !== undefined);
     assert.ok(!detail.includes('secret'), 'password should be redacted');
     assert.ok(detail.startsWith('postgres://'), 'DSN prefix preserved for diagnostics');
+  });
+
+  it('extracts only fixed migration stage and code diagnostics from pod logs', () => {
+    assert.deepEqual(
+      extractLifecycleFailureDiagnostics(`
+connection failed for postgres://owner:secret@database/commander
+Migration failed: COMMANDER_MIGRATION_FAILED stage=closure-migrations code=TASK1_CATALOG_COLLECTION_FAILED
+password=still-secret
+Migration failed: COMMANDER_MIGRATION_FAILED stage=owner-command code=TENANT_CUTOVER_PROOF_INVALID
+`),
+      [
+        'COMMANDER_MIGRATION_FAILED stage=closure-migrations code=TASK1_CATALOG_COLLECTION_FAILED',
+        'COMMANDER_MIGRATION_FAILED stage=owner-command code=TENANT_CUTOVER_PROOF_INVALID',
+      ],
+    );
   });
 
   it('reports cluster existence without throwing', () => {
