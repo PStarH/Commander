@@ -62,6 +62,7 @@ spec:
                   key: {{ include "commander.databaseWorkerSecretKey" . | quote }}
             - name: COMMANDER_KERNEL_BACKEND
               value: postgres
+            {{- include "commander.databaseTlsEnv" . | nindent 12 }}
             {{- end }}
             - name: COMMANDER_WORKER_BOOTSTRAP
               value: {{ .Values.worker.bootstrap | quote }}
@@ -123,9 +124,15 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if include "commander.postgresBackend" . }}
+            {{- include "commander.databaseTlsVolumeMount" . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if include "commander.postgresBackend" . }}
+        {{- include "commander.databaseTlsVolume" . | nindent 8 }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{ toYaml . | nindent 8 }}
       {{- end }}

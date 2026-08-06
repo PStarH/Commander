@@ -340,6 +340,9 @@ describe('Helm lifecycle static contract', () => {
       assert.match(manifest, /name: migration-gate/);
       assert.match(manifest, /migrationGate\.js[\s\S]*await/);
       assert.match(manifest, new RegExp(`key: ["']?${key}["']?`));
+      assert.match(manifest, /COMMANDER_DATABASE_TLS_CA_FILE/);
+      assert.match(manifest, /COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256/);
+      assert.match(manifest, /name: database-public-ca[\s\S]*mountPath: \/run\/commander\/database-tls/);
       assert.doesNotMatch(manifest, /owner-url|BOOTSTRAP_AUTHORITY/);
     }
   });
