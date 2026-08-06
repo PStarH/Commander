@@ -516,7 +516,7 @@ async function attackSlaEnforcer(): Promise<void> {
         'sanitize title (strip @here, @channel, @everyone, URLs) before forwarding to Slack/PagerDuty',
       );
     }
-    if (pdTitle.includes('evil.com')) {
+    if (/https?:\/\/\S+/u.test(pdTitle)) {
       report(
         'SlaEnforcer forwards attacker URL into PagerDuty incident',
         'high',
