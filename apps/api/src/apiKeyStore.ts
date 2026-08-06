@@ -3,13 +3,14 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { atomicWriteFileSync, readJsonFileSafe } from './atomicWrite';
+import { deriveApiKeyHash } from './apiKeyHash';
 
 /**
  * Persistent API key store for the HTTP API layer.
  *
  * DESIGN:
  * - Keys are generated as `cmdr_` prefixed random tokens.
- * - Only a SHA-256 hash of the key is persisted; the plaintext is returned
+ * - Only a scrypt-derived hash of the key is persisted; the plaintext is returned
  *   exactly once at creation time and is never recoverable.
  * - Storage is a JSON file in `.commander/api_keys.json` so the API server
  *   can run without better-sqlite3 if needed.
@@ -20,7 +21,7 @@ export interface ApiKeyRecord {
   name: string;
   /** First 8 characters of the original key, shown in the UI for identification. */
   prefix: string;
-  /** SHA-256 hex hash of the full key. */
+  /** Scrypt-derived hex hash of the full key. */
   hash: string;
   scopes: string[];
   /** Optional tenant this key belongs to. */
@@ -39,10 +40,6 @@ export interface ApiKeyCreationResult {
 const KEYS_FILE = path.join(process.cwd(), '.commander', 'api_keys.json');
 const KEY_PREFIX = 'cmdr_';
 const KEY_BYTES = 32;
-
-function sha256(input: string): string {
-  return crypto.createHash('sha256').update(input).digest('hex');
-}
 
 function generateKey(): string {
   return KEY_PREFIX + crypto.randomBytes(KEY_BYTES).toString('base64url');
@@ -76,7 +73,7 @@ function writeRecords(records: ApiKeyRecord[]): void {
 
 export class ApiKeyStore {
   private records: ApiKeyRecord[] = [];
-  /** O(1) index keyed by SHA-256 hash for authentication lookups. */
+  /** O(1) index keyed by the derived API key hash for authentication lookups. */
   private hashIndex: Map<string, ApiKeyRecord> = new Map();
 
   constructor() {
@@ -117,7 +114,7 @@ export class ApiKeyStore {
       id: generateId(),
       name: name.trim() || 'API Key',
       prefix: key.slice(0, 8),
-      hash: sha256(key),
+      hash: deriveApiKeyHash(key).toString('hex'),
       scopes: scopes.length > 0 ? scopes : ['read', 'write'],
       tenantId,
       enabled: true,
