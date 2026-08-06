@@ -11,7 +11,8 @@ metadata:
   name: {{ include "commander.tenantCutoverProofJobName" . }}
   labels:
     {{- include "commander.labels" . | nindent 4 }}
-    {{- include "commander.proofReaderLabels" . | nindent 4 }}
+    commander.io/tenant-authority-proof-reader: "true"
+    commander.io/tenant-authority-proof-release: {{ .Release.Name | quote }}
   annotations:
     helm.sh/hook: post-install,post-upgrade
     helm.sh/hook-weight: "10"
