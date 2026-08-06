@@ -240,6 +240,13 @@ export function helmCommandFailureDiagnostic(
 }
 
 export function helmRolloutFailureCode(stderr: string): string | undefined {
+  const deploymentField = stderr.match(
+    /Deployment(?:\.apps)?\s+"[^"\n]+"\s+is invalid:[\s\S]*?spec\.template\.spec\.([^:\s]+)/i,
+  )?.[1];
+  if (deploymentField) {
+    const field = deploymentField.replace(/[^A-Za-z0-9]+/g, '_').toUpperCase();
+    if (field.length <= 40) return `TENANT_CUTOVER_HELM_DEPLOYMENT_${field}_INVALID`;
+  }
   const resourceKind = stderr.match(
     /\b(Deployment|StatefulSet|Service|Secret|ConfigMap|Job|NetworkPolicy|HorizontalPodAutoscaler|Role|RoleBinding|ServiceAccount)\b(?:\.[A-Za-z0-9/.-]+)?\s+"[^"\n]+"\s+is invalid/i,
   )?.[1];

@@ -1781,6 +1781,12 @@ data: { owner-url: ${payload} }
       helmRolloutFailureCode('Deployment.apps "commander-api" is invalid: spec.template'),
       'TENANT_CUTOVER_HELM_DEPLOYMENT_INVALID',
     );
+    assert.equal(
+      helmRolloutFailureCode(
+        'Deployment.apps "commander-api" is invalid: spec.template.spec.containers: Required value',
+      ),
+      'TENANT_CUTOVER_HELM_DEPLOYMENT_CONTAINERS_INVALID',
+    );
     assert.equal(helmRolloutFailureCode('postgres://owner:secret@database'), undefined);
   });
 
