@@ -547,8 +547,7 @@ export function sanitizeEvidence(evidence: HarnessEvidence): HarnessEvidence {
 
 const LIFECYCLE_FAILURE_DIAGNOSTIC =
   /(?:COMMANDER_MIGRATION_FAILED|COMMANDER_PROOF_FAILED) stage=[a-z0-9-]+ code=[A-Z0-9_]{2,80}/g;
-const API_STARTUP_FAILURE_CODE =
-  /^\[startup\] Failed to start API server: ([A-Z0-9_]{2,80})$/gm;
+const API_STARTUP_FAILURE_CODE = /^\[startup\] Failed to start API server: ([A-Z0-9_]{2,80})$/gm;
 
 export function extractLifecycleFailureDiagnostics(logs: string): string[] {
   const diagnostics = logs.match(LIFECYCLE_FAILURE_DIAGNOSTIC) ?? [];
@@ -1311,6 +1310,33 @@ async function inspectLifecycleFailureDiagnostics(release: string): Promise<stri
   return extractLifecycleFailureDiagnostics(results.map(({ stdout }) => stdout).join('\n'));
 }
 
+async function collectApiFailureLogs(release: string): Promise<string> {
+  const selector = `app.kubernetes.io/instance=${release},app.kubernetes.io/component=api`;
+  const results = await Promise.all([
+    kubectl(['logs', '-n', NAMESPACE, '-l', selector, '--all-containers=true', '--tail=120']),
+    kubectl([
+      'logs',
+      '-n',
+      NAMESPACE,
+      '-l',
+      selector,
+      '--all-containers=true',
+      '--previous',
+      '--tail=120',
+    ]),
+  ]);
+  const text = results
+    .filter(({ exitCode }) => exitCode === 0)
+    .map(({ stdout }) => stdout)
+    .join('\n')
+    .trim();
+  if (!text) return '';
+  return text
+    .replace(/postgres(?:ql)?:\/\/[^\s"']+/gi, 'postgres://***@***')
+    .replace(/((?:password|token|secret|key)[=:])[^\s]+/gi, '$1[REDACTED]')
+    .slice(-8_000);
+}
+
 async function runCutoverCommand(
   command: 'install' | 'enforce',
   release: string,
@@ -1759,6 +1785,7 @@ async function runRealBundledLifecycle(imageDigest: string): Promise<ScenarioEvi
     };
   } catch (error) {
     const diagnostics = await kubectl(['get', 'pods,jobs', '-n', NAMESPACE, '-o', 'wide']);
+    const apiLogs = await collectApiFailureLogs(release);
     return {
       name: 'real-bundled-install-upgrade-current-uninstall',
       passed: false,
@@ -1767,7 +1794,7 @@ async function runRealBundledLifecycle(imageDigest: string): Promise<ScenarioEvi
       assertions,
       error: `${error instanceof Error ? error.message : String(error)}${
         diagnostics.stdout.trim() ? `\n${diagnostics.stdout.trim()}` : ''
-      }`,
+      }${apiLogs ? `\nAPI_FAILURE_LOGS\n${apiLogs}` : ''}`,
     };
   } finally {
     rmSync(stateDirectory, { recursive: true, force: true });
@@ -1913,6 +1940,7 @@ async function runRealExternalTlsLifecycle(imageDigest: string): Promise<Scenari
     };
   } catch (error) {
     const diagnostics = await kubectl(['get', 'pods,jobs', '-A', '-o', 'wide']);
+    const apiLogs = await collectApiFailureLogs(release);
     return {
       name: 'real-external-tls-install-upgrade-current-uninstall',
       passed: false,
@@ -1921,7 +1949,7 @@ async function runRealExternalTlsLifecycle(imageDigest: string): Promise<Scenari
       assertions,
       error: `${error instanceof Error ? error.message : String(error)}${
         diagnostics.stdout.trim() ? `\n${diagnostics.stdout.trim()}` : ''
-      }`,
+      }${apiLogs ? `\nAPI_FAILURE_LOGS\n${apiLogs}` : ''}`,
     };
   } finally {
     rmSync(stateDirectory, { recursive: true, force: true });
@@ -2020,6 +2048,7 @@ async function runFailedRolloutRecovery(imageDigest: string): Promise<ScenarioEv
     };
   } catch (error) {
     const diagnostics = await kubectl(['get', 'pods,jobs', '-n', NAMESPACE, '-o', 'wide']);
+    const apiLogs = await collectApiFailureLogs(release);
     return {
       name: 'failed-rollout-exact-retry-recovery',
       passed: false,
@@ -2028,7 +2057,7 @@ async function runFailedRolloutRecovery(imageDigest: string): Promise<ScenarioEv
       assertions,
       error: `${error instanceof Error ? error.message : String(error)}${
         diagnostics.stdout.trim() ? `\n${diagnostics.stdout.trim()}` : ''
-      }`,
+      }${apiLogs ? `\nAPI_FAILURE_LOGS\n${apiLogs}` : ''}`,
     };
   } finally {
     rmSync(stateDirectory, { recursive: true, force: true });
