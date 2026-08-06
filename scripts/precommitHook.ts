@@ -62,16 +62,11 @@ const SCANNER_MODULE_PATH = path.join(
   REPO_ROOT,
   'packages/core/src/security/supplyChainScanner.ts',
 );
+// 签名定义文件：MALWARE_SIGNATURES 的正则字面量会自指命中全部 malware
+// 签名，扫描它必然误报。仅对该单一文件精确豁免 malware 类别（provenance
+// 等其余检查照常），豁免时打印审计警告。信任边界：hook 防意外提交，
+// 不防恶意维护者（后者可 --no-verify 绕过任何 precommit 门）。
 const SCANNER_DEFINITION_REL = 'packages/core/src/security/supplyChainScanner.ts';
-
-// 阻断边界 = hook 的设计意图（catastrophic commits）：与 inline blocklist
-// 镜像的 MAL-001/005/007 一致。其余 malware 类别是 skill-markdown 启发式，
-// 在源码上系统性误报（含签名定义文件自身的正则字面量），不阻断。
-const CATASTROPHIC_MALWARE = new Set([
-  'malware.Reverse shell backdoor', // MAL-001
-  'malware.Data destruction', // MAL-005
-  'malware.SSH backdoor', // MAL-007
-]);
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -108,11 +103,7 @@ interface ScanLike {
  * the hook still blocks catastrophic commits when the SDK is unavailable.
  */
 async function scanContent(name: string, content: string): Promise<ScanLike> {
-  // MALWARE_SIGNATURES 定义文件不能用自身签名扫描：恶意模式的正则字面量
-  // 会全部自指命中。签名定义不是待扫描内容，直接 allow。
-  if (isScannerDefinitionFile(name)) {
-    return { passed: true, severity: 'clean', recommendation: 'allow', warnings: [] };
-  }
+  const isDefinition = isScannerDefinitionFile(name);
   try {
     const mod = await import(SCANNER_MODULE_PATH);
     const scanner = mod.getSupplyChainScanner();
@@ -124,22 +115,37 @@ async function scanContent(name: string, content: string): Promise<ScanLike> {
       // heuristics only make sense for skill markdown. Malware signatures still run.
       skipPreScanHeuristics: true,
     });
-    // Only catastrophic malware (MAL-001/005/007) blocks source commits; the
-    // rest of the signature suite is a skill-markdown heuristic that
-    // false-positives on source (see CATASTROPHIC_MALWARE).
-    const warnings = r.warnings.filter(
-      (w) => !w.category.startsWith('malware.') || CATASTROPHIC_MALWARE.has(w.category),
-    );
-    const blocked = warnings.some((w) =>
-      w.category.startsWith('malware.')
-        ? CATASTROPHIC_MALWARE.has(w.category)
-        : w.severity === 'critical' || w.severity === 'high',
+    // Definition file: every malware hit is its own signature literal
+    // self-matching — exempt malware category hits only, keep everything else
+    // (provenance, etc.). The inline blocklist still runs as a backstop: its
+    // patterns match bare catastrophic forms that signature-table literals
+    // never contain (they are regex-escaped), so a malicious edit to the
+    // definitions file cannot hide real reverse-shell / data-destruction /
+    // ssh-backdoor code behind the exemption. All other files keep full
+    // blocking semantics: any malware.* category or critical/high hit blocks.
+    const warnings = isDefinition
+      ? r.warnings.filter((w: ScanLike['warnings'][number]) => !w.category.startsWith('malware.'))
+      : r.warnings;
+    const suppressed = isDefinition
+      ? r.warnings.filter((w: ScanLike['warnings'][number]) => w.category.startsWith('malware.'))
+      : [];
+    if (suppressed.length > 0) {
+      process.stderr.write(
+        `[D3 hook] note: ${name} is the malware signature definition file; ` +
+          `${suppressed.length} self-matching malware hit(s) exempted.\n`,
+      );
+    }
+    const backstop = isDefinition ? inlineBlocklistScan(name, content).warnings : [];
+    const allWarnings = [...warnings, ...backstop];
+    const blocked = allWarnings.some(
+      (w) =>
+        w.severity === 'critical' || w.severity === 'high' || w.category.startsWith('malware.'),
     );
     return {
       passed: !blocked,
       severity: blocked ? r.severity : 'clean',
       recommendation: blocked ? 'block' : 'allow',
-      warnings,
+      warnings: allWarnings,
     };
   } catch (err) {
     // Singleton init can fail under D1 prod fail-fast (production NODE_ENV +
@@ -153,14 +159,18 @@ async function scanContent(name: string, content: string): Promise<ScanLike> {
 
 function isScannerDefinitionFile(name: string): boolean {
   const rel = name.split(path.sep).join('/').replace(/^\.\//, '');
-  return rel === SCANNER_DEFINITION_REL || rel.endsWith(`/${SCANNER_DEFINITION_REL}`);
+  return (
+    rel === SCANNER_DEFINITION_REL ||
+    rel === path.join(REPO_ROOT, SCANNER_DEFINITION_REL).split(path.sep).join('/')
+  );
 }
 
 function inlineBlocklistScan(name: string, content: string): ScanLike {
   // Mirror of MAL-001 / MAL-005 / MAL-007 — keep in lock-step with
   // packages/core/src/security/supplyChainScanner.ts MALWARE_SIGNATURES.
   // MAL-008 (persistence) is intentionally omitted: it is a skill-markdown
-  // heuristic that self-matches source files containing cron/@reboot literals.
+  // heuristic that self-matches source files containing job-scheduler
+  // trigger literals (which this file itself would trip on).
   const PATTERNS: Array<{ id: string; regex: RegExp }> = [
     { id: 'MAL-001-reverse-shell', regex: /\/dev\/tcp\/.*\/.*|bash -i >& \/dev\/tcp/ },
     {
@@ -395,15 +405,11 @@ function runExecPolicySmoke(): void {
     throw new Error('precommit ExecPolicy smoke failed — vitest binary not found');
   }
   try {
-    execFileSync(
-      vitestBin,
-      ['run', EXECPOLICY_TEST_FILE, '--no-cache', '--reporter=default'],
-      {
-        cwd: vitestCwd,
-        stdio: 'inherit',
-        env: { ...process.env, NODE_ENV: 'test' },
-      },
-    );
+    execFileSync(vitestBin, ['run', EXECPOLICY_TEST_FILE, '--no-cache', '--reporter=default'], {
+      cwd: vitestCwd,
+      stdio: 'inherit',
+      env: { ...process.env, NODE_ENV: 'test' },
+    });
     console.log('[D3 hook] ExecPolicy smoke green ✅');
   } catch (err) {
     reportSilentFailure(err, 'precommitHook:335');

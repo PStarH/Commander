@@ -6,12 +6,12 @@ unreviewed tool calls locally.
 
 ## What this gives you
 
-| Capability | Behavior |
-| --- | --- |
-| **Tool discovery** | The Commander MCP server advertises its built-in tools (`execute_agent`, `list_models`, `route_task`) plus any gateway-routed tools you register. |
-| **Governed routing** | Tools that require human approval (e.g. non-read-only tools marked `requireApproval`) are **not** executed locally. The server sends the action envelope to the Action Gateway, which returns a `WAITING_FOR_APPROVAL` action the human reviews via the governance UI / `POST /v1/actions/:runId/{approve,reject}`. |
-| **Fail closed** | Without a configured gateway executor the server refuses the call with an `ACTION_GATEWAY_REQUIRED` error — never falls through to a silent local execution. |
-| **Idempotent replay** | Gateway-proposed actions carry an idempotency key derived from the tool call, so re-submitting the same call returns `idempotentReplay: true` instead of creating a duplicate. |
+| Capability            | Behavior                                                                                                                                                                                                                                                                                                                                                     |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Tool discovery**    | The Commander MCP server advertises the model-router tools (`execute_agent`, `list_models`, `route_task`) plus the six gateway tools (`commander_action_propose`, `commander_action_simulate`, `commander_action_get`, `commander_action_approve`, `commander_action_reconcile`, `commander_action_evidence`) once an Action Gateway executor is configured. |
+| **Governed routing**  | Tools that require human approval (e.g. non-read-only tools marked `requireApproval`) are **not** executed locally. The server sends the action envelope to the Action Gateway, which returns an `AWAITING_APPROVAL` action the human reviews via the governance UI / `POST /v1/actions/:runId/{approve,reject}`.                                            |
+| **Fail closed**       | Without a configured gateway executor the server refuses the call with an `ACTION_GATEWAY_REQUIRED` error — never falls through to a silent local execution.                                                                                                                                                                                                 |
+| **Idempotent replay** | Gateway-proposed actions carry an idempotency key derived from the tool call, so re-submitting the same call returns `idempotentReplay: true` instead of creating a duplicate.                                                                                                                                                                               |
 
 ## Requirements
 
@@ -67,7 +67,7 @@ Each suite asserts:
 
 1. The committed config advertises the Commander MCP server pointing at
    `./packages/mcp-server/dist/cli.js` and the gateway URL.
-2. `tools/list` returns the commander + model-router tools.
+2. `tools/list` returns the six canonical gateway tools (`commander_action_*`).
 3. Routing a `requireApproval` tool through the gateway executor completes
    the full governed lifecycle (propose → digest-mismatch 409 at approve →
    approve → claim/admit/complete effect+step → evidence export with PII

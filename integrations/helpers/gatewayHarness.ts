@@ -7,9 +7,12 @@ import {
   canonicalEvidenceBody,
   createEvidenceSigner,
   verifyEvidenceBundle,
+  type EvidenceBundle,
+  type VerifyEvidenceBundleResult,
 } from '@commander/effect-broker';
 import { createFetchActionGatewayExecutor, MCPServer } from '@commander/core';
 import type { Tool } from '@commander/core/runtime';
+import { type ActionStateV1 } from '@commander/contracts';
 import {
   InMemoryKernelRepository,
   seedFreshOperationsDrains,
@@ -20,8 +23,58 @@ import type {
   GatewayEvidenceRecord,
   V1KernelGateway,
 } from '../../apps/api/src/v1GatewayKernel.js';
+import type {
+  ActionDecision,
+  ActionEnvelope,
+  ActionSimulation,
+} from '../../apps/api/src/actionGatewayEndpoints.js';
 import { GatewayIdempotencyConflictError } from '../../apps/api/src/v1GatewayKernel.js';
 import { createV1GatewayRouter } from '../../apps/api/src/v1GatewayEndpoints.js';
+
+/**
+ * Rendered action resource served by the gateway (mirror of the unexported
+ * `renderAction` return shape in actionGatewayEndpoints.ts).
+ */
+export interface GatewayActionView {
+  runId: string;
+  stepId: string;
+  effectId: string;
+  state: ActionStateV1;
+  decision: ActionDecision;
+  simulation: ActionSimulation;
+  actionDigest: string;
+  policySnapshotId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Action-gateway metadata stored on the kernel run (mirror of the unexported
+ * `ActionGatewayMetadata` interface in actionGatewayEndpoints.ts).
+ */
+export interface GatewayActionMetadataView {
+  authority: 'commander.action-gateway/v1';
+  stepId: string;
+  effectId: string;
+  interactionId?: string;
+  actionDigest: string;
+  policySnapshotId: string;
+  decision: ActionDecision;
+  simulation: ActionSimulation;
+  envelope: ActionEnvelope;
+}
+
+/** Response payload of the `/v1/actions/:runId/evidence` endpoint. */
+export interface GatewayEvidencePayload {
+  receipt: EvidenceBundle;
+  verification: VerifyEvidenceBundleResult;
+}
+
+/** Response payload of the propose endpoint (`POST /v1/actions`). */
+export interface ProposeActionResponse {
+  action: GatewayActionView;
+  idempotentReplay: boolean;
+}
 
 export class InMemoryGateway implements V1KernelGateway {
   readonly repository = new InMemoryKernelRepository();
@@ -255,7 +308,7 @@ export async function postJson(
   });
 }
 
-export function approvalBinding(action: any) {
+export function approvalBinding(action: { simulation: ActionSimulation }) {
   return {
     actionDigest: action.simulation.actionDigest,
     simulationId: action.simulation.simulationId,
@@ -294,7 +347,7 @@ export async function putKillSwitch(
 export async function completeGovernedAction(
   gateway: InMemoryGateway,
   baseUrl: string,
-  action: any,
+  action: GatewayActionView,
 ) {
   const runId = action.runId;
 
@@ -304,7 +357,10 @@ export async function completeGovernedAction(
     approvalBinding({ simulation: { ...action.simulation, actionDigest: '0'.repeat(64) } }),
   );
   assert.equal(digestRejected.status, 409);
-  assert.equal(((await digestRejected.json()) as any).error.code, 'ACTION_DIGEST_MISMATCH');
+  assert.equal(
+    ((await digestRejected.json()) as { error: { code: string } }).error.code,
+    'ACTION_DIGEST_MISMATCH',
+  );
 
   const approved = await postJson(baseUrl, `/v1/actions/${runId}/approve`, approvalBinding(action));
   assert.equal(approved.status, 200);
@@ -318,8 +374,8 @@ export async function completeGovernedAction(
   });
   assert.ok(claimed?.lease);
   const run = await gateway.repository.getRun(runId, 'tenant-a');
-  const metadata = run!.metadata.actionGateway as any;
-  const envelope = metadata.envelope as any;
+  const metadata = run!.metadata.actionGateway as GatewayActionMetadataView;
+  const envelope = metadata.envelope;
   const effectRequest = {
     id: metadata.effectId,
     runId: run!.id,
@@ -394,14 +450,14 @@ export async function completeGovernedAction(
     retentionUntil: '2027-07-17T06:00:04.000Z',
   });
 
-  let evidencePayload: any;
+  let evidencePayload: GatewayEvidencePayload;
   await withEvidenceJwks(signer.jwks, async () => {
     const evidence = await fetch(`${baseUrl}/v1/actions/${runId}/evidence`, {
       headers: { 'x-test-tenant': 'tenant-a' },
     });
     assert.equal(evidence.status, 200);
     const evidenceText = await evidence.text();
-    evidencePayload = JSON.parse(evidenceText) as any;
+    evidencePayload = JSON.parse(evidenceText) as GatewayEvidencePayload;
     const receipt = evidencePayload.receipt;
     assert.equal(receipt.schemaVersion, 'l3-11.v0');
     assert.equal(receipt.scope.runId, runId);
@@ -454,7 +510,7 @@ export async function proveGovernedFlow(gateway: InMemoryGateway, baseUrl: strin
       Authorization: 'Bearer SENSITIVE_AUTH_TOKEN',
     },
   });
-  const payload = (await proposed.json()) as any;
+  const payload = (await proposed.json()) as ProposeActionResponse;
   assert.equal(proposed.status, 202);
   assert.equal(payload.action.state, 'AWAITING_APPROVAL');
   return completeGovernedAction(gateway, baseUrl, payload.action);
@@ -488,7 +544,7 @@ export async function proveMcpGovernedLifecycle(
   assert.equal(response.error, undefined);
   const result = response.result as { content?: Array<{ text?: string }> } | undefined;
   const text = result?.content?.[0]?.text ?? '';
-  const payload = JSON.parse(text) as any;
+  const payload = JSON.parse(text) as ProposeActionResponse;
   assert.equal(payload.action.state, 'AWAITING_APPROVAL');
   assert.equal(payload.idempotentReplay, false);
   assert.ok(payload.action.runId);

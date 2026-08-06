@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import { createStdioMcpServer } from '@commander/mcp-server';
-import { parseSimpleToml } from '../helpers/simpleToml.js';
 import {
   createGatewayRoutedMcpServer,
   InMemoryGateway,
@@ -22,28 +21,77 @@ const GATEWAY_TOOLS = [
   'commander_action_simulate',
 ];
 
+interface OmpMcpConfig {
+  mcpServers: {
+    commander: {
+      type: string;
+      command: string;
+      args: string[];
+      cwd: string;
+      env: Record<string, string>;
+    };
+  };
+}
+
 describe('pi agent (OH-MY-PI) integration', () => {
   it('committed .omp/mcp.json advertises the commander MCP server behind the gateway', () => {
-    const config = JSON.parse(
-      readFileSync(new URL('./.omp/mcp.json', import.meta.url), 'utf8'),
-    ) as {
-      mcpServers: {
-        commander: {
-          type: string;
-          command: string;
-          args: string[];
-          cwd: string;
-          env: Record<string, string>;
-        };
-      };
-    };
-    const serverCfg = config.mcpServers.commander;
+    const serverCfg = readOmpMcpConfig().mcpServers.commander;
     assert.ok(serverCfg);
     assert.equal(serverCfg.type, 'stdio');
     assert.equal(serverCfg.command, 'node');
     assert.deepEqual(serverCfg.args, ['./packages/mcp-server/dist/cli.js']);
+    // OH-MY-PI expands ${PWD} itself at discovery time; the committed config
+    // keeps the placeholder so the server runs in whichever project pi starts in.
     assert.equal(serverCfg.cwd, '${PWD}');
     assert.equal(serverCfg.env.COMMANDER_ACTION_GATEWAY_URL, 'http://127.0.0.1:4000');
+  });
+
+  it('simulates OH-MY-PI discovery: expands ${PWD} from .omp/mcp.json and handshakes the spawned server', async () => {
+    const serverCfg = readOmpMcpConfig().mcpServers.commander;
+    const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+    // OMP resolves ${VAR} / ${VAR:-default} from its own process env at
+    // discovery; mirror that with the repo root standing in for PWD.
+    const env = { PWD: repoRoot, ...process.env, ...serverCfg.env };
+    const command = expandEnvVars(serverCfg.command, env);
+    const args = serverCfg.args.map((arg) => expandEnvVars(arg, env));
+    const cwd = expandEnvVars(serverCfg.cwd, env);
+    assert.ok(isAbsolute(cwd), `cwd should expand to an absolute path, got ${cwd}`);
+    assert.equal(cwd, repoRoot);
+
+    const child = spawn(command, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stderr = '';
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => (stderr += chunk));
+    try {
+      const request = lineClient(child);
+      const initialized = (await request({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: { name: 'pi-integration-test', version: '0.0.0' },
+        },
+      })) as {
+        result?: { protocolVersion: string; serverInfo: { name: string; version: string } };
+      };
+      assert.equal(initialized.result?.protocolVersion, '2024-11-05');
+      assert.equal(initialized.result?.serverInfo.name, 'commander-mcp-server');
+      assert.equal(initialized.result?.serverInfo.version, '0.2.0');
+      const listed = (await request({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/list',
+      })) as { result?: { tools: Array<{ name: string }> } };
+      const names = (listed.result?.tools ?? []).map((tool) => tool.name).sort();
+      assert.deepEqual(names, GATEWAY_TOOLS);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(detail + '\n[stderr] ' + stderr);
+    } finally {
+      child.kill();
+    }
   });
 
   it('server advertises the six canonical gateway tools (discovery)', async () => {
@@ -93,48 +141,30 @@ describe('pi agent (OH-MY-PI) integration', () => {
     assert.ok(error);
     assert.match(error.message, /ACTION_GATEWAY_REQUIRED/);
   });
-
-  it('spawned dist/cli.js completes the MCP initialize handshake and advertises gateway tools', async () => {
-    const cliPath = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'packages', 'mcp-server', 'dist', 'cli.js');
-    const child = spawn(process.execPath, [cliPath], {
-      env: { ...process.env, COMMANDER_ACTION_GATEWAY_URL: 'http://127.0.0.1:4000' },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stderr = '';
-    child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (chunk: string) => (stderr += chunk));
-    try {
-      const request = lineClient(child);
-      const initialized = (await request({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: {
-          protocolVersion: '2024-11-05',
-          capabilities: {},
-          clientInfo: { name: 'pi-integration-test', version: '0.0.0' },
-        },
-      })) as {
-        result?: { protocolVersion: string; serverInfo: { name: string; version: string } };
-      };
-      assert.equal(initialized.result?.protocolVersion, '2024-11-05');
-      assert.equal(initialized.result?.serverInfo.name, 'commander-mcp-server');
-      assert.equal(initialized.result?.serverInfo.version, '0.2.0');
-      const listed = (await request({
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/list',
-      })) as { result?: { tools: Array<{ name: string }> } };
-      const names = (listed.result?.tools ?? []).map((tool) => tool.name).sort();
-      assert.deepEqual(names, GATEWAY_TOOLS);
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      throw new Error(detail + '\n[stderr] ' + stderr);
-    } finally {
-      child.kill();
-    }
-  });
 });
+
+function readOmpMcpConfig(): OmpMcpConfig {
+  return JSON.parse(
+    readFileSync(new URL('./.omp/mcp.json', import.meta.url), 'utf8'),
+  ) as OmpMcpConfig;
+}
+
+/**
+ * Mirrors OH-MY-PI's discovery-time env expansion for `.omp/mcp.json`:
+ * `${VAR}` and `${VAR:-default}` resolve from the process env, and unresolved
+ * placeholders stay literal (OMP keeps them as-is rather than failing).
+ */
+function expandEnvVars(value: string, env: Record<string, string | undefined>): string {
+  return value.replace(
+    /\$\{([^}:]+)(?::-([^}]*))?\}/g,
+    (_, varName: string, defaultValue?: string) => {
+      const envValue = env[varName];
+      if (envValue !== undefined) return envValue;
+      if (defaultValue !== undefined) return defaultValue;
+      return `\${${varName}}`;
+    },
+  );
+}
 
 /**
  * Minimal line-delimited JSON-RPC client over the child's stdio: writes one
