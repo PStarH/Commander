@@ -346,6 +346,9 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
   let matchedScopes: string[] = [];
   let matchedKey: StoredKey | null = null;
 
+  // Header presence selects credential syntax only; every supplied key still
+  // passes the timing-safe lookup before the request can continue.
+  // codeql[js/user-controlled-bypass]: lookup below is mandatory before next().
   if (apiKeyHeader) {
     const matched = findKey(apiKeyHeader, apiKeys);
     if (!matched) {

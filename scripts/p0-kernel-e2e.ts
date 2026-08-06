@@ -73,7 +73,7 @@ function log(step: string, detail?: unknown): void {
 }
 
 async function main(): Promise<void> {
-  log('config', { API_BASE, TENANT, REQUIRE_TERMINAL, hasApiKey: Boolean(API_KEY) });
+  log('config', { API_BASE, TENANT, REQUIRE_TERMINAL });
 
   // 1) Health
   let health: Awaited<ReturnType<typeof http>>;

@@ -223,17 +223,20 @@ export interface HoneypotStats {
  * The value is deterministic only by env var; otherwise a random fake key is
  * produced so that no static AWS credential string is embedded in source.
  */
+function randomCharacters(charset: string, length: number): string {
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    result += charset[crypto.randomInt(charset.length)]!;
+  }
+  return result;
+}
+
 function generateDecoyAwsAccessKeyId(): string {
   // Build the AWS AKIA prefix at runtime to avoid static credential scanners
   // flagging a literal string in the repository.
   const prefix = ['A', 'K', 'I', 'A'].join('');
   const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  const bytes = crypto.randomBytes(16);
-  let suffix = '';
-  for (let i = 0; i < 16; i++) {
-    suffix += charset[bytes[i]! % charset.length];
-  }
-  return `${prefix}${suffix}`;
+  return `${prefix}${randomCharacters(charset, 16)}`;
 }
 
 // ============================================================================
@@ -1625,12 +1628,7 @@ export class ActiveDeceptionSystem {
    */
   private randomBase62(length: number): string {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    const bytes = crypto.randomBytes(length);
-    let result = '';
-    for (let i = 0; i < length; i++) {
-      result += charset[bytes[i]! % charset.length];
-    }
-    return result;
+    return randomCharacters(charset, length);
   }
 
   /**
@@ -1639,12 +1637,7 @@ export class ActiveDeceptionSystem {
    */
   private randomUpperAlphanumeric(length: number): string {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    const bytes = crypto.randomBytes(length);
-    let result = '';
-    for (let i = 0; i < length; i++) {
-      result += charset[bytes[i]! % charset.length];
-    }
-    return result;
+    return randomCharacters(charset, length);
   }
 
   /**
@@ -1653,12 +1646,7 @@ export class ActiveDeceptionSystem {
    */
   private randomBase64(length: number): string {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-    const bytes = crypto.randomBytes(length);
-    let result = '';
-    for (let i = 0; i < length; i++) {
-      result += charset[bytes[i]! % charset.length];
-    }
-    return result;
+    return randomCharacters(charset, length);
   }
 
   /**
@@ -1667,12 +1655,7 @@ export class ActiveDeceptionSystem {
    */
   private randomBase64Url(length: number): string {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-    const bytes = crypto.randomBytes(length);
-    let result = '';
-    for (let i = 0; i < length; i++) {
-      result += charset[bytes[i]! % charset.length];
-    }
-    return result;
+    return randomCharacters(charset, length);
   }
 }
 
