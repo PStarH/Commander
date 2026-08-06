@@ -1,5 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
+import { generateKeyPairSync, sign } from 'node:crypto';
+import { CommanderClient } from '../src/commanderClient';
+import {
+  CommanderGatewayClient,
+  CommanderGatewayError,
+  verifyActionEvidence,
+} from '../src/v1/client';
 
 void describe('@commander/sdk — types', () => {
   void it('types are valid — CommanderClientConfig', () => {
@@ -63,33 +70,28 @@ void describe('@commander/sdk — types', () => {
 
 void describe('@commander/sdk — CommanderClient', () => {
   void it('can be instantiated with default config', () => {
-    const { CommanderClient } = require('../src/commanderClient');
     const client = new CommanderClient();
     assert.ok(client);
     assert.equal(client.isConnected, false);
   });
 
   void it('throws on run before connect', async () => {
-    const { CommanderClient } = require('../src/commanderClient');
     const client = new CommanderClient();
     await assert.rejects(() => client.run('test task'), /not connected/);
   });
 
   void it('throws on plan before connect', async () => {
-    const { CommanderClient } = require('../src/commanderClient');
     const client = new CommanderClient();
     await assert.rejects(() => client.plan('test task'), /not connected/);
   });
 
   void it('returns empty session list before any runs', () => {
-    const { CommanderClient } = require('../src/commanderClient');
     const client = new CommanderClient();
     const sessions = client.listSessions();
     assert.deepEqual(sessions, []);
   });
 
   void it('detects no provider from empty env', () => {
-    const { CommanderClient } = require('../src/commanderClient');
     const client = new CommanderClient();
     // Private method — just verify the constructor works without env keys
     assert.equal(client.isConnected, false);
@@ -97,14 +99,12 @@ void describe('@commander/sdk — CommanderClient', () => {
 
   void describe('memory (best-effort)', () => {
     void it('queryMemory returns an array without throwing when not connected', () => {
-      const { CommanderClient } = require('../src/commanderClient');
       const client = new CommanderClient();
       const results = client.queryMemory({ keywords: ['test'], limit: 5 });
       assert.ok(Array.isArray(results));
     });
 
     void it('getMemoryStats returns zeroed stats when not connected', async () => {
-      const { CommanderClient } = require('../src/commanderClient');
       const client = new CommanderClient();
       const stats = await client.getMemoryStats();
       assert.equal(stats.workingCount, 0);
@@ -114,7 +114,6 @@ void describe('@commander/sdk — CommanderClient', () => {
     });
 
     void it('getStats is a live alias for getMemoryStats', async () => {
-      const { CommanderClient } = require('../src/commanderClient');
       const client = new CommanderClient();
       const stats = await client.getStats();
       assert.equal(stats.totalCount, 0);
@@ -146,7 +145,7 @@ const actionFixtures = {
     runId: 'run-action-1',
     stepId: 'step-1',
     effectId: 'effect-1',
-    state: 'PENDING',
+    state: 'PROPOSED',
     decision: {
       effect: 'allow',
       decisionId: 'action-gateway-allow',
@@ -170,7 +169,6 @@ const actionFixtures = {
 
 void describe('@commander/sdk — Gateway V1 client', () => {
   void it('submits a durable run with idempotency and preserves 202 semantics', async () => {
-    const { CommanderGatewayClient } = require('../src/v1/client');
     let captured: RequestInit | undefined;
     const client = new CommanderGatewayClient({
       baseUrl: 'https://commander.example/',
@@ -207,7 +205,6 @@ void describe('@commander/sdk — Gateway V1 client', () => {
   });
 
   void it('simulateAction posts the governed action envelope', async () => {
-    const { CommanderGatewayClient } = require('../src/v1/client');
     let url = '';
     let captured: RequestInit | undefined;
     const client = new CommanderGatewayClient({
@@ -230,7 +227,6 @@ void describe('@commander/sdk — Gateway V1 client', () => {
   });
 
   void it('proposeAction posts with Idempotency-Key header', async () => {
-    const { CommanderGatewayClient } = require('../src/v1/client');
     let captured: RequestInit | undefined;
     const client = new CommanderGatewayClient({
       baseUrl: 'https://commander.example',
@@ -251,7 +247,6 @@ void describe('@commander/sdk — Gateway V1 client', () => {
   });
 
   void it('getAction loads a governed action by run id', async () => {
-    const { CommanderGatewayClient } = require('../src/v1/client');
     let url = '';
     const client = new CommanderGatewayClient({
       baseUrl: 'https://commander.example',
@@ -270,7 +265,6 @@ void describe('@commander/sdk — Gateway V1 client', () => {
   });
 
   void it('approveAction posts approval bindings', async () => {
-    const { CommanderGatewayClient } = require('../src/v1/client');
     let url = '';
     let captured: RequestInit | undefined;
     const client = new CommanderGatewayClient({
@@ -290,14 +284,14 @@ void describe('@commander/sdk — Gateway V1 client', () => {
       simulationId: actionFixtures.action.simulation.simulationId,
       policySnapshotId: actionFixtures.action.policySnapshotId,
     };
-    const result = await client.approveAction('run-action-1', approval);
+    const result = await client.approveAction('run-action-1', approval, 'approve-action-0001');
     assert.equal(url, 'https://commander.example/v1/actions/run-action-1/approve');
     assert.deepEqual(JSON.parse(String(captured?.body)), approval);
+    assert.equal(new Headers(captured?.headers).get('idempotency-key'), 'approve-action-0001');
     assert.equal(result.runId, 'run-action-1');
   });
 
   void it('rejectAction posts optional reason', async () => {
-    const { CommanderGatewayClient } = require('../src/v1/client');
     let captured: RequestInit | undefined;
     const client = new CommanderGatewayClient({
       baseUrl: 'https://commander.example',
@@ -305,7 +299,7 @@ void describe('@commander/sdk — Gateway V1 client', () => {
       fetch: async (_url: string, init?: RequestInit) => {
         captured = init;
         return new Response(
-          JSON.stringify({ action: { ...actionFixtures.action, state: 'REJECTED' } }),
+          JSON.stringify({ action: { ...actionFixtures.action, state: 'FAILED' } }),
           {
             status: 200,
             headers: { 'content-type': 'application/json' },
@@ -313,13 +307,17 @@ void describe('@commander/sdk — Gateway V1 client', () => {
         );
       },
     });
-    const result = await client.rejectAction('run-action-1', { reason: 'too risky' });
-    assert.equal(result.state, 'REJECTED');
+    const result = await client.rejectAction(
+      'run-action-1',
+      { reason: 'too risky' },
+      'reject-action-0001',
+    );
+    assert.equal(result.state, 'FAILED');
     assert.deepEqual(JSON.parse(String(captured?.body)), { reason: 'too risky' });
+    assert.equal(new Headers(captured?.headers).get('idempotency-key'), 'reject-action-0001');
   });
 
   void it('reconcileAction posts to reconcile endpoint', async () => {
-    const { CommanderGatewayClient } = require('../src/v1/client');
     let url = '';
     const client = new CommanderGatewayClient({
       baseUrl: 'https://commander.example',
@@ -333,14 +331,13 @@ void describe('@commander/sdk — Gateway V1 client', () => {
       },
     });
     await assert.rejects(
-      () => client.reconcileAction('run-action-1'),
+      () => client.reconcileAction('run-action-1', 'reconcile-action-0001'),
       (error: { status: number }) => error.status === 501,
     );
     assert.equal(url, 'https://commander.example/v1/actions/run-action-1/reconcile');
   });
 
   void it('getActionEvidence loads evidence bundle', async () => {
-    const { CommanderGatewayClient } = require('../src/v1/client');
     let url = '';
     const client = new CommanderGatewayClient({
       baseUrl: 'https://commander.example',
@@ -349,8 +346,8 @@ void describe('@commander/sdk — Gateway V1 client', () => {
         url = requestUrl;
         return new Response(
           JSON.stringify({
-            bundle: { bundleId: 'bundle-1', runId: 'run-action-1' },
-            verification: { valid: true },
+            receipt: { bundleId: 'bundle-1', scope: { runId: 'run-action-1' } },
+            verification: { ok: true },
           }),
           { status: 200, headers: { 'content-type': 'application/json' } },
         );
@@ -358,7 +355,136 @@ void describe('@commander/sdk — Gateway V1 client', () => {
     });
     const result = await client.getActionEvidence('run-action-1');
     assert.equal(url, 'https://commander.example/v1/actions/run-action-1/evidence');
-    assert.equal(result.bundle.bundleId, 'bundle-1');
-    assert.equal(result.verification.valid, true);
+    assert.equal(result.receipt.bundleId, 'bundle-1');
+    assert.equal(result.verification.ok, true);
+  });
+
+  void it('reconcileAction preserves the canonical 202 result', async () => {
+    const fixture = {
+      effectId: 'effect-1',
+      state: 'COMPLETION_UNKNOWN',
+      reconcileAfter: '2026-07-29T08:30:00.000Z',
+      alreadyScheduled: true,
+      scheduled: true,
+    };
+    const client = new CommanderGatewayClient({
+      baseUrl: 'https://commander.example',
+      fetch: async () =>
+        new Response(JSON.stringify(fixture), {
+          status: 202,
+          headers: { 'content-type': 'application/json' },
+        }),
+    });
+
+    assert.deepEqual(
+      await client.reconcileAction('run-action-1', 'reconcile-action-0002'),
+      fixture,
+    );
+  });
+
+  void it('preserves HTTP status and gateway error code', async () => {
+    const client = new CommanderGatewayClient({
+      baseUrl: 'https://commander.example',
+      fetch: async () =>
+        new Response(
+          JSON.stringify({
+            error: { code: 'NO_RECONCILABLE_EFFECT', message: 'No pending effect.' },
+          }),
+          { status: 409, headers: { 'content-type': 'application/json' } },
+        ),
+    });
+
+    await assert.rejects(
+      () => client.reconcileAction('run-action-1', 'reconcile-action-0003'),
+      (error: InstanceType<typeof CommanderGatewayError>) =>
+        error.status === 409 &&
+        error.code === 'NO_RECONCILABLE_EFFECT' &&
+        error.message === 'No pending effect.',
+    );
+  });
+
+  void it('lists, updates, and removes kill switches using canonical paths', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fixture = {
+      tenantId: 'tenant-a',
+      scope: 'tool',
+      value: 'ticket.create',
+      enabled: true,
+      reason: 'incident response',
+      actor: 'operator-1',
+      updatedAt: '2026-07-29T08:00:00.000Z',
+    };
+    const client = new CommanderGatewayClient({
+      baseUrl: 'https://commander.example',
+      fetch: async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        if (init?.method === 'DELETE') return new Response(null, { status: 204 });
+        return new Response(
+          JSON.stringify(
+            init?.method === 'PUT' ? { killSwitch: fixture } : { killSwitches: [fixture] },
+          ),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      },
+    });
+
+    assert.deepEqual(await client.listKillSwitches(), [fixture]);
+    assert.deepEqual(
+      await client.putKillSwitch(
+        'tool',
+        'ticket.create',
+        { enabled: true, reason: 'incident response' },
+        'kill-put-0001',
+      ),
+      fixture,
+    );
+    await client.removeKillSwitch('tool', 'ticket.create', 'kill-delete-0001');
+
+    assert.deepEqual(
+      calls.map(({ url, init }) => [url, init?.method ?? 'GET']),
+      [
+        ['https://commander.example/v1/actions/kill-switches', 'GET'],
+        ['https://commander.example/v1/actions/kill-switches/tool/ticket.create', 'PUT'],
+        ['https://commander.example/v1/actions/kill-switches/tool/ticket.create', 'DELETE'],
+      ],
+    );
+    assert.deepEqual(JSON.parse(String(calls[1].init?.body)), {
+      enabled: true,
+      reason: 'incident response',
+    });
+    assert.equal(new Headers(calls[1].init?.headers).get('idempotency-key'), 'kill-put-0001');
+    assert.equal(new Headers(calls[2].init?.headers).get('idempotency-key'), 'kill-delete-0001');
+  });
+
+  void it('verifies an evidence receipt against JWKS without fetching', () => {
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const protectedHeader = Buffer.from(
+      JSON.stringify({ alg: 'EdDSA', kid: 'evidence-key-1', typ: 'JWT' }),
+    ).toString('base64url');
+    const payload = Buffer.from(
+      JSON.stringify({ runId: 'run-action-1', contentHash: 'a'.repeat(64) }),
+    ).toString('base64url');
+    const signingInput = `${protectedHeader}.${payload}`;
+    const receipt = `${signingInput}.${sign(null, Buffer.from(signingInput), privateKey).toString('base64url')}`;
+    const jwks = {
+      keys: [
+        {
+          ...publicKey.export({ format: 'jwk' }),
+          kid: 'evidence-key-1',
+          alg: 'EdDSA',
+          use: 'sig',
+        },
+      ],
+    };
+
+    assert.deepEqual(verifyActionEvidence(receipt, jwks), {
+      valid: true,
+      payload: { runId: 'run-action-1', contentHash: 'a'.repeat(64) },
+    });
+    const receiptParts = receipt.split('.');
+    const forgedSignature = Buffer.from(receiptParts[2], 'base64url');
+    forgedSignature[0] ^= 1;
+    const forgedReceipt = `${receiptParts[0]}.${receiptParts[1]}.${forgedSignature.toString('base64url')}`;
+    assert.equal(verifyActionEvidence(forgedReceipt, jwks).valid, false);
   });
 });

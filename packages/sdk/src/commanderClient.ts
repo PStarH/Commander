@@ -23,7 +23,7 @@
  * ```
  */
 
-import { reportSilentFailure } from '@commander/core';
+import { reportSilentFailure, getGlobalThreeLayerMemory } from '@commander/core';
 import type { CommanderOptions } from '@commander/core';
 
 import type {
@@ -378,7 +378,6 @@ export class CommanderClient {
   queryMemory(options: MemoryQueryOptions = {}): MemoryItem[] {
     try {
       // Synchronous access to global ThreeLayerMemory (already initialized by core)
-      const { getGlobalThreeLayerMemory } = require('@commander/core');
       const memory = getGlobalThreeLayerMemory();
       const entries = memory.querySync({
         keywords: options.keywords,
@@ -391,14 +390,14 @@ export class CommanderClient {
         .filter((e: { layer: string }) =>
           e.layer === 'working' || e.layer === 'episodic' || e.layer === 'longterm',
         )
-        .map((e: Record<string, unknown>) => ({
-          id: e.id as string,
-          content: e.content as string,
+        .map((e) => ({
+          id: e.id,
+          content: e.content,
           layer: e.layer as 'working' | 'episodic' | 'longterm',
-          importance: e.importance as number,
-          tags: (e.tags as string[]) ?? [],
-          createdAt: e.createdAt as string,
-          metadata: (e.metadata as Record<string, unknown>) ?? {},
+          importance: e.importance,
+          tags: e.tags ?? [],
+          createdAt: e.createdAt,
+          metadata: e.metadata ?? {},
         }));
 
       if (options.tags && options.tags.length > 0) {

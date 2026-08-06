@@ -1,6 +1,7 @@
 {
   "name": "@commander/mcp-server",
   "version": "0.2.0",
+  "type": "module",
   "description": "Publishable MCP server for Commander — exposes Commander tools via stdin/stdout JSON-RPC.",
   "license": "MIT",
   "author": "PStarH <sampan090611@gmail.com>",
