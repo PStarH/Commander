@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "commander": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["./packages/mcp-server/dist/cli.js"],
+      "cwd": "${PWD}",
+      "env": {
+        "COMMANDER_ACTION_GATEWAY_URL": "http://127.0.0.1:4000"
+      }
+    }
+  }
+}
