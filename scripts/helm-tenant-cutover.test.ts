@@ -1777,6 +1777,10 @@ data: { owner-url: ${payload} }
       helmRolloutFailureCode('unable to build kubernetes objects from release manifest'),
       'TENANT_CUTOVER_HELM_MANIFEST_INVALID',
     );
+    assert.equal(
+      helmRolloutFailureCode('Deployment.apps "commander-api" is invalid: spec.template'),
+      'TENANT_CUTOVER_HELM_DEPLOYMENT_INVALID',
+    );
     assert.equal(helmRolloutFailureCode('postgres://owner:secret@database'), undefined);
   });
 

@@ -240,6 +240,18 @@ export function helmCommandFailureDiagnostic(
 }
 
 export function helmRolloutFailureCode(stderr: string): string | undefined {
+  const resourceKind = stderr.match(
+    /\b(Deployment|StatefulSet|Service|Secret|ConfigMap|Job|NetworkPolicy|HorizontalPodAutoscaler|Role|RoleBinding|ServiceAccount)\b(?:\.[A-Za-z0-9/.-]+)?\s+"[^"\n]+"\s+is invalid/i,
+  )?.[1];
+  if (resourceKind) {
+    return `TENANT_CUTOVER_HELM_${resourceKind.replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase()}_INVALID`;
+  }
+  const patchedKind = stderr.match(
+    /cannot patch "[^"\n]+" with kind (Deployment|StatefulSet|Service|Secret|ConfigMap|Job|NetworkPolicy|HorizontalPodAutoscaler|Role|RoleBinding|ServiceAccount)/i,
+  )?.[1];
+  if (patchedKind) {
+    return `TENANT_CUTOVER_HELM_${patchedKind.replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase()}_INVALID`;
+  }
   const patterns: ReadonlyArray<[RegExp, string]> = [
     [/pre-install hooks? failed/i, 'TENANT_CUTOVER_HELM_PRE_INSTALL_HOOK_FAILED'],
     [/post-install hooks? failed/i, 'TENANT_CUTOVER_HELM_POST_INSTALL_HOOK_FAILED'],
