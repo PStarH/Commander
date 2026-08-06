@@ -86,6 +86,12 @@ export interface SupplyChainScanRequest {
   provenance?: SupplyChainProvenance;
   /** Tenant that owns this scan */
   tenantId?: string;
+  /**
+   * Skip the skill-content pre-scan heuristics (backtick/$( )/exec()/spawn()
+   * shell-injection regexes). The malware signature scan still runs. Use for
+   * scanning regular source files, where those patterns are legitimate.
+   */
+  skipPreScanHeuristics?: boolean;
 }
 
 export interface SupplyChainScanResult {
@@ -310,14 +316,18 @@ export class SupplyChainScanner {
     const startTime = Date.now();
 
     // ── Phase 1: Fast pre-scan (regex-based, reuses existing scanner) ──
-    const preScan = scanSkillContent(request.name, request.content, request.tools);
-    for (const w of preScan.warnings) {
-      warnings.push({
-        severity: w.severity,
-        category: `pre_scan.${w.category}`,
-        message: w.message,
-        evidence: w.match,
-      });
+    const preScan = request.skipPreScanHeuristics
+      ? { passed: true, warnings: [] }
+      : scanSkillContent(request.name, request.content, request.tools);
+    if (!request.skipPreScanHeuristics) {
+      for (const w of preScan.warnings) {
+        warnings.push({
+          severity: w.severity,
+          category: `pre_scan.${w.category}`,
+          message: w.message,
+          evidence: w.match,
+        });
+      }
     }
 
     // ── Phase 2: Dependency analysis ──

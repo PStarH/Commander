@@ -1,6 +1,7 @@
 {
   "name": "@commander/sdk",
   "version": "0.2.0",
+  "type": "module",
   "description": "Commander Agent SDK — embed multi-agent orchestration in your own applications",
   "main": "dist/index.js",
   "module": "dist/index.js",
