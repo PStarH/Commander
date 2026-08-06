@@ -239,6 +239,25 @@ export function helmCommandFailureDiagnostic(
   return `TENANT_CUTOVER_COMMAND_FAILED stage=${stage} code=${code}`;
 }
 
+export function helmRolloutFailureCode(stderr: string): string | undefined {
+  const patterns: ReadonlyArray<[RegExp, string]> = [
+    [/pre-install hooks? failed/i, 'TENANT_CUTOVER_HELM_PRE_INSTALL_HOOK_FAILED'],
+    [/post-install hooks? failed/i, 'TENANT_CUTOVER_HELM_POST_INSTALL_HOOK_FAILED'],
+    [/pre-upgrade hooks? failed/i, 'TENANT_CUTOVER_HELM_PRE_UPGRADE_HOOK_FAILED'],
+    [/post-upgrade hooks? failed/i, 'TENANT_CUTOVER_HELM_POST_UPGRADE_HOOK_FAILED'],
+    [
+      /unable to build kubernetes objects|error validating data|cannot unmarshal|no matches for kind/i,
+      'TENANT_CUTOVER_HELM_MANIFEST_INVALID',
+    ],
+    [
+      /cannot patch|cannot create|failed to create resource| is invalid:/i,
+      'TENANT_CUTOVER_HELM_RESOURCE_APPLY_FAILED',
+    ],
+    [/timed out waiting|context deadline exceeded/i, 'TENANT_CUTOVER_HELM_ROLLOUT_TIMEOUT'],
+  ];
+  return patterns.find(([pattern]) => pattern.test(stderr))?.[1];
+}
+
 function fail(code: string): never {
   throw new Error(code);
 }
@@ -2658,13 +2677,25 @@ async function runHelmPostRendered(
   const helm = spawn(
     'helm',
     [...helmArgs, '--post-renderer', process.execPath, ...postRendererArgs],
-    { shell: false, stdio: ['ignore', 'ignore', 'ignore'] },
+    { shell: false, stdio: ['ignore', 'ignore', 'pipe'] },
   );
+  const stderrPromise = readBoundedStream(
+    helm.stderr,
+    64 * 1024,
+    'TENANT_CUTOVER_RESTORE_STREAM_LIMIT',
+  ).catch(() => '');
   try {
     try {
       await processResult(helm, 'TENANT_CUTOVER_COMMAND_FAILED');
+      await stderrPromise;
     } catch {
-      throw new Error(helmCommandFailureDiagnostic(failureStage, postRenderFailureCode));
+      const stderr = await stderrPromise;
+      throw new Error(
+        helmCommandFailureDiagnostic(
+          failureStage,
+          postRenderFailureCode ?? helmRolloutFailureCode(stderr),
+        ),
+      );
     }
     if (requests !== 1) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
   } finally {
