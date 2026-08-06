@@ -5,7 +5,7 @@ type: application
 version: 0.4.0
 appVersion: '0.4.0'
 annotations:
-  commander.io/content-sha256: 54d7fc51ec693b94a63989130fc245e0216bcb94ea453a561af99044d2ea5072
+  commander.io/content-sha256: 58310faa97487f036c33e598f518d1e3500416bf60cf5498abff4b73a6ae6ef2
 keywords:
   - agent
   - orchestration

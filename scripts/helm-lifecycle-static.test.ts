@@ -49,7 +49,7 @@ function render(upgrade = false, extraArgs: string[] = [], release = 'lifecycle-
 }
 
 function manifests(rendered: string): Manifest[] {
-  return loadAll(rendered, undefined, { json: true }).filter(
+  return loadAll(rendered).filter(
     (value): value is Manifest => typeof value === 'object' && value !== null,
   );
 }
