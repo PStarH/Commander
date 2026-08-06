@@ -46,7 +46,8 @@ function checkFile(path: string, forbiddenImports: string[]): string[] {
   const content = readFileSync(path, 'utf-8');
   const found: string[] = [];
   for (const imp of forbiddenImports) {
-    const pattern = new RegExp(`\\bfrom\\s+['"]${imp.replace(/\//g, '\\/')}['"]`, 'g');
+    const escapedImport = imp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`\\bfrom\\s+['"]${escapedImport}['"]`, 'g');
     if (pattern.test(content)) found.push(imp);
   }
   return found;
