@@ -39,7 +39,7 @@ def test_same_tool_loop_with_different_args():
 
 def test_handles_object_tool_calls():
     class ToolCall:
-        def __init__(self, name, arguments):
+        def __init__(self, name: str, arguments: dict[str, int]) -> None:
             self.name = name
             self.arguments = arguments
 
