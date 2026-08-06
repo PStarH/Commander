@@ -16,6 +16,7 @@ import {
   assertManagedFieldsMatch,
   createNodePorts,
   extractRetainedSecretPayloads,
+  helmCommandFailureDiagnostic,
   parsePostRendererInvocation,
   postRenderRetainedSecrets,
   streamHelmRevisionRestore,
@@ -1517,7 +1518,10 @@ data: { owner-url: ${payload} }
       () => runHelmTenantCutover(input(), fixture),
       /TENANT_CUTOVER_PROOF_JOB_INVALID/,
     );
-    assert.equal(fixture.calls.some((call) => call.startsWith('run-proof-job:')), false);
+    assert.equal(
+      fixture.calls.some((call) => call.startsWith('run-proof-job:')),
+      false,
+    );
     assert.deepEqual(fixture.calls.slice(-4), [
       'cleanup-proof:commander/commander',
       'cleanup-configmap:commander/commander-proof-projection-v7-r7',
@@ -1734,6 +1738,24 @@ data: { owner-url: ${payload} }
           'v4.0.0',
         ),
       /TENANT_CUTOVER_HELM_VERSION_INVALID/,
+    );
+  });
+
+  it('reports only fixed stages and codes for projected Helm command failures', () => {
+    const diagnostics = [
+      helmCommandFailureDiagnostic('render'),
+      helmCommandFailureDiagnostic('post-render'),
+      helmCommandFailureDiagnostic('rollout'),
+    ];
+
+    assert.deepEqual(diagnostics, [
+      'TENANT_CUTOVER_COMMAND_FAILED stage=render code=TENANT_CUTOVER_HELM_RENDER_FAILED',
+      'TENANT_CUTOVER_COMMAND_FAILED stage=post-render code=TENANT_CUTOVER_HELM_POST_RENDER_FAILED',
+      'TENANT_CUTOVER_COMMAND_FAILED stage=rollout code=TENANT_CUTOVER_HELM_ROLLOUT_FAILED',
+    ]);
+    assert.doesNotMatch(
+      diagnostics.join('\n'),
+      /postgres(?:ql)?:|password|values|kind:\s*Secret|COMMANDER_OWNER_DATABASE_URL|stderr/i,
     );
   });
 

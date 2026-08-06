@@ -545,6 +545,13 @@ export function sanitizeEvidence(evidence: HarnessEvidence): HarnessEvidence {
   return out;
 }
 
+const LIFECYCLE_FAILURE_DIAGNOSTIC =
+  /(?:COMMANDER_MIGRATION_FAILED|COMMANDER_PROOF_FAILED) stage=[a-z0-9-]+ code=[A-Z0-9_]{2,80}/g;
+
+export function extractLifecycleFailureDiagnostics(logs: string): string[] {
+  return [...new Set(logs.match(LIFECYCLE_FAILURE_DIAGNOSTIC) ?? [])];
+}
+
 function runCmd(
   file: string,
   args: string[],
@@ -1284,6 +1291,19 @@ async function inspectLiveProofPod(release: string, imageDigest: string): Promis
   return true;
 }
 
+async function inspectLifecycleFailureDiagnostics(release: string): Promise<string[]> {
+  const selectors = [
+    `commander.io/migration-client-v2=true,commander.io/migration-release=${release}`,
+    `commander.io/tenant-authority-proof-reader=true,commander.io/tenant-authority-proof-release=${release}`,
+  ];
+  const results = await Promise.all(
+    selectors.map((selector) =>
+      kubectl(['logs', '-n', NAMESPACE, '-l', selector, '--all-containers=true', '--tail=100']),
+    ),
+  );
+  return extractLifecycleFailureDiagnostics(results.map(({ stdout }) => stdout).join('\n'));
+}
+
 async function runCutoverCommand(
   command: 'install' | 'enforce',
   release: string,
@@ -1326,14 +1346,29 @@ async function runCutoverCommand(
     });
   });
   let proofPodObserved = false;
+  const failureDiagnostics = new Set<string>();
+  let nextDiagnosticPollAt = 0;
   while (!finished) {
-    proofPodObserved = (await inspectLiveProofPod(release, digest)) || proofPodObserved;
+    const now = Date.now();
+    const shouldPollDiagnostics = now >= nextDiagnosticPollAt;
+    const [liveProofObserved, diagnostics] = await Promise.all([
+      inspectLiveProofPod(release, digest),
+      shouldPollDiagnostics ? inspectLifecycleFailureDiagnostics(release) : Promise.resolve([]),
+    ]);
+    proofPodObserved = liveProofObserved || proofPodObserved;
+    diagnostics.forEach((diagnostic) => failureDiagnostics.add(diagnostic));
+    if (shouldPollDiagnostics) nextDiagnosticPollAt = now + 500;
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
   await completion;
   if (exitCode !== 0) {
     const detail = Buffer.concat(stderr).toString('utf8').trim().slice(-4_000);
-    throw new Error(`HELM_TENANT_CUTOVER_FAILED${detail ? `: ${detail}` : ''}`);
+    const diagnosticDetail = [...failureDiagnostics].join(' ');
+    throw new Error(
+      `HELM_TENANT_CUTOVER_FAILED${detail ? `: ${detail}` : ''}${
+        diagnosticDetail ? ` ${diagnosticDetail}` : ''
+      }`,
+    );
   }
   if (requireLiveProofPod && !proofPodObserved) {
     throw new Error('LIVE_PROOF_POD_NOT_OBSERVED');

@@ -220,6 +220,18 @@ const IMAGE = /^sha256:[0-9a-f]{64}$/;
 const NAME = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
 const SECRET_KEY = /^[A-Za-z0-9._-]+$/;
 
+export type HelmCommandFailureStage = 'render' | 'post-render' | 'rollout';
+
+const HELM_COMMAND_FAILURE_CODES: Record<HelmCommandFailureStage, string> = {
+  render: 'TENANT_CUTOVER_HELM_RENDER_FAILED',
+  'post-render': 'TENANT_CUTOVER_HELM_POST_RENDER_FAILED',
+  rollout: 'TENANT_CUTOVER_HELM_ROLLOUT_FAILED',
+};
+
+export function helmCommandFailureDiagnostic(stage: HelmCommandFailureStage): string {
+  return `TENANT_CUTOVER_COMMAND_FAILED stage=${stage} code=${HELM_COMMAND_FAILURE_CODES[stage]}`;
+}
+
 function fail(code: string): never {
   throw new Error(code);
 }
@@ -1137,9 +1149,7 @@ function proofJobForRevision(input: {
     ? jsonRecord(proofToken.projected, 'TENANT_CUTOVER_PROOF_JOB_INVALID')
     : {};
   const tokenSources = Array.isArray(tokenProjection.sources)
-    ? tokenProjection.sources.map((value) =>
-        jsonRecord(value, 'TENANT_CUTOVER_PROOF_JOB_INVALID'),
-      )
+    ? tokenProjection.sources.map((value) => jsonRecord(value, 'TENANT_CUTOVER_PROOF_JOB_INVALID'))
     : [];
   const serviceAccountToken = tokenSources[0]
     ? jsonRecord(tokenSources[0].serviceAccountToken, 'TENANT_CUTOVER_PROOF_JOB_INVALID')
@@ -1155,18 +1165,14 @@ function proofJobForRevision(input: {
     ? jsonRecord(databaseCa.secret, 'TENANT_CUTOVER_PROOF_JOB_INVALID')
     : {};
   const databaseCaItems = Array.isArray(databaseCaSecret.items)
-    ? databaseCaSecret.items.map((value) =>
-        jsonRecord(value, 'TENANT_CUTOVER_PROOF_JOB_INVALID'),
-      )
+    ? databaseCaSecret.items.map((value) => jsonRecord(value, 'TENANT_CUTOVER_PROOF_JOB_INVALID'))
     : [];
   const apiProof = volumes.get('api-proof-public');
   const apiProofSecret = apiProof
     ? jsonRecord(apiProof.secret, 'TENANT_CUTOVER_PROOF_JOB_INVALID')
     : {};
   const apiProofItems = Array.isArray(apiProofSecret.items)
-    ? apiProofSecret.items.map((value) =>
-        jsonRecord(value, 'TENANT_CUTOVER_PROOF_JOB_INVALID'),
-      )
+    ? apiProofSecret.items.map((value) => jsonRecord(value, 'TENANT_CUTOVER_PROOF_JOB_INVALID'))
     : [];
   const podSecurity = jsonRecord(podSpec.securityContext, 'TENANT_CUTOVER_PROOF_JOB_INVALID');
   const containerSecurity = proofContainer
@@ -1177,10 +1183,7 @@ function proofJobForRevision(input: {
     'TENANT_CUTOVER_PROOF_JOB_INVALID',
   );
   const templateMetadata = jsonRecord(template.metadata, 'TENANT_CUTOVER_PROOF_JOB_INVALID');
-  const templateLabels = jsonRecord(
-    templateMetadata.labels,
-    'TENANT_CUTOVER_PROOF_JOB_INVALID',
-  );
+  const templateLabels = jsonRecord(templateMetadata.labels, 'TENANT_CUTOVER_PROOF_JOB_INVALID');
   const expectedProofLabels = {
     'app.kubernetes.io/name': input.projection.releaseName,
     'app.kubernetes.io/instance': input.projection.releaseName,
@@ -1206,13 +1209,17 @@ function proofJobForRevision(input: {
       (contract.readOnly ? mount.readOnly === true : mount.readOnly === undefined)
     );
   });
-  const exactApiProofItems = [...apiProofItems]
-    .sort((left, right) => String(left.path).localeCompare(String(right.path)));
+  const exactApiProofItems = [...apiProofItems].sort((left, right) =>
+    String(left.path).localeCompare(String(right.path)),
+  );
   if (
     !exactObjectKeys(job, ['apiVersion', 'kind', 'metadata', 'spec']) ||
-    !exactKeys(Object.keys(metadata), metadata.namespace === undefined
-      ? ['name', 'labels', 'annotations']
-      : ['name', 'namespace', 'labels', 'annotations']) ||
+    !exactKeys(
+      Object.keys(metadata),
+      metadata.namespace === undefined
+        ? ['name', 'labels', 'annotations']
+        : ['name', 'namespace', 'labels', 'annotations'],
+    ) ||
     !exactKeys(Object.keys(labels), [
       'app.kubernetes.io/name',
       'app.kubernetes.io/instance',
@@ -2580,9 +2587,7 @@ async function streamValuesToHelm(input: {
   );
   helm.stdin.end(input.values);
   try {
-    await Promise.all([
-      processResult(helm, 'TENANT_CUTOVER_COMMAND_FAILED'),
-    ]);
+    await Promise.all([processResult(helm, 'TENANT_CUTOVER_COMMAND_FAILED')]);
     if (requests !== 1) fail('TENANT_CUTOVER_RESTORE_SECRET_RENDER_INVALID');
   } finally {
     helm.kill();
@@ -2600,6 +2605,7 @@ async function runHelmPostRendered(
   const socketPath = join(socketDirectory, 'post-render.sock');
   const token = randomBytes(32).toString('hex');
   let requests = 0;
+  let failureStage: HelmCommandFailureStage = 'render';
   const server = createServer(async (request, response) => {
     try {
       const supplied = request.headers['x-commander-restore-token'];
@@ -2613,6 +2619,7 @@ async function runHelmPostRendered(
         fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
       }
       requests += 1;
+      failureStage = 'post-render';
       const manifest = await readBoundedStream(
         request,
         RESTORE_STREAM_LIMIT,
@@ -2621,6 +2628,7 @@ async function runHelmPostRendered(
       const rendered = await postRender(manifest);
       response.writeHead(200, { 'content-type': 'application/yaml' });
       response.end(rendered);
+      failureStage = 'rollout';
     } catch {
       response.writeHead(400);
       response.end();
@@ -2641,7 +2649,11 @@ async function runHelmPostRendered(
     { shell: false, stdio: ['ignore', 'ignore', 'ignore'] },
   );
   try {
-    await processResult(helm, 'TENANT_CUTOVER_COMMAND_FAILED');
+    try {
+      await processResult(helm, 'TENANT_CUTOVER_COMMAND_FAILED');
+    } catch {
+      throw new Error(helmCommandFailureDiagnostic(failureStage));
+    }
     if (requests !== 1) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
   } finally {
     helm.kill();
@@ -3541,38 +3553,42 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           request.projectionConfigMapName,
         );
         try {
-          await streamHelmRevisionRestore(request, {
-            readHelmBounded,
-            streamValuesToHelm: (input) =>
-              streamValuesToHelm({
-                ...input,
-                afterPostRender: async (manifest) => {
-                  assertProjectionConsumer(
-                    manifest,
-                    request.release,
-                    request.targetRevision,
-                    request.projectionConfigMapName,
-                  );
-                  const projection = projectHelmReleaseRevision({
-                    namespace: request.namespace,
-                    releaseName: request.release,
-                    revision: request.targetRevision,
-                    manifest,
-                    values: request.rendererValues,
-                  });
-                  await prepareReleaseProjectionConfigMap(command, {
-                    namespace: request.namespace,
-                    release: request.release,
-                    revision: request.targetRevision,
-                    name: request.projectionConfigMapName,
-                    projection,
-                  });
-                  projected = true;
-                },
-              }),
-          }, (payloads) => {
-            retainedSecrets = payloads;
-          });
+          await streamHelmRevisionRestore(
+            request,
+            {
+              readHelmBounded,
+              streamValuesToHelm: (input) =>
+                streamValuesToHelm({
+                  ...input,
+                  afterPostRender: async (manifest) => {
+                    assertProjectionConsumer(
+                      manifest,
+                      request.release,
+                      request.targetRevision,
+                      request.projectionConfigMapName,
+                    );
+                    const projection = projectHelmReleaseRevision({
+                      namespace: request.namespace,
+                      releaseName: request.release,
+                      revision: request.targetRevision,
+                      manifest,
+                      values: request.rendererValues,
+                    });
+                    await prepareReleaseProjectionConfigMap(command, {
+                      namespace: request.namespace,
+                      release: request.release,
+                      revision: request.targetRevision,
+                      name: request.projectionConfigMapName,
+                      projection,
+                    });
+                    projected = true;
+                  },
+                }),
+            },
+            (payloads) => {
+              retainedSecrets = payloads;
+            },
+          );
           if (!projected) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
           restoredOwner = { namespace: request.namespace, release: request.release };
         } finally {
