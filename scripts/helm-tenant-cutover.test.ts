@@ -17,6 +17,7 @@ import {
   createNodePorts,
   extractRetainedSecretPayloads,
   helmCommandFailureDiagnostic,
+  helmRolloutFailureCode,
   parsePostRendererInvocation,
   postRenderRetainedSecrets,
   streamHelmRevisionRestore,
@@ -1765,6 +1766,18 @@ data: { owner-url: ${payload} }
       diagnostics.join('\n'),
       /postgres(?:ql)?:|password|values|kind:\s*Secret|COMMANDER_OWNER_DATABASE_URL|stderr/i,
     );
+  });
+
+  it('classifies Helm stderr without returning raw command output', () => {
+    assert.equal(
+      helmRolloutFailureCode('UPGRADE FAILED: post-install hooks failed: secret=value'),
+      'TENANT_CUTOVER_HELM_POST_INSTALL_HOOK_FAILED',
+    );
+    assert.equal(
+      helmRolloutFailureCode('unable to build kubernetes objects from release manifest'),
+      'TENANT_CUTOVER_HELM_MANIFEST_INVALID',
+    );
+    assert.equal(helmRolloutFailureCode('postgres://owner:secret@database'), undefined);
   });
 
   it('records the chart-content digest in every Helm revision', () => {
