@@ -50,6 +50,9 @@ import type {
   PutKillSwitchInput,
   RemoveKillSwitchInput,
   OperationsReadiness,
+  ActionRequestBindingInput,
+  ActionRequestBindingResult,
+  CompleteActionRequestInput,
 } from '../types.js';
 import { OPERATIONS_HEARTBEAT_TTL_MS } from '../types.js';
 import { isClassAEffectType } from '@commander/contracts';
@@ -161,6 +164,10 @@ type InMemoryWorkerRecord = {
 };
 
 export class InMemoryKernelRepository implements KernelRepository {
+  private readonly actionRequests = new Map<
+    string,
+    { requestHash: string; responseStatus?: number; responseBody?: unknown }
+  >();
   private readonly runs = new Map<string, KernelRun>();
   private readonly steps = new Map<string, KernelStep>();
   private readonly effectsByKey = new Map<string, KernelEffect>();
@@ -328,6 +335,36 @@ export class InMemoryKernelRepository implements KernelRepository {
 
   async initialize(): Promise<void> {
     /* explicit no-op for tests */
+  }
+
+  async beginActionRequest(input: ActionRequestBindingInput): Promise<ActionRequestBindingResult> {
+    const key = `${input.tenantId}\u0000${input.idempotencyKey}`;
+    const existing = this.actionRequests.get(key);
+    if (!existing) {
+      this.actionRequests.set(key, { requestHash: input.requestHash });
+      return { state: 'STARTED' };
+    }
+    if (existing.requestHash !== input.requestHash) return { state: 'CONFLICT' };
+    if (existing.responseStatus === undefined) return { state: 'IN_PROGRESS' };
+    return {
+      state: 'REPLAY',
+      responseStatus: existing.responseStatus,
+      responseBody: clone(existing.responseBody),
+    };
+  }
+
+  async completeActionRequest(input: CompleteActionRequestInput): Promise<void> {
+    const key = `${input.tenantId}\u0000${input.idempotencyKey}`;
+    const existing = this.actionRequests.get(key);
+    if (!existing || existing.requestHash !== input.requestHash) {
+      throw new KernelInvariantError(
+        'ACTION_REQUEST_BINDING_INVALID',
+        'Action request binding changed',
+      );
+    }
+    if (existing.responseStatus !== undefined) return;
+    existing.responseStatus = input.responseStatus;
+    existing.responseBody = clone(input.responseBody);
   }
 
   /** Test helper: durable worker registry used by worker-mode claimNextStep. Returns claim secret. */

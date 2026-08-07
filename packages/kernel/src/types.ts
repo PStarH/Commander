@@ -617,6 +617,7 @@ export class KernelInvariantError extends Error {
       | 'INTERACTION_NOT_FOUND'
       | 'INTERACTION_ALREADY_ANSWERED'
       | 'STEP_NOT_FOUND'
+      | 'ACTION_REQUEST_BINDING_INVALID'
       | 'KILL_SWITCH_LOOKUP_FAILED',
     message: string,
   ) {
@@ -725,6 +726,29 @@ export interface KillSwitchMatchDims {
   tool?: string;
   destination?: string;
   effectType?: string;
+}
+
+// ── Action Gateway HTTP idempotency ────────────────────────────────────────
+
+export interface ActionRequestBindingInput {
+  tenantId: string;
+  idempotencyKey: string;
+  requestHash: string;
+}
+
+export type ActionRequestBindingResult =
+  | { state: 'STARTED' }
+  | { state: 'IN_PROGRESS' }
+  | { state: 'CONFLICT' }
+  | {
+      state: 'REPLAY';
+      responseStatus: number;
+      responseBody: unknown;
+    };
+
+export interface CompleteActionRequestInput extends ActionRequestBindingInput {
+  responseStatus: number;
+  responseBody: unknown;
 }
 
 // ── Outbox DLQ ──────────────────────────────────────────────────────────────

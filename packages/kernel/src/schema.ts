@@ -435,6 +435,22 @@ CREATE TABLE IF NOT EXISTS commander_action_kill_switches (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id, scope, value)
 );
+
+CREATE TABLE IF NOT EXISTS commander_action_requests (
+  tenant_id TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  request_hash TEXT NOT NULL CHECK (request_hash ~ '^[a-f0-9]{64}$'),
+  state TEXT NOT NULL CHECK (state IN ('IN_PROGRESS','COMPLETED')),
+  response_status INTEGER,
+  response_body JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at TIMESTAMPTZ,
+  PRIMARY KEY (tenant_id, idempotency_key),
+  CHECK (
+    (state = 'IN_PROGRESS' AND response_status IS NULL AND completed_at IS NULL)
+    OR (state = 'COMPLETED' AND response_status BETWEEN 100 AND 599 AND completed_at IS NOT NULL)
+  )
+);
 `;
 
 /**
@@ -473,6 +489,7 @@ export const TENANT_ID_TABLES = [
   'commander_capability_revocations',
   'commander_capability_replays',
   'commander_action_kill_switches',
+  'commander_action_requests',
   'commander_evidence_receipts',
 ] as const;
 
@@ -691,6 +708,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO co
 REVOKE INSERT, UPDATE, DELETE ON TABLE commander_workers FROM commander_worker;
 REVOKE INSERT, UPDATE, DELETE ON TABLE commander_effect_allowlist FROM commander_worker;
 REVOKE INSERT, UPDATE, DELETE ON TABLE commander_action_kill_switches FROM commander_worker;
+REVOKE INSERT, UPDATE, DELETE ON TABLE commander_action_requests FROM commander_worker;
 REVOKE INSERT, UPDATE, DELETE ON TABLE commander_tenant_execution_limits FROM commander_worker;
 REVOKE INSERT, UPDATE, DELETE ON TABLE commander_tenant_execution_control FROM commander_worker;
 REVOKE INSERT, UPDATE, DELETE ON TABLE commander_outbox_dlq FROM commander_worker;
