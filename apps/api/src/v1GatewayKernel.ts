@@ -133,6 +133,7 @@ export interface V1KernelGateway {
 
 export type { KernelRun } from '@commander/kernel';
 
+// codeql[js/insufficient-password-hash]: This helper hashes canonical request data and opaque IDs, not passwords.
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
