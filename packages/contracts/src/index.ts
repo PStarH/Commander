@@ -91,6 +91,20 @@ export type {
   GovernedActionV1,
 } from './effects.js';
 
+export {
+  isActionLearningRecordExportable,
+  validateActionLearningRecordV1,
+} from './actionLearning.js';
+export type {
+  ActionLearningApprovalOutcomeV1,
+  ActionLearningConsentV1,
+  ActionLearningDeletionStatusV1,
+  ActionLearningPolicyOutcomeV1,
+  ActionLearningReconciliationPathV1,
+  ActionLearningRecordV1,
+  ActionLearningRemoteOutcomeV1,
+} from './actionLearning.js';
+
 export { KERNEL_ERROR_CODES } from './errors.js';
 export type { KernelErrorCode, KernelErrorDetails } from './errors.js';
 export { isClassAEffectType } from './effectClassification.js';
