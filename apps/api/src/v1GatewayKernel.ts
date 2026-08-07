@@ -138,10 +138,7 @@ function sha256(value: string): string {
 }
 
 export function canonicalPrincipalDigest(value: string): string {
-  return createHmac(
-    'sha256',
-    process.env.COMMANDER_INTEGRITY_KEY ?? 'commander-canonical-digest',
-  )
+  return createHmac('sha256', process.env.COMMANDER_INTEGRITY_KEY ?? 'commander-canonical-digest')
     .update(value)
     .digest('hex');
 }
