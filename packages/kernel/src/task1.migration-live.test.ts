@@ -185,7 +185,9 @@ describe('Task 1 PostgreSQL migration history', { skip: !ownerUrl }, () => {
         upgraded.map(({ id, checksum }) => ({ id, checksum })),
       );
       assert.equal(
-        fresh.some(({ id }) => KERNEL_TASK1_POST_CLOSURE_MIGRATIONS.some((migration) => migration.id === id)),
+        fresh.some(({ id }) =>
+          KERNEL_TASK1_POST_CLOSURE_MIGRATIONS.some((migration) => migration.id === id),
+        ),
         false,
         'fresh baseline migration must not record post-closure repairs',
       );
@@ -280,7 +282,19 @@ describe('Task 1 PostgreSQL migration history', { skip: !ownerUrl }, () => {
             );
             assert.deepEqual(
               ledger.filter(({ id }) => id.startsWith('2026-08-05.1.')).map(({ id }) => id),
-              KERNEL_TASK1_POST_CLOSURE_MIGRATIONS.map(({ id }) => id),
+              KERNEL_TASK1_POST_CLOSURE_MIGRATIONS.filter(({ id }) =>
+                id.startsWith('2026-08-05.1.'),
+              ).map(({ id }) => id),
+            );
+            assert.equal(
+              await lifecyclePool
+                .query<{ enabled: boolean }>(
+                  `SELECT enabled
+                     FROM public.commander_tenant_authority_allowed_tenants
+                    WHERE tenant_id='commander/readiness/v1'`,
+                )
+                .then(({ rows }) => rows[0]?.enabled),
+              true,
             );
             assert.equal(
               ledger.some(

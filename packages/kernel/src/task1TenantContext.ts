@@ -802,3 +802,10 @@ GRANT EXECUTE ON FUNCTION public.bind_app_tenant_context(uuid),
   public.close_app_tenant_context(uuid)
   TO commander_app;
 `;
+
+/** Owner-only repair that makes the reserved readiness identity issuable after closure. */
+export const KERNEL_TASK1_READINESS_TENANT_SEED_SQL = `
+INSERT INTO public.commander_tenant_authority_allowed_tenants (tenant_id, enabled)
+VALUES ('commander/readiness/v1', true)
+ON CONFLICT (tenant_id) DO UPDATE SET enabled = true;
+`;

@@ -15,6 +15,7 @@ import {
   KERNEL_TASK1_API_OPERATIONS_READINESS_SQL,
   KERNEL_TASK1_AUTHENTICATED_TENANT_AUTHORITY_ENFORCE_SQL,
   KERNEL_TASK1_AUTHENTICATED_TENANT_AUTHORITY_EXPAND_SQL,
+  KERNEL_TASK1_READINESS_TENANT_SEED_SQL,
   KERNEL_TASK1_TENANT_CONTEXT_CLOCK_REPAIR_SQL,
 } from './task1TenantContext.js';
 import {
@@ -192,6 +193,8 @@ export const KERNEL_TASK1_CLOSURE_MIGRATION_CHECKSUMS = Object.freeze({
 export const KERNEL_TASK1_POST_CLOSURE_MIGRATION_CHECKSUMS = Object.freeze({
   '2026-08-05.1.task1_tenant_context_clock_monotonicity':
     '1c0abf04fede099ca65bb983d2b6b0eb443e0e065aebd02fe9d43ee40ceadf56',
+  '2026-08-06.1.task1_readiness_tenant_seed':
+    '81c6deafc83268e7207738a5cd715e6928e9b0f01cdb82be91f7580f8457105d',
 });
 
 export const KERNEL_TASK2_FORWARD_MIGRATION_CHECKSUMS = Object.freeze({
@@ -288,6 +291,10 @@ export const KERNEL_TASK1_POST_CLOSURE_MIGRATIONS: readonly KernelMigration[] = 
   task1PostClosureMigration(
     '2026-08-05.1.task1_tenant_context_clock_monotonicity',
     KERNEL_TASK1_TENANT_CONTEXT_CLOCK_REPAIR_SQL,
+  ),
+  task1PostClosureMigration(
+    '2026-08-06.1.task1_readiness_tenant_seed',
+    KERNEL_TASK1_READINESS_TENANT_SEED_SQL,
   ),
 ];
 
