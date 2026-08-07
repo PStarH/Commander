@@ -133,7 +133,8 @@ export interface V1KernelGateway {
 
 export type { KernelRun } from '@commander/kernel';
 
-// lgtm[js/insufficient-password-hash] canonicalValueHash is for request/evidence digests, not passwords.
+// lgtm[js/insufficient-password-hash]
+// codeql[js/insufficient-password-hash]: canonicalValueHash is not a password hash.
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
