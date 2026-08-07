@@ -35,3 +35,20 @@ REVOKE ALL ON TABLE public.commander_action_requests
   FROM commander_worker, commander_scheduler, commander_adapter_ops, commander_tenant_authority;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.commander_action_requests TO commander_app;
 `;
+
+export const KERNEL_ACTION_REQUEST_RECOVERY_SQL = `
+ALTER TABLE public.commander_action_requests
+  ADD COLUMN IF NOT EXISTS attempt_token text;
+ALTER TABLE public.commander_action_requests
+  ADD COLUMN IF NOT EXISTS lease_expires_at timestamptz;
+
+UPDATE public.commander_action_requests
+SET attempt_token = COALESCE(attempt_token, 'legacy:' || idempotency_key),
+    lease_expires_at = COALESCE(lease_expires_at, created_at)
+WHERE attempt_token IS NULL OR lease_expires_at IS NULL;
+
+ALTER TABLE public.commander_action_requests
+  ALTER COLUMN attempt_token SET NOT NULL;
+ALTER TABLE public.commander_action_requests
+  ALTER COLUMN lease_expires_at SET NOT NULL;
+`;
