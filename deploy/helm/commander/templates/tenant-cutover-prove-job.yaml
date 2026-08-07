@@ -74,7 +74,7 @@ spec:
             sources:
               - serviceAccountToken:
                   audience: commander-tenant-cutover-proof/v1
-                  expirationSeconds: 300
+                  expirationSeconds: 600
                   path: token
               - configMap:
                   name: kube-root-ca.crt
