@@ -309,7 +309,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
   override async beginActionRequest(
     input: ActionRequestBindingInput,
   ): Promise<ActionRequestBindingResult> {
-    return this.db.transaction(() => {
+    return this.db.transaction((): ActionRequestBindingResult => {
       const inserted = this.db
         .prepare(
           `INSERT OR IGNORE INTO commander_action_requests
