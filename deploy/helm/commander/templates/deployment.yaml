@@ -128,6 +128,8 @@ spec:
               value: /tmp/commander-api/agent-state.json
             - name: COMMANDER_ACTION_RATIONALE_FILE
               value: /tmp/commander-api/action-rationales.json
+            - name: API_RATE_LIMIT_DB_PATH
+              value: /tmp/commander-api/rate-limit.sqlite
             {{- if include "commander.postgresBackend" . }}
             - name: COMMANDER_MEMORY_STORE
               value: in-memory
