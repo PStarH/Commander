@@ -272,6 +272,9 @@ export type {
   KillSwitchScope,
   PutKillSwitchInput,
   RemoveKillSwitchInput,
+  ActionRequestBindingInput,
+  ActionRequestBindingResult,
+  CompleteActionRequestInput,
 } from './types.js';
 
 // Object storage (interface only — implementations are in testing/)
