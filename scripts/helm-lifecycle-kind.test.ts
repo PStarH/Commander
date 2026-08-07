@@ -171,6 +171,17 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.deepEqual(kubernetesApiEgress.spec.podSelector, ownerEgress.spec.podSelector);
     assert.deepEqual(kubernetesApiEgress.spec.egress, [
       {
+        to: [
+          {
+            namespaceSelector: {
+              matchLabels: { 'kubernetes.io/metadata.name': 'kube-system' },
+            },
+            podSelector: { matchLabels: { component: 'kube-apiserver' } },
+          },
+        ],
+        ports: [{ protocol: 'TCP', port: 6443 }],
+      },
+      {
         to: [{ ipBlock: { cidr: '10.96.0.1/32' } }],
         ports: [{ protocol: 'TCP', port: 443 }],
       },

@@ -390,6 +390,17 @@ export function buildLifecycleStableNetworkPolicies(input: {
       policyTypes: ['Egress'],
       egress: [
         {
+          to: [
+            {
+              namespaceSelector: {
+                matchLabels: { 'kubernetes.io/metadata.name': 'kube-system' },
+              },
+              podSelector: { matchLabels: { component: 'kube-apiserver' } },
+            },
+          ],
+          ports: [{ protocol: 'TCP', port: 6443 }],
+        },
+        {
           to: [{ ipBlock: { cidr: `${input.kubernetesApiServiceIp}/32` } }],
           ports: [{ protocol: 'TCP', port: 443 }],
         },
