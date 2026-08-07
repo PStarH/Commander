@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import express, { type Request, type Response, type Router } from 'express';
 import {
   evaluateManifestGatewayEffect,
@@ -26,6 +27,7 @@ import type { KillSwitchMatchDims } from './v1GatewayKernel';
 
 const ACTION_GATEWAY_AUTHORITY = 'commander.action-gateway/v1';
 const ACTION_POLICY_SNAPSHOT = 'action-gateway-mvp-v1';
+const ACTION_REQUEST_STALE_AFTER_MS = 30_000;
 
 function configuredEvidenceJwks(): EvidenceJwks | null {
   const raw = process.env.COMMANDER_EVIDENCE_JWKS_JSON?.trim();
@@ -132,6 +134,10 @@ export interface ActionSimulation extends ActionDecision {
 
 type GatewayStep = NonNullable<Awaited<ReturnType<V1KernelGateway['getStep']>>>;
 type GatewayEffect = NonNullable<Awaited<ReturnType<V1KernelGateway['getEffect']>>>;
+type GatewayInteraction = Awaited<ReturnType<V1KernelGateway['listInteractions']>>[number];
+type GatewayCompensationAuthorization = NonNullable<
+  Awaited<ReturnType<V1KernelGateway['getCompensationAuthorization']>>
+>;
 
 export function projectCanonicalActionState(input: {
   decisionEffect: ActionDecision['effect'];
@@ -461,6 +467,27 @@ async function persistSimulation(
   }
 }
 
+function matchesDurableSimulation(run: KernelRun, simulation: ActionSimulation): boolean {
+  const durableSimulation = run.metadata.actionGatewaySimulation;
+  return (
+    run.id === simulation.simulationId &&
+    run.workGraphVersion === 'action-gateway-simulation/v1' &&
+    run.policySnapshotId === simulation.policySnapshotId &&
+    typeof durableSimulation === 'object' &&
+    durableSimulation !== null &&
+    canonicalValueHash(durableSimulation) === canonicalValueHash(simulation)
+  );
+}
+
+function matchesCompensationAuthorizationIgnoringExpiry(
+  left: GatewayCompensationAuthorization,
+  right: GatewayCompensationAuthorization,
+): boolean {
+  const { expiresAt: _leftExpiresAt, ...leftBinding } = left;
+  const { expiresAt: _rightExpiresAt, ...rightBinding } = right;
+  return canonicalValueHash(leftBinding) === canonicalValueHash(rightBinding);
+}
+
 function parseActionMetadata(run: KernelRun): ActionGatewayMetadata | null {
   const value = run.metadata.actionGateway;
   if (!value || typeof value !== 'object') return null;
@@ -532,6 +559,30 @@ async function renderAction(
   };
 }
 
+function renderApprovedActionSnapshot(
+  run: KernelRun,
+  metadata: ActionGatewayMetadata,
+  interaction: GatewayInteraction & { answeredAt: string },
+) {
+  return {
+    runId: run.id,
+    stepId: metadata.stepId,
+    effectId: metadata.effectId,
+    state: projectCanonicalActionState({
+      decisionEffect: metadata.decision.effect,
+      approval: true,
+      runState: 'PENDING',
+      stepState: 'RETRY_WAIT',
+    }),
+    decision: metadata.decision,
+    simulation: metadata.simulation,
+    actionDigest: metadata.actionDigest,
+    policySnapshotId: metadata.policySnapshotId,
+    createdAt: run.createdAt,
+    updatedAt: interaction.answeredAt,
+  };
+}
+
 function invalidRequest(res: Response, error: z.ZodError) {
   return res.status(400).json({
     error: { code: 'INVALID_REQUEST', details: error.issues },
@@ -542,6 +593,74 @@ function actionNotFound(res: Response) {
   return res.status(404).json({
     error: { code: 'ACTION_NOT_FOUND', message: 'Action was not found.' },
   });
+}
+
+function actionRequestRecoveryConflict(res: Response, message: string) {
+  return res.status(409).json({
+    error: { code: 'ACTION_REQUEST_RECOVERY_CONFLICT', message },
+  });
+}
+
+function actionRequestRecoveryUnprovable(res: Response, message: string) {
+  // Absence is not a terminal fact while the superseded handler may still finish.
+  // Return the uncertainty to this caller without poisoning all future queries.
+  res.locals.actionRequestLeaveInProgress = true;
+  return res.status(409).json({
+    error: { code: 'ACTION_REQUEST_RECOVERY_UNPROVABLE', message },
+  });
+}
+
+function actionRequestPrincipalBinding(req: Request) {
+  if (req.user) {
+    return {
+      kind: 'user' as const,
+      id: req.user.id,
+      role: req.user.role,
+    };
+  }
+  return {
+    kind: 'api-key' as const,
+    id: req.apiKeyId!,
+    scopes: [...(req.apiScopes ?? [])].sort(),
+  };
+}
+
+function preflightActionRequestAuthority(req: Request, res: Response): boolean {
+  if (
+    (req.method === 'PUT' || req.method === 'DELETE') &&
+    /^\/kill-switches\/[^/]+\/[^/]+$/.test(req.path)
+  ) {
+    return requiredKillSwitchManager(req, res) !== null;
+  }
+  if (req.method !== 'POST') return true;
+  if (
+    /^\/[^/]+\/(approve|reject)$/.test(req.path) ||
+    /^\/[^/]+\/compensations\/[^/]+\/approve$/.test(req.path)
+  ) {
+    return requiredApprover(req, res) !== null;
+  }
+  if (/^\/[^/]+\/reconcile$/.test(req.path)) {
+    return requiredReconcileAuthority(req, res) !== null;
+  }
+  return true;
+}
+
+function isStaleActionRequestTakeover(res: Response): boolean {
+  return res.locals.actionRequestTakeover === true;
+}
+
+function supportsStaleActionRequestTakeover(req: Request): boolean {
+  if (req.method === 'PUT') return /^\/kill-switches\/[^/]+\/[^/]+$/.test(req.path);
+  if (req.method === 'DELETE') return /^\/kill-switches\/[^/]+\/[^/]+$/.test(req.path);
+  if (req.method !== 'POST') return false;
+  return (
+    req.path === '/' ||
+    req.path === '/simulate' ||
+    /^\/[^/]+\/(approve|reject)$/.test(req.path) ||
+    /^\/[^/]+\/compensations$/.test(req.path) ||
+    /^\/[^/]+\/compensations\/[^/]+\/approve$/.test(req.path) ||
+    /^\/[^/]+\/reconcile$/.test(req.path)
+  );
 }
 
 export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway | null): Router {
@@ -559,6 +678,7 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
     ) {
       return next();
     }
+    if (!preflightActionRequestAuthority(req, res)) return;
     const kernel = resolveKernel();
     if (!kernel) return next();
     if (!kernel.beginActionRequest || !kernel.completeActionRequest) {
@@ -573,14 +693,20 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
       method: req.method,
       path: req.originalUrl.split('?')[0],
       body: req.body ?? null,
+      principal: actionRequestPrincipalBinding(req),
     });
+    const bindingInput = {
+      tenantId,
+      idempotencyKey: key,
+      requestHash,
+      attemptToken: randomUUID(),
+      now: new Date(),
+      staleAfterMs: ACTION_REQUEST_STALE_AFTER_MS,
+      allowStaleTakeover: supportsStaleActionRequestTakeover(req),
+    };
     let binding: Awaited<ReturnType<NonNullable<V1KernelGateway['beginActionRequest']>>>;
     try {
-      binding = await kernel.beginActionRequest({
-        tenantId,
-        idempotencyKey: key,
-        requestHash,
-      });
+      binding = await kernel.beginActionRequest(bindingInput);
     } catch {
       return res.status(503).json({
         error: {
@@ -610,15 +736,15 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
       if (binding.responseStatus === 204) return res.send();
       return res.json(binding.responseBody);
     }
+    res.locals.actionRequestTakeover = binding.state === 'TAKEOVER';
 
     const originalJson = res.json.bind(res);
     const originalSend = res.send.bind(res);
     let completing = false;
     const complete = async (body: unknown): Promise<void> => {
+      if (res.locals.actionRequestLeaveInProgress === true) return;
       await kernel.completeActionRequest!({
-        tenantId,
-        idempotencyKey: key,
-        requestHash,
+        ...bindingInput,
         responseStatus: res.statusCode,
         responseBody: body ?? null,
       });
@@ -699,6 +825,17 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
       });
     }
     try {
+      if (isStaleActionRequestTakeover(res)) {
+        const current = (await kernel.listKillSwitches(tenantId)).find(
+          (entry) => entry.scope === scopeParsed.data && entry.value === value,
+        );
+        return actionRequestRecoveryUnprovable(
+          res,
+          current
+            ? 'The current kill-switch row cannot prove which request last wrote it.'
+            : 'The missing kill-switch row cannot prove the original update response.',
+        );
+      }
       const killSwitch = await kernel.putKillSwitch({
         tenantId,
         scope: scopeParsed.data,
@@ -736,11 +873,23 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
         },
       });
     }
+    const value = decodeURIComponent(req.params.value);
     try {
+      if (isStaleActionRequestTakeover(res)) {
+        const stillPresent = (await kernel.listKillSwitches(tenantId)).some(
+          (entry) => entry.scope === scopeParsed.data && entry.value === value,
+        );
+        return actionRequestRecoveryUnprovable(
+          res,
+          stillPresent
+            ? 'The current kill-switch row cannot prove whether the original delete completed.'
+            : 'The missing kill-switch row cannot prove which request deleted it.',
+        );
+      }
       await kernel.removeKillSwitch({
         tenantId,
         scope: scopeParsed.data,
-        value: decodeURIComponent(req.params.value),
+        value,
       });
       return res.status(204).send();
     } catch {
@@ -768,8 +917,35 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
       });
     }
     const envelope: ActionEnvelope = { tenantId, ...parsed.data };
-    if (await rejectIfKillSwitchActive(kernel, envelope, res)) return;
     const simulation = buildSimulation(envelope);
+    if (isStaleActionRequestTakeover(res)) {
+      let durableRun = await kernel.getRun(simulation.simulationId, tenantId);
+      if (durableRun) {
+        if (!matchesDurableSimulation(durableRun, simulation)) {
+          return actionRequestRecoveryConflict(
+            res,
+            'The durable simulation does not match the original request.',
+          );
+        }
+        if (durableRun.state === 'PENDING') {
+          durableRun =
+            (await kernel.cancelRun(durableRun.id, tenantId, actor(req))) ??
+            (await kernel.getRun(durableRun.id, tenantId));
+        }
+        if (durableRun?.state !== 'CANCELLED') {
+          return actionRequestRecoveryConflict(
+            res,
+            'The durable simulation audit run is not in its completed state.',
+          );
+        }
+        return res.json({ simulation });
+      }
+      return actionRequestRecoveryUnprovable(
+        res,
+        'No durable simulation audit run proves the original response.',
+      );
+    }
+    if (await rejectIfKillSwitchActive(kernel, envelope, res)) return;
     await persistSimulation(kernel, envelope, simulation, actor(req));
     // Simulation is preview-only: always 200 with the decision (including deny).
     return res.json({ simulation });
@@ -794,52 +970,99 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
     }
 
     const envelope: ActionEnvelope = { tenantId, ...parsed.data };
-    if (await rejectIfKillSwitchActive(kernel, envelope, res)) return;
-    if (isClassAEffectType(envelope.effectType)) {
-      try {
-        const readiness = await kernel.getOperationsReadiness(tenantId);
-        if (!readiness.ready) {
-          return res.status(503).json({
-            error: {
-              code: 'OPERATIONS_NOT_READY',
-              message: 'Required reconciliation and compensation drains are unavailable.',
-              details: readiness,
-            },
-          });
-        }
-        const evidenceReadiness = kernel.getEvidenceRepositoryAvailability
-          ? await kernel.getEvidenceRepositoryAvailability()
-          : { ready: false };
-        if (!evidenceReadiness.ready) {
-          return res.status(503).json({
-            error: {
-              code: 'OPERATIONS_NOT_READY',
-              message: 'Required operations and evidence repository are unavailable.',
-              details: {
-                operations: readiness,
-                evidenceRepository: { ready: false },
-              },
-            },
-          });
-        }
-      } catch {
-        return res.status(503).json({
-          error: {
-            code: 'OPERATIONS_NOT_READY',
-            message: 'Operations readiness could not be verified.',
-            details: { evidenceRepository: { ready: false } },
-          },
-        });
-      }
-    }
     const simulation = buildSimulation(envelope);
+    if (isStaleActionRequestTakeover(res)) {
+      const recoveredRunId = deriveGatewayRunId(tenantId, envelope.idempotencyKey);
+      const recovered = await loadAction(kernel, recoveredRunId, tenantId);
+      if (recovered) {
+        if (
+          canonicalValueHash(recovered.metadata.envelope) !== canonicalValueHash(envelope) ||
+          canonicalValueHash(recovered.metadata.simulation) !== canonicalValueHash(simulation)
+        ) {
+          return actionRequestRecoveryConflict(
+            res,
+            'The durable action run does not match the original proposal.',
+          );
+        }
+        return res
+          .status(200)
+          .location(`/v1/actions/${recovered.run.id}`)
+          .json({
+            action: await renderAction(kernel, recovered.run, recovered.metadata),
+            idempotentReplay: true,
+          });
+      }
+      let durableSimulation = await kernel.getRun(simulation.simulationId, tenantId);
+      if (!durableSimulation) {
+        return actionRequestRecoveryUnprovable(
+          res,
+          'No durable simulation proves that the original proposal passed its preconditions.',
+        );
+      }
+      if (!matchesDurableSimulation(durableSimulation, simulation)) {
+        return actionRequestRecoveryConflict(
+          res,
+          'The durable simulation does not match the original proposal.',
+        );
+      }
+      if (durableSimulation.state === 'PENDING') {
+        durableSimulation =
+          (await kernel.cancelRun(durableSimulation.id, tenantId, actor(req))) ??
+          (await kernel.getRun(durableSimulation.id, tenantId));
+      }
+      if (durableSimulation?.state !== 'CANCELLED') {
+        return actionRequestRecoveryConflict(
+          res,
+          'The durable proposal simulation is not in its completed state.',
+        );
+      }
+    } else {
+      if (await rejectIfKillSwitchActive(kernel, envelope, res)) return;
+      if (isClassAEffectType(envelope.effectType)) {
+        try {
+          const readiness = await kernel.getOperationsReadiness(tenantId);
+          if (!readiness.ready) {
+            return res.status(503).json({
+              error: {
+                code: 'OPERATIONS_NOT_READY',
+                message: 'Required reconciliation and compensation drains are unavailable.',
+                details: readiness,
+              },
+            });
+          }
+          const evidenceReadiness = kernel.getEvidenceRepositoryAvailability
+            ? await kernel.getEvidenceRepositoryAvailability()
+            : { ready: false };
+          if (!evidenceReadiness.ready) {
+            return res.status(503).json({
+              error: {
+                code: 'OPERATIONS_NOT_READY',
+                message: 'Required operations and evidence repository are unavailable.',
+                details: {
+                  operations: readiness,
+                  evidenceRepository: { ready: false },
+                },
+              },
+            });
+          }
+        } catch {
+          return res.status(503).json({
+            error: {
+              code: 'OPERATIONS_NOT_READY',
+              message: 'Operations readiness could not be verified.',
+              details: { evidenceRepository: { ready: false } },
+            },
+          });
+        }
+      }
+      await persistSimulation(kernel, envelope, simulation, actor(req));
+    }
     const decision: ActionDecision = {
       effect: simulation.effect,
       decisionId: simulation.decisionId,
       reason: simulation.reason,
       policySnapshotId: simulation.policySnapshotId,
     };
-    await persistSimulation(kernel, envelope, simulation, actor(req));
     if (decision.effect === 'deny') {
       const runId = deriveGatewayRunId(tenantId, envelope.idempotencyKey);
       return res.status(403).json({
@@ -990,33 +1213,64 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
         },
       });
     }
+    const approvalResponse = {
+      approved: true,
+      actionDigest: parsed.data.actionDigest,
+      simulationId: parsed.data.simulationId,
+      policySnapshotId: parsed.data.policySnapshotId,
+      reviewer,
+      runId: loaded.run.id,
+      tenantId,
+    };
     const interactions = await kernel.listInteractions(loaded.run.id, tenantId);
-    const interaction = interactions.find(
-      (item) => item.id === loaded.metadata.interactionId && item.status === 'pending',
+    const existingInteraction = interactions.find(
+      (item) => item.id === loaded.metadata.interactionId,
     );
-    if (!interaction) {
+    if (isStaleActionRequestTakeover(res) && existingInteraction?.status === 'answered') {
+      if (
+        !existingInteraction.response ||
+        canonicalValueHash(existingInteraction.response) !== canonicalValueHash(approvalResponse)
+      ) {
+        return res.status(409).json({
+          error: { code: 'ACTION_ALREADY_REVIEWED', message: 'This action was already reviewed.' },
+        });
+      }
+      if (!existingInteraction.answeredAt) {
+        return actionRequestRecoveryConflict(
+          res,
+          'The durable approval is missing its response timestamp.',
+        );
+      }
+      return res.json({
+        action: renderApprovedActionSnapshot(loaded.run, loaded.metadata, {
+          ...existingInteraction,
+          answeredAt: existingInteraction.answeredAt,
+        }),
+      });
+    }
+    if (existingInteraction?.status !== 'pending') {
       return res.status(409).json({
         error: { code: 'ACTION_ALREADY_REVIEWED', message: 'This action was already reviewed.' },
       });
     }
-    await kernel.answerInteraction({
-      interactionId: interaction.id,
+    const answeredInteraction = await kernel.answerInteraction({
+      interactionId: existingInteraction.id,
       runId: loaded.run.id,
       tenantId,
-      response: {
-        approved: true,
-        actionDigest: parsed.data.actionDigest,
-        simulationId: parsed.data.simulationId,
-        policySnapshotId: parsed.data.policySnapshotId,
-        reviewer,
-        runId: loaded.run.id,
-        tenantId,
-      },
+      response: approvalResponse,
       actor: reviewer,
     });
-    const current = await kernel.getRun(loaded.run.id, tenantId);
+    if (!answeredInteraction.answeredAt) {
+      return actionRequestRecoveryConflict(
+        res,
+        'The durable approval is missing its response timestamp.',
+      );
+    }
     return res.json({
-      action: await renderAction(kernel, current!, loaded.metadata),
+      action: renderApprovedActionSnapshot(loaded.run, loaded.metadata, {
+        ...answeredInteraction,
+        answeredAt: answeredInteraction.answeredAt,
+      }),
     });
   });
 
@@ -1047,31 +1301,58 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
         },
       });
     }
+    const rejectionResponse = {
+      approved: false,
+      reviewer,
+      ...(parsed.data.reason ? { reason: parsed.data.reason } : {}),
+    };
     const interactions = await kernel.listInteractions(loaded.run.id, tenantId);
-    const interaction = interactions.find(
-      (item) => item.id === loaded.metadata.interactionId && item.status === 'pending',
+    const existingInteraction = interactions.find(
+      (item) => item.id === loaded.metadata.interactionId,
     );
-    if (!interaction) {
+    const recoveredRejection =
+      isStaleActionRequestTakeover(res) &&
+      existingInteraction?.status === 'answered' &&
+      existingInteraction.response &&
+      canonicalValueHash(existingInteraction.response) === canonicalValueHash(rejectionResponse);
+    if (
+      isStaleActionRequestTakeover(res) &&
+      existingInteraction?.status === 'answered' &&
+      !recoveredRejection
+    ) {
       return res.status(409).json({
         error: { code: 'ACTION_ALREADY_REVIEWED', message: 'This action was already reviewed.' },
       });
     }
-    await kernel.answerInteraction({
-      interactionId: interaction.id,
-      runId: loaded.run.id,
-      tenantId,
-      response: {
-        approved: false,
-        reviewer,
-        ...(parsed.data.reason ? { reason: parsed.data.reason } : {}),
-      },
-      actor: reviewer,
-      releaseStep: false,
-    });
-    await kernel.cancelRun(loaded.run.id, tenantId, reviewer);
-    const current = await kernel.getRun(loaded.run.id, tenantId);
+    if (!recoveredRejection) {
+      if (existingInteraction?.status !== 'pending') {
+        return res.status(409).json({
+          error: { code: 'ACTION_ALREADY_REVIEWED', message: 'This action was already reviewed.' },
+        });
+      }
+      await kernel.answerInteraction({
+        interactionId: existingInteraction.id,
+        runId: loaded.run.id,
+        tenantId,
+        response: rejectionResponse,
+        actor: reviewer,
+        releaseStep: false,
+      });
+    }
+    let current = await kernel.getRun(loaded.run.id, tenantId);
+    if (current?.state !== 'CANCELLED') {
+      current =
+        (await kernel.cancelRun(loaded.run.id, tenantId, reviewer)) ??
+        (await kernel.getRun(loaded.run.id, tenantId));
+    }
+    if (current?.state !== 'CANCELLED') {
+      return actionRequestRecoveryConflict(
+        res,
+        'The durable rejection did not reach the terminal cancelled run state.',
+      );
+    }
     return res.json({
-      action: await renderAction(kernel, current!, loaded.metadata),
+      action: await renderAction(kernel, current, loaded.metadata),
     });
   });
 
@@ -1154,29 +1435,16 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
       adapterVersion: parsed.data.adapterVersion,
       actionDigest,
     }).slice(0, 40)}`;
-    const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+    const existingAuthorization = await kernel.getCompensationAuthorization(
+      authorizationId,
+      tenantId,
+    );
+    const expiresAt =
+      existingAuthorization?.expiresAt ?? new Date(Date.now() + 10 * 60_000).toISOString();
     const approvalInteractionId =
       decision.effect === 'require_approval'
         ? `interaction_${canonicalValueHash({ authorizationId, actionDigest }).slice(0, 40)}`
         : undefined;
-    if (approvalInteractionId) {
-      const existing = (await kernel.listInteractions(loaded.run.id, tenantId)).find(
-        (interaction) => interaction.id === approvalInteractionId,
-      );
-      if (!existing) {
-        await kernel.createInteraction(
-          {
-            id: approvalInteractionId,
-            runId: loaded.run.id,
-            stepId: loaded.metadata.stepId,
-            tenantId,
-            prompt: `Approve compensation authorization ${authorizationId}`,
-            expiresAt: new Date(expiresAt),
-          },
-          actor(req),
-        );
-      }
-    }
     const authorization = {
       id: authorizationId,
       tenantId,
@@ -1194,7 +1462,40 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
       ...(approvalInteractionId ? { approvalInteractionId } : {}),
     };
     try {
-      const persisted = await kernel.createCompensationAuthorization(authorization);
+      let persisted: Awaited<ReturnType<V1KernelGateway['createCompensationAuthorization']>>;
+      try {
+        persisted = await kernel.createCompensationAuthorization(authorization);
+      } catch (error) {
+        const concurrentlyPersisted = await kernel.getCompensationAuthorization(
+          authorizationId,
+          tenantId,
+        );
+        if (
+          !concurrentlyPersisted ||
+          !matchesCompensationAuthorizationIgnoringExpiry(concurrentlyPersisted, authorization)
+        ) {
+          throw error;
+        }
+        persisted = { authorization: concurrentlyPersisted, replayed: true };
+      }
+      if (approvalInteractionId) {
+        const existing = (await kernel.listInteractions(loaded.run.id, tenantId)).find(
+          (interaction) => interaction.id === approvalInteractionId,
+        );
+        if (!existing) {
+          await kernel.createInteraction(
+            {
+              id: approvalInteractionId,
+              runId: loaded.run.id,
+              stepId: loaded.metadata.stepId,
+              tenantId,
+              prompt: `Approve compensation authorization ${authorizationId}`,
+              expiresAt: new Date(persisted.authorization.expiresAt),
+            },
+            actor(req),
+          );
+        }
+      }
       if (decision.effect === 'require_approval') {
         return res.status(202).json({
           authorization: persisted.authorization,
@@ -1249,22 +1550,36 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
     ) {
       return res.status(409).json({ error: { code: 'APPROVAL_BINDING_MISMATCH' } });
     }
-    const interaction = await kernel.answerInteraction({
-      interactionId: authorization.approvalInteractionId,
-      runId: loaded.run.id,
-      tenantId,
-      response: {
-        approved: true,
-        approvedBy: approver,
-        authorizationId: authorization.id,
-        originalEffectId: authorization.originalEffectId,
-        actionDigest: authorization.actionDigest,
-        policyDecisionId: authorization.policyDecisionId,
-        policySnapshotId: authorization.policySnapshotId,
-      },
-      actor: approver,
-      releaseStep: false,
-    });
+    const approvalResponse = {
+      approved: true,
+      approvedBy: approver,
+      authorizationId: authorization.id,
+      originalEffectId: authorization.originalEffectId,
+      actionDigest: authorization.actionDigest,
+      policyDecisionId: authorization.policyDecisionId,
+      policySnapshotId: authorization.policySnapshotId,
+    };
+    const existingInteraction = (await kernel.listInteractions(loaded.run.id, tenantId)).find(
+      (item) => item.id === authorization.approvalInteractionId,
+    );
+    let interaction;
+    if (existingInteraction?.status === 'answered') {
+      if (
+        canonicalValueHash(existingInteraction.response) !== canonicalValueHash(approvalResponse)
+      ) {
+        return res.status(409).json({ error: { code: 'ACTION_ALREADY_REVIEWED' } });
+      }
+      interaction = existingInteraction;
+    } else {
+      interaction = await kernel.answerInteraction({
+        interactionId: authorization.approvalInteractionId,
+        runId: loaded.run.id,
+        tenantId,
+        response: approvalResponse,
+        actor: approver,
+        releaseStep: false,
+      });
+    }
     const result = await kernel.requestCompensation({
       tenantId,
       authorizationId: authorization.id,
