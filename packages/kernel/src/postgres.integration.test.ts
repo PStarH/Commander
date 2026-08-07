@@ -570,6 +570,105 @@ describe('PostgresKernelRepository integration', () => {
   });
 
   it(
+    'takes over stale action requests and fences the superseded attempt',
+    { skip: !databaseUrl },
+    async () => {
+      if (!databaseUrl) return;
+      const ownerPool = new Pool({ connectionString: databaseUrl, max: 2 });
+      await runKernelMigrations(ownerPool);
+      await ensureRoleLogin(ownerPool, 'commander_app', appPassword);
+      await ensureRoleLogin(ownerPool, 'commander_tenant_authority', tenantAuthorityPassword);
+      const { appPool, tenantAuthorityPool, createRepository } =
+        createEnforcedAppContext(databaseUrl);
+      const repository = createRepository();
+      const suffix = `${Date.now()}-${process.pid}`;
+      const tenantId = `action-takeover-${suffix}`;
+      const request = {
+        tenantId,
+        idempotencyKey: `action-key-${suffix}`,
+        requestHash: 'c'.repeat(64),
+        attemptToken: `attempt-original-${suffix}`,
+        now: new Date(),
+        staleAfterMs: 30_000,
+        allowStaleTakeover: true,
+      };
+      const takeoverAttemptToken = `attempt-takeover-${suffix}`;
+
+      try {
+        await seedTenantAuthorityAllowedTenants(ownerPool, [tenantId]);
+
+        assert.deepEqual(await repository.beginActionRequest(request), { state: 'STARTED' });
+        assert.deepEqual(
+          await repository.beginActionRequest({
+            ...request,
+            attemptToken: `attempt-active-retry-${suffix}`,
+            now: new Date('2099-01-01T00:00:00.000Z'),
+          }),
+          { state: 'IN_PROGRESS' },
+        );
+
+        await ownerPool.query(
+          `UPDATE commander_action_requests
+              SET lease_expires_at = clock_timestamp() - interval '1 second'
+            WHERE tenant_id = $1 AND idempotency_key = $2`,
+          [tenantId, request.idempotencyKey],
+        );
+
+        assert.deepEqual(
+          await repository.beginActionRequest({
+            ...request,
+            attemptToken: takeoverAttemptToken,
+            now: new Date(),
+          }),
+          { state: 'TAKEOVER' },
+        );
+        assert.deepEqual(
+          await repository.beginActionRequest({
+            ...request,
+            attemptToken: `attempt-competing-takeover-${suffix}`,
+            now: new Date(),
+          }),
+          { state: 'IN_PROGRESS' },
+        );
+
+        await assert.rejects(
+          repository.completeActionRequest({
+            ...request,
+            responseStatus: 202,
+            responseBody: { stale: true },
+          }),
+          (error) =>
+            error instanceof KernelInvariantError && error.code === 'ACTION_REQUEST_BINDING_FENCED',
+        );
+        await repository.completeActionRequest({
+          ...request,
+          attemptToken: takeoverAttemptToken,
+          now: new Date(),
+          responseStatus: 202,
+          responseBody: { recovered: true },
+        });
+        assert.deepEqual(
+          await repository.beginActionRequest({
+            ...request,
+            attemptToken: `attempt-replay-${suffix}`,
+            now: new Date(),
+          }),
+          { state: 'REPLAY', responseStatus: 202, responseBody: { recovered: true } },
+        );
+      } finally {
+        await ownerPool.query(
+          'DELETE FROM commander_action_requests WHERE tenant_id = $1 AND idempotency_key = $2',
+          [tenantId, request.idempotencyKey],
+        );
+        await cleanupTenantTestState(ownerPool, [tenantId]);
+        await tenantAuthorityPool.end();
+        await appPool.end();
+        await ownerPool.end();
+      }
+    },
+  );
+
+  it(
     'runs checksummed migrations, enforces worker generation fencing, and preserves tenant isolation',
     { skip: !databaseUrl || !workerDatabaseUrl },
     async () => {
