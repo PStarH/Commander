@@ -1,17 +1,183 @@
-import { describe, it, expect } from 'vitest';
-import { MCPServer, createFetchActionGatewayExecutor, type Tool } from '@commander/core';
+import { beforeEach, describe, it, expect } from 'vitest';
+import {
+  MCPServer,
+  createFetchActionGatewayExecutor,
+  resetGuardianAgent,
+  type Tool,
+} from '@commander/core';
 import {
   assertActionGatewayConfigured,
   createStdioMcpServer,
   isEnterpriseOrProductionMcpMode,
+  isLocalRuntimeEnabled,
   startStdioServer,
+  type McpActionGatewayExecutor,
 } from '../src/stdioServer';
 import { run } from '../src/cli';
 import { MCP_PROTOCOL_VERSION } from '@commander/core';
 
+beforeEach(() => {
+  resetGuardianAgent();
+});
+
 describe('createStdioMcpServer', () => {
-  it('advertises Commander tools and model-router tools by default', () => {
+  const canonicalActionTools = [
+    'commander_action_approve',
+    'commander_action_compensation_approve',
+    'commander_action_compensation_request',
+    'commander_action_evidence',
+    'commander_action_get',
+    'commander_action_propose',
+    'commander_action_reconcile',
+    'commander_action_simulate',
+  ];
+
+  it('advertises only canonical Action Gateway tools by default', () => {
     const { server, status } = createStdioMcpServer();
+
+    expect(
+      server
+        .listTools()
+        .map((tool) => tool.name)
+        .sort(),
+    ).toEqual(canonicalActionTools);
+    expect(status.enterpriseWrites).toBe(true);
+  });
+
+  it('maps every canonical action tool to the Action Gateway', async () => {
+    const calls: Parameters<McpActionGatewayExecutor['request']>[0][] = [];
+    const executor: McpActionGatewayExecutor = {
+      request: async (request) => {
+        calls.push(request);
+        return { action: { runId: 'run-42', state: 'PROPOSED' } };
+      },
+    };
+    const { server } = createStdioMcpServer({ actionGatewayExecutor: executor });
+    const envelope = {
+      source: 'mcp',
+      package: 'commander.mcp',
+      model: 'mcp-default',
+      tool: 'ticket.create',
+      destination: 'demo://tickets',
+      effectType: 'demo.ticket.create',
+      args: { title: 'hello' },
+      idempotencyKey: 'mcp-action-0001',
+    };
+    const approval = {
+      runId: 'run/42',
+      idempotencyKey: 'mcp-approve-0001',
+      actionDigest: 'a'.repeat(64),
+      simulationId: 'simulation-42',
+      policySnapshotId: 'policy-42',
+    };
+    const compensation = {
+      runId: 'run/42',
+      idempotencyKey: 'mcp-compensation-0001',
+      originalEffectId: 'effect-42',
+      adapterVersion: 'demo.adapter.v1',
+      compensationEffectType: 'compensate.demo.ticket.create',
+      compensationPatch: { ticketId: 'ticket-42' },
+      forwardReceiptHash: 'b'.repeat(64),
+    };
+    const compensationApproval = {
+      runId: 'run/42',
+      authorizationId: 'authorization-42',
+      idempotencyKey: 'mcp-compensation-approve-0001',
+      actionDigest: 'c'.repeat(64),
+      policySnapshotId: 'policy-42',
+    };
+    const cases = [
+      ['commander_action_simulate', envelope],
+      ['commander_action_propose', envelope],
+      ['commander_action_get', { runId: 'run/42' }],
+      ['commander_action_approve', approval],
+      ['commander_action_compensation_request', compensation],
+      ['commander_action_compensation_approve', compensationApproval],
+      ['commander_action_reconcile', { runId: 'run/42', idempotencyKey: 'mcp-reconcile-0001' }],
+      ['commander_action_evidence', { runId: 'run/42' }],
+    ] as const;
+
+    for (const [name, args] of cases) {
+      resetGuardianAgent();
+      const response = await server.handleRequest({
+        jsonrpc: '2.0',
+        id: name,
+        method: 'tools/call',
+        params: { name, arguments: args },
+      });
+      expect(response.error).toBeUndefined();
+    }
+
+    expect(calls).toEqual([
+      {
+        method: 'POST',
+        path: '/v1/actions/simulate',
+        body: envelope,
+        headers: { 'Idempotency-Key': 'mcp-action-0001' },
+      },
+      {
+        method: 'POST',
+        path: '/v1/actions',
+        body: envelope,
+        headers: { 'Idempotency-Key': 'mcp-action-0001' },
+      },
+      { method: 'GET', path: '/v1/actions/run%2F42' },
+      {
+        method: 'POST',
+        path: '/v1/actions/run%2F42/approve',
+        body: {
+          actionDigest: 'a'.repeat(64),
+          simulationId: 'simulation-42',
+          policySnapshotId: 'policy-42',
+        },
+        headers: { 'Idempotency-Key': 'mcp-approve-0001' },
+      },
+      {
+        method: 'POST',
+        path: '/v1/actions/run%2F42/compensations',
+        body: {
+          originalEffectId: 'effect-42',
+          adapterVersion: 'demo.adapter.v1',
+          compensationEffectType: 'compensate.demo.ticket.create',
+          compensationPatch: { ticketId: 'ticket-42' },
+          forwardReceiptHash: 'b'.repeat(64),
+        },
+        headers: { 'Idempotency-Key': 'mcp-compensation-0001' },
+      },
+      {
+        method: 'POST',
+        path: '/v1/actions/run%2F42/compensations/authorization-42/approve',
+        body: { actionDigest: 'c'.repeat(64), policySnapshotId: 'policy-42' },
+        headers: { 'Idempotency-Key': 'mcp-compensation-approve-0001' },
+      },
+      {
+        method: 'POST',
+        path: '/v1/actions/run%2F42/reconcile',
+        headers: { 'Idempotency-Key': 'mcp-reconcile-0001' },
+      },
+      { method: 'GET', path: '/v1/actions/run%2F42/evidence' },
+    ]);
+  });
+
+  it('requires the explicit local-runtime gate for all legacy tools', () => {
+    const gatewayOnly = createStdioMcpServer({ allowDangerousTools: true });
+    expect(
+      gatewayOnly.server
+        .listTools()
+        .map((tool) => tool.name)
+        .sort(),
+    ).toEqual(canonicalActionTools);
+
+    const localOnly = createStdioMcpServer({ localRuntime: true });
+    const localNames = localOnly.server.listTools().map((tool) => tool.name);
+    expect(localNames).toContain('execute_agent');
+    expect(localNames).toContain('list_models');
+    expect(localNames).not.toContain('commander_action_propose');
+    expect(localOnly.status.enterpriseWrites).toBe(false);
+  });
+
+  it('advertises Commander tools and model-router tools by default', () => {
+    const { server, status } = createStdioMcpServer({ localRuntime: true });
     const tools = server.listTools();
     expect(tools.length).toBeGreaterThan(0);
     expect(status.tools.length).toBe(tools.length);
@@ -21,13 +187,13 @@ describe('createStdioMcpServer', () => {
   });
 
   it('modelRouterOnly mode only registers the three model-router tools', () => {
-    const { server } = createStdioMcpServer({ modelRouterOnly: true });
+    const { server } = createStdioMcpServer({ modelRouterOnly: true, localRuntime: true });
     const tools = server.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(['execute_agent', 'list_models', 'route_task']);
   });
 
   it('initialize returns the shared MCP protocol version', async () => {
-    const { server } = createStdioMcpServer({ modelRouterOnly: true });
+    const { server } = createStdioMcpServer({ modelRouterOnly: true, localRuntime: true });
     const response = await server.handleRequest({
       jsonrpc: '2.0',
       id: 1,
@@ -47,7 +213,7 @@ describe('createStdioMcpServer', () => {
   });
 
   it('tools/list returns the registered tools', async () => {
-    const { server } = createStdioMcpServer({ modelRouterOnly: true });
+    const { server } = createStdioMcpServer({ modelRouterOnly: true, localRuntime: true });
     const response = await server.handleRequest({
       jsonrpc: '2.0',
       id: 2,
@@ -63,7 +229,7 @@ describe('createStdioMcpServer', () => {
   });
 
   it('tools/call invokes execute_agent', async () => {
-    const { server } = createStdioMcpServer({ modelRouterOnly: true });
+    const { server } = createStdioMcpServer({ modelRouterOnly: true, localRuntime: true });
     const response = await server.handleRequest({
       jsonrpc: '2.0',
       id: 3,
@@ -80,7 +246,11 @@ describe('createStdioMcpServer', () => {
   });
 
   it('status reflects server metadata', () => {
-    const { status } = createStdioMcpServer({ name: 'custom-mcp', version: '1.2.3' });
+    const { status } = createStdioMcpServer({
+      name: 'custom-mcp',
+      version: '1.2.3',
+      localRuntime: true,
+    });
     expect(status.name).toBe('custom-mcp');
     expect(status.version).toBe('1.2.3');
     expect(status.protocolVersion).toBe(MCP_PROTOCOL_VERSION);
@@ -136,6 +306,7 @@ describe('createStdioMcpServer', () => {
   it('keeps list_models local when an action gateway executor is configured', async () => {
     const { server } = createStdioMcpServer({
       modelRouterOnly: true,
+      localRuntime: true,
       actionGatewayExecutor: {
         proposeAction: async () => {
           throw new Error('action gateway should not be called for list_models');
@@ -189,7 +360,7 @@ describe('createStdioMcpServer', () => {
 
 describe('startStdioServer', () => {
   it('returns a stop function', () => {
-    const { stop, server } = startStdioServer({ modelRouterOnly: true });
+    const { stop, server } = startStdioServer({ modelRouterOnly: true, localRuntime: true });
     expect(typeof stop).toBe('function');
     expect(server.listTools().length).toBe(3);
     stop();
@@ -277,6 +448,17 @@ describe('action gateway guards', () => {
     expect(() =>
       assertActionGatewayConfigured({ NODE_ENV: 'test', COMMANDER_ACTION_GATEWAY_URL: undefined }),
     ).not.toThrow();
+  });
+
+  it('only enables local tools with the explicit development gate', () => {
+    expect(isLocalRuntimeEnabled(undefined, { COMMANDER_MCP_LOCAL_RUNTIME: '1' })).toBe(true);
+    expect(isLocalRuntimeEnabled(undefined, { COMMANDER_MCP_LOCAL_RUNTIME: '0' })).toBe(false);
+    expect(
+      isLocalRuntimeEnabled(undefined, {
+        COMMANDER_MCP_LOCAL_RUNTIME: '1',
+        COMMANDER_PROFILE: 'enterprise',
+      }),
+    ).toBe(false);
   });
 
   it('refuses --allow-dangerous-tools without COMMANDER_ACTION_GATEWAY_URL', () => {

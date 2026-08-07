@@ -1,8 +1,8 @@
 /**
- * V2 Cross-Tenant Live-Fire Attack Tests
+ * V2 Cross-Tenant Isolation Protocol Tests (in-memory)
  *
- * These tests execute real attack scenarios against the kernel's tenant
- * isolation defenses — not just metadata verification.
+ * These tests exercise attack scenarios against the in-memory kernel's tenant
+ * isolation protocol — not real PostgreSQL, HTTP, or worker infrastructure.
  *
  * Attack vectors tested:
  *   1. Cross-tenant run read (TENANT-005: audit log bypass)
@@ -54,11 +54,24 @@ function createRunCommand(
   };
 }
 
-describe('V2 Cross-Tenant Live-Fire — Kernel Tenant Isolation', () => {
+describe('V2 Cross-Tenant Isolation Protocol — In-Memory Kernel', () => {
   let kernel: InMemoryKernelRepository;
 
   beforeEach(() => {
     kernel = new InMemoryKernelRepository();
+    const registeredAt = new Date(Date.now() - 1_000);
+    const heartbeat = new Date();
+    for (const [workerId, capability] of [
+      ['ops-reconcile', 'effect.reconcile'],
+      ['ops-compensate', 'effect.compensate'],
+    ] as const) {
+      kernel.seedTestWorker(workerId, [TENANT_A, TENANT_B], 1, {
+        capabilities: [capability],
+        identitySubject: 'db:commander_adapter_ops',
+        registeredAt,
+        lastHeartbeatAt: heartbeat,
+      });
+    }
   });
 
   // ── 1. Cross-tenant run read (TENANT-005: audit log bypass) ──
@@ -206,9 +219,7 @@ describe('V2 Cross-Tenant Live-Fire — Kernel Tenant Isolation', () => {
   // ── 7. Cross-tenant interaction hijack (TENANT-001: data access) ──
 
   it('rejects cross-tenant interaction: tenant B cannot answer tenant A interaction', async () => {
-    const cmd = createRunCommand(TENANT_A, [
-      { kind: 'agent', initialState: 'WAITING_FOR_HUMAN' },
-    ]);
+    const cmd = createRunCommand(TENANT_A, [{ kind: 'agent', initialState: 'WAITING_FOR_HUMAN' }]);
     const run = await kernel.createRun(cmd, 'gateway');
     const stepId = cmd.steps[0]!.id;
 

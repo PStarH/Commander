@@ -3,12 +3,15 @@
  * P0 full loop: start Gateway (API dist) + mock worker, submit /v1/runs, wait for terminal.
  *
  * Requires:
- *   - Postgres with kernel migrations reachable via DATABASE_URL
+ *   - PostgreSQL with kernel migrations reachable via a verified TLS DSN
+ *     (`?sslmode=verify-full`, `COMMANDER_DATABASE_TLS_CA_FILE`, and
+ *     `COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256`)
+ *   - `AUTH_FAILURE_REDIS_URL` for the production API auth-failure authority
  *   - Built apps/api/dist and packages (worker-plane, kernel, core)
  *
  * Usage:
- *   export DATABASE_URL=postgres://commander:commander@127.0.0.1:5433/commander
- *   export COMMANDER_KERNEL_DATABASE_URL=$DATABASE_URL
+ *   pnpm p0:full-loop:tls
+ *   # Or invoke directly after exporting the verified TLS/Redis variables:
  *   pnpm p0:full-loop
  *
  * Exit: 0 terminal success, 2 config, 3 timeout/non-success, 1 error
@@ -17,8 +20,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { resolve } from 'node:path';
-import { Pool } from 'pg';
 import { runKernelMigrations, seedWorkerAllowedTenants } from '@commander/kernel';
+import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const PORT = Number(process.env.P0_PORT ?? 4012);
@@ -65,7 +68,7 @@ async function waitHealth(ms: number): Promise<void> {
 
 async function main(): Promise<void> {
   log('migrate kernel schema');
-  const pool = new Pool({ connectionString: DB, max: 2 });
+  const pool = createVerifiedPostgresPool({ connectionString: DB, max: 2 });
   const appPassword = `p0-${randomUUID()}`;
   const workerPassword = `p0-${randomUUID()}`;
   try {

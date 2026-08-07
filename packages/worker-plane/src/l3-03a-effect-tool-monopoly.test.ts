@@ -284,7 +284,7 @@ describe('L3-03a ToolStepExecutor production monopoly', () => {
       () => executor.execute(step, { signal: ac.signal, worker: createMockWorker() }),
       (err: unknown) =>
         err instanceof WorkerExecutionError &&
-        err.options.code === 'EFFECT_EXECUTION_FAILED' &&
+        err.options.code === 'POLICY_DENIED' &&
         err.message === 'POLICY_DENIED',
     );
   });

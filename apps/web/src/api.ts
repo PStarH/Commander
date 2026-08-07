@@ -3,8 +3,6 @@ import type {
   WarRoomSnapshot,
   ProjectMemoryItem,
   MemoryOverview,
-  CreateMissionPayload,
-  CreateLogPayload,
   MemoryKindFilter,
   ConfidenceReport,
   CostSummary,
@@ -277,53 +275,6 @@ export async function fetchMemoryItems(filters?: {
 
 export async function fetchMemoryOverview(): Promise<MemoryOverview> {
   return apiFetch<MemoryOverview>(`/projects/${PROJECT_ID}/memory/overview`);
-}
-
-export async function createMission(payload: CreateMissionPayload): Promise<void> {
-  await apiFetch<void>(`/projects/${PROJECT_ID}/missions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-}
-
-export async function updateMissionStatus(missionId: string, status: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/missions/${missionId}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status }),
-  });
-  if (!response.ok) {
-    const message = await readError(response, 'Failed to update mission');
-    if (response.status === 409 && message.includes('requires approval')) {
-      throw new ApprovalRequiredError('该任务在 MANUAL 治理模式下，完成前需要在指挥台中走审批流。');
-    }
-    throw new Error(message);
-  }
-}
-
-export async function approveMission(missionId: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/missions/${missionId}/approve`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-  });
-  if (!response.ok) throw new Error(await readError(response, 'Failed to approve mission'));
-}
-
-export async function createLog(missionId: string, payload: CreateLogPayload): Promise<void> {
-  const response = await fetch(`${API_BASE}/missions/${missionId}/logs`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) throw new Error(await readError(response, 'Failed to write log'));
-}
-
-export class ApprovalRequiredError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ApprovalRequiredError';
-  }
 }
 
 export async function fetchMissionConfidence(missionId: string): Promise<ConfidenceReport> {
@@ -622,7 +573,7 @@ export async function fetchLineage(runId: string): Promise<LineageSummaryRespons
 }
 
 // ============================================================================
-// Security Posture — real compliance report from GET /api/security/posture
+// Security Posture — self-assessed posture report from GET /api/security/posture
 // ============================================================================
 
 export async function fetchSecurityPosture(): Promise<ComplianceAuditReport> {
@@ -742,69 +693,6 @@ export async function fetchApprovalConfig(): Promise<UnifiedApprovalConfig> {
     throw new Error(await readError(response, 'Failed to load approval config'));
   }
   return response.json() as Promise<UnifiedApprovalConfig>;
-}
-
-export async function updateSandboxMode(
-  mode: ApprovalSandboxMode,
-): Promise<{ status: string; mode: ApprovalSandboxMode; description: string }> {
-  const response = await fetch(`${API_BASE}/api/approval/sandbox-mode`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode }),
-  });
-  if (!response.ok) {
-    throw new Error(await readError(response, 'Failed to update sandbox mode'));
-  }
-  return response.json() as Promise<{
-    status: string;
-    mode: ApprovalSandboxMode;
-    description: string;
-  }>;
-}
-
-export type ToolPolicyUpdate = Partial<
-  Pick<ToolPolicy, 'level' | 'riskLevel' | 'description' | 'autoApproveIf'>
->;
-
-export async function updateToolPolicy(
-  pattern: string,
-  updates: ToolPolicyUpdate,
-): Promise<{ status: string; policy: ToolPolicy }> {
-  const response = await fetch(`${API_BASE}/api/approval/policy/${encodeURIComponent(pattern)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(updates),
-  });
-  if (!response.ok) {
-    throw new Error(await readError(response, 'Failed to update tool policy'));
-  }
-  return response.json() as Promise<{ status: string; policy: ToolPolicy }>;
-}
-
-export async function addToolPolicy(
-  policy: ToolPolicy,
-): Promise<{ status: string; policy: ToolPolicy }> {
-  const response = await fetch(`${API_BASE}/api/approval/policy`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(policy),
-  });
-  if (!response.ok) {
-    throw new Error(await readError(response, 'Failed to add tool policy'));
-  }
-  return response.json() as Promise<{ status: string; policy: ToolPolicy }>;
-}
-
-export async function removeToolPolicy(
-  pattern: string,
-): Promise<{ status: string; pattern: string }> {
-  const response = await fetch(`${API_BASE}/api/approval/policy/${encodeURIComponent(pattern)}`, {
-    method: 'DELETE',
-  });
-  if (!response.ok) {
-    throw new Error(await readError(response, 'Failed to remove tool policy'));
-  }
-  return response.json() as Promise<{ status: string; pattern: string }>;
 }
 
 export async function fetchApprovalAuditLog(

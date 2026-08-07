@@ -1,0 +1,415 @@
+{
+  "schema": "legacy-authority-allowlist/v2",
+  "entries": [
+    {
+      "path": "apps/api/src/approvalConfigEndpoints.ts",
+      "sourceSha256": "858f278d276cdf63103a6ce79bbfbc0424691f18478a597772ee560728b989db",
+      "callersSha256": "14912c925b2d28f442e5db7d6fe6ff20acd7ca25a2c47a9ec8beb893b8e815b9",
+      "owner": "@commander/api",
+      "reason": "Legacy approval configuration mutation pending authority split",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "versioned kernel approval policy authority",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "apps/api/src/chatEndpoints.ts",
+      "sourceSha256": "7037ce44f9f026889038abe827e35bdd9042fb3e1efb867fdc46c580f4365697",
+      "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "owner": "@commander/api",
+      "reason": "Legacy chat route executes the in-process runtime pending Action Gateway migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "POST /v1/runs",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "apps/api/src/governanceEndpoints.ts",
+      "sourceSha256": "78792f7db1b6e30e1cc33b8874c9fd58a4ace29772cae1d08917c005839add0a",
+      "callersSha256": "14912c925b2d28f442e5db7d6fe6ff20acd7ca25a2c47a9ec8beb893b8e815b9",
+      "owner": "@commander/api",
+      "reason": "Legacy governance evidence mutation pending kernel evidence API",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "kernel evidence authority",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "apps/api/src/memoryIndexEndpoints.ts",
+      "sourceSha256": "88295c8dea109f2a07f0c84be2ca591bb8f287f7c38a313087f27d52dabe2162",
+      "callersSha256": "14912c925b2d28f442e5db7d6fe6ff20acd7ca25a2c47a9ec8beb893b8e815b9",
+      "owner": "@commander/api",
+      "reason": "Legacy memory reconcile mutation pending canonical effect admission",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "Action Gateway effect admission",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "apps/api/src/orchestratorEndpoints.ts",
+      "sourceSha256": "f9ce3911b72dee7ad0d0d8ea3f3c424811d9a38a0d4c40a8548ff8d94f1a054c",
+      "callersSha256": "14912c925b2d28f442e5db7d6fe6ff20acd7ca25a2c47a9ec8beb893b8e815b9",
+      "owner": "@commander/api",
+      "reason": "Legacy in-process orchestrator pending gateway migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "POST /v1/runs with WorkGraph",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "apps/api/src/pauseEndpoints.ts",
+      "sourceSha256": "c0a357cb417433c2d4bb6561da5d7da308466c0f3ce5ee92278f52edcc5c6fcb",
+      "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "owner": "@commander/api",
+      "reason": "Legacy pause and resume routes execute the in-process runtime pending kernel migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "POST /v1/runs lifecycle operations",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "apps/api/src/pipelineEndpoints.ts",
+      "sourceSha256": "684ac4fc0a4ccc82dc97d5e7639d4b25e5ce953610951c8d9901c2726de849f2",
+      "callersSha256": "14912c925b2d28f442e5db7d6fe6ff20acd7ca25a2c47a9ec8beb893b8e815b9",
+      "owner": "@commander/api",
+      "reason": "Legacy pipeline route executes the sequential runtime pending Action Gateway migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "POST /v1/runs with WorkGraph",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "apps/api/src/projectEndpoints.ts",
+      "sourceSha256": "76c20f59ddf9dae6b5f7734d682aa8c9c55de888c6ceb87a4917ef7e3f040bf1",
+      "callersSha256": "8277ca41a337a638f4d13499d2bfbad71b8fd5e2efb1c5ac6ec600a93a97884b",
+      "owner": "@commander/api",
+      "reason": "Legacy mission and approval store mutations pending kernel migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "kernel mission and approval authority",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "apps/api/src/sagaEndpoints.ts",
+      "sourceSha256": "04c6cc951da33522201fc39345e87741588b515b5b484440b1eb448dfcf78749",
+      "callersSha256": "14912c925b2d28f442e5db7d6fe6ff20acd7ca25a2c47a9ec8beb893b8e815b9",
+      "owner": "@commander/api",
+      "reason": "Legacy saga run controls pending gateway migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "POST /v1/runs lifecycle operations",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "apps/api/src/sequentialExecutor.ts",
+      "sourceSha256": "cd179034d318f27a0da8a321be7abdeaae459caf97370645c14225495224734c",
+      "callersSha256": "6d0505641617d27a25a595dd26786e176253b51da242a2633422b9942e39e06e",
+      "owner": "@commander/api",
+      "reason": "Legacy sequential runtime construction pending worker migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "POST /v1/runs and worker-plane",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "apps/api/src/store.ts",
+      "sourceSha256": "297d4494c758e9b77747fe8ef4c8c1e1439a4dc5217c237c0856b6aeec984e47",
+      "callersSha256": "f930cf996441b7bcd8b85161e951c18e518ccc61e7a0c65e5163124f9b0c4006",
+      "owner": "@commander/api",
+      "reason": "Legacy WarRoom write store pending kernel projection migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "kernel projections",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "apps/api/src/v2/v2BenchEndpoints.ts",
+      "sourceSha256": "3becd6c84d7bfb8e8731cdee3a1adf5de31bfd8453e78e9595706489005e9aa8",
+      "callersSha256": "14912c925b2d28f442e5db7d6fe6ff20acd7ca25a2c47a9ec8beb893b8e815b9",
+      "owner": "@commander/api",
+      "reason": "Legacy benchmark run batch route pending gateway migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "POST /v1/runs",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "packages/core/src/agentLoop.ts",
+      "sourceSha256": "4cf60946c85bbc7ee197c0524d40b5bb99abfabc10105c74f04933e792292107",
+      "callersSha256": "f5f66d55f8412a38ada231ecc178a1063b57cd0508f25f22ce70a87fc5b055de",
+      "owner": "@commander/core",
+      "reason": "Legacy local agent loop pending worker-plane migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "worker-plane agent loop",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "packages/core/src/atr/runLedger.ts",
+      "sourceSha256": "d23ce57414bc32c18bad0bffd42d3f3af513a4ef9ce8cd98645c5aee075c4161",
+      "callersSha256": "3efb8f6b5e0c111e0f144ef34eb5bead2da866c2931dea94bee2c348002409e5",
+      "owner": "@commander/core",
+      "reason": "Legacy local run ledger pending kernel repository migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "kernel run repository",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "packages/core/src/atr/taskQueue.ts",
+      "sourceSha256": "7ca9cb7558e38907ececc786cf14591cf03766166e725e8d70809e341e998bdf",
+      "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "owner": "@commander/core",
+      "reason": "Legacy local task queue pending worker-plane migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "kernel task queue and worker-plane",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "packages/core/src/atr/workerPool.ts",
+      "sourceSha256": "d825a9b887f47dbf053059dfed1f99b0e8e5047ec0eba9ec377d24ebc3c85eb6",
+      "callersSha256": "b21dddeb5011b0591f5aaea171a4e10f11d52375aa5344b7556060939127030a",
+      "owner": "@commander/core",
+      "reason": "Legacy local run claimant pending worker-plane migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "worker-plane claim authority",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "packages/core/src/cli/commands/_shared.ts",
+      "sourceSha256": "122d18a2c35284d7a973a9c49412146cc45e1e1e9f83b223a38b8ffb90145554",
+      "callersSha256": "b89d7ca13edbb273493c9400eabeeba35f7cdec42b3963c69f640a52e6757359",
+      "owner": "@commander/core",
+      "reason": "Legacy local CLI runtime factory pending gateway client migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "ActionGatewayClient",
+      "disposition": "migrate-to-readonly"
+    },
+    {
+      "path": "packages/core/src/cli/commands/core.ts",
+      "sourceSha256": "3ceebe0ae0b96c47186ee6a60b7bbbc3e899d2cf9137b0e3bcb90bdda8681ef4",
+      "callersSha256": "7c86a09c11a8f402fbee5e32d19423d6fb5cb091c5f06d11eab42e182c3e247d",
+      "owner": "@commander/core",
+      "reason": "Legacy local CLI orchestration pending gateway client migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "ActionGatewayClient",
+      "disposition": "migrate-to-readonly"
+    },
+    {
+      "path": "packages/core/src/cli/commands/small-features.ts",
+      "sourceSha256": "bcefaf511ca2e8c5a449ded5626c31745bd16e4774c31efdb4f248e025c86b7c",
+      "callersSha256": "c7ed60b8797ffa17dbfd0185601e7b2a7d253e5c07fa995ae0e6b08ca5c90b90",
+      "owner": "@commander/core",
+      "reason": "Legacy local CLI runtime commands pending gateway client migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "ActionGatewayClient",
+      "disposition": "migrate-to-readonly"
+    },
+    {
+      "path": "packages/core/src/cli/commands/up.ts",
+      "sourceSha256": "ee71baaf1490b79b123a7cb71617b67b96a1fca07c33d0a801ceb29309eb072c",
+      "callersSha256": "c7ed60b8797ffa17dbfd0185601e7b2a7d253e5c07fa995ae0e6b08ca5c90b90",
+      "owner": "@commander/core",
+      "reason": "Legacy local CLI runtime startup pending gateway client migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "ActionGatewayClient",
+      "disposition": "migrate-to-readonly"
+    },
+    {
+      "path": "packages/core/src/cli/commands/workflow.ts",
+      "sourceSha256": "bd181784d2c7fb764dbb9953bd503f15f4c77be890784082da09bdaf36079ce2",
+      "callersSha256": "c7ed60b8797ffa17dbfd0185601e7b2a7d253e5c07fa995ae0e6b08ca5c90b90",
+      "owner": "@commander/core",
+      "reason": "Legacy local CLI workflow runtime pending gateway client migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "ActionGatewayClient",
+      "disposition": "migrate-to-readonly"
+    },
+    {
+      "path": "packages/core/src/commander/factory.ts",
+      "sourceSha256": "5015ff724999668e91827b0e38e3045e5740f3fe0f430653ed82a1dd21b5d7de",
+      "callersSha256": "29df7c4b382098d0606f8b9bb6b7443722941d7d015c0ac694a74b091e81e101",
+      "owner": "@commander/core",
+      "reason": "Legacy public runtime factory retained for local compatibility",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "ActionGatewayClient",
+      "disposition": "migrate-to-readonly"
+    },
+    {
+      "path": "packages/core/src/runtime/finallyCleanupHandler.ts",
+      "sourceSha256": "ce568dc4cee9bb6a5bb06d9b7b200b9d741bd02ea5bb6c749063332037bf9bd3",
+      "callersSha256": "748e2913a89ec5c60ef54664bc980235b239f77bc65ae2c24328dd337ee6ee5b",
+      "owner": "@commander/core",
+      "reason": "Legacy runtime cleanup mutation pending kernel lifecycle migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "kernel lifecycle authority",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "packages/core/src/runtime/httpServer.ts",
+      "sourceSha256": "bfa26bfdd34de62c730e4697c1c1c440524f90cf95adbebb59ba089c4c14001e",
+      "callersSha256": "993a5c0932f0a9347c4044a38d2c7fe943bc3e4c9f082cf39e69a427829fe4c0",
+      "owner": "@commander/core",
+      "reason": "Legacy local runtime HTTP server retained for compatibility",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "Action Gateway API",
+      "disposition": "migrate-to-readonly"
+    },
+    {
+      "path": "packages/core/src/runtime/runtimeFactory.ts",
+      "sourceSha256": "7e9a4e637214819722959c74409c02dd832ff38479fddd2b4f8f7b5d64342e38",
+      "callersSha256": "bcea602caaefeb22115113aa8245a8c6c89eb8d99d8b517a6e0eb5e6dd97c09f",
+      "owner": "@commander/core",
+      "reason": "Legacy runtime factory pending worker-plane migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "worker-plane runtime factory",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "packages/core/src/runtime/sideEffectGate.ts",
+      "sourceSha256": "7442c3607e118daf0bf044e864c69fd0195bfbb43365363af64f60f2d54e0a60",
+      "callersSha256": "faf8d6a6e172d798836fe276c24f346474b39e87230029cb9bf37923ba5292fa",
+      "owner": "@commander/core",
+      "reason": "Legacy side-effect approval mutation pending effect broker migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "effect-broker approval authority",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "packages/core/src/saga/checkpointManager.ts",
+      "sourceSha256": "a572d4228210650e0e275a7f9ab81d1bf8343846352bd4685551392acddba98c",
+      "callersSha256": "b16de1f424e256286b8ab4e5d8a5daf8b6f44f605f34b3c93f0e00f608cf5823",
+      "owner": "@commander/core",
+      "reason": "Legacy saga evidence mutation pending kernel evidence migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "kernel evidence authority",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "packages/core/src/saga/sagaCoordinator.ts",
+      "sourceSha256": "8ef0cc9748c7e591b8165eeb0b3b04a4a49c0f9ab009ed0931fa61856cbf541d",
+      "callersSha256": "c9efb80bc85881ebed361f3f66b9bfe7205d353f73dbd1d09a9c9d3860b1fa93",
+      "owner": "@commander/core",
+      "reason": "Legacy saga runtime construction pending gateway migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "POST /v1/runs lifecycle operations",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "packages/core/src/telos/telosOrchestrator.ts",
+      "sourceSha256": "75c15e209a90dd36cd868b0a148f6ae59f862df090021d3a294ccfeaaa3c3735",
+      "callersSha256": "1ea1732f1653f2384d77d1172ee219d6aa6de38401122126f44a4a9ad9acaecf",
+      "owner": "@commander/core",
+      "reason": "Legacy orchestrator runtime construction pending worker migration",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "worker-plane agent loop",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "packages/python-sdk/src/commander/_client.py",
+      "sourceSha256": "52548a05c7a0f2d76e262c6e68d1be1ef79156d371229892ae0399f077438e52",
+      "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "owner": "@commander/python-sdk",
+      "reason": "Python SDK still exposes legacy write clients pending generated Action Gateway conformance",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "generated /v1 Action Gateway client",
+      "disposition": "migrate-to-readonly"
+    },
+    {
+      "path": "scripts/authority-closure-proof.ts",
+      "sourceSha256": "0baef28fef8f27fd3a238e872be11e88b7fbf605ac554a7887244b4c76b1cf76",
+      "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "owner": "repository-operations",
+      "reason": "Live closure proof intentionally seeds challenged kernel rows",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "Task 1 owner command and challenged proof API",
+      "disposition": "remove"
+    },
+    {
+      "path": "scripts/bench-worker-claim-throughput.ts",
+      "sourceSha256": "a0a045335be1e7b25c5ad99ae32d4520c482a38e61d5db99ee256892b04a538c",
+      "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "owner": "repository-benchmarks",
+      "reason": "Non-production benchmark intentionally exercises legacy claim path",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "worker-plane claim benchmark",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "scripts/benchmark-gaia.ts",
+      "sourceSha256": "4bdc2d57a7ffe13b397e6de540cb5d78a155c27207fdd29de535722e4b797035",
+      "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "owner": "repository-benchmarks",
+      "reason": "Non-production benchmark constructs the legacy local runtime",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "ActionGatewayClient benchmark harness",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "scripts/demo-qa/debug-guardian.ts",
+      "sourceSha256": "4cfd8a66bef6d18e1eb469c69a2dfbd474ce71f91d5bfbe1a91f367e09da3444",
+      "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "owner": "repository-demos",
+      "reason": "Non-production QA script constructs the legacy local runtime",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "ActionGatewayClient QA harness",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "scripts/demo-qa/debug-trunc.ts",
+      "sourceSha256": "02334f0a440347f58b9b0ca18b03182e2385f5fb21c0b3bd271666a7b8ea5646",
+      "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "owner": "repository-demos",
+      "reason": "Non-production QA script constructs the legacy local runtime",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "ActionGatewayClient QA harness",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "scripts/demo-qa/test-chaos-failover.ts",
+      "sourceSha256": "f408e545a8609f5a00ec4e8035a0966b2858470c5d06aa65363d60f3e859ba16",
+      "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "owner": "repository-demos",
+      "reason": "Non-production QA script constructs the legacy local runtime",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "ActionGatewayClient QA harness",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "scripts/demo-qa/test-guardian-block.ts",
+      "sourceSha256": "d3e51cdf2cdc5e06006c39566afafd81cacbeb2ec658b7e98b463e3f2da62865",
+      "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "owner": "repository-demos",
+      "reason": "Non-production QA script constructs the legacy local runtime",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "ActionGatewayClient QA harness",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "scripts/demo-qa/test-provider-fallback.ts",
+      "sourceSha256": "2829d9c1b7219d2681042a54e81b96d599ff381b89f31498b7924c0e11306c9d",
+      "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "owner": "repository-demos",
+      "reason": "Non-production QA script constructs the legacy local runtime",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "ActionGatewayClient QA harness",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "scripts/demo-qa/test-tool-truncation.ts",
+      "sourceSha256": "dffeecf5b7188f25f4f5c133b4ca67e13a28c31bf1a1e365f615d5a3b070b942",
+      "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "owner": "repository-demos",
+      "reason": "Non-production QA script constructs the legacy local runtime",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "ActionGatewayClient QA harness",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "scripts/l4-a-golden-demo.ts",
+      "sourceSha256": "07ff2f5af6c0afba50f4103121b28966029d4fa877bf71980fe442f5e1420073",
+      "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "owner": "repository-demos",
+      "reason": "Live L4-A demo intentionally seeds canonical kernel work",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "Action Gateway live demo",
+      "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "scripts/l4-b-compensation-dual-process-race.ts",
+      "sourceSha256": "cd8761620ded74f7e39a106f9339fe9495efadd5935ed10881bc0bf0b69d435e",
+      "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "owner": "repository-operations",
+      "reason": "Live compensation race fixture directly seeds and cleans canonical kernel rows",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "kernel compensation fixture API",
+      "disposition": "migrate-and-delete"
+    }
+  ]
+}

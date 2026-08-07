@@ -53,6 +53,7 @@ function createMockFetch(state: MockState) {
         number: state.pulls.length + 1,
         html_url: `https://github.com/octo/repo/pull/${state.pulls.length + 1}`,
         state: 'open',
+        title: body.title,
         body: body.body,
         head: { ref: body.head },
         base: { ref: body.base },
@@ -106,10 +107,7 @@ describe('github.pullRequestCreate adapter', () => {
     assert.equal(state.createCount, 1);
     assert.match(state.pulls[0]!.body, /<!-- commander-action:/);
     assert.equal(response.prNumber, 1);
-    assert.equal(
-      state.pulls[0]!.body.includes(githubPrBodyMarker(tenantId, idempotencyKey)),
-      true,
-    );
+    assert.equal(state.pulls[0]!.body.includes(githubPrBodyMarker(tenantId, idempotencyKey)), true);
   });
 
   it('double execute with same idempotency creates only one remote PR', async () => {
@@ -123,6 +121,91 @@ describe('github.pullRequestCreate adapter', () => {
     await adapter.execute(input);
     assert.equal(state.createCount, 1);
     assert.equal(state.pulls.length, 1);
+  });
+
+  it('rejects same-key execution when title or body changes', async () => {
+    const state: MockState = { pulls: [], createCount: 0, writeCount: 0 };
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: createMockFetch(state),
+    });
+    await adapter.execute(baseInput());
+
+    await assert.rejects(
+      () =>
+        adapter.execute({
+          ...baseInput(),
+          args: { title: 'Changed PR', body: 'changed body', head: 'feature', base: 'main' },
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof AdapterExecutionError);
+        assert.equal(error.code, 'GITHUB_IDEMPOTENCY_CONFLICT');
+        assert.equal(error.commitState, 'NOT_COMMITTED');
+        assert.equal(error.retryMode, 'NEVER');
+        return true;
+      },
+    );
+    assert.equal(state.createCount, 1);
+  });
+
+  it('rejects same-key execution when head or base changes', async () => {
+    const state: MockState = { pulls: [], createCount: 0, writeCount: 0 };
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: createMockFetch(state),
+    });
+    await adapter.execute(baseInput());
+
+    for (const args of [
+      { title: 'Test PR', body: 'body', head: 'other-feature', base: 'main' },
+      { title: 'Test PR', body: 'body', head: 'feature', base: 'other-main' },
+    ]) {
+      await assert.rejects(
+        () => adapter.execute({ ...baseInput(), args }),
+        (error: unknown) => {
+          assert.ok(error instanceof AdapterExecutionError);
+          assert.equal(error.code, 'GITHUB_IDEMPOTENCY_CONFLICT');
+          assert.equal(error.commitState, 'NOT_COMMITTED');
+          assert.equal(error.retryMode, 'NEVER');
+          return true;
+        },
+      );
+    }
+    assert.equal(state.createCount, 1);
+  });
+
+  it('rejects same-key replay when the remote title is missing', async () => {
+    const marker = githubPrBodyMarker(tenantId, idempotencyKey);
+    const state: MockState = {
+      pulls: [
+        {
+          number: 1,
+          html_url: 'https://github.com/octo/repo/pull/1',
+          state: 'open',
+          body: `body\n\n${marker}`,
+          head: { ref: 'feature' },
+          base: { ref: 'main' },
+        },
+      ],
+      createCount: 0,
+      writeCount: 0,
+    };
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: createMockFetch(state),
+    });
+
+    await assert.rejects(
+      () => adapter.execute(baseInput()),
+      (error: unknown) => {
+        assert.ok(error instanceof AdapterExecutionError);
+        assert.equal(error.code, 'GITHUB_IDEMPOTENCY_CONFLICT');
+        assert.equal(error.commitState, 'NOT_COMMITTED');
+        assert.equal(error.retryMode, 'NEVER');
+        return true;
+      },
+    );
+    assert.equal(state.createCount, 0);
   });
 
   it('queryOutcome lists by marker without write', async () => {
@@ -142,8 +225,8 @@ describe('github.pullRequestCreate adapter', () => {
       request: { head: 'feature', base: 'main' },
     });
     assert.equal(state.writeCount, writesBefore);
-    assert.equal(outcome.status, 'COMPLETED');
-    if (outcome.status === 'COMPLETED') {
+    assert.equal(outcome.status, 'APPLIED');
+    if (outcome.status === 'APPLIED') {
       assert.equal(outcome.response.prNumber, 1);
     }
   });
@@ -174,7 +257,7 @@ describe('github.pullRequestCreate adapter', () => {
       request: { prNumber: forward.prNumber },
       compensationResponse: compensated,
     });
-    assert.equal(outcome.status, 'COMPLETED');
+    assert.equal(outcome.status, 'APPLIED');
   });
 
   it('maps 401/403 to NOT_COMMITTED NEVER', async () => {

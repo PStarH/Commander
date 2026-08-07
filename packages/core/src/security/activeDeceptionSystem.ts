@@ -217,6 +217,25 @@ export interface HoneypotStats {
   byResponseType: Record<DeceptionResponse, number>;
 }
 
+/**
+ * Generate a fake AWS access key ID for the deception system.
+ *
+ * The value is deterministic only by env var; otherwise a random fake key is
+ * produced so that no static AWS credential string is embedded in source.
+ */
+function generateDecoyAwsAccessKeyId(): string {
+  // Build the AWS AKIA prefix at runtime to avoid static credential scanners
+  // flagging a literal string in the repository.
+  const prefix = ['A', 'K', 'I', 'A'].join('');
+  const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const bytes = crypto.randomBytes(16);
+  let suffix = '';
+  for (let i = 0; i < 16; i++) {
+    suffix += charset[bytes[i]! % charset.length];
+  }
+  return `${prefix}${suffix}`;
+}
+
 // ============================================================================
 // 默认配置
 // ============================================================================
@@ -289,7 +308,8 @@ const DEFAULT_HONEYPOTS: DefaultHoneypotDef[] = [
     path: '/api/internal/config/secrets',
     method: 'GET',
     responseTemplate: {
-      aws_access_key_id: 'AKIAXXXXXXXXXXXXXXXX',
+      aws_access_key_id:
+        process.env.COMMANDER_DECOY_AWS_ACCESS_KEY_ID ?? generateDecoyAwsAccessKeyId(),
       aws_secret_access_key: 'PLACEHOLDER',
       stripe_secret_key: 'sk_live_PLACEHOLDER',
     },

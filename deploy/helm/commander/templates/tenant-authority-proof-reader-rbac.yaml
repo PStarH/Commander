@@ -1,0 +1,48 @@
+{{- if not .Values.tenantAuthority.transportBootstrap }}
+{{- if include "commander.postgresBackend" . }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "commander.tenantAuthorityProofReaderName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "commander.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tenant-authority-proof-reader
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "commander.tenantAuthorityProofReaderName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "commander.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["services"]
+    resourceNames: [{{ printf "%s-api-proof" (include "commander.fullname" .) | quote }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "commander.tenantAuthorityProofReaderName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "commander.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "commander.tenantAuthorityProofReaderName" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "commander.tenantAuthorityProofReaderName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}

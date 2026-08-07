@@ -1,7 +1,7 @@
 name: P0 Kernel E2E
 
 # Lightweight gate for Architecture V2 closure work.
-# Complements ci.yml kernel-postgres-integration; runs on P0 branches and PRs.
+# Complements ci.yml kernel-postgres-integration; runs on P0 branches and on demand.
 
 on:
   push:
@@ -9,8 +9,6 @@ on:
       - 'p0/**'
       - master
       - main
-  pull_request:
-    branches: [master, main]
   workflow_dispatch:
 
 jobs:
@@ -29,6 +27,15 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U commander -d commander"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
@@ -61,8 +68,10 @@ jobs:
           pnpm --filter @commander/worker-plane build
           pnpm --filter @commander/api build
       - name: Kernel PG integration
-        run: pnpm exec tsx --test packages/kernel/src/postgres.integration.test.ts
+        run: pnpm exec node --import tsx --test packages/kernel/src/postgres.integration.test.ts
       - name: Worker e2e + reclaim
-        run: pnpm exec tsx --test --test-force-exit packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts
+        run: pnpm exec node --import tsx --test --test-force-exit packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts
       - name: Full loop to SUCCEEDED
-        run: pnpm p0:full-loop
+        run: pnpm p0:full-loop:tls
+        env:
+          AUTH_FAILURE_REDIS_URL: redis://localhost:6379

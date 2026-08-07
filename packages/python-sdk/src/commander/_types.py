@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from enum import Enum
 from typing import Any, Literal
 
@@ -854,7 +855,7 @@ class SecurityPostureHistory(CommanderModel):
 
 
 class SecurityPostureReport(CommanderModel):
-    """Full compliance report from the latest posture snapshot."""
+    """Self-assessed control-coverage report from the latest posture snapshot."""
 
     metadata: dict[str, Any] = Field(default_factory=dict)
     posture: dict[str, Any] = Field(default_factory=dict)
@@ -1096,6 +1097,16 @@ class EvalWilcoxonResult(CommanderModel):
 # ============================================================================
 
 ActionEffect = Literal["allow", "deny", "require_approval"]
+GovernedActionState = Literal[
+    "PROPOSED",
+    "AWAITING_APPROVAL",
+    "ADMITTED",
+    "RUNNING",
+    "SUCCEEDED",
+    "FAILED",
+    "COMPLETION_UNKNOWN",
+    "ESCALATED",
+]
 
 
 class ActionDecision(CommanderModel):
@@ -1120,7 +1131,7 @@ class GovernedAction(CommanderModel):
     run_id: str = Field(..., alias="runId")
     step_id: str = Field(..., alias="stepId")
     effect_id: str = Field(..., alias="effectId")
-    state: str
+    state: GovernedActionState
     decision: ActionDecision
     simulation: ActionSimulation
     action_digest: str = Field(..., alias="actionDigest")
@@ -1150,11 +1161,163 @@ class ActionApprovalInput(CommanderModel):
     policy_snapshot_id: str = Field(..., alias="policySnapshotId")
 
 
+class ActionCompensationInput(CommanderModel):
+    """Request a governed compensation for a completed forward effect."""
+
+    original_effect_id: str = Field(..., alias="originalEffectId")
+    adapter_version: str = Field(..., alias="adapterVersion")
+    compensation_effect_type: str = Field(..., alias="compensationEffectType")
+    compensation_patch: dict[str, Any] = Field(alias="compensationPatch")
+    forward_receipt_hash: str = Field(..., alias="forwardReceiptHash")
+
+
+class ActionCompensationApprovalInput(CommanderModel):
+    """Approval binding for a governed compensation authorization."""
+
+    action_digest: str = Field(..., alias="actionDigest")
+    policy_snapshot_id: str = Field(..., alias="policySnapshotId")
+
+
+class ActionCompensationAuthorization(CommanderModel):
+    """Persisted compensation authorization returned by the gateway."""
+
+    id: str
+    tenant_id: str = Field(alias="tenantId")
+    original_run_id: str = Field(alias="originalRunId")
+    original_effect_id: str = Field(alias="originalEffectId")
+    compensation_effect_type: str = Field(alias="compensationEffectType")
+    adapter_version: str = Field(alias="adapterVersion")
+    compensation_patch: dict[str, Any] = Field(alias="compensationPatch")
+    forward_receipt_hash: str = Field(alias="forwardReceiptHash")
+    policy_decision_id: str = Field(alias="policyDecisionId")
+    policy_snapshot_id: str = Field(alias="policySnapshotId")
+    decision: Literal["allow", "require_approval", "deny"]
+    action_digest: str = Field(alias="actionDigest")
+    expires_at: str = Field(alias="expiresAt")
+    approval_interaction_id: str | None = Field(None, alias="approvalInteractionId")
+
+
+class ActionCompensationResult(CommanderModel):
+    """Gateway compensation request result."""
+
+    authorization: ActionCompensationAuthorization | None = None
+    replayed: bool = False
+    state: Literal["AWAITING_APPROVAL"] | None = None
+    accepted: bool | None = None
+    request: dict[str, Any] | None = None
+
+
+class ActionCompensationApprovalResult(CommanderModel):
+    """Gateway compensation approval result."""
+
+    interaction: dict[str, Any]
+    accepted: bool
+    request: dict[str, Any]
+    replayed: bool = False
+
+
+class ActionEvidenceServerVerification(CommanderModel):
+    """Integrity verification returned with a persisted evidence receipt."""
+
+    ok: bool
+    reason: str | None = None
+    broken_at: Literal["effects", "auditEvents", "contentHash", "dlp"] | None = Field(
+        None, alias="brokenAt"
+    )
+    index: int | None = None
+
+
 class ActionEvidenceBundle(CommanderModel):
     """Evidence bundle and verification result."""
 
-    bundle: dict[str, Any]
-    verification: dict[str, Any]
+    receipt: dict[str, Any]
+    verification: ActionEvidenceServerVerification
+
+
+class ProposeActionResult(CommanderModel):
+    """Typed proposal response with compatibility tuple unpacking."""
+
+    action: GovernedAction
+    idempotent_replay: bool = Field(alias="idempotentReplay")
+    accepted: bool
+
+    def __iter__(self) -> Generator[Any, None, None]:
+        yield self.action
+        yield self.idempotent_replay
+        yield self.accepted
+
+
+class RequestReconcileResult(CommanderModel):
+    """Result of requesting immediate reconciliation for an unknown effect."""
+
+    scheduled: Literal[True]
+    effect_id: str = Field(alias="effectId")
+    state: Literal["COMPLETION_UNKNOWN"]
+    reconcile_after: str = Field(alias="reconcileAfter")
+    already_scheduled: bool = Field(alias="alreadyScheduled")
+
+
+class GatewayErrorDetail(CommanderModel):
+    """Structured gateway error returned by all action endpoints."""
+
+    code: str
+    message: str | None = None
+    details: Any | None = None
+
+
+class GatewayErrorResponse(CommanderModel):
+    """Canonical gateway error envelope."""
+
+    error: GatewayErrorDetail
+
+
+KillSwitchScope = Literal[
+    "tenant", "package", "model", "tool", "destination", "effect-type"
+]
+
+
+class KillSwitch(CommanderModel):
+    """Tenant-scoped action kill switch."""
+
+    tenant_id: str = Field(alias="tenantId")
+    scope: KillSwitchScope
+    value: str
+    enabled: bool
+    reason: str | None = None
+    actor: str
+    updated_at: str = Field(alias="updatedAt")
+
+
+class KillSwitchUpdateInput(CommanderModel):
+    """Enable or disable a kill switch."""
+
+    enabled: bool
+    reason: str | None = None
+
+
+class ActionEvidenceJwk(CommanderModel):
+    """Ed25519 verification key for action evidence receipts."""
+
+    kty: Literal["OKP"]
+    crv: Literal["Ed25519"]
+    x: str
+    kid: str
+    alg: Literal["EdDSA"] | None = None
+    use: Literal["sig"] | None = None
+
+
+class ActionEvidenceJwks(CommanderModel):
+    """Offline key set for evidence receipt verification."""
+
+    keys: list[ActionEvidenceJwk]
+
+
+class ActionEvidenceVerification(CommanderModel):
+    """Pure evidence receipt verification result."""
+
+    valid: bool
+    payload: dict[str, Any] | None = None
+    error: GatewayErrorDetail | None = None
 
 
 # ============================================================================

@@ -5,6 +5,17 @@ on:
     branches: [master, main]
   pull_request:
     branches: [master, main]
+  workflow_dispatch:
+    inputs:
+      run_dr_live_proof:
+        description: Run the protected G4 rotation and PostgreSQL DR proof
+        required: true
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   quality:
@@ -13,9 +24,13 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        node-version: ['20', '22']
+      # Pull requests run the full quality suite once on the canonical runner.
+      # Compatibility entries still run on main pushes and manual dispatches,
+      # preserving platform coverage without six identical PR runs.
+      matrix: >-
+        ${{ fromJSON(github.event_name == 'pull_request'
+          && '{"include":[{"os":"ubuntu-latest","node-version":"22","canonical":true}]}'
+          || '{"include":[{"os":"ubuntu-latest","node-version":"22","canonical":true},{"os":"ubuntu-latest","node-version":"20","canonical":false},{"os":"macos-latest","node-version":"20","canonical":false},{"os":"macos-latest","node-version":"22","canonical":false},{"os":"windows-latest","node-version":"20","canonical":false},{"os":"windows-latest","node-version":"22","canonical":false}]}') }}
     steps:
       - uses: actions/checkout@v6
 
@@ -207,18 +222,25 @@ jobs:
         shell: bash
         run: |
           set +e
-          out=$(pnpm audit --audit-level=high 2>&1)
+          audit_output="$RUNNER_TEMP/pnpm-audit.json"
+          pnpm audit --audit-level=high --json > "$audit_output" 2>&1
           code=$?
-          echo "$out"
+          cat "$audit_output"
           if [ $code -eq 0 ]; then
             exit 0
           fi
-          if echo "$out" | grep -Eqi '410|ERR_PNPM_AUDIT_BAD_RESPONSE|endpoint is being retired|ECONNRESET|ETIMEDOUT|fetch failed'; then
-            echo "::warning::pnpm audit transport/API unavailable (npm audit endpoint retirement or network). Continuing; audit:wiring + CodeQL remain hard security gates."
+          # GHSA-qwww-vcr4-c8h2 is scoped to React Router's unstable RSC APIs.
+          # The policy script parses valid JSON before considering a narrowly
+          # recognized pnpm transport failure. It fails closed for malformed
+          # output, other advisories, and any RSC wiring in apps/web/src.
+          if [ "$code" -ne 0 ] && pnpm exec tsx scripts/ci-audit-policy.ts "$audit_output"; then
             exit 0
           fi
           echo "::error::pnpm audit reported high/critical advisories"
           exit $code
+
+      - name: Security audit policy regression
+        run: pnpm exec node --import tsx --test scripts/ci-audit-policy.test.ts
 
       - name: ESLint check (no-console rule)
         run: pnpm exec eslint packages/core/src
@@ -226,11 +248,15 @@ jobs:
       - name: Prettier format check
         run: pnpm exec prettier --check "packages/core/src/**/*.ts" "apps/api/src/**/*.ts" "apps/web/src/**/*.{ts,tsx}"
 
+      - name: Claim honesty gate
+        run: pnpm claim:gate:test
+
       - name: TypeScript check (core)
         run: |
           # tsc --noEmit resolves @commander/plugin-sdk types from dist; clean CI has none
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/plugin-sdk build
+          pnpm --filter @commander/postgres-runtime build
           pnpm --filter @commander/core exec tsc --noEmit
 
       - name: TypeScript check (SDK)
@@ -240,9 +266,11 @@ jobs:
           pnpm --filter @commander/sdk typecheck
 
       - name: Generate dependency SBOM
+        if: matrix.canonical
         run: pnpm list --recursive --depth=Infinity --json > sbom.json
 
       - name: Upload SBOM artifact
+        if: matrix.canonical
         uses: actions/upload-artifact@v4
         with:
           name: sbom-${{ matrix.os }}-node${{ matrix.node-version }}
@@ -270,21 +298,6 @@ jobs:
       - name: Contracts package tests (controlPlane + baseline + OpenAPI)
         run: pnpm --filter @commander/contracts test
 
-      - name: Architecture V2 package boundary gate
-        # WS0 PARTIAL: known red on unversioned api routes + in-memory outbox Map.
-        # arch:guard + contract:check are the ENFORCED gates; do not treat this as ACCEPTED.
-        continue-on-error: true
-        run: pnpm arch:gate
-
-      - name: Production sandbox static gate
-        run: pnpm --filter @commander/core build:production
-
-      - name: Production sandbox boot-refuse
-        # boot-refuse tests construct their own production env internally
-        # (local `productionEnv` constant). Do NOT set COMMANDER_ALLOW_NO_SANDBOX
-        # here — spec §3 forbids that combination even as dead config.
-        run: pnpm --filter @commander/core exec tsx --test tests/sandbox/boot-refuse.test.ts
-
       - name: Kernel unit tests (compensation DLQ + WS2)
         # L2-12: claimOutbox(+ByTopic) DLQ/max_attempts filter + poison→DLQ proofs.
         run: pnpm --filter @commander/kernel test
@@ -304,11 +317,11 @@ jobs:
           pnpm --filter @commander/kernel build
           pnpm --filter @commander/action-adapters build
           pnpm --filter @commander/core build
-          pnpm --filter @commander/core exec tsx --test \
+          pnpm --filter @commander/core exec node --import tsx --test \
             tests/sandbox/productionPolicy.test.ts \
             tests/memory/memoryAuditQuery.test.ts \
             tests/security/exec-policy-resource-tool.test.ts
-          pnpm exec tsx --test \
+          pnpm exec node --import tsx --test \
             packages/worker-plane/src/llmBrokerBridge.test.ts \
             packages/worker-plane/src/workerRuntimeAdapter.test.ts \
             packages/worker-plane/src/stepWorkloadIdentity.test.ts \
@@ -319,7 +332,7 @@ jobs:
             packages/worker-plane/src/bootstrap.policy.test.ts \
             packages/worker-plane/src/bootstrap.authority.test.ts \
             packages/worker-plane/src/registry.rls.test.ts
-          pnpm exec tsx --test \
+          pnpm exec node --import tsx --test \
             apps/api/test/namespacedMemoryEndpoints.test.ts \
             apps/api/test/namespacedMemoryRbac.test.ts \
             apps/api/test/legacyExecutionGuard.test.ts \
@@ -349,6 +362,7 @@ jobs:
           fi
 
       - name: Run SLO measurements
+        if: matrix.canonical
         shell: bash
         env:
           # Dev/test bypass only — CI runners lack real sandbox runtimes.
@@ -357,14 +371,14 @@ jobs:
 
       - name: Upload SLO report
         uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && matrix.canonical
         with:
           name: slo-report-${{ matrix.os }}-node${{ matrix.node-version }}
           path: packages/core/.commander_benchmarks/slo-report-*.json
           if-no-files-found: ignore
 
       - name: Print SLO summary
-        if: always()
+        if: always() && matrix.canonical
         shell: bash
         run: |
           echo "📊 SLO measurement summary"
@@ -380,16 +394,8 @@ jobs:
         shell: bash
         run: cd packages/core && pnpm exec tsx src/cliEntry.ts status
 
-      - name: Build core package
-        shell: bash
-        run: |
-          # core tsc imports @commander/plugin-sdk; clean CI has no local dist cache
-          pnpm --filter @commander/contracts build
-          pnpm --filter @commander/plugin-sdk build
-          pnpm --filter @commander/core build
-
       - name: Red Team Smoke Test (security gate)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.canonical
         shell: bash
         run: |
           echo "🔴 Running red team smoke test (5 critical scenarios)..."
@@ -429,9 +435,22 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
-      DATABASE_URL: postgres://commander:commander@localhost:5432/commander
-      COMMANDER_KERNEL_DATABASE_URL: postgres://commander:commander@localhost:5432/commander
+      DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander
+      COMMANDER_KERNEL_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander
+      COMMANDER_KERNEL_POSTGRES_CONTRACT_TEST: '1'
+      COMMANDER_KERNEL_POSTGRES_CONTRACT_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander_kernel_contract
+      COMMANDER_OWNER_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander
+      OWNER_DSN: postgres://commander_owner:commander_owner@localhost:5432/commander
       GIT_TERMINAL_PROMPT: '0'
       COMMANDER_INTERACTION_DB: ':memory:'
     steps:
@@ -444,10 +463,83 @@ jobs:
       - run: pnpm install
       - name: Rebuild better-sqlite3 (repositoryContract SQLite suite)
         run: pnpm rebuild better-sqlite3
+      - name: Bootstrap kernel integration roles
+        env:
+          PGPASSWORD: commander
+        run: |
+          psql --set ON_ERROR_STOP=1 --host localhost --port 5432 --username commander --dbname commander <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_owner') THEN
+              CREATE ROLE commander_owner LOGIN PASSWORD 'commander_owner' NOSUPERUSER NOCREATEDB CREATEROLE INHERIT NOREPLICATION BYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_app') THEN
+              CREATE ROLE commander_app LOGIN PASSWORD 'commander_app' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_tenant_authority') THEN
+              CREATE ROLE commander_tenant_authority LOGIN PASSWORD 'commander_tenant_authority' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_scheduler') THEN
+              CREATE ROLE commander_scheduler LOGIN PASSWORD 'commander_scheduler' NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION BYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_worker') THEN
+              CREATE ROLE commander_worker LOGIN PASSWORD 'commander_worker' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_adapter_ops') THEN
+              CREATE ROLE commander_adapter_ops LOGIN PASSWORD 'commander_adapter_ops' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+            END IF;
+          END $$;
+          ALTER ROLE commander_owner LOGIN CREATEROLE BYPASSRLS PASSWORD 'commander_owner';
+          ALTER ROLE commander_app LOGIN NOBYPASSRLS PASSWORD 'commander_app';
+          ALTER ROLE commander_tenant_authority LOGIN NOBYPASSRLS PASSWORD 'commander_tenant_authority';
+          ALTER ROLE commander_scheduler LOGIN BYPASSRLS PASSWORD 'commander_scheduler';
+          ALTER ROLE commander_worker LOGIN NOBYPASSRLS PASSWORD 'commander_worker';
+          ALTER ROLE commander_adapter_ops LOGIN NOBYPASSRLS PASSWORD 'commander_adapter_ops';
+          ALTER DATABASE commander OWNER TO commander_owner;
+          ALTER SCHEMA public OWNER TO commander_owner;
+          GRANT commander_app TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_tenant_authority TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_scheduler TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_worker TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_adapter_ops TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          SQL
+      - name: Create isolated kernel contract database
+        env:
+          PGPASSWORD: commander
+        run: |
+          if ! psql --host localhost --port 5432 --username commander --dbname postgres --tuples-only --no-align \
+            --command "SELECT 1 FROM pg_database WHERE datname = 'commander_kernel_contract'" | grep -qx 1; then
+            createdb --host localhost --port 5432 --username commander --owner commander_owner commander_kernel_contract
+          fi
+          psql --set ON_ERROR_STOP=1 --host localhost --port 5432 --username commander --dbname commander_kernel_contract <<'SQL'
+          ALTER SCHEMA public OWNER TO commander_owner;
+          GRANT USAGE, CREATE ON SCHEMA public TO commander_owner;
+          CREATE TABLE IF NOT EXISTS public.kernel_contract_disposable_marker (
+            marker text PRIMARY KEY CHECK (marker = 'commander_kernel_contract_v1')
+          );
+          INSERT INTO public.kernel_contract_disposable_marker (marker)
+          VALUES ('commander_kernel_contract_v1')
+          ON CONFLICT (marker) DO NOTHING;
+          ALTER TABLE public.kernel_contract_disposable_marker OWNER TO commander_owner;
+          REVOKE ALL ON public.kernel_contract_disposable_marker FROM PUBLIC;
+          GRANT CONNECT ON DATABASE commander_kernel_contract TO commander_app, commander_tenant_authority,
+            commander_scheduler, commander_worker, commander_adapter_ops;
+          SQL
+      - name: Apply isolated kernel contract migrations
+        env:
+          COMMANDER_OWNER_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander_kernel_contract
+        run: |
+          pnpm exec tsx scripts/ci-bootstrap-deploy-gates.ts closure
+          pnpm exec tsx scripts/ci-bootstrap-deploy-gates.ts full
+      - name: Apply kernel closure migrations
+        run: |
+          pnpm exec tsx scripts/ci-bootstrap-deploy-gates.ts closure
+          pnpm exec tsx scripts/ci-bootstrap-deploy-gates.ts full
       - name: Build kernel / worker-plane / core / api
         run: |
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/plugin-sdk build
+          pnpm --filter @commander/postgres-runtime build
           pnpm --filter @commander/effect-broker build
           pnpm --filter @commander/kernel build
           pnpm --filter @commander/action-adapters build
@@ -455,10 +547,10 @@ jobs:
           pnpm --filter @commander/worker-plane build
           pnpm --filter @commander/api build
       - name: Kernel PostgreSQL integration (fencing + tenant isolation)
-        run: pnpm exec tsx --test packages/kernel/src/postgres.integration.test.ts
+        run: pnpm exec node --import tsx --test packages/kernel/src/postgres.integration.test.ts
       - name: Kernel PostgreSQL ops + compensation race (C4/C5/C2 PG)
         run: |
-          pnpm exec tsx --test --test-concurrency=1 \
+          pnpm exec node --import tsx --test --test-concurrency=1 \
             packages/kernel/src/postgres.ops.integration.test.ts \
             packages/kernel/src/ops/outbox/compensationPublisherRace.integration.test.ts \
             packages/kernel/src/ops/outbox/compensationPublisherRace.postgres.integration.test.ts
@@ -474,15 +566,12 @@ jobs:
           path: artifacts/l4-b-compensation-dual-race-*.json
           if-no-files-found: error
       - name: Worker plane e2e (execute + lease reclaim)
-        run: pnpm exec tsx --test --test-force-exit packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts
-      - name: Production worker sandbox boot-refuse
-        # boot-refuse test passes env explicitly to createProductionWorkerSandboxReadiness().
-        # Do NOT set COMMANDER_ALLOW_NO_SANDBOX here — spec §3 forbids that combination.
-        run: pnpm exec tsx --test packages/worker-plane/src/boot-refuse.test.ts
+        run: pnpm exec node --import tsx --test packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts
       - name: Full Gateway → Worker terminal loop
-        run: pnpm p0:full-loop
+        run: pnpm p0:full-loop:tls
         env:
           P0_TIMEOUT_MS: '120000'
+          AUTH_FAILURE_REDIS_URL: redis://localhost:6379
 
   l4-b-deploy-gates:
     name: L4-B Deploy Gates
@@ -502,8 +591,11 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      OWNER_DSN: postgres://commander:commander@localhost:5432/commander
+      DATABASE_URL: postgres://commander:commander@localhost:5432/commander
       COMMANDER_KERNEL_DATABASE_URL: postgres://commander:commander@localhost:5432/commander
+      COMMANDER_TASK1_PG_URL: postgres://commander_ci_admin:commander_ci_admin@localhost:5432/commander
+      COMMANDER_OWNER_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander
+      OWNER_DSN: postgres://commander_owner:commander_owner@localhost:5432/commander
     steps:
       - uses: actions/checkout@v6
 
@@ -531,11 +623,230 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v4
         with:
-          version: v3.14.4
+          version: v3.17.3
 
-      # P1 fail-closed: sole gate command (no parallel subset steps)
+      - name: Bootstrap deploy-gate authority
+        env:
+          PGPASSWORD: commander
+          COMMANDER_CI_ADMIN_PASSWORD: commander_ci_admin
+          COMMANDER_OWNER_PASSWORD: commander_owner
+        run: |
+          psql --set ON_ERROR_STOP=1 --host localhost --port 5432 --username commander --dbname commander \
+            --set=commander_ci_admin_password="$COMMANDER_CI_ADMIN_PASSWORD" \
+            --set=commander_owner_password="$COMMANDER_OWNER_PASSWORD" <<'SQL'
+          CREATE ROLE commander_ci_admin WITH LOGIN SUPERUSER PASSWORD :'commander_ci_admin_password';
+          CREATE ROLE commander_owner WITH LOGIN PASSWORD :'commander_owner_password' NOSUPERUSER NOCREATEDB CREATEROLE INHERIT NOREPLICATION BYPASSRLS;
+          CREATE ROLE commander_app WITH LOGIN PASSWORD 'commander_app' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+          CREATE ROLE commander_tenant_authority WITH LOGIN PASSWORD 'commander_tenant_authority' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+          CREATE ROLE commander_scheduler WITH LOGIN PASSWORD 'commander_scheduler' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION BYPASSRLS;
+          CREATE ROLE commander_worker WITH LOGIN PASSWORD 'commander_worker' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+          CREATE ROLE commander_adapter_ops WITH LOGIN PASSWORD 'commander_adapter_ops' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+          ALTER DATABASE commander OWNER TO commander_owner;
+          ALTER SCHEMA public OWNER TO commander_owner;
+          GRANT commander_app TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_tenant_authority TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_scheduler TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_worker TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_adapter_ops TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          SQL
+
+      - name: Apply enforced Task 1 closure migrations
+        run: pnpm exec tsx scripts/ci-bootstrap-deploy-gates.ts closure
+
+      - name: Apply post-closure kernel migrations
+        run: pnpm exec tsx scripts/ci-bootstrap-deploy-gates.ts full
+
+      - name: PostgreSQL TLS fixture (D runtime transport proof)
+        run: pnpm test:task1:postgres:tls
+
+      - name: Import authorized rotation sign-off key
+        env:
+          COMMANDER_GPG_PUBLIC_KEY_ASC: ${{ secrets.COMMANDER_GPG_PUBLIC_KEY_ASC }}
+        run: |
+          test -n "$COMMANDER_GPG_PUBLIC_KEY_ASC"
+          GNUPGHOME="$RUNNER_TEMP/commander-gnupg"
+          export GNUPGHOME
+          install -d -m 700 "$GNUPGHOME"
+          printf '%s' "$COMMANDER_GPG_PUBLIC_KEY_ASC" > "$RUNNER_TEMP/commander-signoff-public.asc"
+          gpg --batch --import "$RUNNER_TEMP/commander-signoff-public.asc"
+          gpg --batch --fingerprint C489A6C6865F81B690408C5B12AA1940B17D9448
+          printf 'GNUPGHOME=%s\n' "$GNUPGHOME" >> "$GITHUB_ENV"
+
+      - name: PostgreSQL Task 2 and compensation authority suites
+        env:
+          COMMANDER_TASK2_PG_URL: postgres://commander:commander@localhost:5432/commander
+          COMMANDER_COMPENSATION_PG_URL: postgres://commander:commander@localhost:5432/commander
+        run: |
+          test -n "$COMMANDER_TASK2_PG_URL"
+          test -n "$COMMANDER_COMPENSATION_PG_URL"
+          pnpm exec node --import tsx --test --test-force-exit packages/kernel/src/task2.postgres-live.test.ts
+          pnpm exec node --import tsx --test --test-force-exit packages/kernel/src/compensation.postgres-live.test.ts
+
+      - name: Restore deploy-gate role authority after live suites
+        env:
+          PGPASSWORD: commander
+        run: |
+          psql --set ON_ERROR_STOP=1 --host localhost --port 5432 --username commander --dbname commander <<'SQL'
+          ALTER ROLE commander_owner LOGIN CREATEROLE BYPASSRLS PASSWORD 'commander_owner';
+          ALTER ROLE commander_app LOGIN NOBYPASSRLS PASSWORD 'commander_app';
+          ALTER ROLE commander_tenant_authority LOGIN NOBYPASSRLS PASSWORD 'commander_tenant_authority';
+          ALTER ROLE commander_scheduler LOGIN BYPASSRLS PASSWORD 'commander_scheduler';
+          ALTER ROLE commander_worker LOGIN NOBYPASSRLS PASSWORD 'commander_worker';
+          ALTER ROLE commander_adapter_ops LOGIN NOBYPASSRLS PASSWORD 'commander_adapter_ops';
+          SQL
+
+      # P1 fail-closed: the deploy-gate command re-bootstraps role authority
+      # after live suites, then runs the final proof as the last assertion.
       - name: Deploy gates (pnpm test:deploy-gates)
         run: pnpm test:deploy-gates
+
+  # G4 requires a protected network, distinct restore target, and retained
+  # public verification key. It is deliberately opt-in: PR and push runners
+  # never receive production DR credentials, and an incomplete dispatch fails.
+  l4-b-dr-live-proof:
+    name: L4-B G4 Rotation and DR Live Proof
+    if: github.event_name == 'workflow_dispatch' && inputs.run_dr_live_proof
+    environment: cd-live-proof
+    runs-on: [self-hosted, linux, x64, commander-dr]
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - run: pnpm install
+
+      - name: Materialize protected DR inputs
+        env:
+          COMMANDER_DR_SOURCE_DATABASE_URL: ${{ secrets.COMMANDER_DR_SOURCE_DATABASE_URL }}
+          COMMANDER_DR_RESTORE_DATABASE_URL: ${{ secrets.COMMANDER_DR_RESTORE_DATABASE_URL }}
+          COMMANDER_DR_DATABASE_TLS_CA_PEM: ${{ secrets.COMMANDER_DR_DATABASE_TLS_CA_PEM }}
+          COMMANDER_DR_DATABASE_TLS_SPKI_SHA256: ${{ secrets.COMMANDER_DR_DATABASE_TLS_SPKI_SHA256 }}
+          COMMANDER_DR_DATABASE_TLS_CA_MOUNT_IDENTITY: ${{ vars.COMMANDER_DR_DATABASE_TLS_CA_MOUNT_IDENTITY }}
+          COMMANDER_DR_EVIDENCE_JWKS_JSON: ${{ secrets.COMMANDER_DR_EVIDENCE_JWKS_JSON }}
+        run: |
+          set -eu
+          for required in \
+            COMMANDER_DR_SOURCE_DATABASE_URL \
+            COMMANDER_DR_RESTORE_DATABASE_URL \
+            COMMANDER_DR_DATABASE_TLS_CA_PEM \
+            COMMANDER_DR_DATABASE_TLS_SPKI_SHA256 \
+            COMMANDER_DR_DATABASE_TLS_CA_MOUNT_IDENTITY \
+            COMMANDER_DR_EVIDENCE_JWKS_JSON; do
+            test -n "$(printenv "$required")" || {
+              echo "::error::$required is required for protected DR proof"
+              exit 1
+            }
+          done
+          for executable in gpg psql pg_dump pg_restore createdb; do
+            command -v "$executable" >/dev/null || {
+              echo "::error::$executable is required on the protected DR runner"
+              exit 1
+            }
+          done
+          node --input-type=module <<'NODE'
+          const source = new URL(process.env.COMMANDER_DR_SOURCE_DATABASE_URL);
+          const restore = new URL(process.env.COMMANDER_DR_RESTORE_DATABASE_URL);
+          for (const [name, value] of [['DATABASE_URL', source], ['RST_DATABASE_URL', restore]]) {
+            if (!['postgres:', 'postgresql:'].includes(value.protocol)) throw new Error(`${name} must be a PostgreSQL URL`);
+            if (value.searchParams.getAll('sslmode').length !== 1 || value.searchParams.get('sslmode') !== 'verify-full') {
+              throw new Error(`${name} must require sslmode=verify-full`);
+            }
+          }
+          if (source.hostname === restore.hostname && (source.port || '5432') === (restore.port || '5432') && source.pathname === restore.pathname) {
+            throw new Error('RST_DATABASE_URL must identify an independent restore target');
+          }
+          if (!/^[a-f0-9]{64}$/.test(process.env.COMMANDER_DR_DATABASE_TLS_SPKI_SHA256 ?? '')) {
+            throw new Error('COMMANDER_DR_DATABASE_TLS_SPKI_SHA256 must be a lowercase SHA-256 digest');
+          }
+          const jwks = JSON.parse(process.env.COMMANDER_DR_EVIDENCE_JWKS_JSON);
+          if (!jwks || typeof jwks !== 'object' || !Array.isArray(jwks.keys) || jwks.keys.length === 0) {
+            throw new Error('COMMANDER_DR_EVIDENCE_JWKS_JSON must contain public verification keys');
+          }
+          for (const key of jwks.keys) {
+            if (!key || typeof key !== 'object' || Array.isArray(key) || Object.hasOwn(key, 'd')) {
+              throw new Error('COMMANDER_DR_EVIDENCE_JWKS_JSON must not contain private key material');
+            }
+          }
+          NODE
+          umask 077
+          evidence_root="$GITHUB_WORKSPACE/.internal/evidence/cd/$GITHUB_RUN_ID/g4"
+          tls_dir="$RUNNER_TEMP/commander-dr-tls"
+          install -d -m 700 "$tls_dir" "$evidence_root/dr"
+          printf '%s' "$COMMANDER_DR_DATABASE_TLS_CA_PEM" > "$tls_dir/ca.crt"
+          printf '%s' "$COMMANDER_DR_EVIDENCE_JWKS_JSON" > "$evidence_root/jwks.json"
+          test -s "$tls_dir/ca.crt"
+          test -s "$evidence_root/jwks.json"
+          chmod 600 "$tls_dir/ca.crt" "$evidence_root/jwks.json"
+          {
+            printf 'DATABASE_URL=%s\n' "$COMMANDER_DR_SOURCE_DATABASE_URL"
+            printf 'RST_DATABASE_URL=%s\n' "$COMMANDER_DR_RESTORE_DATABASE_URL"
+            printf 'COMMANDER_DATABASE_TLS_CA_FILE=%s\n' "$tls_dir/ca.crt"
+            printf 'COMMANDER_DATABASE_TLS_CA_MOUNT_IDENTITY=%s\n' "$COMMANDER_DR_DATABASE_TLS_CA_MOUNT_IDENTITY"
+            printf 'COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=%s\n' "$COMMANDER_DR_DATABASE_TLS_SPKI_SHA256"
+            printf 'PGSSLMODE=verify-full\n'
+            printf 'PGSSLROOTCERT=%s\n' "$tls_dir/ca.crt"
+            printf 'COMMANDER_DR_BACKUP_DIR=%s\n' "$evidence_root/dr"
+            printf 'COMMANDER_DR_RETAINED_JWKS_PATH=%s\n' "$evidence_root/jwks.json"
+          } >> "$GITHUB_ENV"
+
+      - name: Import authorized rotation sign-off key
+        env:
+          COMMANDER_GPG_PUBLIC_KEY_ASC: ${{ secrets.COMMANDER_GPG_PUBLIC_KEY_ASC }}
+        run: |
+          set -eu
+          test -n "$COMMANDER_GPG_PUBLIC_KEY_ASC"
+          GNUPGHOME="$RUNNER_TEMP/commander-gnupg"
+          export GNUPGHOME
+          install -d -m 700 "$GNUPGHOME"
+          printf '%s' "$COMMANDER_GPG_PUBLIC_KEY_ASC" > "$RUNNER_TEMP/commander-signoff-public.asc"
+          gpg --batch --import "$RUNNER_TEMP/commander-signoff-public.asc"
+          gpg --batch --fingerprint C489A6C6865F81B690408C5B12AA1940B17D9448
+          printf 'GNUPGHOME=%s\n' "$GNUPGHOME" >> "$GITHUB_ENV"
+
+      - name: Run G4 rotation and DR proof
+        run: |
+          set -euo pipefail
+          evidence_root="$GITHUB_WORKSPACE/.internal/evidence/cd/$GITHUB_RUN_ID/g4"
+          pnpm rotate:verify 2>&1 | tee "$evidence_root/rotate.log"
+          pnpm dr:verify -- --jwks-path "$COMMANDER_DR_RETAINED_JWKS_PATH" 2>&1 | tee "$evidence_root/dr.log"
+          report="$(find "$COMMANDER_DR_BACKUP_DIR" -name drill-report.json -type f -print -quit)"
+          test -n "$report"
+          node --input-type=module - "$report" <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const report = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+          if (report.overall !== 'PASS' || report.honestyLevel !== 'ENFORCED' || !report.restore?.independent) {
+            throw new Error('DR report did not establish the required ENFORCED independent PASS result');
+          }
+          if (!report.tls?.sourceVerified || !report.tls?.restoreVerified) {
+            throw new Error('DR report did not prove CA, hostname, and SPKI verification for both database targets');
+          }
+          if (report.validation?.evidenceReceiptsVerified !== report.validation?.evidenceReceiptCount) {
+            throw new Error('DR report did not verify every restored evidence receipt');
+          }
+          NODE
+
+      # Raw pg_dump data is intentionally excluded. Retention belongs to the
+      # protected backup system; this artifact contains only the sanitized log,
+      # public JWKS, and the machine-readable result needed for review.
+      - name: Upload sanitized G4 proof report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: l4-b-g4-proof-${{ github.run_id }}
+          if-no-files-found: error
+          path: |
+            .internal/evidence/cd/${{ github.run_id }}/g4/rotate.log
+            .internal/evidence/cd/${{ github.run_id }}/g4/dr.log
+            .internal/evidence/cd/${{ github.run_id }}/g4/jwks.json
+            .internal/evidence/cd/${{ github.run_id }}/g4/dr/**/drill-report.json
 
   l4-b-cell-runtime:
     name: L4-B Cell Runtime

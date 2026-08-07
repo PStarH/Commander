@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
+import {
+  ActionAdapterRegistry,
+  KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
+  type ActionAdapter,
+} from '@commander/action-adapters';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
 import { createWorkerPolicyEvaluator } from './bootstrap.js';
 
@@ -44,9 +49,11 @@ async function createActionRun(
     simulationId?: string;
     simulationActionDigest?: string;
     simulationDecisionId?: string;
+    envelope?: typeof envelope;
   } = {},
 ) {
-  const tenantId = options.tenantId ?? envelope.tenantId;
+  const baseEnvelope = options.envelope ?? envelope;
+  const tenantId = options.tenantId ?? baseEnvelope.tenantId;
   const runId = options.runId ?? 'run-action';
   const stepId = `${runId}-step`;
   const effectId = `${runId}-effect`;
@@ -54,13 +61,15 @@ async function createActionRun(
   const effect = options.effect ?? 'allow';
   const destination =
     options.destination ??
-    (effect === 'require_approval'
+    (options.envelope
+      ? baseEnvelope.destination
+      : effect === 'require_approval'
       ? 'demo://tickets/approval'
       : effect === 'deny'
         ? 'demo://tickets/denied'
-        : envelope.destination);
+        : baseEnvelope.destination);
   const actionEnvelope = {
-    ...envelope,
+    ...baseEnvelope,
     tenantId,
     destination,
   };
@@ -136,19 +145,131 @@ async function createActionRun(
 
 function evaluate(
   repository: InMemoryKernelRepository,
-  input: { tenantId: string; runId: string; stepId: string; request?: Record<string, unknown> },
+  input: {
+    tenantId: string;
+    runId: string;
+    stepId: string;
+    request?: Record<string, unknown>;
+    registry?: ActionAdapterRegistry;
+  },
 ) {
-  return createWorkerPolicyEvaluator(repository).evaluate({
+  const request = input.request ?? envelope;
+  return createWorkerPolicyEvaluator(repository, input.registry).evaluate({
     tenantId: input.tenantId,
     runId: input.runId,
     stepId: input.stepId,
-    type: 'demo.ticket.create',
-    request: input.request ?? envelope,
+    type: String(request.effectType ?? envelope.effectType),
+    request,
     token: {} as never,
   });
 }
 
 describe('L4-01 Action Gateway worker policy', () => {
+  it('allows a registered Kubernetes manifest action only after exact bound approval', async () => {
+    const adapter: ActionAdapter = {
+      descriptor: KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
+      async execute() {
+        return {};
+      },
+      async queryOutcome() {
+        return { status: 'UNKNOWN', error: { code: 'NOT_QUERIED', message: 'not queried' } };
+      },
+      async compensate() {
+        return {};
+      },
+      async queryCompensationOutcome() {
+        return { status: 'UNKNOWN', error: { code: 'NOT_QUERIED', message: 'not queried' } };
+      },
+    };
+    const registry = new ActionAdapterRegistry([adapter]);
+    const kubernetesEnvelope = {
+      ...envelope,
+      tool: 'kubernetes.deployment.rollback',
+      destination: 'k8s://kind/commander/deployments/api',
+      effectType: 'connector.kubernetes.deployment.rollback',
+      args: { targetRevision: '41', reason: 'campaign-4 test' },
+    };
+    const repository = new InMemoryKernelRepository();
+    const action = await createActionRun(repository, {
+      runId: 'run-kubernetes-approval',
+      effect: 'require_approval',
+      decisionId: 'action-gateway-manifest-require_approval',
+      envelope: kubernetesEnvelope,
+    });
+
+    assert.equal(
+      (
+        await evaluate(repository, {
+          tenantId: 'tenant-a',
+          runId: action.runId,
+          stepId: action.stepId,
+          request: action.actionEnvelope,
+          registry,
+        })
+      ).effect,
+      'deny',
+    );
+
+    await repository.answerInteraction({
+      interactionId: action.interactionId,
+      runId: action.runId,
+      tenantId: 'tenant-a',
+      response: {
+        approved: true,
+        actionDigest: action.actionDigest,
+        simulationId: action.simulationId,
+        policySnapshotId: action.policySnapshotId,
+        reviewer: 'reviewer-a',
+        runId: action.runId,
+        tenantId: 'tenant-a',
+      },
+      actor: 'reviewer-a',
+    });
+    const approved = await evaluate(repository, {
+      tenantId: 'tenant-a',
+      runId: action.runId,
+      stepId: action.stepId,
+      request: action.actionEnvelope,
+      registry,
+    });
+    assert.equal(approved.effect, 'allow');
+    assert.equal(approved.decisionId, 'action-gateway-allow-after-approval');
+
+    const crossDestination = await evaluate(repository, {
+      tenantId: 'tenant-a',
+      runId: action.runId,
+      stepId: action.stepId,
+      request: {
+        ...action.actionEnvelope,
+        destination: 'k8s://kind/commander/deployments/other',
+      },
+      registry,
+    });
+    assert.equal(crossDestination.effect, 'deny');
+    assert.equal(crossDestination.reason, 'ACTION_DIGEST_MISMATCH');
+
+    for (const [runId, override] of [
+      ['run-kubernetes-malformed', { destination: 'k8s://kind/other%2Ftenant/deployments/api' }],
+      ['run-kubernetes-wrong-tool', { tool: 'kubernetes.deployment.scale' }],
+    ] as const) {
+      const rejected = await createActionRun(repository, {
+        runId,
+        effect: 'require_approval',
+        decisionId: 'action-gateway-manifest-require_approval',
+        envelope: { ...kubernetesEnvelope, ...override },
+      });
+      const decision = await evaluate(repository, {
+        tenantId: 'tenant-a',
+        runId: rejected.runId,
+        stepId: rejected.stepId,
+        request: rejected.actionEnvelope,
+        registry,
+      });
+      assert.equal(decision.effect, 'deny', runId);
+      assert.equal(decision.reason, 'ACTION_GATEWAY_DECISION_REVALIDATION_FAILED', runId);
+    }
+  });
+
   it('allows only a trusted persisted Action Gateway envelope', async () => {
     const repository = new InMemoryKernelRepository();
     const action = await createActionRun(repository);

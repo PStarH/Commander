@@ -37,11 +37,15 @@ const { action, accepted } = await client.proposeAction(actionInput);
 console.log('propose', action.state, accepted);
 
 if (action.decision.effect === 'require_approval') {
-  const approved = await client.approveAction(action.runId, {
-    actionDigest: simulation.actionDigest,
-    simulationId: simulation.simulationId,
-    policySnapshotId: simulation.policySnapshotId,
-  });
+  const approved = await client.approveAction(
+    action.runId,
+    {
+      actionDigest: simulation.actionDigest,
+      simulationId: simulation.simulationId,
+      policySnapshotId: simulation.policySnapshotId,
+    },
+    `${actionInput.idempotencyKey}:approve`,
+  );
   console.log('approve', approved.state);
 }
 

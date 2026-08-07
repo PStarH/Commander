@@ -9,15 +9,36 @@ import {
   FIXED_ACTION_ADAPTER_MANIFESTS,
   githubPrBodyMarker,
   GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR,
+  KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
   servicenowCorrelationId,
   SERVICENOW_INCIDENT_CREATE_DESCRIPTOR,
 } from './actionAdapters.js';
 
 describe('actionAdapters contracts', () => {
-  it('exposes exactly two fixed production manifests', () => {
-    assert.equal(FIXED_ACTION_ADAPTER_MANIFESTS.length, 2);
+  it('exposes exactly three fixed production manifests', () => {
+    assert.equal(FIXED_ACTION_ADAPTER_MANIFESTS.length, 3);
     assert.equal(FIXED_ACTION_ADAPTER_MANIFESTS[0]?.adapterId, 'github.pull-request.create');
     assert.equal(FIXED_ACTION_ADAPTER_MANIFESTS[1]?.adapterId, 'servicenow.incident.create');
+    assert.equal(FIXED_ACTION_ADAPTER_MANIFESTS[2]?.adapterId, 'kubernetes.deployment.rollback');
+  });
+
+  it('findAdapterManifest matches the controlled Kubernetes rollback destination', () => {
+    assert.equal(
+      findAdapterManifest({
+        effectType: 'connector.kubernetes.deployment.rollback',
+        toolName: 'kubernetes.deployment.rollback',
+        destination: 'k8s://kind/commander/deployments/api',
+      }),
+      KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
+    );
+    assert.equal(
+      findAdapterManifest({
+        effectType: 'connector.kubernetes.deployment.rollback',
+        toolName: 'kubernetes.deployment.rollback',
+        destination: 'k8s://kind/other%2Ftenant/deployments/api',
+      }),
+      null,
+    );
   });
 
   it('findAdapterManifest matches registered GitHub destination', () => {

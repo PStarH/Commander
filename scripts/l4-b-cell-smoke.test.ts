@@ -4,6 +4,8 @@ import {
   applyApiGateToComposeSidecarSteps,
   assertCapabilityAuthorityOnCellServices,
   assertKernelBackendOnCellServices,
+  controlledChangeEvidenceFromProofResult,
+  notReadyControlledChangeEvidence,
   runCellSmoke,
   runOptionalChaosStep,
 } from './l4-b-cell-smoke.js';
@@ -19,11 +21,60 @@ const CAPABILITY_ENV = {
 };
 
 describe('l4-b-cell-smoke', () => {
+  it('emits explicit NOT_READY controlled-change telemetry when no Kubernetes proof ran', () => {
+    assert.deepEqual(notReadyControlledChangeEvidence(), {
+      proofVerdict: 'NOT_READY',
+      remoteOutcome: 'UNKNOWN',
+      reconciliationLatencyMs: null,
+      duplicateWriteCount: null,
+      writesDuringReconciliation: null,
+      compensationDisposition: 'NOT_RUN',
+      irreducibleUnknownDisposition: 'NOT_RUN',
+    });
+  });
+
+  it('rejects a PROVEN artifact that violates controlled-change invariants', () => {
+    assert.throws(
+      () =>
+        controlledChangeEvidenceFromProofResult({
+          verdict: 'PROVEN',
+          failures: ['SIGNED_RECEIPT_REQUIRED'],
+          metrics: {
+            remoteOutcome: 'BOGUS',
+            reconciliationLatencyMs: -1,
+            duplicateWriteCount: 1,
+            writesDuringReconciliation: 1,
+            compensationDisposition: 'NOT_RUN',
+            irreducibleUnknownDisposition: 'NOT_RUN',
+          },
+        }),
+      /CONTROLLED_CHANGE/,
+    );
+    assert.throws(
+      () =>
+        controlledChangeEvidenceFromProofResult({
+          verdict: 'PROVEN',
+          failures: [],
+          metrics: {
+            remoteOutcome: 'APPLIED',
+            reconciliationLatencyMs: 500,
+            duplicateWriteCount: 0,
+            writesDuringReconciliation: 0,
+            compensationDisposition: 'APPLIED',
+            irreducibleUnknownDisposition: 'ESCALATED',
+          },
+        }),
+      /SIGNED_ARTIFACT_VERIFICATION_REQUIRED/,
+    );
+  });
+
   it('cell up-assert seeds the same explicit tenant scope it assigns to workers', () => {
     const env = buildCellUpAssertEnv();
     assert.equal(env.COMMANDER_CELL_TENANT_ID, 'cell-smoke-tenant');
     assert.equal(env.COMMANDER_WORKER_TENANTS, env.COMMANDER_CELL_TENANT_ID);
     assert.equal(env.COMMANDER_WORKER_ALLOWED_TENANTS, env.COMMANDER_CELL_TENANT_ID);
+    assert.ok(env.COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM);
+    assert.ok(env.COMMANDER_EVIDENCE_SIGNING_KEY_ID);
   });
 
   it('mock mode only asserts chaos step S6 (no fake deploy steps)', async (t) => {

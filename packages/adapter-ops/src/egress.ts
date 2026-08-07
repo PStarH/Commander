@@ -5,11 +5,30 @@
 
 export function parseEgressAllowlist(env: NodeJS.ProcessEnv = process.env): string[] {
   const raw = env.COMMANDER_ADAPTER_EGRESS_ALLOWLIST?.trim() ?? '';
-  if (!raw) return [];
-  return raw
+  const allowlist = raw
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+  const kubernetesServer = env.COMMANDER_KUBERNETES_SERVER?.trim();
+  if (kubernetesServer) {
+    let server: URL;
+    try {
+      server = new URL(kubernetesServer);
+    } catch {
+      throw new Error('COMMANDER_KUBERNETES_SERVER_INVALID: expected an HTTPS URL');
+    }
+    if (
+      server.protocol !== 'https:' ||
+      server.username ||
+      server.password ||
+      server.search ||
+      server.hash
+    ) {
+      throw new Error('COMMANDER_KUBERNETES_SERVER_INVALID: expected an HTTPS origin');
+    }
+    allowlist.push(server.hostname);
+  }
+  return [...new Set(allowlist)];
 }
 
 /**
@@ -37,19 +56,14 @@ export function assertEgressAllowlistBeforeDaemonStart(
  * 传输层闸门：对实际 HTTP(S) URL 的 hostname 做允许列表匹配。
  * 条目为 hostname（或后缀域）；CIDR 条目无法在无 DNS 解析时匹配，交由 NetworkPolicy。
  */
-export function assertEgressUrlAllowed(
-  url: RequestInfo | URL,
-  allowlist: readonly string[],
-): void {
+export function assertEgressUrlAllowed(url: RequestInfo | URL, allowlist: readonly string[]): void {
   if (allowlist.length === 0) return;
   const href = typeof url === 'string' ? url : url instanceof URL ? url.href : String(url);
   let host: string;
   try {
     host = new URL(href).hostname.toLowerCase();
   } catch {
-    throw new Error(
-      'ADAPTER_OPS_EGRESS_DENIED: unparseable URL ' + href.slice(0, 120),
-    );
+    throw new Error('ADAPTER_OPS_EGRESS_DENIED: unparseable URL ' + href.slice(0, 120));
   }
   const hostEntries = allowlist.filter((entry) => !looksLikeCidr(entry));
   if (hostEntries.length === 0) {
@@ -59,9 +73,7 @@ export function assertEgressUrlAllowed(
   const allowed = hostEntries.some((entry) => hostMatches(host, entry.toLowerCase()));
   if (!allowed) {
     throw new Error(
-      'ADAPTER_OPS_EGRESS_DENIED: host ' +
-        host +
-        ' not in COMMANDER_ADAPTER_EGRESS_ALLOWLIST',
+      'ADAPTER_OPS_EGRESS_DENIED: host ' + host + ' not in COMMANDER_ADAPTER_EGRESS_ALLOWLIST',
     );
   }
 }
@@ -77,7 +89,9 @@ export function createEgressGatedFetch(
 }
 
 function looksLikeCidr(entry: string): boolean {
-  return /^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/.test(entry) || entry.includes(':') && entry.includes('/');
+  return (
+    /^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/.test(entry) || (entry.includes(':') && entry.includes('/'))
+  );
 }
 
 function hostMatches(host: string, entry: string): boolean {

@@ -1,3 +1,4 @@
+{{- if not .Values.tenantAuthority.transportBootstrap }}
 # =============================================================================
 # Commander — Worker Deployment
 # =============================================================================
@@ -29,6 +30,10 @@ spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
       securityContext: {{ toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if include "commander.postgresBackend" . }}
+      initContainers:
+        {{- include "commander.runtimeMigrationGate" (dict "root" . "key" (include "commander.databaseWorkerSecretKey" .)) | nindent 8 }}
+      {{- end }}
       containers:
         - name: worker
           image: "{{ .Values.worker.image.repository | default .Values.image.repository }}:{{ .Values.worker.image.tag | default .Values.image.tag }}"
@@ -77,6 +82,21 @@ spec:
               value: {{ .Values.worker.tenants | quote }}
             - name: COMMANDER_CELL_TENANT_ID
               value: {{ include "commander.cellTenantId" . | quote }}
+            {{- if .Values.adapterOps.kubernetes.cluster }}
+            - name: COMMANDER_KUBERNETES_CLUSTER
+              value: {{ .Values.adapterOps.kubernetes.cluster | quote }}
+            - name: COMMANDER_KUBERNETES_SERVER
+              value: {{ .Values.adapterOps.kubernetes.server | quote }}
+            - name: COMMANDER_KUBERNETES_NAMESPACES
+              value: {{ join "," .Values.adapterOps.kubernetes.namespaces | quote }}
+            - name: COMMANDER_KUBERNETES_TOKEN_ENV
+              value: {{ .Values.adapterOps.kubernetes.tokenEnv | quote }}
+            - name: {{ .Values.adapterOps.kubernetes.tokenEnv }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.adapterOps.secrets.existingSecret | quote }}
+                  key: {{ .Values.adapterOps.kubernetes.tokenSecretKey | quote }}
+            {{- end }}
             - name: COMMANDER_WORKER_POLL_MS
               value: {{ .Values.worker.pollMs | quote }}
             - name: COMMANDER_WORKER_LEASE_TTL_MS
@@ -84,6 +104,7 @@ spec:
             - name: COMMANDER_WORKER_HEARTBEAT_MS
               value: {{ .Values.worker.heartbeatMs | quote }}
             {{- include "commander.capabilityEnv" . | nindent 12 }}
+            {{- include "commander.evidenceSigningEnv" . | nindent 12 }}
           resources: {{ toYaml .Values.worker.resources | nindent 12 }}
           securityContext:
             {{- include "commander.cellSecurityContext" . | nindent 12 }}
@@ -114,4 +135,5 @@ spec:
       {{- with .Values.tolerations }}
       tolerations: {{ toYaml . | nindent 8 }}
       {{- end }}
+{{- end }}
 {{- end }}

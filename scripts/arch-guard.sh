@@ -20,7 +20,11 @@ const allowedDependencies = {
   '@commander/contracts': [],
   // Task 3: createCapabilityAuthority + durable replay/revocation adapters live in
   // kernel and construct effect-broker issuer/verifier (no reverse dep).
-  '@commander/kernel': ['@commander/contracts', '@commander/effect-broker'],
+  '@commander/kernel': [
+    '@commander/contracts',
+    '@commander/effect-broker',
+    '@commander/postgres-runtime',
+  ],
   '@commander/effect-broker': ['@commander/contracts'],
   // L4 action adapters (GitHub/ServiceNow); leaf package — no kernel/ops.
   '@commander/action-adapters': ['@commander/contracts', '@commander/effect-broker'],
@@ -37,6 +41,7 @@ const allowedDependencies = {
     '@commander/effect-broker',
     '@commander/action-adapters',
     '@commander/core',
+    '@commander/postgres-runtime',
   ],
   '@commander/api': [
     '@commander/contracts',
@@ -44,12 +49,18 @@ const allowedDependencies = {
     '@commander/worker-plane',
     '@commander/effect-broker',
     '@commander/core',
+    '@commander/postgres-runtime',
   ],
-  '@commander/core': ['@commander/plugin-sdk', '@commander/contracts'],
+  '@commander/core': [
+    '@commander/plugin-sdk',
+    '@commander/contracts',
+    '@commander/postgres-runtime',
+  ],
+  '@commander/postgres-runtime': [],
   '@commander/plugin-sdk': [],
   '@commander/sdk': ['@commander/contracts', '@commander/core'],
   '@commander/mcp-server': ['@commander/core'],
-  '@commander/web': [],
+  '@commander/web': ['@commander/contracts'],
 };
 
 function exists(file) {
@@ -196,7 +207,14 @@ for (const file of sourceFiles) {
       const resolved = path.resolve(path.dirname(file), specifier);
       const relativeToPackage = path.relative(packageOwner.info.directory, resolved);
       if (relativeToPackage.startsWith('..') || path.isAbsolute(relativeToPackage)) {
-        failures.push(`Relative import escapes package boundary: ${relativeFile(file)} -> ${specifier}`);
+        const targetPackage = packageForFile(resolved);
+        const isAllowedTestImport =
+          /\.test\.tsx?$/.test(file) &&
+          targetPackage !== null &&
+          allowed(owner, targetPackage.name);
+        if (!isAllowedTestImport) {
+          failures.push(`Relative import escapes package boundary: ${relativeFile(file)} -> ${specifier}`);
+        }
       }
       continue;
     }

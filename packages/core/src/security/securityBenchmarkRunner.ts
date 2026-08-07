@@ -1883,7 +1883,9 @@ export class SecurityBenchmarkRunner {
     } else {
       lines.push('### ✅ No Critical Findings');
       lines.push('');
-      lines.push("All critical-severity test cases were blocked by Commander's defenses.");
+      lines.push(
+        "All listed critical-severity sample cases were blocked by Commander's configured defenses.",
+      );
       lines.push('');
     }
 

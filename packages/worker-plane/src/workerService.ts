@@ -55,6 +55,14 @@ function toWorkerExecutionError(error: unknown): WorkerError {
   return new WorkerError(String(error), { code: 'EXECUTOR_FAILED', retryable: false });
 }
 
+function reconciliationOwnsStep(error: WorkerError): boolean {
+  return (
+    error.options.code === 'COMPLETION_UNKNOWN' ||
+    error.options.code === 'COMPLETION_UNCONFIRMED' ||
+    error.options.code === 'EVIDENCE_PERSIST_FAILED'
+  );
+}
+
 /**
  * Process-local worker loop. It has no HTTP server and no AgentRuntime import:
  * all work is leased from the shared kernel and all lifecycle writes return to it.
@@ -272,6 +280,9 @@ export class WorkerService {
               details: error instanceof WorkerError ? error.options.details : undefined,
             }, error)
           : toWorkerExecutionError(error);
+        // EffectBroker has already durably moved this effect and step to reconciliation.
+        // A generic failStep here could overwrite that ownership transfer or make it retryable.
+        if (reconciliationOwnsStep(known)) return;
         const failed = await this.kernel.failStep({
           stepId: step.id,
           tenantId: step.tenantId,

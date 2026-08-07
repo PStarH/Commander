@@ -20,6 +20,7 @@
 // ============================================================================
 export * from './models';
 export { reportSilentFailure } from './silentFailureReporter';
+export { optionalImport, optionalRequire } from './optionalImport';
 
 // Orchestration exports
 export {
@@ -455,7 +456,7 @@ export {
 export { AgentLineage, getAgentLineage, resetAgentLineage } from './security/agentLineage';
 export type { LineageNode, LineageSummary, LineageQuery } from './security/agentLineage';
 
-// SupplyChainScanner — enterprise-grade skill/tool pre-load security scanning
+// SupplyChainScanner — skill/tool pre-load security scanning
 export { SupplyChainScanner, getSupplyChainScanner } from './security/supplyChainScanner';
 export type { SupplyChainScanRequest, SupplyChainScanResult } from './security/supplyChainScanner';
 
@@ -522,7 +523,7 @@ export type {
   AgentSocConfig,
 } from './security/agentSoc';
 
-// EuAiActCompliance — EU AI Act Article 12/13/14 automated compliance reporting
+// EuAiActCompliance — EU AI Act Article 12/13/14 self-assessment reporting
 export {
   EuAiActComplianceReporter,
   getEuAiActComplianceReporter,
@@ -548,7 +549,7 @@ export type {
   StandbyHealth,
 } from './security/agentStandbyManager';
 
-// RedTeamBaseline — regression detection for continuous red team CI/CD
+// RedTeamBaseline — regression detection for configured red-team CI/CD
 export { RedTeamBaselineManager, getRedTeamBaseline } from './security/redTeamBaseline';
 export type {
   RegressionSeverity,

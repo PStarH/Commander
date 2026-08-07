@@ -26,6 +26,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
+import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import { WorkerService } from './workerService.js';
 import { PostgresWorkerRegistry } from './registry.js';
 import { ApiKeyWorkerAuthenticator } from './apiKeyAuthenticator.js';
@@ -42,22 +43,25 @@ import type {
   AuditSink,
   EffectKernelPort,
   EffectBrokerOptions,
+  ConfiguredEvidenceSigner,
 } from '@commander/effect-broker';
 import {
   EffectBroker,
   CapabilityTokenIssuer,
   canonicalRequestHash,
+  createEvidenceSigner,
 } from '@commander/effect-broker';
 import type { KernelInteraction, KernelRun, KernelStep, KernelRepository } from '@commander/kernel';
+import { createCapabilityAuthority, type CapabilityAuthority } from '@commander/kernel';
 import {
-  createCapabilityAuthority,
-  type CapabilityAuthority,
-} from '@commander/kernel';
+  ActionAdapterRegistry,
+  parseKubernetesDeploymentDestination,
+} from '@commander/action-adapters';
+import {
+  createActionAdapterEffectExecutor,
+  createProductionAdapterRegistry,
+} from './actionAdapterExecutor.js';
 import { InMemoryTicketAdapter } from './ticketAdapter.js';
-
-// Lazy import to avoid circular dependency at module load time
-/* eslint-disable @typescript-eslint/no-explicit-any */
-type Pool = { connect(): Promise<any>; end(): Promise<void> };
 
 /** Thrown when a worker is not scoped to an explicit, non-empty tenant list. */
 export const WORKER_TENANT_SCOPE_REQUIRED = 'WORKER_TENANT_SCOPE_REQUIRED';
@@ -67,6 +71,23 @@ export const OWNER_DATABASE_ROLE_REJECTED = 'OWNER_DATABASE_ROLE_REJECTED';
 
 /** Durable replay/revocation stores missing from authority or kernel repository. */
 export const CAPABILITY_DURABLE_STORES_REQUIRED = 'CAPABILITY_DURABLE_STORES_REQUIRED';
+
+export const EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV = 'COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM';
+export const EVIDENCE_SIGNING_KEY_ID_ENV = 'COMMANDER_EVIDENCE_SIGNING_KEY_ID';
+export const EVIDENCE_REPOSITORY_REQUIRED = 'EVIDENCE_REPOSITORY_REQUIRED';
+
+export function createWorkerEvidenceSigner(
+  env: NodeJS.ProcessEnv = process.env,
+): ConfiguredEvidenceSigner | null {
+  const privateKeyPem = env[EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV]?.trim() ?? '';
+  const keyId = env[EVIDENCE_SIGNING_KEY_ID_ENV]?.trim() ?? '';
+  const required = env.NODE_ENV === 'production';
+  if (!privateKeyPem || !keyId) {
+    if (required) throw new Error('EVIDENCE_SIGNING_KEY_REQUIRED');
+    return null;
+  }
+  return createEvidenceSigner({ privateKeyPem, keyId });
+}
 
 /** Owner / migration LOGIN role — never accept for worker DATABASE_URL. */
 export const OWNER_MIGRATION_DATABASE_ROLES = new Set(['commander_owner']);
@@ -197,12 +218,14 @@ export function productionCapabilityBrokerOptions(
   replay: CapabilityAuthority['replayForTenant'];
   revocations: CapabilityAuthority['revocations'];
   requireDurableCapabilityStores: true;
+  requireOperationsReadiness: true;
 } {
   return {
     audience: capability.audience,
     requireRequestBinding: true,
     localWorkerId,
     requireDurableCapabilityStores: true,
+    requireOperationsReadiness: true,
     replay: (tenantId: string) => capability.replayForTenant(tenantId),
     revocations: capability.revocations,
   };
@@ -212,6 +235,7 @@ export async function createWorkerService(): Promise<WorkerService> {
   // Fail-closed BEFORE sandbox readiness, DB connect, registration, or polling:
   // a worker without an explicit tenant scope must not start.
   const { tenantIds, schedulerMode } = resolveWorkerTenantScope(process.env);
+  const evidenceSigner = createWorkerEvidenceSigner(process.env);
 
   await createProductionWorkerSandboxReadiness().assertReady();
 
@@ -259,18 +283,18 @@ export async function createWorkerService(): Promise<WorkerService> {
   };
 
   // ── Connect to PostgreSQL ──
-  const { Pool: PgPool } = (await import('pg')) as unknown as {
-    Pool: new (config: { connectionString: string; max: number }) => Pool;
-  };
-  const pool = new PgPool({ connectionString: dbUrl, max: maxConcurrency + 5 });
+  const pool = createVerifiedPostgresPool({
+    connectionString: dbUrl,
+    max: maxConcurrency + 5,
+  });
 
   // Post-connect owner-role gate (current_user) before kernel/broker/poll.
   {
     const client = await pool.connect();
     try {
-      const identityRows = (await client.query(
-        'SELECT current_user::text AS role_name',
-      )) as { rows: Array<{ role_name?: string }> };
+      const identityRows = (await client.query('SELECT current_user::text AS role_name')) as {
+        rows: Array<{ role_name?: string }>;
+      };
       assertNonOwnerDatabaseRole(identityRows.rows[0]?.role_name ?? '');
     } finally {
       client.release();
@@ -303,6 +327,8 @@ export async function createWorkerService(): Promise<WorkerService> {
   const { broker: effectBroker, issuer: capabilityIssuer } = createEffectBroker(
     kernel,
     workerId,
+    process.env,
+    evidenceSigner,
   );
 
   // ── Create step executor based on worker kind ──
@@ -382,7 +408,10 @@ function denyActionGateway(reason: string) {
  * Mirrors apps/api `evaluateAction` for policySnapshotId `action-gateway-mvp-v1`.
  * Worker re-runs this so a sealed metadata.decision alone cannot authorize effects.
  */
-export function evaluateActionGatewayMvpV1(envelope: Record<string, unknown>): {
+export function evaluateActionGatewayMvpV1(
+  envelope: Record<string, unknown>,
+  actionAdapters: ActionAdapterRegistry = ActionAdapterRegistry.empty(),
+): {
   effect: 'allow' | 'deny' | 'require_approval';
   decisionId: string;
   reason: string;
@@ -391,6 +420,27 @@ export function evaluateActionGatewayMvpV1(envelope: Record<string, unknown>): {
   const effectType = envelope.effectType;
   const tool = envelope.tool;
   const destination = envelope.destination;
+  const adapter = typeof effectType === 'string' ? actionAdapters.resolve(effectType) : null;
+  if (
+    adapter &&
+    effectType === adapter.descriptor.effectType &&
+    tool === adapter.descriptor.toolName &&
+    adapter.descriptor.adapterId === 'kubernetes.deployment.rollback' &&
+    typeof destination === 'string'
+  ) {
+    try {
+      parseKubernetesDeploymentDestination(destination);
+      const effect = adapter.descriptor.defaultGatewayEffect;
+      return {
+        effect,
+        decisionId: `action-gateway-manifest-${effect}`,
+        reason: `Registered adapter policy requires '${effect}' for this exact action.`,
+        policySnapshotId: 'action-gateway-mvp-v1',
+      };
+    } catch {
+      // Malformed destinations remain deny-by-default below.
+    }
+  }
   const isCreate = effectType === 'demo.ticket.create' && tool === 'ticket.create';
   const isCompensation =
     effectType === 'compensate.demo.ticket.create' && tool === 'ticket.compensate';
@@ -428,6 +478,7 @@ export function evaluateActionGatewayMvpV1(envelope: Record<string, unknown>): {
 
 export function createWorkerPolicyEvaluator(
   kernelOrEnv: ActionGatewayPolicyKernel | NodeJS.ProcessEnv = process.env,
+  actionAdapters: ActionAdapterRegistry = ActionAdapterRegistry.empty(),
 ): PolicyEvaluator {
   const kernel = isActionGatewayPolicyKernel(kernelOrEnv) ? kernelOrEnv : null;
   return {
@@ -555,22 +606,27 @@ export function createWorkerPolicyEvaluator(
         }
         // Defense in depth: re-evaluate mvp-v1 against the bound envelope so a
         // forged or post-create-mutated metadata.decision cannot authorize work.
+        let revalidatedDecisionId: string | null = null;
         if (metadata.policySnapshotId === 'action-gateway-mvp-v1') {
-          const fresh = evaluateActionGatewayMvpV1(actionEnvelope);
+          const fresh = evaluateActionGatewayMvpV1(actionEnvelope, actionAdapters);
           if (
             fresh.effect !== actionDecision.effect ||
             fresh.decisionId !== actionDecision.decisionId
           ) {
             return denyActionGateway('ACTION_GATEWAY_DECISION_REVALIDATION_FAILED');
           }
+          revalidatedDecisionId = fresh.decisionId;
         }
         if (actionDecision.effect === 'allow') {
-          if (actionDecision.decisionId !== 'action-gateway-allow') {
+          if (
+            actionDecision.decisionId !== 'action-gateway-allow' &&
+            actionDecision.decisionId !== revalidatedDecisionId
+          ) {
             return denyActionGateway('ACTION_GATEWAY_DECISION_INVALID');
           }
           return {
             effect: 'allow' as const,
-            decisionId: actionDecision.decisionId,
+            decisionId: String(actionDecision.decisionId),
             reason: actionDecision.reason,
             policySnapshotId: String(metadata.policySnapshotId),
           };
@@ -579,7 +635,8 @@ export function createWorkerPolicyEvaluator(
           return denyActionGateway('ACTION_GATEWAY_POLICY_DENIED');
         }
         if (
-          actionDecision.decisionId !== 'action-gateway-require_approval' ||
+          (actionDecision.decisionId !== 'action-gateway-require_approval' &&
+            actionDecision.decisionId !== revalidatedDecisionId) ||
           typeof metadata.interactionId !== 'string'
         ) {
           return denyActionGateway('ACTION_GATEWAY_APPROVAL_MISSING');
@@ -629,10 +686,15 @@ export function withDefaultLlmAllowlist(
   _env: NodeJS.ProcessEnv = process.env,
 ): EffectKernelPort {
   return {
+    getOperationsReadiness: kernel.getOperationsReadiness?.bind(kernel),
     admitEffect: (input) => kernel.admitEffect(input),
     completeEffect: (effectId, tenantId, lease, response, actor) =>
       kernel.completeEffect(effectId, tenantId, lease, response, actor),
+    completeEffectWithEvidence: kernel.completeEffectWithEvidence?.bind(kernel),
+    failEffectWithEvidence: kernel.failEffectWithEvidence?.bind(kernel),
     markEffectCompletionUnknown: kernel.markEffectCompletionUnknown?.bind(kernel),
+    listEffectsForRun: kernel.listEffectsForRun?.bind(kernel),
+    listEvents: kernel.listEvents?.bind(kernel),
     incrementQuota: kernel.incrementQuota?.bind(kernel),
     getQuota: kernel.getQuota?.bind(kernel),
     isActionAllowed: async (tenantId, action) => {
@@ -642,7 +704,10 @@ export function withDefaultLlmAllowlist(
   };
 }
 
-export function createWorkerEffectExecutor(tickets = new InMemoryTicketAdapter()): EffectExecutor {
+export function createWorkerEffectExecutor(
+  tickets = new InMemoryTicketAdapter(),
+  actionAdapterExecutor?: EffectExecutor,
+): EffectExecutor {
   return {
     execute: async (input) => {
       if (input.type.startsWith('llm.')) {
@@ -713,6 +778,9 @@ export function createWorkerEffectExecutor(tickets = new InMemoryTicketAdapter()
           status: ticket.status,
         };
       }
+      if (actionAdapterExecutor) {
+        return actionAdapterExecutor.execute(input);
+      }
       throw new Error(`UNREGISTERED_EFFECT_TYPE: ${input.type}`);
     },
   };
@@ -729,6 +797,7 @@ export function createEffectBroker(
   kernel: AllowlistKernel & KernelRepository,
   localWorkerId: string,
   env: NodeJS.ProcessEnv = process.env,
+  evidenceSigner: ConfiguredEvidenceSigner | null = null,
 ): {
   broker: EffectBroker;
   issuer: CapabilityTokenIssuer;
@@ -737,9 +806,13 @@ export function createEffectBroker(
   const capability = createCapabilityAuthority(env, kernel);
   assertDurableCapabilityStores(capability, kernel);
 
-  const policy = createWorkerPolicyEvaluator(kernel);
+  const actionAdapters = createProductionAdapterRegistry(undefined, env);
+  const policy = createWorkerPolicyEvaluator(kernel, actionAdapters);
   const effectKernel = withDefaultLlmAllowlist(kernel);
-  const executor = createWorkerEffectExecutor();
+  const executor = createWorkerEffectExecutor(
+    undefined,
+    createActionAdapterEffectExecutor(actionAdapters),
+  );
 
   // Console audit sink. Production should forward to a durable audit store.
   const audit: AuditSink = {
@@ -758,19 +831,31 @@ export function createEffectBroker(
   };
 
   const brokerOptions = productionCapabilityBrokerOptions(capability, localWorkerId);
+  let evidenceOptions: Pick<EffectBrokerOptions, 'evidenceSigner' | 'requireEvidencePersistence'> =
+    {};
+  if (evidenceSigner) {
+    if (
+      !effectKernel.completeEffectWithEvidence ||
+      !effectKernel.failEffectWithEvidence ||
+      !effectKernel.listEffectsForRun ||
+      !effectKernel.listEvents
+    ) {
+      throw new Error(EVIDENCE_REPOSITORY_REQUIRED);
+    }
+    evidenceOptions = {
+      evidenceSigner,
+      requireEvidencePersistence: true,
+    };
+  }
 
   // WS2 §4: request binding is mandatory. The EffectBroker constructor
   // enforces this in production (throws REQUEST_BINDING_DISABLED_IN_PROD).
   // Verifier already embeds durable tenant-scoped replay + revocations;
   // options still carry non-optional store handles from the factory.
-  const broker = new EffectBroker(
-    capability.verifier,
-    policy,
-    effectKernel,
-    executor,
-    audit,
-    brokerOptions,
-  );
+  const broker = new EffectBroker(capability.verifier, policy, effectKernel, executor, audit, {
+    ...brokerOptions,
+    ...evidenceOptions,
+  });
   return { broker, issuer: capability.issuer, capability };
 }
 

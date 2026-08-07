@@ -1,6 +1,6 @@
 /**
- * runComplianceAudit — CLI entry point for generating enterprise compliance
- * audit reports (ISO 42001, NIST AI RMF) from the Commander security posture.
+ * runComplianceAudit — CLI entry point for generating self-assessed control
+ * coverage reports (ISO 42001, NIST AI RMF) from the Commander security posture.
  *
  * Usage:
  *   npx tsx packages/core/src/security/runComplianceAudit.ts                     # Markdown report to stdout
@@ -72,7 +72,7 @@ async function main(): Promise<void> {
     signReports: !args.noSign,
   });
 
-  console.error('📊 Generating full compliance audit report...');
+  console.error('📊 Generating self-assessed control coverage report...');
 
   const report = manager.generateFullReport({
     commitHash: args.commitHash,
@@ -117,7 +117,7 @@ async function main(): Promise<void> {
   // Exit with non-zero if score below threshold
   if (report.posture.overallScore < args.threshold) {
     console.error(
-      `\n❌ FAILED: Compliance score ${report.posture.overallScore}/100 is below threshold ${args.threshold}/100.`,
+      `\n❌ FAILED: Control-coverage score ${report.posture.overallScore}/100 is below threshold ${args.threshold}/100.`,
     );
     process.exit(1);
   }

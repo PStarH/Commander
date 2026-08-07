@@ -16,14 +16,30 @@
  *   COMMANDER_DR_RESTORE_PORT: Port for restored PG instance (default: 5433)
  *   COMMANDER_DR_BACKUP_DIR: Base directory for backups (default: ./dr-backups)
  *   RST_DATABASE_URL: Explicit restored DSN (overrides port rewrite)
+ *   COMMANDER_DATABASE_TLS_CA_FILE: CA file used for verified PostgreSQL TLS
+ *   COMMANDER_DATABASE_TLS_CA_MOUNT_IDENTITY: non-secret CA mount identity
+ *   COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: pinned server key digest
  */
 
 import { execFileSync, execSync } from 'node:child_process';
-import { mkdir, writeFile, stat } from 'node:fs/promises';
+import { createHash, createPublicKey, type JsonWebKeyInput } from 'node:crypto';
+import { copyFile, mkdir, readFile, writeFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { verifyRunExists, verifyRunMissing, type DrilledRun } from '../packages/kernel/src/disasterRecovery.js';
+import {
+  verifyRunExists,
+  verifyRunMissing,
+  type DrilledRun,
+} from '../packages/kernel/src/disasterRecovery.js';
 import { createDrillRun } from '../packages/kernel/src/drillWorkload.js';
+import { createVerifiedPostgresPool } from '../packages/postgres-runtime/src/index.js';
+import { verifyEvidenceReceipt, type EvidenceVerificationResult } from './verify-evidence.js';
+import {
+  canonicalEvidenceJson,
+  type EvidenceBundle,
+  type EvidenceJwks,
+  type EvidenceSignature,
+} from '../packages/effect-broker/src/index.js';
 
 export interface DsnParts {
   host: string;
@@ -62,6 +78,10 @@ export interface DrillReport {
     schemaValid: boolean;
     independent: boolean;
   };
+  tls: {
+    sourceVerified: boolean;
+    restoreVerified: boolean;
+  };
   validation: {
     runsTableExists: boolean;
     stepsTableExists: boolean;
@@ -71,6 +91,15 @@ export interface DrillReport {
     killSwitches: boolean;
     outboxTableExists: boolean;
     timersTableExists: boolean;
+    evidenceReceiptsRestored: boolean;
+    evidenceAnchorsRestored: boolean;
+    identityOutcomeAccountingPreserved: boolean;
+    evidenceReceiptCount: number;
+    anchoredEvidenceReceiptCount: number;
+    evidenceReceiptsVerified: number;
+    evidenceReceiptVerificationFailures: number;
+    retainedJwksSha256: string | null;
+    retainedJwksKeyIds: string[];
     rowCount: { runs: number; steps: number; events: number };
   };
   rpo: { targetMs: number; actualMs: number; passed: boolean; mode: 'measured' | 'draft' };
@@ -101,6 +130,110 @@ export function buildRestoreDatabaseUrl(sourceUrl: string, restorePort: string):
   return parsed.toString();
 }
 
+function requireDrTlsValue(environment: NodeJS.ProcessEnv, name: string): string {
+  const value = environment[name];
+  if (!value) throw new Error(`${name}_REQUIRED`);
+  return value;
+}
+
+function assertVerifiedTlsDatabaseUrl(name: string, value: string): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${name} must be a PostgreSQL URL`);
+  }
+  if (
+    (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') ||
+    url.searchParams.getAll('sslmode').length !== 1 ||
+    url.searchParams.get('sslmode') !== 'verify-full'
+  ) {
+    throw new Error(`${name} must require sslmode=verify-full`);
+  }
+}
+
+export function assertDrTlsConfiguration(
+  databaseUrl: string,
+  restoreDatabaseUrl: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): void {
+  assertVerifiedTlsDatabaseUrl('DATABASE_URL', databaseUrl);
+  assertVerifiedTlsDatabaseUrl('RST_DATABASE_URL', restoreDatabaseUrl);
+  requireDrTlsValue(environment, 'COMMANDER_DATABASE_TLS_CA_FILE');
+  requireDrTlsValue(environment, 'COMMANDER_DATABASE_TLS_CA_MOUNT_IDENTITY');
+  const expectedSpki = requireDrTlsValue(
+    environment,
+    'COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256',
+  );
+  if (!/^[a-f0-9]{64}$/.test(expectedSpki)) {
+    throw new Error('COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256_INVALID');
+  }
+}
+
+export function buildDrPostgresEnv(
+  dsn: DsnParts,
+  environment: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const caFile = requireDrTlsValue(environment, 'COMMANDER_DATABASE_TLS_CA_FILE');
+  return {
+    ...environment,
+    PGHOST: dsn.host,
+    PGPORT: String(dsn.port),
+    PGUSER: dsn.user,
+    PGPASSWORD: dsn.password,
+    PGDATABASE: dsn.database,
+    PGSSLMODE: 'verify-full',
+    PGSSLROOTCERT: caFile,
+  };
+}
+
+/**
+ * Prove the target database identity before invoking libpq tooling.
+ *
+ * `psql` can enforce CA/SAN validation through `sslmode=verify-full`, but it
+ * has no portable SPKI pin option. The application pool already owns the
+ * repository's CA + hostname + SPKI contract, so use one short-lived pool
+ * connection as an authenticated TLS preflight for every DR target.
+ */
+export async function verifyDrDatabaseTlsConnection(
+  databaseUrl: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  const pool = createVerifiedPostgresPool(
+    {
+      connectionString: databaseUrl,
+      connectionTimeoutMillis: 10_000,
+      max: 1,
+    },
+    environment,
+  );
+  try {
+    await pool.query('SELECT 1');
+  } finally {
+    await pool.end();
+  }
+}
+
+export function buildPostgresControlDatabaseUrl(databaseUrl: string): string {
+  const url = new URL(databaseUrl);
+  url.pathname = '/postgres';
+  return url.toString();
+}
+
+/**
+ * Keep the restore server preflight ahead of the first mutating operation.
+ * The callback is intentionally synchronous because it wraps `createdb`.
+ */
+export async function preflightRestoreServerBeforeCreate(
+  restoreDatabaseUrl: string,
+  verify: (controlDatabaseUrl: string) => Promise<void> = (controlDatabaseUrl) =>
+    verifyDrDatabaseTlsConnection(controlDatabaseUrl),
+  createDatabase: () => void,
+): Promise<void> {
+  await verify(buildPostgresControlDatabaseUrl(restoreDatabaseUrl));
+  createDatabase();
+}
+
 export function assertDistinctRestoreTarget(source: DsnParts, restore: DsnParts): void {
   const same =
     source.host === restore.host &&
@@ -124,7 +257,11 @@ export function computeRpoMs(cutoffAt: Date, lastCommittedAt: Date): number {
   return Math.max(0, cutoffAt.getTime() - lastCommittedAt.getTime());
 }
 
-export function queryRunCommittedAt(dsn: DsnParts, runId: string, runPsqlFn: (dsn: DsnParts, sql: string) => string): Date {
+export function queryRunCommittedAt(
+  dsn: DsnParts,
+  runId: string,
+  runPsqlFn: (dsn: DsnParts, sql: string) => string,
+): Date {
   const raw = runPsqlFn(
     dsn,
     `SELECT EXTRACT(EPOCH FROM created_at AT TIME ZONE 'UTC') * 1000 FROM commander_runs WHERE id = '${runId}'`,
@@ -139,11 +276,9 @@ export function queryRunCommittedAt(dsn: DsnParts, runId: string, runPsqlFn: (ds
 export function resolveHonestyLevel(opts: {
   independentRestore: boolean;
   sentinelVerified: boolean;
-  cellProcessesVerified?: boolean;
 }): HonestyLevel {
   if (!opts.independentRestore) return 'DRAFT';
   if (!opts.sentinelVerified) return 'DRAFT';
-  if (opts.cellProcessesVerified) return 'PROVEN';
   return 'ENFORCED';
 }
 
@@ -157,28 +292,430 @@ export function sanitizeError(err: unknown, secrets: string[] = []): string {
   return msg;
 }
 
-function pgEnv(dsn: DsnParts): NodeJS.ProcessEnv {
+export function assertRegularArtifact(path: string, info: { isFile(): boolean }): void {
+  if (!info.isFile()) throw new Error(`backup artifact is not a regular file: ${path}`);
+}
+
+export function restoreBackupDirectory(
+  mode: 'full' | 'backup' | 'restore',
+  path: string,
+  drillId: string,
+): string {
+  return mode === 'restore' ? path : join(path, drillId);
+}
+
+export function restoredValidationFailures(validation: DrillReport['validation']): string[] {
+  const required: Array<[keyof DrillReport['validation'], string]> = [
+    ['runsTableExists', 'restored runs table missing'],
+    ['stepsTableExists', 'restored steps table missing'],
+    ['eventsTableExists', 'restored events table missing'],
+    ['effects', 'restored effects table missing'],
+    ['interactions', 'restored interactions table missing'],
+    ['killSwitches', 'restored kill-switch table missing'],
+    ['outboxTableExists', 'restored outbox table missing'],
+    ['timersTableExists', 'restored timers table missing'],
+    ['evidenceReceiptsRestored', 'restored evidence receipts missing'],
+    ['evidenceAnchorsRestored', 'restored evidence anchors incomplete'],
+    [
+      'identityOutcomeAccountingPreserved',
+      'restored evidence identity/outcome accounting incomplete',
+    ],
+  ];
+  return required.filter(([key]) => validation[key] !== true).map(([, message]) => message);
+}
+
+export function createFreshRestoreDatabase(_dsn: DsnParts, createDatabase: () => void): void {
+  try {
+    createDatabase();
+  } catch (err) {
+    throw new Error(`failed to create a fresh restore database: ${sanitizeError(err)}`);
+  }
+}
+
+export function restoreIntoFreshTarget(steps: {
+  createDatabase(): void;
+  countUserObjects(): number;
+  restore(): void;
+}): void {
+  steps.createDatabase();
+  assertEmptyRestoreTarget(steps.countUserObjects());
+  steps.restore();
+}
+
+export function assertEmptyRestoreTarget(userObjectCount: number): void {
+  if (!Number.isSafeInteger(userObjectCount)) {
+    throw new Error('restore target emptiness could not be verified');
+  }
+  if (userObjectCount !== 0) {
+    throw new Error(`restore target is not empty: ${userObjectCount} user objects found`);
+  }
+}
+
+export function resolveDrillOverall(opts: {
+  mode: 'full' | 'restore';
+  independentRestore: boolean;
+  restoreFailures: readonly string[];
+  validationFailures: readonly string[];
+  sentinelVerified: boolean;
+  rpoPassed: boolean;
+  rtoPassed: boolean;
+}): DrillReport['overall'] {
+  if (
+    !opts.independentRestore ||
+    opts.restoreFailures.length > 0 ||
+    opts.validationFailures.length > 0
+  ) {
+    return 'FAIL';
+  }
+  if (!opts.rtoPassed) return 'FAIL';
+  if (opts.mode === 'restore') return 'DRAFT';
+  if (!opts.sentinelVerified || !opts.rpoPassed) return 'FAIL';
+  return 'PASS';
+}
+
+export interface RetainedJwksArtifact {
+  jwks: EvidenceJwks;
+  sha256: string;
+  keyIds: string[];
+}
+
+export function validateRetainedJwks(value: unknown, bytes: Uint8Array): RetainedJwksArtifact {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('retained JWKS must be an object');
+  }
+  const keys = (value as { keys?: unknown }).keys;
+  if (!Array.isArray(keys) || keys.length === 0) throw new Error('retained JWKS keys are required');
+  const keyIds = new Set<string>();
+  for (const key of keys) {
+    if (!key || typeof key !== 'object' || Array.isArray(key))
+      throw new Error('retained JWKS key is invalid');
+    const candidate = key as Record<string, unknown>;
+    if (candidate.d !== undefined)
+      throw new Error('retained JWKS must not contain private key material');
+    if (
+      candidate.kty !== 'OKP' ||
+      candidate.crv !== 'Ed25519' ||
+      candidate.alg !== 'EdDSA' ||
+      candidate.use !== 'sig'
+    ) {
+      throw new Error('retained JWKS key parameters are invalid');
+    }
+    if (typeof candidate.kid !== 'string' || !candidate.kid || keyIds.has(candidate.kid)) {
+      throw new Error('retained JWKS key ids must be unique');
+    }
+    if (typeof candidate.x !== 'string' || !candidate.x)
+      throw new Error('retained JWKS public key is missing');
+    try {
+      createPublicKey({ key: candidate, format: 'jwk' } as JsonWebKeyInput);
+    } catch {
+      throw new Error('retained JWKS public key is invalid');
+    }
+    keyIds.add(candidate.kid);
+  }
   return {
-    ...process.env,
-    PGHOST: dsn.host,
-    PGPORT: String(dsn.port),
-    PGUSER: dsn.user,
-    PGPASSWORD: dsn.password,
-    PGDATABASE: dsn.database,
+    jwks: { keys: keys as EvidenceJwks['keys'] },
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    keyIds: [...keyIds].sort(),
   };
+}
+
+export interface RestoredReceiptForVerification {
+  body: EvidenceBundle;
+  signature: EvidenceSignature;
+  actionDigest?: string;
+  contentHash?: string;
+}
+
+export interface RestoredReceiptCursor {
+  createdAt: string;
+  tenantId: string;
+  bundleId: string;
+}
+
+export interface RestoredReceiptPage {
+  receipts: RestoredReceiptForVerification[];
+  cursor: RestoredReceiptCursor | null;
+}
+
+export interface RestoredReceiptVerification {
+  verified: number;
+  failed: number;
+  failures: string[];
+}
+
+export function verifyRestoredReceipts(
+  receipts: readonly RestoredReceiptForVerification[],
+  jwks: EvidenceJwks,
+): RestoredReceiptVerification {
+  let verified = 0;
+  const failures: string[] = [];
+  for (const receipt of receipts) {
+    if (
+      !receipt.body.signature ||
+      canonicalEvidenceJson(receipt.body.signature) !== canonicalEvidenceJson(receipt.signature)
+    ) {
+      failures.push('EVIDENCE_SIGNATURE_BINDING_MISMATCH');
+      continue;
+    }
+    if (receipt.actionDigest !== undefined && receipt.actionDigest !== receipt.body.actionDigest) {
+      failures.push('EVIDENCE_ACTION_DIGEST_MISMATCH');
+      continue;
+    }
+    if (receipt.contentHash !== undefined && receipt.contentHash !== receipt.body.contentHash) {
+      failures.push('EVIDENCE_CONTENT_HASH_MISMATCH');
+      continue;
+    }
+    if (!jwks.keys.some((key) => key.kid === receipt.signature.keyId)) {
+      failures.push('EVIDENCE_KEY_ID_NOT_RETAINED');
+      continue;
+    }
+    const result: EvidenceVerificationResult = verifyEvidenceReceipt(
+      { ...receipt.body, signature: receipt.signature },
+      jwks,
+    );
+    if (result.ok) verified += 1;
+    else failures.push(result.reason ?? 'EVIDENCE_SIGNATURE_INVALID');
+  }
+  return { verified, failed: receipts.length - verified, failures };
+}
+
+export function verifyRestoredReceiptPages(
+  queryPage: (cursor: RestoredReceiptCursor | null) => RestoredReceiptPage,
+  jwks: EvidenceJwks,
+  options: { pageSize?: number; maxFailureReasons?: number } = {},
+): RestoredReceiptVerification {
+  const pageSize = options.pageSize ?? 2;
+  const maxFailureReasons = options.maxFailureReasons ?? 20;
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1) {
+    throw new Error('restored receipt page size must be a positive integer');
+  }
+  if (!Number.isSafeInteger(maxFailureReasons) || maxFailureReasons < 0) {
+    throw new Error('restored receipt failure reason limit must be a non-negative integer');
+  }
+
+  let cursor: RestoredReceiptCursor | null = null;
+  let verified = 0;
+  let failed = 0;
+  const failures: string[] = [];
+  for (;;) {
+    const page = queryPage(cursor);
+    const result = verifyRestoredReceipts(page.receipts, jwks);
+    verified += result.verified;
+    failed += result.failed;
+    const remainingFailureReasons = maxFailureReasons - failures.length;
+    if (remainingFailureReasons > 0) {
+      failures.push(...result.failures.slice(0, remainingFailureReasons));
+    }
+    if (page.receipts.length < pageSize) return { verified, failed, failures };
+    if (!page.cursor) {
+      throw new Error('restored receipt page cursor missing before final page');
+    }
+    cursor = page.cursor;
+  }
+}
+
+export async function readRetainedJwks(path: string): Promise<RetainedJwksArtifact> {
+  const info = await stat(path);
+  assertRegularArtifact(path, info);
+  const bytes = await readFile(path);
+  let value: unknown;
+  try {
+    value = JSON.parse(bytes.toString('utf8'));
+  } catch {
+    throw new Error(`retained JWKS is not valid JSON: ${path}`);
+  }
+  return validateRetainedJwks(value, bytes);
+}
+
+export function parseRestoredReceiptRows(raw: string): RestoredReceiptForVerification[] {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw || '[]');
+  } catch {
+    throw new Error('restored evidence receipt query returned invalid JSON');
+  }
+  if (!Array.isArray(value))
+    throw new Error('restored evidence receipt query returned a non-array');
+  return parseRestoredReceiptRowValues(value);
+}
+
+function parseRestoredReceiptRowValues(value: unknown[]): RestoredReceiptForVerification[] {
+  return value.map((row, index) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      throw new Error(`restored evidence receipt row ${index} is invalid`);
+    }
+    const candidate = row as Record<string, unknown>;
+    if (
+      !candidate.body ||
+      typeof candidate.body !== 'object' ||
+      !candidate.signature ||
+      typeof candidate.signature !== 'object'
+    ) {
+      throw new Error(`restored evidence receipt row ${index} is incomplete`);
+    }
+    return {
+      body: candidate.body as EvidenceBundle,
+      signature: candidate.signature as EvidenceSignature,
+      actionDigest: typeof candidate.actionDigest === 'string' ? candidate.actionDigest : undefined,
+      contentHash: typeof candidate.contentHash === 'string' ? candidate.contentHash : undefined,
+    };
+  });
+}
+
+function parseRestoredReceiptPage(raw: string): RestoredReceiptPage {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw || '[]');
+  } catch {
+    throw new Error('restored evidence receipt query returned invalid JSON');
+  }
+  if (!Array.isArray(value))
+    throw new Error('restored evidence receipt query returned a non-array');
+  const receipts = parseRestoredReceiptRowValues(value);
+  if (value.length === 0) return { receipts, cursor: null };
+  const last = value[value.length - 1] as Record<string, unknown>;
+  if (
+    typeof last.createdAt !== 'string' ||
+    typeof last.tenantId !== 'string' ||
+    typeof last.bundleId !== 'string'
+  ) {
+    throw new Error('restored evidence receipt page cursor is invalid');
+  }
+  return {
+    receipts,
+    cursor: {
+      createdAt: last.createdAt,
+      tenantId: last.tenantId,
+      bundleId: last.bundleId,
+    },
+  };
+}
+
+export function assessRestoredEvidence(
+  dsn: DsnParts,
+  runPsqlFn: (dsn: DsnParts, sql: string) => string,
+): Pick<
+  DrillReport['validation'],
+  | 'evidenceReceiptsRestored'
+  | 'evidenceAnchorsRestored'
+  | 'identityOutcomeAccountingPreserved'
+  | 'evidenceReceiptCount'
+  | 'anchoredEvidenceReceiptCount'
+> {
+  const empty = {
+    evidenceReceiptsRestored: false,
+    evidenceAnchorsRestored: false,
+    identityOutcomeAccountingPreserved: false,
+    evidenceReceiptCount: 0,
+    anchoredEvidenceReceiptCount: 0,
+  };
+  try {
+    const exists = runPsqlFn(
+      dsn,
+      "SELECT to_regclass('public.commander_evidence_receipts') IS NOT NULL",
+    );
+    if (exists !== 't') return empty;
+    const evidenceReceiptCount = Number.parseInt(
+      runPsqlFn(dsn, 'SELECT COUNT(*) FROM public.commander_evidence_receipts'),
+      10,
+    );
+    const anchoredEvidenceReceiptCount = Number.parseInt(
+      runPsqlFn(
+        dsn,
+        'SELECT COUNT(*) FROM public.commander_evidence_receipts WHERE anchored_at IS NOT NULL',
+      ),
+      10,
+    );
+    const identityOutcomeCount = Number.parseInt(
+      runPsqlFn(
+        dsn,
+        `SELECT COUNT(*)
+           FROM public.commander_evidence_receipts AS receipt
+          WHERE receipt.action_digest ~ '^[a-f0-9]{64}$'
+            AND receipt.content_hash ~ '^[a-f0-9]{64}$'
+            AND pg_catalog.jsonb_typeof(receipt.signature) = 'object'
+            AND pg_catalog.jsonb_typeof(receipt.body) = 'object'
+            AND receipt.body ? 'scope'
+            AND receipt.body ? 'terminalDisposition'`,
+      ),
+      10,
+    );
+    if (
+      !Number.isSafeInteger(evidenceReceiptCount) ||
+      !Number.isSafeInteger(anchoredEvidenceReceiptCount) ||
+      !Number.isSafeInteger(identityOutcomeCount) ||
+      evidenceReceiptCount <= 0
+    ) {
+      return empty;
+    }
+    return {
+      evidenceReceiptsRestored: true,
+      evidenceAnchorsRestored: anchoredEvidenceReceiptCount === evidenceReceiptCount,
+      identityOutcomeAccountingPreserved: identityOutcomeCount === evidenceReceiptCount,
+      evidenceReceiptCount,
+      anchoredEvidenceReceiptCount,
+    };
+  } catch {
+    return empty;
+  }
+}
+
+function sqlLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+function queryRestoredReceiptPage(
+  dsn: DsnParts,
+  runPsqlFn: (dsn: DsnParts, sql: string) => string,
+  cursor: RestoredReceiptCursor | null,
+): RestoredReceiptPage {
+  // Keep each psql result comfortably below execFileSync's default maxBuffer.
+  // Evidence records are bounded by the sink, so a two-row page is bounded too.
+  const pageSize = 2;
+  const afterCursor = cursor
+    ? `WHERE (created_at, tenant_id, bundle_id) > (
+         ${sqlLiteral(cursor.createdAt)}::timestamptz,
+         ${sqlLiteral(cursor.tenantId)},
+         ${sqlLiteral(cursor.bundleId)}
+       )`
+    : '';
+  const raw = runPsqlFn(
+    dsn,
+    `SELECT COALESCE(
+       json_agg(
+         json_build_object(
+           'body', body,
+           'signature', signature,
+           'actionDigest', action_digest,
+           'contentHash', content_hash,
+           'createdAt', created_at,
+           'tenantId', tenant_id,
+           'bundleId', bundle_id
+         ) ORDER BY created_at, tenant_id, bundle_id
+       ), '[]'::json
+     )::text
+       FROM (
+         SELECT body, signature, action_digest, content_hash, created_at, tenant_id, bundle_id
+           FROM public.commander_evidence_receipts
+           ${afterCursor}
+          ORDER BY created_at, tenant_id, bundle_id
+          LIMIT ${pageSize}
+       ) AS receipt_page`,
+  );
+  return parseRestoredReceiptPage(raw);
 }
 
 function runPsql(dsn: DsnParts, sql: string): string {
   return execFileSync('psql', ['-t', '-A', '-c', sql], {
     encoding: 'utf-8',
     stdio: 'pipe',
-    env: pgEnv(dsn),
+    env: buildDrPostgresEnv(dsn),
   }).trim();
 }
 
 function tableExists(dsn: DsnParts, table: string): boolean {
   try {
-    return runPsql(dsn, `SELECT EXISTS (SELECT FROM pg_tables WHERE tablename = '${table}');`) === 't';
+    return runPsql(dsn, `SELECT to_regclass('public.${table}') IS NOT NULL;`) === 't';
   } catch {
     return false;
   }
@@ -186,10 +723,40 @@ function tableExists(dsn: DsnParts, table: string): boolean {
 
 function countRows(dsn: DsnParts, table: string): number {
   try {
-    return Number.parseInt(runPsql(dsn, `SELECT COUNT(*) FROM ${table};`), 10) || 0;
+    return Number.parseInt(runPsql(dsn, `SELECT COUNT(*) FROM public.${table};`), 10) || 0;
   } catch {
     return 0;
   }
+}
+
+function countRestoreTargetUserObjects(dsn: DsnParts): number {
+  const raw = runPsql(
+    dsn,
+    `SELECT COUNT(*)
+       FROM (
+         SELECT n.oid
+           FROM pg_catalog.pg_namespace AS n
+          WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'public')
+            AND n.nspname !~ '^pg_(toast|temp)'
+         UNION ALL
+         SELECT c.oid
+           FROM pg_catalog.pg_class AS c
+           JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+          WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+            AND n.nspname !~ '^pg_(toast|temp)'
+         UNION ALL
+         SELECT p.oid
+           FROM pg_catalog.pg_proc AS p
+           JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+          WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+            AND n.nspname !~ '^pg_(toast|temp)'
+       ) AS user_objects`,
+  );
+  const count = Number.parseInt(raw, 10);
+  if (!Number.isSafeInteger(count)) {
+    throw new Error('restore target emptiness could not be verified');
+  }
+  return count;
 }
 
 function resolveGitSha(): string {
@@ -209,11 +776,16 @@ async function main(): Promise<void> {
       : args.includes('--restore')
         ? 'restore'
         : 'full';
+  const backupPathFlag = args.indexOf('--backup-path');
   const backupPathArg =
-    args[args.indexOf('--backup-path') + 1] ??
+    (backupPathFlag >= 0 ? args[backupPathFlag + 1] : undefined) ??
     process.env.COMMANDER_DR_BACKUP_DIR ??
     './dr-backups';
   const backupPath = resolve(backupPathArg);
+  const jwksPathFlag = args.indexOf('--jwks-path');
+  const retainedJwksSource = resolve(
+    (jwksPathFlag >= 0 ? args[jwksPathFlag + 1] : undefined) ?? join(backupPath, 'jwks.json'),
+  );
 
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) {
@@ -223,13 +795,16 @@ async function main(): Promise<void> {
 
   const sourceDsn = parseDatabaseUrl(dbUrl);
   const restorePort = process.env.COMMANDER_DR_RESTORE_PORT ?? '5433';
-  const restoreDbUrl =
-    process.env.RST_DATABASE_URL ?? buildRestoreDatabaseUrl(dbUrl, restorePort);
+  const restoreDbUrl = process.env.RST_DATABASE_URL ?? buildRestoreDatabaseUrl(dbUrl, restorePort);
+  assertDrTlsConfiguration(dbUrl, restoreDbUrl);
   const restoredDsn = parseDatabaseUrl(restoreDbUrl);
-  const redactSecrets = [sourceDsn.password, restoredDsn.password, dbUrl, restoreDbUrl].filter(Boolean);
+  const redactSecrets = [sourceDsn.password, restoredDsn.password, dbUrl, restoreDbUrl].filter(
+    Boolean,
+  );
 
   const drillId = `drill_${new Date().toISOString().replace(/[:.]/g, '-')}_${randomUUID().slice(0, 8)}`;
-  const drillBackupPath = join(backupPath, drillId);
+  const drillBackupPath = restoreBackupDirectory(mode, backupPath, drillId);
+  const retainedJwksDestination = join(drillBackupPath, 'jwks.json');
   const failures: string[] = [];
   const incidentStart = new Date();
 
@@ -243,6 +818,7 @@ async function main(): Promise<void> {
   let cutoffAt: string | null = null;
   let lastCommittedAt: Date | null = null;
   let backupCompletedAt: Date | null = null;
+  let retainedJwksArtifact: RetainedJwksArtifact | null = null;
 
   const report: DrillReport = {
     drillId,
@@ -263,6 +839,7 @@ async function main(): Promise<void> {
     cutoffAt: null,
     backup: { path: drillBackupPath, sizeBytes: 0, durationMs: 0, method: 'pg_dump' },
     restore: { durationMs: 0, pgVersion: '', schemaValid: false, independent: false },
+    tls: { sourceVerified: false, restoreVerified: false },
     validation: {
       runsTableExists: false,
       stepsTableExists: false,
@@ -272,6 +849,15 @@ async function main(): Promise<void> {
       killSwitches: false,
       outboxTableExists: false,
       timersTableExists: false,
+      evidenceReceiptsRestored: false,
+      evidenceAnchorsRestored: false,
+      identityOutcomeAccountingPreserved: false,
+      evidenceReceiptCount: 0,
+      anchoredEvidenceReceiptCount: 0,
+      evidenceReceiptsVerified: 0,
+      evidenceReceiptVerificationFailures: 0,
+      retainedJwksSha256: null,
+      retainedJwksKeyIds: [],
       rowCount: { runs: 0, steps: 0, events: 0 },
     },
     rpo: { targetMs: RPO_TARGET_MS, actualMs: 0, passed: false, mode: 'draft' },
@@ -285,12 +871,18 @@ async function main(): Promise<void> {
     failures.push(restoreRefusal);
     report.failures = failures;
     report.honestyLevel = 'DRAFT';
-    report.overall = 'DRAFT';
+    report.overall = 'FAIL';
     report.completedAt = new Date().toISOString();
     return finish(report);
   }
 
   try {
+    if (mode === 'full' || mode === 'backup') {
+      console.log('[0/6] Verifying source PostgreSQL TLS identity (CA + hostname + SPKI)...');
+      await verifyDrDatabaseTlsConnection(dbUrl);
+      report.tls.sourceVerified = true;
+    }
+
     if (mode === 'full' || mode === 'backup') {
       console.log('[1/6] Sentinel runA (before cutoff)...');
       runA = await createDrillRun(dbUrl);
@@ -305,14 +897,16 @@ async function main(): Promise<void> {
       const backupStart = Date.now();
       const dumpFile = join(drillBackupPath, 'dump.dump');
       execFileSync('pg_dump', ['--format=custom', `--file=${dumpFile}`], {
-        env: pgEnv(sourceDsn),
+        env: buildDrPostgresEnv(sourceDsn),
         stdio: 'pipe',
         timeout: 10 * 60 * 1000,
       });
       report.backup.durationMs = Date.now() - backupStart;
       backupCompletedAt = new Date();
       const stats = await stat(dumpFile).catch(() => null);
-      if (stats) report.backup.sizeBytes = stats.size;
+      if (!stats) throw new Error(`backup artifact missing: ${dumpFile}`);
+      assertRegularArtifact(dumpFile, stats);
+      report.backup.sizeBytes = stats.size;
       console.log(`  Backup completed in ${report.backup.durationMs}ms`);
 
       console.log('[3/6] Sentinel runB (after cutoff — must be absent after restore)...');
@@ -327,23 +921,46 @@ async function main(): Promise<void> {
       return finish(report);
     }
 
+    const dumpFile = join(drillBackupPath, 'dump.dump');
+    const dumpStats = await stat(dumpFile).catch(() => null);
+    if (!dumpStats) throw new Error(`backup artifact missing: ${dumpFile}`);
+    assertRegularArtifact(dumpFile, dumpStats);
+    report.backup.sizeBytes = dumpStats.size;
+
+    console.log('[3.5/6] Validating retained public JWKS artifact...');
+    if (mode === 'full' || mode === 'restore') {
+      retainedJwksArtifact = await readRetainedJwks(retainedJwksSource);
+      if (mode === 'full' && resolve(retainedJwksSource) !== resolve(retainedJwksDestination)) {
+        await mkdir(drillBackupPath, { recursive: true });
+        await copyFile(retainedJwksSource, retainedJwksDestination);
+        retainedJwksArtifact = await readRetainedJwks(retainedJwksDestination);
+      }
+      report.validation.retainedJwksSha256 = retainedJwksArtifact.sha256;
+      report.validation.retainedJwksKeyIds = retainedJwksArtifact.keyIds;
+    }
+
     console.log('[4/6] Restoring to independent target...');
     const restoreStart = Date.now();
-    const dumpFile = join(drillBackupPath, 'dump.dump');
 
     assertDistinctRestoreTarget(sourceDsn, restoredDsn);
     try {
-      execFileSync('createdb', [restoredDsn.database], {
-        env: { ...pgEnv(restoredDsn), PGDATABASE: 'postgres' },
-        stdio: 'pipe',
+      // The target database does not exist yet. Verify the restore server
+      // identity through its control database before issuing createdb.
+      await preflightRestoreServerBeforeCreate(restoreDbUrl, verifyDrDatabaseTlsConnection, () => {
+        createFreshRestoreDatabase(restoredDsn, () => {
+          execFileSync('createdb', [restoredDsn.database], {
+            env: { ...buildDrPostgresEnv(restoredDsn), PGDATABASE: 'postgres' },
+            stdio: 'pipe',
+          });
+        });
       });
-    } catch {
-      // database may already exist on retry
-    }
-
-    try {
+      assertEmptyRestoreTarget(countRestoreTargetUserObjects(restoredDsn));
+      // The restore database is created immediately above. Verify its
+      // certificate/key identity before pg_restore can write anything.
+      await verifyDrDatabaseTlsConnection(restoreDbUrl);
+      report.tls.restoreVerified = true;
       execFileSync('pg_restore', ['--no-owner', '--no-acl', dumpFile], {
-        env: pgEnv(restoredDsn),
+        env: buildDrPostgresEnv(restoredDsn),
         stdio: 'pipe',
         timeout: 5 * 60 * 1000,
       });
@@ -371,12 +988,23 @@ async function main(): Promise<void> {
       report.validation.effects = tableExists(restoredDsn, 'commander_effects');
       report.validation.interactions = tableExists(restoredDsn, 'commander_interactions');
       report.validation.killSwitches = tableExists(restoredDsn, 'commander_kill_switches');
-      report.restore.schemaValid =
-        report.validation.runsTableExists &&
-        report.validation.stepsTableExists &&
-        report.validation.effects &&
-        report.validation.interactions;
-
+      Object.assign(report.validation, assessRestoredEvidence(restoredDsn, runPsql));
+      if (retainedJwksArtifact && report.validation.evidenceReceiptsRestored) {
+        try {
+          const verification = verifyRestoredReceiptPages(
+            (cursor) => queryRestoredReceiptPage(restoredDsn, runPsql, cursor),
+            retainedJwksArtifact.jwks,
+          );
+          report.validation.evidenceReceiptsVerified = verification.verified;
+          report.validation.evidenceReceiptVerificationFailures = verification.failed;
+          for (const reason of verification.failures)
+            failures.push(`restored evidence receipt verification failed: ${reason}`);
+        } catch (err) {
+          failures.push(
+            `restored evidence receipt verification failed: ${sanitizeError(err, redactSecrets)}`,
+          );
+        }
+      }
       report.validation.rowCount.runs = countRows(restoredDsn, 'commander_runs');
       report.validation.rowCount.steps = countRows(restoredDsn, 'commander_steps');
       report.validation.rowCount.events = countRows(restoredDsn, 'commander_events');
@@ -392,6 +1020,20 @@ async function main(): Promise<void> {
       failures.push('Skipped RST validation — no independent restore');
     }
 
+    const schemaFailures = restoredValidationFailures(report.validation);
+    const validationFailures = [...schemaFailures];
+    if (!retainedJwksArtifact) validationFailures.push('retained JWKS artifact missing');
+    if (report.validation.evidenceReceiptsRestored) {
+      if (report.validation.evidenceReceiptVerificationFailures > 0) {
+        validationFailures.push('restored evidence receipt signatures invalid');
+      }
+      if (report.validation.evidenceReceiptsVerified !== report.validation.evidenceReceiptCount) {
+        validationFailures.push('restored evidence receipt verification incomplete');
+      }
+    }
+    report.restore.schemaValid = schemaFailures.length === 0;
+    failures.push(...validationFailures);
+
     console.log('[6/6] Assessing RPO/RTO...');
     if (backupCompletedAt && lastCommittedAt && independentRestore) {
       const rpoMs = computeRpoMs(backupCompletedAt, lastCommittedAt);
@@ -402,30 +1044,36 @@ async function main(): Promise<void> {
     } else {
       report.rpo.mode = 'draft';
       report.rpo.passed = false;
-      failures.push('RPO not measured — missing cutoff or independent restore');
+      if (mode !== 'restore')
+        failures.push('RPO not measured — missing cutoff or independent restore');
     }
 
     const completedAt = new Date();
     report.rto.actualMs = completedAt.getTime() - incidentStart.getTime();
     report.rto.passed = report.rto.actualMs <= RTO_TARGET_MS;
-    if (!report.rto.passed) failures.push(`RTO exceeded: ${report.rto.actualMs}ms > ${RTO_TARGET_MS}ms`);
+    if (!report.rto.passed)
+      failures.push(`RTO exceeded: ${report.rto.actualMs}ms > ${RTO_TARGET_MS}ms`);
 
-    const cellProcessesVerified = process.env.COMMANDER_DR_CELL_VERIFY === '1';
     report.honestyLevel = resolveHonestyLevel({
       independentRestore,
       sentinelVerified,
-      cellProcessesVerified,
     });
 
-    if (report.honestyLevel === 'DRAFT') {
-      report.overall = 'DRAFT';
-    } else {
-      report.overall = failures.length === 0 ? 'PASS' : 'FAIL';
-    }
+    report.overall = resolveDrillOverall({
+      mode: mode === 'restore' ? 'restore' : 'full',
+      independentRestore,
+      restoreFailures: independentRestore ? [] : ['independent restore failed'],
+      validationFailures,
+      sentinelVerified,
+      rpoPassed: report.rpo.passed,
+      rtoPassed: report.rto.passed,
+    });
     report.completedAt = completedAt.toISOString();
 
     console.log(`\n[DR Drill ${drillId}] ${report.overall} honesty=${report.honestyLevel}`);
-    console.log(`  RPO: ${report.rpo.actualMs}ms mode=${report.rpo.mode} — ${report.rpo.passed ? 'PASS' : 'FAIL'}`);
+    console.log(
+      `  RPO: ${report.rpo.actualMs}ms mode=${report.rpo.mode} — ${report.rpo.passed ? 'PASS' : 'FAIL'}`,
+    );
     console.log(`  RTO: ${report.rto.actualMs}ms — ${report.rto.passed ? 'PASS' : 'FAIL'}`);
     if (failures.length > 0) {
       console.log('  Failures:');
@@ -441,16 +1089,19 @@ async function main(): Promise<void> {
   return finish(report);
 }
 
-function finish(report: DrillReport): void {
+async function finish(report: DrillReport): Promise<void> {
   const reportPath = join(report.backup.path, 'drill-report.json');
-  mkdir(report.backup.path, { recursive: true })
-    .then(() => writeFile(reportPath, JSON.stringify(report, null, 2)))
-    .then(() => console.log(`\nReport saved to: ${reportPath}`))
-    .catch(() => {})
-    .finally(() => {
-      if (report.overall === 'FAIL') process.exit(1);
-      if (report.overall === 'DRAFT') process.exit(2);
-    });
+  try {
+    await mkdir(report.backup.path, { recursive: true });
+    await writeFile(reportPath, JSON.stringify(report, null, 2));
+    console.log(`\nReport saved to: ${reportPath}`);
+  } catch (err) {
+    console.error(`Failed to persist DR report: ${sanitizeError(err)}`);
+    process.exitCode = 1;
+    return;
+  }
+  if (report.overall === 'FAIL') process.exitCode = 1;
+  if (report.overall === 'DRAFT') process.exitCode = 2;
 }
 
 function buildRedactSecrets(): string[] {
@@ -465,7 +1116,9 @@ function buildRedactSecrets(): string[] {
       process.env.RST_DATABASE_URL ?? buildRestoreDatabaseUrl(dbUrl, restorePort);
     secrets.push(restoreDbUrl);
     secrets.push(parseDatabaseUrl(restoreDbUrl).password);
-  } catch { /* ignore malformed DSN */ }
+  } catch {
+    /* ignore malformed DSN */
+  }
   return secrets.filter(Boolean);
 }
 

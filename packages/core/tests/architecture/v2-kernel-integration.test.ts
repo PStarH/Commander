@@ -283,7 +283,7 @@ describe('V2 Kernel Integration — Full Execution Path', () => {
     assert.ok(eventTypes.includes('run.failed'), 'Should have run.failed event');
   });
 
-  it('should handle concurrent workers claiming the same step (exactly-once claim)', async () => {
+  it('should allow one in-memory worker to claim a step during a concurrent race', async () => {
     const command = createRunCommand(tenantId, [
       { kind: 'agent', input: { goal: 'Concurrent test', agentId: 'agent' } },
     ]);
@@ -297,9 +297,9 @@ describe('V2 Kernel Integration — Full Execution Path', () => {
       executeStep(kernel, 'worker-B', executor),
     ]);
 
-    // Exactly one should have claimed and completed the step
+    // One worker should have claimed and completed the step
     const claimed = [result1, result2].filter((r) => r.step !== null);
-    assert.equal(claimed.length, 1, 'Exactly one worker should claim the step');
+    assert.equal(claimed.length, 1, 'One worker should claim the step');
 
     // The claiming worker should have completed it
     assert.equal(claimed[0].completed, true);
@@ -308,8 +308,8 @@ describe('V2 Kernel Integration — Full Execution Path', () => {
     const finalRun = await kernel.getRun(run.id, tenantId);
     assert.equal(finalRun!.state, 'SUCCEEDED');
 
-    // Executor should have been called exactly once
-    assert.equal(executor.executions.length, 1, 'Executor should run exactly once');
+    // The in-memory executor should receive one claim.
+    assert.equal(executor.executions.length, 1, 'Executor should receive one in-memory claim');
   });
 
   it('should enforce tenant concurrency limits', async () => {

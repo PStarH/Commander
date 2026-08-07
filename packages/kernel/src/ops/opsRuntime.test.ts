@@ -13,19 +13,35 @@ describe('kernel ops runtime', () => {
     const calls: string[] = [];
     const runtime = new KernelOpsRuntime({
       reclaim: {
-        start: () => { calls.push('reclaim:start'); },
-        stop: async () => { calls.push('reclaim:stop'); },
+        start: () => {
+          calls.push('reclaim:start');
+        },
+        stop: async () => {
+          calls.push('reclaim:stop');
+        },
         isHealthy: () => true,
       },
       timer: {
-        start: () => { calls.push('timer:start'); },
-        stop: () => { calls.push('timer:stop'); },
+        start: () => {
+          calls.push('timer:start');
+        },
+        stop: () => {
+          calls.push('timer:stop');
+        },
         isHealthy: () => true,
       },
-      outbox: { publish: async () => { calls.push('outbox:publish'); } },
+      outbox: {
+        publish: async () => {
+          calls.push('outbox:publish');
+        },
+      },
       compensation: {
-        start: () => { calls.push('compensation:start'); },
-        stop: async () => { calls.push('compensation:stop'); },
+        start: () => {
+          calls.push('compensation:start');
+        },
+        stop: async () => {
+          calls.push('compensation:stop');
+        },
         isHealthy: () => true,
       },
       outboxIntervalMs: 60_000,
@@ -64,7 +80,11 @@ describe('kernel ops runtime', () => {
     const runtime = new KernelOpsRuntime({
       reclaim: healthyLoop(),
       timer: healthyLoop(),
-      outbox: { publish: async () => { throw new Error('temporary database failure'); } },
+      outbox: {
+        publish: async () => {
+          throw new Error('temporary database failure');
+        },
+      },
       compensation: healthyLoop(),
       outboxIntervalMs: 60_000,
       outboxBatchSize: 10,
@@ -78,7 +98,9 @@ describe('kernel ops runtime', () => {
 
   it('requires a fresh outbox success after restart', async () => {
     let release!: () => void;
-    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     let publishes = 0;
     const runtime = new KernelOpsRuntime({
       reclaim: healthyLoop(),
@@ -110,7 +132,9 @@ describe('kernel ops runtime', () => {
 
   it('does not become ready from an outbox publish that spanned stop()', async () => {
     let release!: () => void;
-    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     let publishes = 0;
     const runtime = new KernelOpsRuntime({
       reclaim: healthyLoop(),
@@ -140,7 +164,9 @@ describe('kernel ops runtime', () => {
 
   it('overlapping stop then start does not wipe a fresh outbox success', async () => {
     let releaseReclaimStop!: () => void;
-    const reclaimStopBlocked = new Promise<void>((resolve) => { releaseReclaimStop = resolve; });
+    const reclaimStopBlocked = new Promise<void>((resolve) => {
+      releaseReclaimStop = resolve;
+    });
     let reclaimStopCount = 0;
     const runtime = new KernelOpsRuntime({
       reclaim: {

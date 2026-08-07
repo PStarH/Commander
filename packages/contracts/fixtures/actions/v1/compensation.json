@@ -1,0 +1,10 @@
+{
+  "originalEffectId": "effect_action_01",
+  "adapterVersion": "demo.adapter.v1",
+  "compensationEffectType": "compensate.demo.ticket.create",
+  "compensationPatch": {
+    "ticketId": "ticket_action_01",
+    "reason": "rollback"
+  },
+  "forwardReceiptHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

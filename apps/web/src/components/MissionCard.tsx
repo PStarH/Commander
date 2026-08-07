@@ -1,12 +1,10 @@
-import { Card, Badge, Button } from './ui';
+import { Card, Badge } from './ui';
 import type { Mission } from '../types';
-import { formatTimestamp, nextMissionActions, isMissionHighRisk } from '../types';
+import { formatTimestamp, isMissionHighRisk } from '../types';
 
 interface MissionCardProps {
   mission: Mission;
   agentName?: string;
-  onStatusChange: (missionId: string, status: string) => void;
-  onApprove: (missionId: string) => void;
 }
 
 const priorityColors: Record<string, 'success' | 'warning' | 'error' | 'info'> = {
@@ -26,7 +24,7 @@ const riskGovColors: Record<string, string> = {
   MANUAL: 'rgba(255, 105, 120, 0.7)',
 };
 
-export function MissionCard({ mission, agentName, onStatusChange, onApprove }: MissionCardProps) {
+export function MissionCard({ mission, agentName }: MissionCardProps) {
   const highRisk = isMissionHighRisk(mission);
   const cardVariant = highRisk
     ? mission.riskLevel === 'CRITICAL'
@@ -67,36 +65,7 @@ export function MissionCard({ mission, agentName, onStatusChange, onApprove }: M
 
       <div className="mission-foot">
         <span className="mission-agent">{agentName || mission.assignedAgentId}</span>
-        <div className="mission-acts">
-          {nextMissionActions(mission.status).map((next) => (
-            <Button
-              key={next}
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                if (
-                  next === 'BLOCKED' &&
-                  !window.confirm(`Block mission "${mission.title}"? This may pause the workflow.`)
-                ) {
-                  return;
-                }
-                onStatusChange(mission.id, next);
-              }}
-            >
-              {next}
-            </Button>
-          ))}
-          {mission.governanceMode === 'MANUAL' && highRisk && mission.status !== 'DONE' && (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => onApprove(mission.id)}
-              className="approve-btn"
-            >
-              Approve
-            </Button>
-          )}
-        </div>
+        <Badge variant="info">{mission.status}</Badge>
       </div>
     </Card>
   );

@@ -3,6 +3,8 @@
 This document describes the public Service Level Objectives (SLOs) for Commander.
 The targets are measured daily by the SLO benchmark runner
 (`.github/workflows/slo-bench.yml`) and reported in the web dashboard at `/slo`.
+The committed measurements are CI baselines and target definitions, not evidence
+of production SLA attainment or a customer contract.
 
 ## SLO Summary
 
@@ -14,6 +16,15 @@ The targets are measured daily by the SLO benchmark runner
 | DLQ recovery success rate      | ≥ 99.5%   | 24h rolling        | `deadLetterQueue` replay metrics      |
 | Event-log hash-chain integrity | 100%       | per write          | `eventSourcingEngine` verification    |
 | Tool approval fail-closed rate | 100%       | per request        | `approvalSystem` deny logs            |
+
+## Design Partner Pilot
+
+The bounded rollback pilot additionally measures proposal response p95 under
+1 second (excluding identity-provider latency), kill-switch enforcement before
+adapter invocation in 100% of trials, unknown resolution or escalation within
+5 minutes, signed terminal evidence within 60 seconds, zero consequential
+duplicate writes, and 100% independently verified terminal receipts. These are
+pilot acceptance thresholds, not general availability claims.
 
 ## RPO/RTO Targets
 

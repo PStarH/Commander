@@ -66,6 +66,21 @@ export default tseslint.config(
     files: ['packages/sdk/**/*.ts', 'apps/**/*.ts'],
     rules: { 'no-console': 'off' },
   },
+  // Kernel package — lower-level durable kernel, includes CLI entrypoints and tests
+  {
+    files: ['packages/kernel/src/**/*.ts'],
+    extends: [tseslint.configs.base],
+    rules: {
+      'no-console': 'off',
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
+      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-require-imports': 'off',
+      'prefer-const': 'warn',
+    },
+  },
   // Legacy files with known `any` usage — NOTE: refactor to remove `any`
   {
     files: [

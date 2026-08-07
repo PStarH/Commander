@@ -250,17 +250,17 @@ export function HallucinationRiskPanel({ runId: initialRunId }: HallucinationRis
 
       {!loadingReport && !error && !report && (
         <div className="narrative narrative-green">
-          Select a run to view hallucination detection results. The Core HallucinationDetector scans
-          every LLM output for 13 signal types (overconfidence, fabricated references, temporal
-          impossibility, and more) and emits a risk score plus a pass / flag / reject
-          recommendation.
+          Select a run to view hallucination detection results. When enabled, the Core
+          HallucinationDetector analyzes LLM outputs for 13 signal types (overconfidence, fabricated
+          references, temporal impossibility, and more) and emits a risk score plus a pass / flag /
+          reject recommendation.
         </div>
       )}
 
       {!loadingReport && !error && report && report.reports.length === 0 && (
         <div className="narrative narrative-green">
-          No hallucination signals recorded for this run. Either the run produced no LLM output, or
-          every output passed the grounding checks cleanly.
+          No hallucination signals were recorded for this run. The run may have produced no output,
+          or the enabled detector did not emit a signal.
         </div>
       )}
 

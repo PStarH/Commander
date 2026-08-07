@@ -1,0 +1,160 @@
+{{- if not .Values.tenantAuthority.transportBootstrap }}
+{{- $operatorSubject := .Values.networkPolicy.migrationOperator.subject | default "" -}}
+{{- if $operatorSubject }}
+{{- $parts := splitList ":" $operatorSubject -}}
+{{- if or (ne (len $parts) 4) (ne (index $parts 0) "system") (ne (index $parts 1) "serviceaccount") -}}
+{{- fail "networkPolicy.migrationOperator.subject must be system:serviceaccount:<namespace>:<name>" -}}
+{{- end -}}
+{{- $operatorNamespace := index $parts 2 -}}
+{{- $operatorName := index $parts 3 -}}
+{{- if or (not (regexMatch "^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$" $operatorNamespace)) (not (regexMatch "^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$" $operatorName)) -}}
+{{- fail "networkPolicy.migrationOperator.subject must contain DNS-label namespace and name" -}}
+{{- end -}}
+{{- $rbacName := printf "%s-tenant-prerequisite-operator" (include "commander.fullname" .) -}}
+{{- $guardSuffix := printf "%s/%s" .Release.Namespace .Release.Name | sha256sum | trunc 16 -}}
+{{- $policyGuard := printf "commander-tenant-authority-policy-guard-%s" $guardSuffix -}}
+{{- $workloadGuard := printf "commander-tenant-authority-guard-%s" $guardSuffix -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $operatorName }}
+  namespace: {{ $operatorNamespace }}
+  labels:
+    app.kubernetes.io/managed-by: commander-operator
+    commander.io/purpose: tenant-authority-prerequisite
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $rbacName }}
+  labels:
+    app.kubernetes.io/managed-by: commander-operator
+    commander.io/purpose: tenant-authority-prerequisite
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingadmissionpolicies", "validatingadmissionpolicybindings"]
+    resourceNames: [{{ $policyGuard | quote }}, {{ $workloadGuard | quote }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $rbacName }}
+  labels:
+    app.kubernetes.io/managed-by: commander-operator
+    commander.io/purpose: tenant-authority-prerequisite
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $rbacName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $operatorName }}
+    namespace: {{ $operatorNamespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $rbacName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: commander-operator
+    commander.io/purpose: tenant-authority-prerequisite
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ .Values.tenantAuthority.apiProof.publicSecret | quote }}]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["services"]
+    resourceNames:
+      - {{ printf "%s-api-proof" (include "commander.fullname" .) | quote }}
+      {{- if include "commander.bundledPostgres" . }}
+      - {{ printf "%s-postgres" (include "commander.fullname" .) | quote }}
+      {{- end }}
+      {{- range (.Values.networkPolicy.databaseEndpoints | default (list)) }}
+      {{- if and .service (eq .service.namespace $.Release.Namespace) }}
+      - {{ .service.name | quote }}
+      {{- end }}
+      {{- end }}
+    verbs: ["get"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["create", "get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $rbacName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: commander-operator
+    commander.io/purpose: tenant-authority-prerequisite
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $rbacName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $operatorName }}
+    namespace: {{ $operatorNamespace }}
+{{- $seen := dict -}}
+{{- range (.Values.networkPolicy.databaseEndpoints | default (list)) }}
+{{- if and .service (ne .service.namespace $.Release.Namespace) (not (hasKey $seen .service.namespace)) }}
+{{- $_ := set $seen .service.namespace true }}
+{{- $destinationNamespace := .service.namespace }}
+{{- $destinationSuffix := printf "%s/%s" $.Release.Name $destinationNamespace | sha256sum | trunc 8 }}
+{{- $destinationRbacName := printf "%s-destination-%s" $rbacName $destinationSuffix | trunc 63 | trimSuffix "-" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $destinationRbacName }}
+  namespace: {{ $destinationNamespace }}
+  labels:
+    app.kubernetes.io/managed-by: commander-operator
+    commander.io/purpose: tenant-authority-prerequisite
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    resourceNames:
+      {{- range ($.Values.networkPolicy.databaseEndpoints | default (list)) }}
+      {{- if and .service (eq .service.namespace $destinationNamespace) }}
+      - {{ .service.name | quote }}
+      {{- end }}
+      {{- end }}
+    verbs: ["get"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["create", "get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $destinationRbacName }}
+  namespace: {{ $destinationNamespace }}
+  labels:
+    app.kubernetes.io/managed-by: commander-operator
+    commander.io/purpose: tenant-authority-prerequisite
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $destinationRbacName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $operatorName }}
+    namespace: {{ $operatorNamespace }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

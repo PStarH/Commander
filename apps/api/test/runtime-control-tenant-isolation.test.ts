@@ -5,8 +5,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import express, { type RequestHandler } from 'express';
 import { createReplayRouter } from '../src/replayEndpoints';
-import { createPauseRouter } from '../src/pauseEndpoints';
-import { getSharedRuntime } from '../src/sharedRuntime';
+import { createPauseRouter, type RunControlGateway } from '../src/pauseEndpoints';
 
 interface RunningServer {
   baseUrl: string;
@@ -133,84 +132,53 @@ test('replay endpoints require tenant-scoped state and hide foreign runs', async
   }
 });
 
-test('pause, resume, and rollback controls reject foreign tenants and preserve same-tenant execution', async () => {
-  const previousCwd = process.cwd();
-  const root = mkdtempSync(join(tmpdir(), 'commander-runtime-'));
-  process.chdir(root);
+test('pause and resume preserve tenant identity through the canonical gateway', async () => {
+  const calls: Array<{ operation: string; runId: string; tenantId: string; actor: string }> = [];
+  const gateway: RunControlGateway = {
+    pauseRun: async (runId, tenantId, actor) => {
+      calls.push({ operation: 'pause', runId, tenantId, actor });
+      return runId === 'pause-a' ? { id: runId, state: 'PAUSED' } : null;
+    },
+    resumeRun: async (runId, tenantId, actor) => {
+      calls.push({ operation: 'resume', runId, tenantId, actor });
+      return runId === 'resume-a' ? { id: runId, state: 'RUNNING' } : null;
+    },
+  };
+  const server = await start(createPauseRouter(() => gateway));
   try {
-    writeTenantCheckpoint(root, 'tenant-a', 'pause-a', 'waiting_for_human');
-    writeTenantCheckpoint(root, 'tenant-a', 'resume-a', 'waiting_for_human');
-    writeTenantCheckpoint(root, 'tenant-a', 'rollback-a');
-    writeTenantCheckpoint(root, 'tenant-b', 'pause-b');
-    writeTenantCheckpoint(root, 'tenant-b', 'resume-b');
-    writeTenantCheckpoint(root, 'tenant-b', 'rollback-b');
-
-    const paused: string[] = [];
-    const executed: Array<{ tenantId?: string }> = [];
-    const fakeRuntime = {
-      pauseRun: (runId: string) => {
-        paused.push(runId);
-        return runId === 'pause-a';
-      },
-      isPaused: (runId: string) => runId === 'resume-a',
-      unpauseRun: () => undefined,
-      execute: async (ctx: { tenantId?: string }) => {
-        executed.push(ctx);
-        return {};
-      },
-      getActiveRuns: () => [{ runId: 'pause-a', paused: true }],
-    };
-    const server = await start(
-      createPauseRouter(() => fakeRuntime as unknown as ReturnType<typeof getSharedRuntime>),
-    );
-    try {
-      const foreignPause = await fetch(`${server.baseUrl}/runtime/pause`, {
+    for (const [operation, runId, expected] of [
+      ['pause', 'pause-b', 409],
+      ['pause', 'pause-a', 200],
+      ['resume', 'resume-b', 409],
+      ['resume', 'resume-a', 200],
+    ] as const) {
+      const response = await fetch(`${server.baseUrl}/runtime/${operation}`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-test-tenant': 'tenant-a' },
-        body: JSON.stringify({ runId: 'pause-b' }),
+        headers: {
+          'content-type': 'application/json',
+          'x-test-tenant': 'tenant-a',
+          'x-test-principal': 'owner-a',
+        },
+        body: JSON.stringify({ runId }),
       });
-      assert.equal(foreignPause.status, 404);
-      assert.deepEqual(paused, []);
-      const ownPause = await fetch(`${server.baseUrl}/runtime/pause`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-test-tenant': 'tenant-a' },
-        body: JSON.stringify({ runId: 'pause-a' }),
-      });
-      assert.equal(ownPause.status, 200);
-
-      const foreignResume = await fetch(`${server.baseUrl}/runtime/resume`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-test-tenant': 'tenant-a' },
-        body: JSON.stringify({ runId: 'resume-b' }),
-      });
-      assert.equal(foreignResume.status, 404);
-      const ownResume = await fetch(`${server.baseUrl}/runtime/resume`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-test-tenant': 'tenant-a' },
-        body: JSON.stringify({ runId: 'resume-a' }),
-      });
-      assert.equal(ownResume.status, 200);
-      assert.equal(executed.at(-1)?.tenantId, 'tenant-a');
-
-      const foreignRollback = await fetch(`${server.baseUrl}/runtime/rollback`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-test-tenant': 'tenant-a' },
-        body: JSON.stringify({ runId: 'rollback-b', stepNumber: 0 }),
-      });
-      assert.equal(foreignRollback.status, 404);
-      const ownRollback = await fetch(`${server.baseUrl}/runtime/rollback`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-test-tenant': 'tenant-a' },
-        body: JSON.stringify({ runId: 'rollback-a', stepNumber: 0 }),
-      });
-      assert.equal(ownRollback.status, 200);
-      assert.equal(executed.length, 2);
-    } finally {
-      await server.close();
+      assert.equal(response.status, expected);
     }
+    for (const runId of ['rollback-a', 'rollback-b']) {
+      const response = await fetch(`${server.baseUrl}/runtime/rollback`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-test-tenant': 'tenant-a' },
+        body: JSON.stringify({ runId, stepNumber: 0 }),
+      });
+      assert.equal(response.status, 410);
+    }
+    assert.deepEqual(calls, [
+      { operation: 'pause', runId: 'pause-b', tenantId: 'tenant-a', actor: 'owner-a' },
+      { operation: 'pause', runId: 'pause-a', tenantId: 'tenant-a', actor: 'owner-a' },
+      { operation: 'resume', runId: 'resume-b', tenantId: 'tenant-a', actor: 'owner-a' },
+      { operation: 'resume', runId: 'resume-a', tenantId: 'tenant-a', actor: 'owner-a' },
+    ]);
   } finally {
-    process.chdir(previousCwd);
-    rmSync(root, { recursive: true, force: true });
+    await server.close();
   }
 });
 
@@ -266,7 +234,11 @@ test('saga controls filter and authorize by snapshot tenant', async () => {
         method: 'POST',
         headers: { 'x-test-tenant': 'tenant-a', 'x-test-principal': 'owner-tenant-a' },
       });
-      assert.equal(foreignResume.status, 404);
+      assert.equal(foreignResume.status, 410);
+      assert.equal(
+        ((await foreignResume.json()) as { error?: { code?: string } }).error?.code,
+        'LEGACY_EXECUTION_DISABLED',
+      );
     } finally {
       await server.close();
     }

@@ -1,7 +1,4 @@
-import {
-  githubPrBodyMarker,
-  GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR,
-} from '@commander/contracts';
+import { githubPrBodyMarker, GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR } from '@commander/contracts';
 import { AdapterExecutionError } from '@commander/effect-broker';
 import type { EffectRemoteOutcome } from '@commander/effect-broker';
 import { assertOkResponse, adapterFetch, readJsonResponse, type FetchFn } from '../http.js';
@@ -18,6 +15,7 @@ interface GitHubPull {
   number: number;
   html_url: string;
   state: string;
+  title?: string;
   body: string | null;
   head: { ref: string };
   base: { ref: string };
@@ -32,7 +30,8 @@ export function createGitHubPullRequestCreateAdapter(
   options: GitHubPullRequestCreateAdapterOptions,
 ): ActionAdapter {
   const rawFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
-  const fetchImpl = (url: RequestInfo | URL, init?: RequestInit) => adapterFetch(rawFetch, url, init);
+  const fetchImpl = (url: RequestInfo | URL, init?: RequestInit) =>
+    adapterFetch(rawFetch, url, init);
 
   async function listPullRequests(
     token: string,
@@ -71,6 +70,28 @@ export function createGitHubPullRequestCreateAdapter(
     });
   }
 
+  function assertPullMatchesCreateRequest(
+    pull: GitHubPull,
+    expected: { title: string; body: string; head: string; base: string },
+  ): void {
+    if (
+      pull.title !== expected.title ||
+      pull.body !== expected.body ||
+      pull.head.ref !== expected.head ||
+      pull.base.ref !== expected.base
+    ) {
+      throw new AdapterExecutionError(
+        'GitHub idempotency key was reused with a different pull-request request',
+        {
+          code: 'GITHUB_IDEMPOTENCY_CONFLICT',
+          commitState: 'NOT_COMMITTED',
+          retryMode: 'NEVER',
+          details: { prNumber: pull.number },
+        },
+      );
+    }
+  }
+
   async function findByMarker(
     input: AdapterQueryInput,
     marker: string,
@@ -86,19 +107,34 @@ export function createGitHubPullRequestCreateAdapter(
       base,
     );
     if (pulls.length === 0) {
-      return { pulls, outcome: { status: 'UNKNOWN' } };
+      return {
+        pulls,
+        outcome: {
+          status: 'UNKNOWN',
+          error: {
+            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+            message: 'Remote outcome is not yet provable',
+          },
+        },
+      };
     }
     if (pulls.length > 1) {
       return {
         pulls,
-        outcome: { status: 'UNKNOWN' },
+        outcome: {
+          status: 'UNKNOWN',
+          error: {
+            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+            message: 'Remote outcome is not yet provable',
+          },
+        },
       };
     }
     const pull = pulls[0]!;
     return {
       pulls,
       outcome: {
-        status: 'COMPLETED',
+        status: 'APPLIED',
         response: {
           prNumber: pull.number,
           url: pull.html_url,
@@ -116,15 +152,22 @@ export function createGitHubPullRequestCreateAdapter(
       const marker = githubPrBodyMarker(input.tenantId, input.idempotencyKey);
       const head = String(input.args.head ?? '');
       const base = String(input.args.base ?? 'main');
+      const title = String(input.args.title ?? 'Commander PR');
+      const bodyText = String(input.args.body ?? '');
+      const body = bodyText.includes(marker) ? bodyText : `${bodyText}\n\n${marker}`.trim();
+      // A replay must find the marker even when the caller mutates routing
+      // fields; the exact request check below turns that mutation into a
+      // conflict instead of allowing a second remote create.
       const existing = await findByMarker(
         {
           ...input,
-          request: { head, base },
+          request: {},
         },
         marker,
       );
       if (existing.pulls.length === 1) {
         const pull = existing.pulls[0]!;
+        assertPullMatchesCreateRequest(pull, { title, body, head, base });
         return { prNumber: pull.number, url: pull.html_url, state: pull.state };
       }
       if (existing.pulls.length > 1) {
@@ -137,9 +180,6 @@ export function createGitHubPullRequestCreateAdapter(
       }
 
       const token = await options.credentials.getGitHubToken(input.tenantId, input.destination);
-      const title = String(input.args.title ?? 'Commander PR');
-      const bodyText = String(input.args.body ?? '');
-      const body = bodyText.includes(marker) ? bodyText : `${bodyText}\n\n${marker}`.trim();
 
       const response = await fetchImpl(
         `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`,
@@ -163,7 +203,15 @@ export function createGitHubPullRequestCreateAdapter(
     async queryOutcome(input: AdapterQueryInput): Promise<EffectRemoteOutcome> {
       const marker = githubPrBodyMarker(input.tenantId, input.idempotencyKey);
       const result = await findByMarker(input, marker);
-      return result.outcome ?? { status: 'UNKNOWN' };
+      return (
+        result.outcome ?? {
+          status: 'UNKNOWN',
+          error: {
+            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+            message: 'Remote outcome is not yet provable',
+          },
+        }
+      );
     },
 
     async compensate(input: AdapterCompensateInput): Promise<Record<string, unknown>> {
@@ -242,11 +290,15 @@ export function createGitHubPullRequestCreateAdapter(
       input: AdapterQueryInput & { compensationResponse?: Record<string, unknown> },
     ): Promise<EffectRemoteOutcome> {
       const { owner, repo } = parseGitHubDestination(input.destination);
-      const prNumber = Number(
-        input.compensationResponse?.prNumber ?? input.request.prNumber,
-      );
+      const prNumber = Number(input.compensationResponse?.prNumber ?? input.request.prNumber);
       if (!Number.isFinite(prNumber)) {
-        return { status: 'UNKNOWN' };
+        return {
+          status: 'UNKNOWN',
+          error: {
+            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+            message: 'Remote outcome is not yet provable',
+          },
+        };
       }
       const token = await options.credentials.getGitHubToken(input.tenantId, input.destination);
       const response = await fetchImpl(
@@ -264,11 +316,17 @@ export function createGitHubPullRequestCreateAdapter(
       const pull = await readJsonResponse<GitHubPull>(response);
       if (pull.state === 'closed') {
         return {
-          status: 'COMPLETED',
+          status: 'APPLIED',
           response: { prNumber: pull.number, state: pull.state },
         };
       }
-      return { status: 'UNKNOWN' };
+      return {
+        status: 'UNKNOWN',
+        error: {
+          code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+          message: 'Remote outcome is not yet provable',
+        },
+      };
     },
   };
 }

@@ -50,7 +50,13 @@ export function isEnterpriseReachablePath(path: string): boolean {
 export function enterpriseRouteFreeze(): RequestHandler {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!isEnterpriseProfile()) return next();
-    if (isEnterpriseReachablePath(req.path)) return next();
+    if (isEnterpriseReachablePath(req.path)) {
+      if (req.path === '/v1/projects' || req.path.startsWith('/v1/projects/')) {
+        res.set('x-commander-projection', 'war-room');
+        res.set('x-commander-canonical-authority', 'kernel');
+      }
+      return next();
+    }
     // Frozen legacy product route — reject before any handler runs.
     res.set('x-legacy', 'true');
     res.set('Deprecation', 'true');

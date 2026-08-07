@@ -237,12 +237,15 @@
     <header>
       <h1>Commander 外部 Benchmark 调研报告</h1>
       <div class="meta">面向 AI Agent 安全框架的第三方基准测试选型与集成建议 · 2026-07-09</div>
+      <div class="callout">
+        <p><strong>证据边界：</strong>这是外部 benchmark 调研与接入建议，不是 Commander 结果认证。本文引用的公开论文/官方数据描述基准本身；Commander 专属的拦截数字来自历史 harness 记录，未在本页完成独立复核，也不代表生产、客户、SOC 或通用安全保证。</p>
+      </div>
     </header>
 
     <main>
       <section>
         <p class="lead">
-          本报告梳理了 <mark class="key">12 个可被 Commander 直接引用或快速适配的第三方外部 benchmark</mark>，覆盖间接提示注入、有害内容拒绝、工具滥用、网络/系统环境任务与通用智能体能力五大维度。所有信息均来自论文原文、官方仓库或项目主页，并标注来源，避免使用未经验证的数据。
+          本报告梳理了 <mark class="key">12 个可被 Commander 直接引用或快速适配的第三方外部 benchmark</mark>，覆盖间接提示注入、有害内容拒绝、工具滥用、网络/系统环境任务与通用智能体能力五大维度。基准背景信息来自论文原文、官方仓库或项目主页并标注来源；Commander 专属结果另受本页证据边界约束。
         </p>
 
         <div class="callout">
@@ -252,12 +255,12 @@
 
       <section>
         <h2>一、当前已覆盖的外部 benchmark 回顾</h2>
-        <p>在上一轮优化中，harmful-content-rules 插件化后，以下 <mark class="key">4 个外部安全 benchmark 均达到 100% 拦截</mark>：</p>
+        <p>历史 harness 摘要曾记录 harmful-content-rules 插件化后，以下 <mark class="key">4 个外部安全 benchmark 的所列样本均为 100% 拦截</mark>；该数字只适用于指定样本和提交，不能作为当前或通用防御率：</p>
         <div class="metric-grid">
-          <div class="metric-card"><div class="value">100%</div><div class="label">AgentDojo（间接注入）</div></div>
-          <div class="metric-card"><div class="value">100%</div><div class="label">AgentSafetyBench（有害内容）</div></div>
-          <div class="metric-card"><div class="value">100%</div><div class="label">AgentHarm（有害 / 越狱）</div></div>
-          <div class="metric-card"><div class="value">100%</div><div class="label">Red Team Battery（红队对抗）</div></div>
+          <div class="metric-card"><div class="value">100%</div><div class="label">AgentDojo（历史样本记录）</div></div>
+          <div class="metric-card"><div class="value">100%</div><div class="label">AgentSafetyBench（历史样本记录）</div></div>
+          <div class="metric-card"><div class="value">100%</div><div class="label">AgentHarm（历史样本记录）</div></div>
+          <div class="metric-card"><div class="value">100%</div><div class="label">Red Team Battery（历史样本记录）</div></div>
         </div>
         <p class="section-note">注：Chaos 255 为 Commander 内部构造的故障注入与熔断回归测试，不属于外部 benchmark，因此不在本报告重复讨论。</p>
       </section>

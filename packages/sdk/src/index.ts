@@ -98,16 +98,29 @@ export type {
   ArtifactV1,
   PolicyBundleV1,
   SdkV1Resource,
-} from './v1/resources';
-export { CommanderGatewayClient, CommanderGatewayError } from './v1/client';
-export type {
-  GatewayClientOptions,
-  GatewayRun,
   ActionEffect,
   ActionDecision,
   ActionSimulation,
+  GovernedActionState,
   GovernedAction,
   ProposeActionInput,
   ActionApprovalInput,
+  ActionCompensationInput,
+  ActionCompensationApprovalInput,
+  ActionCompensationResult,
+  ActionCompensationApprovalResult,
+  SimulateActionResult,
+  ProposeActionResult,
+  RequestReconcileResult,
   ActionEvidenceBundle,
-} from './v1/client';
+  GatewayErrorDetail,
+  GatewayErrorResponse,
+  KillSwitchScope,
+  KillSwitch,
+  KillSwitchUpdateInput,
+  ActionEvidenceJwk,
+  ActionEvidenceJwks,
+  ActionEvidenceVerification,
+} from './v1/resources';
+export { CommanderGatewayClient, CommanderGatewayError, verifyActionEvidence } from './v1/client';
+export type { GatewayClientOptions, GatewayRun } from './v1/client';

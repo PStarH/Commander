@@ -1,100 +1,544 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
-import { EffectBroker } from '@commander/effect-broker';
-import { ActionAdapterRegistry } from '@commander/action-adapters';
-import { ReconciliationDaemon } from './reconciliationDaemon.js';
+import { ReconciliationDaemon, reconcileQueryThrownError } from './reconciliationDaemon.js';
+
+const TEST_RECONCILE_WORKER = {
+  workerId: 'reconcile:test-instance',
+  workerGeneration: 7,
+  claimSecret: 'test-claim-secret',
+} as const;
+
+const EFFECT = {
+  id: 'effect-1',
+  runId: 'run-1',
+  stepId: 'step-1',
+  tenantId: 'tenant-a',
+  type: 'github.pull-request.create',
+  idempotencyKey: 'effect-key',
+  request: { destination: 'octo/repo' },
+  response: undefined,
+  state: 'COMPLETION_UNKNOWN',
+  actionDigest: 'a'.repeat(64),
+  policyDecisionId: 'decision-1',
+  policySnapshotId: 'policy-1',
+  requestHash: 'request-1',
+  createdAt: '2026-07-29T00:00:00.000Z',
+} as const;
+
+const CLAIM = {
+  effect: EFFECT,
+  claimToken: 'claim-token',
+} as const;
+
+const SUCCESS = {
+  applied: true,
+  replayed: false,
+  disposition: 'COMPLETED',
+  receipt: {},
+} as const;
+
+function mutationWithoutEvidence(input: unknown): Record<string, unknown> {
+  assert.ok(input && typeof input === 'object');
+  const { evidence: _evidence, ...mutation } = input as Record<string, unknown>;
+  return mutation;
+}
+
+function assertSignedEvidence(input: unknown): void {
+  assert.ok(input && typeof input === 'object');
+  const evidence = (input as Record<string, unknown>).evidence;
+  assert.ok(evidence && typeof evidence === 'object');
+  assert.deepEqual((evidence as { signature?: unknown }).signature, {
+    algorithm: 'Ed25519',
+    keyId: 'test-key',
+    signedAt: '2026-07-29T00:00:01.000Z',
+    value: 'signature',
+  });
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.fail('condition was not reached');
+}
+
+function daemonFor(input: {
+  outcome?: Record<string, unknown>;
+  queryError?: unknown;
+  brokerFactoryError?: unknown;
+  repository?: Record<string, unknown>;
+  registry?: Record<string, unknown>;
+  heartbeat?: () => Promise<void>;
+  drain?: () => Promise<void>;
+  telemetry?: (event: Record<string, unknown>) => void;
+  terminalEvidenceContext?: Record<string, unknown>;
+}) {
+  const querier = { queryOutcome: async () => ({ status: 'UNKNOWN' }) };
+  const queryCalls: Array<Record<string, unknown>> = [];
+  let brokerFactoryCalls = 0;
+  const repository = {
+    claimReconcileEffects: async () => [CLAIM],
+    listEffectsForRun: async () => [EFFECT],
+    listEvents: async () => [],
+    completeReconcileEffect: async () => SUCCESS,
+    confirmEffectNotApplied: async () => ({ ...SUCCESS, disposition: 'CONFIRMED_NOT_APPLIED' }),
+    rescheduleReconcileEffect: async () => ({ ...SUCCESS, disposition: 'RESCHEDULED' }),
+    escalateReconcileEffect: async () => ({ ...SUCCESS, disposition: 'ESCALATED' }),
+    ...input.repository,
+  };
+  const daemon = new ReconciliationDaemon({
+    ...TEST_RECONCILE_WORKER,
+    repository: repository as never,
+    registry: {
+      resolve: () => ({}),
+      outcomeQuerierFor: () => querier,
+      ...input.registry,
+    } as never,
+    pollIntervalMs: 60_000,
+    batchSize: 10,
+    evidenceSigner: {
+      sign: async () => ({
+        algorithm: 'Ed25519',
+        keyId: 'test-key',
+        signedAt: '2026-07-29T00:00:01.000Z',
+        value: 'signature',
+      }),
+      verify: () => true,
+    },
+    brokerFactory: () => {
+      brokerFactoryCalls += 1;
+      if ('brokerFactoryError' in input) throw input.brokerFactoryError;
+      return {
+        reconcileUnknown: async (query: Record<string, unknown>) => {
+          queryCalls.push(query);
+          if ('queryError' in input) throw input.queryError;
+          return (
+            input.outcome ?? { status: 'UNKNOWN', error: { code: 'UNKNOWN', message: 'unknown' } }
+          );
+        },
+      } as never;
+    },
+    heartbeat: input.heartbeat,
+    drain: input.drain,
+    telemetry: input.telemetry as never,
+    terminalEvidenceContext: input.terminalEvidenceContext as never,
+  });
+  return { daemon, querier, queryCalls, repository, brokerFactoryCalls: () => brokerFactoryCalls };
+}
 
 describe('ReconciliationDaemon', () => {
-  it('escalates unregistered adapter effects during tick', async () => {
-    const kernel = new InMemoryKernelRepository();
-    await kernel.createRun(
-      {
-        id: 'run-recon',
-        tenantId: 'tenant-a',
-        intentHash: 'intent',
-        workGraphHash: 'graph',
-        workGraphVersion: 'v1',
-        policySnapshotId: 'policy',
-        steps: [{ id: 'step-recon', kind: 'tool' }],
+  it('binds evidence context reads to the current reconcile claim token', async () => {
+    const reads: unknown[][] = [];
+    const { daemon } = daemonFor({
+      outcome: { status: 'APPLIED', response: { number: 42 } },
+      terminalEvidenceContext: {
+        getTerminalEvidenceContext: async (...args: unknown[]) => {
+          reads.push(args);
+          return { effect: EFFECT, events: [] };
+        },
       },
-      'gateway',
-    );
-    const step = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
-    assert.ok(step?.lease);
-    await kernel.admitEffect({
-      id: 'effect-recon',
-      runId: 'run-recon',
-      stepId: step.id,
-      tenantId: 'tenant-a',
-      type: 'connector.unknown.effect',
-      idempotencyKey: 'recon-key',
-      policyDecisionId: 'policy',
-      policySnapshotId: 'policy',
-      actionDigest: 'a'.repeat(64),
-      request: {},
-      lease: step.lease,
-      actor: 'worker-1',
+      repository: {
+        listEffectsForRun: async () => assert.fail('broad effect read must not run'),
+        listEvents: async () => assert.fail('broad event read must not run'),
+      },
     });
-    await kernel.markEffectCompletionUnknown({
-      effectId: 'effect-recon',
-      tenantId: 'tenant-a',
-      reason: 'timeout',
-      actor: 'worker-1',
-    });
-    const daemon = new ReconciliationDaemon({
-      repository: kernel,
-      registry: ActionAdapterRegistry.empty(),
-      actor: 'reconciliation-daemon',
-      pollIntervalMs: 60_000,
-      batchSize: 10,
-      brokerFactory: () =>
-        new EffectBroker(
-          { verify: async () => ({ jti: 'x', tenantId: 'tenant-a', runId: 'r', stepId: 's', effectTypes: [], expiresAt: '' }) },
-          { evaluate: async () => ({ effect: 'allow', decisionId: 'd', policySnapshotId: 'p' }) },
-          {
-            getEffect: (id, tenantId) => kernel.getEffect(id, tenantId),
-            reconcileEffect: (input) => kernel.reconcileEffect(input),
-          },
-          { execute: async () => { throw new Error('no write'); } },
-          { append: async () => {} },
-          { requireRequestBinding: false },
-        ),
-    });
-    const stats = await daemon.tick();
-    assert.equal(stats.claimed, 1);
-    assert.equal(stats.escalated, 1);
-    const effect = await kernel.getEffect('effect-recon', 'tenant-a');
-    assert.ok(effect?.reconcileEscalatedAt);
+
+    assert.equal((await daemon.tick()).completed, 1);
+    assert.deepEqual(reads, [[EFFECT.id, EFFECT.runId, EFFECT.tenantId, CLAIM.claimToken]]);
   });
 
-  it('returns zero counts when claimReconcileEffects rejects', async () => {
-    const kernel = new InMemoryKernelRepository();
-    const daemon = new ReconciliationDaemon({
-      repository: {
-        ...kernel,
-        claimReconcileEffects: async () => {
-          throw new Error('db unavailable');
-        },
-      } as never,
-      registry: ActionAdapterRegistry.empty(),
-      actor: 'reconciliation-daemon',
-      pollIntervalMs: 60_000,
-      batchSize: 10,
-      brokerFactory: () =>
-        new EffectBroker(
-          { verify: async () => ({ jti: 'x', tenantId: 'tenant-a', runId: 'r', stepId: 's', effectTypes: [], expiresAt: '' }) },
-          { evaluate: async () => ({ effect: 'allow', decisionId: 'd', policySnapshotId: 'p' }) },
-          {
-            getEffect: (id, tenantId) => kernel.getEffect(id, tenantId),
-            reconcileEffect: (input) => kernel.reconcileEffect(input),
+  it('maps APPLIED and NOT_APPLIED to exactly one fenced terminal mutation', async () => {
+    for (const test of [
+      {
+        outcome: { status: 'APPLIED', response: { number: 42 } },
+        method: 'completeReconcileEffect',
+        response: { number: 42 },
+      },
+      {
+        outcome: { status: 'NOT_APPLIED', response: { checked: true } },
+        method: 'confirmEffectNotApplied',
+        response: { checked: true },
+      },
+    ] as const) {
+      const writes: Array<{ method: string; input: unknown }> = [];
+      const dispositions = {
+        completeReconcileEffect: 'COMPLETED',
+        confirmEffectNotApplied: 'CONFIRMED_NOT_APPLIED',
+        rescheduleReconcileEffect: 'RESCHEDULED',
+        escalateReconcileEffect: 'ESCALATED',
+      } as const;
+      const methods = Object.fromEntries(
+        Object.entries(dispositions).map(([method, disposition]) => [
+          method,
+          async (input: unknown) => {
+            writes.push({ method, input });
+            return { ...SUCCESS, disposition };
           },
-          { execute: async () => { throw new Error('no write'); } },
-          { append: async () => {} },
-          { requireRequestBinding: false },
-        ),
+        ]),
+      );
+      const { daemon, querier, queryCalls } = daemonFor({
+        outcome: test.outcome,
+        repository: methods,
+      });
+
+      assert.deepEqual(await daemon.tick(), {
+        claimed: 1,
+        completed: 1,
+        escalated: 0,
+        rescheduled: 0,
+      });
+      assert.equal(queryCalls.length, 1);
+      assert.equal(queryCalls[0]?.effect, EFFECT, 'broker must receive the claimed snapshot');
+      assert.equal(queryCalls[0]?.querier, querier);
+      assert.deepEqual(writes.map(({ method, input }) => ({ method, input: mutationWithoutEvidence(input) })), [
+        {
+          method: test.method,
+          input: {
+            tenantId: EFFECT.tenantId,
+            effectId: EFFECT.id,
+            ...TEST_RECONCILE_WORKER,
+            claimToken: CLAIM.claimToken,
+            response: test.response,
+          },
+        },
+      ]);
+      assertSignedEvidence(writes[0]?.input);
+    }
+  });
+
+  it('passes UNKNOWN to the repository without calculating attempts, backoff, or deadline', async () => {
+    const writes: Array<{ method: string; input: unknown }> = [];
+    const { daemon } = daemonFor({
+      outcome: {
+        status: 'UNKNOWN',
+        error: { code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE', message: 'not visible yet' },
+      },
+      repository: {
+        rescheduleReconcileEffect: async (input: unknown) => {
+          writes.push({ method: 'rescheduleReconcileEffect', input });
+          return { ...SUCCESS, disposition: 'RESCHEDULED' };
+        },
+        escalateReconcileEffect: async (input: unknown) => {
+          writes.push({ method: 'escalateReconcileEffect', input });
+          return { ...SUCCESS, disposition: 'ESCALATED' };
+        },
+      },
     });
-    const stats = await daemon.tick();
-    assert.deepEqual(stats, { claimed: 0, completed: 0, escalated: 0, rescheduled: 0 });
+
+    assert.deepEqual(await daemon.tick(), {
+      claimed: 1,
+      completed: 0,
+      escalated: 0,
+      rescheduled: 1,
+    });
+    assert.deepEqual(writes.map(({ method, input }) => ({ method, input: mutationWithoutEvidence(input) })), [
+      {
+        method: 'rescheduleReconcileEffect',
+        input: {
+          tenantId: EFFECT.tenantId,
+          effectId: EFFECT.id,
+          ...TEST_RECONCILE_WORKER,
+          claimToken: CLAIM.claimToken,
+          lastError: {
+            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+            message: 'not visible yet',
+          },
+        },
+      },
+    ]);
+    assertSignedEvidence(writes[0]?.input);
+    assert.equal('reconcileAfter' in (writes[0]?.input as object), false);
+  });
+
+  it('normalizes thrown queries without persisting thrown content and treats reschedule as success', async () => {
+    const leakedSecret = 'https://user:raw-secret@example.test/provider-body';
+    const thrown = Object.assign(new Error(leakedSecret), {
+      name: 'CredentialExplosion',
+      code: 'AUTHORIZATION_HEADER_BEARER_SECRET',
+      cause: { providerBody: leakedSecret },
+    });
+    let heartbeatCount = 0;
+    let persisted: Record<string, unknown> | undefined;
+    const { daemon } = daemonFor({
+      queryError: thrown,
+      repository: {
+        rescheduleReconcileEffect: async (input: Record<string, unknown>) => {
+          persisted = input;
+          return { ...SUCCESS, disposition: 'RESCHEDULED' };
+        },
+      },
+      heartbeat: async () => {
+        heartbeatCount += 1;
+      },
+    });
+
+    assert.equal((await daemon.tick()).rescheduled, 1);
+    assert.equal(heartbeatCount, 1);
+    assert.deepEqual(persisted?.lastError, {
+      code: 'RECONCILE_QUERY_THROWN',
+      message: 'Outcome query threw Error for effect type github.pull-request.create',
+    });
+    assert.equal(JSON.stringify(persisted).includes(leakedSecret), false);
+    assert.equal(JSON.stringify(persisted).includes('AUTHORIZATION_HEADER'), false);
+  });
+
+  it('does not consume an attempt when broker construction fails before the query', async () => {
+    const failure = Object.assign(new Error('broker unavailable'), { code: 'BROKER_UNAVAILABLE' });
+    const writes: string[] = [];
+    const { daemon } = daemonFor({
+      brokerFactoryError: failure,
+      repository: {
+        rescheduleReconcileEffect: async () => {
+          writes.push('reschedule');
+          return { ...SUCCESS, disposition: 'RESCHEDULED' };
+        },
+      },
+    });
+
+    await assert.rejects(() => daemon.tick(), failure);
+    assert.deepEqual(writes, []);
+  });
+
+  it('uses stable safe summaries for every thrown-value kind and caps them at 512 code points', () => {
+    const cases: Array<[unknown, string]> = [
+      [new TypeError('private'), 'TypeError'],
+      ['raw secret', 'non-Error:string'],
+      [{ providerBody: 'private' }, 'non-Error:object'],
+      [42, 'non-Error:number'],
+      [true, 'non-Error:boolean'],
+      [1n, 'non-Error:bigint'],
+      [Symbol('private'), 'non-Error:symbol'],
+      [() => 'private', 'non-Error:function'],
+      [undefined, 'non-Error:undefined'],
+      [null, 'non-Error:null'],
+    ];
+    for (const [thrown, kind] of cases) {
+      assert.deepEqual(reconcileQueryThrownError(thrown, 'type with spaces/?'), {
+        code: 'RECONCILE_QUERY_THROWN',
+        message: `Outcome query threw ${kind} for effect type type_with_spaces__`,
+      });
+    }
+
+    const result = reconcileQueryThrownError('secret', `type/${'x'.repeat(600)}\ud83d\ude00`);
+    assert.equal(Array.from(result.message).length, 512);
+    assert.equal(result.message.endsWith('...'), false);
+    assert.match(result.message, /^Outcome query threw non-Error:string for effect type type_/);
+  });
+
+  it('escalates missing adapters before querying and preserves fenced claim auth', async () => {
+    let queryCount = 0;
+    let mutation: unknown;
+    const { daemon } = daemonFor({
+      registry: {
+        resolve: () => null,
+        outcomeQuerierFor: () => {
+          queryCount += 1;
+          return null;
+        },
+      },
+      repository: {
+        escalateReconcileEffect: async (input: unknown) => {
+          mutation = input;
+          return { ...SUCCESS, disposition: 'ESCALATED' };
+        },
+      },
+    });
+
+    assert.equal((await daemon.tick()).escalated, 1);
+    assert.equal(queryCount, 0);
+    assertSignedEvidence(mutation);
+    assert.deepEqual(mutationWithoutEvidence(mutation), {
+      tenantId: EFFECT.tenantId,
+      effectId: EFFECT.id,
+      ...TEST_RECONCILE_WORKER,
+      claimToken: CLAIM.claimToken,
+      reason: 'RECONCILE_ADAPTER_NOT_FOUND',
+    });
+  });
+
+  it('escalates a registered adapter without query support before invoking the broker', async () => {
+    let mutation: unknown;
+    const { daemon, brokerFactoryCalls } = daemonFor({
+      registry: {
+        resolve: () => ({}),
+        outcomeQuerierFor: () => null,
+      },
+      repository: {
+        escalateReconcileEffect: async (input: unknown) => {
+          mutation = input;
+          return { ...SUCCESS, disposition: 'ESCALATED' };
+        },
+      },
+    });
+    assert.equal((await daemon.tick()).escalated, 1);
+    assert.equal(brokerFactoryCalls(), 0);
+    assertSignedEvidence(mutation);
+    assert.deepEqual(mutationWithoutEvidence(mutation), {
+      tenantId: EFFECT.tenantId,
+      effectId: EFFECT.id,
+      ...TEST_RECONCILE_WORKER,
+      claimToken: CLAIM.claimToken,
+      reason: 'RECONCILE_QUERY_UNSUPPORTED',
+    });
+  });
+
+  it('uses the compensation-specific escalation when compensation query support is missing', async () => {
+    let mutation: unknown;
+    const compensationEffect = {
+      ...EFFECT,
+      id: 'effect-compensation',
+      type: 'compensate.kubernetes.deployment.rollback',
+    };
+    const { daemon, brokerFactoryCalls } = daemonFor({
+      registry: {
+        resolve: () => ({}),
+        outcomeQuerierFor: () => null,
+      },
+      repository: {
+        claimReconcileEffects: async () => [
+          {
+            effect: compensationEffect,
+            claimToken: 'claim-compensation',
+          },
+        ],
+        listEffectsForRun: async () => [compensationEffect],
+        escalateReconcileEffect: async (input: unknown) => {
+          mutation = input;
+          return { ...SUCCESS, disposition: 'ESCALATED' };
+        },
+      },
+    });
+
+    assert.equal((await daemon.tick()).escalated, 1);
+    assert.equal(brokerFactoryCalls(), 0);
+    assertSignedEvidence(mutation);
+    assert.deepEqual(mutationWithoutEvidence(mutation), {
+      tenantId: compensationEffect.tenantId,
+      effectId: compensationEffect.id,
+      ...TEST_RECONCILE_WORKER,
+      claimToken: 'claim-compensation',
+      reason: 'COMPENSATION_QUERY_UNSUPPORTED',
+    });
+  });
+
+  it('turns a malformed UNKNOWN into a typed adapter failure', async () => {
+    let persisted: Record<string, unknown> | undefined;
+    const { daemon } = daemonFor({
+      outcome: { status: 'UNKNOWN' },
+      repository: {
+        rescheduleReconcileEffect: async (input: Record<string, unknown>) => {
+          persisted = input;
+          return { ...SUCCESS, disposition: 'RESCHEDULED' };
+        },
+      },
+    });
+
+    assert.equal((await daemon.tick()).rescheduled, 1);
+    assert.deepEqual(persisted?.lastError, {
+      code: 'ADAPTER_OUTCOME_INVALID',
+      message: 'Adapter outcome invalid for effect type github.pull-request.create',
+    });
+  });
+
+  it('does not retry or fall back to another write after a fenced mutation is rejected', async () => {
+    const writes: string[] = [];
+    const { daemon } = daemonFor({
+      outcome: { status: 'APPLIED', response: {} },
+      repository: {
+        completeReconcileEffect: async () => {
+          writes.push('complete');
+          return { applied: false, reason: 'CLAIM_NOT_OWNED' };
+        },
+        rescheduleReconcileEffect: async () => {
+          writes.push('reschedule');
+          return { ...SUCCESS, disposition: 'RESCHEDULED' };
+        },
+        escalateReconcileEffect: async () => {
+          writes.push('escalate');
+          return { ...SUCCESS, disposition: 'ESCALATED' };
+        },
+      },
+    });
+
+    await assert.rejects(() => daemon.tick(), { code: 'RECONCILE_CLAIM_NOT_OWNED' });
+    assert.deepEqual(writes, ['complete']);
+  });
+
+  it('passes durable worker identity to claims and records database failures', async () => {
+    const failure = Object.assign(new Error('db unavailable'), { code: 'DB_UNAVAILABLE' });
+    let claimInput: unknown;
+    let heartbeats = 0;
+    const telemetry: Array<Record<string, unknown>> = [];
+    const { daemon } = daemonFor({
+      repository: {
+        claimReconcileEffects: async (input: unknown) => {
+          claimInput = input;
+          throw failure;
+        },
+      },
+      heartbeat: async () => {
+        heartbeats += 1;
+      },
+      telemetry: (event) => telemetry.push(event),
+    });
+
+    await assert.rejects(() => daemon.tick(), failure);
+    assert.deepEqual(claimInput, { ...TEST_RECONCILE_WORKER, limit: 10 });
+    assert.equal(heartbeats, 0);
+    assert.equal(daemon.getHealth().lastErrorCode, 'DB_UNAVAILABLE');
+    assert.deepEqual(
+      telemetry.map(({ type, loop, errorCode }) => ({ type, loop, errorCode })),
+      [
+        {
+          type: 'ops_loop_tick_failed',
+          loop: 'reconciliation',
+          errorCode: 'DB_UNAVAILABLE',
+        },
+      ],
+    );
+  });
+
+  it('starts an immediate non-overlapping tick and drains after in-flight work', async () => {
+    let releaseClaim: ((entries: never[]) => void) | undefined;
+    const claimed = new Promise<never[]>((resolve) => {
+      releaseClaim = resolve;
+    });
+    let claimCalls = 0;
+    let heartbeats = 0;
+    let drains = 0;
+    const { daemon } = daemonFor({
+      repository: {
+        claimReconcileEffects: async () => {
+          claimCalls += 1;
+          return claimed;
+        },
+      },
+      heartbeat: async () => {
+        heartbeats += 1;
+      },
+      drain: async () => {
+        drains += 1;
+      },
+    });
+
+    daemon.start();
+    await waitFor(() => claimCalls === 1);
+    assert.equal(daemon.getHealth().inFlight, true);
+    assert.deepEqual(await daemon.tick(), {
+      claimed: 0,
+      completed: 0,
+      escalated: 0,
+      rescheduled: 0,
+    });
+
+    const stopping = daemon.stop();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(drains, 0);
+    releaseClaim?.([]);
+    await stopping;
+    assert.equal(heartbeats, 1);
+    assert.equal(drains, 1);
+    assert.equal(daemon.getHealth().running, false);
   });
 });

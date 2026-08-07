@@ -27,6 +27,7 @@ class FakeKernel implements KernelWorkerPort {
   lastFailureCode: string | undefined;
   lastFailureRetryable: boolean | undefined;
   lastFailureRetryAt: Date | undefined;
+  failureCount = 0;
   heartbeatCount = 0;
   claimDelayMs = 0;
   lastHeartbeatActiveSteps: number | undefined;
@@ -139,6 +140,7 @@ class FakeKernel implements KernelWorkerPort {
     retryAt?: Date;
     refundAttempt?: boolean;
   }): Promise<unknown | null> {
+    this.failureCount++;
     const step = this.steps.find((candidate) => candidate.id === request.stepId);
     if (
       !step ||
@@ -298,6 +300,39 @@ describe('worker plane', () => {
     assert.equal(kernel.getStep('agent-step')?.state, 'RETRY_WAIT');
     await service.stop();
   });
+
+  for (const code of [
+    'COMPLETION_UNKNOWN',
+    'COMPLETION_UNCONFIRMED',
+    'EVIDENCE_PERSIST_FAILED',
+  ] as const) {
+    it(`does not fail a step after EffectBroker transfers ownership with ${code}`, async () => {
+      const kernel = new FakeKernel();
+      kernel.addRun(`run-${code}`, 'tenant-a', [{ id: `step-${code}`, kind: 'agent' }]);
+      const service = new WorkerService(
+        definition,
+        identity,
+        auth,
+        new InMemoryWorkerRegistry(),
+        kernel,
+        {
+          execute: async () => {
+            throw new WorkerExecutionError('effect ownership transferred to reconciliation', {
+              code,
+              retryable: true,
+            });
+          },
+        },
+        { leaseTtlMs: 1_000, workerHeartbeatMs: 1_000 },
+      );
+
+      await service.start();
+      assert.equal(await service.pollOnce(), true);
+      await service.waitForIdle();
+      assert.equal(kernel.failureCount, 0);
+      await service.stop();
+    });
+  }
 
   it('refuses to initialize the registry when sandbox readiness fails', async () => {
     const kernel = new FakeKernel();

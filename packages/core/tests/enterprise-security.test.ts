@@ -1,7 +1,7 @@
 /**
  * Enterprise Security Enhancement Test Suite
  *
- * Tests for the new enterprise-grade security modules:
+ * Tests for the security modules used in enterprise deployment profiles:
  * - ZeroTrustValidator: HMAC 签名验证 + 防重放
  * - BillExplosionGuard: 账单爆炸防护
  * - DataLossPrevention: 数据泄露防护

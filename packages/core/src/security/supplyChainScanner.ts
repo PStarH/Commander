@@ -1,5 +1,5 @@
 /**
- * SupplyChainScanner — Enterprise-grade skill/tool/configuration pre-load security scanner.
+ * SupplyChainScanner — skill/tool/configuration pre-load security scanner.
  *
  * Goes beyond the existing skillSecurityScanner.ts (which only scans at creation time
  * with regex patterns) to provide:

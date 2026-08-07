@@ -6,6 +6,7 @@ import {
   EXPECTED_WORKER_TENANTS,
   normalizeEnvironment,
   SERVICE_ROLE_MAP,
+  serviceDsn,
   type ComposeConfig,
 } from './compose-role-assert.js';
 
@@ -46,9 +47,12 @@ const CELL_FIXTURE: ComposeConfig = {
     },
     'adapter-ops': {
       environment: {
-        DATABASE_URL: 'postgres://commander_worker:commander_worker@postgres:5432/commander',
+        DATABASE_URL: 'postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander',
         COMMANDER_WORKER_TENANTS: 'local',
+        COMMANDER_ADAPTER_OPS_INSTANCE_ID: 'local',
+        COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR: '/var/run/commander/adapter-ops',
       },
+      volumes: ['adapter-ops-claim-secrets:/var/run/commander/adapter-ops'],
       profiles: ['cell'],
     },
   },
@@ -90,6 +94,16 @@ const V2_FIXTURE: ComposeConfig = {
       },
       profiles: ['v2'],
     },
+    'adapter-ops': {
+      environment: {
+        DATABASE_URL: 'postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander',
+        COMMANDER_WORKER_TENANTS: 'tenant-local',
+        COMMANDER_ADAPTER_OPS_INSTANCE_ID: 'local',
+        COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR: '/var/run/commander/adapter-ops',
+      },
+      volumes: ['adapter-ops-claim-secrets:/var/run/commander/adapter-ops'],
+      profiles: ['v2'],
+    },
   },
 };
 
@@ -126,6 +140,15 @@ const V2_BENCH_FIXTURE: ComposeConfig = {
           'postgres://commander_scheduler:commander_scheduler@postgres:5432/commander',
       },
     },
+    'adapter-ops': {
+      environment: {
+        DATABASE_URL: 'postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander',
+        COMMANDER_WORKER_TENANTS: 'tenant-0,tenant-1,tenant-2,tenant-3,tenant-4',
+        COMMANDER_ADAPTER_OPS_INSTANCE_ID: 'bench',
+        COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR: '/var/run/commander/adapter-ops',
+      },
+      volumes: ['adapter-ops-claim-secrets:/var/run/commander/adapter-ops'],
+    },
   },
 };
 
@@ -144,14 +167,32 @@ describe('compose-role-assert helpers', () => {
     assert.deepEqual(normalizeEnvironment({ FOO: 'bar', N: 1 }), { FOO: 'bar', N: '1' });
   });
 
+  it('uses the production role-specific DSN keys', () => {
+    assert.equal(
+      serviceDsn(
+        { COMMANDER_OWNER_DATABASE_URL: 'postgres://commander_owner:secret@postgres/commander' },
+        'kernel-migrate',
+      ),
+      'postgres://commander_owner:secret@postgres/commander',
+    );
+    assert.equal(
+      serviceDsn(
+        { COMMANDER_API_DATABASE_URL: 'postgres://commander_app:secret@postgres/commander' },
+        'api',
+      ),
+      'postgres://commander_app:secret@postgres/commander',
+    );
+  });
+
   it('maps services to expected roles', () => {
     assert.equal(SERVICE_ROLE_MAP['kernel-migrate'], 'commander_owner');
     assert.equal(SERVICE_ROLE_MAP.api, 'commander_app');
     assert.equal(SERVICE_ROLE_MAP['kernel-ops'], 'commander_scheduler');
     assert.equal(SERVICE_ROLE_MAP.worker, 'commander_worker');
-    assert.equal(SERVICE_ROLE_MAP['adapter-ops'], 'commander_worker');
+    assert.equal(SERVICE_ROLE_MAP['adapter-ops'], 'commander_adapter_ops');
     assert.equal(EXPECTED_WORKER_TENANTS.cell, 'local');
     assert.equal(EXPECTED_WORKER_TENANTS.base, 'tenant-local');
+    assert.equal(EXPECTED_WORKER_TENANTS.prod, 'tenant-local');
     assert.equal(EXPECTED_WORKER_TENANTS.v2, 'tenant-local');
     assert.equal(
       EXPECTED_WORKER_TENANTS['v2-bench'],
@@ -161,6 +202,24 @@ describe('compose-role-assert helpers', () => {
 });
 
 describe('assertComposeRoles', () => {
+  it('rejects a production authority service missing the lifecycle phase', () => {
+    const production: ComposeConfig = structuredClone(V2_FIXTURE);
+    for (const service of Object.values(production.services ?? {})) {
+      if (!service || !service.environment || Array.isArray(service.environment)) continue;
+      service.environment.COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE = 'enforce';
+      service.environment.COMMANDER_ALLOWED_TENANTS = 'tenant-local';
+    }
+    const apiEnvironment = production.services?.api?.environment as Record<string, string>;
+    delete apiEnvironment.COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE;
+
+    assert.throws(
+      () => assertComposeRoles(production, 'prod'),
+      /api: COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE/,
+    );
+    apiEnvironment.COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE = 'enforce';
+    assert.doesNotThrow(() => assertComposeRoles(production, 'prod'));
+  });
+
   it('passes cell fixture', () => {
     assert.doesNotThrow(() => assertComposeRoles(CELL_FIXTURE, 'cell'));
   });
@@ -299,9 +358,12 @@ describe('assertComposeRoles', () => {
         },
         'adapter-ops': {
           environment: [
-            'DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander',
+            'DATABASE_URL=postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander',
             'COMMANDER_WORKER_TENANTS=local',
+            'COMMANDER_ADAPTER_OPS_INSTANCE_ID=local',
+            'COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR=/var/run/commander/adapter-ops',
           ],
+          volumes: ['adapter-ops-claim-secrets:/var/run/commander/adapter-ops'],
         },
       },
     };
@@ -359,7 +421,7 @@ describe('compose source files (static drift guard)', () => {
 
     const adapterBlock = cell.match(/^\s*adapter-ops:\s*\n(?:^\s{2,}.*\n)*/m)?.[0] ?? '';
     assert.ok(adapterBlock.length > 0, 'docker-compose.cell.yml must define adapter-ops');
-    assert.match(adapterBlock, /commander_worker/, 'cell adapter-ops must use worker DSN');
+    assert.match(adapterBlock, /commander_adapter_ops/, 'cell adapter-ops must use dedicated DSN');
     assert.doesNotMatch(adapterBlock, /commander_owner/, 'cell adapter-ops must not use owner DSN');
 
     const migrationBlock = cell.match(/^  kernel-migrate:\s*\n([\s\S]*?)(?=^  api:)/m)?.[0] ?? '';

@@ -67,7 +67,9 @@ export class TimerWakeupWorker {
     this.healthEpoch += 1;
     const epoch = this.healthEpoch;
     this.lastOkAt = 0;
-    this.timer = setInterval(() => { void this.tick(); }, this.config.pollIntervalMs);
+    this.timer = setInterval(() => {
+      void this.tick();
+    }, this.config.pollIntervalMs);
     void this.kick(epoch);
   }
 
@@ -97,7 +99,9 @@ export class TimerWakeupWorker {
    */
   async tick(): Promise<void> {
     if (!this.inFlight) {
-      this.inFlight = this.runTick().finally(() => { this.inFlight = undefined; });
+      this.inFlight = this.runTick().finally(() => {
+        this.inFlight = undefined;
+      });
     }
     await this.inFlight;
   }
@@ -123,7 +127,7 @@ export class TimerWakeupWorker {
         }
         try {
           await this.processFiredTimer(timer);
-          if (!await this.repo.acknowledgeTimer(timer.id, timer.tenantId, timer.claimToken)) {
+          if (!(await this.repo.acknowledgeTimer(timer.id, timer.tenantId, timer.claimToken))) {
             throw new Error(`Timer ${timer.id} acknowledgement was fenced`);
           }
           this.stats.timersFired++;
@@ -168,7 +172,11 @@ export class TimerWakeupWorker {
           await this.repo.failStepByTimer(
             step.id,
             step.tenantId,
-            { code: 'INTERACTION_TIMEOUT', message: 'Human interaction timed out', retryable: false },
+            {
+              code: 'INTERACTION_TIMEOUT',
+              message: 'Human interaction timed out',
+              retryable: false,
+            },
             'kernel.timer',
           );
         }
