@@ -316,8 +316,16 @@ export function buildLifecycleStableNetworkPolicies(input: {
   databasePodSelector: Record<string, string>;
   apiProofSpkiSha256: string;
   kubernetesApiServiceIp: string;
+  kubernetesApiEndpointIp: string;
+  kubernetesApiEndpointPort: number;
 }): Array<Record<string, unknown>> {
-  if (!isIpv4Address(input.kubernetesApiServiceIp)) {
+  if (
+    !isIpv4Address(input.kubernetesApiServiceIp) ||
+    !isIpv4Address(input.kubernetesApiEndpointIp) ||
+    !Number.isSafeInteger(input.kubernetesApiEndpointPort) ||
+    input.kubernetesApiEndpointPort < 1 ||
+    input.kubernetesApiEndpointPort > 65535
+  ) {
     throw new Error('KUBERNETES_API_SERVICE_INVALID');
   }
   const projection = createTask1PrerequisitePolicyConfig({
@@ -390,23 +398,105 @@ export function buildLifecycleStableNetworkPolicies(input: {
       policyTypes: ['Egress'],
       egress: [
         {
-          to: [
-            {
-              namespaceSelector: {
-                matchLabels: { 'kubernetes.io/metadata.name': 'kube-system' },
-              },
-              podSelector: { matchLabels: { component: 'kube-apiserver' } },
-            },
-          ],
-          ports: [{ protocol: 'TCP', port: 6443 }],
-        },
-        {
           to: [{ ipBlock: { cidr: `${input.kubernetesApiServiceIp}/32` } }],
           ports: [{ protocol: 'TCP', port: 443 }],
+        },
+        {
+          to: [{ ipBlock: { cidr: `${input.kubernetesApiEndpointIp}/32` } }],
+          ports: [{ protocol: 'TCP', port: input.kubernetesApiEndpointPort }],
         },
       ],
     },
   });
+  policies.push({
+    apiVersion: 'networking.k8s.io/v1',
+    kind: 'NetworkPolicy',
+    metadata: {
+      name: `commander-proof-${createHash('sha256')
+        .update(`kubernetes-api\0${input.namespace}\0${input.release}`)
+        .digest('hex')
+        .slice(0, 16)}-egress`,
+      namespace: input.namespace,
+      labels: {
+        'app.kubernetes.io/managed-by': 'commander-operator',
+        'commander.io/purpose': 'kubernetes-api-proof-egress',
+      },
+    },
+    spec: {
+      podSelector: {
+        matchLabels: {
+          'app.kubernetes.io/instance': input.release,
+          'app.kubernetes.io/name': input.release,
+          'commander.io/tenant-authority-proof-reader': 'true',
+          'commander.io/tenant-authority-proof-release': input.release,
+        },
+      },
+      policyTypes: ['Egress'],
+      egress: [
+        {
+          to: [{ ipBlock: { cidr: `${input.kubernetesApiServiceIp}/32` } }],
+          ports: [{ protocol: 'TCP', port: 443 }],
+        },
+        {
+          to: [{ ipBlock: { cidr: `${input.kubernetesApiEndpointIp}/32` } }],
+          ports: [{ protocol: 'TCP', port: input.kubernetesApiEndpointPort }],
+        },
+      ],
+    },
+  });
+  if (input.databaseNamespace !== input.namespace) {
+    policies.push({
+      apiVersion: 'networking.k8s.io/v1',
+      kind: 'NetworkPolicy',
+      metadata: {
+        name: `commander-db-${createHash('sha256')
+          .update(`runtime-ingress\0${input.namespace}\0${input.release}`)
+          .digest('hex')
+          .slice(0, 16)}-ingress`,
+        namespace: input.databaseNamespace,
+        labels: {
+          'app.kubernetes.io/managed-by': 'commander-operator',
+          'commander.io/purpose': 'database-runtime-ingress',
+        },
+      },
+      spec: {
+        podSelector: { matchLabels: input.databasePodSelector },
+        policyTypes: ['Ingress'],
+        ingress: [
+          {
+            from: [
+              {
+                namespaceSelector: {
+                  matchLabels: { 'kubernetes.io/metadata.name': input.namespace },
+                },
+                podSelector: {
+                  matchLabels: {
+                    'app.kubernetes.io/instance': input.release,
+                    'app.kubernetes.io/name': input.release,
+                    'app.kubernetes.io/component': 'api',
+                  },
+                },
+              },
+              {
+                namespaceSelector: {
+                  matchLabels: { 'kubernetes.io/metadata.name': input.namespace },
+                },
+                podSelector: {
+                  matchLabels: {
+                    'app.kubernetes.io/instance': input.release,
+                    'app.kubernetes.io/name': input.release,
+                    'commander.io/tenant-authority-proof-reader': 'true',
+                    'commander.io/tenant-authority-proof-release': input.release,
+                  },
+                },
+              },
+            ],
+            ports: [{ protocol: 'TCP', port: 5432 }],
+          },
+        ],
+      },
+    });
+  }
   return policies;
 }
 
@@ -1055,6 +1145,60 @@ async function kubernetesApiServiceIp(): Promise<string> {
     throw new Error('KUBERNETES_API_SERVICE_INVALID');
   }
   return clusterIp;
+}
+
+export function parseKubernetesApiEndpointSliceList(input: unknown): {
+  ip: string;
+  port: number;
+} {
+  const items =
+    input && typeof input === 'object' && !Array.isArray(input)
+      ? (input as { items?: unknown }).items
+      : undefined;
+  if (!Array.isArray(items)) throw new Error('KUBERNETES_API_ENDPOINT_INVALID');
+  const endpoints = new Set<string>();
+  for (const item of items) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const slice = item as { endpoints?: unknown; ports?: unknown };
+    if (!Array.isArray(slice.endpoints) || !Array.isArray(slice.ports)) continue;
+    const ports = slice.ports
+      .filter(
+        (candidate): candidate is { name: string; protocol: string; port: number } =>
+          !!candidate &&
+          typeof candidate === 'object' &&
+          !Array.isArray(candidate) &&
+          (candidate as { name?: unknown }).name === 'https' &&
+          (candidate as { protocol?: unknown }).protocol === 'TCP' &&
+          Number.isSafeInteger((candidate as { port?: unknown }).port),
+      )
+      .map(({ port }) => port)
+      .filter((port) => port >= 1 && port <= 65535);
+    for (const endpoint of slice.endpoints) {
+      if (!endpoint || typeof endpoint !== 'object' || Array.isArray(endpoint)) continue;
+      const candidate = endpoint as { addresses?: unknown; conditions?: { ready?: unknown } };
+      if (candidate.conditions?.ready !== true || !Array.isArray(candidate.addresses)) continue;
+      for (const address of candidate.addresses) {
+        if (typeof address !== 'string' || !isIpv4Address(address)) continue;
+        for (const port of ports) endpoints.add(`${address}:${port}`);
+      }
+    }
+  }
+  if (endpoints.size !== 1) throw new Error('KUBERNETES_API_ENDPOINT_INVALID');
+  const [ip, rawPort] = [...endpoints][0].split(':');
+  return { ip, port: Number(rawPort) };
+}
+
+async function kubernetesApiEndpoint(): Promise<{ ip: string; port: number }> {
+  return parseKubernetesApiEndpointSliceList(
+    await kubectlJson([
+      'get',
+      'endpointslices.discovery.k8s.io',
+      '-n',
+      'default',
+      '-l',
+      'kubernetes.io/service-name=kubernetes',
+    ]),
+  );
 }
 
 async function ensureControlPlaneReady(): Promise<void> {
@@ -1830,6 +1974,7 @@ async function assertReleaseCleanup(release: string): Promise<void> {
 async function runRealBundledLifecycle(
   imageDigest: string,
   kubernetesApiIp: string,
+  kubernetesApiEndpoint: { ip: string; port: number },
 ): Promise<ScenarioEvidence> {
   const startedAt = Date.now();
   const release = scenarioRelease('cmdr-live');
@@ -1879,6 +2024,8 @@ async function runRealBundledLifecycle(
       },
       apiProofSpkiSha256: material.apiProofSpkiSha256,
       kubernetesApiServiceIp: kubernetesApiIp,
+      kubernetesApiEndpointIp: kubernetesApiEndpoint.ip,
+      kubernetesApiEndpointPort: kubernetesApiEndpoint.port,
     });
 
     const installed = await runCutoverCommand('install', release, installValues, true);
@@ -1976,6 +2123,7 @@ async function runRealBundledLifecycle(
 async function runRealExternalTlsLifecycle(
   imageDigest: string,
   kubernetesApiIp: string,
+  kubernetesApiEndpoint: { ip: string; port: number },
 ): Promise<ScenarioEvidence> {
   const startedAt = Date.now();
   const release = scenarioRelease('cmdr-external');
@@ -2043,6 +2191,8 @@ async function runRealExternalTlsLifecycle(
       databasePodSelector: { 'app.kubernetes.io/name': 'external-postgres' },
       apiProofSpkiSha256: material.apiProofSpkiSha256,
       kubernetesApiServiceIp: kubernetesApiIp,
+      kubernetesApiEndpointIp: kubernetesApiEndpoint.ip,
+      kubernetesApiEndpointPort: kubernetesApiEndpoint.port,
     });
 
     const installed = await runCutoverCommand('install', release, installValues, true);
@@ -2145,6 +2295,7 @@ async function runRealExternalTlsLifecycle(
 async function runFailedRolloutRecovery(
   imageDigest: string,
   kubernetesApiIp: string,
+  kubernetesApiEndpoint: { ip: string; port: number },
 ): Promise<ScenarioEvidence> {
   const startedAt = Date.now();
   const release = scenarioRelease('cmdr-recovery');
@@ -2181,6 +2332,8 @@ async function runFailedRolloutRecovery(
       },
       apiProofSpkiSha256: material.apiProofSpkiSha256,
       kubernetesApiServiceIp: kubernetesApiIp,
+      kubernetesApiEndpointIp: kubernetesApiEndpoint.ip,
+      kubernetesApiEndpointPort: kubernetesApiEndpoint.port,
     });
     let firstFailure: unknown;
     try {
@@ -2282,9 +2435,14 @@ async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
   await loadProductionImage(imageDigest);
   await ensureControlPlaneReady();
   const kubernetesApiIp = await kubernetesApiServiceIp();
+  const apiEndpoint = await kubernetesApiEndpoint();
   const runners: Record<
     LifecycleScenarioName,
-    (selectedDigest: string, selectedKubernetesApiIp: string) => Promise<ScenarioEvidence>
+    (
+      selectedDigest: string,
+      selectedKubernetesApiIp: string,
+      selectedKubernetesApiEndpoint: { ip: string; port: number },
+    ) => Promise<ScenarioEvidence>
   > = {
     'real-bundled': runRealBundledLifecycle,
     'real-external-tls': runRealExternalTlsLifecycle,
@@ -2292,7 +2450,7 @@ async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
   };
   const scenarios: ScenarioEvidence[] = [];
   for (const scenario of selectedScenarios) {
-    scenarios.push(await runners[scenario](imageDigest, kubernetesApiIp));
+    scenarios.push(await runners[scenario](imageDigest, kubernetesApiIp, apiEndpoint));
   }
   const rbac = scenarios.flatMap((scenario) => scenario.rbac ?? []);
   const networkPolicy = scenarios.flatMap((scenario) => scenario.networkPolicy ?? []);
