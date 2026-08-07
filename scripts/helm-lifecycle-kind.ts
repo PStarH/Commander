@@ -351,17 +351,19 @@ export function buildLifecycleStableNetworkPolicies(input: {
       spkiSha256: input.apiProofSpkiSha256,
     },
   });
-  const policies = projection.value.stablePolicies.map((policy) => ({
-    apiVersion: 'networking.k8s.io/v1',
-    kind: 'NetworkPolicy',
-    metadata: {
-      name: policy.name,
-      namespace: policy.namespace,
-      labels: policy.labels,
-      annotations: { 'commander.io/prerequisite-policy-config-sha256': projection.sha256 },
-    },
-    spec: policy.spec,
-  }));
+  const policies: Array<Record<string, unknown>> = projection.value.stablePolicies.map(
+    (policy) => ({
+      apiVersion: 'networking.k8s.io/v1',
+      kind: 'NetworkPolicy',
+      metadata: {
+        name: policy.name,
+        namespace: policy.namespace,
+        labels: policy.labels,
+        annotations: { 'commander.io/prerequisite-policy-config-sha256': projection.sha256 },
+      },
+      spec: policy.spec,
+    }),
+  );
   policies.push({
     apiVersion: 'networking.k8s.io/v1',
     kind: 'NetworkPolicy',
