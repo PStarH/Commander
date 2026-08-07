@@ -300,10 +300,12 @@ tenantAuthority:
         writes.set(path, contents);
       },
       readFile: async (path) =>
-        writes.get(path) ??
-        (() => {
-          throw new Error('missing');
-        })(),
+        path.endsWith('/values.yaml')
+          ? '{}\n'
+          : (writes.get(path) ??
+            (() => {
+              throw new Error('missing');
+            })()),
       retainedChartPackage: async (_stateDirectory, _namespace, _release, digestValue) =>
         `/retained/charts/${digestValue}/commander`,
       retainChartPackage: async (_source, _stateDirectory, _namespace, _release, digestValue) =>
@@ -1235,6 +1237,37 @@ data: { owner-url: ${payload} }
       'cleanup-proof:commander/commander',
       'cleanup-secret:commander/commander-proof-owner-v7',
     ]);
+  });
+
+  it('projects Helm-coalesced defaults when the supplied values omit proof contract fields', async () => {
+    const fixture = ports();
+    const retainedChart = `/retained/charts/${chart}/commander`;
+    const chartDefaults = await readFile('deploy/helm/commander/values.yaml', 'utf8');
+    fixture.fs.readFile = async (path) => {
+      if (path === `${retainedChart}/values.yaml`) return chartDefaults;
+      const persisted = fixture.writes.get(path);
+      if (persisted === undefined) throw new Error('missing');
+      return persisted;
+    };
+    fixture.helm.runProjectedRevision = async (request) => {
+      const effective = load(request.rendererValues) as Record<string, Record<string, unknown>>;
+      assert.equal(effective.migration?.activeDeadlineSeconds, 600);
+      assert.equal(effective.migration?.ttlSecondsAfterFinished, 300);
+      assert.equal(effective.migration?.terminationGracePeriodSeconds, 30);
+      assert.deepEqual(effective.podSecurityContext, {
+        runAsNonRoot: true,
+        runAsUser: 1000,
+        runAsGroup: 1000,
+        fsGroup: 1000,
+        seccompProfile: { type: 'RuntimeDefault' },
+      });
+      assert.equal(effective.databaseTls?.existingSecret, '');
+      assert.equal(effective.databaseTls?.caSecret, 'database-ca');
+      return releaseProjection(request.revision);
+    };
+
+    const result = await runHelmTenantCutover(input(), fixture);
+    assert.equal(result.action, 'deployed');
   });
 
   it('creates a stable fresh bundled database Secret before deriving the proof credential', async () => {
