@@ -589,6 +589,10 @@ describe('helm-lifecycle-kind helpers', () => {
 
   it('runs the live Kind workflow for every production proof dependency', () => {
     const workflow = readFileSync(resolve('.github/workflows/helm-lifecycle.yml'), 'utf8');
+    const kindConfig = readFileSync(
+      resolve('scripts/fixtures/helm-lifecycle/kind-config.yaml'),
+      'utf8',
+    );
     for (const path of [
       'apps/api/**',
       'deploy/helm/commander/**',
@@ -608,6 +612,10 @@ describe('helm-lifecycle-kind helpers', () => {
       );
     }
     assert.match(workflow, /run: pnpm exec tsx scripts\/helm-lifecycle-kind\.ts run/);
+    assert.match(
+      kindConfig,
+      /api-audiences: https:\/\/kubernetes\.default\.svc\.cluster\.local,commander-tenant-cutover-proof\/v1/,
+    );
   });
 
   it('sanitizes DSNs and PEM blocks from evidence', () => {
