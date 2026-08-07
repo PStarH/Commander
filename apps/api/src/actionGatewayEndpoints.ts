@@ -546,6 +546,102 @@ function actionNotFound(res: Response) {
 export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway | null): Router {
   const router = express.Router();
 
+  router.use(async (req, res, next) => {
+    if (!['POST', 'PUT', 'DELETE'].includes(req.method)) return next();
+    const tenantId = req.tenantId;
+    const key = req.header('Idempotency-Key');
+    if (
+      !tenantId ||
+      (!req.user && !req.apiKeyId) ||
+      !key ||
+      !/^[A-Za-z0-9._:-]{8,256}$/.test(key)
+    ) {
+      return next();
+    }
+    const kernel = resolveKernel();
+    if (!kernel) return next();
+    if (!kernel.beginActionRequest || !kernel.completeActionRequest) {
+      return res.status(503).json({
+        error: {
+          code: 'ACTION_IDEMPOTENCY_UNAVAILABLE',
+          message: 'Durable Action request binding is unavailable.',
+        },
+      });
+    }
+    const requestHash = canonicalValueHash({
+      method: req.method,
+      path: req.originalUrl.split('?')[0],
+      body: req.body ?? null,
+      actor: req.apiKeyId ?? req.user?.id,
+    });
+    let binding: Awaited<ReturnType<NonNullable<V1KernelGateway['beginActionRequest']>>>;
+    try {
+      binding = await kernel.beginActionRequest({
+        tenantId,
+        idempotencyKey: key,
+        requestHash,
+      });
+    } catch {
+      return res.status(503).json({
+        error: {
+          code: 'ACTION_IDEMPOTENCY_UNAVAILABLE',
+          message: 'Durable Action request binding could not be verified.',
+        },
+      });
+    }
+    if (binding.state === 'CONFLICT') {
+      return res.status(409).json({
+        error: {
+          code: 'IDEMPOTENCY_KEY_CONFLICT',
+          message: 'Idempotency-Key was already used with a different request.',
+        },
+      });
+    }
+    if (binding.state === 'IN_PROGRESS') {
+      return res.status(409).json({
+        error: {
+          code: 'IDEMPOTENCY_REQUEST_IN_PROGRESS',
+          message: 'The original request has not reached a durable response.',
+        },
+      });
+    }
+    if (binding.state === 'REPLAY') {
+      res.status(binding.responseStatus);
+      if (binding.responseStatus === 204) return res.send();
+      return res.json(binding.responseBody);
+    }
+
+    const originalJson = res.json.bind(res);
+    const originalSend = res.send.bind(res);
+    let completing = false;
+    const complete = async (body: unknown): Promise<void> => {
+      await kernel.completeActionRequest!({
+        tenantId,
+        idempotencyKey: key,
+        requestHash,
+        responseStatus: res.statusCode,
+        responseBody: body ?? null,
+      });
+    };
+    res.json = ((body: unknown) => {
+      if (completing) return originalJson(body);
+      completing = true;
+      void complete(body)
+        .then(() => originalJson(body))
+        .catch(next);
+      return res;
+    }) as Response['json'];
+    res.send = ((body?: unknown) => {
+      if (completing) return originalSend(body);
+      completing = true;
+      void complete(body)
+        .then(() => originalSend(body))
+        .catch(next);
+      return res;
+    }) as Response['send'];
+    return next();
+  });
+
   router.get('/kill-switches', async (req, res) => {
     const tenantId = requiredTenant(req, res);
     if (!tenantId) return;

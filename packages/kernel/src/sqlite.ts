@@ -39,6 +39,9 @@ import type {
   FinalizeCompensationInput,
   ParkCompensationUnknownInput as ParkCompensationRequestUnknownInput,
   CompensationMutationResult,
+  ActionRequestBindingInput,
+  ActionRequestBindingResult,
+  CompleteActionRequestInput,
 } from './types.js';
 import { OPERATIONS_HEARTBEAT_TTL_MS } from './types.js';
 import { assertRunTransition, assertStepTransition } from './transitionValidation.js';
@@ -301,6 +304,75 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
       const dir = dirname(this.sqliteOptions.path);
       if (dir && existsSync(dir)) chmodSync(dir, 0o700);
     }
+  }
+
+  override async beginActionRequest(
+    input: ActionRequestBindingInput,
+  ): Promise<ActionRequestBindingResult> {
+    return this.db.transaction(() => {
+      const inserted = this.db
+        .prepare(
+          `INSERT OR IGNORE INTO commander_action_requests
+             (tenant_id, idempotency_key, request_hash, state)
+           VALUES (?, ?, ?, 'IN_PROGRESS')`,
+        )
+        .run(input.tenantId, input.idempotencyKey, input.requestHash);
+      if (inserted.changes === 1) return { state: 'STARTED' };
+      const row = this.db
+        .prepare(
+          `SELECT request_hash, state, response_status, response_body
+             FROM commander_action_requests
+            WHERE tenant_id=? AND idempotency_key=?`,
+        )
+        .get(input.tenantId, input.idempotencyKey) as
+        | {
+            request_hash: string;
+            state: 'IN_PROGRESS' | 'COMPLETED';
+            response_status: number | null;
+            response_body: string | null;
+          }
+        | undefined;
+      if (!row || row.request_hash !== input.requestHash) return { state: 'CONFLICT' };
+      if (row.state !== 'COMPLETED' || row.response_status === null) {
+        return { state: 'IN_PROGRESS' };
+      }
+      return {
+        state: 'REPLAY',
+        responseStatus: row.response_status,
+        responseBody: row.response_body === null ? null : JSON.parse(row.response_body),
+      };
+    })();
+  }
+
+  override async completeActionRequest(input: CompleteActionRequestInput): Promise<void> {
+    this.db.transaction(() => {
+      const updated = this.db
+        .prepare(
+          `UPDATE commander_action_requests
+              SET state='COMPLETED', response_status=?, response_body=?,
+                  completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+            WHERE tenant_id=? AND idempotency_key=? AND request_hash=?
+              AND state='IN_PROGRESS'`,
+        )
+        .run(
+          input.responseStatus,
+          JSON.stringify(input.responseBody),
+          input.tenantId,
+          input.idempotencyKey,
+          input.requestHash,
+        );
+      if (updated.changes === 1) return;
+      const existing = this.db
+        .prepare(
+          `SELECT request_hash, state FROM commander_action_requests
+            WHERE tenant_id=? AND idempotency_key=?`,
+        )
+        .get(input.tenantId, input.idempotencyKey) as
+        { request_hash: string; state: string } | undefined;
+      if (existing?.request_hash !== input.requestHash || existing.state !== 'COMPLETED') {
+        throw new Error('ACTION_REQUEST_BINDING_INVALID');
+      }
+    })();
   }
 
   close(): void {

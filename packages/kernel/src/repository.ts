@@ -44,6 +44,9 @@ import type {
   PutKillSwitchInput,
   RemoveKillSwitchInput,
   OperationsReadiness,
+  ActionRequestBindingInput,
+  ActionRequestBindingResult,
+  CompleteActionRequestInput,
 } from './types.js';
 import type { EvidenceRepository, KernelEvidenceRecord } from './evidenceRepository.js';
 import type { CompensationOutboxPort } from './ops/compensationConsumer.js';
@@ -59,6 +62,8 @@ export type { KillSwitchMatchDims } from './types.js';
  */
 export interface KernelRepository extends EvidenceRepository, CompensationOutboxPort {
   initialize(): Promise<void>;
+  beginActionRequest(input: ActionRequestBindingInput): Promise<ActionRequestBindingResult>;
+  completeActionRequest(input: CompleteActionRequestInput): Promise<void>;
   createRun(command: CreateKernelRun, actor: string): Promise<KernelRun>;
   /** Control-plane configured maximum simultaneously running steps for a tenant. */
   setTenantConcurrencyLimit(tenantId: string, maxConcurrentSteps: number): Promise<void>;
