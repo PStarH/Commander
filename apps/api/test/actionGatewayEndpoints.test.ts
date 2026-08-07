@@ -14,7 +14,7 @@ import {
   InMemoryKernelRepository,
   seedFreshOperationsDrains,
 } from '@commander/kernel/testing/inMemoryRepository';
-import type { KillSwitchScope } from '@commander/kernel';
+import type { CompleteActionRequestInput, KillSwitchScope } from '@commander/kernel';
 import type {
   ActionReconcileRequestResult,
   GatewayEvidenceRecord,
@@ -31,13 +31,37 @@ class InMemoryGateway implements V1KernelGateway {
   killSwitchLookupError: Error | null = null;
   operationsReady = true;
   evidenceReady = true;
+  actionRequestNow = new Date('2026-08-07T00:00:00.000Z');
+  failNextActionRequestCompletion = false;
+  failedActionRequestCompletion: CompleteActionRequestInput | null = null;
+  readonly actionCalls = {
+    submit: 0,
+    getRun: 0,
+    listInteractions: 0,
+    answerInteraction: 0,
+    cancelRun: 0,
+    putKillSwitch: 0,
+    removeKillSwitch: 0,
+    listKillSwitches: 0,
+  };
 
   beginActionRequest(input: Parameters<InMemoryKernelRepository['beginActionRequest']>[0]) {
-    return this.repository.beginActionRequest(input);
+    return this.repository.beginActionRequest({ ...input, now: this.actionRequestNow });
   }
 
-  completeActionRequest(input: Parameters<InMemoryKernelRepository['completeActionRequest']>[0]) {
-    return this.repository.completeActionRequest(input);
+  async completeActionRequest(
+    input: Parameters<InMemoryKernelRepository['completeActionRequest']>[0],
+  ) {
+    if (this.failNextActionRequestCompletion) {
+      this.failNextActionRequestCompletion = false;
+      this.failedActionRequestCompletion = structuredClone(input);
+      throw new Error('SIMULATED_PROCESS_CRASH_BEFORE_ACTION_REQUEST_COMPLETION');
+    }
+    await this.repository.completeActionRequest({ ...input, now: this.actionRequestNow });
+  }
+
+  advanceActionRequestClock(ms: number) {
+    this.actionRequestNow = new Date(this.actionRequestNow.getTime() + ms);
   }
 
   getOperationsReadiness(_tenantId: string, now = new Date()) {
@@ -55,6 +79,7 @@ class InMemoryGateway implements V1KernelGateway {
   }
 
   async submit(input: Parameters<V1KernelGateway['submit']>[0]) {
+    this.actionCalls.submit++;
     const runId = `run_${createHash('sha256')
       .update(`${input.tenantId}:${input.idempotencyKey}`)
       .digest('hex')
@@ -87,6 +112,7 @@ class InMemoryGateway implements V1KernelGateway {
   }
 
   getRun(runId: string, tenantId: string) {
+    this.actionCalls.getRun++;
     return this.repository.getRun(runId, tenantId);
   }
   getStep(stepId: string, tenantId: string) {
@@ -96,6 +122,7 @@ class InMemoryGateway implements V1KernelGateway {
     return this.repository.listEvents(runId, tenantId);
   }
   listInteractions(runId: string, tenantId: string) {
+    this.actionCalls.listInteractions++;
     return this.repository.listInteractions(runId, tenantId);
   }
   createInteraction(
@@ -105,6 +132,7 @@ class InMemoryGateway implements V1KernelGateway {
     return this.repository.createInteraction(input, actor);
   }
   answerInteraction(input: Parameters<InMemoryKernelRepository['answerInteraction']>[0]) {
+    this.actionCalls.answerInteraction++;
     return this.repository.answerInteraction(input);
   }
   listEffects(runId: string, tenantId: string) {
@@ -159,15 +187,19 @@ class InMemoryGateway implements V1KernelGateway {
     return this.repository.resumeRun(runId, tenantId, actor);
   }
   cancelRun(runId: string, tenantId: string, actor: string) {
+    this.actionCalls.cancelRun++;
     return this.repository.cancelRun(runId, tenantId, actor);
   }
   putKillSwitch(input: Parameters<InMemoryKernelRepository['putKillSwitch']>[0]) {
+    this.actionCalls.putKillSwitch++;
     return this.repository.putKillSwitch(input);
   }
   removeKillSwitch(input: Parameters<InMemoryKernelRepository['removeKillSwitch']>[0]) {
+    this.actionCalls.removeKillSwitch++;
     return this.repository.removeKillSwitch(input);
   }
   listKillSwitches(tenantId: string) {
+    this.actionCalls.listKillSwitches++;
     return this.repository.listKillSwitches(tenantId);
   }
   findMatchingKillSwitch(
@@ -203,6 +235,9 @@ async function withGateway(
     const principal = req.header('x-test-principal') ?? 'api-approver';
     if (principal === 'api-approver') {
       req.apiKeyId = 'test-key';
+      req.apiScopes = ['actions:approve'];
+    } else if (principal === 'api-approver-2') {
+      req.apiKeyId = 'test-key-2';
       req.apiScopes = ['actions:approve'];
     } else if (principal === 'api-reconcile') {
       req.apiKeyId = 'reconcile-key';
@@ -282,6 +317,145 @@ function approvalBinding(action: any) {
     simulationId: action.simulation.simulationId,
     policySnapshotId: action.simulation.policySnapshotId,
   };
+}
+
+async function retryAfterSimulatedActionRequestCrash(
+  gateway: InMemoryGateway,
+  request: () => Promise<Response>,
+): Promise<Response> {
+  gateway.failNextActionRequestCompletion = true;
+  const crashed = await request();
+  assert.equal(crashed.status, 500);
+  await crashed.text();
+
+  const activeRetry = await request();
+  assert.equal(activeRetry.status, 409);
+  assert.equal(((await activeRetry.json()) as any).error.code, 'IDEMPOTENCY_REQUEST_IN_PROGRESS');
+
+  gateway.advanceActionRequestClock(30_000);
+  return request();
+}
+
+type CapturedHttpResponse = { status: number; body: unknown };
+
+async function captureHttpResponse(response: Response): Promise<CapturedHttpResponse> {
+  return {
+    status: response.status,
+    body: response.status === 204 ? null : await response.json(),
+  };
+}
+
+function isActionRequestBindingFenced(error: unknown): boolean {
+  return (
+    error instanceof Error && 'code' in error && error.code === 'ACTION_REQUEST_BINDING_FENCED'
+  );
+}
+
+async function recoverExactResponseAfterSimulatedActionRequestCrash(
+  gateway: InMemoryGateway,
+  request: () => Promise<Response>,
+): Promise<{
+  original: CapturedHttpResponse;
+  recovered: CapturedHttpResponse;
+  replay: CapturedHttpResponse;
+}> {
+  gateway.failedActionRequestCompletion = null;
+  gateway.failNextActionRequestCompletion = true;
+  const crashed = await request();
+  assert.equal(crashed.status, 500);
+  await crashed.text();
+
+  const failedCompletion = gateway.failedActionRequestCompletion;
+  assert.ok(failedCompletion);
+  const original = {
+    status: failedCompletion.responseStatus,
+    body: failedCompletion.responseBody,
+  };
+
+  const activeRetry = await request();
+  assert.equal(activeRetry.status, 409);
+  assert.equal(((await activeRetry.json()) as any).error.code, 'IDEMPOTENCY_REQUEST_IN_PROGRESS');
+
+  gateway.advanceActionRequestClock(30_000);
+  const recovered = await captureHttpResponse(await request());
+  assert.deepEqual(recovered, original);
+
+  await assert.rejects(
+    gateway.repository.completeActionRequest(failedCompletion),
+    isActionRequestBindingFenced,
+  );
+
+  const replay = await captureHttpResponse(await request());
+  assert.deepEqual(replay, original);
+  return { original, recovered, replay };
+}
+
+async function createCompletedForwardAction(
+  gateway: InMemoryGateway,
+  baseUrl: string,
+  idempotencyKey: string,
+  requireApproval: boolean,
+) {
+  const proposed = await postJson(baseUrl, '/v1/actions', {
+    ...baseAction,
+    destination: requireApproval ? 'demo://tickets/approval' : 'demo://tickets',
+    idempotencyKey,
+  });
+  assert.equal(proposed.status, 202);
+  const action = ((await proposed.json()) as any).action;
+  if (requireApproval) {
+    const approved = await postJson(
+      baseUrl,
+      `/v1/actions/${action.runId}/approve`,
+      approvalBinding(action),
+    );
+    assert.equal(approved.status, 200);
+    await approved.json();
+  }
+
+  const step = await gateway.repository.claimNextStep({
+    workerId: `worker-${idempotencyKey}`,
+    workerGeneration: 1,
+    tenantId: 'tenant-a',
+    capabilities: ['tool'],
+    leaseTtlMs: 30_000,
+  });
+  assert.ok(step?.lease);
+  const run = await gateway.repository.getRun(action.runId, 'tenant-a');
+  const metadata = run!.metadata.actionGateway as any;
+  const response = { ticketId: `ticket-${idempotencyKey}` };
+  seedFreshOperationsDrains(gateway.repository, 'tenant-a');
+  const admitted = await gateway.repository.admitEffect({
+    id: metadata.effectId,
+    runId: action.runId,
+    stepId: step.id,
+    tenantId: 'tenant-a',
+    type: metadata.envelope.effectType,
+    idempotencyKey,
+    policyDecisionId: metadata.decision.decisionId,
+    policySnapshotId: metadata.policySnapshotId,
+    actionDigest: metadata.actionDigest,
+    request: metadata.envelope,
+    lease: step.lease,
+    actor: `worker-${idempotencyKey}`,
+  });
+  assert.equal(admitted.admitted, true);
+  await gateway.repository.completeEffect(
+    metadata.effectId,
+    'tenant-a',
+    step.lease,
+    response,
+    `worker-${idempotencyKey}`,
+  );
+  await gateway.repository.completeStep({
+    stepId: step.id,
+    tenantId: 'tenant-a',
+    lease: step.lease,
+    expectedVersion: step.version,
+    output: response,
+    actor: `worker-${idempotencyKey}`,
+  });
+  return { action, metadata, forwardReceiptHash: canonicalValueHash(response) };
 }
 
 async function putKillSwitch(
@@ -494,6 +668,582 @@ describe('Action Gateway HTTP Idempotency-Key contract', () => {
       assert.equal(conflict.status, 409);
       const payload = (await conflict.json()) as { error?: { code?: string } };
       assert.equal(payload.error?.code, 'IDEMPOTENCY_KEY_CONFLICT');
+    });
+  });
+
+  it('does not replay a privileged response across authenticated principals', async () => {
+    await withGateway(new InMemoryGateway(), async (baseUrl) => {
+      const request = (principal: string) =>
+        requestWrite(
+          baseUrl,
+          {
+            name: 'kill-switch update',
+            method: 'PUT',
+            path: '/v1/actions/kill-switches/tool/ticket.create',
+            principal,
+            body: { enabled: true, reason: 'principal binding' },
+          },
+          'kill-switch-principal-key',
+        );
+
+      const first = await request('api-admin');
+      assert.equal(first.status, 200);
+      await first.json();
+
+      const otherPrincipal = await request('user-admin');
+      assert.equal(otherPrincipal.status, 409);
+      assert.equal(((await otherPrincipal.json()) as any).error.code, 'IDEMPOTENCY_KEY_CONFLICT');
+    });
+  });
+});
+
+describe('Action Gateway stale request recovery', () => {
+  it('recovers an exact simulation response without persisting a second audit run', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const body = { ...baseAction, idempotencyKey: 'action-crash-simulation' };
+      const request = () => postJson(baseUrl, '/v1/actions/simulate', body);
+      const callsBefore = { ...gateway.actionCalls };
+
+      const { original } = await recoverExactResponseAfterSimulatedActionRequestCrash(
+        gateway,
+        request,
+      );
+
+      assert.equal(original.status, 200);
+      const simulation = (original.body as any).simulation;
+      const durableRun = await gateway.repository.getRun(simulation.simulationId, 'tenant-a');
+      assert.equal(durableRun?.state, 'CANCELLED');
+      assert.deepEqual(durableRun?.metadata.actionGatewaySimulation, simulation);
+      assert.equal(gateway.actionCalls.submit, callsBefore.submit + 1);
+      assert.equal(gateway.actionCalls.cancelRun, callsBefore.cancelRun + 1);
+      assert.ok(gateway.actionCalls.getRun > callsBefore.getRun);
+      assert.equal(
+        (await gateway.repository.listEvents(simulation.simulationId, 'tenant-a')).filter(
+          (event) => event.type === 'run.created',
+        ).length,
+        1,
+      );
+    });
+  });
+
+  it('does not rerun simulation policy when no durable simulation proves the response', async () => {
+    const gateway = new InMemoryGateway();
+    await gateway.repository.putKillSwitch({
+      tenantId: 'tenant-a',
+      scope: 'tool',
+      value: 'ticket.create',
+      enabled: true,
+      reason: 'force a response without a simulation run',
+      actor: 'api-admin',
+    });
+    await withGateway(gateway, async (baseUrl) => {
+      const body = { ...baseAction, idempotencyKey: 'simulation-no-durable-fact' };
+      const request = () => postJson(baseUrl, '/v1/actions/simulate', body);
+      gateway.failNextActionRequestCompletion = true;
+      const crashed = await request();
+      assert.equal(crashed.status, 403);
+      await crashed.text();
+      const failedCompletion = gateway.failedActionRequestCompletion;
+      assert.ok(failedCompletion);
+      assert.equal(failedCompletion.responseStatus, 403);
+      assert.equal(gateway.actionCalls.submit, 0);
+
+      await gateway.repository.removeKillSwitch({
+        tenantId: 'tenant-a',
+        scope: 'tool',
+        value: 'ticket.create',
+      });
+      gateway.advanceActionRequestClock(30_000);
+      const unprovable = await captureHttpResponse(await request());
+      assert.equal(unprovable.status, 409);
+      assert.equal((unprovable.body as any).error.code, 'ACTION_REQUEST_RECOVERY_UNPROVABLE');
+      assert.equal(gateway.actionCalls.submit, 0);
+      await assert.rejects(
+        gateway.repository.completeActionRequest(failedCompletion),
+        isActionRequestBindingFenced,
+      );
+      const stillLeased = await captureHttpResponse(await request());
+      assert.equal(
+        (stillLeased.body as { error: { code: string } }).error.code,
+        'IDEMPOTENCY_REQUEST_IN_PROGRESS',
+      );
+      gateway.advanceActionRequestClock(30_000);
+      assert.deepEqual(await captureHttpResponse(await request()), unprovable);
+    });
+  });
+
+  it('does not create an action when stale proposal recovery has no durable action run', async () => {
+    const gateway = new InMemoryGateway();
+    await gateway.repository.putKillSwitch({
+      tenantId: 'tenant-a',
+      scope: 'tool',
+      value: 'ticket.create',
+      enabled: true,
+      reason: 'force a response without an action run',
+      actor: 'api-admin',
+    });
+    await withGateway(gateway, async (baseUrl) => {
+      const body = { ...baseAction, idempotencyKey: 'proposal-no-durable-fact' };
+      const request = () => postJson(baseUrl, '/v1/actions', body);
+      gateway.failNextActionRequestCompletion = true;
+      const crashed = await request();
+      assert.equal(crashed.status, 403);
+      await crashed.text();
+      const failedCompletion = gateway.failedActionRequestCompletion;
+      assert.ok(failedCompletion);
+      assert.equal(failedCompletion.responseStatus, 403);
+      assert.equal(gateway.actionCalls.submit, 0);
+
+      await gateway.repository.removeKillSwitch({
+        tenantId: 'tenant-a',
+        scope: 'tool',
+        value: 'ticket.create',
+      });
+      gateway.advanceActionRequestClock(30_000);
+      const unprovable = await captureHttpResponse(await request());
+      assert.equal(unprovable.status, 409);
+      assert.equal((unprovable.body as any).error.code, 'ACTION_REQUEST_RECOVERY_UNPROVABLE');
+      assert.equal(gateway.actionCalls.submit, 0);
+      await assert.rejects(
+        gateway.repository.completeActionRequest(failedCompletion),
+        isActionRequestBindingFenced,
+      );
+      const stillLeased = await captureHttpResponse(await request());
+      assert.equal(
+        (stillLeased.body as { error: { code: string } }).error.code,
+        'IDEMPOTENCY_REQUEST_IN_PROGRESS',
+      );
+      gateway.advanceActionRequestClock(30_000);
+      assert.deepEqual(await captureHttpResponse(await request()), unprovable);
+    });
+  });
+
+  it('does not poison recovery when the superseded proposal finishes after an unprovable query', async () => {
+    const gateway = new InMemoryGateway();
+    const originalFindMatchingKillSwitch = gateway.findMatchingKillSwitch.bind(gateway);
+    let releaseOriginal: (() => void) | undefined;
+    let reportOriginalPaused: (() => void) | undefined;
+    const originalPaused = new Promise<void>((resolve) => {
+      reportOriginalPaused = resolve;
+    });
+    const resumeOriginal = new Promise<void>((resolve) => {
+      releaseOriginal = resolve;
+    });
+    let pauseFirstLookup = true;
+    gateway.findMatchingKillSwitch = async (...args) => {
+      if (pauseFirstLookup) {
+        pauseFirstLookup = false;
+        reportOriginalPaused?.();
+        await resumeOriginal;
+      }
+      return originalFindMatchingKillSwitch(...args);
+    };
+
+    await withGateway(gateway, async (baseUrl) => {
+      const body = { ...baseAction, idempotencyKey: 'proposal-live-predecessor-race' };
+      const request = () => postJson(baseUrl, '/v1/actions', body);
+      const originalResponse = request();
+      await originalPaused;
+
+      gateway.advanceActionRequestClock(30_000);
+      const unprovable = await captureHttpResponse(await request());
+      assert.equal(unprovable.status, 409);
+      assert.equal(
+        (unprovable.body as { error: { code: string } }).error.code,
+        'ACTION_REQUEST_RECOVERY_UNPROVABLE',
+      );
+      assert.equal(gateway.actionCalls.submit, 0);
+
+      assert.ok(releaseOriginal);
+      releaseOriginal();
+      const superseded = await originalResponse;
+      assert.equal(superseded.status, 500);
+      await superseded.text();
+      const submissionsAfterOriginal = gateway.actionCalls.submit;
+      assert.ok(submissionsAfterOriginal >= 1);
+
+      gateway.advanceActionRequestClock(30_000);
+      const recovered = await request();
+      assert.equal(recovered.status, 200);
+      const payload = (await recovered.json()) as { idempotentReplay: boolean };
+      assert.equal(payload.idempotentReplay, true);
+      assert.equal(gateway.actionCalls.submit, submissionsAfterOriginal);
+    });
+  });
+
+  it('terminates stale kill-switch PUT recovery as unprovable without rewriting the row', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const request = () =>
+        fetch(`${baseUrl}/v1/actions/kill-switches/tool/ticket.create`, {
+          method: 'PUT',
+          headers: {
+            'content-type': 'application/json',
+            'x-test-tenant': 'tenant-a',
+            'x-test-principal': 'api-admin',
+            'Idempotency-Key': 'kill-switch-crash-put',
+          },
+          body: JSON.stringify({ enabled: true, reason: 'crash recovery proof' }),
+        });
+
+      gateway.failNextActionRequestCompletion = true;
+      const crashed = await request();
+      assert.equal(crashed.status, 500);
+      await crashed.text();
+      const failedCompletion = gateway.failedActionRequestCompletion;
+      assert.ok(failedCompletion);
+      assert.equal(gateway.actionCalls.putKillSwitch, 1);
+      assert.equal((await gateway.repository.listKillSwitches('tenant-a')).length, 1);
+
+      const activeRetry = await request();
+      assert.equal(activeRetry.status, 409);
+      assert.equal(
+        ((await activeRetry.json()) as any).error.code,
+        'IDEMPOTENCY_REQUEST_IN_PROGRESS',
+      );
+
+      const readsBeforeTakeover = gateway.actionCalls.listKillSwitches;
+      gateway.advanceActionRequestClock(30_000);
+      const unprovable = await captureHttpResponse(await request());
+      assert.equal(unprovable.status, 409);
+      assert.equal((unprovable.body as any).error.code, 'ACTION_REQUEST_RECOVERY_UNPROVABLE');
+      assert.ok(gateway.actionCalls.listKillSwitches > readsBeforeTakeover);
+      assert.equal(gateway.actionCalls.putKillSwitch, 1);
+
+      await assert.rejects(
+        gateway.repository.completeActionRequest(failedCompletion),
+        isActionRequestBindingFenced,
+      );
+      const readsBeforeReplay = gateway.actionCalls.listKillSwitches;
+      const stillLeased = await captureHttpResponse(await request());
+      assert.equal(
+        (stillLeased.body as { error: { code: string } }).error.code,
+        'IDEMPOTENCY_REQUEST_IN_PROGRESS',
+      );
+      assert.equal(gateway.actionCalls.listKillSwitches, readsBeforeReplay);
+      gateway.advanceActionRequestClock(30_000);
+      assert.deepEqual(await captureHttpResponse(await request()), unprovable);
+      assert.equal(gateway.actionCalls.putKillSwitch, 1);
+    });
+  });
+
+  it('terminates stale kill-switch DELETE recovery as unprovable without deleting again', async () => {
+    const gateway = new InMemoryGateway();
+    await gateway.repository.putKillSwitch({
+      tenantId: 'tenant-a',
+      scope: 'tool',
+      value: 'ticket.create',
+      enabled: true,
+      reason: 'delete crash proof',
+      actor: 'api-admin',
+    });
+    await withGateway(gateway, async (baseUrl) => {
+      const request = () =>
+        fetch(`${baseUrl}/v1/actions/kill-switches/tool/ticket.create`, {
+          method: 'DELETE',
+          headers: {
+            'x-test-tenant': 'tenant-a',
+            'x-test-principal': 'api-admin',
+            'Idempotency-Key': 'kill-switch-crash-delete',
+          },
+        });
+
+      gateway.failNextActionRequestCompletion = true;
+      const crashed = await request();
+      assert.equal(crashed.status, 500);
+      await crashed.text();
+      const failedCompletion = gateway.failedActionRequestCompletion;
+      assert.ok(failedCompletion);
+      assert.equal(gateway.actionCalls.removeKillSwitch, 1);
+      assert.equal((await gateway.repository.listKillSwitches('tenant-a')).length, 0);
+
+      const activeRetry = await request();
+      assert.equal(activeRetry.status, 409);
+      assert.equal(
+        ((await activeRetry.json()) as any).error.code,
+        'IDEMPOTENCY_REQUEST_IN_PROGRESS',
+      );
+
+      const readsBeforeTakeover = gateway.actionCalls.listKillSwitches;
+      gateway.advanceActionRequestClock(30_000);
+      const unprovable = await captureHttpResponse(await request());
+      assert.equal(unprovable.status, 409);
+      assert.equal((unprovable.body as any).error.code, 'ACTION_REQUEST_RECOVERY_UNPROVABLE');
+      assert.ok(gateway.actionCalls.listKillSwitches > readsBeforeTakeover);
+      assert.equal(gateway.actionCalls.removeKillSwitch, 1);
+
+      await assert.rejects(
+        gateway.repository.completeActionRequest(failedCompletion),
+        isActionRequestBindingFenced,
+      );
+      const readsBeforeReplay = gateway.actionCalls.listKillSwitches;
+      const stillLeased = await captureHttpResponse(await request());
+      assert.equal(
+        (stillLeased.body as { error: { code: string } }).error.code,
+        'IDEMPOTENCY_REQUEST_IN_PROGRESS',
+      );
+      assert.equal(gateway.actionCalls.listKillSwitches, readsBeforeReplay);
+      gateway.advanceActionRequestClock(30_000);
+      assert.deepEqual(await captureHttpResponse(await request()), unprovable);
+      assert.equal(gateway.actionCalls.removeKillSwitch, 1);
+    });
+  });
+
+  it('recovers a proposed action from its deterministic durable run', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const body = { ...baseAction, idempotencyKey: 'action-crash-proposal' };
+      const recovered = await retryAfterSimulatedActionRequestCrash(gateway, () =>
+        postJson(baseUrl, '/v1/actions', body),
+      );
+
+      assert.equal(recovered.status, 200);
+      const payload = (await recovered.json()) as any;
+      assert.equal(payload.idempotentReplay, true);
+      assert.equal(
+        (await gateway.repository.listEvents(payload.action.runId, 'tenant-a')).filter(
+          (event) => event.type === 'run.created',
+        ).length,
+        1,
+      );
+    });
+  });
+
+  it('recovers compensation authorization and approval from durable facts', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const forward = await createCompletedForwardAction(
+        gateway,
+        baseUrl,
+        'action-crash-compensation',
+        true,
+      );
+      const compensationBody = {
+        originalEffectId: forward.action.effectId,
+        adapterVersion: '1.0.0',
+        compensationEffectType: 'compensate.demo.ticket.create',
+        compensationPatch: { reason: 'crash recovery proof' },
+        forwardReceiptHash: forward.forwardReceiptHash,
+      };
+      const compensationRequest = () =>
+        postJson(
+          baseUrl,
+          `/v1/actions/${forward.action.runId}/compensations`,
+          compensationBody,
+          'tenant-a',
+          'api-approver',
+          'compensation-crash-request',
+        );
+      const recoveredRequest = await retryAfterSimulatedActionRequestCrash(
+        gateway,
+        compensationRequest,
+      );
+      assert.equal(recoveredRequest.status, 202);
+      const requestPayload = (await recoveredRequest.json()) as any;
+      assert.equal(requestPayload.state, 'AWAITING_APPROVAL');
+      assert.equal(requestPayload.replayed, true);
+
+      const approvalBody = {
+        actionDigest: requestPayload.authorization.actionDigest,
+        policySnapshotId: requestPayload.authorization.policySnapshotId,
+      };
+      const compensationApproval = () =>
+        postJson(
+          baseUrl,
+          `/v1/actions/${forward.action.runId}/compensations/${requestPayload.authorization.id}/approve`,
+          approvalBody,
+          'tenant-a',
+          'api-approver',
+          'compensation-crash-approval',
+        );
+      const recoveredApproval = await retryAfterSimulatedActionRequestCrash(
+        gateway,
+        compensationApproval,
+      );
+      assert.equal(recoveredApproval.status, 202);
+      const approvalPayload = (await recoveredApproval.json()) as any;
+      assert.equal(approvalPayload.accepted, true);
+      assert.equal(approvalPayload.replayed, true);
+      assert.equal(approvalPayload.interaction.status, 'answered');
+    });
+  });
+
+  it('recovers the existing reconciliation schedule', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const proposed = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'action-crash-reconcile',
+      });
+      const action = ((await proposed.json()) as any).action;
+      const calls: string[] = [];
+      gateway.requestReconcile = async (effectId) => {
+        calls.push(effectId);
+        return {
+          scheduled: true,
+          effectId,
+          state: 'COMPLETION_UNKNOWN',
+          reconcileAfter: '2026-08-07T00:00:00.000Z',
+          alreadyScheduled: calls.length > 1,
+        };
+      };
+      const request = () =>
+        postJson(
+          baseUrl,
+          `/v1/actions/${action.runId}/reconcile`,
+          {},
+          'tenant-a',
+          'api-reconcile',
+          'reconcile-crash-request',
+        );
+      const recovered = await retryAfterSimulatedActionRequestCrash(gateway, request);
+
+      assert.equal(recovered.status, 202);
+      assert.equal(((await recovered.json()) as any).alreadyScheduled, true);
+      assert.deepEqual(calls, [action.effectId, action.effectId]);
+    });
+  });
+
+  it('recovers an exact ordinary approval response from the durable review fact', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const proposed = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        destination: 'demo://tickets/approval',
+        idempotencyKey: 'action-crash-ordinary-approval',
+      });
+      const action = ((await proposed.json()) as any).action;
+      const request = () =>
+        postJson(
+          baseUrl,
+          `/v1/actions/${action.runId}/approve`,
+          approvalBinding(action),
+          'tenant-a',
+          'api-approver',
+          'ordinary-approval-crash-request',
+        );
+      const callsBefore = { ...gateway.actionCalls };
+
+      const { original } = await recoverExactResponseAfterSimulatedActionRequestCrash(
+        gateway,
+        request,
+      );
+
+      assert.equal(original.status, 200);
+      assert.equal((original.body as any).action.state, 'ADMITTED');
+      const interactions = await gateway.repository.listInteractions(action.runId, 'tenant-a');
+      assert.equal(interactions[0]?.status, 'answered');
+      assert.equal(gateway.actionCalls.answerInteraction, callsBefore.answerInteraction + 1);
+      assert.ok(gateway.actionCalls.listInteractions > callsBefore.listInteractions);
+      assert.equal(
+        (await gateway.repository.listEvents(action.runId, 'tenant-a')).filter(
+          (event) => event.type === 'interaction.answered',
+        ).length,
+        1,
+      );
+    });
+  });
+
+  it('checks approval authority before stale takeover and does not poison authorized recovery', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const proposed = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        destination: 'demo://tickets/approval',
+        idempotencyKey: 'action-crash-approval-authority',
+      });
+      const action = ((await proposed.json()) as any).action;
+      const authorizedRequest = () =>
+        postJson(
+          baseUrl,
+          `/v1/actions/${action.runId}/approve`,
+          approvalBinding(action),
+          'tenant-a',
+          'api-approver',
+          'approval-authority-crash-request',
+        );
+      const unauthorizedRequest = () =>
+        postJson(
+          baseUrl,
+          `/v1/actions/${action.runId}/approve`,
+          approvalBinding(action),
+          'tenant-a',
+          'api-read',
+          'approval-authority-crash-request',
+        );
+
+      gateway.failNextActionRequestCompletion = true;
+      const crashed = await authorizedRequest();
+      assert.equal(crashed.status, 500);
+      await crashed.text();
+      const failedCompletion = gateway.failedActionRequestCompletion;
+      assert.ok(failedCompletion);
+
+      const unauthorizedActive = await unauthorizedRequest();
+      assert.equal(unauthorizedActive.status, 403);
+      await unauthorizedActive.text();
+      gateway.advanceActionRequestClock(30_000);
+      const unauthorizedStale = await unauthorizedRequest();
+      assert.equal(unauthorizedStale.status, 403);
+      await unauthorizedStale.text();
+
+      const recovered = await captureHttpResponse(await authorizedRequest());
+      assert.deepEqual(recovered, {
+        status: failedCompletion.responseStatus,
+        body: failedCompletion.responseBody,
+      });
+      await assert.rejects(
+        gateway.repository.completeActionRequest(failedCompletion),
+        isActionRequestBindingFenced,
+      );
+      assert.deepEqual(await captureHttpResponse(await authorizedRequest()), recovered);
+      assert.equal(
+        (await gateway.repository.listEvents(action.runId, 'tenant-a')).filter(
+          (event) => event.type === 'interaction.answered',
+        ).length,
+        1,
+      );
+    });
+  });
+
+  it('recovers an exact ordinary rejection response from the durable review fact', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const proposed = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        destination: 'demo://tickets/approval',
+        idempotencyKey: 'action-crash-ordinary-rejection',
+      });
+      const action = ((await proposed.json()) as any).action;
+      const request = () =>
+        postJson(
+          baseUrl,
+          `/v1/actions/${action.runId}/reject`,
+          { reason: 'crash recovery must not repeat this decision' },
+          'tenant-a',
+          'api-approver',
+          'ordinary-rejection-crash-request',
+        );
+      const callsBefore = { ...gateway.actionCalls };
+
+      const { original } = await recoverExactResponseAfterSimulatedActionRequestCrash(
+        gateway,
+        request,
+      );
+
+      assert.equal(original.status, 200);
+      assert.equal((original.body as any).action.state, 'FAILED');
+      assert.equal((await gateway.repository.getRun(action.runId, 'tenant-a'))?.state, 'CANCELLED');
+      assert.equal(gateway.actionCalls.answerInteraction, callsBefore.answerInteraction + 1);
+      assert.equal(gateway.actionCalls.cancelRun, callsBefore.cancelRun + 1);
+      assert.ok(gateway.actionCalls.listInteractions > callsBefore.listInteractions);
+      assert.equal(
+        (await gateway.repository.listEvents(action.runId, 'tenant-a')).filter(
+          (event) => event.type === 'interaction.answered',
+        ).length,
+        1,
+      );
     });
   });
 });
