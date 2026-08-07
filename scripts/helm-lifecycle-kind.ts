@@ -546,7 +546,7 @@ export function sanitizeEvidence(evidence: HarnessEvidence): HarnessEvidence {
 }
 
 const LIFECYCLE_FAILURE_DIAGNOSTIC =
-  /(?:COMMANDER_MIGRATION_FAILED|COMMANDER_PROOF_FAILED) stage=[a-z0-9-]+ code=[A-Z0-9_]{2,80}/g;
+  /(?:COMMANDER_MIGRATION_FAILED|COMMANDER_PROOF_FAILED|COMMANDER_API_FAILED) stage=[a-z0-9-]+ code=[A-Z0-9_]{2,80}/g;
 const API_STARTUP_FAILURE_CODE = /^\[startup\] Failed to start API server: ([A-Z0-9_]{2,80})$/gm;
 
 export function extractLifecycleFailureDiagnostics(logs: string): string[] {
