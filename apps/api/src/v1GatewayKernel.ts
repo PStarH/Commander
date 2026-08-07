@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 
 import {
   createKernelRepository,
@@ -133,9 +133,17 @@ export interface V1KernelGateway {
 
 export type { KernelRun } from '@commander/kernel';
 
-// codeql[js/insufficient-password-hash]: This helper hashes canonical request data and opaque IDs, not passwords.
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+export function canonicalPrincipalDigest(value: string): string {
+  return createHmac(
+    'sha256',
+    process.env.COMMANDER_INTEGRITY_KEY ?? 'commander-canonical-digest',
+  )
+    .update(value)
+    .digest('hex');
 }
 
 function kernelInvariantCode(error: unknown): string | undefined {

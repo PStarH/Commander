@@ -16,6 +16,7 @@ import {
 import {
   GatewayIdempotencyConflictError,
   GatewayStepIdConflictError,
+  canonicalPrincipalDigest,
   canonicalValueHash,
   deriveGatewayRunId,
   type KernelRun,
@@ -572,7 +573,7 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
       method: req.method,
       path: req.originalUrl.split('?')[0],
       body: req.body ?? null,
-      actor: req.apiKeyId ?? req.user?.id,
+      actor: req.apiKeyId ? canonicalPrincipalDigest(req.apiKeyId) : req.user?.id,
     });
     let binding: Awaited<ReturnType<NonNullable<V1KernelGateway['beginActionRequest']>>>;
     try {
