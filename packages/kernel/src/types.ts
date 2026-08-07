@@ -618,6 +618,7 @@ export class KernelInvariantError extends Error {
       | 'INTERACTION_ALREADY_ANSWERED'
       | 'STEP_NOT_FOUND'
       | 'ACTION_REQUEST_BINDING_INVALID'
+      | 'ACTION_REQUEST_BINDING_FENCED'
       | 'KILL_SWITCH_LOOKUP_FAILED',
     message: string,
   ) {
@@ -734,10 +735,15 @@ export interface ActionRequestBindingInput {
   tenantId: string;
   idempotencyKey: string;
   requestHash: string;
+  attemptToken: string;
+  now: Date;
+  staleAfterMs: number;
+  allowStaleTakeover: boolean;
 }
 
 export type ActionRequestBindingResult =
   | { state: 'STARTED' }
+  | { state: 'TAKEOVER' }
   | { state: 'IN_PROGRESS' }
   | { state: 'CONFLICT' }
   | {

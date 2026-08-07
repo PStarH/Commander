@@ -441,6 +441,8 @@ CREATE TABLE IF NOT EXISTS commander_action_requests (
   idempotency_key TEXT NOT NULL,
   request_hash TEXT NOT NULL CHECK (request_hash ~ '^[a-f0-9]{64}$'),
   state TEXT NOT NULL CHECK (state IN ('IN_PROGRESS','COMPLETED')),
+  attempt_token TEXT NOT NULL,
+  lease_expires_at TIMESTAMPTZ NOT NULL,
   response_status INTEGER,
   response_body JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
