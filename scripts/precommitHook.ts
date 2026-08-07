@@ -62,11 +62,6 @@ const SCANNER_MODULE_PATH = path.join(
   REPO_ROOT,
   'packages/core/src/security/supplyChainScanner.ts',
 );
-// 签名定义文件：MALWARE_SIGNATURES 的正则字面量会自指命中全部 malware
-// 签名，扫描它必然误报。仅对该单一文件精确豁免 malware 类别（provenance
-// 等其余检查照常），豁免时打印审计警告。信任边界：hook 防意外提交，
-// 不防恶意维护者（后者可 --no-verify 绕过任何 precommit 门）。
-const SCANNER_DEFINITION_REL = 'packages/core/src/security/supplyChainScanner.ts';
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -98,12 +93,11 @@ interface ScanLike {
 }
 
 /**
- * Run SupplyChainScanner.scan() if we can load the module. Otherwise fall
- * back to an inline blocklist mirroring MAL-001 / MAL-005 / MAL-007 so
- * the hook still blocks catastrophic commits when the SDK is unavailable.
+ * Run SupplyChainScanner.scan(). If the module cannot be loaded, fail closed:
+ * a pre-commit malware gate must not silently pass while its scanner is down
+ * (bypass explicitly with COMMANDER_SKIP_PRECOMMIT=1 instead).
  */
 async function scanContent(name: string, content: string): Promise<ScanLike> {
-  const isDefinition = isScannerDefinitionFile(name);
   try {
     const mod = await import(SCANNER_MODULE_PATH);
     const scanner = mod.getSupplyChainScanner();
@@ -115,29 +109,7 @@ async function scanContent(name: string, content: string): Promise<ScanLike> {
       // heuristics only make sense for skill markdown. Malware signatures still run.
       skipPreScanHeuristics: true,
     });
-    // Definition file: every malware hit is its own signature literal
-    // self-matching — exempt malware category hits only, keep everything else
-    // (provenance, etc.). The inline blocklist still runs as a backstop: its
-    // patterns match bare catastrophic forms that signature-table literals
-    // never contain (they are regex-escaped), so a malicious edit to the
-    // definitions file cannot hide real reverse-shell / data-destruction /
-    // ssh-backdoor code behind the exemption. All other files keep full
-    // blocking semantics: any malware.* category or critical/high hit blocks.
-    const warnings = isDefinition
-      ? r.warnings.filter((w: ScanLike['warnings'][number]) => !w.category.startsWith('malware.'))
-      : r.warnings;
-    const suppressed = isDefinition
-      ? r.warnings.filter((w: ScanLike['warnings'][number]) => w.category.startsWith('malware.'))
-      : [];
-    if (suppressed.length > 0) {
-      process.stderr.write(
-        `[D3 hook] note: ${name} is the malware signature definition file; ` +
-          `${suppressed.length} self-matching malware hit(s) exempted.\n`,
-      );
-    }
-    const backstop = isDefinition ? inlineBlocklistScan(name, content).warnings : [];
-    const allWarnings = [...warnings, ...backstop];
-    const blocked = allWarnings.some(
+    const blocked = r.warnings.some(
       (w) =>
         w.severity === 'critical' || w.severity === 'high' || w.category.startsWith('malware.'),
     );
@@ -145,55 +117,26 @@ async function scanContent(name: string, content: string): Promise<ScanLike> {
       passed: !blocked,
       severity: blocked ? r.severity : 'clean',
       recommendation: blocked ? 'block' : 'allow',
-      warnings: allWarnings,
+      warnings: r.warnings,
     };
   } catch (err) {
-    // Singleton init can fail under D1 prod fail-fast (production NODE_ENV +
-    // missing COMMANDER_AUDIT_CHAIN_KEY). Continue with the inline mirror.
     process.stderr.write(
-      `[D3 hook] SupplyChainScanner unavailable (${(err as Error)?.message ?? err}); using inline blocklist.\n`,
+      `[D3 hook] SupplyChainScanner unavailable (${(err as Error)?.message ?? err}); blocking (fail-closed). Bypass with COMMANDER_SKIP_PRECOMMIT=1 (logged).\n`,
     );
-    return inlineBlocklistScan(name, content);
+    return {
+      passed: false,
+      severity: 'malicious',
+      recommendation: 'block',
+      warnings: [
+        {
+          severity: 'critical',
+          category: 'scanner-unavailable',
+          message: 'SupplyChainScanner failed to load; commit blocked (fail-closed)',
+          evidence: name,
+        },
+      ],
+    };
   }
-}
-
-function isScannerDefinitionFile(name: string): boolean {
-  const rel = name.split(path.sep).join('/').replace(/^\.\//, '');
-  return (
-    rel === SCANNER_DEFINITION_REL ||
-    rel === path.join(REPO_ROOT, SCANNER_DEFINITION_REL).split(path.sep).join('/')
-  );
-}
-
-function inlineBlocklistScan(name: string, content: string): ScanLike {
-  // Mirror of MAL-001 / MAL-005 / MAL-007 — keep in lock-step with
-  // packages/core/src/security/supplyChainScanner.ts MALWARE_SIGNATURES.
-  // MAL-008 (persistence) is intentionally omitted: it is a skill-markdown
-  // heuristic that self-matches source files containing job-scheduler
-  // trigger literals (which this file itself would trip on).
-  const PATTERNS: Array<{ id: string; regex: RegExp }> = [
-    { id: 'MAL-001-reverse-shell', regex: /\/dev\/tcp\/.*\/.*|bash -i >& \/dev\/tcp/ },
-    {
-      id: 'MAL-005-data-destruction',
-      regex: /rm\s+-rf\s+\/(?:\s|$)|;\s*:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/,
-    },
-    {
-      id: 'MAL-007-ssh-backdoor',
-      regex: />>\s*~\/\.ssh\/authorized_keys|>>\s*\/root\/\.ssh\/authorized_keys/,
-    },
-  ];
-  const warnings = PATTERNS.filter((p) => p.regex.test(content)).map((p) => ({
-    severity: 'critical' as const,
-    category: p.id,
-    message: `blocklist hit: ${p.id}`,
-    evidence: name,
-  }));
-  return {
-    passed: warnings.length === 0,
-    severity: warnings.length > 0 ? 'malicious' : 'clean',
-    recommendation: warnings.length > 0 ? 'block' : 'allow',
-    warnings,
-  };
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────
