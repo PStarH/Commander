@@ -217,6 +217,37 @@ function requiredTenant(req: Request, res: Response): string | null {
   return req.tenantId;
 }
 
+function requiredIdempotencyKey(req: Request, res: Response): string | null {
+  const value = req.header('Idempotency-Key');
+  if (!value || !/^[A-Za-z0-9._:-]{8,256}$/.test(value)) {
+    res.status(400).json({
+      error: {
+        code: 'IDEMPOTENCY_KEY_REQUIRED',
+        message: 'Idempotency-Key must be 8-256 URL-safe characters.',
+      },
+    });
+    return null;
+  }
+  return value;
+}
+
+function assertBodyIdempotencyKey(
+  bodyKey: string | undefined,
+  headerKey: string,
+  res: Response,
+): boolean {
+  if (bodyKey !== undefined && bodyKey !== headerKey) {
+    res.status(409).json({
+      error: {
+        code: 'IDEMPOTENCY_KEY_CONFLICT',
+        message: 'Idempotency-Key header does not match the request binding.',
+      },
+    });
+    return false;
+  }
+  return true;
+}
+
 function requiredApprover(req: Request, res: Response): string | null {
   const principalId = req.user?.id ?? req.apiKeyId;
   if (!principalId) {
@@ -542,6 +573,7 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
   router.put('/kill-switches/:scope/:value', async (req, res) => {
     const tenantId = requiredTenant(req, res);
     if (!tenantId) return;
+    if (!requiredIdempotencyKey(req, res)) return;
     const manager = requiredKillSwitchManager(req, res);
     if (!manager) return;
     const scopeParsed = killSwitchScopeSchema.safeParse(req.params.scope);
@@ -590,6 +622,7 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
   router.delete('/kill-switches/:scope/:value', async (req, res) => {
     const tenantId = requiredTenant(req, res);
     if (!tenantId) return;
+    if (!requiredIdempotencyKey(req, res)) return;
     const manager = requiredKillSwitchManager(req, res);
     if (!manager) return;
     const scopeParsed = killSwitchScopeSchema.safeParse(req.params.scope);
@@ -624,8 +657,11 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
   router.post('/simulate', async (req, res) => {
     const tenantId = requiredTenant(req, res);
     if (!tenantId) return;
+    const headerKey = requiredIdempotencyKey(req, res);
+    if (!headerKey) return;
     const parsed = actionInputSchema.safeParse(req.body);
     if (!parsed.success) return invalidRequest(res, parsed.error);
+    if (!assertBodyIdempotencyKey(parsed.data.idempotencyKey, headerKey, res)) return;
     const kernel = resolveKernel();
     if (!kernel) {
       return res.status(503).json({
@@ -646,8 +682,11 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
   router.post('/', async (req, res) => {
     const tenantId = requiredTenant(req, res);
     if (!tenantId) return;
+    const headerKey = requiredIdempotencyKey(req, res);
+    if (!headerKey) return;
     const parsed = actionInputSchema.safeParse(req.body);
     if (!parsed.success) return invalidRequest(res, parsed.error);
+    if (!assertBodyIdempotencyKey(parsed.data.idempotencyKey, headerKey, res)) return;
     const kernel = resolveKernel();
     if (!kernel) {
       return res.status(503).json({
@@ -812,6 +851,7 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
   router.post('/:runId/approve', async (req, res) => {
     const tenantId = requiredTenant(req, res);
     if (!tenantId) return;
+    if (!requiredIdempotencyKey(req, res)) return;
     const reviewer = requiredApprover(req, res);
     if (!reviewer) return;
     const parsed = approvalSchema.safeParse(req.body);
@@ -887,6 +927,7 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
   router.post('/:runId/reject', async (req, res) => {
     const tenantId = requiredTenant(req, res);
     if (!tenantId) return;
+    if (!requiredIdempotencyKey(req, res)) return;
     const reviewer = requiredApprover(req, res);
     if (!reviewer) return;
     const parsed = rejectionSchema.safeParse(req.body);
@@ -941,6 +982,7 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
   router.post('/:runId/compensations', async (req, res) => {
     const tenantId = requiredTenant(req, res);
     if (!tenantId) return;
+    if (!requiredIdempotencyKey(req, res)) return;
     const parsed = compensationInputSchema.safeParse(req.body);
     if (!parsed.success) return invalidRequest(res, parsed.error);
     const kernel = resolveKernel();
@@ -1087,6 +1129,7 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
   router.post('/:runId/compensations/:authorizationId/approve', async (req, res) => {
     const tenantId = requiredTenant(req, res);
     if (!tenantId) return;
+    if (!requiredIdempotencyKey(req, res)) return;
     const approver = requiredApprover(req, res);
     if (!approver) return;
     const parsed = compensationApprovalSchema.safeParse(req.body);
@@ -1139,6 +1182,7 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
   router.post('/:runId/reconcile', async (req, res) => {
     const tenantId = requiredTenant(req, res);
     if (!tenantId) return;
+    if (!requiredIdempotencyKey(req, res)) return;
     const actor = requiredReconcileAuthority(req, res);
     if (!actor) return;
     const kernel = resolveKernel();
