@@ -14,6 +14,7 @@ import {
   pollTask1RuntimeIdentity,
   readTask1DatabaseIdentity,
   runTask1TenantSelfCheck,
+  task1ReadinessDiagnosticCode,
   type Task1QueryClient,
   type Task1QueryPool,
 } from '../src/task1ReadinessRuntime.js';
@@ -28,12 +29,16 @@ class RecordingClient implements Task1QueryClient {
     this.calls.push({ text, values });
     return this.answer(text) as { rows: never[] };
   }
-  release(error?: Error | boolean): void { this.releases.push(error); }
+  release(error?: Error | boolean): void {
+    this.releases.push(error);
+  }
 }
 
 class Pool implements Task1QueryPool {
   constructor(readonly client: RecordingClient) {}
-  connect(): Promise<Task1QueryClient> { return Promise.resolve(this.client); }
+  connect(): Promise<Task1QueryClient> {
+    return Promise.resolve(this.client);
+  }
   query(text: string, values?: readonly unknown[]): Promise<{ rows: never[] }> {
     return this.client.query(text, values);
   }
@@ -59,7 +64,10 @@ function responseStatus(state: Task1ReadinessProof, challenge?: string): number 
       rawHeaders: challenge ? ['X-Commander-Readiness-Challenge', challenge] : [],
     },
     {
-      status(value) { statusCode = value; return this; },
+      status(value) {
+        statusCode = value;
+        return this;
+      },
       setHeader() {},
       end() {},
     },
@@ -68,6 +76,24 @@ function responseStatus(state: Task1ReadinessProof, challenge?: string): number 
 }
 
 describe('Task 1 readiness runtime', () => {
+  it('emits only fixed readiness diagnostics and bounded PostgreSQL SQLSTATE codes', () => {
+    assert.equal(
+      task1ReadinessDiagnosticCode(new Error('TENANT_CONTEXT_INVALID'), 'READINESS_FAILED'),
+      'TENANT_CONTEXT_INVALID',
+    );
+    assert.equal(
+      task1ReadinessDiagnosticCode(
+        { code: '57014', message: 'query timed out' },
+        'READINESS_FAILED',
+      ),
+      'PG_57014',
+    );
+    assert.equal(
+      task1ReadinessDiagnosticCode(new Error('password=secret'), 'READINESS_FAILED'),
+      'READINESS_FAILED',
+    );
+  });
+
   it('runs issue, bind, canonical resolve, and close without product DML', async () => {
     const app = new RecordingClient((text) => {
       if (text.includes('pg_backend_pid')) {
@@ -100,7 +126,10 @@ describe('Task 1 readiness runtime', () => {
     assert.equal(authority.calls.length, 1);
     assert.match(authority.calls[0]!.text, /issue_app_tenant_context/);
     assert.deepEqual(authority.calls[0]!.values, [
-      'commander/readiness/v1', 16_384, 91, '9223372036854775808',
+      'commander/readiness/v1',
+      16_384,
+      91,
+      '9223372036854775808',
     ]);
     assert.deepEqual(app.releases, [undefined]);
     assert.deepEqual(authority.releases, [undefined]);
@@ -152,12 +181,18 @@ describe('Task 1 readiness runtime', () => {
     const challenge = Buffer.alloc(32, 4).toString('base64url');
     const state = proof();
     state.recordTenantSelfCheck(true);
-    const matching = new Pool(new RecordingClient(() => ({ rows: [{
-      operation_version_text: '19',
-      runtime_phase: 'enforce',
-      api_image_digest: `sha256:${digest('a')}`,
-      configuration_sha256: digest('c'),
-    }] })));
+    const matching = new Pool(
+      new RecordingClient(() => ({
+        rows: [
+          {
+            operation_version_text: '19',
+            runtime_phase: 'enforce',
+            api_image_digest: `sha256:${digest('a')}`,
+            configuration_sha256: digest('c'),
+          },
+        ],
+      })),
+    );
 
     await pollTask1RuntimeIdentity(state, matching);
     assert.equal(responseStatus(state, challenge), 200);
@@ -182,7 +217,9 @@ describe('Task 1 readiness runtime', () => {
       configurationSha256: digest('c'),
     });
     let resolveQuery!: (value: { rows: never[] }) => void;
-    const pending = new Promise<{ rows: never[] }>((resolve) => { resolveQuery = resolve; });
+    const pending = new Promise<{ rows: never[] }>((resolve) => {
+      resolveQuery = resolve;
+    });
     const pollingClient: Task1QueryClient = {
       query: () => pending,
       release: () => undefined,
@@ -195,12 +232,16 @@ describe('Task 1 readiness runtime', () => {
     const poll = pollTask1RuntimeIdentity(state, pollingPool);
     await Promise.resolve();
     assert.equal(responseStatus(state, challenge), 200);
-    resolveQuery({ rows: [{
-      operation_version_text: '19',
-      runtime_phase: 'enforce',
-      api_image_digest: `sha256:${digest('a')}`,
-      configuration_sha256: digest('c'),
-    }] as never[] });
+    resolveQuery({
+      rows: [
+        {
+          operation_version_text: '19',
+          runtime_phase: 'enforce',
+          api_image_digest: `sha256:${digest('a')}`,
+          configuration_sha256: digest('c'),
+        },
+      ] as never[],
+    });
     await poll;
   });
 
@@ -230,10 +271,11 @@ describe('Task 1 readiness runtime', () => {
       authorityDatabaseUrl: env.COMMANDER_TENANT_AUTHORITY_DATABASE_URL,
     });
     assert.throws(
-      () => parseTask1ReadinessEnvironment({
-        ...env,
-        COMMANDER_TENANT_AUTHORITY_DATABASE_URL: env.DATABASE_URL,
-      }),
+      () =>
+        parseTask1ReadinessEnvironment({
+          ...env,
+          COMMANDER_TENANT_AUTHORITY_DATABASE_URL: env.DATABASE_URL,
+        }),
       /DATABASE_URLS_MUST_BE_DISTINCT/,
     );
   });
@@ -245,21 +287,25 @@ describe('Task 1 readiness runtime', () => {
       COMMANDER_DATABASE_TLS_CA_FILE: '/run/database/ca.crt',
       COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: digest('d'),
     };
-    const pools = createTask1ReadinessDatabasePools({
-      phase: 'enforce',
-      port: 9443,
-      certFile: '/run/proof/tls.crt',
-      keyFile: '/run/proof/tls.key',
-      proofDnsName: 'api.commander.svc.cluster.local',
-      imageDigest: `sha256:${digest('a')}`,
-      configurationSha256: digest('c'),
-      appDatabaseUrl: 'postgres://commander_app:app@db/commander?sslmode=verify-full',
-      authorityDatabaseUrl:
-        'postgres://commander_tenant_authority:authority@db/commander?sslmode=verify-full',
-    }, env, ((input: Record<string, unknown>, receivedEnv: NodeJS.ProcessEnv) => {
-      calls.push({ input, env: receivedEnv });
-      return fakePool;
-    }) as never);
+    const pools = createTask1ReadinessDatabasePools(
+      {
+        phase: 'enforce',
+        port: 9443,
+        certFile: '/run/proof/tls.crt',
+        keyFile: '/run/proof/tls.key',
+        proofDnsName: 'api.commander.svc.cluster.local',
+        imageDigest: `sha256:${digest('a')}`,
+        configurationSha256: digest('c'),
+        appDatabaseUrl: 'postgres://commander_app:app@db/commander?sslmode=verify-full',
+        authorityDatabaseUrl:
+          'postgres://commander_tenant_authority:authority@db/commander?sslmode=verify-full',
+      },
+      env,
+      ((input: Record<string, unknown>, receivedEnv: NodeJS.ProcessEnv) => {
+        calls.push({ input, env: receivedEnv });
+        return fakePool;
+      }) as never,
+    );
 
     assert.equal(pools.appPool, fakePool);
     assert.equal(pools.authorityPool, fakePool);
@@ -275,10 +321,16 @@ describe('Task 1 readiness runtime', () => {
   });
 
   it('reads the immutable database identity only through its bounded RPC', async () => {
-    const pool = new Pool(new RecordingClient(() => ({ rows: [{
-      installation_id: '11111111-1111-4111-8111-111111111111',
-      database_peer_binding_sha256: digest('d'),
-    }] })));
+    const pool = new Pool(
+      new RecordingClient(() => ({
+        rows: [
+          {
+            installation_id: '11111111-1111-4111-8111-111111111111',
+            database_peer_binding_sha256: digest('d'),
+          },
+        ],
+      })),
+    );
     assert.deepEqual(await readTask1DatabaseIdentity(pool), {
       installationId: '11111111-1111-4111-8111-111111111111',
       databasePeerBindingSha256: digest('d'),
@@ -290,11 +342,30 @@ describe('Task 1 readiness runtime', () => {
     const directory = mkdtempSync(join(tmpdir(), 'commander-task1-proof-'));
     const certFile = join(directory, 'tls.crt');
     const keyFile = join(directory, 'tls.key');
-    execFileSync('openssl', [
-      'req', '-x509', '-new', '-nodes', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256',
-      '-days', '2', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost',
-      '-keyout', keyFile, '-out', certFile,
-    ], { stdio: 'ignore' });
+    execFileSync(
+      'openssl',
+      [
+        'req',
+        '-x509',
+        '-new',
+        '-nodes',
+        '-newkey',
+        'ec',
+        '-pkeyopt',
+        'ec_paramgen_curve:P-256',
+        '-days',
+        '2',
+        '-subj',
+        '/CN=localhost',
+        '-addext',
+        'subjectAltName=DNS:localhost',
+        '-keyout',
+        keyFile,
+        '-out',
+        certFile,
+      ],
+      { stdio: 'ignore' },
+    );
     chmodSync(certFile, 0o444);
     chmodSync(keyFile, 0o644);
     assert.throws(
@@ -303,27 +374,31 @@ describe('Task 1 readiness runtime', () => {
     );
 
     chmodSync(keyFile, 0o400);
-    assert.doesNotThrow(() => loadTask1ProofTlsMaterial({
-      certFile,
-      keyFile,
-      expectedDnsName: 'localhost',
-    }));
-    assert.throws(
-      () => loadTask1ProofTlsMaterial({
+    assert.doesNotThrow(() =>
+      loadTask1ProofTlsMaterial({
         certFile,
         keyFile,
-        expectedDnsName: 'api.commander.svc.cluster.local',
+        expectedDnsName: 'localhost',
       }),
+    );
+    assert.throws(
+      () =>
+        loadTask1ProofTlsMaterial({
+          certFile,
+          keyFile,
+          expectedDnsName: 'api.commander.svc.cluster.local',
+        }),
       /TLS_MATERIAL_INVALID/,
     );
     const linkedKey = join(directory, 'linked.key');
     symlinkSync(keyFile, linkedKey);
     assert.throws(
-      () => loadTask1ProofTlsMaterial({
-        certFile,
-        keyFile: linkedKey,
-        expectedDnsName: 'localhost',
-      }),
+      () =>
+        loadTask1ProofTlsMaterial({
+          certFile,
+          keyFile: linkedKey,
+          expectedDnsName: 'localhost',
+        }),
       /KEY_FILE_INVALID/,
     );
   });
@@ -332,11 +407,30 @@ describe('Task 1 readiness runtime', () => {
     const directory = mkdtempSync(join(tmpdir(), 'commander-task1-proof-server-'));
     const certFile = join(directory, 'tls.crt');
     const keyFile = join(directory, 'tls.key');
-    execFileSync('openssl', [
-      'req', '-x509', '-new', '-nodes', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256',
-      '-days', '2', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost',
-      '-keyout', keyFile, '-out', certFile,
-    ], { stdio: 'ignore' });
+    execFileSync(
+      'openssl',
+      [
+        'req',
+        '-x509',
+        '-new',
+        '-nodes',
+        '-newkey',
+        'ec',
+        '-pkeyopt',
+        'ec_paramgen_curve:P-256',
+        '-days',
+        '2',
+        '-subj',
+        '/CN=localhost',
+        '-addext',
+        'subjectAltName=DNS:localhost',
+        '-keyout',
+        keyFile,
+        '-out',
+        certFile,
+      ],
+      { stdio: 'ignore' },
+    );
     chmodSync(certFile, 0o444);
     chmodSync(keyFile, 0o400);
     const state = proof();
@@ -351,23 +445,45 @@ describe('Task 1 readiness runtime', () => {
 
     try {
       const status = await new Promise<number>((resolveRequest, reject) => {
-        const req = request({
-          host: 'localhost', port: address.port, path: '/ready/tenant-authority/v1',
-          ca: readFileSync(certFile), minVersion: 'TLSv1.3', maxVersion: 'TLSv1.3',
-        }, (res) => { res.resume(); res.on('end', () => resolveRequest(res.statusCode ?? 0)); });
+        const req = request(
+          {
+            host: 'localhost',
+            port: address.port,
+            path: '/ready/tenant-authority/v1',
+            ca: readFileSync(certFile),
+            minVersion: 'TLSv1.3',
+            maxVersion: 'TLSv1.3',
+          },
+          (res) => {
+            res.resume();
+            res.on('end', () => resolveRequest(res.statusCode ?? 0));
+          },
+        );
         req.on('error', reject);
         req.end();
       });
       assert.equal(status, 200);
 
-      await assert.rejects(new Promise<void>((resolveRequest, reject) => {
-        const req = request({
-          host: 'localhost', port: address.port, path: '/ready/tenant-authority/v1',
-          ca: readFileSync(certFile), minVersion: 'TLSv1.2', maxVersion: 'TLSv1.2',
-        }, (res) => { res.resume(); res.on('end', resolveRequest); });
-        req.on('error', reject);
-        req.end();
-      }));
+      await assert.rejects(
+        new Promise<void>((resolveRequest, reject) => {
+          const req = request(
+            {
+              host: 'localhost',
+              port: address.port,
+              path: '/ready/tenant-authority/v1',
+              ca: readFileSync(certFile),
+              minVersion: 'TLSv1.2',
+              maxVersion: 'TLSv1.2',
+            },
+            (res) => {
+              res.resume();
+              res.on('end', resolveRequest);
+            },
+          );
+          req.on('error', reject);
+          req.end();
+        }),
+      );
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

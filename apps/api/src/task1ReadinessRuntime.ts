@@ -17,9 +17,21 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const POSITIVE_DECIMAL = /^[1-9][0-9]*$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const IMAGE_DIGEST = /^sha256:[a-f0-9]{64}$/;
+const DIAGNOSTIC_CODE = /^[A-Z][A-Z0-9_]{1,79}$/;
+const POSTGRES_SQLSTATE = /^[0-9A-Z]{5}$/;
 
 export interface Task1QueryResult<Row = Record<string, unknown>> {
   rows: Row[];
+}
+
+export function task1ReadinessDiagnosticCode(error: unknown, fallback: string): string {
+  if (!DIAGNOSTIC_CODE.test(fallback)) throw new Error('TASK1_READINESS_DIAGNOSTIC_INVALID');
+  if (error instanceof Error && DIAGNOSTIC_CODE.test(error.message)) return error.message;
+  if (typeof error === 'object' && error !== null) {
+    const code = Reflect.get(error, 'code');
+    if (typeof code === 'string' && POSTGRES_SQLSTATE.test(code)) return `PG_${code}`;
+  }
+  return fallback;
 }
 
 export interface Task1QueryClient {
@@ -499,8 +511,11 @@ export class Task1ReadinessRuntime {
         this.options.appPool,
         this.options.authorityPool,
       );
-    } catch {
-      // The state is already invalidated; context values must never be logged.
+    } catch (error) {
+      const code = task1ReadinessDiagnosticCode(error, 'TASK1_READINESS_SELF_CHECK_FAILED');
+      process.stderr.write(
+        `[readiness] COMMANDER_API_FAILED stage=readiness-self-check code=${code}\n`,
+      );
     }
     if (this.stopped) {
       this.poolError();
