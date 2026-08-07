@@ -21,7 +21,7 @@
     {
       "id": "kernel-task1-kubernetes-proof-api-client",
       "path": "packages/kernel/src/task1KubernetesProofRuntime.ts",
-      "sourceSha256": "cb67ef5a3020d19eab7e53a04a843b617cbdf5cd45d26ddd6b323e60c0e7fa0f",
+      "sourceSha256": "6d8010ef3b09a5d89b15a2ae8a2161206bda6add5522ae2bcad2d2ebd037a20c",
       "owner": "@commander/kernel",
       "reason": "Projected-token and cluster-CA client for the proof-reader Kubernetes API allowlist",
       "expiresAt": "2027-07-29",
