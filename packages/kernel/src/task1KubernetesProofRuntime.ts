@@ -1,126 +1,207 @@
-import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { createServer } from 'node:https';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { describe, it } from 'node:test';
-import {
-  createTask1KubernetesProofApi,
-  parseTask1ProjectedTokenIdentity,
-} from './task1KubernetesProofRuntime.js';
+import { request } from 'node:https';
+import type { Task1KubernetesProofApi, Task1KubernetesProofReadRequest, Task1ProjectedTokenIdentity } from './task1KubernetesProofObserver.js';
 
-const audience = 'commander-tenant-cutover-proof/v1';
+type JsonRecord = Record<string, unknown>;
 
-function token(overrides: Record<string, unknown> = {}): string {
-  const payload = {
-    aud: [audience],
-    exp: 1785258600,
-    iat: 1785258000,
-    iss: 'https://kubernetes.default.svc.cluster.local',
-    sub: 'system:serviceaccount:commander:commander-proof-reader-c48e77f6d68ea66c',
-    'kubernetes.io': {
-      namespace: 'commander',
-      pod: { name: 'proof-pod', uid: 'proof-pod-uid' },
-      serviceaccount: {
-        name: 'commander-proof-reader-c48e77f6d68ea66c',
-        uid: 'proof-reader-uid',
-      },
-    },
-    ...overrides,
+const AUDIENCE = 'commander-tenant-cutover-proof/v1';
+const SERVICE_ACCOUNT = /^commander-proof-reader-[0-9a-f]{16}$/;
+const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const DNS_SUBDOMAIN = /^[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?$/;
+const LABEL_KEY = /^(?:[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?\/)?[A-Za-z0-9](?:[-_.A-Za-z0-9]{0,61}[A-Za-z0-9])?$/;
+const LABEL_VALUE = /^(?:[A-Za-z0-9](?:[-_.A-Za-z0-9]{0,61}[A-Za-z0-9])?)?$/;
+const MAX_TOKEN_BYTES = 16 * 1024;
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+const PROOF_TOKEN_MAX_LIFETIME_SECONDS = 10 * 60;
+
+export interface Task1KubernetesProofApiOptions {
+  hostname: string;
+  port: number;
+  readToken(): Promise<string>;
+  readCa(): Promise<Buffer>;
+  timeoutMs?: number;
+}
+
+function fail(code: string): never {
+  throw new Error(code);
+}
+
+function record(value: unknown, code: string): JsonRecord {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail(code);
+  return value as JsonRecord;
+}
+
+function nonempty(value: unknown, code: string): string {
+  if (typeof value !== 'string' || value.length === 0) fail(code);
+  return value;
+}
+
+function safeEpochSeconds(value: unknown): number {
+  if (!Number.isSafeInteger(value) || Number(value) <= 0) {
+    fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+  }
+  return Number(value);
+}
+
+export function parseTask1ProjectedTokenIdentity(token: string): Task1ProjectedTokenIdentity {
+  if (
+    typeof token !== 'string' || token.length === 0 ||
+    Buffer.byteLength(token, 'utf8') > MAX_TOKEN_BYTES
+  ) fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+  const parts = token.split('.');
+  if (parts.length !== 3 || parts.some((part) => part.length === 0)) {
+    fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+  }
+  let payload: JsonRecord;
+  try {
+    payload = record(
+      JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')) as unknown,
+      'TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID',
+    );
+  } catch {
+    return fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+  }
+  if (
+    !Array.isArray(payload.aud) || payload.aud.length !== 1 || payload.aud[0] !== AUDIENCE
+  ) fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+  const expires = safeEpochSeconds(payload.exp);
+  const issued = safeEpochSeconds(payload.iat);
+  if (expires <= issued || expires - issued > PROOF_TOKEN_MAX_LIFETIME_SECONDS) {
+    fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+  }
+  const kubernetes = record(payload['kubernetes.io'], 'TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+  const namespace = nonempty(kubernetes.namespace, 'TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+  const pod = record(kubernetes.pod, 'TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+  const serviceAccount = record(
+    kubernetes.serviceaccount,
+    'TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID',
+  );
+  const serviceAccountName = nonempty(
+    serviceAccount.name,
+    'TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID',
+  );
+  const podName = nonempty(pod.name, 'TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+  const podUid = nonempty(pod.uid, 'TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+  if (
+    !DNS_LABEL.test(namespace) || !DNS_SUBDOMAIN.test(podName) ||
+    !SERVICE_ACCOUNT.test(serviceAccountName) ||
+    payload.sub !== `system:serviceaccount:${namespace}:${serviceAccountName}`
+  ) fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+  const expiresAt = new Date(expires * 1_000);
+  if (!Number.isFinite(expiresAt.getTime())) fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+  return {
+    audience: AUDIENCE,
+    expiresAt: expiresAt.toISOString(),
+    namespace,
+    serviceAccountName,
+    podName,
+    podUid,
   };
-  return [
-    Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url'),
-    Buffer.from(JSON.stringify(payload)).toString('base64url'),
-    'signature',
-  ].join('.');
 }
 
-function tlsFixture(): { directory: string; cert: Buffer; key: Buffer } {
-  const directory = mkdtempSync(join(tmpdir(), 'commander-kube-proof-'));
-  const keyFile = join(directory, 'tls.key');
-  const certFile = join(directory, 'tls.crt');
-  execFileSync('openssl', [
-    'req', '-x509', '-new', '-nodes', '-newkey', 'ec', '-pkeyopt',
-    'ec_paramgen_curve:P-256', '-days', '2', '-subj', '/CN=localhost',
-    '-addext', 'subjectAltName=DNS:localhost', '-keyout', keyFile, '-out', certFile,
-  ], { stdio: 'ignore' });
-  return { directory, cert: readFileSync(certFile), key: readFileSync(keyFile) };
+function selectorQuery(selector: Readonly<Record<string, string>> | undefined): string {
+  if (!selector || Object.keys(selector).length === 0) {
+    fail('TENANT_CUTOVER_KUBERNETES_REQUEST_INVALID');
+  }
+  const entries = Object.entries(selector).sort(([left], [right]) => left.localeCompare(right));
+  if (entries.some(([key, value]) => !LABEL_KEY.test(key) || !LABEL_VALUE.test(value))) {
+    fail('TENANT_CUTOVER_KUBERNETES_REQUEST_INVALID');
+  }
+  return encodeURIComponent(entries.map(([key, value]) => `${key}=${value}`).join(','));
 }
 
-describe('Task 1 Kubernetes proof runtime', () => {
-  it('derives only the bound proof-reader Pod identity from the projected JWT', () => {
-    assert.deepEqual(parseTask1ProjectedTokenIdentity(token()), {
-      audience,
-      expiresAt: '2026-07-28T17:10:00.000Z',
-      namespace: 'commander',
-      serviceAccountName: 'commander-proof-reader-c48e77f6d68ea66c',
-      podName: 'proof-pod',
-      podUid: 'proof-pod-uid',
-    });
-    assert.throws(
-      () => parseTask1ProjectedTokenIdentity(token({ aud: [audience, 'other'] })),
-      /TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID/,
-    );
-    assert.throws(
-      () => parseTask1ProjectedTokenIdentity(token({ sub: 'system:serviceaccount:commander:default' })),
-      /TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID/,
-    );
-    assert.throws(
-      () => parseTask1ProjectedTokenIdentity(token({ exp: 1785258601 })),
-      /TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID/,
-    );
-  });
-
-  it('reads exact Kubernetes resources over authenticated cluster-CA HTTPS', async () => {
-    const fixture = tlsFixture();
-    const requests: Array<{ url: string; authorization: string | undefined }> = [];
-    const server = createServer({ cert: fixture.cert, key: fixture.key }, (request, response) => {
-      requests.push({
-        url: request.url ?? '',
-        authorization: request.headers.authorization,
-      });
-      response.statusCode = 200;
-      response.setHeader('content-type', 'application/json');
-      response.end(JSON.stringify({ metadata: { name: 'release-a-api-proof' } }));
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    try {
-      const address = server.address();
-      assert.ok(address && typeof address === 'object');
-      const api = createTask1KubernetesProofApi({
-        hostname: 'localhost',
-        port: address.port,
-        readToken: async () => token(),
-        readCa: async () => fixture.cert,
-      });
-      assert.deepEqual(await api.read({
-        resource: 'service', namespace: 'commander', name: 'release-a-api-proof', audience,
-      }), { metadata: { name: 'release-a-api-proof' } });
-      assert.deepEqual(await api.read({
-        resource: 'pods', namespace: 'commander', audience,
-        selector: {
-          'app.kubernetes.io/instance': 'release-a',
-          'app.kubernetes.io/component': 'api',
-        },
-      }), { metadata: { name: 'release-a-api-proof' } });
-      assert.deepEqual(requests, [
-        {
-          url: '/api/v1/namespaces/commander/services/release-a-api-proof',
-          authorization: `Bearer ${token()}`,
-        },
-        {
-          url: '/api/v1/namespaces/commander/pods?labelSelector=app.kubernetes.io%2Fcomponent%3Dapi%2Capp.kubernetes.io%2Finstance%3Drelease-a',
-          authorization: `Bearer ${token()}`,
-        },
-      ]);
-      await assert.rejects(
-        () => api.read({ resource: 'service', namespace: '../other', name: 'x', audience }),
-        /TENANT_CUTOVER_KUBERNETES_REQUEST_INVALID/,
-      );
-    } finally {
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-      rmSync(fixture.directory, { recursive: true, force: true });
+function requestPath(input: Task1KubernetesProofReadRequest): string {
+  if (!DNS_LABEL.test(input.namespace) || input.audience !== AUDIENCE) {
+    fail('TENANT_CUTOVER_KUBERNETES_REQUEST_INVALID');
+  }
+  const namespace = encodeURIComponent(input.namespace);
+  if (input.resource === 'service' || input.resource === 'deployment') {
+    if (!input.name || !DNS_SUBDOMAIN.test(input.name) || input.selector !== undefined) {
+      fail('TENANT_CUTOVER_KUBERNETES_REQUEST_INVALID');
     }
-  });
-});
+    const name = encodeURIComponent(input.name);
+    return input.resource === 'service'
+      ? `/api/v1/namespaces/${namespace}/services/${name}`
+      : `/apis/apps/v1/namespaces/${namespace}/deployments/${name}`;
+  }
+  if (input.name !== undefined) fail('TENANT_CUTOVER_KUBERNETES_REQUEST_INVALID');
+  const resource = input.resource === 'replicaSets' ? 'replicasets' : 'pods';
+  const prefix = input.resource === 'replicaSets' ? '/apis/apps/v1' : '/api/v1';
+  return `${prefix}/namespaces/${namespace}/${resource}?labelSelector=${selectorQuery(input.selector)}`;
+}
+
+export function createTask1KubernetesProofApi(
+  options: Task1KubernetesProofApiOptions,
+): Task1KubernetesProofApi {
+  if (
+    !DNS_SUBDOMAIN.test(options.hostname) || !Number.isInteger(options.port) ||
+    options.port <= 0 || options.port > 65535
+  ) fail('TENANT_CUTOVER_KUBERNETES_CONFIGURATION_INVALID');
+  const timeoutMs = options.timeoutMs ?? 2_000;
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_000) {
+    fail('TENANT_CUTOVER_KUBERNETES_CONFIGURATION_INVALID');
+  }
+  return {
+    async read(input) {
+      const [token, ca] = await Promise.all([options.readToken(), options.readCa()]);
+      parseTask1ProjectedTokenIdentity(token);
+      if (!Buffer.isBuffer(ca) || ca.length === 0) {
+        fail('TENANT_CUTOVER_KUBERNETES_CONFIGURATION_INVALID');
+      }
+      const path = requestPath(input);
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (error?: Error, value?: unknown): void => {
+          if (settled) return;
+          settled = true;
+          if (error) reject(error);
+          else resolve(value);
+        };
+        const call = request({
+          hostname: options.hostname,
+          port: options.port,
+          path,
+          method: 'GET',
+          agent: false,
+          ca,
+          rejectUnauthorized: true,
+          minVersion: 'TLSv1.2',
+          headers: {
+            Accept: 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+        }, (response) => {
+          if (response.statusCode !== 200) {
+            response.resume();
+            finish(new Error('TENANT_CUTOVER_KUBERNETES_API_REJECTED'));
+            return;
+          }
+          const chunks: Buffer[] = [];
+          let bytes = 0;
+          response.on('data', (chunk: Buffer) => {
+            bytes += chunk.byteLength;
+            if (bytes > MAX_RESPONSE_BYTES) {
+              call.destroy(new Error('TENANT_CUTOVER_KUBERNETES_RESPONSE_INVALID'));
+              return;
+            }
+            chunks.push(chunk);
+          });
+          response.once('end', () => {
+            try {
+              const body = Buffer.concat(chunks).toString('utf8');
+              if (!body || body.includes('\0')) {
+                finish(new Error('TENANT_CUTOVER_KUBERNETES_RESPONSE_INVALID'));
+                return;
+              }
+              finish(undefined, JSON.parse(body) as unknown);
+            } catch {
+              finish(new Error('TENANT_CUTOVER_KUBERNETES_RESPONSE_INVALID'));
+            }
+          });
+        });
+        call.setTimeout(timeoutMs, () => call.destroy(new Error('TENANT_CUTOVER_KUBERNETES_TIMEOUT')));
+        call.once('error', (error) => finish(error));
+        call.end();
+      });
+    },
+  };
+}
