@@ -475,7 +475,7 @@ describe('Helm lifecycle static contract', () => {
     assert.match(prove, /name: COMMANDER_KUBERNETES_PROOF_RUNTIME[\s\S]*value: "1"/);
     assert.match(
       prove,
-      /serviceAccountToken:[\s\S]*audience: commander-tenant-cutover-proof\/v1[\s\S]*expirationSeconds: 300[\s\S]*path: token/,
+      /serviceAccountToken:[\s\S]*audience: commander-tenant-cutover-proof\/v1[\s\S]*expirationSeconds: 600[\s\S]*path: token/,
     );
     assert.match(
       prove,
