@@ -22,6 +22,9 @@ import {
   type CreateInteractionRequest,
   type RequestCompensationInput,
   type RequestCompensationResult,
+  type ActionRequestBindingInput,
+  type ActionRequestBindingResult,
+  type CompleteActionRequestInput,
 } from '@commander/kernel';
 import type { EvidenceBundle, EvidenceSignature } from '@commander/effect-broker';
 
@@ -70,6 +73,8 @@ function isEvidenceBundle(value: unknown): value is EvidenceBundle {
 }
 
 export interface V1KernelGateway {
+  beginActionRequest?(input: ActionRequestBindingInput): Promise<ActionRequestBindingResult>;
+  completeActionRequest?(input: CompleteActionRequestInput): Promise<void>;
   getOperationsReadiness(tenantId: string, now?: Date): Promise<OperationsReadiness>;
   /** Optional read-only evidence repository availability probe; absent is not ready. */
   getEvidenceRepositoryAvailability?(): Promise<{ ready: boolean }>;
@@ -224,6 +229,14 @@ export function canonicalWorkGraphHash(steps: NewKernelStep[]): string {
 
 class RepositoryV1KernelGateway implements V1KernelGateway {
   constructor(private readonly repository: KernelRepository) {}
+
+  beginActionRequest(input: ActionRequestBindingInput): Promise<ActionRequestBindingResult> {
+    return this.repository.beginActionRequest(input);
+  }
+
+  completeActionRequest(input: CompleteActionRequestInput): Promise<void> {
+    return this.repository.completeActionRequest(input);
+  }
 
   getOperationsReadiness(tenantId: string, now?: Date): Promise<OperationsReadiness> {
     return this.repository.getOperationsReadiness(tenantId, now);

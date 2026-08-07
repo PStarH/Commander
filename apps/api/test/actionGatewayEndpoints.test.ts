@@ -32,6 +32,14 @@ class InMemoryGateway implements V1KernelGateway {
   operationsReady = true;
   evidenceReady = true;
 
+  beginActionRequest(input: Parameters<InMemoryKernelRepository['beginActionRequest']>[0]) {
+    return this.repository.beginActionRequest(input);
+  }
+
+  completeActionRequest(input: Parameters<InMemoryKernelRepository['completeActionRequest']>[0]) {
+    return this.repository.completeActionRequest(input);
+  }
+
   getOperationsReadiness(_tenantId: string, now = new Date()) {
     return Promise.resolve({
       ready: this.operationsReady,
@@ -249,14 +257,20 @@ async function postJson(
   body: unknown,
   tenant = 'tenant-a',
   principal = 'api-approver',
+  idempotencyKey?: string,
 ) {
+  const bodyKey = (body as { idempotencyKey?: string }).idempotencyKey;
+  const derivedKey = `test-${createHash('sha256')
+    .update(JSON.stringify({ path, body, principal }))
+    .digest('hex')
+    .slice(0, 24)}`;
   return fetch(`${baseUrl}${path}`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       'x-test-tenant': tenant,
       'x-test-principal': principal,
-      'Idempotency-Key': (body as { idempotencyKey?: string }).idempotencyKey ?? 'test-key-0001',
+      'Idempotency-Key': idempotencyKey ?? bodyKey ?? derivedKey,
     },
     body: JSON.stringify(body),
   });
@@ -278,13 +292,17 @@ async function putKillSwitch(
   tenant = 'tenant-a',
   principal = 'api-admin',
 ) {
+  const key = `kill-${createHash('sha256')
+    .update(JSON.stringify({ scope, value, body, principal }))
+    .digest('hex')
+    .slice(0, 24)}`;
   return fetch(`${baseUrl}/v1/actions/kill-switches/${scope}/${encodeURIComponent(value)}`, {
     method: 'PUT',
     headers: {
       'content-type': 'application/json',
       'x-test-tenant': tenant,
       'x-test-principal': principal,
-      'Idempotency-Key': 'test-key-0001',
+      'Idempotency-Key': key,
     },
     body: JSON.stringify(body),
   });
@@ -421,6 +439,63 @@ describe('Action Gateway HTTP Idempotency-Key contract', () => {
       });
     });
   }
+
+  it('replays the original kill-switch response for the same tenant, key, and request', async () => {
+    await withGateway(new InMemoryGateway(), async (baseUrl) => {
+      const request = () =>
+        requestWrite(
+          baseUrl,
+          {
+            name: 'kill-switch update',
+            method: 'PUT',
+            path: '/v1/actions/kill-switches/tool/ticket.create',
+            principal: 'api-admin',
+            body: { enabled: true, reason: 'maintenance' },
+          },
+          'kill-switch-key-0001',
+        );
+      const first = await request();
+      const firstPayload = await first.json();
+      const replay = await request();
+      const replayPayload = await replay.json();
+
+      assert.equal(first.status, 200);
+      assert.equal(replay.status, 200);
+      assert.deepEqual(replayPayload, firstPayload);
+    });
+  });
+
+  it('rejects a changed kill-switch request that reuses the same tenant and key', async () => {
+    await withGateway(new InMemoryGateway(), async (baseUrl) => {
+      const first = await requestWrite(
+        baseUrl,
+        {
+          name: 'kill-switch update',
+          method: 'PUT',
+          path: '/v1/actions/kill-switches/tool/ticket.create',
+          principal: 'api-admin',
+          body: { enabled: true, reason: 'maintenance' },
+        },
+        'kill-switch-key-0002',
+      );
+      assert.equal(first.status, 200);
+
+      const conflict = await requestWrite(
+        baseUrl,
+        {
+          name: 'kill-switch update',
+          method: 'PUT',
+          path: '/v1/actions/kill-switches/tool/ticket.create',
+          principal: 'api-admin',
+          body: { enabled: false, reason: 'changed request' },
+        },
+        'kill-switch-key-0002',
+      );
+      assert.equal(conflict.status, 409);
+      const payload = (await conflict.json()) as { error?: { code?: string } };
+      assert.equal(payload.error?.code, 'IDEMPOTENCY_KEY_CONFLICT');
+    });
+  });
 });
 
 describe('L4-04 kill switch matrix', () => {
@@ -483,7 +558,7 @@ describe('L4-04 kill switch matrix', () => {
           headers: {
             'x-test-tenant': 'tenant-a',
             'x-test-principal': 'api-admin',
-            'Idempotency-Key': 'test-key-0001',
+            'Idempotency-Key': 'kill-delete-key-0001',
           },
         },
       );
@@ -912,6 +987,7 @@ describe('L4-01 governed action HTTP API', () => {
           {},
           'tenant-a',
           'api-reconcile',
+          `reconcile-case-${expected.reason.toLowerCase()}`,
         );
         assert.equal(response.status, expected.status, expected.reason);
         assert.equal(((await response.json()) as any).error.code, expected.code);
@@ -1006,7 +1082,10 @@ describe('L4-01 governed action HTTP API', () => {
   it('simulates and durably proposes one allowed action as one tool step', async () => {
     const gateway = new InMemoryGateway();
     await withGateway(gateway, async (baseUrl) => {
-      const simulated = await postJson(baseUrl, '/v1/actions/simulate', baseAction);
+      const simulated = await postJson(baseUrl, '/v1/actions/simulate', {
+        ...baseAction,
+        idempotencyKey: 'simulation-key-0001',
+      });
       assert.equal(simulated.status, 200);
       const simulation = ((await simulated.json()) as any).simulation;
       assert.deepEqual(Object.keys(simulation).sort(), [
@@ -1056,7 +1135,20 @@ describe('L4-01 governed action HTTP API', () => {
       assert.ok(run);
       const actionMetadata = run.metadata.actionGateway as any;
       assert.equal(actionMetadata.authority, 'commander.action-gateway/v1');
-      assert.deepEqual(actionMetadata.simulation, simulation);
+      assert.deepEqual(
+        {
+          effect: actionMetadata.simulation.effect,
+          decisionId: actionMetadata.simulation.decisionId,
+          reason: actionMetadata.simulation.reason,
+          policySnapshotId: actionMetadata.simulation.policySnapshotId,
+        },
+        {
+          effect: simulation.effect,
+          decisionId: simulation.decisionId,
+          reason: simulation.reason,
+          policySnapshotId: simulation.policySnapshotId,
+        },
+      );
       const step = await gateway.repository.getStep(actionMetadata.stepId, 'tenant-a');
       assert.equal(step?.kind, 'tool');
       assert.equal(step?.input.effectType, 'demo.ticket.create');
@@ -1180,15 +1272,13 @@ describe('L4-01 governed action HTTP API', () => {
         destination: 'demo://tickets/approval',
         idempotencyKey: 'action-approval-digest-mismatch',
       };
-      const simulated = await postJson(baseUrl, '/v1/actions/simulate', actionInput);
-      const simulation = ((await simulated.json()) as any).simulation;
       const proposed = await postJson(baseUrl, '/v1/actions', actionInput);
       const action = ((await proposed.json()) as any).action;
 
       const rejected = await postJson(baseUrl, `/v1/actions/${action.runId}/approve`, {
         actionDigest: '0'.repeat(64),
-        simulationId: simulation.simulationId,
-        policySnapshotId: simulation.policySnapshotId,
+        simulationId: action.simulation.simulationId,
+        policySnapshotId: action.simulation.policySnapshotId,
       });
       assert.equal(rejected.status, 409);
       assert.equal(((await rejected.json()) as any).error.code, 'ACTION_DIGEST_MISMATCH');
@@ -1358,10 +1448,10 @@ describe('L4-01 governed action HTTP API', () => {
       const first = await postJson(baseUrl, '/v1/actions', baseAction);
       const replay = await postJson(baseUrl, '/v1/actions', baseAction);
       assert.equal(first.status, 202);
-      assert.equal(replay.status, 200);
+      assert.equal(replay.status, 202);
       const firstPayload = (await first.json()) as any;
       const replayPayload = (await replay.json()) as any;
-      assert.equal(replayPayload.idempotentReplay, true);
+      assert.deepEqual(replayPayload, firstPayload);
       assert.equal(replayPayload.action.runId, firstPayload.action.runId);
       assert.equal(
         (await gateway.repository.listEvents(firstPayload.action.runId, 'tenant-a')).filter(

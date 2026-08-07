@@ -43,6 +43,7 @@ import {
   KERNEL_COMPENSATION_APPROVAL_CLAIM_BINDING_SQL,
   KERNEL_COMPENSATION_AUTHORIZATION_READ_SQL,
 } from './campaign2CriticalHardening.js';
+import { KERNEL_ACTION_REQUEST_IDEMPOTENCY_SQL } from './actionRequestSchema.js';
 
 export interface KernelMigration {
   id: string;
@@ -401,6 +402,11 @@ export const KERNEL_MIGRATIONS: readonly KernelMigration[] = [
   ...KERNEL_COMPENSATION_PERSISTENCE_MIGRATIONS,
   ...KERNEL_CAMPAIGN2_CRITICAL_HARDENING_MIGRATIONS,
   ...KERNEL_SIGNED_EVIDENCE_MIGRATIONS,
+  {
+    id: '2026-08-07.1.action_request_idempotency',
+    sql: KERNEL_ACTION_REQUEST_IDEMPOTENCY_SQL,
+    checksum: checksum(KERNEL_ACTION_REQUEST_IDEMPOTENCY_SQL),
+  },
 ];
 
 const TASK2_HISTORICAL_SCHEMA_ID = '2026-07-26.2.task2_reconciliation_schema';

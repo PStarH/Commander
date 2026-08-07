@@ -505,6 +505,22 @@ CREATE TABLE IF NOT EXISTS commander_action_kill_switches (
   PRIMARY KEY (tenant_id, scope, value)
 );
 
+CREATE TABLE IF NOT EXISTS commander_action_requests (
+  tenant_id TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('IN_PROGRESS','COMPLETED')),
+  response_status INTEGER,
+  response_body TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  completed_at TEXT,
+  PRIMARY KEY (tenant_id, idempotency_key),
+  CHECK (
+    (state = 'IN_PROGRESS' AND response_status IS NULL AND completed_at IS NULL)
+    OR (state = 'COMPLETED' AND response_status BETWEEN 100 AND 599 AND completed_at IS NOT NULL)
+  )
+);
+
 CREATE TABLE IF NOT EXISTS commander_evidence_receipts (
   tenant_id TEXT NOT NULL,
   run_id TEXT NOT NULL,
@@ -602,5 +618,6 @@ export const SQLITE_KERNEL_TABLES = [
   'commander_capability_revocations',
   'commander_capability_replays',
   'commander_action_kill_switches',
+  'commander_action_requests',
   'commander_evidence_receipts',
 ] as const;
