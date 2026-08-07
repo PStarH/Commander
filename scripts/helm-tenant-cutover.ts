@@ -534,19 +534,46 @@ function releaseProjectionConfigMapName(
   return name;
 }
 
+function coalesceHelmValues(defaults: Record<string, unknown>, overrides: Record<string, unknown>) {
+  const result: Record<string, unknown> = { ...defaults };
+  for (const [key, override] of Object.entries(overrides)) {
+    if (override === null) {
+      delete result[key];
+      continue;
+    }
+    const fallback = result[key];
+    result[key] =
+      fallback !== null &&
+      typeof fallback === 'object' &&
+      !Array.isArray(fallback) &&
+      override !== null &&
+      typeof override === 'object' &&
+      !Array.isArray(override)
+        ? coalesceHelmValues(
+            fallback as Record<string, unknown>,
+            override as Record<string, unknown>,
+          )
+        : override;
+  }
+  return result;
+}
+
 function rendererValues(
+  defaults: string,
   values: string,
   operation: HelmOperation,
   setValues: readonly string[],
   projectionConfigMapName: string,
 ): string {
-  let parsed: unknown;
+  let parsedDefaults: unknown;
+  let parsedValues: unknown;
   try {
-    parsed = load(values);
+    parsedDefaults = load(defaults);
+    parsedValues = load(values);
   } catch {
     return fail('TENANT_CUTOVER_VALUES_INVALID');
   }
-  const root = yamlRecord(parsed);
+  const root = coalesceHelmValues(yamlRecord(parsedDefaults), yamlRecord(parsedValues));
   const apply = (path: string, value: string | boolean): void => {
     const keys = path.split('.');
     let cursor = root;
@@ -1604,6 +1631,7 @@ export async function runHelmTenantCutover(
     );
     const chartDigest = ports.chartDigest(chartPackage);
     if (!SHA256.test(chartDigest)) fail('TENANT_CUTOVER_CHART_DIGEST_INVALID');
+    const chartDefaults = await ports.fs.readFile(join(chartPackage, 'values.yaml'));
     assertOperation(
       operation,
       operation.operationKind === 'rollback_to_recorded_expand'
@@ -1687,6 +1715,7 @@ export async function runHelmTenantCutover(
           targetRevision,
           projectionConfigMapName,
           rendererValues: rendererValues(
+            chartDefaults,
             dump(evidence.releaseProjection.rendererInput.values, {
               noRefs: true,
               sortKeys: true,
@@ -1718,6 +1747,7 @@ export async function runHelmTenantCutover(
   if (ports.chartDigest(chartPackage) !== chartDigest) {
     fail('TENANT_CUTOVER_RETAINED_CHART_DRIFT');
   }
+  const chartDefaults = await ports.fs.readFile(join(chartPackage, 'values.yaml'));
   const values = await ports.readValues(request.values);
   const imageDigest = apiImageDigest(values);
   const databasePlan = databaseRolloutPlan(values, request.release, request.command);
@@ -1916,7 +1946,13 @@ export async function runHelmTenantCutover(
         revision: targetRevision,
         projectionConfigMapName,
         args,
-        rendererValues: rendererValues(values, operation, setValues, projectionConfigMapName),
+        rendererValues: rendererValues(
+          chartDefaults,
+          values,
+          operation,
+          setValues,
+          projectionConfigMapName,
+        ),
       });
     },
     ports,
@@ -3516,6 +3552,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
               namespace,
               '--revision',
               revision,
+              '--all',
               '--output',
               'yaml',
             ],
