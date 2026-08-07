@@ -256,6 +256,7 @@ async function postJson(
       'content-type': 'application/json',
       'x-test-tenant': tenant,
       'x-test-principal': principal,
+      'Idempotency-Key': (body as { idempotencyKey?: string }).idempotencyKey ?? 'test-key-0001',
     },
     body: JSON.stringify(body),
   });
@@ -283,10 +284,144 @@ async function putKillSwitch(
       'content-type': 'application/json',
       'x-test-tenant': tenant,
       'x-test-principal': principal,
+      'Idempotency-Key': 'test-key-0001',
     },
     body: JSON.stringify(body),
   });
 }
+
+describe('Action Gateway HTTP Idempotency-Key contract', () => {
+  type ActionWriteCase = {
+    name: string;
+    method: 'POST' | 'PUT' | 'DELETE';
+    path: string;
+    principal?: string;
+    body?: unknown;
+  };
+
+  const writes: ActionWriteCase[] = [
+    {
+      name: 'simulation',
+      method: 'POST',
+      path: '/v1/actions/simulate',
+      body: baseAction,
+    },
+    {
+      name: 'proposal',
+      method: 'POST',
+      path: '/v1/actions',
+      body: baseAction,
+    },
+    {
+      name: 'approval',
+      method: 'POST',
+      path: '/v1/actions/run-missing/approve',
+      body: {
+        actionDigest: 'a'.repeat(64),
+        simulationId: 'simulation-missing',
+        policySnapshotId: 'policy-missing',
+      },
+    },
+    {
+      name: 'rejection',
+      method: 'POST',
+      path: '/v1/actions/run-missing/reject',
+      body: { reason: 'contract test' },
+    },
+    {
+      name: 'compensation request',
+      method: 'POST',
+      path: '/v1/actions/run-missing/compensations',
+      body: {
+        originalEffectId: 'effect-missing',
+        adapterVersion: 'adapter-v1',
+        compensationEffectType: 'compensate.demo.ticket.create',
+        compensationPatch: { state: 'closed' },
+        forwardReceiptHash: 'b'.repeat(64),
+      },
+    },
+    {
+      name: 'compensation approval',
+      method: 'POST',
+      path: '/v1/actions/run-missing/compensations/authorization-missing/approve',
+      body: {
+        actionDigest: 'c'.repeat(64),
+        policySnapshotId: 'policy-missing',
+      },
+    },
+    {
+      name: 'reconciliation',
+      method: 'POST',
+      path: '/v1/actions/run-missing/reconcile',
+      principal: 'api-reconcile',
+    },
+    {
+      name: 'kill-switch update',
+      method: 'PUT',
+      path: '/v1/actions/kill-switches/tool/ticket.create',
+      principal: 'api-admin',
+      body: { enabled: true, reason: 'contract test' },
+    },
+    {
+      name: 'kill-switch delete',
+      method: 'DELETE',
+      path: '/v1/actions/kill-switches/tool/ticket.create',
+      principal: 'api-admin',
+    },
+  ];
+
+  async function requestWrite(
+    baseUrl: string,
+    request: ActionWriteCase,
+    idempotencyKey?: string,
+  ): Promise<Response> {
+    const headers = new Headers({
+      'x-test-tenant': 'tenant-a',
+      'x-test-principal': request.principal ?? 'api-approver',
+    });
+    if (request.body !== undefined) headers.set('content-type', 'application/json');
+    if (idempotencyKey !== undefined) headers.set('Idempotency-Key', idempotencyKey);
+    return fetch(`${baseUrl}${request.path}`, {
+      method: request.method,
+      headers,
+      body: request.body === undefined ? undefined : JSON.stringify(request.body),
+    });
+  }
+
+  for (const header of [
+    { name: 'missing', value: undefined },
+    { name: 'malformed', value: 'short' },
+  ] as const) {
+    for (const write of writes) {
+      it(`rejects a ${header.name} Idempotency-Key on ${write.name}`, async () => {
+        await withGateway(new InMemoryGateway(), async (baseUrl) => {
+          const response = await requestWrite(baseUrl, write, header.value);
+          assert.equal(response.status, 400);
+          const payload = (await response.json()) as { error?: { code?: string } };
+          assert.equal(payload.error?.code, 'IDEMPOTENCY_KEY_REQUIRED');
+        });
+      });
+    }
+  }
+
+  for (const write of writes.slice(0, 2)) {
+    it(`rejects an Idempotency-Key header/body mismatch on ${write.name}`, async () => {
+      await withGateway(new InMemoryGateway(), async (baseUrl) => {
+        const response = await requestWrite(
+          baseUrl,
+          {
+            ...write,
+            body: { ...baseAction, idempotencyKey: 'body-key-0001' },
+          },
+          'header-key-0001',
+        );
+        const payload = (await response.json()) as { error?: { code?: string } };
+        assert.equal(response.status, 409);
+        assert.equal(payload.error?.code, 'IDEMPOTENCY_KEY_CONFLICT');
+      });
+    });
+  }
+});
 
 describe('L4-04 kill switch matrix', () => {
   const scopes: Array<{ scope: KillSwitchScope; value: string }> = [
@@ -345,7 +480,11 @@ describe('L4-04 kill switch matrix', () => {
         `${baseUrl}/v1/actions/kill-switches/tool/${encodeURIComponent('ticket.create')}`,
         {
           method: 'DELETE',
-          headers: { 'x-test-tenant': 'tenant-a', 'x-test-principal': 'api-admin' },
+          headers: {
+            'x-test-tenant': 'tenant-a',
+            'x-test-principal': 'api-admin',
+            'Idempotency-Key': 'test-key-0001',
+          },
         },
       );
       assert.equal(removed.status, 204);
