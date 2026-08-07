@@ -43,7 +43,10 @@ import {
   KERNEL_COMPENSATION_APPROVAL_CLAIM_BINDING_SQL,
   KERNEL_COMPENSATION_AUTHORIZATION_READ_SQL,
 } from './campaign2CriticalHardening.js';
-import { KERNEL_ACTION_REQUEST_IDEMPOTENCY_SQL } from './actionRequestSchema.js';
+import {
+  KERNEL_ACTION_REQUEST_IDEMPOTENCY_SQL,
+  KERNEL_ACTION_REQUEST_RECOVERY_SQL,
+} from './actionRequestSchema.js';
 
 export interface KernelMigration {
   id: string;
@@ -406,6 +409,11 @@ export const KERNEL_MIGRATIONS: readonly KernelMigration[] = [
     id: '2026-08-07.1.action_request_idempotency',
     sql: KERNEL_ACTION_REQUEST_IDEMPOTENCY_SQL,
     checksum: checksum(KERNEL_ACTION_REQUEST_IDEMPOTENCY_SQL),
+  },
+  {
+    id: '2026-08-07.2.action_request_recovery',
+    sql: KERNEL_ACTION_REQUEST_RECOVERY_SQL,
+    checksum: checksum(KERNEL_ACTION_REQUEST_RECOVERY_SQL),
   },
 ];
 
