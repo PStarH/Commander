@@ -1462,6 +1462,31 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
       ...(approvalInteractionId ? { approvalInteractionId } : {}),
     };
     try {
+      if (approvalInteractionId) {
+        let existing = (await kernel.listInteractions(loaded.run.id, tenantId)).find(
+          (interaction) => interaction.id === approvalInteractionId,
+        );
+        if (!existing) {
+          try {
+            existing = await kernel.createInteraction(
+              {
+                id: approvalInteractionId,
+                runId: loaded.run.id,
+                stepId: loaded.metadata.stepId,
+                tenantId,
+                prompt: `Approve compensation authorization ${authorizationId}`,
+                expiresAt: new Date(expiresAt),
+              },
+              actor(req),
+            );
+          } catch (error) {
+            existing = (await kernel.listInteractions(loaded.run.id, tenantId)).find(
+              (interaction) => interaction.id === approvalInteractionId,
+            );
+            if (!existing) throw error;
+          }
+        }
+      }
       let persisted: Awaited<ReturnType<V1KernelGateway['createCompensationAuthorization']>>;
       try {
         persisted = await kernel.createCompensationAuthorization(authorization);
@@ -1477,24 +1502,6 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
           throw error;
         }
         persisted = { authorization: concurrentlyPersisted, replayed: true };
-      }
-      if (approvalInteractionId) {
-        const existing = (await kernel.listInteractions(loaded.run.id, tenantId)).find(
-          (interaction) => interaction.id === approvalInteractionId,
-        );
-        if (!existing) {
-          await kernel.createInteraction(
-            {
-              id: approvalInteractionId,
-              runId: loaded.run.id,
-              stepId: loaded.metadata.stepId,
-              tenantId,
-              prompt: `Approve compensation authorization ${authorizationId}`,
-              expiresAt: new Date(persisted.authorization.expiresAt),
-            },
-            actor(req),
-          );
-        }
       }
       if (decision.effect === 'require_approval') {
         return res.status(202).json({
