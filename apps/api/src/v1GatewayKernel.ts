@@ -137,9 +137,9 @@ function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-export function canonicalPrincipalDigest(value: string): string {
+export function canonicalActionRequestHash(value: unknown): string {
   return createHmac('sha256', process.env.COMMANDER_INTEGRITY_KEY ?? 'commander-canonical-digest')
-    .update(value)
+    .update(canonicalStringify(value))
     .digest('hex');
 }
 
