@@ -46,12 +46,12 @@ describe('pi agent (OH-MY-PI) integration', () => {
     assert.equal(serverCfg.env.COMMANDER_ACTION_GATEWAY_URL, 'http://127.0.0.1:4000');
   });
 
-  it('simulates OH-MY-PI discovery: expands ${PWD} from .omp/mcp.json and handshakes the spawned server', async () => {
+  it('config format: ${PWD} in the committed .omp/mcp.json expands to an absolute cwd and spawns the advertised server', async () => {
     const serverCfg = readOmpMcpConfig().mcpServers.commander;
     const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
     // OMP resolves ${VAR} / ${VAR:-default} from its own process env at
     // discovery; mirror that with the repo root standing in for PWD.
-    const env = { PWD: repoRoot, ...process.env, ...serverCfg.env };
+    const env = { ...process.env, PWD: repoRoot, ...serverCfg.env };
     const command = expandEnvVars(serverCfg.command, env);
     const args = serverCfg.args.map((arg) => expandEnvVars(arg, env));
     const cwd = expandEnvVars(serverCfg.cwd, env);
