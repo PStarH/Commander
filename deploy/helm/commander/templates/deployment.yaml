@@ -121,8 +121,14 @@ spec:
               value: {{ .Values.config.corsOrigins | quote }}
             - name: API_STORE_BACKEND
               value: {{ include "commander.apiStoreBackend" . | quote }}
-            {{- if include "commander.postgresBackend" . }}
             # Legacy stores are non-authoritative; /v1 durability remains in the kernel.
+            - name: COMMANDER_WARROOM_FILE
+              value: /tmp/commander-api/war-room.json
+            - name: COMMANDER_AGENT_STATE_FILE
+              value: /tmp/commander-api/agent-state.json
+            - name: COMMANDER_ACTION_RATIONALE_FILE
+              value: /tmp/commander-api/action-rationales.json
+            {{- if include "commander.postgresBackend" . }}
             - name: COMMANDER_MEMORY_STORE
               value: in-memory
             - name: COMMANDER_KERNEL_ENABLED

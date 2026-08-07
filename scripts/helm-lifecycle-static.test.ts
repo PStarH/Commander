@@ -96,6 +96,33 @@ function resource(rendered: string, kind: string, name: string): string {
 }
 
 describe('Helm lifecycle static contract', () => {
+  it('keeps non-authoritative API file stores on the writable tmp volume', () => {
+    const apiDeployments = [
+      deployment(render(), 'api'),
+      deployment(
+        render(false, [
+          '--set',
+          'database.enabled=false',
+          '--set',
+          'database.backend=sqlite',
+          '--set',
+          'database.postgres.bundled=false',
+        ]),
+        'api',
+      ),
+    ];
+    for (const api of apiDeployments) {
+      for (const [name, file] of [
+        ['COMMANDER_WARROOM_FILE', 'war-room.json'],
+        ['COMMANDER_AGENT_STATE_FILE', 'agent-state.json'],
+        ['COMMANDER_ACTION_RATIONALE_FILE', 'action-rationales.json'],
+      ]) {
+        assert.match(api, new RegExp(`- name: ${name}\\n\\s+value: /tmp/commander-api/${file}`));
+      }
+      assert.match(api, /- name: tmp\n\s+mountPath: \/tmp/);
+    }
+  });
+
   it('binds production auth-failure authority to the enabled Redis service', () => {
     const api = deployment(render(false, ['--set', 'redis.enabled=true']), 'api');
     assert.match(api, /- name: REDIS_URL\n\s+value: redis:\/\/lifecycle-demo-redis:6379/);
