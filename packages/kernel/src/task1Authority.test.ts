@@ -177,10 +177,28 @@ describe('Task 1 authoritative Class A admission', () => {
     assert.deepEqual(KERNEL_TASK1_POST_CLOSURE_MIGRATION_CHECKSUMS, {
       '2026-08-05.1.task1_tenant_context_clock_monotonicity':
         '1c0abf04fede099ca65bb983d2b6b0eb443e0e065aebd02fe9d43ee40ceadf56',
+      '2026-08-06.1.task1_readiness_tenant_seed':
+        '81c6deafc83268e7207738a5cd715e6928e9b0f01cdb82be91f7580f8457105d',
     });
     assert.deepEqual(
       KERNEL_TASK1_POST_CLOSURE_MIGRATIONS.map(({ id }) => id),
-      ['2026-08-05.1.task1_tenant_context_clock_monotonicity'],
+      [
+        '2026-08-05.1.task1_tenant_context_clock_monotonicity',
+        '2026-08-06.1.task1_readiness_tenant_seed',
+      ],
+    );
+    const readinessSeed = KERNEL_TASK1_POST_CLOSURE_MIGRATIONS.find(
+      ({ id }) => id === '2026-08-06.1.task1_readiness_tenant_seed',
+    );
+    assert.ok(readinessSeed, 'enforce closure must seed the reserved readiness tenant');
+    assert.match(
+      readinessSeed.sql,
+      /INSERT INTO public\.commander_tenant_authority_allowed_tenants\s*\(tenant_id, enabled\)[\s\S]*VALUES \('commander\/readiness\/v1', true\)[\s\S]*ON CONFLICT \(tenant_id\) DO UPDATE SET enabled = true/i,
+    );
+    assert.equal(
+      KERNEL_TASK1_BASELINE_MIGRATIONS.some(({ id }) => id === readinessSeed.id),
+      false,
+      'readiness seed must remain owner-only and post-closure',
     );
     assert.equal(
       KERNEL_TASK1_BASELINE_MIGRATIONS.some(({ id }) =>
