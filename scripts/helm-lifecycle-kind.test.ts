@@ -130,11 +130,19 @@ describe('helm-lifecycle-kind helpers', () => {
         'app.kubernetes.io/component': 'postgres',
       },
       apiProofSpkiSha256: 'c'.repeat(64),
+      kubernetesApiServiceIp: '10.96.0.1',
     }) as Array<{
-      metadata: { namespace: string; annotations: Record<string, string> };
+      metadata: {
+        namespace: string;
+        annotations?: Record<string, string>;
+        labels: Record<string, string>;
+      };
       spec: {
         podSelector: { matchLabels: Record<string, string> };
-        egress?: Array<{ ports?: Array<{ port: number }> }>;
+        egress?: Array<{
+          to?: Array<{ ipBlock?: { cidr: string } }>;
+          ports?: Array<{ protocol?: string; port: number }>;
+        }>;
       };
     }>;
     const ownerEgress = policies.find(
@@ -152,9 +160,21 @@ describe('helm-lifecycle-kind helpers', () => {
       [53, 53, 9443, 5432],
     );
     assert.match(
-      ownerEgress.metadata.annotations['commander.io/prerequisite-policy-config-sha256'],
+      ownerEgress.metadata.annotations?.['commander.io/prerequisite-policy-config-sha256'] ?? '',
       /^[a-f0-9]{64}$/,
     );
+    const kubernetesApiEgress = policies.find(
+      (policy) =>
+        policy.metadata.labels['commander.io/purpose'] === 'kubernetes-api-migration-egress',
+    );
+    assert.ok(kubernetesApiEgress);
+    assert.deepEqual(kubernetesApiEgress.spec.podSelector, ownerEgress.spec.podSelector);
+    assert.deepEqual(kubernetesApiEgress.spec.egress, [
+      {
+        to: [{ ipBlock: { cidr: '10.96.0.1/32' } }],
+        ports: [{ protocol: 'TCP', port: 443 }],
+      },
+    ]);
     assert.equal(
       policies.some((policy) => policy.metadata.namespace === 'commander-lifecycle'),
       true,

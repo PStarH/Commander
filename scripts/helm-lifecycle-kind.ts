@@ -315,7 +315,11 @@ export function buildLifecycleStableNetworkPolicies(input: {
   databaseServiceName: string;
   databasePodSelector: Record<string, string>;
   apiProofSpkiSha256: string;
+  kubernetesApiServiceIp: string;
 }): Array<Record<string, unknown>> {
+  if (!isIpv4Address(input.kubernetesApiServiceIp)) {
+    throw new Error('KUBERNETES_API_SERVICE_INVALID');
+  }
   const projection = createTask1PrerequisitePolicyConfig({
     namespace: input.namespace,
     releaseName: input.release,
@@ -347,7 +351,7 @@ export function buildLifecycleStableNetworkPolicies(input: {
       spkiSha256: input.apiProofSpkiSha256,
     },
   });
-  return projection.value.stablePolicies.map((policy) => ({
+  const policies = projection.value.stablePolicies.map((policy) => ({
     apiVersion: 'networking.k8s.io/v1',
     kind: 'NetworkPolicy',
     metadata: {
@@ -358,6 +362,39 @@ export function buildLifecycleStableNetworkPolicies(input: {
     },
     spec: policy.spec,
   }));
+  policies.push({
+    apiVersion: 'networking.k8s.io/v1',
+    kind: 'NetworkPolicy',
+    metadata: {
+      name: `commander-mig-${createHash('sha256')
+        .update(`kubernetes-api\0${input.namespace}\0${input.release}`)
+        .digest('hex')
+        .slice(0, 16)}-egress`,
+      namespace: input.namespace,
+      labels: {
+        'app.kubernetes.io/managed-by': 'commander-operator',
+        'commander.io/purpose': 'kubernetes-api-migration-egress',
+      },
+    },
+    spec: {
+      podSelector: {
+        matchLabels: {
+          'app.kubernetes.io/instance': input.release,
+          'app.kubernetes.io/name': input.release,
+          'commander.io/migration-client-v2': 'true',
+          'commander.io/migration-release': input.release,
+        },
+      },
+      policyTypes: ['Egress'],
+      egress: [
+        {
+          to: [{ ipBlock: { cidr: `${input.kubernetesApiServiceIp}/32` } }],
+          ports: [{ protocol: 'TCP', port: 443 }],
+        },
+      ],
+    },
+  });
+  return policies;
 }
 
 function externalDatabaseInitScript(): string {
@@ -1828,6 +1865,7 @@ async function runRealBundledLifecycle(
         'app.kubernetes.io/component': 'postgres',
       },
       apiProofSpkiSha256: material.apiProofSpkiSha256,
+      kubernetesApiServiceIp: kubernetesApiIp,
     });
 
     const installed = await runCutoverCommand('install', release, installValues, true);
@@ -1991,6 +2029,7 @@ async function runRealExternalTlsLifecycle(
       databaseServiceName: 'external-postgres',
       databasePodSelector: { 'app.kubernetes.io/name': 'external-postgres' },
       apiProofSpkiSha256: material.apiProofSpkiSha256,
+      kubernetesApiServiceIp: kubernetesApiIp,
     });
 
     const installed = await runCutoverCommand('install', release, installValues, true);
@@ -2128,6 +2167,7 @@ async function runFailedRolloutRecovery(
         'app.kubernetes.io/component': 'postgres',
       },
       apiProofSpkiSha256: material.apiProofSpkiSha256,
+      kubernetesApiServiceIp: kubernetesApiIp,
     });
     let firstFailure: unknown;
     try {
