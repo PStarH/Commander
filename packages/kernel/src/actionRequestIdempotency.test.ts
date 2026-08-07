@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
+import { KERNEL_ACTION_REQUEST_IDEMPOTENCY_SQL } from './actionRequestSchema.js';
 import { SqliteKernelRepository } from './sqlite.js';
 
 const directories: string[] = [];
@@ -13,6 +14,18 @@ afterEach(() => {
 });
 
 describe('durable Action Gateway request binding', () => {
+  it('binds Postgres RLS to the authenticated app tenant', () => {
+    assert.match(
+      KERNEL_ACTION_REQUEST_IDEMPOTENCY_SQL,
+      /CREATE POLICY commander_app_authenticated_tenant[\s\S]*tenant_id = public\.commander_authenticated_app_tenant\(\)/,
+    );
+    assert.doesNotMatch(KERNEL_ACTION_REQUEST_IDEMPOTENCY_SQL, /current_setting\('app\.tenant_scope'/);
+    assert.match(
+      KERNEL_ACTION_REQUEST_IDEMPOTENCY_SQL,
+      /REVOKE ALL ON TABLE public\.commander_action_requests[\s\S]*commander_worker, commander_scheduler/,
+    );
+  });
+
   it('replays the stored response and conflicts on a changed request after reopen', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'commander-action-request-'));
     directories.push(directory);
