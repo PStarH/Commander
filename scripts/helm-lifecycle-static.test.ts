@@ -116,6 +116,7 @@ describe('Helm lifecycle static contract', () => {
         ['COMMANDER_WARROOM_FILE', 'war-room.json'],
         ['COMMANDER_AGENT_STATE_FILE', 'agent-state.json'],
         ['COMMANDER_ACTION_RATIONALE_FILE', 'action-rationales.json'],
+        ['API_RATE_LIMIT_DB_PATH', 'rate-limit.sqlite'],
       ]) {
         assert.match(api, new RegExp(`- name: ${name}\\n\\s+value: /tmp/commander-api/${file}`));
       }
