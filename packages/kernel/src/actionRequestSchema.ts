@@ -24,9 +24,11 @@ ALTER TABLE public.commander_action_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.commander_action_requests FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS commander_tenant_isolation ON public.commander_action_requests;
-CREATE POLICY commander_tenant_isolation ON public.commander_action_requests
-  USING (tenant_id = ANY (string_to_array(current_setting('app.tenant_scope', true), ',')))
-  WITH CHECK (tenant_id = ANY (string_to_array(current_setting('app.tenant_scope', true), ',')));
+DROP POLICY IF EXISTS commander_app_authenticated_tenant ON public.commander_action_requests;
+CREATE POLICY commander_app_authenticated_tenant ON public.commander_action_requests
+  FOR ALL TO commander_app
+  USING (tenant_id = public.commander_authenticated_app_tenant())
+  WITH CHECK (tenant_id = public.commander_authenticated_app_tenant());
 
 REVOKE ALL ON TABLE public.commander_action_requests FROM PUBLIC;
 REVOKE ALL ON TABLE public.commander_action_requests
