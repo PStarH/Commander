@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { arch, tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createTask1PrerequisitePolicyConfig } from './task1-helm-prerequisite.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -296,6 +297,67 @@ ${databaseCidrs}    kubernetesApiCidrs:
         podSelector:
 ${endpointSelector}
 `;
+}
+
+const LIFECYCLE_DATABASE_ROLES = [
+  'owner',
+  'app',
+  'tenant-authority',
+  'scheduler',
+  'worker',
+  'adapter-ops',
+] as const;
+
+export function buildLifecycleStableNetworkPolicies(input: {
+  namespace: string;
+  release: string;
+  databaseNamespace: string;
+  databaseServiceName: string;
+  databasePodSelector: Record<string, string>;
+  apiProofSpkiSha256: string;
+}): Array<Record<string, unknown>> {
+  const projection = createTask1PrerequisitePolicyConfig({
+    namespace: input.namespace,
+    releaseName: input.release,
+    clusterDomain: 'cluster.local',
+    migrationOperatorSubject: `system:serviceaccount:${input.namespace}:lifecycle-migration-operator`,
+    clusterDns: { namespace: 'kube-system', podSelector: { 'k8s-app': 'kube-dns' } },
+    databaseEndpoints: [
+      {
+        roles: [...LIFECYCLE_DATABASE_ROLES],
+        service: {
+          namespace: input.databaseNamespace,
+          name: input.databaseServiceName,
+          servicePort: 5432,
+          targetPort: 5432,
+          podSelector: input.databasePodSelector,
+        },
+      },
+    ],
+    apiProof: {
+      serviceName: `${input.release}-api-proof`,
+      servicePort: 9443,
+      targetPort: 9443,
+      podSelector: {
+        'app.kubernetes.io/name': input.release,
+        'app.kubernetes.io/instance': input.release,
+        'app.kubernetes.io/component': 'api',
+      },
+      dnsSan: `${input.release}-api-proof.${input.namespace}.svc.cluster.local`,
+      spkiSha256: input.apiProofSpkiSha256,
+    },
+  });
+  return projection.value.stablePolicies.map((policy) => ({
+    apiVersion: 'networking.k8s.io/v1',
+    kind: 'NetworkPolicy',
+    metadata: {
+      name: policy.name,
+      namespace: policy.namespace,
+      labels: policy.labels,
+      annotations: { 'commander.io/prerequisite-policy-config-sha256': projection.sha256 },
+    },
+    spec: policy.spec,
+  }));
 }
 
 function externalDatabaseInitScript(): string {
@@ -856,6 +918,23 @@ function kubectl(args: string[]): Promise<CommandResult> {
   return runCmd('kubectl', args);
 }
 
+async function installLifecycleStableNetworkPolicies(
+  directory: string,
+  input: Parameters<typeof buildLifecycleStableNetworkPolicies>[0],
+): Promise<void> {
+  const manifest = resolve(directory, 'stable-network-policies.json');
+  writeFileSync(
+    manifest,
+    `${JSON.stringify({
+      apiVersion: 'v1',
+      kind: 'List',
+      items: buildLifecycleStableNetworkPolicies(input),
+    })}\n`,
+    { mode: 0o600 },
+  );
+  requireCommand(await kubectl(['apply', '--filename', manifest]), 'STABLE_NETWORK_POLICY_FAILED');
+}
+
 function helm(args: string[]): Promise<CommandResult> {
   return runCmd('helm', args);
 }
@@ -964,7 +1043,7 @@ function generateCertificateMaterial(
   namespace: string,
   release: string,
   databaseDnsNames?: string[],
-): { databaseSpkiSha256: string } {
+): { databaseSpkiSha256: string; apiProofSpkiSha256: string } {
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const openssl = (args: string[]) => {
     const result = runCmdSync('openssl', args, { cwd: directory });
@@ -1043,7 +1122,10 @@ function generateCertificateMaterial(
     `${release}-api-proof.${namespace}.svc`,
     `${release}-api-proof.${namespace}.svc.cluster.local`,
   ]);
-  return { databaseSpkiSha256: certificateSpkiSha256(resolve(directory, 'postgres.crt')) };
+  return {
+    databaseSpkiSha256: certificateSpkiSha256(resolve(directory, 'postgres.crt')),
+    apiProofSpkiSha256: certificateSpkiSha256(resolve(directory, 'api-proof.crt')),
+  };
 }
 
 async function createLifecycleTlsSecrets(
@@ -1735,6 +1817,18 @@ async function runRealBundledLifecycle(
       }),
       { mode: 0o600 },
     );
+    await installLifecycleStableNetworkPolicies(stateDirectory, {
+      namespace: NAMESPACE,
+      release,
+      databaseNamespace: NAMESPACE,
+      databaseServiceName: `${release}-postgres`,
+      databasePodSelector: {
+        'app.kubernetes.io/name': release,
+        'app.kubernetes.io/instance': release,
+        'app.kubernetes.io/component': 'postgres',
+      },
+      apiProofSpkiSha256: material.apiProofSpkiSha256,
+    });
 
     const installed = await runCutoverCommand('install', release, installValues, true);
     assertions.push({
@@ -1890,6 +1984,14 @@ async function runRealExternalTlsLifecycle(
       }),
       { mode: 0o600 },
     );
+    await installLifecycleStableNetworkPolicies(stateDirectory, {
+      namespace: NAMESPACE,
+      release,
+      databaseNamespace: EXTERNAL_DATABASE_NAMESPACE,
+      databaseServiceName: 'external-postgres',
+      databasePodSelector: { 'app.kubernetes.io/name': 'external-postgres' },
+      apiProofSpkiSha256: material.apiProofSpkiSha256,
+    });
 
     const installed = await runCutoverCommand('install', release, installValues, true);
     requireCommand(
@@ -2015,6 +2117,18 @@ async function runFailedRolloutRecovery(
       }),
       { mode: 0o600 },
     );
+    await installLifecycleStableNetworkPolicies(stateDirectory, {
+      namespace: NAMESPACE,
+      release,
+      databaseNamespace: NAMESPACE,
+      databaseServiceName: `${release}-postgres`,
+      databasePodSelector: {
+        'app.kubernetes.io/name': release,
+        'app.kubernetes.io/instance': release,
+        'app.kubernetes.io/component': 'postgres',
+      },
+      apiProofSpkiSha256: material.apiProofSpkiSha256,
+    });
     let firstFailure: unknown;
     try {
       await runCutoverCommand('install', release, values, false);

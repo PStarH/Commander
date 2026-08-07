@@ -594,27 +594,47 @@ export class PostgresKernelRepository implements KernelRepository {
       async (client) => {
         const inserted = await client.query(
           `INSERT INTO commander_action_requests
-             (tenant_id, idempotency_key, request_hash, state)
-           VALUES ($1, $2, $3, 'IN_PROGRESS')
+           (tenant_id, idempotency_key, request_hash, state, attempt_token, lease_expires_at)
+           VALUES ($1, $2, $3, 'IN_PROGRESS', $4, now() + ($5 * interval '1 millisecond'))
            ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
            RETURNING tenant_id`,
-          [input.tenantId, input.idempotencyKey, input.requestHash],
+          [
+            input.tenantId,
+            input.idempotencyKey,
+            input.requestHash,
+            input.attemptToken,
+            input.staleAfterMs,
+          ],
         );
         if (inserted.rowCount === 1) return { state: 'STARTED' };
         const existing = await client.query<{
           request_hash: string;
           state: 'IN_PROGRESS' | 'COMPLETED';
+          attempt_token: string;
+          lease_stale: boolean;
           response_status: number | null;
           response_body: unknown;
         }>(
-          `SELECT request_hash, state, response_status, response_body
+          `SELECT request_hash, state, attempt_token, lease_expires_at <= now() AS lease_stale,
+                  response_status, response_body
              FROM commander_action_requests
-            WHERE tenant_id=$1 AND idempotency_key=$2`,
+            WHERE tenant_id=$1 AND idempotency_key=$2
+            FOR UPDATE`,
           [input.tenantId, input.idempotencyKey],
         );
         const row = existing.rows[0];
         if (!row || row.request_hash !== input.requestHash) return { state: 'CONFLICT' };
         if (row.state !== 'COMPLETED' || row.response_status === null) {
+          if (input.allowStaleTakeover && row.lease_stale) {
+            await client.query(
+              `UPDATE commander_action_requests
+                  SET attempt_token=$3,
+                      lease_expires_at=now() + ($4 * interval '1 millisecond')
+                WHERE tenant_id=$1 AND idempotency_key=$2`,
+              [input.tenantId, input.idempotencyKey, input.attemptToken, input.staleAfterMs],
+            );
+            return { state: 'TAKEOVER' };
+          }
           return { state: 'IN_PROGRESS' };
         }
         return {
@@ -632,24 +652,35 @@ export class PostgresKernelRepository implements KernelRepository {
       async (client) => {
         const updated = await client.query(
           `UPDATE commander_action_requests
-              SET state='COMPLETED', response_status=$4, response_body=$5::jsonb,
+              SET state='COMPLETED', response_status=$5, response_body=$6::jsonb,
                   completed_at=now()
             WHERE tenant_id=$1 AND idempotency_key=$2 AND request_hash=$3
-              AND state='IN_PROGRESS'`,
+              AND attempt_token=$4 AND state='IN_PROGRESS'`,
           [
             input.tenantId,
             input.idempotencyKey,
             input.requestHash,
+            input.attemptToken,
             input.responseStatus,
             json(input.responseBody),
           ],
         );
         if (updated.rowCount === 1) return;
-        const existing = await client.query<{ request_hash: string; state: string }>(
-          `SELECT request_hash, state FROM commander_action_requests
+        const existing = await client.query<{
+          request_hash: string;
+          state: string;
+          attempt_token: string;
+        }>(
+          `SELECT request_hash, state, attempt_token FROM commander_action_requests
             WHERE tenant_id=$1 AND idempotency_key=$2`,
           [input.tenantId, input.idempotencyKey],
         );
+        if (existing.rows[0]?.attempt_token !== input.attemptToken) {
+          throw new KernelInvariantError(
+            'ACTION_REQUEST_BINDING_FENCED',
+            'Action request attempt was superseded',
+          );
+        }
         if (
           existing.rows[0]?.request_hash !== input.requestHash ||
           existing.rows[0]?.state !== 'COMPLETED'
