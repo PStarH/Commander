@@ -1413,7 +1413,7 @@ function proofJobForRevision(input: {
     !exactObjectKeys(tokenSources[0] ?? {}, ['serviceAccountToken']) ||
     !exactObjectKeys(serviceAccountToken, ['audience', 'expirationSeconds', 'path']) ||
     serviceAccountToken.audience !== 'commander-tenant-cutover-proof/v1' ||
-    serviceAccountToken.expirationSeconds !== 300 ||
+    serviceAccountToken.expirationSeconds !== 600 ||
     serviceAccountToken.path !== 'token' ||
     !exactObjectKeys(tokenSources[1] ?? {}, ['configMap']) ||
     !exactObjectKeys(rootCa, ['name', 'items']) ||
