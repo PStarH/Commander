@@ -17,6 +17,7 @@ import {
   leafCertificateExtensions,
   nodeInventoriesContainExactReference,
   namespaceCleanupArgs,
+  parseKubernetesApiEndpointSliceList,
   postgresImageForArchitecture,
   productionImageReferences,
   reusableProductionImageDigest,
@@ -122,15 +123,13 @@ describe('helm-lifecycle-kind helpers', () => {
     const policies = buildLifecycleStableNetworkPolicies({
       namespace: 'commander-lifecycle',
       release: 'cmdr-live',
-      databaseNamespace: 'commander-lifecycle',
-      databaseServiceName: 'cmdr-live-postgres',
-      databasePodSelector: {
-        'app.kubernetes.io/name': 'cmdr-live',
-        'app.kubernetes.io/instance': 'cmdr-live',
-        'app.kubernetes.io/component': 'postgres',
-      },
+      databaseNamespace: 'commander-external-database',
+      databaseServiceName: 'external-postgres',
+      databasePodSelector: { 'app.kubernetes.io/name': 'external-postgres' },
       apiProofSpkiSha256: 'c'.repeat(64),
       kubernetesApiServiceIp: '10.96.0.1',
+      kubernetesApiEndpointIp: '172.18.0.2',
+      kubernetesApiEndpointPort: 6443,
     }) as Array<{
       metadata: {
         namespace: string;
@@ -140,7 +139,11 @@ describe('helm-lifecycle-kind helpers', () => {
       spec: {
         podSelector: { matchLabels: Record<string, string> };
         egress?: Array<{
-          to?: Array<{ ipBlock?: { cidr: string } }>;
+          to?: Array<{
+            ipBlock?: { cidr: string };
+            namespaceSelector?: { matchLabels: Record<string, string> };
+            podSelector?: { matchLabels: Record<string, string> };
+          }>;
           ports?: Array<{ protocol?: string; port: number }>;
         }>;
       };
@@ -171,24 +174,81 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.deepEqual(kubernetesApiEgress.spec.podSelector, ownerEgress.spec.podSelector);
     assert.deepEqual(kubernetesApiEgress.spec.egress, [
       {
-        to: [
-          {
-            namespaceSelector: {
-              matchLabels: { 'kubernetes.io/metadata.name': 'kube-system' },
-            },
-            podSelector: { matchLabels: { component: 'kube-apiserver' } },
-          },
-        ],
-        ports: [{ protocol: 'TCP', port: 6443 }],
-      },
-      {
         to: [{ ipBlock: { cidr: '10.96.0.1/32' } }],
         ports: [{ protocol: 'TCP', port: 443 }],
       },
+      {
+        to: [{ ipBlock: { cidr: '172.18.0.2/32' } }],
+        ports: [{ protocol: 'TCP', port: 6443 }],
+      },
     ]);
+    const proofEgress = policies.find(
+      (policy) => policy.metadata.labels['commander.io/purpose'] === 'kubernetes-api-proof-egress',
+    );
+    assert.ok(proofEgress);
+    assert.equal(
+      proofEgress.spec.podSelector.matchLabels['commander.io/tenant-authority-proof-reader'],
+      'true',
+    );
     assert.equal(
       policies.some((policy) => policy.metadata.namespace === 'commander-lifecycle'),
       true,
+    );
+    const databaseRuntimeIngress = policies.find(
+      (policy) => policy.metadata.labels['commander.io/purpose'] === 'database-runtime-ingress',
+    ) as
+      | {
+          metadata: { namespace: string };
+          spec: {
+            ingress: Array<{
+              from: Array<{ podSelector: { matchLabels: Record<string, string> } }>;
+              ports: Array<{ protocol: string; port: number }>;
+            }>;
+          };
+        }
+      | undefined;
+    assert.ok(databaseRuntimeIngress);
+    assert.equal(databaseRuntimeIngress.metadata.namespace, 'commander-external-database');
+    assert.deepEqual(
+      databaseRuntimeIngress.spec.ingress[0].from.map(
+        (peer) => peer.podSelector.matchLabels['app.kubernetes.io/component'] ?? 'proof-reader',
+      ),
+      ['api', 'proof-reader'],
+    );
+    assert.deepEqual(databaseRuntimeIngress.spec.ingress[0].ports, [
+      { protocol: 'TCP', port: 5432 },
+    ]);
+  });
+
+  it('extracts the unique ready Kubernetes API endpoint from EndpointSlice data', () => {
+    assert.deepEqual(
+      parseKubernetesApiEndpointSliceList({
+        items: [
+          {
+            ports: [{ name: 'https', protocol: 'TCP', port: 6443 }],
+            endpoints: [
+              { addresses: ['172.18.0.2'], conditions: { ready: true } },
+              { addresses: ['172.18.0.3'], conditions: { ready: false } },
+            ],
+          },
+        ],
+      }),
+      { ip: '172.18.0.2', port: 6443 },
+    );
+    assert.throws(
+      () =>
+        parseKubernetesApiEndpointSliceList({
+          items: [
+            {
+              ports: [{ name: 'https', protocol: 'TCP', port: 6443 }],
+              endpoints: [
+                { addresses: ['172.18.0.2'], conditions: { ready: true } },
+                { addresses: ['172.18.0.3'], conditions: { ready: true } },
+              ],
+            },
+          ],
+        }),
+      /KUBERNETES_API_ENDPOINT_INVALID/,
     );
   });
 
