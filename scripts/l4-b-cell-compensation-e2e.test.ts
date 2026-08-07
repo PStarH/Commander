@@ -64,7 +64,12 @@ describe('l4-b-cell-compensation-e2e', () => {
   });
 
   it('requests and approves canonical compensation before waiting for COMPENSATED', async () => {
-    const requests: Array<{ method: string; path: string; body: Record<string, unknown> }> = [];
+    const requests: Array<{
+      method: string;
+      path: string;
+      body: Record<string, unknown>;
+      idempotencyKey?: string;
+    }> = [];
     let actionReads = 0;
     const server = createServer(async (req, res) => {
       const chunks: Buffer[] = [];
@@ -72,7 +77,14 @@ describe('l4-b-cell-compensation-e2e', () => {
       const body = chunks.length
         ? (JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>)
         : {};
-      requests.push({ method: req.method ?? '', path: req.url ?? '', body });
+      requests.push({
+        method: req.method ?? '',
+        path: req.url ?? '',
+        body,
+        ...(typeof req.headers['idempotency-key'] === 'string'
+          ? { idempotencyKey: req.headers['idempotency-key'] }
+          : {}),
+      });
       res.setHeader('content-type', 'application/json');
       if (req.method === 'POST' && req.url === '/v1/actions') {
         res.writeHead(202);
@@ -195,6 +207,7 @@ describe('l4-b-cell-compensation-e2e', () => {
       assert.deepEqual(requests[3], {
         method: 'POST',
         path: '/v1/actions/run-forward/compensations',
+        idempotencyKey: `compensate-${requests[0]?.body.idempotencyKey}`,
         body: {
           originalEffectId: 'effect-forward',
           adapterVersion: 'demo-ticket/v1',
@@ -207,6 +220,16 @@ describe('l4-b-cell-compensation-e2e', () => {
         actionDigest: 'c'.repeat(64),
         policySnapshotId: 'action-gateway-mvp-v1',
       });
+      const writes = requests.filter(({ method }) => method === 'POST');
+      assert.equal(writes[0]?.idempotencyKey, writes[0]?.body.idempotencyKey);
+      assert.equal(writes[1]?.idempotencyKey, `approve-${writes[0]?.body.idempotencyKey}`);
+      assert.equal(
+        writes[3]?.idempotencyKey,
+        `approve-compensation-${writes[0]?.body.idempotencyKey}`,
+      );
+      for (const write of writes) {
+        assert.match(write.idempotencyKey ?? '', /^[A-Za-z0-9._:-]{8,256}$/);
+      }
       assert.equal(actionReads, 1, 'compensation terminal state comes from raw run status');
     } finally {
       await new Promise<void>((resolve, reject) =>
