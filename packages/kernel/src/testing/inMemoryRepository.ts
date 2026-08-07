@@ -166,7 +166,13 @@ type InMemoryWorkerRecord = {
 export class InMemoryKernelRepository implements KernelRepository {
   private readonly actionRequests = new Map<
     string,
-    { requestHash: string; responseStatus?: number; responseBody?: unknown }
+    {
+      requestHash: string;
+      attemptToken: string;
+      leaseExpiresAt: number;
+      responseStatus?: number;
+      responseBody?: unknown;
+    }
   >();
   private readonly runs = new Map<string, KernelRun>();
   private readonly steps = new Map<string, KernelStep>();
@@ -341,11 +347,22 @@ export class InMemoryKernelRepository implements KernelRepository {
     const key = `${input.tenantId}\u0000${input.idempotencyKey}`;
     const existing = this.actionRequests.get(key);
     if (!existing) {
-      this.actionRequests.set(key, { requestHash: input.requestHash });
+      this.actionRequests.set(key, {
+        requestHash: input.requestHash,
+        attemptToken: input.attemptToken,
+        leaseExpiresAt: input.now.getTime() + input.staleAfterMs,
+      });
       return { state: 'STARTED' };
     }
     if (existing.requestHash !== input.requestHash) return { state: 'CONFLICT' };
-    if (existing.responseStatus === undefined) return { state: 'IN_PROGRESS' };
+    if (existing.responseStatus === undefined) {
+      if (input.allowStaleTakeover && existing.leaseExpiresAt <= input.now.getTime()) {
+        existing.attemptToken = input.attemptToken;
+        existing.leaseExpiresAt = input.now.getTime() + input.staleAfterMs;
+        return { state: 'TAKEOVER' };
+      }
+      return { state: 'IN_PROGRESS' };
+    }
     return {
       state: 'REPLAY',
       responseStatus: existing.responseStatus,
@@ -360,6 +377,12 @@ export class InMemoryKernelRepository implements KernelRepository {
       throw new KernelInvariantError(
         'ACTION_REQUEST_BINDING_INVALID',
         'Action request binding changed',
+      );
+    }
+    if (existing.attemptToken !== input.attemptToken) {
+      throw new KernelInvariantError(
+        'ACTION_REQUEST_BINDING_FENCED',
+        'Action request attempt was superseded',
       );
     }
     if (existing.responseStatus !== undefined) return;

@@ -289,6 +289,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         }
         this.db.exec(SQLITE_KERNEL_SCHEMA_SQL);
         this.migrateCapabilityRevocationsPk();
+        this.migrateActionRequestRecovery();
         this.db
           .prepare(`INSERT OR IGNORE INTO commander_kernel_schema (version) VALUES (?)`)
           .run(SQLITE_KERNEL_SCHEMA_VERSION);
@@ -313,14 +314,21 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
       const inserted = this.db
         .prepare(
           `INSERT OR IGNORE INTO commander_action_requests
-             (tenant_id, idempotency_key, request_hash, state)
-           VALUES (?, ?, ?, 'IN_PROGRESS')`,
+             (tenant_id, idempotency_key, request_hash, state, attempt_token, lease_expires_at)
+           VALUES (?, ?, ?, 'IN_PROGRESS', ?, ?)`,
         )
-        .run(input.tenantId, input.idempotencyKey, input.requestHash);
+        .run(
+          input.tenantId,
+          input.idempotencyKey,
+          input.requestHash,
+          input.attemptToken,
+          new Date(input.now.getTime() + input.staleAfterMs).toISOString(),
+        );
       if (inserted.changes === 1) return { state: 'STARTED' };
       const row = this.db
         .prepare(
-          `SELECT request_hash, state, response_status, response_body
+          `SELECT request_hash, state, attempt_token, lease_expires_at,
+                  response_status, response_body
              FROM commander_action_requests
             WHERE tenant_id=? AND idempotency_key=?`,
         )
@@ -328,12 +336,29 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         | {
             request_hash: string;
             state: 'IN_PROGRESS' | 'COMPLETED';
+            attempt_token: string;
+            lease_expires_at: string;
             response_status: number | null;
             response_body: string | null;
           }
         | undefined;
       if (!row || row.request_hash !== input.requestHash) return { state: 'CONFLICT' };
       if (row.state !== 'COMPLETED' || row.response_status === null) {
+        if (input.allowStaleTakeover && Date.parse(row.lease_expires_at) <= input.now.getTime()) {
+          this.db
+            .prepare(
+              `UPDATE commander_action_requests
+                  SET attempt_token=?, lease_expires_at=?
+                WHERE tenant_id=? AND idempotency_key=?`,
+            )
+            .run(
+              input.attemptToken,
+              new Date(input.now.getTime() + input.staleAfterMs).toISOString(),
+              input.tenantId,
+              input.idempotencyKey,
+            );
+          return { state: 'TAKEOVER' };
+        }
         return { state: 'IN_PROGRESS' };
       }
       return {
@@ -352,7 +377,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
               SET state='COMPLETED', response_status=?, response_body=?,
                   completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
             WHERE tenant_id=? AND idempotency_key=? AND request_hash=?
-              AND state='IN_PROGRESS'`,
+              AND attempt_token=? AND state='IN_PROGRESS'`,
         )
         .run(
           input.responseStatus,
@@ -360,15 +385,19 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
           input.tenantId,
           input.idempotencyKey,
           input.requestHash,
+          input.attemptToken,
         );
       if (updated.changes === 1) return;
       const existing = this.db
         .prepare(
-          `SELECT request_hash, state FROM commander_action_requests
+          `SELECT request_hash, state, attempt_token FROM commander_action_requests
             WHERE tenant_id=? AND idempotency_key=?`,
         )
         .get(input.tenantId, input.idempotencyKey) as
-        { request_hash: string; state: string } | undefined;
+        { request_hash: string; state: string; attempt_token: string } | undefined;
+      if (existing?.attempt_token !== input.attemptToken) {
+        throw new Error('ACTION_REQUEST_BINDING_FENCED');
+      }
       if (existing?.request_hash !== input.requestHash || existing.state !== 'COMPLETED') {
         throw new Error('ACTION_REQUEST_BINDING_INVALID');
       }
@@ -472,6 +501,26 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
       )
       .all(tenantId) as Array<Record<string, unknown>>;
     return rows.map(evidenceFromSqlite);
+  }
+
+  private migrateActionRequestRecovery(): void {
+    const columns = this.db.prepare(`PRAGMA table_info(commander_action_requests)`).all() as Array<{
+      name: string;
+    }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (!names.has('attempt_token')) {
+      this.db.exec(
+        `ALTER TABLE commander_action_requests ADD COLUMN attempt_token TEXT NOT NULL DEFAULT 'legacy'`,
+      );
+    }
+    if (!names.has('lease_expires_at')) {
+      this.db.exec(
+        `ALTER TABLE commander_action_requests ADD COLUMN lease_expires_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z'`,
+      );
+      this.db.exec(
+        `UPDATE commander_action_requests SET lease_expires_at=created_at WHERE state='IN_PROGRESS'`,
+      );
+    }
   }
 
   /**

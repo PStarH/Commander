@@ -10,6 +10,7 @@ import {
   assertNegativeCanaryResult,
   assertProofPodContract,
   buildExternalPostgresResources,
+  buildLifecycleStableNetworkPolicies,
   buildLifecycleValues,
   calicoImagesForArchitecture,
   kindNodeImageForArchitecture,
@@ -115,6 +116,49 @@ describe('helm-lifecycle-kind helpers', () => {
       assert.match(values, new RegExp(`- ${role}`));
     }
     assert.doesNotMatch(values, /commander-lifecycle-noop/);
+  });
+
+  it('installs the operator-owned stable policies required by lifecycle owner Jobs', () => {
+    const policies = buildLifecycleStableNetworkPolicies({
+      namespace: 'commander-lifecycle',
+      release: 'cmdr-live',
+      databaseNamespace: 'commander-lifecycle',
+      databaseServiceName: 'cmdr-live-postgres',
+      databasePodSelector: {
+        'app.kubernetes.io/name': 'cmdr-live',
+        'app.kubernetes.io/instance': 'cmdr-live',
+        'app.kubernetes.io/component': 'postgres',
+      },
+      apiProofSpkiSha256: 'c'.repeat(64),
+    }) as Array<{
+      metadata: { namespace: string; annotations: Record<string, string> };
+      spec: {
+        podSelector: { matchLabels: Record<string, string> };
+        egress?: Array<{ ports?: Array<{ port: number }> }>;
+      };
+    }>;
+    const ownerEgress = policies.find(
+      (policy) => policy.spec.podSelector.matchLabels['commander.io/migration-client-v2'],
+    );
+    assert.ok(ownerEgress);
+    assert.deepEqual(ownerEgress.spec.podSelector.matchLabels, {
+      'app.kubernetes.io/instance': 'cmdr-live',
+      'app.kubernetes.io/name': 'cmdr-live',
+      'commander.io/migration-client-v2': 'true',
+      'commander.io/migration-release': 'cmdr-live',
+    });
+    assert.deepEqual(
+      ownerEgress.spec.egress?.flatMap((rule) => rule.ports ?? []).map(({ port }) => port),
+      [53, 53, 9443, 5432],
+    );
+    assert.match(
+      ownerEgress.metadata.annotations['commander.io/prerequisite-policy-config-sha256'],
+      /^[a-f0-9]{64}$/,
+    );
+    assert.equal(
+      policies.some((policy) => policy.metadata.namespace === 'commander-lifecycle'),
+      true,
+    );
   });
 
   it('builds a real external PostgreSQL TLS lifecycle configuration', () => {
