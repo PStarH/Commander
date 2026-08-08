@@ -133,6 +133,10 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "commander.proofReaderLabels" . | nindent 14 }}
+        {{- range .Values.networkPolicy.ingressCidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
       ports:
         - protocol: TCP
           port: {{ .Values.tenantAuthority.apiProof.port }}
@@ -170,6 +174,10 @@ spec:
   ingress:
     - from:
         - podSelector: {}
+        {{- range .Values.networkPolicy.ingressCidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
         {{- with .Values.networkPolicy.ingressControllerNamespace }}
         - namespaceSelector:
             matchLabels:
