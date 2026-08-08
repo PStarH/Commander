@@ -10,6 +10,8 @@ declare global {
   namespace Express {
     interface Request {
       apiKeyId?: string;
+      /** Stable non-secret principal identifier used for action bindings and audit actors. */
+      principalRef?: string;
       apiScopes?: string[];
       /** Tenant associated with the authenticated API key or static key mapping. */
       tenantId?: string;
@@ -379,6 +381,7 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
   }
 
   req.apiKeyId = matchedKey.name;
+  req.principalRef = matchedKey.name;
   req.apiScopes = matchedKey.scopes;
   if (matchedKey.tenantId) {
     req.tenantId = matchedKey.tenantId;
