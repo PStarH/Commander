@@ -115,6 +115,7 @@ import {
 import { isLegacyExecutionAllowed } from './legacyExecutionGuard';
 import { isEnterpriseProfile } from './profileSignal';
 import { startTask1ReadinessService, type Task1ReadinessService } from './task1ReadinessRuntime';
+import { ensureAuthFailureStoreReady } from './authFailureStore';
 
 import { getDirname, getRequire } from './esmCompat';
 const __dirname = getDirname(import.meta.url);
@@ -888,6 +889,11 @@ async function startServer(): Promise<void> {
   // Load tenant configuration before any routers or shared singletons are
   // created. Missing config falls back to single-tenant mode (NullTenantProvider).
   loadTenantProvider();
+
+  // Keep the production API closed until the shared lockout authority is
+  // reachable. Redis may start after the API Pod, so the bounded connection
+  // retry must complete before health and readiness probes can pass.
+  await ensureAuthFailureStoreReady();
 
   // Initialize the shared execution kernel before V1 resource routes are used.
   // Auto-on when production / V2 mode / DSN present (see isCommanderKernelEnabled).
