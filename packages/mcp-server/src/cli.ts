@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { assertActionGatewayConfigured, startStdioServer } from './stdioServer';
 
 const HELP = `
@@ -82,6 +84,9 @@ export function run(argv: string[] = process.argv): void {
   );
 }
 
-if (require.main === module) {
+const isDirectExecution =
+  !!process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+
+if (isDirectExecution) {
   run();
 }

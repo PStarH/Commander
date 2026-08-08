@@ -93,61 +93,50 @@ interface ScanLike {
 }
 
 /**
- * Run SupplyChainScanner.scan() if we can load the module. Otherwise fall
- * back to an inline blocklist mirroring MAL-001 / MAL-005 / MAL-007 so
- * the hook still blocks catastrophic commits when the SDK is unavailable.
+ * Run SupplyChainScanner.scan(). If the module cannot be loaded, fail closed:
+ * a pre-commit malware gate must not silently pass while its scanner is down
+ * (bypass explicitly with COMMANDER_SKIP_PRECOMMIT=1 instead).
  */
 async function scanContent(name: string, content: string): Promise<ScanLike> {
   try {
     const mod = await import(SCANNER_MODULE_PATH);
     const scanner = mod.getSupplyChainScanner();
-    const r = scanner.scan({ name, content, tools: [] });
+    const r = scanner.scan({
+      name,
+      content,
+      tools: [],
+      // Source files legitimately use spawn()/exec()/backticks; the skill-content
+      // heuristics only make sense for skill markdown. Malware signatures still run.
+      skipPreScanHeuristics: true,
+    });
+    const blocked = r.warnings.some(
+      (w) =>
+        w.severity === 'critical' || w.severity === 'high' || w.category.startsWith('malware.'),
+    );
     return {
-      passed: r.passed,
-      severity: r.severity,
-      recommendation: r.recommendation,
+      passed: !blocked,
+      severity: blocked ? r.severity : 'clean',
+      recommendation: blocked ? 'block' : 'allow',
       warnings: r.warnings,
     };
   } catch (err) {
-    // Singleton init can fail under D1 prod fail-fast (production NODE_ENV +
-    // missing COMMANDER_AUDIT_CHAIN_KEY). Continue with the inline mirror.
     process.stderr.write(
-      `[D3 hook] SupplyChainScanner unavailable (${(err as Error)?.message ?? err}); using inline blocklist.\n`,
+      `[D3 hook] SupplyChainScanner unavailable (${(err as Error)?.message ?? err}); blocking (fail-closed). Bypass with COMMANDER_SKIP_PRECOMMIT=1 (logged).\n`,
     );
-    return inlineBlocklistScan(name, content);
+    return {
+      passed: false,
+      severity: 'malicious',
+      recommendation: 'block',
+      warnings: [
+        {
+          severity: 'critical',
+          category: 'scanner-unavailable',
+          message: 'SupplyChainScanner failed to load; commit blocked (fail-closed)',
+          evidence: name,
+        },
+      ],
+    };
   }
-}
-
-function inlineBlocklistScan(name: string, content: string): ScanLike {
-  // Mirror of MAL-001 / MAL-005 / MAL-007 / MAL-008 — keep in lock-step with
-  // packages/core/src/security/supplyChainScanner.ts MALWARE_SIGNATURES.
-  const PATTERNS: Array<{ id: string; regex: RegExp }> = [
-    { id: 'MAL-001-reverse-shell', regex: /\/dev\/tcp\/.*\/.*|bash -i >& \/dev\/tcp/ },
-    {
-      id: 'MAL-005-data-destruction',
-      regex: /rm\s+-rf\s+\/(?:\s|$)|;\s*:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/,
-    },
-    {
-      id: 'MAL-007-ssh-backdoor',
-      regex: />>\s*~\/\.ssh\/authorized_keys|>>\s*\/root\/\.ssh\/authorized_keys/,
-    },
-    {
-      id: 'MAL-008-persistence',
-      regex: /@reboot|crontab\s+-\s+-[el]|\/etc\/cron\.(daily|hourly|weekly|monthly)/i,
-    },
-  ];
-  const warnings = PATTERNS.filter((p) => p.regex.test(content)).map((p) => ({
-    severity: 'critical' as const,
-    category: p.id,
-    message: `blocklist hit: ${p.id}`,
-    evidence: name,
-  }));
-  return {
-    passed: warnings.length === 0,
-    severity: warnings.length > 0 ? 'malicious' : 'clean',
-    recommendation: warnings.length > 0 ? 'block' : 'allow',
-    warnings,
-  };
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────
@@ -340,16 +329,30 @@ function runExecPolicySmoke(): void {
   // packages/core as cwd so vitest resolves its config and the test
   // file path is relative to the package root.
   const vitestCwd = path.join(REPO_ROOT, 'packages', 'core');
+  // Resolve the local vitest binary explicitly. `npx vitest` re-resolves
+  // the package from a nested node_modules/.pnpm path that does not exist
+  // in pnpm workspaces (worktree + CI argv-replay), so the smoke test
+  // would always fail with MODULE_NOT_FOUND even though the binary works.
+  const vitestBin = [
+    path.join(vitestCwd, 'node_modules', '.bin', 'vitest'),
+    path.join(REPO_ROOT, 'node_modules', '.bin', 'vitest'),
+  ].find((p) => {
+    try {
+      fs.accessSync(p, fs.constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  if (!vitestBin) {
+    throw new Error('precommit ExecPolicy smoke failed — vitest binary not found');
+  }
   try {
-    execFileSync(
-      'npx',
-      ['vitest', 'run', EXECPOLICY_TEST_FILE, '--no-cache', '--reporter=default'],
-      {
-        cwd: vitestCwd,
-        stdio: 'inherit',
-        env: { ...process.env, NODE_ENV: 'test' },
-      },
-    );
+    execFileSync(vitestBin, ['run', EXECPOLICY_TEST_FILE, '--no-cache', '--reporter=default'], {
+      cwd: vitestCwd,
+      stdio: 'inherit',
+      env: { ...process.env, NODE_ENV: 'test' },
+    });
     console.log('[D3 hook] ExecPolicy smoke green ✅');
   } catch (err) {
     reportSilentFailure(err, 'precommitHook:335');

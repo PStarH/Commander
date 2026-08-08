@@ -25,6 +25,11 @@ import type { KillSwitchMatchDims } from './v1GatewayKernel';
 
 const ACTION_GATEWAY_AUTHORITY = 'commander.action-gateway/v1';
 const ACTION_POLICY_SNAPSHOT = 'action-gateway-mvp-v1';
+// Provenance is a governance input, so it must be assigned by the gateway
+// rather than copied from an untrusted action request.
+const ACTION_GATEWAY_SOURCE = 'action-gateway';
+const ACTION_GATEWAY_PACKAGE = 'commander.action-gateway';
+const ACTION_GATEWAY_MODEL = 'gateway-default';
 
 function configuredEvidenceJwks(): EvidenceJwks | null {
   const raw = process.env.COMMANDER_EVIDENCE_JWKS_JSON?.trim();
@@ -341,6 +346,19 @@ function actor(req: Request): string {
   return req.apiKeyId ?? req.user?.id ?? 'action-gateway.unknown';
 }
 
+function buildActionEnvelope(
+  tenantId: string,
+  input: z.infer<typeof actionInputSchema>,
+): ActionEnvelope {
+  return {
+    tenantId,
+    ...input,
+    source: ACTION_GATEWAY_SOURCE,
+    package: ACTION_GATEWAY_PACKAGE,
+    model: ACTION_GATEWAY_MODEL,
+  };
+}
+
 function deterministicId(prefix: string, value: string): string {
   return `${prefix}_${canonicalValueHash(value).slice(0, 32)}`;
 }
@@ -373,26 +391,26 @@ function evaluateAction(envelope: ActionEnvelope): ActionDecision {
       policySnapshotId: ACTION_POLICY_SNAPSHOT,
     };
   }
-  if (envelope.destination === 'demo://tickets') {
+  if (envelope.destination !== 'demo://tickets') {
     return {
-      effect: 'allow',
-      decisionId: 'action-gateway-allow',
-      reason: 'The registered demo ticket destination is allowed.',
+      effect: 'deny',
+      decisionId: 'action-gateway-deny',
+      reason: `Destination '${envelope.destination}' is not registered by the Action Gateway.`,
       policySnapshotId: ACTION_POLICY_SNAPSHOT,
     };
   }
-  if (envelope.destination === 'demo://tickets/approval') {
+  if (isCreate) {
     return {
       effect: 'require_approval',
       decisionId: 'action-gateway-require_approval',
-      reason: 'The approval demo destination requires a human decision.',
+      reason: 'Creating a demo ticket requires a human decision.',
       policySnapshotId: ACTION_POLICY_SNAPSHOT,
     };
   }
   return {
-    effect: 'deny',
-    decisionId: 'action-gateway-deny',
-    reason: `Destination '${envelope.destination}' is not registered by the Action Gateway.`,
+    effect: 'allow',
+    decisionId: 'action-gateway-allow',
+    reason: 'The registered demo ticket destination is allowed.',
     policySnapshotId: ACTION_POLICY_SNAPSHOT,
   };
 }
@@ -632,7 +650,7 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
         },
       });
     }
-    const envelope: ActionEnvelope = { tenantId, ...parsed.data };
+    const envelope = buildActionEnvelope(tenantId, parsed.data);
     if (await rejectIfKillSwitchActive(kernel, envelope, res)) return;
     const simulation = buildSimulation(envelope);
     await persistSimulation(kernel, envelope, simulation, actor(req));
@@ -655,7 +673,7 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
       });
     }
 
-    const envelope: ActionEnvelope = { tenantId, ...parsed.data };
+    const envelope = buildActionEnvelope(tenantId, parsed.data);
     if (await rejectIfKillSwitchActive(kernel, envelope, res)) return;
     if (isClassAEffectType(envelope.effectType)) {
       try {

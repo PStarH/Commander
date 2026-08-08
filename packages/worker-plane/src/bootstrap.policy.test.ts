@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
 import {
   createWorkerPolicyEvaluator,
+  createWorkerEffectExecutor,
   resolveWorkerTenantScope,
   withDefaultLlmAllowlist,
   WORKER_TENANT_SCOPE_REQUIRED,
@@ -130,6 +131,55 @@ describe('createWorkerPolicyEvaluator', () => {
   });
 });
 
+describe('createWorkerEffectExecutor', () => {
+  it('refuses ticket execution when the persisted destination is not the real ticket target', async () => {
+    const executor = createWorkerEffectExecutor();
+    await assert.rejects(
+      () =>
+        executor.execute({
+          type: 'demo.ticket.create',
+          request: {
+            destination: 'demo://tickets/approval',
+            args: { title: 'x' },
+            idempotencyKey: 'ticket-destination-binding',
+          },
+          signal: new AbortController().signal,
+          executionContext: {
+            tenantId: 'tenant-a',
+            workerId: 'worker-a',
+            fencingEpoch: 1,
+            leaseToken: 'lease-a',
+            effectId: 'effect-a',
+          },
+        }),
+      /INVALID_DEMO_TICKET_ACTION/,
+    );
+  });
+
+  it('refuses ticket compensation when the persisted destination is not the real ticket target', async () => {
+    const executor = createWorkerEffectExecutor();
+    await assert.rejects(
+      () =>
+        executor.execute({
+          type: 'compensate.demo.ticket.create',
+          request: {
+            destination: 'demo://tickets/approval',
+            args: { targetIdempotencyKey: 'ticket-destination-binding' },
+          },
+          signal: new AbortController().signal,
+          executionContext: {
+            tenantId: 'tenant-a',
+            workerId: 'worker-a',
+            fencingEpoch: 1,
+            leaseToken: 'lease-a',
+            effectId: 'effect-a',
+          },
+        }),
+      /INVALID_DEMO_TICKET_COMPENSATION/,
+    );
+  });
+});
+
 describe('withDefaultLlmAllowlist', () => {
   it('requires llm.* to be provisioned by a policy authority', async () => {
     const kernel = new InMemoryKernelRepository();
@@ -151,19 +201,13 @@ describe('withDefaultLlmAllowlist', () => {
     const kernel = new InMemoryKernelRepository();
     const port = withDefaultLlmAllowlist(kernel, {});
     assert.equal(await port.isActionAllowed!('tenant-a', 'demo.ticket.create'), false);
-    assert.equal(
-      await port.isActionAllowed!('tenant-a', 'compensate.demo.ticket.create'),
-      false,
-    );
+    assert.equal(await port.isActionAllowed!('tenant-a', 'compensate.demo.ticket.create'), false);
   });
 
   it('does not let worker env mutate demo ticket policy', async () => {
     const kernel = new InMemoryKernelRepository();
     const port = withDefaultLlmAllowlist(kernel, { COMMANDER_DEMO_TICKET_ALLOWLIST: '1' });
     assert.equal(await port.isActionAllowed!('tenant-a', 'demo.ticket.create'), false);
-    assert.equal(
-      await port.isActionAllowed!('tenant-a', 'compensate.demo.ticket.create'),
-      false,
-    );
+    assert.equal(await port.isActionAllowed!('tenant-a', 'compensate.demo.ticket.create'), false);
   });
 });

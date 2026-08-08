@@ -163,7 +163,7 @@ export async function runComposeDemoCompensationFlow(
     package: 'cell-e2e',
     model: 'mock',
     tool: 'ticket.create',
-    destination: 'demo://tickets/approval',
+    destination: 'demo://tickets',
     effectType: 'demo.ticket.create',
     args: { title: 'Cell compensation E2E' },
     idempotencyKey: idem,

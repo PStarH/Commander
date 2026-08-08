@@ -452,26 +452,26 @@ export function evaluateActionGatewayMvpV1(
       policySnapshotId: 'action-gateway-mvp-v1',
     };
   }
-  if (destination === 'demo://tickets') {
+  if (destination !== 'demo://tickets') {
     return {
-      effect: 'allow',
-      decisionId: 'action-gateway-allow',
-      reason: 'The registered demo ticket destination is allowed.',
+      effect: 'deny',
+      decisionId: 'action-gateway-deny',
+      reason: `Destination '${String(destination)}' is not registered by the Action Gateway.`,
       policySnapshotId: 'action-gateway-mvp-v1',
     };
   }
-  if (destination === 'demo://tickets/approval') {
+  if (isCreate) {
     return {
       effect: 'require_approval',
       decisionId: 'action-gateway-require_approval',
-      reason: 'The approval demo destination requires a human decision.',
+      reason: 'Creating a demo ticket requires a human decision.',
       policySnapshotId: 'action-gateway-mvp-v1',
     };
   }
   return {
-    effect: 'deny',
-    decisionId: 'action-gateway-deny',
-    reason: `Destination '${String(destination)}' is not registered by the Action Gateway.`,
+    effect: 'allow',
+    decisionId: 'action-gateway-allow',
+    reason: 'The registered demo ticket destination is allowed.',
     policySnapshotId: 'action-gateway-mvp-v1',
   };
 }
@@ -736,6 +736,7 @@ export function createWorkerEffectExecutor(
         const args = input.request.args;
         if (
           !ctx?.tenantId ||
+          input.request.destination !== 'demo://tickets' ||
           !args ||
           typeof args !== 'object' ||
           typeof (args as Record<string, unknown>).title !== 'string' ||
@@ -759,6 +760,7 @@ export function createWorkerEffectExecutor(
         const args = input.request.args;
         if (
           !ctx?.tenantId ||
+          input.request.destination !== 'demo://tickets' ||
           !args ||
           typeof args !== 'object' ||
           typeof (args as Record<string, unknown>).targetIdempotencyKey !== 'string'

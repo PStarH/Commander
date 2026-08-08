@@ -239,6 +239,9 @@ jobs:
           pnpm --filter @commander/core build
           pnpm --filter @commander/sdk typecheck
 
+      - name: Governed Codex and Pi integrations
+        run: pnpm test:integrations
+
       - name: Generate dependency SBOM
         run: pnpm list --recursive --depth=Infinity --json > sbom.json
 

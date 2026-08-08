@@ -31,6 +31,7 @@ import { getCurrentTenantId } from '../runtime/tenantContext';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 import { recordSinkFailure } from '../observability/sinkFailureCounter';
 import { getSupplyChainAttestor } from './supplyChainAttestor';
+import { MALWARE_SIGNATURES } from './malwareSignatures';
 
 // ============================================================================
 // Types
@@ -86,6 +87,12 @@ export interface SupplyChainScanRequest {
   provenance?: SupplyChainProvenance;
   /** Tenant that owns this scan */
   tenantId?: string;
+  /**
+   * Skip the skill-content pre-scan heuristics (backtick/$( )/exec()/spawn()
+   * shell-injection regexes). The malware signature scan still runs. Use for
+   * scanning regular source files, where those patterns are legitimate.
+   */
+  skipPreScanHeuristics?: boolean;
 }
 
 export interface SupplyChainScanResult {
@@ -166,122 +173,6 @@ export interface MalwareSignatureMatch {
 }
 
 // ============================================================================
-// Known malware signatures (continuously updated)
-// ============================================================================
-
-const MALWARE_SIGNATURES: Array<{
-  id: string;
-  name: string;
-  description: string;
-  severity: 'high' | 'critical';
-  patterns: RegExp[];
-}> = [
-  {
-    id: 'MAL-001',
-    name: 'Reverse shell backdoor',
-    description: 'Code that establishes a reverse shell connection to an external host',
-    severity: 'critical',
-    patterns: [
-      /\/dev\/tcp\/.*\/.*/,
-      /bash -i >& \/dev\/tcp/,
-      /python -c 'import socket,subprocess,os'/,
-      /nc\s+-e\s+\/bin\/(?:ba)?sh/,
-    ],
-  },
-  {
-    id: 'MAL-002',
-    name: 'Cryptocurrency miner',
-    description: 'Unauthorized crypto mining code',
-    severity: 'critical',
-    patterns: [
-      /stratum\+tcp:\/\//,
-      /xmrig/i,
-      /minerd/i,
-      /cpuminer/i,
-      /cryptonight/i,
-      /pool\.(?:minexmr|supportxmr|moneroocean)/i,
-    ],
-  },
-  {
-    id: 'MAL-003',
-    name: 'Credential exfiltration',
-    description: 'Code that sends credentials or secrets to external servers',
-    severity: 'critical',
-    patterns: [
-      /curl\s+.*\|\s*(?:nc|netcat|socat)/i,
-      /wget\s+--post-data=.*\$\(.*(?:key|token|secret|password)/i,
-      /send\(.*process\.env/i,
-      /fetch\(.*\/\/.*attacker.*api/i,
-      /axios\.post\(.*process\.env/i,
-    ],
-  },
-  {
-    id: 'MAL-004',
-    name: 'Privilege escalation',
-    description: 'Code that attempts to gain elevated privileges',
-    severity: 'critical',
-    patterns: [
-      /chmod\s+[0-7]*7[0-7]*7/,
-      /chown\s+root/,
-      /sudo\s+-u\s+(?:root|0)/,
-      /pkexec/i,
-      /setuid\(0\)/,
-    ],
-  },
-  {
-    id: 'MAL-005',
-    name: 'Data destruction',
-    description: 'Code that destroys or corrupts data',
-    severity: 'critical',
-    patterns: [
-      /rm\s+-rf\s+\/(?:\s|$)/,
-      /mkfs\./,
-      /dd\s+if=\/dev\/(?:zero|random|urandom)\s+of=\/dev\/sd/,
-      /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/,
-      /shred\s+-/,
-    ],
-  },
-  {
-    id: 'MAL-006',
-    name: 'Supply chain poisoning',
-    description: 'Package that overrides or patches legitimate dependencies with malicious code',
-    severity: 'critical',
-    patterns: [
-      /npm\s+install\s+-g/i,
-      /pip\s+install.*--user.*\|\|/i,
-      /curl.*\|.*sh/i,
-      /curl.*\|.*bash/i,
-      /wget\s+-O\s+-\s+.*\|\s*sh/i,
-    ],
-  },
-  {
-    id: 'MAL-007',
-    name: 'SSH backdoor',
-    description: 'Code that adds unauthorized SSH keys or modifies SSH configuration',
-    severity: 'critical',
-    patterns: [
-      />>\s*~\/\.ssh\/authorized_keys/,
-      />>\s*\/root\/\.ssh\/authorized_keys/,
-      /ssh-keygen\s+.*-f\s+.*\/\.ssh/i,
-      /authorized_keys2/i,
-    ],
-  },
-  {
-    id: 'MAL-008',
-    name: 'Persistence mechanism',
-    description: 'Code that establishes persistent access (cron, systemd, launchd)',
-    severity: 'high',
-    patterns: [
-      /crontab\s+-/,
-      /\/etc\/cron\.(?:d|daily|hourly|weekly|monthly)/i,
-      /systemctl\s+enable/i,
-      /launchctl\s+load/i,
-      /@reboot/i,
-    ],
-  },
-];
-
-// ============================================================================
 // SupplyChainScanner
 // ============================================================================
 
@@ -310,14 +201,18 @@ export class SupplyChainScanner {
     const startTime = Date.now();
 
     // ── Phase 1: Fast pre-scan (regex-based, reuses existing scanner) ──
-    const preScan = scanSkillContent(request.name, request.content, request.tools);
-    for (const w of preScan.warnings) {
-      warnings.push({
-        severity: w.severity,
-        category: `pre_scan.${w.category}`,
-        message: w.message,
-        evidence: w.match,
-      });
+    const preScan = request.skipPreScanHeuristics
+      ? { passed: true, warnings: [] }
+      : scanSkillContent(request.name, request.content, request.tools);
+    if (!request.skipPreScanHeuristics) {
+      for (const w of preScan.warnings) {
+        warnings.push({
+          severity: w.severity,
+          category: `pre_scan.${w.category}`,
+          message: w.message,
+          evidence: w.match,
+        });
+      }
     }
 
     // ── Phase 2: Dependency analysis ──

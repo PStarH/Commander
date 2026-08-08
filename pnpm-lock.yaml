@@ -25,6 +25,9 @@ importers:
 
   .:
     dependencies:
+      '@commander/contracts':
+        specifier: workspace:*
+        version: link:packages/contracts
       '@commander/core':
         specifier: workspace:*
         version: link:packages/core
@@ -34,6 +37,12 @@ importers:
       '@commander/kernel':
         specifier: workspace:*
         version: link:packages/kernel
+      '@commander/mcp-server':
+        specifier: workspace:*
+        version: link:packages/mcp-server
+      '@commander/sdk':
+        specifier: workspace:*
+        version: link:packages/sdk
       '@commander/worker-plane':
         specifier: workspace:*
         version: link:packages/worker-plane
@@ -53,6 +62,9 @@ importers:
         specifier: ^2.11.2
         version: 2.11.2(playwright-extra@4.3.6(playwright-core@1.61.1)(playwright@1.61.1))
     devDependencies:
+      '@types/express':
+        specifier: ^5.0.6
+        version: 5.0.6
       '@types/js-yaml':
         specifier: ^4.0.9
         version: 4.0.9
@@ -65,6 +77,9 @@ importers:
       eslint:
         specifier: ^10.4.0
         version: 10.4.0
+      express:
+        specifier: ^5.2.1
+        version: 5.2.1
       prettier:
         specifier: 3.9.5
         version: 3.9.5

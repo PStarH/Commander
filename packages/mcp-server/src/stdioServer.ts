@@ -11,6 +11,36 @@ import {
   type MCPServerCapabilities,
   type ActionGatewayExecutor,
 } from '@commander/core';
+import { createHash } from 'node:crypto';
+
+export interface McpActionGatewayRequest {
+  method: 'GET' | 'POST';
+  path: string;
+  body?: Record<string, unknown>;
+  headers?: Record<string, string>;
+}
+
+export interface McpActionGatewayExecutor {
+  request(input: McpActionGatewayRequest): Promise<unknown>;
+}
+
+const MCP_ACTION_PROVENANCE = {
+  source: 'mcp',
+  package: 'commander.mcp',
+} as const;
+
+const MCP_GOVERNED_ACTIONS = {
+  'ticket.create': {
+    tool: 'ticket.create',
+    destination: 'demo://tickets',
+    effectType: 'demo.ticket.create',
+  },
+  'ticket.compensate': {
+    tool: 'ticket.compensate',
+    destination: 'demo://tickets',
+    effectType: 'compensate.demo.ticket.create',
+  },
+} as const;
 
 export interface McpActionGatewayRequest {
   method: 'GET' | 'POST';
@@ -293,38 +323,19 @@ function registerActionGatewayTools(
   const actionEnvelopeSchema: MCPTool['inputSchema'] = {
     type: 'object',
     properties: {
-      source: { type: 'string' },
-      package: { type: 'string' },
-      model: { type: 'string' },
-      tool: { type: 'string' },
-      destination: { type: 'string' },
-      effectType: { type: 'string' },
+      action: {
+        type: 'string',
+        enum: Object.keys(MCP_GOVERNED_ACTIONS),
+        description: 'Registered governed action to submit.',
+      },
       args: { type: 'object' },
-      idempotencyKey: { type: 'string' },
     },
-    required: [
-      'source',
-      'package',
-      'model',
-      'tool',
-      'destination',
-      'effectType',
-      'args',
-      'idempotencyKey',
-    ],
+    required: ['action', 'args'],
   };
   const runIdSchema: MCPTool['inputSchema'] = {
     type: 'object',
     properties: { runId: { type: 'string' } },
     required: ['runId'],
-  };
-  const idempotentRunIdSchema: MCPTool['inputSchema'] = {
-    type: 'object',
-    properties: {
-      runId: { type: 'string' },
-      idempotencyKey: { type: 'string' },
-    },
-    required: ['runId', 'idempotencyKey'],
   };
 
   registerGatewayTool(
@@ -350,50 +361,6 @@ function registerActionGatewayTools(
     'Get a governed action from the Commander Action Gateway.',
     runIdSchema,
     (args) => ({ method: 'GET', path: actionPath(args.runId) }),
-  );
-  registerGatewayTool(
-    server,
-    executor,
-    'commander_action_approve',
-    'Approve an action using its exact simulation binding.',
-    {
-      type: 'object',
-      properties: {
-        runId: { type: 'string' },
-        idempotencyKey: { type: 'string' },
-        actionDigest: { type: 'string' },
-        simulationId: { type: 'string' },
-        policySnapshotId: { type: 'string' },
-      },
-      required: [
-        'runId',
-        'idempotencyKey',
-        'actionDigest',
-        'simulationId',
-        'policySnapshotId',
-      ],
-    },
-    (args) => {
-      const { runId, actionDigest, simulationId, policySnapshotId } = args;
-      return {
-        method: 'POST',
-        path: `${actionPath(runId)}/approve`,
-        body: { actionDigest, simulationId, policySnapshotId },
-        headers: idempotencyHeaders(args.idempotencyKey),
-      };
-    },
-  );
-  registerGatewayTool(
-    server,
-    executor,
-    'commander_action_reconcile',
-    'Request reconciliation for a completion-unknown action.',
-    idempotentRunIdSchema,
-    (args) => ({
-      method: 'POST',
-      path: `${actionPath(args.runId)}/reconcile`,
-      headers: idempotencyHeaders(args.idempotencyKey),
-    }),
   );
   registerGatewayTool(
     server,
@@ -427,9 +394,35 @@ function registerGatewayTool(
 function actionRequest(
   method: 'POST',
   path: string,
-  body: Record<string, unknown>,
+  args: Record<string, unknown>,
 ): McpActionGatewayRequest {
+  const action =
+    MCP_GOVERNED_ACTIONS[
+      requiredString(args.action, 'action') as keyof typeof MCP_GOVERNED_ACTIONS
+    ];
+  if (!action) throw new Error('action must name a registered governed action');
+  const body: Record<string, unknown> = {
+    ...action,
+    args: requiredRecord(args.args, 'args'),
+    ...MCP_ACTION_PROVENANCE,
+    model: process.env.COMMANDER_MCP_MODEL ?? 'mcp-default',
+  };
+  body.idempotencyKey = deriveMcpIdempotencyKey(body);
   return { method, path, body, headers: idempotencyHeaders(body.idempotencyKey) };
+}
+
+function deriveMcpIdempotencyKey(action: Record<string, unknown>): string {
+  return `mcp-${createHash('sha256').update(canonicalJson(action)).digest('hex').slice(0, 32)}`;
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+    .join(',')}}`;
 }
 
 function idempotencyHeaders(idempotencyKey: unknown): Record<string, string> {
@@ -445,6 +438,13 @@ function requiredString(value: unknown, name: string): string {
     throw new Error(`${name} must be a non-empty string`);
   }
   return value;
+}
+
+function requiredRecord(value: unknown, name: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${name} must be an object`);
+  }
+  return value as Record<string, unknown>;
 }
 
 export function isEnterpriseOrProductionMcpMode(env: NodeJS.ProcessEnv = process.env): boolean {

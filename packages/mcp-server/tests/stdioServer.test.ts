@@ -22,11 +22,9 @@ beforeEach(() => {
 
 describe('createStdioMcpServer', () => {
   const canonicalActionTools = [
-    'commander_action_approve',
     'commander_action_evidence',
     'commander_action_get',
     'commander_action_propose',
-    'commander_action_reconcile',
     'commander_action_simulate',
   ];
 
@@ -42,7 +40,7 @@ describe('createStdioMcpServer', () => {
     expect(status.enterpriseWrites).toBe(true);
   });
 
-  it('maps every canonical action tool to the Action Gateway', async () => {
+  it('maps the agent-facing action tools to the Action Gateway', async () => {
     const calls: Parameters<McpActionGatewayExecutor['request']>[0][] = [];
     const executor: McpActionGatewayExecutor = {
       request: async (request) => {
@@ -51,29 +49,10 @@ describe('createStdioMcpServer', () => {
       },
     };
     const { server } = createStdioMcpServer({ actionGatewayExecutor: executor });
-    const envelope = {
-      source: 'mcp',
-      package: 'commander.mcp',
-      model: 'mcp-default',
-      tool: 'ticket.create',
-      destination: 'demo://tickets',
-      effectType: 'demo.ticket.create',
-      args: { title: 'hello' },
-      idempotencyKey: 'mcp-action-0001',
-    };
-    const approval = {
-      runId: 'run/42',
-      idempotencyKey: 'mcp-approve-0001',
-      actionDigest: 'a'.repeat(64),
-      simulationId: 'simulation-42',
-      policySnapshotId: 'policy-42',
-    };
     const cases = [
-      ['commander_action_simulate', envelope],
-      ['commander_action_propose', envelope],
+      ['commander_action_simulate', { action: 'ticket.create', args: { title: 'hello' } }],
+      ['commander_action_propose', { action: 'ticket.create', args: { title: 'hello' } }],
       ['commander_action_get', { runId: 'run/42' }],
-      ['commander_action_approve', approval],
-      ['commander_action_reconcile', { runId: 'run/42', idempotencyKey: 'mcp-reconcile-0001' }],
       ['commander_action_evidence', { runId: 'run/42' }],
     ] as const;
 
@@ -87,35 +66,24 @@ describe('createStdioMcpServer', () => {
       expect(response.error).toBeUndefined();
     }
 
-    expect(calls).toEqual([
-      {
-        method: 'POST',
-        path: '/v1/actions/simulate',
-        body: envelope,
-        headers: { 'Idempotency-Key': 'mcp-action-0001' },
+    expect(calls).toHaveLength(4);
+    expect(calls[0]).toMatchObject({
+      method: 'POST',
+      path: '/v1/actions/simulate',
+      body: {
+        source: 'mcp',
+        package: 'commander.mcp',
+        model: 'mcp-default',
+        tool: 'ticket.create',
+        destination: 'demo://tickets',
+        effectType: 'demo.ticket.create',
+        args: { title: 'hello' },
       },
-      {
-        method: 'POST',
-        path: '/v1/actions',
-        body: envelope,
-        headers: { 'Idempotency-Key': 'mcp-action-0001' },
-      },
+    });
+    expect(calls[0].headers?.['Idempotency-Key']).toMatch(/^mcp-/);
+    expect(calls[1].headers?.['Idempotency-Key']).toBe(calls[0].headers?.['Idempotency-Key']);
+    expect(calls.slice(2)).toEqual([
       { method: 'GET', path: '/v1/actions/run%2F42' },
-      {
-        method: 'POST',
-        path: '/v1/actions/run%2F42/approve',
-        body: {
-          actionDigest: 'a'.repeat(64),
-          simulationId: 'simulation-42',
-          policySnapshotId: 'policy-42',
-        },
-        headers: { 'Idempotency-Key': 'mcp-approve-0001' },
-      },
-      {
-        method: 'POST',
-        path: '/v1/actions/run%2F42/reconcile',
-        headers: { 'Idempotency-Key': 'mcp-reconcile-0001' },
-      },
       { method: 'GET', path: '/v1/actions/run%2F42/evidence' },
     ]);
   });
@@ -266,6 +234,7 @@ describe('createStdioMcpServer', () => {
 
   it('keeps list_models local when an action gateway executor is configured', async () => {
     const { server } = createStdioMcpServer({
+      localRuntime: true,
       modelRouterOnly: true,
       localRuntime: true,
       actionGatewayExecutor: {

@@ -26,6 +26,7 @@ import { createV1GatewayRouter } from '../src/v1GatewayEndpoints.js';
 
 class InMemoryGateway implements V1KernelGateway {
   readonly repository = new InMemoryKernelRepository();
+  readonly evidence = new Map<string, GatewayEvidenceRecord>();
   private readonly submissions = new Map<string, string>();
   readonly evidence = new Map<string, GatewayEvidenceRecord>();
   killSwitchLookupError: Error | null = null;
@@ -168,8 +169,8 @@ class InMemoryGateway implements V1KernelGateway {
 
 const baseAction = {
   source: 'test-agent',
-  package: 'test-package',
-  model: 'test-model',
+  package: 'caller-supplied-package',
+  model: 'caller-supplied-model',
   tool: 'ticket.create',
   destination: 'demo://tickets',
   effectType: 'demo.ticket.create',
@@ -286,8 +287,8 @@ async function putKillSwitch(
 describe('L4-04 kill switch matrix', () => {
   const scopes: Array<{ scope: KillSwitchScope; value: string }> = [
     { scope: 'tenant', value: 'tenant-a' },
-    { scope: 'package', value: 'test-package' },
-    { scope: 'model', value: 'test-model' },
+    { scope: 'package', value: 'commander.action-gateway' },
+    { scope: 'model', value: 'gateway-default' },
     { scope: 'tool', value: 'ticket.create' },
     { scope: 'destination', value: 'demo://tickets' },
     { scope: 'effect-type', value: 'demo.ticket.create' },
@@ -313,6 +314,27 @@ describe('L4-04 kill switch matrix', () => {
       });
     });
   }
+
+  it('derives package and model before kill-switch matching', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const enabled = await putKillSwitch(baseUrl, 'package', 'commander.action-gateway', {
+        enabled: true,
+        reason: 'block gateway actions',
+      });
+      assert.equal(enabled.status, 200);
+      const response = await postJson(baseUrl, '/v1/actions/simulate', {
+        ...baseAction,
+        package: 'attacker.package',
+        model: 'attacker-model',
+        idempotencyKey: 'action-provenance-kill-switch',
+      });
+      assert.equal(response.status, 403);
+      const payload = (await response.json()) as any;
+      assert.equal(payload.error.code, 'KILL_SWITCH_ACTIVE');
+      assert.equal(payload.error.details.value, 'commander.action-gateway');
+    });
+  });
 
   it('lists, updates, and deletes kill switches for the authenticated tenant', async () => {
     const gateway = new InMemoryGateway();
@@ -356,7 +378,7 @@ describe('L4-04 kill switch matrix', () => {
     await withGateway(gateway, async (baseUrl) => {
       const proposed = await postJson(baseUrl, '/v1/actions', {
         ...baseAction,
-        destination: 'demo://tickets/approval',
+        destination: 'demo://tickets',
         idempotencyKey: 'action-kill-after-approval',
       });
       assert.equal(proposed.status, 202);
@@ -775,7 +797,7 @@ describe('L4-01 governed action HTTP API', () => {
     await withGateway(gateway, async (baseUrl) => {
       const first = await postJson(baseUrl, '/v1/actions', {
         ...baseAction,
-        destination: 'demo://tickets/approval',
+        destination: 'demo://tickets',
         idempotencyKey: 'action-auth-approve',
       });
       const firstAction = ((await first.json()) as any).action;
@@ -812,7 +834,7 @@ describe('L4-01 governed action HTTP API', () => {
 
       const second = await postJson(baseUrl, '/v1/actions', {
         ...baseAction,
-        destination: 'demo://tickets/approval',
+        destination: 'demo://tickets',
         idempotencyKey: 'action-auth-reject',
       });
       const secondRunId = ((await second.json()) as any).action.runId;
@@ -827,7 +849,7 @@ describe('L4-01 governed action HTTP API', () => {
     });
   });
 
-  it('simulates and durably proposes one allowed action as one tool step', async () => {
+  it('simulates and durably proposes one approval-required action as one tool step', async () => {
     const gateway = new InMemoryGateway();
     await withGateway(gateway, async (baseUrl) => {
       const simulated = await postJson(baseUrl, '/v1/actions/simulate', baseAction);
@@ -841,7 +863,7 @@ describe('L4-01 governed action HTTP API', () => {
         'reason',
         'simulationId',
       ]);
-      assert.equal(simulation.effect, 'allow');
+      assert.equal(simulation.effect, 'require_approval');
       const simulationRun = await gateway.repository.getRun(simulation.simulationId, 'tenant-a');
       assert.ok(simulationRun);
       assert.equal(simulationRun.state, 'CANCELLED');
@@ -867,8 +889,8 @@ describe('L4-01 governed action HTTP API', () => {
       const proposed = await postJson(baseUrl, '/v1/actions', baseAction);
       assert.equal(proposed.status, 202);
       const payload = (await proposed.json()) as any;
-      assert.equal(payload.action.decision.effect, 'allow');
-      assert.equal(payload.action.state, 'ADMITTED');
+      assert.equal(payload.action.decision.effect, 'require_approval');
+      assert.equal(payload.action.state, 'AWAITING_APPROVAL');
       assert.deepEqual(Object.keys(payload.action.decision).sort(), [
         'decisionId',
         'effect',
@@ -880,6 +902,18 @@ describe('L4-01 governed action HTTP API', () => {
       assert.ok(run);
       const actionMetadata = run.metadata.actionGateway as any;
       assert.equal(actionMetadata.authority, 'commander.action-gateway/v1');
+      assert.deepEqual(
+        {
+          source: actionMetadata.envelope.source,
+          package: actionMetadata.envelope.package,
+          model: actionMetadata.envelope.model,
+        },
+        {
+          source: 'action-gateway',
+          package: 'commander.action-gateway',
+          model: 'gateway-default',
+        },
+      );
       assert.deepEqual(actionMetadata.simulation, simulation);
       const step = await gateway.repository.getStep(actionMetadata.stepId, 'tenant-a');
       assert.equal(step?.kind, 'tool');
@@ -954,7 +988,7 @@ describe('L4-01 governed action HTTP API', () => {
     await withGateway(gateway, async (baseUrl) => {
       const proposed = await postJson(baseUrl, '/v1/actions', {
         ...baseAction,
-        destination: 'demo://tickets/approval',
+        destination: 'demo://tickets',
         idempotencyKey: 'action-key-approval',
       });
       assert.equal(proposed.status, 202);
@@ -1001,7 +1035,7 @@ describe('L4-01 governed action HTTP API', () => {
     await withGateway(gateway, async (baseUrl) => {
       const actionInput = {
         ...baseAction,
-        destination: 'demo://tickets/approval',
+        destination: 'demo://tickets',
         idempotencyKey: 'action-approval-digest-mismatch',
       };
       const simulated = await postJson(baseUrl, '/v1/actions/simulate', actionInput);
@@ -1028,7 +1062,7 @@ describe('L4-01 governed action HTTP API', () => {
       const proposeApproval = async (idempotencyKey: string) => {
         const response = await postJson(baseUrl, '/v1/actions', {
           ...baseAction,
-          destination: 'demo://tickets/approval',
+          destination: 'demo://tickets',
           idempotencyKey,
         });
         const action = ((await response.json()) as any).action;
@@ -1131,7 +1165,7 @@ describe('L4-01 governed action HTTP API', () => {
     await withGateway(gateway, async (baseUrl) => {
       const proposed = await postJson(baseUrl, '/v1/actions', {
         ...baseAction,
-        destination: 'demo://tickets/approval',
+        destination: 'demo://tickets',
         idempotencyKey: 'action-key-reject',
       });
       const payload = (await proposed.json()) as any;
@@ -1154,7 +1188,7 @@ describe('L4-01 governed action HTTP API', () => {
     await withGateway(gateway, async (baseUrl) => {
       const proposed = await postJson(baseUrl, '/v1/actions', {
         ...baseAction,
-        destination: 'demo://tickets/approval',
+        destination: 'demo://tickets',
         idempotencyKey: 'action-key-tenant',
       });
       const payload = (await proposed.json()) as any;
@@ -1204,7 +1238,7 @@ describe('L4-01 governed action HTTP API', () => {
       withGateway(gateway, async (baseUrl) => {
         const proposed = await postJson(baseUrl, '/v1/actions', {
           ...baseAction,
-          destination: 'demo://tickets/approval',
+          destination: 'demo://tickets',
           idempotencyKey: 'action-key-evidence',
           args: {
             title: 'SENSITIVE_TOOL_ARGUMENT',
@@ -1343,7 +1377,7 @@ describe('L4-01 governed action HTTP API', () => {
     await withGateway(gateway, async (baseUrl) => {
       const proposed = await postJson(baseUrl, '/v1/actions', {
         ...baseAction,
-        destination: 'demo://tickets/approval',
+        destination: 'demo://tickets',
         idempotencyKey: 'action-key-reject-evidence',
       });
       const payload = (await proposed.json()) as any;
