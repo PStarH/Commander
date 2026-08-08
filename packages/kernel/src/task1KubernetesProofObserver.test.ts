@@ -187,7 +187,9 @@ function resources(): Record<string, any> {
               name: 'api',
               ready: true,
               restartCount: 0,
-              image: apiContainer.image,
+              // Kubernetes may report the locally resolved tag here even when
+              // the Pod template was submitted with a digest reference.
+              image: 'docker.io/library/commander:kind',
               imageID: `containerd://sha256:${digest('b')}`,
             },
           ],
@@ -333,7 +335,7 @@ function resources(): Record<string, any> {
                 name: 'tenant-cutover-prove',
                 ready: true,
                 restartCount: 0,
-                image: `registry.example/commander@sha256:${digest('b')}`,
+                image: 'docker.io/library/commander:kind',
                 imageID: `containerd://sha256:${digest('b')}`,
               },
             ],
