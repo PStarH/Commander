@@ -414,7 +414,7 @@ describe('Helm lifecycle static contract', () => {
     assert.match(rendered, /name: lifecycle-demo-api-proof/);
     assert.match(
       api,
-      /startupProbe:[\s\S]*path: \/health[\s\S]*port: http[\s\S]*failureThreshold: 30[\s\S]*periodSeconds: 2/,
+      /startupProbe:[\s\S]*path: \/health[\s\S]*port: http[\s\S]*failureThreshold: 90[\s\S]*periodSeconds: 2/,
     );
     assert.match(
       api,
