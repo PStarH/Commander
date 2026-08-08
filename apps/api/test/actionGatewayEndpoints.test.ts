@@ -235,18 +235,23 @@ async function withGateway(
     const principal = req.header('x-test-principal') ?? 'api-approver';
     if (principal === 'api-approver') {
       req.apiKeyId = 'test-key';
+      req.principalRef = 'test-key';
       req.apiScopes = ['actions:approve'];
     } else if (principal === 'api-approver-2') {
       req.apiKeyId = 'test-key-2';
+      req.principalRef = 'test-key-2';
       req.apiScopes = ['actions:approve'];
     } else if (principal === 'api-reconcile') {
       req.apiKeyId = 'reconcile-key';
+      req.principalRef = 'reconcile-key';
       req.apiScopes = ['actions:reconcile'];
     } else if (principal === 'api-read') {
       req.apiKeyId = 'read-key';
+      req.principalRef = 'read-key';
       req.apiScopes = ['read'];
     } else if (principal === 'api-admin') {
       req.apiKeyId = 'admin-key';
+      req.principalRef = 'admin-key';
       req.apiScopes = ['admin'];
     } else if (principal === 'user-admin' || principal === 'user-operator') {
       req.user = {
