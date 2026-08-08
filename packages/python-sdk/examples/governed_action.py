@@ -21,7 +21,7 @@ async def main() -> None:
         package="demo.package",
         model="demo-model",
         tool="ticket.create",
-        destination="demo://tickets/approval",
+        destination="demo://tickets",
         effect_type="demo.ticket.create",
         args={"title": "Reset password"},
         idempotency_key=f"python-example-{int(time.time())}",

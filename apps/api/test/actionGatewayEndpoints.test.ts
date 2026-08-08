@@ -1,17 +1,23 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import { createServer } from 'node:http';
 import { describe, it } from 'node:test';
 import express from 'express';
-import { verifyEvidenceBundle } from '@commander/effect-broker';
+import {
+  buildRunEvidenceBundle,
+  canonicalEvidenceBody,
+  createEvidenceSigner,
+  verifyEvidenceBundle,
+} from '@commander/effect-broker';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
 import type { KillSwitchScope } from '@commander/kernel';
-import type { V1KernelGateway } from '../src/v1GatewayKernel.js';
+import type { GatewayEvidenceRecord, V1KernelGateway } from '../src/v1GatewayKernel.js';
 import { GatewayIdempotencyConflictError } from '../src/v1GatewayKernel.js';
 import { createV1GatewayRouter } from '../src/v1GatewayEndpoints.js';
 
 class InMemoryGateway implements V1KernelGateway {
   readonly repository = new InMemoryKernelRepository();
+  readonly evidence = new Map<string, GatewayEvidenceRecord>();
   private readonly submissions = new Map<string, string>();
   killSwitchLookupError: Error | null = null;
 
@@ -68,6 +74,9 @@ class InMemoryGateway implements V1KernelGateway {
   getEffect(effectId: string, tenantId: string) {
     return this.repository.getEffect(effectId, tenantId);
   }
+  getEvidence(runId: string, tenantId: string) {
+    return Promise.resolve(this.evidence.get(`${tenantId}\u0000${runId}`) ?? null);
+  }
   pauseRun(runId: string, tenantId: string, actor: string) {
     return this.repository.pauseRun(runId, tenantId, actor);
   }
@@ -97,8 +106,8 @@ class InMemoryGateway implements V1KernelGateway {
 
 const baseAction = {
   source: 'test-agent',
-  package: 'test-package',
-  model: 'test-model',
+  package: 'caller-supplied-package',
+  model: 'caller-supplied-model',
   tool: 'ticket.create',
   destination: 'demo://tickets',
   effectType: 'demo.ticket.create',
@@ -153,6 +162,17 @@ async function withGateway(
   }
 }
 
+async function withEvidenceJwks(jwks: unknown, action: () => Promise<void>): Promise<void> {
+  const previous = process.env.COMMANDER_EVIDENCE_JWKS_JSON;
+  process.env.COMMANDER_EVIDENCE_JWKS_JSON = JSON.stringify(jwks);
+  try {
+    await action();
+  } finally {
+    if (previous === undefined) delete process.env.COMMANDER_EVIDENCE_JWKS_JSON;
+    else process.env.COMMANDER_EVIDENCE_JWKS_JSON = previous;
+  }
+}
+
 async function postJson(
   baseUrl: string,
   path: string,
@@ -201,8 +221,8 @@ async function putKillSwitch(
 describe('L4-04 kill switch matrix', () => {
   const scopes: Array<{ scope: KillSwitchScope; value: string }> = [
     { scope: 'tenant', value: 'tenant-a' },
-    { scope: 'package', value: 'test-package' },
-    { scope: 'model', value: 'test-model' },
+    { scope: 'package', value: 'commander.action-gateway' },
+    { scope: 'model', value: 'gateway-default' },
     { scope: 'tool', value: 'ticket.create' },
     { scope: 'destination', value: 'demo://tickets' },
     { scope: 'effect-type', value: 'demo.ticket.create' },
@@ -228,6 +248,27 @@ describe('L4-04 kill switch matrix', () => {
       });
     });
   }
+
+  it('derives package and model before kill-switch matching', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const enabled = await putKillSwitch(baseUrl, 'package', 'commander.action-gateway', {
+        enabled: true,
+        reason: 'block gateway actions',
+      });
+      assert.equal(enabled.status, 200);
+      const response = await postJson(baseUrl, '/v1/actions/simulate', {
+        ...baseAction,
+        package: 'attacker.package',
+        model: 'attacker-model',
+        idempotencyKey: 'action-provenance-kill-switch',
+      });
+      assert.equal(response.status, 403);
+      const payload = (await response.json()) as any;
+      assert.equal(payload.error.code, 'KILL_SWITCH_ACTIVE');
+      assert.equal(payload.error.details.value, 'commander.action-gateway');
+    });
+  });
 
   it('lists, updates, and deletes kill switches for the authenticated tenant', async () => {
     const gateway = new InMemoryGateway();
@@ -271,7 +312,7 @@ describe('L4-04 kill switch matrix', () => {
     await withGateway(gateway, async (baseUrl) => {
       const proposed = await postJson(baseUrl, '/v1/actions', {
         ...baseAction,
-        destination: 'demo://tickets/approval',
+        destination: 'demo://tickets',
         idempotencyKey: 'action-kill-after-approval',
       });
       assert.equal(proposed.status, 202);
@@ -314,6 +355,23 @@ describe('L4-04 kill switch matrix', () => {
 });
 
 describe('L4-01 governed action HTTP API', () => {
+  it('requires approval for ticket creation at its only registered destination', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const approvalRequired = await postJson(baseUrl, '/v1/actions/simulate', baseAction);
+      assert.equal(approvalRequired.status, 200);
+      assert.equal(((await approvalRequired.json()) as any).simulation.effect, 'require_approval');
+
+      const deprecatedAlias = await postJson(baseUrl, '/v1/actions/simulate', {
+        ...baseAction,
+        destination: 'demo://tickets/approval',
+        idempotencyKey: 'action-deprecated-approval-destination',
+      });
+      assert.equal(deprecatedAlias.status, 200);
+      assert.equal(((await deprecatedAlias.json()) as any).simulation.effect, 'deny');
+    });
+  });
+
   it('requires an authenticated principal on every action endpoint', async () => {
     const gateway = new InMemoryGateway();
     await withGateway(gateway, async (baseUrl) => {
@@ -364,7 +422,7 @@ describe('L4-01 governed action HTTP API', () => {
     await withGateway(gateway, async (baseUrl) => {
       const first = await postJson(baseUrl, '/v1/actions', {
         ...baseAction,
-        destination: 'demo://tickets/approval',
+        destination: 'demo://tickets',
         idempotencyKey: 'action-auth-approve',
       });
       const firstAction = ((await first.json()) as any).action;
@@ -401,7 +459,7 @@ describe('L4-01 governed action HTTP API', () => {
 
       const second = await postJson(baseUrl, '/v1/actions', {
         ...baseAction,
-        destination: 'demo://tickets/approval',
+        destination: 'demo://tickets',
         idempotencyKey: 'action-auth-reject',
       });
       const secondRunId = ((await second.json()) as any).action.runId;
@@ -416,7 +474,7 @@ describe('L4-01 governed action HTTP API', () => {
     });
   });
 
-  it('simulates and durably proposes one allowed action as one tool step', async () => {
+  it('simulates and durably proposes one approval-required action as one tool step', async () => {
     const gateway = new InMemoryGateway();
     await withGateway(gateway, async (baseUrl) => {
       const simulated = await postJson(baseUrl, '/v1/actions/simulate', baseAction);
@@ -430,7 +488,7 @@ describe('L4-01 governed action HTTP API', () => {
         'reason',
         'simulationId',
       ]);
-      assert.equal(simulation.effect, 'allow');
+      assert.equal(simulation.effect, 'require_approval');
       const simulationRun = await gateway.repository.getRun(simulation.simulationId, 'tenant-a');
       assert.ok(simulationRun);
       assert.equal(simulationRun.state, 'CANCELLED');
@@ -456,7 +514,7 @@ describe('L4-01 governed action HTTP API', () => {
       const proposed = await postJson(baseUrl, '/v1/actions', baseAction);
       assert.equal(proposed.status, 202);
       const payload = (await proposed.json()) as any;
-      assert.equal(payload.action.decision.effect, 'allow');
+      assert.equal(payload.action.decision.effect, 'require_approval');
       assert.deepEqual(Object.keys(payload.action.decision).sort(), [
         'decisionId',
         'effect',
@@ -468,6 +526,18 @@ describe('L4-01 governed action HTTP API', () => {
       assert.ok(run);
       const actionMetadata = run.metadata.actionGateway as any;
       assert.equal(actionMetadata.authority, 'commander.action-gateway/v1');
+      assert.deepEqual(
+        {
+          source: actionMetadata.envelope.source,
+          package: actionMetadata.envelope.package,
+          model: actionMetadata.envelope.model,
+        },
+        {
+          source: 'action-gateway',
+          package: 'commander.action-gateway',
+          model: 'gateway-default',
+        },
+      );
       assert.deepEqual(actionMetadata.simulation, simulation);
       const step = await gateway.repository.getStep(actionMetadata.stepId, 'tenant-a');
       assert.equal(step?.kind, 'tool');
@@ -520,7 +590,7 @@ describe('L4-01 governed action HTTP API', () => {
     await withGateway(gateway, async (baseUrl) => {
       const proposed = await postJson(baseUrl, '/v1/actions', {
         ...baseAction,
-        destination: 'demo://tickets/approval',
+        destination: 'demo://tickets',
         idempotencyKey: 'action-key-approval',
       });
       assert.equal(proposed.status, 202);
@@ -567,7 +637,7 @@ describe('L4-01 governed action HTTP API', () => {
     await withGateway(gateway, async (baseUrl) => {
       const actionInput = {
         ...baseAction,
-        destination: 'demo://tickets/approval',
+        destination: 'demo://tickets',
         idempotencyKey: 'action-approval-digest-mismatch',
       };
       const simulated = await postJson(baseUrl, '/v1/actions/simulate', actionInput);
@@ -594,7 +664,7 @@ describe('L4-01 governed action HTTP API', () => {
       const proposeApproval = async (idempotencyKey: string) => {
         const response = await postJson(baseUrl, '/v1/actions', {
           ...baseAction,
-          destination: 'demo://tickets/approval',
+          destination: 'demo://tickets',
           idempotencyKey,
         });
         const action = ((await response.json()) as any).action;
@@ -688,7 +758,7 @@ describe('L4-01 governed action HTTP API', () => {
     await withGateway(gateway, async (baseUrl) => {
       const proposed = await postJson(baseUrl, '/v1/actions', {
         ...baseAction,
-        destination: 'demo://tickets/approval',
+        destination: 'demo://tickets',
         idempotencyKey: 'action-key-reject',
       });
       const payload = (await proposed.json()) as any;
@@ -711,7 +781,7 @@ describe('L4-01 governed action HTTP API', () => {
     await withGateway(gateway, async (baseUrl) => {
       const proposed = await postJson(baseUrl, '/v1/actions', {
         ...baseAction,
-        destination: 'demo://tickets/approval',
+        destination: 'demo://tickets',
         idempotencyKey: 'action-key-tenant',
       });
       const payload = (await proposed.json()) as any;
@@ -752,99 +822,148 @@ describe('L4-01 governed action HTTP API', () => {
 
   it('exports verifiable L3-11 evidence without raw prompts, tool args, or secrets', async () => {
     const gateway = new InMemoryGateway();
-    await withGateway(gateway, async (baseUrl) => {
-      const proposed = await postJson(baseUrl, '/v1/actions', {
-        ...baseAction,
-        destination: 'demo://tickets/approval',
-        idempotencyKey: 'action-key-evidence',
-        args: {
-          title: 'SENSITIVE_TOOL_ARGUMENT',
-          Authorization: 'Bearer SENSITIVE_AUTH_TOKEN',
-        },
-      });
-      const payload = (await proposed.json()) as any;
-      const approved = await postJson(
-        baseUrl,
-        `/v1/actions/${payload.action.runId}/approve`,
-        approvalBinding(payload.action),
-      );
-      assert.equal(approved.status, 200);
-      const claimed = await gateway.repository.claimNextStep({
-        workerId: 'evidence-worker',
-        workerGeneration: 1,
-        tenantId: 'tenant-a',
-        capabilities: ['tool'],
-        leaseTtlMs: 30_000,
-      });
-      assert.ok(claimed?.lease);
-      const run = await gateway.repository.getRun(payload.action.runId, 'tenant-a');
-      const metadata = run!.metadata.actionGateway as any;
-      const admission = await gateway.repository.admitEffect({
-        id: metadata.effectId,
-        runId: run!.id,
-        stepId: claimed.id,
-        tenantId: 'tenant-a',
-        type: 'demo.ticket.create',
-        idempotencyKey: 'action-key-evidence',
-        policyDecisionId: 'action-gateway-allow-after-approval',
-        policySnapshotId: metadata.policySnapshotId,
-        actionDigest: metadata.actionDigest,
-        request: metadata.envelope,
-        lease: claimed.lease,
-        actor: 'evidence-worker',
-      });
-      assert.equal(admission.admitted, true);
-      await gateway.repository.completeEffect(
-        metadata.effectId,
-        'tenant-a',
-        claimed.lease,
-        {
-          status: 'ok',
-          body: 'SENSITIVE_EFFECT_RESPONSE',
-          access_token: 'SENSITIVE_RESPONSE_TOKEN',
-        },
-        'evidence-worker',
-      );
-      await gateway.repository.completeStep({
-        stepId: claimed.id,
-        tenantId: 'tenant-a',
-        lease: claimed.lease,
-        expectedVersion: claimed.version,
-        output: { status: 'ok' },
-        actor: 'evidence-worker',
-      });
-      const evidence = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}/evidence`, {
-        headers: { 'x-test-tenant': 'tenant-a' },
-      });
-      assert.equal(evidence.status, 200);
-      const evidenceText = await evidence.text();
-      const evidencePayload = JSON.parse(evidenceText) as any;
-      assert.equal(evidencePayload.bundle.schemaVersion, 'l3-11.v0');
-      assert.equal(evidencePayload.bundle.scope.runId, payload.action.runId);
-      assert.equal(evidencePayload.verification.ok, true);
-      assert.equal(verifyEvidenceBundle(evidencePayload.bundle).ok, true);
-      assert.equal(evidenceText.includes('SENSITIVE_TOOL_ARGUMENT'), false);
-      assert.equal(evidenceText.includes('SENSITIVE_AUTH_TOKEN'), false);
-      assert.equal(evidenceText.includes('SENSITIVE_EFFECT_RESPONSE'), false);
-      assert.equal(evidenceText.includes('SENSITIVE_RESPONSE_TOKEN'), false);
-      assert.equal(evidenceText.includes('Approve demo.ticket.create'), false);
-      assert.equal(evidencePayload.bundle.effects[0].responseSummary.status, 'ok');
-
-      const reconcile = await postJson(
-        baseUrl,
-        `/v1/actions/${payload.action.runId}/reconcile`,
-        {},
-      );
-      assert.equal(reconcile.status, 409);
+    const { privateKey } = generateKeyPairSync('ed25519');
+    const signer = createEvidenceSigner({
+      privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      keyId: 'cell-test-1',
     });
+    await withEvidenceJwks(signer.jwks, () =>
+      withGateway(gateway, async (baseUrl) => {
+        const proposed = await postJson(baseUrl, '/v1/actions', {
+          ...baseAction,
+          destination: 'demo://tickets',
+          idempotencyKey: 'action-key-evidence',
+          args: {
+            title: 'SENSITIVE_TOOL_ARGUMENT',
+            Authorization: 'Bearer SENSITIVE_AUTH_TOKEN',
+          },
+        });
+        const payload = (await proposed.json()) as any;
+        const approved = await postJson(
+          baseUrl,
+          `/v1/actions/${payload.action.runId}/approve`,
+          approvalBinding(payload.action),
+        );
+        assert.equal(approved.status, 200);
+        const claimed = await gateway.repository.claimNextStep({
+          workerId: 'evidence-worker',
+          workerGeneration: 1,
+          tenantId: 'tenant-a',
+          capabilities: ['tool'],
+          leaseTtlMs: 30_000,
+        });
+        assert.ok(claimed?.lease);
+        const run = await gateway.repository.getRun(payload.action.runId, 'tenant-a');
+        const metadata = run!.metadata.actionGateway as any;
+        const admission = await gateway.repository.admitEffect({
+          id: metadata.effectId,
+          runId: run!.id,
+          stepId: claimed.id,
+          tenantId: 'tenant-a',
+          type: 'demo.ticket.create',
+          idempotencyKey: 'action-key-evidence',
+          policyDecisionId: 'action-gateway-allow-after-approval',
+          policySnapshotId: metadata.policySnapshotId,
+          actionDigest: metadata.actionDigest,
+          request: metadata.envelope,
+          lease: claimed.lease,
+          actor: 'evidence-worker',
+        });
+        assert.equal(admission.admitted, true);
+        await gateway.repository.completeEffect(
+          metadata.effectId,
+          'tenant-a',
+          claimed.lease,
+          {
+            status: 'ok',
+            body: 'SENSITIVE_EFFECT_RESPONSE',
+            access_token: 'SENSITIVE_RESPONSE_TOKEN',
+          },
+          'evidence-worker',
+        );
+        await gateway.repository.completeStep({
+          stepId: claimed.id,
+          tenantId: 'tenant-a',
+          lease: claimed.lease,
+          expectedVersion: claimed.version,
+          output: { status: 'ok' },
+          actor: 'evidence-worker',
+        });
+        const body = buildRunEvidenceBundle({
+          tenantId: 'tenant-a',
+          runId: run!.id,
+          actionDigest: metadata.actionDigest,
+          intentHash: run!.intentHash,
+          workGraphHash: run!.workGraphHash,
+          workGraphVersion: run!.workGraphVersion,
+          policySnapshotId: run!.policySnapshotId,
+          kernelApiVersion: 'v1',
+          effects: await gateway.repository.listEffectsForRun(run!.id, 'tenant-a'),
+          exportedAt: '2026-07-17T06:00:02.000Z',
+          bundleId: 'bundle-persisted-evidence',
+        });
+        const signature = await signer.sign(canonicalEvidenceBody(body));
+        gateway.evidence.set(`tenant-a\u0000${run!.id}`, {
+          tenantId: 'tenant-a',
+          runId: run!.id,
+          bundleId: body.bundleId,
+          actionDigest: body.actionDigest,
+          body,
+          contentHash: body.contentHash,
+          signature,
+          createdAt: body.exportedAt,
+          anchoredAt: '2026-07-17T06:00:04.000Z',
+          retentionUntil: '2027-07-17T06:00:04.000Z',
+        });
+        const evidence = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}/evidence`, {
+          headers: { 'x-test-tenant': 'tenant-a' },
+        });
+        assert.equal(evidence.status, 200);
+        const evidenceText = await evidence.text();
+        const evidencePayload = JSON.parse(evidenceText) as any;
+        assert.equal(evidencePayload.receipt.schemaVersion, 'l3-11.v0');
+        assert.equal(evidencePayload.receipt.scope.runId, payload.action.runId);
+        assert.equal(evidencePayload.receipt.signature.keyId, 'cell-test-1');
+        assert.equal(evidencePayload.verification.ok, true);
+        assert.equal(verifyEvidenceBundle(evidencePayload.receipt).ok, true);
+        assert.equal(evidenceText.includes('SENSITIVE_TOOL_ARGUMENT'), false);
+        assert.equal(evidenceText.includes('SENSITIVE_AUTH_TOKEN'), false);
+        assert.equal(evidenceText.includes('SENSITIVE_EFFECT_RESPONSE'), false);
+        assert.equal(evidenceText.includes('SENSITIVE_RESPONSE_TOKEN'), false);
+        assert.equal(evidenceText.includes('Approve demo.ticket.create'), false);
+        assert.equal(evidencePayload.receipt.effects[0].responseSummary.status, 'ok');
+
+        gateway.evidence.set(`tenant-a\u0000${run!.id}`, {
+          ...gateway.evidence.get(`tenant-a\u0000${run!.id}`)!,
+          signature: { ...signature, value: 'forged-signature' },
+        });
+        const forged = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}/evidence`, {
+          headers: { 'x-test-tenant': 'tenant-a' },
+        });
+        assert.equal(forged.status, 503);
+        assert.equal(
+          ((await forged.json()) as { error: { code: string } }).error.code,
+          'EVIDENCE_INVALID',
+        );
+
+        const reconcile = await postJson(
+          baseUrl,
+          `/v1/actions/${payload.action.runId}/reconcile`,
+          {},
+          'tenant-a',
+          'api-admin',
+        );
+        assert.equal(reconcile.status, 409);
+      }),
+    );
   });
 
-  it('drops free-text interaction fields from exported evidence audit details', async () => {
+  it('does not reconstruct evidence from transient interaction events', async () => {
     const gateway = new InMemoryGateway();
     await withGateway(gateway, async (baseUrl) => {
       const proposed = await postJson(baseUrl, '/v1/actions', {
         ...baseAction,
-        destination: 'demo://tickets/approval',
+        destination: 'demo://tickets',
         idempotencyKey: 'action-key-reject-evidence',
       });
       const payload = (await proposed.json()) as any;
@@ -856,31 +975,103 @@ describe('L4-01 governed action HTTP API', () => {
       const evidence = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}/evidence`, {
         headers: { 'x-test-tenant': 'tenant-a' },
       });
-      assert.equal(evidence.status, 200);
+      assert.equal(evidence.status, 503);
       const evidenceText = await evidence.text();
       const evidencePayload = JSON.parse(evidenceText) as any;
       assert.equal(evidenceText.includes('USER_CONTROLLED_REJECT_SECRET'), false);
-      assert.equal(evidenceText.includes('USER_CONTROLLED_REVIEWER_SECRET'), false);
-      assert.equal(evidenceText.includes('Approve demo.ticket.create'), false);
-      assert.equal(evidencePayload.verification.ok, true);
-      assert.equal(verifyEvidenceBundle(evidencePayload.bundle).ok, true);
+      assert.equal(evidencePayload.error.code, 'EVIDENCE_NOT_READY');
+    });
+  });
 
-      const created = evidencePayload.bundle.auditEvents.find(
-        (event: any) => event.type === 'interaction.created',
-      );
-      const answered = evidencePayload.bundle.auditEvents.find(
-        (event: any) => event.type === 'interaction.answered',
-      );
-      assert.deepEqual(Object.keys(created.details).sort(), [
-        'expiresAt',
-        'interactionId',
-        'status',
-      ]);
-      assert.deepEqual(answered.details, {
-        interactionId: created.details.interactionId,
-        status: 'answered',
-        approved: false,
+  it('rejects persisted evidence whose body scope is not bound to the requested tenant', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const proposed = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'action-key-cross-scope-evidence',
       });
+      const payload = (await proposed.json()) as { action: { runId: string } };
+      const body = buildRunEvidenceBundle({
+        tenantId: 'tenant-b',
+        runId: payload.action.runId,
+        actionDigest: 'a'.repeat(64),
+        policySnapshotId: 'action-gateway-mvp-v1',
+        effects: [],
+        exportedAt: '2026-07-17T06:00:02.000Z',
+        bundleId: 'bundle-cross-scope-evidence',
+      });
+      gateway.evidence.set(`tenant-a\u0000${payload.action.runId}`, {
+        tenantId: 'tenant-a',
+        runId: payload.action.runId,
+        bundleId: body.bundleId,
+        actionDigest: body.actionDigest,
+        body,
+        contentHash: body.contentHash,
+        signature: {
+          algorithm: 'Ed25519',
+          keyId: 'cell-test-1',
+          signedAt: '2026-07-17T06:00:03.000Z',
+          value: 'persisted-signature',
+        },
+        createdAt: body.exportedAt,
+        anchoredAt: '2026-07-17T06:00:04.000Z',
+        retentionUntil: '2027-07-17T06:00:04.000Z',
+      });
+
+      const evidence = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}/evidence`, {
+        headers: { 'x-test-tenant': 'tenant-a' },
+      });
+      assert.equal(evidence.status, 503);
+      assert.equal(
+        ((await evidence.json()) as { error: { code: string } }).error.code,
+        'EVIDENCE_INVALID',
+      );
+    });
+  });
+
+  it('returns EVIDENCE_INVALID for a malformed persisted evidence body', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const proposed = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'action-key-malformed-evidence',
+      });
+      const payload = (await proposed.json()) as { action: { runId: string } };
+      const body = buildRunEvidenceBundle({
+        tenantId: 'tenant-a',
+        runId: payload.action.runId,
+        actionDigest: 'b'.repeat(64),
+        policySnapshotId: 'action-gateway-mvp-v1',
+        effects: [],
+        exportedAt: '2026-07-17T06:00:02.000Z',
+        bundleId: 'bundle-malformed-evidence',
+      });
+      gateway.evidence.set(`tenant-a\u0000${payload.action.runId}`, {
+        tenantId: 'tenant-a',
+        runId: payload.action.runId,
+        bundleId: body.bundleId,
+        actionDigest: body.actionDigest,
+        body: { ...body, effects: null } as unknown as GatewayEvidenceRecord['body'],
+        contentHash: body.contentHash,
+        signature: {
+          algorithm: 'Ed25519',
+          keyId: 'cell-test-1',
+          signedAt: '2026-07-17T06:00:03.000Z',
+          value: 'persisted-signature',
+        },
+        createdAt: body.exportedAt,
+        anchoredAt: '2026-07-17T06:00:04.000Z',
+        retentionUntil: '2027-07-17T06:00:04.000Z',
+      });
+
+      const evidence = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}/evidence`, {
+        headers: { 'x-test-tenant': 'tenant-a' },
+      });
+      assert.equal(evidence.status, 503);
+      assert.equal(
+        ((await evidence.json()) as { error: { code: string } }).error.code,
+        'EVIDENCE_INVALID',
+      );
     });
   });
 

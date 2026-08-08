@@ -1,5 +1,10 @@
-import { describe, it, expect } from 'vitest';
-import { MCPServer, createFetchActionGatewayExecutor, type Tool } from '@commander/core';
+import { beforeEach, describe, it, expect } from 'vitest';
+import {
+  MCPServer,
+  createFetchActionGatewayExecutor,
+  resetGuardianAgent,
+  type Tool,
+} from '@commander/core';
 import {
   assertActionGatewayConfigured,
   createStdioMcpServer,
@@ -9,25 +14,149 @@ import {
 import { run } from '../src/cli';
 import { MCP_PROTOCOL_VERSION } from '@commander/core';
 
+const AGENT_GATEWAY_TOOLS = [
+  'commander_action_evidence',
+  'commander_action_get',
+  'commander_action_propose',
+  'commander_action_simulate',
+];
+
+beforeEach(() => {
+  resetGuardianAgent();
+});
+
 describe('createStdioMcpServer', () => {
-  it('advertises Commander tools and model-router tools by default', () => {
-    const { server, status } = createStdioMcpServer();
-    const tools = server.listTools();
-    expect(tools.length).toBeGreaterThan(0);
-    expect(status.tools.length).toBe(tools.length);
-    expect(tools.some((t) => t.name === 'execute_agent')).toBe(true);
-    expect(tools.some((t) => t.name === 'list_models')).toBe(true);
-    expect(tools.some((t) => t.name === 'route_task')).toBe(true);
+  it('defaults to the governed agent surface without approval capability', () => {
+    const { server } = createStdioMcpServer();
+    const names = server
+      .listTools()
+      .map((tool) => tool.name)
+      .sort();
+    expect(names).toEqual(AGENT_GATEWAY_TOOLS);
+    expect(names).not.toContain('commander_action_approve');
+    expect(names).not.toContain('commander_action_reconcile');
   });
 
-  it('modelRouterOnly mode only registers the three model-router tools', () => {
-    const { server } = createStdioMcpServer({ modelRouterOnly: true });
+  it('fails closed when an agent proposes without a gateway executor', async () => {
+    const { server } = createStdioMcpServer();
+    const response = await server.handleRequest({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: 'commander_action_propose',
+        arguments: {
+          action: 'ticket.create',
+          args: { title: 'x' },
+        },
+      },
+    });
+
+    expect(response.error).toMatchObject({
+      message: expect.stringContaining('ACTION_GATEWAY_REQUIRED'),
+    });
+  });
+
+  it('derives one idempotency key for equivalent gateway proposals', async () => {
+    const requests: Array<{ body?: Record<string, unknown>; headers?: Record<string, string> }> =
+      [];
+    const { server } = createStdioMcpServer({
+      actionGatewayExecutor: {
+        request: async (request) => {
+          requests.push(request);
+          return { action: { runId: 'run-1', state: 'WAITING_FOR_APPROVAL' } };
+        },
+      },
+    });
+
+    const first = await server.handleRequest({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {
+        name: 'commander_action_propose',
+        arguments: {
+          action: 'ticket.create',
+          args: { title: 'x', labels: ['a', 'b'] },
+        },
+      },
+    });
+    const replay = await server.handleRequest({
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: {
+        name: 'commander_action_propose',
+        arguments: {
+          action: 'ticket.create',
+          args: { labels: ['a', 'b'], title: 'x' },
+        },
+      },
+    });
+
+    expect(first.error).toBeUndefined();
+    expect(replay.error).toBeUndefined();
+    expect(requests).toHaveLength(2);
+    expect(requests[0].body?.idempotencyKey).toMatch(/^mcp-/);
+    expect(requests[0].body?.idempotencyKey).toBe(requests[1].body?.idempotencyKey);
+    expect(requests[0].headers?.['Idempotency-Key']).toBe(requests[0].body?.idempotencyKey);
+  });
+
+  it('derives action identity from the registered action instead of agent input', async () => {
+    const requests: Array<{ body?: Record<string, unknown> }> = [];
+    const { server } = createStdioMcpServer({
+      actionGatewayExecutor: {
+        request: async (request) => {
+          requests.push(request);
+          return { action: { runId: 'run-1', state: 'WAITING_FOR_APPROVAL' } };
+        },
+      },
+    });
+
+    const response = await server.handleRequest({
+      jsonrpc: '2.0',
+      id: 4,
+      method: 'tools/call',
+      params: {
+        name: 'commander_action_propose',
+        arguments: {
+          action: 'ticket.create',
+          args: { title: 'x' },
+          tool: 'ticket.compensate',
+          destination: 'demo://tickets/approval',
+          effectType: 'compensate.demo.ticket.create',
+        },
+      },
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(requests).toHaveLength(1);
+    expect(requests[0].body).toMatchObject({
+      tool: 'ticket.create',
+      destination: 'demo://tickets',
+      effectType: 'demo.ticket.create',
+      args: { title: 'x' },
+    });
+  });
+
+  it('rejects a local action executor on the governed gateway surface', () => {
+    expect(() =>
+      createStdioMcpServer({
+        actionGatewayExecutor: {
+          proposeAction: async () => ({ action: {}, idempotentReplay: false }),
+        },
+      }),
+    ).toThrow(/localRuntime.*mcp action gateway executor/i);
+  });
+
+  it('local modelRouterOnly mode only registers the three model-router tools', () => {
+    const { server } = createStdioMcpServer({ localRuntime: true, modelRouterOnly: true });
     const tools = server.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(['execute_agent', 'list_models', 'route_task']);
   });
 
   it('initialize returns the shared MCP protocol version', async () => {
-    const { server } = createStdioMcpServer({ modelRouterOnly: true });
+    const { server } = createStdioMcpServer({ localRuntime: true, modelRouterOnly: true });
     const response = await server.handleRequest({
       jsonrpc: '2.0',
       id: 1,
@@ -47,7 +176,7 @@ describe('createStdioMcpServer', () => {
   });
 
   it('tools/list returns the registered tools', async () => {
-    const { server } = createStdioMcpServer({ modelRouterOnly: true });
+    const { server } = createStdioMcpServer({ localRuntime: true, modelRouterOnly: true });
     const response = await server.handleRequest({
       jsonrpc: '2.0',
       id: 2,
@@ -63,7 +192,7 @@ describe('createStdioMcpServer', () => {
   });
 
   it('tools/call invokes execute_agent', async () => {
-    const { server } = createStdioMcpServer({ modelRouterOnly: true });
+    const { server } = createStdioMcpServer({ localRuntime: true, modelRouterOnly: true });
     const response = await server.handleRequest({
       jsonrpc: '2.0',
       id: 3,
@@ -135,6 +264,7 @@ describe('createStdioMcpServer', () => {
 
   it('keeps list_models local when an action gateway executor is configured', async () => {
     const { server } = createStdioMcpServer({
+      localRuntime: true,
       modelRouterOnly: true,
       actionGatewayExecutor: {
         proposeAction: async () => {
@@ -189,7 +319,7 @@ describe('createStdioMcpServer', () => {
 
 describe('startStdioServer', () => {
   it('returns a stop function', () => {
-    const { stop, server } = startStdioServer({ modelRouterOnly: true });
+    const { stop, server } = startStdioServer({ localRuntime: true, modelRouterOnly: true });
     expect(typeof stop).toBe('function');
     expect(server.listTools().length).toBe(3);
     stop();

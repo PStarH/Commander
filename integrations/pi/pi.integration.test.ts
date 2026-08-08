@@ -6,18 +6,15 @@ import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import { createStdioMcpServer } from '@commander/mcp-server';
 import {
-  createGatewayRoutedMcpServer,
   InMemoryGateway,
-  proveMcpGovernedLifecycle,
+  proveGatewayMcpLifecycle,
   withGateway,
 } from '../helpers/gatewayHarness.js';
 
 const GATEWAY_TOOLS = [
-  'commander_action_approve',
   'commander_action_evidence',
   'commander_action_get',
   'commander_action_propose',
-  'commander_action_reconcile',
   'commander_action_simulate',
 ];
 
@@ -94,7 +91,7 @@ describe('pi agent (OH-MY-PI) integration', () => {
     }
   });
 
-  it('server advertises the six canonical gateway tools (discovery)', async () => {
+  it('server advertises the four agent-facing gateway tools (discovery)', async () => {
     const { server, status } = createStdioMcpServer({});
     const response = await server.handleRequest({
       jsonrpc: '2.0',
@@ -107,13 +104,16 @@ describe('pi agent (OH-MY-PI) integration', () => {
     assert.equal(status.enterpriseWrites, true);
   });
 
-  it('routes ticket.create through the gateway and completes the governed lifecycle', async () => {
+  it('routes an agent proposal through the gateway and completes the governed lifecycle', async () => {
     const gateway = new InMemoryGateway();
     await withGateway(gateway, async (baseUrl) => {
-      const { localCalls, handleRequest } = createGatewayRoutedMcpServer(baseUrl);
-      const evidence = await proveMcpGovernedLifecycle(handleRequest, gateway, baseUrl);
+      const { server } = createStdioMcpServer({ actionGatewayUrl: baseUrl });
+      const evidence = await proveGatewayMcpLifecycle(
+        (request) => server.handleRequest(request as Parameters<typeof server.handleRequest>[0]),
+        gateway,
+        baseUrl,
+      );
       assert.equal(evidence.verification.ok, true);
-      assert.deepEqual(localCalls, []);
     });
   });
 
@@ -126,14 +126,8 @@ describe('pi agent (OH-MY-PI) integration', () => {
       params: {
         name: 'commander_action_propose',
         arguments: {
-          source: 'test-agent',
-          package: 'test-package',
-          model: 'test-model',
-          tool: 'ticket.create',
-          destination: 'demo://tickets',
-          effectType: 'demo.ticket.create',
+          action: 'ticket.create',
           args: { title: 'x' },
-          idempotencyKey: 'action-key-fail-closed',
         },
       },
     });

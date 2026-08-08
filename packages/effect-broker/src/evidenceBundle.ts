@@ -2,7 +2,22 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { CapabilityGrant } from './index.js';
 
 export const EVIDENCE_BUNDLE_SCHEMA = 'l3-11.v0' as const;
+export const EVIDENCE_BODY_VERSION = 'commander.evidence-body/v1' as const;
 export const EVIDENCE_GENESIS_HASH = '0'.repeat(64);
+
+export type EvidenceTerminalDisposition = 'SUCCEEDED' | 'FAILED' | 'ESCALATED';
+
+export interface EvidenceSignature {
+  algorithm: 'Ed25519';
+  keyId: string;
+  signedAt: string;
+  value: string;
+}
+
+export interface EvidenceSigner {
+  sign(canonicalBody: string): Promise<EvidenceSignature>;
+  verify(canonicalBody: string, signature: EvidenceSignature): boolean;
+}
 
 /** Keys stripped by default — CoT / raw LLM / OTel gen_ai prompt fields (DLP). */
 export const EVIDENCE_DLP_EXCLUDED_KEYS = new Set([
@@ -38,6 +53,13 @@ export const EVIDENCE_RESPONSE_SUMMARY_KEYS = new Set([
  */
 const EVIDENCE_SECRET_FIELD_NAME =
   /password|passwd|passcode|secret|token|authorization|credential|privatekey|accesskey|apikey|otp|cookie|xapikey|xauthtoken/i;
+
+const EVIDENCE_SECRET_VALUE =
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----|\bBearer\s+\S+|\b(?:sk|ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_-]{8,}|\bAKIA[A-Z0-9]{16}\b|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/i;
+
+function isSecretValue(value: unknown): boolean {
+  return typeof value === 'string' && EVIDENCE_SECRET_VALUE.test(value);
+}
 
 export interface EvidenceBundleScope {
   tenantId: string;
@@ -90,14 +112,18 @@ export interface EvidenceBundleAuditEntry {
 
 export interface EvidenceBundle {
   schemaVersion: typeof EVIDENCE_BUNDLE_SCHEMA;
+  bodyVersion: typeof EVIDENCE_BODY_VERSION;
   bundleId: string;
   exportedAt: string;
+  actionDigest: string;
+  terminalDisposition: EvidenceTerminalDisposition;
   scope: EvidenceBundleScope;
   identity: EvidenceBundleIdentity;
   versions: EvidenceBundleVersions;
   effects: EvidenceBundleEffectEntry[];
   auditEvents: EvidenceBundleAuditEntry[];
   contentHash: string;
+  signature?: EvidenceSignature;
 }
 
 export interface EvidenceEffectSource {
@@ -129,6 +155,7 @@ export interface EvidenceAuditSource {
 export interface BuildEvidenceBundleInput {
   tenantId: string;
   runId: string;
+  actionDigest?: string;
   effectId?: string;
   intentHash?: string;
   workGraphHash?: string;
@@ -149,15 +176,18 @@ export interface VerifyEvidenceBundleResult {
   index?: number;
 }
 
-function canonicalJson(value: unknown): string {
+export function canonicalEvidenceJson(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (Array.isArray(value)) return `[${value.map(canonicalEvidenceJson).join(',')}]`;
   const obj = value as Record<string, unknown>;
-  return `{${Object.keys(obj).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(obj[k])}`).join(',')}}`;
+  return `{${Object.keys(obj)
+    .sort()
+    .map((k) => `${JSON.stringify(k)}:${canonicalEvidenceJson(obj[k])}`)
+    .join(',')}}`;
 }
 
 function sha256(value: unknown): string {
-  return createHash('sha256').update(canonicalJson(value)).digest('hex');
+  return createHash('sha256').update(canonicalEvidenceJson(value)).digest('hex');
 }
 
 /** Drop undefined so hashes match JSON.parse(JSON.stringify(...)) round-trips. */
@@ -192,11 +222,17 @@ function isAllowedResponseSummaryKey(key: string): boolean {
 
 /** responseSummary values are metadata scalars only — nested objects are a DLP bypass. */
 function isResponseSummaryScalar(value: unknown): boolean {
-  return value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
+  return (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  );
 }
 
 /** Recursively remove DLP keys and secret field names; does not mutate input. */
 export function sanitizeForEvidence(value: unknown): unknown {
+  if (isSecretValue(value)) return '[REDACTED]';
   if (value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map(sanitizeForEvidence);
   const result: Record<string, unknown> = {};
@@ -208,6 +244,7 @@ export function sanitizeForEvidence(value: unknown): unknown {
 }
 
 export function findDlpViolation(value: unknown, path = ''): string | undefined {
+  if (isSecretValue(value)) return path || '(value)';
   if (value === null || typeof value !== 'object') return undefined;
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
@@ -225,13 +262,16 @@ export function findDlpViolation(value: unknown, path = ''): string | undefined 
   return undefined;
 }
 
-function summarizeResponse(response?: Record<string, unknown>): Record<string, unknown> | undefined {
+function summarizeResponse(
+  response?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
   if (!response) return undefined;
   const sanitized = sanitizeForEvidence(response) as Record<string, unknown>;
   const summary: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(sanitized)) {
     if (!isAllowedResponseSummaryKey(key)) continue;
     if (!isResponseSummaryScalar(child)) continue;
+    if (child === '[REDACTED]') continue;
     summary[key] = child;
   }
   if (Object.keys(summary).length === 0) return undefined;
@@ -260,7 +300,9 @@ function scopeEffects(input: BuildEvidenceBundleInput): EvidenceEffectSource[] {
 }
 
 function scopeAuditEvents(input: BuildEvidenceBundleInput): EvidenceAuditSource[] {
-  return (input.auditEvents ?? []).filter((e) => e.tenantId === input.tenantId && e.runId === input.runId);
+  return (input.auditEvents ?? []).filter(
+    (e) => e.tenantId === input.tenantId && e.runId === input.runId,
+  );
 }
 
 function hashChainedEntries<T extends { entryHash: string; prevEntryHash: string }>(
@@ -277,31 +319,39 @@ function hashChainedEntries<T extends { entryHash: string; prevEntryHash: string
 }
 
 function buildEffectEntries(effects: EvidenceEffectSource[]): EvidenceBundleEffectEntry[] {
-  const sorted = [...effects].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
-  const bare = sorted.map((effect) => compact({
-    effectId: effect.id,
-    stepId: effect.stepId,
-    type: effect.type,
-    state: effect.state,
-    policyDecisionId: effect.policyDecisionId,
-    requestHash: effect.requestHash,
-    approvalInteractionId: effect.approvalInteractionId,
-    responseSummary: summarizeResponse(effect.response),
-    createdAt: effect.createdAt,
-    completedAt: effect.completedAt,
-  }));
+  const sorted = [...effects].sort(
+    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+  );
+  const bare = sorted.map((effect) =>
+    compact({
+      effectId: effect.id,
+      stepId: effect.stepId,
+      type: effect.type,
+      state: effect.state,
+      policyDecisionId: effect.policyDecisionId,
+      requestHash: effect.requestHash,
+      approvalInteractionId: effect.approvalInteractionId,
+      responseSummary: summarizeResponse(effect.response),
+      createdAt: effect.createdAt,
+      completedAt: effect.completedAt,
+    }),
+  );
   return hashChainedEntries<EvidenceBundleEffectEntry>(bare);
 }
 
 function buildAuditEntries(events: EvidenceAuditSource[]): EvidenceBundleAuditEntry[] {
-  const sorted = [...events].sort((a, b) => a.at.localeCompare(b.at) || a.type.localeCompare(b.type));
-  const bare = sorted.map((event) => compact({
-    type: event.type,
-    at: event.at,
-    severity: event.severity,
-    stepId: event.stepId,
-    details: sanitizeForEvidence(event.details) as Record<string, unknown>,
-  }));
+  const sorted = [...events].sort(
+    (a, b) => a.at.localeCompare(b.at) || a.type.localeCompare(b.type),
+  );
+  const bare = sorted.map((event) =>
+    compact({
+      type: event.type,
+      at: event.at,
+      severity: event.severity,
+      stepId: event.stepId,
+      details: sanitizeForEvidence(event.details) as Record<string, unknown>,
+    }),
+  );
   return hashChainedEntries<EvidenceBundleAuditEntry>(bare);
 }
 
@@ -310,11 +360,38 @@ function attachContentHash(body: Omit<EvidenceBundle, 'contentHash'>): EvidenceB
   return { ...body, contentHash };
 }
 
+function terminalDisposition(
+  effects: EvidenceEffectSource[],
+  auditEvents: EvidenceAuditSource[],
+): EvidenceTerminalDisposition {
+  const terminalStates = new Set(['COMPLETED', 'FAILED', 'CONFIRMED_NOT_APPLIED']);
+  const unresolved = effects.some((effect) => !terminalStates.has(effect.state));
+  const escalated = auditEvents.some((event) => event.type === 'effect.reconcile_escalated');
+  if (unresolved && escalated) return 'ESCALATED';
+  if (
+    effects.some((effect) => effect.state === 'FAILED' || effect.state === 'CONFIRMED_NOT_APPLIED')
+  ) {
+    return 'FAILED';
+  }
+  return 'SUCCEEDED';
+}
+
 export function buildRunEvidenceBundle(input: BuildEvidenceBundleInput): EvidenceBundle {
+  const effects = scopeEffects(input);
+  const auditEvents = scopeAuditEvents(input);
   const body: Omit<EvidenceBundle, 'contentHash'> = {
     schemaVersion: EVIDENCE_BUNDLE_SCHEMA,
+    bodyVersion: EVIDENCE_BODY_VERSION,
     bundleId: input.bundleId ?? randomUUID(),
     exportedAt: input.exportedAt ?? new Date().toISOString(),
+    actionDigest:
+      input.actionDigest ??
+      sha256({
+        tenantId: input.tenantId,
+        runId: input.runId,
+        effectRequestHashes: effects.map((effect) => effect.requestHash).sort(),
+      }),
+    terminalDisposition: terminalDisposition(effects, auditEvents),
     scope: compact({ tenantId: input.tenantId, runId: input.runId, effectId: input.effectId }),
     identity: compact({
       intentHash: input.intentHash,
@@ -326,10 +403,45 @@ export function buildRunEvidenceBundle(input: BuildEvidenceBundleInput): Evidenc
       workGraphVersion: input.workGraphVersion,
       kernelApiVersion: input.kernelApiVersion,
     }),
-    effects: buildEffectEntries(scopeEffects(input)),
-    auditEvents: buildAuditEntries(scopeAuditEvents(input)),
+    effects: buildEffectEntries(effects),
+    auditEvents: buildAuditEntries(auditEvents),
   };
   return attachContentHash(body);
+}
+
+export function canonicalEvidenceBody(bundle: EvidenceBundle): string {
+  const { signature: _signature, ...body } = bundle;
+  return canonicalEvidenceJson(body);
+}
+
+export function assertTerminalEvidence(bundle: EvidenceBundle): void {
+  const terminalStates = new Set(['COMPLETED', 'FAILED', 'CONFIRMED_NOT_APPLIED']);
+  const unresolved = bundle.effects.filter((effect) => !terminalStates.has(effect.state));
+  const hasEscalation = bundle.auditEvents.some(
+    (event) => event.type === 'effect.reconcile_escalated',
+  );
+  if (
+    unresolved.length > 0 &&
+    (!unresolved.every((effect) => effect.state === 'COMPLETION_UNKNOWN') ||
+      !hasEscalation ||
+      bundle.terminalDisposition !== 'ESCALATED')
+  ) {
+    throw new Error('TERMINAL_EVIDENCE_REQUIRED');
+  }
+  if (unresolved.length === 0 && bundle.terminalDisposition === 'ESCALATED') {
+    throw new Error('TERMINAL_EVIDENCE_REQUIRED');
+  }
+  const expected = bundle.effects.some(
+    (effect) => effect.state === 'FAILED' || effect.state === 'CONFIRMED_NOT_APPLIED',
+  )
+    ? 'FAILED'
+    : 'SUCCEEDED';
+  if (unresolved.length === 0 && bundle.terminalDisposition !== expected) {
+    throw new Error('TERMINAL_EVIDENCE_REQUIRED');
+  }
+  if (!/^[a-f0-9]{64}$/.test(bundle.actionDigest)) {
+    throw new Error('TERMINAL_EVIDENCE_REQUIRED: ACTION_DIGEST_INVALID');
+  }
 }
 
 export function buildEffectEvidenceBundle(
@@ -338,7 +450,12 @@ export function buildEffectEvidenceBundle(
   const match = input.effects.filter((e) => e.id === input.effectId);
   // Only keep audit rows explicitly bound to this effectId (fail-closed scope).
   const audit = (input.auditEvents ?? []).filter((e) => e.details.effectId === input.effectId);
-  return buildRunEvidenceBundle({ ...input, effects: match, auditEvents: audit, effectId: input.effectId });
+  return buildRunEvidenceBundle({
+    ...input,
+    effects: match,
+    auditEvents: audit,
+    effectId: input.effectId,
+  });
 }
 
 function recomputeEffectEntry(entry: EvidenceBundleEffectEntry): string {
@@ -394,7 +511,7 @@ export function verifyEvidenceBundle(bundle: EvidenceBundle): VerifyEvidenceBund
     prev = entry.entryHash;
   }
 
-  const { contentHash, ...body } = bundle;
+  const { contentHash, signature: _signature, ...body } = bundle;
   if (sha256(body) !== contentHash) {
     return { ok: false, reason: 'contentHash mismatch', brokenAt: 'contentHash' };
   }

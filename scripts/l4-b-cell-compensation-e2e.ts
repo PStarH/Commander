@@ -36,12 +36,7 @@ export interface CompensationE2EResult {
   elapsedMs: number;
 }
 
-export {
-  assertComposeCellHealth,
-  CELL_COMPOSE_ENV,
-  CELL_E2E_TENANT,
-  tryComposeCellUp,
-};
+export { assertComposeCellHealth, CELL_COMPOSE_ENV, CELL_E2E_TENANT, tryComposeCellUp };
 
 async function httpJson(
   baseUrl: string,
@@ -159,12 +154,13 @@ export async function runComposeDemoCompensationFlow(
     package: 'cell-e2e',
     model: 'mock',
     tool: 'ticket.create',
-    destination: 'demo://tickets/approval',
+    destination: 'demo://tickets',
     effectType: 'demo.ticket.create',
     args: { title: 'Cell compensation E2E' },
     idempotencyKey: idem,
   });
-  if (proposed.status !== 202) return { proposed: false, approved: false, forwardDone: false, compensated: false };
+  if (proposed.status !== 202)
+    return { proposed: false, approved: false, forwardDone: false, compensated: false };
   const action = (proposed.json?.action ?? {}) as {
     runId: string;
     simulation: { actionDigest: string; simulationId: string; policySnapshotId: string };
@@ -174,7 +170,8 @@ export async function runComposeDemoCompensationFlow(
     simulationId: action.simulation.simulationId,
     policySnapshotId: action.simulation.policySnapshotId,
   });
-  if (approved.status !== 200) return { proposed: true, approved: false, forwardDone: false, compensated: false };
+  if (approved.status !== 200)
+    return { proposed: true, approved: false, forwardDone: false, compensated: false };
   const forwardState = await pollActionTerminal(baseUrl, action.runId);
   if (forwardState !== 'SUCCEEDED') {
     return { proposed: true, approved: true, forwardDone: false, compensated: false };
@@ -297,7 +294,9 @@ async function main(): Promise<void> {
   const outPath = join(outDir, `l4-b-cell-compensation-e2e-${Date.now()}.json`);
   await writeFile(outPath, JSON.stringify(result, null, 2));
   console.log(`Cell compensation E2E steps: ${JSON.stringify(result.steps)}`);
-  console.log(`Cell compensation E2E ${result.verdict} ${result.passed ? 'PASS' : 'FAIL'} → ${outPath}`);
+  console.log(
+    `Cell compensation E2E ${result.verdict} ${result.passed ? 'PASS' : 'FAIL'} → ${outPath}`,
+  );
   if (!result.passed) process.exit(1);
 }
 

@@ -1,12 +1,12 @@
 import express, { type Request, type Response, type Router } from 'express';
 import { z } from 'zod';
 import {
-  buildRunEvidenceBundle,
+  assertTerminalEvidence,
+  canonicalEvidenceBody,
   verifyEvidenceBundle,
-  type EvidenceAuditSource,
-  type EvidenceEffectSource,
+  verifyEvidenceSignature,
+  type EvidenceJwks,
 } from '@commander/effect-broker';
-import type { KernelEvent } from '@commander/kernel';
 import {
   GatewayIdempotencyConflictError,
   GatewayStepIdConflictError,
@@ -19,6 +19,30 @@ import type { KillSwitchMatchDims } from './v1GatewayKernel';
 
 const ACTION_GATEWAY_AUTHORITY = 'commander.action-gateway/v1';
 const ACTION_POLICY_SNAPSHOT = 'action-gateway-mvp-v1';
+// Provenance is a governance input, so it must be assigned by the gateway
+// rather than copied from an untrusted action request.
+const ACTION_GATEWAY_SOURCE = 'action-gateway';
+const ACTION_GATEWAY_PACKAGE = 'commander.action-gateway';
+const ACTION_GATEWAY_MODEL = 'gateway-default';
+
+function configuredEvidenceJwks(): EvidenceJwks | null {
+  const raw = process.env.COMMANDER_EVIDENCE_JWKS_JSON?.trim();
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      Array.isArray(parsed) ||
+      !Array.isArray((parsed as { keys?: unknown }).keys)
+    ) {
+      return null;
+    }
+    return parsed as EvidenceJwks;
+  } catch {
+    return null;
+  }
+}
 
 const actionInputSchema = z
   .object({
@@ -216,6 +240,19 @@ function actor(req: Request): string {
   return req.apiKeyId ?? req.user?.id ?? 'action-gateway.unknown';
 }
 
+function buildActionEnvelope(
+  tenantId: string,
+  input: z.infer<typeof actionInputSchema>,
+): ActionEnvelope {
+  return {
+    tenantId,
+    ...input,
+    source: ACTION_GATEWAY_SOURCE,
+    package: ACTION_GATEWAY_PACKAGE,
+    model: ACTION_GATEWAY_MODEL,
+  };
+}
+
 function deterministicId(prefix: string, value: string): string {
   return `${prefix}_${canonicalValueHash(value).slice(0, 32)}`;
 }
@@ -234,26 +271,26 @@ function evaluateAction(envelope: ActionEnvelope): ActionDecision {
       policySnapshotId: ACTION_POLICY_SNAPSHOT,
     };
   }
-  if (envelope.destination === 'demo://tickets') {
+  if (envelope.destination !== 'demo://tickets') {
     return {
-      effect: 'allow',
-      decisionId: 'action-gateway-allow',
-      reason: 'The registered demo ticket destination is allowed.',
+      effect: 'deny',
+      decisionId: 'action-gateway-deny',
+      reason: `Destination '${envelope.destination}' is not registered by the Action Gateway.`,
       policySnapshotId: ACTION_POLICY_SNAPSHOT,
     };
   }
-  if (envelope.destination === 'demo://tickets/approval') {
+  if (isCreate) {
     return {
       effect: 'require_approval',
       decisionId: 'action-gateway-require_approval',
-      reason: 'The approval demo destination requires a human decision.',
+      reason: 'Creating a demo ticket requires a human decision.',
       policySnapshotId: ACTION_POLICY_SNAPSHOT,
     };
   }
   return {
-    effect: 'deny',
-    decisionId: 'action-gateway-deny',
-    reason: `Destination '${envelope.destination}' is not registered by the Action Gateway.`,
+    effect: 'allow',
+    decisionId: 'action-gateway-allow',
+    reason: 'The registered demo ticket destination is allowed.',
     policySnapshotId: ACTION_POLICY_SNAPSHOT,
   };
 }
@@ -380,29 +417,6 @@ function actionNotFound(res: Response) {
   });
 }
 
-function evidenceAuditDetails(event: KernelEvent): Record<string, unknown> {
-  if (event.type === 'interaction.created') {
-    const expiresAt = event.payload.expiresAt;
-    return {
-      interactionId: event.aggregateId,
-      status: 'pending',
-      expiresAt: typeof expiresAt === 'string' ? expiresAt : null,
-    };
-  }
-  if (event.type === 'interaction.answered') {
-    const response =
-      event.payload.response && typeof event.payload.response === 'object'
-        ? (event.payload.response as Record<string, unknown>)
-        : {};
-    return {
-      interactionId: event.aggregateId,
-      status: 'answered',
-      ...(typeof response.approved === 'boolean' ? { approved: response.approved } : {}),
-    };
-  }
-  return event.payload;
-}
-
 export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway | null): Router {
   const router = express.Router();
 
@@ -526,7 +540,7 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
         },
       });
     }
-    const envelope: ActionEnvelope = { tenantId, ...parsed.data };
+    const envelope = buildActionEnvelope(tenantId, parsed.data);
     if (await rejectIfKillSwitchActive(kernel, envelope, res)) return;
     const simulation = buildSimulation(envelope);
     await persistSimulation(kernel, envelope, simulation, actor(req));
@@ -549,7 +563,7 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
       });
     }
 
-    const envelope: ActionEnvelope = { tenantId, ...parsed.data };
+    const envelope = buildActionEnvelope(tenantId, parsed.data);
     if (await rejectIfKillSwitchActive(kernel, envelope, res)) return;
     const simulation = buildSimulation(envelope);
     const decision: ActionDecision = {
@@ -836,42 +850,44 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
     }
     const loaded = await loadAction(kernel, req.params.runId, tenantId);
     if (!loaded) return actionNotFound(res);
-    const [events, effects] = await Promise.all([
-      kernel.listEvents(loaded.run.id, tenantId),
-      kernel.listEffects(loaded.run.id, tenantId),
-    ]);
-    const evidenceEffects: EvidenceEffectSource[] = effects.map((effect) => ({
-      ...effect,
-      approvalInteractionId:
-        effect.id === loaded.metadata.effectId ? loaded.metadata.interactionId : undefined,
-    }));
-    const auditEvents: EvidenceAuditSource[] = events.map((event) => ({
-      type: event.type,
-      severity: event.type.includes('failed') || event.type.includes('denied') ? 'high' : 'low',
-      tenantId: event.tenantId,
-      runId: event.runId,
-      stepId: event.stepId ?? loaded.metadata.stepId,
-      at: event.occurredAt,
-      details: evidenceAuditDetails(event),
-    }));
-    const bundle = buildRunEvidenceBundle({
-      tenantId,
-      runId: loaded.run.id,
-      intentHash: loaded.run.intentHash,
-      workGraphHash: loaded.run.workGraphHash,
-      workGraphVersion: loaded.run.workGraphVersion,
-      policySnapshotId: loaded.run.policySnapshotId,
-      kernelApiVersion: 'v1',
-      effects: evidenceEffects,
-      auditEvents,
-      exportedAt: loaded.run.updatedAt,
-      bundleId: `bundle_${canonicalValueHash({
-        runId: loaded.run.id,
-        actionDigest: loaded.metadata.actionDigest,
-        updatedAt: loaded.run.updatedAt,
-      }).slice(0, 40)}`,
-    });
-    return res.json({ bundle, verification: verifyEvidenceBundle(bundle) });
+    const record = await kernel.getEvidence(loaded.run.id, tenantId);
+    if (!record?.anchoredAt || !record.signature) {
+      return res.status(503).json({
+        error: {
+          code: 'EVIDENCE_NOT_READY',
+          message: 'A signed and anchored evidence receipt is not available.',
+        },
+      });
+    }
+    try {
+      if (
+        record.tenantId !== tenantId ||
+        record.runId !== loaded.run.id ||
+        record.body.scope.tenantId !== tenantId ||
+        record.body.scope.runId !== loaded.run.id ||
+        record.bundleId !== record.body.bundleId ||
+        record.actionDigest !== record.body.actionDigest ||
+        record.contentHash !== record.body.contentHash
+      ) {
+        throw new Error('EVIDENCE_RECORD_BINDING_INVALID');
+      }
+      const receipt = { ...record.body, signature: record.signature };
+      const verification = verifyEvidenceBundle(receipt);
+      if (!verification.ok) throw new Error(verification.reason ?? 'EVIDENCE_INVALID');
+      assertTerminalEvidence(receipt);
+      const jwks = configuredEvidenceJwks();
+      if (
+        !jwks ||
+        !verifyEvidenceSignature(canonicalEvidenceBody(receipt), record.signature, jwks)
+      ) {
+        throw new Error('EVIDENCE_SIGNATURE_INVALID');
+      }
+      return res.json({ receipt, verification });
+    } catch {
+      return res.status(503).json({
+        error: { code: 'EVIDENCE_INVALID', message: 'Persisted evidence failed integrity checks.' },
+      });
+    }
   });
 
   return router;

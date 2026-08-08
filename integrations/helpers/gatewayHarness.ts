@@ -13,10 +13,7 @@ import {
 import { createFetchActionGatewayExecutor, MCPServer } from '@commander/core';
 import type { Tool } from '@commander/core/runtime';
 import { type ActionStateV1 } from '@commander/contracts';
-import {
-  InMemoryKernelRepository,
-  seedFreshOperationsDrains,
-} from '@commander/kernel/testing/inMemoryRepository';
+import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
 import type { KillSwitchScope } from '@commander/kernel';
 import type {
   ActionReconcileRequestResult,
@@ -220,8 +217,8 @@ export class InMemoryGateway implements V1KernelGateway {
 
 export const baseAction = {
   source: 'test-agent',
-  package: 'test-package',
-  model: 'test-model',
+  package: 'commander.action-gateway',
+  model: 'gateway-default',
   tool: 'ticket.create',
   destination: 'demo://tickets',
   effectType: 'demo.ticket.create',
@@ -338,10 +335,10 @@ export async function putKillSwitch(
 /**
  * Shared post-propose lifecycle (port of the L3-11 evidence flow in
  * apps/api/test/actionGatewayEndpoints.test.ts): reject with wrong digest (409),
- * approve, then claim/admit/complete the effect + step — seeding the Class-A
- * operations drains before admission — and persist a signed, anchored evidence
- * receipt so the gateway can serve it with signature verification. Asserts the
- * receipt shape, DLP redaction, and that terminal reconcile is 409.
+ * approve, then claim/admit/complete the effect + step and persist a signed,
+ * anchored evidence receipt so the gateway can serve it with signature
+ * verification. Asserts the receipt shape, DLP redaction, and that terminal
+ * reconcile is 409.
  * Returns the evidence payload for extra checks.
  */
 export async function completeGovernedAction(
@@ -390,12 +387,6 @@ export async function completeGovernedAction(
     lease: claimed.lease,
     actor: 'integration-worker',
   };
-  assert.deepEqual(
-    await gateway.repository.admitEffect(effectRequest),
-    { admitted: false, reason: 'OPERATIONS_NOT_READY' },
-    'admission must not bypass Class A drains readiness',
-  );
-  seedFreshOperationsDrains(gateway.repository, 'tenant-a');
   const admission = await gateway.repository.admitEffect(effectRequest);
   assert.equal(admission.admitted, true);
   await gateway.repository.completeEffect(
@@ -503,7 +494,7 @@ export async function completeGovernedAction(
 export async function proveGovernedFlow(gateway: InMemoryGateway, baseUrl: string) {
   const proposed = await postJson(baseUrl, '/v1/actions', {
     ...baseAction,
-    destination: 'demo://tickets/approval',
+    destination: 'demo://tickets',
     idempotencyKey: 'integration-key-governed',
     args: {
       title: 'SENSITIVE_TOOL_ARGUMENT',
@@ -517,12 +508,11 @@ export async function proveGovernedFlow(gateway: InMemoryGateway, baseUrl: strin
 }
 
 /**
- * Drive the governed lifecycle *through the MCP server*: a client calls the
- * `ticket.create` tool with `requireApproval`, the server routes it to the
- * gateway executor (no local execute), and the human completes the flow.
- * `handleRequest` must be the registered server (already wired to the gateway).
+ * Drive the governed lifecycle through the default MCP gateway surface. The
+ * agent can propose the action but cannot approve it; the test completes the
+ * human approval over the gateway HTTP API.
  */
-export async function proveMcpGovernedLifecycle(
+export async function proveGatewayMcpLifecycle(
   handleRequest: (
     request: Record<string, unknown>,
   ) => Promise<{ error?: unknown; result?: unknown }>,
@@ -534,10 +524,13 @@ export async function proveMcpGovernedLifecycle(
     id: 7,
     method: 'tools/call',
     params: {
-      name: 'ticket.create',
+      name: 'commander_action_propose',
       arguments: {
-        title: 'SENSITIVE_TOOL_ARGUMENT',
-        requireApproval: true,
+        action: 'ticket.create',
+        args: {
+          title: 'SENSITIVE_TOOL_ARGUMENT',
+          Authorization: 'Bearer SENSITIVE_AUTH_TOKEN',
+        },
       },
     },
   });
@@ -545,7 +538,7 @@ export async function proveMcpGovernedLifecycle(
   const result = response.result as { content?: Array<{ text?: string }> } | undefined;
   const text = result?.content?.[0]?.text ?? '';
   const payload = JSON.parse(text) as ProposeActionResponse;
-  assert.equal(payload.action.state, 'AWAITING_APPROVAL');
+  assert.equal(payload.action.state, 'WAITING_FOR_APPROVAL');
   assert.equal(payload.idempotentReplay, false);
   assert.ok(payload.action.runId);
   return completeGovernedAction(gateway, baseUrl, payload.action);
