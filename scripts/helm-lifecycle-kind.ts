@@ -176,6 +176,7 @@ export function buildLifecycleValues(input: {
   databaseSpkiSha256: string;
   logLevel: 'info' | 'warn';
   kubernetesApiServiceIp: string;
+  kubernetesApiEndpointIp: string;
   database?:
     | { kind: 'bundled' }
     | {
@@ -191,7 +192,8 @@ export function buildLifecycleValues(input: {
   if (
     !/^sha256:[a-f0-9]{64}$/.test(input.imageDigest) ||
     !/^[a-f0-9]{64}$/.test(input.databaseSpkiSha256) ||
-    !isIpv4Address(input.kubernetesApiServiceIp)
+    !isIpv4Address(input.kubernetesApiServiceIp) ||
+    !isIpv4Address(input.kubernetesApiEndpointIp)
   ) {
     throw new Error('LIFECYCLE_VALUES_INVALID');
   }
@@ -278,6 +280,8 @@ ${bootstrapAuthority}  apiProof:
     privateSecret: ${input.release}-api-proof-private
 networkPolicy:
   enabled: true
+  ingressCidrs:
+    - ${input.kubernetesApiEndpointIp}/32
   egress:
 ${databaseCidrs}    kubernetesApiCidrs:
       - ${input.kubernetesApiServiceIp}/32
@@ -2142,6 +2146,7 @@ async function runRealBundledLifecycle(
         databaseSpkiSha256: material.databaseSpkiSha256,
         logLevel: 'info',
         kubernetesApiServiceIp: kubernetesApiIp,
+        kubernetesApiEndpointIp: kubernetesApiEndpoint.ip,
       }),
       { mode: 0o600 },
     );
@@ -2154,6 +2159,7 @@ async function runRealBundledLifecycle(
         databaseSpkiSha256: material.databaseSpkiSha256,
         logLevel: 'warn',
         kubernetesApiServiceIp: kubernetesApiIp,
+        kubernetesApiEndpointIp: kubernetesApiEndpoint.ip,
       }),
       { mode: 0o600 },
     );
@@ -2311,6 +2317,7 @@ async function runRealExternalTlsLifecycle(
         databaseSpkiSha256: material.databaseSpkiSha256,
         logLevel: 'info',
         kubernetesApiServiceIp: kubernetesApiIp,
+        kubernetesApiEndpointIp: kubernetesApiEndpoint.ip,
         database,
       }),
       { mode: 0o600 },
@@ -2324,6 +2331,7 @@ async function runRealExternalTlsLifecycle(
         databaseSpkiSha256: material.databaseSpkiSha256,
         logLevel: 'warn',
         kubernetesApiServiceIp: kubernetesApiIp,
+        kubernetesApiEndpointIp: kubernetesApiEndpoint.ip,
         database,
       }),
       { mode: 0o600 },
@@ -2462,6 +2470,7 @@ async function runFailedRolloutRecovery(
         databaseSpkiSha256: material.databaseSpkiSha256,
         logLevel: 'info',
         kubernetesApiServiceIp: kubernetesApiIp,
+        kubernetesApiEndpointIp: kubernetesApiEndpoint.ip,
       }),
       { mode: 0o600 },
     );

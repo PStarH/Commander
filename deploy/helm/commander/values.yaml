@@ -334,6 +334,9 @@ serviceAccount:
 networkPolicy:
   enabled: false
   ingressControllerNamespace: ''
+  # Explicit node CIDRs for kubelet health probes when ingress is isolated.
+  # Keep this list narrow; an empty list preserves deny-by-default behavior.
+  ingressCidrs: []
   clusterDns:
     namespace: kube-system
     podSelector:

@@ -517,6 +517,8 @@ describe('Helm lifecycle static contract', () => {
     const rendered = render(false, [
       '--set',
       'networkPolicy.egress.kubernetesApiCidrs[0]=10.96.0.1/32',
+      '--set',
+      'networkPolicy.ingressCidrs[0]=172.18.0.2/32',
     ]);
     const proofPolicy = resource(rendered, 'NetworkPolicy', 'lifecycle-demo-tenant-cutover-prove');
     assert.match(proofPolicy, /commander\.io\/tenant-authority-proof-reader: "true"/);
@@ -540,7 +542,11 @@ describe('Helm lifecycle static contract', () => {
     assert.match(databaseIngress, /commander\.io\/tenant-authority-proof-reader: "true"/);
     const apiProofIngress = resource(rendered, 'NetworkPolicy', 'lifecycle-demo-api-proof-ingress');
     assert.match(apiProofIngress, /commander\.io\/tenant-authority-proof-reader: "true"/);
+    assert.match(apiProofIngress, /cidr: "172\.18\.0\.2\/32"/);
     assert.match(apiProofIngress, /port: 9443/);
     assert.doesNotMatch(apiProofIngress, /port: 4000/);
+    const apiIngress = resource(rendered, 'NetworkPolicy', 'lifecycle-demo-api-ingress');
+    assert.match(apiIngress, /cidr: "172\.18\.0\.2\/32"/);
+    assert.match(apiIngress, /port: 4000/);
   });
 });
