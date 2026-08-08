@@ -35,7 +35,7 @@ api:
     livenessPath: /health
     readinessPath: /ready
     metricsPath: /metrics
-    startupFailureThreshold: 30
+    startupFailureThreshold: 90
     startupPeriodSeconds: 2
     initialDelaySeconds: 10
     periodSeconds: 15
