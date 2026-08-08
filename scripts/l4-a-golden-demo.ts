@@ -289,7 +289,7 @@ async function checkPolicySimulation(baseUrl: string): Promise<void> {
 
   const approval = await postJson(baseUrl, '/v1/actions/simulate', {
     ...BASE_ACTION,
-    destination: 'demo://tickets/approval',
+    destination: 'demo://tickets',
     idempotencyKey: 'l4-a-sim-approval',
   });
   assert.equal(approval.status, 200);
@@ -332,7 +332,7 @@ async function checkProposeApproveExecute(
 async function checkExactApprovalBinding(baseUrl: string, gateway: InMemoryGateway): Promise<void> {
   const proposed = await postJson(baseUrl, '/v1/actions', {
     ...BASE_ACTION,
-    destination: 'demo://tickets/approval',
+    destination: 'demo://tickets',
     idempotencyKey: 'l4-a-binding',
   });
   const action = (
@@ -366,7 +366,7 @@ async function checkExactApprovalBinding(baseUrl: string, gateway: InMemoryGatew
     package: BASE_ACTION.package,
     model: BASE_ACTION.model,
     tool: BASE_ACTION.tool,
-    destination: 'demo://tickets/approval',
+    destination: 'demo://tickets',
     effectType: BASE_ACTION.effectType,
     args: { title: 'Approved title' },
     idempotencyKey: 'l4-a-mutated-key',
@@ -483,7 +483,7 @@ async function checkKillSwitchBlocks(baseUrl: string, gateway: InMemoryGateway):
 
   const proposed = await postJson(baseUrl, '/v1/actions', {
     ...BASE_ACTION,
-    destination: 'demo://tickets/approval',
+    destination: 'demo://tickets',
     idempotencyKey: 'l4-a-kill-after-approval',
   });
   const action = (
@@ -520,7 +520,7 @@ async function checkKillSwitchBlocks(baseUrl: string, gateway: InMemoryGateway):
     request: {
       ...BASE_ACTION,
       tenantId: GOLDEN_DEMO_TENANT,
-      destination: 'demo://tickets/approval',
+      destination: 'demo://tickets',
       idempotencyKey: 'l4-a-kill-after-approval',
     },
     token: {} as never,
@@ -532,7 +532,7 @@ async function checkKillSwitchBlocks(baseUrl: string, gateway: InMemoryGateway):
 async function checkEvidenceVerification(baseUrl: string, gateway: InMemoryGateway): Promise<void> {
   const proposed = await postJson(baseUrl, '/v1/actions', {
     ...BASE_ACTION,
-    destination: 'demo://tickets/approval',
+    destination: 'demo://tickets',
     idempotencyKey: 'l4-a-evidence',
     args: {
       title: 'SENSITIVE_TOOL_ARGUMENT',
@@ -629,7 +629,7 @@ async function checkEvidenceVerification(baseUrl: string, gateway: InMemoryGatew
 async function checkCompletionUnknown(baseUrl: string, gateway: InMemoryGateway): Promise<void> {
   const proposed = await postJson(baseUrl, '/v1/actions', {
     ...BASE_ACTION,
-    destination: 'demo://tickets/approval',
+    destination: 'demo://tickets',
     idempotencyKey: 'l4-a-unknown',
   });
   const action = (
@@ -693,7 +693,7 @@ async function checkCompletionUnknown(baseUrl: string, gateway: InMemoryGateway)
 async function checkReconcile(baseUrl: string, gateway: InMemoryGateway): Promise<void> {
   const proposed = await postJson(baseUrl, '/v1/actions', {
     ...BASE_ACTION,
-    destination: 'demo://tickets/approval',
+    destination: 'demo://tickets',
     idempotencyKey: 'l4-a-reconcile',
   });
   const action = (

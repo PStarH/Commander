@@ -64,33 +64,28 @@ void describe('@commander/sdk — types', () => {
 
 void describe('@commander/sdk — CommanderClient', () => {
   void it('can be instantiated with default config', () => {
-    const { CommanderClient } = require('../src/commanderClient');
     const client = new CommanderClient();
     assert.ok(client);
     assert.equal(client.isConnected, false);
   });
 
   void it('throws on run before connect', async () => {
-    const { CommanderClient } = require('../src/commanderClient');
     const client = new CommanderClient();
     await assert.rejects(() => client.run('test task'), /not connected/);
   });
 
   void it('throws on plan before connect', async () => {
-    const { CommanderClient } = require('../src/commanderClient');
     const client = new CommanderClient();
     await assert.rejects(() => client.plan('test task'), /not connected/);
   });
 
   void it('returns empty session list before any runs', () => {
-    const { CommanderClient } = require('../src/commanderClient');
     const client = new CommanderClient();
     const sessions = client.listSessions();
     assert.deepEqual(sessions, []);
   });
 
   void it('detects no provider from empty env', () => {
-    const { CommanderClient } = require('../src/commanderClient');
     const client = new CommanderClient();
     // Private method — just verify the constructor works without env keys
     assert.equal(client.isConnected, false);
@@ -98,14 +93,12 @@ void describe('@commander/sdk — CommanderClient', () => {
 
   void describe('memory (best-effort)', () => {
     void it('queryMemory returns an array without throwing when not connected', () => {
-      const { CommanderClient } = require('../src/commanderClient');
       const client = new CommanderClient();
       const results = client.queryMemory({ keywords: ['test'], limit: 5 });
       assert.ok(Array.isArray(results));
     });
 
     void it('getMemoryStats returns zeroed stats when not connected', async () => {
-      const { CommanderClient } = require('../src/commanderClient');
       const client = new CommanderClient();
       const stats = await client.getMemoryStats();
       assert.equal(stats.workingCount, 0);
@@ -115,7 +108,6 @@ void describe('@commander/sdk — CommanderClient', () => {
     });
 
     void it('getStats is a live alias for getMemoryStats', async () => {
-      const { CommanderClient } = require('../src/commanderClient');
       const client = new CommanderClient();
       const stats = await client.getStats();
       assert.equal(stats.totalCount, 0);
@@ -171,7 +163,6 @@ const actionFixtures = {
 
 void describe('@commander/sdk — Gateway V1 client', () => {
   void it('submits a durable run with idempotency and preserves 202 semantics', async () => {
-    const { CommanderGatewayClient } = require('../src/v1/client');
     let captured: RequestInit | undefined;
     const client = new CommanderGatewayClient({
       baseUrl: 'https://commander.example/',
@@ -208,7 +199,6 @@ void describe('@commander/sdk — Gateway V1 client', () => {
   });
 
   void it('simulateAction posts the governed action envelope', async () => {
-    const { CommanderGatewayClient } = require('../src/v1/client');
     let url = '';
     let captured: RequestInit | undefined;
     const client = new CommanderGatewayClient({
@@ -231,7 +221,6 @@ void describe('@commander/sdk — Gateway V1 client', () => {
   });
 
   void it('proposeAction posts with Idempotency-Key header', async () => {
-    const { CommanderGatewayClient } = require('../src/v1/client');
     let captured: RequestInit | undefined;
     const client = new CommanderGatewayClient({
       baseUrl: 'https://commander.example',
@@ -252,7 +241,6 @@ void describe('@commander/sdk — Gateway V1 client', () => {
   });
 
   void it('getAction loads a governed action by run id', async () => {
-    const { CommanderGatewayClient } = require('../src/v1/client');
     let url = '';
     const client = new CommanderGatewayClient({
       baseUrl: 'https://commander.example',
@@ -271,7 +259,6 @@ void describe('@commander/sdk — Gateway V1 client', () => {
   });
 
   void it('approveAction posts approval bindings', async () => {
-    const { CommanderGatewayClient } = require('../src/v1/client');
     let url = '';
     let captured: RequestInit | undefined;
     const client = new CommanderGatewayClient({
@@ -299,7 +286,6 @@ void describe('@commander/sdk — Gateway V1 client', () => {
   });
 
   void it('rejectAction posts optional reason', async () => {
-    const { CommanderGatewayClient } = require('../src/v1/client');
     let captured: RequestInit | undefined;
     const client = new CommanderGatewayClient({
       baseUrl: 'https://commander.example',
@@ -326,7 +312,6 @@ void describe('@commander/sdk — Gateway V1 client', () => {
   });
 
   void it('reconcileAction posts to reconcile endpoint', async () => {
-    const { CommanderGatewayClient } = require('../src/v1/client');
     let url = '';
     const client = new CommanderGatewayClient({
       baseUrl: 'https://commander.example',
@@ -347,7 +332,6 @@ void describe('@commander/sdk — Gateway V1 client', () => {
   });
 
   void it('getActionEvidence loads evidence bundle', async () => {
-    const { CommanderGatewayClient } = require('../src/v1/client');
     let url = '';
     const client = new CommanderGatewayClient({
       baseUrl: 'https://commander.example',

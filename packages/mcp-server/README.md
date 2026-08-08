@@ -22,24 +22,24 @@ commander-mcp-server
 
 Options:
 
-| Flag                      | Description                                             |
-| ------------------------- | ------------------------------------------------------- |
-| `--name <name>`           | Server name advertised during MCP initialization        |
-| `--version <version>`     | Server version advertised during MCP initialization     |
-| `--model-router-only`     | Only register the lightweight model-router tools        |
-| `--allow-dangerous-tools` | Expose dangerous built-in tools such as `shell_execute` |
-| `--help`                  | Show help                                               |
+| Flag                      | Description                                            |
+| ------------------------- | ------------------------------------------------------ |
+| `--name <name>`           | Server name advertised during MCP initialization       |
+| `--version <version>`     | Server version advertised during MCP initialization    |
+| `--model-router-only`     | Only register model-router tools in local runtime mode |
+| `--allow-dangerous-tools` | Expose dangerous local tools in local runtime mode     |
+| `--help`                  | Show help                                              |
 
 ### Programmatic
 
 ```typescript
 import { createStdioMcpServer, startStdioServer } from '@commander/mcp-server';
 
-const { server, status } = createStdioMcpServer();
+const { server, status } = createStdioMcpServer(); // governed Action Gateway surface
 console.log(`Exposing ${status.tools.length} tools`);
 
-// Or start reading from process.stdin automatically:
-const { stop } = startStdioServer({ modelRouterOnly: false });
+// Or explicitly enable the local Commander runtime for development:
+const { stop } = startStdioServer({ localRuntime: true, modelRouterOnly: false });
 ```
 
 ### Wiring into an MCP client config
@@ -57,12 +57,19 @@ const { stop } = startStdioServer({ modelRouterOnly: false });
 
 ## Tools
 
-By default the server registers:
+By default the server registers only governed Action Gateway tools:
 
-- `execute_agent` — run a goal against the Commander runtime
-- `list_models` — list models and tiers from the model router
-- `route_task` — preview which tier a task would be routed to
-- All built-in Commander tools returned by `createAllTools()`, with dangerous tools filtered out unless `--allow-dangerous-tools` is passed
+- `commander_action_simulate` — preview a governed action
+- `commander_action_propose` — submit a governed action for policy and approval
+- `commander_action_get` — retrieve a governed action
+- `commander_action_evidence` — retrieve a terminal action's evidence bundle
+
+Clients submit a registered `action` and its `args`; the server derives the
+tool, effect type, destination, provenance, and idempotency key. Approval,
+rejection, and reconciliation remain human-only API operations.
+
+Set `COMMANDER_MCP_LOCAL_RUNTIME=1` (or `localRuntime: true` programmatically)
+to expose the local model-router and Commander tool surface for development.
 
 ## HTTP API (when used inside `@commander/api`)
 

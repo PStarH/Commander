@@ -157,7 +157,7 @@ async function createInMemoryActionRun(
 }
 
 describe('Action Gateway → Kernel → EffectBroker → demo adapter', () => {
-  it('executes allow and approved actions while denied actions never reach the adapter', async () => {
+  it('executes approved actions while denied actions never reach the adapter', async () => {
     const kernel = new InMemoryKernelRepository();
     await kernel.setAllowlistEntry('tenant-action-e2e', 'demo.ticket.create', true);
     await kernel.setAllowlistEntry('tenant-action-e2e', 'compensate.demo.ticket.create', true);
@@ -218,10 +218,25 @@ describe('Action Gateway → Kernel → EffectBroker → demo adapter', () => {
       },
     );
 
-    const allowed = await createInMemoryActionRun(kernel, {
-      runId: 'run-action-allow',
-      effect: 'allow',
+    const approvedBeforeWorker = await createInMemoryActionRun(kernel, {
+      runId: 'run-action-approved-before-worker',
+      effect: 'require_approval',
       destination: 'demo://tickets',
+    });
+    await kernel.answerInteraction({
+      interactionId: approvedBeforeWorker.interactionId,
+      runId: 'run-action-approved-before-worker',
+      tenantId: approvedBeforeWorker.tenantId,
+      response: {
+        approved: true,
+        actionDigest: approvedBeforeWorker.actionDigest,
+        simulationId: approvedBeforeWorker.simulationId,
+        policySnapshotId: 'action-gateway-mvp-v1',
+        reviewer: 'reviewer-a',
+        runId: 'run-action-approved-before-worker',
+        tenantId: approvedBeforeWorker.tenantId,
+      },
+      actor: 'reviewer-a',
     });
     const denied = await createInMemoryActionRun(kernel, {
       runId: 'run-action-deny',
@@ -231,14 +246,18 @@ describe('Action Gateway → Kernel → EffectBroker → demo adapter', () => {
     const approval = await createInMemoryActionRun(kernel, {
       runId: 'run-action-approval',
       effect: 'require_approval',
-      destination: 'demo://tickets/approval',
+      destination: 'demo://tickets',
     });
 
     await worker.start();
     try {
       assert.equal(await worker.pollOnce(), true);
       await worker.waitForIdle();
-      assert.equal((await kernel.getRun('run-action-allow', allowed.tenantId))?.state, 'SUCCEEDED');
+      assert.equal(
+        (await kernel.getRun('run-action-approved-before-worker', approvedBeforeWorker.tenantId))
+          ?.state,
+        'SUCCEEDED',
+      );
       assert.equal(tickets.createInvocations, 1);
 
       assert.equal(await worker.pollOnce(), true);
@@ -277,7 +296,7 @@ describe('Action Gateway → Kernel → EffectBroker → demo adapter', () => {
       const mutated = await createInMemoryActionRun(kernel, {
         runId: 'run-action-mutated-after-approval',
         effect: 'require_approval',
-        destination: 'demo://tickets/approval',
+        destination: 'demo://tickets',
         args: { title: 'Approved title' },
         executionArgs: { title: 'Mutated title' },
       });
@@ -316,7 +335,7 @@ describe('Action Gateway → Kernel → EffectBroker → demo adapter', () => {
         destination: 'demo://tickets',
         effectType: 'compensate.demo.ticket.create',
         tool: 'ticket.compensate',
-        args: { targetIdempotencyKey: allowed.envelope.idempotencyKey },
+        args: { targetIdempotencyKey: approvedBeforeWorker.envelope.idempotencyKey },
       });
       assert.equal(await worker.pollOnce(), true);
       await worker.waitForIdle();
@@ -328,11 +347,11 @@ describe('Action Gateway → Kernel → EffectBroker → demo adapter', () => {
       );
       assert.equal(tickets.compensateInvocations, 0, 'Task 1 must fail closed before adapter compensation');
       const remote = await tickets.queryOutcome({
-        effectId: 'run-action-allow-effect',
-        idempotencyKey: allowed.envelope.idempotencyKey,
+        effectId: 'run-action-approved-before-worker-effect',
+        idempotencyKey: approvedBeforeWorker.envelope.idempotencyKey,
         type: 'demo.ticket.create',
         request: {},
-        tenantId: allowed.tenantId,
+        tenantId: approvedBeforeWorker.tenantId,
       });
       assert.equal(remote.status, 'APPLIED');
       assert.equal(remote.response?.status, 'open');
@@ -463,7 +482,9 @@ describe('Gateway → Kernel → Worker real execution loop', { skip: !databaseU
       await pool.query('DELETE FROM commander_outbox WHERE tenant_id=$1', [tenantId]);
       await pool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id=$1', [workerId]);
       await pool.query('DELETE FROM commander_workers WHERE id=$1', [workerId]);
-      await pool.query('DELETE FROM commander_worker_allowed_tenants WHERE tenant_id=$1', [tenantId]);
+      await pool.query('DELETE FROM commander_worker_allowed_tenants WHERE tenant_id=$1', [
+        tenantId,
+      ]);
       await workerPool.end();
       await pool.end();
     }

@@ -58,13 +58,11 @@ async function createActionRun(
   const stepId = `${runId}-step`;
   const effectId = `${runId}-effect`;
   const interactionId = `${runId}-interaction`;
-  const effect = options.effect ?? 'allow';
+  const effect = options.effect ?? 'require_approval';
   const destination =
     options.destination ??
     (options.envelope
       ? baseEnvelope.destination
-      : effect === 'require_approval'
-      ? 'demo://tickets/approval'
       : effect === 'deny'
         ? 'demo://tickets/denied'
         : baseEnvelope.destination);
@@ -279,8 +277,8 @@ describe('L4-01 Action Gateway worker policy', () => {
       stepId: action.stepId,
       request: action.actionEnvelope,
     });
-    assert.equal(decision.effect, 'allow');
-    assert.equal(decision.decisionId, 'action-gateway-allow');
+    assert.equal(decision.effect, 'deny');
+    assert.equal(decision.reason, 'ACTION_GATEWAY_APPROVAL_REQUIRED');
     assert.equal(decision.policySnapshotId, 'action-gateway-mvp-v1');
   });
 
@@ -384,6 +382,7 @@ describe('L4-01 Action Gateway worker policy', () => {
     const action = await createActionRun(repository, {
       runId: 'run-approval',
       effect: 'require_approval',
+      destination: 'demo://tickets',
     });
 
     assert.equal(
@@ -698,7 +697,7 @@ describe('L4-04 kill switch worker policy', () => {
     await repository.putKillSwitch({
       tenantId: 'tenant-a',
       scope: 'destination',
-      value: 'demo://tickets/approval',
+      value: 'demo://tickets',
       enabled: true,
       actor: 'ops-a',
     });

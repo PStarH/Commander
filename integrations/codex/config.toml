@@ -1,0 +1,21 @@
+# Commander MCP server for Codex CLI (OpenAI Codex).
+#
+# This file is the committed reference config. Codex only auto-discovers
+# <repo-root>/.codex/config.toml, and this repo's .gitignore excludes .codex/,
+# so copy/merge this file into .codex/config.toml at the repo root:
+#
+#   cp integrations/codex/config.toml .codex/config.toml
+#
+# Requirements:
+#   - Built server: pnpm run build:integrations (or pnpm --filter @commander/mcp-server build)
+#   - Action Gateway reachable at COMMANDER_ACTION_GATEWAY_URL (default http://127.0.0.1:4000,
+#     started with `pnpm dev:api`). Without a gateway URL the Commander tools
+#     fail closed with an ACTION_GATEWAY_REQUIRED response.
+#   - Optional: export COMMANDER_API_KEY=... in your shell when the gateway
+#     requires an API key. Do not commit secrets into this file.
+
+[mcp_servers.commander]
+command = "node"
+args = ["./packages/mcp-server/dist/cli.js"]
+cwd = "."
+env = { COMMANDER_ACTION_GATEWAY_URL = "http://127.0.0.1:4000" }
