@@ -16,6 +16,7 @@ const PROOF_TOKEN_MAX_LIFETIME_SECONDS = 10 * 60;
 const SHA256 = /^[0-9a-f]{64}$/;
 const KUBERNETES_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const SECRET_KEY = /^[A-Za-z0-9._-]+$/;
+const KUBERNETES_PROOF_INVALID_CODE = 'TENANT_CUTOVER_KUBERNETES_PROOF_INVALID';
 
 interface ProofPodContract {
   apiProof: { secretName: string; caKey: string; certKey: string };
@@ -56,7 +57,16 @@ export interface Task1KubernetesProofObserverOptions {
 }
 
 function invalid(): never {
-  throw new Error('TENANT_CUTOVER_KUBERNETES_PROOF_INVALID');
+  const caller = new Error().stack
+    ?.split('\n')
+    .slice(2)
+    .find((line) => /task1KubernetesProofObserver\.(?:ts|js):\d+:\d+/.test(line));
+  const location = caller?.match(/task1KubernetesProofObserver\.(?:ts|js):\d+:\d+/)?.[0];
+  const diagnostic = location ?? 'task1KubernetesProofObserver:unknown';
+  throw Object.assign(new Error(`${KUBERNETES_PROOF_INVALID_CODE} invariant=${diagnostic}`), {
+    code: KUBERNETES_PROOF_INVALID_CODE,
+    diagnostic,
+  });
 }
 
 function record(value: unknown): JsonRecord {

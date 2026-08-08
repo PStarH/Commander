@@ -595,7 +595,13 @@ export function migrationFailureDiagnostic(stage: MigrationStage, error: unknown
         ? error.message
         : undefined;
   const code = candidate && /^[A-Z0-9_]{2,80}$/.test(candidate) ? candidate : undefined;
-  return code ? `stage=${stage} code=${code}` : `stage=${stage}`;
+  const detail =
+    typeof record.diagnostic === 'string' && /^[A-Za-z0-9_.:/-]{1,200}$/.test(record.diagnostic)
+      ? record.diagnostic
+      : undefined;
+  return code
+    ? `stage=${stage} code=${code}${detail ? ` detail=${detail}` : ''}`
+    : `stage=${stage}`;
 }
 
 export async function readTask1OwnerInput(
