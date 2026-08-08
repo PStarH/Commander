@@ -764,6 +764,86 @@ export function extractLifecycleFailureDiagnostics(logs: string): string[] {
   return [...new Set(diagnostics)];
 }
 
+export function projectLifecyclePodDiagnostics(input: unknown): Array<Record<string, unknown>> {
+  const items =
+    input && typeof input === 'object' && Array.isArray((input as { items?: unknown[] }).items)
+      ? (input as { items: unknown[] }).items
+      : [];
+  return items.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const pod = item as { metadata?: Record<string, unknown>; status?: Record<string, unknown> };
+    const metadata = pod.metadata ?? {};
+    const status = pod.status ?? {};
+    const conditions = Array.isArray(status.conditions)
+      ? status.conditions
+          .filter((condition): condition is Record<string, unknown> =>
+            Boolean(condition && typeof condition === 'object'),
+          )
+          .map((condition) => ({
+            type: condition.type,
+            status: condition.status,
+            reason: condition.reason,
+          }))
+      : [];
+    const containerStatuses = Array.isArray(status.containerStatuses)
+      ? status.containerStatuses
+          .filter((container): container is Record<string, unknown> =>
+            Boolean(container && typeof container === 'object'),
+          )
+          .map((container) => ({
+            name: container.name,
+            ready: container.ready,
+            restartCount: container.restartCount,
+            image: container.image,
+            state: container.state,
+            lastState: container.lastState,
+          }))
+      : [];
+    return [
+      {
+        namespace: metadata.namespace,
+        name: metadata.name,
+        phase: status.phase,
+        conditions,
+        containerStatuses,
+      },
+    ];
+  });
+}
+
+export function projectLifecycleJobDiagnostics(input: unknown): Array<Record<string, unknown>> {
+  const items =
+    input && typeof input === 'object' && Array.isArray((input as { items?: unknown[] }).items)
+      ? (input as { items: unknown[] }).items
+      : [];
+  return items.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const job = item as { metadata?: Record<string, unknown>; status?: Record<string, unknown> };
+    const status = job.status ?? {};
+    const conditions = Array.isArray(status.conditions)
+      ? status.conditions
+          .filter((condition): condition is Record<string, unknown> =>
+            Boolean(condition && typeof condition === 'object'),
+          )
+          .map((condition) => ({
+            type: condition.type,
+            status: condition.status,
+            reason: condition.reason,
+            message: condition.message,
+          }))
+      : [];
+    return [
+      {
+        namespace: job.metadata?.namespace,
+        name: job.metadata?.name,
+        conditions,
+        failed: status.failed,
+        succeeded: status.succeeded,
+      },
+    ];
+  });
+}
+
 function runCmd(
   file: string,
   args: string[],
@@ -1635,6 +1715,71 @@ async function collectApiFailureLogs(release: string): Promise<string> {
     .slice(-8_000);
 }
 
+async function collectLifecycleFailureDiagnostics(release: string): Promise<string> {
+  const [pods, jobs, apiLogs, proofLogs] = await Promise.all([
+    kubectl([
+      'get',
+      'pods',
+      '-n',
+      NAMESPACE,
+      '-l',
+      `app.kubernetes.io/instance=${release}`,
+      '-o',
+      'json',
+    ]),
+    kubectl([
+      'get',
+      'jobs',
+      '-n',
+      NAMESPACE,
+      '-l',
+      `app.kubernetes.io/instance=${release}`,
+      '-o',
+      'json',
+    ]),
+    collectApiFailureLogs(release),
+    collectProofFailureLogs(release),
+  ]);
+  const parseJson = (result: CommandResult): unknown => {
+    if (result.exitCode !== 0) return undefined;
+    try {
+      return JSON.parse(result.stdout) as unknown;
+    } catch {
+      return undefined;
+    }
+  };
+  const podProjection = projectLifecyclePodDiagnostics(parseJson(pods));
+  const jobProjection = projectLifecycleJobDiagnostics(parseJson(jobs));
+  const state = JSON.stringify({ pods: podProjection, jobs: jobProjection });
+  return `${state}${apiLogs ? `\nAPI_FAILURE_LOGS\n${apiLogs}` : ''}${proofLogs ? `\nPROOF_FAILURE_LOGS\n${proofLogs}` : ''}`.slice(
+    -20_000,
+  );
+}
+
+async function collectProofFailureLogs(release: string): Promise<string> {
+  const selector = `commander.io/tenant-authority-proof-reader=true,commander.io/tenant-authority-proof-release=${release}`;
+  const results = await Promise.all([
+    kubectl(['logs', '-n', NAMESPACE, '-l', selector, '-c', 'tenant-cutover-prove', '--tail=160']),
+    kubectl([
+      'logs',
+      '-n',
+      NAMESPACE,
+      '-l',
+      selector,
+      '-c',
+      'tenant-cutover-prove',
+      '--previous',
+      '--tail=160',
+    ]),
+  ]);
+  return results
+    .filter(({ exitCode }) => exitCode === 0)
+    .map(({ stdout }) => stdout)
+    .join('\n')
+    .replace(/postgres(?:ql)?:\/\/[^\s"']+/gi, 'postgres://***@***')
+    .slice(-8_000);
+}
+
 async function runCutoverCommand(
   command: 'install' | 'enforce',
   release: string,
@@ -2104,7 +2249,7 @@ async function runRealBundledLifecycle(
     };
   } catch (error) {
     const diagnostics = await kubectl(['get', 'pods,jobs', '-n', NAMESPACE, '-o', 'wide']);
-    const apiLogs = await collectApiFailureLogs(release);
+    const failureEvidence = await collectLifecycleFailureDiagnostics(release);
     return {
       name: 'real-bundled-install-upgrade-current-uninstall',
       passed: false,
@@ -2113,7 +2258,7 @@ async function runRealBundledLifecycle(
       assertions,
       error: `${error instanceof Error ? error.message : String(error)}${
         diagnostics.stdout.trim() ? `\n${diagnostics.stdout.trim()}` : ''
-      }${apiLogs ? `\nAPI_FAILURE_LOGS\n${apiLogs}` : ''}`,
+      }${failureEvidence ? `\nFAILURE_EVIDENCE\n${failureEvidence}` : ''}`,
     };
   } finally {
     rmSync(stateDirectory, { recursive: true, force: true });
@@ -2276,7 +2421,7 @@ async function runRealExternalTlsLifecycle(
     };
   } catch (error) {
     const diagnostics = await kubectl(['get', 'pods,jobs', '-A', '-o', 'wide']);
-    const apiLogs = await collectApiFailureLogs(release);
+    const failureEvidence = await collectLifecycleFailureDiagnostics(release);
     return {
       name: 'real-external-tls-install-upgrade-current-uninstall',
       passed: false,
@@ -2285,7 +2430,7 @@ async function runRealExternalTlsLifecycle(
       assertions,
       error: `${error instanceof Error ? error.message : String(error)}${
         diagnostics.stdout.trim() ? `\n${diagnostics.stdout.trim()}` : ''
-      }${apiLogs ? `\nAPI_FAILURE_LOGS\n${apiLogs}` : ''}`,
+      }${failureEvidence ? `\nFAILURE_EVIDENCE\n${failureEvidence}` : ''}`,
     };
   } finally {
     rmSync(stateDirectory, { recursive: true, force: true });
@@ -2404,7 +2549,7 @@ async function runFailedRolloutRecovery(
     };
   } catch (error) {
     const diagnostics = await kubectl(['get', 'pods,jobs', '-n', NAMESPACE, '-o', 'wide']);
-    const apiLogs = await collectApiFailureLogs(release);
+    const failureEvidence = await collectLifecycleFailureDiagnostics(release);
     return {
       name: 'failed-rollout-exact-retry-recovery',
       passed: false,
@@ -2413,7 +2558,7 @@ async function runFailedRolloutRecovery(
       assertions,
       error: `${error instanceof Error ? error.message : String(error)}${
         diagnostics.stdout.trim() ? `\n${diagnostics.stdout.trim()}` : ''
-      }${apiLogs ? `\nAPI_FAILURE_LOGS\n${apiLogs}` : ''}`,
+      }${failureEvidence ? `\nFAILURE_EVIDENCE\n${failureEvidence}` : ''}`,
     };
   } finally {
     rmSync(stateDirectory, { recursive: true, force: true });
