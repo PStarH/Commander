@@ -1827,17 +1827,25 @@ async function runCutoverCommand(
   });
   let proofPodObserved = false;
   const failureDiagnostics = new Set<string>();
+  let liveApiFailureLogs = '';
   let nextDiagnosticPollAt = 0;
+  let nextApiLogPollAt = 0;
   while (!finished) {
     const now = Date.now();
     const shouldPollDiagnostics = now >= nextDiagnosticPollAt;
-    const [liveProofObserved, diagnostics] = await Promise.all([
+    const shouldPollApiLogs = now >= nextApiLogPollAt;
+    const [liveProofObserved, diagnostics, apiLogs] = await Promise.all([
       inspectLiveProofPod(release, digest),
       shouldPollDiagnostics ? inspectLifecycleFailureDiagnostics(release) : Promise.resolve([]),
+      shouldPollApiLogs ? collectApiFailureLogs(release) : Promise.resolve(''),
     ]);
     proofPodObserved = liveProofObserved || proofPodObserved;
     diagnostics.forEach((diagnostic) => failureDiagnostics.add(diagnostic));
     if (shouldPollDiagnostics) nextDiagnosticPollAt = now + 100;
+    if (shouldPollApiLogs) {
+      nextApiLogPollAt = now + 250;
+      if (apiLogs) liveApiFailureLogs = `${liveApiFailureLogs}\n${apiLogs}`.slice(-20_000);
+    }
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
   await completion;
@@ -1847,7 +1855,7 @@ async function runCutoverCommand(
     throw new Error(
       `HELM_TENANT_CUTOVER_FAILED${detail ? `: ${detail}` : ''}${
         diagnosticDetail ? ` ${diagnosticDetail}` : ''
-      }`,
+      }${liveApiFailureLogs ? `\nLIVE_API_FAILURE_LOGS\n${liveApiFailureLogs}` : ''}`,
     );
   }
   if (requireLiveProofPod && !proofPodObserved) {
