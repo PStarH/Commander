@@ -52,6 +52,17 @@ describe('kernel owner migration entrypoint', () => {
     );
   });
 
+  it('retains a bounded proof invariant detail alongside its machine error code', () => {
+    const proofError = Object.assign(new Error('proof details must not be trusted'), {
+      code: 'TENANT_CUTOVER_KUBERNETES_PROOF_INVALID',
+      diagnostic: 'task1KubernetesProofObserver.ts:761:7',
+    });
+    assert.equal(
+      migrationFailureDiagnostic('owner-command', proofError),
+      'stage=owner-command code=TENANT_CUTOVER_KUBERNETES_PROOF_INVALID detail=task1KubernetesProofObserver.ts:761:7',
+    );
+  });
+
   it('runs closure descriptors only for the explicit phase-bound action', () => {
     assert.equal(parseTask1ClosureMigrationPhase([], {}), undefined);
     assert.equal(

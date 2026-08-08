@@ -433,6 +433,30 @@ class FixtureApi implements Task1KubernetesProofApi {
 }
 
 describe('Task 1 Kubernetes proof observer', () => {
+  it('retains the machine error code and failing observer location for diagnostics', async () => {
+    const values = resources();
+    values.service.metadata.name = 'wrong-service';
+    const observer = createTask1KubernetesProofObserver({
+      api: new FixtureApi(values),
+      readProjectedTokenIdentity: async () => token(),
+      readReleaseProjection: async () => releaseProjection(),
+      now: () => now,
+    });
+
+    await assert.rejects(
+      () => observer(operation()),
+      (error: unknown) => {
+        assert(error instanceof Error);
+        assert.equal(
+          (error as Error & { code?: unknown }).code,
+          'TENANT_CUTOVER_KUBERNETES_PROOF_INVALID',
+        );
+        assert.match(error.message, /invariant=.*task1KubernetesProofObserver\.ts:\d+/);
+        return true;
+      },
+    );
+  });
+
   it('uses only the frozen proof-reader permissions and binds its own projected-token Pod', async () => {
     const api = new FixtureApi();
     const observer = createTask1KubernetesProofObserver({
