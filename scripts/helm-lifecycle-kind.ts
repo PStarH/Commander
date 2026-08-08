@@ -1694,19 +1694,23 @@ async function inspectLifecycleFailureDiagnostics(release: string): Promise<stri
 
 async function collectApiFailureLogs(release: string): Promise<string> {
   const selector = `app.kubernetes.io/instance=${release},app.kubernetes.io/component=api`;
-  const results = await Promise.all([
-    kubectl(['logs', '-n', NAMESPACE, '-l', selector, '--all-containers=true', '--tail=120']),
-    kubectl([
-      'logs',
-      '-n',
-      NAMESPACE,
-      '-l',
-      selector,
-      '--all-containers=true',
-      '--previous',
-      '--tail=120',
+  const pods = await kubectl(['get', 'pods', '-n', NAMESPACE, '-l', selector, '-o', 'json']);
+  if (pods.exitCode !== 0) return '';
+  let names: string[] = [];
+  try {
+    const parsed = JSON.parse(pods.stdout) as { items?: Array<{ metadata?: { name?: unknown } }> };
+    names = (parsed.items ?? [])
+      .map((pod) => pod.metadata?.name)
+      .filter((name): name is string => typeof name === 'string' && name.length > 0);
+  } catch {
+    return '';
+  }
+  const results = await Promise.all(
+    names.flatMap((name) => [
+      kubectl(['logs', '-n', NAMESPACE, name, '-c', 'api', '--tail=120']),
+      kubectl(['logs', '-n', NAMESPACE, name, '-c', 'api', '--previous', '--tail=120']),
     ]),
-  ]);
+  );
   const text = results
     .filter(({ exitCode }) => exitCode === 0)
     .map(({ stdout }) => stdout)
@@ -1717,6 +1721,18 @@ async function collectApiFailureLogs(release: string): Promise<string> {
     .replace(/postgres(?:ql)?:\/\/[^\s"']+/gi, 'postgres://***@***')
     .replace(/((?:password|token|secret|key)[=:])[^\s]+/gi, '$1[REDACTED]')
     .slice(-8_000);
+}
+
+async function collectApiPodDiagnostics(release: string): Promise<string> {
+  const selector = `app.kubernetes.io/instance=${release},app.kubernetes.io/component=api`;
+  const result = await kubectl(['get', 'pods', '-n', NAMESPACE, '-l', selector, '-o', 'json']);
+  if (result.exitCode !== 0) return '';
+  try {
+    const projection = projectLifecyclePodDiagnostics(JSON.parse(result.stdout));
+    return projection.length > 0 ? JSON.stringify(projection) : '';
+  } catch {
+    return '';
+  }
 }
 
 async function collectLifecycleFailureDiagnostics(release: string): Promise<string> {
@@ -1828,16 +1844,18 @@ async function runCutoverCommand(
   let proofPodObserved = false;
   const failureDiagnostics = new Set<string>();
   let liveApiFailureLogs = '';
+  let liveApiPodDiagnostics = '';
   let nextDiagnosticPollAt = 0;
   let nextApiLogPollAt = 0;
   while (!finished) {
     const now = Date.now();
     const shouldPollDiagnostics = now >= nextDiagnosticPollAt;
     const shouldPollApiLogs = now >= nextApiLogPollAt;
-    const [liveProofObserved, diagnostics, apiLogs] = await Promise.all([
+    const [liveProofObserved, diagnostics, apiLogs, apiPodDiagnostics] = await Promise.all([
       inspectLiveProofPod(release, digest),
       shouldPollDiagnostics ? inspectLifecycleFailureDiagnostics(release) : Promise.resolve([]),
       shouldPollApiLogs ? collectApiFailureLogs(release) : Promise.resolve(''),
+      shouldPollDiagnostics ? collectApiPodDiagnostics(release) : Promise.resolve(''),
     ]);
     proofPodObserved = liveProofObserved || proofPodObserved;
     diagnostics.forEach((diagnostic) => failureDiagnostics.add(diagnostic));
@@ -1846,6 +1864,7 @@ async function runCutoverCommand(
       nextApiLogPollAt = now + 250;
       if (apiLogs) liveApiFailureLogs = `${liveApiFailureLogs}\n${apiLogs}`.slice(-20_000);
     }
+    if (apiPodDiagnostics) liveApiPodDiagnostics = apiPodDiagnostics;
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
   await completion;
@@ -1855,7 +1874,7 @@ async function runCutoverCommand(
     throw new Error(
       `HELM_TENANT_CUTOVER_FAILED${detail ? `: ${detail}` : ''}${
         diagnosticDetail ? ` ${diagnosticDetail}` : ''
-      }${liveApiFailureLogs ? `\nLIVE_API_FAILURE_LOGS\n${liveApiFailureLogs}` : ''}`,
+      }${liveApiPodDiagnostics ? `\nLIVE_API_POD_DIAGNOSTICS\n${liveApiPodDiagnostics}` : ''}${liveApiFailureLogs ? `\nLIVE_API_FAILURE_LOGS\n${liveApiFailureLogs}` : ''}`,
     );
   }
   if (requireLiveProofPod && !proofPodObserved) {
